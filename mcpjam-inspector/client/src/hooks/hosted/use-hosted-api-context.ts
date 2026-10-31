@@ -27,7 +27,6 @@ interface UseApiContextOptions {
   xaaPolicy?: XaaEnterprisePolicy;
   clientConfigSyncPending?: boolean;
   getAccessToken: () => Promise<string | undefined | null>;
-  oauthTokensByServerId?: Record<string, string>;
   // Resolved scenario identity (post-redeem) — drives scenario-aware request
   // shaping inside the API context.
   scenarioId?: string;
@@ -53,7 +52,6 @@ export function useApiContext({
   xaaPolicy,
   clientConfigSyncPending,
   getAccessToken,
-  oauthTokensByServerId,
   scenarioId,
   accessVersion,
   isAuthenticated,
@@ -91,7 +89,6 @@ export function useApiContext({
       xaaPolicy,
       clientConfigSyncPending,
       getAccessToken,
-      oauthTokensByServerId,
       scenarioId,
       accessVersion,
       isAuthenticated,
@@ -119,7 +116,6 @@ export function useApiContext({
     xaaPolicy,
     clientConfigSyncPending,
     getAccessToken,
-    oauthTokensByServerId,
     scenarioId,
     accessVersion,
     isAuthenticated,

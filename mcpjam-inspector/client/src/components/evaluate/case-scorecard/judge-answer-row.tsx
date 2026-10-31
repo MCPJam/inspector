@@ -235,7 +235,7 @@ export function judgeAnswerState(input: {
   gating: boolean;
 }): JudgeAnswerState {
   // Fails closed and FIRST: a label recorded as blind beside a visible
-  // verdict is not calibration data, and calibration gates other builds.
+  // verdict is not calibration data, and would inflate the agreement rate.
   // Only a verdict is withheld: every later state reads `judgeCase` alone,
   // and without one there is nothing to leak and no label control to lift
   // the mask, so "hidden until you label" would never clear.

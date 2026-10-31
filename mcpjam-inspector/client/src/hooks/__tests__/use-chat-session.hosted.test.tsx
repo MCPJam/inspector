@@ -207,7 +207,6 @@ vi.mock("@/lib/apis/web/context", () => ({
       projectId,
       serverIds,
       serverNames,
-      oauthTokens,
       accessScope,
       scenarioId,
       accessVersion,
@@ -215,7 +214,6 @@ vi.mock("@/lib/apis/web/context", () => ({
       projectId: string;
       serverIds: string[];
       serverNames: string[];
-      oauthTokens?: Record<string, string>;
       accessScope?: string;
       scenarioId?: string;
       accessVersion?: number;
@@ -223,7 +221,6 @@ vi.mock("@/lib/apis/web/context", () => ({
       projectId,
       serverIds,
       serverNames,
-      ...(oauthTokens ? { oauthTokens } : {}),
       ...(accessScope ? { accessScope } : {}),
       ...(scenarioId ? { scenarioId } : {}),
       ...(scenarioId && Number.isFinite(accessVersion)
@@ -674,9 +671,6 @@ describe("useChatSession hosted mode", () => {
           selectedServerIds: ["server-id-1"],
           scenarioId: "cbx_test",
           accessVersion: 1,
-          oauthTokens: {
-            "server-id-1": "browser-token",
-          },
         },
       }),
     );

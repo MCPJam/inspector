@@ -482,6 +482,7 @@ type HarnessRuntimeAdapterBase = {
 export type HarnessCreateArgs = {
   modelId: string;
   auth: HarnessAuth;
+  elicitationHandler?: boolean;
   /**
    * The reasoning effort this turn asked for. An adapter that lists efforts in
    * `supportedReasoningEfforts` MUST apply it through its own runtime option;
@@ -910,8 +911,10 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
     reasoningEffort,
     permissionMode,
     upstream,
+    elicitationHandler,
   }) {
     const env = claudeCodeTurnEnv(permissionMode, modelId, upstream);
+    if (elicitationHandler) env.MCPJAM_HARNESS_ELICITATION = "1";
     // The HOSTED recipe: shared bootstrap + typed terminal errors, so a
     // provider failure reaches an eval as fields rather than a sentence. A
     // local session swaps this bootstrap for the Inspector layer's

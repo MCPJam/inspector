@@ -48,6 +48,8 @@ export type ConformanceRunListItem = {
   passed: number;
   failed: number;
   couldNotRun: number;
+  /** Absent on rows read from a build that predates the field. */
+  notApplicable?: number;
   requestedSuites: string[];
   protocolVersion: string | null;
   actorLabel: string | null;
@@ -437,6 +439,7 @@ export function ConformanceRunDetailPage({
                   passed: detail.passed,
                   failed: detail.failed,
                   couldNotRun: detail.couldNotRun,
+                  notApplicable: detail.notApplicable,
                 }
               : undefined
           }

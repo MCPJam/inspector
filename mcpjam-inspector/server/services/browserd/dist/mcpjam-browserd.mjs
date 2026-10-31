@@ -10691,10 +10691,10 @@ async function launchBrowserdContext(options) {
     await policy.assertActive();
   }
   if (policy && options.contextMode !== "ephemeral" && options.userDataDir) {
-    const { rm } = await import("node:fs/promises");
+    const { rm: rm2 } = await import("node:fs/promises");
     const { join: join4 } = await import("node:path");
     for (const cache of ["Service Worker", "Cache", "Code Cache"]) {
-      await rm(join4(options.userDataDir, "Default", cache), {
+      await rm2(join4(options.userDataDir, "Default", cache), {
         recursive: true,
         force: true
       });
@@ -10751,11 +10751,35 @@ async function launchBrowserdContext(options) {
         ...userAgent ? { userAgent } : {}
       })
     };
+    const launchProfileContext = async (contextMode) => {
+      const cleared = await clearStaleSingletonLock(options.userDataDir);
+      if (cleared.heldBy) {
+        throw new Error(
+          `profile_in_use: another browser (pid ${cleared.heldBy.pid ?? "unknown"}${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds this profile; close it and try again`
+        );
+      }
+      const context = await chromium.launchPersistentContext(
+        options.userDataDir,
+        {
+          ...launchArgs,
+          acceptDownloads: false,
+          permissions: [],
+          ...contextOptionsFor({
+            contextMode,
+            surface,
+            ...options.deviceScaleFactor !== void 0 ? { deviceScaleFactor: options.deviceScaleFactor } : {}
+          })
+        }
+      );
+      return await finish(context);
+    };
     if (options.contextMode === "ephemeral") {
+      if (options.profileImported)
+        return await launchProfileContext("ephemeral");
       const browser = await chromium.launch(launchArgs);
-      let context2;
+      let context;
       try {
-        context2 = await browser.newContext({
+        context = await browser.newContext({
           acceptDownloads: false,
           permissions: [],
           // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
@@ -10768,28 +10792,9 @@ async function launchBrowserdContext(options) {
         });
         throw error;
       }
-      return await finish(context2, () => browser.close());
+      return await finish(context, () => browser.close());
     }
-    const cleared = await clearStaleSingletonLock(options.userDataDir);
-    if (cleared.heldBy) {
-      throw new Error(
-        `profile_in_use: another browser (pid ${cleared.heldBy.pid ?? "unknown"}${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds this profile; close it and try again`
-      );
-    }
-    const context = await chromium.launchPersistentContext(
-      options.userDataDir,
-      {
-        ...launchArgs,
-        acceptDownloads: false,
-        permissions: [],
-        ...contextOptionsFor({
-          contextMode: "persistent",
-          surface,
-          ...options.deviceScaleFactor !== void 0 ? { deviceScaleFactor: options.deviceScaleFactor } : {}
-        })
-      }
-    );
-    return await finish(context);
+    return await launchProfileContext("persistent");
   } catch (error) {
     await proxy?.close();
     throw error;
@@ -10855,250 +10860,8 @@ function adaptContext(context, options = {}) {
   };
 }
 
-// server/services/browserd/daemon/main.ts
-import { mkdirSync } from "node:fs";
-import { execFile } from "node:child_process";
-import { readFile as readFile2, unlink as unlink2 } from "node:fs/promises";
-
-// server/services/browserd/daemon/display-resize.ts
-function displayGeometryFor(size, options = {}) {
-  const dpr = options.deviceScaleFactor ?? 1;
-  const even = (value) => {
-    const scaled = Math.round(value * dpr);
-    return scaled % 2 === 0 ? scaled : scaled + 1;
-  };
-  return {
-    width: even(size.width),
-    height: even(size.height),
-    depth: options.depth ?? 24
-  };
-}
-function shellSafeDisplay(display) {
-  return /^:[0-9]+(\.[0-9]+)?$/.test(display) ? display : null;
-}
-async function resizeHostedDisplay(deps, next, previous) {
-  const display = shellSafeDisplay(deps.display);
-  if (!display) {
-    return {
-      ok: false,
-      reason: `refusing to resize a display named ${JSON.stringify(
-        deps.display
-      )}`,
-      restored: true
-    };
-  }
-  const geometry = displayGeometryFor(next, {
-    ...deps.deviceScaleFactor !== void 0 ? { deviceScaleFactor: deps.deviceScaleFactor } : {}
-  });
-  const applyDisplay = async (size) => {
-    const { width, height } = size;
-    if (![width, height].every(
-      (value) => Number.isInteger(value) && value >= 32 && value <= 32768
-    )) {
-      return { ok: false, reason: "invalid display geometry" };
-    }
-    const mode = `mcpjam-${width}x${height}`;
-    const clock = ((width + 160) * (height + 45) * 60 / 1e6).toFixed(3);
-    const randr = `xrandr --display ${display}`;
-    const command = [
-      `${randr} --newmode ${mode} ${clock} ${width} ${width + 48} ${width + 80} ${width + 160} ${height} ${height + 3} ${height + 6} ${height + 45} 2>/dev/null || true`,
-      `${randr} --addmode VNC-0 ${mode} &&`,
-      `${randr} --output VNC-0 --mode ${mode} --fb ${width}x${height} &&`,
-      `${randr} --current | awk '$1 == "VNC-0" && $2 == "connected" && $3 == "${width}x${height}+0+0" { found = 1 } END { exit !found }'`
-    ].join("\n");
-    try {
-      const result = await deps.run(command);
-      return result.exitCode === 0 ? { ok: true } : {
-        ok: false,
-        reason: result.stderr?.trim() || `xrandr exited ${result.exitCode} resizing to ${size.width}x${size.height}`
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        reason: error instanceof Error ? error.message : String(error)
-      };
-    }
-  };
-  const restore = async () => {
-    const back = displayGeometryFor(previous, {
-      ...deps.deviceScaleFactor !== void 0 ? { deviceScaleFactor: deps.deviceScaleFactor } : {}
-    });
-    const result = await applyDisplay(back);
-    if (!result.ok) return false;
-    let pageRestored = true;
-    await deps.resizePage?.(previous).catch(() => {
-      pageRestored = false;
-    });
-    if (!pageRestored) return false;
-    await deps.restartEncoder?.(previous).catch(() => {
-    });
-    return true;
-  };
-  const display_ = await applyDisplay(geometry);
-  if (!display_.ok) {
-    return {
-      ok: false,
-      reason: display_.reason ?? "the display refused the new size",
-      restored: await restore()
-    };
-  }
-  try {
-    await deps.resizePage?.(next);
-    await deps.restartEncoder?.(next);
-  } catch (error) {
-    return {
-      ok: false,
-      reason: error instanceof Error ? error.message : String(error),
-      restored: await restore()
-    };
-  }
-  return { ok: true, applied: next };
-}
-
-// server/services/browserd/daemon/config.ts
-import { createHash as createHash2, randomBytes as randomBytes4 } from "node:crypto";
-import { chmodSync, readFileSync, writeFileSync } from "node:fs";
-var DEFAULT_ON_FEATURES = [
-  "a11yFrames",
-  "scrollableMarkers"
-];
-var OPT_IN_FEATURES = [
-  "keystrokeTyping"
-];
-function namedIn(raw) {
-  return new Set(
-    (raw ?? "").split(",").map((name) => name.trim()).filter((name) => name.length > 0)
-  );
-}
-function parseBrowserdFeatures(env = process.env) {
-  const enabled = namedIn(env.MCPJAM_BROWSERD_FEATURES);
-  const disabled = namedIn(env.MCPJAM_BROWSERD_DISABLE_FEATURES);
-  const features = {};
-  for (const name of DEFAULT_ON_FEATURES) {
-    if (!disabled.has(name)) features[name] = true;
-  }
-  for (const name of OPT_IN_FEATURES) {
-    if (enabled.has(name) && !disabled.has(name)) features[name] = true;
-  }
-  return features;
-}
-var DEFAULT_BROWSERD_PORT = 8791;
-var DEFAULT_BROWSERD_HOST = "0.0.0.0";
-var DEFAULT_BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";
-var DEFAULT_BROWSERD_RECORD_MAX_BYTES = 60 * 1024 * 1024;
-function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
-  const supplied = env.MCPJAM_BROWSERD_TOKEN ?? "";
-  const tokenFile = env.MCPJAM_BROWSERD_TOKEN_FILE?.trim() || void 0;
-  const token = supplied.length > 0 ? supplied : tokenFile ? mintToken(tokenFile) : "";
-  if (token.length === 0) {
-    throw new Error(
-      "MCPJAM_BROWSERD_TOKEN is required \u2014 refusing to start an unauthenticated browser daemon on a public host"
-    );
-  }
-  const rawPort = env.MCPJAM_BROWSERD_PORT;
-  const port = rawPort === void 0 ? DEFAULT_BROWSERD_PORT : Number(rawPort);
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-    throw new Error(
-      `MCPJAM_BROWSERD_PORT must be a valid port (1-65535), got ${rawPort}`
-    );
-  }
-  const headless = env.MCPJAM_BROWSERD_HEADLESS === "true";
-  return {
-    token,
-    port,
-    host: env.MCPJAM_BROWSERD_HOST || DEFAULT_BROWSERD_HOST,
-    userDataDir: env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR,
-    headless,
-    windowSize: env.MCPJAM_BROWSERD_WINDOW_SIZE || void 0,
-    // Only the exact string opts in. An unset or misspelled value keeps the
-    // persistent profile — the mode a human's logins depend on — rather than
-    // silently wiping state because a typo read as "ephemeral".
-    contextMode: env.MCPJAM_BROWSERD_EPHEMERAL === "true" ? "ephemeral" : "persistent",
-    // NEVER WITH HEADLESS. Kiosk is what makes "the display IS the page" true
-    // for the video encoder, and a headless Chromium draws on no display at
-    // all — so the daemon would advertise `h264`, spawn a grab of an empty X
-    // screen, and hand every watcher a picture of nothing. The two are
-    // contradictory rather than merely unusual, so the one that decides
-    // whether there is a picture wins.
-    kiosk: env.MCPJAM_BROWSERD_KIOSK === "1" && !headless,
-    // NEVER WITHOUT KIOSK on a hosted box, and the guard is the same shape as
-    // kiosk's own: a display that resized under a Chromium that is not filling
-    // it leaves the page one size and the capture another, which is the exact
-    // disagreement between the number and the picture this whole path exists
-    // to prevent.
-    viewportPolicy: parseViewportPolicy(env.MCPJAM_BROWSERD_VIEWPORT_POLICY),
-    deviceScaleFactor: readDeviceScaleFactor(env),
-    recordDir: env.MCPJAM_BROWSERD_RECORD_DIR?.trim() || `${env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR}/recordings`,
-    recordMaxBytes: readRecordMaxBytes(env),
-    // Only the exact string disables it, matching every other switch here: a
-    // typo must not silently cost a run its evidence.
-    recordingEnabled: env.MCPJAM_BROWSERD_RECORD !== "0",
-    ...tokenFile ? { tokenFile } : {},
-    ...env.MCPJAM_BROWSERD_PROFILE_ARCHIVE?.trim() ? { profileArchivePath: env.MCPJAM_BROWSERD_PROFILE_ARCHIVE.trim() } : {},
-    // Only a daemon that had to mint its own token was started by the box.
-    startedBy: supplied.length === 0 && tokenFile ? "prelaunch" : "inspector"
-  };
-}
-function readDeviceScaleFactor(env) {
-  const raw = Number(env.MCPJAM_BROWSERD_DPR);
-  if (!Number.isFinite(raw) || raw < 1 || raw > 3) return 1;
-  return raw;
-}
-function readRecordMaxBytes(env) {
-  const raw = Number(env.MCPJAM_BROWSERD_RECORD_MAX_BYTES);
-  if (!Number.isFinite(raw) || raw < 1)
-    return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
-  return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
-}
-function defaultMintToken(path) {
-  const token = randomBytes4(32).toString("hex");
-  writeFileSync(path, token, { encoding: "utf8", mode: 384 });
-  chmodSync(path, 384);
-  return token;
-}
-function announcedFeatures(config, env = process.env) {
-  const features = [];
-  if (config.kiosk && env.MCPJAM_BROWSER_VIDEO !== "false") {
-    features.push("h264");
-  }
-  if (config.recordingEnabled) features.push("record");
-  return features;
-}
-function extraArgsFor(config) {
-  const args = [];
-  if (config.windowSize) args.push(`--window-size=${config.windowSize}`);
-  if (config.kiosk) {
-    args.push("--kiosk", "--start-fullscreen", "--window-position=0,0");
-    if (!config.windowSize) {
-      args.push("--window-size=1024,768");
-    }
-  }
-  if (config.deviceScaleFactor !== 1 && config.contextMode === "persistent") {
-    args.push(`--force-device-scale-factor=${config.deviceScaleFactor}`);
-  }
-  return args;
-}
-function formatReadyLine(host2, port, bootId, protocolVersion) {
-  return JSON.stringify({
-    event: "listening",
-    host: host2,
-    port,
-    bootId,
-    ...protocolVersion === void 0 ? {} : { protocolVersion }
-  });
-}
-function readBundleHash(argv = process.argv, hashFile = defaultHashFile) {
-  const entry = argv[1];
-  if (!entry) return void 0;
-  try {
-    return hashFile(entry);
-  } catch {
-    return void 0;
-  }
-}
-function defaultHashFile(path) {
-  return createHash2("sha256").update(readFileSync(path)).digest("hex");
-}
+// server/services/browserd/daemon/prepare-browser-profile.ts
+import { readFile as readFile2, rm } from "node:fs/promises";
 
 // server/services/browserd/profile-archive.ts
 import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -11429,6 +11192,272 @@ async function importBrowserProfileArchive(profileDir, archive, options = {}) {
   }
 }
 
+// server/services/browserd/daemon/prepare-browser-profile.ts
+async function prepareBrowserProfile(config) {
+  if (!config.profileArchivePath) return false;
+  try {
+    try {
+      const archive = await readFile2(config.profileArchivePath);
+      await importBrowserProfileArchive(
+        config.userDataDir,
+        new Uint8Array(archive)
+      );
+    } finally {
+      await rm(config.profileArchivePath, { force: true });
+    }
+  } catch (cause) {
+    throw new Error(
+      "Saved profile could not be loaded. Save the profile again and retry.",
+      { cause }
+    );
+  }
+  return true;
+}
+
+// server/services/browserd/daemon/main.ts
+import { mkdirSync } from "node:fs";
+import { execFile } from "node:child_process";
+
+// server/services/browserd/daemon/display-resize.ts
+function displayGeometryFor(size, options = {}) {
+  const dpr = options.deviceScaleFactor ?? 1;
+  const even = (value) => {
+    const scaled = Math.round(value * dpr);
+    return scaled % 2 === 0 ? scaled : scaled + 1;
+  };
+  return {
+    width: even(size.width),
+    height: even(size.height),
+    depth: options.depth ?? 24
+  };
+}
+function shellSafeDisplay(display) {
+  return /^:[0-9]+(\.[0-9]+)?$/.test(display) ? display : null;
+}
+async function resizeHostedDisplay(deps, next, previous) {
+  const display = shellSafeDisplay(deps.display);
+  if (!display) {
+    return {
+      ok: false,
+      reason: `refusing to resize a display named ${JSON.stringify(
+        deps.display
+      )}`,
+      restored: true
+    };
+  }
+  const geometry = displayGeometryFor(next, {
+    ...deps.deviceScaleFactor !== void 0 ? { deviceScaleFactor: deps.deviceScaleFactor } : {}
+  });
+  const applyDisplay = async (size) => {
+    const { width, height } = size;
+    if (![width, height].every(
+      (value) => Number.isInteger(value) && value >= 32 && value <= 32768
+    )) {
+      return { ok: false, reason: "invalid display geometry" };
+    }
+    const mode = `mcpjam-${width}x${height}`;
+    const clock = ((width + 160) * (height + 45) * 60 / 1e6).toFixed(3);
+    const randr = `xrandr --display ${display}`;
+    const command = [
+      `${randr} --newmode ${mode} ${clock} ${width} ${width + 48} ${width + 80} ${width + 160} ${height} ${height + 3} ${height + 6} ${height + 45} 2>/dev/null || true`,
+      `${randr} --addmode VNC-0 ${mode} &&`,
+      `${randr} --output VNC-0 --mode ${mode} --fb ${width}x${height} &&`,
+      `${randr} --current | awk '$1 == "VNC-0" && $2 == "connected" && $3 == "${width}x${height}+0+0" { found = 1 } END { exit !found }'`
+    ].join("\n");
+    try {
+      const result = await deps.run(command);
+      return result.exitCode === 0 ? { ok: true } : {
+        ok: false,
+        reason: result.stderr?.trim() || `xrandr exited ${result.exitCode} resizing to ${size.width}x${size.height}`
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        reason: error instanceof Error ? error.message : String(error)
+      };
+    }
+  };
+  const restore = async () => {
+    const back = displayGeometryFor(previous, {
+      ...deps.deviceScaleFactor !== void 0 ? { deviceScaleFactor: deps.deviceScaleFactor } : {}
+    });
+    const result = await applyDisplay(back);
+    if (!result.ok) return false;
+    let pageRestored = true;
+    await deps.resizePage?.(previous).catch(() => {
+      pageRestored = false;
+    });
+    if (!pageRestored) return false;
+    await deps.restartEncoder?.(previous).catch(() => {
+    });
+    return true;
+  };
+  const display_ = await applyDisplay(geometry);
+  if (!display_.ok) {
+    return {
+      ok: false,
+      reason: display_.reason ?? "the display refused the new size",
+      restored: await restore()
+    };
+  }
+  try {
+    await deps.resizePage?.(next);
+    await deps.restartEncoder?.(next);
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+      restored: await restore()
+    };
+  }
+  return { ok: true, applied: next };
+}
+
+// server/services/browserd/daemon/config.ts
+import { createHash as createHash2, randomBytes as randomBytes4 } from "node:crypto";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+var DEFAULT_ON_FEATURES = [
+  "a11yFrames",
+  "scrollableMarkers"
+];
+var OPT_IN_FEATURES = [
+  "keystrokeTyping"
+];
+function namedIn(raw) {
+  return new Set(
+    (raw ?? "").split(",").map((name) => name.trim()).filter((name) => name.length > 0)
+  );
+}
+function parseBrowserdFeatures(env = process.env) {
+  const enabled = namedIn(env.MCPJAM_BROWSERD_FEATURES);
+  const disabled = namedIn(env.MCPJAM_BROWSERD_DISABLE_FEATURES);
+  const features = {};
+  for (const name of DEFAULT_ON_FEATURES) {
+    if (!disabled.has(name)) features[name] = true;
+  }
+  for (const name of OPT_IN_FEATURES) {
+    if (enabled.has(name) && !disabled.has(name)) features[name] = true;
+  }
+  return features;
+}
+var DEFAULT_BROWSERD_PORT = 8791;
+var DEFAULT_BROWSERD_HOST = "0.0.0.0";
+var DEFAULT_BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";
+var DEFAULT_BROWSERD_RECORD_MAX_BYTES = 60 * 1024 * 1024;
+function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
+  const supplied = env.MCPJAM_BROWSERD_TOKEN ?? "";
+  const tokenFile = env.MCPJAM_BROWSERD_TOKEN_FILE?.trim() || void 0;
+  const token = supplied.length > 0 ? supplied : tokenFile ? mintToken(tokenFile) : "";
+  if (token.length === 0) {
+    throw new Error(
+      "MCPJAM_BROWSERD_TOKEN is required \u2014 refusing to start an unauthenticated browser daemon on a public host"
+    );
+  }
+  const rawPort = env.MCPJAM_BROWSERD_PORT;
+  const port = rawPort === void 0 ? DEFAULT_BROWSERD_PORT : Number(rawPort);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    throw new Error(
+      `MCPJAM_BROWSERD_PORT must be a valid port (1-65535), got ${rawPort}`
+    );
+  }
+  const headless = env.MCPJAM_BROWSERD_HEADLESS === "true";
+  return {
+    token,
+    port,
+    host: env.MCPJAM_BROWSERD_HOST || DEFAULT_BROWSERD_HOST,
+    userDataDir: env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR,
+    headless,
+    windowSize: env.MCPJAM_BROWSERD_WINDOW_SIZE || void 0,
+    // Only the exact string opts in. An unset or misspelled value keeps the
+    // persistent profile — the mode a human's logins depend on — rather than
+    // silently wiping state because a typo read as "ephemeral".
+    contextMode: env.MCPJAM_BROWSERD_EPHEMERAL === "true" ? "ephemeral" : "persistent",
+    // NEVER WITH HEADLESS. Kiosk is what makes "the display IS the page" true
+    // for the video encoder, and a headless Chromium draws on no display at
+    // all — so the daemon would advertise `h264`, spawn a grab of an empty X
+    // screen, and hand every watcher a picture of nothing. The two are
+    // contradictory rather than merely unusual, so the one that decides
+    // whether there is a picture wins.
+    kiosk: env.MCPJAM_BROWSERD_KIOSK === "1" && !headless,
+    // NEVER WITHOUT KIOSK on a hosted box, and the guard is the same shape as
+    // kiosk's own: a display that resized under a Chromium that is not filling
+    // it leaves the page one size and the capture another, which is the exact
+    // disagreement between the number and the picture this whole path exists
+    // to prevent.
+    viewportPolicy: parseViewportPolicy(env.MCPJAM_BROWSERD_VIEWPORT_POLICY),
+    deviceScaleFactor: readDeviceScaleFactor(env),
+    recordDir: env.MCPJAM_BROWSERD_RECORD_DIR?.trim() || `${env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR}/recordings`,
+    recordMaxBytes: readRecordMaxBytes(env),
+    // Only the exact string disables it, matching every other switch here: a
+    // typo must not silently cost a run its evidence.
+    recordingEnabled: env.MCPJAM_BROWSERD_RECORD !== "0",
+    ...tokenFile ? { tokenFile } : {},
+    ...env.MCPJAM_BROWSERD_PROFILE_ARCHIVE?.trim() ? { profileArchivePath: env.MCPJAM_BROWSERD_PROFILE_ARCHIVE.trim() } : {},
+    // Only a daemon that had to mint its own token was started by the box.
+    startedBy: supplied.length === 0 && tokenFile ? "prelaunch" : "inspector"
+  };
+}
+function readDeviceScaleFactor(env) {
+  const raw = Number(env.MCPJAM_BROWSERD_DPR);
+  if (!Number.isFinite(raw) || raw < 1 || raw > 3) return 1;
+  return raw;
+}
+function readRecordMaxBytes(env) {
+  const raw = Number(env.MCPJAM_BROWSERD_RECORD_MAX_BYTES);
+  if (!Number.isFinite(raw) || raw < 1)
+    return DEFAULT_BROWSERD_RECORD_MAX_BYTES;
+  return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
+}
+function defaultMintToken(path) {
+  const token = randomBytes4(32).toString("hex");
+  writeFileSync(path, token, { encoding: "utf8", mode: 384 });
+  chmodSync(path, 384);
+  return token;
+}
+function announcedFeatures(config, env = process.env) {
+  const features = [];
+  if (config.kiosk && env.MCPJAM_BROWSER_VIDEO !== "false") {
+    features.push("h264");
+  }
+  if (config.recordingEnabled) features.push("record");
+  return features;
+}
+function extraArgsFor(config) {
+  const args = [];
+  if (config.windowSize) args.push(`--window-size=${config.windowSize}`);
+  if (config.kiosk) {
+    args.push("--kiosk", "--start-fullscreen", "--window-position=0,0");
+    if (!config.windowSize) {
+      args.push("--window-size=1024,768");
+    }
+  }
+  if (config.deviceScaleFactor !== 1 && config.contextMode === "persistent") {
+    args.push(`--force-device-scale-factor=${config.deviceScaleFactor}`);
+  }
+  return args;
+}
+function formatReadyLine(host2, port, bootId, protocolVersion) {
+  return JSON.stringify({
+    event: "listening",
+    host: host2,
+    port,
+    bootId,
+    ...protocolVersion === void 0 ? {} : { protocolVersion }
+  });
+}
+function readBundleHash(argv = process.argv, hashFile = defaultHashFile) {
+  const entry = argv[1];
+  if (!entry) return void 0;
+  try {
+    return hashFile(entry);
+  } catch {
+    return void 0;
+  }
+}
+function defaultHashFile(path) {
+  return createHash2("sha256").update(readFileSync(path)).digest("hex");
+}
+
 // server/services/browserd/daemon/main.ts
 function log(message) {
   process.stderr.write(`[mcpjam-browserd] ${message}
@@ -11462,17 +11491,10 @@ function displayHeight(config) {
 async function main() {
   const config = readBrowserdConfig();
   const bundleHash = readBundleHash();
-  if (config.profileArchivePath && config.contextMode === "persistent") {
-    const archive = await readFile2(config.profileArchivePath);
-    await importBrowserProfileArchive(
-      config.userDataDir,
-      new Uint8Array(archive)
-    );
-    await unlink2(config.profileArchivePath).catch(() => {
-    });
-  }
+  const profileImported = await prepareBrowserProfile(config);
   const context = await launchBrowserdContext({
     userDataDir: config.userDataDir,
+    profileImported,
     headless: config.headless,
     extraArgs: extraArgsFor(config),
     contextMode: config.contextMode,

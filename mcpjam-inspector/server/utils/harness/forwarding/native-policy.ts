@@ -1,10 +1,20 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
+import { canonicalJson } from "../../tool-approval-token.js";
+
+export function forwardingToolPolicy(
+  policy?: ToolPolicySnapshot,
+): ToolPolicySnapshot {
+  return (
+    policy ?? { mode: "default", denied: {}, known: [], unknownTool: "allow" }
+  );
+}
 
 /** Cached native tool closures may survive a configuration refresh. */
 export function nativePolicyDigest(
   policies: Record<string, ToolPolicySnapshot> = {},
+  delivery?: unknown,
 ): string {
   const normalized = Object.entries(policies)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -21,7 +31,13 @@ export function nativePolicyDigest(
           decision.classification,
         ]),
     ]);
-  return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
+  return createHash("sha256")
+    .update(
+      delivery === undefined
+        ? JSON.stringify(normalized)
+        : canonicalJson([normalized, delivery]),
+    )
+    .digest("hex");
 }
 
 export function stampNativeForwardingPolicy(
