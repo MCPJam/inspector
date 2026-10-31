@@ -1201,6 +1201,43 @@ describe("ConformanceTab", () => {
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 
+  it("keeps Settings closed until the saved defaults have loaded", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const onSaveServerDefaults = vi.fn(async () => {});
+    const props = {
+      server: alpha,
+      servers: [alpha],
+      onSelectServer: vi.fn(),
+      onSaveServerDefaults,
+      serverDefaults: { alpha: { tasks: [] } },
+    };
+    const { rerender } = render(<ConformanceTab {...props} />);
+    await runToCompletion();
+    // The setup's run saved its picks; only what follows counts here.
+    onSaveServerDefaults.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(
+      screen.getByRole("heading", { name: "alpha Conformance Settings" }),
+    ).toBeInTheDocument();
+
+    // The defaults reload: Settings would start from "everything" and a
+    // change would save over them, so it closes and cannot be opened.
+    rerender(<ConformanceTab {...props} serverDefaultsLoaded={false} />);
+    expect(
+      screen.queryByRole("heading", { name: "alpha Conformance Settings" }),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeDisabled();
+    expect(onSaveServerDefaults).not.toHaveBeenCalled();
+
+    // Loaded again: it comes back on the saved defaults.
+    rerender(<ConformanceTab {...props} serverDefaultsLoaded />);
+    expect(screen.getByRole("checkbox", { name: "Run Tasks" })).toHaveAttribute(
+      "data-state",
+      "unchecked",
+    );
+  });
+
   it("keeps at least one check in Settings", async () => {
     setupSuccessfulRunMocks();
     const alpha = createHttpServer({ name: "alpha" });

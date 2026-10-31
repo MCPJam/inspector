@@ -207,6 +207,7 @@ export function ConformanceContent({
   onEditServer,
   onRequestRun,
   onOpenSettings,
+  settingsLoading = false,
   autoStart = false,
   onAutoStart,
   initialVersionPin,
@@ -228,6 +229,8 @@ export function ConformanceContent({
   onRequestRun?: () => void;
   /** Opens this server's Conformance Settings. */
   onOpenSettings?: () => void;
+  /** The saved defaults Settings edits have not loaded yet. */
+  settingsLoading?: boolean;
   /** Run once on mount: the setup steps just chose this server. */
   autoStart?: boolean;
   onAutoStart?: () => void;
@@ -465,7 +468,12 @@ export function ConformanceContent({
             <span className="truncate font-semibold">{server.name}</span>
             <div className="ml-auto flex items-center gap-2">
               {onOpenSettings ? (
-                <Button variant="outline" size="sm" onClick={onOpenSettings}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onOpenSettings}
+                  disabled={settingsLoading}
+                >
                   <Settings className="size-3.5" aria-hidden /> Settings
                 </Button>
               ) : null}

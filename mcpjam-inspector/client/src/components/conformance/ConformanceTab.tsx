@@ -334,6 +334,9 @@ export function ConformanceTab({
           ? () => setSettingsFor(server.name)
           : undefined
       }
+      // Settings starts from the saved defaults: opened before they load, it
+      // would start from "everything" and a change would save over them.
+      settingsLoading={!serverDefaultsLoaded}
       autoStart={Boolean(
         start && startsHere && startedIdRef.current !== start.id,
       )}
@@ -348,7 +351,11 @@ export function ConformanceTab({
       }
     />
   );
-  const settingsOpen = Boolean(settingsServer && onSaveServerDefaults);
+  // Also closed while the defaults reload, e.g. after a project switch: it
+  // comes back, started fresh, once they have.
+  const settingsOpen = Boolean(
+    settingsServer && onSaveServerDefaults && serverDefaultsLoaded,
+  );
   // The run view stays mounted, at the same place in the tree, under the
   // setup steps and Settings: remounting it would drop the results and cancel
   // a run still going.
