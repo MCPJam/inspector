@@ -23,6 +23,19 @@ const valid = {
 };
 
 describe("isTaskCreatedPayload", () => {
+  it("preserves account and producing execution identifiers", () => {
+    expect(
+      isTaskCreatedPayload({
+        ...valid,
+        connectionId: "account",
+        sourceExecutionId: "execution",
+      }),
+    ).toBe(true);
+    for (const connectionId of ["", "a\u0000b", 42, null]) {
+      expect(isTaskCreatedPayload({ ...valid, connectionId })).toBe(false);
+    }
+  });
+
   it("accepts the minimal shape", () => {
     expect(isTaskCreatedPayload({ ...valid, serverName: undefined })).toBe(true);
   });

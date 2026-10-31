@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   clearTrackedTasksForScope,
   dismissRegistryTasks,
+  dismissTask,
+  getTrackedTaskById,
+  taskIdentity,
   getDismissedTaskIds,
   getRespondedInputKeys,
   recordRespondedInputKeys,
@@ -15,6 +18,8 @@ import {
 } from "../task-tracker";
 
 const STORAGE_KEY = "mcp-tracked-tasks";
+const BOUND_STORAGE_KEY = "mcp-tracked-tasks-v4";
+const LEGACY_STORAGE_KEY = "mcp-tracked-tasks";
 // Handles are pruned after 7 days, so fixtures must be dated relative to now.
 const NOW = new Date().toISOString();
 
@@ -26,8 +31,8 @@ describe("task-tracker", () => {
 
   it("migrates v1 bare-array entries to legacy-tagged records", () => {
     localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify([{ taskId: "old-1", serverId: "s1", createdAt: NOW }])
+      LEGACY_STORAGE_KEY,
+      JSON.stringify([{ taskId: "old-1", serverId: "s1", createdAt: NOW }]),
     );
 
     expect(getTrackedTasks()).toEqual([
@@ -38,6 +43,146 @@ describe("task-tracker", () => {
         createdAt: NOW,
       },
     ]);
+  });
+
+  it("isolates matching handles and their answers by selected account", () => {
+    const base = {
+      taskId: "same",
+      serverId: "server",
+      wire: "extension" as const,
+      createdAt: NOW,
+    };
+    const a = { ...base, connectionId: "account-a" };
+    const b = { ...base, connectionId: "account-b" };
+    trackTask(base);
+    trackTask(a);
+    trackTask(b);
+    expect(new Set(getTrackedTasks().map(taskIdentity)).size).toBe(3);
+    recordTaskObservation(a, { nextPollAt: 123 });
+    recordRespondedInputKeys(a, ["answered"]);
+    expect(getRespondedInputKeys(b)).toEqual([]);
+    expect(getRespondedInputKeys(a)).toEqual(["answered"]);
+    expect(getTrackedTaskById("same", "server", a)?.nextPollAt).toBe(123);
+    expect(getTrackedTaskById("same", "server", b)?.nextPollAt).toBeUndefined();
+    dismissTask("same", "server", a);
+    expect(
+      getTrackedTasksForServer("server", "extension", "account-a"),
+    ).toEqual([]);
+    expect(
+      getTrackedTasksForServer("server", "extension", "account-b"),
+    ).toHaveLength(1);
+    untrackTask("same", "server", a);
+    expect(getTrackedTasks()).toHaveLength(2);
+    expect(getTrackedTaskById("same", "server", b)).toBeDefined();
+  });
+
+  it("migrates once without letting an older tab replace account-pinned state", () => {
+    localStorage.setItem(
+      LEGACY_STORAGE_KEY,
+      JSON.stringify({
+        version: 3,
+        tasks: [
+          { taskId: "old", serverId: "s", wire: "legacy", createdAt: NOW },
+        ],
+      }),
+    );
+    expect(getTrackedTasks()).toHaveLength(1);
+    trackTask({
+      taskId: "pinned",
+      serverId: "s",
+      wire: "extension",
+      connectionId: "account",
+      createdAt: NOW,
+    });
+    localStorage.setItem(
+      LEGACY_STORAGE_KEY,
+      JSON.stringify({ version: 3, tasks: [] }),
+    );
+    expect(getTrackedTasks()).toHaveLength(1);
+    expect(
+      getTrackedTasks().find((t) => t.taskId === "pinned")?.connectionId,
+    ).toBe("account");
+  });
+
+  it("discovers tasks created by an older tab after bound storage exists", () => {
+    const bound = {
+      taskId: "same",
+      serverId: "s",
+      wire: "extension" as const,
+      connectionId: "account",
+      createdAt: NOW,
+    };
+    trackTask(bound);
+    dismissTask("same", "s", bound);
+    localStorage.setItem(
+      LEGACY_STORAGE_KEY,
+      JSON.stringify({
+        version: 3,
+        tasks: [
+          { taskId: "new", serverId: "s", wire: "extension", createdAt: NOW },
+        ],
+      }),
+    );
+    expect(
+      getTrackedTasks()
+        .map((t) => t.taskId)
+        .sort(),
+    ).toEqual(["new", "same"]);
+    expect(getTrackedTaskById("same", "s", bound)?.dismissed).toBe(true);
+    expect(getTrackedTasksForServer("s", "extension", "account")).toEqual([]);
+  });
+
+  it("keeps registry dismissals inside their account and wire", () => {
+    dismissRegistryTasks("s", ["same"], {
+      connectionId: "a",
+      wire: "extension",
+    });
+    expect(
+      getDismissedTaskIds("s", { connectionId: "a", wire: "extension" }).has(
+        "same",
+      ),
+    ).toBe(true);
+    expect(
+      getDismissedTaskIds("s", { connectionId: "b", wire: "extension" }).has(
+        "same",
+      ),
+    ).toBe(false);
+    expect(
+      getDismissedTaskIds("s", { connectionId: "a", wire: "legacy" }).has(
+        "same",
+      ),
+    ).toBe(false);
+  });
+
+  it("scrubs the logged-out scope from legacy storage too", () => {
+    localStorage.setItem(
+      LEGACY_STORAGE_KEY,
+      JSON.stringify({
+        version: 3,
+        tasks: [
+          {
+            taskId: "mine",
+            serverId: "s",
+            wire: "legacy",
+            createdAt: NOW,
+            scope: "a",
+          },
+          {
+            taskId: "other",
+            serverId: "s",
+            wire: "legacy",
+            createdAt: NOW,
+            scope: "b",
+          },
+        ],
+      }),
+    );
+    clearTrackedTasksForScope("a");
+    expect(
+      JSON.parse(localStorage.getItem(LEGACY_STORAGE_KEY)!).tasks.map(
+        (t: { taskId: string }) => t.taskId,
+      ),
+    ).toEqual(["other"]);
   });
 
   it("keys identity on (serverId, wire, taskId)", () => {
@@ -52,16 +197,19 @@ describe("task-tracker", () => {
     expect(getTrackedTasksForServer("s1", "extension")).toHaveLength(1);
   });
 
-  it("persists under a versioned schema", () => {
+  it("persists bound handles under a versioned schema", () => {
     trackTask({
+      connectionId: "account",
       taskId: "t1",
       serverId: "s1",
       wire: "extension",
       createdAt: NOW,
     });
 
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) as string);
-    expect(stored.version).toBe(3);
+    const stored = JSON.parse(
+      localStorage.getItem(BOUND_STORAGE_KEY) as string,
+    );
+    expect(stored.version).toBe(4);
     expect(stored.tasks).toHaveLength(1);
   });
 
@@ -496,8 +644,8 @@ describe("task-tracker", () => {
       scope: "other-org",
     }));
     localStorage.setItem(
-      "mcp-tracked-tasks",
-      JSON.stringify({ version: 3, tasks: seeded })
+      STORAGE_KEY,
+      JSON.stringify({ version: 3, tasks: seeded }),
     );
 
     setTrackedTaskScope("my-org");
