@@ -43,6 +43,16 @@ export type {
   PlatformFindingsJobStatus,
   PlatformReadinessObservationReason,
 } from "./analysis-outcome-types.js";
+import type { PlatformEvalFindingsView } from "./findings-view-types.js";
+export type {
+  PlatformEvalFindingsView,
+  PlatformEvalFindingsViewStatus,
+  PlatformFindingExplanation,
+  PlatformFindingObservationOutcome,
+  PlatformFindingOption,
+  PlatformFindingOptionKind,
+  PlatformFindingProblem,
+} from "./findings-view-types.js";
 export type { PlatformBrowserToolPolicy } from "./browser-policy.js";
 export type PlatformSessionBrowserInput = {
   policy?: PlatformBrowserToolPolicy;
@@ -5327,6 +5337,11 @@ export interface PlatformUnifiedFindings {
   };
   canBuild: boolean;
   canEnrich: boolean;
+  /**
+   * One problem per recorded observation, joined by the backend. Absent from
+   * older backends. Check `version` before rendering; render it alone.
+   */
+  findingsView?: PlatformEvalFindingsView;
 }
 
 export interface PlatformInsightsEnvelope {
