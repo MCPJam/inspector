@@ -33,7 +33,7 @@ describe("context refused before it was stored", () => {
     ]);
   });
 
-  it("refuses an update over the byte budget without sending it", async () => {
+  it("refuses an update no policy admits without sending it", async () => {
     const send = vi.fn().mockResolvedValue(result("small"));
     const onRefused = vi.fn();
     const update = createModelContextController({
@@ -41,7 +41,7 @@ describe("context refused before it was stored", () => {
       send,
       onRefused,
     });
-    const text = "x".repeat(300_000);
+    const text = "x".repeat(4 * 1024 * 1024);
     expect(() => update({ content: [{ type: "text", text }] })).toThrow(
       PluginContextNotPersisted,
     );
@@ -49,10 +49,45 @@ describe("context refused before it was stored", () => {
     expect(onRefused.mock.calls[0][0]).toMatchObject({
       code: -32000,
       reason: "PLUGIN_CONTEXT_TOO_LARGE",
-      excess: { budget: "updateMaxBytes", allowed: 256 * 1024 },
+      excess: { budget: "updateMaxBytes", allowed: 4 * 1024 * 1024 },
     });
-    expect(onRefused.mock.calls[0][0].excess.actual).toBeGreaterThan(300_000);
     await expect(update({ content: [] })).resolves.toEqual(result("small"));
+  });
+
+  it("leaves an update over the default budget to the server's policy", async () => {
+    const send = vi.fn().mockResolvedValue(result("large"));
+    const update = createModelContextController({
+      requireLive: () => {},
+      send,
+    });
+    const text = "x".repeat(300_000);
+    await expect(
+      update({ content: [{ type: "text", text }] }),
+    ).resolves.toEqual(result("large"));
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it("remounts on a stored snapshot larger than the default budgets", () => {
+    const onSnapshot = vi.fn();
+    const update = createModelContextController({
+      requireLive: () => {},
+      send: vi.fn(),
+      onSnapshot,
+    });
+    // 256 images, about 2.5 MB, as a ChatGPT-sized policy admits.
+    const content = Array.from({ length: 256 }, () => ({
+      type: "image",
+      mimeType: "image/png",
+      data: "A".repeat(10_000),
+    }));
+    expect(
+      update.restore({
+        revision: 1,
+        sequence: 1,
+        state: { updateId: "stored", content },
+      }),
+    ).toBe(true);
+    expect(onSnapshot.mock.calls[0][0].state.content).toHaveLength(256);
   });
 
   it("still holds updates whose outcome is unknown", async () => {
