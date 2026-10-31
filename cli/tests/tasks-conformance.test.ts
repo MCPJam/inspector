@@ -49,6 +49,7 @@ test("buildTasksConformanceConfig maps the undeclared-capability checks to their
   assert.deepEqual(creation.checkIds, [
     "tasks-result-type-discipline",
     "tasks-undeclared-creation-refused",
+    "tasks-legacy-ignores-extension-declaration",
   ]);
 
   const lifecycle = buildTasksConformanceConfig({

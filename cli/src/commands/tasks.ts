@@ -65,6 +65,7 @@ const TASKS_CHECK_IDS_BY_CATEGORY: Record<
   creation: [
     "tasks-result-type-discipline",
     "tasks-undeclared-creation-refused",
+    "tasks-legacy-ignores-extension-declaration",
   ],
   lifecycle: [
     "tasks-ttl-shape",

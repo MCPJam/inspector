@@ -24,6 +24,10 @@
 
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import {
+  declaresTasksExtension,
+  TASKS_EXTENSION_ID,
+} from "./extension-tasks-fixture.js";
 
 export const LEGACY_TASK_TOOL_NAME = "long_running";
 export const LEGACY_TASK_ID = "legacy-task-1";
@@ -92,6 +96,17 @@ export interface LegacyTasksFixtureOptions {
    * able to overwrite what the client resolved for itself.
    */
   listResultExtras?: Record<string, unknown>;
+  /**
+   * Also advertise the tasks extension in `capabilities.extensions`. Allowed on
+   * 2025-11-25: nothing forbids advertising it, only acting on it.
+   */
+  advertiseTasksExtension?: boolean;
+  /**
+   * Break SEP-2663's 2025-11-25 rule: answer a `tools/call` that declares the
+   * tasks extension in `_meta` (and sends no `params.task`) with a flat
+   * extension `CreateTaskResult`, as if the declaration enabled tasks.
+   */
+  honorExtensionDeclaration?: boolean;
 }
 
 export interface ReceivedRequest {
@@ -127,13 +142,17 @@ const DEFAULT_TASKS_CAPABILITY: Record<string, unknown> = {
 };
 
 function initialize(
-  tasksCapability: Record<string, unknown> = DEFAULT_TASKS_CAPABILITY
+  tasksCapability: Record<string, unknown> = DEFAULT_TASKS_CAPABILITY,
+  advertiseTasksExtension = false
 ): Record<string, unknown> {
   return {
     protocolVersion: "2025-11-25",
     capabilities: {
       tools: { listChanged: false },
       tasks: tasksCapability,
+      ...(advertiseTasksExtension
+        ? { extensions: { [TASKS_EXTENSION_ID]: {} } }
+        : {}),
     },
     serverInfo: { name: "legacy-tasks-fixture", version: "1.0.0" },
   };
@@ -212,7 +231,10 @@ export async function serveLegacyTasksFixture(
   ): Record<string, unknown> => {
     switch (method) {
       case "initialize":
-        return initialize(options.tasksCapability);
+        return initialize(
+          options.tasksCapability,
+          options.advertiseTasksExtension
+        );
       case "tools/list":
         return toolsList();
       case "tools/call":
@@ -232,6 +254,17 @@ export async function serveLegacyTasksFixture(
             task.status = options.createTaskStatus;
           }
           return { task };
+        }
+        if (options.honorExtensionDeclaration && declaresTasksExtension(params)) {
+          return {
+            resultType: "task",
+            taskId: LEGACY_TASK_ID,
+            status: "working",
+            createdAt: "2026-07-27T00:00:00Z",
+            lastUpdatedAt: "2026-07-27T00:00:00Z",
+            ttlMs: 60_000,
+            pollIntervalMs: pollInterval,
+          };
         }
         return { content: [{ type: "text", text: "plain call" }] };
       case "tasks/get": {

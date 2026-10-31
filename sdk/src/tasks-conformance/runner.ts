@@ -22,9 +22,15 @@ import {
   MCP_ERROR_CODES,
   PRE_RENUMBER_DRAFT_ERROR_CODES,
 } from "../mcp-client-manager/mcp-error-codes.js";
-import { MCP_TASKS_EXTENSION_ID } from "../mcp-client-manager/tasks-dispatch.js";
+import {
+  MCP_TASKS_EXTENSION_ID,
+  serverDeclaresTasksExtension,
+} from "../mcp-client-manager/tasks-dispatch.js";
 import type { TasksWire } from "../mcp-client-manager/tasks-dispatch.js";
-import { CLIENT_CAPABILITIES_META_KEY } from "../mcp-client-manager/tasks-ext.js";
+import {
+  CLIENT_CAPABILITIES_META_KEY,
+  withTasksExtensionDeclaration,
+} from "../mcp-client-manager/tasks-ext.js";
 import { ensureTasksExtensionEraGateShadow } from "../mcp-client-manager/tasks-ext-era-gate.js";
 import { TASK_CREATED_META_KEY } from "../mcp-client-manager/transport-utils.js";
 import { deepJsonSafe } from "../json-safe.js";
@@ -67,7 +73,7 @@ export const CHECK_METADATA: Record<
     category: "dispatch",
     title: "Tasks Wire Resolvable",
     description:
-      "The negotiated protocol version and advertised capabilities resolve to exactly one tasks wire, and the server does not advertise capabilities for the other era.",
+      "The negotiated protocol version and advertised capabilities resolve to exactly one tasks wire.",
   },
   "tasks-declaration-hygiene": {
     id: "tasks-declaration-hygiene",
@@ -159,6 +165,13 @@ export const CHECK_METADATA: Record<
     title: "Undeclared Capability Error Names What Is Missing",
     description:
       "A -32021 rejection carries error.data.requiredCapabilities naming the capability the client failed to declare.",
+  },
+  "tasks-legacy-ignores-extension-declaration": {
+    id: "tasks-legacy-ignores-extension-declaration",
+    category: "creation",
+    title: "Extension Declaration Ignored On 2025-11-25",
+    description:
+      "On a 2025-11-25 connection, a tools/call that declares the tasks extension and sends no `params.task` must not come back as a task: the extension does not apply to that version.",
   },
 };
 
@@ -1001,6 +1014,21 @@ export function findRawResult(
   return undefined;
 }
 
+/**
+ * The id of a task in a result, in either era's shape: flat `taskId` (the
+ * extension's `CreateTaskResult`) or nested `task.taskId` (2025-11-25).
+ */
+export function findCreatedTaskId(result: unknown): string | undefined {
+  if (!isRecord(result)) return undefined;
+  if (typeof result.taskId === "string" && result.taskId.length > 0) {
+    return result.taskId;
+  }
+  const nested = isRecord(result.task) ? result.task : undefined;
+  return typeof nested?.taskId === "string" && nested.taskId.length > 0
+    ? nested.taskId
+    : undefined;
+}
+
 export function findRawTaskResponse(
   messages: unknown[]
 ): RawTaskResponse | undefined {
@@ -1312,28 +1340,18 @@ export class MCPTasksConformanceTest {
 
           if (selected.has("tasks-wire-resolvable")) {
             const stepStartedAt = Date.now();
-            const warnings: string[] = [];
-            const extensions = (capabilities as { extensions?: unknown })
-              ?.extensions;
-            const advertisesExtension =
-              isRecord(extensions) && MCP_TASKS_EXTENSION_ID in extensions;
-
-            if (advertisesExtension && protocolVersion === "2025-11-25") {
-              // SEP-2663: on 2025-11-25 the extension capability MUST be
-              // treated as absent. Advertising it is a server-side smell, not
-              // a client failure, so it surfaces as a warning.
-              warnings.push(
-                `server advertises ${MCP_TASKS_EXTENSION_ID} on 2025-11-25, where it must be treated as absent`
-              );
-            }
-
+            // No warning for a server that advertises the extension on
+            // 2025-11-25: nothing forbids advertising it, and the extensions
+            // overview expects initialize-era peers to carry
+            // `capabilities.extensions`. What SEP-2663 forbids is BEHAVIOR —
+            // treating the declaration as enabling tasks — and
+            // `tasks-legacy-ignores-extension-declaration` tests exactly that.
             checks.push(
               protocolVersion
                 ? passed(
                     "tasks-wire-resolvable",
                     Date.now() - stepStartedAt,
-                    { protocolVersion, wire, support },
-                    warnings
+                    { protocolVersion, wire, support }
                   )
                 : failed(
                     "tasks-wire-resolvable",
@@ -2269,15 +2287,137 @@ export class MCPTasksConformanceTest {
             }
           }
 
+          // Outbound ids of the probe below. It declares the extension on a
+          // 2025-11-25 connection ON PURPOSE, so hygiene must not grade it.
+          const declaredLegacyProbeIds = new Set<string>();
+
+          if (selected.has("tasks-legacy-ignores-extension-declaration")) {
+            const stepStartedAt = Date.now();
+            const advertisesExtension =
+              serverDeclaresTasksExtension(capabilities);
+            if (protocolVersion !== "2025-11-25") {
+              checks.push(
+                notApplicable(
+                  "tasks-legacy-ignores-extension-declaration",
+                  "check applies to 2025-11-25 connections only"
+                )
+              );
+            } else if (wire !== "legacy" && !advertisesExtension) {
+              checks.push(
+                notApplicable(
+                  "tasks-legacy-ignores-extension-declaration",
+                  "the server offers no tasks on this connection: it declares neither the 2025-11-25 tasks capability nor the tasks extension"
+                )
+              );
+            } else {
+              // `pickProbeTool`, not `resolveProbeTool`: a server that only
+              // advertises the extension resolves to `wire: "none"` here,
+              // which `resolveProbeTool` treats as nothing to probe — and that
+              // server is the one most likely to break this rule.
+              const declaredProbeTool = pickProbeTool(
+                tools,
+                this.config.toolName
+              );
+              if (!declaredProbeTool) {
+                checks.push(
+                  couldNotRun(
+                    "tasks-legacy-ignores-extension-declaration",
+                    this.config.toolName
+                      ? `the requested probe tool ${JSON.stringify(
+                          this.config.toolName
+                        )} is not listed by this server (${describeListedTools(
+                          tools
+                        )}); pass --tool-name (SDK: toolName) with a tool the server lists`
+                      : `no listed tool advertises \`execution.taskSupport\`, so no tool could be chosen for the declaring call (${describeListedTools(
+                          tools
+                        )}); pass --tool-name (SDK: toolName) naming a tool that can create a task`
+                  )
+                );
+              } else {
+                const idsBefore = sentRequestIds(sent, "tools/call");
+                const probe = await this.probeLegacyDeclaredCreation(
+                  manager,
+                  serverId,
+                  declaredProbeTool.name,
+                  received
+                );
+                for (const requestId of sentRequestIds(sent, "tools/call")) {
+                  if (!idsBefore.has(requestId)) {
+                    declaredLegacyProbeIds.add(requestId);
+                  }
+                }
+                const stepDurationMs = Date.now() - stepStartedAt;
+                const detail = {
+                  tool: declaredProbeTool.name,
+                  outcome: probe.outcome,
+                  advertisesExtension,
+                };
+                if (probe.outcome === "unavailable") {
+                  checks.push(
+                    couldNotRun(
+                      "tasks-legacy-ignores-extension-declaration",
+                      probe.message,
+                      detail
+                    )
+                  );
+                } else if (probe.outcome === "created") {
+                  // SEP-2663, Backward Compatibility, 2025-11-25 row: servers
+                  // MUST NOT treat the extension capability as enabling tasks
+                  // under that version.
+                  checks.push(
+                    failed(
+                      "tasks-legacy-ignores-extension-declaration",
+                      stepDurationMs,
+                      `a tools/call that declared ${MCP_TASKS_EXTENSION_ID} on 2025-11-25 and sent no params.task came back as a task; the extension does not apply to 2025-11-25, so the server must answer as if no task capability was declared (SEP-2663)`,
+                      { ...detail, taskId: probe.taskId }
+                    )
+                  );
+                } else if (probe.outcome === "errored") {
+                  // Not a pass: no server response, so the rule was not tested.
+                  checks.push(
+                    failed(
+                      "tasks-legacy-ignores-extension-declaration",
+                      stepDurationMs,
+                      `the declaring tools/call produced no JSON-RPC response (${probe.message}), so the server was never tested; re-run against a reachable server`,
+                      detail
+                    )
+                  );
+                } else {
+                  // A plain result or a JSON-RPC error: either way no task was
+                  // created, which is all the rule asks.
+                  checks.push(
+                    passed(
+                      "tasks-legacy-ignores-extension-declaration",
+                      stepDurationMs,
+                      probe.outcome === "refused"
+                        ? { ...detail, code: probe.code }
+                        : detail
+                    )
+                  );
+                }
+              }
+            }
+          }
+
           if (selected.has("tasks-declaration-hygiene")) {
             const stepStartedAt = Date.now();
-            const violations = findDeclarationViolations(wire, sent);
+            const inspected = sent.filter(
+              (message) =>
+                !(
+                  isRecord(message) &&
+                  message.method === "tools/call" &&
+                  (typeof message.id === "string" ||
+                    typeof message.id === "number") &&
+                  declaredLegacyProbeIds.has(String(message.id))
+                )
+            );
+            const violations = findDeclarationViolations(wire, inspected);
             checks.push(
               violations.length === 0
                 ? passed(
                     "tasks-declaration-hygiene",
                     Date.now() - stepStartedAt,
-                    { inspectedRequests: sent.length, wire }
+                    { inspectedRequests: inspected.length, wire }
                   )
                 : failed(
                     "tasks-declaration-hygiene",
@@ -2469,6 +2609,72 @@ export class MCPTasksConformanceTest {
           discriminated: raw.discriminated,
         };
       }
+      const code = errorCode(error);
+      const message = errorMessage(error);
+      return code === undefined
+        ? { outcome: "errored", message }
+        : { outcome: "refused", code, message };
+    }
+  }
+
+  /**
+   * Sends ONE `tools/call` that DECLARES the tasks extension on a 2025-11-25
+   * connection, with no `params.task`, and reports whether a task came back.
+   * SEP-2663 (Backward Compatibility, 2025-11-25 row): servers MUST NOT treat
+   * the extension capability as enabling tasks under that version, so the call
+   * proceeds as if the client had declared no task capability at all.
+   *
+   * Through the raw seam, not `executeTool`: the manager never attaches the
+   * declaration on this wire (that is what `tasks-declaration-hygiene`
+   * guards), and attaching it is the probe. Outcomes mirror
+   * {@link probeUndeclaredCreation}, plus `unavailable` when there is no seam.
+   * A task is a task in either era's shape — flat `taskId` or the 2025-11-25
+   * nested `task` — and the raw response is read too, in case decoding threw.
+   */
+  private async probeLegacyDeclaredCreation(
+    manager: MCPClientManager,
+    serverId: string,
+    toolName: string,
+    received: unknown[]
+  ): Promise<
+    | { outcome: "created"; taskId: string }
+    | { outcome: "answered" }
+    | { outcome: "refused"; code: number; message: string }
+    | { outcome: "errored"; message: string }
+    | { outcome: "unavailable"; message: string }
+  > {
+    const client = manager.getManagedClient(serverId);
+    if (typeof client?.requestWithSchema !== "function") {
+      return {
+        outcome: "unavailable",
+        message:
+          "this connection cannot send a custom tools/call, so the declaring call was not sent and the rule was not tested",
+      };
+    }
+    const receivedBefore = received.length;
+    const rawTaskId = () =>
+      findCreatedTaskId(findRawResult(received.slice(receivedBefore)));
+    try {
+      const result = await client.requestWithSchema(
+        {
+          method: "tools/call",
+          params: withTasksExtensionDeclaration(
+            {
+              name: toolName,
+              arguments: this.config.toolArguments ?? {},
+            },
+            undefined
+          ),
+        } as never,
+        RAW_PROBE_RESULT_SCHEMA
+      );
+      const taskId = findCreatedTaskId(result) ?? rawTaskId();
+      return taskId === undefined
+        ? { outcome: "answered" }
+        : { outcome: "created", taskId };
+    } catch (error) {
+      const taskId = rawTaskId();
+      if (taskId !== undefined) return { outcome: "created", taskId };
       const code = errorCode(error);
       const message = errorMessage(error);
       return code === undefined

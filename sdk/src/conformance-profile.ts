@@ -134,8 +134,11 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
 };
 
 /**
- * `mcp-tasks` v2026-08-22.1 — the eight checks the Tasks suite shipped before
- * the gap program's scenario depth.
+ * `mcp-tasks` v2026-10-31.1 — the eight checks the Tasks suite shipped before
+ * the gap program's scenario depth, plus
+ * `tasks-legacy-ignores-extension-declaration` (a SEP-2663 MUST NOT, scored as
+ * soon as it shipped because it replaced a warning on `tasks-wire-resolvable`).
+ * v2026-08-22.1 was the eight alone.
  *
  * A SEPARATE profile rather than a section of `mcp-protocol`, which was the
  * open design question. Two reasons settled it:
@@ -151,7 +154,7 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
  */
 const MCP_TASKS_PROFILE: ConformanceProfile = {
   id: "mcp-tasks",
-  version: "2026-08-22.1",
+  version: "2026-10-31.1",
   scored: [
     "tasks-wire-resolvable",
     "tasks-declaration-hygiene",
@@ -161,6 +164,7 @@ const MCP_TASKS_PROFILE: ConformanceProfile = {
     "tasks-ttl-shape",
     "tasks-inline-result",
     "tasks-mcp-name-routing",
+    "tasks-legacy-ignores-extension-declaration",
   ] satisfies MCPTasksCheckId[],
 };
 
