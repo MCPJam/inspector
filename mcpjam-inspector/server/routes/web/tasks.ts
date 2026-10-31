@@ -52,7 +52,17 @@ import { authorizeTaskSources } from '../../utils/task-source-authorization.js';
 
 const withVerifiedTaskConnection: typeof withEphemeralConnection = (c, schema, fn, options) => {
   let authorized: Awaited<ReturnType<typeof authorizeTaskSources>>;
-  return withEphemeralConnection(c, schema, fn, {
+  return withEphemeralConnection(c, schema, async (manager, body, ...rest) => {
+    if (!isRecord(body)) throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "Invalid task target");
+    // Resolve account and owner before connecting; compare the wire only after negotiation.
+    await manager.ensureTasksSupport(taskConnectionKey(manager, { ...body, wire: undefined }));
+    if (authorized) {
+      const current = await authorizeTaskSources(c, body);
+      if (!current || current.binding !== authorized.binding)
+        throw new WebRouteError(403, ErrorCode.FORBIDDEN, "The Task's original connection changed. Reopen it in its original chat.");
+    }
+    return fn(manager, body, ...rest);
+  }, {
     ...options,
     beforeConnect: async (raw) => {
       await options?.beforeConnect?.(raw);
@@ -65,14 +75,7 @@ const withVerifiedTaskConnection: typeof withEphemeralConnection = (c, schema, f
       }
     },
     hostConfigForBody: async (raw) => authorized?.hostConfig ?? options?.hostConfigForBody?.(raw),
-    beforeOperation: async (body) => {
-      if (isRecord(body) && authorized) {
-        const current = await authorizeTaskSources(c, body);
-        if (!current || current.binding !== authorized.binding)
-          throw new WebRouteError(403, ErrorCode.FORBIDDEN, "The Task's original connection changed. Reopen it in its original chat.");
-      }
-      await options?.beforeOperation?.(body);
-    },
+
   });
 };
 

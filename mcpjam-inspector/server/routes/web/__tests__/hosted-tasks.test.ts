@@ -16,6 +16,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const lifecycle: string[] = [];
 let managerImpl: Record<string, unknown> = {};
 
+const mockAuthorizeTaskSources = vi.fn();
+vi.mock("../../../utils/task-source-authorization.js", () => ({
+  authorizeTaskSources: (...args: unknown[]) => mockAuthorizeTaskSources(...args),
+}));
+
 const mockListRegistryTasks = vi.fn();
 const mockReportTaskStatuses = vi.fn();
 
@@ -41,8 +46,11 @@ vi.mock("../auth.js", async () => {
       c: any,
       schema: any,
       fn: (manager: any, body: any) => Promise<unknown>,
+      options: any,
     ) => {
-      const parsed = schema.safeParse(await c.req.json());
+      const raw = await c.req.json();
+      await options?.beforeConnect?.(raw);
+      const parsed = schema.safeParse(raw);
       if (!parsed.success) {
         return c.json(
           { error: { code: ErrorCode.VALIDATION_ERROR, message: "invalid" } },
@@ -51,6 +59,7 @@ vi.mock("../auth.js", async () => {
       }
       lifecycle.push("connect");
       try {
+        await options?.beforeOperation?.(parsed.data);
         const result = await fn(managerImpl, parsed.data);
         return c.json(result as Record<string, unknown>, 200);
       } catch (error) {
@@ -97,6 +106,7 @@ const legacySupport = {
 
 function setManager(overrides: Record<string, unknown>) {
   managerImpl = {
+    ensureTasksSupport: vi.fn().mockResolvedValue(extensionSupport),
     getTasksSupport: vi.fn().mockReturnValue(extensionSupport),
     ...overrides,
   };
@@ -118,8 +128,62 @@ describe("hosted /api/web/tasks", () => {
   beforeEach(() => {
     lifecycle.length = 0;
     managerImpl = {};
+    mockAuthorizeTaskSources.mockReset().mockResolvedValue(undefined);
     mockListRegistryTasks.mockReset().mockResolvedValue(null);
     mockReportTaskStatuses.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("waits for negotiation before checking ephemeral task capabilities", async () => {
+    let negotiated = false;
+    const manager = setManager({
+      ensureTasksSupport: vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        negotiated = true;
+      }),
+      getTasksSupport: vi.fn(() => negotiated ? extensionSupport : { wire: "none" }),
+    });
+    const response = await post("/capabilities", {});
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ wire: "extension" });
+    expect(manager.ensureTasksSupport).toHaveBeenCalledWith("s1");
+  });
+
+  it("waits before checking the saved wire on a Task read", async () => {
+    let negotiated = false;
+    setManager({
+      ensureTasksSupport: vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        negotiated = true;
+      }),
+      getTasksSupport: vi.fn(() => negotiated ? extensionSupport : { wire: "none" }),
+      getTaskExt: vi.fn().mockResolvedValue({ taskId: "t1" }),
+    });
+    const response = await post("/get", { taskId: "t1", wire: "extension" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ task: { taskId: "t1" } });
+  });
+
+  it("rejects an authority change during negotiation before reading the Task", async () => {
+    mockAuthorizeTaskSources.mockResolvedValueOnce({ binding: "original", hostConfig: {} });
+    const manager = setManager({
+      ensureTasksSupport: vi.fn(async () => {
+        await Promise.resolve();
+        mockAuthorizeTaskSources.mockResolvedValue(undefined);
+      }),
+      getTaskExt: vi.fn(),
+    });
+    const response = await post("/get", { taskId: "t1", wire: "extension" });
+    expect(response.status).toBe(403);
+    expect(manager.getTaskExt).not.toHaveBeenCalled();
+    expect(lifecycle).toEqual(["connect", "disconnect"]);
+  });
+
+  it("surfaces failed negotiation instead of reporting unsupported tasks", async () => {
+    const manager = setManager({ ensureTasksSupport: vi.fn().mockRejectedValue(new Error("connection failed")) });
+    const response = await post("/capabilities", {});
+    expect(response.status).toBe(500);
+    expect(manager.getTasksSupport).not.toHaveBeenCalled();
+    expect(lifecycle).toEqual(["connect", "disconnect"]);
   });
 
   it("connects, reads and disconnects for a single get", async () => {
