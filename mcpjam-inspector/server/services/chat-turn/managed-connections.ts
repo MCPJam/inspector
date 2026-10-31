@@ -35,7 +35,10 @@ import { buildHostConnectionPins } from "../host-connection-pins.js";
 import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
 import { type Context } from "hono";
 import { TaskCreatedSink } from "@mcpjam/sdk";
-import { isCompatibleHostedTasksVersion } from "@/shared/hosted-task-created";
+import {
+  isCompatibleHostedTasksVersion,
+  hostedTaskOwnerRequestId,
+} from "@/shared/hosted-task-created";
 import { HostedTaskCreatedBridge } from "../../utils/hosted-task-created-bridge.js";
 import { recordHostedTask } from "../hosted-task-registry.js";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
@@ -350,6 +353,16 @@ export async function prepareManagedConnections(args: {
       (rawBody as Record<string, unknown>).hostedTasksVersion,
     )
       ? new HostedTaskCreatedBridge({
+          requestedOwnerScope:
+            typeof (rawBody as Record<string, unknown>).hostedTaskOwnerScope ===
+            "string"
+              ? ((rawBody as Record<string, unknown>)
+                  .hostedTaskOwnerScope as string)
+              : undefined,
+          ownerRequestId: hostedTaskOwnerRequestId(
+            (rawBody as Record<string, unknown>).hostedTaskOwnerRequestId,
+            (rawBody as Record<string, unknown>).hostedTaskOwnerVersion,
+          ),
           serverNamesById:
             buildServerNamesById(effectiveServerIds, effectiveServerNames) ??
             {},
@@ -606,6 +619,7 @@ export async function prepareManagedConnections(args: {
     },
   );
   connectedManager = manager;
+  taskCreatedBridge?.bindOwner(hostedBody.projectId, authenticatedUserId);
   const pendingApproval = pendingStdioCommandApproval(refusedServers);
   if (pendingApproval) throw pendingApproval;
   if (Array.isArray(hostedBody.messages) && hostedBody.messages.length <= 1)

@@ -9,6 +9,8 @@
 import { describe, expect, it } from "vitest";
 import {
   HOSTED_TASKS_VERSION,
+  HOSTED_TASK_OWNER_VERSION,
+  hostedTaskOwnerRequestId,
   HOSTED_TASK_CREATED_DATA_PART_TYPE,
   isCompatibleHostedTasksVersion,
   isTaskCreatedDataPart,
@@ -95,5 +97,20 @@ describe("version handshake", () => {
     expect(isCompatibleHostedTasksVersion(undefined)).toBe(false);
     expect(isCompatibleHostedTasksVersion(null)).toBe(false);
     expect(isCompatibleHostedTasksVersion("1")).toBe(false);
+  });
+});
+
+
+describe("Task owner handshake", () => {
+  it("requires a supported version and bounded correlation id", () => {
+    expect(hostedTaskOwnerRequestId("request", HOSTED_TASK_OWNER_VERSION)).toBe(
+      "request",
+    );
+    for (const version of [undefined, null, "1", 2])
+      expect(hostedTaskOwnerRequestId("request", version)).toBeUndefined();
+    for (const id of [undefined, "", "a".repeat(129), "a\u0000b"])
+      expect(
+        hostedTaskOwnerRequestId(id, HOSTED_TASK_OWNER_VERSION),
+      ).toBeUndefined();
   });
 });
