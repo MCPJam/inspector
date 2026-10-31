@@ -2,11 +2,70 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createModelContextController,
   PluginContextHeld,
+  PluginContextNotPersisted,
   PluginContextUpdateRejected,
 } from "../model-context-controller";
 const result = (id: string) => ({
   _meta: { "openai/modelContext": { updateId: id } },
 });
+describe("context refused before it was stored", () => {
+  it("lets the next, smaller update go at once", async () => {
+    const send = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new PluginContextNotPersisted("INSTANCE_CONTEXT_RATE_LIMITED"),
+      )
+      .mockResolvedValueOnce(result("second"));
+    const update = createModelContextController({
+      requireLive: () => {},
+      send,
+    });
+    const refused = await update({ content: [] }).catch((error) => error);
+    expect(refused).toBeInstanceOf(PluginContextUpdateRejected);
+    expect(refused).toMatchObject({
+      code: -32000,
+      message: "The host could not persist the model context update",
+    });
+    await expect(update({ content: [] })).resolves.toEqual(result("second"));
+    // The refused update never advanced the sequence.
+    expect(send.mock.calls.map(([request]) => request.sequence)).toEqual([
+      1, 1,
+    ]);
+  });
+
+  it("refuses an update over the byte budget without sending it", async () => {
+    const send = vi.fn().mockResolvedValue(result("small"));
+    const onRefused = vi.fn();
+    const update = createModelContextController({
+      requireLive: () => {},
+      send,
+      onRefused,
+    });
+    const text = "x".repeat(300_000);
+    expect(() => update({ content: [{ type: "text", text }] })).toThrow(
+      PluginContextNotPersisted,
+    );
+    expect(send).not.toHaveBeenCalled();
+    expect(onRefused.mock.calls[0][0]).toMatchObject({
+      code: -32000,
+      reason: "PLUGIN_CONTEXT_TOO_LARGE",
+      excess: { budget: "updateMaxBytes", allowed: 256 * 1024 },
+    });
+    expect(onRefused.mock.calls[0][0].excess.actual).toBeGreaterThan(300_000);
+    await expect(update({ content: [] })).resolves.toEqual(result("small"));
+  });
+
+  it("still holds updates whose outcome is unknown", async () => {
+    const send = vi.fn().mockRejectedValueOnce(new Error("network"));
+    const update = createModelContextController({
+      requireLive: () => {},
+      send,
+    });
+    await expect(update({ content: [] })).rejects.toThrow("network");
+    await expect(update({ content: [] })).rejects.toThrow("outcome unknown");
+  });
+});
+
 describe("context replace queue", () => {
   it("settles an unknown remove-all only by re-sending the same operation", async () => {
     const onSnapshot = vi.fn();

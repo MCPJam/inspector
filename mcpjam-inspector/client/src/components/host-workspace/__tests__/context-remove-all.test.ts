@@ -38,18 +38,20 @@ describe("re-sending an unconfirmed remove-all", () => {
       "PLUGIN_WORKSPACE_UNREACHABLE",
       "INSTANCE_RESPONSE_INVALID",
       "INSTANCE_UNAVAILABLE",
+      "PLUGIN_CONTEXT_MEMORY_LIMIT",
     ])
       send.mockRejectedValueOnce(new ThreadAppError(code));
-    expect(await removeAllAppContext(send, signal(), [0, 0, 0, 0, 0])).toEqual({
-      outcome: "applied",
-    });
-    expect(send).toHaveBeenCalledTimes(6);
+    expect(
+      await removeAllAppContext(send, signal(), [0, 0, 0, 0, 0, 0]),
+    ).toEqual({ outcome: "applied" });
+    expect(send).toHaveBeenCalledTimes(7);
   });
 
   it.each([
     new ThreadAppError("INSTANCE_CONTEXT_DUPLICATE_MISMATCH"),
     new ThreadAppError("INSTANCE_CONTEXT_UNAVAILABLE"),
     new ThreadAppError("INVALID_PLUGIN_INSTANCE_REQUEST"),
+    new ThreadAppError("PLUGIN_CONTEXT_TOO_LARGE"),
     new PluginContextUpdateRejected("App context could not be removed"),
   ])("stops at a refusal of this exact request: %s", async (refusal) => {
     const send = vi.fn().mockRejectedValue(refusal);
