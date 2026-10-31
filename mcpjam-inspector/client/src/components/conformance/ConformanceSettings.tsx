@@ -41,14 +41,13 @@ export function ConformanceSettings({
       toast.error("Keep at least one check selected.");
       return;
     }
+    const previous = selection;
     setTouched(true);
     setSelection(next);
-    onSave(next).catch((error: unknown) => {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Could not save the default checks. Try again.",
-      );
+    onSave(next).catch(() => {
+      // Back to what is saved, unless another change came after this one.
+      setSelection((current) => (current === next ? previous : current));
+      toast.error("Could not save the default checks. Try again.");
     });
   };
 

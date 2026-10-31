@@ -16,6 +16,11 @@ import type {
 // transitive deps that break the Vite browser bundle.
 import {
   canRunConformance,
+  CHECK_ERAS,
+  MCP_APPS_CHECK_IDS,
+  MCP_CHECK_IDS,
+  MCP_TASKS_CHECK_IDS,
+  PROTOCOL_VERSION_ERAS,
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -182,3 +187,38 @@ export const NOT_SELECTED = {
 
 export const isSelected = (checkIds: readonly string[] | undefined) =>
   checkIds === undefined || checkIds.length > 0;
+
+function knownIds<T extends string>(
+  picked: readonly string[] | undefined,
+  known: readonly T[],
+): T[] | undefined {
+  return picked === undefined
+    ? undefined
+    : known.filter((id) => picked.includes(id));
+}
+
+/**
+ * The selection with each suite list cut to ids this build knows: saved
+ * defaults are plain strings, so an id renamed or removed since would get the
+ * whole suite refused. A pinned version also drops protocol checks outside
+ * its era, which would only run as skips.
+ */
+export function runnableSelection(
+  selection: ConformanceSelection | undefined,
+  versionPin: ProtocolVersionPin,
+): ConformanceSelection | undefined {
+  if (!selection) return undefined;
+  const pinnedEra =
+    versionPin === "auto" ? undefined : PROTOCOL_VERSION_ERAS[versionPin];
+  const protocolIds = MCP_CHECK_IDS.filter(
+    (id) =>
+      pinnedEra === undefined ||
+      (CHECK_ERAS[id] as readonly string[]).includes(pinnedEra),
+  );
+  return {
+    ...selection,
+    protocol: knownIds(selection.protocol, protocolIds),
+    apps: knownIds(selection.apps, MCP_APPS_CHECK_IDS),
+    tasks: knownIds(selection.tasks, MCP_TASKS_CHECK_IDS),
+  };
+}

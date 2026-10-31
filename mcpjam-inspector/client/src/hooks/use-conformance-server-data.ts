@@ -7,12 +7,12 @@
 import { useCallback, useMemo } from "react";
 import { useMutation } from "convex/react";
 import { makeFunctionReference } from "convex/server";
-import type { ConformanceSelection } from "@/hooks/use-conformance-run";
+import {
+  runnableSelection,
+  type ConformanceSelection,
+} from "@/hooks/use-conformance-run";
 import { useSoftQuery } from "@/hooks/use-soft-query";
 import type { ConformanceRunListItem } from "@/components/conformance/ConformanceHistory";
-
-/** How many recent runs the server list reads its "last run" from. */
-const RECENT_RUNS = 50;
 
 type ServerSettingsRow = {
   serverId: string;
@@ -46,14 +46,11 @@ export function useConformanceServerData({
     "conformanceSettings:listServerSettings",
     projectId ? { projectId } : "skip",
   );
-  const { data: recent } = useSoftQuery<{ page: ConformanceRunListItem[] }>(
-    "conformanceRuns:listRuns",
-    projectId
-      ? {
-          projectId,
-          paginationOpts: { numItems: RECENT_RUNS, cursor: null },
-        }
-      : "skip",
+  // One row per server, read per server: a busy server can't push the
+  // others off the list.
+  const { data: latestRuns } = useSoftQuery<ConformanceRunListItem[]>(
+    "conformanceRuns:latestRunPerServer",
+    projectId ? { projectId } : "skip",
   );
   const saveSettings = useMutation(
     makeFunctionReference<"mutation">("conformanceSettings:setServerSettings"),
@@ -63,25 +60,29 @@ export function useConformanceServerData({
     const byName: Record<string, ConformanceSelection> = {};
     for (const row of settingsRows ?? []) {
       const name = serversById.get(row.serverId);
-      if (name) byName[name] = row.defaultChecks;
+      // Stored as plain strings: drop ids this build does not know.
+      const defaults = runnableSelection(row.defaultChecks, "auto");
+      if (name && defaults) byName[name] = defaults;
     }
     return byName;
   }, [settingsRows, serversById]);
 
-  // Runs come newest first, so the first one seen per server is its latest.
   const lastRunByServer = useMemo(() => {
     const byName: Record<string, ConformanceRunListItem> = {};
-    for (const run of recent?.page ?? []) {
+    for (const run of latestRuns ?? []) {
       const name = run.serverId ? serversById.get(run.serverId) : undefined;
-      if (name && !byName[name]) byName[name] = run;
+      if (name) byName[name] = run;
     }
     return byName;
-  }, [recent, serversById]);
+  }, [latestRuns, serversById]);
 
   const saveDefaults = useCallback(
     async (serverName: string, selection: ConformanceSelection) => {
       const serverId = serversByName.get(serverName);
-      if (!projectId || !serverId) return;
+      // Throw, not return: the caller's toast must say the change was lost.
+      if (!projectId || !serverId) {
+        throw new Error(`No saved server named "${serverName}" to save to.`);
+      }
       await saveSettings({
         projectId,
         serverId,
@@ -93,6 +94,9 @@ export function useConformanceServerData({
 
   return {
     defaultsByServer,
+    /** False until the saved defaults are read, or known to be unreadable. */
+    defaultsLoaded:
+      !projectId || settingsRows !== undefined || settingsError !== undefined,
     lastRunByServer,
     /** Unset when the page has no project to save to, or can't read the
      *  saved defaults back. */

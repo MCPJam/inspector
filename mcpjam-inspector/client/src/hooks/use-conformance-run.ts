@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // Browser-safe SDK entry — the top-level `@mcpjam/sdk` pulls Node-only
 // transitive deps that break the Vite browser bundle.
+import type { MCPAppsCheckId, MCPCheckId, MCPTasksCheckId } from "@mcpjam/sdk";
 import {
   pooledConformanceScore,
   scoreFromAppsResult,
@@ -50,6 +51,7 @@ import {
   isSelected,
   NOT_SELECTED,
   oauthStateFromResult,
+  runnableSelection,
   verdictOf,
   type AppsSuiteState,
   type ConformanceSelection,
@@ -94,6 +96,7 @@ export {
   createTasksState,
   isHttpServer,
   oauthStateFromResult,
+  runnableSelection,
 };
 export type {
   AppsSuiteState,
@@ -293,11 +296,10 @@ export function useConformanceRun({
   );
 
   const runProtocol = useCallback(
-    async (runToken: number, serverName: string) => {
+    async (runToken: number, serverName: string, checkIds?: MCPCheckId[]) => {
       if (!httpServer) return;
       setProtocol({ status: "running" });
       try {
-        const checkIds = selectionRef.current?.protocol;
         const { result } = await runProtocolConformance(serverName, {
           protocolVersion: versionPin === "auto" ? undefined : versionPin,
           ...(checkIds ? { checkIds } : {}),
@@ -316,10 +318,13 @@ export function useConformanceRun({
   );
 
   const runApps = useCallback(
-    async (runToken: number, serverName: string) => {
+    async (
+      runToken: number,
+      serverName: string,
+      checkIds?: MCPAppsCheckId[]
+    ) => {
       setApps({ status: "running" });
       try {
-        const checkIds = selectionRef.current?.apps;
         const { result } = await runAppsConformance(
           serverName,
           ...(checkIds ? [{ checkIds }] : []),
@@ -338,10 +343,13 @@ export function useConformanceRun({
   );
 
   const runTasks = useCallback(
-    async (runToken: number, serverName: string) => {
+    async (
+      runToken: number,
+      serverName: string,
+      checkIds?: MCPTasksCheckId[]
+    ) => {
       setTasks({ status: "running" });
       try {
-        const checkIds = selectionRef.current?.tasks;
         const { result } = await runTasksConformance(
           serverName,
           ...(checkIds ? [{ checkIds }] : []),
@@ -641,22 +649,26 @@ export function useConformanceRun({
 
     // A suite left out before Run reads as not selected, not as one that
     // does not apply to the server.
-    const picked = selectionRef.current;
+    // Saved defaults are plain strings: send only ids this build knows and,
+    // when pinned, ones that version runs.
+    const picked = runnableSelection(selectionRef.current, versionPin);
     const promises: Promise<void>[] = [];
     if (httpServerNow) {
       if (isSelected(picked?.protocol)) {
-        promises.push(runProtocol(runToken, currentServer.name));
+        promises.push(
+          runProtocol(runToken, currentServer.name, picked?.protocol)
+        );
       } else {
         setProtocol(NOT_SELECTED);
       }
     }
     if (isSelected(picked?.apps)) {
-      promises.push(runApps(runToken, currentServer.name));
+      promises.push(runApps(runToken, currentServer.name, picked?.apps));
     } else {
       setApps(NOT_SELECTED);
     }
     if (isSelected(picked?.tasks)) {
-      promises.push(runTasks(runToken, currentServer.name));
+      promises.push(runTasks(runToken, currentServer.name, picked?.tasks));
     } else {
       setTasks(NOT_SELECTED);
     }
@@ -669,7 +681,7 @@ export function useConformanceRun({
     }
 
     await Promise.allSettled(promises);
-  }, [beginRun, runApps, runOAuth, runProtocol, runTasks, server]);
+  }, [beginRun, runApps, runOAuth, runProtocol, runTasks, server, versionPin]);
 
   // Scores are derived, never stored: each finished suite contributes, and
   // the headline pools their COUNTS (not an average of suite scores), so a
