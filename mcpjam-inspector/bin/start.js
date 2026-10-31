@@ -3,7 +3,7 @@
 import { resolve, dirname } from "path";
 import { spawn } from "child_process";
 import { fileURLToPath, pathToFileURL } from "url";
-import { createServer, createConnection } from "net";
+import { createConnection } from "net";
 import { execSync } from "child_process";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import open from "open";
@@ -14,7 +14,10 @@ import {
   networkAccessLinks,
 } from "./access-link.mjs";
 import { launchWorkspaceCandidate } from "./launch-workspace.mjs";
-import { computeInstanceEnv } from "./runtime-profile.mjs";
+import {
+  resolveStartPortEnv,
+  StartPortUnavailableError,
+} from "./start-port.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -126,23 +129,6 @@ function logBox(content, title = null) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms, true));
-}
-
-function isPortAvailable(port) {
-  return new Promise((resolve) => {
-    const server = createServer();
-
-    server.listen(port, "127.0.0.1", () => {
-      server.close(() => {
-        resolve(true);
-      });
-    });
-
-    server.on("error", () => {
-      // Port is not available
-      resolve(false);
-    });
-  });
 }
 
 function waitForServerReady(port, host, timeoutMs = 30000, signal = null) {
@@ -970,79 +956,27 @@ async function main() {
   // Apply parsed environment variables to process.env first
   Object.assign(process.env, envVars);
 
-  // Port configuration (fixed default to 6274)
-  const requestedPortValue = envVars.PORT || "6274";
-  const requestedPort = Number(requestedPortValue);
+  // Port configuration: --port is exact; without it, start at 6274 and take
+  // the next free port (see `resolveStartPortEnv`).
   let PORT;
-
   try {
-    if (
-      !/^\d+$/.test(requestedPortValue) ||
-      !Number.isInteger(requestedPort) ||
-      requestedPort < 1 ||
-      requestedPort > 65535
-    ) {
-      logError(`Invalid port: ${requestedPortValue}`);
-      throw new Error(`Invalid port: ${requestedPortValue}`);
-    }
-
-    // Check if user explicitly set a port via --port flag
-    const hasExplicitPort = envVars.PORT !== undefined;
-
-    if (hasExplicitPort) {
-      if (await isPortAvailable(requestedPort)) {
-        PORT = requestedPort.toString();
-      } else {
-        logError(`Explicitly requested port ${requestedPort} is not available`);
-        logInfo(
-          "Use a different port with --port <number> or let the system find one automatically",
-        );
-        throw new Error(`Port ${requestedPort} is already in use`);
-      }
-    } else {
-      // Fixed port policy: use default port 6274 and fail fast if unavailable
-      if (await isPortAvailable(requestedPort)) {
-        PORT = requestedPort.toString();
-      } else {
-        logError(
-          `Default port ${requestedPort} is already in use. Please free the port`,
-        );
-        throw new Error(`Port ${requestedPort} is already in use`);
-      }
-    }
-
-    // Update environment variables with the final port
-    envVars.PORT = PORT;
-    envVars.SERVER_PORT = PORT;
-    // Default: localhost in development, 127.0.0.1 in production
-    const defaultHost =
-      process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
-    const baseHost = process.env.HOST || defaultHost;
-    envVars.BASE_URL = `http://${baseHost}:${PORT}`;
-    // This instance's own addresses. The packaged server serves the app
-    // itself, so the browser port IS the server port: it names this
-    // instance's session namespace, and the public callback origins (CLI
-    // login, Slack/Discord linking) follow it. A configured NON-loopback
-    // origin is a deliberate public deployment and is kept; a loopback one
-    // from another port never survives `--port`.
-    const instanceEnv = computeInstanceEnv({
-      ports: { server: Number(PORT) },
-      browserPort: Number(PORT),
-      host: baseHost,
+    const { requestedPort, port, env } = await resolveStartPortEnv({
+      envVars,
       profile: process.env,
     });
-    for (const key of [
-      "MCPJAM_BROWSER_PORT",
-      "CLI_AUTH_PUBLIC_ORIGIN",
-      "SLACK_LINK_PUBLIC_ORIGIN",
-      "DISCORD_LINK_PUBLIC_ORIGIN",
-    ]) {
-      envVars[key] = instanceEnv[key];
+    if (port !== requestedPort) {
+      logInfo(
+        `Port ${requestedPort} is in use (another MCPJam Inspector or the desktop app?), starting on ${port}. ` +
+          `That is a separate browser origin, so it opens with its own session and empty browser storage.`,
+      );
     }
+    PORT = String(port);
+    Object.assign(envVars, env);
     verboseInfo(`Browser origin ${envVars.CLI_AUTH_PUBLIC_ORIGIN}`);
     Object.assign(process.env, envVars);
   } catch (error) {
     logError(`Port configuration failed: ${error.message}`);
+    if (error instanceof StartPortUnavailableError) logInfo(error.hint);
     throw error;
   }
 
