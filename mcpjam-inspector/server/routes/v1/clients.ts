@@ -485,11 +485,20 @@ function hostConfigPinsAModel(config: Record<string, unknown>): boolean {
  * arguments), so the caller got only "Client write rejected by the platform"
  * with no field named: a 500 for a body the API had just emitted.
  *
+ * `getHost` also folds `localBrowserEnabled` into `config`, resolved against
+ * the project default. The write takes it only as a top-level `updateHost`
+ * arg, and echoing the resolved value there would pin an inherited default
+ * onto the host, so it is dropped too.
+ *
  * Stripped rather than named in a 400, because these are OUR derived fields,
  * not the caller's mistake. A genuinely unknown key still fails closed and
  * still logs, which is the behaviour the write translator documents.
  */
-const READ_ONLY_CONFIG_KEYS = ["id", "schemaVersion"] as const;
+const READ_ONLY_CONFIG_KEYS = [
+  "id",
+  "schemaVersion",
+  "localBrowserEnabled",
+] as const;
 
 /**
  * Return `config` ready for the Convex write: `modelId` TRIMMED, and the

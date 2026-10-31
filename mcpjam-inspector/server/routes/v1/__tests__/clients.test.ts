@@ -847,6 +847,34 @@ describe("v1 client routes", () => {
       );
     });
 
+    // INSPECTOR-HONO-Y: `getHost` folds the resolved local-browser setting
+    // into `config`, and the input validator has no such field.
+    it("strips the localBrowserEnabled the GET folds into config", async () => {
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/clients/h1",
+        {
+          body: {
+            expectedConfigId: "hc1",
+            config: {
+              modelId: "openai/gpt-5",
+              systemPrompt: "edited",
+              localBrowserEnabled: true,
+            },
+          },
+        },
+      );
+      expect(res.status).toBe(200);
+      const [, args] = convexMutationMock.mock.calls[0];
+      expect(args).toMatchObject({
+        input: { modelId: "openai/gpt-5", systemPrompt: "edited" },
+      });
+      expect(args.input).not.toHaveProperty("localBrowserEnabled");
+      expect(args).not.toHaveProperty("localBrowserEnabled");
+    });
+
     it("strips them on create too", async () => {
       convexMutationMock.mockResolvedValue({ hostId: "h1" });
       mockQuery({ "hosts:getHost": DETAIL_ROW });
