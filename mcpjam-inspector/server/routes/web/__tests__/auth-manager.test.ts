@@ -201,7 +201,9 @@ describe("web auth manager batching", () => {
           connectionId,
           ownerScope: "different-owner",
         }),
-      ).toThrow("signed-in account changed");
+      ).toThrow(
+        expect.objectContaining({ code: ErrorCode.FORBIDDEN, status: 403 }),
+      );
       expect(configs[key].baseFetch).toBeTypeOf("function");
       if (connectionId) {
         expect(configs[key].requestInit.headers.get("Authorization")).toBe(
