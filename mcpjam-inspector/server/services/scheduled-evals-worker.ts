@@ -40,6 +40,7 @@ import {
   type ResolvedEnvironmentForLaunch,
 } from "./environments/resolve.js";
 import { getServiceCredential } from "./service-credential.js";
+import { serverDrain } from "./lifecycle/drain.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
@@ -382,7 +383,7 @@ export function startScheduledEvalsWorker(options?: {
           // doesn't need an Inspector restart.
           waitMs = ERROR_BACKOFF_MS;
         } else if (claimed) {
-          await execute(claimed);
+          await serverDrain.track("claimed_job", execute(claimed));
           // Drain mode: if a trigger was waiting, check again immediately —
           // another suite's window may be queued behind it.
           waitMs = 1_000;
