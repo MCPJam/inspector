@@ -37,10 +37,8 @@ export const MCP_TASKS_CHECK_IDS = [
   "tasks-input-required-update-completes",
   "tasks-ttl-integer-shape",
   "tasks-undeclared-capability-names-requirements",
-  // SCORED from `mcp-tasks@2026-10-31.1`: a SEP-2663 MUST NOT (the extension
-  // declaration does not enable tasks on 2025-11-25). It replaced a warning
-  // on `tasks-wire-resolvable` that flagged mere advertising, which no rule
-  // forbids.
+  // Scored, unlike the block above: a SEP-2663 MUST NOT (the extension
+  // declaration does not enable tasks on 2025-11-25).
   "tasks-legacy-ignores-extension-declaration",
 ] as const;
 
