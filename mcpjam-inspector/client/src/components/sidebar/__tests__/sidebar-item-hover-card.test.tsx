@@ -11,6 +11,7 @@ import {
   SIDEBAR_HOVER_OPEN_DELAY_MS,
   SidebarItemHoverCard,
 } from "../sidebar-item-hover-card";
+import { learnMoreContent } from "@/lib/learn-more-content";
 
 // From learnMoreContent["servers"]: present only when the clip section is.
 const SERVERS_DESCRIPTION = "Connect and manage your MCP servers.";
@@ -148,6 +149,42 @@ describe("SidebarItemHoverCard content", () => {
 
     expect(isOpen("A")).toBe(true);
     expect(screen.queryByText(SERVERS_DESCRIPTION)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["swarms", "Swarms"],
+    ["user-testing", "User Testing"],
+    ["evaluate", "Evaluate"],
+  ])(
+    "shows the %s description and expand button without a clip",
+    (tabId, title) => {
+      const onExpand = vi.fn();
+      vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+      render(card("A", { tabId, onExpand, labelVisible: true }));
+      hover("A");
+      advance(SIDEBAR_HOVER_OPEN_DELAY_MS);
+
+      expect(
+        screen.getByText(learnMoreContent[tabId].description)
+      ).toBeInTheDocument();
+      expect(document.querySelector("video")).toBeNull();
+
+      fireEvent.click(
+        screen.getByRole("button", { name: `Learn more about ${title}` })
+      );
+      expect(onExpand).toHaveBeenCalledWith(tabId, expect.anything());
+    }
+  );
+
+  it("leaves a clipless description out when the learn-more flag is off", () => {
+    render(card("A", { tabId: "swarms", labelVisible: true }));
+    hover("A");
+    advance(SIDEBAR_HOVER_OPEN_DELAY_MS * 2);
+
+    expect(isOpen("A")).toBe(false);
   });
 
   it("shows the disabled message in the body", () => {
