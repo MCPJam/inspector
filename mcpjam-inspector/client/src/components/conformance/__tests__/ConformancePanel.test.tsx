@@ -1109,6 +1109,42 @@ describe("ConformanceTab", () => {
     });
   });
 
+  it("keeps the score labeled with the run's protocol after the selector changes", async () => {
+    const user = userEvent.setup();
+    setupSuccessfulRunMocks();
+    render(<ConformanceTab server={createHttpServer()} />);
+
+    await user.click(
+      screen.getByRole("combobox", { name: "Protocol version" }),
+    );
+    await user.click(screen.getByRole("option", { name: "2025-03-26" }));
+    await runToCompletion();
+
+    expect(screen.getByText(/PROTOCOL 2025-03-26/)).toBeInTheDocument();
+    expect(screen.queryByText(/from the previous run/)).toBeNull();
+
+    await user.click(
+      screen.getByRole("combobox", { name: "Protocol version" }),
+    );
+    await user.click(screen.getByRole("option", { name: "2025-06-18" }));
+
+    expect(screen.getByText(/PROTOCOL 2025-03-26/)).toBeInTheDocument();
+    expect(screen.queryByText(/PROTOCOL 2025-06-18/)).toBeNull();
+    expect(
+      screen.getByText(
+        /from the previous run with protocol 2025-03-26\. Run again to check 2025-06-18/,
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("combobox", { name: "Protocol version" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Auto (negotiated)" }));
+    expect(
+      screen.getByText(/Run again to check Auto\./),
+    ).toBeInTheDocument();
+  });
+
   it("opens an errored suite on its error and what it would have run", async () => {
     setupSuccessfulRunMocks();
     mockRunProtocol.mockRejectedValue(new Error("protocol endpoint down"));
@@ -1146,6 +1182,10 @@ describe("ConformanceTab", () => {
       screen.getByRole("combobox", { name: "Protocol version" }),
     );
     await user.click(screen.getByRole("option", { name: "2025-06-18" }));
+
+    // The list describes the run on screen, so it waits for the next run.
+    expect(screen.getByText("Modern Client Handshake")).toBeDefined();
+    await runToCompletion();
 
     // A legacy pin drops the modern-only checks entirely.
     expect(screen.queryByText("Modern Client Handshake")).toBeNull();

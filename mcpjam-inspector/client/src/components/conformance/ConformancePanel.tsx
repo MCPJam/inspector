@@ -44,7 +44,11 @@ import {
 } from "./ConformancePageChrome";
 import { toast } from "@/lib/toast";
 import { useAppNavigate, useCurrentLocationParts } from "@/lib/app-navigation";
-import { useConformanceRun, type SuiteState } from "@/hooks/use-conformance-run";
+import {
+  useConformanceRun,
+  type SuiteState,
+} from "@/hooks/use-conformance-run";
+import { ConformanceStaleResults, pinLabel } from "./ConformanceStaleResults";
 import {
   PersistConformanceRun,
   type ConformancePersistConfig,
@@ -218,6 +222,7 @@ function ConformanceContent({
     versionPin,
     setVersionPin,
     runVersion,
+    runVersionPin,
     runAll,
     protocolScore,
     appsScore,
@@ -230,9 +235,12 @@ function ConformanceContent({
     skipOAuth,
   } = snapshot;
 
+  // Labels and the catalog describe the results on screen, so they follow the
+  // pin those results were run with; the dropdown only sets the next run.
+  const resultsPin = runVersionPin ?? versionPin;
   const protocolChecks = useMemo(
-    () => protocolCatalog(versionPin),
-    [versionPin],
+    () => protocolCatalog(resultsPin),
+    [resultsPin],
   );
   const protocolPendingIds = pendingIdSet(protocol.result);
   const tasksPendingIds = pendingIdSet(tasks.result);
@@ -316,6 +324,8 @@ function ConformanceContent({
     onViewChange("overview");
     runAll();
   };
+  const staleResults =
+    runVersionPin !== null && !isRunning && runVersionPin !== versionPin;
   const isConnecting =
     connect.status === "connecting" || connect.status === "ready";
   const hasStarted =
@@ -412,21 +422,25 @@ function ConformanceContent({
                 <OverallScoreCard
                   score={pooledScore}
                   serverName={server.name}
-                  version={
-                    pooledScore?.protocolVersion ??
-                    (versionPin === "auto" ? "Auto" : versionPin)
-                  }
+                  version={pooledScore?.protocolVersion ?? pinLabel(resultsPin)}
                   isRunning={isRunning}
                   oauthNotScored={oauthNotScored}
                   blockedBySignIn={blockedBySignIn}
                 />
 
+                {staleResults && (
+                  <ConformanceStaleResults
+                    resultsPin={resultsPin}
+                    versionPin={versionPin}
+                  />
+                )}
+
                 {waitingOnAuthorization > 0 && (
                   <div className="mt-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs leading-relaxed">
                     This server requires sign-in, and this run had no valid
-                    session, so the checks that need it could not run.
-                    Reconnect the server with OAuth from the server menu, or
-                    update its access token, then run again.
+                    session, so the checks that need it could not run. Reconnect
+                    the server with OAuth from the server menu, or update its
+                    access token, then run again.
                   </div>
                 )}
 
@@ -439,7 +453,7 @@ function ConformanceContent({
                     score={protocolScore}
                     catalog={protocolChecks}
                     catalogNote={
-                      versionPin === "auto"
+                      resultsPin === "auto"
                         ? "The negotiated version decides which era's checks run."
                         : undefined
                     }
@@ -660,9 +674,12 @@ export function ConformanceTab({
     if (next === "history") params.set("view", "history");
     else params.delete("view");
     const query = params.toString();
-    navigate(`${location.pathname}${query ? `?${query}` : ""}${location.hash}`, {
-      replace: true,
-    });
+    navigate(
+      `${location.pathname}${query ? `?${query}` : ""}${location.hash}`,
+      {
+        replace: true,
+      },
+    );
   };
   const showHistory = history !== undefined;
   // `?view=history` can outlive the History tab, e.g. a run link opened where
