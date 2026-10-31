@@ -289,6 +289,7 @@ describe("runHarnessTurn activity", () => {
       expect(harnessState.readNativeResult).toHaveBeenCalledWith(
         "server-1",
         "native-call",
+        "read",
       );
       expect(chunks).toContainEqual(
         expect.objectContaining({
