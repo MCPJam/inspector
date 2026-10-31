@@ -18,6 +18,7 @@ import { reportServiceCredentialAtBoot } from "./services/service-credential-boo
 import { reportRouteFailure } from "./utils/route-error-report.js";
 import { attachSocketDiagnostics } from "./utils/socket-diagnostics.js";
 import { startProcessVitalsSampler } from "./utils/process-vitals.js";
+import { resolveShutdownSettings } from "../bin/shutdown-settings.mjs";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { isSpaDocumentRequest } from "./utils/spa-document-request.js";
 import { readFileSync } from "fs";
@@ -1032,13 +1033,12 @@ const expectedParentPid = Number.parseInt(
 );
 let orphanCheckInterval: ReturnType<typeof setInterval> | undefined;
 let shuttingDown = false;
-const shutdownForceExitMs = 5000;
-const logFlushExitMs = 1000;
+const shutdownSettings = resolveShutdownSettings();
 
 function exitAfterLogFlush(code: number) {
   const exitFallbackTimer = setTimeout(
     () => process.exit(code),
-    logFlushExitMs,
+    shutdownSettings.logFlushMs,
   );
   exitFallbackTimer.unref();
 
@@ -1066,7 +1066,7 @@ async function shutdown() {
       new Error("Shutdown timed out; forcing process exit."),
     );
     exitAfterLogFlush(1);
-  }, shutdownForceExitMs);
+  }, shutdownSettings.forceExitMs);
   forceExitTimer.unref();
 
   // Cleared BEFORE the worker awaits: a `stop()` that rejects must not leave a
