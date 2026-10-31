@@ -260,7 +260,7 @@ export function ConformanceTab({
           // save leaves the old defaults; the run goes ahead either way.
           saveDefaults?.(serverName, selection).catch(() => {
             toast.error(
-              "Could not save these checks as the server's defaults.",
+              "Could not save these checks as the server's defaults. Change them in Settings to try again.",
             );
           });
         }}
