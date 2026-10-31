@@ -90,6 +90,8 @@ const config: ForgeConfig = {
       resolve(__dirname, "dist", "client"),
       resolve(__dirname, ".env.production"),
       resolve(__dirname, "..", "sdk", "dist"),
+      resolve(__dirname, "LICENSE"),
+      resolve(__dirname, "LICENSE-EE"),
     ],
     osxSign: osxSignOptions,
     osxNotarize: osxNotarizeOptions,
