@@ -255,7 +255,10 @@ export async function serveLegacyTasksFixture(
           }
           return { task };
         }
-        if (options.honorExtensionDeclaration && declaresTasksExtension(params)) {
+        if (
+          options.honorExtensionDeclaration &&
+          declaresTasksExtension(params)
+        ) {
           return {
             resultType: "task",
             taskId: LEGACY_TASK_ID,

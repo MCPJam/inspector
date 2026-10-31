@@ -1017,12 +1017,22 @@ export function findRawResult(
 /**
  * The id of a task in a result, in either era's shape: flat `taskId` (the
  * extension's `CreateTaskResult`) or nested `task.taskId` (2025-11-25).
+ *
+ * `resultType: "task"` is a task even with no id, so it gets a placeholder
+ * rather than passing. A result with an array `content` is a normal
+ * `CallToolResult`, and stray `taskId`/`task` keys on it do not make it one.
  */
 export function findCreatedTaskId(result: unknown): string | undefined {
   if (!isRecord(result)) return undefined;
-  if (typeof result.taskId === "string" && result.taskId.length > 0) {
-    return result.taskId;
+  const flatId =
+    typeof result.taskId === "string" && result.taskId.length > 0
+      ? result.taskId
+      : undefined;
+  if (result.resultType === "task") {
+    return flatId ?? "(task result with no taskId)";
   }
+  if (Array.isArray(result.content)) return undefined;
+  if (flatId) return flatId;
   const nested = isRecord(result.task) ? result.task : undefined;
   return typeof nested?.taskId === "string" && nested.taskId.length > 0
     ? nested.taskId
@@ -1348,11 +1358,11 @@ export class MCPTasksConformanceTest {
             // `tasks-legacy-ignores-extension-declaration` tests exactly that.
             checks.push(
               protocolVersion
-                ? passed(
-                    "tasks-wire-resolvable",
-                    Date.now() - stepStartedAt,
-                    { protocolVersion, wire, support }
-                  )
+                ? passed("tasks-wire-resolvable", Date.now() - stepStartedAt, {
+                    protocolVersion,
+                    wire,
+                    support,
+                  })
                 : failed(
                     "tasks-wire-resolvable",
                     Date.now() - stepStartedAt,

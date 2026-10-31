@@ -4,6 +4,7 @@ import {
   MCP_TASKS_CHECK_IDS,
   decideOutcome,
   findDeclarationViolations,
+  findCreatedTaskId,
   findRawTaskStates,
   sentRequestIds,
   validateCompletionAck,
@@ -444,6 +445,31 @@ describe("completion acknowledgements", () => {
         "tasks/cancel",
       ),
     ).toEqual({ violations: [], warnings: [] });
+  });
+});
+
+describe("findCreatedTaskId", () => {
+  it("finds a task in either era's shape", () => {
+    expect(
+      findCreatedTaskId({ resultType: "task", taskId: "t1", status: "working" })
+    ).toBe("t1");
+    expect(findCreatedTaskId({ task: { taskId: "t2" } })).toBe("t2");
+  });
+
+  it("treats resultType task with no id as a task", () => {
+    expect(
+      findCreatedTaskId({ resultType: "task", status: "working" })
+    ).toBeDefined();
+  });
+
+  it("does not treat a normal tool result with stray task keys as a task", () => {
+    expect(
+      findCreatedTaskId({
+        content: [{ type: "text", text: "ok" }],
+        taskId: "stray",
+        task: { taskId: "stray" },
+      })
+    ).toBeUndefined();
   });
 });
 
