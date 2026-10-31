@@ -547,6 +547,8 @@ export type RequestEventMap = {
 export type SystemEventMap = {
   telemetry_canary: Record<string, never>;
   "server.shutdown.drain": import("./log-events/shutdown-drain.js").ShutdownDrainEvent;
+  /** One per start: `web` runs no claim loops; `worker` and `all` do. */
+  "server.process_role": { role: "all" | "web" | "worker" };
   llm_spend_unattested_ip_pooled: Record<string, never>;
   "model_catalog.refresh.failed": {
     reason: "fetch_failed" | "invalid_catalog";
