@@ -478,8 +478,8 @@ export function EvalModelChoices({
    * while the organization requires its own keys (see `useAvailableModels`).
    */
   onManageOrgProviders?: () => void;
-  /** The same, under any key policy, for a model search with no match. */
-  onAddProvider?: () => void;
+  /** The same, under any key policy, for a model search with no match; `null` when none is offered. */
+  onAddProvider: (() => void) | null;
   inModal?: boolean;
   value: ModelSelection;
   onChange: (value: ModelSelection) => void;

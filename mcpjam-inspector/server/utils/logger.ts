@@ -183,9 +183,13 @@ export const logger = {
     // without this check every declined user-fault error would be re-captured
     // here — rebuilding the noise the origin policy exists to remove.
     if (!isOriginCaptureHandled(error)) {
+      // Built before `withIdentityCapture`: inside `Sentry.withScope` its six
+      // frames fill V8's 10-frame stack limit, the caller's frame is lost, and
+      // every unapproved message collapses into one Sentry group.
+      const captured = error ?? new Error(message);
       // The final Sentry transport reconstructs approved diagnostics.
       withIdentityCapture(() =>
-        Sentry.captureException(error ?? new Error(message), {
+        Sentry.captureException(captured, {
           extra: { message, ...context },
           ...sentryIdentityMetadata(),
         }),

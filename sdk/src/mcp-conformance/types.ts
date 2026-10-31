@@ -438,6 +438,10 @@ export const MCP_READINESS_IDS = [
   // example, but never states it as a MUST or a SHOULD. An example-only
   // convention is MAY strength, and advice is the only honest home for it.
   "readiness-resource-error-echoes-uri",
+  // The core "Tool Names" rules (1–128 characters, a fixed character set,
+  // unique within a server) are SHOULDs from 2025-11-25 on. Informational
+  // until advice has a grading rubric.
+  "readiness-tool-name-conventions",
 ] as const;
 
 export type MCPReadinessId = (typeof MCP_READINESS_IDS)[number];
