@@ -19,6 +19,7 @@ import {
   assertNoConflictingEnvironmentOverrides,
 } from "../../services/evals/quick-run-environment.js";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
+import { refuseWhileDraining } from "../../services/lifecycle/admission.js";
 import { prepareSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
 import {
   createAuthorizedManager,
@@ -63,6 +64,14 @@ import {
 } from "../shared/evals.js";
 
 const evals = new Hono();
+
+// The routes that start eval work, refused while this process drains.
+evals.on("POST", ["/run", "/replay-run"], refuseWhileDraining("eval_run"));
+evals.on(
+  "POST",
+  ["/run-test-case", "/stream-test-case"],
+  refuseWhileDraining("quick_run"),
+);
 
 const hostedBatchSchema = z.object({
   projectId: z.string().min(1),
