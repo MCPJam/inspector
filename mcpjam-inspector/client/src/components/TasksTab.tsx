@@ -1,3 +1,5 @@
+import { taskInputPrompt } from "@/lib/task-input-prompt";
+import { TaskInputDialog } from "./tasks/TaskInputDialog";
 import { taskPanelApi, type TaskPanelTarget } from "@/lib/task-panel-api";
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { isHostedMode } from "@/lib/apis/mode-client";
@@ -356,55 +358,20 @@ function TaskPanel({
       }
     : null;
 
-  // Extension wire: `inputRequests` is a keyed snapshot re-sent on every poll.
-  // Only elicitation entries are answerable here (sampling/roots are rejected,
-  // matching the MRTR collector's Decision-8 rule).
-  const extensionInputRequest = useMemo(() => {
-    if (!isExtensionWire || selectedTask?.status !== "input_required") {
-      return null;
-    }
-    // Union of this session's answers and the keys persisted from earlier
-    // sessions — a reload must not re-prompt for something the server already
-    // acknowledged.
-    const answered = new Set([
-      ...(answeredInputKeys.get(selectedTask.taskId) ?? []),
-      ...scheduler.respondedInputKeys(selectedTask.taskId),
-    ]);
-    const entries = Object.entries(selectedTask.inputRequests ?? {});
-    for (const [key, value] of entries) {
-      if (answered.has(key)) continue;
-      const request = value as {
-        method?: string;
-        params?: { message?: string; requestedSchema?: unknown };
-      };
-      if (request?.method === "elicitation/create") {
-        return { key, request };
-      }
-    }
-    return null;
+  const {
+    next: extensionInputRequest,
+    unanswerableCount: unanswerableInputCount,
+  } = useMemo(() => {
+    if (!isExtensionWire || selectedTask?.status !== "input_required")
+      return { next: null, unanswerableCount: 0 };
+    return taskInputPrompt(
+      selectedTask.inputRequests ?? {},
+      new Set([
+        ...(answeredInputKeys.get(selectedTask.taskId) ?? []),
+        ...scheduler.respondedInputKeys(selectedTask.taskId),
+      ]),
+    );
   }, [isExtensionWire, selectedTask, answeredInputKeys, scheduler]);
-
-  /** Keys in the current snapshot this UI cannot answer (sampling/roots). */
-  const unanswerableInputCount = useMemo(() => {
-    if (!isExtensionWire || selectedTask?.status !== "input_required") return 0;
-    return Object.values(selectedTask.inputRequests ?? {}).filter(
-      (value) =>
-        (value as { method?: string })?.method !== "elicitation/create",
-    ).length;
-  }, [isExtensionWire, selectedTask]);
-
-  const extensionDialogElicitation: DialogElicitation | null =
-    extensionInputRequest
-      ? {
-          requestId: extensionInputRequest.key,
-          message: extensionInputRequest.request.params?.message ?? "",
-          schema: extensionInputRequest.request.params?.requestedSchema as
-            Record<string, unknown> | undefined,
-          timestamp: selectedTask?.lastUpdatedAt ?? "",
-          origin: "mrtr",
-          serverId: serverName,
-        }
-      : null;
 
   const handlePollIntervalChange = useCallback(
     (value: string) => {
@@ -1198,7 +1165,7 @@ function TaskPanel({
       action: "accept" | "decline" | "cancel",
       parameters?: Record<string, unknown>,
     ) => {
-      if (!extensionInputRequest) return;
+      if (!extensionInputRequest) return false;
       // Partial responses are allowed: answer the key the user just handled.
       // SEP-2663 `InputResponse` is the BARE result object — never wrapped in a
       // `{method, result}` envelope, which a conforming server would ignore
@@ -1214,7 +1181,7 @@ function TaskPanel({
       // silently discard the user's answer whenever the update failed: the
       // re-sent snapshot would still carry the key, we would skip it as
       // "answered", and the task would sit in `input_required` forever.
-      if (!acknowledged) return;
+      if (!acknowledged) return false;
       setAnsweredInputKeys((prev) => {
         const next = new Map(prev);
         const keys = new Set(next.get(selectedTaskId) ?? []);
@@ -1225,6 +1192,7 @@ function TaskPanel({
       // Durable, so a reload does not re-prompt. Keys only — never the prompt
       // or the response.
       scheduler.markInputResponded(selectedTaskId, [key]);
+      return true;
     },
     [
       extensionInputRequest,
@@ -1839,7 +1807,7 @@ function TaskPanel({
                 <p className="mt-1 text-[11px] text-muted-foreground">
                   {unanswerableInputCount} pending request
                   {unanswerableInputCount === 1 ? "" : "s"} this UI cannot
-                  answer (sampling/roots) — visible in the raw request JSON
+                  answer — visible in the raw request JSON
                   below.
                 </p>
               )}
@@ -1982,17 +1950,23 @@ function TaskPanel({
       {/* Elicitation Dialog for tasks in input_required status */}
       {/* Per MCP Tasks spec (2025-11-25): when a task needs input, server sends */}
       {/* elicitation requests with relatedTaskId in the metadata */}
-      <ElicitationDialog
-        elicitationRequest={
-          extensionDialogElicitation ?? legacyDialogElicitation
-        }
-        onResponse={
-          extensionDialogElicitation
-            ? handleExtensionInputResponse
-            : handleElicitationResponse
-        }
-        loading={elicitationResponding || submittingInput}
-      />
+      {extensionInputRequest ? (
+        <TaskInputDialog
+          key={JSON.stringify([selectedTaskId, extensionInputRequest.key])}
+          prompt={extensionInputRequest}
+          serverId={taskTarget?.serverId ?? serverName ?? ""}
+          serverName={serverName}
+          timestamp={selectedTask?.lastUpdatedAt ?? ""}
+          onResponse={handleExtensionInputResponse}
+          loading={submittingInput}
+        />
+      ) : (
+        <ElicitationDialog
+          elicitationRequest={legacyDialogElicitation}
+          onResponse={handleElicitationResponse}
+          loading={elicitationResponding}
+        />
+      )}
     </>
   );
 }
