@@ -1,5 +1,10 @@
 import { getManagerOrganization } from "../../mcp-connections.js";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
+import {
+  isCreateTaskExtResult,
+  runToolTaskSeam,
+  type ToolTaskSeamOptions,
+} from "@mcpjam/sdk";
 import type { ConnectionsByServerId, MCPClientManager } from "@mcpjam/sdk";
 import type { ChunkWriter } from "../../chat-stream-chunks.js";
 import {
@@ -102,6 +107,7 @@ export async function prepareNativeForwarding(args: {
   writer: ChunkWriter;
   delivery?: "native" | "bridge";
   profiles?: Record<string, HarnessConnectionProfile>;
+  tasks?: ToolTaskSeamOptions;
 }) {
   if (args.strategy.plane !== "web-authorized" || !args.owners.length)
     throw new Error("Native forwarding route is unavailable.");
@@ -171,6 +177,7 @@ export async function prepareNativeForwarding(args: {
     }),
   );
   const widgetParents = new Map<string, string>();
+  const deliveredTasks = new Set<string>();
   return {
     mcpJson,
     delivery: args.delivery ?? "native",
@@ -182,16 +189,50 @@ export async function prepareNativeForwarding(args: {
       );
       if (!owner)
         throw new Error("The MCP result does not belong to this turn.");
-      return readNativeToolResult(
+      let sourceExecutionId: string | undefined;
+      const result = await readNativeToolResult(
         createExecutionControl({ owner }),
         args.turnId,
         toolCallId,
-        (executionId) =>
+        (executionId) => {
+          sourceExecutionId = executionId;
           widgetParents.set(
             JSON.stringify([serverId, toolCallId]),
             executionId,
-          ),
+          );
+        },
       );
+      if (
+        args.tasks &&
+        sourceExecutionId &&
+        isCreateTaskExtResult(result) &&
+        !deliveredTasks.has(sourceExecutionId)
+      ) {
+        const executionId = sourceExecutionId;
+        await runToolTaskSeam(
+          {
+            serverId,
+            toolName: "Task",
+            wire: "extension",
+            callPlain: async () => result,
+            callEligible: async () => result,
+          },
+          {
+            ...args.tasks,
+            resolveIdentity: () => ({
+              serverId,
+              connectionId: owner.connectionId,
+            }),
+            onTaskCreated: (event) =>
+              args.tasks!.onTaskCreated({
+                ...event,
+                sourceExecutionId: executionId,
+              }),
+          },
+        );
+        deliveredTasks.add(executionId);
+      }
+      return result;
     },
     widgetContext: (serverId: string, toolCallId: string) => {
       const owner = args.owners.find(

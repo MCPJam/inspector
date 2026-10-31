@@ -297,6 +297,7 @@ const taskTargetSchema = projectServerSchema.extend({
     .optional(),
   wire: z.enum(["legacy", "extension"]).optional(),
   ownerScope: z.string().min(1).max(2048).optional(),
+  sourceExecutions: z.record(z.string().min(1).max(512), z.string().min(1).max(512)).optional(),
 });
 
 export const taskGetSchema = taskTargetSchema.extend({
@@ -3305,6 +3306,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     refusedServers: Record<string, unknown>,
   ) => Promise<T>,
   options?: {
+    beforeOperation?: (body: z.infer<S>) => Promise<void>;
     timeoutMs?: number;
     rpcLogs?: boolean;
     guestUnsupportedMessage?: string;
@@ -3348,13 +3350,15 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       c,
       rawBody,
       schema,
-      (manager, body, refusedServers) =>
-        fn(
+      async (manager, body, refusedServers) => {
+        await options?.beforeOperation?.(body);
+        return fn(
           manager,
           body,
           forwardLogMessagesInto(manager, rpcCollector),
           refusedServers,
-        ),
+        );
+      },
       {
         timeoutMs: options?.timeoutMs,
         guestUnsupportedMessage: options?.guestUnsupportedMessage,

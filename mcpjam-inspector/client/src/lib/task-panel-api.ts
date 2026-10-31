@@ -44,22 +44,69 @@ export function taskPanelApi(
     connectionId,
     wire: expectedWire,
   };
+  const recoveredSources = new Map<string, string>();
+  const requestFor = (ids: string[]) => {
+    const sources = ids.flatMap((id) => {
+      const source =
+        tracker.getTrackedTaskById(id, serverId, selection)
+          ?.sourceExecutionId ?? recoveredSources.get(id);
+      return source ? [[id, source]] : [];
+    });
+    return {
+      ...request,
+      ...(sources.length
+        ? { sourceExecutions: Object.fromEntries(sources) }
+        : {}),
+    };
+  };
   return {
     listTasks: (_server: string, cursor?: string) =>
-      api.listTasks(serverId, cursor, request),
+      api.listTasks(serverId, cursor, request).then((result) => {
+        for (const row of result.registryTasks ?? [])
+          if (row.sourceExecutionId)
+            recoveredSources.set(row.taskId, row.sourceExecutionId);
+        return result;
+      }),
     getTask: (_server: string, id: string) =>
-      api.getTask(serverId, id, request),
+      api.getTask(serverId, id, requestFor([id])),
     getTaskResult: (_server: string, id: string) =>
-      api.getTaskResult(serverId, id, request),
-    getTasksBatch: (_server: string, ids: string[]) =>
-      api.getTasksBatch(serverId, ids, request),
+      api.getTaskResult(serverId, id, requestFor([id])),
+    getTasksBatch: async (_server: string, ids: string[]) => {
+      // Different creating calls may have different host policies on the same account.
+      const groups = new Map<string, string[]>();
+      for (const id of ids) {
+        const source = requestFor([id]).sourceExecutions?.[id] ?? "";
+        groups.set(source, [...(groups.get(source) ?? []), id]);
+      }
+      const entries = [...groups.values()];
+      const batches = await Promise.allSettled(
+        entries.map((group) =>
+          api.getTasksBatch(serverId, group, requestFor(group)),
+        ),
+      );
+      const first = batches.find((batch) => batch.status === "fulfilled");
+      return {
+        wire:
+          first?.status === "fulfilled"
+            ? first.value.wire
+            : (expectedWire ?? "none"),
+        tasks: batches.flatMap((batch, index) =>
+          batch.status === "fulfilled"
+            ? batch.value.tasks
+            : entries[index].map((taskId) => ({
+                taskId,
+                error: batch.reason instanceof Error ? batch.reason.message : "This Task could not be read. Try again.",
+              })),
+        ),
+      };
+    },
     updateTask: (
       _server: string,
       id: string,
       responses: Record<string, unknown>,
-    ) => api.updateTask(serverId, id, responses, request),
+    ) => api.updateTask(serverId, id, responses, requestFor([id])),
     cancelTask: (_server: string, id: string) =>
-      api.cancelTask(serverId, id, request),
+      api.cancelTask(serverId, id, requestFor([id])),
     getTaskCapabilities: (_server: string) =>
       api.getTaskCapabilities(serverId, { ...request, wire: undefined }),
     getLatestProgress: (_server: string) =>

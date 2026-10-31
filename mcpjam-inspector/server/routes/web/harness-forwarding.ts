@@ -1,3 +1,6 @@
+import { recordHostedTask } from '../../services/hosted-task-registry.js';
+import { getConvexBearerForDelegation } from '../../utils/v1-convex-token.js';
+import { forwardingExecutionContext } from '../../utils/harness/forwarding/execution-context.js';
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { randomUUID, createHash } from "node:crypto";
@@ -231,6 +234,18 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
                   respectVisibility:
                     sealed.profile?.respectToolVisibility !== false,
                   settle,
+                  ...(sealed.profile?.taskMode === "expose" ? { tasks: {
+                    mode: "expose" as const, surface: "chat" as const, scope: caller.projectId,
+                    resolveIdentity: () => ({serverId, connectionId: context.owner.connectionId}),
+                    onTaskCreated: async (event) => {
+                      const sourceExecutionId = forwardingExecutionContext.getStore()?.executionId;
+                      if (!sourceExecutionId) throw new Error("Task execution evidence is unavailable");
+                      await recordHostedTask({...event, sourceExecutionId}, {
+                        bearer: await getConvexBearerForDelegation(caller.externalId, caller.organizationId),
+                        projectId: caller.projectId,
+                      });
+                    },
+                  }} : {}),
                   modelOutput: {
                     modelVisibleMcpToolResults:
                       sealed.profile?.modelVisibleMcpToolResults,

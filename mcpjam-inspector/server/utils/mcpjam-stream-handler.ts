@@ -1323,6 +1323,7 @@ export interface MCPJamHandlerOptions {
   onHarnessMcpReady?: (scopeIds?: Record<string, string>) => void;
   onHarnessElicitation?: HarnessElicitationHandler;
   harnessOwnedInput?: boolean;
+  harnessOwnedTasks?: boolean;
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;

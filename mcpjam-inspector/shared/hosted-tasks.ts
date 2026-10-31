@@ -27,6 +27,7 @@ export interface TaskRequestTarget {
   connectionId?: string;
   wire?: "legacy" | "extension";
   ownerScope?: string;
+  sourceExecutions?: Record<string, string>;
 }
 
 /**
@@ -59,6 +60,7 @@ export type RegistryTaskStatus =
  * and the live `tasks/get` read stays the source of truth.
  */
 export interface RegistryTaskEntry {
+  sourceExecutionId?: string;
   connectionId?: string;
   wire: "legacy" | "extension";
   taskId: string;

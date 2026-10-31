@@ -239,6 +239,7 @@ export async function recordCreatedTask(
   task: {
     wire: "legacy" | "extension";
     taskId: string;
+    sourceExecutionId?: string;
     status?: string;
     /** Epoch milliseconds, when the server reported a creation time. */
     createdAt?: number;
@@ -255,6 +256,7 @@ export async function recordCreatedTask(
         : {}),
       wire: task.wire,
       taskId: task.taskId,
+      ...(task.sourceExecutionId ? { sourceExecutionId: task.sourceExecutionId } : {}),
       lastKnownStatus: task.status ?? "working",
       ...(task.createdAt !== undefined ? { createdAt: task.createdAt } : {}),
       // No `ownerUserId`, no `authContextKey`: both are server-derived and
@@ -286,6 +288,7 @@ export async function recordHostedTask(
     {
       wire: event.wire,
       taskId: event.identity.taskId,
+      sourceExecutionId: event.sourceExecutionId,
       status: event.status,
       ...(event.createdAt !== undefined
         ? { createdAt: Date.parse(event.createdAt) }

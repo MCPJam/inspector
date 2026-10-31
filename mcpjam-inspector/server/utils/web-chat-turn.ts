@@ -1947,6 +1947,7 @@ export async function streamChatTurn(
       ? { onHarnessElicitation: runtime.elicitationBridge.callback }
       : {}),
     harnessOwnedInput: runtime.harnessOwnedInput,
+    harnessOwnedTasks: runtime.taskCreatedBridge?.canDeliverOwnedTasks === true,
     // Hosted MRTR (§12.5) resume: emulated engine only. On a fresh resume
     // request the engine drives one retry leg (reconstructing tool
     // output-schema validation) before the first model call, splices the

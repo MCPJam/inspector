@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { taskPanelApi } from "../task-panel-api";
-import { getTask } from "../apis/mcp-tasks-api";
+import { getTask, getTasksBatch } from "../apis/mcp-tasks-api";
 import {
   getOwnedTaskScope,
   getTrackedTasks,
@@ -12,6 +12,7 @@ import {
 vi.mock("../apis/mcp-tasks-api", async (original) => ({
   ...(await original<typeof import("../apis/mcp-tasks-api")>()),
   getTask: vi.fn(async () => ({ wire: "extension", task: {} })),
+  getTasksBatch: vi.fn(),
 }));
 
 describe("scoped Task panels", () => {
@@ -46,6 +47,52 @@ describe("scoped Task panels", () => {
     });
     panel.clearTrackedTasksForServer("Display");
     expect(getTrackedTasks().map((task) => task.connectionId)).toEqual(["b"]);
+  });
+
+  it("carries each Task's source into its control request", async () => {
+    trackTask({ ...handle, sourceExecutionId: "receipt-a" });
+    const panel = taskPanelApi(
+      { serverId: "canonical", scope: getOwnedTaskScope()! },
+      "extension",
+    );
+    await panel.getTask("Display", "same");
+    expect(getTask).toHaveBeenLastCalledWith(
+      "canonical",
+      "same",
+      expect.objectContaining({ sourceExecutions: { same: "receipt-a" } }),
+    );
+  });
+
+  it("keeps successful Task reads when another source is refused", async () => {
+    trackTask({ ...handle, taskId: "a", sourceExecutionId: "receipt-a" });
+    trackTask({ ...handle, taskId: "b", sourceExecutionId: "receipt-b" });
+    vi.mocked(getTasksBatch)
+      .mockResolvedValueOnce({
+        wire: "extension",
+        tasks: [{ taskId: "a", task: { status: "working" } }],
+      })
+      .mockRejectedValueOnce(new Error("Forbidden"));
+    const panel = taskPanelApi(
+      { serverId: "canonical", scope: getOwnedTaskScope()! },
+      "extension",
+    );
+    const result = await panel.getTasksBatch("Display", ["a", "b"]);
+    expect(result.tasks).toEqual([
+      { taskId: "a", task: { status: "working" } },
+      { taskId: "b", error: expect.any(String) },
+    ]);
+    expect(getTasksBatch).toHaveBeenNthCalledWith(
+      1,
+      "canonical",
+      ["a"],
+      expect.objectContaining({ sourceExecutions: { a: "receipt-a" } }),
+    );
+    expect(getTasksBatch).toHaveBeenNthCalledWith(
+      2,
+      "canonical",
+      ["b"],
+      expect.objectContaining({ sourceExecutions: { b: "receipt-b" } }),
+    );
   });
 
   it("uses an explicit owner for provenance-only handles", () => {

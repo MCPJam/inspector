@@ -59,3 +59,8 @@ it("retains the existing path for connection behavior the bridge cannot reproduc
     }).delivery,
   ).toBeUndefined();
 });
+it("admits Task delivery only with the owned browser handshake", () => {
+  const tasks = candidate({}, {extensions: {"io.modelcontextprotocol/tasks": {}}});
+  expect(forwardingAdmission({...tasks,hasTasks:true}).delivery).toBeUndefined();
+  expect(forwardingAdmission({...tasks,hasTasks:true,ownedTasksAvailable:true}).delivery).toBe("bridge");
+});

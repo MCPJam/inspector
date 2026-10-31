@@ -8,6 +8,7 @@ import {
 type Candidate = Omit<Parameters<typeof nativeForwardingGaps>[0], "manager"> & {
   manager: MCPClientManager;
   modernInputAvailable?: boolean;
+  ownedTasksAvailable?: boolean;
 };
 const BRIDGED_GAPS = new Set([
   "tool-visibility",
@@ -19,6 +20,7 @@ const BRIDGED_GAPS = new Set([
   "unqualified-protocol",
   "request-timeout",
   "client-behavior",
+  "tasks",
 ]);
 
 /** Choose the MCP delivery before the CLI starts; errors never switch the agent loop. */
@@ -30,7 +32,7 @@ export function forwardingAdmission(candidate: Candidate): {
   if (gaps.length === 0) return { delivery: "native", gaps };
   const bridged =
     !candidate.hasClientTools &&
-    !candidate.hasTasks &&
+    (!candidate.hasTasks || candidate.ownedTasksAvailable === true) &&
     isEnhancedModelPolicy(candidate.modelVisibleMcpToolResults) &&
     gaps.every((gap) => BRIDGED_GAPS.has(gap)) &&
     candidate.serverIds.every((id) =>
@@ -38,6 +40,7 @@ export function forwardingAdmission(candidate: Candidate): {
         candidate.manager,
         id,
         candidate.modernInputAvailable === true,
+        candidate.ownedTasksAvailable === true,
       ),
     );
   return { delivery: bridged ? "bridge" : undefined, gaps };
