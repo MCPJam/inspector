@@ -1685,7 +1685,12 @@ export function ConformanceRoute() {
     handleDisconnect,
     handleReconnect,
   } = useAppRouteContext();
-  const { serversByName, serversById } = useProjectServers({
+  const {
+    servers: projectServers,
+    serversByName,
+    serversById,
+    isLoading: projectServersLoading,
+  } = useProjectServers({
     isAuthenticated,
     projectId: convexProjectId,
   });
@@ -1763,6 +1768,10 @@ export function ConformanceRoute() {
         serverDefaultsLoaded={defaultsLoaded}
         onSaveServerDefaults={saveDefaults}
         lastRuns={lastRunByServer}
+        projectServerNames={projectServers?.map(
+          (server: { name: string }) => server.name,
+        )}
+        projectServersLoading={projectServersLoading}
         onViewRun={
           convexProjectId
             ? (runId) =>

@@ -4,12 +4,11 @@
  * the hook re-exports everything here, so importers keep one path.
  */
 
+// Types only, so nothing from the top-level entry reaches the bundle; the
+// browser entry does not export the result types.
 import type {
-  MCPAppsCheckId,
-  MCPCheckId,
   MCPConformanceResult,
   MCPAppsConformanceResult,
-  MCPTasksCheckId,
   MCPTasksConformanceResult,
 } from "@mcpjam/sdk";
 // Browser-safe SDK entry: the top-level `@mcpjam/sdk` pulls Node-only
@@ -21,6 +20,9 @@ import {
   MCP_CHECK_IDS,
   MCP_TASKS_CHECK_IDS,
   PROTOCOL_VERSION_ERAS,
+  type MCPAppsCheckId,
+  type MCPCheckId,
+  type MCPTasksCheckId,
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";

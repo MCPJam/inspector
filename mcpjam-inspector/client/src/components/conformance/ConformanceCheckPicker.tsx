@@ -200,12 +200,14 @@ function SuiteChecks({
   return (
     <div className="border-b border-border/60 last:border-b-0">
       <div className="flex items-start gap-3 p-4 transition-colors hover:bg-muted/30">
-        <Checkbox
-          checked={checked}
-          onCheckedChange={() => onSuiteChange(checked !== true)}
-          aria-label={`Run ${title}`}
-          className="mt-0.5"
-        />
+        {/* A 24px target around the box: the label passes its clicks on. */}
+        <label className="-m-1 flex size-6 shrink-0 cursor-pointer items-center justify-center">
+          <Checkbox
+            checked={checked}
+            onCheckedChange={() => onSuiteChange(checked !== true)}
+            aria-label={`Run ${title}`}
+          />
+        </label>
         <button
           type="button"
           onClick={() => setOpen((value) => !value)}

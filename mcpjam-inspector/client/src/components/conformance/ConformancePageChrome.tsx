@@ -3,18 +3,32 @@
  * and server pickers, and the pre-run state.
  */
 
-import type { ReactNode } from "react";
-import { AlertTriangle, Server } from "lucide-react";
+import { useId, useState, type ReactNode } from "react";
+import { AlertTriangle, ChevronDown, Server } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@mcpjam/design-system/select";
 import { MCP_PROTOCOL_VERSIONS } from "@mcpjam/sdk/browser";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@mcpjam/design-system/popover";
+import {
+  ServerPickerServerList,
+  type ServerPickerServerRow,
+} from "@mcpjam/design-system/server-picker-panel";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import {
+  UNKNOWN_CONNECTION_STATUS,
+  getConnectionStatusMeta,
+  isConnectionStatus,
+} from "@/components/connection/server-card-utils";
+import { navigateApp, routePaths } from "@/lib/app-navigation";
 import type { ProtocolVersionPin } from "@/hooks/use-conformance-run";
 import { cn } from "@/lib/utils";
 import { ConformanceScorePreview } from "./ConformanceScorePreview";
@@ -61,7 +75,9 @@ export function ConformanceConnectError({
   onRetry,
   onEdit,
 }: {
-  server: ServerWithName;
+  /** Only a name for a server this session has not loaded yet. */
+  server: Pick<ServerWithName, "name"> &
+    Partial<Pick<ServerWithName, "lastError" | "lastNormalizedError">>;
   needsSignIn: boolean;
   onRetry: () => void;
   onEdit?: () => void;
@@ -253,75 +269,128 @@ export function ProtocolVersionSelect({
 }
 
 /** How a server that is not connected reads in the picker; Run connects it. */
-function connectionNote(server: ServerWithName): string | null {
-  switch (server.connectionStatus) {
-    case "connected":
-      return null;
-    case "connecting":
-    case "oauth-flow":
-      return "Connecting";
-    case "failed":
-      return "Could not connect. Run to retry";
-    default:
-      return "Not connected";
-  }
+/**
+ * A server's row in the picker: the status dot the server cards use, and a
+ * Connect while it is neither connected nor on its way there.
+ */
+function serverRow(
+  name: string,
+  // A project server this session has not loaded is plainly not connected.
+  status: string,
+  onConnect: ((serverName: string) => void) | undefined,
+  connecting: boolean,
+): ServerPickerServerRow {
+  // `isConnectionStatus`, not a cast: a value outside the union is a state
+  // the page cannot read, so it gets no dot and no Connect.
+  const meta = isConnectionStatus(status)
+    ? getConnectionStatusMeta(status)
+    : null;
+  const inFlight =
+    connecting ||
+    status === "connected" ||
+    status === "connecting" ||
+    status === "oauth-flow";
+  return {
+    id: name,
+    name,
+    status: meta
+      ? { label: meta.label, indicatorClassName: meta.indicatorClassName }
+      : UNKNOWN_CONNECTION_STATUS,
+    onConnect:
+      onConnect && meta && !inFlight ? () => onConnect(name) : undefined,
+  };
 }
 
-/** The page's own server picker; replaces the shell's header server tabs. */
 export function ConformanceServerPicker({
   servers,
+  moreServerNames = [],
+  loading = false,
+  connectingNames = [],
   selectedName,
   onSelect,
+  onConnect,
   labelledBy,
 }: {
   servers: ServerWithName[];
+  /** Project servers this session has not loaded, listed as not connected. */
+  moreServerNames?: readonly string[];
+  /** The project's servers are still loading. */
+  loading?: boolean;
+  /** Connects started here and not settled yet: no second Connect. */
+  connectingNames?: readonly string[];
   selectedName: string | null;
   onSelect: (name: string) => void;
-  /** The visible label's id; without one the select names itself. */
+  /** Connects a server from its row. Omit to offer no Connect. */
+  onConnect?: (serverName: string) => void;
+  /** The visible label's id; without one the trigger names itself. */
   labelledBy?: string;
 }) {
-  const value =
-    selectedName && servers.some((server) => server.name === selectedName)
-      ? selectedName
-      : undefined;
-  const placeholder = servers.length === 0 ? "None" : "Select";
+  const [open, setOpen] = useState(false);
+  const valueId = useId();
+  const loaded = new Set(servers.map((server) => server.name));
+  const rows = [
+    ...servers.map((server) =>
+      serverRow(
+        server.name,
+        server.connectionStatus,
+        onConnect,
+        connectingNames.includes(server.name),
+      ),
+    ),
+    ...moreServerNames
+      .filter((name) => !loaded.has(name))
+      .map((name) =>
+        serverRow(
+          name,
+          "disconnected",
+          onConnect,
+          connectingNames.includes(name),
+        ),
+      ),
+  ];
+  const selected = rows.some((row) => row.name === selectedName)
+    ? selectedName
+    : null;
   return (
-    <Select
-      value={value}
-      onValueChange={onSelect}
-      disabled={servers.length === 0}
-    >
-      <SelectTrigger
-        aria-label={labelledBy ? undefined : "Server"}
-        aria-labelledby={labelledBy}
-        className={cn(
-          "h-8 w-auto max-w-[260px] gap-1.5 rounded-full px-2.5 text-xs font-medium shadow-none",
-          value
-            ? "border-border/60 bg-muted/40 hover:bg-muted/60"
-            : "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45",
-        )}
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={labelledBy ? undefined : "Server"}
+          aria-labelledby={labelledBy ? `${labelledBy} ${valueId}` : undefined}
+          className={cn(
+            "flex h-8 max-w-[260px] items-center gap-1.5 rounded-full border px-2.5 text-foreground outline-none transition-colors",
+            "focus-visible:ring-[3px] focus-visible:ring-ring/50",
+            selected
+              ? "border-border/60 bg-muted/40 hover:bg-muted/60"
+              : "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45",
+          )}
+        >
+          <Server className="size-3.5 shrink-0 text-muted-foreground" />
+          <span id={valueId} className="min-w-0 truncate text-xs font-medium">
+            {selected ?? "Select server"}
+          </span>
+          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="max-h-(--radix-popover-content-available-height) w-72 overflow-y-auto p-1.5"
+        align="start"
+        sideOffset={4}
       >
-        <Server className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 truncate">
-          <SelectValue placeholder={placeholder} />
-        </span>
-      </SelectTrigger>
-      <SelectContent>
-        {servers.map((server) => {
-          const note = connectionNote(server);
-          return (
-            // The note goes in `description`, which stays in the menu: the
-            // closed trigger repeats only the item text.
-            <SelectItem
-              key={server.name}
-              value={server.name}
-              description={note ?? undefined}
-            >
-              {server.name}
-            </SelectItem>
-          );
-        })}
-      </SelectContent>
-    </Select>
+        <ServerPickerServerList
+          servers={rows}
+          selectedServerId={selected}
+          catalogKnown={!loading || rows.length > 0}
+          onSelectServer={(name) => {
+            onSelect(name);
+            setOpen(false);
+          }}
+          onAddServer={() => navigateApp(routePaths.servers)}
+          // Conformance has no other way to add one, so it stays under the list.
+          addServer="always"
+        />
+      </PopoverContent>
+    </Popover>
   );
 }

@@ -3,8 +3,9 @@
  * change saves right away; Run's setup steps and one-click Run start from it.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronLeft } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
 import type { ConformanceSelection } from "@/hooks/use-conformance-run";
 import { toast } from "@/lib/toast";
 import {
@@ -31,8 +32,10 @@ export function ConformanceSettings({
   );
   const [touched, setTouched] = useState(false);
   useEffect(() => {
-    if (!touched && defaults) setSelection(defaults);
+    if (!touched) setSelection(defaults ?? {});
   }, [defaults, touched]);
+  // The newest change, so only its save hands the boxes back to the row.
+  const latestChange = useRef<ConformanceSelection | null>(null);
 
   const change = (next: ConformanceSelection) => {
     // Run again and the server list's Run use these as they are: with nothing
@@ -41,28 +44,34 @@ export function ConformanceSettings({
       toast.error("Keep at least one check selected.");
       return;
     }
-    const previous = selection;
+    latestChange.current = next;
     setTouched(true);
     setSelection(next);
-    onSave(next).catch(() => {
-      // Back to what is saved, unless another change came after this one.
-      setSelection((current) => (current === next ? previous : current));
-      toast.error("Could not save the default checks. Try again.");
-    });
+    onSave(next)
+      .catch(() => {
+        toast.error("Could not save the default checks. Try again.");
+      })
+      .finally(() => {
+        // Settled: the saved row is the truth again, so a failed change (or
+        // two in a row) cannot stay on screen while runs use the row. Unless
+        // a newer change is still on its way.
+        if (latestChange.current === next) setTouched(false);
+      });
   };
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="shrink-0 border-b border-border/40 px-8 py-2.5">
         <div className="flex min-w-0 items-center gap-3">
-          <button
-            type="button"
+          <Button
+            variant="link"
+            size="sm"
             onClick={onBack}
-            className="inline-flex items-center gap-1 rounded-sm text-sm font-medium text-primary hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-auto gap-1 px-0 text-sm has-[>svg]:px-0"
           >
             <ChevronLeft className="size-3.5" />
             Back
-          </button>
+          </Button>
           <div className="h-4 w-px shrink-0 bg-border" />
           <h2 className="min-w-0 truncate text-xl font-semibold tracking-tight">
             {serverName} Conformance Settings

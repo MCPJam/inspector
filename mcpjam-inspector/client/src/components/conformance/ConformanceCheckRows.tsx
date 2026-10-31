@@ -348,13 +348,15 @@ export function CatalogRow({
     <div className="border-b border-border/30 last:border-0">
       <div className="flex items-center gap-2 px-1">
         {selectable ? (
-          <Checkbox
-            checked={selected}
-            disabled={!onSelectedChange}
-            onCheckedChange={(value) => onSelectedChange?.(value === true)}
-            aria-label={`Run ${entry.title}`}
-            className="size-3.5"
-          />
+          // A 24px target around the box: the label passes its clicks on.
+          <label className="flex size-6 shrink-0 cursor-pointer items-center justify-center has-[:disabled]:cursor-default">
+            <Checkbox
+              checked={selected}
+              disabled={!onSelectedChange}
+              onCheckedChange={(value) => onSelectedChange?.(value === true)}
+              aria-label={`Run ${entry.title}`}
+            />
+          </label>
         ) : null}
         <button
           type="button"

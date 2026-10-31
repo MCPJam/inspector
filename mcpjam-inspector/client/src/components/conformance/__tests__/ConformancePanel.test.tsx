@@ -203,6 +203,17 @@ async function runToCompletion() {
 
 const RUN_OR_AGAIN = new RegExp(`^(${RUN_LABEL}|Run again)$`);
 
+/** Step 1's server picker, named by its label and then its value. */
+const SERVER_FIELD =
+  /^Choose the server you want to test for protocol conformance/;
+
+/** A server's row in the open picker: its name, not its Connect. */
+function serverRow(name: string) {
+  return within(screen.getByRole("dialog"))
+    .getAllByRole("button", { name: new RegExp(`${name}$`) })
+    .find((button) => !button.getAttribute("aria-label")?.startsWith("Connect"))!;
+}
+
 /** A suite's header row, found by its description (unique, unlike titles). */
 function suiteHeader(suite: keyof typeof SUITE_COPY) {
   const button = screen
@@ -747,11 +758,9 @@ describe("ConformanceTab", () => {
     ).toBeInTheDocument();
     expect(within(steps).getByText("Select what to test")).toBeInTheDocument();
     // The page's server comes preselected, on the negotiated version.
-    expect(
-      screen.getByRole("combobox", {
-        name: "Choose the server you want to test for protocol conformance",
-      }),
-    ).toHaveTextContent("alpha");
+    expect(screen.getByRole("button", { name: SERVER_FIELD })).toHaveTextContent(
+      "alpha",
+    );
     expect(
       screen.getByRole("combobox", { name: "Select protocol version" }),
     ).toHaveTextContent("Protocol · Auto");
@@ -840,7 +849,7 @@ describe("ConformanceTab", () => {
     expect(appsBox).toHaveAttribute("data-state", "checked");
 
     // Leave one Apps check out: the suite reads as partly picked.
-    const appsRow = appsBox.parentElement!.parentElement!;
+    const appsRow = appsBox.closest("label")!.parentElement!.parentElement!;
     const appsChecks = within(appsRow)
       .getAllByRole("checkbox")
       .filter((box) => box !== appsBox);
@@ -919,12 +928,8 @@ describe("ConformanceTab", () => {
     );
 
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    await user.click(
-      screen.getByRole("combobox", {
-        name: "Choose the server you want to test for protocol conformance",
-      }),
-    );
-    await user.click(screen.getByRole("option", { name: "beta" }));
+    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
+    await user.click(serverRow("beta"));
     await user.click(
       screen.getByRole("combobox", { name: "Select protocol version" }),
     );
@@ -1146,9 +1151,11 @@ describe("ConformanceTab", () => {
         "Could not save the default checks. Try again.",
       ),
     );
-    expect(screen.getByRole("checkbox", { name: "Run Tasks" })).toHaveAttribute(
-      "data-state",
-      "checked",
+    // Once the save settles, the boxes show what is saved again.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("checkbox", { name: "Run Tasks" }),
+      ).toHaveAttribute("data-state", "checked"),
     );
 
     // Run again does not use the change that was never saved.
@@ -1328,7 +1335,8 @@ describe("ConformanceTab", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("connects a server that is not connected, then runs", async () => {
+  it("waits in step 1 until the server is connected from the picker", async () => {
+    const user = userEvent.setup();
     setupSuccessfulRunMocks();
     const disconnected = createHttpServer({
       name: "alpha",
@@ -1344,13 +1352,21 @@ describe("ConformanceTab", () => {
       />,
     );
 
-    clickRun();
-    await waitFor(() =>
-      expect(onConnectServer).toHaveBeenCalledWith("alpha", { signIn: false }),
-    );
-    expect(
-      (await screen.findAllByRole("button", { name: /Connecting/ }))[0],
-    ).toBeDisabled();
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+
+    // Picking it says what is missing, in a toast rather than under the field.
+    const error = vi.spyOn(toast, "error");
+    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
+    await user.click(serverRow("alpha"));
+    expect(error).toHaveBeenCalledWith("Connect alpha to continue.");
+    expect(screen.queryByText("Connect alpha to continue.")).toBeNull();
+    error.mockRestore();
+
+    // The picker connects it in place, as in User Testing.
+    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
+    await user.click(screen.getByRole("button", { name: "Connect alpha" }));
+    expect(onConnectServer).toHaveBeenCalledWith("alpha", { signIn: false });
     expect(mockRunProtocol).not.toHaveBeenCalled();
 
     // The connect lands: the page re-renders with the connected server.
@@ -1363,11 +1379,87 @@ describe("ConformanceTab", () => {
         onConnectServer={onConnectServer}
       />,
     );
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+  });
+
+  it("lists the project's servers not loaded yet, and connects one from step 1", async () => {
+    const user = userEvent.setup();
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const onConnectServer = vi.fn(async () => "ready" as const);
+    const props = {
+      onSelectServer: vi.fn(),
+      onConnectServer,
+      projectServerNames: ["alpha", "notion"],
+    };
+    const { rerender } = render(
+      <ConformanceTab server={alpha} servers={[alpha]} {...props} />,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
+    // Listed as not connected, with Connect, like User Testing's picker.
+    await user.click(screen.getByRole("button", { name: "Connect notion" }));
+    expect(onConnectServer).toHaveBeenCalledWith("notion", { signIn: false });
+    expect(screen.getByRole("button", { name: SERVER_FIELD })).toHaveTextContent(
+      "notion",
+    );
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+
+    // Connected: the session loads it, and the steps go on.
+    const notion = createHttpServer({ name: "notion" });
+    rerender(
+      <ConformanceTab server={alpha} servers={[alpha, notion]} {...props} />,
+    );
+    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+  });
+
+  it("connects a server that dropped before Run again, then runs", async () => {
+    setupSuccessfulRunMocks();
+    const connected = createHttpServer({ name: "alpha" });
+    const onConnectServer = vi.fn(async () => "ready" as const);
+    const { rerender } = render(
+      <ConformanceTab
+        server={connected}
+        servers={[connected]}
+        onSelectServer={vi.fn()}
+        onConnectServer={onConnectServer}
+      />,
+    );
+    await runToCompletion();
+    mockRunProtocol.mockClear();
+
+    // Dropped after the first run: Run again connects it before running.
+    const dropped = { ...connected, connectionStatus: "disconnected" as const };
+    rerender(
+      <ConformanceTab
+        server={dropped}
+        servers={[dropped]}
+        onSelectServer={vi.fn()}
+        onConnectServer={onConnectServer}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+    await waitFor(() =>
+      expect(onConnectServer).toHaveBeenCalledWith("alpha", { signIn: false }),
+    );
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+
+    rerender(
+      <ConformanceTab
+        server={connected}
+        servers={[connected]}
+        onSelectServer={vi.fn()}
+        onConnectServer={onConnectServer}
+      />,
+    );
     await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
   });
 
   it("names the server and offers Retry or Edit when the connect fails", async () => {
-    const info = vi.spyOn(toast, "info");
+    const user = userEvent.setup();
     const server = createHttpServer({
       name: "alpha",
       connectionStatus: "failed",
@@ -1385,12 +1477,13 @@ describe("ConformanceTab", () => {
       />,
     );
 
-    clickRun();
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
+    await user.click(screen.getByRole("button", { name: "Connect alpha" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(`Couldn't connect to "alpha"`);
     expect(alert).toHaveTextContent("connect ECONNREFUSED 127.0.0.1:3000");
-    expect(info).not.toHaveBeenCalled();
-    expect(mockRunProtocol).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
 
     fireEvent.click(
       within(alert).getByRole("button", { name: "Edit connection" }),
@@ -1401,10 +1494,10 @@ describe("ConformanceTab", () => {
     expect(onConnectServer).toHaveBeenLastCalledWith("alpha", {
       signIn: false,
     });
-    info.mockRestore();
   });
 
   it("clears the connect alert once the server connects some other way", async () => {
+    const user = userEvent.setup();
     const server = createHttpServer({
       name: "alpha",
       connectionStatus: "failed",
@@ -1418,15 +1511,18 @@ describe("ConformanceTab", () => {
       <ConformanceTab server={server} servers={[server]} {...props} />,
     );
 
-    clickRun();
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
+    await user.click(screen.getByRole("button", { name: "Connect alpha" }));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
 
-    // Fixed from Edit connection, which reconnects without going through Run.
+    // Fixed from Edit connection, which reconnects without the picker.
     const connected = { ...server, connectionStatus: "connected" as const };
     rerender(
       <ConformanceTab server={connected} servers={[connected]} {...props} />,
     );
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
 
     // A later drop is a new state, not the old failure coming back.
     const dropped = { ...server, connectionStatus: "disconnected" as const };
@@ -1437,6 +1533,7 @@ describe("ConformanceTab", () => {
   });
 
   it("asks to sign in again when the connect needs reauthorization", async () => {
+    const user = userEvent.setup();
     const server = createHttpServer({
       name: "alpha",
       connectionStatus: "disconnected",
@@ -1451,7 +1548,9 @@ describe("ConformanceTab", () => {
       />,
     );
 
-    clickRun();
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
+    await user.click(screen.getByRole("button", { name: "Connect alpha" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("It needs you to sign in again.");
 
@@ -1487,28 +1586,43 @@ describe("ConformanceTab", () => {
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 
-  it("shows a server's connection note in the menu, not the closed select", async () => {
+  it("lists servers with their status, and Connect only where it can connect", async () => {
     const user = userEvent.setup();
-    const server = createHttpServer({
+    const alpha = createHttpServer({
       name: "alpha",
       connectionStatus: "disconnected",
     });
+    const beta = createHttpServer({ name: "beta" });
+    const onSelect = vi.fn();
+    const onConnect = vi.fn();
     render(
       <ConformanceServerPicker
-        servers={[server]}
+        servers={[alpha, beta]}
         selectedName="alpha"
-        onSelect={vi.fn()}
+        onSelect={onSelect}
+        onConnect={onConnect}
       />,
     );
 
-    const trigger = screen.getByRole("combobox", { name: "Server" });
+    const trigger = screen.getByRole("button", { name: "Server" });
     expect(trigger).toHaveTextContent("alpha");
-    expect(trigger).not.toHaveTextContent("Not connected");
-
     await user.click(trigger);
-    expect(screen.getByRole("option", { name: /alpha/ })).toHaveTextContent(
-      "Not connected",
-    );
+
+    // Servers only: no groups tab, and Add server stays under the list.
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add server" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Disconnected" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Connected" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Connect beta" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Connect alpha" }));
+    expect(onConnect).toHaveBeenCalledWith("alpha");
+    expect(onSelect).not.toHaveBeenCalled();
+
+    await user.click(serverRow("beta"));
+    expect(onSelect).toHaveBeenCalledWith("beta");
   });
 
   it("lists protocol versions newest first, after Auto", async () => {

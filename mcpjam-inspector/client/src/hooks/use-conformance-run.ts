@@ -22,8 +22,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // Browser-safe SDK entry — the top-level `@mcpjam/sdk` pulls Node-only
 // transitive deps that break the Vite browser bundle.
-import type { MCPAppsCheckId, MCPCheckId, MCPTasksCheckId } from "@mcpjam/sdk";
 import {
+  type MCPAppsCheckId,
+  type MCPCheckId,
+  type MCPTasksCheckId,
   pooledConformanceScore,
   scoreFromAppsResult,
   scoreFromOAuthResult,

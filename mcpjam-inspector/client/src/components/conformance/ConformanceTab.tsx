@@ -62,6 +62,8 @@ export function ConformanceTab({
   onSaveServerDefaults,
   lastRuns,
   onViewRun,
+  projectServerNames,
+  projectServersLoading,
 }: {
   server?: ServerWithName | null;
   persist?: ConformancePersistConfig;
@@ -90,6 +92,10 @@ export function ConformanceTab({
   lastRuns?: Record<string, ConformanceRunListItem>;
   /** Opens a saved run's page. */
   onViewRun?: (runId: string) => void;
+  /** Every server saved in the project, for the setup's picker. */
+  projectServerNames?: readonly string[];
+  /** The project's server list has not arrived yet. */
+  projectServersLoading?: boolean;
 }) {
   // The tab lives in the URL (`?view=history`, which a run's page links back
   // with), so a refresh, Back/Forward and the sidebar's plain `/conformance`
@@ -226,6 +232,8 @@ export function ConformanceTab({
     setupOpen && servers && onSelectServer ? (
       <ConformanceSetup
         servers={servers}
+        projectServerNames={projectServerNames}
+        projectServersLoading={projectServersLoading}
         initialServerName={selectionIsOffered ? (server?.name ?? null) : null}
         initialVersionPin={start?.versionPin ?? "auto"}
         // Saved defaults win, as they do for Run again: they already hold the
@@ -241,6 +249,8 @@ export function ConformanceTab({
         }
         defaultsFor={defaultsFor}
         defaultsLoaded={serverDefaultsLoaded}
+        onConnectServer={onConnectServer}
+        onEditServer={onEditServer}
         onCancel={() => setSetupOpen(false)}
         onRun={(serverName, versionPin, selection) => {
           setSetupOpen(false);
