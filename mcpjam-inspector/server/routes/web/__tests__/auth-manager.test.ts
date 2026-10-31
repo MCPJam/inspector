@@ -1,3 +1,4 @@
+import { taskOwnerScope } from "../../../../shared/task-owner.js";
 import { taskConnectionKey } from "../../../utils/task-connection-key.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -115,6 +116,7 @@ describe("web auth manager batching", () => {
               oauthAccessToken: "wire-token-not-identity",
               oauthCredentialId: "saved-credential",
               oauthCredentialAuthorizedAt: 42,
+              internalLogContext: { userId: "resolved-owner" },
               oauthConnections: [
                 {
                   connectionId: "other-account",
@@ -186,6 +188,22 @@ describe("web auth manager batching", () => {
           })
         : "server-1";
       expect(Object.keys(configs)).toEqual([key]);
+      expect(
+        taskConnectionKey(result.manager, {
+          serverId: "server-1",
+          connectionId,
+          ownerScope: taskOwnerScope("project-1", "resolved-owner"),
+        }),
+      ).toBe(key);
+      expect(() =>
+        taskConnectionKey(result.manager, {
+          serverId: "server-1",
+          connectionId,
+          ownerScope: "different-owner",
+        }),
+      ).toThrow(
+        expect.objectContaining({ code: ErrorCode.FORBIDDEN, status: 403 }),
+      );
       expect(configs[key].baseFetch).toBeTypeOf("function");
       if (connectionId) {
         expect(configs[key].requestInit.headers.get("Authorization")).toBe(

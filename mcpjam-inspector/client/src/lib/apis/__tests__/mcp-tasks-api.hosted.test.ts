@@ -253,6 +253,7 @@ describe("mcp-tasks-api (hosted mode)", () => {
       const target = {
         connectionId: "saved-account",
         wire: "extension" as const,
+        ownerScope: "verified-owner",
       };
       authFetchMock.mockResolvedValue(
         jsonResponse({ wire: "extension", task: {}, tasks: [] }),

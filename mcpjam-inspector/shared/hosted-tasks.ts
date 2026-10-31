@@ -26,6 +26,7 @@ export const HOSTED_TASK_BATCH_MAX = HOSTED_TASK_BATCH_LIMIT;
 export interface TaskRequestTarget {
   connectionId?: string;
   wire?: "legacy" | "extension";
+  ownerScope?: string;
 }
 
 /**

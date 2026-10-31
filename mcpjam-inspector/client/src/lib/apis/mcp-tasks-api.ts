@@ -350,20 +350,22 @@ export interface ProgressEvent {
 // UI hides progress entirely.
 export async function getLatestProgress(
   serverId: string,
+  target?: TaskRequestTarget,
 ): Promise<ProgressEvent | null> {
   return runByMode({
     hosted: async () => null,
-    local: () => getLatestProgressLocal(serverId),
+    local: () => getLatestProgressLocal(serverId, target),
   });
 }
 
 async function getLatestProgressLocal(
   serverId: string,
+  target?: TaskRequestTarget,
 ): Promise<ProgressEvent | null> {
   const res = await authFetch("/api/mcp/tasks/progress", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverId }),
+    body: JSON.stringify({ serverId, ...target }),
   });
 
   let body: any = null;
@@ -380,20 +382,22 @@ async function getLatestProgressLocal(
 // Get all active progress for a server
 export async function getAllProgress(
   serverId: string,
+  target?: TaskRequestTarget,
 ): Promise<ProgressEvent[]> {
   return runByMode({
     hosted: async () => [],
-    local: () => getAllProgressLocal(serverId),
+    local: () => getAllProgressLocal(serverId, target),
   });
 }
 
 async function getAllProgressLocal(
   serverId: string,
+  target?: TaskRequestTarget,
 ): Promise<ProgressEvent[]> {
   const res = await authFetch("/api/mcp/tasks/progress/all", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverId }),
+    body: JSON.stringify({ serverId, ...target }),
   });
 
   let body: any = null;
