@@ -39,7 +39,7 @@ export type GateApproval = {
   }) => Promise<ApprovalAnswer>;
 };
 
-function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+export function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
     const abort = () => reject(signal.reason);
     promise.then(
