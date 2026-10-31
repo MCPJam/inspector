@@ -166,7 +166,9 @@ describe("PosthogUtils", () => {
 
     const opts = getPostHogOptions() as Record<string, unknown>;
 
-    expect(opts.opt_out_capturing_by_default).toBeUndefined();
+    // False, not absent: the consent getter answers for a visitor outside
+    // the consent regions (lib/analytics-consent.ts).
+    expect(opts.opt_out_capturing_by_default).toBe(false);
   });
 
   describe("replay + exception capture surface matrix", () => {
