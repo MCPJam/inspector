@@ -173,10 +173,16 @@ export function PersistConformanceRun({
   persist,
   server,
   snapshot,
+  onSavedRun,
 }: {
   persist: ConformancePersistConfig;
   server: ServerWithName;
   snapshot: RunSnapshot;
+  /**
+   * The saved run's id once it is finalized, and null when a new run starts,
+   * so the live view can offer Share for the run it just saved.
+   */
+  onSavedRun?: (runId: string | null) => void;
 }) {
   const startRun = useMutation("conformanceRuns:startRun" as any);
   const heartbeat = useMutation("conformanceRuns:heartbeat" as any);
@@ -184,6 +190,8 @@ export function PersistConformanceRun({
   const cancelRun = useMutation(cancelRunMutation);
   const cancelRunRef = useRef(cancelRun);
   cancelRunRef.current = cancelRun;
+  const onSavedRunRef = useRef(onSavedRun);
+  onSavedRunRef.current = onSavedRun;
   const upsertReport = useAction("conformanceRuns:upsertReportAction" as any);
 
   const [runId, setRunId] = useState<string | null>(null);
@@ -230,6 +238,7 @@ export function PersistConformanceRun({
     startedVersionRef.current = runVersion;
     runIdRef.current = null;
     setRunId(null);
+    onSavedRunRef.current?.(null);
     uploadedRef.current = new Set();
     pendingUploadsRef.current = new Map();
     suiteUploadsRef.current = new Map();
@@ -388,17 +397,21 @@ export function PersistConformanceRun({
     void Promise.allSettled(uploads).then(() => {
       if (finalizedRef.current) return;
       finalizedRef.current = true;
-      void finalizeRun({ runId }).catch(() => {
-        // The live results stay on screen, but the run is still open. Mark
-        // it unfinalized so leaving the page cancels it, or cancel it now if
-        // the page left while finalizing.
-        if (runIdRef.current !== runId) return;
-        if (disposedRef.current) {
-          cancelRunQuietly(cancelRunRef.current, runId);
-        } else {
-          finalizedRef.current = false;
-        }
-      });
+      void finalizeRun({ runId })
+        .then(() => {
+          if (runIdRef.current === runId) onSavedRunRef.current?.(runId);
+        })
+        .catch(() => {
+          // The live results stay on screen, but the run is still open. Mark
+          // it unfinalized so leaving the page cancels it, or cancel it now if
+          // the page left while finalizing.
+          if (runIdRef.current !== runId) return;
+          if (disposedRef.current) {
+            cancelRunQuietly(cancelRunRef.current, runId);
+          } else {
+            finalizedRef.current = false;
+          }
+        });
     });
   }, [finalizeRun, isRunning, runVersion, server, runId]);
 

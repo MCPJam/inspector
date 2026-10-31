@@ -78,11 +78,8 @@ import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconci
 import { TracingTab } from "./components/TracingTab";
 import { WebmcpInspectorTab } from "./components/webmcp-inspector/WebmcpInspectorTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
-import {
-  ConformanceTab,
-  type ConformanceConnectServer,
-} from "./components/conformance/ConformancePanel";
-import { AddServerModal } from "./components/connection/AddServerModal";
+import type { ConformanceConnectServer } from "./components/conformance/ConformancePanel";
+import { ConformanceTab } from "./components/conformance/ConformanceTab";
 import { ServerDetailModal } from "./components/connection/ServerDetailModal";
 import {
   ConformanceHistory,
@@ -239,6 +236,7 @@ import type {
   PlaygroundServerSelectorProps,
 } from "./components/ActiveServerSelector";
 import { useProjectServers } from "./hooks/useViews";
+import { useConformanceServerData } from "./hooks/use-conformance-server-data";
 import { HostedShellGate } from "./components/hosted/HostedShellGate";
 import { resolveHostedShellGateState } from "./components/hosted/hosted-shell-gate-state";
 import {
@@ -388,6 +386,7 @@ import {
 } from "./components/hosts/host-verify-deep-link";
 import type { HostFocusTabId } from "./components/hosts/redesigned/types";
 import {
+  buildConformanceRunPath,
   buildHostsPath,
   buildOrganizationPath,
   buildOrganizationSwitchTarget,
@@ -1679,20 +1678,29 @@ export function ConformanceRoute() {
     appState,
     selectedServerEntry,
     setSelectedServer,
-    activeProject,
     convexProjectId,
     isAuthenticated,
     ensureServersReady,
-    handleConnect,
     handleUpdate,
     handleDisconnect,
     handleReconnect,
   } = useAppRouteContext();
-  const { serversByName, serversById } = useProjectServers({
+  const {
+    servers: projectServers,
+    serversByName,
+    serversById,
+    isLoading: projectServersLoading,
+  } = useProjectServers({
     isAuthenticated,
     projectId: convexProjectId,
   });
-  const [isAddingServer, setIsAddingServer] = useState(false);
+  const navigate = useAppNavigate();
+  const { defaultsByServer, defaultsLoaded, lastRunByServer, saveDefaults } =
+    useConformanceServerData({
+      projectId: convexProjectId,
+      serversById,
+      serversByName,
+    });
   // The name the edit form is open on, plus the server as it was then: a
   // rename drops the old name from `appState.servers` before the new one
   // lands, and without the snapshot the form would close mid-save.
@@ -1741,7 +1749,6 @@ export function ConformanceRoute() {
         servers={servers}
         onSelectServer={setSelectedServer}
         onConnectServer={connectServer}
-        onAddServer={() => setIsAddingServer(true)}
         onEditServer={editServer}
         persist={
           convexProjectId
@@ -1757,23 +1764,22 @@ export function ConformanceRoute() {
             />
           ) : undefined
         }
-      />
-      {/* Added and edited here, not on Connect: the page keeps its place. */}
-      <AddServerModal
-        isOpen={isAddingServer}
-        onClose={() => setIsAddingServer(false)}
-        onSubmit={(formData) => {
-          track("connecting_server", { location: "conformance" });
-          handleConnect(formData);
-          setIsAddingServer(false);
-        }}
-        // Same project defaults as the Servers tab's form. No `projectId`:
-        // its protocol-version pin is only persisted by the Servers tab.
-        projectClientConfig={activeProject?.clientConfig}
-        projectXaaDefaultIdentity={
-          activeProject?.xaaTestDefaults?.defaultIdentity ?? null
+        serverDefaults={defaultsByServer}
+        serverDefaultsLoaded={defaultsLoaded}
+        onSaveServerDefaults={saveDefaults}
+        lastRuns={lastRunByServer}
+        projectServerNames={projectServers?.map(
+          (server: { name: string }) => server.name,
+        )}
+        projectServersLoading={projectServersLoading}
+        onViewRun={
+          convexProjectId
+            ? (runId) =>
+                navigate(buildConformanceRunPath(runId, convexProjectId))
+            : undefined
         }
       />
+      {/* Edited here, not on Connect: the page keeps its place. */}
       {editingServer ? (
         <ServerDetailModal
           isOpen
