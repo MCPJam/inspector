@@ -31,12 +31,7 @@ export const MCPJAM_CLOUD: Readonly<DeploymentAddress> = Object.freeze({
 
 /** Where the chosen server came from. `managed` means locked by IT. */
 export type DeploymentSource =
-  | "managed"
-  | "flag"
-  | "env"
-  | "oauth"
-  | "managed-default"
-  | "default";
+  "managed" | "flag" | "env" | "oauth" | "managed-default" | "default";
 
 export type DeploymentErrorCode =
   | "API_URL_INVALID"

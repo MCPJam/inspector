@@ -48,11 +48,11 @@ type Row = {
   name: string;
   flag?: string;
   env?: NodeJS.ProcessEnv;
-  login?: "none-saved" | "for-b" | "for-b-spelled" | "unrecorded" | "unparsable";
+  login?:
+    "none-saved" | "for-b" | "for-b-spelled" | "unrecorded" | "unparsable";
   credential: DeploymentCredential;
   expect:
-    | { baseUrl: string; source: string }
-    | { code: string; message?: RegExp };
+    { baseUrl: string; source: string } | { code: string; message?: RegExp };
 };
 
 const rows: Row[] = [
@@ -87,7 +87,10 @@ const rows: Row[] = [
   },
   {
     name: "both variables, one server spelled two ways",
-    env: { MCPJAM_API_URL: `${A}/api/v1/`, MCPJAM_BASE_URL: "HTTPS://A.EXAMPLE.TEST:443" },
+    env: {
+      MCPJAM_API_URL: `${A}/api/v1/`,
+      MCPJAM_BASE_URL: "HTTPS://A.EXAMPLE.TEST:443",
+    },
     credential: "api-key",
     expect: { baseUrl: A, source: "env" },
   },
@@ -95,7 +98,11 @@ const rows: Row[] = [
     name: "both variables, two servers",
     env: { MCPJAM_API_URL: `${A}/api/v1`, MCPJAM_BASE_URL: B },
     credential: "api-key",
-    expect: { code: "DEPLOYMENT_CONFLICT", message: /MCPJAM_API_URL .* and MCPJAM_BASE_URL .* name different MCPJam servers/ },
+    expect: {
+      code: "DEPLOYMENT_CONFLICT",
+      message:
+        /MCPJAM_API_URL .* and MCPJAM_BASE_URL .* name different MCPJam servers/,
+    },
   },
   {
     name: "two servers in the variables stop even when a flag is given",
@@ -124,7 +131,8 @@ const rows: Row[] = [
     credential: "oauth",
     expect: {
       code: "LOGIN_DEPLOYMENT_MISMATCH",
-      message: /^Your saved login is for https:\/\/b\.example\.test\/api\/v1; this command targets https:\/\/a\.example\.test\/api\/v1\. Run `mcpjam cloud login --api-url https:\/\/a\.example\.test\/api\/v1`/,
+      message:
+        /^Your saved login is for https:\/\/b\.example\.test\/api\/v1; this command targets https:\/\/a\.example\.test\/api\/v1\. Run `mcpjam cloud login --api-url https:\/\/a\.example\.test\/api\/v1`/,
     },
   },
   {
@@ -132,7 +140,10 @@ const rows: Row[] = [
     env: { MCPJAM_API_URL: `${A}/api/v1` },
     login: "for-b",
     credential: "oauth",
-    expect: { code: "LOGIN_DEPLOYMENT_MISMATCH", message: /Run `mcpjam cloud login` to sign in there/ },
+    expect: {
+      code: "LOGIN_DEPLOYMENT_MISMATCH",
+      message: /Run `mcpjam cloud login` to sign in there/,
+    },
   },
   {
     name: "saved login for B, flag for B spelled differently",
@@ -197,13 +208,20 @@ const rows: Row[] = [
     name: "an unparsable flag",
     flag: "staging.example.test",
     credential: "api-key",
-    expect: { code: "API_URL_INVALID", message: /^Invalid --api-url value\. Expected a full URL like https:\/\/app\.mcpjam\.com\/api\/v1\.$/ },
+    expect: {
+      code: "API_URL_INVALID",
+      message:
+        /^Invalid --api-url value\. Expected a full URL like https:\/\/app\.mcpjam\.com\/api\/v1\.$/,
+    },
   },
   {
     name: "a non-http variable",
     env: { MCPJAM_BASE_URL: "ftp://a.example.test" },
     credential: "api-key",
-    expect: { code: "API_URL_INVALID", message: /^Invalid MCPJAM_BASE_URL value .* Expected an http\(s\) URL/ },
+    expect: {
+      code: "API_URL_INVALID",
+      message: /^Invalid MCPJAM_BASE_URL value .* Expected an http\(s\) URL/,
+    },
   },
 ];
 
