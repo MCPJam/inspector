@@ -427,6 +427,7 @@ describe.each(["local", "hosted"] as const)(
         turnTimeout?: boolean;
         capacity?: boolean;
         capacityAbort?: boolean;
+        modelFree?: boolean;
       } = {},
     ) {
       vi.useFakeTimers();
@@ -446,7 +447,16 @@ describe.each(["local", "hosted"] as const)(
         _id: `iter-${index + 1}`,
         testCaseId: "case-1",
         iterationNumber: index + 1,
-        testCaseSnapshot: snapshot,
+        // The backend files a case with no prompt under a display-only
+        // sentinel model, whatever model the runner's config carries.
+        testCaseSnapshot: options.modelFree
+          ? {
+              title: "Case",
+              query: "",
+              model: "widget-probe",
+              provider: "none",
+            }
+          : snapshot,
         status: "pending",
         result: "pending",
       })) as Array<Record<string, any>>;
@@ -573,7 +583,18 @@ describe.each(["local", "hosted"] as const)(
               testCaseId: "case-1",
               expectedToolCalls: [],
               promptTurns: [
-                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+                options.modelFree
+                  ? {
+                      id: "turn-1",
+                      prompt: "",
+                      expectedToolCalls: [],
+                      pinnedToolCall: {
+                        serverName: "srv-1",
+                        toolName: "show_map",
+                        arguments: {},
+                      },
+                    }
+                  : { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
               ],
             },
           ],
@@ -644,6 +665,16 @@ describe.each(["local", "hosted"] as const)(
           summary: expect.any(Object),
         }),
       );
+    });
+
+    it("times out the row of a case with no prompt, whose snapshot carries the sentinel model", async () => {
+      const { rows } = await startRun({ modelFree: true });
+      expect(rows.map((row) => row.status)).toEqual([
+        "completed",
+        "timed_out",
+        "completed",
+      ]);
+      expect(rows[1].metadata.stopReason).toBe("iteration_timeout");
     });
 
     it("restores abort-the-run behavior under the compatibility switch", async () => {

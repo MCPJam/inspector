@@ -134,6 +134,19 @@ test("without the Inspector server only the SDK catalog is written", () => {
   }
 });
 
+test("the Inspector catalog names dependency errors and keeps the capturing event as a fact", () => {
+  const root = fixture();
+  try {
+    const outputs = buildTelemetryCatalogs({ root });
+    assert.ok(inspector(outputs).errors.includes("McpError"));
+    assert.ok(JSON.parse(outputs[OUTPUTS.browser]).errors.includes("AI_APICallError"));
+    assert.deepEqual(inspector(outputs).diagnosticFields.event, ["probe.request"]);
+    assert.ok(!JSON.parse(outputs[OUTPUTS.sdk]).errors.includes("McpError"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a second scan in one process sees edited, renamed and deleted routes", () => {
   const root = fixture();
   try {

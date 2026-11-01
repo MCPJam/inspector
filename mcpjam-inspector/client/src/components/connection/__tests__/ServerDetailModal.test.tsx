@@ -694,6 +694,38 @@ describe("ServerDetailModal", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("summarizes a bearer-token server's auth and links to Config", async () => {
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({
+          authMethod: "bearer",
+          config: {
+            url: "https://example.com/mcp",
+            requestInit: { headers: { Authorization: "Bearer secret-token" } },
+          },
+        })}
+        defaultTab="authorization"
+      />
+    );
+
+    const authPanel = screen
+      .getAllByRole("tabpanel", { hidden: true })
+      .find((panel) => panel.getAttribute("data-state") === "active");
+    expect(within(authPanel!).getByText("Bearer Token")).toBeInTheDocument();
+    expect(within(authPanel!).getByText("****************")).toBeInTheDocument();
+    expect(within(authPanel!).queryByText("secret-token")).toBeNull();
+
+    fireEvent.click(
+      within(authPanel!).getByRole("button", { name: "Edit in Config" })
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("tab", { name: "Configuration" })
+      ).toHaveAttribute("data-state", "active")
+    );
+  });
+
   it("overlays the auth panel instead of stacking under the config panel", () => {
     // The configuration panel is force-mounted and stays `invisible` while
     // inactive, which still occupies its full height. A sibling panel in

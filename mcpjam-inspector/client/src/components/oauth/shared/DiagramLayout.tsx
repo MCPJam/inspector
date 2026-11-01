@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useIsMobile } from "@/hooks/use-mobile";
 import {
   Background,
   Controls,
@@ -33,23 +34,46 @@ export const DiagramLayout = ({
   focusedStep,
 }: DiagramLayoutProps) => {
   const reactFlowInstance = useReactFlow();
+  const isMobile = useIsMobile();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const lastCentered = useRef<string | null>(null);
+  const [hasDimensions, setHasDimensions] = useState(false);
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const measure = () =>
+      setHasDimensions(container.clientWidth > 0 && container.clientHeight > 0);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
 
   // Auto-zoom to current step
   useEffect(() => {
-    if (!reactFlowInstance) {
+    if (!reactFlowInstance || !hasDimensions) {
       return;
     }
 
+    // Showing an unchanged diagram must preserve the user's pan and zoom.
+    const focusKey = JSON.stringify([currentStep, focusedStep]);
+    if (lastCentered.current === focusKey) return;
     // Small delay to ensure nodes are rendered
     const timer = setTimeout(() => {
+      const container = containerRef.current;
+      if (!container?.clientWidth || !container.clientHeight) return;
+      // A mobile pane can hide before d3 starts its zoom transition. Center
+      // immediately there so an animation never reads a zero-sized extent.
+      const duration = isMobile ? 0 : 800;
       // If reset to idle, zoom back to the top
       if (currentStep === "idle") {
         // Zoom to the top of the diagram
         // Center around the middle actors (Client and MCP Server)
         reactFlowInstance.setCenter(550, 200, {
           zoom: 0.8,
-          duration: 800,
+          duration,
         });
+        lastCentered.current = focusKey;
         return;
       }
 
@@ -95,17 +119,26 @@ export const DiagramLayout = ({
           // Zoom into the current step with animation
           reactFlowInstance.setCenter(centerX, centerY, {
             zoom: 1.2,
-            duration: 800,
+            duration,
           });
+          lastCentered.current = focusKey;
         }
       }
     }, 100);
 
     return () => clearTimeout(timer);
-  }, [currentStep, focusedStep, edges, nodes, reactFlowInstance]);
+  }, [
+    currentStep,
+    focusedStep,
+    edges,
+    nodes,
+    reactFlowInstance,
+    hasDimensions,
+    isMobile,
+  ]);
 
   return (
-    <div className="w-full h-full">
+    <div ref={containerRef} className="w-full h-full">
       <ReactFlow
         nodes={nodes}
         edges={edges}

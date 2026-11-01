@@ -59,6 +59,9 @@ export function shouldSkipGuestSession(
   hostname: string | undefined = typeof window === "undefined"
     ? undefined
     : window.location.hostname,
+  pathname = typeof window === "undefined" ? "" : window.location.pathname,
 ): boolean {
+  // Redemption requires a signed-in account; minting a guest can block its public sign-in modal.
+  if (pathname.replace(/\/+$/, "") === "/redeem") return true;
   return Boolean(hostname) && isCaniuseLandingHost(hostname as string);
 }
