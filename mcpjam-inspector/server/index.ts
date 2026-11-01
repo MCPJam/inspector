@@ -174,6 +174,7 @@ import {
   assertSandboxIsolation,
 } from "./middleware/sandbox-host-partition";
 import { assertHostedFirstPartyMcpUrls } from "./utils/hosted-mcp-base-fetch.js";
+import { loadPrivateEgressAllowlist } from "./utils/hosted-egress-guard.js";
 import webRoutes from "./routes/web/index";
 import internalServerConnections from "./routes/internal/server-connections.js";
 import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
@@ -509,6 +510,9 @@ if (HOSTED_MODE) {
   // mid-turn, one turn at a time, with the reason buried in a per-request
   // error. This says it once, names the variable, and stops.
   assertHostedFirstPartyMcpUrls();
+  // Parsed now rather than on the first private dial, so an invalid
+  // MCPJAM_PRIVATE_EGRESS_ALLOWLIST is reported at boot, not mid-request.
+  loadPrivateEgressAllowlist();
 }
 
 // 5. Session authentication (blocks unauthorized API requests)

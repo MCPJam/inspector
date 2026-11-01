@@ -37,6 +37,7 @@ import { HOSTED_MODE } from "../config.js";
 import {
   BlockedEgressTargetError,
   EgressResolutionError,
+  hostedPrivateEgressAdmission,
 } from "./hosted-egress-guard.js";
 
 export interface PinnedFetchOptions {
@@ -533,6 +534,10 @@ export function createStreamingPinnedFetch(
 
   const streamingFetch = createPinnedStreamingFetch({
     allowLoopback: options.allowLoopback,
+    // The operator's private allowlist, through the guard's one decision: the
+    // transport asks it on every hop, at pin time, about the addresses it is
+    // about to dial. Absent when nothing is listed.
+    admitPrivateDestination: hostedPrivateEgressAdmission(),
     chainTimeoutMs: options.chainTimeoutMs ?? options.timeoutMs,
     bodyIdleTimeoutMs: options.bodyIdleTimeoutMs,
     maxResponseBytes: options.maxResponseBytes,
