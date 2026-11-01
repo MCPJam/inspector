@@ -323,7 +323,7 @@ export async function prepareManagedConnections(args: {
     qualifiedForwardingRuntime(getHarnessAdapter(resolvedExecution.harness))?.ownedInput === true &&
     rawBody.hostedHarnessInputVersion === HOSTED_HARNESS_INPUT_VERSION &&
     process.env.HARNESS_NATIVE_FORWARDING === "true" &&
-    turnRail === "hosted" &&
+    (turnRail === "hosted" || turnRail === "org") &&
     typeof inputHostId === "string" && inputHostId.length > 0 && !scenarioId && !rawBody.harnessExecutionTarget
       ? createHarnessInputHost({
           allowedServerIds: new Set(effectiveServerIds),

@@ -1,5 +1,6 @@
 import { prepareCodexHome, type CodexHomeInput } from "./codex-home.js";
 import { refreshNativeMcpServers } from "../shared/native-mcp.js";
+import { waitForNativeMcpServers } from "./native-mcp-ready.js";
 
 export type NativeMcpRuntime = {
   request(method: string, params?: unknown): Promise<unknown>;
@@ -8,6 +9,7 @@ export type NativeMcpRuntime = {
 export type NativeMcpRefreshState = {
   runtime: NativeMcpRuntime;
   home: CodexHomeInput;
+  threadId?: string;
 };
 
 /** Serialize credential refreshes without starting or resuming a model turn. */
@@ -31,7 +33,12 @@ export function createNativeMcpRefresher(options: {
         const next = { ...state.home, nativeMcpServers: servers };
         try {
           prepareCodexHome(next);
-          await state.runtime.request("config/mcpServer/reload", {});
+          await waitForNativeMcpServers({
+            runtime: state.runtime,
+            threadId: state.threadId,
+            serverNames: Object.keys(servers),
+            reload: true,
+          });
           options.commit(next);
         } catch (error) {
           try {

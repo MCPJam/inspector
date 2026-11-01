@@ -74,13 +74,17 @@ describe("managed connection ownership", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   it.each([
-    { harness: "claude-code" as const, expected: true, resolved: false },
-    { harness: "codex" as const, expected: true, resolved: false },
-    { harness: "cursor" as const, expected: false, resolved: false },
-    { harness: "codex" as const, expected: true, resolved: true },
+    { harness: "claude-code" as const, expected: true, resolved: false, rail: "hosted" as const },
+    { harness: "codex" as const, expected: true, resolved: false, rail: "hosted" as const },
+    { harness: "cursor" as const, expected: false, resolved: false, rail: "hosted" as const },
+    { harness: "codex" as const, expected: true, resolved: true, rail: "hosted" as const },
+    { harness: "claude-code" as const, expected: true, resolved: false, rail: "org" as const },
+    { harness: "codex" as const, expected: true, resolved: false, rail: "org" as const },
+    { harness: "codex" as const, expected: false, resolved: false, rail: "own-key" as const },
+    { harness: "codex" as const, expected: false, resolved: false, rail: "local" as const },
   ])(
-    "installs owned input for $harness (saved host: $resolved)",
-    async ({ harness, expected, resolved }) => {
+    "installs owned input for $harness on $rail (saved host: $resolved)",
+    async ({ harness, expected, resolved, rail }) => {
       vi.stubEnv("HARNESS_NATIVE_FORWARDING", "true");
       const resources = new TurnResources((error) => {
         throw error;
@@ -95,6 +99,7 @@ describe("managed connection ownership", () => {
           resources,
           setup: {
             ...setup,
+            turnRail: rail,
             hostId: resolved ? undefined : "host",
             isHostAuthoritative: resolved,
             ...(resolved

@@ -104,6 +104,7 @@ type SessionRow = {
   resumeConfig?: {
     modelId?: string;
     toolMode?: "read_only" | "auto";
+    requireNativeToolDiscovery?: boolean;
     environmentId?: string;
     serverIds?: string[];
     systemPrompt?: string;

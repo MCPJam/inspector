@@ -7,7 +7,37 @@
       "familyPattern": "^anthropic/claude-(haiku|sonnet|opus)-\\d+(\\.\\d+)?$",
       "status": "supported",
       "evidence": "Claude Code accepts the haiku/sonnet/opus family ids natively (toClaudeCodeModel maps them to CLI model names).",
-      "observedAt": "2026-09-25"
+      "observedAt": "2026-09-25",
+      "nativeDiscovery": [
+        {
+          "runtimeVersion": "2.1.245",
+          "modelId": "anthropic/claude-haiku-4.5",
+          "delivery": "forwarded-bridge",
+          "venue": "hosted",
+          "surface": "chat",
+          "funding": "platform",
+          "upstreamProfile": "gateway",
+          "status": "supported",
+          "evidence": "HARN-13 signed-in development: small and 163-tool catalogs, native search/reference expansion, one approved call per turn and a different tool on the following turn. https://app.kestral.ai/workspace/yhNILB2/documents/1U5pmXZo",
+          "observedAt": "2026-10-31",
+          "adapterVersion": "tool-search-auto-v1",
+          "protocolVersion": "2026-07-28"
+        },
+        {
+          "runtimeVersion": "2.1.245",
+          "modelId": "anthropic/claude-haiku-4.5",
+          "delivery": "host-tools",
+          "venue": "hosted",
+          "surface": "chat",
+          "funding": "platform",
+          "upstreamProfile": "gateway",
+          "status": "supported",
+          "evidence": "HARN-13 signed-in development, retained MCPJam host-tool delivery: required discovery enabled; small and 163-tool catalogs; native search/reference expansion in the large catalog; exact fixture results across two turns; hidden App tools absent from native references. https://app.kestral.ai/workspace/yhNILB2/documents/1U5pmXZo",
+          "observedAt": "2026-11-01",
+          "adapterVersion": "tool-search-auto-v1",
+          "protocolVersion": "2026-07-28"
+        }
+      ]
     },
     {
       "harness": "claude-code",
@@ -63,7 +93,37 @@
       "familyPattern": "^openai/gpt-5",
       "status": "supported",
       "evidence": "Codex runs the OpenAI gpt-5 family natively (toCodexModel).",
-      "observedAt": "2026-09-25"
+      "observedAt": "2026-09-25",
+      "nativeDiscovery": [
+        {
+          "runtimeVersion": "0.163.0",
+          "modelId": "openai/gpt-5.5",
+          "delivery": "forwarded-bridge",
+          "venue": "hosted",
+          "surface": "chat",
+          "funding": "platform",
+          "upstreamProfile": "gateway",
+          "status": "supported",
+          "evidence": "HARN-13 signed-in development: small and 163-tool catalogs, native search/reference expansion, one approved call per turn and a different tool on the following turn. https://app.kestral.ai/workspace/yhNILB2/documents/1U5pmXZo",
+          "observedAt": "2026-10-31",
+          "adapterVersion": "native-mcp-v1",
+          "protocolVersion": "2026-07-28"
+        },
+        {
+          "runtimeVersion": "0.163.0",
+          "modelId": "openai/gpt-5.5",
+          "delivery": "host-tools",
+          "venue": "hosted",
+          "surface": "chat",
+          "funding": "platform",
+          "upstreamProfile": "gateway",
+          "status": "supported",
+          "evidence": "HARN-13 signed-in development, retained MCPJam host-tool delivery: required discovery enabled; small and 163-tool catalogs; native search/reference expansion in the large catalog; exact fixture results across two turns; hidden App tools absent from native references. https://app.kestral.ai/workspace/yhNILB2/documents/1U5pmXZo",
+          "observedAt": "2026-11-01",
+          "adapterVersion": "native-mcp-v1",
+          "protocolVersion": "2026-07-28"
+        }
+      ]
     },
     {
       "harness": "codex",

@@ -1,16 +1,18 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { prepareCodexHome, type CodexHomeInput } from "../bridge/codex-home.js";
 import {
   createNativeMcpRefresher,
   type NativeMcpRefreshState,
+  type NativeMcpRuntime,
 } from "../bridge/native-mcp-refresh.js";
 
 vi.mock("../bridge/codex-home.js", () => ({ prepareCodexHome: vi.fn() }));
 beforeEach(() => vi.resetAllMocks());
+afterEach(() => vi.restoreAllMocks());
 
-function fixture() {
+function fixture(threadId?: string) {
   const runtime = {
-    request: vi.fn(async () => undefined),
+    request: vi.fn<NativeMcpRuntime["request"]>(async () => undefined),
     kill: vi.fn(async () => undefined),
   };
   const server = {
@@ -21,6 +23,7 @@ function fixture() {
   };
   let state: NativeMcpRefreshState | undefined = {
     runtime,
+    threadId,
     home: {
       codexHome: "/unused",
       baseUrl: "https://model.example",
@@ -54,6 +57,49 @@ function fixture() {
     state: () => state,
   };
 }
+
+it("confirms the refreshed thread's inventory before acknowledging", async () => {
+  const f = fixture("thread");
+  f.runtime.request.mockImplementation(async (method) =>
+    method === "mcpServerStatus/list"
+      ? {
+          data: [
+            {
+              name: "server",
+              runtimeStatus: "connected",
+              tools: {},
+              toolsError: null,
+            },
+          ],
+        }
+      : undefined,
+  );
+  await f.controller.refresh(f.candidate("fresh"));
+  expect(f.runtime.request.mock.calls).toEqual([
+    ["config/mcpServer/reload", {}],
+    [
+      "mcpServerStatus/list",
+      { threadId: "thread", serverName: "server", detail: "toolsAndAuthOnly" },
+    ],
+  ]);
+  expect(f.runtime.kill).not.toHaveBeenCalled();
+});
+
+it("retires and releases the queue when the reload request never resolves", async () => {
+  const f = fixture("thread");
+  const deadline = new AbortController();
+  vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+  f.runtime.request.mockImplementation(() => new Promise(() => {}));
+  const pending = f.controller.refresh(f.candidate("fresh"));
+  const failed = expect(pending).rejects.toThrow("did not become ready");
+  await Promise.resolve();
+  deadline.abort();
+  await failed;
+  await f.controller.settled();
+  expect(f.runtime.kill).toHaveBeenCalledOnce();
+  expect(f.invalidate).toHaveBeenCalledOnce();
+  expect(f.state()).toBeUndefined();
+});
 
 it("reloads only the native MCP configuration on the same runtime", async () => {
   const f = fixture();
@@ -116,7 +162,7 @@ it.each(["write", "reload"])(
       });
     else f.runtime.request.mockRejectedValueOnce(Error("reload failed"));
     await expect(f.controller.refresh(f.candidate("new"))).rejects.toThrow(
-      `${failure} failed`,
+      failure === "write" ? "write failed" : "did not become ready",
     );
     expect(f.runtime.kill).toHaveBeenCalledOnce();
     expect(f.invalidate).toHaveBeenCalledOnce();

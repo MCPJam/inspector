@@ -8,6 +8,7 @@ import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import type { NativeMessage } from "./native-wire.js";
 import type { Settlement } from "./execution-control.js";
 import { enhancedModelOutput } from "./enhanced-model-output.js";
+import { enhancedServerCapabilityGaps } from "./server-capabilities.js";
 
 export async function enhancedToolPolicy(
   manager: MCPClientManager,
@@ -55,6 +56,13 @@ export async function enhancedMcpResponse(args: {
     throw new Error(
       "The enhanced App connection requires the stateless MCP protocol.",
     );
+  if (enhancedServerCapabilityGaps({
+    manager: args.manager,
+    serverIds: [args.serverId],
+    ownedTasksAvailable: args.tasks !== undefined,
+  }).length) {
+    throw new Error("The server capabilities no longer match a qualified enhanced connection.");
+  }
   if (!args.message) return new Response(null, { status: 405 });
   const params = args.message.params;
   const response: unknown =

@@ -1,3 +1,4 @@
+import { harnessToolOrigin } from "@/shared/tool-origin";
 import { qualifiedForwardingRuntime } from "../forwarding/runtime-contract.js";
 import { describe, expect, it, vi } from "vitest";
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
@@ -1008,6 +1009,16 @@ function addUsage(total, usage) {
     expect(() => getHarnessAdapter("pi")).toThrow(/Unsupported harness/);
   });
 
+  it("recognizes Claude's actual native ToolSearch without relabelling an MCP tool", () => {
+    const nativeTools = getHarnessAdapter("claude-code").listBuiltinTools();
+    const call = {
+      rawToolName: "ToolSearch", toolName: "ToolSearch",
+      hostTools: {}, nativeTools,
+    };
+    expect(harnessToolOrigin(call)).toBe("native");
+    expect(harnessToolOrigin({ ...call, serverId: "server" })).toBe("mcp");
+  });
+
   describe("native MCP delivery", () => {
     const mcpJson = {
       mcpServers: {
@@ -1037,6 +1048,23 @@ function addUsage(total, usage) {
       adapter.createHarness({ modelId: "anthropic/claude-haiku-4.5", auth: {}, mcpJson });
       expect(createClaudeCodeHarness).not.toHaveBeenLastCalledWith(expect.objectContaining({
         env: expect.objectContaining({ MCPJAM_HARNESS_ELICITATION: "1" }),
+      }));
+    });
+
+    it("enables threshold-based native search for forwarding or a qualified request", () => {
+      const adapter = getHarnessAdapter("claude-code");
+      adapter.createHarness({ modelId: "anthropic/claude-haiku-4.5", auth: {}, mcpJson, forwardingMcpJson: mcpJson });
+      expect(createClaudeCodeHarness).toHaveBeenLastCalledWith(expect.objectContaining({
+        env: expect.objectContaining({ ENABLE_TOOL_SEARCH: "auto" }),
+      }));
+      expect(adapter.forwardingRuntime?.configurationVersion).toBe("tool-search-auto-v1");
+      adapter.createHarness({ modelId: "anthropic/claude-haiku-4.5", auth: {}, mcpJson });
+      expect(createClaudeCodeHarness).not.toHaveBeenLastCalledWith(expect.objectContaining({
+        env: expect.objectContaining({ ENABLE_TOOL_SEARCH: expect.anything() }),
+      }));
+      adapter.createHarness({ modelId: "anthropic/claude-haiku-4.5", auth: {}, mcpJson, requireNativeToolDiscovery: true });
+      expect(createClaudeCodeHarness).toHaveBeenLastCalledWith(expect.objectContaining({
+        env: expect.objectContaining({ ENABLE_TOOL_SEARCH: "auto" }),
       }));
     });
 

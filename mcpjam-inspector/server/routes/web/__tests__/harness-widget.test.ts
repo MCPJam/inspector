@@ -3,6 +3,7 @@ import { withRetainedResourceSource } from "@/shared/retained-app-resources";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { harnessWidgets } from "../harness-widget.js";
 import { ExecutionControlError } from "../../../utils/harness/forwarding/execution-control.js";
+import type { MrtrLegMiddleware } from "@mcpjam/sdk";
 
 const state = vi.hoisted(() => ({
   userId: "user",
@@ -268,6 +269,53 @@ it("uses the original account and trusted host for resource reads", async () => 
   expect(state.manager.mock.calls[0][4]).toBe(4321);
   expect(state.read).toHaveBeenCalledWith("server", { uri: "test://record", _meta: { progressToken: "progress" } }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   expect(state.scope).toHaveBeenCalledTimes(3);
+});
+it("binds eliciting resource legs to the parent without requiring a tool frame", async () => {
+  const scope = await state.scope();
+  state.scope.mockClear();
+  state.scope.mockResolvedValue({
+    ...scope,
+    chatSessionId: "chat",
+    hostConfig: {
+      hostStyle: "codex",
+      clientCapabilities: { elicitation: { form: {} } },
+      mcpProfile: { apps: { mcpAppsOverrides: { serverResources: true } } },
+    },
+  });
+  state.read.mockImplementation(async () => {
+    const middleware: MrtrLegMiddleware =
+      state.collect.mock.calls[0][2].aroundLeg;
+    for (const round of [0, 1])
+      await middleware({
+        operationId: "resource",
+        round,
+        request: { method: "resources/read", params: { uri: "test://record" } },
+        send: async () => ({}),
+      });
+    return { contents: [{ uri: "test://record", text: "bound" }] };
+  });
+  const response = await harnessWidgets.request("/widget-resources", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-mcpjam-harness-input-version": "1",
+    },
+    body: JSON.stringify({
+      context: {
+        owner: {
+          kind: "chat",
+          userId: "user",
+          serverId: "server",
+          harnessSessionId: "lane",
+        },
+        parentExecutionId: "parent",
+      },
+      operation: { method: "resources/read", uri: "test://record" },
+    }),
+  });
+  expect(response.status).toBe(200);
+  expect(state.inputGate).not.toHaveBeenCalled();
+  expect(state.scope).toHaveBeenCalledTimes(7);
 });
 it("rechecks authority after connecting and before a resource call", async () => {
   const scope = await state.scope(); state.scope.mockReset();

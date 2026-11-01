@@ -354,13 +354,14 @@ harnessWidgets.post("/widget-resources", async c => {
     }).parse(JSON.parse(await readNativeBody(c.req.raw)));
     connection = await authorizeWidgetConnection(c, body.context);
     if (connection instanceof Response) return connection;
-    const { owner, control, authorized, input, scope, revalidateScope, resourceOnly, serverKey } = connection;
+    const { owner, authorized, input, scope, revalidateScope, resourceOnly, serverKey } = connection;
     if (body.operation.method !== "widget/content" && !appResourcesEnabled(scope.hostConfig)) throw new Error("App resources unavailable");
     const signal = c.req.raw.signal;
     const config = authorized.authorizedServerConfigs?.[serverKey];
     if (!config || !("url" in config)) throw new Error("App connection unavailable");
     if (input) authorized.manager.setMrtrInputCollector(serverKey, input.host.collectMrtrForServer(owner.serverId), {
-      aroundLeg: resourceOnly ? retainedResourceLegGate(revalidateScope, signal) : createForwardingMrtrGate({ control, approval: forwardingApproval(control, owner, scope.projectId), turnId: scope.turnId, expiresAt: Math.min(scope.expiresAt, Date.now() + 300_000), signal }),
+      // Resource reads have parent authority but no dispatched tool frame.
+      aroundLeg: retainedResourceLegGate(revalidateScope, signal),
     });
     await authorized.manager.connectToServer(serverKey, config, { signal });
     if (resourceOnly ? !("claim" in body.context) || retainedProfileFingerprint(authorized.manager, serverKey) !== readRetainedResourceSource(body.context.claim.output)?.profile : !isEnhancedMcpProfile(authorized.manager, serverKey, !!input)) throw new Error("App connection no longer matches its producing profile");

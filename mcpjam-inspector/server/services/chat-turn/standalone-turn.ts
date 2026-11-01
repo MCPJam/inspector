@@ -170,6 +170,7 @@ export async function runStandaloneTurn(
         reasoningEffort,
         explicitTemperature: effort.effort ? body.temperature : undefined,
         requireToolApproval: execution.requireToolApproval,
+        requireNativeToolDiscovery: execution.requireNativeToolDiscovery,
         respectToolVisibility: execution.respectToolVisibility,
         modelVisibleMcpToolResults: execution.modelVisibleMcpToolResults,
         customProviders: body.customProviders,
@@ -203,6 +204,7 @@ export async function runStandaloneTurn(
           : {}),
       },
       persist: {
+        requireNativeToolDiscovery: execution.requireNativeToolDiscovery,
         projectId: "",
         chatSessionId: body.chatSessionId,
         sourceType: "direct",

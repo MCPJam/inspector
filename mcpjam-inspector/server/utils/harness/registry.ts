@@ -490,6 +490,8 @@ export type HarnessCreateArgs = {
   elicitationHandler?: boolean;
   /** Present only after shared forwarding admission and owner authorization. */
   forwardingMcpJson?: HarnessMcpJson;
+  /** Only set after exact-route discovery admission. */
+  requireNativeToolDiscovery?: boolean;
   /**
    * The reasoning effort this turn asked for. An adapter that lists efforts in
    * `supportedReasoningEfforts` MUST apply it through its own runtime option;
@@ -891,6 +893,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   mcpNativeDelivery: "session-config",
   forwardingRuntime: {
     runtimeVersion: "2.1.245",
+    configurationVersion: "tool-search-auto-v1",
     ownedInput: true,
     refresh: withClaudeForwardingResume,
   },
@@ -924,8 +927,17 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
     permissionMode,
     upstream,
     elicitationHandler,
+    forwardingMcpJson,
+    requireNativeToolDiscovery,
   }) {
     const env = claudeCodeTurnEnv(permissionMode, modelId, upstream);
+    // This pin disables discovery behind a gateway unless explicitly enabled.
+    // Preserve the existing eager route; small forwarded catalogs stay eager.
+    if (
+      requireNativeToolDiscovery ||
+      (forwardingMcpJson && Object.keys(forwardingMcpJson.mcpServers).length > 0)
+    )
+      env.ENABLE_TOOL_SEARCH = "auto";
     if (elicitationHandler) env.MCPJAM_HARNESS_ELICITATION = "1";
     // The HOSTED recipe: shared bootstrap + typed terminal errors, so a
     // provider failure reaches an eval as fields rather than a sentence. A
@@ -1047,6 +1059,7 @@ const codexAdapter: HarnessRuntimeAdapter = {
   mcpDelivery: HARNESS_MCP_DELIVERY.codex,
   forwardingRuntime: {
     runtimeVersion: "0.163.0",
+    configurationVersion: "native-mcp-v1",
     correlationKey: "callId",
     ownedInput: true,
     refresh: withForwardingResume,

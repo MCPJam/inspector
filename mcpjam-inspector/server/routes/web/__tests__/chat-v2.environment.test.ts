@@ -339,6 +339,9 @@ describe("web chat-v2 — environment execution target", () => {
     });
 
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
       if (String(input).endsWith("/web/authorize-project")) {
         return new Response(
           JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }),
@@ -769,6 +772,9 @@ describe("web chat-v2 — environment execution target", () => {
     function needsSignIn(serverId: string) {
       const answer = global.fetch;
       global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
         const response = await answer(input, init);
         if (!String(input).endsWith("/web/authorize-batch")) return response;
         const batch = await response.json();
@@ -848,6 +854,9 @@ describe("web chat-v2 — environment execution target", () => {
       };
       const answer = global.fetch;
       global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
         const url = String(input);
         if (url.endsWith("/web/authorize-batch-local")) {
           return Response.json({
@@ -1474,6 +1483,9 @@ describe("web chat-v2 — plugin capability attribution", () => {
       new Response("ok", { status: 200 })
     );
     global.fetch = vi.fn(async (input: any, init: any) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
       if (String(input).endsWith("/web/authorize-project")) {
         return new Response(
           JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }),
@@ -1647,6 +1659,9 @@ describe("web chat-v2 — turn provenance (P1)", () => {
       return new Response("ok", { status: 200 });
     });
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
       if (String(input).endsWith("/web/authorize-project")) {
         return new Response(
           JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }),

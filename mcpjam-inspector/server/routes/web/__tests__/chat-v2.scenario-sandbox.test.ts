@@ -284,6 +284,9 @@ describe("web chat-v2 — scenario ephemeral sandbox", () => {
     });
 
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
       if (String(input).endsWith("/web/authorize-batch")) {
         const payload = JSON.parse(String(init?.body ?? "{}"));
         const serverIds: string[] = payload?.serverIds ?? [];

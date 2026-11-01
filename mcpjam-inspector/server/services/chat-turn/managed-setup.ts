@@ -9,7 +9,8 @@ import {
   LocalAutoApproveConsentRequiredError,
 } from "../../utils/harness/local/readiness.js";
 import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
-import { apiSessionWriteAllowed } from "../../routes/web/api-session-write-guard";
+import { readWebConversationState } from "../../routes/web/web-conversation-state.js";
+import { enforceNativeDiscoverySessionPin } from "../../utils/harness/native-discovery.js";
 import { BrowserSessionService } from "../browserd/session-service";
 import { type Context } from "hono";
 import { ranTurnSelection } from "../../utils/session-model-selection.js";
@@ -83,6 +84,7 @@ import {
   type EffectiveCapabilitySet,
 } from "../environments/effective-capabilities.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
+import { HOSTED_APP_HANDLERS, qualifyHarnessHostCapabilities } from "../../../shared/harness-host-capabilities.js";
 import { resolveTurnBuiltInToolIds } from "../../utils/built-in-tools/built-in-tool-policy.js";
 import { logger } from "../../utils/logger.js";
 import { listLocalRuntimeSkills } from "../../utils/skill-tools.js";
@@ -99,34 +101,6 @@ export async function resolveManagedTurnSetup(args: {
 }) {
   const { c, rawBody, bearerToken, localIngress, rpcCollector } = args;
   const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
-  if (!c.get("guestId") && hostedBody.projectId && hostedBody.chatSessionId) {
-    const allowed = await apiSessionWriteAllowed(
-      rawBody.origin,
-      async (signal) => {
-        const service = new BrowserSessionService();
-        if (!service.enabled) return { writable: true };
-        return service.agentRequest<{
-          writable: boolean;
-        }>("assert_web_writable", {
-          bearer: bearerToken,
-          projectId: hostedBody.projectId!,
-          body: { conversationId: hostedBody.chatSessionId },
-          signal: AbortSignal.any([signal, c.req.raw.signal]),
-        });
-      },
-    );
-    if (!allowed)
-      return {
-        response: c.json(
-          {
-            code: "API_SESSION_READ_ONLY",
-            error:
-              "This API session is view-only in Playground. Continue it through the session API.",
-          },
-          409,
-        ),
-      };
-  }
   const { initializePins, mcpProtocolVersionsByServerId } =
     extractMcpInitializeOptions(rawBody);
   const body = rawBody as unknown as ChatV2Request & {
@@ -231,6 +205,39 @@ export async function resolveManagedTurnSetup(args: {
     getClient: async () =>
       createConvexClient(await getConvexBearerForRequest(c)),
   });
+  let requiredNativeDiscoveryPin = false;
+  if (turnMode === "interactive" && !c.get("guestId") && hostedBody.projectId && hostedBody.chatSessionId) {
+    const service = new BrowserSessionService();
+    if (service.enabled) {
+      const state = await readWebConversationState(
+        (signal) =>
+          service.agentRequest<{
+            writable: boolean;
+            requireNativeToolDiscovery?: boolean;
+          }>("assert_web_writable", {
+            bearer: bearerToken,
+            projectId: hostedBody.projectId,
+            body: { conversationId: hostedBody.chatSessionId },
+            signal,
+          }),
+        c.req.raw.signal,
+      );
+      requiredNativeDiscoveryPin = state.requireNativeToolDiscovery === true;
+      if (!state.writable) {
+        return {
+          response: c.json(
+            {
+              code: "API_SESSION_READ_ONLY",
+              error:
+                "This API session is view-only in Playground. Continue it through the session API.",
+            },
+            409,
+          ),
+        };
+      }
+    }
+  }
+  enforceNativeDiscoverySessionPin(hostRuntimeConfig, requiredNativeDiscoveryPin);
   let effectiveCapabilities = resolvedCapabilities;
   if (effectiveCapabilities) {
     rpcCollector?.setPluginOriginByServerId(
@@ -724,6 +731,10 @@ export async function resolveManagedTurnSetup(args: {
   }
   return {
     value: {
+      harnessHostCapabilities:
+        resolvedExecution.harness && hostRuntimeConfig
+          ? qualifyHarnessHostCapabilities(hostRuntimeConfig, HOSTED_APP_HANDLERS)
+          : undefined,
       hostedBody,
       initializePins,
       mcpProtocolVersionsByServerId,

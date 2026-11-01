@@ -117,6 +117,7 @@ export interface ResumeConfig {
    */
   reasoningEffort?: ModelReasoningEffort;
   requireToolApproval?: boolean;
+  requireNativeToolDiscovery?: boolean;
   respectToolVisibility?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
@@ -171,6 +172,7 @@ export interface DirectHostConfig {
   modelId: string;
   temperature: number;
   requireToolApproval: boolean;
+  requireNativeToolDiscovery?: boolean;
   /**
    * Optional SEP-1865 visibility filter switch. Undefined means "use the
    * spec default" — the backend's hostConfigV2 canonicalizer drops
@@ -202,6 +204,7 @@ export function buildDirectHostConfig(input: {
   requestedTemperature?: number;
   resolvedTemperature?: number;
   requireToolApproval?: boolean;
+  requireNativeToolDiscovery?: boolean;
   respectToolVisibility?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
@@ -214,6 +217,7 @@ export function buildDirectHostConfig(input: {
     requestedTemperature,
     resolvedTemperature,
     requireToolApproval,
+    requireNativeToolDiscovery,
     respectToolVisibility,
     modelVisibleMcpToolResults,
     mcpToolResultImageRendering,
@@ -230,6 +234,7 @@ export function buildDirectHostConfig(input: {
         ? requestedTemperature
         : 0.7,
     requireToolApproval: requireToolApproval === true,
+    ...(requireNativeToolDiscovery !== undefined ? { requireNativeToolDiscovery } : {}),
     // Pass through verbatim so undefined-vs-set semantics survive into
     // the backend canonicalizer (drops undefined; keeps explicit false).
     ...(respectToolVisibility !== undefined ? { respectToolVisibility } : {}),

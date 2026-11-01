@@ -183,7 +183,7 @@ describe("harness MCP proxy tool policy", () => {
       "srv-a",
       "read_file",
       {},
-      { signal: undefined }
+      { request: { signal: undefined } }
     );
   });
 
@@ -257,7 +257,7 @@ describe("harness MCP proxy tool policy", () => {
       "srv-a",
       "delete_repo",
       {},
-      { signal: undefined }
+      { request: { signal: undefined } }
     );
   });
 });

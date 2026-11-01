@@ -1,4 +1,5 @@
 import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
+import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 import { AdmissionWaitBudget } from "../services/sessionSimulation/admission-retry.js";
@@ -913,6 +914,8 @@ function applyToolRefresh(
 }
 
 export interface MCPJamHandlerOptions {
+  /** Effective saved App declaration, qualified by the caller's installed handlers. */
+  harnessHostCapabilities?: import("@/shared/harness-host-capabilities").HarnessHostCapabilityQualification;
   /** Durable callers must finish this write before the next external effect. */
   durableCheckpoint?: (state: {
     phase: "model" | "tools" | "ready" | "complete";
@@ -1220,6 +1223,7 @@ export interface MCPJamHandlerOptions {
    * host's intent directly.
    */
   requireToolApproval?: boolean;
+  requireNativeToolDiscovery?: boolean;
   /**
    * Host/client policy for eligible MCP tool-result content/resources.
    * Controls only model-facing tool output; raw results remain available to
@@ -5163,6 +5167,7 @@ export async function runChatEngineLoop(
   options: MCPJamHandlerOptions,
   streamSink: "ui" | "none",
 ): Promise<ChatEngineLoopResult> {
+  assertNativeDiscovery({ required: options.requireNativeToolDiscovery });
   const {
     messages,
     modelId,
@@ -6112,6 +6117,7 @@ export async function handleMCPJamFreeChatModel(
   options = { ...options, harness: dispatch.harnessId };
   assertAgentLoopResume(options.agentLoop, Boolean(options.scopeStepUpResume));
   const useHarness = Boolean((options.agentLoop ?? options.harness) && !options.scopeStepUpResume);
+  if (!useHarness) assertNativeDiscovery({ required: options.requireNativeToolDiscovery });
   const result = await (useHarness
     ? runHarnessTurn(options, "ui")
     : runChatEngineLoop(options, "ui"));

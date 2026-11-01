@@ -1,3 +1,4 @@
+import { assertNativeDiscovery } from "../utils/harness/native-discovery.js";
 import { mergeViewToolEvidence } from "./evals/view-tool-evidence.js";
 import { evalWidgetServerCall } from "./evals/view-tool-policy.js";
 import {
@@ -5063,6 +5064,7 @@ const runLocalIteration = async ({
     },
     precedence: "override-wins",
   });
+  assertNativeDiscovery({ required: resolvedExecution.requireNativeToolDiscovery });
   const skillsSource = resolveIterationSkillsSource({
     harness: resolvedExecution.harness,
     pinnedSkillSource,
@@ -6474,6 +6476,7 @@ const runHostedIterationWithBrowser = async (
     },
     precedence: "override-wins",
   });
+  assertNativeDiscovery({ required: resolvedExecution.requireNativeToolDiscovery });
   const skillsSource = resolveIterationSkillsSource({
     harness: resolvedExecution.harness,
     pinnedSkillSource,

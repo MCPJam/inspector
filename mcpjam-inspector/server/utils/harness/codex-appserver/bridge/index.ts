@@ -18,6 +18,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { runBridge, type BridgeTurn } from "@ai-sdk/harness/bridge";
+import { callHostTool } from "./host-tool-call.js";
 import { RELAY_MCP_SERVER_NAME } from "../shared/tool-names.js";
 import {
   runtimeConfigFingerprint,
@@ -42,7 +43,11 @@ import type {
   ThreadStartResult,
   TurnStartResult,
 } from "./app-server-protocol.js";
-import { createNativeMcpRefresher } from "./native-mcp-refresh.js";
+import {
+  createNativeMcpRefresher,
+  type NativeMcpRuntime,
+} from "./native-mcp-refresh.js";
+import { waitForMcpStartup, waitForNativeMcpServers } from "./native-mcp-ready.js";
 import { createApprovalController } from "./approval-controller.js";
 import { foreignMcpServerOverrides } from "./mcp-isolation.js";
 import { setupWindowsSandbox } from "./windows-sandbox-setup.js";
@@ -256,7 +261,6 @@ async function main(): Promise<void> {
     | {
         turn: BridgeTurn;
         aliasToCanonical: Map<string, string>;
-        toolCallSeq: number;
       }
     | undefined;
   let catalog = buildHostToolCatalog([]);
@@ -278,18 +282,26 @@ async function main(): Promise<void> {
    */
   let runtimeConfig: string | undefined;
   let nativeHome: CodexHomeInput | undefined;
+  const invalidateRuntime = async (runtime: NativeMcpRuntime) => {
+    nativeHome = undefined;
+    if (client !== runtime) return;
+    client = undefined;
+    threadId = undefined;
+    const oldRelay = relay;
+    relay = undefined;
+    await oldRelay?.close();
+  };
+  const retireRuntime = async (runtime: NativeMcpRuntime) => {
+    try {
+      await runtime.kill();
+    } finally {
+      await invalidateRuntime(runtime);
+    }
+  };
   const nativeRefresh = createNativeMcpRefresher({
-    current: () => client && nativeHome ? { runtime: client, home: nativeHome } : undefined,
+    current: () => client && nativeHome ? { runtime: client, home: nativeHome, threadId } : undefined,
     commit: (home) => { nativeHome = home; },
-    invalidate: async (runtime) => {
-      nativeHome = undefined;
-      if (client !== runtime) return;
-      client = undefined;
-      threadId = undefined;
-      const oldRelay = relay;
-      relay = undefined;
-      await oldRelay?.close();
-    },
+    invalidate: invalidateRuntime,
   });
   const runtimeConfigOf = (start: StartMessage): string =>
     runtimeConfigFingerprint(start);
@@ -310,31 +322,7 @@ async function main(): Promise<void> {
 
     relay = await startHostToolRelay({
       listTools: () => catalog.descriptors,
-      callTool: async ({ toolName, input }) => {
-        const active = activeTurn;
-        if (!active) throw new Error("no active turn for a host tool call");
-        const canonical = active.aliasToCanonical.get(toolName) ?? toolName;
-        const toolCallId = `mcpjam-host-${++active.toolCallSeq}`;
-        // `providerExecuted: false` is the signal that MCPJam runs this one.
-        // The framework's approval gate (HarnessAgent `toolApproval`) fires on
-        // the host side before `execute`, which is why the bridge must not
-        // prompt for it as well.
-        active.turn.emit({
-          type: "tool-call",
-          toolCallId,
-          toolName: canonical,
-          input: JSON.stringify(input ?? {}),
-          providerExecuted: false,
-        });
-        const result = await active.turn.requestToolResult(toolCallId);
-        active.turn.emit({
-          type: "tool-result",
-          toolCallId,
-          toolName: canonical,
-          result,
-        });
-        return result;
-      },
+      callTool: (request) => callHostTool(activeTurn, request),
     });
 
     const homeInput: CodexHomeInput = {
@@ -463,12 +451,18 @@ async function main(): Promise<void> {
       if (start.nativeMcpServers && nativeHome) {
         nativeHome = { ...nativeHome, nativeMcpServers: start.nativeMcpServers };
         prepareCodexHome(nativeHome);
-        await runtime.request("config/mcpServer/reload", {});
+        try {
+          await waitForNativeMcpServers({
+            runtime, serverNames: [], reload: true, signal: turn.abortSignal,
+          });
+        } catch (error) {
+          await retireRuntime(runtime);
+          throw error;
+        }
       }
       activeTurn = {
         turn,
         aliasToCanonical: catalog.aliasToCanonical,
-        toolCallSeq: 0,
       };
 
       const translator = createStreamTranslator({
@@ -526,6 +520,19 @@ async function main(): Promise<void> {
             threadParams,
           );
       threadId = thread.thread?.id ?? resumeId;
+      const nativeNames = Object.keys(start.nativeMcpServers ?? {});
+      if (!threadId) throw new Error("MCP startup requires a thread");
+      try {
+        await waitForMcpStartup({
+          runtime,
+          threadId,
+          serverNames: nativeNames,
+          signal: turn.abortSignal,
+        });
+      } catch (error) {
+        await retireRuntime(runtime);
+        throw error;
+      }
       if (threadId) turn.emit({ type: "bridge-thread", threadId });
       turn.emit({
         type: "stream-start",

@@ -1,6 +1,7 @@
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { getManagerResourceSnapshot } from "../../mcp-connections.js";
 import { nativeForwardingGaps } from "./native-admission.js";
+import { enhancedServerCapabilityGaps } from "./server-capabilities.js";
 import {
   isEnhancedModelPolicy,
   isEnhancedMcpProfile,
@@ -12,6 +13,7 @@ type Candidate = Omit<Parameters<typeof nativeForwardingGaps>[0], "manager"> & {
   ownedTasksAvailable?: boolean;
 };
 const BRIDGED_GAPS = new Set([
+  "app-host-capabilities",
   "tool-visibility",
   "model-result-policy",
   "client-capabilities",
@@ -56,5 +58,10 @@ export function forwardingAdmission(candidate: Candidate): {
         candidate.ownedTasksAvailable === true,
       ),
     );
-  return { delivery: bridged ? "bridge" : undefined, gaps };
+  if (!bridged) return { gaps };
+  const serverGaps = enhancedServerCapabilityGaps(candidate);
+  return {
+    delivery: serverGaps.length ? undefined : "bridge",
+    gaps: [...gaps, ...serverGaps],
+  };
 }
