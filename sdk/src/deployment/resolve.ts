@@ -19,6 +19,7 @@ import {
   McpjamDeploymentError,
   parseApiUrl,
   parseBaseUrl,
+  printableAddress,
   sameServer,
   tryParseApiUrl,
   type DeploymentAddress,
@@ -60,17 +61,32 @@ function explicitAddress(
 }
 
 /**
- * The server the saved login was made against. A login written before logins
- * recorded their server is an MCPJam Cloud login, and so is one whose recorded
- * server no longer parses: `readStoredAuth` already drops unparsable values.
+ * The server the saved login was made against. Only a login written before
+ * logins recorded their server counts as an MCPJam Cloud login. A recorded
+ * server that is no longer a usable address, such as one with a query that an
+ * older CLI accepted, still owns the login's token: sending the login is
+ * refused, while `cloud login`, which sends no token, goes ahead without it.
  */
 function savedLoginAddress(
   input: ResolveDeploymentInput,
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  credential: DeploymentCredential
 ): DeploymentAddress | undefined {
   const stored = readStoredAuth(input.authFilePath ?? getAuthFilePath({ env }));
   if (!stored) return undefined;
-  return (stored.apiUrl && tryParseApiUrl(stored.apiUrl)) || MCPJAM_CLOUD;
+  if (stored.apiUrl === undefined) return MCPJAM_CLOUD;
+  const address = tryParseApiUrl(stored.apiUrl);
+  if (address) return address;
+  if (credential === "oauth") throw unusableLogin(stored.apiUrl);
+  return undefined;
+}
+
+function unusableLogin(recorded: string): McpjamDeploymentError {
+  const shown = printableAddress(recorded);
+  return new McpjamDeploymentError(
+    "LOGIN_DEPLOYMENT_MISMATCH",
+    `Your saved login records ${shown ? `the server "${shown}", which` : "a server that"} is not a usable server address. Run \`mcpjam cloud login\` to sign in again, or use an API key.`
+  );
 }
 
 function loginMismatch(
@@ -97,7 +113,9 @@ export function resolveDeployment(
   const explicit = explicitAddress(input);
   const fromEnv = deploymentFromEnv(env);
   const saved =
-    credential === "api-key" ? undefined : savedLoginAddress(input, env);
+    credential === "api-key"
+      ? undefined
+      : savedLoginAddress(input, env, credential);
 
   const chosen: ResolvedDeployment = explicit
     ? { ...explicit, source: "flag" }

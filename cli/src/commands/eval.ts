@@ -231,6 +231,7 @@ import {
   effortShorthand,
   parseModelSelectionFlag,
 } from "../lib/model-selection-flags.js";
+import { declareMcpjamUse } from "../lib/deployment-preflight.js";
 
 type CreateOptions = PlatformOptions & {
   project?: string;
@@ -5458,8 +5459,10 @@ export function registerEvalCommands(program: Command): void {
       }
     );
 
-  evals
-    .command("validate")
+  // Offline unless --project asks for the live tool-reference check.
+  declareMcpjamUse(evals.command("validate"), {
+    when: (options) => options.project !== undefined,
+  })
     .description(
       "Validate a local eval suite file offline — no auth, no network unless --project is passed (0 valid, 1 contract-invalid or unresolved reference, 2 unreadable/oversize/malformed)"
     )

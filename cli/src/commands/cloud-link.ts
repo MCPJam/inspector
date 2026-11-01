@@ -201,8 +201,10 @@ export function registerCloudLinkCommands(cloud: Command): void {
       }
     });
 
-  cloud
-    .command("link")
+  // `--remove` only deletes the local link file.
+  declareMcpjamUse(cloud.command("link"), {
+    when: (options) => options.remove !== true,
+  })
     .description(
       "Pin this directory to a Cloud project by writing .mcpjam/project.json. The file contains no secrets and is committed by default; per-developer setups may gitignore it."
     )

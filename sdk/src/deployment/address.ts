@@ -86,7 +86,7 @@ export function isMcpjamDeploymentError(
  * `value` without its trailing slashes. Written as a loop because
  * `/\/+$/` is rated a polynomial-time regex on input like `"a" + "/".repeat(n)`.
  */
-function trimTrailingSlashes(value: string): string {
+export function trimTrailingSlashes(value: string): string {
   let end = value.length;
   while (end > 0 && value[end - 1] === "/") end -= 1;
   return value.slice(0, end);
@@ -133,7 +133,7 @@ function fromApiUrl(apiUrl: string): DeploymentAddress {
  * fragment are masked, and a value that is not a URL with a host, such as an
  * API key in the wrong variable, is not repeated at all.
  */
-function printable(value: string): string | undefined {
+export function printableAddress(value: string): string | undefined {
   let url: URL;
   try {
     url = new URL(value.trim());
@@ -153,7 +153,7 @@ function invalid(
   problem: string,
   source?: DeploymentSource
 ) {
-  const shown = printable(value);
+  const shown = printableAddress(value);
   return new McpjamDeploymentError(
     "API_URL_INVALID",
     `Invalid ${label} value${shown ? ` "${shown}"` : ""}. ${problem}`,

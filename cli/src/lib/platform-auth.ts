@@ -29,7 +29,12 @@ import {
   writeStoredAuth,
   type StoredPlatformAuth,
 } from "./auth-store.js";
-import { operationalError, usageError } from "./output.js";
+import {
+  deploymentCliError,
+  deploymentRefusalOf,
+  operationalError,
+  usageError,
+} from "./output.js";
 
 export const DEFAULT_PLATFORM_ORIGIN = "https://app.mcpjam.com";
 const LEGACY_API_KEY_PREFIX = "mcpjam_";
@@ -311,6 +316,10 @@ async function enrichStoredAuthWithAccount(
       plan = me.plan.trim();
     }
   } catch (error) {
+    // A refused redirect is the server address being wrong, not a lookup
+    // that failed: every later command would refuse it too.
+    const refusal = deploymentRefusalOf(error);
+    if (refusal) throw deploymentCliError(refusal);
     deps.warn(
       `Could not load account details after login: ${
         error instanceof Error ? error.message : String(error)
