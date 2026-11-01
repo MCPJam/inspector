@@ -640,9 +640,9 @@ describe("MCPTasksConformanceTest", () => {
       "tasks-inline-result": "passed",
       "tasks-mcp-name-routing": "passed",
       // The scenario depth added by the conformance-gap program, all outside
-      // the `mcp-tasks` profile's scored set. The one skip is correct: this
-      // task completes without ever asking for input, so there is no
-      // `input_required` round trip to grade.
+      // the `mcp-tasks` profile's scored set except `tasks-update-ack-shape`.
+      // Its skip is correct: this task completes without ever asking for
+      // input, so there is no `tasks/update` acknowledgement to grade.
       "tasks-invalid-task-id-rejected": "passed",
       // Skipped against the FAKE manager by design: it reads raw inbound
       // frames (the only place a malformed status payload survives the SDK's
@@ -652,7 +652,7 @@ describe("MCPTasksConformanceTest", () => {
       "tasks-cancel-ack-shape": "passed",
       "tasks-ttl-integer-shape": "passed",
       "tasks-undeclared-capability-names-requirements": "passed",
-      "tasks-input-required-update-completes": "skipped",
+      "tasks-update-ack-shape": "skipped",
     });
     expect(result.passed).toBe(true);
     expect(result.discovery).toMatchObject({
@@ -940,8 +940,9 @@ describe("MCPTasksConformanceTest", () => {
         (c) => c.status === "skipped" && c.skipReason === "could-not-run"
       )
       // Eleven, not six: the gap-program checks that also need a created task
-      // report the same honest gap. The SCORED tally is still six, because they
-      // are pending under `mcp-tasks@2026-08-22.1`.
+      // report the same honest gap. The SCORED tally is seven — the six plus
+      // `tasks-update-ack-shape`, scored since `mcp-tasks@2026-11-01.1` — and
+      // the rest are pending.
     ).toHaveLength(11);
     expect(result.incompleteReason).toContain("--tool-name");
     expect(result.incompleteReason).toContain("long_job");
