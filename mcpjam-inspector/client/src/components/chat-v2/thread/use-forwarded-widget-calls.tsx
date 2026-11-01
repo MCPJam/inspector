@@ -6,6 +6,7 @@ import {
 import { z } from "zod";
 import { authFetch } from "@/lib/session-token";
 import { parseSSEStream } from "@/lib/sse";
+import type { RetainedResourceProof } from "@/shared/retained-app-resources";
 import type { McpWidgetExecutionContext } from "@/shared/mcp-tool-origin-metadata";
 import { ToolPart } from "./parts/tool-part";
 import { toast } from "@/lib/toast";
@@ -81,7 +82,7 @@ export function useForwardedWidgetCalls(
       />
     )),
     call: async (
-      context: McpWidgetExecutionContext,
+      context: McpWidgetExecutionContext | RetainedResourceProof,
       name: string,
       input: Record<string, unknown>,
     ): Promise<CallToolResult> => {
