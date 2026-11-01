@@ -161,11 +161,11 @@ const UNAUTHORIZED_TRIGGER_DESCRIPTIONS: Record<
 const TOOL_RESULT_CHALLENGE_DESCRIPTIONS: Record<AuthChallengeAction, string> =
   {
     prompt:
-      'A tool result with isError and _meta["mcp/www_authenticate"] shows a Connect card. After sign-in, the call runs again.',
+      "When a tool result asks the user to sign in, a Connect card appears. After sign-in, the call runs again.",
     notify:
-      'A tool result with isError and _meta["mcp/www_authenticate"] ends with a sign-in message. The call is not run again.',
+      "When a tool result asks the user to sign in, the call stops and a sign-in message appears. The call does not run again.",
     passthrough:
-      'A tool result with _meta["mcp/www_authenticate"] is an ordinary tool error. This challenge is not part of the MCP spec.',
+      "A tool result that asks the user to sign in is treated as an ordinary tool error. This kind of sign-in request is not part of the MCP spec.",
   };
 
 const TOOL_RESULT_TRIGGER_DESCRIPTIONS: Record<
@@ -1498,8 +1498,8 @@ export function ProtocolTab({
           </div>
           <div className="mt-2 flex flex-col divide-y divide-border/50 rounded-md border border-border/50">
             <AuthChallengeKnobRow
-              label="On HTTP 401"
-              ariaLabel="On HTTP 401"
+              label="When the server asks for sign-in"
+              ariaLabel="When the server asks for sign-in"
               value={storedUnauthorizedChallenge}
               defaultValue={AUTH_CHALLENGE_POLICY_DEFAULTS.unauthorizedChallenge}
               options={AUTH_CHALLENGE_ACTION_LABELS}
@@ -1514,8 +1514,8 @@ export function ProtocolTab({
               readOnly={readOnly}
             />
             <AuthChallengeKnobRow
-              label="What counts as a 401 challenge"
-              ariaLabel="HTTP 401 trigger"
+              label="What counts as a server sign-in request"
+              ariaLabel="Server sign-in trigger"
               value={storedUnauthorizedTrigger}
               defaultValue={
                 AUTH_CHALLENGE_POLICY_DEFAULTS.unauthorizedChallengeTrigger
@@ -1535,13 +1535,8 @@ export function ProtocolTab({
               readOnly={readOnly}
             />
             <AuthChallengeKnobRow
-              label={
-                <>
-                  On tool-result <code className="text-[10px]">_meta</code>{" "}
-                  challenge (ChatGPT style)
-                </>
-              }
-              ariaLabel="On tool-result _meta challenge"
+              label="When a tool result asks for sign-in (ChatGPT style)"
+              ariaLabel="When a tool result asks for sign-in"
               value={storedToolResultChallenge}
               defaultValue={
                 AUTH_CHALLENGE_POLICY_DEFAULTS.toolResultAuthChallenge
@@ -1556,13 +1551,8 @@ export function ProtocolTab({
               readOnly={readOnly}
             />
             <AuthChallengeKnobRow
-              label={
-                <>
-                  What counts as a <code className="text-[10px]">_meta</code>{" "}
-                  challenge
-                </>
-              }
-              ariaLabel="Tool-result _meta trigger"
+              label="What counts as a tool result sign-in request"
+              ariaLabel="Tool result sign-in trigger"
               value={storedToolResultTrigger}
               defaultValue={
                 AUTH_CHALLENGE_POLICY_DEFAULTS.toolResultAuthChallengeTrigger

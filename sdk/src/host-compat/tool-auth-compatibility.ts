@@ -1,9 +1,6 @@
-import type {
-  HostCompatTool,
-  CompatFinding,
-  CompatProvenance,
-  HostCompatCatalog,
-} from "../host-compat/index.js";
+import type { HostCompatCatalog } from "./catalog.js";
+import type { HostCompatTool } from "./server-requirements.js";
+import type { CompatFinding, CompatProvenance } from "./types.js";
 import {
   AUTH_CHALLENGE_POLICY_DEFAULTS,
   authChallengePolicyFrom,

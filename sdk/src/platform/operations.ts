@@ -1,5 +1,4 @@
-import { withToolResultAuthChallengeFindings } from "./tool-auth-compatibility.js";
-export { toolResultAuthChallengeFindings } from "./tool-auth-compatibility.js";
+export { toolResultAuthChallengeFindings } from "../host-compat/tool-auth-compatibility.js";
 import {
   environmentNamesFor,
   resolveSuiteHostTargets,
@@ -79,7 +78,6 @@ import {
   type RunTargetPlan,
 } from "./suite-run-plans.js";
 import {
-  bundledHostCompatCatalog,
   evaluateMarketHosts,
   scanWidgetUsage,
   type CompatFinding,
@@ -1882,13 +1880,7 @@ export const checkHostCompatibilityOperation: PlatformOperation<
         appOnly: requirements.appOnlyWidgets.length,
       },
       unknownDimensions: requirements.unknownDimensions,
-      hosts: withToolResultAuthChallengeFindings(
-        reports,
-        toolsData.tools,
-        // The same catalog `evaluateMarketHosts` graded against: the bundled
-        // one, since no live catalog is passed above.
-        bundledHostCompatCatalog()
-      ).map((report) => ({
+      hosts: reports.map((report) => ({
         hostId: report.hostId,
         hostLabel: report.hostLabel,
         verdict: report.verdict,

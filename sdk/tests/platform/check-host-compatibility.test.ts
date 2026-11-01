@@ -4,7 +4,10 @@ import {
   PlatformApiClient,
 } from "../../src/platform/index.js";
 import { toolResultAuthChallengeFindings } from "../../src/platform/operations.js";
-import { bundledHostCompatCatalog } from "../../src/host-compat/index.js";
+import {
+  bundledHostCompatCatalog,
+  evaluateMarketHosts,
+} from "../../src/host-compat/index.js";
 import {
   AUTH_CHALLENGE_POLICY_DEFAULTS,
   authChallengePolicyFrom,
@@ -226,6 +229,11 @@ describe("checkHostCompatibilityOperation — tool-result sign-in challenges", (
         ]),
       },
     );
+    // Pinned by id, so a wrong catalog value fails here instead of moving
+    // the expected set along with it.
+    const byId = (id: string) => result.hosts.find((host) => host.hostId === id);
+    expect(finding(byId("claude"))).toMatchObject({ tools: ["get_orders"] });
+    expect(finding(byId("chatgpt"))).toBeUndefined();
     const actions = resolvedActionById();
     expect(Object.values(actions)).toContain("passthrough");
     for (const host of result.hosts) {
@@ -246,6 +254,20 @@ describe("checkHostCompatibilityOperation — tool-result sign-in challenges", (
         expect(warned, host.hostId).toBeUndefined();
       }
     }
+  });
+
+  it("comes from evaluateMarketHosts, so the client engine and CLI report it too", () => {
+    const { reports } = evaluateMarketHosts({
+      tools: [
+        {
+          name: "get_orders",
+          securitySchemes: [{ type: "oauth2", scopes: ["orders:read"] }],
+        },
+      ],
+    });
+    const byId = (id: string) => reports.find((report) => report.hostId === id);
+    expect(finding(byId("claude"))).toMatchObject({ tools: ["get_orders"] });
+    expect(finding(byId("chatgpt"))).toBeUndefined();
   });
 
   it("reads a declaration carried in _meta.securitySchemes", async () => {

@@ -292,13 +292,13 @@ describe("ProtocolTab tool list changed controls", () => {
 
 describe("ProtocolTab mid-session sign-in controls", () => {
   const unauthorizedCombo = () =>
-    screen.getByRole("combobox", { name: "On HTTP 401" });
+    screen.getByRole("combobox", { name: "When the server asks for sign-in" });
   const unauthorizedTriggerCombo = () =>
-    screen.getByRole("combobox", { name: "HTTP 401 trigger" });
+    screen.getByRole("combobox", { name: "Server sign-in trigger" });
   const toolResultCombo = () =>
-    screen.getByRole("combobox", { name: "On tool-result _meta challenge" });
+    screen.getByRole("combobox", { name: "When a tool result asks for sign-in" });
   const toolResultTriggerCombo = () =>
-    screen.getByRole("combobox", { name: "Tool-result _meta trigger" });
+    screen.getByRole("combobox", { name: "Tool result sign-in trigger" });
   const stored = () =>
     JSON.parse(screen.getByTestId("auth").textContent ?? "{}") as Record<
       string,

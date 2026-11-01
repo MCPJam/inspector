@@ -816,7 +816,7 @@ const AUTH_CHALLENGE_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "unauthorizedChallenge",
     section: "protocol",
     subsection: "Mid-session sign-in",
-    label: "Sign-in on HTTP 401",
+    label: "When the server asks for sign-in",
     path: "mcpProfile.unauthorizedChallenge",
     description:
       "What the client does when a server asks the user to sign in: prompt to sign in and run the call again, tell the user to sign in, or show an ordinary error. If unset, the client prompts.",
@@ -831,7 +831,7 @@ const AUTH_CHALLENGE_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "unauthorizedChallengeTrigger",
     section: "protocol",
     subsection: "Mid-session sign-in",
-    label: "HTTP 401 trigger",
+    label: "Server sign-in trigger",
     path: "mcpProfile.unauthorizedChallengeTrigger",
     description:
       "Accept any server sign-in request, only requests that name Bearer authentication, or only those that also provide a resource metadata link. If unset, any request counts.",
@@ -842,10 +842,10 @@ const AUTH_CHALLENGE_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "toolResultAuthChallenge",
     section: "protocol",
     subsection: "Mid-session sign-in",
-    label: "Sign-in on tool-result _meta challenge",
+    label: "When a tool result asks for sign-in",
     path: "mcpProfile.toolResultAuthChallenge",
     description:
-      'What the client does with a tool result that has isError and _meta["mcp/www_authenticate"]. Absent means pass through: this challenge is not part of the MCP spec.',
+      "What the client does when a tool result asks the user to sign in. If unset, the client passes the result through as an ordinary tool error, because this kind of sign-in request is not part of the MCP spec.",
     kind: {
       kind: "enum",
       options: AUTH_CHALLENGE_ACTIONS,
@@ -857,10 +857,10 @@ const AUTH_CHALLENGE_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     id: "toolResultAuthChallengeTrigger",
     section: "protocol",
     subsection: "Mid-session sign-in",
-    label: "Tool-result _meta trigger",
+    label: "Tool result sign-in trigger",
     path: "mcpProfile.toolResultAuthChallengeTrigger",
     description:
-      "What the _meta challenge needs: nothing more, a tool that declares an oauth2 security scheme, or that plus both error and error_description. Absent means the last.",
+      "What a tool result's sign-in request needs before it counts: nothing more, a tool that supports OAuth sign-in, or that plus an error code and description. If unset, it needs the tool to support OAuth sign-in and the result to carry both the error code and its description.",
     kind: { kind: "enum", options: TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS },
     read: (cfg) => mcpProfile(cfg)?.toolResultAuthChallengeTrigger,
   },
