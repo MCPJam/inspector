@@ -53,7 +53,13 @@ export type CompatFindingCode =
   /** Widget uses a host capability the host lacks (degraded/info). */
   | "capability_unsupported"
   /** Server's negotiated protocol version isn't in the host's set (info). */
-  | "protocol_version_mismatch";
+  | "protocol_version_mismatch"
+  /**
+   * Tools declare an `oauth2` security scheme — the pattern that asks for
+   * sign-in through `_meta["mcp/www_authenticate"]` on a tool result — and the
+   * host treats such a result as an ordinary error (info).
+   */
+  | "tool_result_auth_challenge_ignored";
 
 /** Fields common to every finding. The prose is default copy, not the contract. */
 type CompatFindingBase = {
@@ -84,7 +90,11 @@ export type CompatFinding =
       capability: WidgetCapabilityNeed;
       tools: string[];
     })
-  | (CompatFindingBase & { code: "protocol_version_mismatch" });
+  | (CompatFindingBase & { code: "protocol_version_mismatch" })
+  | (CompatFindingBase & {
+      code: "tool_result_auth_challenge_ignored";
+      tools: string[];
+    });
 
 /** Per-lane rollup so a surface can show apps vs server verdicts independently. */
 export type CompatLaneVerdict = {
