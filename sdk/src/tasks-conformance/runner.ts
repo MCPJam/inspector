@@ -813,6 +813,14 @@ export function validateTaskTtlIntegerShape(
       violations.push(`${name} is ${value}, which is not an integer`);
       continue;
     }
+    // schema.json bounds both fields to ±9007199254740991, the safe-integer
+    // range, so a larger whole number is out of schema too.
+    if (!Number.isSafeInteger(value)) {
+      violations.push(
+        `${name} is ${value}, which is outside the schema's integer range`
+      );
+      continue;
+    }
     if (value < 0) {
       warnings.push(
         `${name} is ${value}; the extension states no lower bound, but it spells "unlimited" as null rather than as a negative number`
@@ -1910,6 +1918,7 @@ export class MCPTasksConformanceTest {
 
           if (selected.has("tasks-ttl-integer-shape")) {
             const stepStartedAt = Date.now();
+            const integerTaskId = createdTaskId ?? rawCreation?.taskId;
             if (wire !== "extension") {
               // "integer milliseconds" is the EXTENSION's `Task` interface
               // talking. The legacy wire's `ttl`/`pollInterval` carry no such
@@ -1921,7 +1930,7 @@ export class MCPTasksConformanceTest {
                   "the integer-milliseconds statement belongs to the tasks extension; the legacy wire states no such bound"
                 )
               );
-            } else if (!createdTaskId) {
+            } else if (!integerTaskId) {
               checks.push(noTask("tasks-ttl-integer-shape"));
             } else {
               // EVERY task payload the server sent, not just the last. The
@@ -1930,22 +1939,23 @@ export class MCPTasksConformanceTest {
               // fractional value on any one of them breaks the schema even when
               // the final one is clean. Read raw, like the status-payload check,
               // so the decoder cannot hide a value — and so a bad creation
-              // result is still judged when no `tasks/get` was ever answered.
-              // The decoded final task is the fallback when no raw frame was
-              // captured.
-              const rawCreation = findRawCreationTask(
+              // result is still judged when no `tasks/get` was ever answered,
+              // or when the client could not decode the creation as a task at
+              // all (the raw frame still names its `taskId`). The decoded final
+              // task is the fallback when no raw frame was captured.
+              const creationPayload = findRawCreationTask(
                 received,
-                createdTaskId,
+                integerTaskId,
                 sentRequestIds(sent, "tools/call")
               );
               const rawStates = findRawTaskStates(
                 received,
-                createdTaskId,
+                integerTaskId,
                 sentRequestIds(sent, "tasks/get")
               );
               const payloads: Array<{ source: string; task: unknown }> = [
-                ...(rawCreation
-                  ? [{ source: "tools/call", task: rawCreation }]
+                ...(creationPayload
+                  ? [{ source: "tools/call", task: creationPayload }]
                   : []),
                 ...rawStates.map((state) => ({
                   source: `tasks/get ${String(state.status)}`,

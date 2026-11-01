@@ -277,14 +277,41 @@ describe("tasks-ttl-integer-shape", () => {
     const phases = quickPhases();
     phases[0] = { ...phases[0]!, ttlMs: 1500.5 };
     const entry = check(
-      await run(await serve(phases, { misbehave: { getResultType: "bogus" } }), [
-        ID,
-      ]),
+      await run(
+        await serve(phases, { misbehave: { getResultType: "bogus" } }),
+        [ID],
+      ),
       ID,
     );
     expect(entry.status).toBe("failed");
     expect(entry.error?.message).toContain(
       "tools/call: ttlMs is 1500.5, which is not an integer",
+    );
+  });
+
+  it("still judges the creation payload when the client cannot decode it as a task", async () => {
+    const phases = quickPhases();
+    phases[0] = { ...phases[0]!, ttlMs: 1500.5 };
+    const entry = check(
+      await run(
+        await serve(phases, { misbehave: { omitCreateResultType: true } }),
+        [ID],
+      ),
+      ID,
+    );
+    expect(entry.status).toBe("failed");
+    expect(entry.error?.message).toContain(
+      "tools/call: ttlMs is 1500.5, which is not an integer",
+    );
+  });
+
+  it("fails a whole number beyond the schema's safe-integer range", async () => {
+    const phases = quickPhases();
+    phases[1] = { ...phases[1]!, ttlMs: Number.MAX_SAFE_INTEGER + 1 };
+    const entry = check(await run(await serve(phases), [ID]), ID);
+    expect(entry.status).toBe("failed");
+    expect(entry.error?.message).toContain(
+      "outside the schema's integer range",
     );
   });
 
