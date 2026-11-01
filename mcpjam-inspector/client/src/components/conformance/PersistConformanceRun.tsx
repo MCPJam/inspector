@@ -180,7 +180,7 @@ export function PersistConformanceRun({
   snapshot: RunSnapshot;
   /**
    * The saved run's id once it is finalized, and null when a new run starts,
-   * so the live view can link to the run it just saved.
+   * so the live view can offer Share for the run it just saved.
    */
   onSavedRun?: (runId: string | null) => void;
 }) {

@@ -3,25 +3,44 @@
  * and server pickers, and the pre-run state.
  */
 
-import type { ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
+import { AlertTriangle, ChevronDown, Server } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@mcpjam/design-system/select";
 import { MCP_PROTOCOL_VERSIONS } from "@mcpjam/sdk/browser";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@mcpjam/design-system/popover";
+import {
+  ServerPickerServerList,
+  type ServerPickerServerRow,
+} from "@mcpjam/design-system/server-picker-panel";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import {
+  UNKNOWN_CONNECTION_STATUS,
+  getConnectionStatusMeta,
+  isConnectionStatus,
+} from "@/components/connection/server-card-utils";
+import { navigateApp, routePaths } from "@/lib/app-navigation";
 import type { ProtocolVersionPin } from "@/hooks/use-conformance-run";
 import { cn } from "@/lib/utils";
 import { ConformanceScorePreview } from "./ConformanceScorePreview";
 
 export const RUN_LABEL = "Run conformance checks";
 
+export const NO_SERVERS_MESSAGE = "Add a server to run conformance checks.";
+
 /**
- * The pre-run state: the animated score card above the first-run prompt.
- * It fills the space above whatever follows it in the scroll container.
+ * The pre-run state: the sample score card above the first-run prompt and its
+ * one Run button. It fills the space above whatever follows it in the scroll
+ * container.
  */
 export function ConformancePreRun({ runButton }: { runButton: ReactNode }) {
   return (
@@ -31,7 +50,7 @@ export function ConformancePreRun({ runButton }: { runButton: ReactNode }) {
     <div className="flex shrink-0 grow flex-col py-4">
       <div className="my-auto flex flex-col items-center gap-4">
         <ConformanceScorePreview />
-        <div className="flex flex-col items-center gap-2 pt-2 text-center">
+        <div className="flex flex-col items-center gap-2 pt-6 text-center">
           <h3 className="text-xl font-semibold tracking-tight">
             Run your first conformance check
           </h3>
@@ -39,8 +58,58 @@ export function ConformancePreRun({ runButton }: { runButton: ReactNode }) {
             We assess protocol, apps, tasks, and OAuth on the server of your
             choice.
           </p>
-          <div className="pt-4">{runButton}</div>
+          <div className="flex pt-6">{runButton}</div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A background connect that failed when Run was clicked: names the server and
+ * offers the two ways forward, rather than a toast that is gone in seconds.
+ */
+export function ConformanceConnectError({
+  server,
+  needsSignIn,
+  onRetry,
+  onEdit,
+}: {
+  /** Only a name for a server this session has not loaded yet. */
+  server: Pick<ServerWithName, "name"> &
+    Partial<Pick<ServerWithName, "lastError" | "lastNormalizedError">>;
+  needsSignIn: boolean;
+  onRetry: () => void;
+  onEdit?: () => void;
+}) {
+  const reason = needsSignIn
+    ? "It needs you to sign in again."
+    : (server.lastNormalizedError?.oneLine ??
+      server.lastError ??
+      "Check that it is running and that its server settings are right.");
+  return (
+    <div
+      role="alert"
+      className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-red-500/30 bg-red-500/5 px-4 py-3"
+    >
+      <div className="flex min-w-0 items-start gap-2 text-sm">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+        <div className="min-w-0">
+          <div className="font-medium">Couldn't connect to "{server.name}"</div>
+          <div className="text-muted-foreground">{reason}</div>
+        </div>
+      </div>
+      <div className="flex shrink-0 gap-2">
+        {/* A plain retry would hit the same missing sign-in, so this one
+            opens it. */}
+        <Button size="sm" variant="outline" onClick={onRetry}>
+          {needsSignIn ? "Sign in" : "Retry"}
+        </Button>
+        {onEdit ? (
+          <Button size="sm" variant="ghost" onClick={onEdit}>
+            Edit connection
+          </Button>
+        ) : null}
       </div>
     </div>
   );
@@ -165,10 +234,13 @@ export function ProtocolVersionSelect({
   value,
   onChange,
   disabled,
+  labelledBy,
 }: {
   value: ProtocolVersionPin;
   onChange?: (value: ProtocolVersionPin) => void;
   disabled?: boolean;
+  /** The visible label's id; without one the select names itself. */
+  labelledBy?: string;
 }) {
   return (
     <Select
@@ -177,8 +249,9 @@ export function ProtocolVersionSelect({
       disabled={disabled}
     >
       <SelectTrigger
-        aria-label="Protocol version"
-        className="h-8 w-auto gap-2 text-sm"
+        aria-label={labelledBy ? undefined : "Protocol version"}
+        aria-labelledby={labelledBy}
+        className="h-9.5 w-full justify-between gap-2 px-3 text-sm"
       >
         <span>Protocol · {value === "auto" ? "Auto" : value}</span>
       </SelectTrigger>
@@ -195,40 +268,129 @@ export function ProtocolVersionSelect({
   );
 }
 
-/** The page's own server picker; replaces the shell's header server tabs. */
+/** How a server that is not connected reads in the picker; Run connects it. */
+/**
+ * A server's row in the picker: the status dot the server cards use, and a
+ * Connect while it is neither connected nor on its way there.
+ */
+function serverRow(
+  name: string,
+  // A project server this session has not loaded is plainly not connected.
+  status: string,
+  onConnect: ((serverName: string) => void) | undefined,
+  connecting: boolean,
+): ServerPickerServerRow {
+  // `isConnectionStatus`, not a cast: a value outside the union is a state
+  // the page cannot read, so it gets no dot and no Connect.
+  const meta = isConnectionStatus(status)
+    ? getConnectionStatusMeta(status)
+    : null;
+  const inFlight =
+    connecting ||
+    status === "connected" ||
+    status === "connecting" ||
+    status === "oauth-flow";
+  return {
+    id: name,
+    name,
+    status: meta
+      ? { label: meta.label, indicatorClassName: meta.indicatorClassName }
+      : UNKNOWN_CONNECTION_STATUS,
+    onConnect:
+      onConnect && meta && !inFlight ? () => onConnect(name) : undefined,
+  };
+}
+
 export function ConformanceServerPicker({
   servers,
+  moreServerNames = [],
+  loading = false,
+  connectingNames = [],
   selectedName,
   onSelect,
+  onConnect,
+  labelledBy,
 }: {
   servers: ServerWithName[];
+  /** Project servers this session has not loaded, listed as not connected. */
+  moreServerNames?: readonly string[];
+  /** The project's servers are still loading. */
+  loading?: boolean;
+  /** Connects started here and not settled yet: no second Connect. */
+  connectingNames?: readonly string[];
   selectedName: string | null;
   onSelect: (name: string) => void;
+  /** Connects a server from its row. Omit to offer no Connect. */
+  onConnect?: (serverName: string) => void;
+  /** The visible label's id; without one the trigger names itself. */
+  labelledBy?: string;
 }) {
-  const value =
-    selectedName && servers.some((server) => server.name === selectedName)
-      ? selectedName
-      : undefined;
+  const [open, setOpen] = useState(false);
+  const valueId = useId();
+  const loaded = new Set(servers.map((server) => server.name));
+  const rows = [
+    ...servers.map((server) =>
+      serverRow(
+        server.name,
+        server.connectionStatus,
+        onConnect,
+        connectingNames.includes(server.name),
+      ),
+    ),
+    ...moreServerNames
+      .filter((name) => !loaded.has(name))
+      .map((name) =>
+        serverRow(
+          name,
+          "disconnected",
+          onConnect,
+          connectingNames.includes(name),
+        ),
+      ),
+  ];
+  const selected = rows.some((row) => row.name === selectedName)
+    ? selectedName
+    : null;
   return (
-    <Select
-      value={value}
-      onValueChange={onSelect}
-      disabled={servers.length === 0}
-    >
-      <SelectTrigger aria-label="Server" className="h-8 w-auto gap-2 text-sm">
-        <SelectValue
-          placeholder={
-            servers.length === 0 ? "No connected servers" : "Select a server"
-          }
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={labelledBy ? undefined : "Server"}
+          aria-labelledby={labelledBy ? `${labelledBy} ${valueId}` : undefined}
+          className={cn(
+            "flex h-8 max-w-[260px] items-center gap-1.5 rounded-full border px-2.5 text-foreground outline-none transition-colors",
+            "focus-visible:ring-[3px] focus-visible:ring-ring/50",
+            selected
+              ? "border-border/60 bg-muted/40 hover:bg-muted/60"
+              : "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45",
+          )}
+        >
+          <Server className="size-3.5 shrink-0 text-muted-foreground" />
+          <span id={valueId} className="min-w-0 truncate text-xs font-medium">
+            {selected ?? "Select server"}
+          </span>
+          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="max-h-(--radix-popover-content-available-height) w-72 overflow-y-auto p-1.5"
+        align="start"
+        sideOffset={4}
+      >
+        <ServerPickerServerList
+          servers={rows}
+          selectedServerId={selected}
+          catalogKnown={!loading || rows.length > 0}
+          onSelectServer={(name) => {
+            onSelect(name);
+            setOpen(false);
+          }}
+          onAddServer={() => navigateApp(routePaths.servers)}
+          // Conformance has no other way to add one, so it stays under the list.
+          addServer="always"
         />
-      </SelectTrigger>
-      <SelectContent>
-        {servers.map((server) => (
-          <SelectItem key={server.name} value={server.name}>
-            {server.name}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+      </PopoverContent>
+    </Popover>
   );
 }

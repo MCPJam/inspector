@@ -347,6 +347,7 @@ export {
 // sampling requests through the SAME trust rules as the standalone path.
 export {
   TASK_INPUT_METHODS,
+  validateEmbeddedClientRequest,
   isTaskInputMethod,
   TaskInputRejectedError,
   collectTaskInputResponses,
@@ -543,6 +544,7 @@ export type {
   MrtrOperationState,
   MrtrLegResult,
   MrtrLegSender,
+  MrtrLegMiddleware,
   MrtrSupportedModes,
   MrtrInputCollector,
   MrtrValidateResponse,

@@ -149,6 +149,7 @@ export const memberFixture: AppFixture = {
     ],
   },
   responses: {
+    "/api/web/oauth/connections": { connections: [], shared: true },
     "/api/web/tasks/capabilities": { supported: false },
     "/api/web/servers/check-oauth": {
       useOAuth: false,

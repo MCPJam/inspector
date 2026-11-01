@@ -30,10 +30,82 @@ const EXCLUDED_PROFILE_SEGMENTS = new Set([
   "singletonsock",
 ]);
 
+// A saved profile exists to carry signed-in sessions, which live in cookies
+// and site storage. Saved passwords, autofill (cards and addresses included),
+// browsing history, bookmarks, per-site network records, browser account data
+// and extension state are not needed for that, so they never leave the browser
+// that collected them. Names match at any depth, so every profile directory
+// (`Default`, `Profile 1`, `Guest Profile`) and the user-data root are covered.
+//
+// A denylist, not an allowlist of session stores: Chromium moves site storage
+// between releases (Cookies moved under `Network/`), and an allowlist that
+// misses a store silently signs the user out of every site that used it.
+const PRIVATE_PROFILE_SEGMENTS = new Set([
+  "login data",
+  "login data for account",
+  "affiliation database",
+  "web data",
+  "account web data",
+  "autofillstrikedatabase",
+  "autofillaimodelcache",
+  "history",
+  "media history",
+  "visited links",
+  "top sites",
+  "shortcuts",
+  "favicons",
+  "network action predictor",
+  "dips",
+  "bookmarks",
+  "accountbookmarks",
+  "encryptedbookmarks2",
+  "encryptedaccountbookmarks2",
+  "network persistent state",
+  "transportsecurity",
+  "reporting and nel",
+  "site characteristics database",
+  "download service",
+  "platform notifications",
+  "segmentation platform",
+  "segmentation_platform",
+  "feature engagement tracker",
+  "trust tokens",
+  "conversions",
+  "shared dictionary",
+  "accounts",
+  "gcm store",
+  "sessions",
+  "current session",
+  "last session",
+  "current tabs",
+  "last tabs",
+  "sync data",
+  "extensions",
+  "extension state",
+  "extension activity",
+  "extension rules",
+  "extension scripts",
+  "extension cookies",
+  "local extension settings",
+  "sync extension settings",
+  "managed extension settings",
+]);
+
+// SQLite keeps uncommitted rows in -journal/-wal/-shm, and Chromium, tools and
+// people leave backup copies (`Bookmarks.bak`, `Web Data~`). Each is the store
+// under another name, so the suffixes are stripped, stacked ones included,
+// before the name is checked.
+const STORE_COPY_SUFFIX = /(?:-journal|-wal|-shm|\.bak|\.tmp|\.old|~)+$/;
+
+function isExcludedProfileSegment(segment: string): boolean {
+  const base = segment.toLowerCase().replace(STORE_COPY_SUFFIX, "");
+  return (
+    EXCLUDED_PROFILE_SEGMENTS.has(base) || PRIVATE_PROFILE_SEGMENTS.has(base)
+  );
+}
+
 function isExcludedProfilePath(path: string): boolean {
-  return path
-    .split(/[\\/]+/)
-    .some((segment) => EXCLUDED_PROFILE_SEGMENTS.has(segment.toLowerCase()));
+  return path.split(/[\\/]+/).some(isExcludedProfileSegment);
 }
 
 function assertSafeArchivePath(path: string): void {
@@ -167,7 +239,9 @@ async function collectProfileEntries(
       uncompressedBytes.value + stat.size >
       MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES
     ) {
-      throw new Error("browser profile archive exceeds the expanded size limit");
+      throw new Error(
+        "browser profile archive exceeds the expanded size limit",
+      );
     }
     const contents = await readFile(absolutePath);
     const header = makeTarHeader(
@@ -266,7 +340,10 @@ async function ensureSafeDirectory(
   }
 }
 
-/** Pack a Chromium user-data-dir, excluding caches and singleton locks. */
+/**
+ * Pack a Chromium user-data-dir, excluding caches, singleton locks, saved
+ * passwords, autofill, history and extension state.
+ */
 export async function exportBrowserProfileArchive(
   profileDir: string,
 ): Promise<Uint8Array> {

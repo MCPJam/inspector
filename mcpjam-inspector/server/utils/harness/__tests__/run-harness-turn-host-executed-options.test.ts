@@ -32,6 +32,7 @@ const harnessState = vi.hoisted(() => ({
   finalText: "done",
   continuations: [] as any[],
   create: vi.fn(),
+  createRuntime: vi.fn(() => ({ harnessId: "codex" })),
   stream: vi.fn(),
   session: {
     sessionId: "session-1",
@@ -88,16 +89,17 @@ vi.mock("../registry.js", () => ({
     // The delivery mode under test: no `.mcp.json`, the servers ride as
     // host-executed tools MCPJam builds itself.
     mcpDelivery: adapterDelivery.value,
+    mcpNativeDelivery: "session-config",
     supportsModel: vi.fn(() => true),
     toNativeModel,
-    createHarness: vi.fn(() => ({ harnessId: "codex" })),
+    createHarness: harnessState.createRuntime,
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
   })),
 }));
 
 /** The projection itself is covered by its own file; here it is a spy. */
 const projectSpy = vi.hoisted(() =>
-  vi.fn(async () => ({ tools: {}, keyToServerId: {} }))
+  vi.fn(async (_args: Parameters<typeof import("../host-executed-mcp-tools").projectSelectedMcpServersAsHostTools>[0]) => ({ tools: {}, keyToServerId: {} }))
 );
 vi.mock("../host-executed-mcp-tools.js", async (importOriginal) => {
   const actual = await importOriginal<
@@ -153,10 +155,31 @@ vi.mock("../harness-model-broker.js", () => ({
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
     proxyBaseUrl: "https://broker.example",
+    forwarding: {}, expiresAt: Date.now() + 60_000,
   })),
 }));
 
+const forwarding = vi.hoisted(() => ({
+  allowed: false,
+  admission: vi.fn((): { delivery?: "native" | "bridge"; gaps: string[] } => ({ gaps: [] })),
+  prepare: vi.fn(async () => ({
+    mcpJson: { mcpServers: { server: { url: "https://forward.test/mcp" } } },
+    keyToServerId: { server: "srv-a" }, policyDigest: "policy", logScopeIds: {},
+    isForwardedTool: () => false, stop: vi.fn(async () => {}),
+  })),
+}));
+vi.mock("../forwarding/enhanced-admission.js", () => ({ forwardingAdmission: forwarding.admission }));
+vi.mock("../forwarding/native-turn.js", async (original) => ({
+  ...await original<typeof import("../forwarding/native-turn.js")>(),
+  hasForwardingOrganization: () => forwarding.allowed,
+  nativeForwardingSelection: () => ({ serverIds: ["srv-a"] }),
+  prepareNativeForwarding: forwarding.prepare,
+}));
+
 import { runHarnessTurn } from "../run-harness-turn";
+import { readMcpOriginalResult, readMcpWidgetContext } from "@/shared/mcp-tool-origin-metadata";
+import { transcriptToUIMessages } from "../../../../client/src/lib/transcript-to-ui-messages";
+import { convertToMcpjamModelMessages } from "../../mcp-tool-result-model-output";
 import { mcpToolOptionsFor } from "../../mcp-tool-options.js";
 import { markServerVerifiedApproval } from "../../tool-approval-token.js";
 import { getHarnessAdapter } from "../registry.js";
@@ -578,4 +601,101 @@ it.each(["claude-code", "codex"] as const)("delivers %s App context per turn wit
   await runHarnessTurn({ ...options, harnessTurnContext: "widget state two", harnessUnavailableAppTools: true } as never, "none");
   expect(agentConstruction.last?.instructions).toEqual(firstInstructions);
   expect(JSON.stringify(harnessState.stream.mock.calls.at(-1))).toContain("widget state two");
+});
+
+
+describe("enrolled Claude forwarding admission", () => {
+  beforeEach(() => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
+    vi.stubEnv("HARNESS_NATIVE_FORWARDING", "true");
+    forwarding.allowed = true;
+    forwarding.admission.mockReset().mockReturnValue({ delivery: "native", gaps: [] });
+    forwarding.prepare.mockClear();
+    projectSpy.mockClear();
+    harnessState.stream.mockClear();
+    adapterDelivery.value = "harness";
+    harnessState.createRuntime.mockClear();
+  });
+  afterEach(() => { forwarding.allowed = false; vi.unstubAllEnvs(); });
+  const enrolled = () => baseOptions({
+    harness: "claude-code", agentLoop: "claude-code", sourceType: "direct",
+    hostId: "host-claude", chatSessionId: "chat-claude",
+    harnessMcpProxy: { plane: "web-authorized", mode: "relay" },
+  });
+  it("uses forwarding instead of projecting the same tools twice when admitted", async () => {
+    await runHarnessTurn(enrolled() as never, "none");
+    expect(forwarding.admission).toHaveBeenCalledOnce();
+    expect(forwarding.prepare).toHaveBeenCalledOnce();
+    expect(harnessState.createRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      mcpJson: { mcpServers: { server: { url: "https://forward.test/mcp" } } },
+    }));
+    expect(projectSpy).not.toHaveBeenCalled();
+    expect(harnessState.stream).toHaveBeenCalledOnce();
+  });
+  it("keeps the configured bridge when the profile does not qualify", async () => {
+    forwarding.admission.mockReturnValue({ gaps: ["unqualified-protocol"] });
+    await runHarnessTurn(enrolled() as never, "none");
+    expect(forwarding.admission).toHaveBeenCalledOnce();
+    expect(forwarding.prepare).not.toHaveBeenCalled();
+    expect(projectSpy).toHaveBeenCalledOnce();
+    expect(harnessState.stream).toHaveBeenCalledOnce();
+  });
+  it.each(["flag-disabled", "eval-surface"])("retains the bridge for %s", async reason => {
+    if (reason === "flag-disabled") vi.stubEnv("HARNESS_NATIVE_FORWARDING", "false");
+    const options = enrolled();
+    if (reason === "eval-surface") Object.assign(options, { sourceType: "eval", evalIterationId: "iteration" });
+    await runHarnessTurn(options as never, "none");
+    expect(forwarding.admission).not.toHaveBeenCalled();
+    expect(forwarding.prepare).not.toHaveBeenCalled();
+    expect(projectSpy).toHaveBeenCalledOnce();
+  });
+  it("keeps other organizations on their configured bridge", async () => {
+    forwarding.allowed = false;
+    await runHarnessTurn(enrolled() as never, "none");
+    expect(forwarding.admission).not.toHaveBeenCalled();
+    expect(forwarding.prepare).not.toHaveBeenCalled();
+    expect(projectSpy).toHaveBeenCalledOnce();
+  });
+});
+
+
+it("keeps retained App presentation separate from saved model history", async () => {
+  vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
+  adapterDelivery.value = "mcpjam";
+  const raw = { content: [{ type: "text", text: "visible" }], _meta: { private: "WIDGET_PRIVATE_SENTINEL" }, structuredContent: { privateValue: 7 } };
+  const projected = { type: "text", value: "visible" };
+  const onConversationComplete = vi.fn();
+  projectSpy.mockImplementationOnce(async args => {
+    args.onRawResult?.({ toolCallId: "app-call", raw });
+    return { tools: {}, keyToServerId: {} };
+  });
+  harnessState.streamParts = [
+    { type: "tool-call", toolCallId: "app-call", toolName: "app", input: {} },
+    { type: "tool-result", toolCallId: "app-call", toolName: "app", output: projected },
+    { type: "finish", finishReason: "stop" },
+  ];
+  try {
+    const turn = await runHarnessTurn(baseOptions({ onConversationComplete }) as never, "ui");
+    const wire = await turn.response!.text();
+    const chunks = wire.split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6)));
+    const outputChunk = chunks.find(chunk => chunk.type === "tool-output-available");
+    expect(outputChunk.output).toEqual(projected);
+    expect(readMcpOriginalResult(outputChunk.providerMetadata)).toEqual(raw);
+    expect(readMcpWidgetContext(outputChunk.providerMetadata)).toBeUndefined();
+    expect(onConversationComplete).toHaveBeenCalledOnce();
+    const history = onConversationComplete.mock.calls[0][0];
+    const result = history.flatMap((message: ModelMessage) => Array.isArray(message.content) ? message.content : []).find((part: {type: string}) => part.type === "tool-result");
+    expect(result).toMatchObject({ output: projected, result: raw });
+    const ui = transcriptToUIMessages(history);
+    const app = ui.flatMap(message => message.parts).find(part => "toolCallId" in part);
+    expect(app && "callProviderMetadata" in app && readMcpOriginalResult(app.callProviderMetadata)).toEqual(raw);
+    expect(app && "callProviderMetadata" in app && readMcpWidgetContext(app.callProviderMetadata)).toBeUndefined();
+    const freshHistory = await convertToMcpjamModelMessages(ui);
+    expect(JSON.stringify(freshHistory)).toContain("visible");
+    expect(JSON.stringify(freshHistory)).not.toContain("WIDGET_PRIVATE_SENTINEL");
+    expect(JSON.stringify(freshHistory)).not.toContain("privateValue");
+  } finally {
+    harnessState.streamParts = [{ type: "finish", finishReason: "stop" }];
+    vi.unstubAllEnvs();
+  }
 });

@@ -1,6 +1,14 @@
 import { TurnResources } from "./resources.js";
+import {
+  createHarnessInputHost,
+  harnessElicitationModes,
+} from "../../utils/harness/input-host.js";
+import { isForwardingOrganization } from "../../utils/harness/forwarding/native-turn.js";
 import { chatTurnIsolatedServerIds } from "../../utils/plugin-server-isolation.js";
-import { HOSTED_ELICITATION_VERSION } from "../../../shared/hosted-elicitation.js";
+import {
+  HOSTED_ELICITATION_VERSION,
+  HOSTED_HARNESS_INPUT_VERSION,
+} from "../../../shared/hosted-elicitation.js";
 import { hasServiceCredential } from "../service-credential.js";
 import { PluginInvocationError } from "../plugin-host/invocation.js";
 import { describePluginError } from "../../../shared/plugin-diagnostics.js";
@@ -27,7 +35,10 @@ import { buildHostConnectionPins } from "../host-connection-pins.js";
 import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
 import { type Context } from "hono";
 import { TaskCreatedSink } from "@mcpjam/sdk";
-import { isCompatibleHostedTasksVersion } from "@/shared/hosted-task-created";
+import {
+  isCompatibleHostedTasksVersion,
+  hostedTaskOwnerRequestId,
+} from "@/shared/hosted-task-created";
 import { HostedTaskCreatedBridge } from "../../utils/hosted-task-created-bridge.js";
 import { recordHostedTask } from "../hosted-task-registry.js";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
@@ -77,6 +88,7 @@ import {
   resolvePluginExtensions,
 } from "@mcpjam/sdk/host-config/internal";
 import { resolveManagedTurnSetup } from "./managed-setup.js";
+import { pendingStdioCommandApproval } from "../../utils/stdio-command-approvals.js";
 
 type ManagedSetup = Extract<
   Awaited<ReturnType<typeof resolveManagedTurnSetup>>,
@@ -131,6 +143,7 @@ export async function prepareManagedConnections(args: {
     selectedServerIds,
     selectedServerNames,
     scenarioId,
+    hostId,
     accessVersion,
     modelDefinition,
     turnMode,
@@ -300,6 +313,21 @@ export async function prepareManagedConnections(args: {
     await elicitationBridge?.dispose();
   });
 
+  const harnessInput =
+    elicitationBridge &&
+    resolvedExecution.harness === "claude-code" &&
+    rawBody.hostedHarnessInputVersion === HOSTED_HARNESS_INPUT_VERSION &&
+    process.env.HARNESS_NATIVE_FORWARDING === "true" &&
+    turnRail === "hosted" &&
+    hostId && !scenarioId && !rawBody.harnessExecutionTarget
+      ? createHarnessInputHost({
+          allowedServerIds: new Set(effectiveServerIds),
+          modes: harnessElicitationModes(effectiveClientCapabilities),
+          handle: elicitationBridge.callback,
+          signal: c.req.raw.signal,
+        })
+      : undefined;
+
   const mrtrBridge =
     mrtrEnabled && convexBearer
       ? new HostedMrtrBridge({
@@ -325,6 +353,16 @@ export async function prepareManagedConnections(args: {
       (rawBody as Record<string, unknown>).hostedTasksVersion,
     )
       ? new HostedTaskCreatedBridge({
+          requestedOwnerScope:
+            typeof (rawBody as Record<string, unknown>).hostedTaskOwnerScope ===
+            "string"
+              ? ((rawBody as Record<string, unknown>)
+                  .hostedTaskOwnerScope as string)
+              : undefined,
+          ownerRequestId: hostedTaskOwnerRequestId(
+            (rawBody as Record<string, unknown>).hostedTaskOwnerRequestId,
+            (rawBody as Record<string, unknown>).hostedTaskOwnerVersion,
+          ),
           serverNamesById:
             buildServerNamesById(effectiveServerIds, effectiveServerNames) ??
             {},
@@ -371,13 +409,11 @@ export async function prepareManagedConnections(args: {
   // form extensions are advertised or handled at all.
   // Emulated and Codex harness turns (whose MCP tools run here, in process)
   // take the same plugin executor; see `chatPluginFormPlan`.
+  const hostPins = hostRuntimeConfig
+    ? buildHostConnectionPins(hostRuntimeConfig, WEB_STREAM_TIMEOUT_MS)
+    : undefined;
   const pluginPins =
-    pluginWorkspace && hostRuntimeConfig && turnMode === "interactive"
-      ? buildHostConnectionPins(
-          hostRuntimeConfig as never,
-          WEB_STREAM_TIMEOUT_MS,
-        )
-      : undefined;
+    pluginWorkspace && turnMode === "interactive" ? hostPins : undefined;
   const pluginPinFor = (id: string) =>
     pluginPins?.mcpProtocolVersionsByServerId?.[id] ??
     pluginPins?.initializePins?.mcpProtocolVersion;
@@ -510,7 +546,7 @@ export async function prepareManagedConnections(args: {
     bearerToken,
     hostedBody.projectId,
     effectiveServerIds,
-    WEB_STREAM_TIMEOUT_MS,
+    hostPins?.timeoutMs ?? WEB_STREAM_TIMEOUT_MS,
     hostedBody.oauthTokens,
     // Scenario: advertise the HOST's capabilities, not the body's, so the
     // wire matches what we're prepared to honor.
@@ -547,6 +583,7 @@ export async function prepareManagedConnections(args: {
       httpLogger: rpcCollector.httpLogger,
       serverNames: effectiveServerNames,
       initializePins: effectiveInitializePins,
+      requestTimeoutByServerId: hostPins?.requestTimeoutByServerId,
       mcpProtocolVersionsByServerId,
       xaaPolicy,
       // Required for any XAA server in the batch (policy-forced or
@@ -562,11 +599,17 @@ export async function prepareManagedConnections(args: {
       // Registered SYNCHRONOUSLY inside createAuthorizedManager (before the
       // connect microtask) so `buildCapabilities` advertises `elicitation`
       // for MRTR-capable servers — same race discipline as elicitation.
-      ...(mrtrBridge
+      ...(mrtrBridge || harnessInput
         ? {
-            mrtrInputCollectorForServer: (serverId: string) =>
+            mrtrInputCollectorForServer: (
+              serverId: string,
+              organizationId?: string | null,
+            ) =>
               modelMrtr?.collectorForServer(serverId) ??
-              mrtrBridge.mrtrInputCollectorForServer(serverId),
+              mrtrBridge?.mrtrInputCollectorForServer(serverId) ??
+              (isForwardingOrganization(organizationId)
+                ? harnessInput?.collectMrtrForServer(serverId)
+                : undefined),
           }
         : {}),
       // Same scope the bash tool reserves under, so a plugin's stdio
@@ -576,6 +619,9 @@ export async function prepareManagedConnections(args: {
     },
   );
   connectedManager = manager;
+  taskCreatedBridge?.bindOwner(hostedBody.projectId, authenticatedUserId);
+  const pendingApproval = pendingStdioCommandApproval(refusedServers);
+  if (pendingApproval) throw pendingApproval;
   if (Array.isArray(hostedBody.messages) && hostedBody.messages.length <= 1)
     void refreshConnectionProfiles(manager, bearerToken, hostedBody.projectId);
 
@@ -688,6 +734,7 @@ export async function prepareManagedConnections(args: {
 
   return {
     tasksSeam,
+    harnessOwnedInput: !!harnessInput,
     scopeStepUpResumeRequest,
     scopeStepUpCancelRequest,
     scopeStepUpEnabled,

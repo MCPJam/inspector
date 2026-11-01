@@ -1,83 +1,12 @@
-import { useEffect, useState } from "react";
-import { cn } from "@/lib/utils";
-
 /**
- * Decorative "overall score" card for the pre-run state. Nothing here is a
- * real result: each suite's value drifts toward a random target so the card
- * reads like a review in progress. Reduced-motion users get a still frame.
+ * Decorative "overall score" card for the pre-run state: what a clean run
+ * reads like. Nothing here is a real result.
  */
 
 const SUITES = ["Protocol", "Apps", "Tasks", "OAuth"] as const;
-const BAR_COUNT = 5;
 const TOTAL_CHECKS = 8;
-const TICK_MS = 50;
-const RETARGET_MS = 1400;
-
-function randomTarget() {
-  return 35 + Math.random() * 65;
-}
-
-function toneFor(value: number) {
-  if (value >= 80) return "bg-emerald-500";
-  if (value >= 50) return "bg-amber-500";
-  return "bg-red-500";
-}
-
-function prefersReducedMotion() {
-  return (
-    typeof window !== "undefined" &&
-    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
-  );
-}
-
-function useDriftingValues(count: number) {
-  const [values, setValues] = useState<number[]>(() =>
-    Array.from({ length: count }, randomTarget),
-  );
-
-  useEffect(() => {
-    if (prefersReducedMotion()) return;
-    let targets = Array.from({ length: count }, randomTarget);
-    const retarget = setInterval(() => {
-      targets = targets.map(randomTarget);
-    }, RETARGET_MS);
-    const tick = setInterval(() => {
-      setValues((current) =>
-        current.map((value, i) => value + (targets[i] - value) * 0.12),
-      );
-    }, TICK_MS);
-    return () => {
-      clearInterval(retarget);
-      clearInterval(tick);
-    };
-  }, [count]);
-
-  return values;
-}
-
-function SuiteMeter({ value }: { value: number }) {
-  const filled = Math.max(1, Math.ceil(value / (100 / BAR_COUNT)));
-  return (
-    <div className="flex h-4 shrink-0 items-end gap-0.5">
-      {Array.from({ length: BAR_COUNT }, (_, i) => (
-        <span
-          key={i}
-          className={cn(
-            "w-1.5 rounded-[2px] transition-colors duration-300",
-            i < filled ? toneFor(value) : "bg-muted",
-          )}
-          style={{ height: `${40 + i * 15}%` }}
-        />
-      ))}
-    </div>
-  );
-}
 
 export function ConformanceScorePreview() {
-  const values = useDriftingValues(SUITES.length);
-  const overall = values.reduce((sum, v) => sum + v, 0) / values.length;
-  const passed = Math.round((overall / 100) * TOTAL_CHECKS);
-
   return (
     <div
       aria-hidden="true"
@@ -89,21 +18,23 @@ export function ConformanceScorePreview() {
       <div className="flex items-end gap-2">
         <div className="flex items-start">
           <span className="text-[32px] leading-8 font-semibold tracking-[-0.03em] tabular-nums">
-            {Math.round(overall)}
+            100
           </span>
           <span className="pt-0.5 text-sm font-semibold text-muted-foreground">
             %
           </span>
         </div>
-        <span className="pb-0.5 text-xs font-medium text-muted-foreground tabular-nums">
-          {passed}/{TOTAL_CHECKS}
+        <span className="pb-0.75 text-xs font-medium text-muted-foreground tabular-nums">
+          {TOTAL_CHECKS}/{TOTAL_CHECKS}
         </span>
       </div>
       <div className="flex flex-col border-t border-border/60 pt-1.5">
-        {SUITES.map((suite, i) => (
+        {SUITES.map((suite) => (
           <div key={suite} className="flex h-6.5 items-center gap-3">
             <span className="grow text-[13px] font-medium">{suite}</span>
-            <SuiteMeter value={values[i]} />
+            <span className="flex h-4.5 shrink-0 items-center rounded-sm bg-emerald-500/15 px-1.5 text-[11px] font-semibold tracking-[0.04em] text-emerald-700 dark:text-emerald-400">
+              PASSED
+            </span>
           </div>
         ))}
       </div>

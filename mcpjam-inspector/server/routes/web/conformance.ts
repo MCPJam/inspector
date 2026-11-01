@@ -1,7 +1,10 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import {
+  MCP_APPS_CHECK_IDS,
+  MCP_CHECK_IDS,
   MCP_PROTOCOL_VERSIONS,
+  MCP_TASKS_CHECK_IDS,
   oauthConformanceProfileSchema,
   type MCPServerConfig,
 } from "@mcpjam/sdk";
@@ -32,6 +35,8 @@ import {
   EgressResolutionError,
   assertAllowedHostedTargetUrl,
 } from "../../utils/hosted-egress-guard.js";
+import { principalKey } from "../../utils/request-principal.js";
+import { toBrowserOAuthResult } from "../../utils/oauth-conformance-browser-result.js";
 
 const conformanceWeb = new Hono();
 
@@ -72,11 +77,20 @@ async function assertConformanceTarget(
   }
 }
 
-/** Resolve HTTP server URL and headers for conformance from authorized config. */
+/**
+ * Resolve HTTP server URL and headers for conformance from authorized config.
+ *
+ * `withLogin` adds the user's login as `Authorization: Bearer`: the one saved
+ * in Convex when they connected (`authorizeServer` hands it back). A token in
+ * the request body is ignored. Hosted OAuth never leaves a token in the page,
+ * and when the backend withholds its saved token on purpose (a repointed URL,
+ * an export policy), a body token must not get past that refusal.
+ */
 async function resolveHostedHttpConfig(
   c: any,
   bearerToken: string,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  options: { withLogin: boolean }
 ): Promise<{
   serverUrl: string;
   accessToken?: string;
@@ -111,14 +125,18 @@ async function resolveHostedHttpConfig(
     );
   }
 
-  const oauthToken =
-    typeof wsBody.oauthAccessToken === "string"
-      ? wsBody.oauthAccessToken
-      : undefined;
+  const oauthToken = options.withLogin
+    ? (auth.oauthAccessToken ?? undefined)
+    : undefined;
   const headers: Record<string, string> = {
     ...(auth.serverConfig.headers ?? {}),
   };
   if (oauthToken) {
+    // Replace a saved header in any case, or the request would carry two
+    // Authorization values and the server would see them joined.
+    for (const key of Object.keys(headers)) {
+      if (key.toLowerCase() === "authorization") delete headers[key];
+    }
     headers["Authorization"] = `Bearer ${oauthToken}`;
   }
 
@@ -150,12 +168,11 @@ async function resolveHostedServerConfig(
     }
   );
 
+  // Saved login only — see `resolveHostedHttpConfig`.
   const httpConfig = toHttpConfig(
     auth,
     WEB_CALL_TIMEOUT_MS,
-    typeof wsBody.oauthAccessToken === "string"
-      ? wsBody.oauthAccessToken
-      : undefined,
+    auth.oauthAccessToken ?? undefined,
     wsBody.clientCapabilities as Record<string, unknown> | undefined
   );
 
@@ -224,6 +241,8 @@ const protocolSchema = z
   .object({
     /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
     protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
+    /** Run only these checks, as picked before Run; absent ⇒ all of them. */
+    checkIds: z.array(z.enum(MCP_CHECK_IDS)).min(1).optional(),
   })
   .passthrough(); // project/guest fields pass through to resolveHostedHttpConfig
 
@@ -231,13 +250,16 @@ conformanceWeb.post("/protocol", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
     const body = await readJsonBody<Record<string, unknown>>(c);
-    const resolved = await resolveHostedHttpConfig(c, bearerToken, body);
+    const resolved = await resolveHostedHttpConfig(c, bearerToken, body, {
+      withLogin: true,
+    });
     const parsed = parseWithSchema(protocolSchema, body);
 
     try {
       const { result } = await runProtocolConformance({
         ...resolved,
         protocolVersion: parsed.protocolVersion,
+        checkIds: parsed.checkIds,
       });
       return { success: true, result };
     } catch (error) {
@@ -248,14 +270,25 @@ conformanceWeb.post("/protocol", async (c) =>
 
 // ── POST /apps ──────────────────────────────────────────────────────────
 
+const appsSchema = z
+  .object({
+    /** Run only these checks, as picked before Run; absent ⇒ all of them. */
+    checkIds: z.array(z.enum(MCP_APPS_CHECK_IDS)).min(1).optional(),
+  })
+  .passthrough(); // project/guest fields pass through to resolveHostedServerConfig
+
 conformanceWeb.post("/apps", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
     const body = await readJsonBody<Record<string, unknown>>(c);
     const config = await resolveHostedServerConfig(c, bearerToken, body);
+    const parsed = parseWithSchema(appsSchema, body);
 
     try {
-      const { result } = await runAppsConformance(config);
+      const { result } = await runAppsConformance({
+        ...config,
+        ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
+      });
       return { success: true, result };
     } catch (error) {
       throw toWebError(error);
@@ -299,6 +332,8 @@ const tasksSchema = z
     toolName: z.string().min(1).optional(),
     toolArguments: z.record(z.string(), z.unknown()).optional(),
     pollTimeoutMs: z.number().int().positive().max(120_000).optional(),
+    /** Run only these checks, as picked before Run; absent ⇒ all of them. */
+    checkIds: z.array(z.enum(MCP_TASKS_CHECK_IDS)).min(1).optional(),
   })
   .passthrough(); // project/guest fields pass through to resolveHostedServerConfig
 
@@ -314,6 +349,7 @@ conformanceWeb.post("/tasks", async (c) =>
         runTasksConformance({
           ...config,
           timeout: HOSTED_TASKS_CALL_TIMEOUT_MS,
+          ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
           ...(parsed.toolName ? { toolName: parsed.toolName } : {}),
           ...(parsed.toolArguments
             ? { toolArguments: parsed.toolArguments }
@@ -346,7 +382,13 @@ conformanceWeb.post("/oauth/start", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
     const body = await readJsonBody<Record<string, unknown>>(c);
-    const resolved = await resolveHostedHttpConfig(c, bearerToken, body);
+    // No login here: the OAuth suite grades the server from an
+    // unauthenticated request and runs its own fresh authorization. Its probes
+    // merge these headers, so a bearer would make the server answer 200 and
+    // the suite would grade OAuth as not required.
+    const resolved = await resolveHostedHttpConfig(c, bearerToken, body, {
+      withLogin: false,
+    });
     const parsed = parseWithSchema(oauthStartSchema, body);
 
     if (!parsed.callbackOrigin) {
@@ -368,7 +410,7 @@ conformanceWeb.post("/oauth/start", async (c) =>
     }
 
     try {
-      return await startOAuthConformance({
+      const started = await startOAuthConformance({
         defaultServerUrl: resolved.serverUrl,
         defaultCustomHeaders: resolved.customHeaders,
         redirectUrl: `${parsed.callbackOrigin.replace(
@@ -376,7 +418,11 @@ conformanceWeb.post("/oauth/start", async (c) =>
           ""
         )}/oauth/callback/debug`,
         oauthProfile: parsed.oauthProfile,
+        owner: principalKey(c),
       });
+      return started.phase === "complete"
+        ? { ...started, result: toBrowserOAuthResult(started.result) }
+        : started;
     } catch (error) {
       throw toWebError(error);
     }
@@ -396,7 +442,10 @@ conformanceWeb.post("/oauth/authorize", async (c) =>
     const body = await readJsonBody<Record<string, unknown>>(c);
     const parsed = parseWithSchema(oauthAuthorizeSchema, body);
 
-    const delivered = submitOAuthConformanceCode(parsed);
+    const delivered = submitOAuthConformanceCode({
+      ...parsed,
+      owner: principalKey(c),
+    });
     if (!delivered) {
       throw new WebRouteError(
         404,
@@ -419,7 +468,13 @@ conformanceWeb.post("/oauth/complete", async (c) =>
     const body = await readJsonBody<Record<string, unknown>>(c);
     const parsed = parseWithSchema(oauthCompleteSchema, body);
     try {
-      return await completeOAuthConformance(parsed);
+      const completed = await completeOAuthConformance({
+        ...parsed,
+        owner: principalKey(c),
+      });
+      return completed.phase === "complete"
+        ? { ...completed, result: toBrowserOAuthResult(completed.result) }
+        : completed;
     } catch (error) {
       throw toWebError(error);
     }

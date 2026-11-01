@@ -52,8 +52,11 @@ export type Settlement = {
 };
 export type ExecutionIntent = {
   invocationKey: string;
+  policyDigest?: string;
+  nativeToolCallId?: string;
   turnId: string;
-  rpcId: string | number;
+  rpcId?: string | number;
+  continuation?: { executionId: string; operationId: string; round: number };
   method: string;
   paramsJson: string;
   expiresAt: number;
@@ -117,6 +120,7 @@ export class ExecutionControlError extends Error {
 export function createExecutionControl(args: {
   owner: ForwardingOwner;
   token?: string;
+  widgetParentId?: string;
   baseUrl?: string;
   fetch?: typeof fetch;
 }) {
@@ -130,14 +134,18 @@ export function createExecutionControl(args: {
     schema: z.ZodType<T>,
     mode: "grant" | "owner" | "settle" = "grant",
   ): Promise<T> {
-    if (mode === "grant" && !args.token)
+    if (mode === "grant" && !args.token && !args.widgetParentId)
       throw new ExecutionControlError("grant_unavailable");
     const body = JSON.stringify(
       mode === "settle"
         ? { operation }
         : {
             owner: args.owner,
-            ...(mode === "grant" ? { token: args.token } : {}),
+            ...(mode === "grant"
+              ? args.widgetParentId
+                ? { widgetParentId: args.widgetParentId }
+                : { token: args.token }
+              : {}),
             operation,
           },
     );
@@ -160,6 +168,24 @@ export function createExecutionControl(args: {
     return parsed.data;
   }
   return {
+    widgetScope: () =>
+      post(
+        { kind: "authorize" },
+        z.object({
+          projectId: z.string(),
+          organizationId: z.string(),
+          turnId: z.string(),
+          expiresAt: z.number(),
+          hostConfig: z.record(z.string(), z.unknown()),
+          chatSessionId: z.string().optional(),
+        }),
+      ),
+    bindPolicy: (turnId: string, policyDigest: string) =>
+      post(
+        { kind: "bind_policy", turnId, policyDigest },
+        z.object({ bound: z.literal(true) }),
+        "owner",
+      ),
     authorize: () =>
       post(
         { kind: "authorize" },
@@ -169,10 +195,19 @@ export function createExecutionControl(args: {
           organizationId: z.string(),
           projectId: z.string(),
           expiresAt: z.number(),
+          turnId: z.string().min(1),
+          policyDigest: z.string().regex(/^[a-f0-9]{64}$/),
+          chatSessionId: z.string().nullable().optional(),
         }),
       ),
     turnApprovals: (turnId: string) =>
       post({ kind: "turn_approvals", turnId }, z.array(receipt), "owner"),
+    nativeResult: (turnId: string, nativeToolCallId: string) =>
+      post(
+        { kind: "native_result", turnId, nativeToolCallId },
+        receipt,
+        "owner",
+      ),
     approvalContext: (executionId: string) =>
       post({ kind: "approval_context", executionId }, receipt, "owner"),
     answerApproval: (

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { forwardingExecutionContext } from "./execution-context.js";
 import {
   decideToolPolicyFromSnapshot,
   type ToolPolicySnapshot,
@@ -8,6 +9,7 @@ import {
   mintToolApprovalId,
   toolApprovalClaimKey,
   verifyToolApprovalId,
+  TOOL_APPROVAL_TOKEN_MAX_AGE_MS,
   type ToolApprovalBinding,
 } from "../../tool-approval-token.js";
 import {
@@ -38,7 +40,7 @@ export type GateApproval = {
   }) => Promise<ApprovalAnswer>;
 };
 
-function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+export function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
     const abort = () => reject(signal.reason);
     promise.then(
@@ -143,6 +145,10 @@ export async function executeForwardedOperation<T>(args: {
       throw new ExecutionControlError("approval_unavailable");
     }
     const call = { toolCallId: prepared.executionId, toolName, input };
+    const approvalExpiresAt = Math.min(
+      intent.expiresAt,
+      Date.now() + TOOL_APPROVAL_TOKEN_MAX_AGE_MS,
+    );
     const approvalId = mintToolApprovalId({
       call,
       binding: args.approval.binding,
@@ -157,14 +163,14 @@ export async function executeForwardedOperation<T>(args: {
     await control.requestApproval(
       prepared.executionId,
       nonceHash,
-      intent.expiresAt,
+      approvalExpiresAt,
       approvalId,
     );
     let answer: ApprovalAnswer;
     try {
       const signal = AbortSignal.any([
         ...(args.signal ? [args.signal] : []),
-        AbortSignal.timeout(Math.max(0, intent.expiresAt - Date.now())),
+        AbortSignal.timeout(Math.max(0, approvalExpiresAt - Date.now())),
       ]);
       answer = await withAbort(
         args.approval.ask({
@@ -172,7 +178,7 @@ export async function executeForwardedOperation<T>(args: {
           approvalId,
           toolName,
           input,
-          expiresAt: intent.expiresAt,
+          expiresAt: approvalExpiresAt,
           signal,
         }),
         signal,
@@ -231,7 +237,10 @@ export async function executeForwardedOperation<T>(args: {
       .then(() => undefined));
   try {
     args.signal?.throwIfAborted();
-    return await args.dispatch(settle, snapshot);
+    return await forwardingExecutionContext.run(
+      { executionId: prepared.executionId },
+      () => args.dispatch(settle, snapshot),
+    );
   } catch (error) {
     await settle({ outcome: "incomplete" });
     throw error;

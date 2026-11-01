@@ -118,7 +118,7 @@ describe("useWidgetHost", () => {
     listResourceTemplatesMock.mockReset();
   });
 
-  describe("services.listResourceTemplates (host-owned guard)", () => {
+  describe("services.listResourceTemplates (surface routing)", () => {
     it("delegates to the api when the surface is not web-managed", async () => {
       const templates = [{ uriTemplate: "ui://widget/{id}", name: "tpl" }];
       listResourceTemplatesMock.mockResolvedValue(templates);
@@ -130,18 +130,19 @@ describe("useWidgetHost", () => {
       await expect(
         result.current.services.listResourceTemplates("server-1"),
       ).resolves.toEqual(templates);
-      expect(listResourceTemplatesMock).toHaveBeenCalledWith("server-1");
+      expect(listResourceTemplatesMock).toHaveBeenCalledWith("server-1", { forceHosted: false });
     });
 
-    it("throws and never hits the api on web-managed surfaces", async () => {
+    it("uses the hosted API on web-managed surfaces", async () => {
+      listResourceTemplatesMock.mockResolvedValue([]);
       const { result } = renderHook(() => useWidgetHost(), {
         wrapper: makeWrapper({ webManaged: true }),
       });
 
       await expect(
         result.current.services.listResourceTemplates("server-1"),
-      ).rejects.toThrow(/Browsing resource templates isn’t available in MCPJam’s hosted web app/);
-      expect(listResourceTemplatesMock).not.toHaveBeenCalled();
+      ).resolves.toEqual([]);
+      expect(listResourceTemplatesMock).toHaveBeenCalledWith("server-1", { forceHosted: true });
     });
   });
 

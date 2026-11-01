@@ -8,16 +8,10 @@ const mockRunApps = vi.fn();
 const mockRunTasks = vi.fn();
 const mockStartOAuth = vi.fn();
 
-const { startRun, finalizeRun, cancelRun, navigate } = vi.hoisted(() => ({
+const { startRun, finalizeRun, cancelRun } = vi.hoisted(() => ({
   startRun: vi.fn().mockResolvedValue({ runId: "run_1" }),
   finalizeRun: vi.fn().mockResolvedValue({ runId: "run_1" }),
   cancelRun: vi.fn().mockResolvedValue({ cancelled: true }),
-  navigate: vi.fn(),
-}));
-
-vi.mock("@/lib/app-navigation", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
-  useAppNavigate: () => navigate,
 }));
 
 vi.mock("@/lib/apis/mcp-conformance-api", () => ({
@@ -64,7 +58,7 @@ vi.mock(
   }),
 );
 
-import { ConformanceTab } from "../ConformancePanel";
+import { ConformanceTab } from "../ConformanceTab";
 import { RUN_LABEL } from "../ConformancePageChrome";
 
 function createHttpServer(): ServerWithName {
@@ -142,7 +136,6 @@ describe("ConformanceTab persist", () => {
     startRun.mockClear();
     finalizeRun.mockClear();
     cancelRun.mockClear();
-    navigate.mockClear();
     mockRunProtocol.mockImplementation(hang);
     mockRunApps.mockImplementation(hang);
     mockRunTasks.mockImplementation(hang);
@@ -253,7 +246,7 @@ describe("ConformanceTab persist", () => {
     );
   });
 
-  it("links a finished run to its saved page and does not cancel it on leave", async () => {
+  it("finalizes a finished run without a link to it, and does not cancel it on leave", async () => {
     const user = userEvent.setup();
     mockPassingSuites();
     const { unmount } = render(
@@ -264,12 +257,13 @@ describe("ConformanceTab persist", () => {
     );
     await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
 
-    const link = await screen.findByRole("button", { name: "View saved run" });
-    expect(finalizeRun).toHaveBeenCalledWith({ runId: "run_1" });
-    await user.click(link);
-    expect(navigate).toHaveBeenCalledWith(
-      expect.stringContaining("/conformance/runs/run_1"),
+    await waitFor(() =>
+      expect(finalizeRun).toHaveBeenCalledWith({ runId: "run_1" }),
     );
+    // The results are already on screen and the run is in History.
+    expect(
+      screen.queryByRole("button", { name: "View saved run" }),
+    ).not.toBeInTheDocument();
 
     unmount();
     expect(cancelRun).not.toHaveBeenCalled();

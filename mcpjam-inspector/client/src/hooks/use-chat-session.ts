@@ -52,6 +52,7 @@ import {
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import { toast } from "sonner";
 import { track } from "@/lib/analytics";
+import { askStdioCommandApprovalForChatError } from "@/lib/stdio-command-approval";
 import {
   convertToModelMessages,
   type ChatTransport,
@@ -85,6 +86,10 @@ import {
 import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvex, useConvexAuth } from "convex/react";
+import {
+  useOwnedChatElicitations,
+  mergeChatElicitations,
+} from "./use-owned-chat-elicitations";
 import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import { ModelDefinition, type ModelProvider } from "@/shared/types";
 import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
@@ -246,6 +251,7 @@ import {
 } from "@/shared/hosted-rpc-log";
 import {
   HOSTED_ELICITATION_VERSION,
+  HOSTED_HARNESS_INPUT_VERSION,
   isHostedElicitationDataPart,
   type HostedElicitationAction,
   type HostedElicitationRequestEvent,
@@ -296,9 +302,12 @@ import {
 import { noteTurnNoticePart } from "@/lib/turn-notice-parts";
 import {
   HOSTED_TASKS_VERSION,
+  HOSTED_TASK_OWNER_VERSION,
   isTaskCreatedDataPart,
 } from "@/shared/hosted-task-created";
-import { getTrackedTaskScope, trackTask } from "@/lib/task-tracker";
+import { TaskOwnerRequests } from "@/lib/task-owner-requests";
+import { trackCreatedTask } from "@/lib/task-created-tracking";
+import { getTrackedTaskScope, getOwnedTaskScope } from "@/lib/task-tracker";
 import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
 import { useHarnessAgentActivityStore } from "@/stores/harness-agent-activity-store";
 import { useHarnessLiveOutputStore } from "@/stores/harness-live-output-store";
@@ -2039,7 +2048,6 @@ export function useChatSession(
   const hostedProjectId = hostedContext?.projectId;
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedEnsureServerIds = hostedContext?.ensureServerIds;
-  const hostedOAuthTokens = hostedContext?.oauthTokens;
   const hostedScenarioId = hostedContext?.scenarioId;
   const hostedHostId = hostedContext?.hostId;
   // A hidden environment rides a CLIENT-turn context: it needs the client it
@@ -2669,8 +2677,14 @@ export function useChatSession(
           if (event.kind === "resolved") {
             store.resolveContinuation(event.continuationId);
             if (event.pluginModelOperation) {
-              for (const [key, answer] of ownedMrtrAnswers.current) if (key.startsWith(`${event.continuationId}:`)) { answer.dispose(); ownedMrtrAnswers.current.delete(key); }
-              void acknowledgeHostedMrtrContinuation(event.continuationId).catch(() => {});
+              for (const [key, answer] of ownedMrtrAnswers.current)
+                if (key.startsWith(`${event.continuationId}:`)) {
+                  answer.dispose();
+                  ownedMrtrAnswers.current.delete(key);
+                }
+              void acknowledgeHostedMrtrContinuation(
+                event.continuationId,
+              ).catch(() => {});
             }
             if (event.indeterminate) {
               // Exactly-once: a side-effecting call may or may not have run, so
@@ -2757,7 +2771,8 @@ export function useChatSession(
             // The SDK can start a client-tool continuation before React effects.
             // Preserve unversioned surfaces; only advance an existing cursor.
             if (
-              (receipt.outcome === "saved" || receipt.outcome === "duplicate") &&
+              (receipt.outcome === "saved" ||
+                receipt.outcome === "duplicate") &&
               typeof receipt.version === "number" &&
               resumedVersionRef.current?.sessionId === receipt.chatSessionId &&
               resumedVersionRef.current.version !== null
@@ -2818,40 +2833,11 @@ export function useChatSession(
           const message = HARNESS_RESET_MESSAGES[part.data.reason];
           if (message) toast.info(message);
         } else if (isTaskCreatedDataPart(part)) {
-          // Track it and stop. Deliberately NO navigation: a chat turn must
-          // not yank the user out of the conversation to a task list.
-          //
-          // `trackTask` needs nothing added for at-least-once delivery — it
-          // dedupes on the full task identity, so a duplicated part is a
-          // no-op. The scope is passed EXPLICITLY, from the value captured at
-          // submit: letting `trackTask` stamp the live active scope was the
-          // bug — a part delivered after a mid-stream project switch filed
-          // the task under the NEW project.
-          //
-          // Keyed by server NAME when the server sent one: the tracker and the
-          // Tasks tab both read by name, while a hosted `serverId` is a Convex
-          // document id, so tracking under the id files the task where the
-          // Tasks tab never looks.
-          trackTask({
-            taskId: part.data.taskId,
-            serverId: part.data.serverName ?? part.data.serverId,
-            wire: part.data.wire,
-            // Required by the tracker. The server's own timestamp when it sent
-            // one; a local reading only as a last resort, since the tracker
-            // renders it as the handle's age.
-            createdAt: part.data.createdAt ?? new Date().toISOString(),
-            ...(part.data.toolName ? { toolName: part.data.toolName } : {}),
-            ...(part.data.status ? { status: part.data.status } : {}),
-            ...(part.data.ttlMs !== undefined
-              ? { ttlMs: part.data.ttlMs }
-              : {}),
-            ...(part.data.pollIntervalMs !== undefined
-              ? { pollIntervalMs: part.data.pollIntervalMs }
-              : {}),
-            ...(turnTaskScopeRef.current !== undefined
-              ? { scope: turnTaskScopeRef.current }
-              : {}),
-          });
+          trackCreatedTask(
+            part.data,
+            turnTaskScopeRef.current,
+            taskOwnerRequests.current,
+          );
         }
         return;
       }
@@ -3584,31 +3570,37 @@ export function useChatSession(
       reportChatFailure(chatError, lastChatResponseRef.current);
       logPluginChatFailure(chatError, appMessageTurnRef.current);
 
-      // Try to recover a structured limitKind from a JSON-shaped error message
-      // so the concurrency carve-out is honored on the SSE error path. Best
-      // effort: untouched if the message isn't JSON.
-      let limitKind: "total" | "concurrency" | undefined;
+      // Try to recover the structured body from a JSON-shaped error message:
+      // its limitKind honors the concurrency carve-out on the SSE error path,
+      // and its details carry a stdio command approval. Best effort:
+      // untouched if the message isn't JSON.
+      let parsed: { limitKind?: unknown; details?: unknown } | undefined;
       const jsonStart = chatError.message.indexOf("{");
       if (jsonStart >= 0) {
         try {
-          const parsed = JSON.parse(chatError.message.slice(jsonStart));
-          if (parsed && typeof parsed === "object") {
-            const value = (parsed as { limitKind?: unknown }).limitKind;
-            if (value === "total" || value === "concurrency") {
-              limitKind = value;
-            }
-          }
+          const value: unknown = JSON.parse(chatError.message.slice(jsonStart));
+          if (value && typeof value === "object") parsed = value;
         } catch {
           // not JSON; ignore
         }
       }
+      const limitKind =
+        parsed?.limitKind === "total" || parsed?.limitKind === "concurrency"
+          ? parsed.limitKind
+          : undefined;
       notifyMCPJamLimitError({
         message: chatError.message,
         limitKind,
         ...(hostedScenarioId ? { surface: "scenario" as const } : {}),
       });
+      if (hostedProjectId) {
+        void askStdioCommandApprovalForChatError(
+          parsed?.details,
+          hostedProjectId,
+        );
+      }
     },
-    [hostedScenarioId],
+    [hostedScenarioId, hostedProjectId],
   );
 
   // Create transport
@@ -3640,6 +3632,7 @@ export function useChatSession(
   // was submitted under — never to whatever scope happens to be active when a
   // late part arrives after a project switch.
   const turnTaskScopeRef = useRef<string | undefined>(undefined);
+  const taskOwnerRequests = useRef(new TaskOwnerRequests());
 
   const sendIdentity = {
     install: convexClient.url,
@@ -3767,11 +3760,6 @@ export function useChatSession(
         serverIds: servers?.serverIds ?? hostedSelectedServerIds,
         serverNames: servers?.serverNames ?? selectedServers,
         accessScope: "chat_v2",
-        ...(isHostedDirectChat &&
-        hostedOAuthTokens &&
-        Object.keys(hostedOAuthTokens).length > 0
-          ? { oauthTokens: hostedOAuthTokens }
-          : {}),
         ...(hostedScenarioId ? { scenarioId: hostedScenarioId } : {}),
         ...(hostedScenarioId && Number.isFinite(hostedAccessVersion)
           ? { accessVersion: hostedAccessVersion }
@@ -3806,6 +3794,7 @@ export function useChatSession(
         // any server that elicits. The server only registers its callback —
         // and therefore only advertises `elicitation` — when it sees this.
         hostedElicitationVersion: HOSTED_ELICITATION_VERSION,
+        hostedHarnessInputVersion: HOSTED_HARNESS_INPUT_VERSION,
         // Handshake: tells the server this bundle can render a suspended MRTR
         // (`input_required`) round AND resume it (§12.5). The server only
         // registers the suspending collector — and therefore only takes the
@@ -3894,6 +3883,11 @@ export function useChatSession(
         // to request approval for, or defers one nothing will ever ask about
         // — and that second one stalls the turn.
         turnRequireToolApprovalRef.current = requireToolApprovalRef.current;
+        const taskOwnerScope = getOwnedTaskScope();
+        const ownerRequestId = taskOwnerRequests.current.capture(
+          generateId(),
+          taskOwnerScope,
+        );
         const widgetModelContext = pendingWidgetModelContextRef.current;
         pendingWidgetModelContextRef.current = undefined;
         const rewind =
@@ -3901,8 +3895,17 @@ export function useChatSession(
             ? rewindRef.current.lineage
             : undefined;
         return {
+          ...(ownerRequestId
+            ? {
+                hostedTaskOwnerVersion: HOSTED_TASK_OWNER_VERSION,
+                hostedTaskOwnerRequestId: ownerRequestId,
+                hostedTaskOwnerScope: taskOwnerScope,
+              }
+            : {}),
           model: selectedModel,
-          ...(requestChoice.kind === "picked" ? { modelSelection: requestChoice.selection } : {}),
+          ...(requestChoice.kind === "picked"
+            ? { modelSelection: requestChoice.selection }
+            : {}),
           ...(shouldSendClientApiKey ? { apiKey } : {}),
           // Always send the user's slider value. The server's `prepareChatV2`
           // already drops temperature for GPT-5 before the LLM call (its API
@@ -3912,7 +3915,11 @@ export function useChatSession(
           // helper's 0.7 fallback regardless of the slider.
           // An effort and a temperature are mutually exclusive: the routes
           // refuse (or drop) a temperature under an effort, so send only one.
-          ...(requestChoice.kind === "inherit" ? {} : requestEffort ? { reasoningEffort: requestEffort } : { temperature }),
+          ...(requestChoice.kind === "inherit"
+            ? {}
+            : requestEffort
+              ? { reasoningEffort: requestEffort }
+              : { temperature }),
           systemPrompt,
           ...(shouldUseOrgAwareChatApi
             ? buildHostedBody()
@@ -3970,15 +3977,26 @@ export function useChatSession(
           // legacy cloud-family resolution. `localMcpRuntimeRequired` keeps an
           // org-runtime model's turn on this server's runtime resolution, which
           // local-only MCP servers and an explicit local-harness ask both need.
-          ...(!HOSTED_MODE ? {
-            ...(personalBrowserEngine && !hostedScenarioId ? {
-              browserEngine: sendLocalBrowser ? "local" : "cloud",
-            } : {}),
-            ...(sendLocalEngine ? { computerEngine: "local" } : {}),
-            ...((localMcpRuntimeRequired || (localHarnessRequested && selectedModelUsesOrgRuntime)) ? { localMcpRuntimeRequired: true } : {}),
-            ...(selectedModel.provider === "ollama" ? { ollamaBaseUrl: getOllamaBaseUrl() } : {}),
-            ...(selectedModel.provider === "azure" ? { azureBaseUrl: getAzureBaseUrl() } : {}),
-          } : {}),
+          ...(!HOSTED_MODE
+            ? {
+                ...(personalBrowserEngine && !hostedScenarioId
+                  ? {
+                      browserEngine: sendLocalBrowser ? "local" : "cloud",
+                    }
+                  : {}),
+                ...(sendLocalEngine ? { computerEngine: "local" } : {}),
+                ...(localMcpRuntimeRequired ||
+                (localHarnessRequested && selectedModelUsesOrgRuntime)
+                  ? { localMcpRuntimeRequired: true }
+                  : {}),
+                ...(selectedModel.provider === "ollama"
+                  ? { ollamaBaseUrl: getOllamaBaseUrl() }
+                  : {}),
+                ...(selectedModel.provider === "azure"
+                  ? { azureBaseUrl: getAzureBaseUrl() }
+                  : {}),
+              }
+            : {}),
           requireToolApproval: requireToolApprovalRef.current,
           respectToolVisibility: respectToolVisibilityRef.current,
           ...(modelVisibleMcpToolResultsRef.current !== undefined
@@ -4084,7 +4102,6 @@ export function useChatSession(
     options.pluginGlobalContext,
     chatSessionId,
     hostedSelectedServerIds,
-    hostedOAuthTokens,
     hostedScenarioId,
     hostedHostId,
     hostedExecutionTarget,
@@ -6181,6 +6198,13 @@ export function useChatSession(
     setPendingElicitations((queue) => (queue.length > 0 ? [] : queue));
   }, [isStreaming]);
 
+  const ownedElicitations = useOwnedChatElicitations({
+    enabled:
+      isAuthenticated && (HOSTED_MODE || hostedRequiresWebChatApi),
+    projectId: hostedProjectId ?? undefined,
+    chatSessionId,
+  });
+
   const respondToElicitation = useCallback(
     async (answer: {
       rendezvousId: string;
@@ -6341,7 +6365,10 @@ export function useChatSession(
     traceViewsSupported,
 
     // Elicitation (hosted): a server is blocking a tool call on this user.
-    pendingElicitations,
+    pendingElicitations: mergeChatElicitations(
+      pendingElicitations,
+      ownedElicitations,
+    ),
     respondToElicitation,
     elicitationResponding,
     urlElicitationRequired,

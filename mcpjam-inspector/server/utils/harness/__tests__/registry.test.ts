@@ -537,6 +537,9 @@ async function drive() {
     options: {
       ...start.model ? { model: start.model } : {},
       ...start.maxTurns !== void 0 ? { maxTurns: start.maxTurns } : {},
+      hooks: {
+        PreToolUse: []
+      },
       ...permissionOptions,
       mcpServers,
       cwd: workdir,
@@ -565,6 +568,9 @@ function emitUserToolResults(msg) {
 async function runBridge(options) {
   const handleInbound = async (msg, ws) => {
     switch (msg.type) {
+      case "abort":
+        turnAbort?.abort();
+        return;
       case "resume":
         activeSocket = ws;
         replay(ws, msg.lastSeenEventId);
@@ -1017,6 +1023,18 @@ function addUsage(total, usage) {
       expect(runtime.harnessId).toBe("claude-code");
       expect(createClaudeCodeHarness).toHaveBeenLastCalledWith(expect.objectContaining({
         mcpServers: mcpJson.mcpServers,
+      }));
+    });
+
+    it("enables the private elicitation channel only with an installed handler", () => {
+      const adapter = getHarnessAdapter("claude-code");
+      adapter.createHarness({ modelId: "anthropic/claude-haiku-4.5", auth: {}, mcpJson, elicitationHandler: true });
+      expect(createClaudeCodeHarness).toHaveBeenLastCalledWith(expect.objectContaining({
+        env: expect.objectContaining({ MCPJAM_HARNESS_ELICITATION: "1" }),
+      }));
+      adapter.createHarness({ modelId: "anthropic/claude-haiku-4.5", auth: {}, mcpJson });
+      expect(createClaudeCodeHarness).not.toHaveBeenLastCalledWith(expect.objectContaining({
+        env: expect.objectContaining({ MCPJAM_HARNESS_ELICITATION: "1" }),
       }));
     });
 

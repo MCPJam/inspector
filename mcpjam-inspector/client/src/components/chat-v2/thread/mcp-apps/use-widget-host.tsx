@@ -183,7 +183,7 @@ export function useWidgetHost(): WidgetHostImpl {
     : "chat";
 
   // Read into a ref so the memoized `services` object stays stable while the
-  // listResourceTemplates guard still observes the live value (mirrors the
+  // listResourceTemplates routing still observes the live value (mirrors the
   // renderer's existing webManagedServersRef pattern).
   const webManagedServersRef = useRef(webManagedServers);
   webManagedServersRef.current = webManagedServers;
@@ -194,17 +194,8 @@ export function useWidgetHost(): WidgetHostImpl {
       readResource,
       listResources,
       listPrompts,
-      // Host-owned: preserve the renderer's hosted/web-managed guard
-      // (mcp-apps-renderer.tsx:2861-2868); the raw api fn only enforces
-      // HOSTED_MODE.
-      listResourceTemplates: async (serverId: string) => {
-        if (HOSTED_MODE || webManagedServersRef.current) {
-          throw new Error(
-            "Browsing resource templates isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.",
-          );
-        }
-        return listResourceTemplates(serverId);
-      },
+      listResourceTemplates: (serverId: string) =>
+        listResourceTemplates(serverId, { forceHosted: webManagedServersRef.current }),
       authFetch,
       // Cached widget HTML arrives as a short-lived artifact link; these let
       // the renderer renew an expired one and ignore a re-minted one.

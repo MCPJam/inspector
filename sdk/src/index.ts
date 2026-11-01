@@ -1893,6 +1893,7 @@ export type {
   MrtrOperationState,
   MrtrLegResult,
   MrtrLegSender,
+  MrtrLegMiddleware,
   MrtrSupportedModes,
   MrtrInputCollector,
   MrtrValidateResponse,
@@ -1950,6 +1951,7 @@ export {
   canDeclareTasksExtension,
   readDeclaredInputCapabilities,
   TaskInputRejectedError,
+  validateEmbeddedClientRequest,
   DEFAULT_TASK_INPUT_LIMITS,
   createStrictElicitationContentValidator,
   retryAfterMsFromError,
@@ -2057,3 +2059,8 @@ export { aiRequestHeaders } from "./ai-request-headers.js";
 
 export { EvalRunStartError } from "./eval-run-start.js";
 export type { EvalIdentityOptions } from "./eval-run-start.js";
+export { projectMcpToolResultForModel } from "./mcp-client-manager/tool-converters.js";
+export {
+  DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS,
+  resolveModelVisibleMcpToolResults,
+} from "./host-config/host-policy.js";

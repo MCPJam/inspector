@@ -16,6 +16,7 @@ import type {
   MCPTasksCheckResult,
   OAuthConformanceStepResult,
 } from "@mcpjam/sdk";
+import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { cn } from "@/lib/utils";
 import { Collapse, StatusIcon } from "./conformance-ui";
 
@@ -242,6 +243,15 @@ export function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
             {step.summary}
           </div>
 
+          {typeof step.error?.details === "string" && (
+            <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
+              <div className="mb-1 font-medium text-foreground/70">Details</div>
+              <div className="whitespace-pre-wrap break-all font-mono text-[10px]">
+                {step.error.details}
+              </div>
+            </div>
+          )}
+
           {step.teachableMoments && step.teachableMoments.length > 0 && (
             <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
               <div className="mb-1 font-medium text-foreground/70">
@@ -316,40 +326,111 @@ export function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
  * A not-yet-run check. Mirrors {@link CheckRow}'s interaction so the preview
  * and the real results read as the same list in two states.
  */
-export function CatalogRow({ entry }: { entry: CatalogEntry }) {
+export function CatalogRow({
+  entry,
+  selected,
+  onSelectedChange,
+}: {
+  entry: CatalogEntry;
+  /**
+   * Set, the row carries a checkbox showing whether it runs. Without
+   * `onSelectedChange` the checkbox is disabled: the suite's own checkbox
+   * decides for every row.
+   */
+  selected?: boolean;
+  onSelectedChange?: (selected: boolean) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const expandable = Boolean(entry.description);
+  const selectable = selected !== undefined;
 
   return (
     <div className="border-b border-border/30 last:border-0">
-      <button
-        type="button"
-        className="w-full flex items-center gap-2 py-1.5 px-1 text-left transition-colors enabled:hover:bg-muted/30 enabled:cursor-pointer disabled:cursor-default"
-        onClick={() => setExpanded((value) => !value)}
-        disabled={!expandable}
-        aria-expanded={expandable ? expanded : undefined}
-      >
-        <MinusCircle className="h-3.5 w-3.5 text-muted-foreground/50 flex-shrink-0" />
-        <span className="flex-1 min-w-0 truncate text-xs text-muted-foreground">
-          {entry.title}
-        </span>
-        {entry.note && (
-          <span className="flex-shrink-0 text-[10px] text-muted-foreground/70">
-            {entry.note}
+      <div className="flex items-center gap-2 px-1">
+        {selectable ? (
+          // A 24px target around the box: the label passes its clicks on.
+          <label className="flex size-6 shrink-0 cursor-pointer items-center justify-center has-[:disabled]:cursor-default">
+            <Checkbox
+              checked={selected}
+              disabled={!onSelectedChange}
+              onCheckedChange={(value) => onSelectedChange?.(value === true)}
+              aria-label={`Run ${entry.title}`}
+            />
+          </label>
+        ) : null}
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left transition-colors enabled:hover:bg-muted/30 enabled:cursor-pointer disabled:cursor-default"
+          onClick={() => setExpanded((value) => !value)}
+          disabled={!expandable}
+          aria-expanded={expandable ? expanded : undefined}
+        >
+          {selectable ? null : (
+            <MinusCircle className="h-3.5 w-3.5 text-muted-foreground/50 flex-shrink-0" />
+          )}
+          <span className="flex-1 min-w-0 truncate text-xs text-muted-foreground">
+            {entry.title}
           </span>
-        )}
-        {expandable &&
-          (expanded ? (
-            <ChevronDown className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-          ) : (
-            <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-          ))}
-      </button>
+          {entry.note && (
+            <span className="flex-shrink-0 text-[10px] text-muted-foreground/70">
+              {entry.note}
+            </span>
+          )}
+          {expandable &&
+            (expanded ? (
+              <ChevronDown className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+            ) : (
+              <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+            ))}
+        </button>
+      </div>
       <Collapse open={expanded && Boolean(entry.description)}>
         <div className="px-6 pb-2 text-xs text-muted-foreground whitespace-pre-wrap break-words">
           {entry.description}
         </div>
       </Collapse>
+    </div>
+  );
+}
+
+/**
+ * A suite's checks as a gray list: before a run ("not run yet") and for a
+ * suite that did not apply, so the reader can still see what it covers.
+ */
+export function CatalogList({
+  catalog,
+  note,
+  isSelected,
+  onSelectedChange,
+}: {
+  catalog: CatalogEntry[];
+  /** The rest of the line after "N checks in this suite", punctuation included. */
+  note: string;
+  /**
+   * Each row carries a checkbox showing whether it runs; with
+   * `onSelectedChange` too, the user picks rows one by one.
+   */
+  isSelected?: (id: string) => boolean;
+  onSelectedChange?: (id: string, selected: boolean) => void;
+}) {
+  return (
+    <div className="pl-7">
+      <div className="py-1 text-[11px] text-muted-foreground">
+        {catalog.length} checks in this suite{note}
+      </div>
+      {catalog.map((entry) => (
+        <CatalogRow
+          key={entry.id}
+          entry={entry}
+          {...(isSelected ? { selected: isSelected(entry.id) } : {})}
+          {...(isSelected && onSelectedChange
+            ? {
+                onSelectedChange: (selected: boolean) =>
+                  onSelectedChange(entry.id, selected),
+              }
+            : {})}
+        />
+      ))}
     </div>
   );
 }

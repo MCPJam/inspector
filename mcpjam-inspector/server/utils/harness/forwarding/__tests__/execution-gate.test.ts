@@ -4,11 +4,17 @@ import {
   type GateOperation,
 } from "../execution-gate.js";
 import type { ExecutionControl, Settlement } from "../execution-control.js";
+import { TOOL_APPROVAL_TOKEN_MAX_AGE_MS } from "../../../tool-approval-token.js";
+import { createForwardingMrtrGate } from "../mrtr-gate.js";
+import { forwardingExecutionContext } from "../execution-context.js";
 
 beforeEach(() =>
   vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "forwarding-gate-test-signing-secret"),
 );
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.useRealTimers();
+});
 const operation: GateOperation = {
   invocationKey: "one",
   turnId: "turn",
@@ -92,6 +98,189 @@ function fixture(approval = false) {
 }
 
 describe("forwarded execution gate", () => {
+  it("does not send a continuation when its own approval is denied", async () => {
+    const f = fixture(true);
+    const guard = createForwardingMrtrGate({
+      control: f.control,
+      approval: {
+        binding,
+        ask: async ({ approvalId }) => ({ approvalId, decision: "denied" }),
+      },
+      turnId: "turn",
+      expiresAt: operation.expiresAt,
+      signal: new AbortController().signal,
+    });
+    const send = vi.fn(async () => ({}));
+    await forwardingExecutionContext.run(
+      { executionId: "parent" },
+      async () => {
+        await expect(
+          guard({
+            operationId: "operation",
+            round: 1,
+            request: { method: "tools/call", params: { name: "read" } },
+            send,
+          }),
+        ).rejects.toThrow("approval_not_granted");
+      },
+    );
+    expect(send).not.toHaveBeenCalled();
+    expect(f.control.claim).not.toHaveBeenCalled();
+  });
+
+  it("binds a continuation to the live parent without inventing a wire id", async () => {
+    const f = fixture();
+    let count = 0;
+    f.control.prepare.mockImplementation(async () => ({
+      executionId: `execution-${++count}`,
+      state: "prepared",
+      replayed: false,
+      requireToolApproval: false,
+    }));
+    const guard = createForwardingMrtrGate({
+      control: f.control,
+      approval: {
+        binding,
+        ask: async () => {
+          throw new Error("Unexpected approval");
+        },
+      },
+      policy: { mode: "default", denied: {}, known: [], unknownTool: "allow" },
+      turnId: "turn",
+      policyDigest: "a".repeat(64),
+      expiresAt: operation.expiresAt,
+      signal: new AbortController().signal,
+    });
+    await executeForwardedOperation({
+      ...f,
+      operation,
+      dispatch: async () => {
+        await guard({
+          operationId: "operation",
+          round: 0,
+          request: { method: "tools/call", params: {} },
+          send: async () => ({}),
+        });
+        return guard({
+          operationId: "operation",
+          round: 1,
+          request: { method: "tools/call", params: {} },
+          send: async () => ({ isError: true }),
+        });
+      },
+    });
+    expect(f.control.prepare).toHaveBeenCalledTimes(2);
+    expect(f.control.prepare.mock.calls[1][0]).toMatchObject({
+      continuation: {
+        executionId: "execution-1",
+        operationId: "operation",
+        round: 1,
+      },
+    });
+    expect(f.control.prepare.mock.calls[1][0]).not.toHaveProperty("rpcId");
+    expect(f.control.settle).toHaveBeenCalledWith(
+      "execution-2",
+      expect.any(String),
+      expect.objectContaining({ outcome: "tool_error" }),
+    );
+    expect(forwardingExecutionContext.getStore()).toBeUndefined();
+  });
+
+  it("refuses a repeated SDK send after an uncertain outcome", async () => {
+    const f = fixture();
+    const guard = createForwardingMrtrGate({
+      control: f.control,
+      approval: {
+        binding,
+        ask: async () => {
+          throw new Error("Unexpected approval");
+        },
+      },
+      policy: { mode: "default", denied: {}, known: [], unknownTool: "allow" },
+      turnId: "turn",
+      policyDigest: "a".repeat(64),
+      expiresAt: operation.expiresAt,
+      signal: new AbortController().signal,
+    });
+    const send = vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    });
+    const attempt = {
+      operationId: "operation",
+      round: 0,
+      request: { method: "tools/call" as const, params: {} },
+      send,
+    };
+    await forwardingExecutionContext.run(
+      { executionId: "parent" },
+      async () => {
+        await expect(guard(attempt)).rejects.toThrow("fetch failed");
+        await expect(guard(attempt)).rejects.toThrow("already attempted");
+      },
+    );
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it.each([6, 14])(
+    "accepts an approval after %i minutes within the live lease",
+    async (minutes) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const now = Date.now();
+      const f = fixture(true);
+      await executeForwardedOperation({
+        ...f,
+        operation: { ...operation, expiresAt: now + 30 * 60_000 },
+        approval: {
+          binding,
+          ask: async (request) => {
+            expect(request.expiresAt).toBe(
+              now + TOOL_APPROVAL_TOKEN_MAX_AGE_MS,
+            );
+            expect(f.dispatch).not.toHaveBeenCalled();
+            vi.setSystemTime(now + minutes * 60_000);
+            return { approvalId: request.approvalId, decision: "approved" };
+          },
+        },
+      });
+      expect(f.dispatch).toHaveBeenCalledOnce();
+    },
+  );
+  it("does not extend an approval past the current lease", async () => {
+    const f = fixture(true);
+    const expiresAt = Date.now() + 60_000;
+    await executeForwardedOperation({
+      ...f,
+      operation: { ...operation, expiresAt },
+      approval: {
+        binding,
+        ask: async (request) => {
+          expect(request.expiresAt).toBe(expiresAt);
+          return { approvalId: request.approvalId, decision: "approved" };
+        },
+      },
+    });
+    expect(f.control.requestApproval.mock.calls[0][2]).toBe(expiresAt);
+  });
+  it("refuses a signed answer older than the existing approval lifetime", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const now = Date.now();
+    const f = fixture(true);
+    await expect(
+      executeForwardedOperation({
+        ...f,
+        operation: { ...operation, expiresAt: now + 30 * 60_000 },
+        approval: {
+          binding,
+          ask: async (request) => {
+            vi.setSystemTime(now + TOOL_APPROVAL_TOKEN_MAX_AGE_MS + 1_000);
+            return { approvalId: request.approvalId, decision: "approved" };
+          },
+        },
+      }),
+    ).rejects.toThrow("approval_unverified");
+    expect(f.dispatch).not.toHaveBeenCalled();
+    expect(f.control.claim).not.toHaveBeenCalled();
+  });
   it("records intent and claims before dispatch, and settles the exact raw result", async () => {
     const f = fixture();
     expect(await executeForwardedOperation({ ...f, operation })).toBe("answer");

@@ -2355,6 +2355,13 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
+  it("preserves the configured client user agent in the App handshake", async () => {
+    mockHostContextStoreState.draftHostContext = { userAgent: "Claude-profile-user-agent" };
+    render(<HostedRenderer {...baseProps} />);
+    await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+    expect(appBridgeArgsRef.current?.options?.hostContext?.userAgent).toBe("Claude-profile-user-agent");
+  });
+
   it("user override wins over the host style preset", async () => {
     const override = {
       openLinks: {},

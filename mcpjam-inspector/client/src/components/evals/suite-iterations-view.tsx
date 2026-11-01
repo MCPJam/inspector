@@ -89,7 +89,6 @@ import {
   RUBRIC_CHECK_ROW_IDENTITY_HINT,
 } from "./judge-rubric-editor";
 import { areRubricChecksValid } from "./rubric-checks-model";
-import { JudgeGatePanel } from "./judge-gate-panel";
 import { useGroundedness } from "./use-groundedness";
 import {
   PerCaseIterationsControl,
@@ -134,7 +133,6 @@ import {
 } from "@/hooks/use-suite-capabilities";
 import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 import {
-  CAPABILITY_REASON_COPY,
   CI_OWNED_REASON_COPY,
   featureDisabledReason,
   PERMISSION_REASON_COPY,
@@ -483,6 +481,7 @@ export function SuiteIterationsView({
   availableModels,
   requireOrgKeys = false,
   onManageOrgProviders,
+  onAddProvider,
   route,
   userMap,
   projectId = null,
@@ -582,6 +581,11 @@ export function SuiteIterationsView({
    * while the organization requires its own keys (see `useAvailableModels`).
    */
   onManageOrgProviders?: () => void;
+  /**
+   * The same from a model search with no match, under any key policy, or
+   * `null` when the organization offers this viewer none.
+   */
+  onAddProvider: (() => void) | null;
   route: EvalRoute;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
   projectId?: string | null;
@@ -748,13 +752,9 @@ export function SuiteIterationsView({
   //
   // The cost is one `getSuiteCapabilities` read per suite view. It is a
   // one-shot query keyed on the suite and its revision, not a subscription.
-  // Bumped by a judge-gate acknowledgement, which changes what the gate switch
-  // may do WITHOUT changing the suite's revision — the acknowledgement is
-  // stored on the suite but is not a settings edit, so nothing else re-asks.
-  const [capabilitiesRefresh, setCapabilitiesRefresh] = useState(0);
   const { state: capabilitiesState, capabilities } = useSuiteCapabilities(
     suite._id,
-    `${suite.revisionNumber ?? "none"}:${capabilitiesRefresh}`,
+    suite.revisionNumber ?? "none",
   );
   // The ONE rule every row below shares: when capabilities could not be read,
   // behave exactly as the page did before they existed. Capabilities make a
@@ -2219,6 +2219,7 @@ export function SuiteIterationsView({
                   availableModels={availableModels}
                   requireOrgKeys={requireOrgKeys}
                   onManageOrgProviders={onManageOrgProviders}
+                  onAddProvider={onAddProvider}
                   suiteIterations={caseIterations}
                   suiteRuns={runs}
                   // The same opt-in and project gate the decision card beside
@@ -3192,11 +3193,6 @@ export function SuiteIterationsView({
               <div data-setting-key="passOrFail" className="space-y-4">
                 <SuitePassOrFailSection
                   capabilities={capabilitiesReady ? capabilities : null}
-                  unavailableReason={
-                    capabilitiesState === "unavailable"
-                      ? CAPABILITY_REASON_COPY.flag_unavailable
-                      : undefined
-                  }
                   stageFacts={{
                     connection: (
                       <SuiteStageFactsList
@@ -3240,28 +3236,7 @@ export function SuiteIterationsView({
                   availableModels={availableModels}
                   requireOrgKeys={requireOrgKeys}
                   onManageOrgProviders={onManageOrgProviders}
-                  judgeAccessory={
-                    <JudgeGatePanel
-                      suiteId={suite._id}
-                      judge={capabilitiesReady ? capabilities.judge : undefined}
-                      unavailableReason={
-                        capabilitiesState === "unavailable"
-                          ? CAPABILITY_REASON_COPY.flag_unavailable
-                          : undefined
-                      }
-                      judgeConfig={draft.current.judgeConfig}
-                      onJudgeConfigChange={(next) =>
-                        dispatchDraft({
-                          type: "edit",
-                          key: "judgeConfig",
-                          value: next,
-                        })
-                      }
-                      onAcknowledged={() =>
-                        setCapabilitiesRefresh((n) => n + 1)
-                      }
-                    />
-                  }
+                  onAddProvider={onAddProvider}
                   rubricEditor={
                     <JudgeInstructionsEditor
                       value={draft.current.judgeRubric}

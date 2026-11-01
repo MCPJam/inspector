@@ -1,5 +1,10 @@
 import { getManagerOrganization } from "../../mcp-connections.js";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
+import {
+  isCreateTaskExtResult,
+  runToolTaskSeam,
+  type ToolTaskSeamOptions,
+} from "@mcpjam/sdk";
 import type { ConnectionsByServerId, MCPClientManager } from "@mcpjam/sdk";
 import type { ChunkWriter } from "../../chat-stream-chunks.js";
 import {
@@ -18,6 +23,41 @@ import {
 } from "./execution-control.js";
 import { startForwardingApprovalPresentation } from "./approval.js";
 import { nativeRpcLogScope } from "./native-rpc-logs.js";
+import { nativePolicyDigest, forwardingToolPolicy } from "./native-policy.js";
+import { readNativeToolResult } from "./native-results.js";
+import type { HarnessConnectionProfile } from "../harness-connection-profile.js";
+import {
+  mergeMcpToolConnectionMetadata,
+  mergeMcpWidgetContext,
+  mergeMcpOriginalResult,
+  type McpConnectionAttribution,
+  type McpWidgetExecutionContext,
+} from "@/shared/mcp-tool-origin-metadata";
+
+export function nativeToolMetadata(
+  forwarding:
+    | {
+        delivery?: "native" | "bridge";
+        widgetContext?: (
+          serverId: string,
+          callId: string,
+        ) => McpWidgetExecutionContext | undefined;
+      }
+    | undefined,
+  serverId: string | undefined,
+  callId: string,
+  connection: McpConnectionAttribution | undefined,
+  originalResult?: unknown,
+) {
+  return mergeMcpOriginalResult(
+    mergeMcpWidgetContext(
+      mergeMcpToolConnectionMetadata(undefined, connection),
+      serverId ? forwarding?.widgetContext?.(serverId, callId) : undefined,
+      forwarding?.delivery,
+    ),
+    originalResult,
+  );
+}
 
 export type NativeForwardingSelection = {
   harnessSessionId: string;
@@ -60,10 +100,14 @@ export async function prepareNativeForwarding(args: {
   origin: string;
   expiresAt: number;
   turnId: string;
+  promptIndex?: number;
   strategy: HarnessMcpProxyStrategy;
   authHeader: string;
   policies?: Record<string, ToolPolicySnapshot>;
   writer: ChunkWriter;
+  delivery?: "native" | "bridge";
+  profiles?: Record<string, HarnessConnectionProfile>;
+  tasks?: ToolTaskSeamOptions;
 }) {
   if (args.strategy.plane !== "web-authorized" || !args.owners.length)
     throw new Error("Native forwarding route is unavailable.");
@@ -86,21 +130,40 @@ export async function prepareNativeForwarding(args: {
   );
   const mcpJson = buildHarnessProxyMcpJson(inputs);
   const keyToServerId = harnessServerKeyToName(inputs);
+  const policyDigest = nativePolicyDigest(
+    args.policies,
+    args.profiles
+      ? { delivery: args.delivery, profiles: args.profiles }
+      : undefined,
+  );
   for (const [key, serverId] of Object.entries(keyToServerId)) {
+    // The native HTTP request includes the human approval wait at the gate.
+    mcpJson.mcpServers[key].timeout = Math.max(
+      1000,
+      args.expiresAt - Date.now(),
+    );
     const owner = args.owners.find(
       (candidate) => candidate.serverId === serverId,
     )!;
+    await createExecutionControl({ owner }).bindPolicy(
+      args.turnId,
+      policyDigest,
+    );
     mcpJson.mcpServers[key].headers = {
+      // E2B pins injected credentials to the outbound connection. A resumed
+      // query must open a new connection after the credential lease rotates.
+      Connection: "close",
       "X-MCPJam-Forwarding-Context": sealHarnessProxyToken({
-        token: JSON.stringify({ owner, turnId: args.turnId }),
+        token: JSON.stringify({
+          owner,
+          turnId: args.turnId,
+          policyDigest,
+          ...(args.delivery ? { delivery: args.delivery } : {}),
+        }),
         serverId,
-        policy: args.policies?.[serverId] ?? {
-          mode: "default",
-          denied: {},
-          known: [],
-          unknownTool: "allow",
-        },
+        policy: forwardingToolPolicy(args.policies?.[serverId]),
         expiresAtMs: args.expiresAt,
+        profile: args.profiles?.[serverId],
       }),
     };
   }
@@ -109,14 +172,85 @@ export async function prepareNativeForwarding(args: {
       control: createExecutionControl({ owner }),
       owner,
       turnId: args.turnId,
+      promptIndex: args.promptIndex,
       writer: args.writer,
     }),
   );
+  const widgetParents = new Map<string, string>();
+  const deliveredTasks = new Set<string>();
   return {
     mcpJson,
+    delivery: args.delivery ?? "native",
+    policyDigest,
     keyToServerId,
-    logScopeIds: Object.fromEntries(args.owners.map((owner) =>
-      [owner.serverId, nativeRpcLogScope(owner, args.turnId)])),
+    readToolResult: async (serverId: string, toolCallId: string, toolName?: string) => {
+      const owner = args.owners.find(
+        (candidate) => candidate.serverId === serverId,
+      );
+      if (!owner)
+        throw new Error("The MCP result does not belong to this turn.");
+      let sourceExecutionId: string | undefined;
+      const result = await readNativeToolResult(
+        createExecutionControl({ owner }),
+        args.turnId,
+        toolCallId,
+        (executionId) => {
+          sourceExecutionId = executionId;
+          widgetParents.set(
+            JSON.stringify([serverId, toolCallId]),
+            executionId,
+          );
+        },
+      );
+      if (
+        args.tasks &&
+        sourceExecutionId &&
+        isCreateTaskExtResult(result) &&
+        !deliveredTasks.has(sourceExecutionId)
+      ) {
+        const executionId = sourceExecutionId;
+        await runToolTaskSeam(
+          {
+            serverId,
+            toolName: toolName ?? "Task",
+            wire: "extension",
+            callPlain: async () => result,
+            callEligible: async () => result,
+          },
+          {
+            ...args.tasks,
+            resolveIdentity: () => ({
+              serverId,
+              connectionId: owner.connectionId,
+            }),
+            onTaskCreated: (event) =>
+              args.tasks!.onTaskCreated({
+                ...event,
+                sourceExecutionId: executionId,
+              }),
+          },
+        );
+        deliveredTasks.add(executionId);
+      }
+      return result;
+    },
+    widgetContext: (serverId: string, toolCallId: string) => {
+      const owner = args.owners.find(
+        (candidate) => candidate.serverId === serverId,
+      );
+      const parentExecutionId = widgetParents.get(
+        JSON.stringify([serverId, toolCallId]),
+      );
+      return owner?.kind === "chat" && parentExecutionId
+        ? { owner, parentExecutionId }
+        : undefined;
+    },
+    logScopeIds: Object.fromEntries(
+      args.owners.map((owner) => [
+        owner.serverId,
+        nativeRpcLogScope(owner, args.turnId),
+      ]),
+    ),
     stop: async () => {
       await Promise.all(stop.map((fn) => fn()));
     },
@@ -130,7 +264,12 @@ export async function prepareNativeForwarding(args: {
 
 /** Rollout uses the organization resolved by hosted authorization, never the request body. */
 export function hasForwardingOrganization(manager: MCPClientManager): boolean {
-  const organizationId = getManagerOrganization(manager);
+  return isForwardingOrganization(getManagerOrganization(manager));
+}
+
+export function isForwardingOrganization(
+  organizationId?: string | null,
+): boolean {
   return (
     !!organizationId &&
     (process.env.HARNESS_FORWARDING_ORGANIZATION_IDS ?? "")

@@ -13,6 +13,7 @@ import {
 import type { ExecutionControl, ForwardingOwner } from "./execution-control.js";
 import type { GateApproval } from "./execution-gate.js";
 import { logger } from "../../logger.js";
+import { writeTraceEvent } from "../../live-chat-trace-stream.js";
 const inputSchema = z.object({
   present: z.boolean(),
   value: z.unknown().optional(),
@@ -69,15 +70,35 @@ export function startForwardingApprovalPresentation(args: {
   control: ExecutionControl;
   owner: ForwardingOwner;
   turnId: string;
+  promptIndex?: number;
   writer: ChunkWriter;
 }): () => Promise<void> {
   const abort = new AbortController();
   const shown = new Set<string>();
   const completed = new Set<string>();
   let reported = false;
+  let nextHeartbeat = Date.now() + 15_000;
   const poll = async (final = false) => {
     try {
       const rows = await args.control.turnApprovals(args.turnId);
+      // Keep the browser stream alive while the native process awaits a user.
+      // This existing transient event is ignored by the chat state reducer.
+      if (
+        !final &&
+        !abort.signal.aborted &&
+        Date.now() >= nextHeartbeat &&
+        rows.some(
+          (row) =>
+            row.state === "prepared" && row.approval?.state === "pending",
+        )
+      ) {
+        writeTraceEvent(args.writer, {
+          type: "heartbeat",
+          turnId: args.turnId,
+          promptIndex: args.promptIndex ?? 0,
+        });
+        nextHeartbeat = Date.now() + 15_000;
+      }
       for (const row of rows) {
         if ((!final && abort.signal.aborted) || !row.approval?.approvalId)
           continue;

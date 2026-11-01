@@ -37,6 +37,7 @@ import {
 } from "@/shared/types.js";
 import { REGISTRATION_MODE_OPTIONS } from "@/lib/registration-strategy";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
+import { AUTH_METHOD_LABELS } from "./auth-method-labels";
 import { XaaCredentialFields } from "./XaaCredentialFields";
 import { XaaDcrRegistrationStatus } from "./XaaDcrRegistrationStatus";
 
@@ -418,12 +419,14 @@ export function AuthenticationSection({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="auto">Auto</SelectItem>
-              <SelectItem value="none">No Authentication</SelectItem>
-              <SelectItem value="bearer">Bearer Token</SelectItem>
-              <SelectItem value="oauth">OAuth</SelectItem>
+              <SelectItem value="auto">{AUTH_METHOD_LABELS.auto}</SelectItem>
+              <SelectItem value="none">{AUTH_METHOD_LABELS.none}</SelectItem>
+              <SelectItem value="bearer">
+                {AUTH_METHOD_LABELS.bearer}
+              </SelectItem>
+              <SelectItem value="oauth">{AUTH_METHOD_LABELS.oauth}</SelectItem>
               {showXaaOption && (
-                <SelectItem value="xaa">Cross-App Access (XAA)</SelectItem>
+                <SelectItem value="xaa">{AUTH_METHOD_LABELS.xaa}</SelectItem>
               )}
             </SelectContent>
           </Select>

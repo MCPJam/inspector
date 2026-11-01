@@ -9,6 +9,16 @@ import {
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { hydratedToolResultOutput } from "@/shared/hydrated-tool-output";
 import {
+  readMcpOriginalResult,
+  mergeMcpOriginalResult,
+} from "@/shared/mcp-tool-origin-metadata";
+import {
+  presentNativeTranscript,
+  preserveNativeUiPresentations,
+} from "../harness/forwarding/native-transcript";
+import { transcriptToUIMessages } from "../../../client/src/lib/transcript-to-ui-messages";
+import { convertToMcpjamModelMessages } from "../mcp-tool-result-model-output";
+import {
   mintToolApprovalId,
   toolApprovalBindingFor,
 } from "../tool-approval-token";
@@ -44,6 +54,140 @@ const ctx: ProvenanceContext = {
 };
 /** The same project and key, another chat. */
 const otherChat: ProvenanceContext = { ...ctx, chatSessionId: "chat_2" };
+
+it.each([false, true])("authenticates saved presentation separately from model output (retained=%s)", async retained => {
+  const widgetContext = {
+    owner: {
+      kind: "chat" as const,
+      userId: "user",
+      serverId: "linear",
+      harnessSessionId: "lane",
+    },
+    parentExecutionId: "parent",
+  };
+  const raw = { content: [], _meta: { private: "original" } };
+  const messages: ModelMessage[] = [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "call",
+          toolName: "list_issues",
+          input: {},
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call",
+          toolName: "list_issues",
+          output: { type: "text", value: "model" },
+        },
+      ],
+    },
+  ];
+  const presented = presentNativeTranscript(
+    messages,
+    new Map([
+      ["call", { result: raw, metadata: { mcpjam: retained ? { resultPresentation: true } : { widgetContext } } }],
+    ]),
+  );
+  const ui = transcriptToUIMessages(
+    signHistoryForPersistence(presented, ctx, tools),
+  );
+  const checked = verifyClientHistory(ui, ctx);
+  expect(checked.unverifiedToolResults).toBe(0);
+  expect(
+    JSON.stringify(preserveNativeUiPresentations(messages, checked.messages)),
+  ).toContain('"private":"original"');
+  const nextModel = await convertToMcpjamModelMessages(
+    checked.messages as UIMessage[],
+  );
+  expect(JSON.stringify(nextModel)).not.toContain('"private":"original"');
+  const secondSave = signHistoryForPersistence(
+    preserveNativeUiPresentations(nextModel, checked.messages),
+    ctx,
+    tools,
+  );
+  const reopened = verifyClientHistory(transcriptToUIMessages(secondSave), ctx);
+  expect(reopened.unverifiedToolResults).toBe(0);
+  expect(
+    JSON.stringify(preserveNativeUiPresentations(nextModel, reopened.messages)),
+  ).toContain('"private":"original"');
+  const part = ui[0].parts[0];
+  if (!("callProviderMetadata" in part))
+    throw new Error("Missing tool metadata");
+  part.callProviderMetadata = mergeMcpOriginalResult(
+    part.callProviderMetadata,
+    { content: [], _meta: { private: "forged" } },
+  );
+  const rejected = verifyClientHistory(ui, ctx);
+  expect(
+    JSON.stringify(preserveNativeUiPresentations(messages, rejected.messages)),
+  ).not.toContain("forged");
+});
+
+it.each([false, true])("authenticates live presentation chunks (retained=%s)", async retained => {
+  const sign = createUiChunkProvenanceSigner(ctx);
+  const call = { toolCallId: "call", toolName: "list_issues", input: {} };
+  sign({ type: "tool-input-available", ...call });
+  const raw = { content: [], _meta: { private: "original" } };
+  const metadata = mergeMcpOriginalResult(
+    {
+      mcpjam: retained ? { resultPresentation: true } : {
+        widgetContext: {
+          owner: {
+            kind: "chat",
+            userId: "user",
+            serverId: "linear",
+            harnessSessionId: "lane",
+          },
+          parentExecutionId: "parent",
+        },
+      },
+    },
+    raw,
+  );
+  const [chunk] = sign({
+    type: "tool-output-available",
+    toolCallId: "call",
+    output: "model",
+    providerMetadata: metadata,
+  });
+  if (!("providerMetadata" in chunk))
+    throw new Error("Missing result metadata");
+  const ui = [
+    {
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          ...call,
+          state: "output-available",
+          output: "model",
+          resultProviderMetadata: chunk.providerMetadata,
+        },
+      ],
+    },
+  ];
+  const checked = verifyClientHistory(ui, ctx);
+  const message = checked.messages[0];
+  if (
+    !message ||
+    typeof message !== "object" ||
+    !("parts" in message) ||
+    !Array.isArray(message.parts)
+  )
+    throw new Error("Missing message");
+  expect(
+    readMcpOriginalResult(message.parts[0].resultProviderMetadata),
+  ).toEqual(raw);
+  expect(JSON.stringify(await convertToMcpjamModelMessages(checked.messages as UIMessage[]))).not.toContain('"private":"original"');
+});
 /** No signing: what an unsigned stream looks like. */
 const unsignedStream: UiChunkProvenanceSigner = (chunk) => [chunk];
 const presentation: HistoryPresentation = {

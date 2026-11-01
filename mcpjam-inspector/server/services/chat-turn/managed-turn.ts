@@ -155,6 +155,7 @@ export async function handleManagedChatTurn(
     });
     let {
       tasksSeam,
+      harnessOwnedInput,
       scopeStepUpResumeRequest,
       scopeStepUpCancelRequest,
       scopeStepUpEnabled,
@@ -661,6 +662,7 @@ export async function handleManagedChatTurn(
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
           rpcCollector,
           elicitationBridge,
+          harnessOwnedInput,
           // One-time sandbox notices PEEKED from the control plane above (the
           // stream writer doesn't exist yet at provision time). Flushed once
           // the writer is ready, and acked only for the chunks that actually

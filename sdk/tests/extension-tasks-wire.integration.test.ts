@@ -192,6 +192,16 @@ async function getTask(
 }
 
 describe("tasks extension wire — negotiation (real client)", () => {
+  it("waits for an eager connection before resolving task support", async () => {
+    const fixture = await serve();
+    const manager = new MCPClientManager({
+      [SERVER_ID]: { url: fixture.url, mcpProtocolVersion: EXTENSION_PROTOCOL_VERSION },
+    });
+    opened.managers.push(manager);
+    expect(manager.getTasksSupport(SERVER_ID).wire).toBe("none");
+    expect(await manager.ensureTasksSupport(SERVER_ID)).toMatchObject({ wire: "extension" });
+  });
+
   it("resolves the extension wire from the advertised capability", async () => {
     const fixture = await serve();
     const manager = await connect(fixture.url);

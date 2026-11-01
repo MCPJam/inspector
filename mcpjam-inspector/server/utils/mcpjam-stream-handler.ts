@@ -76,6 +76,7 @@ import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.j
 import type { HarnessPolicyBlockRecord } from "./harness/harness-proxy-policy-enforcement.js";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import type { InsufficientScopeInfo } from "../routes/web/hosted-elicitation.js";
+import type { HarnessElicitationHandler } from "./harness/with-harness-elicitation.js";
 import type { ScopeStepUpRequiredEvent } from "@/shared/scope-step-up";
 import {
   buildFinishChunk,
@@ -129,6 +130,8 @@ import {
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
 import {
+  isRejectedToolCallMetadata,
+  markRejectedToolCallMetadata,
   mergeMcpToolOriginMetadata,
   mergeMcpToolConnectionMetadata,
   toolConnectionAttribution,
@@ -1318,6 +1321,9 @@ export interface MCPJamHandlerOptions {
   onStreamComplete?: () => Promise<void> | void;
   /** Starts log delivery only after the harness's MCP route and owner scopes are fixed. */
   onHarnessMcpReady?: (scopeIds?: Record<string, string>) => void;
+  onHarnessElicitation?: HarnessElicitationHandler;
+  harnessOwnedInput?: boolean;
+  harnessOwnedTasks?: boolean;
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
@@ -1611,6 +1617,14 @@ interface StreamResult {
    */
   toolInputErrors: string[];
   /**
+   * Every tool call this step emitted that was rejected before it ran (the
+   * `tool-input-error` chunks). Each one is ALSO a `tool-call` entry in
+   * `contentParts`, so the step records it; the caller answers each with an
+   * error result so the model reads why and can retry, as the AI SDK's own
+   * loop does. `errorText` is the plain sentence, already unwrapped.
+   */
+  rejectedToolCalls: RejectedToolCall[];
+  /**
    * Name of every tool call this step STARTED but never finished: a
    * `tool-input-start` with no `tool-input-available` or `tool-input-error`
    * after it, which is what a stream cut off mid-call leaves behind. Like a
@@ -1624,6 +1638,46 @@ interface StreamResult {
    * if the stream produced no chunks.
    */
   firstChunkAt?: number;
+}
+
+interface RejectedToolCall {
+  toolCallId: string;
+  toolName: string;
+  errorText: string;
+}
+
+/**
+ * The name a rejected call is recorded under in history. Usually the name the
+ * model wrote; but a rejected call is exactly the one that may carry a name no
+ * provider accepts (a model once called `<serverId>::read_me`), and the record
+ * is replayed to the provider on the next step. Characters outside the
+ * provider-safe set become `_` — the error result still quotes the original.
+ */
+function historyNameForRejectedToolCall(toolName: string): string {
+  if (/^[a-zA-Z0-9_-]{1,64}$/.test(toolName)) return toolName;
+  return toolName.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64) || "unknown_tool";
+}
+
+/**
+ * Names of rejected tool calls in `messages`. Their tools are by definition
+ * not in the tool set, so the unavailable-tool scrub would drop the call and
+ * its error result — and with them the only thing telling the model why its
+ * call failed.
+ */
+function rejectedToolCallNames(messages: ModelMessage[]): Set<string> {
+  const names = new Set<string>();
+  for (const msg of messages) {
+    if (msg?.role !== "assistant" || !Array.isArray(msg.content)) continue;
+    for (const part of msg.content) {
+      if (
+        part.type === "tool-call" &&
+        isRejectedToolCallMetadata(part.providerOptions)
+      ) {
+        names.add(part.toolName);
+      }
+    }
+  }
+  return names;
 }
 
 /**
@@ -2041,12 +2095,17 @@ function scrubMessagesForBackend(
     return msg;
   });
 
+  const rejectedNames = rejectedToolCallNames(stripped);
   const withoutUnavailableToolHistory = scrubUnavailableToolHistoryForBackend(
     stripped,
     Object.keys(tools as Record<string, unknown>),
     // A page's tools exist only while that page is open; what the model did
-    // with them is still what happened. See the parameter's doc.
-    name => isWebmcpPageToolName(name) || WIDGET_TOOL_VERBS.includes(name),
+    // with them is still what happened. See the parameter's doc. A rejected
+    // call is kept for the same reason: its error is how the model retries.
+    name =>
+      isWebmcpPageToolName(name) ||
+      WIDGET_TOOL_VERBS.includes(name) ||
+      rejectedNames.has(name),
   );
 
   const scrubbed = scrubChatGPTAppsToolResultsForBackend(
@@ -2441,6 +2500,7 @@ async function processStream(
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   const toolInputErrors: string[] = [];
+  const rejectedToolCalls: RejectedToolCall[] = [];
   const unfinishedTools = new Map<string, string>();
   let pendingText = "";
   let pendingTextMetadata: TextPart["providerOptions"] | undefined;
@@ -2636,8 +2696,12 @@ async function processStream(
           flushReasoning();
           // A tool call the model DID emit, rejected before it could run —
           // `NoSuchToolError` / `InvalidToolInputError` on the backend's
-          // `streamText`. It is forwarded to the client but pushes nothing
-          // onto `contentParts`, so record why for the empty-step classifier.
+          // `streamText`. It is recorded as a `tool-call` part and listed in
+          // `rejectedToolCalls`, which the caller answers with an error result
+          // so the model can read why and retry — what the AI SDK's own loop
+          // does. Before, it pushed nothing, and the turn ended: with a red
+          // empty-step error when the step had nothing else, and silently
+          // when the model had written text first.
           // A call that starts and never resolves either way was cut off
           // mid-input; remember its name until one of the two arrives.
           if (chunk.type === "tool-input-start") {
@@ -2645,16 +2709,39 @@ async function processStream(
           } else if (chunk.type === "tool-input-error") {
             unfinishedTools.delete(String(chunk.toolCallId));
           }
+          const toolCallId = normalizeToolCallId(chunk.toolCallId);
           if (chunk.type === "tool-input-error") {
             const toolInputErrorText = (chunk as { errorText?: unknown })
               .errorText;
-            toolInputErrors.push(
+            const errorText =
               typeof toolInputErrorText === "string" && toolInputErrorText
                 ? toolInputErrorText
-                : "the model's tool input failed schema validation",
-            );
+                : "the model's tool input failed schema validation";
+            toolInputErrors.push(errorText);
+            const rejectedInput = (chunk as { input?: unknown }).input;
+            const historyName = historyNameForRejectedToolCall(chunk.toolName);
+            contentParts.push({
+              type: "tool-call",
+              toolCallId,
+              toolName: historyName,
+              // The provider replays this input; a rejected one may not even
+              // be an object. Same fallback as the AI SDK's own history.
+              input:
+                rejectedInput !== null &&
+                typeof rejectedInput === "object" &&
+                !Array.isArray(rejectedInput)
+                  ? rejectedInput
+                  : {},
+              providerOptions: markRejectedToolCallMetadata(undefined),
+            });
+            rejectedToolCalls.push({
+              toolCallId,
+              toolName: historyName,
+              // The backend serializes its error chunks as JSON; the model
+              // should read the sentence, not the envelope.
+              errorText: parseStreamErrorChunkText(errorText).message,
+            });
           }
-          const toolCallId = normalizeToolCallId(chunk.toolCallId);
           const providerMetadata =
             "toolName" in chunk && typeof chunk.toolName === "string"
               ? withPageToolAttributionMetadata(
@@ -2875,6 +2962,7 @@ async function processStream(
     finishChunk,
     firstChunkAt,
     toolInputErrors,
+    rejectedToolCalls,
     unfinishedToolNames: [...unfinishedTools.values()],
   };
 }
@@ -4187,6 +4275,7 @@ async function processOneStep(ctx: StepContext): Promise<{
     finishChunk,
     firstChunkAt,
     toolInputErrors,
+    rejectedToolCalls,
     unfinishedToolNames,
   } = await processStream(
     res.body,
@@ -4214,6 +4303,22 @@ async function processOneStep(ctx: StepContext): Promise<{
     messageHistory.push({
       role: "assistant",
       content: contentParts,
+    } as ModelMessage);
+  }
+  // Answer each rejected call with its error, as the AI SDK's own loop does,
+  // so the next step shows the model why it failed. Written here rather than
+  // by the executor: a call whose INPUT was refused names a real tool, and
+  // the executor would run it with that input. Nothing goes to the client —
+  // its part already shows the error from the forwarded chunk.
+  if (rejectedToolCalls.length > 0) {
+    messageHistory.push({
+      role: "tool",
+      content: rejectedToolCalls.map((rejected) => ({
+        type: "tool-result",
+        toolCallId: rejected.toolCallId,
+        toolName: rejected.toolName,
+        output: { type: "error-text", value: rejected.errorText },
+      })),
     } as ModelMessage);
   }
   if (contentParts.length > 0)
@@ -4764,6 +4869,41 @@ async function processOneStep(ctx: StepContext): Promise<{
       return { shouldContinue: false, didEmitFinish: false };
     }
 
+    return { shouldContinue: true, didEmitFinish: false };
+  }
+
+  // A REJECTED CALL IS A STEP THE MODEL GETS TO RETRY. Its error result is
+  // already in history (above), so another step lets the model read it and
+  // call the right tool — whether the step also had text or nothing else.
+  // `maxSteps` still bounds a model that keeps getting it wrong.
+  if (rejectedToolCalls.length > 0) {
+    pushBackendStepSuccessSpans(
+      traceTurn.turnSpans,
+      traceTurn.turnStartedAt,
+      traceTurn.promptIndex,
+      stepIndex,
+      stepStartAbs,
+      { startAbs: llmStartAbs, endAbs: llmEndAbs },
+      undefined,
+      {
+        modelId,
+        inputTokens: stepUsage?.inputTokens,
+        outputTokens: stepUsage?.outputTokens,
+        totalTokens: stepUsage?.totalTokens,
+        messageStartIndex: stepMessageStartIndex,
+        messageEndIndex: stepMessageEndIndex,
+        status: "ok",
+        ...harnessSpanMeta,
+      },
+    );
+    setStepSpanMessageRanges(
+      traceTurn.turnSpans,
+      traceTurn.promptIndex,
+      stepIndex,
+      stepMessageStartIndex,
+      stepMessageEndIndex,
+    );
+    emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
     return { shouldContinue: true, didEmitFinish: false };
   }
 
