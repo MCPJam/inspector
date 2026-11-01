@@ -132,16 +132,37 @@ function fromApiUrl(apiUrl: string): DeploymentAddress {
   };
 }
 
+/**
+ * The rejected value as a refusal may print it. Addresses are often pasted
+ * from a secret store or a CI variable, so credentials, a query and a
+ * fragment are masked, and a value that is not a URL with a host, such as an
+ * API key in the wrong variable, is not repeated at all.
+ */
+function printable(value: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return undefined;
+  }
+  if (!url.host) return undefined;
+  const userinfo = url.username || url.password ? "***@" : "";
+  const query = url.search ? "?***" : "";
+  const fragment = url.hash ? "#***" : "";
+  return `${url.protocol}//${userinfo}${url.host}${url.pathname}${query}${fragment}`;
+}
+
 function invalid(
   label: string,
   value: string,
   problem: string,
   source?: DeploymentSource
 ) {
+  const shown = printable(value);
   return new McpjamDeploymentError(
     "API_URL_INVALID",
-    `Invalid ${label} value "${value}". ${problem}`,
-    { apiUrl: value, ...(source ? { source } : {}) }
+    `Invalid ${label} value${shown ? ` "${shown}"` : ""}. ${problem}`,
+    { apiUrl: shown ?? "", ...(source ? { source } : {}) }
   );
 }
 

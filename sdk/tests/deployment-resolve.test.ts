@@ -197,7 +197,7 @@ const rows: Row[] = [
     name: "an unparsable flag",
     flag: "staging.example.test",
     credential: "api-key",
-    expect: { code: "API_URL_INVALID", message: /^Invalid --api-url value "staging\.example\.test"\. Expected a full URL like https:\/\/app\.mcpjam\.com\/api\/v1\.$/ },
+    expect: { code: "API_URL_INVALID", message: /^Invalid --api-url value\. Expected a full URL like https:\/\/app\.mcpjam\.com\/api\/v1\.$/ },
   },
   {
     name: "a non-http variable",

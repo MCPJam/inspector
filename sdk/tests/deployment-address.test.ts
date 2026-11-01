@@ -63,6 +63,27 @@ describe("server addresses", () => {
     expect((thrown as Error).message).toMatch(message);
   });
 
+  it("never repeats credentials, a query, a fragment or a non-URL in a refusal", () => {
+    const refusal = (value: string) => {
+      try {
+        parseApiUrl(value, "MCPJAM_API_URL");
+      } catch (error) {
+        if (error instanceof McpjamDeploymentError) return error;
+      }
+      throw new Error(`expected ${value} to be refused`);
+    };
+    const withSecrets = refusal("https://user:s3cret@a.test/api/v1?token=t0k#frag");
+    expect(withSecrets.message).toBe(
+      'Invalid MCPJAM_API_URL value "https://***@a.test/api/v1?***#***". Expected a server address with no credentials, query or fragment, like https://app.mcpjam.com/api/v1.'
+    );
+    expect(withSecrets.apiUrl).toBe("https://***@a.test/api/v1?***#***");
+    const apiKey = refusal("sk_live_0123456789");
+    expect(apiKey.message).toBe(
+      "Invalid MCPJAM_API_URL value. Expected a full URL like https://app.mcpjam.com/api/v1."
+    );
+    expect(apiKey.apiUrl).toBe("");
+  });
+
   it("reads nothing when neither variable is set", () => {
     expect(deploymentFromEnv({ MCPJAM_API_URL: " ", MCPJAM_BASE_URL: "" })).toBe(
       undefined
