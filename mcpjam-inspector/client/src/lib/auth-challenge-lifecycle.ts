@@ -1,5 +1,6 @@
 import type { PendingWriteResult } from "@/lib/scope-step-up-pending";
 import { create } from "zustand";
+import { readProjectPathSegment } from "@/lib/project-route";
 import {
   authChallengePolicyFrom,
   decideAuthChallengeAction,
@@ -86,7 +87,7 @@ export interface AuthChallengeCard {
   /** Chat: called once the click is accepted, before the redirect. */
   onConnect?: () => PendingWriteResult;
   continuationId?: string;
-  attempt?: AuthChallengeAttempt;
+  attempt: AuthChallengeAttempt;
   /** Chat: the suspended tool call this card belongs to. */
   toolCallId?: string;
   /** Chat: the server entry resolved when the part arrived. */
@@ -229,7 +230,7 @@ export function callAttempt(
   return {
     projectId:
       projectId ??
-      window.location.pathname.match(/^\/p\/([^/]+)/)?.[1] ??
+      readProjectPathSegment(window.location.pathname) ??
       "local",
     serverId: server.name,
     surface,

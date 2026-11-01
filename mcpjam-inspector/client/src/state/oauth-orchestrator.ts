@@ -19,7 +19,6 @@ import { authorizationFlowDigest } from "@/lib/oauth/flow-digest";
 import {
   describeAsSlug,
   resolveStepUpAction,
-  type AuthChallengeSignal,
   type NormalizedError,
   type StepUpAction,
   type StepUpAuthMode,
@@ -85,7 +84,9 @@ function buildOAuthReauthRequired(
   };
 }
 
-function parseOAuthScopes(scopes?: string | string[]): string[] | undefined {
+export function parseOAuthScopes(
+  scopes?: string | string[],
+): string[] | undefined {
   const parsed = Array.isArray(scopes) ? scopes : scopes?.split(/[,\s]+/);
   const normalized = parsed?.map((scope) => scope.trim()).filter(Boolean);
   return normalized && normalized.length > 0 ? normalized : undefined;
@@ -527,7 +528,7 @@ function stepUpLedgerKey(operation: StepUpOperationKey): string {
 // a prior session's exhausted counter would make a brand-new session throw
 // immediately on its first legitimate step-up. `sessionStorage` scopes the
 // bound to the session, which is exactly the loop we need to bound (§10.5#5).
-function stepUpAttemptsStore(): Storage | undefined {
+export function stepUpAttemptsStore(): Storage | undefined {
   try {
     return typeof sessionStorage !== "undefined" ? sessionStorage : undefined;
   } catch {
@@ -778,7 +779,9 @@ export function resetInsufficientScopeStepUp(
 // {@link ensureAuthorizedForReconnect}. This is what makes the step-up CORE
 // reachable end-to-end from a real MCP tool call on the local path.
 
-function readServerUrlForStepUp(server: ServerWithName): string | undefined {
+export function readServerUrlForStepUp(
+  server: ServerWithName,
+): string | undefined {
   const fromConfig = (server.config as any)?.url?.toString?.();
   if (fromConfig) return fromConfig;
   try {
@@ -803,7 +806,7 @@ function readServerUrlForStepUp(server: ServerWithName): string | undefined {
  * blocks private/reserved hosts → SSRF) and cross-origin MCP-Authorization
  * header stripping (`mergeHeadersForResourceMetadataRequest`).
  */
-function validResourceMetadataUrlHint(
+export function validResourceMetadataUrlHint(
   resourceMetadataUrl: string | undefined,
 ): string | undefined {
   const hint = resourceMetadataUrl?.trim();
@@ -818,7 +821,9 @@ function validResourceMetadataUrlHint(
   return undefined;
 }
 
-function readOriginalOAuthScopes(server: ServerWithName): string[] | undefined {
+export function readOriginalOAuthScopes(
+  server: ServerWithName,
+): string[] | undefined {
   // Mirror buildReconnectOAuthOptions' scope precedence: the flow profile's
   // scopes, else the stored OAuth config's scopes. These are the scopes the
   // ORIGINAL grant requested — the base the step-up union must not drop.
@@ -1048,74 +1053,12 @@ export function resetToolCallStepUp(
   );
 }
 
-// ===========================================================================
-// Mid-session sign-in ("lazy authentication")
-// ===========================================================================
-//
-// A server that let the client connect anonymously refuses one protected call
-// with a sign-in challenge (an HTTP 401, or a `_meta` challenge on a tool
-// result). This is step-up starting from an empty scope set, plus three things
-// step-up does not need:
-//
-//   1. CONSENT before the first redirect. Presenting the challenge has no side
-//      effects; only an explicit Connect click (`confirmed: true`) writes the
-//      ledger and starts OAuth.
-//   2. A GATE on the server-stamped effective auth method. Only a tokenless
-//      Auto server (`discover`) or an OAuth server may start sign-in; `none`,
-//      `bearer` and `xaa` get a hint. The browser never computes the method.
-//   3. TOKENS KEPT until the callback succeeds, so abandoning Connect does not
-//      break every other tool on an already-authorized server.
-
-const AUTH_CHALLENGE_LEDGER_PREFIX = "mcp-auth-challenge-ledger-v2-";
-
-/**
- * One sign-in attempt per operation per live window.
- *
- * - `awaiting_callback`: a Connect click redirected and no callback has come
- *   back. Seeing that on a NEW click means the user came back with the Back
- *   button; the entry is cleared and the click retries.
- * - `signed_in`: a callback completed for this server since the click. A
- *   challenge now is a repeat after sign-in, and is permanent for this window.
- */
-export interface AuthChallengeAttempt {
-  projectId: string;
-  serverId: string;
-  surface: string;
-  callId: string;
-  chatSessionId?: string;
-}
-function hasAuthAttemptIdentity(value: unknown): value is AuthChallengeAttempt {
-  if (!value || typeof value !== "object") return false;
-  const attempt = value as Partial<AuthChallengeAttempt>;
-  return [
-    attempt.projectId,
-    attempt.serverId,
-    attempt.surface,
-    attempt.callId,
-  ].every((value) => typeof value === "string" && value.length > 0);
-}
-type AuthChallengeOperation = StepUpOperationKey & {
-  attempt?: AuthChallengeAttempt;
-};
-
-type AuthChallengeLedgerEntry = {
-  serverName: string;
-  operation: AuthChallengeOperation;
-  phase: "awaiting_callback" | "signed_in";
-  /**
-   * A digest of the authorization request's `state`, once the redirect
-   * started (never the state itself; see `authorizationFlowDigest`).
-   */
-  flowDigest?: string;
-  expiresAt: number;
-};
-
 /**
  * The `onAuthorizationRedirect` hook that turns the flow's `state` into its
  * digest before anything sees it. Awaited by the OAuth flow, so the digest is
  * recorded before the browser leaves.
  */
-function flowDigestHook(
+export function flowDigestHook(
   onFlow: ((flow: { digest: string }) => void) | undefined,
 ): ((flow: { state?: string }) => Promise<void>) | undefined {
   if (!onFlow) return undefined;
@@ -1129,331 +1072,15 @@ function flowDigestHook(
   };
 }
 
-function authChallengeLedgerKey(operation: AuthChallengeOperation): string {
-  return `${AUTH_CHALLENGE_LEDGER_PREFIX}${encodeURIComponent(
-    JSON.stringify([normalizeStepUpOperationKey(operation), operation.attempt]),
-  )}`;
-}
-
-function readAuthChallengeLedger(
-  operation: AuthChallengeOperation,
-): AuthChallengeLedgerEntry | undefined {
-  try {
-    const store = stepUpAttemptsStore();
-    const key = authChallengeLedgerKey(operation);
-    const raw = store?.getItem(key);
-    if (!raw) return undefined;
-    const entry = JSON.parse(raw) as Partial<AuthChallengeLedgerEntry>;
-    if (
-      typeof entry.serverName !== "string" ||
-      (entry.phase !== "awaiting_callback" && entry.phase !== "signed_in") ||
-      typeof entry.expiresAt !== "number" ||
-      !hasAuthAttemptIdentity(entry.operation?.attempt) ||
-      entry.expiresAt <= Date.now()
-    ) {
-      store?.removeItem(key);
-      return undefined;
-    }
-    return entry as AuthChallengeLedgerEntry;
-  } catch {
-    return undefined;
-  }
-}
-
-function writeAuthChallengeLedger(entry: AuthChallengeLedgerEntry): void {
-  try {
-    stepUpAttemptsStore()?.setItem(
-      authChallengeLedgerKey(entry.operation),
-      JSON.stringify(entry),
-    );
-  } catch {
-    // Best-effort: losing the entry can allow one extra prompt, never a
-    // redirect without a click.
-  }
-}
-
-function clearAuthChallengeLedger(operation: AuthChallengeOperation): void {
-  try {
-    stepUpAttemptsStore()?.removeItem(authChallengeLedgerKey(operation));
-  } catch {
-    // Best-effort.
-  }
-}
-
-function authChallengeOperationKey(
-  server: ServerWithName,
-  operation: ToolCallStepUpOperation,
-  attempt?: AuthChallengeAttempt,
-): AuthChallengeOperation {
-  return {
-    attempt,
-    resourceUrl: canonicalizeStepUpResourceUrl(
-      readServerUrlForStepUp(server) ?? "",
-    ),
-    method: operation.method,
-    operation: operation.operation,
-  };
-}
-
-function forEachAuthChallengeLedgerEntry(
-  visit: (entry: AuthChallengeLedgerEntry, key: string, store: Storage) => void,
-): void {
-  const store = stepUpAttemptsStore();
-  if (!store) return;
-  for (let index = store.length - 1; index >= 0; index -= 1) {
-    const key = store.key(index);
-    if (!key?.startsWith(AUTH_CHALLENGE_LEDGER_PREFIX)) continue;
-    const raw = store.getItem(key);
-    if (!raw) continue;
-    let entry: AuthChallengeLedgerEntry;
-    try {
-      entry = JSON.parse(raw) as AuthChallengeLedgerEntry;
-    } catch {
-      store.removeItem(key);
-      continue;
-    }
-    if (
-      !hasAuthAttemptIdentity(entry.operation?.attempt) ||
-      typeof entry.expiresAt !== "number" ||
-      entry.expiresAt <= Date.now()
-    ) {
-      store.removeItem(key);
-      continue;
-    }
-    visit(entry, key, store);
-  }
-}
-
-/**
- * A completed OAuth callback for `serverName`. Every attempt awaiting it moves
- * to `signed_in`, so a repeat challenge on the same call is permanent.
- * Returns how many attempts it completed.
- *
- * Only the attempt with the exact callback digest completes. Missing or
- * legacy flow identity cannot authorize a retry.
- */
-export function markAuthChallengeSignedIn(
-  serverName: string,
-  callbackDigest?: string,
-): number {
-  let completed = 0;
-  try {
-    if (!callbackDigest) return 0;
-    forEachAuthChallengeLedgerEntry((entry, key, store) => {
-      if (
-        entry.serverName !== serverName ||
-        entry.phase !== "awaiting_callback"
-      ) {
-        return;
-      }
-      if (!entry.flowDigest || entry.flowDigest !== callbackDigest) {
-        return;
-      }
-      store.setItem(key, JSON.stringify({ ...entry, phase: "signed_in" }));
-      completed += 1;
-    });
-  } catch {
-    // Best-effort.
-  }
-  return completed;
-}
-
-/** Whether a sign-in for `serverName` redirected and has not come back. */
-export function hasAuthChallengeAwaitingCallback(serverName: string): boolean {
-  let awaiting = false;
-  try {
-    forEachAuthChallengeLedgerEntry((entry) => {
-      if (
-        entry.serverName === serverName &&
-        entry.phase === "awaiting_callback"
-      ) {
-        awaiting = true;
-      }
-    });
-  } catch {
-    // Best-effort.
-  }
-  return awaiting;
-}
-
-/** Forget a server's attempts after a SUCCESSFUL protected call. */
-export function resetAuthChallenge(
-  server: ServerWithName,
-  operation: ToolCallStepUpOperation,
-  attempt?: AuthChallengeAttempt,
-): void {
-  if (attempt)
-    clearAuthChallengeLedger(
-      authChallengeOperationKey(server, operation, attempt),
-    );
-}
-
-export type AuthChallengeGate =
-  | { kind: "allowed" }
-  | {
-      kind: "blocked";
-      reason: "none" | "bearer" | "xaa" | "unknown";
-      hint: string;
-    };
-
-/**
- * May this challenge start an interactive sign-in at all? Read from the
- * server-stamped effective auth method, never from a browser-side parse.
- */
-export function gateAuthChallenge(
-  effectiveAuth: AuthChallengeSignal["effectiveAuth"],
-): AuthChallengeGate {
-  switch (effectiveAuth) {
-    case "discover":
-    case "oauth":
-      return { kind: "allowed" };
-    case "none":
-      return {
-        kind: "blocked",
-        reason: "none",
-        hint: "This server asked for sign-in, but its authentication is set to None. Switch it to Auto or OAuth to sign in.",
-      };
-    case "bearer":
-      return {
-        kind: "blocked",
-        reason: "bearer",
-        hint: "This server rejected the static credential it was given. Update the server's bearer token or headers.",
-      };
-    case "xaa":
-      return {
-        kind: "blocked",
-        reason: "xaa",
-        hint: "Interactive sign-in is not available for this server. Check the server's Cross-App Access (XAA) settings.",
-      };
-    default:
-      return {
-        kind: "blocked",
-        reason: "unknown",
-        hint: "Could not start sign-in. Reconnect the server and try again.",
-      };
-  }
-}
-
-export type AuthChallengeOutcome =
-  | ({ kind: "blocked" } & Extract<AuthChallengeGate, { kind: "blocked" }>)
-  /** Presented, not acted on: render the Connect card. No side effects. */
-  | { kind: "pendingConnect" }
-  /** A repeat challenge after sign-in. Permanent for this window. */
-  | { kind: "permanent" }
-  | {
-      kind: "started";
-      reauthorization: OAuthResult;
-      /** The scopes requested, or `undefined` when discovery decides. */
-      scopes?: string[];
-    };
-
-/**
- * Handle a mid-session sign-in challenge on one operation.
- *
- * Without `confirmed: true` this has NO side effects: it gates and reports
- * whether a Connect card applies. A confirmed click writes the one-attempt
- * ledger and starts OAuth; the caller saves anything it will replay BEFORE
- * calling, and binds it to the flow through `onAuthorizationFlow`.
- */
-export async function applyToolCallAuthChallenge(
-  server: ServerWithName,
-  signal: AuthChallengeSignal,
-  options: {
-    operation: ToolCallStepUpOperation;
-    attempt?: AuthChallengeAttempt;
-    confirmed: boolean;
-    beforeRedirect?: (oauthOptions: BuiltOAuthRequest) => void;
-    /** Told the digest of the flow's `state`; see `authorizationFlowDigest`. */
-    onAuthorizationFlow?: (flow: { digest: string }) => void;
-    onTraceUpdate?: (trace: OAuthTrace) => void;
-    /**
-     * The server already has a grant the browser cannot see: a hosted
-     * credential. Its scopes are kept, exactly as for browser tokens.
-     */
-    existingGrant?: boolean;
-  },
-): Promise<AuthChallengeOutcome> {
-  const gate = gateAuthChallenge(signal.effectiveAuth);
-  if (gate.kind === "blocked") return gate;
-
-  const operationKey = authChallengeOperationKey(
-    server,
-    options.operation,
-    options.attempt,
-  );
-  const ledger = options.attempt
-    ? readAuthChallengeLedger(operationKey)
-    : undefined;
-  if (ledger?.phase === "signed_in") return { kind: "permanent" };
-  if (!options.confirmed) return { kind: "pendingConnect" };
-
-  // A click that finds an attempt still awaiting its callback: the user came
-  // back with the Back button. The old attempt can never complete, so it is
-  // cleared and this click retries instead of being refused for the window.
-  if (ledger?.phase === "awaiting_callback") {
-    clearAuthChallengeLedger(operationKey);
-  }
-
-  // Scopes: the challenge's `scope` when it named one, unioned with what
-  // this server's existing grant requested; otherwise nothing, and discovery
-  // decides. Never widen a first sign-in by guessing.
-  const serverUrl = readServerUrlForStepUp(server);
-  const issuer = resolveStoredIssuer(server.name, serverUrl);
-  const challengedScopes = parseOAuthScopes(signal.requiredScope);
-  const hasExistingGrant =
-    Boolean(server.oauthTokens) || options.existingGrant === true;
-  const scopes = challengedScopes
-    ? hasExistingGrant
-      ? stepUpScopeUnion(
-          server.name,
-          issuer,
-          challengedScopes,
-          readOriginalOAuthScopes(server),
-        )
-      : challengedScopes
-    : undefined;
-
-  writeAuthChallengeLedger({
-    serverName: server.name,
-    operation: {
-      ...normalizeStepUpOperationKey(operationKey),
-      attempt: options.attempt,
-    },
-    phase: "awaiting_callback",
-    expiresAt: Date.now() + SCOPE_STEP_UP_LIVE_TTL_MS,
-  });
-
-  let reauthorization: OAuthResult;
-  try {
-    reauthorization = await ensureAuthorizedForReconnect(server, {
-      allowInteractiveOAuthFlow: true,
-      interactiveOAuthConfirmed: true,
-      forceInteractiveFlow: true,
-      preserveExistingAuthorization: true,
-      ...(scopes ? { stepUpScopes: scopes } : {}),
-      resourceMetadataUrl: validResourceMetadataUrlHint(
-        signal.resourceMetadataUrl,
-      ),
-      onTraceUpdate: options.onTraceUpdate,
-      beforeRedirect: options.beforeRedirect,
-      onAuthorizationRedirect: flowDigestHook((flow) => {
-        const current = readAuthChallengeLedger(operationKey);
-        if (current?.phase === "awaiting_callback") {
-          writeAuthChallengeLedger({ ...current, flowDigest: flow.digest });
-        }
-        options.onAuthorizationFlow?.(flow);
-      }),
-    });
-  } catch (error) {
-    clearAuthChallengeLedger(operationKey);
-    throw error;
-  }
-  // Nothing navigated and nothing was granted: the click is not spent.
-  if (
-    reauthorization.kind === "error" ||
-    reauthorization.kind === "reauth_required"
-  ) {
-    clearAuthChallengeLedger(operationKey);
-  }
-  return { kind: "started", reauthorization, scopes };
-}
+// Mid-session sign-in: the per-call ledger, the auth-method gate and
+// `applyToolCallAuthChallenge` live in their own module.
+export {
+  applyToolCallAuthChallenge,
+  gateAuthChallenge,
+  hasAuthChallengeAwaitingCallback,
+  markAuthChallengeSignedIn,
+  resetAuthChallenge,
+  type AuthChallengeAttempt,
+  type AuthChallengeGate,
+  type AuthChallengeOutcome,
+} from "./auth-challenge-ledger";

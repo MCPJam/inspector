@@ -147,6 +147,27 @@ describe("chat sign-in recovery", () => {
       "awaiting_oauth",
     );
   });
+  it("does not resume a call when neither side has a flow digest", () => {
+    const value = input();
+    expect(savePendingChatScopeStepUp(value)).toEqual({ ok: true });
+    expect(preparePendingChatAuthRequired(value)).toEqual({ ok: true });
+    expect(
+      settlePendingChatScopeStepUpAfterCallback("same", undefined, undefined)
+        .kind,
+    ).toBe("failed");
+    expect(readPendingChatScopeStepUp({ continuationId: "a" })?.phase).not.toBe(
+      "ready",
+    );
+  });
+  it("keeps only the most recent failures", () => {
+    for (let index = 0; index < 60; index += 1)
+      recordChatAuthRecoveryFailure("resume_failed", {
+        continuationId: `cont-${index}`,
+      });
+    const notices = renderHook(useChatAuthRecoveryFailures);
+    expect(notices.result.current).toHaveLength(50);
+    expect(notices.result.current.at(-1)?.continuationId).toBe("cont-59");
+  });
   it("ignores unrelated sign-ins instead of cancelling a different chat", () => {
     start();
     expect(

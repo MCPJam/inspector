@@ -59,7 +59,7 @@ export function connectionIntentForBinding(
 export const SIGNED_IN_WITH_OWN_ACCOUNT_MESSAGE =
   "Signed in with your own account. Run the tool again to use it; the earlier call was not retried.";
 export const SIGNED_IN_WITH_DIFFERENT_ACCOUNT_MESSAGE =
-  "Signed in with a different account than the call used, so it was not retried. Run the tool again.";
+  "Signed in with a different account than the call used, so it was not retried. Run the call again.";
 
 /**
  * Whether a saved call may be replayed after the callback completed.

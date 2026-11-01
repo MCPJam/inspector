@@ -83,6 +83,7 @@ function read(): RecoveryState {
               typeof item.id === "string" &&
               typeof item.reason === "string",
           )
+          .slice(-MAX_FAILURES)
           .map((item: ChatAuthRecoveryFailure) => ({
             ...safe(item),
             id: item.id,
@@ -132,6 +133,7 @@ function safe(context: RecoveryContext): RecoveryContext {
     result.callbackDigest = context.callbackDigest.slice(0, 8);
   return result;
 }
+const MAX_FAILURES = 50;
 export function traceChatAuthRecovery(
   stage: string,
   context: RecoveryContext,
@@ -162,8 +164,10 @@ export function recordChatAuthRecoveryFailure(
     reason,
   ]);
   const failure = { ...details, id, reason, timestamp: Date.now() };
+  // Bounded like `history`; a dismissed entry ages out instead of being
+  // dropped, so it cannot show again while it is still recent.
   if (!state.failures.some((item) => item.id === id))
-    state.failures.push(failure);
+    state.failures = [...state.failures, failure].slice(-MAX_FAILURES);
   const report = options.report !== false && !state.reported.includes(id);
   if (report) state.reported = [...state.reported, id].slice(-200);
   write(state);

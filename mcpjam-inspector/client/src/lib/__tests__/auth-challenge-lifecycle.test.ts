@@ -19,6 +19,7 @@ import {
 import {
   claimPendingDirectScopeStepUpReplay,
   peekPendingDirectScopeStepUpReplay,
+  SIGNED_IN_FOR_ANOTHER_REQUEST_MESSAGE,
   type DirectScopeStepUpReplayDescriptor,
 } from "../scope-step-up-replay";
 import { useAuthChallengeNoticeStore } from "../auth-challenge-chat";
@@ -440,7 +441,7 @@ describe("auth challenge lifecycle", () => {
       // Another flow's callback does not replay it.
       expect(
         await settleSignInCallback("orders", { state: "flow-other" }),
-      ).toMatch(/not retried/);
+      ).toBe(SIGNED_IN_FOR_ANOTHER_REQUEST_MESSAGE);
       expect(peekPendingDirectScopeStepUpReplay()?.phase).toBe("awaiting_oauth");
     });
 

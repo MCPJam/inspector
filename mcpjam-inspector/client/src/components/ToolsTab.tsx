@@ -738,25 +738,25 @@ export function ToolsTab({
       const challenge = parseInsufficientScopeChallenge(
         (response as { insufficientScope?: unknown }).insufficientScope,
       );
-      if (
+      const directReplay =
         replayDescriptor?.kind === "tool" &&
         isActionableStepUpChallenge(challenge)
-      ) {
-        savePendingDirectScopeStepUpReplay({
-          operation: {
-            resourceUrl: String(
-              (server?.config as any)?.url ?? serverName ?? "",
-            ),
-            method: "tools/call",
-            operation: toolName,
-          },
-          descriptor: replayDescriptor,
-        });
-      }
+          ? savePendingDirectScopeStepUpReplay({
+              operation: {
+                resourceUrl: String(
+                  (server?.config as any)?.url ?? serverName ?? "",
+                ),
+                method: "tools/call",
+                operation: toolName,
+              },
+              descriptor: replayDescriptor,
+            })
+          : undefined;
       driveScopeStepUpFromChallenge(
         server,
         challenge,
         { method: "tools/call", operation: toolName },
+        directReplay ? { directReplay } : undefined,
       );
     }
   };
