@@ -34,6 +34,7 @@ import {
   resetToolCallStepUp,
   type ToolCallStepUpOperation,
 } from "@/state/oauth-orchestrator";
+import { cancelPendingDirectScopeStepUpReplay } from "@/lib/scope-step-up-replay";
 import {
   findProjectByAnyId,
   type AppState,
@@ -330,13 +331,23 @@ export function driveScopeStepUp(
     requiredScope: challenge.requiredScope,
     resourceMetadataUrl: challenge.resourceMetadataUrl,
   };
+  // No redirect means no callback will ever settle a call the surface saved
+  // for this step-up; left in place it would block the next one for the
+  // saved call's lifetime.
+  const dropSavedCall = () => cancelPendingDirectScopeStepUpReplay(server.name);
   void (operation
     ? applyToolCallStepUp(server, stepUp, { operation })
     : applyToolCallStepUp(server, stepUp))
-    .catch(() => {
-      // The operation's own error is already surfaced by the caller, so a
-      // failed step-up has nothing further to report to the user.
-    })
+    .then(
+      (outcome) => {
+        if (outcome?.reauthorization?.kind !== "redirect") dropSavedCall();
+      },
+      () => {
+        dropSavedCall();
+        // The operation's own error is already surfaced by the caller, so a
+        // failed step-up has nothing further to report to the user.
+      },
+    )
     .finally(() => {
       inFlight.delete(key);
     });
