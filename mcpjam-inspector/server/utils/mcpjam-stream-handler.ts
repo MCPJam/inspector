@@ -914,6 +914,8 @@ function applyToolRefresh(
 }
 
 export interface MCPJamHandlerOptions {
+  /** Effective saved App declaration, qualified by the caller's installed handlers. */
+  harnessHostCapabilities?: import("@/shared/harness-host-capabilities").HarnessHostCapabilityQualification;
   /** Durable callers must finish this write before the next external effect. */
   durableCheckpoint?: (state: {
     phase: "model" | "tools" | "ready" | "complete";

@@ -12,6 +12,7 @@ function candidate(
   capabilities: object = caps,
 ) {
   return {
+    hostCapabilities: { capabilities: {}, gaps: [] },
     manager: {
       getServerConfig: () => ({
         url: "https://fixture.test/mcp",
@@ -30,6 +31,14 @@ function candidate(
 }
 it("selects the qualified modern bridge before starting the CLI", () => {
   expect(forwardingAdmission(candidate()).delivery).toBe("bridge");
+});
+it("keeps a profile with an unsupported App declaration on its configured path", () => {
+  expect(forwardingAdmission({ ...candidate(), hostCapabilities: {
+    capabilities: { futureCapability: {} }, gaps: ["host-capability:futureCapability"],
+  } }).delivery).toBeUndefined();
+});
+it("requires an authoritative effective host declaration", () => {
+  expect(forwardingAdmission({ ...candidate(), hostCapabilities: undefined }).delivery).toBeUndefined();
 });
 it("requires owned input delivery separately from the legacy callback", () => {
   const input = candidate({}, { ...caps, elicitation: { form: {}, url: {} } });

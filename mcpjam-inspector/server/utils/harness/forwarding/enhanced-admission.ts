@@ -12,6 +12,7 @@ type Candidate = Omit<Parameters<typeof nativeForwardingGaps>[0], "manager"> & {
   ownedTasksAvailable?: boolean;
 };
 const BRIDGED_GAPS = new Set([
+  "app-host-capabilities",
   "tool-visibility",
   "model-result-policy",
   "client-capabilities",
