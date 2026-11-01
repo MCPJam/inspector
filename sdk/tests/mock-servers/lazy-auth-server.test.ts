@@ -893,6 +893,73 @@ describe("MCPClientManager against the fixture", () => {
     expect((products as { isError?: boolean }).isError).toBeFalsy();
   });
 
+  /** A real refresh token from the fixture's authorization server. */
+  async function issueRefreshToken(server: LazyAuthServer) {
+    const { clientId, pkce, authorizeUrl, prm } =
+      await prepareAuthorization(server);
+    const location = new URL(await server.approveAuthorization(authorizeUrl));
+    const token = await postForm(`${server.origin}/token`, {
+      grant_type: "authorization_code",
+      code: location.searchParams.get("code") ?? "",
+      redirect_uri: REDIRECT_URI,
+      client_id: clientId,
+      code_verifier: pkce.verifier,
+      resource: prm.resource,
+    });
+    expect(token.status).toBe(200);
+    return { clientId, refreshToken: token.body.refresh_token as string };
+  }
+
+  /** Fails the test instead of hanging when a call never settles. */
+  function settlesWithin<T>(promise: Promise<T>, ms = 5_000): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`did not settle in ${ms}ms`)), ms)
+      ),
+    ]);
+  }
+
+  it("runs a first tool call on a refresh-token connection without listing tools first", async () => {
+    // Operations on such a server are serialized. The 2026-07-28 header
+    // mirroring warm-up lists tools from inside the call, and must not queue
+    // behind the call it is serving.
+    const server = await start({ mode: "http401" });
+    const manager = await connect(server, await issueRefreshToken(server));
+    expect(manager.getInitializationInfo("lazy")?.protocolVersion).toBe(
+      "2026-07-28"
+    );
+    const products = await settlesWithin(
+      manager.executeTool("lazy", "list_products", {})
+    );
+    expect((products as { isError?: boolean }).isError).toBeFalsy();
+  });
+
+  it("keeps using the rotated refresh token after a reconnect", async () => {
+    // The fixture rotates refresh tokens and rejects a spent one, as WorkOS
+    // AuthKit does.
+    const server = await start({ mode: "http401" });
+    const rotations: string[] = [];
+    const manager = await connect(server, {
+      ...(await issueRefreshToken(server)),
+      onTokensRotated: ({ refreshToken }: { refreshToken: string }) => {
+        rotations.push(refreshToken);
+      },
+    });
+    const first = (await settlesWithin(
+      manager.executeTool("lazy", "get_my_orders", {})
+    )) as { isError?: boolean };
+    expect(first.isError).toBeFalsy();
+    expect(rotations).toHaveLength(1);
+
+    await manager.disconnectServer("lazy");
+    const second = (await settlesWithin(
+      manager.executeTool("lazy", "get_my_orders", {})
+    )) as { isError?: boolean };
+    expect(second.isError).toBeFalsy();
+    expect(rotations).toHaveLength(2);
+  });
+
   it("connects pinned to 2026-07-28", async () => {
     const server = await start({ mode: "meta" });
     const manager = await connect(server, { mcpProtocolVersion: "2026-07-28" });

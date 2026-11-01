@@ -1,3 +1,5 @@
+import { bindLocalTaskOwnerScope } from "./task-owner-binding.js";
+import { taskOwnerScope } from "../../shared/task-owner.js";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
   localServerCheckQueue,
@@ -73,12 +75,14 @@ import {
 } from "./server-secrets.js";
 import {
   buildXaaMintArgs,
-  isXaaMintErrorReported,
   mintXaaAccessToken,
   resolveXaaConnectIssuer,
   resolveXaaConnectRegistrationMode,
 } from "../services/xaa-mint.js";
-import { toXaaConnectFailure } from "../services/xaa-connect-error.js";
+import {
+  reportXaaMintFailure,
+  toXaaConnectFailure,
+} from "../services/xaa-connect-error.js";
 import {
   getLocalConfidentialCimdProvider,
   withSkillsExtensionCapability,
@@ -90,7 +94,15 @@ import {
   releasePluginLease,
   retainPluginLease,
 } from "../services/plugins/local-stdio.js";
-import type { PluginStdioLaunchSpec } from "../services/plugins/plugin-root.js";
+import {
+  needsPluginRoot,
+  type PluginStdioLaunchSpec,
+} from "../services/plugins/plugin-root.js";
+import {
+  checkStdioLaunchApproval,
+  stdioCommandApprovalRequired,
+  toStdioLaunchSpec,
+} from "./stdio-command-approvals.js";
 import {
   requireServiceCredential,
   WORKOS_API_KEY_FEATURE,
@@ -158,6 +170,8 @@ type LocalAuthorizeServerConfig =
 
 type LocalAuthorizeBatchSuccess = {
   ok: true;
+  /** Server-only owner binding from backend authorization. */
+  authorizedTaskOwnerScope?: string;
   role: string;
   accessLevel: string;
   permissions: { chatOnly: boolean };
@@ -361,7 +375,13 @@ export async function authorizeBatchLocal(
   for (const [serverId, result] of Object.entries(raw.results)) {
     if (result.ok) {
       const { internalLogContext: _omit, ...clean } = result;
-      stripped[serverId] = clean;
+      stripped[serverId] = {
+        ...clean,
+        authorizedTaskOwnerScope: taskOwnerScope(
+          projectId,
+          result.internalLogContext?.userId,
+        ),
+      };
     } else {
       stripped[serverId] = result;
     }
@@ -1030,6 +1050,33 @@ async function applyLocalRuntimeResolution<
 
   if (result.serverConfig.transportType === "stdio") {
     const stdioConfig = result.serverConfig;
+    // Any workspace member can change what a stdio row runs (a plugin
+    // component's env included), and it spawns here with the user's
+    // privileges, so this device must have approved the exact spec as
+    // configured first. Checked after the secret reveal so env
+    // VALUES are part of what was approved, and before materialization so a
+    // refusal pins no bundle.
+    const spec = toStdioLaunchSpec(stdioConfig);
+    const check = await checkStdioLaunchApproval(serverId, spec);
+    if (check.approval !== "approved") {
+      throw stdioCommandApprovalRequired({
+        serverId,
+        serverDisplayName: args.serverDisplayName ?? args.managerKey,
+        spec,
+        fingerprint: check.fingerprint,
+        approval: check.approval,
+        changedEnvNames: check.changedEnvNames,
+        // The same test materialization applies below.
+        pluginComponent:
+          stdioConfig.pluginComponent === true ||
+          needsPluginRoot({
+            command: spec.command,
+            args: spec.args,
+            env: spec.env,
+            workingDirectory: spec.cwd,
+          }),
+      });
+    }
     const materialized = await materializePluginStdioForConnect({
       // Lazy: an ordinary stdio server must not pay a Convex read — or
       // require Convex configuration at all — to connect.
@@ -1496,14 +1543,12 @@ export async function resolveLocalServerForConnect(
       const minted = await mintXaaAccessToken(mintArgs);
       resolvedOauthAccessToken = minted.accessToken;
     } catch (error) {
-      if (!isXaaMintErrorReported(error)) {
-        logger.error("[XAA connect] mint failed", error, {
-          serverId,
-          serverName: options?.serverDisplayName ?? serverId,
-          resource: sc.url,
-        });
-      }
-      // Re-framed AFTER the log above: the debugger-worded original still
+      reportXaaMintFailure(error, {
+        serverId,
+        serverName: options?.serverDisplayName ?? serverId,
+        resource: sc.url,
+      });
+      // Re-framed AFTER the report above: the debugger-worded original still
       // reaches Sentry/Axiom (as `cause`), the caller gets one sentence that
       // names this server and the action that fixes it.
       throw toXaaConnectFailure(error, xaaFailureTarget);
@@ -2145,6 +2190,12 @@ async function executeLocalServerConnectAttempt(
     ...otherGroups,
     ...(connected.length ? { [serverDisplayName]: connected } : {}),
   });
+
+  bindLocalTaskOwnerScope(
+    mcpClientManager,
+    [serverDisplayName, ...connected.map((entry) => entry.key)],
+    resolved.authorizeResult.authorizedTaskOwnerScope,
+  );
 
   // Capture the inspection snapshot synchronously so a fast follow-up
   // disconnect/reconnect on the same server can't tear down the manager

@@ -1,3 +1,4 @@
+import { authorizationFlowDigest } from "@/lib/oauth/flow-digest";
 import {
   serverCheckQueue,
   isServerCheckQueueError,
@@ -1683,6 +1684,9 @@ export function useServerState({
       // through the normal name-to-id context.
       const resolved = syncedTarget ?? tryResolveProjectServer(serverName);
       if (resolved) {
+        // A form save or probe is the user's own action: manual on the check
+        // queue, so a stdio command approval can ask.
+        serverCheckQueue.markManual(resolved.projectId, serverName);
         // Re-resolve WITH the Convex serverId. Callers already applied
         // `withProjectConnectionDefaults`, but they only know the display
         // name, so the `serverConnectionOverrides[serverId]` layer was skipped
@@ -3243,7 +3247,10 @@ export function useServerState({
               });
               logger.info("OAuth connection successful", { serverName });
               markPendingChatScopeStepUpReady(serverName);
-              markPendingDirectScopeStepUpReplayReady(serverName);
+              markPendingDirectScopeStepUpReplayReady(
+                serverName,
+                await authorizationFlowDigest(state),
+              );
               if (!suppressSuccessToast) {
                 toast.success(
                   `OAuth connection successful! Connected to ${serverName}.`,
@@ -6171,6 +6178,12 @@ export function useServerState({
             };
         }
       }
+      // A button's reconnect is manual whatever mark the auto-connect hook
+      // left on the check queue; an automatic check never asks for a stdio
+      // command approval.
+      const manualTarget = tryResolveProjectServer(serverName);
+      if (manualTarget)
+        serverCheckQueue.markManual(manualTarget.projectId, serverName);
       return reconnectServerInternal(serverName, {
         forceOAuthFlow: options?.forceOAuthFlow,
         connectionIntent,
@@ -6263,7 +6276,15 @@ export function useServerState({
   const ensureServersReady = useCallback(
     async (
       serverNames: string[],
-      options?: { allowInteractiveOAuthFlow?: boolean },
+      options?: {
+        allowInteractiveOAuthFlow?: boolean;
+        /**
+         * The auto-connect hook's batch. Every other caller is an explicit
+         * action (an eval Start, a quick run, opening a case) and is marked
+         * manual so a stdio command approval can ask.
+         */
+        automatic?: boolean;
+      },
     ): Promise<EnsureServersReadyResult> => {
       const uniqueServerNames = [...new Set(serverNames.filter(Boolean))];
 
@@ -6304,6 +6325,17 @@ export function useServerState({
         } else {
           groupsByKey.set(resolvedKey, { resolvedKey, refs: [serverName] });
           orderedKeys.push(resolvedKey);
+        }
+      }
+
+      // The check queue flags a job automatic from a one-shot mark the
+      // auto-connect hook sets; a mark it left behind (its server was already
+      // connected by the time we looked) would make this explicit batch
+      // silent, and an automatic check never asks for a command approval.
+      if (!options?.automatic) {
+        for (const key of orderedKeys) {
+          const target = tryResolveProjectServer(key);
+          if (target) serverCheckQueue.markManual(target.projectId, key);
         }
       }
 

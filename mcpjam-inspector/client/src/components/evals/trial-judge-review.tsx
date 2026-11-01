@@ -4,8 +4,8 @@
  * WHAT A LABEL IS. A reviewer's own read of whether the trial satisfied the
  * request — pass, partial or fail — recorded beside the judge's. It is
  * EVIDENCE ABOUT THE JUDGE, never a verdict about the run: it changes no
- * `result`, no score row, and no gate. Enough blind labels agreeing with the
- * judge is what lets that judge decide runs at all.
+ * `result`, no score row, and no gate. Blind labels feed the agreement rate
+ * reported beside the judge.
  *
  * WHY A CONTAINER. `IterationDetails` has five hosts and knows only its
  * iteration; four of them have no business issuing this read. So the fetch

@@ -207,7 +207,6 @@ vi.mock("@/lib/apis/web/context", () => ({
       projectId,
       serverIds,
       serverNames,
-      oauthTokens,
       accessScope,
       scenarioId,
       accessVersion,
@@ -215,7 +214,6 @@ vi.mock("@/lib/apis/web/context", () => ({
       projectId: string;
       serverIds: string[];
       serverNames: string[];
-      oauthTokens?: Record<string, string>;
       accessScope?: string;
       scenarioId?: string;
       accessVersion?: number;
@@ -223,7 +221,6 @@ vi.mock("@/lib/apis/web/context", () => ({
       projectId,
       serverIds,
       serverNames,
-      ...(oauthTokens ? { oauthTokens } : {}),
       ...(accessScope ? { accessScope } : {}),
       ...(scenarioId ? { scenarioId } : {}),
       ...(scenarioId && Number.isFinite(accessVersion)
@@ -387,6 +384,34 @@ describe("useChatSession hosted mode", () => {
         providerKey: "openai", enabled: true, hasSecret: true }],
     },
     hostedContext: { projectId: "project-1", selectedServerIds: [] },
+  });
+
+  it.each([true, false])("waits for the forwarding gate before showing its %s answer", async (approved) => {
+    mockState.addToolApprovalResponse.mockClear();
+    mockState.sendMessage.mockClear();
+    let acknowledge!: (response: Response) => void;
+    mockState.authFetch.mockImplementationOnce(() => new Promise<Response>((resolve) => { acknowledge = resolve; }));
+    const { result, unmount } = renderHook(() => useChatSession(selectionOptions()));
+    const response = { id: 'mjfg1:{"executionId":"execution"}', approved };
+    const pending = result.current.addToolApprovalResponse(response);
+    expect(mockState.authFetch).toHaveBeenCalledWith("/api/web/harness-forwarding/approval", expect.objectContaining({
+      method: "POST", body: JSON.stringify(response),
+    }));
+    expect(mockState.addToolApprovalResponse).not.toHaveBeenCalled();
+    acknowledge(Response.json({ ok: true }));
+    await act(async () => { await pending; });
+    expect(mockState.addToolApprovalResponse).toHaveBeenCalledWith(response);
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it.each([Response.json({ ok: false }), Response.json({ error: "stale" }, { status: 409 })])("does not acknowledge a rejected forwarding approval", async (reply) => {
+    mockState.addToolApprovalResponse.mockClear();
+    mockState.authFetch.mockResolvedValueOnce(reply);
+    const { result, unmount } = renderHook(() => useChatSession(selectionOptions()));
+    await act(async () => { await result.current.addToolApprovalResponse({ id: 'mjfg1:{}', approved: true }); });
+    expect(mockState.addToolApprovalResponse).not.toHaveBeenCalled();
+    unmount();
   });
 
   it("sends a deliberate temperature edit with its selection and scopes it to the host", () => {
@@ -646,9 +671,6 @@ describe("useChatSession hosted mode", () => {
           selectedServerIds: ["server-id-1"],
           scenarioId: "cbx_test",
           accessVersion: 1,
-          oauthTokens: {
-            "server-id-1": "browser-token",
-          },
         },
       }),
     );
@@ -1395,7 +1417,7 @@ describe("useChatSession hosted mode", () => {
     });
   });
 
-  it("pairs preflight-resolved server ids with the names they were resolved from when the selection changes mid-preflight", async () => {
+  it("fails closed when the server selection changes mid-preflight", async () => {
     let resolvePreflight!: (value: Array<{ serverId: string }>) => void;
     const ensureServerIds = vi.fn(
       () =>
@@ -1420,7 +1442,7 @@ describe("useChatSession hosted mode", () => {
     mockState.authFetch.mockClear();
 
     // Send starts: the async preflight is now in flight for [server-a, server-b].
-    let sendPromise: Promise<void> | undefined;
+    let sendPromise: Promise<boolean> | undefined;
     act(() => {
       sendPromise = result.current.sendMessage({ text: "hi" });
     });
@@ -1430,34 +1452,14 @@ describe("useChatSession hosted mode", () => {
     rerender({ selectedServers: ["server-a"] });
 
     resolvePreflight([{ serverId: "id-a" }, { serverId: "id-b" }]);
-    await act(async () => {
-      await sendPromise;
-    });
+    const dispatched = await act(async () => await sendPromise);
 
-    await waitFor(() => {
-      expect(mockState.authFetch).toHaveBeenCalledTimes(1);
-    });
-    const body = JSON.parse(
-      String(
-        (mockState.authFetch.mock.calls.at(-1)?.[1] as RequestInit | undefined)
-          ?.body ?? "{}",
-      ),
-    );
-    // Ids ride with the names they were resolved from — never stale ids
-    // paired with the fresh (shrunk) selection.
-    expect(body.selectedServerIds).toEqual(["id-a", "id-b"]);
-    expect(body.selectedServerNames).toEqual(["server-a", "server-b"]);
+    // Ids resolved for the old selection never run under the new one.
+    expect(dispatched).toBe(false);
+    expect(mockState.authFetch).not.toHaveBeenCalled();
   });
 
-  it("fails a send closed when the session changes mid-preflight", async () => {
-    // `useChat` runs on a stable `proxyTransport` that delegates at REQUEST
-    // time to the latest transport, so the POST body carries whatever
-    // `chatSessionId` is live when it fires — not the one the message was
-    // composed against. Without a guard, a session change during the async
-    // server-id preflight posts this turn into an unrelated transcript, and
-    // ingestion writes it there. Sibling of the target-key check above.
-    // `resetChat` mints through `generateId`, stubbed to a constant for this
-    // suite — so it must vary here or the session would never actually move.
+  it.each(["session", "saved config"])("fails closed when %s changes during preparation", async (change) => {
     vi.mocked(generateId)
       .mockImplementationOnce(() => "chat-session-id")
       .mockImplementation(() => "chat-session-id-2");
@@ -1470,43 +1472,146 @@ describe("useChatSession hosted mode", () => {
         }),
     );
 
-    const { result } = renderHook(() =>
+    const { result, rerender } = renderHook(({ systemPrompt }) =>
       useChatSession({
         selectedServers: ["server-a"],
+        savedClientConfig: {
+          id: "config-a", schemaVersion: 2, hostStyle: "claude",
+          modelId: guestModel.id, systemPrompt, temperature: 0.7,
+          requireToolApproval: false, serverIds: [], optionalServerIds: [],
+          connectionDefaults: {}, clientCapabilities: {}, hostContext: {},
+        },
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: [],
           ensureServerIds,
         },
       }),
+      { initialProps: { systemPrompt: "First prompt" } },
     );
 
-    // `authFetch`, not `mockState.sendMessage`: the mocked `useChat` returns
-    // its OWN inline `sendMessage` that drives the transport directly, so
-    // `mockState.sendMessage` is never wired in and asserting on it would be
-    // vacuously true. The transport's fetch is the only real post signal.
     mockState.authFetch.mockClear();
 
     let sendPromise: Promise<boolean> | undefined;
     act(() => {
-      sendPromise = result.current.sendMessage({ text: "hi" }) as unknown as
-        Promise<boolean> | undefined;
+      sendPromise = result.current.sendMessage({ text: "hi" });
     });
     expect(ensureServerIds).toHaveBeenCalledWith(["server-a"]);
 
-    // The thread moves under the in-flight preflight.
-    act(() => {
-      result.current.resetChat();
-    });
-    expect(result.current.chatSessionId).toBe("chat-session-id-2");
+    if (change === "session") {
+      act(() => result.current.resetChat());
+      expect(result.current.chatSessionId).toBe("chat-session-id-2");
+    } else {
+      rerender({ systemPrompt: "Changed prompt" });
+    }
 
     resolvePreflight([{ serverId: "id-a" }]);
     const dispatched = await act(async () => await sendPromise);
 
-    // Fails closed: resolves `false` and never posts, so the turn cannot land
-    // under the session that replaced the one it was composed against.
     expect(dispatched).toBe(false);
     expect(mockState.authFetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps a sent turn's continuation valid when the server selection changes", async () => {
+    const { result, rerender } = renderHook(
+      ({ selectedServers, selectedServerIds }) =>
+        useChatSession({
+          selectedServers,
+          hostedContext: { projectId: "project-1", selectedServerIds },
+        }),
+      {
+        initialProps: {
+          selectedServers: ["server-a"],
+          selectedServerIds: ["id-a"],
+        },
+      },
+    );
+    await act(async () => {
+      await result.current.sendMessage({ text: "hi" });
+    });
+
+    // A server reconnecting or joining changes the selection while an
+    // approval is pending; the approval's request must still build.
+    rerender({
+      selectedServers: ["server-a", "server-b"],
+      selectedServerIds: ["id-a", "id-b"],
+    });
+
+    expect(() => lastTransportOptions.body()).not.toThrow();
+  });
+
+  it("builds a continuation on the ids its send resolved", async () => {
+    const ensureServerIds = vi.fn(async (names: string[]) =>
+      names.map((name) => ({ serverId: `id-${name}` })),
+    );
+    const { result, rerender } = renderHook(
+      ({ selectedServers }) =>
+        useChatSession({
+          selectedServers,
+          hostedContext: {
+            projectId: "project-1",
+            selectedServerIds: [],
+            ensureServerIds,
+          },
+        }),
+      { initialProps: { selectedServers: ["adhoc-server"] } },
+    );
+    await act(async () => {
+      await result.current.sendMessage({ text: "hi" });
+    });
+
+    // The approval's request runs before the saved id reaches this selection.
+    expect(lastTransportOptions.body()).toMatchObject({
+      selectedServerIds: ["id-adhoc-server"],
+      selectedServerNames: ["adhoc-server"],
+    });
+
+    // A different selection was never resolved, so it still needs saving.
+    rerender({ selectedServers: ["adhoc-server", "other-server"] });
+    expect(() => lastTransportOptions.body()).toThrow(
+      "Save the selected servers before sending this message.",
+    );
+  });
+
+  it("builds a scenario request whose servers come from the scenario", async () => {
+    lastTransportOptions = undefined;
+    renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-a"],
+        hostedContext: {
+          projectId: "project-1",
+          scenarioId: "scenario-1",
+          accessVersion: 1,
+          selectedServerIds: [],
+        },
+      }),
+    );
+    await waitFor(() => expect(lastTransportOptions).toBeDefined());
+
+    expect(() => lastTransportOptions.body()).not.toThrow();
+  });
+
+  it("sends a scenario message whose servers have no ids here", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-a"],
+        hostedContext: {
+          projectId: "project-1",
+          scenarioId: "scenario-1",
+          accessVersion: 1,
+          selectedServerIds: [],
+        },
+      }),
+    );
+    mockState.authFetch.mockClear();
+
+    let dispatched: boolean | undefined;
+    await act(async () => {
+      dispatched = await result.current.sendMessage({ text: "hi" });
+    });
+
+    expect(dispatched).toBe(true);
+    expect(mockState.authFetch).toHaveBeenCalled();
   });
 
   it("does not block submit on unresolved server ids when a send-time resolver is provided", async () => {
@@ -2475,7 +2580,6 @@ describe("useChatSession — hidden environment (a Playground chat's plugins)", 
       }),
     );
     expect(again.result.current.hiddenEnvironmentActive).toBe(false);
-    expect(again.result.current.hiddenEnvironmentOffReason).toBeNull();
     const body = lastTransportOptions.body();
     expect(body).toEqual(plain);
     expect(body.hostId).toBe("host_1");

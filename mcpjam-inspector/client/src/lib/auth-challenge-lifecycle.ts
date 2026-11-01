@@ -210,7 +210,7 @@ export const AUTH_CHALLENGE_DISMISSED_MESSAGE =
   "This server asked you to sign in. You chose Not now for this session; reconnect the server with OAuth to sign in.";
 
 export const AUTH_CHALLENGE_PERMANENT_MESSAGE =
-  "This server still asked for sign-in after you signed in, so the call was not retried. Your account may not have access to it.";
+  "This server asked for sign-in again after you signed in. Check that your account has access to it, then try again.";
 
 export function authChallengeErrorMessage(serverName: string): string {
   return `${serverName} needs you to sign in before this call can run.`;
@@ -280,7 +280,11 @@ export async function presentAuthChallenge(input: {
   const attempt =
     input.replay?.authAttempt ??
     callAttempt(server, input.surface, crypto.randomUUID());
-  if (input.replay) input.replay.authAttempt = attempt;
+  // A copy: the caller's descriptor can be a saved call's own, whose identity
+  // the replay store compares when the call is cleared.
+  const replay = input.replay
+    ? { ...input.replay, authAttempt: attempt }
+    : undefined;
   const origin = mcpServerOrigin(server);
   const outcome = await applyToolCallAuthChallenge(server, signal, {
     operation: input.operation,
@@ -324,9 +328,7 @@ export async function presentAuthChallenge(input: {
     readOnly: input.readOnly,
     explanation,
     expiresAt: Date.now() + SCOPE_STEP_UP_LIVE_TTL_MS,
-    ...(decision.action === "prompt" && input.replay
-      ? { replay: input.replay }
-      : {}),
+    ...(decision.action === "prompt" && replay ? { replay } : {}),
     ...(input.connectionId ? { connectionId: input.connectionId } : {}),
     ...(input.onConnect ? { onConnect: input.onConnect } : {}),
     ...(input.continuationId ? { continuationId: input.continuationId } : {}),

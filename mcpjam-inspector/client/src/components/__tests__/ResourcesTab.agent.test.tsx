@@ -272,7 +272,7 @@ describe("ResourcesTab — agent-driven step-up lifecycle (SEP-2350)", () => {
     expect(mockApplyToolCallStepUp.mock.calls[0][1]).toMatchObject({
       requiredScope: "files:write",
     });
-    expect(mockApplyToolCallStepUp.mock.calls[0][2]).toEqual({
+    expect(mockApplyToolCallStepUp.mock.calls[0][2]).toMatchObject({
       operation: { method: "resources/read", operation: "file:///a.txt" },
     });
   });

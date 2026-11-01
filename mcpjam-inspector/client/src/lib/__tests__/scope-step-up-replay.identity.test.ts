@@ -53,6 +53,29 @@ describe("direct replay identity", () => {
       }),
     ).toBeDefined();
   });
+  it("marks a call saved without a flow binding ready on the server's next sign-in", () => {
+    savePendingDirectScopeStepUpReplay({
+      operation: {
+        resourceUrl: "https://example.test/mcp",
+        method: "tools/call",
+        operation: "read",
+      },
+      descriptor: {
+        kind: "tool",
+        surface: "tools",
+        serverName: "same",
+        toolName: "read",
+        parameters: {},
+      },
+    });
+    markPendingDirectScopeStepUpReplayReady("same", "any-flow");
+    expect(
+      claimPendingDirectScopeStepUpReplay({
+        serverName: "same",
+        surface: "tools",
+      }),
+    ).toBeDefined();
+  });
   it("requires a flow digest and cannot rearm an already claimed call", () => {
     save("a");
     markPendingDirectScopeStepUpReplayReady("same");
@@ -127,6 +150,54 @@ describe("direct replay identity", () => {
   it("rejects unavailable storage without leaking inputs", () => {
     const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("quota"); });
     try { expect(() => save("a")).toThrow(); } finally { spy.mockRestore(); }
+  });
+  it("lets the next call replace one whose sign-in this page left behind", () => {
+    save("a");
+    // The page came back from the authorization server with Back.
+    window.dispatchEvent(
+      Object.assign(new Event("pageshow"), { persisted: true }),
+    );
+    expect(() => save("b")).not.toThrow();
+    expect(
+      peekPendingDirectScopeStepUpReplay()?.descriptor.authAttempt?.callId,
+    ).toBe("b");
+    // The replacement is this page's own sign-in again, so it still blocks.
+    expect(() => save("c")).toThrow("Another call is waiting");
+  });
+  it("lets the next call replace one saved before the page reloaded", () => {
+    sessionStorage.setItem(
+      "mcp-scope-step-up-replay-v1",
+      JSON.stringify({
+        version: 1,
+        callId: "from-before-reload",
+        generation: 1,
+        phase: "awaiting_oauth",
+        operation: {
+          resourceUrl: "https://example.test/mcp",
+          method: "tools/call",
+          operation: "read",
+        },
+        descriptor: {
+          kind: "tool",
+          surface: "tools",
+          serverName: "same",
+          toolName: "read",
+          parameters: {},
+        },
+        returnPath: "/p/p1/tools",
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      }),
+    );
+    expect(() => save("b")).not.toThrow();
+  });
+  it("keeps a signed-in call that is waiting to be replayed", () => {
+    save("a");
+    markPendingDirectScopeStepUpReplayReady("same", "flow-a");
+    window.dispatchEvent(
+      Object.assign(new Event("pageshow"), { persisted: true }),
+    );
+    expect(() => save("b")).toThrow("Another call is waiting");
   });
   it("an old request finishing cannot clean up a newer pending call", () => {
     save("a");
