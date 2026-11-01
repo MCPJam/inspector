@@ -490,6 +490,8 @@ export type HarnessCreateArgs = {
   elicitationHandler?: boolean;
   /** Present only after shared forwarding admission and owner authorization. */
   forwardingMcpJson?: HarnessMcpJson;
+  /** Only set after exact-route discovery admission. */
+  requireNativeToolDiscovery?: boolean;
   /**
    * The reasoning effort this turn asked for. An adapter that lists efforts in
    * `supportedReasoningEfforts` MUST apply it through its own runtime option;
@@ -926,11 +928,15 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
     upstream,
     elicitationHandler,
     forwardingMcpJson,
+    requireNativeToolDiscovery,
   }) {
     const env = claudeCodeTurnEnv(permissionMode, modelId, upstream);
     // This pin disables discovery behind a gateway unless explicitly enabled.
     // Preserve the existing eager route; small forwarded catalogs stay eager.
-    if (forwardingMcpJson && Object.keys(forwardingMcpJson.mcpServers).length > 0)
+    if (
+      requireNativeToolDiscovery ||
+      (forwardingMcpJson && Object.keys(forwardingMcpJson.mcpServers).length > 0)
+    )
       env.ENABLE_TOOL_SEARCH = "auto";
     if (elicitationHandler) env.MCPJAM_HARNESS_ELICITATION = "1";
     // The HOSTED recipe: shared bootstrap + typed terminal errors, so a

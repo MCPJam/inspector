@@ -38,7 +38,7 @@ describe("native discovery admission", () => {
     { adapterVersion: "future-adapter" },
     { protocolVersion: "2027-01-01" },
     { delivery: "forwarded-native" as const },
-    { delivery: "host-tools" as const },
+    { delivery: "host-tools" as const, adapterVersion: "unqualified-adapter" },
     { delivery: "native-proxy" as const },
     { venue: "local" as const },
     { surface: "eval" as const },
@@ -75,6 +75,15 @@ describe("native discovery admission", () => {
         route: { ...route, modelId: "openai/gpt-5.4" },
       }),
     ).toThrow("not qualified");
+  });
+
+  it.each([
+    { harnessId: "codex", runtimeVersion: "0.163.0", modelId: "openai/gpt-5.5", adapterVersion: "native-mcp-v1" },
+    { harnessId: "claude-code", runtimeVersion: "2.1.245", modelId: "anthropic/claude-haiku-4.5", adapterVersion: "tool-search-auto-v1" },
+  ])("admits the observed retained route for $harnessId", ({ harnessId, ...version }) => {
+    expect(() => assertNativeDiscovery({
+      required: true, harnessId, route: { ...route, ...version, delivery: "host-tools" },
+    })).not.toThrow();
   });
   it("refuses a missing or emulated route", () => {
     expect(() => assertNativeDiscovery({ required: true })).toThrow(

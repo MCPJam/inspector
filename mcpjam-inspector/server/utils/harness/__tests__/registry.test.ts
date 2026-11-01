@@ -1051,7 +1051,7 @@ function addUsage(total, usage) {
       }));
     });
 
-    it("enables threshold-based native search only for forwarded Claude servers", () => {
+    it("enables threshold-based native search for forwarding or a qualified request", () => {
       const adapter = getHarnessAdapter("claude-code");
       adapter.createHarness({ modelId: "anthropic/claude-haiku-4.5", auth: {}, mcpJson, forwardingMcpJson: mcpJson });
       expect(createClaudeCodeHarness).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -1061,6 +1061,10 @@ function addUsage(total, usage) {
       adapter.createHarness({ modelId: "anthropic/claude-haiku-4.5", auth: {}, mcpJson });
       expect(createClaudeCodeHarness).not.toHaveBeenLastCalledWith(expect.objectContaining({
         env: expect.objectContaining({ ENABLE_TOOL_SEARCH: expect.anything() }),
+      }));
+      adapter.createHarness({ modelId: "anthropic/claude-haiku-4.5", auth: {}, mcpJson, requireNativeToolDiscovery: true });
+      expect(createClaudeCodeHarness).toHaveBeenLastCalledWith(expect.objectContaining({
+        env: expect.objectContaining({ ENABLE_TOOL_SEARCH: "auto" }),
       }));
     });
 

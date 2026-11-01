@@ -28,6 +28,14 @@ describe("harnessRuntimeFingerprint", () => {
     expect(harnessRuntimeFingerprint({ ...base, forwardingConfigurationVersion: "unused" })).toBe(harnessRuntimeFingerprint(base));
   });
 
+  it("versions required discovery on a retained client without changing eager clients", () => {
+    const required = { ...base, requireNativeToolDiscovery: true };
+    expect(harnessRuntimeFingerprint({ ...required, forwardingConfigurationVersion: "tool-search-auto-v1" }))
+      .not.toBe(harnessRuntimeFingerprint({ ...required, forwardingConfigurationVersion: "tool-search-auto-v2" }));
+    expect(harnessRuntimeFingerprint({ ...base, forwardingConfigurationVersion: "unused" }))
+      .toBe(harnessRuntimeFingerprint(base));
+  });
+
   it("forks when a selected server disconnects or recovers", () => {
     const healthy = harnessRuntimeFingerprint(base);
     const refused = harnessRuntimeFingerprint({ ...base, unavailableServerIds: ["srv-a"] });
