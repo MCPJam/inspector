@@ -39,6 +39,11 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
+      # The root .npmrc skips install scripts; the DMG maker needs its two
+      # native addons compiled.
+      - name: Build DMG maker addons
+        run: npm run electron:fix:dmg-deps -w @mcpjam/inspector
+
       - name: Setup Apple certificates and API key
         run: |
           echo "${{ secrets.APPLE_API_KEY_CONTENT }}" | base64 -d > /tmp/AuthKey.p8

@@ -17,7 +17,7 @@
     "vitest"
   ],
   "scripts": {
-    "prepare": "node -e \"require('fs').existsSync('scripts/git-hooks/install.mjs') && import('./scripts/git-hooks/install.mjs').then((m) => m.main())\" && node -e \"require('fs').existsSync('scripts/generate-telemetry-catalogs.mjs') && import('./scripts/generate-telemetry-catalogs.mjs').then((m) => m.writeTelemetryCatalogs()).catch((e) => console.warn('[telemetry] catalogs not generated: ' + e.message))\"",
+    "setup": "npm rebuild --ignore-scripts=false node-pty || echo node-pty did not build, so the local terminal is off. Linux needs python3, make and g++. && node scripts/git-hooks/install.mjs && node scripts/generate-telemetry-catalogs.mjs",
     "build": "npm run build -w @mcpjam/evaluators && npm run build -w @mcpjam/sdk && npm run build -w @mcpjam/cli && npm run build -w @mcpjam/vitest && npm run build -w @mcpjam/chat-ui && npm run build -w @mcpjam/widget-react && npm run build -w @mcpjam/inspector",
     "build:packages": "npm run build -w @mcpjam/evaluators && npm run build -w @mcpjam/sdk && npm run build -w @mcpjam/cli",
     "build:inspector": "npm run build -w @mcpjam/inspector",
