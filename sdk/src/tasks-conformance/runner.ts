@@ -770,10 +770,11 @@ export function validateTaskStatusPayload(task: unknown): ShapeVerdict {
 /**
  * The extension's `Task` interface states both durations in INTEGER
  * milliseconds ("Time-to-live duration from creation in integer milliseconds",
- * "Suggested polling interval in integer milliseconds"). `schema.json` renders
- * them as plain `number`, which is why this is separate from
- * {@link validateTaskTtlShape} — that check asserts the era-native FIELD, and
- * widening it would re-grade servers already judged by it.
+ * "Suggested polling interval in integer milliseconds"), and the schema agrees:
+ * schema.ts tags both `@format int` and `schema.json` types them `"integer"`.
+ * This is separate from {@link validateTaskTtlShape} because that check asserts
+ * the era-native FIELD, and widening it would re-grade servers already judged
+ * by it.
  *
  * A NEGATIVE `ttlMs` warns rather than fails: the spec never states a lower
  * bound, and `null` (not a negative number) is how it spells "unlimited", so a
@@ -810,6 +811,14 @@ export function validateTaskTtlIntegerShape(
     }
     if (!Number.isInteger(value)) {
       violations.push(`${name} is ${value}, which is not an integer`);
+      continue;
+    }
+    // schema.json bounds both fields to ±9007199254740991, the safe-integer
+    // range, so a larger whole number is out of schema too.
+    if (!Number.isSafeInteger(value)) {
+      violations.push(
+        `${name} is ${value}, which is outside the schema's integer range`
+      );
       continue;
     }
     if (value < 0) {
@@ -1084,6 +1093,49 @@ export function findRawTaskStates(
     found.push(result);
   }
   return found;
+}
+
+/**
+ * The raw `CreateTaskResult` for `taskId`: the `tools/call` response that
+ * created it, verbatim. A creation result is `Result & Task`, so it carries the
+ * same `ttlMs` / `pollIntervalMs` a `tasks/get` answer does and is held to the
+ * same types.
+ */
+export function findRawCreationTask(
+  messages: unknown[],
+  taskId: string,
+  toolsCallRequestIds: ReadonlySet<string>
+): Record<string, unknown> | undefined {
+  for (const message of messages) {
+    if (!isRecord(message)) continue;
+    const result = isRecord(message.result) ? message.result : undefined;
+    if (!result || result.taskId !== taskId) continue;
+    const id = message.id;
+    if (
+      (typeof id === "string" || typeof id === "number") &&
+      toolsCallRequestIds.has(String(id))
+    ) {
+      return result;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Whether a raw `tools/call` result is a task rather than an ordinary
+ * `CallToolResult` that happens to carry a `taskId` — extra fields are allowed
+ * on a tool result, so the id alone is not evidence that a task was created.
+ * The `resultType: "task"` discriminator is evidence on its own (a task may
+ * carry extra fields too); without it, the shape decides: a known task
+ * `status` and no `content`.
+ */
+function isRawTaskShaped(result: Record<string, unknown>): boolean {
+  if (result.resultType === "task") return true;
+  return (
+    typeof result.status === "string" &&
+    TASK_STATUSES.has(result.status) &&
+    !Array.isArray(result.content)
+  );
 }
 
 /** JSON-RPC ids of the outbound requests for `method`, as strings. */
@@ -1883,6 +1935,20 @@ export class MCPTasksConformanceTest {
 
           if (selected.has("tasks-ttl-integer-shape")) {
             const stepStartedAt = Date.now();
+            let integerTaskId = createdTaskId;
+            if (!integerTaskId && rawCreation) {
+              // The client could not decode the creation as a task, but the raw
+              // frame names one. Use it only when the frame is task-shaped, not
+              // an ordinary tool result that carries a `taskId` field.
+              const raw = findRawCreationTask(
+                received,
+                rawCreation.taskId,
+                sentRequestIds(sent, "tools/call")
+              );
+              if (raw && isRawTaskShaped(raw)) {
+                integerTaskId = rawCreation.taskId;
+              }
+            }
             if (wire !== "extension") {
               // "integer milliseconds" is the EXTENSION's `Task` interface
               // talking. The legacy wire's `ttl`/`pollInterval` carry no such
@@ -1894,28 +1960,77 @@ export class MCPTasksConformanceTest {
                   "the integer-milliseconds statement belongs to the tasks extension; the legacy wire states no such bound"
                 )
               );
-            } else if (!finalTask) {
+            } else if (!integerTaskId) {
               checks.push(noTask("tasks-ttl-integer-shape"));
             } else {
-              const verdict = validateTaskTtlIntegerShape(wire, finalTask);
-              checks.push(
-                verdict.violations.length === 0
-                  ? passed(
-                      "tasks-ttl-integer-shape",
-                      Date.now() - stepStartedAt,
-                      undefined,
-                      verdict.warnings
-                    )
-                  : failed(
-                      "tasks-ttl-integer-shape",
-                      Date.now() - stepStartedAt,
-                      `task TTL/poll interval are not integer milliseconds: ${verdict.violations.join(
-                        "; "
-                      )}`,
-                      undefined,
-                      undefined
-                    )
+              // EVERY task payload the server sent, not just the last. The
+              // creation result and each `tasks/get` answer are all a `Task`,
+              // both values MAY change across polls (tasks.md:308, :340), so a
+              // fractional value on any one of them breaks the schema even when
+              // the final one is clean. Read raw, like the status-payload check,
+              // so the decoder cannot hide a value — and so a bad creation
+              // result is still judged when no `tasks/get` was ever answered,
+              // or when the client could not decode the creation as a task at
+              // all (the raw frame still names its `taskId`). The decoded final
+              // task is the fallback when no raw frame was captured.
+              const creationPayload = findRawCreationTask(
+                received,
+                integerTaskId,
+                sentRequestIds(sent, "tools/call")
               );
+              const rawStates = findRawTaskStates(
+                received,
+                integerTaskId,
+                sentRequestIds(sent, "tasks/get")
+              );
+              const payloads: Array<{ source: string; task: unknown }> = [
+                // Only a task-shaped creation is a `Task`; an ordinary tool
+                // result may carry a `taskId` and other extra fields.
+                ...(creationPayload && isRawTaskShaped(creationPayload)
+                  ? [{ source: "tools/call", task: creationPayload }]
+                  : []),
+                ...rawStates.map((state) => ({
+                  source: `tasks/get ${String(state.status)}`,
+                  task: state,
+                })),
+              ];
+              if (payloads.length === 0 && finalTask) {
+                payloads.push({ source: "final task", task: finalTask });
+              }
+              if (payloads.length === 0) {
+                checks.push(noTask("tasks-ttl-integer-shape"));
+              } else {
+                // Deduped: a server re-sends the same snapshot on every poll.
+                const violations = new Set<string>();
+                const warnings = new Set<string>();
+                for (const { source, task } of payloads) {
+                  const verdict = validateTaskTtlIntegerShape(wire, task);
+                  for (const violation of verdict.violations) {
+                    violations.add(`${source}: ${violation}`);
+                  }
+                  for (const warning of verdict.warnings) {
+                    warnings.add(`${source}: ${warning}`);
+                  }
+                }
+                const details = { inspectedPayloads: payloads.length };
+                checks.push(
+                  violations.size === 0
+                    ? passed(
+                        "tasks-ttl-integer-shape",
+                        Date.now() - stepStartedAt,
+                        details,
+                        warnings.size > 0 ? [...warnings] : undefined
+                      )
+                    : failed(
+                        "tasks-ttl-integer-shape",
+                        Date.now() - stepStartedAt,
+                        `task TTL/poll interval are not integer milliseconds: ${[
+                          ...violations,
+                        ].join("; ")}`,
+                        details
+                      )
+                );
+              }
             }
           }
 
