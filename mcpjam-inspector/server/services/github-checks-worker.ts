@@ -71,6 +71,7 @@ import {
 } from "./github-checks/service-route.js";
 import { executePersistedConformanceRun } from "./conformance-run-executor.js";
 import { createConformanceFetch } from "../routes/shared/conformance.js";
+import { serverDrain } from "./lifecycle/drain.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
@@ -2278,10 +2279,7 @@ export function startGithubChecksWorker(options?: {
     options?.claimedBy ??
     `inspector-gh-${process.env.RAILWAY_REPLICA_ID ?? process.pid}`;
   const claim = options?.claim ?? claimNext;
-  const execute =
-    options?.execute ??
-    ((claimed: ClaimedGithubCheck, by: string) =>
-      executeClaimedCheck(claimed, by));
+  const execute = options?.execute ?? executeClaimedCheck;
 
   if (!requiredEnv()) {
     logger.warn(
@@ -2325,7 +2323,7 @@ export function startGithubChecksWorker(options?: {
         if (claimed === "disabled") {
           waitMs = ERROR_BACKOFF_MS;
         } else if (claimed) {
-          await execute(claimed, claimedBy);
+          await serverDrain.track("claimed_job", execute(claimed, claimedBy));
           // Drain mode: another PR's check may be queued behind this one.
           waitMs = 1_000;
         }

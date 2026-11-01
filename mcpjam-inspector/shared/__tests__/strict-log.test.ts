@@ -92,6 +92,23 @@ describe("strict log boundary", () => {
     expect(buildStrictLogRow("llm_spend_unattested_ip_pooled", { environment: "prod" }))
       .toMatchObject({ event: "llm_spend_unattested_ip_pooled", environment: "prod" });
   });
+  it("keeps the shutdown drain's outcome and remaining-work counts", () => {
+    const payload = {
+      drainMs: 25000,
+      drainClamped: true,
+      drained: false,
+      waitedMs: 25001,
+      inFlightAtStart: 9,
+      remainingClaimedJobs: 1,
+      remainingEvalRuns: 2,
+      remainingSwarmRuns: 3,
+      remainingDoorbells: 4,
+      remainingQuickRuns: 5,
+    };
+    expect(
+      buildStrictLogRow("server.shutdown.drain", {}, payload),
+    ).toMatchObject({ event: "server.shutdown.drain", ...payload });
+  });
   it("marks an internally minted Inspector canary route", () => {
     expect(
       buildStrictLogRow(

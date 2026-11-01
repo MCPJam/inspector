@@ -3,6 +3,7 @@ import {
   classifyFailure,
   startScheduledEvalsWorker,
 } from "../scheduled-evals-worker";
+import { serverDrain } from "../lifecycle/drain.js";
 
 const CLAIM = {
   triggerId: "trig-1",
@@ -112,6 +113,26 @@ describe("startScheduledEvalsWorker loop", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(stopped).toBe(true);
     await stopping;
+  });
+
+  it("registers the run it executes with the shutdown drain", async () => {
+    let finishRun!: () => void;
+    const claim = vi.fn().mockResolvedValueOnce(CLAIM).mockResolvedValue(null);
+    const execute = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishRun = resolve;
+        }),
+    );
+    const before = serverDrain.counts().claimed_job ?? 0;
+    const handle = startScheduledEvalsWorker({ claim, execute });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(serverDrain.counts().claimed_job).toBe(before + 1);
+
+    finishRun();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(serverDrain.counts().claimed_job ?? 0).toBe(before);
+    await handle.stop();
   });
 
   it("does not start without the service credentials", async () => {
