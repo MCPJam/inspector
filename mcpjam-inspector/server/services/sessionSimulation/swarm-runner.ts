@@ -12,7 +12,11 @@ import {
 } from "../../../shared/swarm-attempt-error.js";
 import type { SpendRefusal } from "./admission-retry.js";
 import { prepareTargetGrounding } from "./target-grounding";
-import { SwarmSetupError, setupFailureMessage } from "./swarm-setup-turn";
+import {
+  SETUP_PLATFORM_STOPPED_MESSAGE,
+  SwarmSetupError,
+  setupFailureMessage,
+} from "./swarm-setup-turn";
 import { HOSTED_STEP_MAX_OUTPUT_TOKENS } from "../hosted-step-limits";
 import { isCreditExhaustion } from "../../../shared/credit-exhaustion.js";
 import { composeAbortSignals } from "@mcpjam/sdk";
@@ -944,6 +948,7 @@ async function runJourneyFanOut(
               {
                 terminalStatus: "failed",
                 errorCode: "prerequisites_unavailable",
+                errorMessage: SETUP_PLATFORM_STOPPED_MESSAGE,
               },
             );
           }
@@ -2220,7 +2225,7 @@ async function runJourneyFanOut(
       const failureMessage =
         signInMessage ??
         (err instanceof SwarmSetupError && !signInFailure
-          ? setupFailureMessage(err.partial)
+          ? setupFailureMessage(err.partial, err.platformFailure)
           : undefined);
       const failureCode =
         signInFailure ??
