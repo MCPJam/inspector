@@ -132,6 +132,37 @@ Local development is unaffected. The dev client swaps between `localhost`
 and `127.0.0.1` to get origin separation without operator configuration, and
 no local Host header matches `SANDBOX_HOSTS`.
 
+## Private MCP servers and model endpoints
+
+Hosted mode refuses to dial private destinations: loopback, RFC 1918, CGNAT
+(`100.64.0.0/10`), IPv6 unique-local, and any name that resolves to one. A
+deployment that runs on your own network, beside the MCP servers and model
+endpoints it should use, lists the ones it may reach:
+
+```bash
+# Comma-separated CIDRs and host suffixes.
+MCPJAM_PRIVATE_EGRESS_ALLOWLIST=10.0.0.0/8,fd00::/8,svc.cluster.local
+```
+
+- A range (`10.0.0.0/8`, `fd00::/8`, or a bare address for one host) matches
+  addresses: an IP literal in the URL, or an address a name resolves to. Write
+  the network address; `10.0.0.1/8` is refused.
+- A suffix (`svc.cluster.local`, leading dot optional) matches names on label
+  boundaries: `corp.example` matches `mcp.corp.example` but never
+  `evilcorp.example`. A listed name may resolve to any private address. There
+  are no wildcards.
+- Cloud metadata (`169.254.169.254`, `metadata.google.internal` and the
+  others), link-local, multicast and the unspecified address stay refused
+  whatever the list says, `0.0.0.0/0` included.
+- Every redirect hop is checked again, so a listed host cannot redirect onto an
+  unlisted one.
+- One invalid entry voids the whole list, so a typo never widens it: nothing
+  private is reachable, and the server logs an error at boot naming each bad
+  entry. In production the console shows it only with `VERBOSE_LOGS=true`.
+
+The checks query DNS directly, without `/etc/hosts`, so use fully qualified
+names such as `mcp.tools.svc.cluster.local`.
+
 ## Organization-derived confidential CIMD (disabled by default)
 
 Hosted confidential CIMD is disabled unless `XAA_CIMD_ORG_MASTER_KEY` is set.

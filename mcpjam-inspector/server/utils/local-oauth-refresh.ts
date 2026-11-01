@@ -43,7 +43,8 @@ const MAX_DISCOVERY_REDIRECTS = 3;
  *    set — `.local`/`.internal` names included.
  *  - `isBlockedEgressHost(host, false)` is the never-legitimate tier the rest
  *    of this codebase refuses in EVERY mode: cloud-metadata addresses and
- *    their DNS aliases, IPv4/IPv6 link-local, and the unspecified address.
+ *    their DNS aliases, IPv4/IPv6 link-local, multicast and reserved space,
+ *    and the unspecified address.
  *    `isPrivateNetworkUrl` says yes to several of those (169.254.0.0/16 is
  *    "private", and `metadata.google.internal` ends in `.internal`), which
  *    would let a malicious or simply wrong backend response steer a refresh
