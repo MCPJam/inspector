@@ -109,7 +109,7 @@ describe("which conformance legs run", () => {
     expect(plan.claude_pack_version).toBe("");
     expect(plan.codex_pack_version).toBe("");
     expect(JSON.parse(plan.posix_matrix)).toHaveLength(4);
-    expect(JSON.parse(plan.codex_matrix)).toHaveLength(4);
+    expect(JSON.parse(plan.codex_matrix)).toHaveLength(5);
     expect(plan.run_windows).toBe("true");
   });
 

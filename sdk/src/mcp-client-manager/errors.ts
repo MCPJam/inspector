@@ -407,9 +407,8 @@ export function isInsufficientScopeError(error: unknown): boolean {
  * The fields originate from the resource server's header, so treat them as
  * UNTRUSTED when rendering.
  *
- * Returns `undefined` when no challenge field is present — a bare name match
- * carries nothing actionable — and keeps walking in that case, so a branded but
- * empty wrapper does not hide a populated challenge deeper in the chain.
+ * The first branded node in the chain answers, even with no challenge field:
+ * a bare `insufficient_scope` is still a step-up request.
  */
 export function extractInsufficientScopeChallenge(
   error: unknown,
@@ -453,14 +452,36 @@ export function extractInsufficientScopeChallenge(
 }
 
 /**
+ * The challenge the HTTP error fetch put on its own `401` error, or `undefined`.
+ *
+ * A JSON-RPC error's `data` is written by the MCP server, so a server could
+ * otherwise claim a 401 it never sent. Those errors carry numeric JSON-RPC
+ * codes and are refused. `effectiveAuth` is never part of a wire parse: the
+ * route stamps it, so a value found here is dropped.
+ */
+function httpErrorDataChallenge(
+  node: unknown,
+): AuthChallengeSignal | undefined {
+  if (!node || typeof node !== "object") return undefined;
+  const { code, data } = node as {
+    code?: unknown;
+    data?: { authChallenge?: unknown } | null;
+  };
+  if (typeof code === "number") return undefined;
+  const signal = parseAuthChallengeSignal(data?.authChallenge);
+  if (signal?.source !== "http_401") return undefined;
+  const { effectiveAuth: _wireValue, ...challenge } = signal;
+  return challenge;
+}
+
+/**
  * Recognize a sign-in challenge anywhere in an error's cause chain.
  *
  * Three shapes reach a caller:
  *   - the `SdkHttpError` the HTTP error fetch throws for a `401` on a protected
  *     operation, which carries the parsed challenge as `data.authChallenge`;
  *   - an upstream `InsufficientScopeError` (a `403 insufficient_scope`), mapped
- *     to `source: "http_403_insufficient_scope"`. Unlike
- *     `extractInsufficientScopeChallenge`, a scope-less one still counts;
+ *     to `source: "http_403_insufficient_scope"`, scope-less included;
  *   - an error the manager attached a recorded challenge to (`authChallenge`),
  *     which is how the auth-provider path keeps a header the transport drops.
  *
@@ -470,7 +491,7 @@ export function extractAuthChallenge(
   error: unknown,
 ): AuthChallengeSignal | undefined {
   return findInCauseChain(error, (node) => {
-    const fromData = parseAuthChallengeSignal(node?.data?.authChallenge);
+    const fromData = httpErrorDataChallenge(node);
     if (fromData) return fromData;
     const attached = parseAuthChallengeSignal(node?.authChallenge);
     if (attached) return attached;

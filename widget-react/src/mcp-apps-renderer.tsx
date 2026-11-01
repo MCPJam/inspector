@@ -1,3 +1,4 @@
+import { createAppToolDiscovery } from "./app-tool-discovery";
 import { useInitialRenderOutcome } from "./use-initial-render-outcome";
 import { useSandboxProxyGeneration } from "./use-sandbox-proxy-generation";
 import { WidgetFullscreenPlacementContext } from "./widget-fullscreen-placement";
@@ -61,7 +62,6 @@ import {
 import {
   useAppToolsRegistry,
   useAppToolsRegistryApi,
-  type AppToolDescriptor,
 } from "./app-tools-registry";
 import { readToolResultMeta } from "./tool-result-utils";
 import { usePersistentWidgetSurfaceHost } from "./widget-surface-context";
@@ -1699,9 +1699,6 @@ export function MCPAppsRendererSurface({
   // SEP-1865 App-Provided Tools: per-bridge identity used to register and
   // unregister this iframe's tools in `useAppToolsRegistry`.
   const appToolsBridgeIdRef = useRef<string | null>(null);
-  const appToolsListedBridgeIdsRef = useRef<Set<string>>(new Set());
-  const appToolsListInFlightBridgeIdsRef = useRef<Set<string>>(new Set());
-  const appToolsListRefreshPendingBridgeIdsRef = useRef<Set<string>>(new Set());
   // Reactive mirror of `appToolsBridgeIdRef` so the in-flight busy
   // indicator can subscribe to `useAppToolsRegistry.pendingControllers`
   // by bridge id. Refs alone don't trigger re-renders.
@@ -2281,123 +2278,21 @@ export function MCPAppsRendererSurface({
     []
   );
 
-  const refreshAppProvidedTools = useCallback(
-    async (
-      bridge: AppBridge,
-      bridgeId: string,
-      options: {
-        force?: boolean;
-        // SEP-1865 App-Provided Tools: the modal mounts a second
-        // AppBridge against its own iframe, so callers (mcp-apps-modal)
-        // pass `surface: "modal"`, their own `getIframeElement`, and an
-        // `isLive` predicate tied to their own bridge-id ref. Inline
-        // callers omit them and get the historical inline behavior.
-        surface?: "inline" | "modal";
-        getIframeElement?: () => HTMLIFrameElement | null;
-        isLive?: () => boolean;
-      } = {}
-    ) => {
-      const surface = options.surface ?? "inline";
-      const getIframeElement =
-        options.getIframeElement ??
-        (() => sandboxRef.current?.getIframeElement() ?? null);
-      const isLive =
-        options.isLive ?? (() => appToolsBridgeIdRef.current === bridgeId);
-
-      const alreadyListed = appToolsListedBridgeIdsRef.current.has(bridgeId);
-      const inFlight = appToolsListInFlightBridgeIdsRef.current.has(bridgeId);
-      if (inFlight) {
-        if (options.force) {
-          appToolsListRefreshPendingBridgeIdsRef.current.add(bridgeId);
-        }
-        return;
-      }
-      if (!options.force && alreadyListed) return;
-
-      appToolsListInFlightBridgeIdsRef.current.add(bridgeId);
-      try {
-        let needsRefresh = true;
-        while (needsRefresh) {
-          appToolsListRefreshPendingBridgeIdsRef.current.delete(bridgeId);
-          const tools: AppToolDescriptor[] = [];
-          let cursor: string | undefined;
-          const APP_TOOLS_PAGE_CAP = 8;
-          // The page values cross the iframe boundary, so they are
-          // untrusted: a non-string `nextCursor` is not a cursor. A REPEATED
-          // one is still a cursor though — the value is opaque, and an app may
-          // legally reissue one constant token (`""` included) for every
-          // page — so the page cap is the only bound.
-          for (let page = 0; page < APP_TOOLS_PAGE_CAP; page += 1) {
-            const result = await bridge.listTools(
-              cursor === undefined ? {} : { cursor }
-            );
-            tools.push(
-              ...(result.tools ?? []).filter((t): t is AppToolDescriptor =>
-                Boolean(t && typeof t.name === "string" && t.name.length > 0)
-              )
-            );
-            cursor =
-              typeof result.nextCursor === "string"
-                ? result.nextCursor
-                : undefined;
-            // Presence, not truthiness: MCP 2026-07-28
-            // `server/utilities/pagination` makes `""` a valid cursor that MUST
-            // NOT be read as the end of results.
-            if (cursor === undefined) break;
-            // Stopping at the cap is not the same as reaching the end, and the
-            // registered set is about to be treated as this app's whole tool
-            // surface. Say so rather than letting a truncated read pass as
-            // complete.
-            if (page === APP_TOOLS_PAGE_CAP - 1) {
-              console.warn(
-                `[MCP Apps] tools/list still had more pages after ${APP_TOOLS_PAGE_CAP}; registering a partial tool set for bridge ${bridgeId}.`
-              );
-            }
-          }
-
-          appToolsListedBridgeIdsRef.current.add(bridgeId);
-          // `listTools()` crosses the iframe boundary. If the caller
-          // unmounted or rebuilt while it was pending, the live ref has
-          // been cleared and any late registration would leak stale
-          // aliases.
-          if (!isLive()) return;
-
-          const appVersion = bridge.getAppVersion();
-          await appToolsRegistry.getState().registerInstance({
-            bridgeId,
-            chatSessionId,
-            parentToolCallId: toolCallIdRef.current,
-            serverId: serverIdRef.current,
-            appName: appVersion?.name ?? serverIdRef.current,
-            appVersion: appVersion?.version,
-            surface,
-            bridge,
-            tools,
-            registeredAtMs: Date.now(),
-            // Stable closure: the inline default reads `sandboxRef.current`
-            // which is React-managed and tracks the live SandboxedIframe
-            // across re-renders. The modal passes its own accessor against
-            // `modalSandboxRef`.
-            getIframeElement,
-          });
-          if (!isLive()) {
-            appToolsRegistry.getState().unregisterInstance(bridgeId);
-            return;
-          }
-          needsRefresh =
-            appToolsListRefreshPendingBridgeIdsRef.current.has(bridgeId);
-        }
-      } catch (err) {
-        appToolsListedBridgeIdsRef.current.delete(bridgeId);
-        logWidgetDebug("ui-to-host", "debug/app-tools-list-failed", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      } finally {
-        appToolsListInFlightBridgeIdsRef.current.delete(bridgeId);
-      }
-    },
-    [appToolsRegistry, chatSessionId, logWidgetDebug]
-  );
+  const discoverAppTools = useMemo(() => createAppToolDiscovery({
+    registry: appToolsRegistry,
+    context: () => ({ chatSessionId, parentToolCallId: toolCallIdRef.current, serverId: serverIdRef.current }),
+    onError: error => logWidgetDebug("ui-to-host", "debug/app-tools-list-failed", {
+      error: error instanceof Error ? error.message : String(error),
+    }),
+  }), [appToolsRegistry, chatSessionId, logWidgetDebug]);
+  const refreshAppProvidedTools = useCallback((bridge: AppBridge, bridgeId: string, options: {
+    force?: boolean; surface?: "inline" | "modal";
+    getIframeElement?: () => HTMLIFrameElement | null; isLive?: () => boolean;
+  } = {}) => discoverAppTools(bridge, bridgeId, {
+    ...options,
+    getIframeElement: options.getIframeElement ?? (() => sandboxRef.current?.getIframeElement() ?? null),
+    isLive: options.isLive ?? (() => appToolsBridgeIdRef.current === bridgeId),
+  }), [discoverAppTools]);
 
   // Widget debug store
   const setWidgetDebugInfo = debug.setWidgetDebugInfo;
@@ -2750,7 +2645,9 @@ export function MCPAppsRendererSurface({
         baseHostContext.platform === "mobile"
           ? baseHostContext.platform
           : hostStyleDefinition.mcp.platform,
-      userAgent: navigator.userAgent,
+      userAgent: typeof baseHostContext.userAgent === "string" && baseHostContext.userAgent.length > 0
+        ? baseHostContext.userAgent
+        : navigator.userAgent,
       deviceCapabilities,
       safeAreaInsets,
       styles: mergedStyles,
@@ -3479,10 +3376,9 @@ export function MCPAppsRendererSurface({
               setReinitCount((c) => c + 1);
             }
 
-            // SEP-1865 App-Provided Tools: when the app advertises `tools`
-            // capability, fetch its tool list with the SDK bridge and register
-            // it so the next chat POST can advertise no-execute AI SDK tools.
-            if (appCaps?.tools) {
+            // Discover the selected legacy or WebMCP source after the handshake
+            // so the next chat request can advertise this view's tools.
+            {
               const bridgeId =
                 appToolsBridgeIdRef.current ?? crypto.randomUUID();
               appToolsBridgeIdRef.current = bridgeId;
@@ -3494,6 +3390,7 @@ export function MCPAppsRendererSurface({
               // becomes the chat surface. Gates: the app renders fullscreen,
               // the user hasn't dismissed fullscreen, and this is one-shot.
               if (
+                appCaps?.tools &&
                 !hasAutoPromotedForAppToolsRef.current &&
                 !userPreferInlineRef.current &&
                 declaredAppModes?.includes("fullscreen")
@@ -3985,7 +3882,7 @@ export function MCPAppsRendererSurface({
           if (method === "ui/notifications/size-changed") {
             signalStreamingRender();
           }
-          if (method === "notifications/tools/list_changed") {
+          if (method === "notifications/tools/list_changed" || method === "ui/notifications/sandbox-tools-changed") {
             const bridgeId = appToolsBridgeIdRef.current;
             if (bridgeId) {
               void refreshAppProvidedTools(bridge, bridgeId, { force: true });
@@ -4045,13 +3942,6 @@ export function MCPAppsRendererSurface({
         appToolsRegistry
           .getState()
           .unregisterInstance(appToolsBridgeIdRef.current);
-        appToolsListedBridgeIdsRef.current.delete(appToolsBridgeIdRef.current);
-        appToolsListInFlightBridgeIdsRef.current.delete(
-          appToolsBridgeIdRef.current
-        );
-        appToolsListRefreshPendingBridgeIdsRef.current.delete(
-          appToolsBridgeIdRef.current
-        );
         appToolsBridgeIdRef.current = null;
         setAppToolsBridgeIdState(null);
       }

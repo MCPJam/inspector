@@ -31,6 +31,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "mcp-tasks",
   "mcpjam-compatibility",
   "mcpjam-conformance",
+  "mcpjam-directory-readiness",
   "mcpjam-learning",
   "multi-account-connections-enabled",
   "platform-post-launch",

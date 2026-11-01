@@ -80,6 +80,7 @@ export type ToolExecutionResponse =
     }
   | {
       status: "task_created";
+      wire?: "legacy" | "extension";
       task: TaskData;
       durationMs?: number;
       // Optional string for LLM hosts to return as immediate tool result while task executes

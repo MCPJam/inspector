@@ -262,7 +262,7 @@ describe("Thread", () => {
       expect(mockMessageView).toHaveBeenCalledWith(
         expect.objectContaining({
           interactive: true,
-          reasoningDisplayMode: "inline",
+          reasoningDisplayMode: "collapsed",
         }),
       );
     });

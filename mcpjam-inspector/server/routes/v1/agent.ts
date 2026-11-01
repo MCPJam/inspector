@@ -498,10 +498,11 @@ async function persistProposal(opts: {
       )
     : randomUUID();
   if (!isValidAgentActionId(actionId)) {
-    logger.error("[v1/agent] generated action id exceeded surface limit", {
-      operation: operation.name,
-      length: actionId.length,
-    });
+    logger.error(
+      "[v1/agent] generated action id exceeded surface limit",
+      undefined,
+      { operation: operation.name, length: actionId.length },
+    );
     return retryableError;
   }
   try {

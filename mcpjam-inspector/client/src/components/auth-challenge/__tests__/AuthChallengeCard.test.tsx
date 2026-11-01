@@ -1,11 +1,15 @@
 import { expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createServer } from "@/test/factories";
-import { AuthChallengeCard } from "../AuthChallengeCard";
+import {
+  AuthChallengeCard,
+  authChallengeConnectMessage,
+} from "../AuthChallengeCard";
 import type { AuthChallengeCard as Card } from "@/lib/auth-challenge-lifecycle";
 
 const connect = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/auth-challenge-lifecycle", () => ({
+  AUTH_CHALLENGE_PERMANENT_MESSAGE: "The shared permanent notice.",
   connectAuthChallenge: connect,
   dismissAuthChallenge: vi.fn(),
   useAuthChallengeCards: () => [],
@@ -31,4 +35,10 @@ it.each([true, false])("keeps Connect retryable without an extra approval promis
   fireEvent.click(screen.getByRole("button", { name: "Connect", exact: true }));
   await waitFor(() => expect(onResult).toHaveBeenCalledWith({ kind: "started" }));
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+it("reports a repeated challenge with the same notice as the call surfaces", () => {
+  expect(authChallengeConnectMessage({ kind: "permanent" })).toBe(
+    "The shared permanent notice.",
+  );
 });

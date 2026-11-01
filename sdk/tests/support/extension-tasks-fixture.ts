@@ -140,6 +140,11 @@ export interface ToolBehavior {
    * the extension; a plain result otherwise (tasks.md:61).
    */
   mode: "sync" | "task";
+  /** Require one ordinary MRTR round before creating the task. */
+  beforeTask?: {
+    inputRequests: Record<string, unknown>;
+    requestState: string;
+  };
   /** The plain result for `"sync"` mode (and for undeclared `"task"` calls). */
   result?: Record<string, unknown>;
   /** The lifecycle served for `"task"` mode. Must be non-empty. */
@@ -793,6 +798,9 @@ export async function serveExtensionTasksFixture(
               content: [{ type: "text", text: "plain call" }],
             }),
           };
+        }
+        if (behavior.beforeTask && params?.requestState !== behavior.beforeTask.requestState) {
+          return { resultType: "input_required", ...behavior.beforeTask };
         }
         const entry = createTask(name as string, behavior);
         // `CreateTaskResult = Result & Task` — flat, and bare `Task` fields

@@ -73,7 +73,7 @@ describe("the router mounts every route it registers", () => {
   });
 
   it("mounts every global and public route at the root", () => {
-    const mounted = new Set(pathsOf(shellChildren()));
+    const mounted = new Set([...pathsOf(shellChildren()), ...pathsOf(createAppRouter().routes)]);
     const missing = unscopedRoutes
       .map((route) => route.path)
       .filter((path) => !mounted.has(path));
@@ -180,4 +180,10 @@ describe("the router mounts every route it registers", () => {
       "settings/integrations/github/callback"
     );
   });
+});
+
+
+it("keeps redemption outside the app shell and onboarding", () => {
+  expect(pathsOf(createAppRouter().routes)).toContain("redeem");
+  expect(pathsOf(shellChildren())).not.toContain("redeem");
 });

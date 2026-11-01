@@ -34,6 +34,7 @@ export function NewSwarmJudgeRow({
     modelSelectionsSupported,
     requireOrgKeys,
     onManageOrgProviders,
+    onAddProvider,
   } = useAvailableModels({ projectId });
   return (
     <div
@@ -59,6 +60,7 @@ export function NewSwarmJudgeRow({
         saveModelSelections={modelSelectionsSupported}
         requireOrgKeys={requireOrgKeys}
         onManageOrgProviders={onManageOrgProviders}
+        onAddProvider={onAddProvider}
       />
     </div>
   );

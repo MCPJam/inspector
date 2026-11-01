@@ -787,7 +787,7 @@ export function ToolsTab({
         trackTask({
           taskId: task.taskId,
           serverId: serverName,
-          wire: tasksWire,
+          wire: response.wire ?? (tasksWire === "none" ? "legacy" : tasksWire),
           createdAt: task.createdAt,
           toolName,
           primitiveType: "tool",
@@ -905,6 +905,9 @@ export function ToolsTab({
     setSelectedTool(descriptor.toolName);
   };
 
+  // Reads and writes both run again once sign-in completes, with no second
+  // prompt: the user already asked for this call, and the client's
+  // tool-approval policy still applies to it.
   const replayToolCall = (pending: PendingDirectScopeStepUpReplay) => {
     if (pending.descriptor.kind !== "tool") return;
     const descriptor = pending.descriptor;
@@ -1359,6 +1362,7 @@ export function ToolsTab({
     <>
       <ThreePanelLayout
         id="tools"
+        mobileNavigation={{ selectionKey: selectedTool }}
         sidebar={sidebarContent}
         content={centerContent}
         sidebarVisible={isSidebarVisible}

@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, LogIn } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import {
+  AUTH_CHALLENGE_PERMANENT_MESSAGE,
   connectAuthChallenge,
   dismissAuthChallenge,
   useAuthChallengeCards,
@@ -244,7 +245,7 @@ export function authChallengeConnectMessage(
     case "failed":
       return result.message;
     case "permanent":
-      return "This server still asked for sign-in after you signed in, so the call was not retried. Check with the server admin about your access.";
+      return AUTH_CHALLENGE_PERMANENT_MESSAGE;
     case "refused":
       return "Click Connect to sign in.";
     default:

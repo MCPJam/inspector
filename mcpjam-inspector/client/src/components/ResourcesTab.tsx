@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { MrtrElicitationHost } from "./elicitation/MrtrElicitationHost";
 import { SubscriptionStreamsPanel } from "./subscriptions/SubscriptionStreamsPanel";
 import { HostedMrtrHost } from "./elicitation/HostedMrtrHost";
@@ -201,6 +202,9 @@ export function ResourcesTab({
   const [activeTab, setActiveTab] = useState<"resources" | "templates">(
     "resources",
   );
+
+  const isMobile = useIsMobile();
+  const [resourceSelection, setResourceSelection] = useState(0);
 
   // Resources state
   const [resources, setResources] = useState<MCPResource[]>([]);
@@ -462,6 +466,14 @@ export function ResourcesTab({
     });
   };
 
+  const clearSelectedResource = () => {
+    resourceReadVersionRef.current += 1;
+    setSelectedResource("");
+    setResourceContent(null);
+    setLoading(false);
+    setError("");
+  };
+
   // Read resource
   const readResource = async (uri: string) => {
     if (!serverName) return;
@@ -621,7 +633,19 @@ export function ResourcesTab({
     });
     if (!pending || pending.descriptor.kind !== "resource") return;
     const descriptor = pending.descriptor;
+    // Consume this generation before awaiting: a reload mid-read cannot leave
+    // it "replaying", and a newer sign-in saved meanwhile is a new generation.
+    clearPendingDirectScopeStepUpReplay(pending);
     const replayScope = resourceScope;
+    const readVersionRef =
+      descriptor.target === "template"
+        ? templateReadVersionRef
+        : resourceReadVersionRef;
+    const readVersion = ++readVersionRef.current;
+    // A later read, or another project or server, owns the panel by now.
+    const isCurrentReplay = () =>
+      resourceScopeRef.current === replayScope &&
+      readVersion === readVersionRef.current;
     if (descriptor.target === "template") {
       setSelectedTemplate(descriptor.selection ?? descriptor.uri);
       setTemplateLoading(true);
@@ -633,12 +657,6 @@ export function ResourcesTab({
     }
     void readResourceApi(descriptor.serverName, descriptor.uri)
       .then((data) => {
-        if (resourceScopeRef.current !== replayScope) return;
-        if (descriptor.target === "template") {
-          setTemplateContent(data?.content ?? null);
-        } else {
-          setResourceContent(data?.content ?? null);
-        }
         resetScopeStepUp(
           server,
           {
@@ -647,9 +665,15 @@ export function ResourcesTab({
           },
           descriptor.authAttempt,
         );
+        if (!isCurrentReplay()) return;
+        if (descriptor.target === "template") {
+          setTemplateContent(data?.content ?? null);
+        } else {
+          setResourceContent(data?.content ?? null);
+        }
       })
       .catch((error) => {
-        if (resourceScopeRef.current !== replayScope) return;
+        if (!isCurrentReplay()) return;
         const message = `Authorization finished, but the resource could not be replayed: ${
           error instanceof Error ? error.message : String(error)
         }`;
@@ -660,11 +684,9 @@ export function ResourcesTab({
         }
       })
       .finally(() => {
-        if (resourceScopeRef.current === replayScope) {
-          setLoading(false);
-          setTemplateLoading(false);
-        }
-        clearPendingDirectScopeStepUpReplay(pending);
+        if (!isCurrentReplay()) return;
+        if (descriptor.target === "template") setTemplateLoading(false);
+        else setLoading(false);
       });
   }, [isServerConnected, server, serverName]);
 
@@ -944,11 +966,15 @@ export function ResourcesTab({
     <div className="h-full flex flex-col border-r border-border bg-background">
       {/* Header with tabs and actions */}
       <div className="border-b border-border flex-shrink-0">
-        <div className="px-2 py-1.5 flex items-center gap-2">
+        <div className="px-2 py-1.5 flex flex-wrap md:flex-nowrap items-center gap-2">
           {/* Tabs */}
           <div className="flex items-center gap-1.5">
             <button
-              onClick={() => setActiveTab("resources")}
+              onClick={() => {
+                setActiveTab("resources");
+                if (isMobile && activeTab !== "resources")
+                  clearSelectedResource();
+              }}
               className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                 activeTab === "resources"
                   ? "bg-primary/10 text-primary"
@@ -962,7 +988,11 @@ export function ResourcesTab({
             </button>
             {!HOSTED_MODE && (
               <button
-                onClick={() => setActiveTab("templates")}
+                onClick={() => {
+                  setActiveTab("templates");
+                  if (isMobile && activeTab !== "templates")
+                    clearSelectedResource();
+                }}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                   activeTab === "templates"
                     ? "bg-primary/10 text-primary"
@@ -1013,7 +1043,7 @@ export function ResourcesTab({
               onClick={() => setIsSidebarVisible(false)}
               variant="ghost"
               size="sm"
-              className="h-7 w-7 p-0"
+              className="hidden md:inline-flex h-7 w-7 p-0"
               title="Hide sidebar"
             >
               <PanelLeftClose className="h-3.5 w-3.5" />
@@ -1055,7 +1085,7 @@ export function ResourcesTab({
                   className="hover:bg-muted/50 rounded px-1.5 py-0.5 -mx-1.5 transition-colors text-left"
                   title="Click to go back to list"
                 >
-                  <code className="text-xs font-mono font-medium text-foreground truncate block">
+                  <code className="text-xs font-mono font-medium text-foreground break-all md:truncate block">
                     {selectedTemplateData?.name || selectedTemplate}
                   </code>
                 </button>
@@ -1065,7 +1095,7 @@ export function ResourcesTab({
                   </p>
                 )}
                 {/* URI preview */}
-                <p className="text-xs text-muted-foreground font-mono truncate mt-2">
+                <p className="text-xs text-muted-foreground font-mono break-all md:truncate mt-2">
                   {getResolvedUri() || selectedTemplate}
                 </p>
               </div>
@@ -1161,18 +1191,19 @@ export function ResourcesTab({
                           }`}
                           onClick={() => {
                             setSelectedResource(resource.uri);
+                            setResourceSelection((request) => request + 1);
                             readResource(resource.uri);
                           }}
                         >
                           <div className="flex items-center gap-2">
                             <File className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                            <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border truncate">
+                            <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border break-all md:truncate">
                               {resource.name}
                             </code>
                             <FileOpenWith reference={serverName ? { serverId: serverName, resourceUri: resource.uri } : null} />
                           </div>
                           {resource.description && (
-                            <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
+                            <p className="text-xs mt-2 line-clamp-none md:line-clamp-2 leading-relaxed text-muted-foreground">
                               {resource.description}
                             </p>
                           )}
@@ -1231,15 +1262,15 @@ export function ResourcesTab({
                     >
                       <div className="flex items-center gap-2">
                         <FileCode className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                        <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border truncate">
+                        <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border break-all md:truncate">
                           {template.name}
                         </code>
                       </div>
-                      <p className="text-xs mt-1 line-clamp-1 leading-relaxed text-muted-foreground font-mono">
+                      <p className="text-xs mt-1 break-all md:line-clamp-1 leading-relaxed text-muted-foreground font-mono">
                         {template.uriTemplate}
                       </p>
                       {template.description && (
-                        <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
+                        <p className="text-xs mt-2 line-clamp-none md:line-clamp-2 leading-relaxed text-muted-foreground">
                           {template.description}
                         </p>
                       )}
@@ -1414,6 +1445,19 @@ export function ResourcesTab({
     <>
       <ThreePanelLayout
         id="resources"
+        mobileNavigation={{
+          selectionKey:
+            activeTab === "templates"
+              ? selectedTemplate
+              : selectedResource
+                ? `${selectedResource}:${resourceSelection}`
+                : "",
+          selectionPanel: activeTab === "templates" ? "sidebar" : "content",
+          onBack:
+            activeTab === "templates"
+              ? undefined
+              : clearSelectedResource,
+        }}
         sidebar={sidebarContent}
         content={
           activeTab === "templates"
