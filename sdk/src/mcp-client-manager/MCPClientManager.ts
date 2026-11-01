@@ -352,6 +352,17 @@ export class MCPClientManager {
    * across a reconnect.
    */
   private readonly aggregatedToolsListWarmed = new Set<string>();
+  /**
+   * The newest refresh token per server, with the configured value it
+   * replaced. Rotation is single-use at most authorization servers, so a
+   * rebuilt provider must start from the newest token, not the configured
+   * one. Kept for the registration's life: a reconnect or a recovery reset
+   * would otherwise present a spent token.
+   */
+  private readonly rotatedRefreshTokens = new Map<
+    string,
+    { configured: string; current: string }
+  >();
   private readonly retryAbortControllers = new Map<
     string,
     Set<AbortController>
@@ -858,6 +869,7 @@ export class MCPClientManager {
   async removeServer(serverId: string): Promise<void> {
     await this.disconnectServer(serverId);
     this.registeredServers.delete(serverId);
+    this.rotatedRefreshTokens.delete(serverId);
     this.toolsMetadataCache.delete(serverId);
     this.toolsAnnotationsCache.delete(serverId);
     this.toolDeclarationCapture.clear(serverId);
@@ -908,30 +920,45 @@ export class MCPClientManager {
     params?: Parameters<Client["listTools"]>[0],
     options?: ClientRequestOptions
   ): Promise<ListToolsResult> {
-    return this.runRetryableReadOperation(serverId, options, async (client) => {
-      try {
-        const result = await client.listTools(
-          params,
-          this.withTimeout(serverId, options)
-        );
-        this.cacheToolsMetadata(serverId, result.tools);
-        if (params?.cursor === undefined && options?.cacheMode !== "bypass") {
-          this.aggregatedToolsListWarmed.add(serverId);
-        }
-        return result;
-      } catch (error) {
-        this.toolDeclarationCapture.clear(serverId);
-        if (isMethodUnavailableError(error, "tools/list")) {
-          this.toolsMetadataCache.set(serverId, new Map());
-          this.toolsAnnotationsCache.set(serverId, new Map());
-          // A server without `tools/list` cannot declare `x-mcp-header` on
-          // anything, so the mirroring source is trivially complete.
-          this.aggregatedToolsListWarmed.add(serverId);
-          return { tools: [] } as ListToolsResult;
-        }
-        throw error;
+    return this.runRetryableReadOperation(serverId, options, (client) =>
+      this.listToolsOnClient(serverId, client, params, options)
+    );
+  }
+
+  /**
+   * One `tools/list` on an already-connected client, with the caches it feeds.
+   * Callers that are already inside a manager operation use this directly:
+   * going back through `listTools` would queue behind themselves on a server
+   * whose operations are serialized.
+   */
+  private async listToolsOnClient(
+    serverId: string,
+    client: ManagedMcpClient,
+    params: Parameters<Client["listTools"]>[0] | undefined,
+    options: ClientRequestOptions | undefined
+  ): Promise<ListToolsResult> {
+    try {
+      const result = await client.listTools(
+        params,
+        this.withTimeout(serverId, options)
+      );
+      this.cacheToolsMetadata(serverId, result.tools);
+      if (params?.cursor === undefined && options?.cacheMode !== "bypass") {
+        this.aggregatedToolsListWarmed.add(serverId);
       }
-    });
+      return result;
+    } catch (error) {
+      this.toolDeclarationCapture.clear(serverId);
+      if (isMethodUnavailableError(error, "tools/list")) {
+        this.toolsMetadataCache.set(serverId, new Map());
+        this.toolsAnnotationsCache.set(serverId, new Map());
+        // A server without `tools/list` cannot declare `x-mcp-header` on
+        // anything, so the mirroring source is trivially complete.
+        this.aggregatedToolsListWarmed.add(serverId);
+        return { tools: [] } as ListToolsResult;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -1425,8 +1452,9 @@ export class MCPClientManager {
     try {
       // No `cursor`, no `cacheMode` override: the one call shape that writes
       // upstream's aggregated `tools/list` entry. Marks the connection warm
-      // via `listTools` itself, so this runs at most once per connection.
-      await this.listTools(serverId, undefined, options);
+      // itself, so this runs at most once per connection. It runs on the
+      // caller's client, inside the caller's operation.
+      await this.listToolsOnClient(serverId, client, undefined, options);
     } catch {
       // Deliberately swallowed — see the docblock. A `tools/list` failure must
       // not convert an otherwise-valid `tools/call` into an error.
@@ -2980,11 +3008,20 @@ export class MCPClientManager {
         }
       }
 
+      const remembered = this.rotatedRefreshTokens.get(serverId);
       effectiveAuthProvider = new RefreshTokenOAuthProvider(
         trimmedClientId,
-        trimmedRefresh,
+        remembered?.configured === trimmedRefresh
+          ? remembered.current
+          : trimmedRefresh,
         trimmedClientSecret,
-        config.onTokensRotated
+        async (rotated) => {
+          this.rotatedRefreshTokens.set(serverId, {
+            configured: trimmedRefresh,
+            current: rotated.refreshToken,
+          });
+          await config.onTokensRotated?.(rotated);
+        }
       );
       state.authProvider =
         effectiveAuthProvider instanceof RefreshTokenOAuthProvider
