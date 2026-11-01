@@ -1,3 +1,4 @@
+import { harnessToolOrigin } from "@/shared/tool-origin";
 import { qualifiedForwardingRuntime } from "../forwarding/runtime-contract.js";
 import { describe, expect, it, vi } from "vitest";
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
@@ -1006,6 +1007,16 @@ function addUsage(total, usage) {
   it("throws for an unknown harness id (e.g. a not-yet-installed adapter)", () => {
     // `pi` is a plausible-but-unregistered runtime (codex is now installed).
     expect(() => getHarnessAdapter("pi")).toThrow(/Unsupported harness/);
+  });
+
+  it("recognizes Claude's actual native ToolSearch without relabelling an MCP tool", () => {
+    const nativeTools = getHarnessAdapter("claude-code").listBuiltinTools();
+    const call = {
+      rawToolName: "ToolSearch", toolName: "ToolSearch",
+      hostTools: {}, nativeTools,
+    };
+    expect(harnessToolOrigin(call)).toBe("native");
+    expect(harnessToolOrigin({ ...call, serverId: "server" })).toBe("mcp");
   });
 
   describe("native MCP delivery", () => {

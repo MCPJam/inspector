@@ -4,6 +4,8 @@ import { nativeForwardingSelection, prepareNativeForwarding, hasForwardingOrgani
   nativeToolMetadata,
 } from "./forwarding/native-turn.js";
 import { forwardingAdmission } from "./forwarding/enhanced-admission.js";
+import { assertNativeDiscovery } from "./native-discovery.js";
+import { harnessOrgUpstream } from "@/shared/harness-model-support";
 import {
   presentNativeTranscript,
   type NativeResultPresentation,
@@ -590,6 +592,7 @@ export function harnessRuntimeFingerprint(parts: {
   transport?: string;
   nativeForwarding?: string;
   forwardingConfigurationVersion?: string;
+  requireNativeToolDiscovery?: boolean;
   connectionProfile?: string;
   /**
    * WHERE this turn runs, and — for the local target — exactly what it runs.
@@ -661,6 +664,7 @@ export function harnessRuntimeFingerprint(parts: {
       : []),
     ...(parts.nativeForwarding && parts.forwardingConfigurationVersion
       ? [`forwarding-config:${parts.forwardingConfigurationVersion}`] : []),
+    ...(parts.requireNativeToolDiscovery ? ["native-discovery:required"] : []),
     ...(parts.connectionProfile
       ? [`connection-profile:${parts.connectionProfile}`] : []),
     ...(pluginDimension ? [pluginDimension] : []),
@@ -1597,6 +1601,30 @@ export async function runHarnessTurn(
       const nativeGaps = admission.gaps;
       const enhancedApps = admission.delivery === "bridge";
       const useNativeForwarding = admission.delivery !== undefined;
+      if (options.requireNativeToolDiscovery) {
+        if (!selectedServers?.length || scenarioParticipant) {
+          assertNativeDiscovery({ required: true });
+        }
+        for (const serverId of selectedServers ?? []) {
+          assertNativeDiscovery({
+            required: true,
+            harnessId: harnessAdapter.id,
+            route: {
+              runtimeVersion: harnessAdapter.pinnedRuntimeVersion ?? "",
+              adapterVersion: forwardingRuntime?.configurationVersion ?? "",
+              protocolVersion: mcpClientManager.getInitializationInfo(serverId)?.protocolVersion ?? "",
+              modelId,
+              delivery: useNativeForwarding
+                ? enhancedApps ? "forwarded-bridge" : "forwarded-native"
+                : nativeMcpDelivery ? "native-proxy" : "host-tools",
+              venue: !harnessExecutionTarget && harnessMcpProxy?.plane === "web-authorized" ? "hosted" : "local",
+              surface: sourceType === "eval" ? "eval" : sourceType === "swarm" ? "swarm" : "chat",
+              funding: org.brokeredEndpoint === "platform" ? "platform" : "organization",
+              upstreamProfile: org.brokeredEndpoint === "platform" ? "gateway" : harnessOrgUpstream(harnessAdapter.id)?.profile ?? "gateway",
+            },
+          });
+        }
+      }
       // Enrolled client profiles keep their existing delivery unless this exact
       // server/profile combination qualifies for the forwarding adapter.
       nativeMcpDelivery ||= useNativeForwarding;
@@ -1957,6 +1985,7 @@ export async function runHarnessTurn(
 
       const runtimeFingerprint = harnessRuntimeFingerprint({
         harnessId: harnessAdapter.id,
+        requireNativeToolDiscovery: options.requireNativeToolDiscovery,
         ...(nativeMcpDelivery && harnessMcpProxy?.plane === "web-authorized"
           ? {
               connectionProfile: harnessConnectionFingerprint(
