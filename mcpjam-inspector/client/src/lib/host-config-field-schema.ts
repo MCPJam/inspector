@@ -845,7 +845,7 @@ const AUTH_CHALLENGE_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     label: "When a tool result asks for sign-in",
     path: "mcpProfile.toolResultAuthChallenge",
     description:
-      "What the client does when a tool result asks the user to sign in. If unset, the client passes the result through as an ordinary tool error, because this kind of sign-in request is not part of the MCP spec.",
+      "What the client does when a tool result asks the user to sign in. If unset, the client treats the result as an ordinary tool error.",
     kind: {
       kind: "enum",
       options: AUTH_CHALLENGE_ACTIONS,

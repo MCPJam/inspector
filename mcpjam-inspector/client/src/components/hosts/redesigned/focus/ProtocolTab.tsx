@@ -165,7 +165,7 @@ const TOOL_RESULT_CHALLENGE_DESCRIPTIONS: Record<AuthChallengeAction, string> =
     notify:
       "When a tool result asks the user to sign in, the call stops and a sign-in message appears. The call does not run again.",
     passthrough:
-      "A tool result that asks the user to sign in is treated as an ordinary tool error. This kind of sign-in request is not part of the MCP spec.",
+      "A tool result that asks the user to sign in is treated as an ordinary tool error.",
   };
 
 const TOOL_RESULT_TRIGGER_DESCRIPTIONS: Record<
