@@ -19,6 +19,7 @@ vi.mock("@/components/ui-playground/hooks/use-playground-state", () => ({
 }));
 vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => ({ servers: {} }),
+  useOptionalSharedAppState: () => ({ servers: {} }),
 }));
 vi.mock("@/hooks/use-aggregated-tools", () => ({
   useAggregatedTools: () => ({
