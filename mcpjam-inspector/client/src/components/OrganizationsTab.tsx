@@ -93,6 +93,7 @@ import {
 } from "@/lib/billing-upsell";
 import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
 import { OrganizationSharingPolicyCard } from "./organization/OrganizationSharingPolicyCard";
+import { WorkOrganizationSettings } from "./organization/WorkOrganizationSettings";
 import { OrganizationBillingSection } from "./organization/OrganizationBillingSection";
 import { OrganizationCurrentPlanPanel } from "./organization/OrganizationCurrentPlanPanel";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
@@ -2162,6 +2163,9 @@ function OrganizationPage({
                   organizationId={organization._id}
                   isAdmin={canEdit}
                 />
+                {isOwner && !organization.isPersonal && (
+                  <WorkOrganizationSettings organizationId={organization._id} />
+                )}
               </div>
             )}
 

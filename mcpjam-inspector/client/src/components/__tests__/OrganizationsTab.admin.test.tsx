@@ -27,6 +27,7 @@ vi.mock("convex/react", () => ({
   // `SettingsNav` reaches `useGithubChecksAvailability`, which queries Convex.
   // Without this the mock is missing an export the tree now needs.
   useQuery: () => undefined,
+  useQueries: () => ({ result: null }),
   useMutation: () => vi.fn(),
   useAction: () => vi.fn(),
 }));
