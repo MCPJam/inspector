@@ -3,6 +3,11 @@ import {
   isUnauthorized401,
   type AuthChallengeSignal,
 } from "@mcpjam/sdk";
+import {
+  isMcpjamDeploymentError,
+  type McpjamDeploymentError,
+} from "@mcpjam/sdk/internal/deployment";
+import { isPlatformApiError } from "@mcpjam/sdk/platform";
 
 export type OutputFormat = "json" | "human";
 
@@ -121,9 +126,41 @@ function authChallengeCliError(
   return undefined;
 }
 
+/**
+ * The deployment refusal behind `error`: thrown as itself, or carried as the
+ * cause of the platform client's request error, which is how a refused
+ * redirect arrives. Either way it is a refusal, not a failed request.
+ */
+export function deploymentRefusalOf(
+  error: unknown
+): McpjamDeploymentError | undefined {
+  if (isMcpjamDeploymentError(error)) return error;
+  if (isPlatformApiError(error) && isMcpjamDeploymentError(error.cause)) {
+    return error.cause;
+  }
+  return undefined;
+}
+
+/**
+ * A refusal over where a request would go. A saved login for another server
+ * exits 3, because the fix is signing in again; every other refusal is
+ * configuration and exits 2. An unparsable address keeps the usage code it
+ * has always had.
+ */
+export function deploymentCliError(error: McpjamDeploymentError): CliError {
+  if (error.code === "LOGIN_DEPLOYMENT_MISMATCH") {
+    return new CliError(error.code, error.message, 3);
+  }
+  const code = error.code === "API_URL_INVALID" ? "USAGE_ERROR" : error.code;
+  return new CliError(code, error.message, 2);
+}
+
 export function normalizeCliError(error: unknown): CliError {
   if (error instanceof CliError) {
     return error;
+  }
+  if (isMcpjamDeploymentError(error)) {
+    return deploymentCliError(error);
   }
 
   const message =

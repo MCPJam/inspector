@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isMcpjamDeploymentError } from "./deployment/address.js";
 import { SdkError } from "./errors.js";
 import {
   reportingRequest,
@@ -72,6 +73,7 @@ export async function payEvalIteration(
   } catch (error) {
     if (signal?.aborted) throw signal.reason;
     if (error instanceof EvalBillingError) throw error;
+    if (isMcpjamDeploymentError(error)) throw error;
     if (error instanceof ReportingHttpError && error.status < 500) {
       const details = error.body.details;
       const reason =

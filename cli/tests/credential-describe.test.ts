@@ -90,8 +90,9 @@ test("invalid explicit API URLs are reported without throwing", () => {
   );
   assert.equal(described.credential.valid, true);
   assert.equal(described.deployment.valid, false);
-  assert.equal(described.deployment.apiUrl, "not-a-url");
+  assert.equal(described.deployment.apiUrl, "");
   assert.match(described.deployment.error ?? "", /Invalid --api-url/);
+  assert.doesNotMatch(described.deployment.error ?? "", /not-a-url/);
   assert.equal(described.credential.redactedKey, "sk_…YYYY");
 });
 

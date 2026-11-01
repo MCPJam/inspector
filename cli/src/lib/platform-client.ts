@@ -1,5 +1,4 @@
 import {
-  DEFAULT_PLATFORM_API_BASE_URL,
   describePlatformRefusal,
   isPlatformApiError,
   PlatformApiClient,
@@ -8,12 +7,23 @@ import {
   type PlatformApiError,
 } from "@mcpjam/sdk/platform";
 import { detectCiMetadata } from "@mcpjam/sdk";
+import {
+  backendFetch,
+  isMcpjamDeploymentError,
+  resolveDeployment,
+  type DeploymentCredential,
+  type ResolvedDeployment,
+} from "@mcpjam/sdk/internal/deployment";
 import { readFileSync } from "node:fs";
 import packageJson from "../../package.json" with { type: "json" };
-import { getAuthFilePath, readStoredAuth } from "./auth-store.js";
-import { CliError, cliError, usageError } from "./output.js";
 import {
-  DEFAULT_PLATFORM_ORIGIN,
+  CliError,
+  cliError,
+  deploymentCliError,
+  deploymentRefusalOf,
+  usageError,
+} from "./output.js";
+import {
   resolvePlatformCredential,
   type ResolveCredentialDependencies,
 } from "./platform-auth.js";
@@ -25,9 +35,6 @@ export interface PlatformClientOptions {
   apiHeader?: string[];
   timeoutMs?: number;
 }
-
-export type ApiUrlInspection =
-  { ok: true; apiUrl: string } | { ok: false; error: string };
 
 function readGithubEvent(env: NodeJS.ProcessEnv): string | undefined {
   if (!env.GITHUB_EVENT_PATH) return undefined;
@@ -41,55 +48,20 @@ function readGithubEvent(env: NodeJS.ProcessEnv): string | undefined {
 }
 
 /**
- * Classify an explicit API URL without throwing. `cloud status` reports the
- * error in-band; other Cloud commands still reject via {@link validateApiUrl}.
+ * The MCPJam server for this command, as the SDK resolver decides it, with its
+ * refusals as CLI errors. An address that does not parse is a hard error:
+ * falling back to MCPJam Cloud would run a login or send a token somewhere the
+ * user did not ask for.
  */
-export function inspectApiUrl(value: string, source: string): ApiUrlInspection {
-  let parsed: URL;
+export function resolveCliDeployment(
+  input: { apiUrl?: string; credential: DeploymentCredential },
+  deps: { env?: NodeJS.ProcessEnv; authFilePath?: string } = {},
+): ResolvedDeployment {
   try {
-    parsed = new URL(value);
-  } catch {
-    return {
-      ok: false,
-      error: `Invalid ${source} value "${value}". Expected a full URL like ${DEFAULT_PLATFORM_API_BASE_URL}.`,
-    };
+    return resolveDeployment({ ...input, ...deps });
+  } catch (error) {
+    throw isMcpjamDeploymentError(error) ? deploymentCliError(error) : error;
   }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    return {
-      ok: false,
-      error: `Invalid ${source} value "${value}". Expected an http(s) URL like ${DEFAULT_PLATFORM_API_BASE_URL}.`,
-    };
-  }
-  return { ok: true, apiUrl: value };
-}
-
-/**
- * An explicitly supplied API URL (flag or env) that does not parse must
- * hard-error: silently falling back to prod would run a login or send a
- * token somewhere the user did not ask for.
- */
-export function validateApiUrl(value: string, source: string): string {
-  const inspected = inspectApiUrl(value, source);
-  if (!inspected.ok) {
-    throw usageError(inspected.error);
-  }
-  return inspected.apiUrl;
-}
-
-/** The API URL the user explicitly asked for, if any (flag wins over env). */
-function resolveExplicitApiUrl(
-  options: Pick<PlatformClientOptions, "apiUrl">,
-  env: NodeJS.ProcessEnv,
-): string | undefined {
-  const flagUrl = options.apiUrl?.trim();
-  if (flagUrl) {
-    return validateApiUrl(flagUrl, "--api-url");
-  }
-  const envUrl = env.MCPJAM_API_URL?.trim();
-  if (envUrl) {
-    return validateApiUrl(envUrl, "MCPJAM_API_URL");
-  }
-  return undefined;
 }
 
 /**
@@ -183,21 +155,6 @@ export function resolvePlatformExtraHeaders(
   return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
-export function resolvePlatformBaseUrl(
-  options: Pick<PlatformClientOptions, "apiUrl">,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
-  return resolveExplicitApiUrl(options, env) ?? DEFAULT_PLATFORM_API_BASE_URL;
-}
-
-/** Origin for the hosted CLI auth routes, derived from the API base URL. */
-export function resolvePlatformOrigin(
-  options: Pick<PlatformClientOptions, "apiUrl">,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
-  return new URL(resolvePlatformBaseUrl(options, env)).origin;
-}
-
 export function buildPlatformClient(
   options: PlatformClientOptions,
   deps: ResolveCredentialDependencies = {},
@@ -205,33 +162,28 @@ export function buildPlatformClient(
   client: PlatformApiClient;
   credentialKind: "api-key" | "oauth";
   /**
-   * The API base URL this client actually resolved, including the stored-auth
-   * branch below that `resolvePlatformOrigin` cannot see. Returned so callers
-   * that print a web link build it against the SAME deployment the request
-   * went to — a staging login must not print prod URLs.
+   * The API base URL this client sends to. Returned so callers that print a
+   * web link build it against the SAME deployment the request went to: a
+   * staging login must not print prod URLs.
    */
   baseUrl: string;
+  /** The app base, from the resolver's one rule for stripping `/api/v1`. */
+  appBaseUrl: string;
 } {
   const env = deps.env ?? process.env;
   const credential = resolvePlatformCredential(options, deps);
   const extraHeaders = resolvePlatformExtraHeaders(options, env);
+  // A saved login is sent only to the server it was made against; the
+  // resolver refuses any other before this client is built.
+  const deployment = resolveCliDeployment(
+    { apiUrl: options.apiUrl, credential: credential.kind },
+    { env, ...(deps.authFilePath ? { authFilePath: deps.authFilePath } : {}) },
+  );
 
-  // When the stored OAuth login is the credential, its tokens belong to the
-  // deployment it was created against — default to that deployment's API URL
-  // so a staging login never silently sends its token to prod.
-  let baseUrl = resolveExplicitApiUrl(options, env);
-  if (!baseUrl && credential.kind === "oauth") {
-    const stored = readStoredAuth(
-      deps.authFilePath ?? getAuthFilePath({ env }),
-    );
-    baseUrl = stored?.apiUrl;
-  }
-
-  const resolvedBaseUrl = baseUrl ?? DEFAULT_PLATFORM_API_BASE_URL;
   const client = new PlatformApiClient({
-    baseUrl: resolvedBaseUrl,
+    baseUrl: deployment.apiUrl,
     getAuth: credential.getAuth,
-    ...(deps.fetchFn ? { fetch: deps.fetchFn } : {}),
+    fetch: backendFetch(deps.fetchFn),
     ...(options.timeoutMs !== undefined
       ? { timeoutMs: options.timeoutMs }
       : {}),
@@ -268,21 +220,12 @@ export function buildPlatformClient(
     })(),
     ...(extraHeaders ? { extraHeaders } : {}),
   });
-  return { client, credentialKind: credential.kind, baseUrl: resolvedBaseUrl };
-}
-
-/**
- * The app origin matching an API base URL, for printing web deep links.
- * Falls back to the default origin when the URL is unparseable — a bad link
- * is worse than a slightly wrong one, but neither should abort a command
- * whose real work already succeeded.
- */
-export function webOriginForApiBaseUrl(baseUrl: string): string {
-  try {
-    return new URL(baseUrl).origin;
-  } catch {
-    return DEFAULT_PLATFORM_ORIGIN;
-  }
+  return {
+    client,
+    credentialKind: credential.kind,
+    baseUrl: deployment.apiUrl,
+    appBaseUrl: deployment.baseUrl,
+  };
 }
 
 /**
@@ -361,6 +304,8 @@ export function toCliError(
   if (error instanceof CliError) {
     return error;
   }
+  const refusal = deploymentRefusalOf(error);
+  if (refusal) return deploymentCliError(refusal);
   if (isPlatformApiError(error)) {
     // The CI-owned suite lock. `CONFLICT` alone reads like a race the caller
     // should retry, which is the one thing that will never help here: the

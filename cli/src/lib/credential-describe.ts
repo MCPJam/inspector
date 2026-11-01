@@ -2,18 +2,24 @@
  * Offline description of how this process would authenticate to MCPJam Cloud
  * and which deployment it would talk to.
  *
- * Mirrors `resolvePlatformCredential` / `buildPlatformClient` precedence
- * without calling `getAuth()` or the network. `cloud status` is the consumer.
+ * Mirrors `resolvePlatformCredential` precedence without calling `getAuth()`
+ * or the network, and asks the same resolver `buildPlatformClient` uses for
+ * the deployment. `cloud status` is the consumer, so a refused deployment is
+ * reported in-band instead of thrown.
  */
-import { DEFAULT_PLATFORM_API_BASE_URL } from "@mcpjam/sdk/platform";
+import {
+  isMcpjamDeploymentError,
+  MCPJAM_CLOUD_API_URL,
+  resolveDeployment,
+  type DeploymentSource,
+} from "@mcpjam/sdk/internal/deployment";
 import { getAuthFilePath, readStoredAuth } from "./auth-store.js";
 import { inspectExplicitApiKey } from "./platform-auth.js";
-import { inspectApiUrl } from "./platform-client.js";
 
 const LEGACY_API_KEY_PREFIX = "mcpjam_";
 
 export type CloudCredentialSource = "flag" | "env" | "oauth" | "missing";
-export type CloudDeploymentSource = "flag" | "env" | "oauth" | "default";
+export type CloudDeploymentSource = DeploymentSource;
 
 export type CloudCredentialDescription = {
   source: CloudCredentialSource;
@@ -115,34 +121,34 @@ export function describeCloudCredential(
     };
   }
 
-  const flagUrl = trimmed(options.apiUrl);
-  const envUrl = trimmed(env.MCPJAM_API_URL);
-  let deployment: CloudDeploymentDescription;
-  if (flagUrl) {
-    const inspected = inspectApiUrl(flagUrl, "--api-url");
-    deployment = {
-      apiUrl: inspected.ok ? inspected.apiUrl : flagUrl,
-      source: "flag",
-      valid: inspected.ok,
-      ...(inspected.ok ? {} : { error: inspected.error }),
-    };
-  } else if (envUrl) {
-    const inspected = inspectApiUrl(envUrl, "MCPJAM_API_URL");
-    deployment = {
-      apiUrl: inspected.ok ? inspected.apiUrl : envUrl,
-      source: "env",
-      valid: inspected.ok,
-      ...(inspected.ok ? {} : { error: inspected.error }),
-    };
-  } else if (stored?.apiUrl) {
-    deployment = { apiUrl: stored.apiUrl, source: "oauth", valid: true };
-  } else {
-    deployment = {
-      apiUrl: DEFAULT_PLATFORM_API_BASE_URL,
-      source: "default",
-      valid: true,
+  return {
+    credential,
+    deployment: describeDeployment(options, credential, {
+      env,
+      authFilePath,
+    }),
+  };
+}
+
+function describeDeployment(
+  options: { apiUrl?: string },
+  credential: CloudCredentialDescription,
+  deps: { env: NodeJS.ProcessEnv; authFilePath: string }
+): CloudDeploymentDescription {
+  try {
+    const resolved = resolveDeployment({
+      apiUrl: options.apiUrl,
+      credential: credential.kind === "api-key" ? "api-key" : "oauth",
+      ...deps,
+    });
+    return { apiUrl: resolved.apiUrl, source: resolved.source, valid: true };
+  } catch (error) {
+    if (!isMcpjamDeploymentError(error)) throw error;
+    return {
+      apiUrl: error.apiUrl ?? MCPJAM_CLOUD_API_URL,
+      source: error.source ?? "default",
+      valid: false,
+      error: error.message,
     };
   }
-
-  return { credential, deployment };
 }
