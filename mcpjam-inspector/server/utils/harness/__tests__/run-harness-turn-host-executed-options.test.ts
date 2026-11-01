@@ -99,7 +99,7 @@ vi.mock("../registry.js", () => ({
 
 /** The projection itself is covered by its own file; here it is a spy. */
 const projectSpy = vi.hoisted(() =>
-  vi.fn(async () => ({ tools: {}, keyToServerId: {} }))
+  vi.fn(async (_args: Parameters<typeof import("../host-executed-mcp-tools").projectSelectedMcpServersAsHostTools>[0]) => ({ tools: {}, keyToServerId: {} }))
 );
 vi.mock("../host-executed-mcp-tools.js", async (importOriginal) => {
   const actual = await importOriginal<
@@ -177,6 +177,9 @@ vi.mock("../forwarding/native-turn.js", async (original) => ({
 }));
 
 import { runHarnessTurn } from "../run-harness-turn";
+import { readMcpOriginalResult, readMcpWidgetContext } from "@/shared/mcp-tool-origin-metadata";
+import { transcriptToUIMessages } from "../../../../client/src/lib/transcript-to-ui-messages";
+import { convertToMcpjamModelMessages } from "../../mcp-tool-result-model-output";
 import { mcpToolOptionsFor } from "../../mcp-tool-options.js";
 import { markServerVerifiedApproval } from "../../tool-approval-token.js";
 import { getHarnessAdapter } from "../registry.js";
@@ -653,4 +656,46 @@ describe("enrolled Claude forwarding admission", () => {
     expect(forwarding.prepare).not.toHaveBeenCalled();
     expect(projectSpy).toHaveBeenCalledOnce();
   });
+});
+
+
+it("keeps retained App presentation separate from saved model history", async () => {
+  vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
+  adapterDelivery.value = "mcpjam";
+  const raw = { content: [{ type: "text", text: "visible" }], _meta: { private: "WIDGET_PRIVATE_SENTINEL" }, structuredContent: { privateValue: 7 } };
+  const projected = { type: "text", value: "visible" };
+  const onConversationComplete = vi.fn();
+  projectSpy.mockImplementationOnce(async args => {
+    args.onRawResult?.({ toolCallId: "app-call", raw });
+    return { tools: {}, keyToServerId: {} };
+  });
+  harnessState.streamParts = [
+    { type: "tool-call", toolCallId: "app-call", toolName: "app", input: {} },
+    { type: "tool-result", toolCallId: "app-call", toolName: "app", output: projected },
+    { type: "finish", finishReason: "stop" },
+  ];
+  try {
+    const turn = await runHarnessTurn(baseOptions({ onConversationComplete }) as never, "ui");
+    const wire = await turn.response!.text();
+    const chunks = wire.split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6)));
+    const outputChunk = chunks.find(chunk => chunk.type === "tool-output-available");
+    expect(outputChunk.output).toEqual(projected);
+    expect(readMcpOriginalResult(outputChunk.providerMetadata)).toEqual(raw);
+    expect(readMcpWidgetContext(outputChunk.providerMetadata)).toBeUndefined();
+    expect(onConversationComplete).toHaveBeenCalledOnce();
+    const history = onConversationComplete.mock.calls[0][0];
+    const result = history.flatMap((message: ModelMessage) => Array.isArray(message.content) ? message.content : []).find((part: {type: string}) => part.type === "tool-result");
+    expect(result).toMatchObject({ output: projected, result: raw });
+    const ui = transcriptToUIMessages(history);
+    const app = ui.flatMap(message => message.parts).find(part => "toolCallId" in part);
+    expect(app && "callProviderMetadata" in app && readMcpOriginalResult(app.callProviderMetadata)).toEqual(raw);
+    expect(app && "callProviderMetadata" in app && readMcpWidgetContext(app.callProviderMetadata)).toBeUndefined();
+    const freshHistory = await convertToMcpjamModelMessages(ui);
+    expect(JSON.stringify(freshHistory)).toContain("visible");
+    expect(JSON.stringify(freshHistory)).not.toContain("WIDGET_PRIVATE_SENTINEL");
+    expect(JSON.stringify(freshHistory)).not.toContain("privateValue");
+  } finally {
+    harnessState.streamParts = [{ type: "finish", finishReason: "stop" }];
+    vi.unstubAllEnvs();
+  }
 });

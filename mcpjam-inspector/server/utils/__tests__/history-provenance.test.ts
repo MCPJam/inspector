@@ -55,7 +55,7 @@ const ctx: ProvenanceContext = {
 /** The same project and key, another chat. */
 const otherChat: ProvenanceContext = { ...ctx, chatSessionId: "chat_2" };
 
-it("authenticates saved native presentation separately from the model output", async () => {
+it.each([false, true])("authenticates saved presentation separately from model output (retained=%s)", async retained => {
   const widgetContext = {
     owner: {
       kind: "chat" as const,
@@ -93,7 +93,7 @@ it("authenticates saved native presentation separately from the model output", a
   const presented = presentNativeTranscript(
     messages,
     new Map([
-      ["call", { result: raw, metadata: { mcpjam: { widgetContext } } }],
+      ["call", { result: raw, metadata: { mcpjam: retained ? { resultPresentation: true } : { widgetContext } } }],
     ]),
   );
   const ui = transcriptToUIMessages(
@@ -107,6 +107,7 @@ it("authenticates saved native presentation separately from the model output", a
   const nextModel = await convertToMcpjamModelMessages(
     checked.messages as UIMessage[],
   );
+  expect(JSON.stringify(nextModel)).not.toContain('"private":"original"');
   const secondSave = signHistoryForPersistence(
     preserveNativeUiPresentations(nextModel, checked.messages),
     ctx,
@@ -130,14 +131,14 @@ it("authenticates saved native presentation separately from the model output", a
   ).not.toContain("forged");
 });
 
-it("authenticates the live native presentation on output chunks", () => {
+it.each([false, true])("authenticates live presentation chunks (retained=%s)", async retained => {
   const sign = createUiChunkProvenanceSigner(ctx);
   const call = { toolCallId: "call", toolName: "list_issues", input: {} };
   sign({ type: "tool-input-available", ...call });
   const raw = { content: [], _meta: { private: "original" } };
   const metadata = mergeMcpOriginalResult(
     {
-      mcpjam: {
+      mcpjam: retained ? { resultPresentation: true } : {
         widgetContext: {
           owner: {
             kind: "chat",
@@ -185,6 +186,7 @@ it("authenticates the live native presentation on output chunks", () => {
   expect(
     readMcpOriginalResult(message.parts[0].resultProviderMetadata),
   ).toEqual(raw);
+  expect(JSON.stringify(await convertToMcpjamModelMessages(checked.messages as UIMessage[]))).not.toContain('"private":"original"');
 });
 /** No signing: what an unsigned stream looks like. */
 const unsignedStream: UiChunkProvenanceSigner = (chunk) => [chunk];

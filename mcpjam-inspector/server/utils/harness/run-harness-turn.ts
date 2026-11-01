@@ -35,6 +35,7 @@ import { toToolResultOutput } from "./tool-result-output.js";
 export { toToolResultOutput } from "./tool-result-output.js";
 import {
   mergeMcpToolConnectionMetadata,
+  mergeMcpOriginalResult,
   toolConnectionAttribution,
   type McpConnectionAttribution,
 } from "@/shared/mcp-tool-origin-metadata";
@@ -3819,6 +3820,11 @@ export async function runHarnessTurn(
             const hasRawHostExecuted = hostExecutedRawResults.has(toolCallId);
             const rawHostExecuted = hostExecutedRawResults.get(toolCallId);
             hostExecutedRawResults.delete(toolCallId);
+            const modelOutput = (part as { output?: unknown }).output ??
+              (part as { result?: unknown }).result;
+            if (hasRawHostExecuted && !errorEvent) {
+              nativePresentations.set(toolCallId, { result: rawHostExecuted, metadata: { mcpjam: { resultPresentation: true } } });
+            }
             const output = errorEvent
               ? harnessToolErrorText(part)
               : hasRawHostExecuted
@@ -3931,8 +3937,10 @@ export async function runHarnessTurn(
             } else {
               emitToolOutput(writer, {
                 toolCallId,
-                output: enhancedApps ? output : (rawNativeResult ?? output),
-                providerMetadata: nativeToolMetadata(
+                output: hasRawHostExecuted && !errorEvent ? modelOutput : enhancedApps ? output : (rawNativeResult ?? output),
+                providerMetadata: hasRawHostExecuted && !errorEvent
+                  ? mergeMcpOriginalResult({ mcpjam: { resultPresentation: true } }, rawHostExecuted)
+                  : nativeToolMetadata(
                   nativeForwarding,
                   meta.serverId,
                   toolCallId,
@@ -4003,7 +4011,7 @@ export async function runHarnessTurn(
             pendingResults.push({
               toolCallId,
               toolName: meta.toolName,
-              output,
+              output: hasRawHostExecuted && !errorEvent ? modelOutput : output,
               isError,
               ...(meta.serverId ? { serverId: meta.serverId } : {}),
             });

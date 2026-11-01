@@ -4,7 +4,7 @@ import {
   readMcpToolOriginServerId,
   type McpToolOriginProviderMetadata,
   readMcpOriginalResult,
-  readMcpWidgetContext,
+  hasMcpResultPresentation,
 } from "@/shared/mcp-tool-origin-metadata";
 import { isRecord } from "../../byok/list-request.js";
 
@@ -104,7 +104,7 @@ export function stampNativePresentation(
 ) {
   const original =
     readMcpOriginalResult(metadata) ??
-    (readMcpWidgetContext(metadata) ? fallback : undefined);
+    (hasMcpResultPresentation(metadata) ? fallback : undefined);
   const signature =
     original === undefined ? null : sign(ctx, { ...call, output: original });
   if (!signature) return metadata;
