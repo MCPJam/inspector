@@ -96,7 +96,10 @@ function tombstoneTtl(record: StoredScopeStepUpContinuation): number {
  */
 export function sweepLocalScopeStepUpContinuations(now = Date.now()): void {
   for (const [continuationId, record] of localContinuations) {
-    expireIfNeeded(record, now);
+    // Only a waiting call expires here. A `retrying` one is claimed and may be
+    // running; its resume decides how it ends, and expiring it would report
+    // an in-flight call as never run.
+    if (record.status === "pending") expireIfNeeded(record, now);
     if (
       record.status !== "pending" &&
       record.status !== "retrying" &&
@@ -401,7 +404,7 @@ export function cancelLocalScopeStepUpContinuationForRequest(input: {
 } {
   const record = localContinuations.get(input.continuationId);
   if (!record) throw new Error("scope_step_up_continuation_not_found");
-  expireIfNeeded(record);
+  if (record.status === "pending") expireIfNeeded(record);
   if (
     record.bindingKey !== input.bindingKey ||
     record.toolCallId !== input.toolCallId
@@ -452,7 +455,7 @@ export function settleLocalAuthChallengeHistoryCall(input: {
     ) {
       continue;
     }
-    expireIfNeeded(record);
+    if (record.status === "pending") expireIfNeeded(record);
     if (record.status === "pending") {
       scrubTerminal(
         record,
@@ -485,6 +488,8 @@ export function cancelLocalContinuationForNewMessage(input: {
 }): {
   found: boolean;
   cancelled: boolean;
+  /** The record's status after the cancel; absent when not found. */
+  status?: ScopeStepUpContinuationStatus;
   reason?: ContinuationReason;
   serverId?: string;
   serverName?: string;
@@ -498,7 +503,7 @@ export function cancelLocalContinuationForNewMessage(input: {
   ) {
     return { found: false, cancelled: false };
   }
-  expireIfNeeded(record);
+  if (record.status === "pending") expireIfNeeded(record);
   const cancelled = record.status === "pending";
   if (cancelled) {
     scrubTerminal(
@@ -510,6 +515,7 @@ export function cancelLocalContinuationForNewMessage(input: {
   return {
     found: true,
     cancelled,
+    status: record.status,
     ...(record.reason ? { reason: record.reason } : {}),
     serverId: record.serverId,
     ...(record.serverName ? { serverName: record.serverName } : {}),

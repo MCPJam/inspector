@@ -630,7 +630,7 @@ export function PromptsTab({
               onClick={() => setIsSidebarVisible(false)}
               variant="ghost"
               size="sm"
-              className="h-7 w-7 p-0"
+              className="hidden md:inline-flex h-7 w-7 p-0"
               title="Hide sidebar"
             >
               <PanelLeftClose className="h-3.5 w-3.5" />
@@ -660,6 +660,7 @@ export function PromptsTab({
         <div className="flex-1 flex flex-col min-h-0">
           <SelectedToolHeader
             toolName={selectedPrompt}
+            listLabel="prompt"
             description={selectedPromptData?.description}
             onExpand={() => setSelectedPrompt("")}
             toolSwitchList={{
@@ -829,7 +830,7 @@ export function PromptsTab({
                         <div className="flex items-start gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1">
-                              <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
+                              <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border break-all md:break-normal">
                                 {prompt.name}
                               </code>
                               {prompt.title && (
@@ -839,7 +840,7 @@ export function PromptsTab({
                               )}
                             </div>
                             {prompt.description && (
-                              <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
+                              <p className="text-xs mt-2 line-clamp-none md:line-clamp-2 leading-relaxed text-muted-foreground">
                                 {prompt.description}
                               </p>
                             )}
@@ -931,6 +932,7 @@ export function PromptsTab({
     <>
       <ThreePanelLayout
         id="prompts"
+        mobileNavigation={{ selectionKey: selectedPrompt }}
         sidebar={sidebarContent}
         content={centerContent}
         sidebarVisible={isSidebarVisible}

@@ -1,5 +1,6 @@
 import {
   isScopeStepUpRequiredEvent,
+  SCOPE_STEP_UP_LIVE_TTL_MS,
   type ScopeStepUpRequiredEvent,
 } from "@/shared/scope-step-up";
 import {
@@ -22,6 +23,17 @@ import {
 const LEGACY_KEY = "mcp-scope-step-up-chat-v1";
 const PENDING_SCOPE_STEP_UP_KEY = "mcp-scope-step-up-chat-v2";
 const ATTEMPTS_KEY = "mcp-chat-auth-attempts-v1";
+// A write drops entries whose continuation expired this long ago: the server
+// has already answered for them, and the grace keeps an entry readable while
+// it is being resumed or against a skewed clock. The cap bounds the rest.
+const EXPIRED_ENTRY_GRACE_MS = SCOPE_STEP_UP_LIVE_TTL_MS;
+const MAX_STORED_ENTRIES = 20;
+function retainedBesides<T>(items: T[], expiresAt: (item: T) => number): T[] {
+  const cutoff = Date.now() - EXPIRED_ENTRY_GRACE_MS;
+  return items
+    .filter((item) => expiresAt(item) > cutoff)
+    .slice(-(MAX_STORED_ENTRIES - 1));
+}
 let revision = 0;
 const listeners = new Set<() => void>();
 export function subscribePendingChatScopeStepUps(listener: () => void) {
@@ -232,8 +244,9 @@ function rememberAttempt(pending: PendingChatScopeStepUp): boolean {
   };
   const attempts = readChatAuthAttempts();
   return storeAttempts([
-    ...attempts.filter(
-      (item) => item.continuationId !== attempt.continuationId,
+    ...retainedBesides(
+      attempts.filter((item) => item.continuationId !== attempt.continuationId),
+      (item) => item.expiresAt,
     ),
     attempt,
   ]);
@@ -255,16 +268,23 @@ export function listPendingChatScopeStepUps(
       (!selector.phases || selector.phases.includes(pending.phase)),
   );
 }
-/** Name-only legacy callers may act only when the selection is unambiguous. */
+/**
+ * The most recently written match. A continuation id selects one entry; a
+ * name-only caller gets the newest, as the single-entry store it was written
+ * for did, so a sign-in abandoned with Back cannot block the next one.
+ */
 export function readPendingChatScopeStepUp(
   selector: PendingChatSelector = {},
 ): PendingChatScopeStepUp | undefined {
   const entries = listPendingChatScopeStepUps(selector);
-  return entries.length === 1 ? entries[0] : undefined;
+  return entries[entries.length - 1];
 }
 function writePending(value: PendingChatScopeStepUp): PendingWriteResult {
-  const entries = readAll().filter(
-    (item) => item.event.continuationId !== value.event.continuationId,
+  const entries = retainedBesides(
+    readAll().filter(
+      (item) => item.event.continuationId !== value.event.continuationId,
+    ),
+    (item) => item.event.expiresAt,
   );
   if (!storeEntries([...entries, value])) {
     recordChatAuthRecoveryFailure("save_failed", {
@@ -509,11 +529,20 @@ export function settlePendingChatScopeStepUpAfterCallback(
     ? { kind: "ready" }
     : { kind: "failed", message: settled.message };
 }
+// Without a continuation id, a callback for the server settles only the call
+// that is waiting on its sign-in.
+const NAME_ONLY_CALLBACK_PHASES: PendingChatScopeStepUp["phase"][] = [
+  "awaiting_oauth",
+];
 export function markPendingChatScopeStepUpReady(
   serverName: string,
   continuationId?: string,
 ): boolean {
-  const pending = readPendingChatScopeStepUp({ serverName, continuationId });
+  const pending = readPendingChatScopeStepUp({
+    serverName,
+    continuationId,
+    ...(continuationId ? {} : { phases: NAME_ONLY_CALLBACK_PHASES }),
+  });
   return pending && !pending.resumeAttempted && !pending.cancelAttempted
     ? writePending({ ...pending, phase: "ready" }).ok
     : false;
@@ -530,7 +559,11 @@ export function markPendingChatScopeStepUpCancelled(
   message = "Authorization was not completed.",
   continuationId?: string,
 ): boolean {
-  const pending = readPendingChatScopeStepUp({ serverName, continuationId });
+  const pending = readPendingChatScopeStepUp({
+    serverName,
+    continuationId,
+    ...(continuationId ? {} : { phases: NAME_ONLY_CALLBACK_PHASES }),
+  });
   return pending && !pending.cancelAttempted && pending.phase !== "cancelling"
     ? writePending({
         ...pending,

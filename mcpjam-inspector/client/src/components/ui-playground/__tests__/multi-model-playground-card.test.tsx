@@ -3,8 +3,28 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MultiModelPlaygroundCard } from "../multi-model-playground-card";
 import type { MultiModelCardSummary } from "@/components/chat-v2/model-compare-card-header";
+import { showPluginNotice } from "@/lib/plugins/plugin-notice-display";
 import type { LiveChatTraceEnvelope } from "@/shared/live-chat-trace";
 import { useBrowserComparisonStore } from "@/stores/browser-comparison-store";
+
+const composition = vi.hoisted(() => ({ wanted: false, failed: false, blockingError: undefined as string | undefined }));
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => false,
+}));
+
+vi.mock("@/hooks/use-playground-hidden-environment", () => ({
+  usePlaygroundHiddenEnvironment: () => ({
+    wanted: composition.wanted,
+    failed: composition.failed,
+    blockingError: composition.blockingError,
+    environmentId: "env_column",
+    pluginServerIds: ["plugin_server"],
+    pluginServers: [{ serverId: "plugin_server", name: "Plugin" }],
+    venue: "hosted",
+  }),
+}));
+
+vi.mock("@/lib/plugins/plugin-notice-display", () => ({ showPluginNotice: vi.fn() }));
 
 vi.mock("use-stick-to-bottom", () => {
   const StickToBottomComponent = ({
@@ -35,6 +55,8 @@ const mockUseChatSession = {
   elicitationResponding: false,
   urlElicitationRequired: [],
   dismissUrlElicitationRequired: vi.fn(),
+  hiddenEnvironmentActive: false,
+  isSessionBootstrapComplete: true,
   messages: [],
   setMessages: vi.fn(),
   sendMessage: vi.fn(),
@@ -178,7 +200,8 @@ const model = {
   provider: "openai" as const,
 };
 
-function Harness({ browserWorkspace, extensionBinding, selection, compareKind = "model" }: {
+function Harness({ browserWorkspace, extensionBinding, selection, compareKind = "model", onSendReadinessChange }: {
+  onSendReadinessChange?: Parameters<typeof MultiModelPlaygroundCard>[0]["onSendReadinessChange"];
   selection?: Parameters<typeof MultiModelPlaygroundCard>[0]["selection"];
   compareKind?: "model" | "host";
   browserWorkspace?: { id: string; order: number; clientCount: number };
@@ -198,6 +221,7 @@ function Harness({ browserWorkspace, extensionBinding, selection, compareKind = 
         {Object.keys(messageFlags).length}
       </div>
       <MultiModelPlaygroundCard
+        onSendReadinessChange={onSendReadinessChange}
         extensionBinding={extensionBinding}
         browserWorkspace={browserWorkspace}
         hostedContext={{ projectId: "project-1", selectedServerIds: [] }}
@@ -244,6 +268,11 @@ describe("MultiModelPlaygroundCard", () => {
   });
   beforeEach(() => {
     vi.clearAllMocks();
+    composition.wanted = false;
+    composition.failed = false;
+    composition.blockingError = undefined;
+    mockUseChatSession.status = "ready";
+    mockUseChatSession.hiddenEnvironmentActive = false;
     useBrowserComparisonStore.setState({ clients: {}, selected: {} });
   });
 
@@ -283,6 +312,47 @@ describe("MultiModelPlaygroundCard", () => {
     expect(lane.view.mock.calls.at(-1)![0].apps).toBeNull();
   });
 
+  it("carries the column's plugin composition into its chat context", () => {
+    composition.wanted = true;
+    mockUseChatSession.hiddenEnvironmentActive = true;
+    render(<Harness />);
+    expect(
+      lane.chatOptions.mock.calls.at(-1)?.[0].hostedContext.hiddenEnvironment,
+    ).toMatchObject({
+      environmentId: "env_column",
+      pluginServerIds: ["plugin_server"],
+    });
+    expect(lane.owner.mock.calls.at(-1)?.[1]).toContainEqual({
+      serverId: "plugin_server",
+      name: "Plugin",
+    });
+  });
+
+  it("omits plugin Apps when this model does not run the hidden environment", () => {
+    composition.wanted = true;
+    mockUseChatSession.hiddenEnvironmentActive = false;
+    render(<Harness />);
+    expect(lane.owner.mock.calls.at(-1)?.[1]).toEqual([]);
+  });
+
+  it("only blocks on a cap for a turn that uses the hidden environment", () => {
+    composition.blockingError = "Setup limit reached";
+    const readiness = vi.fn();
+    const { rerender } = render(<Harness onSendReadinessChange={readiness} />);
+    expect(readiness).toHaveBeenLastCalledWith(expect.any(String), true, undefined);
+    mockUseChatSession.hiddenEnvironmentActive = true;
+    rerender(<Harness onSendReadinessChange={readiness} />);
+    expect(readiness).toHaveBeenLastCalledWith(expect.any(String), false, "Setup limit reached");
+  });
+
+  it("does not announce failed composition before a send", () => {
+    composition.failed = true;
+    const { rerender } = render(<Harness />);
+    expect(showPluginNotice).not.toHaveBeenCalled();
+    mockUseChatSession.status = "submitted";
+    rerender(<Harness />);
+    expect(showPluginNotice).toHaveBeenCalledWith("chat-session-1", { kind: "unavailable" });
+  });
   it("registers the model's own conversation under the shared browser workspace", () => {
     const view = render(
       <Harness browserWorkspace={{ id: "parent-chat", order: 1, clientCount: 2 }} />,
@@ -539,6 +609,35 @@ describe("MultiModelPlaygroundCard", () => {
       const root = screen.getByTestId("multi-model-playground-card-root");
       expect(root.className).not.toMatch(/min-h-\[\d+rem\]/);
       expect(root.className).toContain("min-h-0");
+    });
+
+    it("puts a caller's class on the card root (the phone switcher hides a lane with it)", () => {
+      render(
+        <MultiModelPlaygroundCard
+          className="hidden"
+          compareId={String(model.id)}
+          compareLabel={model.name}
+          compareKind="model"
+          model={model}
+          comparisonSummaries={[]}
+          selectedServers={[]}
+          broadcastRequest={null}
+          deterministicExecutionRequest={null}
+          stopRequestId={0}
+          executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
+          displayMode="inline"
+          onDisplayModeChange={vi.fn()}
+          hostStyle="chatgpt"
+          effectiveThreadTheme="light"
+          deviceType="desktop"
+          onSummaryChange={vi.fn()}
+        />,
+      );
+
+      // A class token, not a substring: the root also carries overflow-hidden.
+      expect(screen.getByTestId("multi-model-playground-card-root")).toHaveClass(
+        "hidden",
+      );
     });
 
     it("shell drops its min-height in default desktop inline compare", () => {

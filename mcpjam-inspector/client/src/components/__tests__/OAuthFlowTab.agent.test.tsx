@@ -71,9 +71,10 @@ const machineCtl = vi.hoisted(() => ({
     | ((
         update: (u: Partial<OAuthFlowState>) => void,
         getState: () => OAuthFlowState,
-      ) => void)
+      ) => void | Promise<void>)
     | null,
   updateState: null as ((u: Partial<OAuthFlowState>) => void) | null,
+  machinesCreated: 0,
 }));
 
 vi.mock("@/lib/oauth/debug-state-machine-adapter", () => ({
@@ -82,9 +83,10 @@ vi.mock("@/lib/oauth/debug-state-machine-adapter", () => ({
     getState: () => OAuthFlowState;
   }) => {
     machineCtl.updateState = opts.updateState;
+    machineCtl.machinesCreated += 1;
     return {
       proceedToNextStep: async () => {
-        machineCtl.onAdvance?.(opts.updateState, opts.getState);
+        await machineCtl.onAdvance?.(opts.updateState, opts.getState);
       },
     };
   },
@@ -130,6 +132,7 @@ vi.mock("../oauth/OAuthFlowLogger", () => ({
 type LoggerActions = {
   onContinue?: () => Promise<void>;
   continueLabel?: string;
+  continuePending?: boolean;
 };
 const latestLoggerActions = (): LoggerActions =>
   (captureLoggerProps.mock.lastCall?.[0] as { actions: LoggerActions })
@@ -505,6 +508,143 @@ describe("OAuthFlowTab, after the AS rejects the authorization code", () => {
     });
 
     expect(advances).toBe(1);
+  });
+});
+
+describe("OAuthFlowTab, when the authorization callback delivers the code", () => {
+  // The machine's real steps from sign-in to tokens, recording the step each
+  // advance started from. The token request resolves only when released, so
+  // a test can look at the tab while the exchange is in flight.
+  function scriptRedemption(tokenOutcome: Partial<OAuthFlowState>) {
+    const startedFrom: string[] = [];
+    let releaseTokenRequest: (() => void) | undefined;
+    machineCtl.onAdvance = (update, getState) => {
+      const step = getState().currentStep;
+      startedFrom.push(step);
+      if (step === "authorization_request") {
+        update({ currentStep: "received_authorization_code" });
+      } else if (step === "received_authorization_code") {
+        update({ currentStep: "token_request" });
+      } else if (step === "token_request") {
+        return new Promise<void>((resolve) => {
+          releaseTokenRequest = () => {
+            update(tokenOutcome);
+            resolve();
+          };
+        });
+      }
+    };
+    return {
+      startedFrom,
+      tokenRequestSent: () => releaseTokenRequest !== undefined,
+      respond: () => act(async () => releaseTokenRequest?.()),
+    };
+  }
+
+  async function signInAndReturn(
+    serverConfigs?: Record<string, ServerWithName>,
+  ) {
+    const view = renderTab(serverConfigs && { serverConfigs });
+    await act(async () => {
+      machineCtl.updateState?.({
+        currentStep: "authorization_request",
+        state: "flow-state",
+        authorizationUrl: "https://auth.example.com/authorize?x=1",
+      });
+    });
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          origin: window.location.origin,
+          data: {
+            type: "OAUTH_CALLBACK",
+            code: "fresh-code",
+            state: "flow-state",
+          },
+        }),
+      );
+    });
+    return view;
+  }
+
+  it("redeems the code without waiting for Continue, with Continue held off meanwhile", async () => {
+    const exchange = scriptRedemption({
+      currentStep: "received_access_token",
+      accessToken: "access-token",
+    });
+    await signInAndReturn();
+
+    await waitFor(() => expect(exchange.tokenRequestSent()).toBe(true), {
+      timeout: 2_000,
+    });
+    expect(latestLoggerActions().continuePending).toBe(true);
+
+    await exchange.respond();
+
+    expect(exchange.startedFrom).toEqual([
+      "authorization_request",
+      "received_authorization_code",
+      "token_request",
+    ]);
+    await waitFor(() =>
+      expect(latestLoggerActions().continuePending).toBe(false),
+    );
+  });
+
+  it("doesn't spend the code once the tab unmounts before the timer fires", async () => {
+    const exchange = scriptRedemption({ currentStep: "received_access_token" });
+    const view = await signInAndReturn();
+    view.unmount();
+
+    await act(() => new Promise((resolve) => setTimeout(resolve, 700)));
+
+    expect(exchange.startedFrom).toEqual([]);
+  });
+
+  it("still redeems the code when the machine is rebuilt before the timer fires", async () => {
+    // A server-list refresh hands the tab fresh server objects. With a custom
+    // header that rebuilds the machine and re-runs the callback effect.
+    const withHeader = () => {
+      const server = httpServer("linear");
+      server.oauthFlowProfile!.customHeaders = [
+        { key: "X-Api-Key", value: "k" },
+      ];
+      return { linear: server };
+    };
+    const exchange = scriptRedemption({ currentStep: "received_access_token" });
+    const view = await signInAndReturn(withHeader());
+    const machinesBefore = machineCtl.machinesCreated;
+    view.rerender(
+      <OAuthFlowTab
+        serverConfigs={withHeader()}
+        selectedServerName="linear"
+        hasHeaderServers
+        areServersHydrated
+        onSelectServer={vi.fn()}
+      />,
+    );
+    expect(machineCtl.machinesCreated).toBeGreaterThan(machinesBefore);
+
+    await waitFor(() => expect(exchange.tokenRequestSent()).toBe(true), {
+      timeout: 2_000,
+    });
+  });
+
+  it("stops at a rejected code instead of sending it again", async () => {
+    const exchange = scriptRedemption(REJECTED_EXCHANGE);
+    await signInAndReturn();
+    await waitFor(() => expect(exchange.tokenRequestSent()).toBe(true), {
+      timeout: 2_000,
+    });
+
+    await exchange.respond();
+
+    await waitFor(() =>
+      expect(latestLoggerActions().continueLabel).toBe("Authorize"),
+    );
+    expect(
+      exchange.startedFrom.filter((step) => step === "token_request"),
+    ).toHaveLength(1);
   });
 });
 

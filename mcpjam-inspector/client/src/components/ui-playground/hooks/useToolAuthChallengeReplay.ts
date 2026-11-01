@@ -69,6 +69,7 @@ export function useToolAuthChallengePresentation(
 }
 
 export function useToolAuthChallengeReplay(
+  activeServerNames: readonly string[],
   serverName: string | undefined,
   sharedAppState: SharedState,
   executeTool: UseToolExecutionReturn["executeTool"],
@@ -76,24 +77,26 @@ export function useToolAuthChallengeReplay(
   const tools = useUIPlaygroundStore((state) => state.tools);
   const servers = sharedAppState?.servers;
   useEffect(() => {
-    if (!serverName) return;
-    const liveServer = servers?.[serverName];
-    if (liveServer?.connectionStatus !== "connected") return;
-    const currentTools = useUIPlaygroundStore.getState().tools;
     const waiting = peekPendingDirectScopeStepUpReplay();
-    if (
-      waiting?.descriptor.kind !== "tool" ||
-      !currentTools[waiting.descriptor.toolName]
-    )
-      return;
+    if (waiting?.descriptor.kind !== "tool") return;
+    // Keyed to the saved call's own server: the multi-server rail runs tools
+    // on every active server, not only the selected one.
+    const target = waiting.descriptor.serverName;
+    if (!activeServerNames.includes(target)) return;
+    if (servers?.[target]?.connectionStatus !== "connected") return;
+    // The selected server's form is built from its own tool list, so wait
+    // for it. The rail builds its form from the recovered call instead.
+    const currentTools = useUIPlaygroundStore.getState().tools;
+    const isSelectedServer = target === serverName;
+    if (isSelectedServer && !currentTools[waiting.descriptor.toolName]) return;
     const pending = claimPendingDirectScopeStepUpReplay({
-      serverName,
+      serverName: target,
       surface: "playground",
     });
     if (!pending || pending.descriptor.kind !== "tool") return;
     const descriptor = pending.descriptor;
     const state = useUIPlaygroundStore.getState();
-    state.setSelectedTool(descriptor.toolName);
+    if (isSelectedServer) state.setSelectedTool(descriptor.toolName);
     useUIPlaygroundStore.setState({
       recoveredToolCall: {
         serverName: descriptor.serverName,
@@ -101,14 +104,18 @@ export function useToolAuthChallengeReplay(
         parameters: descriptor.parameters,
       },
     });
-    state.setFormFields(
-      applyParametersToFields(
-        generateFormFieldsFromSchema(
-          currentTools[descriptor.toolName].inputSchema,
+    if (isSelectedServer) {
+      state.setFormFields(
+        applyParametersToFields(
+          generateFormFieldsFromSchema(
+            currentTools[descriptor.toolName].inputSchema,
+          ),
+          descriptor.parameters,
         ),
-        descriptor.parameters,
-      ),
-    );
+      );
+    }
+    // Reads and writes both run again: the user already asked for this call,
+    // and the client's tool-approval policy still applies to it.
     void executeTool({
       serverName: descriptor.serverName,
       toolName: descriptor.toolName,
@@ -118,5 +125,5 @@ export function useToolAuthChallengeReplay(
     }).finally(() => {
       clearPendingDirectScopeStepUpReplay(pending);
     });
-  }, [executeTool, serverName, servers, tools]);
+  }, [activeServerNames, executeTool, serverName, servers, tools]);
 }

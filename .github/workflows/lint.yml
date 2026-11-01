@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NODE_VERSION: "24.14.0"
+  NODE_VERSION: "24.22.1"
   # This workflow typechecks, builds, and boots the server in Node — it never
   # launches Electron, so skip the (occasionally flaky) Electron binary download.
   ELECTRON_SKIP_BINARY_DOWNLOAD: "1"

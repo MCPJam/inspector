@@ -33,21 +33,7 @@ import {
   type McpModelVisibleToolResultPolicy,
 } from "@mcpjam/sdk/browser";
 import { track } from "@/lib/analytics";
-import {
-  recordAppToolInvocation,
-  useAppToolsRegistry,
-} from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
-import { useTrafficLogStore } from "@/stores/traffic-log-store";
-import {
-  useToolAuthChallengePresentation,
-} from "./useToolAuthChallengeReplay";
-
-
-
-// Matches `app_<8 hex chars>` aliases minted by the app-tools registry.
-// Kept local to avoid widening the registry's public surface; the registry
-// owns the canonical pattern (`ALIAS_REGEX`) and exports it via `__internal`.
-const APP_TOOL_ALIAS_REGEX = /^app_[a-z0-9]{8}$/i;
+import { useToolAuthChallengePresentation } from "./useToolAuthChallengeReplay";
 
 // Result metadata type for tool responses
 interface ToolResponseMeta {
@@ -75,41 +61,10 @@ export interface UseToolExecutionOptions {
   setToolResponseMetadata: (meta: Record<string, unknown> | null) => void;
   modelVisibleMcpToolResults?: McpModelVisibleToolResultPolicy["modelVisibleMcpToolResults"];
   /**
-   * The listed tools, read for `readOnlyHint`: only a read-only call is run
-   * again on its own after a mid-session sign-in.
+   * The listed tools, read for `readOnlyHint`, which the sign-in card
+   * reports. Reads and writes both run again after a mid-session sign-in.
    */
   tools?: Record<string, { annotations?: unknown }>;
-}
-
-/**
- * Explicit reference to the playground's selected tool. Server tools are
- * keyed by their MCP name; app-provided tools (SEP-1865) are keyed by the
- * opaque `app_<hash>` alias the registry minted for them. Routing branches
- * on `kind` so server execution never accidentally calls the MCP server
- * with a synthetic alias.
- */
-export type SelectedToolRef =
-  { kind: "server"; name: string } | { kind: "app"; alias: string };
-
-/**
- * Classify a flat tool handle (server name or app alias) by consulting the
- * app-tools registry. Used by the App Builder execution path so the same
- * `selectedTool: string` slot can address both worlds without ambiguity.
- *
- * Read via `getState()` — callers are dispatch sites that just need the
- * current classification once, not a reactive subscription.
- */
-export function classifySelectedTool(
-  name: string | null,
-): SelectedToolRef | null {
-  if (!name) return null;
-  const aliasEntry = useAppToolsRegistry.getState().aliases.get(name);
-  if (aliasEntry) return { kind: "app", alias: name };
-  // Treat alias-shaped handles as app even when the registry has forgotten
-  // them — the executor surfaces a clean "no longer available" error rather
-  // than routing the synthetic name to the MCP server (which would 404).
-  if (APP_TOOL_ALIAS_REGEX.test(name)) return { kind: "app", alias: name };
-  return { kind: "server", name };
 }
 
 export interface UseToolExecutionReturn {
@@ -366,24 +321,6 @@ export function useToolExecution({
         };
       }
 
-      // App-tool routing: when the selected handle is a registry alias, the
-      // playground must dispatch into the live MCP App iframe via
-      // `AppBridge.callTool` and NOT call the MCP server with the synthetic
-      // `app_<hash>` alias. The alias is a model/server-orchestration name
-      // only — the iframe knows the tool by its raw advertised name. See
-      // SEP-1865 and `app-tools-registry.ts` for the contract.
-      const selectedRef = classifySelectedTool(effectiveToolName);
-      if (selectedRef?.kind === "app") {
-        return executeAppTool({
-          alias: selectedRef.alias,
-          params,
-          setExecutionError,
-          setIsExecuting,
-          storeCompletedToolResult,
-          modelVisibleMcpToolResults,
-        });
-      }
-
       if (!effectiveServerName) {
         return {
           ok: false,
@@ -617,164 +554,4 @@ export function useToolExecution({
     executeTool,
     injectToolResult,
   };
-}
-
-interface ExecuteAppToolArgs {
-  alias: string;
-  params: Record<string, unknown>;
-  setExecutionError: (error: string | null) => void;
-  setIsExecuting: (executing: boolean) => void;
-  storeCompletedToolResult: (
-    effectiveToolName: string,
-    params: Record<string, unknown>,
-    result: unknown,
-    toolCallId?: string,
-    serverId?: string,
-    modelOutput?: unknown,
-  ) => void;
-  modelVisibleMcpToolResults?: McpModelVisibleToolResultPolicy["modelVisibleMcpToolResults"];
-}
-
-/**
- * Dispatch a playground-issued tool call into the live MCP App iframe.
- *
- * Mirrors the chat-path dispatch in `use-chat-session.ts`: register an
- * `AbortController` against the bridge's pending set BEFORE awaiting so a
- * mid-flight iframe teardown rejects the await instead of hanging the UI,
- * and call back through the registry's pending bookkeeping in `finally`.
- *
- * The alias is the model/server-orchestration handle; the iframe knows
- * the tool by its `rawName`, so dispatch always uses `entry.rawName`.
- */
-async function executeAppTool({
-  alias,
-  params,
-  setExecutionError,
-  setIsExecuting,
-  storeCompletedToolResult,
-  modelVisibleMcpToolResults,
-}: ExecuteAppToolArgs): Promise<ExecuteToolInvocationResult> {
-  const registry = useAppToolsRegistry.getState();
-  const entry = registry.resolve(alias);
-  // Tag posthog with the raw advertised name when we have it; aliases are
-  // intentionally opaque and unhelpful for product analytics.
-  const reportedName = entry?.rawName ?? alias;
-
-  if (!entry) {
-    const message =
-      "App tool is no longer available — the widget was closed or replaced.";
-    setExecutionError(message);
-    track("app_builder_tool_executed", {
-      location: "app_builder_tab",
-      toolName: reportedName,
-      source: "app",
-      success: false,
-      errorType: "stale_app_alias",
-    });
-    return {
-      ok: false,
-      toolName: alias,
-      parameters: params,
-      error: message,
-    };
-  }
-
-  setIsExecuting(true);
-  setExecutionError(null);
-
-  const controller = new AbortController();
-  registry.registerPendingCall(entry.instance.bridgeId, controller);
-
-  try {
-    const call = entry.bridge.callTool({
-      name: entry.rawName,
-      arguments: params,
-    });
-    const raw = await new Promise<
-      Awaited<ReturnType<typeof entry.bridge.callTool>>
-    >((resolve, reject) => {
-      const onAbort = () =>
-        reject(new Error("App iframe was torn down mid-dispatch"));
-      if (controller.signal.aborted) {
-        onAbort();
-        return;
-      }
-      controller.signal.addEventListener("abort", onAbort, { once: true });
-      call.then(resolve, reject);
-    });
-
-    const modelOutput = await resolveModelOutputForToolResult(
-      raw,
-      entry.instance.serverId,
-      { modelVisibleMcpToolResults },
-    );
-
-    // Store the full untouched CallToolResult — the playground inspector
-    // should be able to see `structuredContent`/`_meta` the chat path
-    // intentionally strips before handing back to the model.
-    storeCompletedToolResult(
-      entry.rawName,
-      params,
-      raw,
-      undefined,
-      entry.instance.serverId,
-      modelOutput,
-    );
-
-    recordAppToolInvocation(
-      {
-        alias,
-        rawName: entry.rawName,
-        appName: entry.instance.appName,
-        serverId: entry.instance.serverId,
-        parentToolCallId: entry.instance.parentToolCallId,
-        bridgeId: entry.instance.bridgeId,
-        input: params,
-        raw,
-      },
-      useTrafficLogStore.getState().addLog,
-    );
-
-    track("app_builder_tool_executed", {
-      location: "app_builder_tab",
-      toolName: reportedName,
-      source: "app",
-      success: true,
-    });
-
-    return {
-      ok: true,
-      toolName: entry.rawName,
-      parameters: params,
-      result: raw,
-      response: { status: "completed", result: raw },
-    };
-  } catch (err) {
-    console.error("App tool execution error:", err);
-    reportCaught(err, {
-      source: "app_builder_tool_execution",
-      extra: { toolName: reportedName, toolSource: "app" },
-    });
-    const message =
-      err instanceof Error ? err.message : "App tool execution failed";
-    setExecutionError(message);
-
-    track("app_builder_tool_executed", {
-      location: "app_builder_tab",
-      toolName: reportedName,
-      source: "app",
-      success: false,
-      errorType: "exception",
-    });
-
-    return {
-      ok: false,
-      toolName: entry.rawName,
-      parameters: params,
-      error: message,
-    };
-  } finally {
-    registry.unregisterPendingCall(entry.instance.bridgeId, controller);
-    setIsExecuting(false);
-  }
 }

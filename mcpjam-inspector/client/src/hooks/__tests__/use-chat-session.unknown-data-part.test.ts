@@ -54,7 +54,7 @@ describe("unknown data parts degrade silently", () => {
     // Guards against the opposite failure: deleting the branch entirely would
     // also satisfy the assertion above.
     expect(HOOK_SOURCE).toContain("isTaskCreatedDataPart(part)");
-    expect(HOOK_SOURCE).toContain("trackTask({");
+    expect(HOOK_SOURCE).toContain("trackCreatedTask(");
   });
 
   it("does not navigate away when a task is created", () => {

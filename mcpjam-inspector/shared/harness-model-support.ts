@@ -1,3 +1,4 @@
+import { HARNESS_DESCRIPTORS } from "./harness-descriptors";
 /**
  * Which models a harness runtime can run, keyed by the runtime's VERSION.
  *
@@ -78,13 +79,9 @@ export const HARNESS_MODEL_SUPPORT_ROWS: readonly HarnessModelSupportRow[] =
  * the same change that bumps an adapter.
  */
 export const HARNESS_PINNED_VERSIONS = {
-  "claude-code": "2.1.245",
-  codex: "0.163.0",
-  // The Cursor CLI build the hosted bootstrap installs (and the computer
-  // template bakes), by the version string Cursor's own installer stamps in.
-  // `server/utils/harness/cursor-bootstrap.ts` pins the download to exactly
-  // this build with a checksum per platform; bump both together.
-  cursor: "2026.10.01-e373342",
+  "claude-code": HARNESS_DESCRIPTORS["claude-code"].runtimeVersion,
+  "codex": HARNESS_DESCRIPTORS["codex"].runtimeVersion,
+  "cursor": HARNESS_DESCRIPTORS["cursor"].runtimeVersion,
 } as const satisfies Record<Harness, string | null>;
 
 /** The pinned runtime version for a harness id, or undefined when the harness
@@ -117,9 +114,9 @@ export type HarnessOrgUpstream = {
 };
 
 export const HARNESS_ORG_UPSTREAM = {
-  "claude-code": { provider: "anthropic", profile: "anthropic-native" },
-  codex: { provider: "openai", profile: "openai-native" },
-  cursor: null,
+  "claude-code": HARNESS_DESCRIPTORS["claude-code"].orgUpstream,
+  "codex": HARNESS_DESCRIPTORS["codex"].orgUpstream,
+  "cursor": HARNESS_DESCRIPTORS["cursor"].orgUpstream,
 } as const satisfies Record<Harness, HarnessOrgUpstream | null>;
 
 /** The org upstream `harnessId` runs on, or null when it takes no org key. */
@@ -203,9 +200,9 @@ export function harnessNoRunnableModelReason(
 
 /** Human-facing runtime names (same values as the registry's `displayName`). */
 const HARNESS_DISPLAY_NAMES: Record<string, string> = {
-  "claude-code": "Claude Code",
-  codex: "Codex",
-  cursor: "Cursor CLI",
+  "claude-code": HARNESS_DESCRIPTORS["claude-code"].displayName,
+  codex: HARNESS_DESCRIPTORS.codex.displayName,
+  cursor: HARNESS_DESCRIPTORS.cursor.displayName,
 };
 
 /** The runtime's human-facing name ("Claude Code"), or the id itself. */

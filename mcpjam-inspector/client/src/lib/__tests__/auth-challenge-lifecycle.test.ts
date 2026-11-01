@@ -154,6 +154,13 @@ describe("auth challenge lifecycle", () => {
     unregisterProfile();
   });
 
+  it("leaves the caller's replay descriptor unchanged", async () => {
+    const replay = { ...REPLAY };
+    const card = await presentCard({ replay });
+    expect(replay).not.toHaveProperty("authAttempt");
+    expect(card.replay).toEqual({ ...REPLAY, authAttempt: card.attempt });
+  });
+
   it("successful cleanup only removes the exact call's card", async () => {
     const first = await presentCard({
       replay: {

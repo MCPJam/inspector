@@ -23,6 +23,7 @@ import type {
   EvalTraceWidgetRenderObservationView,
 } from "@/shared/eval-trace";
 import { evalTraceVideoMetaZ } from "@/shared/eval-trace";
+import { extractToolErrors, markFailedToolCalls } from "@/shared/eval-matching";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Thread, TRANSCRIPT_COLUMN_CLASS } from "@/components/chat-v2/thread";
@@ -110,6 +111,10 @@ function withNewRowsOpen(
 export type TraceViewerEvalToolCall = {
   toolName: string;
   arguments: Record<string, any>;
+  /** The call's id, when the run recorded one; joins it to its result. */
+  toolCallId?: string;
+  /** The trace records this call as failed. */
+  failed?: boolean;
 };
 
 interface TraceViewerProps {
@@ -470,6 +475,22 @@ export function TraceViewer({
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
   const effectiveViewMode = forcedViewMode ?? viewMode;
   const recordedSpans = useMemo(() => getRecordedSpans(trace), [trace]);
+  // Marked from the trace's own failure records, so the diff reads an
+  // identical call after a failed one as its retry, as the verdict did.
+  const gradedActualToolCalls = useMemo(
+    () =>
+      markFailedToolCalls(
+        actualToolCalls,
+        extractToolErrors({
+          messages: getTraceMessages(trace).map(({ role, content }) => ({
+            role,
+            content,
+          })),
+          spans: getRecordedSpans(trace),
+        }),
+      ),
+    [actualToolCalls, trace]
+  );
   const turnRuntimeByPromptIndex = useMemo(
     () => getTraceTurnRuntimeByPromptIndex(trace),
     [trace]
@@ -1173,7 +1194,7 @@ export function TraceViewer({
             {toolsCompareLayout === "diff" ? (
               <ToolCallsDiffView
                 expected={expectedToolCalls}
-                actual={actualToolCalls}
+                actual={gradedActualToolCalls}
                 isLoading={isLoading}
                 headerTrailing={toolsCompareLayoutToggle}
               />

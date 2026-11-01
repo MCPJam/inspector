@@ -443,6 +443,79 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     );
   });
 
+  it("skips the untouched row of a case that starts with a tool call once credits run out", async () => {
+    const success = streamTextMock.getMockImplementation()!;
+    streamTextMock
+      .mockImplementationOnce(success)
+      .mockImplementationOnce(() => {
+        throw new Error("Credits exhausted");
+      });
+    const config = buildQuickRunConfig();
+    const test = config.config.tests[0];
+    test.runs = 3;
+    test.promptTurns = [
+      {
+        id: "turn-1",
+        prompt: "",
+        expectedToolCalls: [],
+        pinnedToolCall: {
+          serverName: "Asana",
+          toolName: "list_tasks",
+          arguments: {},
+        },
+      } as any,
+      { id: "turn-2", prompt: "Hello", expectedToolCalls: [] },
+    ];
+    // Rows as the backend pre-creates them: the snapshot query is the case's
+    // first prompt, not the runner's "Pinned tool call: …". Another case's
+    // row for iteration 3, this case's row for iteration 2 and another
+    // model's row for this case's iteration 3 come first.
+    const row = (
+      _id: string,
+      testCaseId: string,
+      iterationNumber: number,
+      model = test.model,
+    ) => ({
+      _id,
+      testCaseId,
+      iterationNumber,
+      status: "pending",
+      testCaseSnapshot: {
+        title: "Case",
+        query: "Hello",
+        model,
+        provider: test.provider,
+      },
+    });
+    convexClient.query.mockImplementation(async (name: string) =>
+      name === "testSuites:getTestSuiteRunDetails"
+        ? {
+            iterations: [
+              row("other-row-3", "case-2", 3),
+              row("row-2", "case-1", 2),
+              row("other-model-3", "case-1", 3, "other-model"),
+              row("row-3", "case-1", 3),
+            ],
+          }
+        : { status: "running" },
+    );
+    const recorder = {
+      startIteration: vi.fn().mockResolvedValue("iteration"),
+      finishIteration: vi.fn().mockResolvedValue(undefined),
+      finalize: vi.fn().mockResolvedValue(undefined),
+    };
+    await runEvalSuiteWithAiSdk({
+      ...config,
+      runId: "suite-run",
+      recorder,
+    } as any);
+    const skipped = convexClient.action.mock.calls.filter(
+      ([name, args]) =>
+        name === "testSuites:updateTestIteration" && args.status === "skipped",
+    );
+    expect(skipped.map(([, args]) => args.iterationId)).toEqual(["row-3"]);
+  });
+
   it("hands the run's bearer to finalize so evidence uploads as the launching user", async () => {
     const config = buildQuickRunConfig();
     const recorder = {
@@ -856,16 +929,26 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     ]);
   });
 
-  it("refuses an unmatched deny name once before starting iterations", async () => {
+  it.each(["missing", "delte_file", "view:", "veiw:make_move"])("refuses unmatched deny name %s before starting iterations", async (name) => {
     await expect(
       runEvalSuiteWithAiSdk({
         ...buildQuickRunConfig(),
-        toolPolicy: { mode: "default", deny: ["missing"] },
+        toolPolicy: { mode: "default", deny: [name] },
       } as any),
     ).rejects.toThrow(
       "TOOL_POLICY_INVALID: Tool policy deny name(s) did not match any available tool",
     );
     expect(streamTextMock).not.toHaveBeenCalled();
+  });
+
+  it("defers an explicitly qualified view deny and reports it", async () => {
+    const { payload } = await runPolicyTool({
+      mode: "default",
+      deny: ["view:make_move"],
+    });
+    expect(payload.metadata?.policyWarnings).toEqual([
+      "Tool policy deny name(s) could not be resolved at run start: view:make_move",
+    ]);
   });
 
   it("persists a warning for an unmatched allow name", async () => {
@@ -2124,12 +2207,11 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       expect(runAssistantTurnSpy).toHaveBeenCalledTimes(1);
       const opts = runAssistantTurnSpy.mock.calls[0]![0] as any;
       // Computer Use is opt-in (session simulation only). Evals never opt in, so
-      // even a Claude jam driver gets NO computer tools and no advertised gate —
-      // identical to the non-Claude case below. Widget interaction in evals is
-      // expressed deterministically via Interact steps, not model-driven clicks.
+      // even a Claude jam driver gets no computer tools. View-tool discovery
+      // still refreshes before each step on every model.
       expect(opts.tools).not.toHaveProperty("computer");
       expect(opts.tools).not.toHaveProperty("finish_widget");
-      expect(opts.prepareAdvertisedTools).toBeUndefined();
+      expect(opts.prepareAdvertisedTools).toEqual(expect.any(Function));
       // Render observations are model-agnostic — the hook stays attached.
       expect(typeof opts.onToolResult).toBe("function");
     } finally {
@@ -2137,7 +2219,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     }
   });
 
-  it("PR 14: non-Claude jam models get no Computer Use tools or gate (render hook still attached)", async () => {
+  it("non-Claude jam models get view discovery without Computer Use tools", async () => {
     const assistantTurnModule = await import("../../../utils/assistant-turn");
     const runAssistantTurnSpy = vi
       .spyOn(assistantTurnModule, "runAssistantTurn")
@@ -2189,7 +2271,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const opts = runAssistantTurnSpy.mock.calls[0]![0] as any;
       expect(opts.tools).not.toHaveProperty("computer");
       expect(opts.tools).not.toHaveProperty("finish_widget");
-      expect(opts.prepareAdvertisedTools).toBeUndefined();
+      expect(opts.prepareAdvertisedTools).toEqual(expect.any(Function));
       // Render observations are model-agnostic — the hook stays attached.
       expect(typeof opts.onToolResult).toBe("function");
     } finally {
@@ -5272,6 +5354,79 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       );
     });
 
+    it("grades a failed call's identical retry in the failure snapshot's turn summary", async () => {
+      const exportCall = (toolCallId: string) => ({
+        type: "tool-call",
+        toolCallId,
+        toolName: "export_scene",
+        input: { sceneId: "s1" },
+      });
+      const emitted: Array<Record<string, unknown>> = [];
+      streamTextMock.mockReset();
+      streamTextMock.mockImplementationOnce((options: any) => {
+        void options.onStepFinish?.({
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          response: {
+            messages: [
+              { role: "assistant", content: [exportCall("call-1")] },
+              {
+                role: "tool",
+                content: [
+                  {
+                    type: "tool-result",
+                    toolCallId: "call-1",
+                    toolName: "export_scene",
+                    output: { type: "error-text", value: "timed out" },
+                  },
+                ],
+              },
+              { role: "assistant", content: [exportCall("call-2")] },
+              {
+                role: "tool",
+                content: [
+                  {
+                    type: "tool-result",
+                    toolCallId: "call-2",
+                    toolName: "export_scene",
+                    output: { type: "json", value: { ok: true } },
+                  },
+                ],
+              },
+            ],
+          },
+        });
+        return {
+          consumeStream: async () => {
+            throw new Error("stream dropped");
+          },
+          response: Promise.resolve({ modelId: "gpt-4-turbo", messages: [] }),
+          responseMessages: Promise.resolve([]),
+          steps: Promise.resolve([]),
+          totalUsage: Promise.resolve({
+            inputTokens: 1,
+            outputTokens: 1,
+            totalTokens: 2,
+          }),
+          finishReason: Promise.resolve("stop"),
+        };
+      });
+
+      await runStreamCase({ emitCollector: emitted });
+
+      const failureSnapshot = emitted.find(
+        (e) =>
+          e?.type === "trace_snapshot" &&
+          (e as { snapshotKind?: string }).snapshotKind === "failure",
+      ) as { trace: { prompts?: Array<{ retries?: unknown[] }> } } | undefined;
+      expect(failureSnapshot?.trace.prompts?.[0]?.retries).toEqual([
+        expect.objectContaining({
+          toolName: "export_scene",
+          actualIndex: 0,
+          retriedByIndex: 1,
+        }),
+      ]);
+    });
+
     it("does NOT treat tool-error child spans (with toolCallId) as cycle failure (PR 5a review — Codex P2)", async () => {
       // Codex P2 review fix: `wrapToolSetForEvalTrace` records a failed
       // tool call as a `category:"tool"` span PLUS a child
@@ -5897,6 +6052,13 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             }),
           ]),
         );
+        // The live Tools diff joins each call to a failure by this id, so a
+        // retried attempt reads as retried before the iteration persists.
+        expect(
+          (snap as { actualToolCalls?: unknown[] }).actualToolCalls,
+        ).toEqual([
+          expect.objectContaining({ toolName: "search", toolCallId: "call-1" }),
+        ]);
       } finally {
         runAssistantTurnSpy.mockRestore();
       }

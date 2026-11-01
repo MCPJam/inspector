@@ -327,8 +327,7 @@ export function McpAppsModal({
         );
       }
 
-      const appCaps = bridge.getAppCapabilities();
-      if (appCaps?.tools) {
+      {
         const bridgeId =
           modalAppToolsBridgeIdRef.current ?? crypto.randomUUID();
         modalAppToolsBridgeIdRef.current = bridgeId;
@@ -384,7 +383,7 @@ export function McpAppsModal({
           // `onReceive` hook so a `tool.update()` / `enable()` /
           // `disable()` from the modal app is reflected in the chat
           // snapshot's advertised aliases.
-          if (method === "notifications/tools/list_changed") {
+          if (method === "notifications/tools/list_changed" || method === "ui/notifications/sandbox-tools-changed") {
             const bridgeId = modalAppToolsBridgeIdRef.current;
             if (bridgeId) {
               void refreshAppProvidedTools(bridge, bridgeId, {
