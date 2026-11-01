@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { NativeMcpRuntime } from "../bridge/native-mcp-refresh";
-import { waitForNativeMcpServers } from "../bridge/native-mcp-ready";
+import { waitForMcpStartup, waitForNativeMcpServers } from "../bridge/native-mcp-ready";
+import { RELAY_MCP_SERVER_NAME } from "../shared/tool-names";
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
@@ -34,6 +35,54 @@ const ready = {
     },
   ],
 };
+
+it("waits for the retained relay even when no native servers are configured", async () => {
+  const f = fixture();
+  f.runtime.request
+    .mockResolvedValueOnce({ data: [] })
+    .mockResolvedValue({ data: [{ ...ready.data[0], name: RELAY_MCP_SERVER_NAME }] });
+  let started = false;
+  const pending = waitForMcpStartup({ ...f.options, serverNames: [] }).then(() => {
+    started = true;
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(started).toBe(false);
+  await vi.advanceTimersByTimeAsync(100);
+  await pending;
+  expect(f.runtime.request).toHaveBeenLastCalledWith("mcpServerStatus/list", {
+    threadId: "thread",
+    serverName: RELAY_MCP_SERVER_NAME,
+    detail: "toolsAndAuthOnly",
+  });
+});
+
+it("checks the retained relay and every forwarded server before startup completes", async () => {
+  const f = fixture();
+  f.runtime.request.mockResolvedValue({
+    data: [ready.data[0], { ...ready.data[0], name: RELAY_MCP_SERVER_NAME }],
+  });
+  await waitForMcpStartup(f.options);
+  expect(f.runtime.request).toHaveBeenNthCalledWith(1, "mcpServerStatus/list", {
+    threadId: "thread",
+    serverName: RELAY_MCP_SERVER_NAME,
+    detail: "toolsAndAuthOnly",
+  });
+  expect(f.runtime.request).toHaveBeenNthCalledWith(2, "mcpServerStatus/list", {
+    threadId: "thread",
+    serverName: "server",
+    detail: "toolsAndAuthOnly",
+  });
+});
+
+it("refuses startup when the retained relay fails discovery", async () => {
+  const f = fixture();
+  f.runtime.request.mockResolvedValue({
+    data: [{ ...ready.data[0], name: RELAY_MCP_SERVER_NAME, toolsError: "private" }],
+  });
+  await expect(waitForMcpStartup({ ...f.options, serverNames: [] })).rejects.toThrow(
+    "configured native MCP servers did not become ready",
+  );
+});
 
 it("accepts an empty ready inventory on the exact thread and server", async () => {
   const f = fixture();
