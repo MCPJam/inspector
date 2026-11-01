@@ -1,9 +1,11 @@
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
+import { isRunCancellable } from "./helpers";
 
 /**
  * The in-app agent's `cancelEvalRun`, shared by the two eval surfaces that
  * register it. It goes through the Cancel button's own `handleCancelRun`, so
- * the agent can cancel exactly what the button can.
+ * the agent can cancel exactly what the button can, `grading` included: the
+ * trials are done but the gating judge is still billing.
  */
 export async function cancelEvalRunForAgent(
   run: { _id: string; status: string },
@@ -12,7 +14,7 @@ export async function cancelEvalRunForAgent(
     handleCancelRun: (runId: string) => Promise<void>;
   },
 ) {
-  if (run.status !== "pending" && run.status !== "running") {
+  if (!isRunCancellable(run)) {
     return {
       status: "already_finished" as const,
       runId: run._id,
