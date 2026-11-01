@@ -21,8 +21,10 @@ describe("proxy settings from the environment", () => {
       noProxy: "localhost",
     });
     expect(
-      proxySettings({ https_proxy: "http://lower:1", HTTPS_PROXY: "http://upper:2" })
-        .httpsProxy
+      proxySettings({
+        https_proxy: "http://lower:1",
+        HTTPS_PROXY: "http://upper:2",
+      }).httpsProxy
     ).toBe("http://lower:1");
   });
 
