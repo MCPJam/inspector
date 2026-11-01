@@ -52,7 +52,6 @@ import {
   setPendingChatScopeStepUpFlowDigest,
 } from "@/lib/scope-step-up-pending";
 import {
-  cancelPendingDirectScopeStepUpReplay,
   clearPendingDirectScopeStepUpReplay,
   type PendingDirectScopeStepUpReplay,
   setPendingDirectScopeStepUpReplayCredentialBinding,
@@ -110,6 +109,18 @@ export function registerScopeStepUpHostBridge(
   };
 }
 
+/**
+ * Unknown ownership is treated as not ours: sign-in never replaces a
+ * credential the bridge did not confirm belongs to this user.
+ */
+function unconfirmedBinding(
+  connectionId: string | undefined,
+): StepUpCredentialBinding {
+  return connectionId
+    ? { kind: "shared", credentialId: connectionId }
+    : { kind: "none" };
+}
+
 async function resolveCredentialBinding(
   server: ServerWithName,
   connectionId: string | undefined,
@@ -121,15 +132,9 @@ async function resolveCredentialBinding(
     );
     if (resolved) return resolved;
   } catch {
-    // Unknown ownership is treated as not ours: never replace a credential
-    // we could not prove belongs to this user.
-    return connectionId
-      ? { kind: "shared", credentialId: connectionId }
-      : { kind: "none" };
+    return unconfirmedBinding(connectionId);
   }
-  return connectionId
-    ? { kind: "owned", credentialId: connectionId }
-    : { kind: "none" };
+  return unconfirmedBinding(connectionId);
 }
 
 /**
@@ -431,7 +436,7 @@ export function resetScopeStepUp(
       resetToolCallStepUp(server, operation);
       // The mid-session sign-in attempt for the same operation, too: a
       // success after sign-in means a later challenge is a new one.
-      resetAuthChallenge(server, operation, attempt);
+      if (attempt) resetAuthChallenge(server, operation, attempt);
     } else {
       resetToolCallStepUp(server);
     }
@@ -481,8 +486,14 @@ export function driveScopeStepUp(
       return Promise.reject(
         new Error("Could not save the pending call. Try again."),
       );
-    if (!options?.continuationId)
-      setPendingDirectScopeStepUpReplayCredentialBinding(server.name, binding, options?.directReplay);
+    // Only the direct call this step-up saved: a chat or agent step-up for
+    // the same server never binds another surface's call.
+    if (options?.directReplay)
+      setPendingDirectScopeStepUpReplayCredentialBinding(
+        server.name,
+        binding,
+        options.directReplay,
+      );
     const connectionIntent = connectionIntentForBinding(binding);
     return applyToolCallStepUp(server, stepUp, {
       ...(operation ? { operation } : {}),
@@ -507,8 +518,12 @@ export function driveScopeStepUp(
           );
         if (options?.continuationId && !saved)
           throw new Error("Could not save the pending sign-in. Try again.");
-        if (!options?.continuationId)
-          setPendingDirectScopeStepUpReplayFlowDigest(server.name, digest, options?.directReplay);
+        if (options?.directReplay)
+          setPendingDirectScopeStepUpReplayFlowDigest(
+            server.name,
+            digest,
+            options.directReplay,
+          );
       },
     });
   };
@@ -517,11 +532,7 @@ export function driveScopeStepUp(
   const start = () =>
     options?.connectionId && hostBridge?.resolveCredentialBinding
       ? resolveCredentialBinding(server, options.connectionId).then(authorize)
-      : authorize(
-          options?.connectionId
-            ? { kind: "owned", credentialId: options.connectionId }
-            : { kind: "none" },
-        );
+      : authorize(unconfirmedBinding(options?.connectionId));
   let started: ReturnType<typeof start>;
   try {
     started = start();
@@ -529,8 +540,8 @@ export function driveScopeStepUp(
     started = Promise.reject(error);
   }
   const cleanup = () => {
-    if (options?.directReplay) clearPendingDirectScopeStepUpReplay(options.directReplay);
-    else cancelPendingDirectScopeStepUpReplay(server.name);
+    if (options?.directReplay)
+      clearPendingDirectScopeStepUpReplay(options.directReplay);
   };
   void Promise.resolve(started)
     .then(
@@ -596,7 +607,10 @@ export async function runWithScopeStepUp<T>(
   operationKeyOrOperation: ToolCallStepUpOperation | (() => Promise<T>),
   maybeOperation?: () => Promise<T>,
   options?: {
-    beforeStepUp?: (challenge: InsufficientScopeChallenge) => void;
+    /** Saves the call for replay; the step-up binds and cleans up only it. */
+    beforeStepUp?: (
+      challenge: InsufficientScopeChallenge,
+    ) => PendingDirectScopeStepUpReplay | void;
     /**
      * A mid-session sign-in challenge (an HTTP 401) on this operation. Only
      * an on-screen call passes it, to present a Connect card; a
@@ -622,10 +636,15 @@ export async function runWithScopeStepUp<T>(
     return result;
   } catch (error) {
     const challenge = insufficientScopeFromError(error);
-    if (isActionableStepUpChallenge(challenge)) {
-      options?.beforeStepUp?.(challenge);
-    }
-    driveScopeStepUp(server, challenge, operationKey);
+    const directReplay = isActionableStepUpChallenge(challenge)
+      ? options?.beforeStepUp?.(challenge)
+      : undefined;
+    driveScopeStepUp(
+      server,
+      challenge,
+      operationKey,
+      directReplay ? { directReplay } : undefined,
+    );
     const signal = authChallengeFromError(error);
     if (signal && signal.source !== "http_403_insufficient_scope") {
       options?.onAuthChallenge?.(signal);

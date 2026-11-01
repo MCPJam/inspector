@@ -64,6 +64,9 @@ vi.mock("@/state/mcp-api", () => ({
 
 vi.mock("@/state/oauth-orchestrator", () => ({
   ensureAuthorizedForReconnect: mockEnsureAuthorizedForReconnect,
+  // The OAuth callback settles the sign-in ledger.
+  markAuthChallengeSignedIn: vi.fn(() => 0),
+  hasAuthChallengeAwaitingCallback: vi.fn(() => false),
 }));
 
 vi.mock("@/lib/oauth/mcp-oauth", () => ({

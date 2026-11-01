@@ -262,13 +262,9 @@ export async function settleSignInCallback(
   // Compared by digest: the saved calls recorded the flow's digest, never its
   // `state`.
   const digest = await authorizationFlowDigest(callback.state);
-  // Bookkeeping never blocks the callback that completed the sign-in.
-  let completed = 0;
-  try {
-    completed = markAuthChallengeSignedIn(serverName, digest);
-  } catch {
-    completed = 0;
-  }
+  // Never throws: the ledger catches its own storage errors, so bookkeeping
+  // cannot block the callback that completed the sign-in.
+  const completed = markAuthChallengeSignedIn(serverName, digest);
   if (completed > 0) {
     clearAuthChallengeDismissed(serverName);
     track("auth_challenge_completed", { location: "oauth_callback" });
@@ -301,11 +297,7 @@ export async function settleSignInCallback(
 
 /** A callback for `serverName` failed; record it if a sign-in was waiting. */
 export function noteSignInCallbackFailed(serverName: string): void {
-  try {
-    if (!hasAuthChallengeAwaitingCallback(serverName)) return;
-  } catch {
-    return;
-  }
+  if (!hasAuthChallengeAwaitingCallback(serverName)) return;
   track("auth_challenge_failed", {
     location: "oauth_callback",
     stage: "callback",

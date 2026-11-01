@@ -190,8 +190,13 @@ export function presentWidgetAuthChallenge(input: {
           signal.source === "tool_result_meta"
             ? "tool_result_meta"
             : "http_401",
-        action: "passthrough",
-        reason: "honored",
+        action: presentation.decision?.action ?? "passthrough",
+        reason:
+          presentation.reason === "blocked"
+            ? "auth-method-blocked"
+            : presentation.reason === "permanent"
+              ? "repeat-after-sign-in"
+              : (presentation.decision?.reason ?? "honored"),
         ...(signal.effectiveAuth
           ? { effectiveAuth: signal.effectiveAuth }
           : {}),
