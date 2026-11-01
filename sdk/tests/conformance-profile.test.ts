@@ -111,9 +111,15 @@ describe("the mcp-tasks profile", () => {
       "tasks-input-required-update-completes",
       "tasks-invalid-task-id-rejected",
       "tasks-status-payload-shape",
-      "tasks-ttl-integer-shape",
       "tasks-undeclared-capability-names-requirements",
     ]);
+  });
+
+  it("scores the integer TTL check from v2026-10-31.1", () => {
+    // The extension's schema types ttlMs and pollIntervalMs as integers, so
+    // the check is a schema requirement rather than advice.
+    expect(TASKS.version).toBe("2026-10-31.1");
+    expect(TASKS.scored).toContain("tasks-ttl-integer-shape");
   });
 });
 

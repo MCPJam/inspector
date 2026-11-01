@@ -770,10 +770,11 @@ export function validateTaskStatusPayload(task: unknown): ShapeVerdict {
 /**
  * The extension's `Task` interface states both durations in INTEGER
  * milliseconds ("Time-to-live duration from creation in integer milliseconds",
- * "Suggested polling interval in integer milliseconds"). `schema.json` renders
- * them as plain `number`, which is why this is separate from
- * {@link validateTaskTtlShape} — that check asserts the era-native FIELD, and
- * widening it would re-grade servers already judged by it.
+ * "Suggested polling interval in integer milliseconds"), and the schema agrees:
+ * schema.ts tags both `@format int` and `schema.json` types them `"integer"`.
+ * This is separate from {@link validateTaskTtlShape} because that check asserts
+ * the era-native FIELD, and widening it would re-grade servers already judged
+ * by it.
  *
  * A NEGATIVE `ttlMs` warns rather than fails: the spec never states a lower
  * bound, and `null` (not a negative number) is how it spells "unlimited", so a
