@@ -33,6 +33,12 @@
  *      declares the extension is served, and `skills-ext.test.ts` pins that
  *      dual-era behavior;
  *   2. nothing in this module reads the negotiated protocol version.
+ *
+ * The stable spec is written against protocol revision 2026-07-28 or later,
+ * and its request `_meta` envelope exists only on that wire. Serving a
+ * 2025-era server that declares the extension is therefore outside the spec's
+ * baseline. It is kept on purpose: a debugger that refused would hide a
+ * server's skills behind a version negotiation the author may not control.
  */
 
 import type { ServerCapabilities } from "@modelcontextprotocol/client";

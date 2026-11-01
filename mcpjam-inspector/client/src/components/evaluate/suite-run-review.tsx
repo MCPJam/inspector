@@ -1,4 +1,3 @@
-import { DEFAULTS } from "../evals/constants";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { convexErrMessage } from "@/lib/convex-error";
 import {
@@ -10,6 +9,7 @@ import { Loader2, Play, Settings2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { RunIterationControl } from "./run-iteration-control";
+import { rememberIterations, suiteRunIterations } from "./suite-run-iterations";
 import {
   Sheet,
   SheetContent,
@@ -152,30 +152,6 @@ export function selectReviewTargets(
   return filtered;
 }
 
-const REMEMBERED_ITERATIONS_PREFIX = "mcpjam:suite-run-iterations";
-
-function readRememberedIterations(suiteId: string): number | null {
-  try {
-    const value = Number(
-      localStorage.getItem(`${REMEMBERED_ITERATIONS_PREFIX}:${suiteId}`),
-    );
-    return Number.isInteger(value) && value >= 1 && value <= 10 ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function rememberIterations(suiteId: string, count: number) {
-  try {
-    localStorage.setItem(
-      `${REMEMBERED_ITERATIONS_PREFIX}:${suiteId}`,
-      String(count),
-    );
-  } catch {
-    // Storage can be blocked; the sheet then falls back to the suite default.
-  }
-}
-
 export function SuiteRunReview(props: SuiteRunReviewProps) {
   const projectId = props.projectId ?? props.suite.projectId;
   return projectId ? (
@@ -217,16 +193,10 @@ export function SuiteRunReviewContent({
   // Case overrides keep their count; suite setup starts at its own minimum.
   const [iterations, setIterations] = useState(() =>
     String(
-      Math.min(
-        10,
-        Math.max(
-          initialIterations ??
-            readRememberedIterations(suite._id) ??
-            suite.verdictPolicyDefaults?.repetitions ??
-            DEFAULTS.RUNS_PER_TEST,
-          isCaseRun ? 1 : (suite.minIterations ?? 1),
-        ),
-      ),
+      suiteRunIterations(suite, {
+        preferred: initialIterations,
+        floor: isCaseRun ? 1 : undefined,
+      }),
     ),
   );
   const [starting, setStarting] = useState(false);

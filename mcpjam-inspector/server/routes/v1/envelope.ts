@@ -303,7 +303,13 @@ export function mapErrorToV1(
     };
   }
   return {
-    code: mapInternalCode(routeError.code),
+    // Inspector-only, so mapped here like the two above: this device has not
+    // approved a stdio server's command. The credential is valid and
+    // a retry will not help until a person approves it in the UI.
+    code:
+      routeError.code === ErrorCode.STDIO_COMMAND_APPROVAL_REQUIRED
+        ? "FORBIDDEN"
+        : mapInternalCode(routeError.code),
     message: routeError.message,
     details: routeError.details,
     headers: routeError.headers,

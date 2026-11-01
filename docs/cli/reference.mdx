@@ -2732,16 +2732,17 @@ Send one message to a project's MCP servers and print the reply plus the raw too
 
 `--idempotency-key` is required and must be **stable for the intent**, not regenerated per attempt. It is what makes a retry safe: with the same key, a turn that already completed is replayed rather than re-run and re-billed. A fresh key per attempt deduplicates nothing.
 
-Omit `--session` to start a conversation; pass the `sessionId` the command returns to continue one. A session created by `cloud sessions browser open` is initially unconfigured and accepts its model configuration with its first send. Configuration is fixed after the first model turn, so `--model`, `--environment`, `--server`, `--system-prompt` and `--tool-mode` are refused alongside `--session` rather than silently repinning the session.
+Omit `--session` to start a conversation; pass the `sessionId` the command returns to continue one. A session created by `cloud sessions browser open` is initially unconfigured and accepts its model configuration with its first send. After the first model turn, the session is configured: `--model`, `--environment`, `--server`, `--no-servers`, `--system-prompt` and `--tool-mode` are then refused alongside `--session` rather than silently repinning it.
 
 | Flag | Description |
 |------|-------------|
 | `--message <text>` | The message to send, as the user (required) |
 | `--idempotency-key <key>` | Stable key for this turn's intent (required). Reuse it when retrying. |
 | `--session <sessionId>` | Continue this session instead of starting one |
-| `--model <modelId>` | Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Required to start a session. A bare id is rejected rather than guessed — unprefixed ids are indistinguishable from local Ollama models. |
+| `--model <modelId>` | Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Optional on the first send: defaults to the selected environment’s or client’s model and is then pinned. A supplied ID must be provider-prefixed. |
 | `--environment <environmentId>` | Target this environment's servers. Conflicts with `--server`. |
 | `--server <serverId...>` | Target these project servers. Conflicts with `--environment`. |
+| `--no-servers` | Start with no MCP servers. Conflicts with `--server` and `--environment`; requires a backend with chat-environment support. |
 | `--system-prompt <text>` | System prompt for the session |
 | `--tool-mode <mode>` | `read_only` (default) advertises only tools annotated `readOnlyHint: true`. `auto` advertises everything and **may cause real side effects**. |
 | `--max-steps <n>` | Maximum engine steps this turn (1–16) |

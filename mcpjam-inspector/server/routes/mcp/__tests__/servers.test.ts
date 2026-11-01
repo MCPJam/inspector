@@ -3,6 +3,13 @@ import { Hono } from "hono";
 import servers from "../servers.js";
 import { rpcLogBus } from "../../../services/rpc-log-bus";
 
+// This device has approved every stdio command: the per-device approval gate
+// has its own suite, local-server-resolver.stdio-approval.test.ts.
+vi.mock("../../../utils/stdio-command-approvals.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../utils/stdio-command-approvals.js")>()),
+  checkStdioLaunchApproval: async () => ({ approval: "approved" as const }),
+}));
+
 // Mock rpc-log-bus module
 vi.mock("../../../services/rpc-log-bus", () => ({
   rpcLogBus: {

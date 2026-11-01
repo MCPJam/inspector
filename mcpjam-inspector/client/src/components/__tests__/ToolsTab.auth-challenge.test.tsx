@@ -1,4 +1,7 @@
-import { markPendingDirectScopeStepUpReplayReady } from "@/lib/scope-step-up-replay";
+import {
+  markPendingDirectScopeStepUpReplayReady,
+  savePendingDirectScopeStepUpReplay,
+} from "@/lib/scope-step-up-replay";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ToolsTab } from "../ToolsTab";
@@ -469,13 +472,13 @@ describe("ToolsTab mid-session sign-in", () => {
   });
 
   it("keeps another pending call and explains why a scope upgrade cannot start", async () => {
-    const pending = JSON.stringify({
-      version: 1, phase: "awaiting_oauth",
+    // Saved from this page, so it is a live sign-in rather than an abandoned one.
+    savePendingDirectScopeStepUpReplay({
       operation: { resourceUrl: "https://other.example/mcp", method: "tools/call", operation: "read_other" },
       descriptor: { kind: "tool", surface: "tools", serverName: "other", toolName: "read_other", parameters: {} },
-      returnPath: "/", createdAt: Date.now(), expiresAt: Date.now() + 60000,
     });
-    sessionStorage.setItem("mcp-scope-step-up-replay-v1", pending);
+    const pending = sessionStorage.getItem("mcp-scope-step-up-replay-v1");
+    expect(pending).not.toBeNull();
     mockExecuteToolApi.mockResolvedValue({ error: "Needs permission", insufficientScope: { requiredScope: "orders:read" } });
     await runTool("list_orders");
     await waitFor(() => expect(document.body.textContent).toContain("Another call is waiting for sign-in."));
@@ -510,6 +513,58 @@ describe("ToolsTab mid-session sign-in", () => {
       expect(initiateOAuthMock).not.toHaveBeenCalled();
       expect(screen.queryByText("No selection")).not.toBeInTheDocument();
     } finally { restoreStorage(); }
+  });
+
+  it("clears a restored call that the server challenges again", async () => {
+    sessionStorage.setItem(
+      "mcp-scope-step-up-replay-v1",
+      JSON.stringify({
+        version: 1,
+        phase: "ready",
+        operation: {
+          resourceUrl: "https://orders.example/mcp",
+          method: "tools/call",
+          operation: "list_orders",
+        },
+        descriptor: {
+          kind: "tool",
+          surface: "tools",
+          serverName: "orders",
+          toolName: "list_orders",
+          parameters: {},
+        },
+        returnPath: "/",
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      }),
+    );
+    mockListTools.mockResolvedValue({
+      tools: [
+        {
+          name: "list_orders",
+          inputSchema: { type: "object", properties: {} },
+          annotations: { readOnlyHint: true },
+        },
+      ],
+    });
+    mockExecuteToolApi.mockResolvedValue({
+      error: "Sign in required",
+      status: 401,
+      authChallenge: signal(),
+    });
+    render(
+      <ToolsTab
+        serverConfig={serverConfig}
+        serverName="orders"
+        server={server}
+      />,
+    );
+
+    await screen.findByTestId("auth-challenge-card");
+    await waitFor(() =>
+      expect(sessionStorage.getItem("mcp-scope-step-up-replay-v1")).toBeNull(),
+    );
+    expect(mockExecuteToolApi).toHaveBeenCalledTimes(1);
   });
 
   it("replays an already requested write using the existing approval policy", async () => {

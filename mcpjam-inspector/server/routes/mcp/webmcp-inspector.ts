@@ -18,12 +18,7 @@ import type { Context } from "hono";
 import type { ComputerHostedBrowserSessionHandle } from "../../services/browserd/browser-session.js";
 import { z } from "zod";
 import "../../types/hono";
-import {
-  HOSTED_MODE,
-  hostedBrowserEnabled,
-  webmcpInspectorHostedEnabled,
-  webmcpInspectorReachable,
-} from "../../config";
+import { HOSTED_MODE, WEBMCP_INSPECTOR_ENABLED } from "../../config";
 import {
   hostedSessionId,
   startWebMcpSession,
@@ -103,9 +98,10 @@ import {
  * explicitly rather than by being unreachable: a hosted replica has no display
  * to open a window on and no `<webview>` to attach to, and saying so with a
  * code the UI can explain beats a 404 on a route the client can plainly see.
- * `WEBMCP_INSPECTOR_ENABLED` is the kill switch in both modes;
- * `webmcpInspectorHostedEnabled()` is the separate hosted-reachability gate;
- * client visibility follows the deployment's local/hosted Browser rollout.
+ * `WEBMCP_INSPECTOR_ENABLED` is the kill switch in both modes. Who may start
+ * a hosted session is the backend's `hosted-browser` gate, enforced when the
+ * desktop is reserved and the browser token minted; the hosted client shows
+ * the tab from the backend's answer to the same question.
  *
  * The browser opens as a real window on the machine running the inspector: the
  * developer drives their own page directly, and this API is the instrument
@@ -350,13 +346,13 @@ function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
   );
 }
 
-// Reachability — the two switches, composed — lives in `config.ts`, because the
-// chat routes ask the same question before advertising a page's tools and must
-// not import a router to do it. Off means 404, never 403: a capability that is
-// off should not be discoverable, and a 403 tells a prober the route is there.
+// Reachability is the kill switch in `config.ts`, which the chat routes also
+// read before advertising a page's tools. Off means 404, never 403: a
+// capability that is off should not be discoverable, and a 403 tells a prober
+// the route is there.
 
 webmcpInspector.use("*", async (c, next) => {
-  if (!webmcpInspectorReachable()) {
+  if (!WEBMCP_INSPECTOR_ENABLED) {
     return c.json(
       { error: "Not found", code: "webmcp-inspector-disabled" },
       404,
@@ -638,18 +634,8 @@ webmcpInspector.post("/sessions", async (c) => {
   }
   if (transport === "hosted") {
     // Every refusal below is a 4xx with a code the UI can explain, never a
-    // 500: each one is a thing the person can actually fix (turn the feature
-    // on, pick a project, sign in).
-    if (!hostedBrowserEnabled() && !webmcpInspectorHostedEnabled()) {
-      return c.json(
-        {
-          error:
-            "The hosted browser is not enabled on this server. Start it locally, or ask an operator to enable the hosted runtime.",
-          code: "hosted-browser-disabled",
-        },
-        503,
-      );
-    }
+    // 500: each one is a thing the person can actually fix (pick a project,
+    // sign in).
     if (!projectId) {
       return c.json(
         {

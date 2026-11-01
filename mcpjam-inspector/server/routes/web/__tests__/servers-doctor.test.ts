@@ -212,6 +212,64 @@ describe("web servers/doctor", () => {
     );
   });
 
+  it("does not let the request's token stand in for one the backend refused", async () => {
+    global.fetch = vi.fn(async (input) => {
+      if (String(input).endsWith("/web/authorize")) {
+        return new Response(
+          JSON.stringify({
+            authorized: true,
+            role: "member",
+            accessLevel: "project_member",
+            oauthUnavailableReason: "credential_origin_mismatch",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              transportType: "http",
+              url: "https://server.example.com/mcp",
+              headers: { "X-Test": "yes" },
+              useOAuth: true,
+            },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    }) as typeof fetch;
+
+    const app = new Hono();
+    app.use("*", async (c, next) => {
+      (c as any).mcpClientManager = {};
+      await next();
+    });
+    app.route("/api/web", webRoutes);
+
+    const response = await postJson(
+      app,
+      "/api/web/servers/doctor",
+      {
+        projectId: "project-1",
+        serverId: "srv-1",
+        serverName: "Example",
+        oauthAccessToken: "oauth-token",
+      },
+      "test-token",
+    );
+
+    const { status } = await expectJson<{ status: string }>(response);
+
+    expect(status).toBe(200);
+    expect(runServerDoctorMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          requestInit: { headers: { "X-Test": "yes" } },
+        }),
+      }),
+    );
+  });
+
   it("rejects direct guest doctor bodies", async () => {
     const app = createGuestDoctorApp();
 

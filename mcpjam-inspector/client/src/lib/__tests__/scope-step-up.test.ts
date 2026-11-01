@@ -22,6 +22,8 @@ import {
 import {
   peekPendingDirectScopeStepUpReplay,
   savePendingDirectScopeStepUpReplay,
+  setPendingDirectScopeStepUpReplayCredentialBinding,
+  setPendingDirectScopeStepUpReplayFlowDigest,
 } from "../scope-step-up-replay";
 import { McpRequestError } from "@/lib/apis/insufficient-scope";
 import type { AppState, ServerWithName } from "@/state/app-types";
@@ -206,6 +208,50 @@ describe("scope step-up lifecycle", () => {
         );
       },
     );
+
+    function redirectThroughFlow(digest: string) {
+      applyToolCallStepUp.mockImplementation(
+        async (
+          _server: unknown,
+          _stepUp: unknown,
+          options: { onAuthorizationFlow?: (flow: { digest: string }) => void },
+        ) => {
+          options.onAuthorizationFlow?.({ digest });
+          return { action: "reauthorize", reauthorization: { kind: "redirect" } };
+        },
+      );
+    }
+
+    it("is bound to the first sign-in that starts for it", async () => {
+      saveReplay();
+      redirectThroughFlow("flow-new");
+      driveScopeStepUpFromError(server, insufficientScopeError());
+      await vi.waitFor(() =>
+        expect(peekPendingDirectScopeStepUpReplay()?.flowDigest).toBe(
+          "flow-new",
+        ),
+      );
+    });
+
+    it("is not rebound by an unrelated sign-in once a flow claimed it", async () => {
+      saveReplay();
+      setPendingDirectScopeStepUpReplayFlowDigest("srv-1", "flow-own");
+      setPendingDirectScopeStepUpReplayCredentialBinding("srv-1", {
+        kind: "owned",
+        credentialId: "credential-own",
+      });
+      redirectThroughFlow("flow-other");
+      // A chat or agent step-up for the same server, with no saved call of its own.
+      driveScopeStepUpFromError(server, insufficientScopeError());
+      await vi.waitFor(() =>
+        expect(applyToolCallStepUp).toHaveBeenCalledTimes(1),
+      );
+      await Promise.resolve();
+      expect(peekPendingDirectScopeStepUpReplay()).toMatchObject({
+        flowDigest: "flow-own",
+        credentialBinding: { kind: "owned", credentialId: "credential-own" },
+      });
+    });
 
     it("is dropped when the step-up throws", async () => {
       saveReplay();

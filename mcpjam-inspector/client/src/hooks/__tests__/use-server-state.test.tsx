@@ -2,7 +2,7 @@ import { serverCheckQueue } from "@/lib/server-check-queue";
 import { useEffect } from "react";
 import { act, render, renderHook, waitFor } from "@testing-library/react";
 import { flushSync } from "react-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
 import type { AppState, AppAction, ServerWithName } from "@/state/app-types";
 import {
@@ -5924,6 +5924,83 @@ describe("useServerState XAA identity pair — shared save semantics across all 
     entry = findProjectServerEntry();
     expect(entry.xaaSubject).toBe("");
     expect(entry.xaaEmail).toBe("");
+  });
+});
+
+// A stdio server's command is approved from a MANUAL check: the
+// check queue flags a job automatic from a one-shot mark the auto-connect hook
+// sets, and a mark left behind (the hook marked a server `ensureServersReady`
+// found already connected) made the next explicit connect silent — Save &
+// Connect answered "Connection failed" instead of asking. User-initiated
+// paths assert manual intent themselves.
+describe("manual connect intent", () => {
+  let markManual: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    markManual = vi.spyOn(serverCheckQueue, "markManual");
+    reconnectServerMock.mockResolvedValue({
+      success: true,
+      initInfo: null,
+    } as any);
+  });
+
+  afterEach(() => {
+    markManual.mockRestore();
+  });
+
+  function disconnectedAppState() {
+    const appState = createAppState();
+    appState.projects.default.servers["demo-server"].connectionStatus =
+      "disconnected";
+    appState.servers["demo-server"].connectionStatus = "disconnected";
+    return appState;
+  }
+
+  it("ensureServersReady promotes a project server to a manual check", async () => {
+    const { result } = renderUseServerState(vi.fn(), disconnectedAppState());
+
+    await act(async () => {
+      await result.current.ensureServersReady(["demo-server"]);
+    });
+
+    expect(markManual).toHaveBeenCalledWith("project_default", "demo-server");
+  });
+
+  it("ensureServersReady leaves an automatic check automatic", async () => {
+    const { result } = renderUseServerState(vi.fn(), disconnectedAppState());
+
+    await act(async () => {
+      await result.current.ensureServersReady(["demo-server"], {
+        automatic: true,
+      });
+    });
+
+    expect(markManual).not.toHaveBeenCalled();
+  });
+
+  it("handleReconnect promotes the server to a manual check", async () => {
+    const { result } = renderUseServerState(vi.fn(), disconnectedAppState());
+
+    await act(async () => {
+      await result.current.handleReconnect("demo-server");
+    });
+
+    expect(markManual).toHaveBeenCalledWith("project_default", "demo-server");
+  });
+
+  it("handleConnect promotes the server to a manual check", async () => {
+    testConnectionMock.mockResolvedValueOnce({ success: true, initInfo: null });
+    const { result } = renderUseServerState(vi.fn());
+
+    await act(async () => {
+      await result.current.handleConnect({
+        name: "demo-server",
+        type: "http",
+        url: "https://example.com/mcp",
+      } as any);
+    });
+
+    expect(markManual).toHaveBeenCalledWith("project_default", "demo-server");
   });
 });
 

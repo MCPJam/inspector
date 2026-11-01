@@ -206,7 +206,10 @@ export function runOpenAIAuthChecks(
   const publishesPrm = prm !== undefined && prm.discoveredVia !== "not-found";
   const observedChallenge = context.lazyAuthProbe?.protectedCall?.challenge !== undefined;
   const authless = anonymousInitialize && !publishesPrm && !observedChallenge;
-  const lazyShaped = anonymousInitialize && publishesPrm;
+  // A protected call that asked for sign-in is lazy authentication too, even
+  // when its metadata could not be found: the defect is then the metadata,
+  // which the checks below name, not a missing connect-time 401.
+  const lazyShaped = anonymousInitialize && (publishesPrm || observedChallenge);
 
   if (!unauth || unauth.status === 0) {
     findings.push(
@@ -234,7 +237,9 @@ export function runOpenAIAuthChecks(
       notApplicable(
         CHALLENGE_PRESENT,
         stamp,
-        "the endpoint serves an unauthenticated initialize and publishes Protected Resource Metadata (anonymous access with OAuth available, the lazy-authentication shape); its sign-in challenge belongs to a protected tool call, graded by openai.auth.runtime-challenge",
+        publishesPrm
+          ? "the endpoint serves an unauthenticated initialize and publishes Protected Resource Metadata (anonymous access with OAuth available, the lazy-authentication shape); its sign-in challenge belongs to a protected tool call, graded by openai.auth.runtime-challenge"
+          : "the endpoint serves an unauthenticated initialize and asks for sign-in on a protected tool call (the lazy-authentication shape); that challenge is graded by openai.auth.runtime-challenge",
       ),
     );
   } else if (unauth.status === 401) {

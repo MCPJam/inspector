@@ -43,6 +43,14 @@ export class SwarmSetupError extends Error {
     this.name = "SwarmSetupError";
   }
 }
+/** The sentence stored on a target's attempts when its setup turn stopped them. */
+export function setupFailureMessage(setup: SetupRecord): string {
+  if (setup.reason === "timeout")
+    return "Setup ran out of time before this target's test data was ready, so its conversations didn't run. Run it again.";
+  if (setup.reason === "transport_failed")
+    return "Setup couldn't reach the MCP server, so this target's conversations didn't run. Check the server's connection, then run it again.";
+  return "Setup couldn't confirm the test data this target needs, so its conversations didn't run. Check the setup instructions, then run it again.";
+}
 export function swarmSetupChatSessionId(
   runId: string,
   target: PinnedHostExecutionSpec,

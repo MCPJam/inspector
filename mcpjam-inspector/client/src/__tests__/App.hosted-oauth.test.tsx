@@ -6047,6 +6047,37 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
+  it("leaves the conformance server choice to the page, so the last-selected server is restored", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/conformance");
+    localStorage.setItem("mcpjam.conformance.lastServer.v1", "beta");
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "mcpjam-conformance",
+    );
+    const connected = (name: string) => ({
+      name,
+      config: { transportType: "http", url: `https://${name}.example/mcp` },
+      connectionStatus: "connected",
+      enabled: true,
+      retryCount: 0,
+    });
+    const appState = createAppStateMock();
+    appState.appState.servers = {
+      alpha: connected("alpha"),
+      beta: connected("beta"),
+    };
+    appState.projectServers = appState.appState.servers;
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(appState.setSelectedServer).toHaveBeenCalledWith("beta");
+    });
+    expect(appState.setSelectedServer).not.toHaveBeenCalledWith("alpha");
+  });
+
   it("keeps host template deep links in place while auth is loading", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();

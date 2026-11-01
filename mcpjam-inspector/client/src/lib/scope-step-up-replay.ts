@@ -113,6 +113,17 @@ function write(value: PendingDirectScopeStepUpReplay): void {
     throw new Error("MCPJam couldn’t save this call for sign-in. Please try again.");
 }
 
+// Calls whose sign-in this page is driving. A call saved by an earlier page
+// (the tab reloaded, or came back with Back from the authorization server)
+// was abandoned: a completed sign-in returns to the callback, which settles
+// it. Such a call gives way to the next one instead of blocking it.
+const drivenByThisPage = new Set<string>();
+if (typeof window !== "undefined") {
+  window.addEventListener("pageshow", (event) => {
+    if ((event as PageTransitionEvent).persisted) drivenByThisPage.clear();
+  });
+}
+
 export class PendingDirectReplayConflictError extends Error {
   constructor() {
     super("Another call is waiting for sign-in. Finish that sign-in or wait for it to expire, then try again.");
@@ -129,7 +140,13 @@ export function savePendingDirectScopeStepUpReplay(input: {
   const now = Date.now();
   const previous = input.previous;
   const waiting = readStored();
-  if (!previous && waiting && waiting.expiresAt > now) {
+  if (
+    !previous &&
+    waiting &&
+    waiting.expiresAt > now &&
+    (waiting.phase !== "awaiting_oauth" ||
+      (waiting.callId !== undefined && drivenByThisPage.has(waiting.callId)))
+  ) {
     throw new PendingDirectReplayConflictError();
   }
   if (previous) {
@@ -160,6 +177,7 @@ export function savePendingDirectScopeStepUpReplay(input: {
     ...(input.reason ? { reason: input.reason } : {}),
   };
   write(value);
+  if (value.callId) drivenByThisPage.add(value.callId);
   return value;
 }
 
@@ -179,6 +197,10 @@ export function setPendingDirectScopeStepUpReplayFlowDigest(
   ) {
     return;
   }
+  // A step-up that did not save this call (a chat or agent call) may bind it
+  // only if no flow has claimed it yet. A call bound to an earlier, abandoned
+  // sign-in must not be replayed by an unrelated one.
+  if (!expected && pending.flowDigest) return;
   write({ ...pending, flowDigest });
 }
 
@@ -195,6 +217,7 @@ export function setPendingDirectScopeStepUpReplayCredentialBinding(
   if (expected && (!pending || !sameGeneration(pending, expected)))
     throw new Error("The pending call changed. Run it again.");
   if (!pending || pending.descriptor.serverName !== serverName) return;
+  if (!expected && pending.credentialBinding) return;
   write({ ...pending, credentialBinding: binding });
 }
 
@@ -248,13 +271,10 @@ export function markPendingDirectScopeStepUpReplayReady(
     pending.descriptor.serverName !== serverName
   )
     return;
-  if (
-    !pending.flowDigest ||
-    !callbackDigest ||
-    pending.flowDigest !== callbackDigest
-  ) {
-    return;
-  }
+  // A call bound to its flow is marked ready only by that flow's callback.
+  // A surface that saved the call without binding a flow keeps the
+  // one-pending-call rule: the next successful sign-in for the server.
+  if (pending.flowDigest && pending.flowDigest !== callbackDigest) return;
   write({ ...pending, phase: "ready" });
 }
 
