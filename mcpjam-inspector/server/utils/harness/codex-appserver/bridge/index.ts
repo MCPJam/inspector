@@ -46,7 +46,7 @@ import {
   createNativeMcpRefresher,
   type NativeMcpRuntime,
 } from "./native-mcp-refresh.js";
-import { waitForNativeMcpServers } from "./native-mcp-ready.js";
+import { waitForMcpStartup, waitForNativeMcpServers } from "./native-mcp-ready.js";
 import { createApprovalController } from "./approval-controller.js";
 import { foreignMcpServerOverrides } from "./mcp-isolation.js";
 import { setupWindowsSandbox } from "./windows-sandbox-setup.js";
@@ -546,19 +546,17 @@ async function main(): Promise<void> {
           );
       threadId = thread.thread?.id ?? resumeId;
       const nativeNames = Object.keys(start.nativeMcpServers ?? {});
-      if (nativeNames.length) {
-        if (!threadId) throw new Error("Native MCP startup requires a thread");
-        try {
-          await waitForNativeMcpServers({
-            runtime,
-            threadId,
-            serverNames: nativeNames,
-            signal: turn.abortSignal,
-          });
-        } catch (error) {
-          await retireRuntime(runtime);
-          throw error;
-        }
+      if (!threadId) throw new Error("MCP startup requires a thread");
+      try {
+        await waitForMcpStartup({
+          runtime,
+          threadId,
+          serverNames: nativeNames,
+          signal: turn.abortSignal,
+        });
+      } catch (error) {
+        await retireRuntime(runtime);
+        throw error;
       }
       if (threadId) turn.emit({ type: "bridge-thread", threadId });
       turn.emit({

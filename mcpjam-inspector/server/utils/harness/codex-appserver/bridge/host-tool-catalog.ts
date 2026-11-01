@@ -25,6 +25,7 @@ export type HostToolWire = {
 
 export type McpToolDescriptor = {
   name: string;
+  title?: string;
   description?: string;
   inputSchema: Record<string, unknown>;
 };
@@ -104,10 +105,19 @@ export function buildHostToolCatalog(
   const { aliasToCanonical, canonicalToAlias } = buildHostToolAliases(
     tools.map((tool) => tool.name),
   );
-  const descriptors = tools.map((tool) => ({
-    name: canonicalToAlias.get(tool.name) ?? tool.name,
-    ...(tool.description ? { description: tool.description } : {}),
-    inputSchema: asObjectSchema(tool.inputSchema),
-  }));
+  const descriptors = tools.map((tool) => {
+    // Keep the server's bare tool name searchable after adding our routing
+    // prefix. Codex indexes MCP titles, but treats underscored aliases as a
+    // single search token.
+    const title = tool.name.startsWith("mcp__")
+      ? tool.name.split("__").slice(2).join("__")
+      : undefined;
+    return {
+      name: canonicalToAlias.get(tool.name) ?? tool.name,
+      ...(title ? { title } : {}),
+      ...(tool.description ? { description: tool.description } : {}),
+      inputSchema: asObjectSchema(tool.inputSchema),
+    };
+  });
   return { descriptors, aliasToCanonical };
 }

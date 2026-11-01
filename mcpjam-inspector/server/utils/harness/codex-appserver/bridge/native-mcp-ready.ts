@@ -1,6 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod/v4";
 import type { NativeMcpRuntime } from "./native-mcp-refresh.js";
+import { RELAY_MCP_SERVER_NAME } from "../shared/tool-names.js";
 
 const inventory = z.object({
   data: z.array(
@@ -12,6 +13,16 @@ const inventory = z.object({
     }),
   ),
 });
+
+/** Codex also discovers the retained host-tool relay asynchronously. */
+export async function waitForMcpStartup(
+  args: Parameters<typeof waitForNativeMcpServers>[0] & { threadId: string },
+) {
+  await waitForNativeMcpServers({
+    ...args,
+    serverNames: [RELAY_MCP_SERVER_NAME, ...args.serverNames],
+  });
+}
 
 /** Do not start the model against an MCP catalog that is still initializing. */
 export async function waitForNativeMcpServers(args: {
