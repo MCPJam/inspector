@@ -305,6 +305,23 @@ describe("tasks-ttl-integer-shape", () => {
     );
   });
 
+  it("does not treat an ordinary tool result that carries a taskId as a task", async () => {
+    const fixture = await serve(quickPhases(), {
+      tools: {
+        [TASK_TOOL_NAME]: {
+          mode: "sync",
+          result: {
+            content: [{ type: "text", text: "plain" }],
+            taskId: "not-a-task",
+            ttlMs: 1500.5,
+          },
+        },
+      },
+    });
+    const entry = check(await run(fixture, [ID]), ID);
+    expect(entry.status).toBe("skipped");
+  });
+
   it("fails a whole number beyond the schema's safe-integer range", async () => {
     const phases = quickPhases();
     phases[1] = { ...phases[1]!, ttlMs: Number.MAX_SAFE_INTEGER + 1 };

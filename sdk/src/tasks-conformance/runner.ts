@@ -1121,6 +1121,20 @@ export function findRawCreationTask(
   return undefined;
 }
 
+/**
+ * Whether a raw `tools/call` result is shaped like a task (a known task
+ * `status` and no `content`) rather than an ordinary `CallToolResult` that
+ * happens to carry a `taskId` — extra fields are allowed on a tool result, so
+ * the id alone is not evidence that a task was created.
+ */
+function isRawTaskShaped(result: Record<string, unknown>): boolean {
+  return (
+    typeof result.status === "string" &&
+    TASK_STATUSES.has(result.status) &&
+    !Array.isArray(result.content)
+  );
+}
+
 /** JSON-RPC ids of the outbound requests for `method`, as strings. */
 export function sentRequestIds(
   sent: unknown[],
@@ -1918,7 +1932,20 @@ export class MCPTasksConformanceTest {
 
           if (selected.has("tasks-ttl-integer-shape")) {
             const stepStartedAt = Date.now();
-            const integerTaskId = createdTaskId ?? rawCreation?.taskId;
+            let integerTaskId = createdTaskId;
+            if (!integerTaskId && rawCreation) {
+              // The client could not decode the creation as a task, but the raw
+              // frame names one. Use it only when the frame is task-shaped, not
+              // an ordinary tool result that carries a `taskId` field.
+              const raw = findRawCreationTask(
+                received,
+                rawCreation.taskId,
+                sentRequestIds(sent, "tools/call")
+              );
+              if (raw && isRawTaskShaped(raw)) {
+                integerTaskId = rawCreation.taskId;
+              }
+            }
             if (wire !== "extension") {
               // "integer milliseconds" is the EXTENSION's `Task` interface
               // talking. The legacy wire's `ttl`/`pollInterval` carry no such
@@ -1954,7 +1981,9 @@ export class MCPTasksConformanceTest {
                 sentRequestIds(sent, "tasks/get")
               );
               const payloads: Array<{ source: string; task: unknown }> = [
-                ...(creationPayload
+                // Only a task-shaped creation is a `Task`; an ordinary tool
+                // result may carry a `taskId` and other extra fields.
+                ...(creationPayload && isRawTaskShaped(creationPayload)
                   ? [{ source: "tools/call", task: creationPayload }]
                   : []),
                 ...rawStates.map((state) => ({
