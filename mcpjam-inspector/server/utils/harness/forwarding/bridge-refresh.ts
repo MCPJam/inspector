@@ -51,7 +51,7 @@ export async function refreshForwardingBridge(args: {
         finish(
           new Error("The runtime did not confirm the forwarding refresh."),
         ),
-      args.timeoutMs ?? 15_000,
+      args.timeoutMs ?? 45_000,
     );
     args.signal?.addEventListener("abort", abort, { once: true });
     socket.once("error", () =>
