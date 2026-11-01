@@ -2596,7 +2596,7 @@ export function useChatSession(
   );
   const attemptedFailureCancellationRef = useRef(new Set<string>());
   const presentChatAuthRequiredEvent = useCallback(
-    (event: AuthRequiredEvent) => {
+    (event: AuthRequiredEvent, presentation?: { restoring?: boolean }) => {
       traceChatAuthRecovery("card", {
         continuationId: event.continuationId,
         toolCallId: event.toolCallId,
@@ -2611,7 +2611,9 @@ export function useChatSession(
         projectId: hostedProjectId,
       });
       if (!server) {
-
+        // A restored card retries every second until its server loads or the
+        // call expires, so a server not loaded yet is not a failure.
+        if (presentation?.restoring) return;
         recordChatAuthRecoveryFailure("server_missing", {
           continuationId: event.continuationId,
           toolCallId: event.toolCallId,
@@ -4849,7 +4851,7 @@ export function useChatSession(
           isPendingChatAuthRequired(pending) &&
           !presentedSignInCardsRef.current.has(pending.event.toolCallId)
         ) {
-          presentChatAuthRequiredEvent(pending.event);
+          presentChatAuthRequiredEvent(pending.event, { restoring: true });
         }
       }
     };

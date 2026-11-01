@@ -600,6 +600,9 @@ describe("useChatSession mid-session sign-in", () => {
       ).toHaveLength(1),
     );
     expect(mockState.sendMessage).not.toHaveBeenCalled();
+    // A server that loads after the history is not a failed recovery.
+    const notices = renderHook(useChatAuthRecoveryFailures);
+    expect(notices.result.current).toEqual([]);
   });
 
   it("expires abandoned sign-in with one cancellation and a durable notice", async () => {
