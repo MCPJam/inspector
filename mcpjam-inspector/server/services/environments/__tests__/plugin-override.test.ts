@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyPluginVersionOverride } from "../plugin-override.js";
+import { applyPluginVersionOverride, withoutGuestPlugins } from "../plugin-override.js";
 import type { PluginRuntimeAttribution } from "../plugin-attribution.js";
 import type { ResolvedEnvironmentRuntime } from "../runtime.js";
 
@@ -67,6 +67,28 @@ function attribution(): PluginRuntimeAttribution {
 }
 
 describe("applyPluginVersionOverride", () => {
+  it("removes all guest plugin contributions without attribution", () => {
+    const input = spec();
+    input.skills!.push({
+      ...skill("shared", ["environment", "plugin"]),
+      provenance: { channels: ["environment", "plugin"], modelRef: "plugin/shared" },
+    });
+    const result = withoutGuestPlugins(input);
+    expect(result.pluginVersions).toEqual([]);
+    expect(result.servers.effectiveServerIds).toEqual(["srv_host"]);
+    expect(result.servers.connectable?.map((s) => s.serverId)).toEqual([
+      "srv_host",
+    ]);
+    expect(result.skills?.map((s) => [s.skillId, s.channels])).toEqual([
+      ["skl_env", ["environment"]],
+      ["shared", ["environment"]],
+    ]);
+    expect(input.pluginVersions).toHaveLength(2);
+    expect(result.skills?.find((s) => s.skillId === "shared")?.provenance).toEqual({
+      channels: ["environment"], modelRef: "shared",
+    });
+  });
+
   it("drops only the deselected version's servers, skills and pin", () => {
     const result = applyPluginVersionOverride({
       spec: spec(),

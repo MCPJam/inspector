@@ -67,7 +67,7 @@ import {
   harnessToolTarget,
   isHarnessActivityToolName,
 } from "../harness-tool-steps";
-import { useHostContextStore } from "@/stores/client-context-store";
+import { useEffectiveHostContext } from "@/contexts/saved-client-context";
 import { useOpenBrowserOnBrowsing } from "@/hooks/useOpenBrowserOnBrowsing";
 import { extractHostDisplayModes } from "@/lib/client-config";
 import { useScenarioHostTheme } from "@/contexts/scenario-client-style-context";
@@ -329,7 +329,7 @@ export function ToolPart({
   const widgetDebugInfo = recordedWidgetDiagnostics
     ? undefined
     : storedWidgetDebugInfo;
-  const hostContext = useHostContextStore((s) => s.draftHostContext);
+  const hostContext = useEffectiveHostContext();
   const hostAvailableDisplayModes = useMemo(
     () => extractHostDisplayModes(hostContext),
     [hostContext],

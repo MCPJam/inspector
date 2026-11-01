@@ -124,12 +124,14 @@ export const EMPTY_STEP_SENTINEL =
  * `outputTokens` is the step's own usage, quoted so a reader can compare it
  * with the limit without opening the trace.
  */
-export function describeEmptyStepFailure(options: {
+export type EmptyStepFacts = {
   finishReason?: string;
   toolInputErrors?: readonly string[];
   unfinishedToolNames?: readonly string[];
   outputTokens?: number;
-}): string {
+};
+
+export function describeEmptyStepFailure(options: EmptyStepFacts): string {
   const finishReason = options.finishReason;
   const outputTokenCount =
     typeof options.outputTokens === "number" &&
@@ -174,6 +176,47 @@ export function describeEmptyStepFailure(options: {
   return `${EMPTY_STEP_SENTINEL} — ${shape} (finishReason: ${
     finishReason ?? "none reported"
   }). ${cause}`;
+}
+
+/**
+ * Finish reasons that already name a model- or provider-side cause for an
+ * empty step: the output-token limit (`length`, which also covers a tool call
+ * cut off mid-write), a safety filter, or the provider rejecting its own tool
+ * call (`error`). See {@link describeEmptyStepFailure}.
+ */
+const EXPLAINED_EMPTY_FINISH_REASONS: ReadonlySet<string> = new Set([
+  "length",
+  "content-filter",
+  "error",
+]);
+
+/**
+ * Whether an empty hosted step is MCPJam's to own, judged by the provider's
+ * own usage report.
+ *
+ * - A named cause (a rejected tool input, or a finish reason in
+ *   {@link EXPLAINED_EMPTY_FINISH_REASONS}): the model or provider chose where
+ *   the step went, whatever the usage says. Not ours.
+ * - `outputTokens === 0`: the provider says it generated nothing. There was no
+ *   content for our rail to lose, so the empty reply is upstream.
+ * - `outputTokens > 0` and nothing explains it: the provider generated content
+ *   that never reached the step. That is the shape a bug in our stream takes.
+ * - `outputTokens` absent and nothing explains it: no evidence either way.
+ *   Stays ours, as every empty step was before this verdict existed.
+ */
+export function isMcpjamOwnedEmptyStep(facts: EmptyStepFacts): boolean {
+  if ((facts.toolInputErrors?.length ?? 0) > 0) return false;
+  if (
+    facts.finishReason !== undefined &&
+    EXPLAINED_EMPTY_FINISH_REASONS.has(facts.finishReason)
+  ) {
+    return false;
+  }
+  const outputTokens = facts.outputTokens;
+  if (typeof outputTokens !== "number" || !Number.isFinite(outputTokens)) {
+    return true;
+  }
+  return outputTokens > 0;
 }
 
 /**

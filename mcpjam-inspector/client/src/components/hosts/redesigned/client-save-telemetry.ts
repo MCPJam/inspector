@@ -283,6 +283,7 @@ const CLIENT_SETTING_DETECTORS = {
   computer: one("computer", (config) => config.computer),
   browserProfileId: one("browser_profile", (config) => config.browserProfileId),
   harness: one("harness", (config) => config.harness),
+  agentLoop: one("harness", (config) => config.agentLoop),
   connectionDefaults: (saved, draft) => [
     ...(equal(
       saved.connectionDefaults.headers,

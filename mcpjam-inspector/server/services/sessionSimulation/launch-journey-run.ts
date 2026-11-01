@@ -43,7 +43,7 @@ import { resolveTargetPluginServerIds } from "../journeys/plugin-servers.js";
 import { createConvexClient } from "../evals/route-helpers.js";
 import { buildHostConnectionPins } from "../host-connection-pins.js";
 import { logger } from "../../utils/logger.js";
-import { rolloutEnabled } from "../../utils/computers/browser-rollout.js";
+import { isHostedBrowserAvailableFor } from "../../utils/computers/hosted-browser-availability.js";
 import type { PinnedHostExecutionSpec } from "../swarm-agent.js";
 import {
   parseFundingChangedDetails,
@@ -54,21 +54,24 @@ import {
 const BROWSER_TOOL_ID = "browser";
 
 /**
- * Drop `browser` from every pinned host unless the launching member is in the
- * `hosted-browser-enabled` rollout — the same server-side check chat makes
- * before advertising it. The flag used to be read only by the client, so a
- * member outside the rollout whose client still had `browser` saved got a
- * swarm that either provisioned a desktop for it or told them, on every
- * session, why a tool they cannot see was not advertised.
+ * Drop `browser` from every pinned host unless the launching member may use
+ * the hosted browser's tools in this project — the backend's answer, which is
+ * the `hosted-browser` flag evaluated by email plus deployment readiness, the
+ * same decision the desktop reservation behind it makes. A member outside it
+ * whose client still had `browser` saved would otherwise get a swarm that
+ * either provisioned a desktop for it or told them, on every session, why a
+ * tool they cannot see was not advertised.
+ *
+ * `isAvailable` must not reject; it is asked only when a host wants `browser`.
  */
 export async function withoutBrowserOutsideRollout(
   hosts: PinnedHostExecutionSpec[],
-  workosUserId: string | undefined,
+  isAvailable: () => Promise<boolean>,
 ): Promise<PinnedHostExecutionSpec[]> {
   const wantsBrowser = (host: PinnedHostExecutionSpec) =>
     (host.builtInToolIds ?? []).includes(BROWSER_TOOL_ID);
   if (!hosts.some(wantsBrowser)) return hosts;
-  if (workosUserId && (await rolloutEnabled(false, workosUserId))) return hosts;
+  if (await isAvailable()) return hosts;
   return hosts.map((host) =>
     wantsBrowser(host)
       ? {
@@ -518,11 +521,24 @@ export async function launchJourneyRun(
     createConvexClient(await deps.getRunBearer());
 
   setImmediate(async () => {
-    // Never rejects: the rollout read treats every failure as "not enrolled".
-    const runHosts = await withoutBrowserOutsideRollout(
-      hosts,
-      deps.callerContext.workosUserId,
-    );
+    // Never rejects: every failure, the bearer included, reads as "no browser".
+    const runHosts = await withoutBrowserOutsideRollout(hosts, async () => {
+      let bearer: string;
+      try {
+        bearer = await deps.getRunBearer();
+      } catch (error) {
+        logger.warn(
+          "[journeys] no run bearer for the hosted-browser check; launching without browser",
+          { error: error instanceof Error ? error.message : String(error) },
+        );
+        return false;
+      }
+      return isHostedBrowserAvailableFor({
+        bearer,
+        projectId,
+        surface: "tools",
+      });
+    });
     startJourneyRun({
       runId,
       projectId,
@@ -671,10 +687,7 @@ export async function launchJourneyRun(
         };
       },
     }).catch((err) => {
-      logger.error("[swarm-runs] startJourneyRun failed", {
-        runId,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      logger.error("[swarm-runs] startJourneyRun failed", err, { runId });
     });
   });
 

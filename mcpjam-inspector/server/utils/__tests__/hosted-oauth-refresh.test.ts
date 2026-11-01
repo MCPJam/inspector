@@ -448,6 +448,54 @@ describe("buildHostedOAuthUnauthorizedHandler", () => {
       },
     });
   });
+  it("reads the backend's refreshTokenUnavailable flag on a refresh_token_invalid reply", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              code: "refresh_token_invalid",
+              refreshTokenUnavailable: true,
+            }),
+            { status: 401 },
+          ),
+      ),
+    );
+    const original = Object.assign(new Error("HTTP 401"), {
+      statusCode: 401,
+      authChallenge: {
+        source: "http_401",
+        facets: {
+          challengeHeader: "bearer",
+          hasResourceMetadata: false,
+          hasScope: false,
+          hasErrorParams: false,
+        },
+      },
+    });
+    const handler = buildHostedOAuthUnauthorizedHandler({
+      bearerToken: "token",
+      projectId: "p1",
+      serverId: "s1",
+    });
+    await expect(handler({ serverId: "s1", error: original })).rejects.toBe(
+      original,
+    );
+    await expect(
+      handler({
+        serverId: "s1",
+        error: Object.assign(new Error("HTTP 401"), { statusCode: 401 }),
+      }),
+    ).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+      details: {
+        oauthRequired: true,
+        refreshTokenInvalid: false,
+        refreshTokenUnavailable: true,
+      },
+    });
+  });
   it("returns a handler that POSTs and resolves to {accessToken}", async () => {
     const fetchMock = vi.fn(async (_input: any, init?: any) => {
       expect(JSON.parse(init?.body)).toEqual({

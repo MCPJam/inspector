@@ -142,6 +142,7 @@ export async function renderWidgetForRequest(
 
   const harness = new McpAppBrowserHarness({
     callTool: (s, n, a) => mcpClientManager.executeTool(s, n, a),
+    readResource: (s, p) => mcpClientManager.readResource(s, p),
     ...(params.viewport ? { viewport: params.viewport } : {}),
   });
 

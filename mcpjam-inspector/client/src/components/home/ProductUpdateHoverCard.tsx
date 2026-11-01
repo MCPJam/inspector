@@ -8,7 +8,7 @@ import {
 import { parseVideoEmbed } from "./productUpdateVideo";
 import type { ProductUpdateEntry } from "./productUpdateEntry";
 
-// Mirrors LearnMoreHoverCard's preload-as-blob trick so the preview MP4
+// Mirrors SidebarItemHoverCard's preload-as-blob trick so the preview MP4
 // starts paying download cost on first hover rather than at every popover
 // open. Kept module-local — different feeds shouldn't share a cache key
 // across components.

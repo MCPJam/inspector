@@ -182,6 +182,30 @@ function profileHeadersToRecord(
     : undefined;
 }
 
+/**
+ * The OAuth protocol version a fresh flow against `server` should use: the
+ * server's OAuth setting when it names one, else (on "auto") its wire pin or
+ * the version it negotiated at connect. Shared with the conformance suite so
+ * its "Auto" grades the same version a reconnect would use.
+ */
+export function resolveServerOAuthProtocolSelection(server: ServerWithName) {
+  const oauthConfig = readStoredOAuthConfig(server.name);
+  const configProtocolVersion =
+    "mcpProtocolVersion" in server.config &&
+    typeof server.config.mcpProtocolVersion === "string"
+      ? server.config.mcpProtocolVersion
+      : undefined;
+  return resolveOAuthProtocolSelection({
+    mode:
+      server.oauthProtocolMode ??
+      server.oauthFlowProfile?.protocolVersion ??
+      oauthConfig.protocolMode,
+    legacyProtocolVersion: oauthConfig.protocolVersion,
+    wireProtocolVersion: configProtocolVersion,
+    negotiatedProtocolVersion: server.initializationInfo?.protocolVersion,
+  });
+}
+
 function buildReconnectOAuthOptions(
   server: ServerWithName,
   serverUrl: string,
@@ -203,20 +227,7 @@ function buildReconnectOAuthOptions(
   const oauthConfig = readStoredOAuthConfig(server.name);
   const storedClientInfo = readStoredClientInfo(server.name);
   const profile = server.oauthFlowProfile;
-  const configProtocolVersion =
-    "mcpProtocolVersion" in server.config &&
-    typeof server.config.mcpProtocolVersion === "string"
-      ? server.config.mcpProtocolVersion
-      : undefined;
-  const protocolSelection = resolveOAuthProtocolSelection({
-    mode:
-      server.oauthProtocolMode ??
-      profile?.protocolVersion ??
-      oauthConfig.protocolMode,
-    legacyProtocolVersion: oauthConfig.protocolVersion,
-    wireProtocolVersion: configProtocolVersion,
-    negotiatedProtocolVersion: server.initializationInfo?.protocolVersion,
-  });
+  const protocolSelection = resolveServerOAuthProtocolSelection(server);
   // The CANONICAL per-server registrationMode wins — it can be "auto" (resolve
   // from current server metadata at connect time), while the legacy
   // profile/localStorage values are rollback-compat concretes. Preferring a

@@ -627,6 +627,7 @@ function JourneyGradingEditor({
     modelSelectionsSupported,
     requireOrgKeys,
     onManageOrgProviders,
+    onAddProvider,
   } = useAvailableModels({ projectId });
   const [open, setOpen] = useState(false);
   const [rubric, setRubric] = useState<JourneyCriterion[]>([]);
@@ -717,6 +718,7 @@ function JourneyGradingEditor({
             }`}
             requireOrgKeys={requireOrgKeys}
             onManageOrgProviders={onManageOrgProviders}
+            onAddProvider={onAddProvider}
             bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
           />
           <div className="mt-3 border-t border-border/40 pt-3">

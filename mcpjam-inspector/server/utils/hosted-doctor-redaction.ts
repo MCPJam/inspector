@@ -280,11 +280,77 @@ const OAUTH_CHALLENGE_SUMMARY =
   /^(?:Server requires OAuth before it can be connected\.|Unauthenticated probe requires OAuth; continuing with provided credentials\.)(?: The challenge arrived on HTTP \d{3}; MCP requires 401 Unauthorized here, so clients that decide to authenticate from the status code alone will not start OAuth against this server\.)?$/;
 
 /**
- * The skills check's own findings. The skill URIs and reasons after the colon
- * come from the listing, so a hosted response keeps only the counts.
+ * The skills check's spec-conformance clauses, as the SDK composes them from
+ * constants. A clause in the check's findings passes only if it is one of
+ * these, so a sentence the server could have shaped never does.
  */
-const SKILLS_FINDINGS =
-  /^(\d{1,6}) (of \d{1,6} sampled skills failed verification|listed (?:entry|entries) rejected as malformed): /;
+const SKILLS_CONFORMANCE_CLAUSE =
+  /^(?:the extension is declared without the `resources` capability it depends on|`skills\/(?:list|get)` omitted required (?:`ttlMs` and `cacheScope`|`ttlMs`|`cacheScope`)|listed skills omitted required `size` on their files)$/;
+
+const MAX_SKILLS_FINDING_COUNT = 1_000_000;
+
+function skillsFindingCount(value: unknown): number | undefined {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= MAX_SKILLS_FINDING_COUNT
+    ? value
+    : undefined;
+}
+
+/**
+ * The skills check's failure detail, built from the SDK's structured
+ * findings rather than from its sentence. The sentence names skill URIs and
+ * refusal reasons the server chose, and a rejected entry's URI is arbitrary
+ * text, so nothing in it is read here: the conformance clauses are kept when
+ * they match the fixed phrases, and the other findings become counts. A
+ * check without findings is a failure of the run itself, whose detail goes
+ * through {@link allowedDoctorText} like any other step's.
+ */
+function projectSkillsCheckDetail(check: Record<string, unknown>): string {
+  const findings = check.findings;
+  if (!isPlainRecord(findings)) {
+    return (
+      (typeof check.detail === "string"
+        ? allowedDoctorText(check.detail)
+        : undefined) ?? stepFailureText("skills")
+    );
+  }
+  const sentences: string[] = [];
+  const conformance = Array.isArray(findings.conformance)
+    ? findings.conformance.filter(
+        (clause): clause is string =>
+          typeof clause === "string" && SKILLS_CONFORMANCE_CLAUSE.test(clause),
+      )
+    : [];
+  if (conformance.length > 0) {
+    sentences.push(
+      `not conformant to the stable Skills extension spec: ${conformance.join("; ")}.`,
+    );
+  }
+  let omitted = false;
+  if (isPlainRecord(findings.verification)) {
+    const failed = skillsFindingCount(findings.verification.failed);
+    const sampled = skillsFindingCount(findings.verification.sampled);
+    if (failed !== undefined && sampled !== undefined) {
+      sentences.push(
+        `${failed} of ${sampled} sampled skills failed verification.`,
+      );
+      omitted = true;
+    }
+  }
+  const rejected = skillsFindingCount(findings.rejected);
+  if (rejected !== undefined && rejected > 0) {
+    sentences.push(
+      `${rejected} listed ${rejected === 1 ? "entry" : "entries"} rejected as malformed.`,
+    );
+    omitted = true;
+  }
+  if (sentences.length === 0) return stepFailureText("skills");
+  return omitted
+    ? `${sentences.join(" ")} ${OMITTED_TEXT_NOTE}`
+    : sentences.join(" ");
+}
 
 type TextTemplate = (text: string) => string | undefined;
 
@@ -316,10 +382,6 @@ const DOCTOR_TEXT_TEMPLATES: readonly TextTemplate[] = [
   (text) => (OAUTH_CHALLENGE_SUMMARY.test(text) ? text : undefined),
   (text) => (OAUTH_GUARD_REFUSAL.test(text) ? text : undefined),
   (text) => (/^Request timed out after \d+ms$/.test(text) ? text : undefined),
-  (text) => {
-    const match = SKILLS_FINDINGS.exec(text);
-    return match ? `${match[1]} ${match[2]}. ${OMITTED_TEXT_NOTE}` : undefined;
-  },
   (text) => {
     const match = /^HTTP probe failed: (.*)$/s.exec(text);
     const inner = match ? allowedDoctorText(match[1]) : undefined;
@@ -543,7 +605,10 @@ function projectChecks(
     const status = CHECK_STATUSES.has(check.status) ? check.status : "error";
     projected[step] = {
       status,
-      detail: projectStepDetail(status === "error", check.detail, step),
+      detail:
+        step === "skills" && status === "error"
+          ? projectSkillsCheckDetail(check)
+          : projectStepDetail(status === "error", check.detail, step),
     };
   }
   return projected;

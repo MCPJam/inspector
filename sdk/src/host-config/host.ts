@@ -221,6 +221,7 @@ export function canonicalToPublic(c: CanonicalHostConfigV2): HostJson {
   if (c.harness !== undefined) {
     out.harness = c.harness;
   }
+  if (c.agentLoop !== undefined) out.agentLoop = c.agentLoop;
   if (c.hostCapabilitiesOverride !== undefined) {
     out.hostCapabilitiesOverride = c.hostCapabilitiesOverride;
   }
@@ -320,6 +321,8 @@ export class Host {
    * harness, which executes inside the host's attached `computer`.
    */
   harness?: Harness;
+  /** Run a vendor harness while preserving this host's MCPJam client. */
+  agentLoop?: Harness;
 
   /** Required servers. Mutable — `requireServer`/`removeRequiredServer` are sugar. */
   servers: ServerId[];
@@ -413,6 +416,7 @@ export class Host {
     this.mcpToolResultImageRendering = cfg.mcpToolResultImageRendering;
     this.computer = cfg.computer;
     this.harness = cfg.harness;
+    this.agentLoop = cfg.agentLoop;
     this.servers = cfg.servers ? dedup(cfg.servers) : [];
     this.optionalServers = cfg.optionalServers
       ? dedup(cfg.optionalServers)
@@ -594,6 +598,7 @@ export class Host {
       mcpToolResultImageRendering: this.mcpToolResultImageRendering,
       computer: this.computer,
       harness: this.harness,
+      agentLoop: this.agentLoop,
       servers: this.servers,
       optionalServers: this.optionalServers,
       skillSelection: this.skillSelection,
@@ -639,6 +644,7 @@ export class Host {
     if (snap.harness !== undefined) {
       input.harness = snap.harness;
     }
+    if (snap.agentLoop !== undefined) input.agentLoop = snap.agentLoop;
     // `{ mode: "all-visible" }` is forwarded — the canonicalizer collapses it
     // to absent (one identity per behavior); explicit — including
     // explicit-empty — survives.

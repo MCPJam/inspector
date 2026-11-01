@@ -36,7 +36,7 @@ import {
 } from "@/contexts/scenario-client-style-context";
 import { useScenarioHostCapabilitiesOverride } from "@/contexts/scenario-client-capabilities-override-context";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
-import { useHostContextStore } from "@/stores/client-context-store";
+import { useSavedClient, useEffectiveHostContext } from "@/contexts/saved-client-context";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
@@ -59,6 +59,10 @@ import {
   extractHostDisplayMode,
   extractHostDisplayModes,
   extractHostTheme,
+  extractHostLocale,
+  extractHostTimeZone,
+  extractHostDeviceCapabilities,
+  extractHostSafeAreaInsets,
   stableStringifyJson,
 } from "@/lib/client-config";
 import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
@@ -163,7 +167,11 @@ export function useWidgetHost(): WidgetHostImpl {
   // on every host input). It's a relative-import context, so it does not block
   // the Tier-B `@/stores`/`@/contexts` guard regardless.
   const persistentSurfaceHost = usePersistentWidgetSurfaceHost();
-  const playgroundCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
+  const savedClient = useSavedClient();
+  const ambientCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
+  const playgroundCspMode = savedClient
+    ? savedClient.mcpProfile?.apps?.sandbox?.csp?.mode === "declared" ? "widget-declared" : "permissive"
+    : ambientCspMode;
 
   // `isScenarioSurface` / `widgetSurface` are read ONLY for the renderer's CSP
   // mode derivation; collapsing them to one `kind` preserves it exactly
@@ -175,7 +183,7 @@ export function useWidgetHost(): WidgetHostImpl {
     : "chat";
 
   // Read into a ref so the memoized `services` object stays stable while the
-  // listResourceTemplates guard still observes the live value (mirrors the
+  // listResourceTemplates routing still observes the live value (mirrors the
   // renderer's existing webManagedServersRef pattern).
   const webManagedServersRef = useRef(webManagedServers);
   webManagedServersRef.current = webManagedServers;
@@ -186,17 +194,8 @@ export function useWidgetHost(): WidgetHostImpl {
       readResource,
       listResources,
       listPrompts,
-      // Host-owned: preserve the renderer's hosted/web-managed guard
-      // (mcp-apps-renderer.tsx:2861-2868); the raw api fn only enforces
-      // HOSTED_MODE.
-      listResourceTemplates: async (serverId: string) => {
-        if (HOSTED_MODE || webManagedServersRef.current) {
-          throw new Error(
-            "Browsing resource templates isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.",
-          );
-        }
-        return listResourceTemplates(serverId);
-      },
+      listResourceTemplates: (serverId: string) =>
+        listResourceTemplates(serverId, { forceHosted: webManagedServersRef.current }),
       authFetch,
       // Cached widget HTML arrives as a short-lived artifact link; these let
       // the renderer renew an expired one and ignore a re-minted one.
@@ -230,7 +229,10 @@ export function useWidgetHost(): WidgetHostImpl {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sharedHostStyle = usePreferencesStore((s) => s.hostStyle);
   const scenarioHostStyle = useScenarioHostStyle();
-  const scenarioHostTheme = useScenarioHostTheme();
+  const ambientHostTheme = useScenarioHostTheme();
+  const scenarioHostTheme = savedClient
+    ? extractHostTheme(savedClient.hostContext) ?? null
+    : ambientHostTheme;
   const hostCapabilitiesOverride = useScenarioHostCapabilitiesOverride();
   const activeMcpProfile = useActiveMcpProfile();
   // The profile is bound into the resolvers below (3d-iii) — it no longer leaves
@@ -239,7 +241,7 @@ export function useWidgetHost(): WidgetHostImpl {
   // against the live profile; the renderer recomputes via `environment.profileKey`.
   const activeMcpProfileRef = useRef(activeMcpProfile);
   activeMcpProfileRef.current = activeMcpProfile;
-  const draftHostContext = useHostContextStore((s) => s.draftHostContext);
+  const draftHostContext = useEffectiveHostContext();
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
   const playgroundTimeZone = useUIPlaygroundStore((s) => s.globals.timeZone);
@@ -253,7 +255,7 @@ export function useWidgetHost(): WidgetHostImpl {
   const environment = useMemo<WidgetHostEnvironmentInputs>(
     () => ({
       themeMode,
-      sharedHostStyle,
+      sharedHostStyle: savedClient?.hostStyle ?? sharedHostStyle,
       scenarioHostStyle,
       scenarioHostTheme,
       hostCapabilitiesOverride,
@@ -264,11 +266,11 @@ export function useWidgetHost(): WidgetHostImpl {
       profileHostInfo: activeMcpProfile?.apps?.uiInitialize?.hostInfo,
       draftHostContext,
       isPlaygroundActive,
-      playgroundLocale,
-      playgroundTimeZone,
-      playgroundDisplayMode,
-      playgroundCapabilities,
-      playgroundSafeAreaInsets,
+      playgroundLocale: savedClient ? extractHostLocale(draftHostContext) : playgroundLocale,
+      playgroundTimeZone: savedClient ? extractHostTimeZone(draftHostContext) : playgroundTimeZone,
+      playgroundDisplayMode: savedClient ? extractHostDisplayMode(draftHostContext) ?? "inline" : playgroundDisplayMode,
+      playgroundCapabilities: savedClient ? extractHostDeviceCapabilities(draftHostContext) : playgroundCapabilities,
+      playgroundSafeAreaInsets: savedClient ? extractHostSafeAreaInsets(draftHostContext) : playgroundSafeAreaInsets,
       playgroundDeviceType,
     }),
     [
@@ -278,6 +280,7 @@ export function useWidgetHost(): WidgetHostImpl {
       scenarioHostTheme,
       hostCapabilitiesOverride,
       activeMcpProfile,
+      savedClient,
       draftHostContext,
       isPlaygroundActive,
       playgroundLocale,

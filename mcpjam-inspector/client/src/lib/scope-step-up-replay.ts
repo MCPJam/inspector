@@ -179,6 +179,10 @@ export function setPendingDirectScopeStepUpReplayFlowDigest(
   ) {
     return;
   }
+  // A step-up that did not save this call (a chat or agent call) may bind it
+  // only if no flow has claimed it yet. A call bound to an earlier, abandoned
+  // sign-in must not be replayed by an unrelated one.
+  if (!expected && pending.flowDigest) return;
   write({ ...pending, flowDigest });
 }
 
@@ -195,6 +199,7 @@ export function setPendingDirectScopeStepUpReplayCredentialBinding(
   if (expected && (!pending || !sameGeneration(pending, expected)))
     throw new Error("The pending call changed. Run it again.");
   if (!pending || pending.descriptor.serverName !== serverName) return;
+  if (!expected && pending.credentialBinding) return;
   write({ ...pending, credentialBinding: binding });
 }
 
@@ -248,13 +253,10 @@ export function markPendingDirectScopeStepUpReplayReady(
     pending.descriptor.serverName !== serverName
   )
     return;
-  if (
-    !pending.flowDigest ||
-    !callbackDigest ||
-    pending.flowDigest !== callbackDigest
-  ) {
-    return;
-  }
+  // A call bound to its flow is marked ready only by that flow's callback.
+  // A surface that saved the call without binding a flow keeps the
+  // one-pending-call rule: the next successful sign-in for the server.
+  if (pending.flowDigest && pending.flowDigest !== callbackDigest) return;
   write({ ...pending, phase: "ready" });
 }
 
