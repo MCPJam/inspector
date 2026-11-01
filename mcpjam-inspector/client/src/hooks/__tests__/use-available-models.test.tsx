@@ -140,10 +140,16 @@ vi.mock("@/lib/ollama-utils", () => ({
     mockDetectOllamaToolCapableModels(...args),
 }));
 
-// The viewer may manage the organization's providers (an admin).
+// The viewer may manage the organization's providers (an admin), unless a
+// test says otherwise.
 const manageOrgProviders = vi.hoisted(() => vi.fn());
+const viewer = vi.hoisted(() => ({ isAdmin: true }));
+const handoffOrgIds = vi.hoisted(() => [] as (string | null)[]);
 vi.mock("@/hooks/use-org-models-handoff", () => ({
-  useOrgModelsHandoff: () => manageOrgProviders,
+  useOrgModelsHandoff: (organizationId: string | null) => {
+    handoffOrgIds.push(organizationId);
+    return viewer.isAdmin ? manageOrgProviders : undefined;
+  },
 }));
 
 import { useAvailableModels } from "../use-available-models";
@@ -378,5 +384,35 @@ describe("useAvailableModels", () => {
     expect(result.current.requireOrgKeys).toBe(false);
     // Off the policy the pickers look as they always have: no handoff.
     expect(result.current.onManageOrgProviders).toBeUndefined();
+    // Only a search with no match offers an admin "Add a provider".
+    expect(result.current.onAddProvider).toBe(manageOrgProviders);
   });
+
+  it("says null, not undefined, when the organization offers this viewer no handoff", () => {
+    // `ModelSelector` requires `null` here: no other organization stands in.
+    viewer.isAdmin = false;
+    try {
+      const { result } = renderHook(() => useAvailableModels());
+      expect(result.current.onAddProvider).toBeNull();
+    } finally {
+      viewer.isAdmin = true;
+    }
+  });
+
+  // Every scoped picker gets its handoff from here, so this covers them all.
+  it.each(["p2", "convex-project-2"])(
+    "builds the handoff for the organization of the project it is given (%s), not the active one",
+    (projectId) => {
+      sharedAppState.projects.p1.organizationId = "org_1";
+      sharedAppState.projects.p2.organizationId = "org_2";
+      handoffOrgIds.length = 0;
+      try {
+        renderHook(() => useAvailableModels({ projectId }));
+        expect(handoffOrgIds.at(-1)).toBe("org_2");
+      } finally {
+        sharedAppState.projects.p1.organizationId = undefined;
+        sharedAppState.projects.p2.organizationId = undefined;
+      }
+    },
+  );
 });

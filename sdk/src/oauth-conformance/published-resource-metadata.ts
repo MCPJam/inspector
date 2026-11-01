@@ -1,3 +1,4 @@
+import { evaluateResourceIndicator } from "../oauth/resource-policy.js";
 import {
   type NormalizedOAuthConformanceConfig,
   type TrackedRequestFn,
@@ -10,6 +11,12 @@ import {
  * Asked only after an unauthenticated `initialize` SUCCEEDED, and only on the
  * server's own origin: the path-suffixed form first, then the root, which is
  * the order a client discovering without a challenge pointer tries them.
+ *
+ * A document counts only when its `resource` identifies this server (same
+ * origin, and a path the server URL falls under). A gateway's root document
+ * describing another endpoint on the same origin is not this server's
+ * metadata, and grading the flow against it would fail a server that does
+ * not use OAuth.
  */
 export async function findPublishedResourceMetadata(
   config: Pick<NormalizedOAuthConformanceConfig, "serverUrl">,
@@ -47,7 +54,8 @@ export async function findPublishedResourceMetadata(
         response.body.authorization_servers.length > 0 &&
         response.body.authorization_servers.every(
           (server: unknown) => typeof server === "string" && server.length > 0
-        )
+        ) &&
+        describesServer(config.serverUrl, response.body.resource)
       ) {
         return url;
       }
@@ -57,4 +65,12 @@ export async function findPublishedResourceMetadata(
     }
   }
   return undefined;
+}
+
+function describesServer(serverUrl: string, resource: string): boolean {
+  const decision = evaluateResourceIndicator({
+    serverUrl,
+    prmResource: resource,
+  });
+  return decision.status === "valid" && decision.strictClientCompatible;
 }

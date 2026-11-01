@@ -160,6 +160,10 @@ effort today:
 
 A suite's `defaults.toolPolicy` is enforced before the MCP call: a denied tool never reaches the server, the model receives the refusal, and the report records the block by case, iteration and call id. A blocked call is not graded as a call and is not an executed tool span. A `deny` name that matches no tool the servers expose is invalid input (exit `2`); an unmatched `allow` is a warning. With no `toolPolicy`, nothing is restrained.
 
+<Note>
+For the upcoming Inspector eval runner with MCP App view tools enabled, use `view:<name>` in a suite's `toolPolicy.allow` or `deny`, for example `view:make_move`. These names wait until the app renders; plain tool names keep the validation described above. Assertions and side-effect manifests still use `make_move`. This syntax does not enable view tools in the local SDK suite-file runner.
+</Note>
+
 ## Imported cases
 
 Native and claimed-`exact` imported cases run with no approval. An `approximated` case runs only when this invocation approves it:

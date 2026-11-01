@@ -1,3 +1,4 @@
+import { isForwardingApprovalId } from "@/shared/forwarding-approval";
 import { ContextAttachmentChip } from "../chat-input/attachments/context-attachment-chip";
 import {
   PLUGIN_MESSAGE_TEXT_PART,
@@ -56,6 +57,7 @@ import {
   isToolPart,
 } from "./thread-helpers";
 import { useSharedAppState } from "@/state/app-state-context";
+import { localServerNameForId } from "@/lib/apis/web/context";
 import { UI_CONTEXT_PART_TYPE } from "@/shared/ui-context";
 import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
 import { useScenarioHostStyle } from "@/contexts/scenario-client-style-context";
@@ -81,7 +83,10 @@ import {
 import {
   readMcpToolOriginServerId,
   readMcpToolConnectionId,
+  readMcpWidgetContext,
+  readMcpOriginalResult,
 } from "@/shared/mcp-tool-origin-metadata";
+import { useForwardedWidgetCalls } from "./use-forwarded-widget-calls";
 import type { AppToolInvocationUpdate } from "./app-tool-invocations";
 import { reportPossiblyOurFailure } from "@/lib/error-reporting";
 
@@ -194,6 +199,7 @@ function LivePartSwitch({
   displayMode,
   onDisplayModeChange,
   onToolApprovalResponse,
+  onForwardingToolApprovalResponse,
   messageParts,
   toolRenderOverrides,
   showInlineEdit = true,
@@ -235,6 +241,10 @@ function LivePartSwitch({
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
+  onForwardingToolApprovalResponse?: (options: {
+    id: string;
+    approved: boolean;
+  }) => void;
   messageParts?: AnyPart[];
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
   showInlineEdit?: boolean;
@@ -257,6 +267,16 @@ function LivePartSwitch({
   void messageParts;
 
   const appState = useSharedAppState();
+  const widgetContext =
+    readMcpWidgetContext(
+      (part as { resultProviderMetadata?: unknown }).resultProviderMetadata,
+    ) ??
+    readMcpWidgetContext(
+      (part as { providerMetadata?: unknown }).providerMetadata,
+    ) ??
+    readMcpWidgetContext(
+      (part as { callProviderMetadata?: unknown }).callProviderMetadata,
+    );
   const resolveHostCaps = useActiveHostCapsResolver();
   const hostStyle = useScenarioHostStyle();
 
@@ -264,6 +284,13 @@ function LivePartSwitch({
     isToolPart(part) || isDynamicTool(part)
       ? getToolInfo(part as ToolUIPart<UITools> | DynamicToolUIPart)
       : null;
+  const forwardedWidgetCalls = useForwardedWidgetCalls(
+    chatSessionId,
+    interactive &&
+      widgetPolicy === "live" &&
+      !tornDownWidgetIds?.has(toolInfoFromPart?.toolCallId ?? ""),
+    widgetContext?.parentExecutionId,
+  );
 
   // Tool-call identity for the current part (drives the edit reset effect).
   const toolCallId =
@@ -379,20 +406,33 @@ function LivePartSwitch({
     }
 
     const approvalId = toolPart.approval?.id;
+    const respondToApproval =
+      approvalId && isForwardingApprovalId(approvalId)
+        ? (onForwardingToolApprovalResponse ?? onToolApprovalResponse)
+        : onToolApprovalResponse;
     const approvalProps =
-      interactive && approvalId && onToolApprovalResponse
+      interactive && approvalId && respondToApproval
         ? {
             approvalId,
             onApprove: (id: string) =>
-              onToolApprovalResponse?.({ id, approved: true }),
+              respondToApproval?.({ id, approved: true }),
             onDeny: (id: string) =>
-              onToolApprovalResponse?.({ id, approved: false }),
+              respondToApproval?.({ id, approved: false }),
           }
         : {};
     const renderOverride = toolInfo.toolCallId
       ? toolRenderOverrides?.[toolInfo.toolCallId]
       : undefined;
-    const rawToolOutput = (toolPart as any).result ?? toolInfo.rawOutput;
+    const originalResult =
+      readMcpOriginalResult(
+        "resultProviderMetadata" in toolPart
+          ? toolPart.resultProviderMetadata
+          : undefined,
+      ) ??
+      readMcpOriginalResult(toolPart.callProviderMetadata);
+    const rawToolOutput = originalResult ??
+      (toolPart as any).result ??
+      toolInfo.rawOutput;
     const partToolMeta = toolsMetadata[toolInfo.toolName];
     const streamedToolMeta = readToolResultMeta(rawToolOutput);
     const effectiveToolMeta =
@@ -413,17 +453,21 @@ function LivePartSwitch({
       readMcpToolConnectionId((toolPart as any).callProviderMetadata) ??
       readMcpToolConnectionId((toolPart as any).providerMetadata) ??
       readMcpToolConnectionId((toolPart as any).providerOptions);
-    const serverId =
+    const toolServerId =
       renderOverride?.serverId ??
       providerMetadataServerId ??
       getToolServerId(toolInfo.toolName, toolServerMap) ??
       readToolResultServerId(rawToolOutput);
+    const serverId =
+      toolServerId && !appState.servers[toolServerId]
+        ? (localServerNameForId(toolServerId) ?? toolServerId)
+        : toolServerId;
     const hasRenderOverrideToolOutput =
       renderOverride !== undefined &&
       Object.prototype.hasOwnProperty.call(renderOverride, "toolOutput");
     const resolvedToolOutput = hasRenderOverrideToolOutput
       ? renderOverride.toolOutput
-      : (toolInfo.output ?? toolInfo.rawOutput);
+      : (originalResult ?? toolInfo.output ?? toolInfo.rawOutput);
 
     // --- Inline edit: effective values fed to BOTH the editors and the iframe ---
     const baseInput = (toolInfo.input ?? null) as Record<
@@ -624,6 +668,7 @@ function LivePartSwitch({
       const allowWidgetDisplayModeChanges = interactive && !isFrozenWidget;
       return (
         <>
+          {interactive && forwardedWidgetCalls.approvals}
           <ToolPart
             part={toolPart}
             chatSessionId={chatSessionId}
@@ -792,7 +837,13 @@ function LivePartSwitch({
               onCallTool={
                 interactive
                   ? (toolName, params) =>
-                      callTool(serverId ?? "offline-view", toolName, params)
+                      widgetContext
+                        ? forwardedWidgetCalls.call(
+                            widgetContext,
+                            toolName,
+                            params,
+                          )
+                        : callTool(serverId ?? "offline-view", toolName, params)
                   : undefined
               }
               onAppToolInvocationChange={onAppToolInvocationChange}

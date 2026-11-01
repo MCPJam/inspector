@@ -102,6 +102,9 @@ jobs:
             // production deploy is the worse mistake.
             let options = { deploy_backend_prod: false, deploy_webapp: false, skip_verify: false };
             let optionsNote = `No merged version PR names ${label}; releasing without deploys.`;
+            // The release's Slack post names who started it. Dispatched with
+            // GITHUB_TOKEN it would read as a bot, so pass whoever merged the PR.
+            let requestedBy = "";
             if (label) {
               const { data: prs } = await github.rest.pulls.list({
                 owner, repo, state: "closed", base: "main",
@@ -118,6 +121,13 @@ jobs:
                 if (cmp.status === "ahead" || cmp.status === "identical") {
                   options = parseReleaseOptions(versionPr.body);
                   optionsNote = `Options from #${versionPr.number}: ${JSON.stringify(options)}`;
+                  try {
+                    const { data: full } = await github.rest.pulls.get({ owner, repo, pull_number: versionPr.number });
+                    requestedBy = full.merged_by?.login ?? "";
+                  } catch (err) {
+                    // Only the Slack post's "started by" depends on this; the release must not.
+                    core.warning(`Could not read who merged #${versionPr.number}: ${err.message}`);
+                  }
                 } else {
                   optionsNote = `Version PR #${versionPr.number} is not in ${headSha}; releasing without deploys.`;
                 }
@@ -178,6 +188,7 @@ jobs:
                 skip_verify: String(options.skip_verify),
                 versions: decision.label,
                 trigger_sha: headSha,
+                requested_by: requestedBy,
               },
             });
             await core.summary

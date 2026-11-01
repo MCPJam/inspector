@@ -167,6 +167,25 @@ describe("mapErrorToV1 — revoked sessions", () => {
     expect(result.details).toEqual({ reason: "SESSION_REVOKED" });
     expect(V1_ERROR_STATUS[result.code]).toBe(401);
   });
+
+  it("maps STDIO_COMMAND_APPROVAL_REQUIRED to FORBIDDEN, keeping the terms in details", () => {
+    const details = {
+      reason: "stdio_command_approval_required",
+      serverId: "srv-1",
+      approval: { serverId: "srv-1", command: "node" },
+    };
+    const err = new WebRouteError(
+      403,
+      ErrorCode.STDIO_COMMAND_APPROVAL_REQUIRED,
+      '"Files" runs a command this device has not approved yet.',
+      details,
+    );
+
+    const result = mapErrorToV1(err);
+
+    expect(result.code).toBe("FORBIDDEN");
+    expect(result.details).toEqual(details);
+  });
 });
 
 describe("mapErrorToV1 — passthrough", () => {

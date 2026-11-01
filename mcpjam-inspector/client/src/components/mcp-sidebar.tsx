@@ -70,7 +70,10 @@ import {
 } from "@/lib/hosted-tab-policy";
 import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
 import { useLearnMore } from "@/hooks/use-learn-more";
-import { WEBMCP_INSPECTOR_FEATURE_FLAG } from "@/hooks/useWebmcpInspectorEnabled";
+import {
+  WEBMCP_INSPECTOR_FEATURE_FLAG,
+  useWebmcpInspectorEnabledState,
+} from "@/hooks/useWebmcpInspectorEnabled";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
 import {
   useOrganizationBillingStatus,
@@ -493,7 +496,6 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   billingUiEnabled?: boolean;
   isCreateProjectDisabled?: boolean;
   createProjectDisabledReason?: string;
-  onBeforeSignOut?: () => void | Promise<void>;
 }
 
 export function MCPSidebar({
@@ -514,7 +516,6 @@ export function MCPSidebar({
   billingUiEnabled = false,
   isCreateProjectDisabled = false,
   createProjectDisabledReason,
-  onBeforeSignOut,
   ...props
 }: MCPSidebarProps) {
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
@@ -531,9 +532,7 @@ export function MCPSidebar({
     "unified-sessions-enabled",
   );
   const evaluateEnabled = useFeatureFlagEnabled("evaluate-enabled");
-  const webmcpInspectorEnabled = useFeatureFlagEnabled(
-    WEBMCP_INSPECTOR_FEATURE_FLAG,
-  );
+  const webmcpInspectorEnabled = useWebmcpInspectorEnabledState();
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
   const { user, isLoading: isWorkOsAuthLoading } = useAuth();
   // Until WorkOS + Convex resolve the session we don't yet know guest-vs-authed
@@ -653,8 +652,8 @@ export function MCPSidebar({
       // Project-scoped like the rows above: every screen behind it needs a
       // project to resolve suites against.
       "evaluate-enabled": evaluateEnabled === true && isAuthenticated,
-      // Deployment-specific Browser rollout; local guests are eligible too.
-      // Hosted execution retains its server-side sign-in/entitlement checks.
+      // Hosted: the backend's availability answer, flag and readiness both.
+      // Local: the local Browser rollout, which local guests may be in too.
       [WEBMCP_INSPECTOR_FEATURE_FLAG]: webmcpInspectorEnabled === true,
     }),
     [
@@ -930,7 +929,7 @@ export function MCPSidebar({
               className="mt-1"
             />
           ) : null}
-          <SidebarUser onBeforeSignOut={onBeforeSignOut} />
+          <SidebarUser />
         </SidebarFooter>
       </Sidebar>
       {!authResolving && (
