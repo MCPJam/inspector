@@ -17,6 +17,11 @@
       "import": "./dist/internal/telemetry.js",
       "default": "./dist/internal/telemetry.js"
     },
+    "./internal/deployment": {
+      "types": "./dist/internal/deployment.d.ts",
+      "import": "./dist/internal/deployment.js",
+      "default": "./dist/internal/deployment.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",

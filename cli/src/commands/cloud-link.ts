@@ -31,6 +31,7 @@ import {
   runPlatformOperation,
   type PlatformOptions,
 } from "../lib/platform-command.js";
+import { declareMcpjamUse } from "../lib/deployment-preflight.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
 type LinkOptions = PlatformOptions & {
@@ -85,8 +86,8 @@ function nearestLinkPath(): string | undefined {
 }
 
 export function registerCloudLinkCommands(cloud: Command): void {
-  cloud
-    .command("status")
+  // Offline: reports a refused deployment in-band instead of stopping on it.
+  declareMcpjamUse(cloud.command("status"), { when: () => false })
     .description(
       "Show how this CLI would authenticate and which Cloud project it would use, without calling the network."
     )

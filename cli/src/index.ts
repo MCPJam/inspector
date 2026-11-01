@@ -33,6 +33,7 @@ import {
   usageError,
   writeError,
 } from "./lib/output.js";
+import { installDeploymentPreflight } from "./lib/deployment-preflight.js";
 import { addGlobalOptions } from "./lib/server-config.js";
 import {
   captureCommandEvent,
@@ -91,6 +92,7 @@ export async function main(
       }),
   );
   const telemetry = initTelemetry(program, pkgVersion, dependencies.telemetry);
+  installDeploymentPreflight(program);
 
   program.commandsGroup("Local MCP testing:");
   registerTestCommand(program, dependencies.localTest);

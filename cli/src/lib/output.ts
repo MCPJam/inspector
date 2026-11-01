@@ -1,3 +1,8 @@
+import {
+  isMcpjamDeploymentError,
+  type McpjamDeploymentError,
+} from "@mcpjam/sdk/internal/deployment";
+
 export type OutputFormat = "json" | "human";
 
 const DEFAULT_OUTPUT_FORMAT: OutputFormat = "json";
@@ -38,9 +43,26 @@ export function operationalError(message: string, details?: unknown): CliError {
   return new CliError("OPERATIONAL_ERROR", message, 1, details);
 }
 
+/**
+ * A refusal over where a request would go. A saved login for another server
+ * exits 3, because the fix is signing in again; every other refusal is
+ * configuration and exits 2. An unparsable address keeps the usage code it
+ * has always had.
+ */
+export function deploymentCliError(error: McpjamDeploymentError): CliError {
+  if (error.code === "LOGIN_DEPLOYMENT_MISMATCH") {
+    return new CliError(error.code, error.message, 3);
+  }
+  const code = error.code === "API_URL_INVALID" ? "USAGE_ERROR" : error.code;
+  return new CliError(code, error.message, 2);
+}
+
 export function normalizeCliError(error: unknown): CliError {
   if (error instanceof CliError) {
     return error;
+  }
+  if (isMcpjamDeploymentError(error)) {
+    return deploymentCliError(error);
   }
 
   const message =

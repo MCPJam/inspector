@@ -5,8 +5,6 @@ import {
 } from "../lib/conformance-exit-code.js";
 import {
   isConformanceReportingConfigured,
-  reportConformanceRun,
-  reportConformanceRunSafely,
   runConformance,
   type ConformanceSuiteKind,
   type MCPServerConfig,
@@ -18,6 +16,11 @@ import {
   renderConformanceForCli,
   resolveConformanceOutputFormatForCli,
 } from "../lib/conformance-output.js";
+import {
+  requestsUpload,
+  uploadConformanceReport,
+} from "../lib/conformance-upload.js";
+import { declareMcpjamUse } from "../lib/deployment-preflight.js";
 import { parseReporterFormat } from "../lib/reporting.js";
 import {
   addSharedServerOptions,
@@ -50,9 +53,13 @@ export function registerConformanceRunCommand(program: Command): void {
     .command("conformance")
     .description("Run MCPJam conformance suites and optionally upload results");
 
+  // Configured reporting is consent here, so a set MCPJAM_API_KEY uploads.
+  const uploads = (options: Parameters<typeof requestsUpload>[0]) =>
+    requestsUpload(options) || isConformanceReportingConfigured();
+  const run = conformance.command("run");
+  declareMcpjamUse(run, { when: uploads, credential: "api-key" });
   addSharedServerOptions(
-    conformance
-      .command("run")
+    run
       .description(
         "Run Protocol, Apps, and Tasks (default). OAuth is opt-in via --suite oauth.",
       )
@@ -138,32 +145,12 @@ export function registerConformanceRunCommand(program: Command): void {
       reportIncomplete(suiteReport as { outcome?: string; incompleteReason?: string; checks?: Array<{ skipReason?: string }> }, command);
     }
 
-    const shouldUpload =
-      options.upload === true ||
-      options.requireUpload === true ||
-      isConformanceReportingConfigured();
-    if (shouldUpload) {
-      const serverUrl = String(server.url);
-      try {
-        const uploaded = options.requireUpload
-          ? await reportConformanceRun(report, { serverUrl, defaultSource: "cli" })
-          : await reportConformanceRunSafely(report, {
-              serverUrl,
-              defaultSource: "cli",
-            });
-        if (uploaded?.runUrl && !command.optsWithGlobals().quiet) {
-          process.stderr.write(`Uploaded: ${uploaded.runUrl}\n`);
-        }
-        if (options.requireUpload && !uploaded) {
-          throw new Error("Conformance upload did not return a run record");
-        }
-      } catch (error) {
-        if (options.requireUpload) {
-          throw error;
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        process.stderr.write(`Warning: conformance upload failed: ${message}\n`);
-      }
+    if (uploads(options)) {
+      await uploadConformanceReport(report, {
+        serverUrl: String(server.url),
+        requireUpload: options.requireUpload === true,
+        command,
+      });
     }
 
     const exitCode = conformanceExitCode({

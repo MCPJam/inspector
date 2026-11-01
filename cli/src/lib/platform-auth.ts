@@ -20,6 +20,10 @@ import {
 import { getOAuthAccessToken as getSharedOAuthAccessToken, exchangePlatformToken } from "@mcpjam/sdk/platform-auth";
 import { PlatformApiClient } from "@mcpjam/sdk/platform";
 import {
+  backendFetch,
+  isMcpjamDeploymentError,
+} from "@mcpjam/sdk/internal/deployment";
+import {
   clearStoredAuth,
   getAuthFilePath,
   writeStoredAuth,
@@ -64,6 +68,21 @@ export interface ResolveCredentialDependencies {
   fetchFn?: typeof fetch;
   now?: () => number;
   warn?: (message: string) => void;
+}
+
+/**
+ * Which credential {@link resolvePlatformCredential} would pick, without
+ * reading it or warning: what a command decides its server from at start.
+ */
+export function platformCredentialKind(
+  options: { apiKey?: string },
+  env: NodeJS.ProcessEnv = process.env
+): PlatformCredential["kind"] {
+  if (options.apiKey?.trim()) return "api-key";
+  const envKey = env.MCPJAM_API_KEY?.trim();
+  return envKey && !envKey.startsWith(LEGACY_API_KEY_PREFIX)
+    ? "api-key"
+    : "oauth";
 }
 
 export function resolvePlatformCredential(
@@ -143,6 +162,11 @@ export interface PlatformLoginTarget {
    * later cloud commands talk to the same deployment by default.
    */
   apiUrl: string;
+  /**
+   * Edge-authenticator headers (`--api-header`). Sent to this server's login
+   * settings and `/me` only, never to the sign-in provider.
+   */
+  headers?: Readonly<Record<string, string>>;
 }
 
 interface CliAuthConfig {
@@ -158,7 +182,14 @@ export async function runPlatformLogin(
   deps: PlatformLoginDependencies = {}
 ): Promise<PlatformLoginResult> {
   const fetchFn = deps.fetchFn ?? fetch;
-  const config = await fetchCliAuthConfig(target.origin, fetchFn);
+  // MCPJam's own endpoints refuse redirects; the sign-in provider's token
+  // endpoint is not MCPJam and keeps plain `fetch`.
+  const mcpjamFetch = backendFetch(deps.fetchFn);
+  const config = await fetchCliAuthConfig(
+    target.origin,
+    mcpjamFetch,
+    target.headers
+  );
 
   const codeVerifier = generateRandomString(64);
   const state = generateRandomString(32);
@@ -228,7 +259,8 @@ export async function runPlatformLogin(
   const account = await enrichStoredAuthWithAccount(stored, {
     apiUrl: target.apiUrl,
     authFilePath,
-    fetchFn,
+    fetchFn: mcpjamFetch,
+    ...(target.headers ? { headers: target.headers } : {}),
     warn,
   });
 
@@ -258,6 +290,7 @@ async function enrichStoredAuthWithAccount(
     apiUrl: string;
     authFilePath: string;
     fetchFn: typeof fetch;
+    headers?: Readonly<Record<string, string>>;
     warn: (message: string) => void;
   }
 ): Promise<{ email?: string; plan?: string }> {
@@ -268,6 +301,7 @@ async function enrichStoredAuthWithAccount(
       baseUrl: deps.apiUrl,
       getAuth: async () => stored.accessToken,
       fetch: deps.fetchFn,
+      ...(deps.headers ? { extraHeaders: { ...deps.headers } } : {}),
     });
     const me = await client.getMe();
     if (typeof me.email === "string" && me.email.trim()) {
@@ -312,13 +346,15 @@ async function enrichStoredAuthWithAccount(
 
 async function fetchCliAuthConfig(
   platformOrigin: string,
-  fetchFn: typeof fetch
+  fetchFn: typeof fetch,
+  headers: Readonly<Record<string, string>> | undefined
 ): Promise<CliAuthConfig> {
   const configUrl = `${platformOrigin.replace(/\/+$/, "")}/api/cli/auth/config`;
   let response: Response;
   try {
-    response = await fetchFn(configUrl);
+    response = await fetchFn(configUrl, headers ? { headers: { ...headers } } : {});
   } catch (error) {
+    if (isMcpjamDeploymentError(error)) throw error;
     throw operationalError(
       `Could not reach ${configUrl}: ${
         error instanceof Error ? error.message : String(error)

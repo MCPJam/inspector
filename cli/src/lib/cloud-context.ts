@@ -20,6 +20,7 @@ import {
   MISSING_CLOUD_CREDENTIAL_MESSAGE,
 } from "./platform-auth.js";
 import { operationalError, usageError } from "./output.js";
+import { resolveCliDeployment } from "./platform-client.js";
 
 export { MISSING_CLOUD_CREDENTIAL_MESSAGE };
 
@@ -96,13 +97,19 @@ export function preflightCloudCredentials(
   options: CloudCredentialOptions,
   deps: DescribeCloudCredentialDependencies = {}
 ): void {
-  const { credential, deployment } = describeCloudCredential(options, deps);
+  const { credential } = describeCloudCredential(options, deps);
   if (credential.valid === false) {
     throw usageError(credential.error ?? LEGACY_KEY_REMEDY);
   }
-  if (!deployment.valid) {
-    throw usageError(deployment.error ?? "Invalid API URL.");
-  }
+  // Thrown with the refusal's own code and exit status, before the
+  // missing-credential check below.
+  resolveCliDeployment(
+    {
+      apiUrl: options.apiUrl,
+      credential: credential.kind === "api-key" ? "api-key" : "oauth",
+    },
+    deps
+  );
   if (credential.source === "missing") {
     const envKey = (deps.env ?? process.env).MCPJAM_API_KEY?.trim();
     if (envKey?.startsWith("mcpjam_")) {

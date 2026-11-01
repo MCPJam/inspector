@@ -1,3 +1,11 @@
+import { backendFetch } from "./deployment/address.js";
+
+/**
+ * Every caller of this transport sends to MCPJam's own API, so a redirect is
+ * refused rather than followed with the credential and headers.
+ */
+const sendToMcpjam = backendFetch();
+
 /** Shared bounded transport for ingestion and artifact uploads. */
 export interface ReportingTransportOptions {
   timeoutMs: number;
@@ -186,7 +194,7 @@ export async function reportingRequest<T>(
           (async () => {
             const prepared = await prepare();
             if (controller.signal.aborted) throw controller.signal.reason;
-            const response = await fetch(url, {
+            const response = await sendToMcpjam(url, {
               ...init,
               ...prepared,
               signal: controller.signal,

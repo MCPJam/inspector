@@ -19,6 +19,7 @@
  *     one ledger row, and no window in which the page moves between an act and
  *     the observation that was supposed to describe it.
  */
+import { declareMcpjamUse } from "../lib/deployment-preflight.js";
 import { buildPlatformClient } from "../lib/platform-client.js";
 import { Command } from "commander";
 import { writeFile } from "node:fs/promises";
@@ -62,7 +63,8 @@ interface CommonOptions {
 }
 
 function addCommonOptions(command: Command): Command {
-  return command
+  // Only `--cloud` contacts MCPJam; the local browser talks to the Inspector.
+  return declareMcpjamUse(command, { when: (options) => options.cloud === true })
     .option("--cloud", "Drive an isolated MCPJam cloud browser")
     .option(
       "--api-url <url>",

@@ -31,11 +31,7 @@ import {
   announceCloudContext,
   preflightCloudCredentials,
 } from "./cloud-context.js";
-import {
-  buildPlatformClient,
-  toCliError,
-  webOriginForApiBaseUrl,
-} from "./platform-client.js";
+import { buildPlatformClient, toCliError } from "./platform-client.js";
 import { getGlobalOptions } from "./server-config.js";
 import { CliError, usageError, writeResult } from "./output.js";
 
@@ -161,7 +157,7 @@ export function buildCloudClientContext(
     client: built.client,
     credentialKind: built.credentialKind,
     baseUrl: built.baseUrl,
-    webOrigin: webOriginForApiBaseUrl(built.baseUrl),
+    webOrigin: new URL(built.baseUrl).origin,
   };
 }
 
