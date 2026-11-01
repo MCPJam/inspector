@@ -2568,8 +2568,10 @@ export function useChatSession(
       if (!isTraceEventDataPart(part)) {
         if (isScopeStepUpFinishedDataPart(part)) {
           const event = part.data;
-          const pending = readPendingChatScopeStepUp();
-          if (pending?.event.continuationId === event.continuationId) {
+          const pending = readPendingChatScopeStepUp({
+            continuationId: event.continuationId,
+          });
+          if (pending) {
             if (
               event.outcome === "completed" ||
               event.outcome === "cancelled"
@@ -4434,7 +4436,11 @@ export function useChatSession(
   useEffect(() => {
     const sessionId = chatSessionIdRef.current;
     if (!sessionId) return;
-    const pending = readPendingChatScopeStepUp();
+    // This chat's own call: another chat's newer entry must not hide it.
+    const pending = readPendingChatScopeStepUp({
+      chatSessionId: sessionId,
+      phases: ["ready", "cancelled"],
+    });
     if (
       !pending ||
       (pending.phase !== "ready" && pending.phase !== "cancelled") ||
@@ -4456,8 +4462,11 @@ export function useChatSession(
     }
     const claimed =
       pending.phase === "ready"
-        ? claimPendingChatScopeStepUp(sessionId)
-        : claimCancelledChatScopeStepUp(sessionId);
+        ? claimPendingChatScopeStepUp(sessionId, pending.event.continuationId)
+        : claimCancelledChatScopeStepUp(
+            sessionId,
+            pending.event.continuationId,
+          );
     if (!claimed) return;
     const wasCancelled = pending.phase === "cancelled";
 
