@@ -1,3 +1,4 @@
+import { withModelAppResources } from "./model-app-resources";
 import {
   createContext,
   useCallback,
@@ -422,9 +423,9 @@ function ModelApp({
   const ownedHost = useMemo(() => {
     if (!handle) return null;
     const withContext = withAppContext(
-      createThreadAppHost(base, handle, marker.serverId, "model", {
+      withModelAppResources(createThreadAppHost(base, handle, marker.serverId, "model", {
         openAIDisplayModes: ports?.openAIDisplayModes === true,
-      }),
+      }), base, handle, marker.serverId, api, lifetime.signal),
       base,
       handle,
       context,
@@ -441,6 +442,7 @@ function ModelApp({
     handle,
     marker.serverId,
     context.update,
+    api,
     ports,
     scope.threadId,
     lifetime,

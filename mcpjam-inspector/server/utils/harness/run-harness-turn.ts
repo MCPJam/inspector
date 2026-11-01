@@ -1,3 +1,5 @@
+import { withRetainedResourceSource } from "@/shared/retained-app-resources";
+import { retainedResourceExecutor, type RetainedResourcePresentation } from "./forwarding/retained-resources";
 import { nativeForwardingSelection, prepareNativeForwarding, hasForwardingOrganization,
   nativeToolMetadata,
 } from "./forwarding/native-turn.js";
@@ -1163,6 +1165,7 @@ export async function runHarnessTurn(
     // which shows the raw result and projects for the model alone. Claimed once
     // per tool result and then dropped, so the map cannot outgrow the turn.
     const hostExecutedRawResults = new Map<string, unknown>();
+    const retainedResourceSources = new Map<string, RetainedResourcePresentation>();
     let pendingScopeChallenge: HarnessScopeStepUpEvent | undefined;
     let suspendedHarnessToolCallId: string | undefined;
     let scopeStepUpCreation: Promise<void> | undefined;
@@ -1623,6 +1626,14 @@ export async function runHarnessTurn(
       // start — there is no `tools/list_changed` subscription, so a mid-turn
       // schema change is only picked up on the next turn. Done here, before the
       // box is woken, so an unreachable server fails the turn cheaply.
+      const retainedExecutor = retainedResourceExecutor({
+        manager: mcpClientManager, existing: hostToolExecutor,
+        enabled: harnessAdapter.id === "claude-code" && !harnessExecutionTarget &&
+          harnessMcpProxy?.plane === "web-authorized" && process.env.HARNESS_NATIVE_FORWARDING === "true" &&
+          hasForwardingOrganization(mcpClientManager) && !scenarioId &&
+          !evalIterationId && !journeyRunId && !!hostId,
+        laneId: () => continuity?.laneId, sources: retainedResourceSources, turnId,
+      });
       const hostExecutedMcp =
         !nativeMcpDelivery && (selectedServers?.length ?? 0) > 0
           ? await projectSelectedMcpServersAsHostTools({
@@ -1640,7 +1651,7 @@ export async function runHarnessTurn(
               // The plugin executor an emulated turn wraps its tools with:
               // a server's OpenAI form reaches the composer card, and an App
               // result becomes an owned model App with its own context.
-              ...(hostToolExecutor ? { executor: hostToolExecutor } : {}),
+              ...(retainedExecutor ? { executor: retainedExecutor } : {}),
               // …and, for the same reason, no proxy to extract a SEP-2350
               // challenge either. Publish straight into the turn's step-up
               // intake so a hosted-OAuth server pauses this turn instead of
@@ -3820,10 +3831,13 @@ export async function runHarnessTurn(
             const hasRawHostExecuted = hostExecutedRawResults.has(toolCallId);
             const rawHostExecuted = hostExecutedRawResults.get(toolCallId);
             hostExecutedRawResults.delete(toolCallId);
+            const retainedSource = retainedResourceSources.get(toolCallId);
+            retainedResourceSources.delete(toolCallId);
+            const hostPresentation = withRetainedResourceSource(rawHostExecuted, retainedSource ? {...retainedSource, version: 1, toolCallId} : undefined);
             const modelOutput = (part as { output?: unknown }).output ??
               (part as { result?: unknown }).result;
             if (hasRawHostExecuted && !errorEvent) {
-              nativePresentations.set(toolCallId, { result: rawHostExecuted, metadata: { mcpjam: { resultPresentation: true } } });
+              nativePresentations.set(toolCallId, { result: hostPresentation, metadata: { mcpjam: { resultPresentation: true } } });
             }
             const output = errorEvent
               ? harnessToolErrorText(part)
@@ -3939,7 +3953,7 @@ export async function runHarnessTurn(
                 toolCallId,
                 output: hasRawHostExecuted && !errorEvent ? modelOutput : enhancedApps ? output : (rawNativeResult ?? output),
                 providerMetadata: hasRawHostExecuted && !errorEvent
-                  ? mergeMcpOriginalResult({ mcpjam: { resultPresentation: true } }, rawHostExecuted)
+                  ? mergeMcpOriginalResult({ mcpjam: { resultPresentation: true } }, hostPresentation)
                   : nativeToolMetadata(
                   nativeForwarding,
                   meta.serverId,

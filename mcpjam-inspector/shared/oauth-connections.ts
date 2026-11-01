@@ -17,6 +17,8 @@ export interface OAuthConnection {
   expiresAt?: number;
 }
 export interface AuthorizedOAuthConnection extends OAuthConnection {
+  /** Canonical per-account timestamp, including the legacy createdAt fallback. */
+  credentialAuthorizedAt?: number;
   accessToken?: string | null;
   unavailableReason?: string;
 }

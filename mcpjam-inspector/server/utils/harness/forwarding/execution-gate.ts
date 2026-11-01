@@ -40,7 +40,10 @@ export type GateApproval = {
   }) => Promise<ApprovalAnswer>;
 };
 
-export function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+export function withAbort<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
   return new Promise((resolve, reject) => {
     const abort = () => reject(signal.reason);
     promise.then(
@@ -116,101 +119,115 @@ export async function executeForwardedOperation<T>(args: {
       args.signal.throwIfAborted();
     }
   };
-  await requireNotAborted();
-  const frozenParams = input.value;
-  const toolName =
-    frozenParams &&
-    typeof frozenParams === "object" &&
-    "name" in frozenParams &&
-    typeof frozenParams.name === "string"
-      ? frozenParams.name
-      : "";
-  if (intent.method === "tools/call" && policy) {
-    const decision = decideToolPolicyFromSnapshot({
-      snapshot: policy,
-      toolName,
-    });
-    if (!decision.allowed) {
-      await control.settle(prepared.executionId, undefined, {
-        outcome: "refused",
+  try {
+    await requireNotAborted();
+    const frozenParams = input.value;
+    const toolName =
+      frozenParams &&
+      typeof frozenParams === "object" &&
+      "name" in frozenParams &&
+      typeof frozenParams.name === "string"
+        ? frozenParams.name
+        : "";
+    if (intent.method === "tools/call" && policy) {
+      const decision = decideToolPolicyFromSnapshot({
+        snapshot: policy,
+        toolName,
       });
-      throw new ExecutionControlError("blocked_by_policy");
+      if (!decision.allowed) {
+        await control.settle(prepared.executionId, undefined, {
+          outcome: "refused",
+        });
+        throw new ExecutionControlError("blocked_by_policy");
+      }
     }
-  }
-  if (intent.method === "tools/call" && prepared.requireToolApproval) {
-    if (!args.approval) {
-      await control.settle(prepared.executionId, undefined, {
-        outcome: "refused",
-      });
-      throw new ExecutionControlError("approval_unavailable");
-    }
-    const call = { toolCallId: prepared.executionId, toolName, input };
-    const approvalExpiresAt = Math.min(
-      intent.expiresAt,
-      Date.now() + TOOL_APPROVAL_TOKEN_MAX_AGE_MS,
-    );
-    const approvalId = mintToolApprovalId({
-      call,
-      binding: args.approval.binding,
-    });
-    const nonceHash = approvalId && toolApprovalClaimKey(approvalId);
-    if (!approvalId || !nonceHash) {
-      await control.settle(prepared.executionId, undefined, {
-        outcome: "refused",
-      });
-      throw new ExecutionControlError("approval_unavailable");
-    }
-    await control.requestApproval(
-      prepared.executionId,
-      nonceHash,
-      approvalExpiresAt,
-      approvalId,
-    );
-    let answer: ApprovalAnswer;
-    try {
-      const signal = AbortSignal.any([
-        ...(args.signal ? [args.signal] : []),
-        AbortSignal.timeout(Math.max(0, approvalExpiresAt - Date.now())),
-      ]);
-      answer = await withAbort(
-        args.approval.ask({
-          executionId: prepared.executionId,
-          approvalId,
-          toolName,
-          input,
-          expiresAt: approvalExpiresAt,
-          signal,
-        }),
-        signal,
+    if (intent.method === "tools/call" && prepared.requireToolApproval) {
+      if (!args.approval) {
+        await control.settle(prepared.executionId, undefined, {
+          outcome: "refused",
+        });
+        throw new ExecutionControlError("approval_unavailable");
+      }
+      const call = { toolCallId: prepared.executionId, toolName, input };
+      const approvalExpiresAt = Math.min(
+        intent.expiresAt,
+        Date.now() + TOOL_APPROVAL_TOKEN_MAX_AGE_MS,
       );
-    } catch (error) {
-      await control.decideApproval(
-        prepared.executionId,
-        nonceHash,
-        "cancelled",
-      );
-      throw error;
-    }
-    if (
-      answer.approvalId !== approvalId ||
-      !verifyToolApprovalId({
-        approvalId: answer.approvalId,
+      const approvalId = mintToolApprovalId({
         call,
         binding: args.approval.binding,
-      }).ok
-    ) {
-      await control.decideApproval(prepared.executionId, nonceHash, "denied");
-      throw new ExecutionControlError("approval_unverified");
+      });
+      const nonceHash = approvalId && toolApprovalClaimKey(approvalId);
+      if (!approvalId || !nonceHash) {
+        await control.settle(prepared.executionId, undefined, {
+          outcome: "refused",
+        });
+        throw new ExecutionControlError("approval_unavailable");
+      }
+      await control.requestApproval(
+        prepared.executionId,
+        nonceHash,
+        approvalExpiresAt,
+        approvalId,
+      );
+      let answer: ApprovalAnswer;
+      try {
+        const signal = AbortSignal.any([
+          ...(args.signal ? [args.signal] : []),
+          AbortSignal.timeout(Math.max(0, approvalExpiresAt - Date.now())),
+        ]);
+        answer = await withAbort(
+          args.approval.ask({
+            executionId: prepared.executionId,
+            approvalId,
+            toolName,
+            input,
+            expiresAt: approvalExpiresAt,
+            signal,
+          }),
+          signal,
+        );
+      } catch (error) {
+        await control.decideApproval(
+          prepared.executionId,
+          nonceHash,
+          "cancelled",
+        );
+        throw error;
+      }
+      if (
+        answer.approvalId !== approvalId ||
+        !verifyToolApprovalId({
+          approvalId: answer.approvalId,
+          call,
+          binding: args.approval.binding,
+        }).ok
+      ) {
+        await control.decideApproval(prepared.executionId, nonceHash, "denied");
+        throw new ExecutionControlError("approval_unverified");
+      }
+      const decided = await control.decideApproval(
+        prepared.executionId,
+        nonceHash,
+        answer.decision,
+      );
+      if (decided.state !== "approved")
+        throw new ExecutionControlError("approval_not_granted");
     }
-    const decided = await control.decideApproval(
-      prepared.executionId,
-      nonceHash,
-      answer.decision,
-    );
-    if (decided.state !== "approved")
-      throw new ExecutionControlError("approval_not_granted");
+    await requireNotAborted();
+  } catch (error) {
+    try {
+      await control.settle(prepared.executionId, undefined, {
+        outcome: "cancelled",
+      });
+    } catch (settlementError) {
+      throw new AggregateError(
+        [error, settlementError],
+        "Approval cancellation could not be confirmed.",
+      );
+    }
+    throw error;
   }
-  await requireNotAborted();
   const dispatchKey = randomUUID();
   let claim: Awaited<ReturnType<ExecutionControl["claim"]>>;
   try {
@@ -221,11 +238,16 @@ export async function executeForwardedOperation<T>(args: {
         outcome: "incomplete",
       });
     } catch (settlementError) {
-      // A claim that never committed cannot settle. Neither failure permits a send.
-      throw new AggregateError(
-        [error, settlementError],
-        "Dispatch and evidence could not be confirmed.",
-      );
+      try {
+        await control.settle(prepared.executionId, undefined, {
+          outcome: "cancelled",
+        });
+      } catch (unclaimedSettlementError) {
+        throw new AggregateError(
+          [error, settlementError, unclaimedSettlementError],
+          "Dispatch and evidence could not be confirmed.",
+        );
+      }
     }
     throw error;
   }
