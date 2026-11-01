@@ -64,6 +64,9 @@ vi.mock("@/state/mcp-api", () => ({
 
 vi.mock("@/state/oauth-orchestrator", () => ({
   ensureAuthorizedForReconnect: mockEnsureAuthorizedForReconnect,
+  // The OAuth callback settles the sign-in ledger.
+  markAuthChallengeSignedIn: vi.fn(() => 0),
+  hasAuthChallengeAwaitingCallback: vi.fn(() => false),
 }));
 
 vi.mock("@/lib/oauth/mcp-oauth", () => ({
@@ -520,6 +523,72 @@ describe("useServerState hosted OAuth callback guards", () => {
           useOAuth: true,
           tokens: undefined,
         }),
+      );
+    });
+  });
+
+  it("marks the hosted marker's server connecting when no local flow is pending", async () => {
+    writeHostedOAuthPendingMarker({
+      surface: "project",
+      initiatingUserId: "user_1",
+      projectId: "ws_1",
+      serverId: "srv_asana",
+      serverName: "asana",
+      serverUrl: "https://mcp.asana.com/sse",
+      accessScope: "project_member",
+      returnPath: "#servers",
+    });
+    localStorage.setItem("mcp-serverUrl-asana", "https://mcp.asana.com/sse");
+    // Still exchanging the code: only the early dispatch can have run.
+    mockHandleOAuthCallback.mockReturnValue(new Promise(() => {}));
+
+    const dispatch = vi.fn();
+
+    renderHook(() =>
+      useServerState({
+        appState: {
+          servers: {},
+          selectedMultipleServers: [],
+        } as any,
+        dispatch,
+        isLoading: false,
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        currentUserId: "user_1",
+        oauthProjectIds: new Set(["ws_1"]),
+        isAuthLoading: false,
+        isLoadingProjects: false,
+        useLocalFallback: false,
+        effectiveProjects: {
+          ws_1: {
+            id: "ws_1",
+            name: "Project",
+            sharedProjectId: "ws_1",
+            servers: {
+              asana: {
+                name: "asana",
+                config: { url: "https://mcp.asana.com/sse" },
+                connectionStatus: "disconnected",
+              },
+            },
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        } as any,
+        effectiveActiveProjectId: "ws_1",
+        activeProjectServersFlat: [],
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          error: vi.fn(),
+          debug: vi.fn(),
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "CONNECT_REQUEST", name: "asana" }),
       );
     });
   });

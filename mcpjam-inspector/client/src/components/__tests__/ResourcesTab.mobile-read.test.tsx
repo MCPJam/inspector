@@ -106,10 +106,14 @@ describe("Resources mobile read cancellation", () => {
           if (replay) {
             expect(mocks.clearReplay).toHaveBeenCalledOnce();
             if (outcome === "success") {
-              expect(mocks.resetStepUp).toHaveBeenCalledWith(undefined, {
-                method: "resources/read",
-                operation: "file:///alpha.txt",
-              });
+              expect(mocks.resetStepUp).toHaveBeenCalledWith(
+                undefined,
+                {
+                  method: "resources/read",
+                  operation: "file:///alpha.txt",
+                },
+                undefined,
+              );
             }
           }
           fireEvent.click(screen.getByRole("tab", { name: "Results" }));

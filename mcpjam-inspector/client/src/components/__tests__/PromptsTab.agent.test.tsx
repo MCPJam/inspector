@@ -266,3 +266,40 @@ describe("PromptsTab — agent-driven step-up lifecycle (SEP-2350)", () => {
     expect(mockResetToolCallStepUp).not.toHaveBeenCalled();
   });
 });
+
+describe("agent-driven calls and mid-session sign-in", () => {
+  // A command never signs in and never shows a Connect card: only the user,
+  // on screen, can start a sign-in.
+  it("reports a 401 sign-in challenge as authorization_required, with no card", async () => {
+    mockGetPrompt.mockRejectedValueOnce(
+      new McpRequestError("Unauthorized", {
+        status: 401,
+        authChallenge: {
+          source: "http_401",
+          requiredScope: "files:read",
+          effectiveAuth: "discover",
+          facets: {
+            challengeHeader: "bearer",
+            hasResourceMetadata: false,
+            hasScope: true,
+            hasErrorParams: false,
+          },
+        } as never,
+      })
+    );
+    await renderLoaded({ server: { name: "srv" } as unknown as ServerWithName });
+    const response = await dispatch({
+      type: "getPrompt",
+      payload: { prompt: "summarize", arguments: { topic: "MCP" } },
+    });
+    expect(response).toMatchObject({
+      status: "error",
+      error: {
+        code: "authorization_required",
+        details: { source: "http_401", requiredScope: "files:read" },
+      },
+    });
+    expect(document.querySelector('[data-testid="auth-challenge-card"]')).toBeNull();
+    expect(mockApplyToolCallStepUp).not.toHaveBeenCalled();
+  });
+});

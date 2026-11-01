@@ -107,11 +107,14 @@ function readStored(): PendingDirectScopeStepUpReplay | undefined {
   }
 }
 
+export const SAVE_CALL_FOR_SIGN_IN_FAILED_MESSAGE =
+  "MCPJam couldn’t save this call for sign-in. Please try again.";
+
 function write(value: PendingDirectScopeStepUpReplay): void {
   const raw = JSON.stringify(value);
   sessionStorage.setItem(PENDING_DIRECT_REPLAY_KEY, raw);
   if (sessionStorage.getItem(PENDING_DIRECT_REPLAY_KEY) !== raw)
-    throw new Error("MCPJam couldn’t save this call for sign-in. Please try again.");
+    throw new Error(SAVE_CALL_FOR_SIGN_IN_FAILED_MESSAGE);
 }
 
 // Calls whose sign-in this page is driving. A call saved by an earlier page
@@ -303,6 +306,27 @@ export function cancelPendingDirectScopeStepUpReplay(
   ) {
     return;
   }
+  sessionStorage.removeItem(PENDING_DIRECT_REPLAY_KEY);
+}
+
+/**
+ * A callback for `serverName` failed. Drop the call it was signing in for,
+ * but not one bound to another flow: an older tab's denied callback must not
+ * cancel the newer call on the same server.
+ */
+export function cancelPendingDirectScopeStepUpReplayForCallback(
+  serverName: string | undefined,
+  callbackDigest: string | undefined,
+): void {
+  const pending = readStored();
+  if (
+    !pending ||
+    pending.phase !== "awaiting_oauth" ||
+    (serverName && pending.descriptor.serverName !== serverName)
+  )
+    return;
+  // The same rule as marking it ready: an unbound call goes with the server.
+  if (pending.flowDigest && pending.flowDigest !== callbackDigest) return;
   sessionStorage.removeItem(PENDING_DIRECT_REPLAY_KEY);
 }
 

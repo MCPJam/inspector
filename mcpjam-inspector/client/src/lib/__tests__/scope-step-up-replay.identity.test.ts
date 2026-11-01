@@ -6,6 +6,7 @@ import {
   peekPendingDirectScopeStepUpReplay,
   claimPendingDirectScopeStepUpReplay,
   clearPendingDirectScopeStepUpReplay,
+  cancelPendingDirectScopeStepUpReplayForCallback,
 } from "../scope-step-up-replay";
 const save = (callId: string) => {
   savePendingDirectScopeStepUpReplay({
@@ -225,6 +226,13 @@ describe("direct replay identity", () => {
       claimPendingDirectScopeStepUpReplay({ serverName: "same", surface: "tools" }),
     ).toBeDefined();
     expect(() => save("b")).toThrow("Another call is waiting");
+  });
+  it("a failed callback from another flow does not cancel the call", () => {
+    save("a");
+    cancelPendingDirectScopeStepUpReplayForCallback("same", "flow-older-tab");
+    expect(peekPendingDirectScopeStepUpReplay()).toBeDefined();
+    cancelPendingDirectScopeStepUpReplayForCallback("same", "flow-a");
+    expect(peekPendingDirectScopeStepUpReplay()).toBeUndefined();
   });
   it("keeps a signed-in call that is waiting to be replayed", () => {
     save("a");

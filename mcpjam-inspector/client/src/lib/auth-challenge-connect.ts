@@ -21,6 +21,7 @@ import {
   clearPendingDirectScopeStepUpReplay,
   savePendingDirectScopeStepUpReplay,
   PendingDirectReplayConflictError,
+  SAVE_CALL_FOR_SIGN_IN_FAILED_MESSAGE,
   setPendingDirectScopeStepUpReplayCredentialBinding,
   setPendingDirectScopeStepUpReplayFlowDigest,
   settlePendingDirectScopeStepUpReplayAfterCallback,
@@ -84,7 +85,7 @@ export async function connectAuthChallenge(
         kind: "failed",
         message:
           prepared.reason === "storage"
-            ? "MCPJam couldn’t save this call for sign-in. Please try again."
+            ? SAVE_CALL_FOR_SIGN_IN_FAILED_MESSAGE
             : CHAT_AUTH_RECOVERY_MESSAGE,
       };
   }
@@ -146,8 +147,7 @@ export async function connectAuthChallenge(
       });
       return {
         kind: "failed",
-        message:
-          "MCPJam couldn’t save this call for sign-in. Please try again.",
+        message: SAVE_CALL_FOR_SIGN_IN_FAILED_MESSAGE,
       };
     }
   }

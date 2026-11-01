@@ -43,12 +43,19 @@ import { HOSTED_MODE } from "@/lib/config";
 import type { ConnectionStatus } from "@/state/app-types";
 import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import {
+  authorizationRequiredCommandError,
+  presentAuthChallenge,
+} from "@/lib/auth-challenge-lifecycle";
+import type { AuthChallengeSignal } from "@/lib/apis/insufficient-scope";
+import type { DirectScopeStepUpReplayDescriptor } from "@/lib/scope-step-up-replay";
+import {
+  AuthChallengeCards,
+  authChallengeConnectMessage,
+} from "./auth-challenge/AuthChallengeCard";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { clampText } from "@/lib/webmcp/groups/shared";
-import {
-  resetScopeStepUp,
-  runWithScopeStepUp,
-} from "@/lib/scope-step-up";
+import { resetScopeStepUp, runWithScopeStepUp } from "@/lib/scope-step-up";
 import {
   claimPendingDirectScopeStepUpReplay,
   clearPendingDirectScopeStepUpReplay,
@@ -202,11 +209,18 @@ export function ResourcesTab({
   // Resources state
   const [resources, setResources] = useState<MCPResource[]>([]);
   const [selectedResource, setSelectedResource] = useState<string>("");
+  const selectedResourceRef = useRef(selectedResource);
+  selectedResourceRef.current = selectedResource;
   const [resourceContent, setResourceContent] =
     useState<MCPReadResourceResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetchingResources, setFetchingResources] = useState(false);
   const [error, setError] = useState<string>("");
+  // A failed LIST, kept apart from a read's own error: each refresh clears it
+  // and leaves the read's error alone.
+  const [listError, setListError] = useState<string>("");
+  /** Why a sign-in challenge did not become a Connect card. Text only. */
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
   const [loadingMore, setLoadingMore] = useState(false);
   const [resourcesServedFromCache, setResourcesServedFromCache] = useState<
@@ -224,6 +238,7 @@ export function ResourcesTab({
   const [templateLoading, setTemplateLoading] = useState(false);
   const [fetchingTemplates, setFetchingTemplates] = useState(false);
   const [templateError, setTemplateError] = useState<string>("");
+  const [templateListError, setTemplateListError] = useState<string>("");
   const [templateOverrides, setTemplateOverrides] = useState<
     Record<string, string>
   >({});
@@ -277,6 +292,8 @@ export function ResourcesTab({
     setSelectedResource("");
     setResourceContent(null);
     setError("");
+    setListError("");
+    setTemplateListError("");
     setNextCursor(undefined);
     setTemplates([]);
     setSelectedTemplate("");
@@ -289,8 +306,17 @@ export function ResourcesTab({
     setTemplatesServedFromCache(undefined);
   };
 
-  // Fetch resources and templates on mount
+  const resourceScope = `${window.location.pathname.split("/").slice(0, 3).join("/")}:${serverName}`;
+  const resourceScopeRef = useRef(resourceScope);
+  resourceScopeRef.current = resourceScope;
+  const loadedResourceScopeRef = useRef(resourceScope);
+
+  // Refreshing a list must not erase a result restored by OAuth.
   useEffect(() => {
+    if (loadedResourceScopeRef.current !== resourceScope) {
+      loadedResourceScopeRef.current = resourceScope;
+      resetLoadedResourceState();
+    }
     if (!serverConfig || !serverName || !isServerConnected) {
       resetLoadedResourceState();
       return;
@@ -299,7 +325,7 @@ export function ResourcesTab({
     if (!HOSTED_MODE) {
       fetchTemplates();
     }
-  }, [serverConfig, serverName, isServerConnected]);
+  }, [serverConfig, serverName, isServerConnected, resourceScope]);
 
   useEffect(() => {
     if (HOSTED_MODE && activeTab === "templates") {
@@ -322,10 +348,8 @@ export function ResourcesTab({
       setLoadingMore(true);
     } else {
       setFetchingResources(true);
-      setError("");
+      setListError("");
       setResources([]);
-      setSelectedResource("");
-      setResourceContent(null);
       setNextCursor(undefined);
       // Clear stale provenance at the start of a non-append (re)fetch so a
       // failed/in-flight refresh cannot keep showing the previous badge.
@@ -346,12 +370,15 @@ export function ResourcesTab({
         setResources((prev) => [...prev, ...serverResources]);
       } else {
         setResources(serverResources);
-        if (serverResources.length === 0) {
-          setSelectedResource("");
-          setResourceContent(null);
-        } else if (
-          !serverResources.some((resource) => resource.uri === selectedResource)
+        // A resource that left a complete list is no longer selectable. A
+        // paged list may hold it on a later page, so it stays.
+        const selected = selectedResourceRef.current;
+        if (
+          typeof result.nextCursor !== "string" &&
+          selected &&
+          !serverResources.some((resource) => resource.uri === selected)
         ) {
+          setSelectedResource("");
           setResourceContent(null);
         }
       }
@@ -366,7 +393,7 @@ export function ResourcesTab({
       setResourcesServedFromCache(result.servedFromCache);
     } catch (err) {
       if (fetchVersion !== resourcesFetchVersionRef.current) return;
-      setError(`Network error fetching resources: ${err}`);
+      setListError(`Network error fetching resources: ${err}`);
     } finally {
       if (fetchVersion === resourcesFetchVersionRef.current) {
         setFetchingResources(false);
@@ -383,11 +410,8 @@ export function ResourcesTab({
     }
 
     setFetchingTemplates(true);
-    setTemplateError("");
+    setTemplateListError("");
     setTemplates([]);
-    setSelectedTemplate("");
-    setTemplateOverrides({});
-    setTemplateContent(null);
     // Clear stale provenance at the start of a template (re)fetch so a
     // failed/in-flight refresh cannot keep showing the previous badge.
     setTemplatesServedFromCache(undefined);
@@ -402,7 +426,7 @@ export function ResourcesTab({
       setTemplatesServedFromCache(serverTemplates.servedFromCache);
     } catch (err) {
       if (fetchVersion !== templatesFetchVersionRef.current) return;
-      setTemplateError(`Could not fetch resource templates: ${err}`);
+      setTemplateListError(`Could not fetch resource templates: ${err}`);
     } finally {
       if (fetchVersion === templatesFetchVersionRef.current) {
         setFetchingTemplates(false);
@@ -440,6 +464,29 @@ export function ResourcesTab({
     };
   }, [nextCursor, loadingMore, loadMoreResources]);
 
+  // A mid-session sign-in challenge on an on-screen read: a Connect card, or
+  // the reason there is none. Reads are read-only, so the read runs again
+  // after sign-in.
+  const presentResourceAuthChallenge = (
+    signal: AuthChallengeSignal,
+    uri: string,
+    replay: DirectScopeStepUpReplayDescriptor,
+    isCurrentRead: () => boolean,
+  ) => {
+    void presentAuthChallenge({
+      server,
+      signal,
+      surface: "resources",
+      operation: { method: "resources/read", operation: uri },
+      readOnly: true,
+      replay,
+    }).then((presentation) => {
+      // A later read owns the notice area by now.
+      if (!isCurrentRead()) return;
+      if (presentation.kind === "notice") setAuthNotice(presentation.message);
+    });
+  };
+
   const clearSelectedResource = () => {
     resourceReadVersionRef.current += 1;
     setSelectedResource("");
@@ -457,6 +504,7 @@ export function ResourcesTab({
     }
     setLoading(true);
     setError("");
+    setAuthNotice(null);
     const readVersion = ++resourceReadVersionRef.current;
 
     try {
@@ -471,9 +519,7 @@ export function ResourcesTab({
           beforeStepUp: () =>
             savePendingDirectScopeStepUpReplay({
               operation: {
-                resourceUrl: String(
-                  (server?.config as any)?.url ?? serverName,
-                ),
+                resourceUrl: String((server?.config as any)?.url ?? serverName),
                 method: "resources/read",
                 operation: uri,
               },
@@ -485,6 +531,19 @@ export function ResourcesTab({
                 target: "resource",
               },
             }),
+          onAuthChallenge: (signal) =>
+            presentResourceAuthChallenge(
+              signal,
+              uri,
+              {
+                kind: "resource",
+                surface: "resources",
+                serverName,
+                uri,
+                target: "resource",
+              },
+              () => readVersion === resourceReadVersionRef.current,
+            ),
         },
       );
       if (readVersion !== resourceReadVersionRef.current) return;
@@ -530,6 +589,7 @@ export function ResourcesTab({
 
     setTemplateLoading(true);
     setTemplateError("");
+    setAuthNotice(null);
     const readVersion = ++templateReadVersionRef.current;
 
     try {
@@ -542,9 +602,7 @@ export function ResourcesTab({
           beforeStepUp: () =>
             savePendingDirectScopeStepUpReplay({
               operation: {
-                resourceUrl: String(
-                  (server?.config as any)?.url ?? serverName,
-                ),
+                resourceUrl: String((server?.config as any)?.url ?? serverName),
                 method: "resources/read",
                 operation: uri,
               },
@@ -557,6 +615,20 @@ export function ResourcesTab({
                 selection: selectedTemplate,
               },
             }),
+          onAuthChallenge: (signal) =>
+            presentResourceAuthChallenge(
+              signal,
+              uri,
+              {
+                kind: "resource",
+                surface: "resources",
+                serverName,
+                uri,
+                target: "template",
+                selection: selectedTemplate,
+              },
+              () => readVersion === templateReadVersionRef.current,
+            ),
         },
       );
       if (readVersion !== templateReadVersionRef.current) return;
@@ -582,14 +654,19 @@ export function ResourcesTab({
     });
     if (!pending || pending.descriptor.kind !== "resource") return;
     const descriptor = pending.descriptor;
-    // Consume this intent before awaiting so a stale completion cannot revive it
-    // or clear a newer OAuth intent saved while this request is in flight.
-    clearPendingDirectScopeStepUpReplay();
+    // Consume this generation before awaiting: a reload mid-read cannot leave
+    // it "replaying", and a newer sign-in saved meanwhile is a new generation.
+    clearPendingDirectScopeStepUpReplay(pending);
+    const replayScope = resourceScope;
     const readVersionRef =
       descriptor.target === "template"
         ? templateReadVersionRef
         : resourceReadVersionRef;
     const readVersion = ++readVersionRef.current;
+    // A later read, or another project or server, owns the panel by now.
+    const isCurrentReplay = () =>
+      resourceScopeRef.current === replayScope &&
+      readVersion === readVersionRef.current;
     if (descriptor.target === "template") {
       setSelectedTemplate(descriptor.selection ?? descriptor.uri);
       setTemplateLoading(true);
@@ -601,11 +678,15 @@ export function ResourcesTab({
     }
     void readResourceApi(descriptor.serverName, descriptor.uri)
       .then((data) => {
-        resetScopeStepUp(server, {
-          method: "resources/read",
-          operation: descriptor.uri,
-        });
-        if (readVersion !== readVersionRef.current) return;
+        resetScopeStepUp(
+          server,
+          {
+            method: "resources/read",
+            operation: descriptor.uri,
+          },
+          descriptor.authAttempt,
+        );
+        if (!isCurrentReplay()) return;
         if (descriptor.target === "template") {
           setTemplateContent(data?.content ?? null);
         } else {
@@ -613,7 +694,7 @@ export function ResourcesTab({
         }
       })
       .catch((error) => {
-        if (readVersion !== readVersionRef.current) return;
+        if (!isCurrentReplay()) return;
         const message = `Authorization finished, but the resource could not be replayed: ${
           error instanceof Error ? error.message : String(error)
         }`;
@@ -624,7 +705,7 @@ export function ResourcesTab({
         }
       })
       .finally(() => {
-        if (readVersion !== readVersionRef.current) return;
+        if (!isCurrentReplay()) return;
         if (descriptor.target === "template") setTemplateLoading(false);
         else setLoading(false);
       });
@@ -802,9 +883,7 @@ export function ResourcesTab({
                     surface: "resources",
                     serverName,
                     uri,
-                    target: templateUriTemplate
-                      ? "template"
-                      : "resource",
+                    target: templateUriTemplate ? "template" : "resource",
                   },
                 }),
             },
@@ -834,9 +913,13 @@ export function ResourcesTab({
               : undefined,
           };
         } catch (e) {
-          throw createInspectorCommandClientError(
-            "execution_failed",
-            e instanceof Error ? e.message : "Failed to read the resource.",
+          // A sign-in challenge is reported as such; a command never signs in.
+          throw (
+            authorizationRequiredCommandError(e, serverName) ??
+            createInspectorCommandClientError(
+              "execution_failed",
+              e instanceof Error ? e.message : "Failed to read the resource.",
+            )
           );
         }
       },
@@ -870,13 +953,11 @@ export function ResourcesTab({
           .slice(0, RESOURCE_SNAPSHOT_MAX_ITEMS)
           .map((r) => ({ uri: r.uri, name: r.name })),
         templateCount: templates.length,
-        templates: templates
-          .slice(0, RESOURCE_SNAPSHOT_MAX_ITEMS)
-          .map((t) => ({
-            name: t.name,
-            uriTemplate: t.uriTemplate,
-            parameters: extractTemplateParameters(t.uriTemplate),
-          })),
+        templates: templates.slice(0, RESOURCE_SNAPSHOT_MAX_ITEMS).map((t) => ({
+          name: t.name,
+          uriTemplate: t.uriTemplate,
+          parameters: extractTemplateParameters(t.uriTemplate),
+        })),
         selectedResource: selectedResource || null,
         selectedTemplate: selectedTemplate || null,
         selectedTemplateParameters: templateParams.map((p) => p.name),
@@ -1236,12 +1317,34 @@ export function ResourcesTab({
     </div>
   );
 
+  const authChallengeBlock = (
+    <>
+      <AuthChallengeCards
+        surface="resources"
+        server={server}
+        className="p-4 pb-0"
+        onResult={(result) =>
+          setAuthNotice(authChallengeConnectMessage(result) ?? null)
+        }
+      />
+      {authNotice ? (
+        <p
+          className="px-4 pt-2 text-xs text-muted-foreground"
+          data-testid="auth-challenge-notice"
+        >
+          {authNotice}
+        </p>
+      ) : null}
+    </>
+  );
+
   const resourcesCenterContent = (
     <div className="h-full flex flex-col bg-background">
-      {error ? (
+      {authChallengeBlock}
+      {error || listError ? (
         <div className="p-4">
           <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-            {error}
+            {error || listError}
           </div>
         </div>
       ) : loading ? (
@@ -1298,10 +1401,11 @@ export function ResourcesTab({
 
   const templatesCenterContent = (
     <div className="h-full flex flex-col bg-background">
-      {templateError ? (
+      {authChallengeBlock}
+      {templateError || templateListError ? (
         <div className="p-4">
           <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-            {templateError}
+            {templateError || templateListError}
           </div>
         </div>
       ) : templateLoading ? (
