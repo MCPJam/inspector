@@ -54,7 +54,11 @@ function readGithubEvent(env: NodeJS.ProcessEnv): string | undefined {
  * user did not ask for.
  */
 export function resolveCliDeployment(
-  input: { apiUrl?: string; credential: DeploymentCredential },
+  input: {
+    apiUrl?: string;
+    apiUrlLabel?: string;
+    credential: DeploymentCredential;
+  },
   deps: { env?: NodeJS.ProcessEnv; authFilePath?: string } = {},
 ): ResolvedDeployment {
   try {

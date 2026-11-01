@@ -12,6 +12,7 @@
  * still declare leaf flags where they need them.
  */
 import type { Command } from "commander";
+import { MCPJAM_CLOUD_API_URL } from "@mcpjam/sdk/internal/deployment";
 import {
   PlatformApiError,
   runOperationWithPermalinks,
@@ -135,7 +136,7 @@ export function addPlatformOptions(command: Command): Command {
     .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
     .option(
       "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)"
+      `MCPJam API base URL (defaults to your organization's server or ${MCPJAM_CLOUD_API_URL})`
     )
     .option(
       "--api-header <header...>",

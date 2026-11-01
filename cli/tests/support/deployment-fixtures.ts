@@ -185,6 +185,8 @@ export type GuardedOptions = {
   env?: Record<string, string>;
   /** Reads stderr as it arrives, e.g. to finish a login. */
   onStderr?: (text: string) => void;
+  /** Defaults to the sandbox home. */
+  cwd?: string;
   timeoutMs?: number;
 };
 
@@ -215,7 +217,7 @@ export function runGuarded(
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [entry, ...args], {
       env,
-      cwd: sandbox.home,
+      cwd: options.cwd ?? sandbox.home,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";

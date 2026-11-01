@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Command } from "commander";
+import { deploymentPolicy } from "@mcpjam/sdk/internal/deployment";
 import { PostHog } from "posthog-node";
 import {
   getUpdateCacheDir,
@@ -32,6 +33,7 @@ const SAFE_ERROR_CODES = new Set([
 ]);
 
 export type TelemetryDisableReason =
+  | "managed-settings"
   | "--no-telemetry"
   | "DO_NOT_TRACK"
   | "MCPJAM_TELEMETRY_DISABLED"
@@ -319,9 +321,15 @@ function resolveTelemetryDecision(
   const stateFile = getTelemetryStatePath(options);
   const state = readTelemetryState(options);
   const envDisableReason = getEnvDisableReason(options.env);
-  const disableReason = options.commandOptOut
-    ? "--no-telemetry"
-    : envDisableReason ?? (state?.enabled === false ? "state" : null);
+  // An IT lock, or a settings file whose intended policy is unknown, turns
+  // telemetry off whatever the user chose.
+  const policy = deploymentPolicy();
+  const disableReason =
+    policy.locked || policy.invalid !== undefined
+      ? "managed-settings"
+      : options.commandOptOut
+        ? "--no-telemetry"
+        : envDisableReason ?? (state?.enabled === false ? "state" : null);
 
   return {
     enabled: disableReason === null,

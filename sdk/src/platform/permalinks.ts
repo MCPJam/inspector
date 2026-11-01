@@ -30,6 +30,7 @@
  * permalinks — see `PlatformNoPermalinkReason.external-resource` and the
  * share-link operations, which stay outside this selector.
  */
+import { MCPJAM_CLOUD_BASE_URL } from "../deployment/address.js";
 
 /**
  * The query parameter that names a permalink's project.
@@ -49,7 +50,7 @@ export const PROJECT_DEEP_LINK_PARAM = "project";
  * origin) explicitly, which is what keeps a staging deployment from minting
  * production links.
  */
-export const DEFAULT_MCPJAM_APP_ORIGIN = "https://app.mcpjam.com";
+export const DEFAULT_MCPJAM_APP_ORIGIN = MCPJAM_CLOUD_BASE_URL;
 
 /**
  * One ancestor in a ref's parent chain.

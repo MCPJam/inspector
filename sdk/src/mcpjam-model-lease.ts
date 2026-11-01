@@ -21,7 +21,7 @@ import { aiRequestHeaders } from "./ai-request-headers.js";
  */
 
 /** A minted lease and everything needed to spend it. */
-import { trimTrailingSlashes } from "./deployment/address.js";
+import { resolveBaseUrl, trimTrailingSlashes } from "./deployment/address.js";
 import { isLoopbackHost } from "./oauth/state-machines/shared/client-id-metadata.js";
 import { redactTelemetryString } from "./telemetry-redaction.js";
 
@@ -380,11 +380,15 @@ function readEnvVar(name: string): string | undefined {
   return process.env[name];
 }
 
-/** The MCPJam app origin to mint against. */
+/**
+ * The MCPJam app origin to mint against, by the shared order. Imported through
+ * the SDK main entry that includes the IT settings file and its lock.
+ */
 export function resolveMcpjamBaseUrl(explicit?: string): string {
-  const raw =
-    explicit ?? readEnvVar("MCPJAM_BASE_URL") ?? "https://app.mcpjam.com";
-  return trimTrailingSlashes(raw);
+  return resolveBaseUrl(explicit, {
+    MCPJAM_API_URL: readEnvVar("MCPJAM_API_URL"),
+    MCPJAM_BASE_URL: readEnvVar("MCPJAM_BASE_URL"),
+  });
 }
 
 /**
@@ -504,14 +508,11 @@ export class McpjamLeaseClient {
   }
 
   /**
-   * A request carrying a callback credential never follows a redirect: the
-   * lease API does not redirect, and a bearer must not travel to whatever
-   * origin a response names. (The fixed-key path keeps its historical
-   * behaviour.)
+   * Mint and revoke never follow a redirect, whichever credential they carry:
+   * the lease API does not redirect, and neither a key, a bearer nor an edge
+   * header may travel to whatever origin a response names.
    */
-  private credentialRedirectPolicy(): { redirect?: RequestRedirect } {
-    return this.getAuth ? { redirect: "error" } : {};
-  }
+  private static readonly NO_REDIRECTS = { redirect: "error" } as const;
 
   /**
    * The headers for ONE request to MCPJam's own API, credential read now.
@@ -617,7 +618,7 @@ export class McpjamLeaseClient {
           headers: await this.platformHeaders(),
           body: JSON.stringify({ runId: lease.runId }),
           signal,
-          ...this.credentialRedirectPolicy(),
+          ...McpjamLeaseClient.NO_REDIRECTS,
         }
       );
       if (response.ok) this.held.delete(lease.runId);
@@ -648,7 +649,7 @@ export class McpjamLeaseClient {
         headers: await this.platformHeaders(),
         body: JSON.stringify({ model: this.model, modelSelection: this.modelSelection, ...(this.modelSelection.settings?.reasoningEffort ? {reasoningEffort: this.modelSelection.settings.reasoningEffort} : {}) }),
         signal,
-        ...this.credentialRedirectPolicy(),
+        ...McpjamLeaseClient.NO_REDIRECTS,
       });
 
     let response = await send();

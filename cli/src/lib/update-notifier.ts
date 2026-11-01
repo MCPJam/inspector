@@ -1,3 +1,4 @@
+import { deploymentPolicy } from "@mcpjam/sdk/internal/deployment";
 import { spawn as spawnChild, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -186,9 +187,13 @@ export function shouldSkipUpdateCheck(
   // but still surface stderr to the model — a TTY gate would silence the update
   // signal for every agent. CI and the explicit opt-out env vars cover the
   // pipelines that genuinely should not be nudged.
-  return Boolean(
-    env.CI || env.NO_UPDATE_NOTIFIER || env.MCPJAM_NO_UPDATE_CHECK,
-  );
+  if (env.CI || env.NO_UPDATE_NOTIFIER || env.MCPJAM_NO_UPDATE_CHECK) {
+    return true;
+  }
+  // Under an IT lock, or with a settings file whose policy is unknown, the
+  // CLI reaches no MCPJam-run service, npm's registry for MCPJam included.
+  const policy = deploymentPolicy();
+  return policy.locked || policy.invalid !== undefined;
 }
 
 export function isNewerVersion(latest: unknown, current: unknown): boolean {

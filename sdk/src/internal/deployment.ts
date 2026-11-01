@@ -9,6 +9,10 @@ export {
   type ResolvedDeployment,
 } from "../deployment/resolve.js";
 export {
+  deploymentPolicy,
+  managedSettingsPath,
+} from "../deployment/managed-settings.js";
+export {
   backendFetch,
   isMcpjamDeploymentError,
   MCPJAM_CLOUD_API_URL,

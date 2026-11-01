@@ -10,7 +10,14 @@ import {
   type HostCompatToolsInput,
   type ReadResourceResult,
 } from "@mcpjam/sdk/host-compat";
+import { backendFetch } from "@mcpjam/sdk/internal/deployment";
+import {
+  declareMcpjamUse,
+  serverOf,
+  type McpjamUse,
+} from "../lib/deployment-preflight.js";
 import { withEphemeralManager } from "../lib/ephemeral.js";
+import { resolveCliDeployment } from "../lib/platform-client.js";
 import {
   addRetryOptions,
   addSharedServerOptions,
@@ -31,6 +38,18 @@ const TOOLS_PAGE_CAP = 50;
 const CATALOG_FETCH_TIMEOUT_MS = 2_500;
 
 /**
+ * The catalog is read from the resolved MCPJam server, or from
+ * `--catalog-url`, which plays that server's role: allowed while unlocked,
+ * refused under a lock unless it names the locked server. The read sends no
+ * credential, so a saved login never matters.
+ */
+const CATALOG_USE: McpjamUse = {
+  when: (options) => options.offline !== true,
+  credential: "api-key",
+  serverFlag: { option: "catalogUrl", label: "--catalog-url" },
+};
+
+/**
  * Live catalog fetch — never throws, never authenticates. `--offline` skips
  * the fetch entirely (zero MCPJam network); any failure silently falls back
  * to the SDK's bundled catalog.
@@ -40,14 +59,18 @@ async function resolveHostCatalog(options: {
   catalogUrl?: string;
 }): Promise<FetchHostCompatCatalogResult | null> {
   if (options.offline) return null;
+  const { apiUrl } = resolveCliDeployment(
+    serverOf(CATALOG_USE, options, process.env)
+  );
   return fetchHostCompatCatalog({
-    baseUrl: options.catalogUrl,
+    baseUrl: apiUrl,
     timeoutMs: CATALOG_FETCH_TIMEOUT_MS,
+    fetchImpl: backendFetch(),
   });
 }
 
 export function registerCompatCommands(program: Command): void {
-  addRetryOptions(
+  declareMcpjamUse(addRetryOptions(
     addSharedServerOptions(
       program
         .command("compat")
@@ -66,10 +89,10 @@ export function registerCompatCommands(program: Command): void {
         )
         .option(
           "--catalog-url <url>",
-          "Base URL to fetch the live host catalog from. Default: the hosted MCPJam API."
+          "Base URL to fetch the live host catalog from. Default: the MCPJam API this CLI uses."
         )
     )
-  ).action(async (options, command) => {
+  ), CATALOG_USE).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
     const retryPolicy = parseRetryPolicy(options);
 

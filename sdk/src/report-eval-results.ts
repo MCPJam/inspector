@@ -540,7 +540,7 @@ function describeIncompatibleReportingBackend(rawMessage: string): string {
     `so the WHOLE report was refused rather than the field ignored — no results ` +
     `were filed, and this is a reporting failure, not an eval verdict. Upgrade ` +
     `the reporting backend to one that accepts declared case ids (MCPJam-hosted ` +
-    `app.mcpjam.com does), or point \`baseUrl\` at one that is. Backend said: ` +
+    `${new URL(MCPJAM_CLOUD_BASE_URL).host} does), or point \`baseUrl\` at one that is. Backend said: ` +
     rawMessage
   );
 }

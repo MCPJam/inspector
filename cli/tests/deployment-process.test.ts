@@ -27,9 +27,9 @@ import {
   type Sandbox,
 } from "./support/deployment-fixtures.js";
 
-const SDK_REPORT = path.resolve(
+const SDK_SCENARIO = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  "fixtures/sdk-report.mjs",
+  "fixtures/sdk-scenario.mjs",
 );
 const QUIET = { MCPJAM_TELEMETRY_DISABLED: "1", MCPJAM_NO_UPDATE_CHECK: "1" };
 const ME = { id: "user_a", email: "dev@a.example.test", name: "Dev" };
@@ -295,7 +295,7 @@ test("conformance run uploads to MCPJAM_API_URL only, with the key and edge head
 test("SDK reportEvalResults reaches A; conflicting variables throw instead of warning", () =>
   scenario(async () => {
     const sdk = (env: Record<string, string>) =>
-      runGuarded(SDK_REPORT, [], {
+      runGuarded(SDK_SCENARIO, ["report"], {
         sandbox,
         allow: [A.port, B.port],
         env: { ...QUIET, ...env },

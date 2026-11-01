@@ -11,7 +11,10 @@ import {
   projectResolutionError,
   resolveProject,
 } from "@mcpjam/sdk/platform";
-import { describeCloudCredential } from "../lib/credential-describe.js";
+import {
+  describeCloudCredential,
+  describeDeploymentSource,
+} from "../lib/credential-describe.js";
 import {
   describeProjectScope,
   resolveProjectSelector,
@@ -53,6 +56,7 @@ type CloudStatusReport = {
   deployment: {
     apiUrl: string;
     source: string;
+    description: string;
     valid: boolean;
     error?: string;
   };
@@ -181,6 +185,7 @@ export function registerCloudLinkCommands(cloud: Command): void {
         deployment: {
           apiUrl: deployment.apiUrl,
           source: deployment.source,
+          description: describeDeploymentSource(deployment),
           valid: deployment.valid,
           ...(deployment.error ? { error: deployment.error } : {}),
         },

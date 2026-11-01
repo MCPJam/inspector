@@ -202,6 +202,10 @@ export function sameServer(
 
 export type DeploymentEnv = Readonly<Record<string, string | undefined>>;
 
+export type EnvDeployment = DeploymentAddress & {
+  variable: "MCPJAM_API_URL" | "MCPJAM_BASE_URL";
+};
+
 /**
  * The server the environment names. `MCPJAM_BASE_URL` is the older spelling
  * of `MCPJAM_API_URL` without `/api/v1`; naming two different servers is a
@@ -209,7 +213,7 @@ export type DeploymentEnv = Readonly<Record<string, string | undefined>>;
  */
 export function deploymentFromEnv(
   env: DeploymentEnv
-): DeploymentAddress | undefined {
+): EnvDeployment | undefined {
   const apiValue = env.MCPJAM_API_URL?.trim();
   const baseValue = env.MCPJAM_BASE_URL?.trim();
   const api = apiValue
@@ -225,7 +229,39 @@ export function deploymentFromEnv(
       { apiUrl: api.apiUrl, source: "env" }
     );
   }
-  return api ?? base;
+  if (api) return { ...api, variable: "MCPJAM_API_URL" };
+  return base && { ...base, variable: "MCPJAM_BASE_URL" };
+}
+
+type BaseUrlResolver = (
+  explicit: string | undefined,
+  env: DeploymentEnv
+) => string;
+let registeredResolver: BaseUrlResolver | undefined;
+
+/**
+ * Lets the SDK main entry, which runs only in Node, hand modules shared with
+ * the browser bundles a resolver that also reads the IT settings file and the
+ * lock. `@mcpjam/sdk/model-factory` imported on its own never registers one
+ * and stays environment-only.
+ */
+export function registerDeploymentResolver(resolver: BaseUrlResolver): void {
+  registeredResolver = resolver;
+}
+
+/**
+ * The app base for code that may run without Node: the registered resolver
+ * when there is one, else the explicit value, the environment, then MCPJam
+ * Cloud.
+ */
+export function resolveBaseUrl(
+  explicit: string | undefined,
+  env: DeploymentEnv
+): string {
+  if (registeredResolver) return registeredResolver(explicit, env);
+  const value = explicit?.trim();
+  if (value) return parseBaseUrl(value, "baseUrl", "flag").baseUrl;
+  return (deploymentFromEnv(env) ?? MCPJAM_CLOUD).baseUrl;
 }
 
 function requestUrl(input: RequestInfo | URL): string {

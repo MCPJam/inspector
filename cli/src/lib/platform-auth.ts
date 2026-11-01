@@ -22,6 +22,7 @@ import { PlatformApiClient } from "@mcpjam/sdk/platform";
 import {
   backendFetch,
   isMcpjamDeploymentError,
+  resolveDeployment,
 } from "@mcpjam/sdk/internal/deployment";
 import {
   clearStoredAuth,
@@ -36,12 +37,31 @@ import {
   usageError,
 } from "./output.js";
 
-export const DEFAULT_PLATFORM_ORIGIN = "https://app.mcpjam.com";
 const LEGACY_API_KEY_PREFIX = "mcpjam_";
 const DEFAULT_LOGIN_TIMEOUT_MS = 5 * 60_000;
 
-export const LEGACY_KEY_REMEDY =
-  "Legacy mcpjam_ API keys are not supported by platform commands. Create an sk_ key at https://app.mcpjam.com/settings/api-keys or run `mcpjam cloud login`.";
+/** Where this command's server lists API keys, for the remedy below. */
+type ServerHint = { apiUrl?: string; env?: NodeJS.ProcessEnv };
+
+/**
+ * The fix for a legacy key, naming the API keys page of the server the
+ * command uses. A refused address names no page: the command stops on that
+ * refusal before it would matter.
+ */
+export function legacyKeyRemedy(hint: ServerHint = {}): string {
+  let page = "Settings > API keys in MCPJam";
+  try {
+    const { apiUrl } = resolveDeployment({
+      apiUrl: hint.apiUrl,
+      credential: "api-key",
+      env: hint.env ?? process.env,
+    });
+    page = `${new URL(apiUrl).origin}/settings/api-keys`;
+  } catch (error) {
+    if (!isMcpjamDeploymentError(error)) throw error;
+  }
+  return `Legacy mcpjam_ API keys are not supported by platform commands. Create an sk_ key at ${page} or run \`mcpjam cloud login\`.`;
+}
 
 export type ExplicitApiKeyInspection =
   | { ok: true }
@@ -52,9 +72,12 @@ export type ExplicitApiKeyInspection =
  * invalid for Cloud commands. `cloud status` reports this in-band; other
  * commands still reject via {@link resolvePlatformCredential}.
  */
-export function inspectExplicitApiKey(value: string): ExplicitApiKeyInspection {
+export function inspectExplicitApiKey(
+  value: string,
+  hint: ServerHint = {}
+): ExplicitApiKeyInspection {
   if (value.startsWith(LEGACY_API_KEY_PREFIX)) {
-    return { ok: false, error: LEGACY_KEY_REMEDY };
+    return { ok: false, error: legacyKeyRemedy(hint) };
   }
   return { ok: true };
 }
@@ -91,7 +114,7 @@ export function platformCredentialKind(
 }
 
 export function resolvePlatformCredential(
-  options: { apiKey?: string },
+  options: { apiKey?: string; apiUrl?: string },
   deps: ResolveCredentialDependencies = {}
 ): PlatformCredential {
   const env = deps.env ?? process.env;
@@ -100,7 +123,10 @@ export function resolvePlatformCredential(
 
   const flagKey = options.apiKey?.trim();
   if (flagKey) {
-    const inspected = inspectExplicitApiKey(flagKey);
+    const inspected = inspectExplicitApiKey(flagKey, {
+      apiUrl: options.apiUrl,
+      env,
+    });
     if (!inspected.ok) {
       throw usageError(inspected.error);
     }
@@ -115,7 +141,7 @@ export function resolvePlatformCredential(
     // Non-eval platform commands retain their migration fallback. Eval runs
     // reject an explicitly selected legacy key before reaching this resolver.
     warn(
-      `Ignoring legacy mcpjam_ key in MCPJAM_API_KEY for this command. ${LEGACY_KEY_REMEDY}`
+      `Ignoring legacy mcpjam_ key in MCPJAM_API_KEY for this command. ${legacyKeyRemedy({ apiUrl: options.apiUrl, env })}`
     );
   }
 

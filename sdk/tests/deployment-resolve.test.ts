@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   resolveDeployment,
   type DeploymentCredential,
@@ -13,6 +13,8 @@ const CLOUD = "https://app.mcpjam.com";
 
 let directory: string;
 const loginFiles: Record<string, string> = {};
+const itFiles: Record<string, string> = {};
+const SEAM = Symbol.for("mcpjam.managedSettingsPath");
 
 /** A saved login made against `apiUrl`, or one that recorded no server. */
 async function savedLogin(name: string, apiUrl?: string): Promise<void> {
@@ -40,6 +42,18 @@ beforeAll(async () => {
   await savedLogin("unparsable", "ftp://b.example.test/api/v1");
   await savedLogin("with-query", `${B}/api/v1?tenant=acme`);
   await savedLogin("not-a-url", "b.example.test");
+  for (const [name, settings] of Object.entries({
+    "locked-a": { version: 1, apiUrl: `${A}/api/v1`, lock: true },
+    "unlocked-a": { version: 1, apiUrl: `${A}/api/v1`, lock: false },
+    invalid: { version: 1, apiUrl: `${A}/api/v1` },
+  })) {
+    itFiles[name] = join(directory, `it-${name}.json`);
+    await writeFile(itFiles[name], JSON.stringify(settings));
+  }
+});
+
+afterEach(() => {
+  Reflect.deleteProperty(globalThis, SEAM);
 });
 
 afterAll(async () => {
@@ -48,7 +62,11 @@ afterAll(async () => {
 
 type Row = {
   name: string;
+  /** The IT settings file in place. */
+  it?: "locked-a" | "unlocked-a" | "invalid";
   flag?: string;
+  /** An SDK `baseUrl` option instead of a flag. */
+  option?: string;
   env?: NodeJS.ProcessEnv;
   login?:
     | "none-saved"
@@ -249,6 +267,100 @@ const rows: Row[] = [
     expect: { baseUrl: A, source: "flag" },
   },
   {
+    name: "locked to A, nothing named",
+    it: "locked-a",
+    credential: "api-key",
+    expect: { baseUrl: A, source: "managed" },
+  },
+  {
+    name: "locked to A, --api-url B",
+    it: "locked-a",
+    flag: `${B}/api/v1`,
+    credential: "api-key",
+    expect: {
+      code: "DEPLOYMENT_LOCKED",
+      message:
+        /^Your organization locks MCPJam to https:\/\/a\.example\.test\/api\/v1 \(.+it-locked-a\.json\), and --api-url names https:\/\/b\.example\.test\/api\/v1, so nothing was sent\. Remove --api-url, or set it to https:\/\/a\.example\.test\/api\/v1\.$/,
+    },
+  },
+  {
+    name: "locked to A, MCPJAM_API_URL B",
+    it: "locked-a",
+    env: { MCPJAM_API_URL: `${B}/api/v1` },
+    credential: "api-key",
+    expect: { code: "DEPLOYMENT_LOCKED", message: /and MCPJAM_API_URL names/ },
+  },
+  {
+    name: "locked to A, an SDK baseUrl option for B",
+    it: "locked-a",
+    option: B,
+    credential: "api-key",
+    expect: { code: "DEPLOYMENT_LOCKED", message: /and baseUrl names/ },
+  },
+  {
+    name: "locked to A, A named again in another spelling",
+    it: "locked-a",
+    flag: "HTTPS://A.EXAMPLE.TEST/api/v1/",
+    env: { MCPJAM_BASE_URL: A },
+    credential: "api-key",
+    expect: { baseUrl: A, source: "managed" },
+  },
+  {
+    name: "locked to A, saved login for B is the credential",
+    it: "locked-a",
+    login: "for-b",
+    credential: "oauth",
+    expect: {
+      code: "LOGIN_DEPLOYMENT_MISMATCH",
+      message: /Run `mcpjam cloud login` to sign in there/,
+    },
+  },
+  {
+    name: "locked to A, signing in while the saved login is for B",
+    it: "locked-a",
+    login: "for-b",
+    credential: "none",
+    expect: { baseUrl: A, source: "managed" },
+  },
+  {
+    name: "locked to A, a key while the saved login is for B",
+    it: "locked-a",
+    login: "for-b",
+    credential: "api-key",
+    expect: { baseUrl: A, source: "managed" },
+  },
+  {
+    name: "unlocked A is the organization default",
+    it: "unlocked-a",
+    credential: "api-key",
+    expect: { baseUrl: A, source: "managed-default" },
+  },
+  {
+    name: "unlocked A, --api-url B wins",
+    it: "unlocked-a",
+    flag: `${B}/api/v1`,
+    credential: "api-key",
+    expect: { baseUrl: B, source: "flag" },
+  },
+  {
+    name: "unlocked A, the saved login's server outranks it",
+    it: "unlocked-a",
+    login: "for-b",
+    credential: "oauth",
+    expect: { baseUrl: B, source: "oauth" },
+  },
+  {
+    name: "an invalid IT file stops everything, a flag included",
+    it: "invalid",
+    flag: `${A}/api/v1`,
+    credential: "api-key",
+    expect: {
+      code: "MANAGED_SETTINGS_INVALID",
+      message:
+        /^The MCPJam settings file installed by your organization \(.+it-invalid\.json\) needs "lock" set to true or false\. Until an administrator fixes it, commands that contact MCPJam stop before sending anything\.$/,
+    },
+  },
+  {
     name: "an unparsable flag",
     flag: "staging.example.test",
     credential: "api-key",
@@ -271,9 +383,11 @@ const rows: Row[] = [
 
 describe("resolveDeployment", () => {
   it.each(rows)("$name", (row) => {
+    if (row.it) Reflect.set(globalThis, SEAM, itFiles[row.it]);
     const resolve = () =>
       resolveDeployment({
         ...(row.flag ? { apiUrl: row.flag } : {}),
+        ...(row.option ? { baseUrl: row.option } : {}),
         credential: row.credential,
         env: row.env ?? {},
         authFilePath: loginFiles[row.login ?? "none-saved"],

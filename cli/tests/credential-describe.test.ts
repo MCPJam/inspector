@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { DEFAULT_PLATFORM_API_BASE_URL } from "@mcpjam/sdk/platform";
 import { describeCloudCredential, redactCloudApiKey } from "../src/lib/credential-describe.js";
-import { LEGACY_KEY_REMEDY } from "../src/lib/platform-auth.js";
+import { legacyKeyRemedy } from "../src/lib/platform-auth.js";
 
 function authFile(body: Record<string, unknown>): string {
   const directory = mkdtempSync(path.join(tmpdir(), "mcpjam-cred-"));
@@ -74,7 +74,7 @@ test("legacy mcpjam_ flag keys are reported without throwing", () => {
     { env: {} }
   );
   assert.equal(described.credential.valid, false);
-  assert.equal(described.credential.error, LEGACY_KEY_REMEDY);
+  assert.equal(described.credential.error, legacyKeyRemedy({ env: {} }));
   assert.equal(described.credential.source, "flag");
   assert.equal(described.credential.redactedKey, "mcpjam_…cret");
   assert.doesNotMatch(

@@ -29,6 +29,12 @@ export type McpjamUse = {
   when?: (options: CommandOptions) => boolean;
   /** Defaults to the key or saved login the command would send. */
   credential?: DeploymentCredential;
+  /**
+   * A flag that names the MCPJam server in place of `--api-url`, such as
+   * `compat --catalog-url`: allowed while unlocked, refused under a lock
+   * unless it names the locked server.
+   */
+  serverFlag?: { option: string; label: string };
 };
 
 const declaredUses = new WeakMap<Command, McpjamUse>();
@@ -50,6 +56,21 @@ function acceptsApiUrl(command: Command): boolean {
   return false;
 }
 
+/** What a command resolves its server from, for the hook and the command. */
+export function serverOf(
+  use: McpjamUse,
+  options: CommandOptions,
+  env: NodeJS.ProcessEnv
+): Parameters<typeof resolveCliDeployment>[0] {
+  const flag = use.serverFlag;
+  const value = flag ? options[flag.option] : options.apiUrl;
+  return {
+    ...(typeof value === "string" ? { apiUrl: value } : {}),
+    ...(flag ? { apiUrlLabel: flag.label } : {}),
+    credential: use.credential ?? platformCredentialKind(options, env),
+  };
+}
+
 function useOf(command: Command, options: CommandOptions): McpjamUse | null {
   const declared = declaredUses.get(command);
   if (declared?.when) return declared.when(options) ? declared : null;
@@ -63,9 +84,6 @@ export function installDeploymentPreflight(program: Command): void {
     const options = platformOptionsOf<CommandOptions>(actionCommand);
     const use = useOf(actionCommand, options);
     if (!use) return;
-    resolveCliDeployment({
-      apiUrl: options.apiUrl,
-      credential: use.credential ?? platformCredentialKind(options, process.env),
-    });
+    resolveCliDeployment(serverOf(use, options, process.env));
   });
 }
