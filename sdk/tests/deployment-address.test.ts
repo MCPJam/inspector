@@ -11,7 +11,9 @@ import {
 
 describe("server addresses", () => {
   it("normalizes scheme, host case, default port and trailing slashes", () => {
-    expect(parseApiUrl("HTTPS://A.Example.TEST:443/api/v1///", "--api-url")).toEqual({
+    expect(
+      parseApiUrl("HTTPS://A.Example.TEST:443/api/v1///", "--api-url")
+    ).toEqual({
       apiUrl: "https://a.example.test/api/v1",
       baseUrl: "https://a.example.test",
     });
@@ -22,9 +24,9 @@ describe("server addresses", () => {
   });
 
   it("strips /api/v1 exactly once, so a path prefix stays", () => {
-    expect(parseApiUrl("https://x.test/prefix/api/v1", "--api-url").baseUrl).toBe(
-      "https://x.test/prefix"
-    );
+    expect(
+      parseApiUrl("https://x.test/prefix/api/v1", "--api-url").baseUrl
+    ).toBe("https://x.test/prefix");
     expect(parseApiUrl("https://x.test", "--api-url")).toEqual({
       apiUrl: "https://x.test",
       baseUrl: "https://x.test",
@@ -47,7 +49,10 @@ describe("server addresses", () => {
   });
 
   it.each([
-    ["not a url", /Expected a full URL like https:\/\/app\.mcpjam\.com\/api\/v1\./],
+    [
+      "not a url",
+      /Expected a full URL like https:\/\/app\.mcpjam\.com\/api\/v1\./,
+    ],
     ["ftp://a.test/api/v1", /Expected an http\(s\) URL/],
     ["https://user:secret@a.test/api/v1", /no credentials, query or fragment/],
     ["https://a.test/api/v1?tenant=1", /no credentials, query or fragment/],
@@ -63,10 +68,33 @@ describe("server addresses", () => {
     expect((thrown as Error).message).toMatch(message);
   });
 
-  it("reads nothing when neither variable is set", () => {
-    expect(deploymentFromEnv({ MCPJAM_API_URL: " ", MCPJAM_BASE_URL: "" })).toBe(
-      undefined
+  it("never repeats credentials, a query, a fragment or a non-URL in a refusal", () => {
+    const refusal = (value: string) => {
+      try {
+        parseApiUrl(value, "MCPJAM_API_URL");
+      } catch (error) {
+        if (error instanceof McpjamDeploymentError) return error;
+      }
+      throw new Error(`expected ${value} to be refused`);
+    };
+    const withSecrets = refusal(
+      "https://user:s3cret@a.test/api/v1?token=t0k#frag"
     );
+    expect(withSecrets.message).toBe(
+      'Invalid MCPJAM_API_URL value "https://***@a.test/api/v1?***#***". Expected a server address with no credentials, query or fragment, like https://app.mcpjam.com/api/v1.'
+    );
+    expect(withSecrets.apiUrl).toBe("https://***@a.test/api/v1?***#***");
+    const apiKey = refusal("sk_live_0123456789");
+    expect(apiKey.message).toBe(
+      "Invalid MCPJAM_API_URL value. Expected a full URL like https://app.mcpjam.com/api/v1."
+    );
+    expect(apiKey.apiUrl).toBe("");
+  });
+
+  it("reads nothing when neither variable is set", () => {
+    expect(
+      deploymentFromEnv({ MCPJAM_API_URL: " ", MCPJAM_BASE_URL: "" })
+    ).toBe(undefined);
   });
 
   it("recognizes a refusal thrown by another bundle's copy of the class", () => {
