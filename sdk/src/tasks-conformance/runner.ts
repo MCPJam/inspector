@@ -67,7 +67,7 @@ export const CHECK_METADATA: Record<
     category: "dispatch",
     title: "Tasks Wire Resolvable",
     description:
-      "The negotiated protocol version and advertised capabilities resolve to exactly one tasks wire, and the server does not advertise capabilities for the other era.",
+      "The negotiated protocol version and advertised capabilities resolve to exactly one tasks wire.",
   },
   "tasks-declaration-hygiene": {
     id: "tasks-declaration-hygiene",
@@ -1319,11 +1319,11 @@ export class MCPTasksConformanceTest {
               isRecord(extensions) && MCP_TASKS_EXTENSION_ID in extensions;
 
             if (advertisesExtension && protocolVersion === "2025-11-25") {
-              // SEP-2663: on 2025-11-25 the extension capability MUST be
-              // treated as absent. Advertising it is a server-side smell, not
-              // a client failure, so it surfaces as a warning.
+              // A reminder, not a violation: nothing forbids listing the
+              // extension on 2025-11-25. SEP-2663 forbids USING it there, so
+              // the only tasks wire is the in-core 2025-11-25 one.
               warnings.push(
-                `server advertises ${MCP_TASKS_EXTENSION_ID} on 2025-11-25, where it must be treated as absent`
+                `Listing ${MCP_TASKS_EXTENSION_ID} on 2025-11-25 is allowed, but tasks on this connection must use the 2025-11-25 tasks capability, not the extension (SEP-2663).`
               );
             }
 

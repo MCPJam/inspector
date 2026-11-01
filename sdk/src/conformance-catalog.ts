@@ -286,7 +286,7 @@ export const TASKS_CHECK_CATALOG = {
   "tasks-wire-resolvable": {
     title: "Tasks Wire Resolvable",
     description:
-      "The negotiated protocol version and advertised capabilities resolve to exactly one tasks wire, and the server does not advertise capabilities for the other era.",
+      "The negotiated protocol version and advertised capabilities resolve to exactly one tasks wire.",
   },
   "tasks-declaration-hygiene": {
     title: "Per-Version Declaration Hygiene",
