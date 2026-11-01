@@ -4,6 +4,7 @@
 
 Every command that can contact MCPJam (it accepts `--api-url`, or it uploads results) now decides its server when it starts, by the same order the SDK uses, and refuses before contacting anything. Behavior changes:
 
+- An `--api-url`, `MCPJAM_API_URL` or `MCPJAM_BASE_URL` with credentials, a query or a fragment, such as `https://host/api/v1?tenant=1`, is now a usage error (exit `2`). The error masks those parts and does not repeat a value that is not a URL.
 - `MCPJAM_BASE_URL` names the same server as `MCPJAM_API_URL` in the older format. Setting the two to different servers exits `2` (`DEPLOYMENT_CONFLICT`).
 - A saved login is only sent to its own server. A command that would send it to another server exits `3` (`LOGIN_DEPLOYMENT_MISMATCH`); pass an `sk_` key for that server or run `mcpjam cloud login` for it. A login saved before logins recorded their server counts as an MCPJam Cloud login.
 - `cloud login` without an address signs in to the saved login's server again, sends `--api-header` values to the login settings and `/me` only, never to the sign-in provider, and is never blocked by a saved login for another server.
