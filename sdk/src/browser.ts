@@ -714,6 +714,7 @@ export {
 export {
   buildDynamicClientRegistrationRequest,
   executeDynamicClientRegistration,
+  isDynamicClientRegistrationHttpError,
 } from "./oauth/state-machines/shared/dynamic-client-registration.js";
 export type {
   DynamicClientRegistrationCredentials,
