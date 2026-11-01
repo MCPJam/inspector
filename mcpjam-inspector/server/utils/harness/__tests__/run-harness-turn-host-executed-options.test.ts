@@ -32,6 +32,7 @@ const harnessState = vi.hoisted(() => ({
   finalText: "done",
   continuations: [] as any[],
   create: vi.fn(),
+  createRuntime: vi.fn(() => ({ harnessId: "codex" })),
   stream: vi.fn(),
   session: {
     sessionId: "session-1",
@@ -88,9 +89,10 @@ vi.mock("../registry.js", () => ({
     // The delivery mode under test: no `.mcp.json`, the servers ride as
     // host-executed tools MCPJam builds itself.
     mcpDelivery: adapterDelivery.value,
+    mcpNativeDelivery: "session-config",
     supportsModel: vi.fn(() => true),
     toNativeModel,
-    createHarness: vi.fn(() => ({ harnessId: "codex" })),
+    createHarness: harnessState.createRuntime,
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
   })),
 }));
@@ -153,7 +155,25 @@ vi.mock("../harness-model-broker.js", () => ({
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
     proxyBaseUrl: "https://broker.example",
+    forwarding: {}, expiresAt: Date.now() + 60_000,
   })),
+}));
+
+const forwarding = vi.hoisted(() => ({
+  allowed: false,
+  admission: vi.fn((): { delivery?: "native" | "bridge"; gaps: string[] } => ({ gaps: [] })),
+  prepare: vi.fn(async () => ({
+    mcpJson: { mcpServers: { server: { url: "https://forward.test/mcp" } } },
+    keyToServerId: { server: "srv-a" }, policyDigest: "policy", logScopeIds: {},
+    isForwardedTool: () => false, stop: vi.fn(async () => {}),
+  })),
+}));
+vi.mock("../forwarding/enhanced-admission.js", () => ({ forwardingAdmission: forwarding.admission }));
+vi.mock("../forwarding/native-turn.js", async (original) => ({
+  ...await original<typeof import("../forwarding/native-turn.js")>(),
+  hasForwardingOrganization: () => forwarding.allowed,
+  nativeForwardingSelection: () => ({ serverIds: ["srv-a"] }),
+  prepareNativeForwarding: forwarding.prepare,
 }));
 
 import { runHarnessTurn } from "../run-harness-turn";
@@ -578,4 +598,59 @@ it.each(["claude-code", "codex"] as const)("delivers %s App context per turn wit
   await runHarnessTurn({ ...options, harnessTurnContext: "widget state two", harnessUnavailableAppTools: true } as never, "none");
   expect(agentConstruction.last?.instructions).toEqual(firstInstructions);
   expect(JSON.stringify(harnessState.stream.mock.calls.at(-1))).toContain("widget state two");
+});
+
+
+describe("enrolled Claude forwarding admission", () => {
+  beforeEach(() => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
+    vi.stubEnv("HARNESS_NATIVE_FORWARDING", "true");
+    forwarding.allowed = true;
+    forwarding.admission.mockReset().mockReturnValue({ delivery: "native", gaps: [] });
+    forwarding.prepare.mockClear();
+    projectSpy.mockClear();
+    harnessState.stream.mockClear();
+    adapterDelivery.value = "harness";
+    harnessState.createRuntime.mockClear();
+  });
+  afterEach(() => { forwarding.allowed = false; vi.unstubAllEnvs(); });
+  const enrolled = () => baseOptions({
+    harness: "claude-code", agentLoop: "claude-code", sourceType: "direct",
+    hostId: "host-claude", chatSessionId: "chat-claude",
+    harnessMcpProxy: { plane: "web-authorized", mode: "relay" },
+  });
+  it("uses forwarding instead of projecting the same tools twice when admitted", async () => {
+    await runHarnessTurn(enrolled() as never, "none");
+    expect(forwarding.admission).toHaveBeenCalledOnce();
+    expect(forwarding.prepare).toHaveBeenCalledOnce();
+    expect(harnessState.createRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      mcpJson: { mcpServers: { server: { url: "https://forward.test/mcp" } } },
+    }));
+    expect(projectSpy).not.toHaveBeenCalled();
+    expect(harnessState.stream).toHaveBeenCalledOnce();
+  });
+  it("keeps the configured bridge when the profile does not qualify", async () => {
+    forwarding.admission.mockReturnValue({ gaps: ["unqualified-protocol"] });
+    await runHarnessTurn(enrolled() as never, "none");
+    expect(forwarding.admission).toHaveBeenCalledOnce();
+    expect(forwarding.prepare).not.toHaveBeenCalled();
+    expect(projectSpy).toHaveBeenCalledOnce();
+    expect(harnessState.stream).toHaveBeenCalledOnce();
+  });
+  it.each(["flag-disabled", "eval-surface"])("retains the bridge for %s", async reason => {
+    if (reason === "flag-disabled") vi.stubEnv("HARNESS_NATIVE_FORWARDING", "false");
+    const options = enrolled();
+    if (reason === "eval-surface") Object.assign(options, { sourceType: "eval", evalIterationId: "iteration" });
+    await runHarnessTurn(options as never, "none");
+    expect(forwarding.admission).not.toHaveBeenCalled();
+    expect(forwarding.prepare).not.toHaveBeenCalled();
+    expect(projectSpy).toHaveBeenCalledOnce();
+  });
+  it("keeps other organizations on their configured bridge", async () => {
+    forwarding.allowed = false;
+    await runHarnessTurn(enrolled() as never, "none");
+    expect(forwarding.admission).not.toHaveBeenCalled();
+    expect(forwarding.prepare).not.toHaveBeenCalled();
+    expect(projectSpy).toHaveBeenCalledOnce();
+  });
 });
