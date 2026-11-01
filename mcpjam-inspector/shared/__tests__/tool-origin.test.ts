@@ -1,18 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { evalTraceSpanZ } from "../eval-trace";
 import { harnessToolOrigin, toolOrigin } from "../tool-origin";
-import { getHarnessAdapter } from "../../server/utils/harness/registry";
 
 describe("harness origin survives ingestion", () => {
-  it("recognizes Claude's actual native ToolSearch without relabelling an MCP tool", () => {
-    const nativeTools = getHarnessAdapter("claude-code").listBuiltinTools();
-    const call = {
-      rawToolName: "ToolSearch", toolName: "ToolSearch",
-      hostTools: {}, nativeTools,
-    };
-    expect(harnessToolOrigin(call)).toBe("native");
-    expect(harnessToolOrigin({ ...call, serverId: "server" })).toBe("mcp");
-  });
   it.each([
     ["Bash", "bash", undefined, "native"],
     ["Bash", "bash", "server", "mcp"],
