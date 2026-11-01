@@ -1648,6 +1648,10 @@ export async function createAuthorizedManager(
         const selectedId = options.onlySelectedConnections
           ? options.connectionIds?.[id]
           : undefined;
+        // Selected-account authorization returns one credential, not the account list.
+        if (selectedId && !auth.oauthConnections && auth.oauthCredentialId === selectedId && auth.oauthAccessToken) {
+          auth.oauthConnections = [{connectionId: selectedId, accessToken: auth.oauthAccessToken, credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt, isDefault: false}];
+        }
         const live = (auth.oauthConnections ?? []).filter(
           (c) =>
             c.accessToken &&
@@ -2660,7 +2664,7 @@ export async function createAuthorizedManager(
     const account = connection ? auth.oauthConnections?.find(c => c.connectionId === connection.connectionId) : undefined;
     const credentialAuthorizedAt = account ? account.credentialAuthorizedAt ?? account.authorizedAt : auth.oauthCredentialAuthorizedAt ?? null;
     if (connection && credentialAuthorizedAt === undefined) continue;
-    resourceSnapshots.set(key, {serverUpdatedAt: auth.serverConfig.updatedAt, credentialAuthorizedAt: credentialAuthorizedAt ?? null});
+    resourceSnapshots.set(key, {serverUpdatedAt: auth.serverConfig.updatedAt, credentialAuthorizedAt: credentialAuthorizedAt ?? null, credentialId: connection?.connectionId ?? auth.oauthCredentialId ?? undefined});
   }
   setManagerResourceSnapshots(manager, resourceSnapshots);
   setManagerOrganization(manager, batch.organizationId);

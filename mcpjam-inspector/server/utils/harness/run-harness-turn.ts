@@ -1632,7 +1632,7 @@ export async function runHarnessTurn(
           harnessMcpProxy?.plane === "web-authorized" && process.env.HARNESS_NATIVE_FORWARDING === "true" &&
           hasForwardingOrganization(mcpClientManager) && !scenarioId &&
           !evalIterationId && !journeyRunId && !!hostId,
-        laneId: () => continuity?.laneId, sources: retainedResourceSources,
+        laneId: () => continuity?.laneId, sources: retainedResourceSources, turnId,
       });
       const hostExecutedMcp =
         !nativeMcpDelivery && (selectedServers?.length ?? 0) > 0

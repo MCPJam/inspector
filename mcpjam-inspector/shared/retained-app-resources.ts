@@ -23,6 +23,7 @@ export const retainedResourceSourceSchema = retainedResourceBindingSchema
     profile: z.string().min(1),
     attestation: z.string().min(1),
     toolCallId: z.string().min(1),
+    turnId: z.string().min(1).optional(),
   })
   .strict();
 export const retainedResourceProofSchema = z
@@ -94,13 +95,16 @@ export function retainedResourceProofFor(
   },
   metadata: unknown,
 ): RetainedResourceProof | undefined {
-  if (!claim.toolCallId || !hasRetainedResourceSource(claim.output))
-    return undefined;
+  if (!hasRetainedResourceSource(claim.output)) return undefined;
   const parsed = z
     .object({ mcpjam: z.object({ presentationSig: z.string() }) })
     .safeParse(metadata);
   return {
-    claim: { ...claim, toolCallId: claim.toolCallId },
+    claim: {
+      ...claim,
+      input: claim.input ?? {},
+      toolCallId: claim.toolCallId ?? "",
+    },
     signature: parsed.success ? parsed.data.mcpjam.presentationSig : "",
   };
 }

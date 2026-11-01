@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MCPClientManager } from "@mcpjam/sdk";
 import {
+  readRetainedResourceScope,
   retainedResourceExecutor,
   retainedResourceLegGate,
   type RetainedResourcePresentation,
@@ -52,6 +53,7 @@ function producer(transport = "streamable-http") {
     manager,
     enabled: true,
     laneId: () => "lane",
+    turnId: "producing-turn",
     sources: new Map<string, RetainedResourcePresentation>(),
   };
   return { ...args, executor: retainedResourceExecutor(args)! };
@@ -62,6 +64,12 @@ const execution = {
   toolCallId: "call",
   input: {},
 };
+it("sends only the service control-plane owner reference when revalidating a retained result", async () => {
+  vi.mocked(requestExecutionControl).mockResolvedValue({});
+  const owner = {kind: "chat" as const, userId: "user", harnessSessionId: "lane", serverId: "server", connectionId: "account-a"};
+  await readRetainedResourceScope(owner, "original-digest");
+  expect(requestExecutionControl).toHaveBeenCalledWith({resourceOwner: {harnessSessionId: "lane", serverId: "server", connectionId: "account-a"}, operation: {kind: "resource_scope", expectedDigest: "original-digest"}}, expect.anything());
+});
 it("pins the selected alias and the manager's original authorization snapshot", async () => {
   const p = producer();
   const raw = { content: [], _meta: { private: "raw" } };
@@ -161,4 +169,16 @@ it("refuses tools in a resource continuation", async () => {
     }),
   ).rejects.toThrow("method changed");
   expect(send).not.toHaveBeenCalled();
+});
+
+it("pins an ungrouped shared account using its canonical authorization identity", async () => {
+  const p=producer();
+  setManagerConnections(p.manager,{});
+  setManagerResourceSnapshots(p.manager,new Map([["server",{serverUpdatedAt:123,credentialAuthorizedAt:456,credentialId:"shared-account"}]]));
+  vi.mocked(requestExecutionControl).mockResolvedValue({binding:{owner:{kind:"chat",userId:"user",harnessSessionId:"lane",serverId:"server",connectionId:"shared-account"},digest:"digest",projectId:"project",chatSessionId:"chat"}});
+  const run=vi.fn(async()=>({content:[]}));
+  await p.executor({...execution,serverKey:"server"},run);
+  expect(requestExecutionControl).toHaveBeenLastCalledWith({resourceOwner:{harnessSessionId:"lane",serverId:"server",connectionId:"shared-account"},operation:{kind:"resource_scope",snapshot:{hostId:"original-host",hostConfigId:"original-host-config",serverUpdatedAt:123,credentialAuthorizedAt:456}}},expect.anything());
+  expect(p.sources.get("call")?.owner.connectionId).toBe("shared-account");
+  expect(run).toHaveBeenCalledOnce();
 });

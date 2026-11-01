@@ -32,7 +32,13 @@ export function readRetainedResourceScope(
 ) {
   return requestExecutionControl(
     {
-      resourceOwner,
+      resourceOwner: {
+        harnessSessionId: resourceOwner.harnessSessionId,
+        serverId: resourceOwner.serverId,
+        ...(resourceOwner.connectionId
+          ? { connectionId: resourceOwner.connectionId }
+          : {}),
+      },
       operation: {
         kind: "resource_scope",
         ...(snapshot ? { snapshot } : {}),
@@ -89,21 +95,30 @@ export function retainedProfileFingerprint(
 
 export type RetainedResourcePresentation = Awaited<
   ReturnType<typeof readRetainedResourceScope>
->["binding"] & { profile: string; attestation: string };
+>["binding"] & { profile: string; attestation: string; turnId?: string };
 export function retainedResourceExecutor(args: {
   manager: MCPClientManager;
   enabled: boolean;
   existing?: ModelToolExecutor;
   laneId: () => string | undefined;
+  turnId: string;
   sources: Map<string, RetainedResourcePresentation>;
 }): ModelToolExecutor | undefined {
   if (args.existing || !args.enabled) return args.existing;
   const prepared = new Map<string, Promise<unknown>>();
   return async (execution, run) => {
-    const snapshot = getManagerResourceSnapshot(
+    const captured = getManagerResourceSnapshot(
       args.manager,
       execution.serverKey,
     );
+    const snapshot = captured
+      ? {
+          hostId: captured.hostId,
+          hostConfigId: captured.hostConfigId,
+          serverUpdatedAt: captured.serverUpdatedAt,
+          credentialAuthorizedAt: captured.credentialAuthorizedAt,
+        }
+      : undefined;
     const laneId = args.laneId();
     if (
       snapshot &&
@@ -114,16 +129,32 @@ export function retainedResourceExecutor(args: {
       const selected = Object.values(getManagerConnections(args.manager) ?? {})
         .flat()
         .find((connection) => connection.key === execution.serverKey);
-      const preparationKey = JSON.stringify([laneId, snapshot.hostId, snapshot.hostConfigId]);
-      if (!prepared.has(preparationKey)) prepared.set(preparationKey, requestExecutionControl({resourceOwner: {harnessSessionId: laneId, serverId: selected?.serverId ?? execution.serverKey}, operation: {kind: "prepare_resource_chat", snapshot}}, z.object({ready: z.literal(true)})));
+      const connectionId = selected?.connectionId ?? captured?.credentialId;
+      const preparationKey = JSON.stringify([
+        laneId,
+        snapshot.hostId,
+        snapshot.hostConfigId,
+      ]);
+      if (!prepared.has(preparationKey))
+        prepared.set(
+          preparationKey,
+          requestExecutionControl(
+            {
+              resourceOwner: {
+                harnessSessionId: laneId,
+                serverId: selected?.serverId ?? execution.serverKey,
+              },
+              operation: { kind: "prepare_resource_chat", snapshot },
+            },
+            z.object({ ready: z.literal(true) }),
+          ),
+        );
       await prepared.get(preparationKey);
       const scope = await readRetainedResourceScope(
         {
           harnessSessionId: laneId,
           serverId: selected?.serverId ?? execution.serverKey,
-          ...(selected?.connectionId
-            ? { connectionId: selected.connectionId }
-            : {}),
+          ...(connectionId ? { connectionId } : {}),
         },
         undefined,
         snapshot,
@@ -132,6 +163,7 @@ export function retainedResourceExecutor(args: {
         ...scope.binding,
         version: 1 as const,
         toolCallId: execution.toolCallId,
+        turnId: args.turnId,
         profile: retainedProfileFingerprint(args.manager, execution.serverKey),
       };
       const provenance = historyProvenanceContextFor(

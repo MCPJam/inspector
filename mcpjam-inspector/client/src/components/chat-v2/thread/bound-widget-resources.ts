@@ -27,11 +27,20 @@ export function useBoundWidgetResources(
     const parsed: unknown = JSON.parse(key);
     const widget = readMcpWidgetContext({ mcpjam: { widgetContext: parsed } });
     const proof = retainedResourceProofSchema
-      .extend({ signature: z.string() })
+      .extend({
+        signature: z.string(),
+        claim: retainedResourceProofSchema.shape.claim.extend({
+          toolCallId: z.string(),
+          toolName: z.string(),
+        }),
+      })
       .safeParse(parsed);
-    const source = proof.success
-      ? readRetainedResourceSource(proof.data.claim.output)
-      : undefined;
+    const source =
+      proof.success &&
+      !!proof.data.claim.toolCallId &&
+      !!proof.data.claim.toolName
+        ? readRetainedResourceSource(proof.data.claim.output)
+        : undefined;
     return widget ||
       (proof.success && hasRetainedResourceSource(proof.data.claim.output))
       ? {

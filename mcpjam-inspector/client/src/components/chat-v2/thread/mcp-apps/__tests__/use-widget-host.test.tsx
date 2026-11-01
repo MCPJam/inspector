@@ -215,3 +215,15 @@ it.each([2, null])("refuses an unsupported or malformed retained source instead 
   expect(readResource).not.toHaveBeenCalled();
   expect(boundFetch).not.toHaveBeenCalled();
 });
+
+
+it("keeps a retained source with a missing tool identity out of ambient resource APIs", async () => {
+  const {retainedResourceProofFor} = await import("@/shared/retained-app-resources");
+  const proof = retainedResourceProofFor({toolName:"qa_read",input:undefined,output:{_meta:{"mcpjam/retainedResourceSource":{version:1,toolCallId:"original-call",profile:"profile",attestation:"proof",digest:"digest",projectId:"project",chatSessionId:"chat",owner:{kind:"chat",userId:"user",serverId:"original",harnessSessionId:"lane"}}}}},{});
+  if (!proof) throw Error("Source boundary was lost");
+  const {result}=renderHook(()=>{const base=useWidgetHost();const bind=useBoundWidgetResources(proof);return {bound:!!bind,host:bind?bind(base):base};},{wrapper:makeWrapper({})});
+  expect(result.current.bound).toBe(true);
+  await expect(result.current.host.services.readResource("original","test://record")).rejects.toThrow();
+  expect(readResource).not.toHaveBeenCalled();
+  expect(boundFetch).not.toHaveBeenCalled();
+});

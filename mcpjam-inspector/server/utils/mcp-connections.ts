@@ -149,7 +149,7 @@ export function getManagerOrganization(
   return organizations.get(manager);
 }
 
-export type ManagerResourceSnapshot = { serverUpdatedAt: number; credentialAuthorizedAt: number | null };
+export type ManagerResourceSnapshot = { serverUpdatedAt: number; credentialAuthorizedAt: number | null; credentialId?: string };
 const resourceSnapshots = new WeakMap<MCPClientManager, Map<string, ManagerResourceSnapshot>>();
 const resourceHostConfigs = new WeakMap<MCPClientManager, {hostConfigId: string; hostId: string}>();
 export function setManagerResourceSnapshots(manager: MCPClientManager, snapshots: Map<string, ManagerResourceSnapshot>) { resourceSnapshots.set(manager, snapshots); }
