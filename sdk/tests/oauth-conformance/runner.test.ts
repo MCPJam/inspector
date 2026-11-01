@@ -1466,6 +1466,45 @@ describe("OAuthConformanceTest", () => {
     expect(prmRequests.length).toBeLessThanOrEqual(2);
   });
 
+  it.each([
+    [
+      "describes another endpoint on the same origin",
+      {
+        resource: "https://gw.example.com/private/mcp",
+        authorization_servers: ["https://auth.example.com"],
+      },
+    ],
+    ["has no authorization servers", { resource: "https://gw.example.com/public/mcp" }],
+    ["is an empty object", {}],
+  ])(
+    "keeps an anonymous server not applicable when the published PRM %s",
+    async (_label, rootDocument) => {
+      // A shared gateway origin: the path-suffixed document is absent and the
+      // root one is not this server's metadata.
+      const serverUrl = "https://gw.example.com/public/mcp";
+      const fetchFn: typeof fetch = jest.fn(async (input) => {
+        const url = String(input);
+        if (url === serverUrl) {
+          return createMcpInitializeResponse("2025-11-25");
+        }
+        if (url === "https://gw.example.com/.well-known/oauth-protected-resource") {
+          return jsonResponse(rootDocument);
+        }
+        return new Response(null, { status: 404 });
+      }) as unknown as typeof fetch;
+
+      const result = await new OAuthConformanceTest({
+        serverUrl,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "dcr",
+        fetchFn,
+      }).run();
+
+      expect(result.outcome).toBe("not-applicable");
+      expect(result.steps.some((step) => step.status === "failed")).toBe(false);
+    },
+  );
+
   it("grades a server that serves anonymously but publishes PRM, instead of calling it not applicable", async () => {
     // The lazy-authentication shape: the unauthenticated initialize succeeds,
     // and the server still publishes Protected Resource Metadata for the
