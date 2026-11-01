@@ -455,7 +455,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "Verify the URL is reachable from your machine (e.g. `curl`).",
       "Check firewall / VPN rules.",
-      "Behind a corporate proxy, set `HTTPS_PROXY` to it, and list hosts that must connect directly in `NO_PROXY`.",
+      "From the MCPJam CLI behind a corporate proxy, set `HTTPS_PROXY` to it, and list hosts that must connect directly in `NO_PROXY`.",
     ],
     "etimedout",
   ),
