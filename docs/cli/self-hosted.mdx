@@ -23,7 +23,7 @@ The first source that names a server wins. A locked IT settings file overrides e
 
 Every command that can contact MCPJam (it accepts `--api-url`, or it uploads results) decides its server when it starts, before it contacts MCPJam, an MCP server or a model. If `MCPJAM_API_URL` and `MCPJAM_BASE_URL` name different servers, the command exits `2` before any request.
 
-Servers are compared after normalizing the scheme, host case, default port and trailing slash, so `https://MCPJam.acme.com:443/api/v1/` and `https://mcpjam.acme.com/api/v1` are the same server.
+Servers are compared after normalizing the scheme, host case, default port and trailing slash, so `https://MCPJam.acme.com:443/api/v1/` and `https://mcpjam.acme.com/api/v1` are the same server. An address with credentials, a query or a fragment is refused (exit `2`), and the error masks those parts.
 
 ## The IT settings file
 
@@ -48,7 +48,7 @@ Make the file writable only by administrators, for example `root`-owned with mod
 | `"lock": false` | `apiUrl` is the organization default (row 5 above). Users can still choose another server, and telemetry follows their own settings. |
 | Invalid | Commands that can contact MCPJam exit `2` (`MANAGED_SETTINGS_INVALID`), naming the file and the problem. Nothing is sent to MCPJam or its telemetry. Other commands still run. |
 
-The file is invalid when it is not JSON, when `version`, `apiUrl` or `lock` is missing or has the wrong type, when `version` is not `1`, when it has any other key, when it cannot be read, or when `apiUrl` uses plain `http://` to a host other than a loopback address.
+The file is invalid when it is not JSON, when `version`, `apiUrl` or `lock` is missing or has the wrong type, when `version` is not `1`, when it has any other key, when it cannot be read, when `apiUrl` has credentials, a query or a fragment, or when `apiUrl` uses plain `http://` to a host other than a loopback address.
 
 ## Saved logins and API keys
 
