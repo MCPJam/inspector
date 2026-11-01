@@ -273,6 +273,21 @@ describe("tasks-ttl-integer-shape", () => {
     );
   });
 
+  it("still judges the raw payloads when no tasks/get answer could be decoded", async () => {
+    const phases = quickPhases();
+    phases[0] = { ...phases[0]!, ttlMs: 1500.5 };
+    const entry = check(
+      await run(await serve(phases, { misbehave: { getResultType: "bogus" } }), [
+        ID,
+      ]),
+      ID,
+    );
+    expect(entry.status).toBe("failed");
+    expect(entry.error?.message).toContain(
+      "tools/call: ttlMs is 1500.5, which is not an integer",
+    );
+  });
+
   it("only warns on a negative ttlMs, which the extension never forbids", async () => {
     const phases = quickPhases();
     phases[1] = { ...phases[1]!, ttlMs: -1 };
