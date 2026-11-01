@@ -2,7 +2,8 @@
  * A hosted deploy with no sandbox origin is a SECURITY REGRESSION, not a
  * config nicety.
  *
- * `VITE_MCPJAM_SANDBOX_ORIGIN` is what puts MCP Apps widgets on an origin that
+ * The sandbox origin (`MCPJAM_SANDBOX_ORIGIN` on the server, else the build's
+ * `VITE_MCPJAM_SANDBOX_ORIGIN`) is what puts MCP Apps widgets on an origin that
  * shares no cookies with the host app. Unset, the iframe falls back to
  * same-origin and the isolation the sandbox exists to provide is simply gone.
  *
@@ -36,7 +37,7 @@
 const REPORTED_KEY = "mcpjam.sandbox-origin-fault-reported";
 
 const MESSAGE =
-  "VITE_MCPJAM_SANDBOX_ORIGIN is not configured in hosted mode. MCP Apps widgets will render SAME-ORIGIN with the host app, losing the cookie/storage isolation the sandbox provides.";
+  "No sandbox origin is configured in hosted mode, so MCP Apps widgets render on the app's own origin and share its cookies and storage. Set MCPJAM_SANDBOX_ORIGIN on the server, or VITE_MCPJAM_SANDBOX_ORIGIN at build time.";
 
 type SessionFlagStorage = Pick<Storage, "getItem" | "setItem">;
 
