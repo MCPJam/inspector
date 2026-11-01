@@ -567,6 +567,10 @@ export {
 // lets browser hosts keep a target server's authenticated-request rejection in
 // the debugger without sending it to their own exception tracker.
 export { isAuthenticatedRequestFailure } from "./oauth/state-machines/shared/response-error.js";
+// A proxy route's verdict that the server under test presented a certificate
+// Node.js would not accept: the debugger shows it as the server's and keeps it
+// out of the host's exception tracker.
+export { isTlsTrustFailure } from "./oauth-proxy-error.js";
 export { stepFailureFindingKey } from "./oauth/state-machines/shared/step-failure-key.js";
 export {
   isResourceMetadataNotImplemented,
@@ -861,6 +865,7 @@ export {
   isInapplicableCheck,
   isUnrunCheck,
 } from "./conformance-outcome.js";
+export { isAuthorizationRequiredCheck } from "./conformance-authorization.js";
 export type {
   ConformanceRunOutcome,
   ConformanceSkipReason,
@@ -1232,9 +1237,13 @@ export type {
 export type {
   SkillEntry,
   SkillResourceRef,
+  SkillsExtGetResult,
   SkillsExtListResult,
   SkillIdentityFrontmatter,
 } from "./mcp-client-manager/skills-ext-types.js";
 export { modelRejectsTemperature } from "./model-sampling-support.js";
 
 export { aiRequestHeaders } from "./ai-request-headers.js";
+
+/** Use the same validation before rendering embedded Task or MRTR input. */
+export { validateEmbeddedClientRequest } from "./mcp-client-manager/task-input-driver.js";

@@ -115,6 +115,8 @@ export function readAppSignInReturnPath(
       return null;
     }
     if (!isStorableReturnPath(parsed.path)) return null;
+    // The card entry is standalone and has no app navigation tab.
+    if (parsed.path === "/redeem") return parsed.path;
     // Re-normalized on the way out, not just on the way in: this value has
     // been sitting in storage where anything on the origin could rewrite it.
     const normalized = normalizeReturnTargetPath(parsed.path, routePaths.root);

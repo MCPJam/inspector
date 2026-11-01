@@ -1,13 +1,7 @@
 import type { ReactNode } from "react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { defaultFilter } from "cmdk";
-import {
-  ArrowUpRight,
-  Check,
-  ChevronRight,
-  TriangleAlert,
-  X,
-} from "lucide-react";
+import { Check, ChevronRight, TriangleAlert, X } from "lucide-react";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
@@ -19,6 +13,11 @@ import {
 } from "@mcpjam/design-system/popover";
 import { Switch } from "@mcpjam/design-system/switch";
 import { ProviderLogo } from "./model/provider-logo";
+import {
+  AddProviderStep,
+  ManageOrgModelsLink,
+  ModelSearchEmpty,
+} from "./model/add-provider-step";
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
 import {
   Command,
@@ -108,6 +107,13 @@ interface ModelSelectorProps {
    * org settings; omitted, the footer is absent rather than disabled.
    */
   onManageOrgProviders?: () => void;
+  /**
+   * Opens the org's AI providers from a search with no match, under any key
+   * policy: the handoff from `useAvailableModels` for the project the picker
+   * serves, or `null` when that organization offers this viewer none.
+   * `onManageOrgProviders` wins when both are set, so chat passes `null`.
+   */
+  onAddProvider: (() => void) | null;
   /**
    * The organization requires its own provider keys for AI features: MCPJam
    * models are not offered, so the "Free models" / "Your providers" split is
@@ -410,6 +416,7 @@ export function ModelSelector({
   analyticsLocation = "chat_input",
   respondToProviderTabIntent = false,
   onManageOrgProviders,
+  onAddProvider,
   requireOrgKeys = false,
   platformPaidFallback = false,
   workload,
@@ -530,15 +537,16 @@ export function ModelSelector({
     }
   };
 
-  const handleManageOrgProviders = () => {
+  const leaveTo = (handoff?: (() => void) | null) => {
     track("chat_model_selector_manage_org_models_clicked", {
       location: analyticsLocation,
     });
     // Navigating away from a chat while the popover is mounted leaves it
     // orphaned over the next screen, so close it before handing off.
     setIsOpen(false);
-    onManageOrgProviders?.();
+    handoff?.();
   };
+  const handleManageOrgProviders = () => leaveTo(onManageOrgProviders);
 
   const selectedModelsData = allowEmptySelection
     ? (selectedModels ?? [])
@@ -1284,7 +1292,18 @@ export function ModelSelector({
                     {showConfiguredEmpty ||
                     harnessEmpty ||
                     showOrgKeysEmpty ? null : (
-                      <CommandEmpty>No matching models.</CommandEmpty>
+                      <CommandEmpty>
+                        {isSearching ? (
+                          <ModelSearchEmpty
+                            query={search}
+                            requireOrgKeys={requireOrgKeys}
+                            onAdd={onManageOrgProviders ?? onAddProvider}
+                            leaveTo={leaveTo}
+                          />
+                        ) : (
+                          "No matching models."
+                        )}
+                      </CommandEmpty>
                     )}
 
                     {/* Under the key policy the block below says it, with
@@ -1309,21 +1328,9 @@ export function ModelSelector({
                             ? currentModel.disabledReason
                             : "This organization requires its own provider keys for AI features, and none of its providers can run a model here yet."}
                         </p>
-                        {onManageOrgProviders ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-7 text-xs"
-                            onClick={handleManageOrgProviders}
-                          >
-                            Add a provider
-                          </Button>
-                        ) : (
-                          <p className="text-[11px] font-medium text-foreground">
-                            Ask an organization admin to add one.
-                          </p>
-                        )}
+                        <AddProviderStep
+                          onAdd={onManageOrgProviders && handleManageOrgProviders}
+                        />
                       </div>
                     ) : null}
 
@@ -1417,16 +1424,7 @@ export function ModelSelector({
                   !isSearching &&
                   !showOrgKeysEmpty &&
                   (showConfigured || showConfiguredEmpty || harnessEmpty) ? (
-                    <div className="border-t px-2 py-1.5">
-                      <button
-                        type="button"
-                        onClick={handleManageOrgProviders}
-                        className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                      >
-                        Manage organization models
-                        <ArrowUpRight className="size-3 shrink-0" />
-                      </button>
-                    </div>
+                    <ManageOrgModelsLink onClick={handleManageOrgProviders} />
                   ) : null}
                 </>
               );

@@ -10,6 +10,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildServerSkillBanner,
   buildServerSkillToolOutput,
+  mentionsServerSkill,
+  serverSkillLoads,
 } from "../server-skill-banner";
 import {
   SERVER_SKILL_REF_RE,
@@ -219,5 +221,89 @@ describe("server skill refs", () => {
         disambiguator: "ab12cd34",
       })
     ).toBe("acme/refunds~ab12cd34");
+  });
+});
+
+describe("reading a loaded skill back from the conversation", () => {
+  const output = buildServerSkillToolOutput({
+    ref: "acme/refunds",
+    serverLabel: "Acme",
+    skillUri: "skill://acme/refunds/SKILL.md",
+    digestSet: "0123456789ab",
+    content: "# Refunds\n",
+  });
+  const toolMessage = (toolName: string, out: unknown) =>
+    [
+      {
+        role: "tool",
+        content: [
+          { type: "tool-result", toolCallId: "c1", toolName, output: out },
+        ],
+      },
+    ] as never;
+
+  it("gates on a banner that was JSON-stringified into a fence", () => {
+    // A fenced result is text holding the stringified output, so the
+    // marker's quote arrives escaped.
+    const fenced = `MCPJAM_TOOL_OUTPUT\n${JSON.stringify({ type: "text", value: output })}`;
+    expect(
+      mentionsServerSkill(
+        toolMessage("list_issues", { type: "text", value: fenced }),
+      ),
+    ).toBe(true);
+  });
+
+  it("reads a load through any number of json envelopes", () => {
+    let wrapped: unknown = { type: "text", value: output, _meta: {} };
+    for (let i = 0; i < 5; i += 1) wrapped = { type: "json", value: wrapped };
+    const messages = toolMessage("loadSkill", wrapped);
+    expect(mentionsServerSkill(messages)).toBe(true);
+    expect(serverSkillLoads(messages)).toEqual([
+      expect.objectContaining({
+        kind: "loaded",
+        toolCallId: "c1",
+        skill: expect.objectContaining({ digestSet: "0123456789ab" }),
+      }),
+    ]);
+  });
+
+  it("takes a load only from a loadSkill result's text, never its error-text", () => {
+    expect(
+      serverSkillLoads(
+        toolMessage("loadSkill", { type: "error-text", value: output }),
+      ),
+    ).toEqual([]);
+    expect(
+      serverSkillLoads(
+        toolMessage("readSkillFile", { type: "text", value: output }),
+      ),
+    ).toEqual([]);
+    expect(
+      serverSkillLoads([
+        { role: "assistant", content: [{ type: "text", text: output }] },
+      ] as never),
+    ).toEqual([]);
+  });
+
+  it("marks a loadSkill result it cannot read, and gates on it", () => {
+    const messages = toolMessage("loadSkill", { type: "future-shape" });
+    expect(serverSkillLoads(messages)).toEqual([
+      { kind: "unreadable", toolCallId: "c1", providerOptions: undefined },
+    ]);
+    expect(mentionsServerSkill(messages)).toBe(true);
+  });
+
+  it("does not gate on a loadSkill result with no server skill in it", () => {
+    // A local skill, or a refusal: read fine, no banner.
+    expect(
+      mentionsServerSkill(
+        toolMessage("loadSkill", { type: "text", value: "# Local skill" }),
+      ),
+    ).toBe(false);
+    expect(
+      mentionsServerSkill(
+        toolMessage("loadSkill", { type: "execution-denied" }),
+      ),
+    ).toBe(false);
   });
 });

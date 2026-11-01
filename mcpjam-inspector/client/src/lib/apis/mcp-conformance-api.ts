@@ -1,6 +1,9 @@
 import type {
   MCPConformanceResult,
+  MCPAppsCheckId,
   MCPAppsConformanceResult,
+  MCPCheckId,
+  MCPTasksCheckId,
   MCPTasksConformanceResult,
   McpProtocolVersion,
   ConformanceResult as OAuthConformanceResult,
@@ -44,11 +47,14 @@ export interface OAuthStartInput {
 
 export async function runProtocolConformance(
   serverNameOrId: string,
-  options?: { protocolVersion?: McpProtocolVersion },
+  options?: { protocolVersion?: McpProtocolVersion; checkIds?: MCPCheckId[] },
 ): Promise<{ success: boolean; result: MCPConformanceResult }> {
-  const versionFields = options?.protocolVersion
-    ? { protocolVersion: options.protocolVersion }
-    : {};
+  const versionFields = {
+    ...(options?.protocolVersion
+      ? { protocolVersion: options.protocolVersion }
+      : {}),
+    ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
+  };
   return runByMode({
     local: () =>
       localPost("/api/mcp/conformance/protocol", {
@@ -67,15 +73,21 @@ export async function runProtocolConformance(
 
 export async function runAppsConformance(
   serverNameOrId: string,
+  options?: { checkIds?: MCPAppsCheckId[] },
 ): Promise<{ success: boolean; result: MCPAppsConformanceResult }> {
+  const checkFields = options?.checkIds ? { checkIds: options.checkIds } : {};
   return runByMode({
     local: () =>
       localPost("/api/mcp/conformance/apps", {
         serverId: serverNameOrId,
+        ...checkFields,
       }),
     hosted: () => {
       const request = buildServerRequest(serverNameOrId);
-      return webPost("/api/web/conformance/apps", request);
+      return webPost("/api/web/conformance/apps", {
+        ...request,
+        ...checkFields,
+      });
     },
   });
 }
@@ -87,9 +99,14 @@ export async function runAppsConformance(
  */
 export async function runTasksConformance(
   serverNameOrId: string,
-  options?: { toolName?: string; toolArguments?: Record<string, unknown> },
+  options?: {
+    toolName?: string;
+    toolArguments?: Record<string, unknown>;
+    checkIds?: MCPTasksCheckId[];
+  },
 ): Promise<{ success: boolean; result: MCPTasksConformanceResult }> {
   const optionFields = {
+    ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
     ...(options?.toolName ? { toolName: options.toolName } : {}),
     ...(options?.toolArguments ? { toolArguments: options.toolArguments } : {}),
   };

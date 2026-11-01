@@ -118,6 +118,12 @@ const UNPROTECTED_PREFIXES = [
   // `/api/internal/chat-stage/derivation-requested`.
   "/api/internal/chat-stage/",
   "/api/internal/agent-turns/",
+  // Backend→Inspector hourly hosted-browser check. Same caller and same guard:
+  // the router mounts `internalServiceAuthMiddleware()`, so this carve-out
+  // only lets the backend's token reach it. Trailing slash for the
+  // `startsWith` reason above; the router's only path is
+  // `/api/internal/hosted-browser/synthetic`.
+  "/api/internal/hosted-browser/",
 ];
 
 /**

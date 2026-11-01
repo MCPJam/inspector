@@ -32,6 +32,16 @@ function set(overrides: Partial<EffectiveCapabilitySet> = {}) {
   } satisfies EffectiveCapabilitySet;
 }
 
+async function sha256(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(text)
+  );
+  return [...new Uint8Array(digest)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 /** The AI SDK tool shape exposes `execute`; call it the way streamText would. */
 async function run(tool: unknown, input: unknown): Promise<string> {
   const execute = (tool as { execute: (i: unknown) => Promise<string> })
@@ -210,15 +220,93 @@ describe("loadSkill", () => {
     expect(systemPromptSection).toContain(
       "**acme/refunds** (MCP server Acme Billing@v3)"
     );
-    expect(await run(tools.loadSkill, { name: "acme/refunds" })).toContain(
-      "CAPTURED SERVER BODY"
+    const loaded = await run(tools.loadSkill, { name: "acme/refunds" });
+    expect(loaded).toContain("CAPTURED SERVER BODY");
+    // Origin-tagged at the point it enters context, as the live path tags
+    // it, with the capture named. A row with no stored digest says it was
+    // not re-checked.
+    expect(loaded).toContain(
+      '> Origin: MCP server "Acme Billing" (skill://acme/refunds/SKILL.md), captured v3 on 1970-01-01'
     );
+    expect(loaded).toContain("no stored digest");
     const needsApproval = (
       tools.loadSkill as {
         needsApproval: (input: { name: string }) => boolean;
       }
     ).needsApproval;
     expect(needsApproval({ name: "acme/refunds" })).toBe(true);
+  });
+
+  const capturedWithDigest = async (content: string, storedOf: string) =>
+    set({
+      serverSkills: [
+        {
+          ref: "acme/refunds",
+          skillId: "server_skill_1",
+          name: "refunds",
+          description: "Handle refunds",
+          content,
+          contentSha256: await sha256(storedOf),
+          aggregateHash: "version_hash_1",
+          files: [
+            { path: "scripts/run.py", size: 8, url: "https://blob/run" },
+          ],
+          serverId: "server_1",
+          serverLabel: "Acme Billing",
+          skillUri: "skill://acme/refunds/SKILL.md",
+          versionId: "version_1",
+          versionNumber: 3,
+          capturedAt: 1,
+        },
+      ],
+    });
+
+  it("re-checks captured content against its stored digest before loading it", async () => {
+    const ok = getEffectiveSkillToolsAndPrompt(
+      await capturedWithDigest("CAPTURED SERVER BODY", "CAPTURED SERVER BODY")
+    );
+    const loaded = await run(ok.tools.loadSkill, { name: "acme/refunds" });
+    expect(loaded).toContain("CAPTURED SERVER BODY");
+    expect(loaded).not.toContain("no stored digest");
+
+    const tampered = getEffectiveSkillToolsAndPrompt(
+      await capturedWithDigest("CAPTURED SERVER BODY", "something else")
+    );
+    const refused = await run(tampered.tools.loadSkill, {
+      name: "acme/refunds",
+    });
+    expect(refused).toContain("digest_mismatch");
+    expect(refused).not.toContain("CAPTURED SERVER BODY");
+  });
+
+  it("refuses a captured server file whose length differs from the stored size", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(new TextEncoder().encode("print(1)!!"), { status: 200 })
+    );
+    const { tools } = getEffectiveSkillToolsAndPrompt(
+      await capturedWithDigest("CAPTURED SERVER BODY", "CAPTURED SERVER BODY")
+    );
+    const refused = await run(tools.readSkillFile, {
+      name: "acme/refunds",
+      path: "scripts/run.py",
+    });
+    expect(refused).toContain("size_mismatch");
+    expect(refused).not.toContain("print(1)");
+  });
+
+  it("tags a captured server file with its origin", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(new TextEncoder().encode("print(1)"), { status: 200 })
+    );
+    const { tools } = getEffectiveSkillToolsAndPrompt(
+      await capturedWithDigest("CAPTURED SERVER BODY", "CAPTURED SERVER BODY")
+    );
+    const read = await run(tools.readSkillFile, {
+      name: "acme/refunds",
+      path: "scripts/run.py",
+    });
+    expect(read).toContain('> Origin: MCP server "Acme Billing"');
+    expect(read).toContain("print(1)");
   });
 
   it("loads the correct content for each of two plugins declaring one name", async () => {
