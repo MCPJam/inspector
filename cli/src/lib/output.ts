@@ -2,6 +2,7 @@ import {
   isMcpjamDeploymentError,
   type McpjamDeploymentError,
 } from "@mcpjam/sdk/internal/deployment";
+import { isPlatformApiError } from "@mcpjam/sdk/platform";
 
 export type OutputFormat = "json" | "human";
 
@@ -49,6 +50,21 @@ export function operationalError(message: string, details?: unknown): CliError {
  * configuration and exits 2. An unparsable address keeps the usage code it
  * has always had.
  */
+/**
+ * The deployment refusal behind `error`: thrown as itself, or carried as the
+ * cause of the platform client's request error, which is how a refused
+ * redirect arrives. Either way it is a refusal, not a failed request.
+ */
+export function deploymentRefusalOf(
+  error: unknown
+): McpjamDeploymentError | undefined {
+  if (isMcpjamDeploymentError(error)) return error;
+  if (isPlatformApiError(error) && isMcpjamDeploymentError(error.cause)) {
+    return error.cause;
+  }
+  return undefined;
+}
+
 export function deploymentCliError(error: McpjamDeploymentError): CliError {
   if (error.code === "LOGIN_DEPLOYMENT_MISMATCH") {
     return new CliError(error.code, error.message, 3);

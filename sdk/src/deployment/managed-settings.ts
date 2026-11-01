@@ -100,9 +100,12 @@ export function readManagedSettings(): ManagedSettings {
     // Present but unreadable: the intended policy is unknown, so fail closed.
     return invalid(path, `could not be read (${code ?? "unknown error"})`);
   }
+  // PowerShell 5.1's `Set-Content -Encoding UTF8` and `Out-File` write a
+  // UTF-8 byte-order mark, which `JSON.parse` rejects.
+  const json = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(json);
   } catch {
     return invalid(path, "is not valid JSON");
   }

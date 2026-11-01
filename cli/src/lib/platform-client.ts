@@ -20,6 +20,7 @@ import {
   CliError,
   cliError,
   deploymentCliError,
+  deploymentRefusalOf,
   usageError,
 } from "./output.js";
 import {
@@ -170,6 +171,8 @@ export function buildPlatformClient(
    * staging login must not print prod URLs.
    */
   baseUrl: string;
+  /** The app base, from the resolver's one rule for stripping `/api/v1`. */
+  appBaseUrl: string;
 } {
   const env = deps.env ?? process.env;
   const credential = resolvePlatformCredential(options, deps);
@@ -225,6 +228,7 @@ export function buildPlatformClient(
     client,
     credentialKind: credential.kind,
     baseUrl: deployment.apiUrl,
+    appBaseUrl: deployment.baseUrl,
   };
 }
 
@@ -304,14 +308,8 @@ export function toCliError(
   if (error instanceof CliError) {
     return error;
   }
-  if (isMcpjamDeploymentError(error)) {
-    return deploymentCliError(error);
-  }
-  if (isPlatformApiError(error) && isMcpjamDeploymentError(error.cause)) {
-    // The client reports a refused redirect as a failed request; it is a
-    // refusal, with the refusal's code and exit status.
-    return deploymentCliError(error.cause);
-  }
+  const refusal = deploymentRefusalOf(error);
+  if (refusal) return deploymentCliError(refusal);
   if (isPlatformApiError(error)) {
     // The CI-owned suite lock. `CONFLICT` alone reads like a race the caller
     // should retry, which is the one thing that will never help here: the

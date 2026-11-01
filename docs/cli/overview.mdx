@@ -100,7 +100,7 @@ API URL precedence:
 
 1. `--api-url`
 2. `MCPJAM_API_URL`, or `MCPJAM_BASE_URL` (the same server without `/api/v1`)
-3. The server saved with the OAuth login (only when that login is the credential; a login saved before logins recorded their server counts as MCPJam Cloud)
+3. The server saved with the OAuth login (only when that login is the credential; a login saved before logins recorded their server counts as MCPJam Cloud, and one whose recorded server is not a usable address is refused with exit `3`)
 4. `https://app.mcpjam.com/api/v1`
 
 Every command that can contact MCPJam (it accepts `--api-url`, or it uploads results) decides its server when it starts, before it contacts anything. An explicit `--api-url`, `MCPJAM_API_URL` or `MCPJAM_BASE_URL` that is not an `http(s)` URL, or that carries credentials, a query or a fragment, is a usage error (exit `2`), and so are the two variables naming different servers. The error masks credentials, a query and a fragment, and does not repeat a value that is not a URL. A saved login is only sent to its own server: when it is the credential and the order picks another server, the command exits `3` before any request. `mcpjam cloud status` uses the same checks but stays network-free: it still emits the complete JSON report, sets `ok: false`, includes `credential.valid` / `deployment.valid` plus an `error` string, and exits `1`. Missing credentials are informational (`credential.valid: null`) and successful.

@@ -1,4 +1,6 @@
-import { vi } from "vitest";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { beforeEach, vi } from "vitest";
 
 Object.assign(globalThis, {
   jest: Object.assign(vi, {
@@ -8,6 +10,16 @@ Object.assign(globalThis, {
 
 // Unit tests do not discover the checkout running the test; git discovery has dedicated temporary-repository tests.
 process.env.MCPJAM_GIT_AUTODETECT = "false";
+
+// A settings file installed on the machine running the tests must not lock or
+// invalidate them. Tests that need one point the seam at their own file.
+beforeEach(() => {
+  Reflect.set(
+    globalThis,
+    Symbol.for("mcpjam.managedSettingsPath"),
+    join(tmpdir(), "mcpjam-tests-no-managed-settings", "managed-settings.json")
+  );
+});
 
 // Every EvalTest.run() here would otherwise post `eval_test_run_triggered` to production PostHog, where it is counted as customer usage. Telemetry tests clear this themselves.
 process.env.DO_NOT_TRACK = "1";

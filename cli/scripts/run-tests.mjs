@@ -34,7 +34,7 @@ import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const testsDir = path.join(root, "tests");
@@ -90,9 +90,20 @@ function main() {
     process.exit(1);
   }
   const tsx = resolveTsxBinary();
+  // Every test process, and each CLI it spawns, starts without the IT
+  // settings file installed on this machine; see the module for why.
+  const isolation = pathToFileURL(
+    path.join(testsDir, "support", "no-managed-settings.mjs")
+  ).href;
   const result = spawnSync(process.execPath, [tsx, "--test", ...files], {
     cwd: root,
     stdio: "inherit",
+    env: {
+      ...process.env,
+      NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${isolation}`]
+        .filter(Boolean)
+        .join(" "),
+    },
   });
   if (result.error) {
     throw result.error;

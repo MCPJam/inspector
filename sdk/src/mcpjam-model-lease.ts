@@ -21,7 +21,7 @@ import { aiRequestHeaders } from "./ai-request-headers.js";
  */
 
 /** A minted lease and everything needed to spend it. */
-import { resolveBaseUrl } from "./deployment/address.js";
+import { resolveBaseUrl, trimTrailingSlashes } from "./deployment/address.js";
 import { isLoopbackHost } from "./oauth/state-machines/shared/client-id-metadata.js";
 import { redactTelemetryString } from "./telemetry-redaction.js";
 
@@ -378,12 +378,6 @@ function readEnvVar(name: string): string | undefined {
   // reachable from entry points that must load where there is no `process`.
   if (typeof process === "undefined" || !process.env) return undefined;
   return process.env[name];
-}
-
-function trimTrailingSlashes(value: string): string {
-  let end = value.length;
-  while (end > 0 && value[end - 1] === "/") end--;
-  return value.slice(0, end);
 }
 
 /**

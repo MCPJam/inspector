@@ -27,6 +27,9 @@ describe("server addresses", () => {
     expect(
       parseApiUrl("https://x.test/prefix/api/v1", "--api-url").baseUrl
     ).toBe("https://x.test/prefix");
+    expect(
+      parseApiUrl("https://x.test/api/v1/api/v1", "--api-url").baseUrl
+    ).toBe("https://x.test/api/v1");
     expect(parseApiUrl("https://x.test", "--api-url")).toEqual({
       apiUrl: "https://x.test",
       baseUrl: "https://x.test",
