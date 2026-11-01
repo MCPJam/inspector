@@ -521,7 +521,7 @@ export async function handleManagedChatTurn(
           ...(scenarioBox ? { scenarioBox } : {}),
           ...(scenarioParticipant ? { scenarioParticipant: true } : {}),
           authenticatedUserId,
-          ...(hostId ? { hostId } : {}),
+          ...(sourceType === "direct" && typeof hostRuntimeConfig?.hostId === "string" ? { hostId: hostRuntimeConfig.hostId } : hostId ? { hostId } : {}),
           originalMessages: messages,
           ...(resolvedExecution.harness
             ? {
