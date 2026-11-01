@@ -114,8 +114,12 @@ syncBuiltinESMExports();
 
 // The IT settings file is read from a fixed system path. A test points the
 // product at its own file through this registered global, never through a
-// variable the product reads.
-if (process.env.MCPJAM_TEST_MANAGED_SETTINGS) {
-  globalThis[Symbol.for("mcpjam.managedSettingsPath")] =
-    process.env.MCPJAM_TEST_MANAGED_SETTINGS;
-}
+// variable the product reads. A test with no file of its own gets one that is
+// absent, so a file installed on this machine cannot lock or invalidate it.
+globalThis[Symbol.for("mcpjam.managedSettingsPath")] =
+  process.env.MCPJAM_TEST_MANAGED_SETTINGS ||
+  require("node:path").join(
+    require("node:os").tmpdir(),
+    "mcpjam-tests-no-managed-settings",
+    "managed-settings.json",
+  );
