@@ -839,14 +839,11 @@ function LivePartSwitch({
               onSendFollowUp={interactive ? onSendFollowUp : undefined}
               onCallTool={
                 interactive
-                  ? (toolName, params) =>
-                      widgetContext
-                        ? forwardedWidgetCalls.call(
-                            widgetContext,
-                            toolName,
-                            params,
-                          )
-                        : callTool(serverId ?? "offline-view", toolName, params)
+                  ? (toolName, params) => {
+                      const proof = retainedResourceProofFor({toolCallId: toolInfo.toolCallId, toolName: toolInfo.toolName, input: toolInfo.input, output: originalResult}, ("resultProviderMetadata" in toolPart ? toolPart.resultProviderMetadata : undefined) ?? toolPart.callProviderMetadata);
+                      const bound = widgetContext ?? proof;
+                      return bound ? forwardedWidgetCalls.call(bound, toolName, params) : callTool(serverId ?? "offline-view", toolName, params);
+                    }
                   : undefined
               }
               onAppToolInvocationChange={onAppToolInvocationChange}

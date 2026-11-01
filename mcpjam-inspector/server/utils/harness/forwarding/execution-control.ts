@@ -121,22 +121,24 @@ export function createExecutionControl(args: {
   owner: ForwardingOwner;
   token?: string;
   widgetParentId?: string;
+  retainedParent?: {toolCallId: string; turnId: string; scopeDigest: string};
   baseUrl?: string;
   fetch?: typeof fetch;
 }) {
+  if (Number(!!args.token) + Number(!!args.widgetParentId) + Number(!!args.retainedParent) > 1) throw new ExecutionControlError("ambiguous_parent");
   async function post<T>(
     operation: object,
     schema: z.ZodType<T>,
     mode: "grant" | "owner" | "settle" = "grant",
   ): Promise<T> {
-    if (mode === "grant" && !args.token && !args.widgetParentId)
+    if (mode === "grant" && !args.token && !args.widgetParentId && !args.retainedParent)
       throw new ExecutionControlError("grant_unavailable");
     const body = mode === "settle"
         ? { operation }
         : {
             owner: args.owner,
             ...(mode === "grant"
-              ? args.widgetParentId
+              ? args.retainedParent ? {retainedParent: args.retainedParent} : args.widgetParentId
                 ? { widgetParentId: args.widgetParentId }
                 : { token: args.token }
               : {}),

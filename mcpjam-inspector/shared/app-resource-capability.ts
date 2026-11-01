@@ -9,7 +9,10 @@ const configSchema = z.object({
       apps: z
         .object({
           mcpAppsOverrides: z
-            .object({ serverResources: z.boolean().optional() })
+            .object({
+              serverResources: z.boolean().optional(),
+              serverTools: z.boolean().optional(),
+            })
             .optional(),
         })
         .optional(),
@@ -18,7 +21,10 @@ const configSchema = z.object({
 });
 
 /** Use the same resource declaration as the renderer; malformed profiles fail closed. */
-export function appResourcesEnabled(config: unknown): boolean {
+function appCapabilityEnabled(
+  config: unknown,
+  capability: "serverResources" | "serverTools",
+): boolean {
   const parsed = configSchema.safeParse(config);
   return (
     parsed.success &&
@@ -26,6 +32,11 @@ export function appResourcesEnabled(config: unknown): boolean {
       hostStyle: parsed.data.hostStyle,
       profile: parsed.data.mcpProfile,
       hostCapabilitiesOverride: parsed.data.hostCapabilitiesOverride,
-    }).serverResources
+    })[capability]
   );
 }
+
+export const appResourcesEnabled = (config: unknown) =>
+  appCapabilityEnabled(config, "serverResources");
+export const appToolsEnabled = (config: unknown) =>
+  appCapabilityEnabled(config, "serverTools");
