@@ -20,6 +20,7 @@ import {
   readPendingChatScopeStepUp,
   savePendingChatScopeStepUp,
   setPendingChatScopeStepUpCredentialBinding,
+  setPendingChatScopeStepUpFlowDigest,
   settlePendingChatScopeStepUpAfterCallback,
 } from "../scope-step-up-pending";
 import {
@@ -104,15 +105,17 @@ describe("settling the pending stores on the callback", () => {
 
   it("marks a chat step-up ready, or cancels it with the reason", () => {
     saveChatStepUp("c1");
-    settlePendingChatScopeStepUpAfterCallback("orders", "c1");
+    setPendingChatScopeStepUpFlowDigest("orders", "flow");
+    settlePendingChatScopeStepUpAfterCallback("orders", "c1", "flow");
     expect(readPendingChatScopeStepUp()?.phase).toBe("ready");
 
     saveChatStepUp("c1");
+    setPendingChatScopeStepUpFlowDigest("orders", "flow");
     setPendingChatScopeStepUpCredentialBinding("orders", {
       kind: "owned",
       credentialId: "c1",
     });
-    settlePendingChatScopeStepUpAfterCallback("orders", "c2");
+    settlePendingChatScopeStepUpAfterCallback("orders", "c2", "flow");
     expect(readPendingChatScopeStepUp()).toMatchObject({
       phase: "cancelled",
       cancellationMessage: SIGNED_IN_WITH_DIFFERENT_ACCOUNT_MESSAGE,

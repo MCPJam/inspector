@@ -20,6 +20,7 @@ import {
   runWithScopeStepUp,
 } from "../scope-step-up";
 import {
+  markPendingDirectScopeStepUpReplayReady,
   peekPendingDirectScopeStepUpReplay,
   savePendingDirectScopeStepUpReplay,
 } from "../scope-step-up-replay";
@@ -202,6 +203,34 @@ describe("scope step-up lifecycle", () => {
         );
       },
     );
+
+    it("leaves a signed-in call that is waiting to replay", async () => {
+      saveReplay();
+      markPendingDirectScopeStepUpReplayReady("srv-1");
+      applyToolCallStepUp.mockRejectedValue(new Error("authorize failed"));
+      driveScopeStepUpFromError(server, insufficientScopeError());
+      await vi.waitFor(() =>
+        expect(applyToolCallStepUp).toHaveBeenCalledTimes(1),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(peekPendingDirectScopeStepUpReplay()?.phase).toBe("ready");
+    });
+
+    it("leaves a call saved for another operation", async () => {
+      saveReplay();
+      applyToolCallStepUp.mockRejectedValue(new Error("authorize failed"));
+      driveScopeStepUpFromError(server, insufficientScopeError(), {
+        method: "tools/call",
+        operation: "read_file",
+      });
+      await vi.waitFor(() =>
+        expect(applyToolCallStepUp).toHaveBeenCalledTimes(1),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(peekPendingDirectScopeStepUpReplay()).toBeDefined();
+    });
 
     it("is dropped when the step-up throws", async () => {
       saveReplay();

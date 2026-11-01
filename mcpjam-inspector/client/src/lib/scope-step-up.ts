@@ -34,7 +34,10 @@ import {
   resetToolCallStepUp,
   type ToolCallStepUpOperation,
 } from "@/state/oauth-orchestrator";
-import { cancelPendingDirectScopeStepUpReplay } from "@/lib/scope-step-up-replay";
+import {
+  clearPendingDirectScopeStepUpReplay,
+  peekPendingDirectScopeStepUpReplay,
+} from "@/lib/scope-step-up-replay";
 import {
   findProjectByAnyId,
   type AppState,
@@ -333,8 +336,19 @@ export function driveScopeStepUp(
   };
   // No redirect means no callback will ever settle a call the surface saved
   // for this step-up; left in place it would block the next one for the
-  // saved call's lifetime.
-  const dropSavedCall = () => cancelPendingDirectScopeStepUpReplay(server.name);
+  // saved call's lifetime. Only that call: a chat step-up, or one for another
+  // operation, leaves a direct call that is waiting or ready alone.
+  const dropSavedCall = () => {
+    const saved = peekPendingDirectScopeStepUpReplay();
+    if (
+      saved?.phase === "awaiting_oauth" &&
+      saved.descriptor.serverName === server.name &&
+      (!operation ||
+        (saved.operation.method === operation.method &&
+          saved.operation.operation === operation.operation))
+    )
+      clearPendingDirectScopeStepUpReplay(saved);
+  };
   void (operation
     ? applyToolCallStepUp(server, stepUp, { operation })
     : applyToolCallStepUp(server, stepUp))
