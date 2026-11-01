@@ -1,4 +1,9 @@
 import {
+  extractAuthChallenge,
+  isUnauthorized401,
+  type AuthChallengeSignal,
+} from "@mcpjam/sdk";
+import {
   isMcpjamDeploymentError,
   type McpjamDeploymentError,
 } from "@mcpjam/sdk/internal/deployment";
@@ -45,11 +50,82 @@ export function operationalError(message: string, details?: unknown): CliError {
 }
 
 /**
- * A refusal over where a request would go. A saved login for another server
- * exits 3, because the fix is signing in again; every other refusal is
- * configuration and exits 2. An unparsable address keeps the usage code it
- * has always had.
+ * A challenge's `scope` is the server's text, and it lands inside a command a
+ * person may paste into a shell. Quoted as-is it could expand there, so only
+ * plain scope tokens are shown; anything else becomes a placeholder.
  */
+export function displayableScope(scope: string | undefined): string | undefined {
+  if (scope === undefined) return undefined;
+  return /^[A-Za-z0-9._:/@+-]+(?: [A-Za-z0-9._:/@+-]+)*$/.test(scope)
+    ? scope
+    : "<scopes>";
+}
+
+/** Avoid exposing credentials or executable shell syntax in sign-in hints. */
+export function signInUrlArgument(value?: string): string {
+  if (!value) return "<server-url>";
+  try {
+    const url = new URL(value);
+    if (!/^https?:$/.test(url.protocol) || url.username || url.password || url.search || url.hash)
+      return "<server-url>";
+    return "'" + url.toString().replace(/'/g, "'\\''") + "'";
+  } catch {
+    return "<server-url>";
+  }
+}
+
+/**
+ * The command that obtains a token for a server that asked for sign-in.
+ * `--scopes` only when the challenge named them; otherwise the server's
+ * metadata decides.
+ */
+export function authChallengeHint(
+  challenge: Pick<AuthChallengeSignal, "requiredScope">,
+  serverUrl?: string,
+): string {
+  const scope = displayableScope(challenge.requiredScope);
+  const scopes = scope ? ` --scopes "${scope}"` : "";
+  return `Sign in with \`mcpjam oauth login --url ${signInUrlArgument(
+    serverUrl,
+  )}${scopes} --credentials-out <file>\`, then retry with \`--credentials-file <file>\`.`;
+}
+
+/**
+ * Classify a server's sign-in challenge before anything reads the message
+ * text: an `error_description` is the server's prose and may say "connect".
+ */
+function authChallengeCliError(
+  error: unknown,
+  message: string,
+): CliError | undefined {
+  const challenge = extractAuthChallenge(error);
+  if (challenge?.source === "http_403_insufficient_scope") {
+    return cliError("INSUFFICIENT_SCOPE", message, 1, {
+      challenge,
+      hint: authChallengeHint(challenge),
+    });
+  }
+  if (challenge?.source === "http_401") {
+    return cliError("AUTH_REQUIRED", message, 1, {
+      challenge,
+      hint: authChallengeHint(challenge),
+    });
+  }
+  // An MCP client auth failure that kept no challenge (e.g. a connect-time
+  // 401). Narrow on purpose: an MCPJam API 401 is a different problem with a
+  // different fix, and must not be told to run `oauth login`.
+  const name = error instanceof Error ? error.name : undefined;
+  if (
+    (name === "MCPAuthError" || name === "UnauthorizedError") &&
+    isUnauthorized401(error)
+  ) {
+    return cliError("AUTH_REQUIRED", message, 1, {
+      hint: authChallengeHint({}),
+    });
+  }
+  return undefined;
+}
+
 /**
  * The deployment refusal behind `error`: thrown as itself, or carried as the
  * cause of the platform client's request error, which is how a refused
@@ -65,6 +141,12 @@ export function deploymentRefusalOf(
   return undefined;
 }
 
+/**
+ * A refusal over where a request would go. A saved login for another server
+ * exits 3, because the fix is signing in again; every other refusal is
+ * configuration and exits 2. An unparsable address keeps the usage code it
+ * has always had.
+ */
 export function deploymentCliError(error: McpjamDeploymentError): CliError {
   if (error.code === "LOGIN_DEPLOYMENT_MISMATCH") {
     return new CliError(error.code, error.message, 3);
@@ -83,6 +165,12 @@ export function normalizeCliError(error: unknown): CliError {
 
   const message =
     error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown error";
+
+  const authError = authChallengeCliError(error, message);
+  if (authError) {
+    return authError;
+  }
+
   const lower = message.toLowerCase();
 
   if (lower.includes("timed out") || lower.includes("timeout")) {
