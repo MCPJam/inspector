@@ -42,3 +42,75 @@ it("reports a repeated challenge with the same notice as the call surfaces", () 
     "The shared permanent notice.",
   );
 });
+
+function makeCard(overrides: Partial<Card> = {}): Card {
+  return {
+    key: "call",
+    serverName: "bench",
+    serverOrigin: "https://bench.example",
+    surface: "chat",
+    operation: { method: "tools/call", operation: "bench_read" },
+    signal: {
+      source: "http_401",
+      effectiveAuth: "discover",
+      requiredScope: "bench:read",
+      facets: {
+        challengeHeader: "bearer",
+        hasResourceMetadata: true,
+        hasScope: true,
+        hasErrorParams: false,
+      },
+    },
+    action: "prompt",
+    readOnly: true,
+    explanation: "The host prompts.",
+    expiresAt: Date.now() + 60_000,
+    attempt: {
+      projectId: "local",
+      serverId: "bench",
+      surface: "chat",
+      callId: "call",
+    },
+    ...overrides,
+  };
+}
+
+it("stops counting down once the card has expired", () => {
+  const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+  try {
+    render(
+      <AuthChallengeCard
+        card={makeCard({ expiresAt: Date.now() - 1 })}
+        server={createServer({ name: "bench" })}
+      />,
+    );
+    expect(screen.getByText(/This call expired/)).toBeInTheDocument();
+    // The countdown's one-second tick; jsdom's requestAnimationFrame also
+    // runs on setInterval.
+    expect(setIntervalSpy.mock.calls.some(([, delay]) => delay === 1000)).toBe(
+      false,
+    );
+  } finally {
+    setIntervalSpy.mockRestore();
+  }
+});
+
+it("discloses the challenge details from the Details control", () => {
+  render(
+    <AuthChallengeCard
+      card={makeCard()}
+      server={createServer({ name: "bench" })}
+    />,
+  );
+  const trigger = screen.getByRole("button", { name: "Details" });
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(trigger);
+  expect(trigger).toHaveAttribute("aria-expanded", "true");
+  const details = screen.getByTestId("auth-challenge-details");
+  expect(
+    document.getElementById(trigger.getAttribute("aria-controls") ?? ""),
+  ).toContainElement(details);
+  expect(screen.getByTestId("auth-challenge-details")).toHaveTextContent(
+    "bench:read",
+  );
+});

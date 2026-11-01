@@ -13,9 +13,15 @@ import type {
 } from "./useToolExecution";
 
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
-import { applyParametersToFields, generateFormFieldsFromSchema } from "@/lib/tool-form";
+import {
+  applyParametersToFields,
+  generateFormFieldsFromSchema,
+} from "@/lib/tool-form";
 
-type SharedState = Pick<NonNullable<ReturnType<typeof useOptionalSharedAppState>>, "servers"> | null;
+type SharedState = Pick<
+  NonNullable<ReturnType<typeof useOptionalSharedAppState>>,
+  "servers"
+> | null;
 export function useToolAuthChallengePresentation(
   sharedAppState: SharedState,
   tools: UseToolExecutionOptions["tools"],
@@ -37,8 +43,7 @@ export function useToolAuthChallengePresentation(
         return false;
       }
       const annotations = tools?.[toolName]?.annotations as
-        | { readOnlyHint?: unknown }
-        | undefined;
+        { readOnlyHint?: unknown } | undefined;
       void presentAuthChallenge({
         server: sharedAppState?.servers[name],
         signal,

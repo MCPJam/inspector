@@ -13,7 +13,11 @@ import {
   AUTH_REQUIRED_DATA_PART_TYPE,
   type AuthRequiredEvent,
 } from "@/shared/auth-challenge";
-import { isScopeStepUpDataPart } from "@/shared/scope-step-up";
+import {
+  isScopeStepUpDataPart,
+  SCOPE_STEP_UP_FINISHED_DATA_PART_TYPE,
+  SCOPE_STEP_UP_VERSION,
+} from "@/shared/scope-step-up";
 import { listPendingChatScopeStepUps, savePendingChatScopeStepUp, markPendingChatScopeStepUpReady, readPendingChatScopeStepUp } from "@/lib/scope-step-up-pending";
 
 /**
@@ -370,6 +374,21 @@ describe("useChatSession mid-session sign-in", () => {
     await waitFor(() =>
       expect(readPendingChatScopeStepUp()?.phase).toBe("awaiting_click"),
     );
+    mockState.sendMessage.mockImplementation(async () => {
+      // Held until the server answers, so a reload mid-request still knows.
+      expect(readPendingChatScopeStepUp()?.phase).toBe("cancelling");
+      mockState.chatOnData?.({
+        type: SCOPE_STEP_UP_FINISHED_DATA_PART_TYPE,
+        data: {
+          version: SCOPE_STEP_UP_VERSION,
+          continuationId: "cont-1",
+          serverId: "orders",
+          operation: { method: "tools/call", operation: "orders__list_orders" },
+          outcome: "cancelled",
+        },
+        transient: true,
+      });
+    });
 
     await act(async () => {
       await result.current.sendMessage({ text: "never mind, list my profile" });
@@ -383,8 +402,74 @@ describe("useChatSession mid-session sign-in", () => {
         },
       },
     );
-    expect(readPendingChatScopeStepUp()).toBeUndefined();
+    await waitFor(() => expect(readPendingChatScopeStepUp()).toBeUndefined());
     expect(useAuthChallengeCardStore.getState().cards).toEqual({});
+    const notices = renderHook(useChatAuthRecoveryFailures);
+    expect(notices.result.current).toEqual([]);
+  });
+
+  it("reports a cancel sent with a message that the server never confirmed", async () => {
+    const { result } = await renderChatSession();
+    act(() => {
+      mockState.chatOnData?.({
+        type: AUTH_REQUIRED_DATA_PART_TYPE,
+        data: authRequiredEvent(),
+        transient: true,
+      });
+    });
+    await waitFor(() =>
+      expect(readPendingChatScopeStepUp()?.phase).toBe("awaiting_click"),
+    );
+    // The AI SDK resolves a failed request instead of rejecting it.
+    await act(async () => {
+      await result.current.sendMessage({ text: "never mind" });
+    });
+
+    const notices = renderHook(useChatAuthRecoveryFailures);
+    await waitFor(() =>
+      expect(notices.result.current).toEqual([
+        expect.objectContaining({
+          reason: "cancel_failed",
+          continuationId: "cont-1",
+        }),
+      ]),
+    );
+    expect(readPendingChatScopeStepUp()).toBeUndefined();
+    expect(mockState.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a live sign-in for a server this chat cannot resolve inert", async () => {
+    await renderChatSession();
+    act(() => {
+      mockState.chatOnData?.({
+        type: AUTH_REQUIRED_DATA_PART_TYPE,
+        data: authRequiredEvent({ serverId: "gone", serverName: "gone" }),
+        transient: true,
+      });
+    });
+    const notices = renderHook(useChatAuthRecoveryFailures);
+    expect(notices.result.current).toEqual([]);
+    expect(useAuthChallengeCardStore.getState().cards).toEqual({});
+    expect(readPendingChatScopeStepUp()).toBeUndefined();
+  });
+
+  it("registers the restore check once while messages stream", async () => {
+    const { rerender } = await renderChatSession();
+    const addListener = vi.spyOn(window, "addEventListener");
+    for (let chunk = 1; chunk <= 3; chunk += 1) {
+      mockState.messages = [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          parts: [{ type: "text", text: "x".repeat(chunk) }],
+        },
+      ];
+      rerender();
+    }
+    expect(
+      addListener.mock.calls.filter(([type]) => type === "pageshow"),
+    ).toHaveLength(0);
+    addListener.mockRestore();
   });
 
   it("an ordinary send carries no cancel", async () => {

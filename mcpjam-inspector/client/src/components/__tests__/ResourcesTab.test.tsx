@@ -117,6 +117,54 @@ describe("ResourcesTab", () => {
     expect(mockReadResource).toHaveBeenCalledTimes(1);
   });
 
+  it("clears a failed list's error once the list loads again", async () => {
+    mockListResources
+      .mockRejectedValueOnce(new Error("list down"))
+      .mockResolvedValue({ resources: [] });
+    const view = render(
+      <ResourcesTab
+        serverConfig={createServerConfig()}
+        serverName="test-server"
+      />,
+    );
+    await screen.findByText(/list down/);
+    view.rerender(
+      <ResourcesTab
+        serverConfig={createServerConfig()}
+        serverName="test-server"
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.queryByText(/list down/)).not.toBeInTheDocument(),
+    );
+  });
+
+  it("drops a selected resource that left the list", async () => {
+    mockListResources
+      .mockResolvedValueOnce({ resources: [{ name: "alpha", uri: "a://1" }] })
+      .mockResolvedValue({ resources: [] });
+    mockReadResource.mockResolvedValue({
+      content: { contents: [{ type: "text", text: "alpha body" }] },
+    });
+    const view = render(
+      <ResourcesTab
+        serverConfig={createServerConfig()}
+        serverName="test-server"
+      />,
+    );
+    fireEvent.click(await screen.findByText("alpha"));
+    await screen.findByText(/alpha body/);
+    view.rerender(
+      <ResourcesTab
+        serverConfig={createServerConfig()}
+        serverName="test-server"
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.queryByText(/alpha body/)).not.toBeInTheDocument(),
+    );
+  });
+
   describe("empty state", () => {
     it("shows empty state when no server config provided", () => {
       render(<ResourcesTab />);

@@ -1,9 +1,11 @@
 import type { PendingWriteResult } from "@/lib/scope-step-up-pending";
 import { create } from "zustand";
+import { readProjectPathSegment } from "@/lib/project-route";
 import {
   authChallengePolicyFrom,
   decideAuthChallengeAction,
   describeAuthChallengeDecision,
+  type AuthChallengeDecision,
   type AuthChallengeSignal,
   type ToolSecuritySchemeResolution,
 } from "@mcpjam/sdk/browser";
@@ -57,10 +59,13 @@ export {
 
 
 export type AuthChallengeSurface =
-  "tools" | "playground" | "resources" | "prompts" | "chat" | "widget";
+  "tools" | "playground" | "resources" | "prompts" | "chat";
 
 export interface AuthChallengeCard {
-  /** Coalescing key: one visible card per server and MCP origin. */
+  /**
+   * One per call attempt (`JSON.stringify(attempt)`). `show()` keeps one card
+   * per surface, server, origin and project.
+   */
   key: string;
   serverName: string;
   /** The MCP server's origin. Never the authorization server's host. */
@@ -85,7 +90,7 @@ export interface AuthChallengeCard {
   /** Chat: called once the click is accepted, before the redirect. */
   onConnect?: () => PendingWriteResult;
   continuationId?: string;
-  attempt?: AuthChallengeAttempt;
+  attempt: AuthChallengeAttempt;
   /** Chat: the suspended tool call this card belongs to. */
   toolCallId?: string;
   /** Chat: the server entry resolved when the part arrived. */
@@ -103,6 +108,8 @@ export type AuthChallengePresentation =
       message: string;
       /** Developer-only explanation, when there is one. */
       explanation?: string;
+      /** What the emulated host decided for this challenge. */
+      decision?: AuthChallengeDecision;
     };
 
 // ---------------------------------------------------------------------------
@@ -215,14 +222,7 @@ export const AUTH_CHALLENGE_DISMISSED_MESSAGE =
 export const AUTH_CHALLENGE_PERMANENT_MESSAGE =
   "This server asked for sign-in again after you signed in. Check that your account has access to it, then try again.";
 
-export function authChallengeErrorMessage(serverName: string): string {
-  return `${serverName} needs you to sign in before this call can run.`;
-}
-
-/**
- * Decide what a sign-in challenge on one call becomes. No side effects beyond
- * showing a card: nothing is saved and nothing navigates.
- */
+/** The attempt a challenge on one call belongs to. */
 export function callAttempt(
   server: ServerWithName,
   surface: string,
@@ -233,7 +233,7 @@ export function callAttempt(
   return {
     projectId:
       projectId ??
-      window.location.pathname.match(/^\/p\/([^/]+)/)?.[1] ??
+      readProjectPathSegment(window.location.pathname) ??
       "local",
     serverId: server.name,
     surface,
@@ -242,6 +242,10 @@ export function callAttempt(
   };
 }
 
+/**
+ * Decide what a sign-in challenge on one call becomes. No side effects beyond
+ * showing a card: nothing is saved and nothing navigates.
+ */
 export async function presentAuthChallenge(input: {
   server: ServerWithName | undefined;
   signal: AuthChallengeSignal | undefined;
@@ -277,6 +281,7 @@ export async function presentAuthChallenge(input: {
       reason: "passthrough",
       message: explanation,
       explanation,
+      decision,
     };
   }
 
@@ -300,6 +305,7 @@ export async function presentAuthChallenge(input: {
       reason: "blocked",
       message: outcome.hint,
       explanation,
+      decision,
     };
   }
   if (outcome.kind === "permanent") {
@@ -308,6 +314,7 @@ export async function presentAuthChallenge(input: {
       reason: "permanent",
       message: AUTH_CHALLENGE_PERMANENT_MESSAGE,
       explanation,
+      decision,
     };
   }
   if (isAuthChallengeDismissed(server.name, origin)) {
@@ -316,6 +323,7 @@ export async function presentAuthChallenge(input: {
       reason: "dismissed",
       message: AUTH_CHALLENGE_DISMISSED_MESSAGE,
       explanation,
+      decision,
     };
   }
 

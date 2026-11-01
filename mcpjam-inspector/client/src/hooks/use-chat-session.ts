@@ -233,6 +233,7 @@ import {
 } from "@/shared/scope-step-up";
 import {
   claimCancelledChatScopeStepUp,
+  claimWaitingChatScopeStepUpForCancel,
   claimPendingChatScopeStepUp,
   clearPendingChatScopeStepUp,
   isPendingChatAuthRequired,
@@ -2598,11 +2599,14 @@ export function useChatSession(
   const recoveryFailures = useChatAuthRecoveryFailures();
   const finishedRecoveryRef = useRef(new Set<string>());
   const completedRecoveryRef = useRef(
-    new Map<string, { pending: PendingChatScopeStepUp; cancelled: boolean }>(),
+    new Map<
+      string,
+      { pending: PendingChatScopeStepUp; cancelled: boolean; settled?: false }
+    >(),
   );
   const attemptedFailureCancellationRef = useRef(new Set<string>());
   const presentChatAuthRequiredEvent = useCallback(
-    (event: AuthRequiredEvent, presentation?: { restoring?: boolean }) => {
+    (event: AuthRequiredEvent) => {
       traceChatAuthRecovery("card", {
         continuationId: event.continuationId,
         toolCallId: event.toolCallId,
@@ -2616,20 +2620,10 @@ export function useChatSession(
         serverName: event.serverName,
         projectId: hostedProjectId,
       });
-      if (!server) {
-        // A restored card retries every second until its server loads or the
-        // call expires, so a server not loaded yet is not a failure.
-        if (presentation?.restoring) return;
-        recordChatAuthRecoveryFailure("server_missing", {
-          continuationId: event.continuationId,
-          toolCallId: event.toolCallId,
-          chatSessionId: chatSessionIdRef.current,
-          projectId: hostedProjectId,
-          serverName: event.serverName,
-          serverId: event.serverId,
-        });
-        return;
-      }
+      // Scenario and share-link turns resolve no server and show no card. A
+      // restored card retries every second until its server loads or the
+      // call expires. Neither is a failure.
+      if (!server) return;
       presentedSignInCardsRef.current.add(event.toolCallId);
       const sessionId = chatSessionIdRef.current;
       const resumable =
@@ -2793,7 +2787,7 @@ export function useChatSession(
           // A mid-session sign-in. Showing the card has no side effects; the
           // marker is saved now (`awaiting_click`) so a send without clicking,
           // or a reload, can still settle the suspended call. Scenario and
-          // share-link turns resolve no server and stay inert, as for step-up.
+          // share-link turns resolve no server and show no card.
           presentChatAuthRequiredEvent(part.data);
         } else if (isAuthChallengeNoticeDataPart(part)) {
           // Display-only: explains why the emulated host did not prompt.
@@ -4665,6 +4659,8 @@ export function useChatSession(
     )
       return;
     for (const [id, result] of completedRecoveryRef.current) {
+      // A cancel sent with a message waits for that request to finish.
+      if (result.settled === false) continue;
       completedRecoveryRef.current.delete(id);
       if (result.pending.chatSessionId !== chatSessionIdRef.current) continue;
       if (
@@ -4767,8 +4763,6 @@ export function useChatSession(
       return;
     }
     const wasCancelled = pending.phase === "cancelled";
-
-    scopeStepUpResumeInFlightRef.current = true;
     traceChatAuthRecovery(
       wasCancelled ? "cancel" : "resume",
       pendingRecoveryContext(claimed),
@@ -4792,14 +4786,12 @@ export function useChatSession(
       },
     })
       .then(() => {
-
         completedRecoveryRef.current.set(claimed.event.continuationId, {
           pending: claimed,
           cancelled: wasCancelled,
         });
       })
       .catch(() => {
-
         recordChatAuthRecoveryFailure(
           wasCancelled ? "cancel_failed" : "resume_failed",
           pendingRecoveryContext(claimed),
@@ -4864,7 +4856,7 @@ export function useChatSession(
           isPendingChatAuthRequired(pending) &&
           !presentedSignInCardsRef.current.has(pending.event.toolCallId)
         ) {
-          presentChatAuthRequiredEvent(pending.event, { restoring: true });
+          presentChatAuthRequiredEvent(pending.event);
         }
       }
     };
@@ -4877,12 +4869,7 @@ export function useChatSession(
       window.removeEventListener("pageshow", check);
       window.removeEventListener("focus", check);
     };
-  }, [
-    messages,
-    presentChatAuthRequiredEvent,
-    pendingRecoveryRevision,
-    hostedProjectId,
-  ]);
+  }, [presentChatAuthRequiredEvent, pendingRecoveryRevision, hostedProjectId]);
 
   // A redirect/reload interrupted a claimed request: never replay it a second time.
   useEffect(() => {
@@ -5642,36 +5629,67 @@ export function useChatSession(
                   toolCallId: pendingSignIn.event.toolCallId,
                 }
               : undefined;
+          const cancelClaim =
+            cancelSignIn &&
+            claimWaitingChatScopeStepUpForCancel(
+              sessionAtSend,
+              cancelSignIn.continuationId,
+            );
           if (cancelSignIn) {
-            clearPendingChatScopeStepUp(cancelSignIn.continuationId);
+            // An unclaimed marker is dropped so nothing sends this cancel twice.
+            if (!cancelClaim)
+              clearPendingChatScopeStepUp(cancelSignIn.continuationId);
+            else
+              completedRecoveryRef.current.set(cancelSignIn.continuationId, {
+                pending: cancelClaim,
+                cancelled: true,
+                settled: false,
+              });
             clearChatAuthChallengeCard(cancelSignIn.toolCallId);
           }
           const requestOptions = cancelSignIn
             ? { body: { scopeStepUpCancel: cancelSignIn } }
             : undefined;
           appMessageTurnRef.current = pluginMessage !== undefined;
+          let sent: Promise<void>;
           if (pluginMessage) {
-            baseSendMessage(
+            sent = baseSendMessage(
               { parts: pluginMessageParts(pluginMessage.params), ...extra },
               { body: { ...requestOptions?.body, pluginMessage } },
             );
           } else if (pluginMentions?.length || extraParts?.length) {
-            baseSendMessage({
-              parts: [
-                ...buildMentionContextMessages(pluginMentions ?? []).flatMap(
-                  (message) => message.parts,
-                ),
-                ...(extraParts ?? []),
-                { type: "text", text },
-                ...(files ?? []),
-              ],
-              ...extra,
-            }, requestOptions);
+            sent = baseSendMessage(
+              {
+                parts: [
+                  ...buildMentionContextMessages(pluginMentions ?? []).flatMap(
+                    (message) => message.parts,
+                  ),
+                  ...(extraParts ?? []),
+                  { type: "text", text },
+                  ...(files ?? []),
+                ],
+                ...extra,
+              },
+              requestOptions,
+            );
           } else if (files && files.length > 0) {
             // AI SDK accepts FileUIPart[] with data URLs
-            baseSendMessage({ text, files, ...extra }, requestOptions);
+            sent = baseSendMessage({ text, files, ...extra }, requestOptions);
           } else {
-            baseSendMessage({ text, ...extra }, requestOptions);
+            sent = baseSendMessage({ text, ...extra }, requestOptions);
+          }
+          if (cancelClaim) {
+            // The settle effect then clears the marker once the server's
+            // finished part or the call's result arrived, and otherwise
+            // reports the cancel as failed.
+            const settle = () => {
+              completedRecoveryRef.current.set(
+                cancelClaim.event.continuationId,
+                { pending: cancelClaim, cancelled: true },
+              );
+              setSignInReplayTick((tick) => tick + 1);
+            };
+            void Promise.resolve(sent).then(settle, settle);
           }
         } catch (error) {
           pendingWidgetModelContextRef.current = undefined;

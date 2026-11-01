@@ -507,8 +507,11 @@ export function settlePendingChatScopeStepUpAfterCallback(
   if (pending.serverName !== serverName) return fail("server_mismatch");
   if (pending.phase !== "awaiting_oauth") return { kind: "ignored" };
   if (pending.event.expiresAt <= Date.now()) return fail("expired");
+  // A callback that cannot be tied to this call's flow never resumes it,
+  // including when neither side has a digest.
   if (
-    (pending.flowDigest || callbackDigest) &&
+    !pending.flowDigest ||
+    !callbackDigest ||
     pending.flowDigest !== callbackDigest
   )
     return fail("flow_mismatch");
@@ -608,6 +611,30 @@ export function claimCancelledChatScopeStepUp(
   continuationId?: string,
 ) {
   return claim(chatSessionId, "cancelled", continuationId);
+}
+/**
+ * A message sent while a sign-in card waits cancels that call in the same
+ * request. Claiming the marker as `cancelling` lets the cancel settle like a
+ * clicked one: a request that fails, or a reload before it finishes, reports
+ * the cancel as unconfirmed instead of losing it.
+ */
+export function claimWaitingChatScopeStepUpForCancel(
+  chatSessionId: string,
+  continuationId: string,
+): PendingChatScopeStepUp | undefined {
+  const pending = listPendingChatScopeStepUps({
+    chatSessionId,
+    continuationId,
+    phases: ["awaiting_click", "awaiting_oauth"],
+  })[0];
+  if (!pending || pending.cancelAttempted) return undefined;
+  return writePending({
+    ...pending,
+    phase: "cancelling",
+    cancelAttempted: true,
+  }).ok
+    ? pending
+    : undefined;
 }
 export function clearPendingChatScopeStepUp(continuationId: string): void {
   const pending = readPendingChatScopeStepUp({ continuationId });
