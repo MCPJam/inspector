@@ -1,5 +1,11 @@
 # `@mcpjam/sdk` changelog
 
+## 10.2.1
+
+### Patch Changes
+
+- [#6922](https://github.com/MCPJam/inspector/pull/6922) [`c06573b`](https://github.com/MCPJam/inspector/commit/c06573b07101f43a5ab7619e167d06848fd34782) Thanks [@ZeHuari](https://github.com/ZeHuari)! - Conformance: Server Initialize now reports how long the initialize handshake took instead of 0ms, including when the connect fails. The Conformance page no longer shows a "0ms" duration on checks that were skipped.
+
 ## 10.2.0
 
 ### Minor Changes
