@@ -372,11 +372,17 @@ export function evaluateMarketHosts(
     ? buildHostProfilesFromCatalog(catalog)
     : buildMarketHostProfiles();
   const evaluation = evaluateAllHosts(toolsData, profiles, evaluateOptions);
+  // `toolsMetadata` wins over a tool's inline `_meta`, as it does for the
+  // widget scan.
+  const tools = (toolsData?.tools ?? []).map((tool) => {
+    const meta = toolsData?.toolsMetadata?.[tool.name];
+    return meta ? { ...tool, _meta: meta } : tool;
+  });
   return {
     ...evaluation,
     reports: withToolResultAuthChallengeFindings(
       evaluation.reports,
-      toolsData?.tools ?? [],
+      tools,
       catalog ?? bundledHostCompatCatalog()
     ),
   };

@@ -268,6 +268,22 @@ describe("checkHostCompatibilityOperation — tool-result sign-in challenges", (
     const byId = (id: string) => reports.find((report) => report.hostId === id);
     expect(finding(byId("claude"))).toMatchObject({ tools: ["get_orders"] });
     expect(finding(byId("chatgpt"))).toBeUndefined();
+    // The server lane reports the weakest provenance among its findings.
+    expect(byId("claude")?.lanes.server.provenance).toBe(
+      finding(byId("claude"))?.provenance
+    );
+  });
+
+  it("reads a declaration supplied through toolsMetadata", () => {
+    const { reports } = evaluateMarketHosts({
+      tools: [{ name: "get_orders" }],
+      toolsMetadata: {
+        get_orders: { securitySchemes: [{ type: "oauth2", scopes: [] }] },
+      },
+    });
+    expect(
+      finding(reports.find((report) => report.hostId === "claude"))
+    ).toMatchObject({ tools: ["get_orders"] });
   });
 
   it("reads a declaration carried in _meta.securitySchemes", async () => {

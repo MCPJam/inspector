@@ -179,7 +179,7 @@ const PROVENANCE_RANK: Record<CompatProvenance, number> = {
 };
 
 /** Weakest provenance among a lane's findings, falling back to the host baseline. */
-function weakestProvenance(
+export function weakestProvenance(
   findings: CompatFinding[],
   fallback: CompatProvenance
 ): CompatProvenance {
