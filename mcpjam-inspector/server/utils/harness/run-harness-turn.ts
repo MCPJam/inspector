@@ -1584,7 +1584,7 @@ export async function runHarnessTurn(
           : {}),
       });
       const forwardingRuntime = qualifiedForwardingRuntime(harnessAdapter);
-      const nativeCandidate = process.env.HARNESS_NATIVE_FORWARDING === "true" && hasForwardingOrganization(mcpClientManager) && (nativeMcpDelivery || (options.agentLoop === harnessAdapter.id && !hasAccountRouting(accountGroups))) && forwardingRuntime !== undefined && harnessMcpProxy?.plane === "web-authorized" && !scenarioId && !evalIterationId && !journeyRunId && !harnessExecutionTarget && !!hostId && !!selectedServers?.length;
+      const nativeCandidate = process.env.HARNESS_NATIVE_FORWARDING === "true" && hasForwardingOrganization(mcpClientManager) && (nativeMcpDelivery || (forwardingRuntime !== undefined && !hasAccountRouting(accountGroups))) && forwardingRuntime !== undefined && harnessMcpProxy?.plane === "web-authorized" && !scenarioId && !evalIterationId && !journeyRunId && !harnessExecutionTarget && !!hostId && !!selectedServers?.length;
       const admission = nativeCandidate ? forwardingAdmission({ manager: mcpClientManager, serverIds: selectedServers ?? [], respectToolVisibility, modelVisibleMcpToolResults, hasClientTools: options.harnessUnavailableAppTools, hasTasks: tasks !== undefined,
             elicitationRuntimeVersion: onHarnessElicitation ? harnessAdapter.pinnedRuntimeVersion : undefined,
             modernInputAvailable: options.harnessOwnedInput === true,
@@ -1629,7 +1629,7 @@ export async function runHarnessTurn(
       // box is woken, so an unreachable server fails the turn cheaply.
       const retainedExecutor = retainedResourceExecutor({
         manager: mcpClientManager, existing: hostToolExecutor,
-        enabled: harnessAdapter.id === "claude-code" && !harnessExecutionTarget &&
+        enabled: forwardingRuntime !== undefined && !harnessExecutionTarget &&
           harnessMcpProxy?.plane === "web-authorized" && process.env.HARNESS_NATIVE_FORWARDING === "true" &&
           hasForwardingOrganization(mcpClientManager) && !scenarioId &&
           !evalIterationId && !journeyRunId && !!hostId,
@@ -2560,7 +2560,7 @@ export async function runHarnessTurn(
       } else {
         brokerRunId = turnRunId;
         const broker = await org.start({
-          ...(useNativeForwarding ? { nativeForwarding: nativeForwardingSelection({ laneId: continuity?.laneId, hostId, serverIds: selectedServers ?? [], connections: accountGroups }) } : {}),
+          ...(useNativeForwarding ? { nativeForwarding: nativeForwardingSelection({ manager: mcpClientManager, laneId: continuity?.laneId, hostId, serverIds: selectedServers ?? [], connections: accountGroups }) } : {}),
           // The project and the execution scope are fields of `box`'s COMPUTER
           // arm (set where `box` is built, above), so the ephemeral path has no
           // way to send either: the backend derives project + billing org from
@@ -2604,6 +2604,7 @@ export async function runHarnessTurn(
         if (useNativeForwarding) {
           if (!broker.forwarding || !harnessMcpProxy) throw new Error("Native forwarding was not confirmed.");
           nativeForwarding = await prepareNativeForwarding({ ...broker.forwarding, expiresAt: broker.expiresAt, turnId: turnRunId, promptIndex, strategy: harnessMcpProxy, authHeader, policies: harnessToolPolicy, writer,
+            correlationKey: forwardingRuntime?.correlationKey,
             tasks,
             ...(enhancedApps
               ? {
@@ -2666,6 +2667,7 @@ export async function runHarnessTurn(
               auth,
               mcpJson,
               permissionMode,
+              ...(nativeForwarding ? { forwardingMcpJson: mcpJson } : {}),
               elicitationHandler: elicitationServerIds.size > 0,
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
@@ -2676,6 +2678,7 @@ export async function runHarnessTurn(
               modelId,
               auth,
               permissionMode,
+              ...(nativeForwarding ? { forwardingMcpJson: mcpJson } : {}),
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
                 : {}),

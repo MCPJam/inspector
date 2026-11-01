@@ -2,9 +2,9 @@ import { isRecord } from "../../byok/list-request.js";
 import type { ExecutionControl } from "./execution-control.js";
 
 /** Claude owns this metadata; it correlates results without granting a dispatch. */
-export function nativeToolCallId(params: unknown): string | undefined {
+export function nativeToolCallId(params: unknown, metadataKey = "claudecode/toolUseId"): string | undefined {
   if (!isRecord(params) || !isRecord(params._meta)) return;
-  const id = params._meta["claudecode/toolUseId"];
+  const id = params._meta[metadataKey];
   return typeof id === "string" && id.length > 0 && id.length <= 512
     ? id
     : undefined;

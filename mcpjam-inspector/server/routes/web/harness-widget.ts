@@ -83,7 +83,7 @@ async function authorizeWidgetConnection(c: Context, context: z.infer<typeof req
     if (!allowed.includes(scope.organizationId))
       return c.json({ error: "App forwarding is unavailable." }, 403);
     const pins = buildHostConnectionPins(scope.hostConfig, 300_000);
-    const capabilities = hostClientCapabilities(scope.hostConfig);
+    const capabilities = source?.connectionCapabilities ?? hostClientCapabilities(scope.hostConfig);
     if (
       harnessElicitationModes(capabilities).length &&
       c.req.header("x-mcpjam-harness-input-version") !==

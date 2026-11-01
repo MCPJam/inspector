@@ -1,3 +1,4 @@
+import { qualifiedForwardingRuntime } from "../forwarding/runtime-contract.js";
 import { describe, expect, it, vi } from "vitest";
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
 import { HARNESS_MCP_DELIVERY } from "@/shared/harness-mcp-delivery";
@@ -50,8 +51,9 @@ describe("harness registry", () => {
     const a = getHarnessAdapter("codex");
     expect(a.id).toBe("codex");
     expect(a.displayName).toBe("Codex");
-    // Codex: MCP servers arrive as HOST-EXECUTED tools (MCPJam's gate is the
-    // single authority), no native plugin install, pauses for tool approval on
+    // Codex defaults to host-executed tools; qualified forwarding is selected
+    // per run. MCPJam's gate stays the authority, with no native plugin install.
+    // It pauses for tool approval on
     // the app-server adapter — and skills ARE delivered (INS-8), under its own
     // root.
     expect(a.transport).toBe("app-server");
@@ -1601,4 +1603,14 @@ describe("the organization's own key (native upstream profiles)", () => {
     expect(settings?.env?.MCPJAM_HARNESS_UPSTREAM_PROFILE).toBeUndefined();
     expect(settings?.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
   });
+});
+
+it("keeps every declared forwarding contract aligned with its qualified runtime pin", () => {
+  for (const id of registeredHarnessIds()) {
+    const adapter = getHarnessAdapter(id);
+    if (adapter.forwardingRuntime) expect(qualifiedForwardingRuntime(adapter)).toBe(adapter.forwardingRuntime);
+  }
+  expect(getHarnessAdapter("codex").forwardingRuntime).toMatchObject({runtimeVersion: PINNED_CODEX_VERSION, correlationKey: "callId"});
+  expect(getHarnessAdapter("claude-code").forwardingRuntime).toBeDefined();
+  expect(getHarnessAdapter("cursor").forwardingRuntime).toBeUndefined();
 });

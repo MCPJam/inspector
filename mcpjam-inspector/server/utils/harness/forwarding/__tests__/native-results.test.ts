@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { nativeToolCallId, readNativeToolResult } from "../native-results.js";
+
+it("uses only the runtime-selected metadata key for result correlation", () => {
+  const params = { _meta: { callId: "codex-call", "claudecode/toolUseId": "claude-call" } };
+  expect(nativeToolCallId(params, "callId")).toBe("codex-call");
+  expect(nativeToolCallId(params)).toBe("claude-call");
+  expect(nativeToolCallId({ _meta: { "claudecode/toolUseId": "other" } }, "callId")).toBeUndefined();
+  expect(nativeToolCallId({ _meta: { callId: 42 } }, "callId")).toBeUndefined();
+});
 import type { ExecutionControl } from "../execution-control.js";
 
 function fixture() {

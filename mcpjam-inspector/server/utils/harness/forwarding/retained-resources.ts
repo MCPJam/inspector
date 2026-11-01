@@ -95,7 +95,7 @@ export function retainedProfileFingerprint(
 
 export type RetainedResourcePresentation = Awaited<
   ReturnType<typeof readRetainedResourceScope>
->["binding"] & { profile: string; attestation: string; turnId?: string };
+>["binding"] & { profile: string; attestation: string; turnId?: string; connectionCapabilities?: Record<string, unknown> };
 export function retainedResourceExecutor(args: {
   manager: MCPClientManager;
   enabled: boolean;
@@ -104,7 +104,7 @@ export function retainedResourceExecutor(args: {
   turnId: string;
   sources: Map<string, RetainedResourcePresentation>;
 }): ModelToolExecutor | undefined {
-  if (args.existing || !args.enabled) return args.existing;
+  if (!args.enabled) return args.existing;
   const prepared = new Map<string, Promise<unknown>>();
   return async (execution, run) => {
     const captured = getManagerResourceSnapshot(
@@ -122,6 +122,7 @@ export function retainedResourceExecutor(args: {
     const laneId = args.laneId();
     if (
       snapshot &&
+      captured?.headersReconstructible === true &&
       laneId &&
       args.manager.getInitializationInfo(execution.serverKey)?.transport ===
         "streamable-http"
@@ -165,6 +166,11 @@ export function retainedResourceExecutor(args: {
         toolCallId: execution.toolCallId,
         turnId: args.turnId,
         profile: retainedProfileFingerprint(args.manager, execution.serverKey),
+        // Preserve the negotiated declaration, including capabilities withheld
+        // by installed handlers for this server's protocol era.
+        connectionCapabilities: structuredClone(
+          harnessConnectionProfile(args.manager, execution.serverKey).clientCapabilities,
+        ),
       };
       const provenance = historyProvenanceContextFor(
         source.projectId,
@@ -175,6 +181,6 @@ export function retainedResourceExecutor(args: {
       if (!attestation) throw new Error("App source attestation unavailable");
       args.sources.set(execution.toolCallId, { ...source, attestation });
     }
-    return run();
+    return args.existing ? args.existing(execution, run) : run();
   };
 }

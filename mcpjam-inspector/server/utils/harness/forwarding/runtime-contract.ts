@@ -4,6 +4,7 @@ import type { HarnessMcpJson } from "../mcp-config.js";
 /** Vendor-owned continuation behavior; authorization and policy stay shared. */
 export type ForwardingRuntimeContract = {
   runtimeVersion: string;
+  correlationKey?: string;
   refresh<T extends HarnessV1>(
     runtime: T,
     servers: HarnessMcpJson["mcpServers"],

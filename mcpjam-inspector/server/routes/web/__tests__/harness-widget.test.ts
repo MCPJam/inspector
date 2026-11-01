@@ -296,10 +296,10 @@ it("loads initial widget HTML using the same bound resource route", async () => 
   expect(state.manager.mock.calls[0][7].connectionIds).toEqual({ server: "original-account" });
 });
 
-function retainedProof() {
+function retainedProof(connectionCapabilities?: Record<string, unknown>) {
   vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
   vi.stubEnv("HISTORY_PROVENANCE_SECRET", "retained-resource-unit-test-secret");
-  const source = {version: 1 as const, profile: "legacy-profile", toolCallId: "call", turnId: "real-turn", owner: {kind: "chat" as const, userId: "user", serverId: "server", connectionId: "original-account", harnessSessionId: "lane"}, digest: "original-digest", projectId: "project", chatSessionId: "chat"};
+  const source = {version: 1 as const, profile: "legacy-profile", ...(connectionCapabilities ? {connectionCapabilities} : {}), toolCallId: "call", turnId: "real-turn", owner: {kind: "chat" as const, userId: "user", serverId: "server", connectionId: "original-account", harnessSessionId: "lane"}, digest: "original-digest", projectId: "project", chatSessionId: "chat"};
   state.retained.mockResolvedValue({binding: source, organizationId: "internal", expiresAt: Date.now() + 60000, hostConfig: {hostStyle: "claude"}});
   const claim = {toolCallId: "call", toolName: "qa_read", input: {}, output: withRetainedResourceSource({content: [{type: "text", text: "App"}]}, {...source, attestation: signAppResourceSource(historyProvenanceContextFor("project", "chat")!, source)!})};
   return {claim, signature: signToolResult(historyProvenanceContextFor("project", "chat")!, claim)!};
@@ -403,4 +403,24 @@ it("does not open a server when the App request is cancelled during authorizatio
   await response.text();
   expect(state.connect).not.toHaveBeenCalled();
   expect(state.dispatch).not.toHaveBeenCalled();
+});
+
+it("reconnects with the signed negotiated capabilities instead of re-advertising withheld host claims", async () => {
+  const negotiated = { extensions: { "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] } } };
+  const proof = retainedProof(negotiated);
+  const scope = await state.retained();
+  state.retained.mockResolvedValue({...scope, hostConfig: {...scope.hostConfig, clientCapabilities: {...negotiated, experimental: {withheld: true}}}});
+  const response = await retainedResource(proof);
+  expect(response.status).toBe(200);
+  expect(state.manager.mock.calls[0][6]).toEqual(negotiated);
+});
+it("rejects capabilities added to a retained source even with a newly signed result", async () => {
+  const proof = retainedProof({extensions: {}});
+  const {readRetainedResourceSource} = await import("@/shared/retained-app-resources");
+  const source = readRetainedResourceSource(proof.claim.output);
+  if (!source) throw Error("Missing source fixture");
+  proof.claim.output = withRetainedResourceSource(proof.claim.output, {...source, connectionCapabilities: {experimental: {forged: true}}});
+  proof.signature = signToolResult(historyProvenanceContextFor("project", "chat")!, proof.claim)!;
+  expect((await retainedResource(proof)).status).toBe(409);
+  expect(state.manager).not.toHaveBeenCalled();
 });

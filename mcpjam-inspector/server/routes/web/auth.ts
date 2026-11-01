@@ -2050,6 +2050,7 @@ export async function createAuthorizedManager(
   const admittedServerIds = uniqueServerIds.filter(
     (serverId) => !Object.hasOwn(refusedServers, serverId),
   );
+  const reconstructibleHeaderServers = new Set<string>();
   const configEntries = await Promise.all(
     admittedServerIds.map(async (serverId) => {
       try {
@@ -2069,14 +2070,18 @@ export async function createAuthorizedManager(
         ) as EffectiveAuthMethod;
         // `recoveredOAuthTokens` first: it is the freshest, minted moments ago
         // by PASS 1b for a credential the backend could not refresh itself.
+        const storedOAuthToken = recoveredOAuthTokens[serverId] ?? auth.oauthAccessToken;
         const oauthToken =
-          recoveredOAuthTokens[serverId] ??
-          auth.oauthAccessToken ??
+          storedOAuthToken ??
           callerOAuthTokenUnlessRefused(
             auth,
             effectiveAuth,
             oauthTokens?.[serverId],
           );
+        if (auth.serverConfig.transportType === "http" &&
+            (typeof storedOAuthToken === "string" || !oauthToken)) {
+          reconstructibleHeaderServers.add(serverId);
+        }
         const displayServerName = displayNameForServer(
           serverId,
           serverNamesById,
@@ -2659,12 +2664,13 @@ export async function createAuthorizedManager(
   const resourceSnapshots = new Map<string, ManagerResourceSnapshot>();
   for (const [key] of connectionEntries) {
     const connection = connectionsByKey.get(key);
-    const auth = batch.results[connection?.serverId ?? key];
+    const serverId = connection?.serverId ?? key;
+    const auth = batch.results[serverId];
     if (!auth?.ok || auth.serverConfig.updatedAt === undefined || auth.serverConfig.httpVariant === "sse") continue;
     const account = connection ? auth.oauthConnections?.find(c => c.connectionId === connection.connectionId) : undefined;
     const credentialAuthorizedAt = account ? account.credentialAuthorizedAt ?? account.authorizedAt : auth.oauthCredentialAuthorizedAt ?? null;
     if (connection && credentialAuthorizedAt === undefined) continue;
-    resourceSnapshots.set(key, {serverUpdatedAt: auth.serverConfig.updatedAt, credentialAuthorizedAt: credentialAuthorizedAt ?? null, credentialId: connection?.connectionId ?? auth.oauthCredentialId ?? undefined});
+    resourceSnapshots.set(key, {serverUpdatedAt: auth.serverConfig.updatedAt, credentialAuthorizedAt: credentialAuthorizedAt ?? null, credentialId: connection?.connectionId ?? auth.oauthCredentialId ?? undefined, headersReconstructible: !!connection || reconstructibleHeaderServers.has(serverId)});
   }
   setManagerResourceSnapshots(manager, resourceSnapshots);
   setManagerOrganization(manager, batch.organizationId);
