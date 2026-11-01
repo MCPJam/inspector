@@ -322,6 +322,20 @@ describe("tasks-ttl-integer-shape", () => {
     expect(entry.status).toBe("skipped");
   });
 
+  it("grades a discriminated creation result even when it carries extra content", async () => {
+    const phases = quickPhases();
+    phases[0] = {
+      ...phases[0]!,
+      ttlMs: 1500.5,
+      extra: { content: [{ type: "text", text: "extra" }] },
+    };
+    const entry = check(await run(await serve(phases), [ID]), ID);
+    expect(entry.status).toBe("failed");
+    expect(entry.error?.message).toContain(
+      "tools/call: ttlMs is 1500.5, which is not an integer",
+    );
+  });
+
   it("fails a whole number beyond the schema's safe-integer range", async () => {
     const phases = quickPhases();
     phases[1] = { ...phases[1]!, ttlMs: Number.MAX_SAFE_INTEGER + 1 };

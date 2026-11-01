@@ -1122,12 +1122,15 @@ export function findRawCreationTask(
 }
 
 /**
- * Whether a raw `tools/call` result is shaped like a task (a known task
- * `status` and no `content`) rather than an ordinary `CallToolResult` that
- * happens to carry a `taskId` — extra fields are allowed on a tool result, so
- * the id alone is not evidence that a task was created.
+ * Whether a raw `tools/call` result is a task rather than an ordinary
+ * `CallToolResult` that happens to carry a `taskId` — extra fields are allowed
+ * on a tool result, so the id alone is not evidence that a task was created.
+ * The `resultType: "task"` discriminator is evidence on its own (a task may
+ * carry extra fields too); without it, the shape decides: a known task
+ * `status` and no `content`.
  */
 function isRawTaskShaped(result: Record<string, unknown>): boolean {
+  if (result.resultType === "task") return true;
   return (
     typeof result.status === "string" &&
     TASK_STATUSES.has(result.status) &&
