@@ -891,6 +891,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   mcpNativeDelivery: "session-config",
   forwardingRuntime: {
     runtimeVersion: "2.1.245",
+    ownedInput: true,
     refresh: withClaudeForwardingResume,
   },
   liveApprovalRuntime: true,
@@ -1047,6 +1048,7 @@ const codexAdapter: HarnessRuntimeAdapter = {
   forwardingRuntime: {
     runtimeVersion: "0.163.0",
     correlationKey: "callId",
+    ownedInput: true,
     refresh: withForwardingResume,
   },
   // INS-8: skills ARE delivered. The adapter writes every `skills` entry to
