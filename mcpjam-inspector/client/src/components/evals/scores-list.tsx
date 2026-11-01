@@ -17,6 +17,10 @@ import {
 } from "@mcpjam/sdk/contract";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
 import {
+  HOSTED_RUBRIC_CHECKS_MODEL,
+  HOSTED_RUBRIC_CHECKS_SCORER_PREFIX,
+} from "@/shared/hosted-criterion-id";
+import {
   EVAL_FAILED_BADGE_STRONG_CLASS,
   EVAL_PASSED_BADGE_STRONG_CLASS,
 } from "./constants";
@@ -421,12 +425,25 @@ function ScoreGroup({
   );
 }
 
+/**
+ * Who answered a rubric check. Its definition always names Jev, so the row's
+ * own model is the one that says which model answered this trial.
+ */
+function rubricCheckAnsweredBy(score: ScoreResult): string | null {
+  if (!score.scorerId.startsWith(HOSTED_RUBRIC_CHECKS_SCORER_PREFIX)) {
+    return null;
+  }
+  if (!score.model) return null;
+  return `Answered by ${score.model === HOSTED_RUBRIC_CHECKS_MODEL ? "Jev" : score.model}`;
+}
+
 function ScoreRow({ row }: { row: JoinedScore }) {
   const badge = statusBadge(row);
   const Icon = badge.icon;
   const failing = failsGate(row);
   const value = formatValue(row.score);
   const label = row.definition?.label ?? row.score.scorerId;
+  const answeredBy = rubricCheckAnsweredBy(row.score);
 
   return (
     <li
@@ -460,6 +477,11 @@ function ScoreRow({ row }: { row: JoinedScore }) {
                   non-deterministic
                 </span>
               ) : null}
+              {answeredBy ? (
+                <span className="text-[11px] text-muted-foreground">
+                  {answeredBy}
+                </span>
+              ) : null}
             </span>
           </span>
         </summary>
@@ -482,7 +504,9 @@ function ScoreRow({ row }: { row: JoinedScore }) {
               row is treated as failing the gate.
             </div>
           ) : null}
-          {row.score.model ? <div>model: {row.score.model}</div> : null}
+          {row.score.model && !answeredBy ? (
+            <div>model: {row.score.model}</div>
+          ) : null}
         </div>
       </details>
     </li>

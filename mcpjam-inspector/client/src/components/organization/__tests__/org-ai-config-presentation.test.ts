@@ -524,6 +524,10 @@ describe("the default model editor's helpers", () => {
     expect(listedModelFitsKind("gpt-4o-mini-transcribe", "transcription")).toBe(
       true,
     );
+    // OpenAI answers decisions on gpt-6-luna only.
+    expect(listedModelFitsKind("gpt-6-luna", "decision")).toBe(true);
+    expect(listedModelFitsKind("gpt-5.6-luna", "decision")).toBe(false);
+    expect(listedModelFitsKind("gpt-5", "decision")).toBe(false);
   });
 
   it("reads a test's result", () => {
@@ -558,7 +562,8 @@ describe("the default model editor's helpers", () => {
   it.each([
     ["http_400", "Refused", "destructive"],
     ["http_401", "Credentials rejected", "destructive"],
-    ["http_403", "Credentials rejected", "destructive"],
+    // The key works but lacks access: refused, not rejected.
+    ["http_403", "Refused", "destructive"],
     ["http_404", "Refused", "destructive"],
     ["http_408", "Provider unavailable", "warning"],
     ["http_429", "Provider unavailable", "warning"],

@@ -253,11 +253,14 @@ function SavedModel({
           <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
             <CheckLine check={entry?.check ?? null} />
           </div>
+          {entry?.check && !entry.check.ok && entry.check.reason ? (
+            <p className="text-muted-foreground">{entry.check.reason}</p>
+          ) : null}
         </>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-muted-foreground">
-            Not set
+            {ORG_AI_MODEL_PRESENTATION[kind].whenUnset ?? "Not set"}
             {suggestion ? (
               <>
                 {" · Suggested model "}
