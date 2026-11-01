@@ -14,7 +14,7 @@
     {
       "harnessId": "codex",
       "bootstrapDir": ".harness-bootstrap/codex-appserver",
-      "identity": "493846aae6801e9e",
+      "identity": "cf6f4025fcd1bf51",
       "runtimeVersion": "0.163.0"
     },
     {
