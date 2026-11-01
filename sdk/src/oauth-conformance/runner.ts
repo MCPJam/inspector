@@ -1,7 +1,4 @@
 import { refreshAuthorization } from "../oauth/browser-auth.js";
-// Profile verification is an active, contractually read-only probe, enabled
-// after this run acquires a token. This runner has no provided-token mode.
-// verification.profile.enabled=false opts out; no intrusive-probes gate applies.
 import {
   captureOpenAIProfile,
   findOpenAIProfileTool,
@@ -66,6 +63,12 @@ import {
   type VerificationResult,
 } from "./types.js";
 import { normalizeOAuthConformanceConfig } from "./validation.js";
+import { findPublishedResourceMetadata } from "./published-resource-metadata.js";
+
+// Profile verification is an active, contractually read-only probe, enabled
+// after this run acquires a token. This runner has no provided-token mode.
+// verification.profile.enabled=false opts out; no intrusive-probes gate applies.
+
 
 type RunCollector = {
   attempts: HttpHistoryEntry[];
@@ -271,7 +274,11 @@ function buildStepResult(
  * `oauth_unauthenticated_challenge` check calls a 2xx unverifiable rather than
  * a violation.
  */
-type AuthorizationRequirement = "required" | "not-required" | "inconclusive";
+type AuthorizationRequirement =
+  | "required"
+  | "optional"
+  | "not-required"
+  | "inconclusive";
 
 async function probeAuthorizationRequirement(
   config: NormalizedOAuthConformanceConfig,
@@ -283,9 +290,26 @@ async function probeAuthorizationRequirement(
     );
 
     if (response.status >= 200 && response.status < 300) {
+      // SERVING ANONYMOUSLY IS NOT THE SAME AS HAVING NO AUTHORIZATION. A
+      // lazy-authentication server answers the unauthenticated `initialize`,
+      // serves its public tools, and asks for sign-in only on a protected
+      // call — while still publishing Protected Resource Metadata for the
+      // client that call sends to sign in. Authorization is OPTIONAL in the
+      // spec, and this server has opted in, so its OAuth obligations apply:
+      // discovery is graded rather than reported not-applicable.
+      const prmUrl = await findPublishedResourceMetadata(
+        config,
+        trackedRequest,
+      );
+      if (prmUrl) {
+        return {
+          requirement: "optional",
+          detail: `the server answered a request without a token with HTTP ${response.status} and publishes Protected Resource Metadata at ${prmUrl}: anonymous access is allowed and OAuth is available`,
+        };
+      }
       return {
         requirement: "not-required",
-        detail: `the server answered a request without a token with HTTP ${response.status}`,
+        detail: `the server answered a request without a token with HTTP ${response.status} instead of challenging, and publishes no Protected Resource Metadata`,
       };
     }
 
@@ -628,6 +652,15 @@ export class OAuthConformanceTest {
         trackedRequest,
       );
 
+      if (authRequirement.requirement === "optional") {
+        // Graded, not skipped. The flow's own unauthenticated probe sees the
+        // same 2xx and continues into proactive discovery, which is exactly
+        // the path a client signing in to this server takes.
+        this.config.onProgress(
+          `Anonymous access is allowed and OAuth is available — ${authRequirement.detail}. Grading discovery and the authorization flow.`,
+        );
+      }
+
       if (authRequirement.requirement === "not-required") {
         notApplicableReason = authRequirement.detail;
         steps.push(
@@ -959,7 +992,12 @@ export class OAuthConformanceTest {
               state.lastResponse.headers?.["www-authenticate"],
           });
 
-          if (probe.kind === "anonymous_allowed") {
+          // A server the pre-flight found publishing this server's metadata
+          // is graded from proactive discovery, so its 2xx is expected here.
+          if (
+            probe.kind === "anonymous_allowed" &&
+            authRequirement.requirement !== "optional"
+          ) {
             notApplicableReason = `the server answered a request without a token with HTTP ${probeStatus}`;
             // Replace the transition into the probe with the same single row
             // the pre-flight reports, keeping the probe's evidence.

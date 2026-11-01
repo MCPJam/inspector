@@ -1243,10 +1243,15 @@ describe("OAuthConformanceTest", () => {
       );
 
       // The regression this fixes: the run used to march into Protected
-      // Resource Metadata discovery, 404, and report a hard failure.
-      expect(
-        requestedUrls.some((url) => url.includes("oauth-protected-resource")),
-      ).toBe(false);
+      // Resource Metadata discovery, 404, and report a hard failure. It now
+      // ASKS whether metadata is published — on the server's own origin, at
+      // the two well-known paths — and a 404 there is the answer "no OAuth",
+      // never a failure. It goes no further than that.
+      const prmRequests = requestedUrls.filter((url) =>
+        url.includes("oauth-protected-resource"),
+      );
+      expect(prmRequests.every((url) => url.startsWith("https://public.example.com/.well-known/"))).toBe(true);
+      expect(prmRequests.length).toBeLessThanOrEqual(2);
       expect(
         requestedUrls.some((url) => url.includes("oauth-authorization-server")),
       ).toBe(false);
@@ -1449,9 +1454,149 @@ describe("OAuthConformanceTest", () => {
     expect(result.steps.map((step) => step.step)).not.toContain(
       "received_401_unauthorized",
     );
+    // Only the question "is metadata published?", asked on its own origin.
+    const prmRequests = requestedUrls.filter((url) =>
+      url.includes("oauth-protected-resource"),
+    );
     expect(
-      requestedUrls.some((url) => url.includes("oauth-protected-resource")),
-    ).toBe(false);
+      prmRequests.every((url) =>
+        url.startsWith("https://stateless.example.com/.well-known/"),
+      ),
+    ).toBe(true);
+    expect(prmRequests.length).toBeLessThanOrEqual(2);
+  });
+
+  it.each([
+    [
+      "describes another endpoint on the same origin",
+      {
+        resource: "https://gw.example.com/private/mcp",
+        authorization_servers: ["https://auth.example.com"],
+      },
+    ],
+    ["has no authorization servers", { resource: "https://gw.example.com/public/mcp" }],
+    ["is an empty object", {}],
+  ])(
+    "keeps an anonymous server not applicable when the published PRM %s",
+    async (_label, rootDocument) => {
+      // A shared gateway origin: the path-suffixed document is absent and the
+      // root one is not this server's metadata.
+      const serverUrl = "https://gw.example.com/public/mcp";
+      const fetchFn: typeof fetch = jest.fn(async (input) => {
+        const url = String(input);
+        if (url === serverUrl) {
+          return createMcpInitializeResponse("2025-11-25");
+        }
+        if (url === "https://gw.example.com/.well-known/oauth-protected-resource") {
+          return jsonResponse(rootDocument);
+        }
+        return new Response(null, { status: 404 });
+      }) as unknown as typeof fetch;
+
+      const result = await new OAuthConformanceTest({
+        serverUrl,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "dcr",
+        fetchFn,
+      }).run();
+
+      expect(result.outcome).toBe("not-applicable");
+      expect(result.steps.some((step) => step.status === "failed")).toBe(false);
+    },
+  );
+
+  it("grades a server that serves anonymously but publishes PRM, instead of calling it not applicable", async () => {
+    // The lazy-authentication shape: the unauthenticated initialize succeeds,
+    // and the server still publishes Protected Resource Metadata for the
+    // protected tools that ask for sign-in mid-session.
+    const serverUrl = "https://lazy.example.com/mcp";
+    const resourceMetadataUrl =
+      "https://lazy.example.com/.well-known/oauth-protected-resource/mcp";
+    const authServerUrl = "https://auth.example.com";
+
+    const fetchFn: typeof fetch = jest.fn(async (input) => {
+      const url = String(input);
+      if (url === serverUrl) {
+        // Anonymous AND authenticated requests are both served.
+        return createMcpInitializeResponse("2025-11-25");
+      }
+      if (url === resourceMetadataUrl) {
+        return jsonResponse({
+          resource: serverUrl,
+          authorization_servers: [authServerUrl],
+          scopes_supported: ["mcp"],
+        });
+      }
+      if (url === `${authServerUrl}/.well-known/oauth-authorization-server`) {
+        return jsonResponse({
+          issuer: authServerUrl,
+          authorization_endpoint: `${authServerUrl}/authorize`,
+          token_endpoint: `${authServerUrl}/token`,
+          registration_endpoint: `${authServerUrl}/register`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          code_challenge_methods_supported: ["S256"],
+          scopes_supported: ["mcp"],
+        });
+      }
+      if (url === `${authServerUrl}/register`) {
+        return jsonResponse(
+          {
+            client_id: "lazy-client",
+            redirect_uris: ["http://127.0.0.1:3333/callback"],
+            token_endpoint_auth_method: "none",
+          },
+          201,
+        );
+      }
+      if (url === `${authServerUrl}/token`) {
+        return jsonResponse({
+          access_token: "access-token",
+          token_type: "Bearer",
+          expires_in: 3600,
+        });
+      }
+      return jsonResponse({ error: "not found" }, 404);
+    }) as typeof fetch;
+
+    const progress: string[] = [];
+    const test = new OAuthConformanceTest(
+      {
+        serverUrl,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "dcr",
+        auth: { mode: "headless" },
+        oauthConformanceChecks: false,
+        onProgress: (message) => progress.push(message),
+        fetchFn,
+      },
+      {
+        completeHeadlessAuthorization: jest.fn(async () => ({
+          code: "auth-code",
+        })),
+      },
+    );
+
+    const result = await test.run();
+
+    // The whole flow ran and passed: a lazy server's sign-in is graded like
+    // any other's, starting from proactive discovery.
+    expect(result.outcome).toBe("passed");
+    const stepIds = result.steps.map((step) => step.step);
+    expect(stepIds).toEqual(
+      expect.arrayContaining([
+        "request_resource_metadata",
+        "received_resource_metadata",
+        "request_authorization_server_metadata",
+        "received_authorization_server_metadata",
+      ]),
+    );
+    expect(
+      result.steps.find((step) => step.step === "received_resource_metadata")
+        ?.status,
+    ).toBe("passed");
+    expect(progress.some((line) => /Anonymous access is allowed and OAuth is available/.test(line))).toBe(true);
+    expect(result.summary).not.toContain("not applicable");
   });
 
   it("emits one row per step when a step fails, not a green/red duplicate", async () => {
