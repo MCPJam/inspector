@@ -16,6 +16,10 @@ import {
 import type { RequestLogContext } from "./log-events.js";
 import { resolveEnvironment } from "./log-events.js";
 import { HOSTED_MODE } from "../config.js";
+import {
+  resolveFeatureFlagSource,
+  rolloutAnswerWithoutPostHog,
+} from "./feature-flag-source.js";
 
 /**
  * Server-side PostHog capture for business-critical events.
@@ -68,7 +72,9 @@ function serverPlatform(): string {
 let client: PostHog | null = null;
 
 // Feature evaluation controls product availability, independently of tracking.
-// Callers using this exception must suppress feature-flag exposure events.
+// Callers using this exception must suppress feature-flag exposure events, and
+// reach it only when `resolveFeatureFlagSource` names PostHog: never under
+// DO_NOT_TRACK, and never when a flag file answers instead.
 function getClient(forFeatureFlags = false): PostHog | null {
   if (!forFeatureFlags && isAnalyticsDisabled()) return null;
   if (!client) {
@@ -179,6 +185,8 @@ export async function evaluateBrowserRollout(
   distinctId: string,
 ): Promise<boolean> {
   if (!rolloutActorId(distinctId)) return false;
+  const answer = rolloutAnswerWithoutPostHog(key);
+  if (answer !== undefined) return answer;
   try {
     return (
       (await getClient(true)?.isFeatureEnabled(key, distinctId, {
@@ -213,6 +221,8 @@ export async function evaluateLocalHarnessRollout(
   flagKey: LocalHarnessRolloutFlag = "local-harness-enabled",
 ): Promise<boolean> {
   if (!rolloutActorId(distinctId)) return false;
+  const answer = rolloutAnswerWithoutPostHog(flagKey);
+  if (answer !== undefined) return answer;
   try {
     return (
       (await getClient(true)?.isFeatureEnabled(flagKey, distinctId, {
@@ -229,7 +239,8 @@ export async function evaluateLocalHarnessRollout(
  * Values for the flags the web client reads, for `GET /api/web/flags`
  * (MJ-015). Only allowlisted keys are evaluated or returned, no exposure
  * events are sent, and any failure yields `{}` so the client keeps its own
- * fallback instead of failing the page.
+ * fallback instead of failing the page. A flag file's answers are the same for
+ * every visitor; under DO_NOT_TRACK without one, every flag is off.
  */
 export async function evaluateClientFeatureFlags(
   distinctId: string,
@@ -237,6 +248,9 @@ export async function evaluateClientFeatureFlags(
   trustedEmail?: string,
 ): Promise<ClientFeatureFlagValues> {
   if (!rolloutActorId(distinctId)) return {};
+  const source = resolveFeatureFlagSource();
+  if (source.kind === "file") return pickClientFeatureFlags(source.answers);
+  if (source.kind === "off") return {};
   try {
     const values = await getClient(true)?.getAllFlags(distinctId, {
       flagKeys: [...CLIENT_FEATURE_FLAG_KEYS],
