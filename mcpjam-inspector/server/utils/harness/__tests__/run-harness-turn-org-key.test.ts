@@ -73,7 +73,7 @@ vi.mock("../registry.js", () => ({
     displayName: "Claude Code",
     defaultPermissionMode: "allow-all",
     supportsSkills: false,
-    mcpDelivery: "host-executed",
+    mcpDelivery: "mcpjam",
     supportsModel: vi.fn(() => true),
     createHarness: harnessState.createHarness,
     toNativeModel: harnessState.toNativeModel,

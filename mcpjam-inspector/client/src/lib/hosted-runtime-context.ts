@@ -59,6 +59,7 @@ export type HiddenEnvironmentRecovery =
 export type HostedHiddenEnvironment = {
   /** The composed ad-hoc environment; null while it is being composed. */
   environmentId: string | null;
+  blockingError?: string;
   /** The servers its plugins add; kept on in every turn's override. */
   pluginServerIds: string[];
   /**
@@ -83,7 +84,6 @@ export type HostedRuntimeContext = {
    */
   hiddenEnvironment?: HostedHiddenEnvironment;
   selectedServerIds?: string[];
-  oauthTokens?: Record<string, string>;
   /**
    * Saved host being previewed (Playground / host-bound direct chat). Absent
    * for non-host direct chat and for published-scenario sessions (which carry

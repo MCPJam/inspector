@@ -1,3 +1,8 @@
+import { nextResumedVersion } from "./use-resumed-thread-persistence";
+import { isForwardingApprovalId, withoutForwardingGateParts, stripForwardingRequestBody } from "@/shared/forwarding-approval";
+import { dispatchAppToolCall } from "@mcpjam/widget-react";
+import { useSavedClientSendGuard } from "./use-saved-client-send-guard";
+import { stableStringifyJson } from "@/lib/client-config";
 import { prepareRestoredHarnessApproval, type ApprovalServerSelection } from "@/lib/prepare-restored-harness-approval";
 import {
   orgPolicyBlocksChatSend,
@@ -55,6 +60,7 @@ import {
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import { toast } from "sonner";
 import { track } from "@/lib/analytics";
+import { askStdioCommandApprovalForChatError } from "@/lib/stdio-command-approval";
 import {
   convertToModelMessages,
   type ChatTransport,
@@ -88,6 +94,10 @@ import {
 import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvex, useConvexAuth } from "convex/react";
+import {
+  useOwnedChatElicitations,
+  mergeChatElicitations,
+} from "./use-owned-chat-elicitations";
 import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import { ModelDefinition, type ModelProvider } from "@/shared/types";
 import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
@@ -186,6 +196,8 @@ import { HOSTED_MODE } from "@/lib/config";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
 import {
   prepareLocalHarnessSendRequest,
+  withSdkSendFields,
+  normalizeSendHeaders,
   type ChatSendRequestOptions,
 } from "@/lib/chat-send-request";
 import type { LocalHarnessTargetIds } from "@/lib/local-harness-consent";
@@ -266,6 +278,7 @@ import {
 } from "@/shared/hosted-rpc-log";
 import {
   HOSTED_ELICITATION_VERSION,
+  HOSTED_HARNESS_INPUT_VERSION,
   isHostedElicitationDataPart,
   type HostedElicitationAction,
   type HostedElicitationRequestEvent,
@@ -316,9 +329,12 @@ import {
 import { noteTurnNoticePart } from "@/lib/turn-notice-parts";
 import {
   HOSTED_TASKS_VERSION,
+  HOSTED_TASK_OWNER_VERSION,
   isTaskCreatedDataPart,
 } from "@/shared/hosted-task-created";
-import { getTrackedTaskScope, trackTask } from "@/lib/task-tracker";
+import { TaskOwnerRequests } from "@/lib/task-owner-requests";
+import { trackCreatedTask } from "@/lib/task-created-tracking";
+import { getTrackedTaskScope, getOwnedTaskScope } from "@/lib/task-tracker";
 import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
 import { useHarnessAgentActivityStore } from "@/stores/harness-agent-activity-store";
 import { useHarnessLiveOutputStore } from "@/stores/harness-live-output-store";
@@ -569,6 +585,7 @@ export interface UseChatSessionOptions {
   };
   /** Execution configuration (model, system prompt, temperature, tool approval) */
   executionConfig?: ExecutionConfig;
+  savedClientConfig?: import("@/lib/client-config-v2").HostConfigDtoV2;
   /**
    * The previewed host's real harness. A harness turn offers only the efforts
    * its adapter has verified (none today), so the chip hides rather than
@@ -1014,17 +1031,7 @@ export interface UseChatSessionReturn {
    * (see `HostedHiddenEnvironment`). False when none was supplied.
    */
   hiddenEnvironmentActive: boolean;
-  /**
-   * A hidden environment was supplied, but this turn has to stay on this
-   * machine's own chat route, which cannot run it — so it runs as the plain
-   * client turn it would have been. Null otherwise.
-   */
-  hiddenEnvironmentOffReason: HiddenEnvironmentOffReason | null;
 }
-
-/** Why a supplied hidden environment does not carry this chat's turns. */
-export type HiddenEnvironmentOffReason =
-  "local_harness" | "local_server" | "local_model" | "local_tools";
 
 /**
  * Provider for a locked (guest / host-pinned) model id.
@@ -2094,7 +2101,6 @@ export function useChatSession(
   const hostedProjectId = hostedContext?.projectId;
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedEnsureServerIds = hostedContext?.ensureServerIds;
-  const hostedOAuthTokens = hostedContext?.oauthTokens;
   const hostedScenarioId = hostedContext?.scenarioId;
   const hostedHostId = hostedContext?.hostId;
   // A hidden environment rides a CLIENT-turn context: it needs the client it
@@ -2596,7 +2602,7 @@ export function useChatSession(
   );
   const attemptedFailureCancellationRef = useRef(new Set<string>());
   const presentChatAuthRequiredEvent = useCallback(
-    (event: AuthRequiredEvent) => {
+    (event: AuthRequiredEvent, presentation?: { restoring?: boolean }) => {
       traceChatAuthRecovery("card", {
         continuationId: event.continuationId,
         toolCallId: event.toolCallId,
@@ -2611,7 +2617,9 @@ export function useChatSession(
         projectId: hostedProjectId,
       });
       if (!server) {
-
+        // A restored card retries every second until its server loads or the
+        // call expires, so a server not loaded yet is not a failure.
+        if (presentation?.restoring) return;
         recordChatAuthRecoveryFailure("server_missing", {
           continuationId: event.continuationId,
           toolCallId: event.toolCallId,
@@ -2894,8 +2902,14 @@ export function useChatSession(
           if (event.kind === "resolved") {
             store.resolveContinuation(event.continuationId);
             if (event.pluginModelOperation) {
-              for (const [key, answer] of ownedMrtrAnswers.current) if (key.startsWith(`${event.continuationId}:`)) { answer.dispose(); ownedMrtrAnswers.current.delete(key); }
-              void acknowledgeHostedMrtrContinuation(event.continuationId).catch(() => {});
+              for (const [key, answer] of ownedMrtrAnswers.current)
+                if (key.startsWith(`${event.continuationId}:`)) {
+                  answer.dispose();
+                  ownedMrtrAnswers.current.delete(key);
+                }
+              void acknowledgeHostedMrtrContinuation(
+                event.continuationId,
+              ).catch(() => {});
             }
             if (event.indeterminate) {
               // Exactly-once: a side-effecting call may or may not have run, so
@@ -2979,6 +2993,24 @@ export function useChatSession(
             receipt.turnId === expectedTurn.turnId;
           if (sameSession && sameTurn) {
             persistReceiptRef.current = receipt;
+            // The SDK can start a client-tool continuation before React effects.
+            // Preserve unversioned surfaces; only advance an existing cursor.
+            if (
+              (receipt.outcome === "saved" ||
+                receipt.outcome === "duplicate") &&
+              typeof receipt.version === "number" &&
+              resumedVersionRef.current?.sessionId === receipt.chatSessionId &&
+              resumedVersionRef.current.version !== null
+            ) {
+              const next = nextResumedVersion({
+                previous: resumedVersionRef.current,
+                currentSessionId: chatSessionIdRef.current,
+                sessionId: receipt.chatSessionId,
+                version: receipt.version,
+              });
+              resumedVersionRef.current = next;
+              setResumedVersion(next);
+            }
           }
         } else if (isHarnessSessionDataPart(part)) {
           // Cache the harness workdir so the Playground Shell can open a
@@ -3026,40 +3058,11 @@ export function useChatSession(
           const message = HARNESS_RESET_MESSAGES[part.data.reason];
           if (message) toast.info(message);
         } else if (isTaskCreatedDataPart(part)) {
-          // Track it and stop. Deliberately NO navigation: a chat turn must
-          // not yank the user out of the conversation to a task list.
-          //
-          // `trackTask` needs nothing added for at-least-once delivery — it
-          // dedupes on the full task identity, so a duplicated part is a
-          // no-op. The scope is passed EXPLICITLY, from the value captured at
-          // submit: letting `trackTask` stamp the live active scope was the
-          // bug — a part delivered after a mid-stream project switch filed
-          // the task under the NEW project.
-          //
-          // Keyed by server NAME when the server sent one: the tracker and the
-          // Tasks tab both read by name, while a hosted `serverId` is a Convex
-          // document id, so tracking under the id files the task where the
-          // Tasks tab never looks.
-          trackTask({
-            taskId: part.data.taskId,
-            serverId: part.data.serverName ?? part.data.serverId,
-            wire: part.data.wire,
-            // Required by the tracker. The server's own timestamp when it sent
-            // one; a local reading only as a last resort, since the tracker
-            // renders it as the handle's age.
-            createdAt: part.data.createdAt ?? new Date().toISOString(),
-            ...(part.data.toolName ? { toolName: part.data.toolName } : {}),
-            ...(part.data.status ? { status: part.data.status } : {}),
-            ...(part.data.ttlMs !== undefined
-              ? { ttlMs: part.data.ttlMs }
-              : {}),
-            ...(part.data.pollIntervalMs !== undefined
-              ? { pollIntervalMs: part.data.pollIntervalMs }
-              : {}),
-            ...(turnTaskScopeRef.current !== undefined
-              ? { scope: turnTaskScopeRef.current }
-              : {}),
-          });
+          trackCreatedTask(
+            part.data,
+            turnTaskScopeRef.current,
+            taskOwnerRequests.current,
+          );
         }
         return;
       }
@@ -3068,7 +3071,8 @@ export function useChatSession(
         // A dedicated identity for receipt matching, captured while the turn is
         // starting rather than read off trace state later: `activeTurnId` is
         // cleared by `turn_finish`, which lands before the receipt does. A new
-        // turn also invalidates the previous turn's receipt.
+        // request also invalidates the previous request's receipt; client-tool
+        // continuations have already advanced the tracked version on arrival.
         receiptTurnIdentityRef.current = {
           chatSessionId: chatSessionIdRef.current,
           turnId: part.data.turnId,
@@ -3096,13 +3100,14 @@ export function useChatSession(
   /**
    * Take this turn's persist receipt, if one arrived and passed validation.
    *
-   * Consuming rather than reading: the receipt describes exactly one turn, and
+   * Consuming rather than reading: the receipt describes one request, and
    * leaving it in place would let a later reconciliation pass mistake it for a
    * fresh answer about a different turn.
    *
    * Ordering is safe. The AI SDK processes stream chunks in order and only
    * flips `status` to `ready` once the reader completes, so a receipt on the
-   * wire is always observed before any post-stream effect runs. A client abort
+   * wire advances a tracked version before an automatic continuation starts.
+   * The effect consumes the final request's receipt. A client abort
    * or disconnect means no receipt at all — callers fall back to reconciling
    * against the session subscription.
    */
@@ -3139,18 +3144,12 @@ export function useChatSession(
 
   const syncResumedVersion = useCallback(
     (version: number | null, sessionId = chatSessionId) => {
-      // History reads can finish after navigation. Their cursor belongs to the
-      // requested thread, never whichever thread happens to be mounted now.
-      if (sessionId !== chatSessionIdRef.current) return;
-      const previous = resumedVersionRef.current;
-      if (
-        version !== null &&
-        previous?.sessionId === sessionId &&
-        previous.version !== null &&
-        version < previous.version
-      )
-        return;
-      const next = { sessionId, version };
+      const next = nextResumedVersion({
+        previous: resumedVersionRef.current,
+        currentSessionId: chatSessionIdRef.current,
+        sessionId,
+        version,
+      });
       resumedVersionRef.current = next;
       setResumedVersion(next);
     },
@@ -3585,28 +3584,9 @@ export function useChatSession(
       return isLocalOnlyMcpServerConfig(server.config);
     });
   }, [appState, hostedProjectId, selectedServers]);
-  // ── Hidden environment (a Playground chat's plugins) ────────────────────
-  // Only the web chat route resolves an environment. On this machine a turn
-  // that must stay local (a client run here, a local-only server, a model
-  // keyed here, this machine's browser or shell) runs without its plugins and
-  // says so, unless they were composed for that client here (venue `local`).
-  const hiddenEnvironmentOffReason: HiddenEnvironmentOffReason | null =
-    !hostedHiddenEnvironment || HOSTED_MODE
-      ? null
-      : !explicitRequiresWebChatApi &&
-          localHarnessExecution?.requested === true &&
-          hostedHiddenEnvironment.venue !== "local"
-        ? "local_harness"
-        : hasLocalOnlySelectedServer
-          ? "local_server"
-          : !(isMcpJamModel || selectedModelUsesOrgRuntime)
-            ? "local_model"
-            : localBrowserRequested ||
-                (resolvedLocalEngine && Boolean(localConsentToken))
-              ? "local_tools"
-              : null;
-  const hiddenEnvironmentActive =
-    !!hostedHiddenEnvironment && hiddenEnvironmentOffReason === null;
+  // Managed local and service turns share environment composition. The
+  // process role, rather than the selected model or transport, owns execution.
+  const hiddenEnvironmentActive = !!hostedHiddenEnvironment;
   // What this turn actually sends against: set only once the environment is
   // composed. Until then a hidden-environment chat holds sends (see
   // `hostedContextNotReady`) rather than racing a client turn out without
@@ -3620,13 +3600,12 @@ export function useChatSession(
   const hiddenEnvironmentRecover = hiddenEnvironmentActive
     ? hostedHiddenEnvironment?.recover
     : undefined;
-  // Like an environment target, a hidden environment's turn can only run on
-  // `/api/web/chat-v2`.
+  // Like an environment target, a hidden environment's turn resolves its
+  // servers by Convex id.
   const hostedRequiresWebChatApi =
     explicitRequiresWebChatApi || hiddenEnvironmentActive;
   const localMcpRuntimeRequired =
     !HOSTED_MODE &&
-    !hostedRequiresWebChatApi &&
     selectedModelUsesOrgRuntime &&
     (hasLocalOnlySelectedServer || localBrowserRequested);
   /**
@@ -3646,23 +3625,18 @@ export function useChatSession(
    */
   const localHarnessRequested =
     !HOSTED_MODE &&
-    !hostedRequiresWebChatApi &&
     !hostedScenarioId &&
     localHarnessExecution?.requested === true;
-  const isHostedTransport = HOSTED_MODE || hostedRequiresWebChatApi;
-  // An org-runtime model stays on the local `/api/mcp` route in a local build,
-  // like every other model. That route resolves the org connection itself (the
-  // key stays in Convex) and runs tools on this app's own MCP connections, so
-  // a tool result names its server the way the widget looks it up. The web
-  // route keys servers by Convex id — which the local widget endpoints can't
-  // resolve ("Unknown MCP server") — and reconnects every server per turn.
+  const isHostedTransport = HOSTED_MODE || hostedRequiresWebChatApi || Boolean(hostedProjectId);
+  // Managed setup uses stable server IDs on either ingress. Endpoint choice
+  // remains a deployment decision below, independent of this request shape.
   const shouldUseOrgAwareChatApi = isHostedTransport;
   const requestChoice = useMemo(() => chatRequestSelection({
     intent: effectiveSelectionIntent,
     selection: savedSelection,
     model: selectedModel,
     orgConfig: hostedOrgModelConfig,
-    allowLocal: !shouldUseOrgAwareChatApi,
+    allowLocal: !HOSTED_MODE,
     temperature: temperatureOverride,
     effortLevels: reasoningEffortOptions(selectedModel,
       reasoningEffortRouteForRow(selectedModel, hostedOrgModelConfig), reasoningEffortHarness),
@@ -3701,6 +3675,7 @@ export function useChatSession(
       // Resolve the WorkOS / guest bearer at request time for every chat
       // route. authFetch attaches it only to allowlisted Convex-backed paths,
       // including both /api/web/chat-v2 and local /api/mcp/chat-v2.
+      if (typeof init?.body === "string") init = { ...init, body: stripForwardingRequestBody(init.body) };
       let response = await authFetch(input, init);
 
       // Scenario access recovery. A scenario turn re-resolves its authoritative
@@ -3821,31 +3796,37 @@ export function useChatSession(
       reportChatFailure(chatError, lastChatResponseRef.current);
       logPluginChatFailure(chatError, appMessageTurnRef.current);
 
-      // Try to recover a structured limitKind from a JSON-shaped error message
-      // so the concurrency carve-out is honored on the SSE error path. Best
-      // effort: untouched if the message isn't JSON.
-      let limitKind: "total" | "concurrency" | undefined;
+      // Try to recover the structured body from a JSON-shaped error message:
+      // its limitKind honors the concurrency carve-out on the SSE error path,
+      // and its details carry a stdio command approval. Best effort:
+      // untouched if the message isn't JSON.
+      let parsed: { limitKind?: unknown; details?: unknown } | undefined;
       const jsonStart = chatError.message.indexOf("{");
       if (jsonStart >= 0) {
         try {
-          const parsed = JSON.parse(chatError.message.slice(jsonStart));
-          if (parsed && typeof parsed === "object") {
-            const value = (parsed as { limitKind?: unknown }).limitKind;
-            if (value === "total" || value === "concurrency") {
-              limitKind = value;
-            }
-          }
+          const value: unknown = JSON.parse(chatError.message.slice(jsonStart));
+          if (value && typeof value === "object") parsed = value;
         } catch {
           // not JSON; ignore
         }
       }
+      const limitKind =
+        parsed?.limitKind === "total" || parsed?.limitKind === "concurrency"
+          ? parsed.limitKind
+          : undefined;
       notifyMCPJamLimitError({
         message: chatError.message,
         limitKind,
         ...(hostedScenarioId ? { surface: "scenario" as const } : {}),
       });
+      if (hostedProjectId) {
+        void askStdioCommandApprovalForChatError(
+          parsed?.details,
+          hostedProjectId,
+        );
+      }
     },
-    [hostedScenarioId],
+    [hostedScenarioId, hostedProjectId],
   );
 
   // Create transport
@@ -3862,16 +3843,50 @@ export function useChatSession(
     serverIds: string[];
     serverNames: string[];
   } | null>(null);
+  // The last send's resolved servers, kept for that chat's continuations
+  // (approvals, client-tool resumes). They have no preflight of their own and
+  // can run before the newly saved ids reach `hostedSelectedServerIds`.
+  const sentHostedServersRef = useRef<{
+    projectId: string;
+    chatSessionId: string;
+    serverIds: string[];
+    serverNames: string[];
+  } | null>(null);
   // The auth/org scope the CURRENT turn started under, captured once at
   // submit (in the transport body builder) and read by the task-created
   // data-part handler. A task created by a turn belongs to the scope the turn
   // was submitted under — never to whatever scope happens to be active when a
   // late part arrives after a project switch.
   const turnTaskScopeRef = useRef<string | undefined>(undefined);
+  const taskOwnerRequests = useRef(new TaskOwnerRequests());
+
+  const sendIdentity = {
+    install: convexClient.url,
+    actor: workOsUser?.id ?? (isAuthenticated ? "guest" : "anonymous"),
+    projectId: hostedProjectId,
+    config: options.savedClientConfig,
+    target: hostedTargetKeyValue,
+    session: chatSessionId,
+  };
+  // Continuations (approvals, resumes) refuse a changed identity. Only a saved
+  // client also pins its servers and model, so a reconnecting server or a
+  // refreshed model list cannot strand an ordinary chat's pending approval.
+  const savedClientSendGuard = useSavedClientSendGuard(
+    stableStringifyJson(
+      options.savedClientConfig
+        ? { ...sendIdentity, selectedServers, requestChoice }
+        : sendIdentity,
+    ),
+  );
+  // Preparing a send waits on server-id preflight; a selection or model change
+  // in that window refuses the send.
+  const sendPreparationGuard = useSavedClientSendGuard(
+    stableStringifyJson({ ...sendIdentity, selectedServers, requestChoice }),
+  );
 
   const transport = useMemo(() => {
     const shouldSendClientApiKey =
-      !shouldUseOrgAwareChatApi && !selectedModelUsesOrgRuntime;
+      !HOSTED_MODE && !selectedModelUsesOrgRuntime;
     let apiKey: string;
     if (
       selectedModel.provider === "custom" &&
@@ -3899,20 +3914,17 @@ export function useChatSession(
     // (non-scenario) turn whose resolved engine is local; the server re-checks
     // !HOSTED_MODE + non-guest + non-scenario + verifies the token.
     //
-    // Scoped to the /api/mcp/chat-v2 path (`!shouldUseOrgAwareChatApi`): the
-    // local engine only exists on the local server's mcp route (both this
-    // transmission AND the server-side resolver live there). A turn on
-    // /api/web/chat-v2 has no local engine — so we send nothing local there
-    // (no stray consent header on the web route) and that turn's bash
-    // resolves cloud, as it must.
+    // Local builds only: a hosted build's /api/web/chat-v2 has no local
+    // engine, so it gets nothing local (no stray consent header) and that
+    // turn's bash resolves cloud, as it must.
     const sendLocalEngine =
-      !shouldUseOrgAwareChatApi &&
+      !HOSTED_MODE &&
       resolvedLocalEngine &&
       !hostedScenarioId &&
       Boolean(localConsentToken) &&
       authIsMemberRef.current;
     const sendLocalBrowser =
-      !shouldUseOrgAwareChatApi && localBrowserRequested && !hostedScenarioId;
+      !HOSTED_MODE && localBrowserRequested && !hostedScenarioId;
     if (sendLocalBrowser && browserConsentToken)
       mergedHeaders[BROWSER_CONSENT_HEADER] = browserConsentToken;
     if (sendLocalEngine && localConsentToken) {
@@ -3929,9 +3941,7 @@ export function useChatSession(
     const transportHeaders =
       Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined;
 
-    const chatApi = shouldUseOrgAwareChatApi
-      ? "/api/web/chat-v2"
-      : "/api/mcp/chat-v2";
+    const chatApi = HOSTED_MODE ? "/api/web/chat-v2" : "/api/mcp/chat-v2";
 
     // Hosted dashboard guests and signed-in users both require a project id.
     // Submit is blocked until hostedProjectId and selected server ids resolve.
@@ -3945,16 +3955,37 @@ export function useChatSession(
       // pre-resolved selection for surfaces without a preflight (e.g. scenario).
       const preflight = resolvedHostedServersRef.current;
       resolvedHostedServersRef.current = null;
+      if (preflight) {
+        sentHostedServersRef.current = {
+          ...preflight,
+          projectId: hostedProjectId,
+          chatSessionId,
+        };
+      }
+      // A scenario's servers come from the scenario, not this selection.
+      const directSelection = isHostedDirectChat && !hostedEnvironmentId;
+      const selectionUnsaved =
+        hostedSelectedServerIds.length !== selectedServers.length;
+      // A continuation reuses its send's ids for the same chat and servers.
+      const sent = sentHostedServersRef.current;
+      const servers =
+        preflight ??
+        (directSelection &&
+        selectionUnsaved &&
+        sent?.projectId === hostedProjectId &&
+        sent.chatSessionId === chatSessionId &&
+        sent.serverNames.length === selectedServers.length &&
+        sent.serverNames.every((name, index) => name === selectedServers[index])
+          ? sent
+          : null);
+      if (directSelection && selectionUnsaved && !servers) {
+        throw new Error("Save the selected servers before sending this message.");
+      }
       const hostedServerBatch = buildResolvedServerBatchRequest({
         projectId: hostedProjectId,
-        serverIds: preflight?.serverIds ?? hostedSelectedServerIds,
-        serverNames: preflight?.serverNames ?? selectedServers,
+        serverIds: servers?.serverIds ?? hostedSelectedServerIds,
+        serverNames: servers?.serverNames ?? selectedServers,
         accessScope: "chat_v2",
-        ...(isHostedDirectChat &&
-        hostedOAuthTokens &&
-        Object.keys(hostedOAuthTokens).length > 0
-          ? { oauthTokens: hostedOAuthTokens }
-          : {}),
         ...(hostedScenarioId ? { scenarioId: hostedScenarioId } : {}),
         ...(hostedScenarioId && Number.isFinite(hostedAccessVersion)
           ? { accessVersion: hostedAccessVersion }
@@ -3989,6 +4020,7 @@ export function useChatSession(
         // any server that elicits. The server only registers its callback —
         // and therefore only advertises `elicitation` — when it sees this.
         hostedElicitationVersion: HOSTED_ELICITATION_VERSION,
+        hostedHarnessInputVersion: HOSTED_HARNESS_INPUT_VERSION,
         // Handshake: tells the server this bundle can render a suspended MRTR
         // (`input_required`) round AND resume it (§12.5). The server only
         // registers the suspending collector — and therefore only takes the
@@ -4058,6 +4090,7 @@ export function useChatSession(
       api: chatApi,
       fetch: chatFetch,
       body: () => {
+        savedClientSendGuard.assertCurrent();
         if (requestChoiceRef.current.kind === "blocked") throw new Error(requestChoiceRef.current.reason);
         // Capture the task scope this turn is SUBMITTED under, next to
         // `buildHostedBody` (which hard-requires the project id): hosted
@@ -4076,6 +4109,11 @@ export function useChatSession(
         // to request approval for, or defers one nothing will ever ask about
         // — and that second one stalls the turn.
         turnRequireToolApprovalRef.current = requireToolApprovalRef.current;
+        const taskOwnerScope = getOwnedTaskScope();
+        const ownerRequestId = taskOwnerRequests.current.capture(
+          generateId(),
+          taskOwnerScope,
+        );
         const widgetModelContext = pendingWidgetModelContextRef.current;
         pendingWidgetModelContextRef.current = undefined;
         const rewind =
@@ -4083,8 +4121,17 @@ export function useChatSession(
             ? rewindRef.current.lineage
             : undefined;
         return {
+          ...(ownerRequestId
+            ? {
+                hostedTaskOwnerVersion: HOSTED_TASK_OWNER_VERSION,
+                hostedTaskOwnerRequestId: ownerRequestId,
+                hostedTaskOwnerScope: taskOwnerScope,
+              }
+            : {}),
           model: selectedModel,
-          ...(requestChoice.kind === "picked" ? { modelSelection: requestChoice.selection } : {}),
+          ...(requestChoice.kind === "picked"
+            ? { modelSelection: requestChoice.selection }
+            : {}),
           ...(shouldSendClientApiKey ? { apiKey } : {}),
           // Always send the user's slider value. The server's `prepareChatV2`
           // already drops temperature for GPT-5 before the LLM call (its API
@@ -4094,7 +4141,11 @@ export function useChatSession(
           // helper's 0.7 fallback regardless of the slider.
           // An effort and a temperature are mutually exclusive: the routes
           // refuse (or drop) a temperature under an effort, so send only one.
-          ...(requestChoice.kind === "inherit" ? {} : requestEffort ? { reasoningEffort: requestEffort } : { temperature }),
+          ...(requestChoice.kind === "inherit"
+            ? {}
+            : requestEffort
+              ? { reasoningEffort: requestEffort }
+              : { temperature }),
           systemPrompt,
           ...(shouldUseOrgAwareChatApi
             ? buildHostedBody()
@@ -4114,30 +4165,13 @@ export function useChatSession(
                 // server re-resolves harness/computer authoritatively. Direct
                 // path only — omitted when a scenario owns the host.
                 //
-                // NO `executionTarget` here, by design: the local /api/mcp
-                // engine cannot resolve an environment (it has no Convex read
-                // for the bundle) and 400s on the target. Environment-mode
-                // surfaces set `requiresWebChatApi`, which routes them to
-                // /api/web/chat-v2 above, so this branch is unreachable in
-                // environment mode — and if a caller ever gets it wrong, the
-                // turn runs as a plain host turn rather than silently claiming
-                // to be an environment run.
+                // NO `executionTarget` here, by design: this body is the
+                // standalone turn, which has no project. Environment surfaces
+                // always carry a project and use the managed body above; a
+                // caller that gets it wrong runs a plain host turn rather than
+                // silently claiming to be an environment run.
                 ...(!hostedScenarioId && !hostedExecutionTarget && hostedHostId
                   ? { hostId: hostedHostId }
-                  : {}),
-                // "This machine": run this host's bash on the local computer
-                // engine. The consent capability rides the header above; the
-                // server ignores this without it (and off the /mcp direct
-                // path). Absent ⇒ the legacy cloud-family resolution.
-                ...(!hostedScenarioId && personalBrowserEngine
-                  ? {
-                      browserEngine: sendLocalBrowser
-                        ? ("local" as const)
-                        : ("cloud" as const),
-                    }
-                  : {}),
-                ...(sendLocalEngine
-                  ? { computerEngine: "local" as const }
                   : {}),
                 // Pass projectId for BYOK direct-chat history persistence
                 ...(hostedProjectId ? { projectId: hostedProjectId } : {}),
@@ -4149,14 +4183,6 @@ export function useChatSession(
                 // validator would reject the whole ingest call.
                 ...(hostedSelectedServerIds.length === selectedServers.length
                   ? { selectedServerIds: hostedSelectedServerIds }
-                  : {}),
-                // Keeps an org-runtime model's turn on the local route's own
-                // runtime resolution. Local-only MCP servers need it; so does
-                // an explicit local-harness ask, for the same reason — the
-                // agent runs here, so the servers it reaches must resolve here.
-                ...(localMcpRuntimeRequired ||
-                (localHarnessRequested && selectedModelUsesOrgRuntime)
-                  ? { localMcpRuntimeRequired: true }
                   : {}),
                 // Phase F: owner-preview / local scenario sessions persist as
                 // `sourceType: "scenario"`. Without forwarding the resolved
@@ -4170,13 +4196,33 @@ export function useChatSession(
                 ...(hostedScenarioId && hostedScenarioSurface
                   ? { surface: hostedScenarioSurface }
                   : {}),
+              }),
+          // Local builds only, for both bodies. "This machine": run this host's
+          // bash on the local computer engine; the consent capability rides the
+          // header above, and the server ignores this without it. Absent ⇒ the
+          // legacy cloud-family resolution. `localMcpRuntimeRequired` keeps an
+          // org-runtime model's turn on this server's runtime resolution, which
+          // local-only MCP servers and an explicit local-harness ask both need.
+          ...(!HOSTED_MODE
+            ? {
+                ...(personalBrowserEngine && !hostedScenarioId
+                  ? {
+                      browserEngine: sendLocalBrowser ? "local" : "cloud",
+                    }
+                  : {}),
+                ...(sendLocalEngine ? { computerEngine: "local" } : {}),
+                ...(localMcpRuntimeRequired ||
+                (localHarnessRequested && selectedModelUsesOrgRuntime)
+                  ? { localMcpRuntimeRequired: true }
+                  : {}),
                 ...(selectedModel.provider === "ollama"
                   ? { ollamaBaseUrl: getOllamaBaseUrl() }
                   : {}),
                 ...(selectedModel.provider === "azure"
                   ? { azureBaseUrl: getAzureBaseUrl() }
                   : {}),
-              }),
+              }
+            : {}),
           requireToolApproval: requireToolApprovalRef.current,
           respectToolVisibility: respectToolVisibilityRef.current,
           ...(modelVisibleMcpToolResultsRef.current !== undefined
@@ -4242,48 +4288,22 @@ export function useChatSession(
         };
       },
       headers: transportHeaders,
-      /**
-       * The one place a local-harness turn's ids and capability are produced,
-       * and the one place they are produced TOGETHER.
-       *
-       * `prepareSendMessagesRequest` runs exactly once per send, after `body`
-       * and `headers` have resolved, and can rewrite both — which is what makes
-       * "one fresh snapshot" expressible at all. Splitting it across the `body`
-       * closure and the `headers` object (where it used to live) meant the ids
-       * and the token were read at different moments from different sources,
-       * and a grant minted in between produced a body claiming a target with no
-       * capability to authorize it.
-       *
-       * The refusal below is the backstop the whole design rests on. Before it,
-       * an expired grant, a sign-out, or a false `authIsMemberRef` each simply
-       * OMITTED the target — and the server, seeing no target, ran the turn
-       * hosted. A user who deliberately scoped work to their machine got a
-       * cloud sandbox and no indication of it. Failing loudly is the point.
-       */
-      //
-      // Installed ONLY on a local-harness turn. The SDK adds `messages` (and
-      // `id`/`trigger`/`messageId`) to the request itself, but only when no
-      // `prepareSendMessagesRequest` returns a body — any returned body replaces
-      // the SDK's wholesale. A hook that ran on every turn and handed back the
-      // custom fields it was given sent every chat turn out with no `messages`
-      // (400 "messages are required", both routes). Not installing it on the
-      // ordinary path leaves the SDK's own composition in charge there, and
-      // `prepareLocalHarnessSendRequest` re-adds the SDK fields on the path
-      // that does rewrite the body — `lib/chat-send-request.ts` owns that
-      // contract and pins it against the real transport.
-      ...(localHarnessRequested
+      // Validate after asynchronous headers resolve, preserving SDK fields and
+      // obtaining local consent from the live resolver at the request boundary.
+      ...(localHarnessRequested || options.savedClientConfig
         ? {
-            prepareSendMessagesRequest: (
-              options: ChatSendRequestOptions<UIMessage>,
-            ) =>
-              prepareLocalHarnessSendRequest(
-                options,
-                localHarnessExecution?.resolveSendTarget() ?? null,
-              ),
+            prepareSendMessagesRequest: (request: ChatSendRequestOptions<UIMessage>) => {
+              savedClientSendGuard.assertCurrent();
+              return localHarnessRequested
+                ? prepareLocalHarnessSendRequest(request, localHarnessExecution?.resolveSendTarget() ?? null)
+                : { body: withSdkSendFields(request), headers: normalizeSendHeaders(request.headers) };
+            },
           }
         : {}),
     });
   }, [
+    savedClientSendGuard,
+    options.savedClientConfig,
     selectedModel,
     requestChoice,
     requestEffort,
@@ -4308,7 +4328,6 @@ export function useChatSession(
     options.pluginGlobalContext,
     chatSessionId,
     hostedSelectedServerIds,
-    hostedOAuthTokens,
     hostedScenarioId,
     hostedHostId,
     hostedExecutionTarget,
@@ -4376,8 +4395,8 @@ export function useChatSession(
     // Records whether the turn was aborted, for `consumeTurnAborted`. Runs in
     // the SDK's `finally` — after `setStatus({ status: "ready" })` but before
     // React renders that status — so a post-stream effect reading it on the
-    // ready transition always sees THIS turn's answer. Same ordering guarantee
-    // the persist receipt already relies on.
+    // ready transition sees the final request's answer. Client-tool continuations
+    // can start before that effect; receipts advance the cursor in onData.
     onFinish: ({ isAbort, message, finishReason }) => {
       turnAbortedRef.current = isAbort;
       lastFinishRef.current = {
@@ -4516,25 +4535,13 @@ export function useChatSession(
       const registry = appToolsRegistryRef.current.getState();
       registry.registerPendingCall(entry.instance.bridgeId, controller);
       try {
-        const call = entry.bridge.callTool({
-          name: entry.rawName,
-          arguments:
-            tc.input && typeof tc.input === "object"
-              ? (tc.input as Record<string, unknown>)
-              : {},
-        });
-        const raw = await new Promise<
-          Awaited<ReturnType<typeof entry.bridge.callTool>>
-        >((resolve, reject) => {
-          const onAbort = () =>
-            reject(new Error("App iframe was torn down mid-dispatch"));
-          if (controller.signal.aborted) {
-            onAbort();
-            return;
-          }
-          controller.signal.addEventListener("abort", onAbort, { once: true });
-          call.then(resolve, reject);
-        });
+        const raw = await dispatchAppToolCall(
+          entry,
+          tc.input && typeof tc.input === "object"
+            ? (tc.input as Record<string, unknown>)
+            : {},
+          { signal: controller.signal }
+        );
         const sanitized = scrubAppToolResultForModel(raw);
         recordAppToolInvocation(
           {
@@ -4581,7 +4588,8 @@ export function useChatSession(
     // by an automatic follow-up. Bounded like the agent surface: never past a
     // cut-off reply or a spent step budget, or a turn the server can no
     // longer serve is re-posted indefinitely (`autoResumeStopReason`).
-    sendAutomaticallyWhen: (options) => {
+    sendAutomaticallyWhen: (incoming) => {
+      const options = { ...incoming, messages: withoutForwardingGateParts(incoming.messages) };
       autoResumeHeldBackRef.current = null;
       if (lastStepHasPendingApproval(options)) return false;
       if (
@@ -4623,6 +4631,13 @@ export function useChatSession(
       addToolOutput,
     });
     return async (response: Parameters<typeof respond>[0]) => {
+      if (isForwardingApprovalId(response.id)) {
+        const result = await authFetch("/api/web/harness-forwarding/approval", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: response.id, approved: response.approved }) });
+        if (!result.ok) { toast.error("This approval is no longer available. Try the turn again."); return; }
+        const acknowledged: unknown = await result.json();
+        if (!acknowledged || typeof acknowledged !== "object" || !("ok" in acknowledged) || acknowledged.ok !== true) { toast.error("The approval could not be confirmed. Try again."); return; }
+        return sdkAddToolApprovalResponse(response);
+      }
       const selection = restoredApprovalSelectionRef.current;
       if (reasoningEffortHarness && isHostedTransport && hostedEnsureServerIds &&
           selection?.sessionId === chatSessionIdRef.current) {
@@ -4849,7 +4864,7 @@ export function useChatSession(
           isPendingChatAuthRequired(pending) &&
           !presentedSignInCardsRef.current.has(pending.event.toolCallId)
         ) {
-          presentChatAuthRequiredEvent(pending.event);
+          presentChatAuthRequiredEvent(pending.event, { restoring: true });
         }
       }
     };
@@ -5173,7 +5188,7 @@ export function useChatSession(
     }
     let cancelled = false;
     void convertToModelMessages(
-      persistent.map(({ id: _omitId, ...rest }) => rest) as Parameters<
+      withoutForwardingGateParts(persistent).map(({ id: _omitId, ...rest }) => rest) as Parameters<
         typeof convertToModelMessages
       >[0],
       { ignoreIncompleteToolCalls: true },
@@ -5460,6 +5475,10 @@ export function useChatSession(
       // continuations — tool-approval responses, tool outputs — reuse the same
       // client and go through `addToolApprovalResponse`/`addToolOutput`.)
       if (isCurrent && !isCurrent()) return Promise.resolve(false);
+      if (hiddenEnvironmentActive && hostedHiddenEnvironment?.blockingError) {
+        toast.error(hostedHiddenEnvironment.blockingError);
+        return Promise.resolve(false);
+      }
       // The organization's AI key policy leaves no model to send to. Refused
       // here, not only in the composer, so no caller can send around it.
       const orgPolicy = orgPolicySendRef.current;
@@ -5471,6 +5490,8 @@ export function useChatSession(
         toast.error(requestChoiceRef.current.reason);
         return Promise.resolve(false);
       }
+      savedClientSendGuard.begin();
+      const sendIsCurrent = sendPreparationGuard.begin();
       chatToolCallRequestIdsRef.current.clear();
       pendingWidgetModelContextRef.current =
         widgetModelContext && widgetModelContext.length > 0
@@ -5486,7 +5507,7 @@ export function useChatSession(
         // Hosted preflight: resolve selected runtime server NAMES → persisted
         // Convex ids (persisting ad-hoc/App servers) BEFORE the synchronous
         // transport body builds, so the hosted send never carries a display
-        // name. Only on the web-engine path, and only when the surface provided
+        // name. On managed turns, and only when the surface provided
         // a resolver (Playground). On failure, fail the send CLOSED with a
         // visible toast (callers fire-and-forget, so don't reject).
         const usesWebEngine = shouldUseOrgAwareChatApi;
@@ -5559,6 +5580,14 @@ export function useChatSession(
             return false; // fail closed — do not send with unresolved servers
           }
         }
+        // A scenario's servers come from the scenario, not this selection.
+        if (usesWebEngine && !hostedScenarioId && !hostedEnvironmentId && !hostedEnsureServerIds &&
+            hostedSelectedServerIds.length !== serverNamesSnapshot.length) {
+          pendingWidgetModelContextRef.current = undefined;
+          resolvedHostedServersRef.current = null;
+          toast.error("Save the selected servers before sending this message.");
+          return false;
+        }
         try {
           await releaseBrowserForChat(browserProjectAtSend, sessionAtSend);
           if (
@@ -5580,7 +5609,12 @@ export function useChatSession(
           return false;
         }
         try {
-          if (isCurrent && !isCurrent()) return false;
+          if (!sendIsCurrent() || (isCurrent && !isCurrent())) {
+            pendingWidgetModelContextRef.current = undefined;
+            resolvedHostedServersRef.current = null;
+            return false;
+          }
+          savedClientSendGuard.assertCurrent();
           const timestampedMetadata = withMessageTimestampMetadata(
             metadata,
             Date.now(),
@@ -5648,9 +5682,15 @@ export function useChatSession(
       })();
     },
     [
+      hostedHiddenEnvironment?.blockingError,
+      hiddenEnvironmentActive,
       baseSendMessage,
+      savedClientSendGuard,
+      sendPreparationGuard,
       hostedEnsureServerIds,
+      hostedSelectedServerIds,
       hostedEnvironmentId,
+      hostedScenarioId,
       selectedServers,
       shouldUseOrgAwareChatApi,
     ],
@@ -6629,9 +6669,8 @@ export function useChatSession(
     requiresAuthForChat && isAuthenticated && !authHeaders;
   const orgOrHostedContextRequired =
     HOSTED_MODE || hostedRequiresWebChatApi || selectedModelUsesOrgRuntime;
-  // Only the web route needs a Convex id per selected server. An org-runtime
-  // model in a local build runs on the local route by server name, so it needs
-  // the project (above) but never waits on ids.
+  // A managed turn needs a Convex id per selected server on either route; a
+  // standalone local turn addresses its servers by name.
   const selectedServerIdsRequired = isHostedTransport;
   // When the surface provides a send-time resolver (`ensureServerIds`), the
   // preflight resolves ad-hoc/App server names → Convex ids at send, so a
@@ -6655,7 +6694,9 @@ export function useChatSession(
           hostedSelectedServerIds.length !== selectedServers.length))) ||
     // A hidden environment still being composed: a send now would go out as a
     // client turn without the chat's plugins.
-    (hiddenEnvironmentActive && hiddenEnvironmentId === null);
+    (hiddenEnvironmentActive &&
+      hiddenEnvironmentId === null &&
+      !hostedHiddenEnvironment?.blockingError);
   const isStreaming = status === "streaming" || status === "submitted";
 
   // The blocked tool call cannot outlive the stream: when it ends (finished,
@@ -6666,6 +6707,13 @@ export function useChatSession(
     if (isStreaming) return;
     setPendingElicitations((queue) => (queue.length > 0 ? [] : queue));
   }, [isStreaming]);
+
+  const ownedElicitations = useOwnedChatElicitations({
+    enabled:
+      isAuthenticated && (HOSTED_MODE || hostedRequiresWebChatApi),
+    projectId: hostedProjectId ?? undefined,
+    chatSessionId,
+  });
 
   const respondToElicitation = useCallback(
     async (answer: {
@@ -6711,10 +6759,12 @@ export function useChatSession(
    * a suspended operation's stream always ends while its round is pending.)
    */
   const stopChat = useCallback(() => {
+    savedClientSendGuard.cancel();
+    sendPreparationGuard.cancel();
     const store = useHostedMrtrStore.getState();
     for (const round of store.rounds) void store.cancel(round.key);
     stop();
-  }, [stop]);
+  }, [stop, savedClientSendGuard, sendPreparationGuard]);
 
   const submitBlocked =
     disableForAuthentication ||
@@ -6825,7 +6875,10 @@ export function useChatSession(
     traceViewsSupported,
 
     // Elicitation (hosted): a server is blocking a tool call on this user.
-    pendingElicitations,
+    pendingElicitations: mergeChatElicitations(
+      pendingElicitations,
+      ownedElicitations,
+    ),
     respondToElicitation,
     elicitationResponding,
     urlElicitationRequired,
@@ -6837,6 +6890,5 @@ export function useChatSession(
     submitBlocked,
     inputDisabled,
     hiddenEnvironmentActive,
-    hiddenEnvironmentOffReason,
   };
 }

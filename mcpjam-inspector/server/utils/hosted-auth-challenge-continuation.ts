@@ -58,6 +58,16 @@ export function hostedAuthChallengeContinuationId(input: {
 }
 
 /**
+ * A cancel answered for a call that never ran: the store cancelled it now (or
+ * earlier), or its window ran out unanswered. Any other status means the
+ * replay was claimed and may have run, so the call keeps its default
+ * handling rather than being told it did not run.
+ */
+function answeredAsNotRun(status: string): boolean {
+  return status === "cancelled" || status === "expired";
+}
+
+/**
  * History settlement on the hosted engine: cancel the pending sign-in
  * continuation a resent, still-unresolved call belongs to. True when there
  * was one to cancel, so the caller answers the call with the cancel copy; a
@@ -75,7 +85,7 @@ export async function settleHostedAuthChallengeHistoryCall(input: {
     continuationId,
     reason: "the user continued without signing in",
   });
-  if (!cancelled.ok) return false;
+  if (!cancelled.ok || !answeredAsNotRun(cancelled.status)) return false;
   await scrubContinuation(input.bearer, { continuationId });
   return true;
 }
@@ -89,17 +99,19 @@ export async function settleHostedAuthChallengeHistoryCall(input: {
 export async function cancelHostedContinuationForNewMessage(input: {
   bearer: string;
   continuationId: string;
-}): Promise<{ cancelled: boolean; isSignIn: boolean }> {
+}): Promise<{ cancelled: boolean; isSignIn: boolean; mayHaveRun: boolean }> {
   const isSignIn = isHostedAuthChallengeContinuationId(input.continuationId);
   const cancelled = await cancelContinuation(input.bearer, {
     continuationId: input.continuationId,
     reason: "the user sent a new message instead of signing in",
   });
-  if (!cancelled.ok) return { cancelled: false, isSignIn };
+  if (!cancelled.ok) return { cancelled: false, isSignIn, mayHaveRun: false };
+  if (!answeredAsNotRun(cancelled.status))
+    return { cancelled: false, isSignIn, mayHaveRun: true };
   await scrubContinuation(input.bearer, {
     continuationId: input.continuationId,
   });
-  return { cancelled: true, isSignIn };
+  return { cancelled: true, isSignIn, mayHaveRun: false };
 }
 
 /**

@@ -8,9 +8,16 @@
  * iteration id never reaching the mint. The run would execute perfectly,
  * record nothing, and read afterwards as a run whose model made no tool calls.
  */
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi, beforeEach, afterEach } from "vitest";
 import { buildHarnessProxyMcpJsonFromManager } from "../run-harness-turn";
 import { HARNESS_EVIDENCE_TURN_HEADER } from "../mcp-config";
+beforeEach(() =>
+  vi.stubEnv(
+    "COMPUTERS_TERMINAL_TOKEN_SECRET",
+    "test-harness-profile-secret-at-least-32",
+  ),
+);
+afterEach(() => vi.unstubAllEnvs());
 
 vi.mock("../harness-proxy-token-client.js", () => ({
   fetchHarnessProxyTokens: vi.fn(),
@@ -101,7 +108,7 @@ describe("an eval turn on a capture-OFF run", () => {
 });
 
 describe("a playground turn", () => {
-  test("mints claimless and produces a byte-identical config", async () => {
+  test("mints claimless and does not arm eval evidence", async () => {
     vi.mocked(fetchHarnessProxyTokens).mockResolvedValue({
       ok: true,
       tokens: { "server-1": "tok" },

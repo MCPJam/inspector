@@ -2,7 +2,7 @@ import { describeError, type NormalizedError } from "@mcpjam/sdk/browser";
 import type { EvalIteration } from "@/components/evals/types";
 import {
   describeOrgKeysRefusal,
-  orgKeysRefusalCodeInText,
+  runRefusal,
   orgKeysRefusalNextStep,
 } from "@/lib/org-keys-refusal";
 
@@ -10,7 +10,7 @@ import {
 export function describeEvalIterationError(
   iteration: Pick<
     EvalIteration,
-    "status" | "result" | "error" | "errorDetails"
+    "status" | "result" | "error" | "errorDetails" | "infraError"
   >,
 ): NormalizedError | null {
   const timeout =
@@ -21,12 +21,22 @@ export function describeEvalIterationError(
   const cancelled = iteration.status === "cancelled";
   // The organization's AI key policy refused the run's model (or its own
   // provider did): configuration, not the host or the server. A failed
-  // iteration may carry the code only in its diagnostics.
-  const refusalCode =
-    setup || iteration.status === "failed"
-      ? orgKeysRefusalCodeInText(iteration.error, iteration.errorDetails)
+  // iteration may carry the code only in its diagnostics. A completed one
+  // that failed its assertions counts only a code MCPJam recorded in its
+  // diagnostics or infra error: its own text may be the MCP server's.
+  const readText = setup || iteration.status === "failed";
+  const refusal =
+    readText || iteration.result === "failed"
+      ? runRefusal(
+          {
+            error: iteration.error,
+            errorDetails: iteration.errorDetails,
+            infraErrorCode: iteration.infraError?.code,
+          },
+          readText,
+        )
       : undefined;
-  if (!timeout && !setup && !cancelled && !iteration.error && !refusalCode)
+  if (!timeout && !setup && !cancelled && !iteration.error && !refusal)
     return null;
 
   const base = describeError(iteration.error ?? "");
@@ -39,8 +49,8 @@ export function describeEvalIterationError(
     }
   }
   const rawMessage = [iteration.error, details].filter(Boolean).join("\n\n");
-  if (refusalCode && !timeout) {
-    const described = describeOrgKeysRefusal(refusalCode, "member");
+  if (refusal && !timeout) {
+    const described = describeOrgKeysRefusal(refusal.code, "member");
     return {
       ...base,
       slug: "eval/ai_refused",
@@ -50,7 +60,7 @@ export function describeEvalIterationError(
       likelyCauses: [],
       nextSteps: [orgKeysRefusalNextStep(described.remediation)],
       rawMessage,
-      rawCode: refusalCode,
+      rawCode: refusal.stated,
     };
   }
   if (timeout)

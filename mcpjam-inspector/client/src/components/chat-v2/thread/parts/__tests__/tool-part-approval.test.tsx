@@ -1,9 +1,13 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ToolPart } from "../tool-part";
 import { CHAT_AUTH_RECOVERY_MESSAGE, recordChatAuthRecoveryFailure } from "@/lib/chat-auth-recovery";
 vi.mock("@/lib/sentry", () => ({ captureSentryMessage: vi.fn() }));
+import { useForwardedWidgetCalls } from "../../use-forwarded-widget-calls";
+import { authFetch } from "@/lib/session-token";
+
+vi.mock("@/lib/session-token", () => ({ authFetch: vi.fn() }));
 
 vi.mock("lucide-react", () => {
   const s = (props: any) => <div {...props} />;
@@ -111,6 +115,77 @@ describe("ToolPart approval expansion", () => {
     const header = getHeaderButton();
     if (header?.getAttribute("aria-expanded") === "false") await userEvent.click(header);
     expect(screen.getByText(CHAT_AUTH_RECOVERY_MESSAGE)).toBeInTheDocument();
+  });
+
+  it("asks again for a widget continuation after its initial approval", async () => {
+    const user = userEvent.setup();
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    const event = (value: object) =>
+      new TextEncoder().encode(`data: ${JSON.stringify(value)}\n\n`);
+    vi.mocked(authFetch).mockImplementation(async (url, init) => {
+      if (String(url).endsWith("/approval")) {
+        const answer = JSON.parse(String(init?.body));
+        if (answer.id === "second") {
+          stream.enqueue(event({ type: "error", error: "denied" }));
+          stream.close();
+        }
+        return new Response("{}");
+      }
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            stream = controller;
+            stream.enqueue(event({ type: "approval", id: "first" }));
+          },
+        }),
+      );
+    });
+    let api!: ReturnType<typeof useForwardedWidgetCalls>;
+    function Harness() {
+      api = useForwardedWidgetCalls("chat", true, "parent");
+      return <>{api.approvals}</>;
+    }
+    render(<Harness />);
+    let outcome!: Promise<unknown>;
+    act(() => {
+      outcome = api
+        .call(
+          {
+            owner: {
+              kind: "chat",
+              userId: "user",
+              serverId: "server",
+              harnessSessionId: "lane",
+            },
+            parentExecutionId: "parent",
+          },
+          "change",
+          {},
+        )
+        .catch((error: Error) => error.message);
+    });
+    await user.click(await screen.findByRole("button", { name: /^approve$/i }));
+    expect(await screen.findByText("Approved")).toBeInTheDocument();
+    act(() => {
+      stream.enqueue(event({ type: "approval", id: "second" }));
+    });
+    expect(
+      await screen.findByRole("button", { name: /^approve$/i }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^deny$/i }));
+    await expect(outcome).resolves.toBe("denied");
+    expect(
+      vi
+        .mocked(authFetch)
+        .mock.calls.filter(([url]) => String(url).endsWith("/approval"))
+        .map(([, init]) => JSON.parse(String(init?.body))),
+    ).toEqual([
+      { id: "first", approved: true },
+      { id: "second", approved: false },
+    ]);
+    await waitFor(() =>
+      expect(screen.queryByText("Approved")).not.toBeInTheDocument(),
+    );
   });
 
   it("renders the approval pill when approval is requested", async () => {

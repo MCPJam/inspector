@@ -204,10 +204,10 @@ describe("ToolItem", () => {
       expect(screen.getByText(specialName)).toBeInTheDocument();
     });
 
-    it("handles long descriptions with line clamping", () => {
+    it("shows long descriptions on phones and clamps them on desktop", () => {
       const longDescription = "This is a very long description ".repeat(20);
       const tool = createTool({ description: longDescription });
-      const { container } = render(
+      render(
         <ToolItem
           tool={tool}
           name="test-tool"
@@ -215,10 +215,10 @@ describe("ToolItem", () => {
           onClick={vi.fn()}
         />
       );
-
-      // Description should have line-clamp class
-      const descriptionElement = container.querySelector(".line-clamp-2");
-      expect(descriptionElement).toBeInTheDocument();
+      expect(screen.getByText(longDescription.trim())).toHaveClass(
+        "line-clamp-none",
+        "md:line-clamp-2"
+      );
     });
   });
 

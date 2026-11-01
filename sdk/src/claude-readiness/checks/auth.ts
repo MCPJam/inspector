@@ -362,9 +362,25 @@ export function runClaudeAuthChecks(
   );
   const requiresAuth = probe?.status === 401;
   const servedWithoutAuth = probe?.servedWithoutCredentials === true;
+  // A protected call refused with a sign-in challenge shows the server uses
+  // OAuth even though it serves `initialize` anonymously. With no
+  // discoverable metadata that is a server Claude cannot sign in to, not an
+  // authless one.
+  const lazyProtectedCall = evidence.lazyAuthProbe?.protectedCall;
+  const challengedProtectedCall =
+    lazyProtectedCall !== undefined &&
+    !lazyProtectedCall.invalidArguments &&
+    (lazyProtectedCall.outcome === "unauthorized" ||
+      lazyProtectedCall.challenge !== undefined);
+  const authless = servedWithoutAuth && !challengedProtectedCall;
 
   // ── Auth mode: a badge, never a verdict ──────────────────────────────
-  const mode = classifyAuthMode(evidence, requiresAuth, servedWithoutAuth);
+  const mode = classifyAuthMode(
+    evidence,
+    requiresAuth,
+    servedWithoutAuth,
+    challengedProtectedCall,
+  );
   badges.push({
     id: "claude.auth.mode",
     title: "Authentication mode",
@@ -462,7 +478,7 @@ export function runClaudeAuthChecks(
     const reason = "the run did not attempt Protected Resource Metadata discovery";
     findings.push(notEvaluated(PRM_DISCOVERABLE, stamp, reason));
     findings.push(notEvaluated(PRM_RESOURCE_MATCHES_ENTERED, stamp, reason));
-  } else if (servedWithoutAuth && prm.discoveredVia === "not-found") {
+  } else if (authless && prm.discoveredVia === "not-found") {
     const reason =
       "the server is authless, so it publishes no Protected Resource Metadata";
     findings.push(notApplicable(PRM_DISCOVERABLE, stamp, reason));
@@ -474,7 +490,12 @@ export function runClaudeAuthChecks(
             PRM_DISCOVERABLE,
             stamp,
             "Publish Protected Resource Metadata — via the challenge's `resource_metadata` pointer, or at `/.well-known/oauth-protected-resource` with the resource path appended.",
-            { fetchError: prm.fetchError },
+            {
+              fetchError: prm.fetchError,
+              ...(prm.rejectedPointer
+                ? { rejectedPointer: prm.rejectedPointer }
+                : {}),
+            },
           )
         : prm.rejectedPointer
           ? // Discovery SUCCEEDED, via a fallback — and the server still
@@ -583,7 +604,7 @@ export function runClaudeAuthChecks(
       CLIENT_ACQUISITION_PATH,
     ]) {
       findings.push(
-        servedWithoutAuth
+        authless
           ? notApplicable(definition, stamp, "the server is authless")
           : notEvaluated(definition, stamp, reason),
       );
@@ -755,7 +776,7 @@ export function runClaudeAuthChecks(
   // Only a server with no OAuth at all is genuinely outside the rule.
   const stepUp = evidence.insufficientScopeChallenge;
   const authlessServer =
-    servedWithoutAuth && (!prm || prm.discoveredVia === "not-found");
+    authless && (!prm || prm.discoveredVia === "not-found");
   if (!stepUp) {
     findings.push(
       authlessServer
@@ -905,6 +926,7 @@ function classifyAuthMode(
   evidence: ClaudeAuthEvidence,
   requiresAuth: boolean,
   servedWithoutAuth: boolean,
+  challengedProtectedCall: boolean,
 ): { detail: string; confident: boolean } {
   const document = evidence.firstAuthorizationServer?.document;
   if (document?.registration_endpoint) {
@@ -918,6 +940,13 @@ function classifyAuthMode(
       detail: "OAuth with a preregistered client",
       // Indistinguishable from an AS whose metadata we failed to read fully.
       confident: false,
+    };
+  }
+  if (servedWithoutAuth && challengedProtectedCall) {
+    return {
+      detail:
+        "anonymous access allowed; a protected call asked for sign-in (lazy authentication)",
+      confident: true,
     };
   }
   if (

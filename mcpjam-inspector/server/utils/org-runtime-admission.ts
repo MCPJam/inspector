@@ -92,6 +92,7 @@ export function buildRuntimeCacheKey(
   const authHash = createHash("sha256")
     .update(
       JSON.stringify({
+        install: process.env.CONVEX_HTTP_URL ?? "",
         authorization: normalizeAuthHeader(auth) ?? "",
         scenarioId: auth?.scenarioId?.trim() ?? "",
         accessVersion:
