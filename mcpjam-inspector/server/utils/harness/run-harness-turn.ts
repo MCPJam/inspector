@@ -662,7 +662,7 @@ export function harnessRuntimeFingerprint(parts: {
     parts.permissionMode,
     ...(parts.nativeForwarding ? [`native-forwarding:${parts.nativeForwarding}`]
       : []),
-    ...(parts.nativeForwarding && parts.forwardingConfigurationVersion
+    ...((parts.nativeForwarding || parts.requireNativeToolDiscovery) && parts.forwardingConfigurationVersion
       ? [`forwarding-config:${parts.forwardingConfigurationVersion}`] : []),
     ...(parts.requireNativeToolDiscovery ? ["native-discovery:required"] : []),
     ...(parts.connectionProfile
@@ -1986,6 +1986,7 @@ export async function runHarnessTurn(
       const runtimeFingerprint = harnessRuntimeFingerprint({
         harnessId: harnessAdapter.id,
         requireNativeToolDiscovery: options.requireNativeToolDiscovery,
+        forwardingConfigurationVersion: forwardingRuntime?.configurationVersion,
         ...(nativeMcpDelivery && harnessMcpProxy?.plane === "web-authorized"
           ? {
               connectionProfile: harnessConnectionFingerprint(
@@ -1997,7 +1998,6 @@ export async function runHarnessTurn(
           : {}),
         ...(useNativeForwarding ? {
           nativeForwarding: enhancedApps ? "bridge-v1" : "v2",
-          forwardingConfigurationVersion: forwardingRuntime?.configurationVersion,
         } : {}),
         modelId,
         selectedServers: selectedServers ?? [],
@@ -2702,6 +2702,7 @@ export async function runHarnessTurn(
               auth,
               mcpJson,
               permissionMode,
+              ...(options.requireNativeToolDiscovery ? { requireNativeToolDiscovery: true } : {}),
               ...(nativeForwarding ? { forwardingMcpJson: mcpJson } : {}),
               elicitationHandler: elicitationServerIds.size > 0,
               ...(turnReasoningEffort !== undefined
@@ -2713,6 +2714,7 @@ export async function runHarnessTurn(
               modelId,
               auth,
               permissionMode,
+              ...(options.requireNativeToolDiscovery ? { requireNativeToolDiscovery: true } : {}),
               ...(nativeForwarding ? { forwardingMcpJson: mcpJson } : {}),
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
