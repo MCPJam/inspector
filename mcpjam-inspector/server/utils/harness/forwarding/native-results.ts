@@ -1,5 +1,5 @@
 import { isRecord } from "../../byok/list-request.js";
-import type { ExecutionControl } from "./execution-control.js";
+import { ExecutionControlError, type ExecutionControl } from "./execution-control.js";
 
 /** Claude owns this metadata; it correlates results without granting a dispatch. */
 export function nativeToolCallId(params: unknown, metadataKey = "claudecode/toolUseId"): string | undefined {
@@ -17,7 +17,15 @@ export async function readNativeToolResult(
   toolCallId: string,
   onReceipt?: (executionId: string) => void,
 ): Promise<unknown> {
-  const receipt = await control.nativeResult(turnId, toolCallId);
+  const receipt = await control.nativeResult(turnId, toolCallId).catch((error: unknown) => {
+    if (error instanceof ExecutionControlError) {
+      throw new Error(
+        "The tool may have run, but its final result could not be confirmed. Check the server before trying again.",
+        { cause: error },
+      );
+    }
+    throw error;
+  });
   if (receipt.outcome === "incomplete")
     throw new Error("The original MCP result is incomplete.");
   if (receipt.outcome !== "success" && receipt.outcome !== "tool_error") return;
