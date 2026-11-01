@@ -12,6 +12,17 @@ import {
   type ExtensionOwnerIdentity,
 } from "@/components/host-workspace/extension-owners";
 import {
+  markComparisonColumnRestored,
+  readComparisonAuthRecovery,
+  registerComparisonColumn,
+  prepareComparisonAuthRecovery,
+} from "@/lib/comparison-auth-recovery";
+import { getCachedChatHistoryDetail } from "@/components/chat-v2/history/chat-history-prefetch";
+import {
+  recordChatAuthRecoveryFailure,
+  traceChatAuthRecovery,
+} from "@/lib/chat-auth-recovery";
+import {
   useCallback,
   useEffect,
   useMemo,
@@ -444,6 +455,36 @@ export function MultiModelPlaygroundCard({
     harnessId: pluginHarnessId ?? hostCapsResolver?.agentLoop ?? hostCapsResolver?.harness,
     hostResolved: pluginHostResolved,
   });
+  const [recoveryColumn] = useState(() =>
+    readComparisonAuthRecovery(
+      hostedContext?.projectId ?? "local",
+    )?.columns.find(
+      (column) => column.compareId === compareId && column.kind === compareKind,
+    ),
+  );
+  const [recoveryStatus, setRecoveryStatus] = useState<
+    "loading" | "ready" | "failed"
+  >(recoveryColumn ? "loading" : "ready");
+  // The turn already present when a restored column mounts is in its history.
+  // A turn sent while the column restores is new, and waits for it.
+  const [restoredBroadcastId] = useState(() =>
+    recoveryColumn ? broadcastRequest?.id : undefined,
+  );
+  const [restoredExecutionRequestId] = useState(() =>
+    recoveryColumn ? deterministicExecutionRequest?.id : undefined,
+  );
+  const prepareAuthRecovery = useCallback(
+    (continuationId: string) =>
+      browserWorkspace
+        ? prepareComparisonAuthRecovery(
+            browserWorkspace.id,
+            compareId,
+            continuationId,
+            browserWorkspace.clientCount,
+          )
+        : { ok: true as const },
+    [browserWorkspace?.id, browserWorkspace?.clientCount, compareId],
+  );
   const {
     messages,
     setMessages,
@@ -464,6 +505,7 @@ export function MultiModelPlaygroundCard({
     hiddenEnvironmentActive,
     addToolApprovalResponse,
     startChatWithMessages,
+    loadChatSession,
   } = useChatSession({
     pickedModelSelection: selection,
     savedClientConfig: compareKind === "host" ? hostCapsResolver ?? undefined : undefined,
@@ -473,6 +515,8 @@ export function MultiModelPlaygroundCard({
     pluginContextReferences: currentLaneContext,
     // A comparison column never shares the member's one personal computer.
     comparePane: true,
+    prepareAuthRecovery,
+    authRecoveryPaused: recoveryStatus !== "ready",
     selectedServers,
     usePageTools,
     hostedContext: columnHostedContext,
@@ -576,6 +620,87 @@ export function MultiModelPlaygroundCard({
   // A lane with live Apps keeps placeholder transcripts in its Trace view,
   // so one App never has two live hosts.
   const laneWidgetPolicy = laneScope ? "placeholder" : "live";
+  useEffect(() => {
+    if (!browserWorkspace || recoveryStatus !== "ready") return;
+    return registerComparisonColumn(browserWorkspace.id, {
+      compareId,
+      kind: compareKind,
+      order: browserWorkspace.order,
+      chatSessionId,
+      hasMessages: messages.some(
+        (message) => message.role === "user" || message.role === "assistant",
+      ),
+    });
+  }, [
+    browserWorkspace?.id,
+    browserWorkspace?.order,
+    compareId,
+    compareKind,
+    chatSessionId,
+    messages,
+    recoveryStatus,
+  ]);
+  const recoveryLoaderRef = useRef(loadChatSession);
+  recoveryLoaderRef.current = loadChatSession;
+  useEffect(() => {
+    if (!recoveryColumn || !isSessionBootstrapComplete) return;
+    let cancelled = false;
+    const history = recoveryColumn.hasMessages
+      ? getCachedChatHistoryDetail({
+          chatSessionId: recoveryColumn.chatSessionId,
+          projectId: hostedContext?.projectId ?? undefined,
+        })
+      : Promise.resolve({
+          session: {
+            chatSessionId: recoveryColumn.chatSessionId,
+            messagesBlobUrl: null,
+            version: 0,
+          },
+          widgetSnapshots: undefined,
+          turnTraces: undefined,
+        });
+    void history
+      .then(async (detail) => {
+        if (cancelled) return;
+        if (
+          detail.session.chatSessionId !== recoveryColumn.chatSessionId ||
+          (recoveryColumn.hasMessages && !detail.session.messagesBlobUrl)
+        )
+          throw new Error("Comparison history could not be loaded. Reload to try again.");
+        await recoveryLoaderRef.current(
+          {
+            ...detail.session,
+            widgetSnapshots: detail.widgetSnapshots,
+            turnTraces: detail.turnTraces,
+          },
+          { shouldApply: () => !cancelled, restoredModel: model },
+        );
+        if (!cancelled) {
+          traceChatAuthRecovery("comparison_restored", {
+            chatSessionId: recoveryColumn.chatSessionId,
+            projectId: hostedContext?.projectId,
+            recoveryResult: "column_restored",
+          });
+          setRecoveryStatus("ready");
+          markComparisonColumnRestored(hostedContext?.projectId ?? "local", {
+            kind: recoveryColumn.kind,
+            compareId: recoveryColumn.compareId,
+          });
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRecoveryStatus("failed");
+        recordChatAuthRecoveryFailure("comparison_restore_failed", {
+          chatSessionId: recoveryColumn.chatSessionId,
+          projectId: hostedContext?.projectId,
+          recoveryResult: "column_restore_failed",
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [recoveryColumn, isSessionBootstrapComplete, hostedContext?.projectId]);
 
   useComparisonBrowser(
     browserWorkspace && hostedContext?.projectId
@@ -608,6 +733,8 @@ export function MultiModelPlaygroundCard({
   }, [messages, compareId, compareKind, compareEnterMessages, onTranscriptSync]);
 
   useEffect(() => {
+    // A restored column loads its own history instead of any seed.
+    if (recoveryColumn) return;
     if (compareKind === "host") {
       if (lastCompareEnterVersionRef.current > 0) return;
       lastCompareEnterVersionRef.current = 1;
@@ -784,9 +911,8 @@ export function MultiModelPlaygroundCard({
   }, [modelContextQueue]);
 
   useEffect(() => {
-    if (!isSessionBootstrapComplete) {
-      return;
-    }
+    if (recoveryStatus !== "ready") return;
+    if (!isSessionBootstrapComplete) return;
 
     if (!broadcastRequest) {
       return;
@@ -797,6 +923,7 @@ export function MultiModelPlaygroundCard({
     }
 
     lastBroadcastRequestIdRef.current = broadcastRequest.id;
+    if (broadcastRequest.id === restoredBroadcastId) return;
 
     if (broadcastRequest.prependMessages.length > 0) {
       setMessages((previous) => [
@@ -817,6 +944,8 @@ export function MultiModelPlaygroundCard({
     });
   }, [
     broadcastRequest,
+    recoveryStatus,
+    restoredBroadcastId,
     drainModelContextQueue,
     isSessionBootstrapComplete,
     sendMessage,
@@ -825,7 +954,7 @@ export function MultiModelPlaygroundCard({
   ]);
 
   useEffect(() => {
-    if (!deterministicExecutionRequest) {
+    if (recoveryStatus !== "ready" || !deterministicExecutionRequest) {
       return;
     }
 
@@ -836,6 +965,7 @@ export function MultiModelPlaygroundCard({
     }
 
     lastExecutionRequestIdRef.current = deterministicExecutionRequest.id;
+    if (deterministicExecutionRequest.id === restoredExecutionRequestId) return;
 
     const deterministicOptions =
       deterministicExecutionRequest.state === "output-error"
@@ -931,6 +1061,8 @@ export function MultiModelPlaygroundCard({
     });
   }, [
     deterministicExecutionRequest,
+    recoveryStatus,
+    restoredExecutionRequestId,
     hasTraceSnapshot,
     resolvedMcpToolResultImageRendering,
     setMessages,
@@ -1036,6 +1168,16 @@ export function MultiModelPlaygroundCard({
           </div>
         ) : null}
 
+        {recoveryStatus !== "ready" && (
+          <div
+            role={recoveryStatus === "failed" ? "alert" : "status"}
+            className="p-3 text-sm text-muted-foreground"
+          >
+            {recoveryStatus === "failed"
+              ? "MCPJam couldn’t restore this comparison chat. Reload to try again."
+              : "Restoring comparison chat…"}
+          </div>
+        )}
         <CompareLaneWorkspace
           apps={laneScope ? laneApps : null}
           showDiagnostics={showTraceDiagnosticsShell}
