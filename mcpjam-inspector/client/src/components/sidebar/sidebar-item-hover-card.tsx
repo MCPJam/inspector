@@ -119,7 +119,10 @@ interface SidebarItemHoverCardProps {
   title: string;
   /** Shown in the pill; the collapsed rail clips the row's own badge. */
   badge?: string;
-  /** Learn-more entry key. Its clip shows only when `onExpand` is set. */
+  /**
+   * Learn-more entry key. Its clip and description show only when `onExpand`
+   * is set; an entry without a clip shows its description alone.
+   */
   tabId?: string;
   /** Opens the learn-more panel. Absent when the learn-more flag is off. */
   onExpand?: (tabId: string, sourceRect: DOMRect | null) => void;
@@ -162,8 +165,12 @@ export function SidebarItemHoverCard({
   const staleIntentRef = useRef(false);
 
   const entry = tabId ? learnMoreContent[tabId] : undefined;
-  const clipUrl = onExpand ? entry?.previewVideoUrl : undefined;
-  const hasBody = !!clipUrl || !!disabledMessage;
+  const preview =
+    onExpand && (entry?.previewVideoUrl || entry?.description)
+      ? entry
+      : undefined;
+  const clipUrl = preview?.previewVideoUrl;
+  const hasBody = !!preview || !!disabledMessage;
   const enabled = (!labelVisible || hasBody) && !suppressed;
   const open = enabled && owner === id;
   // Another card took over: drop this one now instead of fading it out, so
@@ -286,7 +293,7 @@ export function SidebarItemHoverCard({
         align={hasBody ? "start" : "center"}
         alignOffset={hasBody ? 2 : 0}
         className={cn(
-          clipUrl && "w-72 max-w-none",
+          preview && "w-72 max-w-none",
           // display:none rather than animate-none, which loses to the
           // exit animation's own rule; Radix unmounts on the cancelled fade.
           handedOff && "data-[state=closed]:hidden"
@@ -310,35 +317,37 @@ export function SidebarItemHoverCard({
             {disabledMessage ? (
               <p className="text-xs text-muted-foreground">{disabledMessage}</p>
             ) : null}
-            {clipUrl && entry ? (
+            {preview ? (
               <>
-                <button
-                  type="button"
-                  onClick={handleExpand}
-                  className="cursor-pointer overflow-hidden rounded-sm bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  aria-label={`Open ${entry.title} learn more`}
-                >
-                  <video
-                    ref={videoRef}
-                    src={blobCache[clipUrl] ?? clipUrl}
-                    poster={entry.videoThumbnail}
-                    className="aspect-video h-auto w-full object-cover"
-                    autoPlay
-                    loop
-                    muted
-                    playsInline
-                    preload="auto"
-                  />
-                </button>
+                {clipUrl ? (
+                  <button
+                    type="button"
+                    onClick={handleExpand}
+                    className="cursor-pointer overflow-hidden rounded-sm bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    aria-label={`Open ${preview.title} learn more`}
+                  >
+                    <video
+                      ref={videoRef}
+                      src={blobCache[clipUrl] ?? clipUrl}
+                      poster={preview.videoThumbnail}
+                      className="aspect-video h-auto w-full object-cover"
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                      preload="auto"
+                    />
+                  </button>
+                ) : null}
                 <div className="flex items-end justify-between gap-2">
                   <p className="text-xs text-muted-foreground">
-                    {entry.description}
+                    {preview.description}
                   </p>
                   <button
                     type="button"
                     onClick={handleExpand}
                     className="shrink-0 cursor-pointer rounded-sm p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                    aria-label={`Learn more about ${entry.title}`}
+                    aria-label={`Learn more about ${preview.title}`}
                   >
                     <Maximize2 className="h-3.5 w-3.5" />
                   </button>
