@@ -127,12 +127,6 @@ function authChallengeCliError(
 }
 
 /**
- * A refusal over where a request would go. A saved login for another server
- * exits 3, because the fix is signing in again; every other refusal is
- * configuration and exits 2. An unparsable address keeps the usage code it
- * has always had.
- */
-/**
  * The deployment refusal behind `error`: thrown as itself, or carried as the
  * cause of the platform client's request error, which is how a refused
  * redirect arrives. Either way it is a refusal, not a failed request.
@@ -147,6 +141,12 @@ export function deploymentRefusalOf(
   return undefined;
 }
 
+/**
+ * A refusal over where a request would go. A saved login for another server
+ * exits 3, because the fix is signing in again; every other refusal is
+ * configuration and exits 2. An unparsable address keeps the usage code it
+ * has always had.
+ */
 export function deploymentCliError(error: McpjamDeploymentError): CliError {
   if (error.code === "LOGIN_DEPLOYMENT_MISMATCH") {
     return new CliError(error.code, error.message, 3);
