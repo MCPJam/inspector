@@ -117,12 +117,18 @@ export function readMcpWidgetContext(
   };
 }
 
+/** Presentation is signed separately and grants no widget execution authority. */
+export function hasMcpResultPresentation(metadata: unknown): boolean {
+  return !!readMcpWidgetContext(metadata) ||
+    (isRecord(metadata) && isRecord(metadata.mcpjam) && metadata.mcpjam.resultPresentation === true);
+}
+
 export function mergeMcpOriginalResult(
   metadata: unknown,
   result: unknown,
 ): McpToolOriginProviderMetadata | undefined {
   const base = toProviderMetadata(metadata);
-  if (!readMcpWidgetContext(base) || result === undefined)
+  if (!hasMcpResultPresentation(base) || result === undefined)
     return Object.keys(base).length ? base : undefined;
   return toProviderMetadata({
     ...base,
@@ -132,9 +138,9 @@ export function mergeMcpOriginalResult(
 
 export function readMcpOriginalResult(metadata: unknown): unknown {
   if (
-    !readMcpWidgetContext(metadata) ||
     !isRecord(metadata) ||
-    !isRecord(metadata.mcpjam)
+    !isRecord(metadata.mcpjam) ||
+    !hasMcpResultPresentation(metadata)
   )
     return;
   return metadata.mcpjam.originalResult;
