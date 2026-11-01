@@ -1087,6 +1087,32 @@ export function findRawTaskStates(
   return found;
 }
 
+/**
+ * The raw `CreateTaskResult` for `taskId`: the `tools/call` response that
+ * created it, verbatim. A creation result is `Result & Task`, so it carries the
+ * same `ttlMs` / `pollIntervalMs` a `tasks/get` answer does and is held to the
+ * same types.
+ */
+export function findRawCreationTask(
+  messages: unknown[],
+  taskId: string,
+  toolsCallRequestIds: ReadonlySet<string>
+): Record<string, unknown> | undefined {
+  for (const message of messages) {
+    if (!isRecord(message)) continue;
+    const result = isRecord(message.result) ? message.result : undefined;
+    if (!result || result.taskId !== taskId) continue;
+    const id = message.id;
+    if (
+      (typeof id === "string" || typeof id === "number") &&
+      toolsCallRequestIds.has(String(id))
+    ) {
+      return result;
+    }
+  }
+  return undefined;
+}
+
 /** JSON-RPC ids of the outbound requests for `method`, as strings. */
 export function sentRequestIds(
   sent: unknown[],
@@ -1895,26 +1921,66 @@ export class MCPTasksConformanceTest {
                   "the integer-milliseconds statement belongs to the tasks extension; the legacy wire states no such bound"
                 )
               );
-            } else if (!finalTask) {
+            } else if (!createdTaskId || !finalTask) {
               checks.push(noTask("tasks-ttl-integer-shape"));
             } else {
-              const verdict = validateTaskTtlIntegerShape(wire, finalTask);
+              // EVERY task payload the server sent, not just the last. The
+              // creation result and each `tasks/get` answer are all a `Task`,
+              // both values MAY change across polls (tasks.md:308, :340), so a
+              // fractional value on any one of them breaks the schema even when
+              // the final one is clean. Read raw, like the status-payload check,
+              // so the decoder cannot hide a value. The decoded final task is
+              // the fallback when no raw frame was captured.
+              const rawCreation = findRawCreationTask(
+                received,
+                createdTaskId,
+                sentRequestIds(sent, "tools/call")
+              );
+              const rawStates = findRawTaskStates(
+                received,
+                createdTaskId,
+                sentRequestIds(sent, "tasks/get")
+              );
+              const payloads: Array<{ source: string; task: unknown }> = [
+                ...(rawCreation
+                  ? [{ source: "tools/call", task: rawCreation }]
+                  : []),
+                ...rawStates.map((state) => ({
+                  source: `tasks/get ${String(state.status)}`,
+                  task: state,
+                })),
+              ];
+              if (payloads.length === 0) {
+                payloads.push({ source: "final task", task: finalTask });
+              }
+              // Deduped: a server re-sends the same snapshot on every poll.
+              const violations = new Set<string>();
+              const warnings = new Set<string>();
+              for (const { source, task } of payloads) {
+                const verdict = validateTaskTtlIntegerShape(wire, task);
+                for (const violation of verdict.violations) {
+                  violations.add(`${source}: ${violation}`);
+                }
+                for (const warning of verdict.warnings) {
+                  warnings.add(`${source}: ${warning}`);
+                }
+              }
+              const details = { inspectedPayloads: payloads.length };
               checks.push(
-                verdict.violations.length === 0
+                violations.size === 0
                   ? passed(
                       "tasks-ttl-integer-shape",
                       Date.now() - stepStartedAt,
-                      undefined,
-                      verdict.warnings
+                      details,
+                      warnings.size > 0 ? [...warnings] : undefined
                     )
                   : failed(
                       "tasks-ttl-integer-shape",
                       Date.now() - stepStartedAt,
-                      `task TTL/poll interval are not integer milliseconds: ${verdict.violations.join(
-                        "; "
-                      )}`,
-                      undefined,
-                      undefined
+                      `task TTL/poll interval are not integer milliseconds: ${[
+                        ...violations,
+                      ].join("; ")}`,
+                      details
                     )
               );
             }

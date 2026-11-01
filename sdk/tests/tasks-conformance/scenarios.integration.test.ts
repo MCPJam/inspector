@@ -256,6 +256,23 @@ describe("tasks-ttl-integer-shape", () => {
     expect(entry.error?.message).toContain("not an integer");
   });
 
+  it("fails a fractional pollIntervalMs on a mid-run poll even when the final task is clean", async () => {
+    const phases: TaskPhase[] = [
+      { status: "working", ttlMs: 60_000, pollIntervalMs: 5 },
+      { status: "working", pollIntervalMs: 2.5 },
+      {
+        status: "completed",
+        pollIntervalMs: 5,
+        result: { content: [{ type: "text", text: "done" }], isError: false },
+      },
+    ];
+    const entry = check(await run(await serve(phases), [ID]), ID);
+    expect(entry.status).toBe("failed");
+    expect(entry.error?.message).toContain(
+      "tasks/get working: pollIntervalMs is 2.5, which is not an integer",
+    );
+  });
+
   it("only warns on a negative ttlMs, which the extension never forbids", async () => {
     const phases = quickPhases();
     phases[1] = { ...phases[1]!, ttlMs: -1 };
