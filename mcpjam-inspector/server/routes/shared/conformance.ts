@@ -32,6 +32,7 @@ import {
 } from "@mcpjam/sdk";
 import {
   createSession,
+  deleteSession,
   getSession,
   touchSession,
   setSessionError,
@@ -268,6 +269,12 @@ export interface StartOAuthConformanceInput {
    * caller can then deliver its code or read its result. Local runs omit it.
    */
   owner?: string;
+  /**
+   * Hosted only: runs once the session waits for the user, before the URL is
+   * returned, so later calls can reach this run from any replica. If it
+   * throws, the session is dropped and the error surfaces from this call.
+   */
+  onAuthorizationNeeded?: (session: OAuthConformanceSession) => Promise<void>;
 }
 
 export async function startOAuthConformance(
@@ -350,6 +357,14 @@ export async function startOAuthConformance(
   ]);
 
   if (outcome === "authorization_needed" && session.authorizationUrl) {
+    if (input.onAuthorizationNeeded) {
+      try {
+        await input.onAuthorizationNeeded(session);
+      } catch (error) {
+        deleteSession(session.id);
+        throw error;
+      }
+    }
     return {
       phase: "authorization_needed",
       sessionId: session.id,
