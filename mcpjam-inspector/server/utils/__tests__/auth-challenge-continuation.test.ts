@@ -5,6 +5,7 @@ import {
   __resetLocalScopeStepUpContinuationsForTests,
   AUTH_CHALLENGE_REPEATED_REASON,
   AUTH_CHALLENGE_TOMBSTONE_TTL_MS,
+  cancelLocalContinuationForNewMessage,
   cancelLocalScopeStepUpContinuationForRequest,
   claimLocalScopeStepUpContinuation,
   completeLocalScopeStepUpContinuation,
@@ -102,6 +103,36 @@ describe("local sign-in continuations", () => {
       expect(
         __peekLocalScopeStepUpContinuationForTests(continuationId),
       ).toBeUndefined();
+    });
+
+    it("leaves a claimed replay running past its window alone", () => {
+      // The user signed in near the end of the window and the replay is
+      // still running. Expiring it would later report a call that may have
+      // run as one that never did.
+      const { continuationId } = createSignIn();
+      vi.advanceTimersByTime(SCOPE_STEP_UP_LIVE_TTL_MS - 1_000);
+      claimLocalScopeStepUpContinuation({
+        continuationId,
+        toolCallId: "call-1",
+        bindingKey: BINDING,
+      });
+      vi.advanceTimersByTime(LOCAL_CONTINUATION_SWEEP_INTERVAL_MS * 2);
+      expect(
+        __peekLocalScopeStepUpContinuationForTests(continuationId)?.status,
+      ).toBe("retrying");
+      expect(
+        settleLocalAuthChallengeHistoryCall({
+          bindingKey: BINDING,
+          toolCallId: "call-1",
+        }),
+      ).toBeUndefined();
+      expect(
+        cancelLocalContinuationForNewMessage({
+          continuationId,
+          toolCallId: "call-1",
+          bindingKey: BINDING,
+        }),
+      ).toMatchObject({ found: true, cancelled: false, status: "retrying" });
     });
 
     it("sweeps step-up windows too, keeping the expired answer for a while", () => {

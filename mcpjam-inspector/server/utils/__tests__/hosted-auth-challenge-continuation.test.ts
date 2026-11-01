@@ -36,6 +36,7 @@ import {
   isHostedAuthChallengeContinuationId,
   settleHostedAuthChallengeHistoryCall,
 } from "../hosted-scope-step-up-continuation.js";
+import { cancelHostedContinuationForNewMessage } from "../hosted-auth-challenge-continuation.js";
 
 const CHALLENGE =
   'Bearer error="invalid_token", error_description="Sign in to read orders", scope="orders:read"';
@@ -596,6 +597,31 @@ describe("hosted sign-in continuations", () => {
       ).resolves.toBe(false);
       expect(store.scrub).not.toHaveBeenCalled();
     });
+
+    it.each(["indeterminate", "completed", "resuming"])(
+      "leaves a call whose replay may have run alone (%s)",
+      async (status) => {
+        // The store answers ok for a row it did not cancel; only a call that
+        // never ran may be told so.
+        store.cancel.mockResolvedValueOnce({ ok: true, status });
+        await expect(
+          settleHostedAuthChallengeHistoryCall({
+            bearer: "bearer",
+            authPrincipal: "user-1",
+            chatSessionId: "chat-1",
+            toolCallId: "call-1",
+          }),
+        ).resolves.toBe(false);
+        store.cancel.mockResolvedValueOnce({ ok: true, status });
+        await expect(
+          cancelHostedContinuationForNewMessage({
+            bearer: "bearer",
+            continuationId: hostedAuthChallengeContinuationId(BASE),
+          }),
+        ).resolves.toMatchObject({ cancelled: false, isSignIn: true });
+        expect(store.scrub).not.toHaveBeenCalled();
+      },
+    );
 
     it("derives a different id per caller, conversation and call", () => {
       const id = hostedAuthChallengeContinuationId(BASE);
