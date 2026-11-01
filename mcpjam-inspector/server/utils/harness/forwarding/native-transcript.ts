@@ -77,6 +77,9 @@ export function preserveNativeUiPresentations(
     if (!isRecord(message) || !Array.isArray(message.parts)) continue;
     for (const part of message.parts) {
       if (!isRecord(part) || typeof part.toolCallId !== "string") continue;
+      const serverId =
+        readMcpToolOriginServerId(part.callProviderMetadata) ??
+        readMcpToolOriginServerId(part.resultProviderMetadata);
       for (const metadata of [
         part.resultProviderMetadata,
         part.callProviderMetadata,
@@ -85,7 +88,7 @@ export function preserveNativeUiPresentations(
         if (result !== undefined)
           presentations.set(part.toolCallId, {
             result,
-            metadata: mergeMcpToolOriginMetadata(metadata, undefined),
+            metadata: mergeMcpToolOriginMetadata(metadata, serverId),
           });
       }
     }
