@@ -581,3 +581,9 @@ describe("mapErrorToV1 / v1OnError — recorded capture outcome", () => {
     expect(mapErrorToV1(methodNotFound(), { capture }).captured).toBe(true);
   });
 });
+
+it("preserves the capture decision for a sign-in-required failure", () => {
+   const error = new WebRouteError(403, ErrorCode.UPSTREAM_AUTH_FAILED, "Sign in needed", { authChallenge: { source: "http", serverId: "test-server" } });
+   error.captured = true;
+   expect(mapErrorToV1(error)).toMatchObject({ code: "AUTH_REQUIRED", captured: true });
+ });

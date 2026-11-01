@@ -12,6 +12,7 @@ export {
 } from "@mcpjam/sdk";
 export type { InsufficientScopeChallenge } from "@mcpjam/sdk";
 import { maybeCaptureOriginError } from "./error-origin-capture.js";
+import { readAuthChallenge } from "./connection-effective-auth.js";
 
 export function serializeMcpError(error: unknown) {
   const anyErr = error as any;
@@ -33,6 +34,13 @@ export function serializeMcpError(error: unknown) {
   const insufficientScope = extractInsufficientScopeChallenge(error);
   if (insufficientScope) {
     base.insufficientScope = insufficientScope;
+  }
+  // The typed sign-in challenge (401, or a 403 step-up), stamped with the
+  // connection's effective auth method when the route stamped it. The client
+  // gates sign-in on this, never on parsing the message text.
+  const authChallenge = readAuthChallenge(error);
+  if (authChallenge) {
+    base.authChallenge = authChallenge;
   }
   if (process.env.NODE_ENV === "development" && anyErr?.stack) {
     base.stack = anyErr.stack;
