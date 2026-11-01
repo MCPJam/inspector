@@ -186,6 +186,45 @@ const inputs = [
       },
     },
   },
+  // Mid-session sign-in knobs (same enum discipline as above). Absent is
+  // omitted; the absent-value literals are stored and hash distinctly. For
+  // the `_meta` pair the absent action is "passthrough".
+  {
+    label: "mcp-profile-auth-challenge-unauthorized-notify-bearer-header",
+    input: {
+      ...base(),
+      mcpProfile: {
+        profileVersion: 1,
+        unauthorizedChallenge: "notify",
+        unauthorizedChallengeTrigger: "bearer-header",
+      },
+    },
+  },
+  {
+    label: "mcp-profile-auth-challenge-tool-result-prompt-any",
+    input: {
+      ...base(),
+      hostStyle: "chatgpt",
+      mcpProfile: {
+        profileVersion: 1,
+        toolResultAuthChallenge: "prompt",
+        toolResultAuthChallengeTrigger: "any",
+      },
+    },
+  },
+  {
+    label: "mcp-profile-auth-challenge-absent-value-literals",
+    input: {
+      ...base(),
+      mcpProfile: {
+        profileVersion: 1,
+        unauthorizedChallenge: "prompt",
+        unauthorizedChallengeTrigger: "any",
+        toolResultAuthChallenge: "passthrough",
+        toolResultAuthChallengeTrigger: "oauth2-scheme+error-params",
+      },
+    },
+  },
   {
     label: "sandbox-csp-restrictto-sorted-plus-directives",
     input: {
@@ -271,6 +310,49 @@ const inputs = [
             widgetDisplayModeRequests: "user-initiated-only",
             logging: true,
           },
+        },
+      },
+    },
+  },
+  {
+    // Plugin App context budgets: keys sorted, values stored as given. An
+    // empty policy collapses to absent (covered by canonicalize tests).
+    label: "apps-model-context-policy-sorted",
+    input: {
+      ...base(),
+      hostStyle: "chatgpt",
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          modelContextPolicy: {
+            updateMaxBytes: 2548000,
+            turnMaxBytes: 8388608,
+            maxBlocks: 256,
+          },
+        },
+      },
+    },
+  },
+  {
+    // The budgets beside the `apps` keys they sort between, given out of
+    // order. The backend restores the policy after the pinned SDK runs, so
+    // this pins where it lands.
+    label: "apps-model-context-policy-beside-other-keys",
+    input: {
+      ...base(),
+      hostStyle: "chatgpt",
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          sandbox: {
+            permissions: { mode: "custom", allow: { camera: true } },
+          },
+          pluginExtensions: {
+            enabled: true,
+            capabilities: { mentions: false },
+          },
+          modelContextPolicy: { maxBlocks: 64 },
+          mcpAppsOverrides: { logging: true },
         },
       },
     },
