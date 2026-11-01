@@ -615,7 +615,7 @@ export function validateCompletionAck(
    * the client's return value. `resultType` is a wire-only member the v2 client
    * consumes on the way through, so the decoded `ack` cannot answer whether the
    * server sent it — only this can. Absent when the frame could not be
-   * correlated, and then the member is reported as advice rather than judged.
+   * correlated, and then the member is not judged.
    */
   rawAck?: Record<string, unknown>,
 ): ShapeVerdict {
@@ -634,7 +634,6 @@ export function validateCompletionAck(
     };
   }
   const violations: string[] = [];
-  const warnings: string[] = [];
   const extras = Object.keys(ack).filter(
     (key) => key !== "resultType" && key !== "_meta"
   );
@@ -656,19 +655,18 @@ export function validateCompletionAck(
   // It cannot be judged from the decoded `ack` either — the v2 client consumes
   // `resultType` on the way through, so a conforming server's ack arrives here
   // without it. Reading the rpc log is the same move `tasks-status-payload-shape`
-  // already makes, and for the same reason.
+  // already makes, and for the same reason. With no raw frame a missing member
+  // is not judged: every connection is rpc-logged, so that should not happen,
+  // and blaming the server for what our own client stripped would be wrong.
   const observed = rawAck ?? (ack as Record<string, unknown>);
   const canJudgeResultType = rawAck !== undefined;
   const resultTypeName =
     method === "tasks/cancel" ? "CancelTaskResult" : "UpdateTaskResult";
 
   if (observed.resultType === undefined) {
-    const message = `the acknowledgement omits resultType "complete"; the extension's ${resultTypeName} marks it required`;
     if (canJudgeResultType) {
-      violations.push(message);
-    } else {
-      warnings.push(
-        `${message} (read from the decoded result, which cannot prove what was on the wire)`
+      violations.push(
+        `the acknowledgement omits resultType "complete"; the extension's ${resultTypeName} marks it required`
       );
     }
   } else if (observed.resultType !== "complete") {
@@ -680,7 +678,7 @@ export function validateCompletionAck(
       )} rather than "complete"`
     );
   }
-  return { violations, warnings };
+  return { violations, warnings: [] };
 }
 
 /**
