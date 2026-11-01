@@ -1,4 +1,9 @@
-import { Hono } from "hono";
+import { retainedResourceProofSchema, readRetainedResourceSource } from "@/shared/retained-app-resources";
+import { retainedProfileFingerprint, retainedResourceLegGate, readRetainedResourceScope } from "../../utils/harness/forwarding/retained-resources";
+import { historyProvenanceContextFor, verifyToolResult, verifyAppResourceSource } from "../../utils/history-provenance";
+import { appResourcesEnabled, appToolsEnabled } from "@/shared/app-resource-capability";
+import { buildMcpAppsWidgetContent, mcpAppsWidgetContentSchema } from "./apps";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { makeFunctionReference } from "convex/server";
@@ -34,31 +39,22 @@ import {
   mirrorToolParamHeadersFromMcpProfile,
 } from "../../utils/effective-auth.js";
 
-const requestSchema = z
-  .object({
-    context: z
-      .object({
-        owner: forwardingOwnerSchema,
-        parentExecutionId: z.string().min(1),
-      })
-      .strict(),
-    toolName: z.string().min(1).max(512),
-    arguments: z.record(z.string(), z.unknown()),
-  })
-  .strict();
+const nativeWidgetContextSchema = z.strictObject({owner: forwardingOwnerSchema, parentExecutionId: z.string().min(1)});
+const requestSchema = z.strictObject({context: z.union([nativeWidgetContextSchema, retainedResourceProofSchema]), toolName: z.string().min(1).max(512), arguments: z.record(z.string(), z.unknown())});
 const userQuery = makeFunctionReference<"query">("users:getCurrentUser");
 const userSchema = z.object({ _id: z.string() });
-export const harnessWidgets = new Hono();
-
-/** Widgets authenticate as the user; a stopped model lease supplies no authority here. */
-harnessWidgets.post("/widget", async (c) => {
-  try {
-    if (process.env.HARNESS_NATIVE_FORWARDING !== "true")
-      return c.json({ error: "App forwarding is unavailable." }, 404);
-    const body = requestSchema.parse(
-      JSON.parse(await readNativeBody(c.req.raw)),
-    );
-    const { owner, parentExecutionId } = body.context;
+async function authorizeWidgetConnection(c: Context, context: z.infer<typeof requestSchema>["context"], toolAction = false) {
+    const proof = "claim" in context ? context : undefined;
+    const source = proof ? readRetainedResourceSource(proof.claim.output) : undefined;
+    if (proof && (!source || source.toolCallId !== proof.claim.toolCallId)) throw new Error("App source unavailable");
+    if (proof && source) {
+      const provenance = historyProvenanceContextFor(source.projectId, source.chatSessionId);
+      const {attestation, ...unsigned} = source;
+      if (!provenance || !verifyAppResourceSource(provenance, unsigned, attestation) || !verifyToolResult(provenance, proof.claim, proof.signature)) throw new Error("App source unavailable");
+    }
+    const owner = "owner" in context ? context.owner : source?.owner;
+    if (!owner) throw new Error("App source unavailable");
+    const parentExecutionId = "parentExecutionId" in context ? context.parentExecutionId : undefined;
     const bearer = await getConvexBearerForRequest(c);
     const user = userSchema.parse(
       await createConvexClient(bearer).query(userQuery, {}),
@@ -71,8 +67,16 @@ harnessWidgets.post("/widget", async (c) => {
     const control = createExecutionControl({
       owner,
       widgetParentId: parentExecutionId,
+      ...(source?.turnId ? {retainedParent: {toolCallId: source.toolCallId, turnId: source.turnId, scopeDigest: source.digest}} : {}),
     });
-    const scope = await control.widgetScope();
+    const revalidateScope = source ? async () => {
+      const current = await readRetainedResourceScope(source.owner, source.digest);
+      if (current.binding.owner.userId !== user._id || current.binding.projectId !== source.projectId || current.binding.chatSessionId !== source.chatSessionId) throw new Error("App source changed");
+    } : async () => { await control.widgetScope(); };
+    const retained = source ? await readRetainedResourceScope(source.owner, source.digest) : undefined;
+    if (retained && (retained.binding.projectId !== source?.projectId || retained.binding.chatSessionId !== source?.chatSessionId)) throw new Error("App source changed");
+    const scope = retained ? {...retained.binding, organizationId: retained.organizationId, hostConfig: retained.hostConfig, expiresAt: retained.expiresAt, turnId: source?.turnId ?? source?.toolCallId ?? ""} : await control.widgetScope();
+    if (toolAction && (!appToolsEnabled(scope.hostConfig) || (source && !source.turnId))) throw new Error("App tools unavailable");
     const allowed = (process.env.HARNESS_FORWARDING_ORGANIZATION_IDS ?? "")
       .split(",")
       .map((id) => id.trim());
@@ -104,6 +108,7 @@ harnessWidgets.post("/widget", async (c) => {
         scope.hostConfig.mcpProfile,
       ),
     };
+    try {
     const authorized = await createAuthorizedManager(
       callerContextFromHono(c),
       bearer,
@@ -125,10 +130,28 @@ harnessWidgets.post("/widget", async (c) => {
           organizationId: scope.organizationId,
         }),
         ...(owner.connectionId
-          ? { connectionIds: { [owner.serverId]: owner.connectionId } }
+          ? { connectionIds: { [owner.serverId]: owner.connectionId }, onlySelectedConnections: true }
           : {}),
       },
     );
+    const serverKey = authorized.connectionsByServerId?.[owner.serverId]?.find(connection => connection.connectionId === owner.connectionId)?.key ?? owner.serverId;
+    return { owner, control, scope, input, authorized, revalidateScope, resourceOnly: !!source, retainedSource: source, serverKey };
+    } catch (error) { await input?.dispose(); throw error; }
+}
+
+export const harnessWidgets = new Hono();
+
+/** Widgets authenticate as the user; a stopped model lease supplies no authority here. */
+harnessWidgets.post("/widget", async (c) => {
+  try {
+    if (process.env.HARNESS_NATIVE_FORWARDING !== "true")
+      return c.json({ error: "App forwarding is unavailable." }, 404);
+    const body = requestSchema.parse(
+      JSON.parse(await readNativeBody(c.req.raw)),
+    );
+    const connection = await authorizeWidgetConnection(c, body.context, true);
+    if (connection instanceof Response) return connection;
+    const { owner, control, scope, input, authorized, serverKey, resourceOnly, retainedSource, revalidateScope } = connection;
     const abort = new AbortController();
     const onAbort = () => abort.abort(c.req.raw.signal.reason);
     c.req.raw.signal.addEventListener("abort", onAbort, { once: true });
@@ -148,6 +171,7 @@ harnessWidgets.post("/widget", async (c) => {
         if (!closed) controller.enqueue(encoder.encode(": waiting\n\n"));
       }, 10_000);
       try {
+        abort.signal.throwIfAborted();
         const baseApproval = forwardingApproval(
           control,
           owner,
@@ -167,12 +191,12 @@ harnessWidgets.post("/widget", async (c) => {
             return baseApproval.ask(request);
           },
         };
-        const config = authorized.authorizedServerConfigs?.[owner.serverId];
+        const config = authorized.authorizedServerConfigs?.[serverKey];
         if (!config || !("url" in config))
           throw new Error("App connection unavailable");
         if (input)
           authorized.manager.setMrtrInputCollector(
-            owner.serverId,
+            serverKey,
             input.host.collectMrtrForServer(owner.serverId),
             {
               aroundLeg: createForwardingMrtrGate({
@@ -184,15 +208,15 @@ harnessWidgets.post("/widget", async (c) => {
               }),
             },
           );
-        await authorized.manager.connectToServer(owner.serverId, config, {
+        await authorized.manager.connectToServer(serverKey, config, {
           signal: abort.signal,
         });
         const catalog = await authorized.manager.listTools(
-          owner.serverId,
+          serverKey,
           undefined,
           { signal: abort.signal },
         );
-        if (!isEnhancedMcpProfile(authorized.manager, owner.serverId, !!input))
+        if (resourceOnly ? retainedProfileFingerprint(authorized.manager, serverKey) !== retainedSource?.profile : !isEnhancedMcpProfile(authorized.manager, serverKey, !!input))
           throw new Error(
             "App connection no longer matches its qualified profile",
           );
@@ -221,8 +245,14 @@ harnessWidgets.post("/widget", async (c) => {
                 arguments: z.record(z.string(), z.unknown()),
               })
               .parse(snapshot.params);
+            await revalidateScope();
+            const currentTools = await authorized.manager.listTools(serverKey, undefined, {signal: abort.signal, cacheMode: "bypass"});
+            const currentTool = currentTools.tools.find(entry => entry.name === params.name);
+            if (!currentTool || isVisibleToModelOnly(currentTool._meta)) throw new Error("App tool unavailable");
+            await revalidateScope();
+            abort.signal.throwIfAborted();
             const result = await authorized.manager.executeTool(
-              owner.serverId,
+              serverKey,
               params.name,
               params.arguments,
               { signal: abort.signal },
@@ -306,5 +336,55 @@ harnessWidgets.post("/widget", async (c) => {
       { error: "This App action is no longer available in the current chat." },
       409,
     );
+  }
+});
+
+
+harnessWidgets.post("/widget-resources", async c => {
+  let connection: Awaited<ReturnType<typeof authorizeWidgetConnection>> | undefined;
+  try {
+    if (process.env.HARNESS_NATIVE_FORWARDING !== "true") return c.json({ error: "App forwarding is unavailable." }, 404);
+    const body = z.strictObject({
+      context: requestSchema.shape.context,
+      operation: z.discriminatedUnion("method", [
+        z.strictObject({ method: z.literal("resources/read"), uri: z.string().min(1), _meta: z.record(z.string(), z.unknown()).optional() }),
+        z.strictObject({ method: z.enum(["resources/list", "resources/templates/list"]), cursor: z.string().optional() }),
+        z.strictObject({ method: z.literal("widget/content"), request: mcpAppsWidgetContentSchema.omit({ projectId: true }) }),
+      ]),
+    }).parse(JSON.parse(await readNativeBody(c.req.raw)));
+    connection = await authorizeWidgetConnection(c, body.context);
+    if (connection instanceof Response) return connection;
+    const { owner, control, authorized, input, scope, revalidateScope, resourceOnly, serverKey } = connection;
+    if (body.operation.method !== "widget/content" && !appResourcesEnabled(scope.hostConfig)) throw new Error("App resources unavailable");
+    const signal = c.req.raw.signal;
+    const config = authorized.authorizedServerConfigs?.[serverKey];
+    if (!config || !("url" in config)) throw new Error("App connection unavailable");
+    if (input) authorized.manager.setMrtrInputCollector(serverKey, input.host.collectMrtrForServer(owner.serverId), {
+      aroundLeg: resourceOnly ? retainedResourceLegGate(revalidateScope, signal) : createForwardingMrtrGate({ control, approval: forwardingApproval(control, owner, scope.projectId), turnId: scope.turnId, expiresAt: Math.min(scope.expiresAt, Date.now() + 300_000), signal }),
+    });
+    await authorized.manager.connectToServer(serverKey, config, { signal });
+    if (resourceOnly ? !("claim" in body.context) || retainedProfileFingerprint(authorized.manager, serverKey) !== readRetainedResourceSource(body.context.claim.output)?.profile : !isEnhancedMcpProfile(authorized.manager, serverKey, !!input)) throw new Error("App connection no longer matches its producing profile");
+    await revalidateScope();
+    signal.throwIfAborted();
+    const operation = body.operation;
+    if (operation.method === "widget/content" && operation.request.serverId !== owner.serverId) throw new Error("App resource changed");
+    const result = operation.method === "widget/content"
+      ? await buildMcpAppsWidgetContent(authorized.manager, { ...operation.request, projectId: scope.projectId, serverId: serverKey }, signal)
+      : operation.method === "resources/read"
+        ? await authorized.manager.readResource(serverKey, { uri: operation.uri, ...(operation._meta ? { _meta: operation._meta } : {}) }, { signal })
+        : operation.method === "resources/list"
+          ? await authorized.manager.listResources(serverKey, operation.cursor !== undefined ? { cursor: operation.cursor } : undefined, { signal, cacheMode: "bypass" })
+          : await authorized.manager.listResourceTemplates(serverKey, operation.cursor !== undefined ? { cursor: operation.cursor } : undefined, { signal, cacheMode: "bypass" });
+    await revalidateScope();
+    signal.throwIfAborted();
+    return c.json(result);
+
+  } catch (error) {
+    if (!(error instanceof ExecutionControlError) && !(error instanceof z.ZodError)) reportRouteFailure("App resource refused", new Error(error instanceof Error ? error.name : "AppResourceFailure"), { source: "web.harness-widget.resource", hop: "user_server_hop" });
+    return c.json({ error: "This App resource is no longer available in the current chat." }, 409);
+  } finally {
+    if (connection && !(connection instanceof Response)) {
+      try { await connection.input?.dispose(); } finally { await connection.authorized.manager.disconnectAllServers(); }
+    }
   }
 });

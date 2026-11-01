@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   release: vi.fn(),
   read: vi.fn(),
+  listResources: vi.fn(),
+  listTemplates: vi.fn(),
   runtime: vi.fn(),
   html: "<p>app</p>",
   mimeTypeValid: true,
@@ -106,9 +108,10 @@ beforeEach(() => {
   mocks.resolve.mockResolvedValue({
     revision: "source-revision",
     appToolsEnabled: true,
+    resourcesEnabled: true,
     contextEnabled: true,
     tool: { name: "pickFile", _meta: meta },
-    manager: { readResource: mocks.read, getServerConfig: () => ({}) },
+    manager: { readResource: mocks.read, listResources: mocks.listResources, listResourceTemplates: mocks.listTemplates, getServerConfig: () => ({}) },
   });
   mocks.runtime.mockReturnValue({
     resolve: mocks.resolve,
@@ -331,5 +334,65 @@ describe("original model App context", () => {
     const response = await f.request();
     expect((await response.json()).contextEnabled).toBe(false);
     modelApps.close(f.token, actor);
+  });
+});
+
+
+describe("owned model App resource operations", () => {
+  const resourceRequest = (f: ReturnType<typeof fixture>, operation: object, extra = {}) =>
+    f.router.request("/resources", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: "project", pluginWorkspace: { version: 1, workspaceId: "workspace" }, instanceToken: f.token, operation, ...extra }) });
+  it("reads through the immutable source and releases its runtime", async () => {
+    const f = fixture();
+    const result = await resourceRequest(f, { method: "resources/read", uri: "test://record" });
+    expect(result.status).toBe(200);
+    expect(mocks.read).toHaveBeenCalledWith("saved-id", { uri: "test://record" }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(mocks.resolve).toHaveBeenCalledTimes(2);
+    expect(mocks.release).toHaveBeenCalledOnce();
+  });
+  it("refuses reads when the original host has resources disabled", async () => {
+    const source = await mocks.resolve(); mocks.resolve.mockClear();
+    mocks.resolve.mockResolvedValueOnce({ ...source, resourcesEnabled: false });
+    const result = await resourceRequest(fixture(), { method: "resources/read", uri: "test://record" });
+    expect(result.status).toBe(403);
+    expect(mocks.read).not.toHaveBeenCalled();
+  });
+  it("cancels the actual resource read with the incoming request", async () => {
+    const f = fixture(); const controller = new AbortController();
+    mocks.read.mockImplementationOnce((_server, _params, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      controller.abort(new Error("cancelled"));
+      expect(signal.aborted).toBe(true);
+    }));
+    const result = await f.router.request("/resources", { method: "POST", signal: controller.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: "project", pluginWorkspace: { version: 1, workspaceId: "workspace" }, instanceToken: f.token, operation: { method: "resources/read", uri: "test://record", _meta: { progressToken: "progress" } } }) });
+    expect(result.status).toBe(403);
+    expect(mocks.read).toHaveBeenCalledWith("saved-id", { uri: "test://record", _meta: { progressToken: "progress" } }, expect.any(Object));
+    expect(mocks.release).toHaveBeenCalledOnce();
+  });
+  it("keeps empty cursors on resource template lists", async () => {
+    mocks.listTemplates.mockResolvedValue({ resourceTemplates: [], nextCursor: "next" });
+    const result = await resourceRequest(fixture(), { method: "resources/templates/list", cursor: "" });
+    expect(result.status).toBe(200);
+    expect(await result.json()).toEqual({ resourceTemplates: [], nextCursor: "next" });
+    expect(mocks.listTemplates).toHaveBeenCalledWith("saved-id", { cursor: "" }, expect.objectContaining({ cacheMode: "bypass" }));
+  });
+  it("refuses a source revision change before resource dispatch", async () => {
+    mocks.resolve.mockResolvedValueOnce({ revision: "changed", resourcesEnabled: true });
+    const result = await resourceRequest(fixture(), { method: "resources/read", uri: "test://record" });
+    expect(result.status).toBe(403);
+    expect(mocks.read).not.toHaveBeenCalled();
+    expect(mocks.release).toHaveBeenCalledOnce();
+  });
+  it("refuses resource output if source authority changes during the read", async () => {
+    const original = await mocks.resolve(); mocks.resolve.mockClear();
+    mocks.resolve.mockResolvedValueOnce(original).mockResolvedValueOnce({ ...original, revision: "changed" });
+    const result = await resourceRequest(fixture(), { method: "resources/read", uri: "test://record" });
+    expect(result.status).toBe(403);
+    expect(await result.text()).not.toContain("contents");
+    expect(mocks.read).toHaveBeenCalledOnce();
+  });
+  it("rejects caller-selected accounts instead of overriding the source", async () => {
+    const result = await resourceRequest(fixture(), { method: "resources/read", uri: "test://record" }, { connectionId: "other-account" });
+    expect(result.status).toBe(403);
+    expect(mocks.read).not.toHaveBeenCalled();
   });
 });
