@@ -12,6 +12,8 @@ import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
  * `HarnessId` is the SDK's `Harness` union, so a persistence-layer id without an
  * adapter is a COMPILE error.
  */
+import type { ForwardingRuntimeContract } from "./forwarding/runtime-contract.js";
+import { withClaudeForwardingResume } from "./forwarding/claude-resume.js";
 import { createClaudeCodeHarness } from "./claude-code-bootstrap.js";
 import { createHostedClaudeCodeHarness } from "./claude-code-typed-errors.js";
 export { patchClaudeCodeHarnessBootstrap } from "./claude-code-bootstrap.js";
@@ -367,6 +369,8 @@ type HarnessRuntimeAdapterBase = {
    *  `HarnessMcpDelivery`. Every adapter delivers them one way or the other, so
    *  there is no "MCP unsupported" arm and no MCP pre-flight refusal. */
   mcpDelivery: HarnessMcpDelivery;
+  /** Qualified vendor continuation hook for the shared forwarding route. */
+  forwardingRuntime?: ForwardingRuntimeContract;
   /** Does the adapter deliver runtime (Cloud) skills into the sandbox? Claude
    *  Code: yes. Codex: yes (INS-8) — its `writeSkills` materializes the same
    *  `skills` param under its own root before the CLI starts. */
@@ -882,6 +886,10 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   mcpDelivery: HARNESS_MCP_DELIVERY["claude-code"],
   // …through the SDK session configuration, without writing into the workspace.
   mcpNativeDelivery: "session-config",
+  forwardingRuntime: {
+    runtimeVersion: "2.1.245",
+    refresh: withClaudeForwardingResume,
+  },
   liveApprovalRuntime: true,
   supportsSkills: true,
   skillsBaseDir: CLAUDE_CODE_SKILLS_BASE,
