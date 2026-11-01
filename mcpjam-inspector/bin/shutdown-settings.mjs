@@ -36,8 +36,23 @@ function readMs(raw, scale = 1) {
   return Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined;
 }
 
+/**
+ * The longest drain whose derived timers Node can still schedule: past 2^31-1
+ * ms, setTimeout fires at once, and a drain meant to lengthen the shutdown
+ * would remove its grace instead.
+ */
+const MAX_DRAIN_MS =
+  2 ** 31 -
+  1 -
+  SHUTDOWN_TEARDOWN_MS -
+  SHUTDOWN_LOG_FLUSH_MS -
+  SHUTDOWN_PARENT_MARGIN_MS;
+
 export function resolveShutdownSettings(env = process.env) {
-  const requestedDrainMs = readMs(env.MCPJAM_SHUTDOWN_DRAIN_MS) ?? 0;
+  const requestedDrainMs = Math.min(
+    readMs(env.MCPJAM_SHUTDOWN_DRAIN_MS) ?? 0,
+    MAX_DRAIN_MS,
+  );
   const platformWindowMs = readMs(env.RAILWAY_DEPLOYMENT_DRAINING_SECONDS, 1000);
   // Everything the server still does after the drain, plus the launcher's
   // margin, has to fit inside the platform's window too.
