@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "fs";
 import { join, resolve } from "path";
 import { tryGetGuestAuthority } from "./utils/guest-authority.js";
 import { logger as appLogger } from "./utils/logger.js";
+import { telemetryOptedOut } from "../shared/sentry-identity.js";
 
 export type InspectorEnvMode = "development" | "production";
 
@@ -18,6 +19,8 @@ export interface InspectorClientRuntimeConfig {
   convexSiteUrl?: string;
   workosClientId?: string;
   workosApiHostname?: string;
+  /** Present only under DO_NOT_TRACK: the browser then starts no Sentry and sends PostHog nothing. */
+  doNotTrack?: boolean;
 }
 
 function getInspectorEnvMode(): InspectorEnvMode {
@@ -187,6 +190,11 @@ export function getInspectorClientRuntimeConfig(): InspectorClientRuntimeConfig 
     convexSiteUrl,
     workosClientId,
     workosApiHostname,
+    // The server's opt-out reaches the browser here rather than as a build
+    // argument, so one image serves installs that opt out and ones that do not.
+    ...(telemetryOptedOut(process.env.DO_NOT_TRACK)
+      ? { doNotTrack: true }
+      : {}),
   };
 }
 

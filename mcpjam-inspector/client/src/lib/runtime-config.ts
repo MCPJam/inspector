@@ -3,6 +3,7 @@ export interface InspectorClientRuntimeConfig {
   convexSiteUrl?: string;
   workosClientId?: string;
   workosApiHostname?: string;
+  doNotTrack?: boolean;
 }
 
 declare global {
@@ -52,4 +53,14 @@ export function getRuntimeWorkosClientId(): string | undefined {
  */
 export function getRuntimeWorkosApiHostname(): string | undefined {
   return getNonEmptyString(getRuntimeConfig()?.workosApiHostname);
+}
+
+/**
+ * The server's `DO_NOT_TRACK`, served with the document so one bundle serves
+ * installs that opt out and ones that do not. Set, the browser initializes
+ * Sentry disabled and PostHog opted out with no remote loading; feature flags
+ * still arrive from the server, which answers them without PostHog.
+ */
+export function getRuntimeDoNotTrack(): boolean {
+  return getRuntimeConfig()?.doNotTrack === true;
 }

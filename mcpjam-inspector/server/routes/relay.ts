@@ -6,6 +6,7 @@ import { Hono, type Context, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HOSTED_MODE } from "../config.js";
 import { POSTHOG_PROJECT_KEY } from "../utils/analytics.js";
+import { telemetryOptedOut } from "../../shared/sentry-identity.js";
 import { createFixedWindowMap } from "../middleware/passthrough-rate-limit.js";
 import {
   edgeAttestationConfigured,
@@ -1569,6 +1570,16 @@ async function processCapture(
 }
 
 const relayRoutes = new Hono();
+
+// DO_NOT_TRACK: the relay forwards nothing, whatever a page sends it. The
+// browser learns the opt-out from its runtime config and sends nothing; this
+// holds for a page that did not. A 4xx, which posthog-js does not retry.
+relayRoutes.use("*", async (c, next) => {
+  if (telemetryOptedOut(process.env.DO_NOT_TRACK)) {
+    return c.json({ error: "telemetry_disabled" }, 403);
+  }
+  await next();
+});
 
 // Anonymous by design, like PostHog capture, and charged to the same ingest
 // budget. Bounded and validated separately from the opaque PostHog proxy;

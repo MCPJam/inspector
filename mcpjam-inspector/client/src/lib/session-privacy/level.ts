@@ -9,6 +9,7 @@ import {
 } from "../../../../shared/credential-urls";
 import type { TelemetryRecording } from "../../../../shared/telemetry-privacy";
 import { HOSTED_MODE } from "../config";
+import { getRuntimeDoNotTrack } from "../runtime-config";
 import { liveTelemetryContentPolicy } from "../telemetry-transport-policy";
 
 export type PrivacyLevel = "off" | "masked" | "full";
@@ -82,7 +83,8 @@ export type RecordingSurface = "off" | "desktop" | "hosted";
 export function recordingSurface(): RecordingSurface {
   if (
     !isErrorCaptureSurface() ||
-    import.meta.env.VITE_DISABLE_POSTHOG_LOCAL === "true"
+    import.meta.env.VITE_DISABLE_POSTHOG_LOCAL === "true" ||
+    getRuntimeDoNotTrack()
   ) {
     return "off";
   }

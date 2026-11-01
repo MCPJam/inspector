@@ -96,6 +96,19 @@ describe("client sentry init", () => {
     expect(resolveClientSentryConfig().enabled).toBe(false);
   });
 
+  it("stops reporting when the server says DO_NOT_TRACK, with no rebuild", async () => {
+    window.__MCP_RUNTIME_CONFIG__ = { doNotTrack: true };
+    try {
+      const { initSentry, resolveClientSentryConfig } = await import("../sentry");
+
+      expect(resolveClientSentryConfig().enabled).toBe(false);
+      initSentry();
+      expect(init.mock.calls[0][0].enabled).toBe(false);
+    } finally {
+      delete window.__MCP_RUNTIME_CONFIG__;
+    }
+  });
+
   it("tags hosted when the bundle is built for hosted mode", async () => {
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
     vi.resetModules();
