@@ -35,6 +35,21 @@
  */
 export const HOSTED_TASKS_VERSION = 1;
 
+export const HOSTED_TASK_OWNER_VERSION = 1;
+
+export function hostedTaskOwnerRequestId(
+  value: unknown,
+  version: unknown,
+): string | undefined {
+  return version === HOSTED_TASK_OWNER_VERSION &&
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 128 &&
+    !value.includes("\u0000")
+    ? value
+    : undefined;
+}
+
 /** Wire literal for the stream data part carrying a {@link TaskCreatedPayload}. */
 export const HOSTED_TASK_CREATED_DATA_PART_TYPE = "data-task-created" as const;
 
@@ -48,14 +63,13 @@ export interface TaskCreatedPayload {
    * pass a Convex document id here.
    */
   serverId: string;
+  connectionId?: string;
+  sourceExecutionId?: string;
+  ownerRequestId?: string;
+  ownerScope?: string;
   /**
-   * The server's display NAME, and load-bearing rather than decorative.
-   *
-   * The browser's task tracker is keyed by server name — `ToolsTab` stores
-   * `serverId: serverName`, and `TasksTab` reads back with
-   * `getTrackedTasksForServer(serverName)`. A hosted `serverId` is a Convex
-   * document id, so tracking a task under the id files it exactly where the
-   * Tasks tab will never look. Both are carried; consumers prefer this.
+   * Display label for bound handles, whose identity uses canonical serverId.
+   * Legacy unbound bookmarks still use this name as their lookup key.
    */
   serverName?: string;
   wire: HostedTaskWire;
@@ -94,6 +108,20 @@ export function isTaskCreatedPayload(
   }
   if (value.wire !== "legacy" && value.wire !== "extension") return false;
   if (!isOptionalString(value.serverName)) return false;
+  for (const key of [
+    "connectionId",
+    "sourceExecutionId",
+    "ownerRequestId",
+    "ownerScope",
+  ] as const) {
+    if (
+      value[key] !== undefined &&
+      (typeof value[key] !== "string" ||
+        !value[key] ||
+        value[key].includes("\u0000"))
+    )
+      return false;
+  }
   if (!isOptionalString(value.createdAt)) return false;
   if (!isOptionalString(value.status)) return false;
   if (!isOptionalString(value.toolName)) return false;

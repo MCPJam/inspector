@@ -76,17 +76,18 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
     title: "Server Initialize",
     description: "Server responds to initialize and reports capabilities.",
     async run(ctx) {
-      const startedAt = Date.now();
+      // The handshake already happened on connect; report how long it took.
+      const durationMs = ctx.connectDurationMs ?? 0;
       const info = ctx.initializationInfo;
       if (!info) {
         return failedResult(
           this,
-          Date.now() - startedAt,
+          durationMs,
           "Initialization info is unavailable after connecting to the server",
         );
       }
 
-      return passedResult(this, Date.now() - startedAt, {
+      return passedResult(this, durationMs, {
         protocolVersion: info.protocolVersion,
         transport: info.transport,
         serverCapabilities: info.serverCapabilities as Record<string, unknown>,

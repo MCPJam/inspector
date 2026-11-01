@@ -751,12 +751,16 @@ describe("prepareChatV2", () => {
         (m: any) => m.name === "asana_task_17"
       );
       expect(target).toBeDefined();
-      const targetToolId: string = target.toolId;
+      // The model only ever sees the name — no id to call the tool by.
+      expect(target).not.toHaveProperty("toolId");
 
-      // 2. Model loads the target by id; state must reflect the new id.
+      // 2. Model loads the target by name; state stages its catalog id.
       const load = (result.allTools as any).load_mcp_tools.execute;
-      const loadRes = await load({ toolIds: [targetToolId] }, {} as any);
-      expect(loadRes.loaded.map((l: any) => l.toolId)).toEqual([targetToolId]);
+      const loadRes = await load({ names: ["asana_task_17"] }, {} as any);
+      expect(loadRes.loaded).toEqual([{ name: "asana_task_17" }]);
+      const targetToolId = result.progressivePlan.catalog.find(
+        (entry) => entry.modelName === "asana_task_17"
+      )!.toolId;
       expect(result.discoveryState.newlyLoadedToolIds.has(targetToolId)).toBe(
         true
       );

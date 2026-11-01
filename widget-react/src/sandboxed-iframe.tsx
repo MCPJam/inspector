@@ -552,6 +552,7 @@ export const SandboxedIframe = forwardRef<
         clientContext: clientContext ?? null,
         browserStorage: browserStorage ?? null,
         html: html ?? null,
+        webmcpTools: true,
         permissive: permissive ?? null,
         permissions: permissions ?? null,
         sandbox,
@@ -598,6 +599,7 @@ export const SandboxedIframe = forwardRef<
         method: "ui/notifications/sandbox-resource-ready",
         params: {
           html,
+          webmcpTools: true,
           sandbox,
           csp,
           permissions,

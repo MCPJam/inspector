@@ -53,6 +53,15 @@ describe("workspace production guard composition", () => {
     },
   );
 
+  it("refuses profile export for an ephemeral run", async () => {
+    const driver = driverStub();
+    const stack = buildBrowserdStack(driver, {
+      token: "test",
+      contextMode: "ephemeral",
+    });
+    expect((await post(stack, "/v1/profile/export", {})).status).toBe(501);
+  });
+
   it("fences commands and acquisitions throughout export, including lease expiry", async () => {
     let now = 1000;
     const lease = new HandoffLease({ now: () => now });

@@ -390,11 +390,10 @@ interface ChatInputProps {
   fileAttachments?: FileAttachment[];
   /** Callback when file attachments change */
   onChangeFileAttachments?: (files: FileAttachment[]) => void;
-  /** Tool approval toggle */
   requireToolApproval?: boolean;
   onRequireToolApprovalChange?: (enabled: boolean) => void;
-  /** Shared chat-only mode */
   minimalMode?: boolean;
+  hideExecutionControls?: boolean;
   /** Allow the context popover while the surrounding surface is minimal. */
   showContextPopover?: boolean;
   /** Main chat: show the Claude/ChatGPT host-style selector in the "+" menu. */
@@ -545,6 +544,7 @@ export function ChatInput({
   requireToolApproval = false,
   onRequireToolApprovalChange,
   minimalMode = false,
+  hideExecutionControls = false,
   showContextPopover,
   showHostStyleSelector = false,
   hostStyle,
@@ -2190,7 +2190,7 @@ export function ChatInput({
                         </button>
                       )}
 
-                      <button
+                      {!hideExecutionControls && <button
                         type="button"
                         className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted/60 cursor-pointer"
                         onClick={() => {
@@ -2200,9 +2200,9 @@ export function ChatInput({
                       >
                         <Settings2 className="h-4 w-4 text-muted-foreground" />
                         System Prompt & Temperature
-                      </button>
+                      </button>}
 
-                      {onRequireToolApprovalChange && (
+                      {!hideExecutionControls && onRequireToolApprovalChange && (
                         <div className="rounded-md px-2 py-2 hover:bg-muted/60">
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 text-sm">
@@ -2251,7 +2251,7 @@ export function ChatInput({
               {!minimalMode && executionTarget ? (
                 <ExecutionTargetChip {...executionTarget} />
               ) : null}
-              {!minimalMode && (
+              {!minimalMode && !hideExecutionControls && (
                 <ModelSelector
                   platformPaidFallback={creditBalance?.platformPaidFallback}
                   currentModel={currentModel}
@@ -2267,6 +2267,7 @@ export function ChatInput({
                   onMultiModelEnabledChange={onMultiModelEnabledChange}
                   respondToProviderTabIntent
                   onManageOrgProviders={onManageOrgProviders}
+                  onAddProvider={null}
                   requireOrgKeys={requireOrgKeys}
                   {...modelEfforts}
                   // Servers attached means the turn can call tools.
@@ -2275,7 +2276,7 @@ export function ChatInput({
                   }
                 />
               )}
-              {!minimalMode && !multiModelEnabled && onReasoningEffortChange ? (
+              {!minimalMode && !hideExecutionControls && !multiModelEnabled && onReasoningEffortChange ? (
                 <EffortControl
                   variant="inline"
                   options={reasoningEffortLevels ?? []}
@@ -2497,7 +2498,7 @@ export function ChatInput({
         />
       )}
 
-      {!minimalMode && (
+      {!minimalMode && !hideExecutionControls && (
         <SystemPromptSelector
           systemPrompt={systemPrompt || DEFAULT_SYSTEM_PROMPT}
           onSystemPromptChange={onSystemPromptChange}

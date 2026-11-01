@@ -1,3 +1,4 @@
+import { LOCAL_HARNESS_IDS } from "@/shared/harness-descriptors";
 /**
  * Composer state → {@link CloudServerReadiness}, for surfaces that only run in
  * MCPJam's cloud.
@@ -64,7 +65,7 @@ export function useCloudServerReadiness({
   return useMemo(() => {
     const hostById = new Map(hosts.map((host) => [host.hostId, host]));
     const isLocalClient = (hostId: string) =>
-      !HOSTED_MODE && hostById.get(hostId)?.harness === "claude-code";
+      !HOSTED_MODE && LOCAL_HARNESS_IDS.some(id => id === (hostById.get(hostId)?.agentLoop ?? hostById.get(hostId)?.harness));
     const groupById = new Map(
       serverAttachments.map((group) => [group._id, group]),
     );
