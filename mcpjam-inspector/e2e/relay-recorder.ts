@@ -35,7 +35,9 @@ export async function recordRelayEgress(input: {
     const { Hono, relayRoutes, relayBodyLimit, setTelemetryPolicyQueryForTests } = await relayModule;
     const originalFetch = globalThis.fetch;
     const originalDnt = process.env.DO_NOT_TRACK;
-    process.env.DO_NOT_TRACK = "1";
+    // Off while the relay runs: under DO_NOT_TRACK it forwards nothing, and
+    // its forwarding is what this records. The fetch below is the only egress.
+    delete process.env.DO_NOT_TRACK;
     setTelemetryPolicyQueryForTests(async (_url, _token, context) => query(context));
     globalThis.fetch = async (url, options) => {
       const upstream = new URL(String(url));

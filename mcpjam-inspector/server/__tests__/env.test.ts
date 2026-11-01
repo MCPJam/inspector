@@ -30,6 +30,7 @@ const RUNTIME_CONFIG_ENV_KEYS = [
   "VITE_WORKOS_CLIENT_ID",
   "WORKOS_API_HOSTNAME",
   "VITE_WORKOS_API_HOSTNAME",
+  "DO_NOT_TRACK",
 ] as const;
 const ORIGINAL_RUNTIME_CONFIG_ENV = Object.fromEntries(
   RUNTIME_CONFIG_ENV_KEYS.map((key) => [key, process.env[key]]),
@@ -219,6 +220,27 @@ describe("env loader", () => {
   });
 
   it("emits no script when nothing is configured", () => {
+    expect(getInspectorClientRuntimeConfigScript()).toBeNull();
+  });
+
+  it.each(["1", "true"])(
+    "tells the browser about DO_NOT_TRACK=%s, which alone is enough to inject the script",
+    (value) => {
+      process.env.DO_NOT_TRACK = value;
+
+      expect(getInspectorClientRuntimeConfig()).toMatchObject({
+        doNotTrack: true,
+      });
+      expect(getInspectorClientRuntimeConfigScript()).toBe(
+        '<script>window.__MCP_RUNTIME_CONFIG__={"doNotTrack":true};</script>',
+      );
+    },
+  );
+
+  it("says nothing about tracking for any other DO_NOT_TRACK value", () => {
+    process.env.DO_NOT_TRACK = "0";
+
+    expect(getInspectorClientRuntimeConfig()).not.toHaveProperty("doNotTrack");
     expect(getInspectorClientRuntimeConfigScript()).toBeNull();
   });
 });
