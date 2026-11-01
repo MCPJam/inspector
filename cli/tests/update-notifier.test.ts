@@ -366,6 +366,8 @@ test("spawnBackgroundFetch starts a detached node process with positional args",
 
   spawnBackgroundFetch("/tmp/update-cache.json", "@mcpjam/cli", {
     execPath: "/usr/bin/node",
+    // No proxy configured: the check keeps the environment as it is.
+    env: { PATH: "/usr/bin" },
     spawn: ((
       nextCommand: string,
       nextArgs?: readonly string[],
@@ -386,6 +388,7 @@ test("spawnBackgroundFetch starts a detached node process with positional args",
   assert.deepEqual(options, {
     detached: true,
     stdio: "ignore",
+    env: { PATH: "/usr/bin" },
   });
   assert.equal(registeredEvent, "error");
   assert.equal(unrefCalled, true);

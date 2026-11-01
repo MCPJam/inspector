@@ -22,6 +22,11 @@
       "import": "./dist/internal/deployment.js",
       "default": "./dist/internal/deployment.js"
     },
+    "./internal/network-proxy": {
+      "types": "./dist/internal/network-proxy.d.ts",
+      "import": "./dist/internal/network-proxy.js",
+      "default": "./dist/internal/network-proxy.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",

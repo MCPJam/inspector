@@ -34,6 +34,7 @@ import {
   writeError,
 } from "./lib/output.js";
 import { installDeploymentPreflight } from "./lib/deployment-preflight.js";
+import { installProxyDispatcher } from "./lib/network-proxy.js";
 import { addGlobalOptions } from "./lib/server-config.js";
 import {
   captureCommandEvent,
@@ -186,6 +187,9 @@ export async function runCliEntrypoint(
   argv: readonly string[] = process.argv,
   dependencies: CliEntrypointDependencies = {},
 ): Promise<CliMainResult> {
+  // Here and not in `main`: a program embedding the CLI keeps its own
+  // process-wide networking.
+  installProxyDispatcher();
   const result = await main(argv, dependencies);
   process.exitCode = result.exitCode;
 

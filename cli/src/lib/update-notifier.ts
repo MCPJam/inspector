@@ -3,6 +3,7 @@ import { spawn as spawnChild, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { updateCheckEnv } from "./network-proxy.js";
 
 export const DEFAULT_UPDATE_PACKAGE_NAME = "@mcpjam/cli";
 export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1_000;
@@ -42,6 +43,7 @@ export interface CachePathOptions {
 export interface SpawnBackgroundFetchOptions {
   execPath?: string;
   spawn?: typeof spawnChild;
+  env?: NodeJS.ProcessEnv;
 }
 
 const UPDATE_CACHE_FILE = "update-check.json";
@@ -222,6 +224,10 @@ export function spawnBackgroundFetch(
   options: SpawnBackgroundFetchOptions = {},
 ): void {
   try {
+    // Behind a proxy this Node cannot route `https` through, the check is
+    // skipped rather than sent direct.
+    const env = updateCheckEnv(options.env ?? process.env);
+    if (env === null) return;
     const spawn = options.spawn ?? spawnChild;
     const child = spawn(
       options.execPath ?? process.execPath,
@@ -229,6 +235,7 @@ export function spawnBackgroundFetch(
       {
         detached: true,
         stdio: "ignore",
+        env,
       },
     ) as ChildProcess;
 

@@ -31,7 +31,8 @@ const allowedPorts = new Set(
     .filter(Boolean)
     .map(Number),
 );
-const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1"]);
+const LOOPBACK = new Set(["::1", "localhost", "::ffff:127.0.0.1"]);
+const isLoopback = (host) => LOOPBACK.has(host) || /^127\.\d+\.\d+\.\d+$/.test(host);
 
 function log(entry) {
   if (!logFile) return;
@@ -44,7 +45,7 @@ function logAttempt(entry, allowed) {
 }
 
 function isAllowed(host, port) {
-  return recordOnly || (LOOPBACK.has(host) && allowedPorts.has(Number(port)));
+  return recordOnly || (isLoopback(host) && allowedPorts.has(Number(port)));
 }
 
 /** The destination of a `socket.connect(...)` call, in any of its forms. */
@@ -85,7 +86,7 @@ net.Socket.prototype.connect = function guardedConnect(...args) {
 
 function guardLookup(original, promised) {
   return function guardedLookup(hostname, ...rest) {
-    const allowed = recordOnly || LOOPBACK.has(hostname);
+    const allowed = recordOnly || isLoopback(hostname);
     logAttempt({ kind: "dns", host: hostname }, allowed);
     if (allowed) return original.call(this, hostname, ...rest);
     const error = Object.assign(

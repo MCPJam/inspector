@@ -24,6 +24,7 @@
     "@modelcontextprotocol/server": "2.3.1",
     "commander": "^14.0.3",
     "posthog-node": "^5.54.1",
+    "undici": "^7.30.0",
     "ws": "^8.22.0",
     "zod": "^4.6.5"
   },
@@ -47,6 +48,6 @@
     "ci"
   ],
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   }
 }

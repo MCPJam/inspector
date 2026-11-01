@@ -1,0 +1,108 @@
+---
+title: "Self-hosted MCPJam"
+description: "Point the CLI and SDK at your organization's MCPJam server, lock it with an IT settings file, and work behind a corporate proxy"
+icon: "server"
+---
+
+The CLI and the SDK's Node entry points choose one MCPJam server by the same rules, send a saved login only to the server it was made against, and can be locked to your organization's server by a file IT installs.
+
+**Requirements:** `@mcpjam/cli` 6.1.0 or later on Node.js 22 or later, and `@mcpjam/sdk` 10.3.0 or later. Older releases ignore the settings file, so pin these versions where the lock matters.
+
+## Which server
+
+The first source that names a server wins. A locked IT settings file overrides everything below it.
+
+| # | Source | Example |
+|---|--------|---------|
+| 1 | IT settings file with `"lock": true` | `/etc/mcpjam/managed-settings.json` |
+| 2 | Command-line flag or SDK option | `--api-url https://mcpjam.acme.com/api/v1`, `baseUrl` |
+| 3 | Environment variable | `MCPJAM_API_URL=https://mcpjam.acme.com/api/v1`, or `MCPJAM_BASE_URL=https://mcpjam.acme.com` (the same server, older format) |
+| 4 | The saved login's server, only when the saved login is the credential in use | `mcpjam cloud login --api-url …` |
+| 5 | IT settings file with `"lock": false`: the organization default | the same file |
+| 6 | MCPJam Cloud | `https://app.mcpjam.com/api/v1` |
+
+Every command that can contact MCPJam (it accepts `--api-url`, or it uploads results) decides its server when it starts, before it contacts MCPJam, an MCP server or a model. If `MCPJAM_API_URL` and `MCPJAM_BASE_URL` name different servers, the command exits `2` before any request.
+
+Servers are compared after normalizing the scheme, host case, default port and trailing slash, so `https://MCPJam.acme.com:443/api/v1/` and `https://mcpjam.acme.com/api/v1` are the same server.
+
+## The IT settings file
+
+Install the file at the fixed path for the platform. No environment variable can point the CLI at a different file.
+
+| Platform | Path |
+|----------|------|
+| macOS | `/Library/Application Support/MCPJam/managed-settings.json` |
+| Linux | `/etc/mcpjam/managed-settings.json` |
+| Windows | `C:\Program Files\MCPJam\managed-settings.json` |
+
+```json
+{ "version": 1, "apiUrl": "https://mcpjam.acme.com/api/v1", "lock": true }
+```
+
+Make the file writable only by administrators, for example `root`-owned with mode `644` on macOS and Linux. Standard users cannot write to `C:\Program Files` by default.
+
+| File | What the CLI and SDK do |
+|------|-------------------------|
+| No file | Today's behavior |
+| `"lock": true` | `apiUrl` is the only MCPJam server. A flag, variable, SDK option or `compat --catalog-url` naming another server exits `2` (`DEPLOYMENT_LOCKED`) before any request. MCPJam telemetry, the SDK's error reporting and the update check are off. |
+| `"lock": false` | `apiUrl` is the organization default (row 5 above). Users can still choose another server, and telemetry follows their own settings. |
+| Invalid | Commands that can contact MCPJam exit `2` (`MANAGED_SETTINGS_INVALID`), naming the file and the problem. Nothing is sent to MCPJam or its telemetry. Other commands still run. |
+
+The file is invalid when it is not JSON, when `version`, `apiUrl` or `lock` is missing or has the wrong type, when `version` is not `1`, when it has any other key, when it cannot be read, or when `apiUrl` uses plain `http://` to a host other than a loopback address.
+
+## Saved logins and API keys
+
+| Situation | Result |
+|-----------|--------|
+| The saved login matches the chosen server | The login is used |
+| The saved login is for another server and no API key is given | Exit `3` (`LOGIN_DEPLOYMENT_MISMATCH`) before any request. Run `mcpjam cloud login` for the chosen server. |
+| The saved login is for another server and an API key is given (`--api-key` or `MCPJAM_API_KEY`) | The key goes to the chosen server; the saved login is never sent |
+| A saved login written before logins recorded their server | Treated as an MCPJam Cloud login |
+| `mcpjam cloud login` while the saved login is for another server | Signs in to the chosen server and replaces the saved login |
+| `mcpjam cloud logout` | Clears the local login; contacts no server, even with an invalid settings file |
+
+## What the lock covers
+
+| Destination | While locked |
+|-------------|--------------|
+| The locked MCPJam server (API, CLI login settings) | Allowed |
+| Any other MCPJam server address | Refused before any request |
+| A redirect (`3xx`) in answer to an MCPJam API request | Refused, locked or not (`BACKEND_REDIRECT_REFUSED`, exit `2`) |
+| URLs the locked server returns (model leases, artifact downloads, tunnel relay) | Allowed: your server chose them |
+| The sign-in provider your server's login settings name | Allowed |
+| Model providers, MCP servers under test, the local Inspector | Not governed |
+| MCPJam telemetry and the npm update check | Off |
+
+`--api-header` values, for an edge authenticator in front of your server, are sent on MCPJam API requests and the CLI login settings request only. They never go to the sign-in provider or follow a redirect.
+
+## Corporate proxy
+
+When `HTTPS_PROXY` or `HTTP_PROXY` is set (either case), every request the CLI process makes goes through the proxy and honors `NO_PROXY`. `localhost`, `127.0.0.1` and `[::1]` always connect directly, so local MCP servers and the local Inspector keep working.
+
+The update check runs in a separate short-lived process that uses Node.js's own proxy support. On Node.js older than 22.21, or 24.x older than 24.5, the check is skipped while a proxy is set rather than sent directly.
+
+For a TLS-inspecting proxy or a private CA, trust its root certificate the Node.js way: `NODE_EXTRA_CA_CERTS=/path/to/ca.pem`, or `NODE_OPTIONS=--use-system-ca` to use the system store. Set either in the environment the CLI starts in.
+
+As a library, the SDK never changes the process-wide proxy. Configure your own Node.js process, for example with `NODE_USE_ENV_PROXY=1`.
+
+## Check the setup
+
+`mcpjam cloud status` shows the server and where it came from, without calling the network:
+
+```json
+"deployment": {
+  "apiUrl": "https://mcpjam.acme.com/api/v1",
+  "source": "managed",
+  "description": "set by your organization (locked)",
+  "valid": true
+}
+```
+
+The audience line other cloud commands print to stderr names an organization's server the same way.
+
+## Limits
+
+- The lock prevents mistakes; it is not a security boundary. An older CLI, an edited install, a hand-built `PlatformApiClient`, or `@mcpjam/sdk/model-factory` imported on its own ignores it. Enforce the boundary with your firewall.
+- A server under a path prefix (`https://acme.com/mcpjam/api/v1`) is not supported.
+- These rules cover the CLI and the SDK's Node entry points, not the MCPJam web app.
+- `mcpjam xaa` and the OAuth debugging defaults still reference metadata documents on `app.mcpjam.com` and `www.mcpjam.com`.
