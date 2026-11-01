@@ -386,7 +386,7 @@ describe("ModelSelector", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("No matching models.")).toBeInTheDocument();
+      expect(screen.getByText('No models match "zzzznomatch".')).toBeInTheDocument();
     });
     expect(screen.queryByText("Anthropic")).not.toBeInTheDocument();
     expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();

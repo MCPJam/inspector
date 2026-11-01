@@ -162,6 +162,103 @@ function SelectionDot() {
   );
 }
 
+export type ServerPickerServerListProps = Pick<
+  ServerPickerPanelProps,
+  | "servers"
+  | "selectedServerId"
+  | "onSelectServer"
+  | "catalogKnown"
+  | "busy"
+  | "onAddServer"
+> & {
+  /**
+   * When Add server shows. The panel offers it only to leave an empty
+   * catalog; a surface with nowhere else to add one keeps it under the list.
+   */
+  addServer?: "when-empty" | "always";
+};
+
+/**
+ * The Servers tab on its own: one row per server with its status dot, and a
+ * Connect beside each one that can connect. Exported for surfaces that pick a
+ * single server and have no use for groups.
+ */
+export function ServerPickerServerList({
+  servers,
+  selectedServerId = null,
+  onSelectServer,
+  catalogKnown = true,
+  busy = false,
+  onAddServer,
+  addServer = "when-empty",
+}: ServerPickerServerListProps) {
+  const offerAddServer =
+    servers.length === 0 && catalogKnown && Boolean(onAddServer);
+  const addServerBelow =
+    addServer === "always" && servers.length > 0 && Boolean(onAddServer);
+  return (
+    <>
+      {servers.length === 0 ? (
+        <p className="px-2 py-1.5 text-xs italic text-muted-foreground">
+          {catalogKnown
+            ? "No servers in this project yet."
+            : "Loading servers…"}
+        </p>
+      ) : null}
+      {offerAddServer && onAddServer ? (
+        <AddServerButton onAddServer={onAddServer} busy={busy} />
+      ) : null}
+      {servers.map((server) => {
+        const selected = server.id === selectedServerId;
+        return (
+          <div key={server.id} className={ROW_WRAP}>
+            <button
+              type="button"
+              onClick={() => onSelectServer(server.id)}
+              disabled={busy}
+              aria-current={selected ? "true" : undefined}
+              className={cn(ROW, "min-w-0 flex-1 text-sm disabled:opacity-50")}
+            >
+              <span
+                role="img"
+                aria-label={server.status.label}
+                data-testid={`server-status-dot-${server.id}`}
+                className={cn(
+                  "size-2 shrink-0 rounded-full",
+                  server.status.indicatorClassName,
+                )}
+              />
+              <span className="min-w-0 flex-1 truncate">{server.name}</span>
+            </button>
+            {/* Sibling of the row, never nested inside it: a click here
+              connects and must not also commit a selection. */}
+            {server.onConnect ? (
+              <button
+                type="button"
+                // Named for the row: several rows can offer Connect, and a
+                // screen reader otherwise reads a list of identical buttons.
+                aria-label={`Connect ${server.name}`}
+                onClick={server.onConnect}
+                // `busy` freezes every other control in the panel, and this
+                // was the one that stayed live: a handshake could be started
+                // from a popover that was refusing all of its own actions.
+                disabled={busy}
+                className="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium text-primary hover:underline disabled:opacity-50 disabled:no-underline"
+              >
+                Connect
+              </button>
+            ) : null}
+            {selected ? <SelectionDot /> : null}
+          </div>
+        );
+      })}
+      {addServerBelow && onAddServer ? (
+        <AddServerButton onAddServer={onAddServer} busy={busy} />
+      ) : null}
+    </>
+  );
+}
+
 export function ServerPickerPanel({
   tab,
   onTabChange,
@@ -268,63 +365,14 @@ export function ServerPickerPanel({
       {notice}
 
       <TabsContent value="servers" className="space-y-0.5">
-        {servers.length === 0 ? (
-          <p className="px-2 py-1.5 text-xs italic text-muted-foreground">
-            {catalogKnown
-              ? "No servers in this project yet."
-              : "Loading servers…"}
-          </p>
-        ) : null}
-        {offerAddServer && onAddServer ? (
-          <AddServerButton onAddServer={onAddServer} busy={busy} />
-        ) : null}
-        {servers.map((server) => {
-          const selected = server.id === selectedServerId;
-          return (
-            <div key={server.id} className={ROW_WRAP}>
-              <button
-                type="button"
-                onClick={() => onSelectServer(server.id)}
-                disabled={busy}
-                aria-current={selected ? "true" : undefined}
-                className={cn(
-                  ROW,
-                  "min-w-0 flex-1 text-sm disabled:opacity-50",
-                )}
-              >
-                <span
-                  role="img"
-                  aria-label={server.status.label}
-                  data-testid={`server-status-dot-${server.id}`}
-                  className={cn(
-                    "size-2 shrink-0 rounded-full",
-                    server.status.indicatorClassName,
-                  )}
-                />
-                <span className="min-w-0 flex-1 truncate">{server.name}</span>
-              </button>
-              {/* Sibling of the row, never nested inside it: a click here
-                  connects and must not also commit a selection. */}
-              {server.onConnect ? (
-                <button
-                  type="button"
-                  // Named for the row: several rows can offer Connect, and a
-                  // screen reader otherwise reads a list of identical buttons.
-                  aria-label={`Connect ${server.name}`}
-                  onClick={server.onConnect}
-                  // `busy` freezes every other control in the panel, and this
-                  // was the one that stayed live: a handshake could be started
-                  // from a popover that was refusing all of its own actions.
-                  disabled={busy}
-                  className="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium text-primary hover:underline disabled:opacity-50 disabled:no-underline"
-                >
-                  Connect
-                </button>
-              ) : null}
-              {selected ? <SelectionDot /> : null}
-            </div>
-          );
-        })}
+        <ServerPickerServerList
+          servers={servers}
+          selectedServerId={selectedServerId}
+          onSelectServer={onSelectServer}
+          catalogKnown={catalogKnown}
+          busy={busy}
+          onAddServer={onAddServer}
+        />
       </TabsContent>
 
       <TabsContent value="groups" className="space-y-0.5">

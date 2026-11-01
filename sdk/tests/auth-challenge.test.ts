@@ -368,6 +368,52 @@ describe("extractAuthChallenge", () => {
     });
   });
 
+  it("ignores a challenge an MCP server put in a JSON-RPC error's data", () => {
+    // `data` on a JSON-RPC error is written by the server, so it could claim a
+    // 401 that was never sent.
+    const forged = Object.assign(new Error("MCP error -32001: denied"), {
+      code: -32001,
+      data: {
+        authChallenge: {
+          ...parseChallengeHeader(
+            'Bearer resource_metadata="https://evil.example/prm"'
+          ),
+          effectiveAuth: "discover",
+        },
+      },
+    });
+    expect(extractAuthChallenge(forged)).toBeUndefined();
+    expect(
+      extractAuthChallenge(new Error("tool failed", { cause: forged }))
+    ).toBeUndefined();
+  });
+
+  it("drops effectiveAuth and non-401 sources from HTTP error data", () => {
+    const http401 = Object.assign(new Error("HTTP 401"), {
+      code: "CLIENT_HTTP_AUTHENTICATION",
+      data: {
+        status: 401,
+        authChallenge: {
+          ...parseChallengeHeader('Bearer scope="a"'),
+          effectiveAuth: "discover",
+        },
+      },
+    });
+    const signal = extractAuthChallenge(http401);
+    expect(signal).toMatchObject({ source: "http_401", requiredScope: "a" });
+    expect(signal).not.toHaveProperty("effectiveAuth");
+
+    const metaInData = Object.assign(new Error("HTTP 500"), {
+      data: {
+        authChallenge: {
+          ...parseChallengeHeader('Bearer scope="a"'),
+          source: "tool_result_meta",
+        },
+      },
+    });
+    expect(extractAuthChallenge(metaInData)).toBeUndefined();
+  });
+
   it("maps an InsufficientScopeError, even a scope-less one", () => {
     const scoped = new InsufficientScopeError({
       requiredScope: "orders:write",

@@ -244,6 +244,7 @@ type RouteCase = [
 const WEB_LIST_ROUTES: RouteCase[] = [
   ["web tools/list", "web", "/api/web/tools/list", target],
   ["web resources/list", "web", "/api/web/resources/list", target],
+  ["web resources/templates/list", "web", "/api/web/resources/templates/list", target],
   ["web prompts/list", "web", "/api/web/prompts/list", target],
 ];
 
@@ -364,6 +365,25 @@ describe("hosted MCP routes (web and v1)", () => {
   beforeAll(async () => {
     routes = await loadRoutes(true);
   }, 60_000);
+
+  it("preserves an empty template cursor and the server's next cursor", async () => {
+    const seen: unknown[] = [];
+    upstream.current = async request => {
+      const message = await readMessage(request.clone());
+      if (message?.method !== "resources/templates/list") return mcpServer(request);
+      seen.push(message.params?.cursor);
+      return json({ jsonrpc: "2.0", id: message.id, result: {
+        resourceTemplates: [{ name: "record", uriTemplate: "test://records/{id}" }],
+        nextCursor: "next-page",
+      } });
+    };
+    const response = await post(routes.web, "/api/web/resources/templates/list", { ...target, cursor: "" });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.resourceTemplates).toEqual([{ name: "record", uriTemplate: "test://records/{id}" }]);
+    expect(body.nextCursor).toBe("next-page");
+    expect(seen).toEqual([""]);
+  });
 
   it.each(ROUTES)(
     "%s: reports a failing server by its status line",

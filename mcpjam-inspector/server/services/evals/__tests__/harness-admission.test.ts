@@ -392,7 +392,7 @@ describe("checkEvalHarnessStaticAdmission", () => {
 describe("attribution helpers", () => {
   it("reads only a REGISTERED harness id off a host config", () => {
     expect(harnessOfHostConfig({ harness: "claude-code" })).toBe("claude-code");
-    expect(harnessOfHostConfig({ harness: "not-a-harness" })).toBeUndefined();
+    expect(() => harnessOfHostConfig({ harness: "not-a-harness" })).toThrow("unsupported");
     expect(harnessOfHostConfig(null)).toBeUndefined();
   });
 
@@ -662,7 +662,7 @@ describe("checkEvalExecutionAdmission", () => {
     // still live for the much larger emulated population.
     expect(
       checkEvalExecutionAdmission({
-        hostConfig: { harness: "not-a-harness", builtInToolIds: ["bash"] },
+        hostConfig: { builtInToolIds: ["bash"] },
         pinnedComputerImageId: null,
       }).ok
     ).toBe(false);
@@ -896,4 +896,16 @@ describe("local harness admission", () => {
       }).ok).toBe(true);
     }
   });
+});
+
+
+it.each([
+  { id: "claude-code", model: "anthropic/claude-haiku-4.5", provider: "anthropic" },
+  { id: "codex", model: "openai/gpt-5", provider: "openai" },
+])("admits widget assertions with the $id agent loop and MCPJam client", ({ id, model, provider }) => {
+  expect(checkEvalHarnessAdmission({
+    hostConfig: { agentLoop: id, computer: { kind: "personal" } },
+    serverIds: ["s1"], cases: [{ title: "renders", model, provider }],
+    widgetAssertingCaseTitles: ["renders"],
+  })).toEqual({ ok: true, harness: id });
 });

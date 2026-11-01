@@ -9,7 +9,7 @@
  *
  * Every skill and every file is checked, not a sample.
  *
- * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
+ * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  */
 
 import assert from "node:assert/strict";
@@ -32,6 +32,7 @@ import {
   SKILLS_EXTENSION_CAPABILITY,
   SKILLS_EXTENSION_ID,
   SKILLS_LIST_CACHE_SCOPE,
+  SKILLS_LIST_TTL_MS,
   mimeTypeFor,
   registerSkillsSurface,
 } from "../src/lib/skills-surface.js";
@@ -77,7 +78,12 @@ test("uses a valid public cache scope for the static catalog", () => {
  */
 function capture() {
   const handlers = new Map<string, (params: any) => Promise<any>>();
-  const resources: { uri: string; mimeType?: string }[] = [];
+  const resources: {
+    name: string;
+    uri: string;
+    mimeType?: string;
+    description?: string;
+  }[] = [];
   const stub = {
     server: {
       setRequestHandler: (
@@ -89,11 +95,16 @@ function capture() {
       },
     },
     registerResource: (
-      _name: string,
+      name: string,
       uri: string,
-      config: { mimeType?: string }
+      config: { mimeType?: string; description?: string }
     ) => {
-      resources.push({ uri, mimeType: config.mimeType });
+      resources.push({
+        name,
+        uri,
+        mimeType: config.mimeType,
+        description: config.description,
+      });
     },
   };
   registerSkillsSurface(stub as never);
@@ -104,16 +115,48 @@ test("issues NO freshness licence, because `npx @latest` can change the bytes", 
   // The worker's hour-long ttlMs is safe because its catalog changes only on
   // deploy. Here the stdio command is the natural cache key and it does NOT
   // change across a release, so a cached manifest could be paired with newer
-  // bytes and refuse our own skill as `digest_mismatch`.
+  // bytes and refuse our own skill as `digest_mismatch`. The spec requires
+  // the field, and SEP-2549 defines 0 as "immediately stale".
+  assert.equal(SKILLS_LIST_TTL_MS, 0);
   const { handlers } = capture();
   const listed = await handlers.get("skills/list")!({});
-  assert.equal(
-    listed.ttlMs,
-    undefined,
-    "ttlMs must be absent for the CLI venue"
-  );
+  assert.equal(listed.ttlMs, 0, "ttlMs must be 0 for the CLI venue");
   assert.equal(listed.cacheScope, "public");
   assert.equal(listed.skills.length, 2);
+});
+
+test("skills/get carries the same cache attributes as the listing", async () => {
+  // Required on both results by the stable spec. The SDK only fills them on
+  // base-protocol methods, so a missing field here would reach the wire.
+  const { handlers } = capture();
+  const listed = await handlers.get("skills/list")!({});
+  for (const entry of listed.skills) {
+    const got = await handlers.get("skills/get")!({ uri: entry.uri });
+    assert.deepEqual(got.skill, entry);
+    assert.equal(got.ttlMs, 0);
+    assert.equal(got.cacheScope, "public");
+  }
+});
+
+test("names and describes each SKILL.md resource from its frontmatter", () => {
+  // The spec's SHOULD for skill resources: `name` from the frontmatter name,
+  // `description` from the frontmatter description. Supporting files are
+  // named by their path within the skill.
+  const { resources } = capture();
+  for (const entry of SKILLS_BUNDLE_ENTRIES) {
+    const skillMd = resources.find((resource) => resource.uri === entry.uri);
+    assert.ok(skillMd, `${entry.uri} must be registered`);
+    assert.equal(skillMd.name, entry.frontmatter.name);
+    assert.equal(skillMd.description, entry.frontmatter.description);
+    assert.equal(skillMd.mimeType, "text/markdown");
+    const root = entry.uri.slice(0, -"/SKILL.md".length);
+    for (const file of enumeratedResources(entry)!) {
+      if (file.uri === entry.uri) continue;
+      const row = resources.find((resource) => resource.uri === file.uri);
+      assert.ok(row, `${file.uri} must be registered`);
+      assert.equal(row.name, file.uri.slice(root.length + 1));
+    }
+  }
 });
 
 test("every manifest entry carries a digest and a byte size", () => {
