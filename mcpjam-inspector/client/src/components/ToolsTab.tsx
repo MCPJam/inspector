@@ -689,7 +689,7 @@ export function ToolsTab({
         trackTask({
           taskId: task.taskId,
           serverId: serverName,
-          wire: tasksWire,
+          wire: response.wire ?? (tasksWire === "none" ? "legacy" : tasksWire),
           createdAt: task.createdAt,
           toolName,
           primitiveType: "tool",
@@ -1168,6 +1168,7 @@ export function ToolsTab({
     <>
       <ThreePanelLayout
         id="tools"
+        mobileNavigation={{ selectionKey: selectedTool }}
         sidebar={sidebarContent}
         content={centerContent}
         sidebarVisible={isSidebarVisible}

@@ -28,7 +28,10 @@ import {
   getScenarioChatBackground,
   getScenarioHostFamily,
 } from "@/lib/scenario-client-style";
-import { type ReasoningDisplayMode } from "./thread/parts/reasoning-part";
+import {
+  LIVE_CHAT_REASONING_DISPLAY_MODE,
+  type ReasoningDisplayMode,
+} from "./thread/parts/reasoning-part";
 import { TranscriptThread } from "./thread/transcript-thread";
 import {
   getLastRenderableConversationMessage,
@@ -179,7 +182,7 @@ export function Thread({
   minimalMode = false,
   interactive = true,
   widgetPolicy = "live",
-  reasoningDisplayMode = "inline",
+  reasoningDisplayMode = LIVE_CHAT_REASONING_DISPLAY_MODE,
   mcpToolResultImageRendering,
   focusMessageId = null,
   highlightedMessageIds = [],
@@ -373,7 +376,7 @@ export function Thread({
       <div
         className={cn(
           "flex-1 min-h-0 min-w-0 pb-4",
-          isChatgptDark && "text-[#DFDFDF]"
+          isChatgptDark && "text-[#DFDFDF]",
         )}
         style={
           chatgptFamilyDarkBackground
@@ -406,7 +409,10 @@ export function Thread({
           tornDownWidgetIds={tornDownWidgetIds}
           displayMode={displayMode}
           onDisplayModeChange={onDisplayModeChange}
-          onToolApprovalResponse={isLoading ? undefined : onToolApprovalResponse}
+          onToolApprovalResponse={
+            isLoading ? undefined : onToolApprovalResponse
+          }
+          onForwardingToolApprovalResponse={onToolApprovalResponse}
           toolRenderOverrides={toolRenderOverrides}
           showInlineEdit={showInlineEdit}
           minimalMode={minimalMode}

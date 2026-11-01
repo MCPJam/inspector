@@ -28,6 +28,32 @@ import type { PersistReceiptData } from "@/shared/persist-receipt";
  * `conflict` — someone really did write to this session — and never on silence.
  */
 
+type ResumedVersion = { sessionId: string; version: number | null };
+
+/** Ignore closed sessions and stale reads, while allowing an explicit reset. */
+export function nextResumedVersion({
+  previous,
+  currentSessionId,
+  sessionId,
+  version,
+}: {
+  previous: ResumedVersion | null;
+  currentSessionId: string;
+  sessionId: string;
+  version: number | null;
+}): ResumedVersion | null {
+  if (sessionId !== currentSessionId) return previous;
+  if (
+    version !== null &&
+    previous?.sessionId === sessionId &&
+    previous.version !== null &&
+    version <= previous.version
+  ) {
+    return previous;
+  }
+  return { sessionId, version };
+}
+
 /** Mirrors the AI SDK chat status values both surfaces already pass around. */
 export type ResumedThreadStreamStatus =
   | "submitted"
@@ -230,7 +256,19 @@ export function useResumedThreadPersistence(
     if (isNowStreaming) return;
     if (status !== "ready") return;
 
-    const baseline = sendBaselineRef.current;
+    const capturedBaseline = sendBaselineRef.current;
+    // A client-tool continuation may have committed an earlier request in this
+    // turn. Only a version beyond that commit can prove the final reply saved.
+    const baseline = capturedBaseline && {
+      ...capturedBaseline,
+      version:
+        activeHistorySessionId === capturedBaseline.sessionId
+          ? Math.max(
+              capturedBaseline.version,
+              resumedVersion ?? capturedBaseline.version
+            )
+          : capturedBaseline.version,
+    };
     sendBaselineRef.current = null;
     if (!enabled) return;
 

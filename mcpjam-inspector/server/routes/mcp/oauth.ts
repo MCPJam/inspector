@@ -9,6 +9,7 @@ import {
   executeDebugOAuthProxy,
   fetchOAuthMetadata,
   OAuthProxyError,
+  tlsTrustFailure,
 } from "../../utils/oauth-proxy.js";
 import { reportRouteFailureForResponse } from "../../utils/route-error-report.js";
 
@@ -35,6 +36,17 @@ function safeHostname(url: string | undefined): string {
   } catch {
     return url;
   }
+}
+
+/**
+ * A certificate the server under test presented and Node.js would not accept,
+ * as a 502 that says so. MCPJam's own hosts keep the 500 path: the debugger
+ * fetches our client metadata document through this proxy, and a certificate
+ * failure there is ours (or a TLS-inspecting proxy in front of the user).
+ */
+function asTargetTlsFailure(error: unknown, host: string) {
+  if (host === "mcpjam.com" || host.endsWith(".mcpjam.com")) return undefined;
+  return tlsTrustFailure(error);
 }
 
 /**
@@ -65,8 +77,9 @@ oauth.post("/debug/proxy", async (c) => {
       ...(redirect === "manual" || redirect === "follow" ? { redirect } : {}),
     });
     return c.json(result);
-  } catch (error) {
+  } catch (caught) {
     const targetUrlHost = safeHostname(proxyUrl);
+    const error = asTargetTlsFailure(caught, targetUrlHost) ?? caught;
     if (error instanceof OAuthProxyError) {
       getRequestLogger(c, "routes.mcp.oauth").event("mcp.oauth.proxy.failed", {
         targetUrlHost,
@@ -138,8 +151,9 @@ oauth.post("/proxy", async (c) => {
     });
     c.header(OAUTH_UPSTREAM_URL_HEADER, result.finalUrl);
     return c.json(result);
-  } catch (error) {
+  } catch (caught) {
     const targetUrlHost = safeHostname(proxyUrl);
+    const error = asTargetTlsFailure(caught, targetUrlHost) ?? caught;
     if (error instanceof OAuthProxyError) {
       getRequestLogger(c, "routes.mcp.oauth").event("mcp.oauth.proxy.failed", {
         targetUrlHost,
@@ -216,8 +230,9 @@ oauth.get("/metadata", async (c) => {
 
     c.header(OAUTH_UPSTREAM_URL_HEADER, result.finalUrl);
     return c.json(result.metadata);
-  } catch (error) {
+  } catch (caught) {
     const targetUrlHost = safeHostname(metadataUrl);
+    const error = asTargetTlsFailure(caught, targetUrlHost) ?? caught;
     if (error instanceof OAuthProxyError) {
       getRequestLogger(c, "routes.mcp.oauth").event("mcp.oauth.proxy.failed", {
         targetUrlHost,

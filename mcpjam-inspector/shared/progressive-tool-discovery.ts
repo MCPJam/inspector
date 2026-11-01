@@ -478,20 +478,21 @@ export function searchToolCatalog(
  * Concise per-match summary the model sees inside search_mcp_tools results.
  * Deliberately omits the full schema so the cost of a search is low; the
  * model loads the heavy descriptor only via load_mcp_tools.
+ *
+ * The model gets ONE handle per tool: `name`, the exact key it loads and
+ * calls. The catalog `toolId` (`<serverId>::<tool>`) and the bare `serverId`
+ * stay out — a model shown both an id and a name has called the tool by the
+ * id, which no tool set answers to, and the turn died on it.
  */
 export interface ToolSearchMatch {
-  toolId: string;
   name: string;
-  serverId: string | null;
   description?: string;
   fields: { name: string; type: string; required: boolean }[];
 }
 
 export function formatToolSearchMatch(entry: ToolCatalogEntry): ToolSearchMatch {
   return {
-    toolId: entry.toolId,
     name: entry.modelName,
-    serverId: entry.serverId,
     description: entry.description,
     fields: entry.fields.map((f) => ({
       name: f.name,
@@ -638,12 +639,8 @@ export function gateToolsToActiveSubset<T extends Record<string, unknown>>(
         if (state && catalogNames.has(name)) {
           const activeNames = new Set(resolveActiveToolNames(plan, state));
           if (!activeNames.has(name)) {
-            const toolId = lookupToolIdByModelName(plan.catalog, name);
-            const hint = toolId
-              ? `Call load_mcp_tools with toolIds=[${JSON.stringify(toolId)}] first, then retry.`
-              : `Call search_mcp_tools to find the matching tool id, then load_mcp_tools to activate it.`;
             throw new Error(
-              `Tool '${name}' is not loaded in this step. ${hint}`,
+              `Tool '${name}' is not loaded in this step. Call load_mcp_tools with names=[${JSON.stringify(name)}] first, then retry.`,
             );
           }
         }
@@ -661,18 +658,18 @@ export function gateToolsToActiveSubset<T extends Record<string, unknown>>(
  * tool would regress to meta-tools only — the model's history references
  * a tool the orchestrator no longer considers "loaded".
  *
- * We read directly from the tool-call inputs (toolIds) rather than the
- * tool-result payloads. The input is the model's intent; using it means
- * tools the model attempted to load are restored even if a prior result
- * was an error or got scrubbed. Ids absent from the current catalog are
- * dropped silently (the server may have disconnected since).
+ * We read directly from the tool-call inputs (`names`, or the legacy
+ * `toolIds` older chats carry) rather than the tool-result payloads. The
+ * input is the model's intent; using it means tools the model attempted to
+ * load are restored even if a prior result was an error or got scrubbed.
+ * Entries absent from the current catalog are dropped silently (the server
+ * may have disconnected since).
  */
 export function hydrateDiscoveryStateFromHistory(
   state: ToolDiscoveryState,
   messages: ReadonlyArray<unknown>,
   catalog: ReadonlyArray<ToolCatalogEntry>,
 ): number {
-  const knownIds = new Set(catalog.map((entry) => entry.toolId));
   let added = 0;
   for (const msg of messages) {
     if (!msg || typeof msg !== "object") continue;
@@ -689,11 +686,9 @@ export function hydrateDiscoveryStateFromHistory(
       const input = (part as { input?: unknown; args?: unknown }).input
         ?? (part as { args?: unknown }).args;
       if (!input || typeof input !== "object") continue;
-      const ids = (input as { toolIds?: unknown }).toolIds;
-      if (!Array.isArray(ids)) continue;
-      for (const id of ids) {
-        if (typeof id !== "string") continue;
-        if (!knownIds.has(id)) continue;
+      for (const value of readLoadRequest(input)) {
+        const id = resolveLoadTarget(catalog, value);
+        if (!id) continue;
         if (state.loadedToolIds.has(id)) continue;
         state.loadedToolIds.add(id);
         added += 1;
@@ -701,6 +696,42 @@ export function hydrateDiscoveryStateFromHistory(
     }
   }
   return added;
+}
+
+/**
+ * The tools a `load_mcp_tools` input asks for: `names`, plus the legacy
+ * `toolIds` key that chats from before the name-only change still carry —
+ * and that a model may copy from that history.
+ */
+export function readLoadRequest(input: unknown): string[] {
+  if (!input || typeof input !== "object") return [];
+  const requested: string[] = [];
+  for (const key of ["names", "toolIds"] as const) {
+    const values = (input as Record<string, unknown>)[key];
+    if (!Array.isArray(values)) continue;
+    for (const value of values) {
+      if (typeof value === "string") requested.push(value);
+    }
+  }
+  return requested;
+}
+
+/**
+ * Catalog id for one requested tool: its model-facing name, or — for a legacy
+ * request — its exact catalog id. Never a fuzzy match: loading a tool the
+ * model did not name would expose something it did not ask for.
+ */
+export function resolveLoadTarget(
+  catalog: ReadonlyArray<ToolCatalogEntry>,
+  value: string,
+): string | undefined {
+  for (const entry of catalog) {
+    if (entry.modelName === value) return entry.toolId;
+  }
+  for (const entry of catalog) {
+    if (entry.toolId === value) return entry.toolId;
+  }
+  return undefined;
 }
 
 /**
