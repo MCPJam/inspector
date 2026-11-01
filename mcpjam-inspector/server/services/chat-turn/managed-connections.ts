@@ -1,3 +1,4 @@
+import { setManagerResourceHostConfig } from "../../utils/mcp-connections";
 import { TurnResources } from "./resources.js";
 import {
   createHarnessInputHost,
@@ -618,6 +619,7 @@ export async function prepareManagedConnections(args: {
       ...(executionScope ? { executionScope } : {}),
     },
   );
+  if (typeof hostRuntimeConfig?.hostConfigId === "string" && typeof hostRuntimeConfig.hostId === "string") setManagerResourceHostConfig(manager, hostRuntimeConfig.hostConfigId, hostRuntimeConfig.hostId);
   connectedManager = manager;
   taskCreatedBridge?.bindOwner(hostedBody.projectId, authenticatedUserId);
   const pendingApproval = pendingStdioCommandApproval(refusedServers);

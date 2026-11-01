@@ -1,3 +1,4 @@
+import { getManagerResourceSnapshot, setManagerResourceSnapshots } from "../../../utils/mcp-connections";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 const m = vi.hoisted(() => ({ order: [] as string[] }));
@@ -75,15 +76,17 @@ describe("managed connection ownership", () => {
     });
     const app = new Hono();
     app.post("/", async (c) => {
-      await prepareManagedConnections({
+      const prepared = await prepareManagedConnections({
         c,
         rawBody: {},
         bearerToken: "bearer",
         rpcCollector: createHostedRpcLogCollector({}),
         resources,
-        setup,
+        setup: {...setup, hostRuntimeConfig: {hostConfigId: "saved-host-config", hostId: "host", hostStyle: "claude", modelId: "anthropic/claude-haiku-4.5", systemPrompt: "", temperature: 0, requireToolApproval: false}},
         onOAuthServerUrls: () => {},
       });
+      setManagerResourceSnapshots(prepared.manager, new Map([["server-1", {serverUpdatedAt: 1, credentialAuthorizedAt: null}]]));
+      expect(getManagerResourceSnapshot(prepared.manager, "server-1")?.hostConfigId).toBe("saved-host-config");
       return c.json({});
     });
     expect((await app.request("/", { method: "POST" })).status).toBe(200);

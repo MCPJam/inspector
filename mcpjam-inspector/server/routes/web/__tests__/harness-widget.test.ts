@@ -1,3 +1,5 @@
+import { historyProvenanceContextFor, signToolResult, signAppResourceSource } from "../../../utils/history-provenance";
+import { withRetainedResourceSource } from "@/shared/retained-app-resources";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { harnessWidgets } from "../harness-widget.js";
 import { ExecutionControlError } from "../../../utils/harness/forwarding/execution-control.js";
@@ -5,15 +7,20 @@ import { ExecutionControlError } from "../../../utils/harness/forwarding/executi
 const state = vi.hoisted(() => ({
   userId: "user",
   scope: vi.fn(),
+  retained: vi.fn(),
   manager: vi.fn(),
   gate: vi.fn(),
   dispatch: vi.fn(),
   connect: vi.fn(),
+  read: vi.fn(),
+  resources: vi.fn(),
+  templates: vi.fn(),
   collect: vi.fn(),
   inputGate: vi.fn(),
   ask: vi.fn(),
   tools: [{ name: "write", _meta: { ui: { visibility: ["app"] } } }],
 }));
+vi.mock("../../../utils/harness/forwarding/retained-resources", async original => ({...await original<typeof import("../../../utils/harness/forwarding/retained-resources")>(), readRetainedResourceScope: state.retained, retainedProfileFingerprint: () => "legacy-profile"}));
 vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerForRequest: async () => "user-token",
 }));
@@ -29,7 +36,8 @@ vi.mock(
     createExecutionControl: () => ({ widgetScope: state.scope }),
   }),
 );
-vi.mock("../auth.js", () => ({
+vi.mock("../auth.js", async original => ({
+  ...await original<typeof import("../auth.js")>(),
   createAuthorizedManager: state.manager,
   callerContextFromHono: () => ({}),
 }));
@@ -78,6 +86,10 @@ beforeEach(() => {
       connectToServer: state.connect,
       listTools: async () => ({ tools: state.tools }),
       executeTool: state.dispatch,
+      readResource: state.read,
+      listResources: state.resources,
+      listResourceTemplates: state.templates,
+      getServerConfig: () => ({ url: "https://fixture.example/mcp" }),
       disconnectAllServers: async () => {},
       setMrtrInputCollector: state.collect,
     },
@@ -236,4 +248,107 @@ it("cancels the active gate when its response stream is abandoned", async () => 
   await response.body?.cancel();
   expect(gateSignal?.aborted).toBe(true);
   expect(state.dispatch).not.toHaveBeenCalled();
+});
+
+
+const boundResource = (operation: object) => harnessWidgets.request("/widget-resources", {
+  method: "POST", headers: { "content-type": "application/json" },
+  body: JSON.stringify({ context: { owner: { kind: "chat", userId: "user", serverId: "server", connectionId: "original-account", harnessSessionId: "lane" }, parentExecutionId: "parent" }, operation }),
+});
+it("uses the original account and trusted host for resource reads", async () => {
+  const scope = await state.scope(); state.scope.mockClear();
+  state.scope.mockResolvedValue({ ...scope, hostConfig: { hostStyle: "claude", connectionDefaults: { requestTimeout: 4321 } } });
+  state.read.mockResolvedValue({ contents: [{ uri: "test://record", text: "original account" }] });
+  const response = await boundResource({ method: "resources/read", uri: "test://record", _meta: { progressToken: "progress" } });
+  expect(response.status).toBe(200);
+  expect(state.manager.mock.calls[0][7].connectionIds).toEqual({ server: "original-account" });
+  expect(state.manager.mock.calls[0][4]).toBe(4321);
+  expect(state.read).toHaveBeenCalledWith("server", { uri: "test://record", _meta: { progressToken: "progress" } }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  expect(state.scope).toHaveBeenCalledTimes(3);
+});
+it("rechecks authority after connecting and before a resource call", async () => {
+  const scope = await state.scope(); state.scope.mockReset();
+  state.scope.mockResolvedValueOnce({ ...scope, hostConfig: { hostStyle: "claude" } }).mockRejectedValueOnce(new ExecutionControlError("revoked"));
+  const response = await boundResource({ method: "resources/read", uri: "test://record" });
+  expect(response.status).toBe(409);
+  expect(state.read).not.toHaveBeenCalled();
+});
+it("does not return resource data after authority changes during a read", async () => {
+  const scope = await state.scope(); state.scope.mockReset();
+  state.scope.mockResolvedValueOnce({ ...scope, hostConfig: { hostStyle: "claude" } }).mockResolvedValueOnce(scope).mockRejectedValueOnce(new ExecutionControlError("revoked"));
+  state.read.mockResolvedValue({ contents: [{ uri: "test://record", text: "private resource" }] });
+  const response = await boundResource({ method: "resources/read", uri: "test://record" });
+  expect(response.status).toBe(409);
+  expect(await response.text()).not.toContain("private resource");
+  expect(state.read).toHaveBeenCalledOnce();
+});
+it("loads initial widget HTML using the same bound resource route", async () => {
+  const scope = await state.scope(); state.scope.mockClear();
+  state.scope.mockResolvedValue({ ...scope, hostConfig: { hostStyle: "claude", mcpProfile: { apps: { mcpAppsOverrides: { serverResources: false } } } } });
+  state.read.mockResolvedValue({ contents: [{ uri: "ui://app", mimeType: "text/html;profile=mcp-app", text: "<p>Original App</p>", _meta: { ui: { csp: { connectDomains: [] } } } }] });
+  state.resources.mockResolvedValue({ resources: [] });
+  const response = await boundResource({ method: "widget/content", request: { serverId: "server", resourceUri: "ui://app", toolId: "call", toolName: "app", toolInput: {}, injectOpenAiCompat: true, cspMode: "permissive", template: "ui://app" } });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ html: expect.stringContaining("Original App"), mimeTypeValid: true, injectedOpenAiCompat: true, permissive: true });
+  expect(state.manager.mock.calls[0][7].connectionIds).toEqual({ server: "original-account" });
+});
+
+function retainedProof() {
+  vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+  vi.stubEnv("HISTORY_PROVENANCE_SECRET", "retained-resource-unit-test-secret");
+  const source = {version: 1 as const, profile: "legacy-profile", toolCallId: "call", owner: {kind: "chat" as const, userId: "user", serverId: "server", connectionId: "original-account", harnessSessionId: "lane"}, digest: "original-digest", projectId: "project", chatSessionId: "chat"};
+  state.retained.mockResolvedValue({binding: source, organizationId: "internal", expiresAt: Date.now() + 60000, hostConfig: {hostStyle: "claude"}});
+  const claim = {toolCallId: "call", toolName: "qa_read", input: {}, output: withRetainedResourceSource({content: [{type: "text", text: "App"}]}, {...source, attestation: signAppResourceSource(historyProvenanceContextFor("project", "chat")!, source)!})};
+  return {claim, signature: signToolResult(historyProvenanceContextFor("project", "chat")!, claim)!};
+}
+const retainedResource = (context: object) => harnessWidgets.request("/widget-resources", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({context, operation: {method: "resources/read", uri: "test://account"}})});
+it("verifies the bridge presentation proof and uses only the original connection", async () => {
+  const response = await retainedResource(retainedProof());
+  expect(response.status).toBe(200);
+  expect(state.manager.mock.calls[0][7]).toMatchObject({connectionIds: {server: "original-account"}, onlySelectedConnections: true});
+  expect(state.retained).toHaveBeenCalledTimes(3);
+  expect(state.retained.mock.calls.every(([, digest]) => digest === "original-digest")).toBe(true);
+});
+it.each(["signature", "call", "input", "output", "user", "chat"])("refuses changed bridge %s without dispatch", async change => {
+  const proof = retainedProof();
+  if (change === "signature") proof.signature = "forged";
+  if (change === "call") proof.claim.toolCallId = "another";
+  if (change === "input") proof.claim.input = {changed: true};
+  if (change === "output") proof.claim.output = {content: [], changed: true};
+  if (change === "user") state.userId = "another-user";
+  if (change === "chat") state.retained.mockResolvedValue({...(await state.retained()), binding: {...(await state.retained()).binding, chatSessionId: "another-chat"}});
+  const response = await retainedResource(proof);
+  expect(response.status).toBeGreaterThanOrEqual(400);
+  expect(state.manager).not.toHaveBeenCalled();
+  expect(state.read).not.toHaveBeenCalled();
+});
+it("discards a bridge read if its original authority changes during the request", async () => {
+  const proof = retainedProof();
+  const scope = await state.retained(); state.retained.mockReset();
+  state.retained.mockResolvedValueOnce(scope).mockResolvedValueOnce(scope).mockRejectedValueOnce(new ExecutionControlError("scope_mismatch"));
+  const response = await retainedResource(proof);
+  expect(response.status).toBe(409);
+  expect(state.read).toHaveBeenCalledTimes(1);
+});
+it("does not treat a signed server result as host authority to invent an account source", async () => {
+  const proof = retainedProof();
+  const envelope = proof.claim.output;
+  const parsed = (await import("@/shared/retained-app-resources")).readRetainedResourceSource(envelope);
+  if (!parsed) throw Error("Missing source fixture");
+  proof.claim.output = withRetainedResourceSource(envelope, {...parsed, owner: {...parsed.owner, connectionId: "another-account"}});
+  proof.signature = signToolResult(historyProvenanceContextFor("project", "chat")!, proof.claim)!;
+  const response = await retainedResource(proof);
+  expect(response.status).toBe(409);
+  expect(state.retained).not.toHaveBeenCalled();
+  expect(state.manager).not.toHaveBeenCalled();
+});
+it("reads through the selected non-default connection's actual manager key", async () => {
+  const scope = await state.scope(); state.scope.mockClear();
+  state.scope.mockResolvedValue({...scope, hostConfig: {hostStyle: "claude"}});
+  const authorized = await state.manager(); state.manager.mockClear();
+  state.manager.mockResolvedValue({...authorized, authorizedServerConfigs: {alternate: {url: "https://fixture.example/mcp"}}, connectionsByServerId: {server: [{serverId: "server", connectionId: "original-account", key: "alternate", label: "B", isDefault: false}]}});
+  const response = await boundResource({method: "resources/read", uri: "test://account"});
+  expect(response.status).toBe(200);
+  expect(state.connect.mock.calls[0][0]).toBe("alternate");
+  expect(state.read.mock.calls[0][0]).toBe("alternate");
 });

@@ -1,3 +1,4 @@
+import { retainedResourceProofFor } from "@/shared/retained-app-resources";
 import { isForwardingApprovalId } from "@/shared/forwarding-approval";
 import { ContextAttachmentChip } from "../chat-input/attachments/context-attachment-chip";
 import {
@@ -817,6 +818,8 @@ function LivePartSwitch({
                   },
                 };
               })()}
+              widgetContext={widgetContext}
+              resourceProof={retainedResourceProofFor({toolCallId: toolInfo.toolCallId, toolName: toolInfo.toolName, input: toolInfo.input, output: originalResult}, ("resultProviderMetadata" in toolPart ? toolPart.resultProviderMetadata : undefined) ?? toolPart.callProviderMetadata)}
               toolState={toolInfo.toolState}
               toolInput={effectiveInput}
               toolOutput={effectiveOutput}
