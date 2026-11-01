@@ -16,7 +16,22 @@ import { getConnInfo } from "@hono/node-server/conninfo";
 //   comes straight from the local browser. Hosted deployments behind a real
 //   reverse proxy never reach this fallback — one of the header checks above
 //   always returns first.
+//
+// With MCPJAM_TRUSTED_CLIENT_IP_HEADER set, the address comes from that header
+// alone. The ingress that overwrites it passes the other three through as the
+// client sent them, so a cf-connecting-ip there is a value the caller picked.
+// A request carrying the edge secret still gets Cloudflare's address. One
+// without the named header did not come through that ingress, and gets its
+// TCP peer, the one address it cannot write.
 export function getClientIp(c: Context): string | null {
+  const trustedHeader = resolveTrustedClientIpHeader();
+  if (trustedHeader) {
+    const edgeIp = edgeAuthenticated(c)
+      ? c.req.header("cf-connecting-ip")?.trim()
+      : undefined;
+    return edgeIp || trustedHeaderIp(c, trustedHeader) || peerAddress(c);
+  }
+
   const cfConnectingIp = c.req.header("cf-connecting-ip")?.trim();
   if (cfConnectingIp) return cfConnectingIp;
 
@@ -26,18 +41,7 @@ export function getClientIp(c: Context): string | null {
   const forwardedFor = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
   if (forwardedFor) return forwardedFor;
 
-  // Node-adapter socket fallback. Wrapped in try/catch because hand-rolled
-  // test mocks don't expose the `c.env.incoming.socket` shape `getConnInfo`
-  // reads from — falling through to `null` preserves the existing contract
-  // for those callers.
-  try {
-    const address = getConnInfo(c).remote.address?.trim();
-    if (address) return address;
-  } catch {
-    // Not running under @hono/node-server (e.g., unit-test mock context).
-  }
-
-  return null;
+  return peerAddress(c);
 }
 
 // The header an operator's ingress OVERWRITES on the way in. Not a header it
@@ -45,6 +49,42 @@ export function getClientIp(c: Context): string | null {
 // naming it only attests the address if this deployment's proxy rewrites the
 // whole value.
 const TRUSTED_CLIENT_IP_HEADER_ENV = "MCPJAM_TRUSTED_CLIENT_IP_HEADER";
+
+// An HTTP field name (RFC 9110 `token`), lowercased.
+const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9a-z-]+$/;
+
+let checkedTrustedHeader:
+  | { raw: string | undefined; header: string | null }
+  | undefined;
+
+// The header MCPJAM_TRUSTED_CLIENT_IP_HEADER names, lowercased, or null when it
+// is unset or blank. Anything that is not one header name throws. Both server
+// entry points call this at startup, so a bad value fails the deploy instead
+// of every request that asks for an address. Each value is checked once.
+export function resolveTrustedClientIpHeader(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const raw = env[TRUSTED_CLIENT_IP_HEADER_ENV];
+  if (checkedTrustedHeader && checkedTrustedHeader.raw === raw) {
+    return checkedTrustedHeader.header;
+  }
+  const header = raw?.trim().toLowerCase() || null;
+  if (header && !HEADER_NAME.test(header)) {
+    throw new Error(
+      "MCPJAM_TRUSTED_CLIENT_IP_HEADER must be one HTTP header name such as " +
+        `x-real-ip (got ${JSON.stringify(raw)})`,
+    );
+  }
+  checkedTrustedHeader = { raw, header };
+  return header;
+}
+
+// The address in the named header. Of a list, the last entry: an ingress that
+// appends puts its own observation after whatever the client sent, and one
+// that overwrites leaves a single entry.
+function trustedHeaderIp(c: Context, header: string): string | null {
+  return c.req.header(header)?.split(",").at(-1)?.trim() || null;
+}
 
 // The address this deployment can VOUCH for, as opposed to the one the request
 // claims. `getClientIp` answers "who does this say it is", which is the right
@@ -57,11 +97,14 @@ const TRUSTED_CLIENT_IP_HEADER_ENV = "MCPJAM_TRUSTED_CLIENT_IP_HEADER";
 // Attested here means "an ingress we trust wrote it, and a client's own copy
 // could not have survived":
 // - Once an edge secret is configured, cf-connecting-ip requires a matching
-//   secret. Current and previous secrets allow rotation. Unknown callers
-//   cannot select their own bucket.
-// - Without an edge secret, preserve the existing Cloudflare/trusted proxy
-//   behavior. The header named in MCPJAM_TRUSTED_CLIENT_IP_HEADER is for
-//   a deployment that terminates somewhere other than Cloudflare.
+//   secret, and no other header is read: the edge is that deployment's
+//   ingress, and a request without the secret did not come through it.
+//   Current and previous secrets allow rotation. Unknown callers cannot
+//   select their own bucket.
+// - Without one, the header named in MCPJAM_TRUSTED_CLIENT_IP_HEADER, for a
+//   deployment that terminates somewhere other than Cloudflare. Only that
+//   header: its ingress passes a client's own cf-connecting-ip through.
+// - With neither, preserve the existing Cloudflare/trusted proxy behavior.
 // - The TCP peer, but ONLY with no forwarding header in sight. Behind a proxy
 //   the peer IS the proxy, so trusting it there would put every caller in one
 //   bucket while claiming to have placed them individually.
@@ -80,31 +123,53 @@ export function getSpendClientIp(c: Context): string | null {
 
 export function getAttestedClientIp(c: Context): string | null {
   const cfConnectingIp = c.req.header("cf-connecting-ip")?.trim();
-  const presented = c.req.header("x-mcpjam-edge-secret");
-  const attested = !!presented && [process.env.MCPJAM_EDGE_SECRET, process.env.MCPJAM_EDGE_SECRET_PREVIOUS].some(secret => {
-    if (!secret) return false;
-    const a = Buffer.from(presented), b = Buffer.from(secret);
-    return a.length === b.length && timingSafeEqual(a, b);
-  });
-  if (cfConnectingIp && (attested || !edgeAttestationConfigured())) return cfConnectingIp;
-  if (edgeAttestationConfigured()) return null;
+  if (edgeAttestationConfigured()) {
+    return cfConnectingIp && edgeAuthenticated(c) ? cfConnectingIp : null;
+  }
 
-  const trustedHeader =
-    process.env[TRUSTED_CLIENT_IP_HEADER_ENV]?.trim().toLowerCase();
+  const trustedHeader = resolveTrustedClientIpHeader();
   if (trustedHeader) {
-    const attested = c.req.header(trustedHeader)?.split(",")[0]?.trim();
+    const attested = trustedHeaderIp(c, trustedHeader);
     if (attested) return attested;
+    // Not read, but a cf-connecting-ip still says a proxy may be the peer.
+    if (c.req.header("cf-connecting-ip")) return null;
+  } else if (cfConnectingIp) {
+    return cfConnectingIp;
   }
 
   if (c.req.header("x-real-ip") || c.req.header("x-forwarded-for")) return null;
 
+  return peerAddress(c);
+}
+
+// Whether the request carries the current or previous edge secret. Never true
+// when neither is configured.
+function edgeAuthenticated(c: Context): boolean {
+  const presented = c.req.header("x-mcpjam-edge-secret");
+  if (!presented) return false;
+  const secrets = [
+    process.env.MCPJAM_EDGE_SECRET,
+    process.env.MCPJAM_EDGE_SECRET_PREVIOUS,
+  ];
+  return secrets.some((secret) => {
+    if (!secret) return false;
+    const a = Buffer.from(presented);
+    const b = Buffer.from(secret);
+    return a.length === b.length && timingSafeEqual(a, b);
+  });
+}
+
+// Node-adapter socket fallback. Wrapped in try/catch because hand-rolled
+// test mocks don't expose the `c.env.incoming.socket` shape `getConnInfo`
+// reads from — falling through to `null` preserves the existing contract
+// for those callers.
+function peerAddress(c: Context): string | null {
   try {
     const address = getConnInfo(c).remote.address?.trim();
     if (address) return address;
   } catch {
     // Not running under @hono/node-server (e.g., unit-test mock context).
   }
-
   return null;
 }
 

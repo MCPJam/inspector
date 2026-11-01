@@ -44,6 +44,7 @@ import { registerSyntheticWebMcpPageRoutes } from "./routes/synthetic-webmcp-pag
 import { createXaaWebRouter } from "./routes/web/xaa.js";
 import workosAuthkitRoutes from "./routes/workos-authkit.js";
 import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
+import { resolveTrustedClientIpHeader } from "./utils/client-ip.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
@@ -456,6 +457,10 @@ export async function createHonoApp() {
   // value which would otherwise send the admin API key to another host. Unset
   // (every deployment) this is a no-op.
   resolveWorkosApiBaseUrl(process.env);
+  // Same for `MCPJAM_TRUSTED_CLIENT_IP_HEADER`: a value that is not one header
+  // name fails here rather than in every request that asks for a client
+  // address. Unset, this is a no-op.
+  resolveTrustedClientIpHeader(process.env);
 
   // Mounted in every runtime, hosted included — see the mirror of this mount
   // in server/index.ts for why the gate had to go.

@@ -416,6 +416,29 @@ describe("posthog relay proxy", () => {
     expect(headers.get("x-real-ip")).toBeNull();
   });
 
+  it("never forwards the header MCPJAM_TRUSTED_CLIENT_IP_HEADER names", async () => {
+    vi.stubEnv("MCPJAM_TRUSTED_CLIENT_IP_HEADER", "x-envoy-external-address");
+    try {
+      const app = createTestApp();
+      vi.mocked(fetch).mockResolvedValueOnce(upstreamResponse());
+
+      await app.request("http://localhost:6274/relay/i/v0/e/", {
+        method: "POST",
+        body: eventBatch(),
+        headers: {
+          "X-Envoy-External-Address": "1.2.3.4",
+          "User-Agent": "test-agent",
+        },
+      });
+
+      const headers = new Headers(mockedFetchInit().headers);
+      expect(headers.get("x-envoy-external-address")).toBeNull();
+      expect(headers.get("user-agent")).toBe("test-agent");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("scrubs encoding/cookie/CORS headers from the upstream response and passes status through", async () => {
     const app = createTestApp();
     vi.mocked(fetch).mockResolvedValueOnce(
