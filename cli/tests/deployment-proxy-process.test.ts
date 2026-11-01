@@ -74,7 +74,7 @@ before(async () => {
   origin = createHttpsServer(
     { key: readFileSync(path.join(pki, "site.key")), cert: readFileSync(path.join(pki, "site.pem")) },
     (request, response) => {
-      if (request.headers.host?.startsWith("registry.npmjs.org")) {
+      if (request.headers.host?.replace(/:\d+$/, "") === "registry.npmjs.org") {
         return json(response, 200, { version: "99.0.0" });
       }
       if (request.url === "/api/v1/me") return json(response, 200, ME);
