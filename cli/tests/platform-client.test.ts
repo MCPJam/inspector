@@ -160,10 +160,8 @@ test("a saved login is never sent to another --api-url", async () => {
       error instanceof CliError &&
       error.code === "LOGIN_DEPLOYMENT_MISMATCH" &&
       error.exitCode === 3 &&
-      error.message.includes("https://staging.mcpjam.com/api/v1") &&
-      error.message.includes(
-        "mcpjam cloud login --api-url https://other.example.com/api/v1",
-      ),
+      error.message ===
+        "Your saved login is for https://staging.mcpjam.com/api/v1; this command targets https://other.example.com/api/v1. Run `mcpjam cloud login --api-url https://other.example.com/api/v1` to sign in there, or use an API key for that server.",
   );
   assert.deepEqual(requested, []);
 });
