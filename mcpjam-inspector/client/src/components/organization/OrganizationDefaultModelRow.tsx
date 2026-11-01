@@ -66,6 +66,7 @@ function relativeTime(timestamp: number): string {
 /** One kind's row: its saved (or suggested) model, its actions, its editor. */
 export function ModelRow({
   kind,
+  text,
   entry,
   suggestion,
   providers,
@@ -75,6 +76,8 @@ export function ModelRow({
   actions,
 }: {
   kind: OrgAiModelKind;
+  /** Its description and unset text (`orgAiModelRowText`). */
+  text: { runs: string; whenUnset?: string };
   entry: OrgAiModelEntry | null;
   suggestion: ModelSelection | undefined;
   providers: OrgModelProvider[] | undefined;
@@ -84,7 +87,8 @@ export function ModelRow({
   editor: { eligibleProviders: EligibleProvider[] | undefined } | null;
   actions: DefaultModelRowActions;
 }) {
-  const { label, runs } = ORG_AI_MODEL_PRESENTATION[kind];
+  const { label } = ORG_AI_MODEL_PRESENTATION[kind];
+  const { runs } = text;
   const selection = entry?.selection;
 
   return (
@@ -114,6 +118,7 @@ export function ModelRow({
 
       <SavedModel
         kind={kind}
+        whenUnset={text.whenUnset}
         entry={entry}
         suggestion={suggestion}
         providers={providers}
@@ -216,6 +221,7 @@ function ModelRowButtons({
 /** The saved model and its last test, or "Not set" with any suggestion. */
 function SavedModel({
   kind,
+  whenUnset,
   entry,
   suggestion,
   providers,
@@ -224,6 +230,7 @@ function SavedModel({
   onUseSuggestion,
 }: {
   kind: OrgAiModelKind;
+  whenUnset: string | undefined;
   entry: OrgAiModelEntry | null;
   suggestion: ModelSelection | undefined;
   providers: OrgModelProvider[] | undefined;
@@ -260,7 +267,7 @@ function SavedModel({
       ) : (
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-muted-foreground">
-            {ORG_AI_MODEL_PRESENTATION[kind].whenUnset ?? "Not set"}
+            {whenUnset ?? "Not set"}
             {suggestion ? (
               <>
                 {" · Suggested model "}

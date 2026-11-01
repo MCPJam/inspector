@@ -432,6 +432,24 @@ export const ORG_AI_MODEL_PRESENTATION: Record<
   },
 };
 
+/**
+ * A row's description and unset text, given the rest of the card. Without a
+ * decision kind the default model still answers typed decisions, so its row
+ * says so; without a default model an unset decision model runs nothing.
+ */
+export function orgAiModelRowText(
+  kind: OrgAiModelKind,
+  card: { kinds: readonly OrgAiModelKind[]; defaultSet: boolean },
+): { runs: string; whenUnset?: string } {
+  const { runs, whenUnset } = ORG_AI_MODEL_PRESENTATION[kind];
+  if (kind === "default" && !card.kinds.includes("decision"))
+    return {
+      runs: "Insights and findings, generation, typed decisions and simulated users",
+    };
+  if (kind === "decision" && !card.defaultSet) return { runs };
+  return whenUnset ? { runs, whenUnset } : { runs };
+}
+
 /** "default AI model", "search model", "embedding model", … */
 export function orgAiModelNoun(kind: OrgAiModelKind): string {
   return ORG_AI_MODEL_PRESENTATION[kind]?.noun ?? `${kind} model`;

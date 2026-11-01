@@ -143,9 +143,10 @@ describe("OrganizationDefaultModelCard", () => {
     ).toBeInTheDocument();
     const row = screen.getByTestId("org-ai-model-default");
     expect(within(row).getByText("Default AI model")).toBeInTheDocument();
+    // No decision kind here, so the default model still answers typed decisions.
     expect(
       within(row).getByText(
-        "Insights and findings, generation and simulated users",
+        "Insights and findings, generation, typed decisions and simulated users",
       ),
     ).toBeInTheDocument();
     expect(within(row).getByText("Not set")).toBeInTheDocument();
@@ -377,12 +378,18 @@ describe("OrganizationDefaultModelCard", () => {
         },
       ],
     });
-    await user.click(screen.getByRole("button", { name: "Set embedding model" }));
+    await user.click(
+      screen.getByRole("button", { name: "Set embedding model" }),
+    );
     const editor = screen.getByTestId("org-ai-model-embedding-editor");
     await user.click(
-      within(editor).getByRole("combobox", { name: "Embedding model provider" }),
+      within(editor).getByRole("combobox", {
+        name: "Embedding model provider",
+      }),
     );
-    expect(screen.getByRole("option", { name: "Future Cloud" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Future Cloud" }),
+    ).toBeInTheDocument();
   });
 
   it("builds an org selection from an eligible connection and a typed model", async () => {
@@ -770,13 +777,14 @@ describe("OrganizationDefaultModelCard", () => {
     );
     const editor = screen.getByTestId("org-ai-model-default-editor");
     expect(
-      within(editor).getByRole("combobox", { name: "Default AI model provider" }),
+      within(editor).getByRole("combobox", {
+        name: "Default AI model provider",
+      }),
     ).toHaveTextContent("OpenAI");
     expect(within(editor).getByLabelText("Default AI model id")).toHaveValue(
       "gpt-5-mini",
     );
   });
-
 
   describe("the decision model row", () => {
     const LUNA = orgSelection("conn_openai", "openai/gpt-6-luna", "gpt-6-luna");
@@ -793,9 +801,20 @@ describe("OrganizationDefaultModelCard", () => {
       });
 
     it("shows when the backend reports it, and says what runs while unset", () => {
-      hookState.config = withDecision();
+      hookState.config = withDecision({
+        aiModels: {
+          default: saved(DEFAULT_MODEL),
+          search: null,
+          decision: null,
+        },
+      });
       renderCard();
 
+      expect(
+        within(screen.getByTestId("org-ai-model-default")).getByText(
+          "Insights and findings, generation and simulated users",
+        ),
+      ).toBeInTheDocument();
       const row = screen.getByTestId("org-ai-model-decision");
       expect(within(row).getByText("Decision model")).toBeInTheDocument();
       expect(
@@ -807,6 +826,17 @@ describe("OrganizationDefaultModelCard", () => {
         within(row).getByText("Uses the default AI model"),
       ).toBeInTheDocument();
       expect(within(row).queryByText("Not set")).not.toBeInTheDocument();
+    });
+
+    it("reads Not set when there is no default model to fall back to", () => {
+      hookState.config = withDecision();
+      renderCard();
+
+      const row = screen.getByTestId("org-ai-model-decision");
+      expect(within(row).getByText("Not set")).toBeInTheDocument();
+      expect(
+        within(row).queryByText("Uses the default AI model"),
+      ).not.toBeInTheDocument();
     });
 
     it("says only OpenAI can answer decisions when none of the organization's providers can", async () => {
