@@ -452,3 +452,59 @@ describe("the canonical role spelling counts exactly like the legacy one", () =>
     ).toBeInTheDocument();
   });
 });
+
+describe("rubric-check rows name the model that answered", () => {
+  const RUBRIC: ScoreDefinition = {
+    scorerId: "judge:rubricChecks:c:clarity",
+    idSource: "explicit",
+    scorerVersion: "1",
+    implementationHash: "impl-rubric",
+    label: "clarity",
+    deterministic: false,
+    passThreshold: 0.5,
+    role: "advisory",
+    model: "typesafe-ai/jev",
+  };
+  const rubric = resolveScoreDefinition(RUBRIC);
+
+  it.each([
+    ["typesafe-ai/jev", "Answered by Jev"],
+    ["openai/gpt-6-luna", "Answered by openai/gpt-6-luna"],
+  ])("names %s", (model, text) => {
+    const score: ScoreResult = {
+      ...finalizeScoreResult(rubric, { kind: "scored", value: 1 }),
+      model,
+    };
+    render(
+      <ScoresList
+        scores={[score]}
+        evaluationConfig={buildEvaluationConfigSnapshot([RUBRIC])}
+      />,
+    );
+    expect(screen.getByText(text)).toBeInTheDocument();
+    // The details no longer repeat it as a bare "model:" line.
+    expect(screen.queryByText(/^model:/)).not.toBeInTheDocument();
+  });
+
+  it("names no one for a check that wasn't scored", () => {
+    render(
+      <ScoresList
+        scores={[finalizeScoreResult(rubric, { kind: "skipped" })]}
+        evaluationConfig={buildEvaluationConfigSnapshot([RUBRIC])}
+      />,
+    );
+    expect(screen.queryByText(/^Answered by/)).not.toBeInTheDocument();
+    // The model it would have used still shows in the details, as before.
+    expect(screen.getByText("model: typesafe-ai/jev")).toBeInTheDocument();
+  });
+
+  it("leaves other rows' model line alone", () => {
+    render(
+      <ScoresList
+        scores={[finalizeScoreResult(advisory, { kind: "scored", value: 0.9 })]}
+        evaluationConfig={snapshot}
+      />,
+    );
+    expect(screen.queryByText(/^Answered by/)).not.toBeInTheDocument();
+  });
+});

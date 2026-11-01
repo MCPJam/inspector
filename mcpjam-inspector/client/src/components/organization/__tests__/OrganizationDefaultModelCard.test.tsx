@@ -143,6 +143,7 @@ describe("OrganizationDefaultModelCard", () => {
     ).toBeInTheDocument();
     const row = screen.getByTestId("org-ai-model-default");
     expect(within(row).getByText("Default AI model")).toBeInTheDocument();
+    // No decision kind here, so the default model still answers typed decisions.
     expect(
       within(row).getByText(
         "Insights and findings, generation, typed decisions and simulated users",
@@ -377,12 +378,18 @@ describe("OrganizationDefaultModelCard", () => {
         },
       ],
     });
-    await user.click(screen.getByRole("button", { name: "Set embedding model" }));
+    await user.click(
+      screen.getByRole("button", { name: "Set embedding model" }),
+    );
     const editor = screen.getByTestId("org-ai-model-embedding-editor");
     await user.click(
-      within(editor).getByRole("combobox", { name: "Embedding model provider" }),
+      within(editor).getByRole("combobox", {
+        name: "Embedding model provider",
+      }),
     );
-    expect(screen.getByRole("option", { name: "Future Cloud" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Future Cloud" }),
+    ).toBeInTheDocument();
   });
 
   it("builds an org selection from an eligible connection and a typed model", async () => {
@@ -770,11 +777,151 @@ describe("OrganizationDefaultModelCard", () => {
     );
     const editor = screen.getByTestId("org-ai-model-default-editor");
     expect(
-      within(editor).getByRole("combobox", { name: "Default AI model provider" }),
+      within(editor).getByRole("combobox", {
+        name: "Default AI model provider",
+      }),
     ).toHaveTextContent("OpenAI");
     expect(within(editor).getByLabelText("Default AI model id")).toHaveValue(
       "gpt-5-mini",
     );
   });
 
+  describe("the decision model row", () => {
+    const LUNA = orgSelection("conn_openai", "openai/gpt-6-luna", "gpt-6-luna");
+    const withDecision = (overrides: Partial<OrgAiConfig> = {}) =>
+      makeConfig({
+        supportedModelKinds: ["default", "search", "decision"],
+        aiModels: { default: null, search: null, decision: null },
+        aiModelConnectionIds: {
+          default: ["conn_openai", "conn_anthropic"],
+          search: ["conn_openai", "conn_anthropic"],
+          decision: ["conn_openai"],
+        },
+        ...overrides,
+      });
+
+    it("shows when the backend reports it, and says what runs while unset", () => {
+      hookState.config = withDecision({
+        aiModels: {
+          default: saved(DEFAULT_MODEL),
+          search: null,
+          decision: null,
+        },
+      });
+      renderCard();
+
+      expect(
+        within(screen.getByTestId("org-ai-model-default")).getByText(
+          "Insights and findings, generation and simulated users",
+        ),
+      ).toBeInTheDocument();
+      const row = screen.getByTestId("org-ai-model-decision");
+      expect(within(row).getByText("Decision model")).toBeInTheDocument();
+      expect(
+        within(row).getByText(
+          "Session themes, session questions and rubric checks",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        within(row).getByText("Uses the default AI model"),
+      ).toBeInTheDocument();
+      expect(within(row).queryByText("Not set")).not.toBeInTheDocument();
+    });
+
+    it("reads Not set when there is no default model to fall back to", () => {
+      hookState.config = withDecision();
+      renderCard();
+
+      const row = screen.getByTestId("org-ai-model-decision");
+      expect(within(row).getByText("Not set")).toBeInTheDocument();
+      expect(
+        within(row).queryByText("Uses the default AI model"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("says only OpenAI can answer decisions when none of the organization's providers can", async () => {
+      const user = userEvent.setup();
+      hookState.config = withDecision({
+        aiModelConnectionIds: {
+          default: ["conn_anthropic"],
+          search: ["conn_anthropic"],
+          decision: [],
+        },
+      });
+      renderCard();
+
+      await user.click(
+        screen.getByRole("button", { name: "Set decision model" }),
+      );
+      expect(
+        screen.getByText(
+          "No organization provider can answer decisions. Add an OpenAI provider below to choose a decision model.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("shows a failed Test's reason under its badge", () => {
+      const reason =
+        "This OpenAI key can't use the Decisions API, so use a key that has access.";
+      hookState.config = withDecision({
+        aiModels: {
+          default: null,
+          search: null,
+          decision: saved(LUNA, {
+            check: {
+              ok: false,
+              code: "http_403",
+              reason,
+              checkedAt: Date.now(),
+            },
+          }),
+        },
+      });
+      renderCard();
+
+      const row = screen.getByTestId("org-ai-model-decision");
+      expect(within(row).getByText("Refused")).toBeInTheDocument();
+      expect(within(row).getByText(reason)).toBeInTheDocument();
+    });
+
+    it("shows the reason under a candidate's failed Test in the editor", async () => {
+      const user = userEvent.setup();
+      const reason =
+        "OpenAI couldn't find gpt-6-luna for this key, so use a key that has access.";
+      hookState.config = withDecision({
+        aiModels: { default: null, search: null, decision: saved(LUNA) },
+      });
+      mocks.testAiModel.mockResolvedValue({
+        ok: false,
+        code: "model_not_found",
+        reason,
+        checkedAt: Date.now(),
+      });
+      renderCard();
+
+      await user.click(
+        screen.getByRole("button", { name: "Change decision model" }),
+      );
+      const editor = screen.getByTestId("org-ai-model-decision-editor");
+      await user.click(
+        within(editor).getByRole("button", {
+          name: "Test this decision model",
+        }),
+      );
+      expect(await within(editor).findByText(reason)).toBeInTheDocument();
+    });
+
+    it("is read-only for members", () => {
+      hookState.config = withDecision({
+        canManage: false,
+        aiModels: { default: null, search: null, decision: saved(LUNA) },
+      });
+      renderCard({ isAdmin: false });
+
+      const row = screen.getByTestId("org-ai-model-decision");
+      expect(
+        within(row).queryByRole("button", { name: /decision model/ }),
+      ).not.toBeInTheDocument();
+    });
+  });
 });

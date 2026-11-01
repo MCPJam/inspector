@@ -396,20 +396,29 @@ export function degradationSentence(
 // The organization's AI models for background work
 // ---------------------------------------------------------------------------
 
-/** Each kind's name and the work that runs on it. */
+/**
+ * Each kind's name, the work that runs on it and, where an unset model still
+ * leaves its work running, what runs instead.
+ */
 export const ORG_AI_MODEL_PRESENTATION: Record<
   OrgAiModelKind,
-  { label: string; noun: string; runs: string }
+  { label: string; noun: string; runs: string; whenUnset?: string }
 > = {
   default: {
     label: "Default AI model",
     noun: "default AI model",
-    runs: "Insights and findings, generation, typed decisions and simulated users",
+    runs: "Insights and findings, generation and simulated users",
   },
   search: {
     label: "Search model",
     noun: "search model",
     runs: "Web search",
+  },
+  decision: {
+    label: "Decision model",
+    noun: "decision model",
+    runs: "Session themes, session questions and rubric checks",
+    whenUnset: "Uses the default AI model",
   },
   embedding: {
     label: "Embedding model",
@@ -422,6 +431,24 @@ export const ORG_AI_MODEL_PRESENTATION: Record<
     runs: "Voice input",
   },
 };
+
+/**
+ * A row's description and unset text, given the rest of the card. Without a
+ * decision kind the default model still answers typed decisions, so its row
+ * says so; without a default model an unset decision model runs nothing.
+ */
+export function orgAiModelRowText(
+  kind: OrgAiModelKind,
+  card: { kinds: readonly OrgAiModelKind[]; defaultSet: boolean },
+): { runs: string; whenUnset?: string } {
+  const { runs, whenUnset } = ORG_AI_MODEL_PRESENTATION[kind];
+  if (kind === "default" && !card.kinds.includes("decision"))
+    return {
+      runs: "Insights and findings, generation, typed decisions and simulated users",
+    };
+  if (kind === "decision" && !card.defaultSet) return { runs };
+  return whenUnset ? { runs, whenUnset } : { runs };
+}
 
 /** "default AI model", "search model", "embedding model", … */
 export function orgAiModelNoun(kind: OrgAiModelKind): string {
@@ -458,6 +485,7 @@ export function listedModelFitsKind(
   const speech = /transcri|whisper/.test(id);
   if (kind === "embedding") return embedding;
   if (kind === "transcription") return speech;
+  if (kind === "decision") return id.includes("gpt-6-luna");
   return !embedding && !speech;
 }
 
@@ -468,7 +496,8 @@ export function orgAiModelCheckPresentation(check: OrgAiModelCheck): {
 } {
   if (check.ok) return { label: "Passed", tone: "success" };
   const code = check.code ?? "";
-  if (["provider_auth_failed", "http_401", "http_403"].includes(code)) {
+  // A 403 is a key that works but lacks access: refused, not rejected.
+  if (["provider_auth_failed", "http_401"].includes(code)) {
     return { label: "Credentials rejected", tone: "destructive" };
   }
   if (
