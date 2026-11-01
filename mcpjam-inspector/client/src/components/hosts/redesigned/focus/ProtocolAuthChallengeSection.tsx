@@ -65,11 +65,11 @@ const UNAUTHORIZED_TRIGGER_DESCRIPTIONS: Record<
   UnauthorizedChallengeTrigger,
   string
 > = {
-  any: "Treat every sign-in-required response as a challenge, even without an authentication header.",
+  any: "Treat every response that requires sign-in as a challenge, even when the server sends no sign-in details.",
   "bearer-header":
-    "Require a Bearer authentication challenge in the response header.",
+    "Require the server to ask for sign-in with a Bearer challenge.",
   "resource-metadata":
-    "Require a Bearer authentication challenge with a resource metadata link.",
+    "Require a Bearer challenge that includes a resource metadata link.",
 };
 
 const TOOL_RESULT_CHALLENGE_DESCRIPTIONS: Record<AuthChallengeAction, string> =
