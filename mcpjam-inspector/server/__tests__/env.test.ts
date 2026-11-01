@@ -32,6 +32,7 @@ const RUNTIME_CONFIG_ENV_KEYS = [
   "VITE_WORKOS_API_HOSTNAME",
   "DO_NOT_TRACK",
   "MCPJAM_SANDBOX_ORIGIN",
+  "MCPJAM_PLATFORM_AGENT",
 ] as const;
 const ORIGINAL_RUNTIME_CONFIG_ENV = Object.fromEntries(
   RUNTIME_CONFIG_ENV_KEYS.map((key) => [key, process.env[key]]),
@@ -264,6 +265,20 @@ describe("env loader", () => {
       warn.mockRestore();
     },
   );
+
+  it("tells the browser to hide the agent under MCPJAM_PLATFORM_AGENT=off, and only then", () => {
+    process.env.MCPJAM_PLATFORM_AGENT = "off";
+    expect(getInspectorClientRuntimeConfigScript()).toBe(
+      '<script>window.__MCP_RUNTIME_CONFIG__={"platformAgentDisabled":true};</script>',
+    );
+
+    for (const value of ["on", "OFF", "false", "0", ""]) {
+      process.env.MCPJAM_PLATFORM_AGENT = value;
+      expect(getInspectorClientRuntimeConfig()).not.toHaveProperty(
+        "platformAgentDisabled",
+      );
+    }
+  });
 
   it("says nothing about tracking for any other DO_NOT_TRACK value", () => {
     process.env.DO_NOT_TRACK = "0";

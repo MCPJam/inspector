@@ -33,6 +33,7 @@ import { isBlockedEgressHost } from "./hosted-egress-guard.js";
 import { HOSTED_MODE } from "../config.js";
 import { createStreamingPinnedFetch } from "./pinned-fetch.js";
 import { resolvePlatformMcpUrl } from "./platform-mcp-url.js";
+import { isPlatformAgentEnabled } from "./platform-agent.js";
 
 /**
  * DNS + connect + response headers, summed across one request's redirect chain.
@@ -162,9 +163,11 @@ export function withHostedMcpAnswerBodies(fetchFn: typeof fetch): typeof fetch {
  * they cannot be the private value — a unit test pins them.
  */
 function varyingFirstPartyMcpUrls(): Array<{ label: string; url: string }> {
-  const entries: Array<{ label: string; url: string }> = [
-    { label: "platform MCP worker", url: resolvePlatformMcpUrl() },
-  ];
+  // With the agent off nothing dials the worker, so its URL has nothing to
+  // vet: a self-hosted install need not point it anywhere real.
+  const entries: Array<{ label: string; url: string }> = isPlatformAgentEnabled()
+    ? [{ label: "platform MCP worker", url: resolvePlatformMcpUrl() }]
+    : [];
   for (const [label, value] of [
     ["MCPJAM_DOCS_MCP_URL", process.env.MCPJAM_DOCS_MCP_URL],
     ["MCPJAM_SPEC_MCP_URL", process.env.MCPJAM_SPEC_MCP_URL],

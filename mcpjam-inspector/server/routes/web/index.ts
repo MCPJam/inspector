@@ -28,6 +28,7 @@ import prompts from "./prompts.js";
 import chatV2 from "./chat-v2.js";
 import { onboardingTurnTraceMiddleware } from "../../services/plugin-host/onboarding-trace.js";
 import mcpjamAgent from "./mcpjam-agent.js";
+import { platformAgentGate } from "../../middleware/platform-agent-gate.js";
 import audioTranscriptions from "../mcp/audio-transcriptions.js";
 import scenarios from "./scenarios.js";
 import swarmRuns from "./swarm-runs.js";
@@ -99,6 +100,9 @@ web.use(
   // A plugin onboarding turn records its phases; any other passes through.
   onboardingTurnTraceMiddleware,
 );
+// MCPJAM_PLATFORM_AGENT=off answers every agent route here, ahead of auth.
+web.use("/mcpjam-agent", platformAgentGate);
+web.use("/mcpjam-agent/*", platformAgentGate);
 web.use("/mcpjam-agent", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
   "/mcpjam-agent/widget-content",
