@@ -11,7 +11,7 @@
 </p>
 
 [![npm version](https://img.shields.io/npm/v/@mcpjam/inspector?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@mcpjam/inspector)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge)](https://opensource.org/licenses/Apache-2.0)
+[![License: Apache 2.0 + EE](https://img.shields.io/badge/License-Apache%202.0%20%2B%20EE-blue.svg?style=for-the-badge)](https://github.com/MCPJam/inspector/blob/main/LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2.svg?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/JEnDtz8X6z)
 
 </div>
@@ -148,4 +148,4 @@ We're grateful you're considering it. Read the [contributing guide](CONTRIBUTING
 
 # 📄 License
 
-Licensed under the **Apache License 2.0**. See [LICENSE](LICENSE).
+Licensed under the **Apache License 2.0**, except for the Inspector server's `services/` directory and `routes/mcp/evals.ts`, which are licensed under the [MCPJam Enterprise Edition License](mcpjam-inspector/server/evals/LICENSE). See [LICENSE](LICENSE) for details.
