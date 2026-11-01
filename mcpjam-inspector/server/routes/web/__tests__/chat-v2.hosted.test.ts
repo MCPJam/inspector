@@ -322,6 +322,9 @@ describe("web routes — chat-v2 hosted mode", () => {
     });
 
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
       if (String(input).endsWith("/web/authorize-project")) {
         return new Response(JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }), { status: 200 });
       }
@@ -533,6 +536,9 @@ describe("web routes — chat-v2 hosted mode", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(vi.mocked(global.fetch).mock.calls.some(([url]) =>
+      String(url).endsWith("/agent-browser/assert_web_writable")
+    )).toBe(false);
     expect(await response.text()).toBe("ok");
     expect(prepareChatV2Mock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -660,6 +666,30 @@ describe("web routes — chat-v2 hosted mode", () => {
       expect.objectContaining({ hostId: "host-1" })
     );
     expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("enforces a direct conversation's saved discovery requirement after a client edit", async () => {
+    const { app, token } = createWebTestApp();
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true, requireNativeToolDiscovery: true });
+      }
+      return originalFetch(input, init);
+    });
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: { selectedServerIds: ["server-1"], requireNativeToolDiscovery: false },
+    });
+    const response = await postJson(app, "/api/web/chat-v2", {
+      projectId: "project-1", hostId: "host-1", chatSessionId: "required-chat",
+      selectedServerIds: ["server-1"],
+      messages: [{ role: "user", content: "continue" }],
+      model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
+    }, token);
+    expect(response.status).toBe(409);
+    expect(await response.text()).toContain("Native tool discovery");
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
   it("FAILS CLOSED when the host runtime-config fetch fails — never runs the engine", async () => {
@@ -1413,6 +1443,9 @@ describe("web routes — chat-v2 hosted mode", () => {
     const { app, token } = createWebTestApp();
 
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
       if (String(input).endsWith("/web/authorize-project")) {
         return new Response(JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }), { status: 200 });
       }

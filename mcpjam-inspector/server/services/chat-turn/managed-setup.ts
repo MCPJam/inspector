@@ -100,38 +100,6 @@ export async function resolveManagedTurnSetup(args: {
 }) {
   const { c, rawBody, bearerToken, localIngress, rpcCollector } = args;
   const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
-  let requiredNativeDiscoveryPin = false;
-  if (!c.get("guestId") && hostedBody.projectId && hostedBody.chatSessionId) {
-    const service = new BrowserSessionService();
-    if (service.enabled) {
-      const state = await readWebConversationState(
-        (signal) =>
-          service.agentRequest<{
-            writable: boolean;
-            requireNativeToolDiscovery?: boolean;
-          }>("assert_web_writable", {
-            bearer: bearerToken,
-            projectId: hostedBody.projectId,
-            body: { conversationId: hostedBody.chatSessionId },
-            signal,
-          }),
-        c.req.raw.signal,
-      );
-      requiredNativeDiscoveryPin = state.requireNativeToolDiscovery === true;
-      if (!state.writable) {
-        return {
-          response: c.json(
-            {
-              code: "API_SESSION_READ_ONLY",
-              error:
-                "This API session is view-only in Playground. Continue it through the session API.",
-            },
-            409,
-          ),
-        };
-      }
-    }
-  }
   const { initializePins, mcpProtocolVersionsByServerId } =
     extractMcpInitializeOptions(rawBody);
   const body = rawBody as unknown as ChatV2Request & {
@@ -236,6 +204,38 @@ export async function resolveManagedTurnSetup(args: {
     getClient: async () =>
       createConvexClient(await getConvexBearerForRequest(c)),
   });
+  let requiredNativeDiscoveryPin = false;
+  if (turnMode === "interactive" && !c.get("guestId") && hostedBody.projectId && hostedBody.chatSessionId) {
+    const service = new BrowserSessionService();
+    if (service.enabled) {
+      const state = await readWebConversationState(
+        (signal) =>
+          service.agentRequest<{
+            writable: boolean;
+            requireNativeToolDiscovery?: boolean;
+          }>("assert_web_writable", {
+            bearer: bearerToken,
+            projectId: hostedBody.projectId,
+            body: { conversationId: hostedBody.chatSessionId },
+            signal,
+          }),
+        c.req.raw.signal,
+      );
+      requiredNativeDiscoveryPin = state.requireNativeToolDiscovery === true;
+      if (!state.writable) {
+        return {
+          response: c.json(
+            {
+              code: "API_SESSION_READ_ONLY",
+              error:
+                "This API session is view-only in Playground. Continue it through the session API.",
+            },
+            409,
+          ),
+        };
+      }
+    }
+  }
   enforceNativeDiscoverySessionPin(hostRuntimeConfig, requiredNativeDiscoveryPin);
   let effectiveCapabilities = resolvedCapabilities;
   if (effectiveCapabilities) {
