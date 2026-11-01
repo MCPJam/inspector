@@ -4,6 +4,8 @@
  * Environment-based configuration that's determined at build time.
  * Uses Vite's import.meta.env for static replacement.
  */
+import { sandboxOriginOf } from "@/shared/sandbox-origin";
+import { getRuntimeSandboxOrigin } from "./runtime-config";
 
 /**
  * Hosted mode for cloud deployments (Railway, etc.)
@@ -28,7 +30,12 @@ export const SANITIZE_OAUTH_TRACES = HOSTED_MODE;
  * different registrable subdomain that does not share cookies),
  * e.g. `https://sandbox.mcpjam.com`.
  *
- * Set via `VITE_MCPJAM_SANDBOX_ORIGIN` at build time. The configured origin
+ * Set at runtime by the server's `MCPJAM_SANDBOX_ORIGIN`, which the document
+ * carries in its runtime config, so one image serves every deployment; the
+ * build-time `VITE_MCPJAM_SANDBOX_ORIGIN` is the fallback. Either must be an
+ * http(s) origin, and one that is not is ignored. The runtime config is
+ * written into the document ahead of the bundle, so this is settled before
+ * any module reads it. The configured origin
  * must serve the same sandbox-proxy route the host app serves at
  * `/api/web/apps/mcp-apps/sandbox-proxy`, and its
  * `frame-ancestors` CSP must include the host app origin (the existing
@@ -39,17 +46,9 @@ export const SANITIZE_OAUTH_TRACES = HOSTED_MODE;
  * console warning is emitted — this is a security regression, not the
  * intended deploy.
  */
-export const SANDBOX_ORIGIN: string | null = (() => {
-  const raw = import.meta.env.VITE_MCPJAM_SANDBOX_ORIGIN;
-  if (typeof raw !== "string" || raw.length === 0) return null;
-  try {
-    const url = new URL(raw);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    return url.origin;
-  } catch {
-    return null;
-  }
-})();
+export const SANDBOX_ORIGIN: string | null =
+  sandboxOriginOf(getRuntimeSandboxOrigin()) ??
+  sandboxOriginOf(import.meta.env.VITE_MCPJAM_SANDBOX_ORIGIN);
 
 /**
  * How the sandbox proxy mounts an MCP App view.

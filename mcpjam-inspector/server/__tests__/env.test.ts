@@ -7,7 +7,7 @@ import {
 } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getConfiguredConvexOrigins,
   getInspectorClientRuntimeConfig,
@@ -31,6 +31,7 @@ const RUNTIME_CONFIG_ENV_KEYS = [
   "WORKOS_API_HOSTNAME",
   "VITE_WORKOS_API_HOSTNAME",
   "DO_NOT_TRACK",
+  "MCPJAM_SANDBOX_ORIGIN",
 ] as const;
 const ORIGINAL_RUNTIME_CONFIG_ENV = Object.fromEntries(
   RUNTIME_CONFIG_ENV_KEYS.map((key) => [key, process.env[key]]),
@@ -234,6 +235,33 @@ describe("env loader", () => {
       expect(getInspectorClientRuntimeConfigScript()).toBe(
         '<script>window.__MCP_RUNTIME_CONFIG__={"doNotTrack":true};</script>',
       );
+    },
+  );
+
+  it("serves MCPJAM_SANDBOX_ORIGIN as an origin the browser prefers to its build-time one", () => {
+    process.env.MCPJAM_SANDBOX_ORIGIN = " https://sandbox.customer.example/ignored/path ";
+
+    expect(getInspectorClientRuntimeConfig().sandboxOrigin).toBe(
+      "https://sandbox.customer.example",
+    );
+    expect(getInspectorClientRuntimeConfigScript()).toBe(
+      '<script>window.__MCP_RUNTIME_CONFIG__={"sandboxOrigin":"https://sandbox.customer.example"};</script>',
+    );
+  });
+
+  it.each(["javascript:alert(1)", "ftp://sandbox.customer.example", "sandbox"])(
+    "serves no sandbox origin for %s, and says so once",
+    async (value) => {
+      const { logger } = await import("../utils/logger.js");
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+      process.env.MCPJAM_SANDBOX_ORIGIN = value;
+
+      expect(getInspectorClientRuntimeConfig().sandboxOrigin).toBeUndefined();
+      expect(getInspectorClientRuntimeConfig().sandboxOrigin).toBeUndefined();
+      expect(getInspectorClientRuntimeConfigScript()).toBeNull();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain("MCPJAM_SANDBOX_ORIGIN");
+      warn.mockRestore();
     },
   );
 

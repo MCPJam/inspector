@@ -13,18 +13,23 @@ substitute — origin separation is what enforces isolation.
 
 ### Configuration
 
-Two settings, and both are required. The client build says where widgets load
-from; the server says which hostnames serve nothing but widgets.
+Two settings, and both are required: where widgets load from, and which
+hostnames serve nothing but widgets.
 
 ```bash
-# Client build time.
+# Server runtime. Served to the browser with the page, so one image serves
+# every deployment. Wins over the build-time value below.
+MCPJAM_SANDBOX_ORIGIN=https://sandbox.example.com
+
+# Client build time. Used when MCPJAM_SANDBOX_ORIGIN is unset.
 VITE_MCPJAM_SANDBOX_ORIGIN=https://sandbox.example.com
 
 # Server runtime. Comma-separated hostnames, no scheme, no port.
 SANDBOX_HOSTS=sandbox.example.com
 ```
 
-`VITE_MCPJAM_SANDBOX_ORIGIN` must be:
+The sandbox origin must be an `http://` or `https://` origin (anything else is
+ignored, and the runtime value then falls back to the build-time one), and:
 
 - A different registrable origin from the host app (e.g. host on
   `app.example.com`, sandbox on `sandbox.example.com`), so the browser scopes
@@ -118,8 +123,9 @@ Anything other than `ok` is also logged once at error level during boot.
 
 ### Fallback behavior
 
-If `VITE_MCPJAM_SANDBOX_ORIGIN` is unset in a hosted build — or set to the
-app's own origin, which produces the same iframe — the sandbox falls back to
+If neither `MCPJAM_SANDBOX_ORIGIN` nor `VITE_MCPJAM_SANDBOX_ORIGIN` names a
+sandbox origin in a hosted deployment — or the one named is the app's own
+origin, which produces the same iframe — the sandbox falls back to
 same-origin and the client logs a security warning to the browser console. The
 fallback exists only as a soft-fail for misconfigured deploys; production
 deployments must set the variable. The regression test at
