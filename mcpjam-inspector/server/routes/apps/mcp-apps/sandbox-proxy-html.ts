@@ -21,6 +21,8 @@ import {
 } from "../../../config.js";
 import { MCP_APPS_SANDBOX_PROXY_HTML } from "../SandboxProxyHtml.bundled.js";
 import { RECORDER_SHIM_JS } from "./recorder-shim.js";
+import { WEBMCP_VIEW_POLYFILL_JS } from "../../../utils/webmcp-view/webmcp-view-polyfill.js";
+import { WEBMCP_RELAY_SOURCE } from "../../../utils/webmcp-view/webmcp-relay-source.js";
 
 /**
  * Loopback origins that may frame the proxy and post to it.
@@ -164,7 +166,9 @@ export function renderSandboxProxyHtml(): string {
     () => JSON.stringify(RECORDER_SHIM_JS),
   ).replace('"__MCPJAM_HOST_ORIGINS__"', () =>
     JSON.stringify(sandboxProxyHostOriginPatterns()),
-  );
+  ).replace('"__MCPJAM_WEBMCP_POLYFILL__"', () =>
+    JSON.stringify(WEBMCP_VIEW_POLYFILL_JS),
+  ).replace('/*__MCPJAM_WEBMCP_RELAY__*/', () => WEBMCP_RELAY_SOURCE);
   const result = HOSTED_MODE ? withoutLocalFrameSources(html) : html;
   rendered = result;
   return result;

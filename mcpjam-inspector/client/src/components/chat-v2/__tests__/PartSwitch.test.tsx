@@ -4,12 +4,29 @@ import { MCP_UI_EXTENSION_ID } from "@mcpjam/sdk/browser";
 import { PartSwitch } from "../thread/part-switch";
 import { callTool, executeToolApi } from "@/lib/apis/mcp-tools-api";
 import { ActiveHostCapsResolverProvider } from "@/contexts/active-host-client-capabilities-context";
+import {
+  injectHostedServerMapping,
+  setApiContext,
+} from "@/lib/apis/web/context";
 import type { UIMessage } from "@ai-sdk/react";
 
-const { mockDetectUIType, mockToolPart, mockWidgetReplay } = vi.hoisted(() => ({
+const {
+  mockDetectUIType,
+  mockToolPart,
+  mockWidgetReplay,
+  mockForwardedWidgetCall,
+} = vi.hoisted(() => ({
   mockDetectUIType: vi.fn(),
   mockToolPart: vi.fn(),
   mockWidgetReplay: vi.fn(),
+  mockForwardedWidgetCall: vi.fn(),
+}));
+
+vi.mock("../thread/use-forwarded-widget-calls", () => ({
+  useForwardedWidgetCalls: () => ({
+    approvals: [],
+    call: mockForwardedWidgetCall,
+  }),
 }));
 
 // Mock all part components
@@ -185,6 +202,45 @@ describe("PartSwitch", () => {
     onRequestFullscreen: vi.fn(),
     onExitFullscreen: vi.fn(),
   };
+
+  it("uses the gated widget route for context delivered in AI SDK result metadata", async () => {
+    mockDetectUIType.mockReturnValue("mcp-apps");
+    const originalResult = { content: [], structuredContent: { count: 7 }, _meta: { private: "widget-only" } };
+    const context = {
+      owner: {
+        kind: "chat",
+        userId: "user",
+        serverId: "server",
+        harnessSessionId: "lane",
+      },
+      parentExecutionId: "parent",
+    };
+    render(
+      <PartSwitch
+        {...defaultProps}
+        part={{
+          type: "dynamic-tool",
+          toolName: "qa_read",
+          toolCallId: "call",
+          state: "output-available",
+          input: {},
+          output: { type: "text", value: "model projection" },
+          resultProviderMetadata: { mcpjam: { widgetContext: context, originalResult } },
+        }}
+      />,
+    );
+    const rendered = mockWidgetReplay.mock.calls.at(-1)?.[0];
+    expect(rendered).toBeDefined();
+    expect(rendered.toolOutput).toEqual(originalResult);
+    expect(rendered.rawOutput).toEqual(originalResult);
+    await rendered.onCallTool("qa_write", {});
+    expect(mockForwardedWidgetCall).toHaveBeenCalledWith(
+      context,
+      "qa_write",
+      {},
+    );
+    expect(callTool).not.toHaveBeenCalled();
+  });
 
   it("renders titled App text as one labeled item and mention references using the same chip", () => {
     const view = render(
@@ -517,6 +573,41 @@ describe("PartSwitch", () => {
         "data-server-id",
         "qa-server",
       );
+    });
+
+    it("addresses a managed turn's server by its local name", () => {
+      // A local managed turn tags the call with the Convex id; this app's
+      // own connections are keyed by name.
+      injectHostedServerMapping("qa-server", "convex-server-1");
+      try {
+        const part = {
+          type: "dynamic-tool",
+          toolName: "qa_return_linked_image_resource",
+          toolCallId: "call-1",
+          state: "output-available",
+          input: {},
+          output: { content: [] },
+          callProviderMetadata: {
+            mcpjam: { serverId: "convex-server-1" },
+          },
+        };
+
+        render(
+          <PartSwitch
+            {...defaultProps}
+            part={part as any}
+            toolsMetadata={{}}
+            toolServerMap={{}}
+          />,
+        );
+
+        expect(screen.getByTestId("tool-part")).toHaveAttribute(
+          "data-server-id",
+          "qa-server",
+        );
+      } finally {
+        setApiContext(null);
+      }
     });
 
     it("passes raw MCP result to tool parts instead of model-visible output", () => {

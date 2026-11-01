@@ -34,8 +34,8 @@ vi.mock("../../../routes/web/auth.js", () => ({
 vi.mock("../../evals/route-helpers.js", () => ({
   createConvexClient: () => ({ query: queryMock }),
 }));
-vi.mock("../../../utils/computers/browser-rollout.js", () => ({
-  rolloutEnabled: rolloutMock,
+vi.mock("../../../utils/computers/hosted-browser-availability.js", () => ({
+  isHostedBrowserAvailableFor: rolloutMock,
 }));
 
 // Per harness, as the real helper decides it: `localMock(harness)` stands in
@@ -283,52 +283,56 @@ describe("launchJourneyRun", () => {
         }
       ).hosts.map((host) => host.builtInToolIds);
 
-    it("drops `browser` for a member outside the rollout", async () => {
-      // The flag was only read by the client, so a member without it whose
-      // client still had `browser` saved got a notice on every session about
-      // a tool they cannot see.
+    it("drops `browser` when the backend says the member may not use it", async () => {
+      // A member outside the rollout whose client still had `browser` saved
+      // got a notice on every session about a tool they cannot see.
       createRunMock.mockResolvedValue(browserHosts);
 
-      await launchJourneyRun(
-        { ...DEPS, callerContext: { workosUserId: "user_1" } },
-        INPUT,
-      );
+      await launchJourneyRun(DEPS, INPUT);
       await settle();
 
-      expect(rolloutMock).toHaveBeenCalledWith(false, "user_1");
+      // Asked of the backend with the run's own bearer and project: the flag
+      // is evaluated by email there, as the desktop reservation evaluates it.
+      expect(rolloutMock).toHaveBeenCalledWith({
+        bearer: "run-jwt",
+        projectId: "proj_1",
+        surface: "tools",
+      });
       expect(startedToolIds()).toEqual([["bash"], undefined]);
     });
 
-    it("keeps `browser` for a member in the rollout", async () => {
+    it("keeps `browser` when the backend says the member may use it", async () => {
       rolloutMock.mockResolvedValue(true);
       createRunMock.mockResolvedValue(browserHosts);
 
-      await launchJourneyRun(
-        { ...DEPS, callerContext: { workosUserId: "user_1" } },
-        INPUT,
-      );
+      await launchJourneyRun(DEPS, INPUT);
       await settle();
 
       expect(startedToolIds()).toEqual([["bash", "browser"], undefined]);
     });
 
-    it("drops `browser` when the caller has no member identity", async () => {
+    it("drops `browser` when no run bearer can be had to ask", async () => {
       createRunMock.mockResolvedValue(browserHosts);
 
-      await launchJourneyRun(DEPS, INPUT);
+      await launchJourneyRun(
+        {
+          ...DEPS,
+          getRunBearer: async () => {
+            throw new Error("token exchange failed");
+          },
+        },
+        INPUT,
+      );
       await settle();
 
       expect(rolloutMock).not.toHaveBeenCalled();
       expect(startedToolIds()).toEqual([["bash"], undefined]);
     });
 
-    it("skips the flag read when no host asks for a browser", async () => {
+    it("skips the check when no host asks for a browser", async () => {
       createRunMock.mockResolvedValue(created());
 
-      await launchJourneyRun(
-        { ...DEPS, callerContext: { workosUserId: "user_1" } },
-        INPUT,
-      );
+      await launchJourneyRun(DEPS, INPUT);
       await settle();
 
       expect(rolloutMock).not.toHaveBeenCalled();

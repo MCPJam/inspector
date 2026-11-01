@@ -60,6 +60,17 @@ const providerErrorChain = chain(
   },
   { selection: "providerError" },
 );
+const setupAbortedChain = chain(
+  {
+    connection: "notMeasured",
+    discovery: "notMeasured",
+    selection: "notMeasured",
+    call: "notMeasured",
+    response: "notMeasured",
+    userValue: "notMeasured",
+  },
+  { connection: "setupAborted" },
+);
 
 function iteration(
   id: string,
@@ -165,6 +176,177 @@ describe("classifyIterationError", () => {
         null,
       ),
     ).toBe("unknown");
+  });
+});
+
+// A BYOK run whose provider isn't turned on for the organization: the
+// iteration keeps the backend's sentence, and the code only in its diagnostics.
+const notTurnedOn =
+  'The "anthropic" provider isn\'t turned on for your organization. An organization admin can add it under AI providers in organization settings, or you can pick a model from another provider.';
+const orgProviderRefusal = (code = "provider_not_configured") => ({
+  error: notTurnedOn,
+  errorDetails: JSON.stringify({ ok: false, code, error: notTurnedOn }),
+  metadata: { evalErrors: [{ message: notTurnedOn, reason: "providerError" }] },
+});
+
+describe("organization AI provider refusals", () => {
+  it("sends them to the organization's AI provider settings, not to MCPJam", () => {
+    for (const chain of [providerErrorChain, null]) {
+      expect(
+        classifyIterationError(
+          iteration("a", orgProviderRefusal() as Partial<EvalIteration>),
+          chain,
+        ),
+      ).toBe("orgProviders");
+    }
+  });
+
+  it("reads the runner's refused-selection row", () => {
+    expect(
+      classifyIterationError(
+        iteration("a", {
+          status: "setup_failed",
+          error:
+            "Model selection refused — credential_missing: the saved org connection is gone.",
+        }),
+        null,
+      ),
+    ).toBe("orgProviders");
+  });
+
+  it("never reads a refusal out of an error's text without a chain behind it", () => {
+    // Older rows, quarantined rows or a schema mismatch carry no verified
+    // chain; the text may be the MCP server's own.
+    for (const error of [
+      "credential_missing: set GITHUB_TOKEN",
+      "provider_not_configured: GITHUB_TOKEN is not set",
+    ]) {
+      expect(classifyIterationError(iteration("a", { error }), null)).not.toBe(
+        "orgProviders",
+      );
+    }
+  });
+
+  it("keeps a recorded error that isn't the iteration's own off its infra error code", () => {
+    const groups = buildRunErrorBreakdown({
+      iterations: [
+        iteration("a", {
+          status: "failed",
+          error: notTurnedOn,
+          infraError: {
+            class: "configuration",
+            layer: "model",
+            retryable: false,
+            code: "provider_not_configured",
+          },
+          metadata: {
+            evalErrors: [
+              { message: "The judge timed out.", reason: "providerError" },
+            ],
+          },
+        } as Partial<EvalIteration>),
+      ],
+      chains: new Map([["a", providerErrorChain]]),
+    })?.groups;
+    expect(
+      groups?.find((group) => group.cause === "orgProviders")?.errors,
+    ).toEqual([{ message: notTurnedOn, count: 1 }]);
+    expect(groups?.find((group) => group.cause === "platform")?.errors).toEqual(
+      [{ message: "The judge timed out.", count: 1 }],
+    );
+  });
+
+  it("leaves a tool error that looks like a refusal with the MCP server", () => {
+    expect(
+      classifyIterationError(
+        iteration("a", { error: "credential_missing: set GITHUB_TOKEN" }),
+        toolErrorChain,
+      ),
+    ).toBe("serverError");
+  });
+
+  it("keeps a failure the chain pins on the MCP server there, whatever code was recorded", () => {
+    for (const code of ["credential_missing", "provider_not_configured"]) {
+      expect(
+        classifyIterationError(
+          iteration("a", {
+            error: "set GITHUB_TOKEN",
+            errorDetails: JSON.stringify({ ok: false, code }),
+            infraError: {
+              class: "configuration",
+              layer: "model",
+              retryable: false,
+              code,
+            },
+          } as Partial<EvalIteration>),
+          toolErrorChain,
+        ),
+      ).toBe("serverError");
+    }
+  });
+
+  it("reads a stated refusal from the text when the chain stops on the provider or on setup", () => {
+    for (const stop of [providerErrorChain, setupAbortedChain]) {
+      expect(
+        classifyIterationError(
+          iteration("a", {
+            status: "failed",
+            error: "provider_not_configured: anthropic is not enabled",
+          }),
+          stop,
+        ),
+      ).toBe("orgProviders");
+    }
+  });
+
+  it("reads the typed code on a refused turn recorded as a configuration error", () => {
+    expect(
+      classifyIterationError(
+        iteration("a", {
+          status: "failed",
+          error: notTurnedOn,
+          errorDetails: JSON.stringify({ ok: false, error: notTurnedOn }),
+          infraError: {
+            class: "configuration",
+            layer: "model",
+            retryable: false,
+            code: "provider_not_configured",
+          },
+        } as Partial<EvalIteration>),
+        providerErrorChain,
+      ),
+    ).toBe("orgProviders");
+  });
+
+  it("groups the run under one titled cause with the backend's reason", () => {
+    expect(
+      buildRunErrorBreakdown({
+        iterations: [
+          iteration("a", orgProviderRefusal() as Partial<EvalIteration>),
+        ],
+        chains: new Map([["a", providerErrorChain]]),
+      })?.groups,
+    ).toEqual([
+      {
+        cause: "orgProviders",
+        title: "An organization admin needs to add or reconnect an AI provider",
+        count: 1,
+        errors: [{ message: notTurnedOn, count: 1 }],
+      },
+    ]);
+  });
+
+  it.each([
+    "provider_unavailable",
+    "org_runtime_unsupported",
+    "org_keys_required",
+  ])("keeps %s, which provider settings don't fix, where it was", (code) => {
+    expect(
+      classifyIterationError(
+        iteration("a", orgProviderRefusal(code) as Partial<EvalIteration>),
+        providerErrorChain,
+      ),
+    ).toBe("platform");
   });
 });
 
