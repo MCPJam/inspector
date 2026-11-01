@@ -217,7 +217,8 @@ const rows: Row[] = [
     credential: "oauth",
     expect: {
       code: "LOGIN_DEPLOYMENT_MISMATCH",
-      message: /^Your saved login records the server "ftp:\/\/b\.example\.test\/api\/v1"/,
+      message:
+        /^Your saved login records the server "ftp:\/\/b\.example\.test\/api\/v1"/,
     },
   },
   {
@@ -226,7 +227,8 @@ const rows: Row[] = [
     credential: "oauth",
     expect: {
       code: "LOGIN_DEPLOYMENT_MISMATCH",
-      message: /^Your saved login records the server "https:\/\/b\.example\.test\/api\/v1\?\*\*\*", which is not a usable server address\. Run `mcpjam cloud login`/,
+      message:
+        /^Your saved login records the server "https:\/\/b\.example\.test\/api\/v1\?\*\*\*", which is not a usable server address\. Run `mcpjam cloud login`/,
     },
   },
   {
@@ -235,7 +237,8 @@ const rows: Row[] = [
     credential: "oauth",
     expect: {
       code: "LOGIN_DEPLOYMENT_MISMATCH",
-      message: /^Your saved login records a server that is not a usable server address\./,
+      message:
+        /^Your saved login records a server that is not a usable server address\./,
     },
   },
   {
