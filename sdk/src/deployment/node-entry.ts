@@ -9,6 +9,5 @@ import { resolveDeployment } from "./resolve.js";
 
 registerDeploymentResolver(
   (explicit, env) =>
-    resolveDeployment({ baseUrl: explicit, credential: "api-key", env })
-      .baseUrl
+    resolveDeployment({ baseUrl: explicit, credential: "api-key", env }).baseUrl
 );
