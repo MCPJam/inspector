@@ -1040,6 +1040,19 @@ function addUsage(total, usage) {
       }));
     });
 
+    it("enables threshold-based native search only for forwarded Claude servers", () => {
+      const adapter = getHarnessAdapter("claude-code");
+      adapter.createHarness({ modelId: "anthropic/claude-haiku-4.5", auth: {}, mcpJson, forwardingMcpJson: mcpJson });
+      expect(createClaudeCodeHarness).toHaveBeenLastCalledWith(expect.objectContaining({
+        env: expect.objectContaining({ ENABLE_TOOL_SEARCH: "auto" }),
+      }));
+      expect(adapter.forwardingRuntime?.configurationVersion).toBe("tool-search-auto-v1");
+      adapter.createHarness({ modelId: "anthropic/claude-haiku-4.5", auth: {}, mcpJson });
+      expect(createClaudeCodeHarness).not.toHaveBeenLastCalledWith(expect.objectContaining({
+        env: expect.objectContaining({ ENABLE_TOOL_SEARCH: expect.anything() }),
+      }));
+    });
+
     it("Codex writes no sandbox MCP config — its servers are host-executed", () => {
       // The COMP-39 spike proved `~/.codex/config.toml` `[mcp_servers]` merges
       // cleanly and is still a silent no-op (the model never gets a callable
