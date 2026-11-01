@@ -239,6 +239,8 @@ Every server skill is verified before it is loaded: MCPJam fetches each file lis
 
 Each server skill row shows the origin server's label as a badge directly on the row, so provenance is visible wherever the skill appears in the list. A server that has not mutually declared the extension contributes no rows — "this host and server never had a skills conversation" is a different fact from "this server has no skills".
 
+The [stable spec](https://github.com/modelcontextprotocol/ext-skills/blob/main/specification/stable/skills.mdx) is written against protocol revision 2026-07-28. MCPJam also sends `skills/*` on a 2025-era connection when both sides declared the extension, which is outside the spec's baseline; the request `_meta` envelope the spec requires exists only on 2026-07-28 connections.
+
 The tab's single refresh button reloads both the project skill store and all server skill catalogs at once. It remains visible even when the project store is hidden, since server skills are the only list in that case.
 
 ### Inspecting a server's skills from the CLI
@@ -299,6 +301,15 @@ and checking each against its manifest:
 It reports `skipped` when the extension is not active on the connection, which
 is the normal state for a server that serves no skills.
 
+It also reports `error` for requirements of the stable spec that MCPJam
+otherwise tolerates: a `skills/list` or `skills/get` result without `ttlMs`
+and `cacheScope`, a listed file without its `size`, or an extension
+declaration without the `resources` capability. The Playground still loads
+such a server, so the doctor is where the omission is named. As with any
+check in `error`, the doctor's status is `partial` and `mcpjam server doctor`
+exits 1, so a CI step that runs the doctor fails for a server built against
+the draft spec until it sends the required fields.
+
 ### Unloadable skills
 
 A server skill can appear in the catalog but be refused for loading. MCPJam keeps the skill visible in the catalog — marked `unverifiable` — so the model stops retrying it and you can see what the server advertised. MCPJam declines to inject unverifiable content into a model turn. The reason is always shown:
@@ -312,6 +323,14 @@ A server skill can appear in the catalog but be refused for loading. MCPJam keep
 
 A skill that is unloadable for a limit reason (`too_many_resources` or `too_large`) is a real skill whose manifest exceeds what any conforming host is required to handle — it is not a server bug. The skill remains visible in the catalog with its advertised manifest so you can inspect what was declared.
 
-### Prompt injection cap
+### Size limit
 
-Verification uses the spec's per-skill budget (16 MiB). A separate, lower cap of **128 KiB** applies to how much skill content MCPJam will place in a single model turn. A skill that verifies correctly but exceeds this cap is refused rather than truncated — a clipped skill ends mid-sentence, and the model cannot distinguish that from a skill that simply said less.
+Verification uses the spec's per-skill budget of 16 MiB, which the spec requires a host to support. A separate cap of 256 KiB applies to how much skill content one `loadSkill` or `readSkillFile` result places in a model turn, since nothing else bounds a tool's output on its way into the provider request and the chat history. A skill or file past that cap verifies and is refused with `too_large_for_prompt` rather than truncated — a clipped skill ends mid-sentence, and the model cannot distinguish that from a skill that simply said less.
+
+### While a server skill is loaded
+
+Once a server-provided skill's `SKILL.md` is in the conversation, MCPJam treats the model as acting on that skill until the conversation no longer contains it. During that time, running a shell command (`bash`) and reading a resource from a saved server (`read_server_resource`) always ask for approval, whatever the Tool Approval setting says, because the spec requires the approval gate on code execution and on cross-server reads driven by skill content. The approval on `read_server_resource` shows the tool's input, which names the server being read; the spec asks it to name the skill's origin server too, and that is not yet shown. On an org provider running in the local runtime, which cannot resume a turn after an approval, such a turn is refused with `tool_approval_unsupported` instead.
+
+The origin banner on a loaded skill records the digest set of the manifest it was loaded under. If the server changes the skill's files afterwards, `listSkillFiles` and `readSkillFile` refuse with `manifest_changed` until the skill is loaded again, so a file the server added later is never read as part of the skill the user saw.
+
+A captured server skill, used by environment turns, is tagged with the same banner naming the capture, and its stored content is re-checked against the digest stored with the capture before it enters the conversation.

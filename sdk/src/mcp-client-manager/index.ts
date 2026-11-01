@@ -239,6 +239,7 @@ export {
   SkillsExtRequestMethods,
   SKILL_NOT_FOUND_ERROR_CODE,
   getSkillExt,
+  getSkillResultExt,
   isSkillNotFoundError,
   listSkillsExt,
   readResourceDirectoryExt,
@@ -246,6 +247,7 @@ export {
 export type {
   SkillEntry,
   SkillResourceRef,
+  SkillsExtGetResult,
   SkillsExtListResult,
   SkillsDirectoryEntry,
   SkillsDirectoryReadResult,
@@ -264,6 +266,7 @@ export {
   isMCPSkillsWireError,
   assertSkillsListResult,
   assertSkillEntry,
+  assertSkillsGetEnvelope,
   assertSkillsGetResult,
   assertDirectoryReadResult,
 } from "./skills-ext-guards.js";
@@ -344,6 +347,7 @@ export {
 // sampling requests through the SAME trust rules as the standalone path.
 export {
   TASK_INPUT_METHODS,
+  validateEmbeddedClientRequest,
   isTaskInputMethod,
   TaskInputRejectedError,
   collectTaskInputResponses,
@@ -540,6 +544,7 @@ export type {
   MrtrOperationState,
   MrtrLegResult,
   MrtrLegSender,
+  MrtrLegMiddleware,
   MrtrSupportedModes,
   MrtrInputCollector,
   MrtrValidateResponse,
@@ -559,6 +564,7 @@ export type {
 // a second answer to "is this tool definition valid".
 export {
   buildMcpParamHeaders,
+  findMcpHeaderIssues,
   classifyMcpHeader,
   decodeMcpHeaderValue,
   encodeMcpHeaderValue,

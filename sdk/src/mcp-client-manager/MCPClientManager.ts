@@ -147,7 +147,7 @@ import {
 } from "./tasks-ext.js";
 import { resolveSkillsSupport, type SkillsSupport } from "./skills-dispatch.js";
 import {
-  getSkillExt,
+  getSkillResultExt,
   listSkillsExt,
   readResourceDirectoryExt,
 } from "./skills-ext.js";
@@ -155,6 +155,7 @@ import { MCPSkillsWireError } from "./skills-ext-guards.js";
 import type {
   SkillEntry,
   SkillsDirectoryReadResult,
+  SkillsExtGetResult,
   SkillsExtListResult,
 } from "./skills-ext-types.js";
 import type {
@@ -185,6 +186,7 @@ import {
 } from "./mcp-header-mirror.js";
 import type { ModelVisibleMcpToolResults } from "../host-config/types.js";
 import { cancellationLeafForVersion } from "../host-config/types.js";
+import { forgetVerifiedServerSkillReads } from "../server-skills-cache.js";
 import {
   applyRuntimeClientCapabilities,
   getDefaultClientCapabilities,
@@ -215,6 +217,7 @@ import {
   type InputRequiredResult,
   type MrtrInputCollector,
   type MrtrLegSender,
+  type MrtrLegMiddleware,
 } from "./mrtr-driver.js";
 
 /**
@@ -372,6 +375,7 @@ export class MCPClientManager {
    * hosted PRs plug into.
    */
   private readonly mrtrInputCollectors = new Map<string, MrtrInputCollector>();
+  private readonly mrtrLegMiddleware = new Map<string, MrtrLegMiddleware>();
   /** Extension keys a server's MRTR collector also answers (see
    *  {@link setMrtrInputCollector}); such a key is never legacy-only. */
   private readonly mrtrExtensionClaims = new Map<string, readonly string[]>();
@@ -670,7 +674,7 @@ export class MCPClientManager {
       } else {
         const url = new URL(config.url);
         transportType =
-          config.preferSSE ?? url.pathname.endsWith("/sse")
+          (config.preferSSE ?? url.pathname.endsWith("/sse"))
             ? "sse"
             : "streamable-http";
       }
@@ -791,8 +795,8 @@ export class MCPClientManager {
         negotiation === undefined
           ? "legacy"
           : negotiation.mode === "auto"
-          ? "auto"
-          : "modern-pin";
+            ? "auto"
+            : "modern-pin";
 
       let negotiatedEra: "legacy" | "modern" | undefined;
       let negotiatedProtocolVersion: string | undefined;
@@ -854,8 +858,12 @@ export class MCPClientManager {
     // Purge the MRTR collector too; otherwise a re-registered server inherits
     // the previous owner's collector closure and stale `elicitation` capability.
     this.mrtrInputCollectors.delete(serverId);
+    this.mrtrLegMiddleware.delete(serverId);
     this.mrtrExtensionClaims.delete(serverId);
     this.mrtrFormSchemaSelectors.delete(serverId);
+    // The Skills spec: a host removes a server's cached skill content when
+    // the user removes that server.
+    forgetVerifiedServerSkillReads(this, serverId);
   }
 
   /**
@@ -1061,8 +1069,8 @@ export class MCPClientManager {
     const ids = Array.isArray(serverIds)
       ? serverIds
       : serverIds
-      ? [serverIds]
-      : this.listServers();
+        ? [serverIds]
+        : this.listServers();
 
     const perServerTools = await Promise.all(
       ids.map(async (id) => {
@@ -1823,6 +1831,7 @@ export class MCPClientManager {
        *  (see `selectElicitationFormSchema`), or the empty core schema
        *  accepts any answer. */
       selectFormSchema?: ElicitationFormSchemaSelector;
+      aroundLeg?: MrtrLegMiddleware;
     }
   ): void {
     // Intentionally NOT gated on prior registration: a 2026-07-28 server checks
@@ -1833,6 +1842,9 @@ export class MCPClientManager {
     // collector cannot answer). Registering for an as-yet-unknown server is a
     // no-op until that server connects.
     this.mrtrInputCollectors.set(serverId, collect);
+    if (options?.aroundLeg)
+      this.mrtrLegMiddleware.set(serverId, options.aroundLeg);
+    else this.mrtrLegMiddleware.delete(serverId);
     if (options?.extensionClaims?.length)
       this.mrtrExtensionClaims.set(serverId, [...options.extensionClaims]);
     else this.mrtrExtensionClaims.delete(serverId);
@@ -1844,6 +1856,7 @@ export class MCPClientManager {
   /** Removes a server's MRTR input collector. */
   clearMrtrInputCollector(serverId: string): void {
     this.mrtrInputCollectors.delete(serverId);
+    this.mrtrLegMiddleware.delete(serverId);
     this.mrtrExtensionClaims.delete(serverId);
     this.mrtrFormSchemaSelectors.delete(serverId);
   }
@@ -2033,6 +2046,12 @@ export class MCPClientManager {
       this.getNegotiatedProtocolVersion(serverId),
       this.getServerCapabilities(serverId)
     );
+  }
+
+  /** Wait for negotiation before reading support on an ephemeral connection. */
+  async ensureTasksSupport(serverId: string): Promise<TasksSupport> {
+    await this.ensureConnected(serverId);
+    return this.getTasksSupport(serverId);
   }
 
   /**
@@ -2253,21 +2272,31 @@ export class MCPClientManager {
 
   /**
    * `skills/get` — one skill by URI, including skills the listing never
-   * mentioned. A conforming server answers `-32602` for a URI it does not
-   * serve (`isSkillNotFoundError`).
+   * mentioned, with the result's SEP-2549 `ttlMs` / `cacheScope`. A
+   * conforming server answers `-32602` for a URI it does not serve
+   * (`isSkillNotFoundError`).
    */
+  async getServerSkillResult(
+    serverId: string,
+    uri: string,
+    options?: ClientRequestOptions
+  ): Promise<SkillsExtGetResult> {
+    return this.runRetryableReadOperation(serverId, options, (client) => {
+      this.assertSkillsActive(serverId, "skills/get");
+      return getSkillResultExt(
+        { client, options: this.withTimeout(serverId, options) },
+        uri
+      );
+    });
+  }
+
+  /** {@link getServerSkillResult}, unwrapped to the entry. */
   async getServerSkill(
     serverId: string,
     uri: string,
     options?: ClientRequestOptions
   ): Promise<SkillEntry> {
-    return this.runRetryableReadOperation(serverId, options, (client) => {
-      this.assertSkillsActive(serverId, "skills/get");
-      return getSkillExt(
-        { client, options: this.withTimeout(serverId, options) },
-        uri
-      );
-    });
+    return (await this.getServerSkillResult(serverId, uri, options)).skill;
   }
 
   /**
@@ -2546,11 +2575,11 @@ export class MCPClientManager {
       // against every version supported by the upstream SDK.
       const resolvedSupportedProtocolVersions = wantsAutoNegotiation
         ? undefined
-        : config.supportedProtocolVersions ??
+        : (config.supportedProtocolVersions ??
           this.defaultSupportedProtocolVersions ??
           (!wantsStateless && resolvedProtocolVersion !== undefined
             ? [resolvedProtocolVersion]
-            : undefined);
+            : undefined));
       // Send the version that was actually PINNED, not whatever happens to
       // sit at index 0 of the accept-list.
       //
@@ -4111,11 +4140,11 @@ export class MCPClientManager {
   ): value is ExecuteToolRequest {
     return Boolean(
       value &&
-        typeof value === "object" &&
-        ("request" in value ||
-          "retry" in value ||
-          "allowTaskResult" in value ||
-          "metadata" in value)
+      typeof value === "object" &&
+      ("request" in value ||
+        "retry" in value ||
+        "allowTaskResult" in value ||
+        "metadata" in value)
     );
   }
 
@@ -4160,6 +4189,24 @@ export class MCPClientManager {
   // the operation at round zero.
   // ===========================================================================
 
+  private guardMrtrLeg<T>(
+    serverId: string,
+    request: Parameters<MrtrLegSender>[0],
+    context: Parameters<MrtrLegSender>[1],
+    send: () => Promise<T>
+  ): Promise<T> {
+    const middleware = this.mrtrLegMiddleware.get(serverId);
+    if (!middleware) return send();
+    if (!context.opId) throw new Error("Missing MRTR operation identity");
+    return middleware({
+      operationId: context.opId,
+      round: context.round,
+      request,
+      signal: context.signal,
+      send,
+    });
+  }
+
   private async executeToolWithInputRequired(
     serverId: string,
     callParams: {
@@ -4194,7 +4241,7 @@ export class MCPClientManager {
           : {}),
       }
     );
-    const sender: MrtrLegSender<CallToolResult> = (req) =>
+    const sender: MrtrLegSender<CallToolResult> = (req, leg) =>
       this.runRetriedOperation(
         serverId,
         baseOptions,
@@ -4216,33 +4263,43 @@ export class MCPClientManager {
             serverId,
             mergedOptions,
             (callOptions) =>
-              client.requestWithSchema(
-                req as Request,
-                withInputRequired(defaultResultSchemaForMethod("tools/call")),
-                // Pass `callOptions` through untouched (matching the legacy
-                // `client.callTool(callParams, callOptions)` sibling): it carries
-                // the composed elicitation-timeout watchdog signal. Overwriting
-                // `.signal` with the outer retry `signal` would drop that
-                // watchdog; the outer abort is already enforced by
-                // `runRetriedOperation`'s `awaitWithAbort` wrapper.
-                {
-                  ...callOptions,
-                  allowInputRequired: true,
-                  // Caller-supplied headers win: an explicit override is a
-                  // deliberate act, and the debugger must be able to send a
-                  // deliberately wrong header to exercise a server's -32020.
-                  ...(paramHeaders && Object.keys(paramHeaders).length > 0
-                    ? {
-                        headers: {
-                          ...paramHeaders,
-                          ...(
-                            callOptions as { headers?: Record<string, string> }
-                          ).headers,
-                        },
-                      }
-                    : {}),
-                }
-              ) as Promise<CallToolResult | InputRequiredResult>
+              this.guardMrtrLeg(
+                serverId,
+                req,
+                leg,
+                () =>
+                  client.requestWithSchema(
+                    req as Request,
+                    withInputRequired(
+                      defaultResultSchemaForMethod("tools/call")
+                    ),
+                    // Pass `callOptions` through untouched (matching the legacy
+                    // `client.callTool(callParams, callOptions)` sibling): it carries
+                    // the composed elicitation-timeout watchdog signal. Overwriting
+                    // `.signal` with the outer retry `signal` would drop that
+                    // watchdog; the outer abort is already enforced by
+                    // `runRetriedOperation`'s `awaitWithAbort` wrapper.
+                    {
+                      ...callOptions,
+                      allowInputRequired: true,
+                      // Caller-supplied headers win: an explicit override is a
+                      // deliberate act, and the debugger must be able to send a
+                      // deliberately wrong header to exercise a server's -32020.
+                      ...(paramHeaders && Object.keys(paramHeaders).length > 0
+                        ? {
+                            headers: {
+                              ...paramHeaders,
+                              ...(
+                                callOptions as {
+                                  headers?: Record<string, string>;
+                                }
+                              ).headers,
+                            },
+                          }
+                        : {}),
+                    }
+                  ) as Promise<CallToolResult | InputRequiredResult>
+              )
           );
         }
       );
@@ -4269,15 +4326,18 @@ export class MCPClientManager {
     options: ClientRequestOptions | undefined,
     collect: MrtrInputCollector
   ): Promise<ReadResourceResult> {
-    const sender: MrtrLegSender<ReadResourceResult> = (req) =>
-      this.runRetryableReadOperation(
-        serverId,
-        options,
-        (client) =>
-          client.readResource(req.params as ReadResourceParams, {
-            ...this.withProgressHandler(serverId, options),
-            allowInputRequired: true,
-          }) as Promise<ReadResourceResult | InputRequiredResult>
+    const sender: MrtrLegSender<ReadResourceResult> = (req, leg) =>
+      this.runRetryableReadOperation(serverId, options, (client) =>
+        this.guardMrtrLeg(
+          serverId,
+          req,
+          leg,
+          () =>
+            client.readResource(req.params as ReadResourceParams, {
+              ...this.withProgressHandler(serverId, options),
+              allowInputRequired: true,
+            }) as Promise<ReadResourceResult | InputRequiredResult>
+        )
       );
 
     return runInputRequiredOperation<ReadResourceResult>({
@@ -4304,19 +4364,22 @@ export class MCPClientManager {
     // through the explicit-schema `requestWithSchema` seam directly — which
     // also exercises the modern per-request log-level `_meta` injection end to
     // end at the manager level.
-    const sender: MrtrLegSender<GetPromptResult> = (req) =>
-      this.runRetryableReadOperation(
-        serverId,
-        options,
-        (client) =>
-          client.requestWithSchema(
-            req as Request,
-            withInputRequired(defaultResultSchemaForMethod("prompts/get")),
-            {
-              ...this.withProgressHandler(serverId, options),
-              allowInputRequired: true,
-            }
-          ) as Promise<GetPromptResult | InputRequiredResult>
+    const sender: MrtrLegSender<GetPromptResult> = (req, leg) =>
+      this.runRetryableReadOperation(serverId, options, (client) =>
+        this.guardMrtrLeg(
+          serverId,
+          req,
+          leg,
+          () =>
+            client.requestWithSchema(
+              req as Request,
+              withInputRequired(defaultResultSchemaForMethod("prompts/get")),
+              {
+                ...this.withProgressHandler(serverId, options),
+                allowInputRequired: true,
+              }
+            ) as Promise<GetPromptResult | InputRequiredResult>
+        )
       );
 
     return runInputRequiredOperation<GetPromptResult>({

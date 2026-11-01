@@ -100,6 +100,7 @@ export interface SchedulerTaskState {
 
 export interface UseTaskSchedulerArgs {
   serverId: string | undefined;
+  connectionId?: string;
   wire: LiveTasksWire | "none";
   scope?: string;
   /** The user's preferred minimum, from the tab's poll-interval box. */
@@ -181,6 +182,7 @@ export interface TaskScheduler {
 
 export function useTaskScheduler({
   serverId,
+  connectionId,
   wire,
   scope,
   userMinimumIntervalMs,
@@ -191,7 +193,7 @@ export function useTaskScheduler({
   // previous connection would keep answering `due()` — pinning
   // `msUntilNextDue()` at zero forever, because nothing on the NEW connection
   // ever observes or forgets them, so every re-arm would collapse to the floor.
-  const identityKey = `${scope ?? ""}\u0000${serverId ?? ""}\u0000${wire}`;
+  const identityKey = `${scope ?? ""}\u0000${serverId ?? ""}\u0000${connectionId ?? ""}\u0000${wire}`;
   const engineRef = useRef<TaskLifecycleEngine | undefined>(undefined);
   const engineKeyRef = useRef<string | undefined>(undefined);
   if (!engineRef.current || engineKeyRef.current !== identityKey) {
@@ -221,9 +223,15 @@ export function useTaskScheduler({
   const identityFor = useCallback(
     (taskId: string): TaskLifecycleIdentity | undefined => {
       if (!serverId || wire === "none") return undefined;
-      return { serverId, wire, taskId, ...(scope ? { scope } : {}) };
+      return {
+        serverId,
+        wire,
+        taskId,
+        ...(scope ? { scope } : {}),
+        ...(connectionId !== undefined ? { connectionId } : {}),
+      };
     },
-    [serverId, wire, scope]
+    [serverId, connectionId, wire, scope],
   );
 
   return useMemo<TaskScheduler>(
@@ -244,7 +252,7 @@ export function useTaskScheduler({
           .map((taskId) => identityFor(taskId))
           .filter(
             (identity): identity is TaskLifecycleIdentity =>
-              !!identity && !engine.get(identity)
+              !!identity && !engine.get(identity),
           );
         const restoreStates = getTrackedTaskRestoreStates(unseen);
 
@@ -406,7 +414,7 @@ export function useTaskScheduler({
           engine
             .active()
             .filter((record) => isTerminalLifecycleStatus(record.status))
-            .map((record) => [record.key, record])
+            .map((record) => [record.key, record]),
         );
         const pendingTaskIds: string[] = [];
         const exhaustedTaskIds: string[] = [];
@@ -446,6 +454,6 @@ export function useTaskScheduler({
         return engine.batchIntervalMs(records);
       },
     }),
-    [engine, identityFor, effectiveMinimum]
+    [engine, identityFor, effectiveMinimum],
   );
 }

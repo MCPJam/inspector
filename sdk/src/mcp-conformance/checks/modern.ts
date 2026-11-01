@@ -2731,8 +2731,8 @@ async function runXMcpHeaderDeclarationsCheck(
     return notApplicableResult(meta, "Server does not advertise the tools capability");
   }
 
-  // Shared with the readiness sibling: one bounded, cycle-safe walk, so a
-  // cursor bug cannot exist in one and not the other.
+  // Shared with the other full-listing checks: one bounded, cycle-safe walk,
+  // so a cursor bug cannot exist in one and not the other.
   const walk = await walkToolsList({
     startId: 7300,
     request: ({ id, cursor }) =>

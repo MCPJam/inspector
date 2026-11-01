@@ -2,6 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  nextResumedVersion,
   useResumedThreadPersistence,
   type ResumedThreadStreamStatus,
 } from "../use-resumed-thread-persistence";
@@ -668,5 +669,96 @@ describe("useResumedThreadPersistence", () => {
     expect(harness.onConflict).not.toHaveBeenCalled();
     expect(harness.refreshAfterStream).not.toHaveBeenCalled();
     expect(harness.markHistorySessionRead).not.toHaveBeenCalled();
+  });
+
+  it.each(["failed", "missing"] as const)(
+    "reports an unsaved continuation with a %s receipt even after the first request committed",
+    (outcome) => {
+      const harness = setup({
+        receipt:
+          outcome === "failed"
+            ? {
+                outcome: "failed",
+                chatSessionId: SESSION_ID,
+                failureKind: "timeout",
+              }
+            : null,
+      });
+      act(() =>
+        harness.view.rerender({ ...harness.props, status: "streaming" }),
+      );
+      act(() =>
+        harness.view.rerender({
+          ...harness.props,
+          status: "ready",
+          resumedVersion: 5,
+          reactiveSessionVersion: 5,
+        }),
+      );
+      act(() => vi.advanceTimersByTime(10_001));
+      expect(harness.onUnsaved).toHaveBeenCalledTimes(1);
+      expect(harness.onConflict).not.toHaveBeenCalled();
+      expect(harness.syncResumedVersion).not.toHaveBeenCalled();
+    },
+  );
+
+  it("silently watches beyond the intermediate commit when a continuation is stopped", () => {
+    const harness = setup({ aborted: true });
+    act(() => harness.view.rerender({ ...harness.props, status: "streaming" }));
+    act(() =>
+      harness.view.rerender({
+        ...harness.props,
+        status: "ready",
+        resumedVersion: 5,
+        reactiveSessionVersion: 5,
+      }),
+    );
+    act(() => vi.advanceTimersByTime(10_001));
+    expect(harness.onUnsaved).not.toHaveBeenCalled();
+    expect(harness.syncResumedVersion).not.toHaveBeenCalled();
+    act(() =>
+      harness.view.rerender({
+        ...harness.props,
+        status: "ready",
+        resumedVersion: 5,
+        reactiveSessionVersion: 6,
+      }),
+    );
+    expect(harness.syncResumedVersion).toHaveBeenCalledWith(6);
+    expect(harness.onConflict).not.toHaveBeenCalled();
+  });
+});
+
+describe("nextResumedVersion", () => {
+  const previous = { sessionId: "open", version: 4 };
+  it.each([
+    ["forward", "open", "open", 5, { sessionId: "open", version: 5 }],
+    ["backward", "open", "open", 3, previous],
+    ["duplicate", "open", "open", 4, previous],
+    ["closed", "new", "open", 5, previous],
+    ["newly open", "new", "new", 1, { sessionId: "new", version: 1 }],
+    ["reset", "open", "open", null, { sessionId: "open", version: null }],
+  ] as const)(
+    "handles a %s version",
+    (_name, currentSessionId, sessionId, version, expected) => {
+      const next = nextResumedVersion({
+        previous,
+        currentSessionId,
+        sessionId,
+        version,
+      });
+      expect(next).toEqual(expected);
+      if (expected === previous) expect(next).toBe(previous);
+    },
+  );
+  it("seeds a previously untracked session", () => {
+    expect(
+      nextResumedVersion({
+        previous: null,
+        currentSessionId: "open",
+        sessionId: "open",
+        version: 4,
+      }),
+    ).toEqual(previous);
   });
 });

@@ -168,6 +168,32 @@ describe("EvalsHeader", () => {
     expect(onLandingViewChange).toHaveBeenCalledWith("runs");
   });
 
+  it("on a phone, keeps Setup Run on the title's line and puts the tabs below", () => {
+    render(
+      <EvalsHeader
+        onCreateSuite={vi.fn()}
+        onSetupRun={vi.fn()}
+        landingView="runs"
+        onLandingViewChange={vi.fn()}
+      />,
+    );
+
+    const actions = screen.getByTestId("evals-header-actions");
+    const tabs = screen.getByTestId("evals-header-tabs");
+    expect(actions).toContainElement(
+      screen.getByRole("button", { name: /setup run/i }),
+    );
+    expect(tabs).toContainElement(
+      screen.getByRole("navigation", { name: "Evaluate view" }),
+    );
+    // Phone: title, action, then the tabs on a full-width line of their own.
+    expect(actions).toHaveClass("order-2", "ml-auto");
+    expect(tabs).toHaveClass("order-3", "w-full");
+    // From sm up: title, tabs, action, as before.
+    expect(tabs).toHaveClass("sm:order-2", "sm:w-auto");
+    expect(actions).toHaveClass("sm:order-3");
+  });
+
   it("renders a minimal Evaluate / title trail on detail routes", () => {
     const onEvaluateClick = vi.fn();
     render(

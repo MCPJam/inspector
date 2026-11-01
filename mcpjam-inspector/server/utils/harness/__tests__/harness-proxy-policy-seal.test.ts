@@ -45,6 +45,28 @@ afterEach(() => {
 });
 
 describe("harness proxy policy seal", () => {
+  it("binds a versioned connection profile without exposing it or changing v1 reads", () => {
+    const profile = {
+      clientCapabilities: {
+        extensions: { "future.test/capability": { marker: "original" } },
+      },
+      clientInfo: { name: "saved-client", version: "1", title: "Saved" },
+      timeout: 17_000,
+      firstPageOnly: true,
+    };
+    const sealed = seal({ profile });
+    expect(sealed.startsWith("mcpjps2.")).toBe(true);
+    expect(sealed).not.toContain("saved-client");
+    expect(unsealHarnessProxyToken(sealed, "srv-a")?.profile).toEqual(profile);
+    expect(unsealHarnessProxyToken(seal({}), "srv-a")?.profile).toBeUndefined();
+    expect(
+      unsealHarnessProxyToken(sealed.replace("mcpjps2.", "mcpjps1."), "srv-a"),
+    ).toBeNull();
+    const credentialProfile = Object.assign({}, profile, {
+      headers: { authorization: "secret" },
+    });
+    expect(() => seal({ profile: credentialProfile })).toThrow();
+  });
   it("round-trips the inner token and the decision snapshot", () => {
     const sealed = seal({});
     expect(isSealedHarnessProxyToken(sealed)).toBe(true);
