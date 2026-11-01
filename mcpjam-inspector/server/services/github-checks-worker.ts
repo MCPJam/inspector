@@ -63,12 +63,9 @@ import {
   type AttemptInput,
   type CheckPlanSession,
   type CheckRunTarget,
-} from "./github-checks/check-plan.js";
-import {
   GITHUB_CHECKS_SERVICE_BASE as SERVICE_BASE,
-  githubChecksServiceEnv,
-  postServiceRoute,
-} from "./github-checks/service-route.js";
+} from "./github-checks/check-plan.js";
+import { postServiceRoute, serviceRouteEnv } from "./internal-backend.js";
 import { executePersistedConformanceRun } from "./conformance-run-executor.js";
 import { createConformanceFetch } from "../routes/shared/conformance.js";
 
@@ -174,7 +171,7 @@ export function isGithubChecksWorkerEnabled(): boolean {
 }
 
 function requiredEnv(): { convexUrl: string; serviceToken: string } | null {
-  return githubChecksServiceEnv();
+  return serviceRouteEnv();
 }
 
 export class CredentialPolicyBlockedError extends Error {

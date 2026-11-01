@@ -38,14 +38,8 @@ import {
   translateEnvironmentResolveError,
   type ResolvedEnvironmentForLaunch,
 } from "./environments/resolve.js";
-import { getServiceCredential } from "./service-credential.js";
-
-const POLL_INTERVAL_MS = 15_000;
-const POLL_JITTER_MS = 5_000;
-/** Backoff after claim/transport errors so a broken backend isn't hammered. */
-const ERROR_BACKOFF_MS = 60_000;
-/** Per-request cap on claim/complete calls so a stalled Convex can't wedge the loop. */
-const SERVICE_ROUTE_TIMEOUT_MS = 15_000;
+import { postServiceRoute, serviceRouteEnv } from "./internal-backend.js";
+import { startClaimLoop, type ClaimLoop } from "./workers/claim-loop.js";
 
 type ClaimedScheduledRun = {
   triggerId: string;
@@ -69,51 +63,6 @@ export function isScheduledEvalsWorkerEnabled(): boolean {
   return process.env.SCHEDULED_EVALS_WORKER_ENABLED === "1";
 }
 
-function requiredEnv(): { convexUrl: string; serviceToken: string } | null {
-  const convexUrl = process.env.CONVEX_HTTP_URL;
-  const serviceToken = getServiceCredential();
-  if (!convexUrl || !serviceToken) return null;
-  return { convexUrl, serviceToken };
-}
-
-async function postServiceRoute(
-  path: string,
-  body: Record<string, unknown>,
-): Promise<{ status: number; body: any }> {
-  const env = requiredEnv();
-  if (!env) {
-    throw new Error(
-      "Scheduled evals worker requires CONVEX_HTTP_URL and INSPECTOR_SERVICE_TOKEN",
-    );
-  }
-  const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    SERVICE_ROUTE_TIMEOUT_MS,
-  );
-  let response: Response;
-  try {
-    response = await fetch(`${env.convexUrl}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-inspector-service-token": env.serviceToken,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-  let parsed: any = null;
-  try {
-    parsed = await response.json();
-  } catch {
-    // tolerated; status carries the signal
-  }
-  return { status: response.status, body: parsed };
-}
-
 async function claimNext(
   claimedBy: string,
 ): Promise<ClaimedScheduledRun | null | "disabled"> {
@@ -129,6 +78,12 @@ async function claimNext(
   }
   return (body.claimed as ClaimedScheduledRun | null) ?? null;
 }
+
+/**
+ * Test seam: how a claim response maps to work, nothing to do, or "feature
+ * off" is decided here at the wire, and the loop trusts it.
+ */
+export const claimNextForTests = claimNext;
 
 async function reportComplete(args: {
   triggerId: string;
@@ -338,86 +293,31 @@ export async function executeClaimedRun(
   }
 }
 
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(done, ms);
-    function done() {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }
-    function onAbort() {
-      clearTimeout(timer);
-      done();
-    }
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
-export interface ScheduledEvalsWorkerHandle {
-  /** Aborts polling and resolves once the loop (incl. an in-flight run) settles. */
-  stop: () => Promise<void>;
-}
+export type ScheduledEvalsWorkerHandle = ClaimLoop;
 
 /**
  * Start the polling loop. Call once from server bootstrap when
  * {@link isScheduledEvalsWorkerEnabled}. Returns a handle whose `stop()`
  * ends the loop after the in-flight run (if any) settles.
  */
-export function startScheduledEvalsWorker(options?: {
-  claimedBy?: string;
-  /** Test seam: overrides the claim/execute pair. */
-  claim?: typeof claimNext;
-  execute?: typeof executeClaimedRun;
-}): ScheduledEvalsWorkerHandle {
-  const abort = new AbortController();
-  const claimedBy =
-    options?.claimedBy ??
-    `inspector-${process.env.RAILWAY_REPLICA_ID ?? process.pid}`;
-  const claim = options?.claim ?? claimNext;
-  const execute = options?.execute ?? executeClaimedRun;
-
-  if (!requiredEnv()) {
+export function startScheduledEvalsWorker(): ScheduledEvalsWorkerHandle {
+  if (!serviceRouteEnv()) {
     logger.warn(
       "[scheduled-evals] worker enabled but CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing; not starting",
     );
     return { stop: async () => {} };
   }
 
-  logger.info("[scheduled-evals] worker started", { claimedBy });
-
-  const loop = (async () => {
-    while (!abort.signal.aborted) {
-      let waitMs =
-        POLL_INTERVAL_MS + Math.floor(Math.random() * POLL_JITTER_MS);
-      try {
-        const claimed = await claim(claimedBy);
-        if (claimed === "disabled") {
-          // Feature off backend-side: poll slowly so flipping the env flag
-          // doesn't need an Inspector restart.
-          waitMs = ERROR_BACKOFF_MS;
-        } else if (claimed) {
-          await execute(claimed);
-          // Drain mode: if a trigger was waiting, check again immediately —
-          // another suite's window may be queued behind it.
-          waitMs = 1_000;
-        }
-      } catch (error) {
-        logger.warn("[scheduled-evals] poll failed", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        waitMs = ERROR_BACKOFF_MS;
-      }
-      await sleep(waitMs, abort.signal);
-    }
-    logger.info("[scheduled-evals] worker stopped");
-  })();
-
-  return {
-    stop: async () => {
-      abort.abort();
-      // Bounded by the caller's shutdown force-exit timer; runs that
-      // outlast it are recovered by the backend's stale-lease sweep.
-      await loop;
+  return startClaimLoop({
+    claimedByPrefix: "inspector-",
+    claim: claimNext,
+    execute: executeClaimedRun,
+    log: {
+      started: (claimedBy) =>
+        logger.info("[scheduled-evals] worker started", { claimedBy }),
+      pollFailed: (error) =>
+        logger.warn("[scheduled-evals] poll failed", { error }),
+      stopped: () => logger.info("[scheduled-evals] worker stopped"),
     },
-  };
+  });
 }

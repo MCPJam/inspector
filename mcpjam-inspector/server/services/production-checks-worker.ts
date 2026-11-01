@@ -43,14 +43,12 @@ import {
 import type { Predicate } from "@/shared/eval-matching";
 import type { RunnerWidgetRenderObservation } from "@/shared/eval-trace";
 import { extractToolCallsFromEnvelopeMessages } from "./checks/chat-session-envelope.js";
-import { getServiceCredential } from "./service-credential.js";
-
-const POLL_INTERVAL_MS = 15_000;
-const POLL_JITTER_MS = 5_000;
-/** Backoff after claim/transport errors so a broken backend isn't hammered. */
-const ERROR_BACKOFF_MS = 60_000;
-/** Per-request cap so a stalled Convex can't wedge the loop. */
-const SERVICE_ROUTE_TIMEOUT_MS = 15_000;
+import { postServiceRoute, serviceRouteEnv } from "./internal-backend.js";
+import {
+  startClaimLoop,
+  type ClaimLoop,
+  type ClaimResult,
+} from "./workers/claim-loop.js";
 
 export type ClaimedProductionCheck = {
   triggerId: string;
@@ -66,73 +64,23 @@ export type ClaimedProductionCheck = {
   } | null;
 };
 
-type ClaimOutcome =
-  | { kind: "claimed"; claim: ClaimedProductionCheck }
-  | { kind: "empty" }
-  /** A trigger was consumed without producing work — poll again immediately. */
-  | { kind: "drained" }
-  | { kind: "disabled" };
-
-function requiredEnv(): { convexUrl: string; serviceToken: string } | null {
-  const convexUrl = process.env.CONVEX_HTTP_URL;
-  const serviceToken = getServiceCredential();
-  if (!convexUrl || !serviceToken) return null;
-  return { convexUrl, serviceToken };
-}
-
-async function postServiceRoute(
-  path: string,
-  body: Record<string, unknown>,
-): Promise<{ status: number; body: any }> {
-  const env = requiredEnv();
-  if (!env) {
-    throw new Error(
-      "Production checks worker requires CONVEX_HTTP_URL and INSPECTOR_SERVICE_TOKEN",
-    );
-  }
-  const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    SERVICE_ROUTE_TIMEOUT_MS,
-  );
-  let response: Response;
-  try {
-    response = await fetch(`${env.convexUrl}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-inspector-service-token": env.serviceToken,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-  let parsed: any = null;
-  try {
-    parsed = await response.json();
-  } catch {
-    // tolerated; status carries the signal
-  }
-  return { status: response.status, body: parsed };
-}
-
-async function claimNext(claimedBy: string): Promise<ClaimOutcome> {
+async function claimNext(
+  claimedBy: string,
+): Promise<ClaimResult<ClaimedProductionCheck>> {
   const { status, body } = await postServiceRoute(
     "/internal/v1/production-checks/claim",
     { claimedBy },
   );
   // 404 = PRODUCTION_CHECKS_ENABLED is off backend-side; nothing to do,
   // long backoff so flipping the flag doesn't need an Inspector restart.
-  if (status === 404) return { kind: "disabled" };
+  if (status === 404) return "disabled";
   if (status !== 200 || !body?.ok) {
     throw new Error(`claim failed (${status}): ${JSON.stringify(body)}`);
   }
   if (body.claimed !== true) {
     // `retry` means the mutation consumed a stale trigger (scenario disabled,
     // session gone) — the queue behind it may still hold live work.
-    return body.retry === true ? { kind: "drained" } : { kind: "empty" };
+    return body.retry === true ? "drained" : null;
   }
   if (
     typeof body.triggerId !== "string" ||
@@ -144,18 +92,21 @@ async function claimNext(claimedBy: string): Promise<ClaimOutcome> {
     throw new Error("claim returned a malformed payload");
   }
   return {
-    kind: "claimed",
-    claim: {
-      triggerId: body.triggerId,
-      sessionDocId: body.sessionDocId,
-      checkDocId: body.checkDocId,
-      generation: body.generation,
-      criteria: body.criteria,
-      usage: body.usage ?? null,
-      envelope: body.envelope ?? null,
-    },
+    triggerId: body.triggerId,
+    sessionDocId: body.sessionDocId,
+    checkDocId: body.checkDocId,
+    generation: body.generation,
+    criteria: body.criteria,
+    usage: body.usage ?? null,
+    envelope: body.envelope ?? null,
   };
 }
+
+/**
+ * Test seam: whether a claim response is work, a drained stale trigger,
+ * nothing, or "feature off" is decided here at the wire.
+ */
+export const claimNextForTests = claimNext;
 
 /**
  * Validated token totals for the SDK evaluator. Wire data: a malformed field
@@ -308,23 +259,7 @@ export async function executeClaimedCheck(
   }
 }
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal.aborted) return resolve();
-    const timer = setTimeout(done, ms);
-    function done() {
-      signal.removeEventListener("abort", done);
-      clearTimeout(timer);
-      resolve();
-    }
-    signal.addEventListener("abort", done);
-  });
-}
-
-export interface ProductionChecksWorkerHandle {
-  /** Aborts polling and resolves once the loop (incl. an in-flight grade) settles. */
-  stop: () => Promise<void>;
-}
+export type ProductionChecksWorkerHandle = ClaimLoop;
 
 /**
  * Start the polling loop. Called unconditionally from server bootstrap — it
@@ -332,61 +267,24 @@ export interface ProductionChecksWorkerHandle {
  * infrastructure peer gets an inert handle. One grade in flight per instance;
  * multiple instances race safely (the claim is an atomic Convex mutation).
  */
-export function startProductionChecksWorker(options?: {
-  claimedBy?: string;
-  /** Test seam: overrides the claim/execute pair. */
-  claim?: typeof claimNext;
-  execute?: typeof executeClaimedCheck;
-}): ProductionChecksWorkerHandle {
-  const abort = new AbortController();
-  const claimedBy =
-    options?.claimedBy ??
-    `inspector-${process.env.RAILWAY_REPLICA_ID ?? process.pid}`;
-  const claim = options?.claim ?? claimNext;
-  const execute = options?.execute ?? executeClaimedCheck;
-
+export function startProductionChecksWorker(): ProductionChecksWorkerHandle {
   // Not a worker peer — every local dev and self-hosted inspector lands here.
   // Silent on purpose: with no flag to contradict, absent credentials are the
   // normal case rather than a misconfiguration worth warning about.
-  if (!requiredEnv()) {
+  if (!serviceRouteEnv()) {
     return { stop: async () => {} };
   }
 
-  logger.info("[production-checks] worker started", { claimedBy });
-
-  const loop = (async () => {
-    while (!abort.signal.aborted) {
-      let waitMs =
-        POLL_INTERVAL_MS + Math.floor(Math.random() * POLL_JITTER_MS);
-      try {
-        const outcome = await claim(claimedBy);
-        if (outcome.kind === "disabled") {
-          waitMs = ERROR_BACKOFF_MS;
-        } else if (outcome.kind === "drained") {
-          // A stale trigger was consumed; live work may be queued behind it.
-          waitMs = 250;
-        } else if (outcome.kind === "claimed") {
-          await execute(outcome.claim);
-          // Drain mode: an idle scenario enqueues sessions in a burst.
-          waitMs = 1_000;
-        }
-      } catch (error) {
-        logger.warn("[production-checks] poll failed", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        waitMs = ERROR_BACKOFF_MS;
-      }
-      await sleep(waitMs, abort.signal);
-    }
-    logger.info("[production-checks] worker stopped");
-  })();
-
-  return {
-    stop: async () => {
-      abort.abort();
-      // Bounded by the caller's shutdown force-exit timer; grades that
-      // outlast it are recovered by the backend's stale-lease sweep.
-      await loop;
+  return startClaimLoop({
+    claimedByPrefix: "inspector-",
+    claim: claimNext,
+    execute: executeClaimedCheck,
+    log: {
+      started: (claimedBy) =>
+        logger.info("[production-checks] worker started", { claimedBy }),
+      pollFailed: (error) =>
+        logger.warn("[production-checks] poll failed", { error }),
+      stopped: () => logger.info("[production-checks] worker stopped"),
     },
-  };
+  });
 }
