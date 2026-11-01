@@ -447,7 +447,7 @@ export function harnessToolApprovalRefusalReason(args: {
     );
   }
   const mcpToolApproval =
-    args.adapter.mcpDelivery === "native"
+    args.adapter.mcpDelivery === "harness"
       ? args.adapter.supportsMcpToolApproval
       : args.adapter.supportsHostExecutedToolApproval;
   if (args.hasSelectedMcpServers && !mcpToolApproval) {

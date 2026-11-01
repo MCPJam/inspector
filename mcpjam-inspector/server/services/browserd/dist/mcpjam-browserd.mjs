@@ -10691,10 +10691,10 @@ async function launchBrowserdContext(options) {
     await policy.assertActive();
   }
   if (policy && options.contextMode !== "ephemeral" && options.userDataDir) {
-    const { rm } = await import("node:fs/promises");
+    const { rm: rm2 } = await import("node:fs/promises");
     const { join: join4 } = await import("node:path");
     for (const cache of ["Service Worker", "Cache", "Code Cache"]) {
-      await rm(join4(options.userDataDir, "Default", cache), {
+      await rm2(join4(options.userDataDir, "Default", cache), {
         recursive: true,
         force: true
       });
@@ -10751,11 +10751,35 @@ async function launchBrowserdContext(options) {
         ...userAgent ? { userAgent } : {}
       })
     };
+    const launchProfileContext = async (contextMode) => {
+      const cleared = await clearStaleSingletonLock(options.userDataDir);
+      if (cleared.heldBy) {
+        throw new Error(
+          `profile_in_use: another browser (pid ${cleared.heldBy.pid ?? "unknown"}${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds this profile; close it and try again`
+        );
+      }
+      const context = await chromium.launchPersistentContext(
+        options.userDataDir,
+        {
+          ...launchArgs,
+          acceptDownloads: false,
+          permissions: [],
+          ...contextOptionsFor({
+            contextMode,
+            surface,
+            ...options.deviceScaleFactor !== void 0 ? { deviceScaleFactor: options.deviceScaleFactor } : {}
+          })
+        }
+      );
+      return await finish(context);
+    };
     if (options.contextMode === "ephemeral") {
+      if (options.profileImported)
+        return await launchProfileContext("ephemeral");
       const browser = await chromium.launch(launchArgs);
-      let context2;
+      let context;
       try {
-        context2 = await browser.newContext({
+        context = await browser.newContext({
           acceptDownloads: false,
           permissions: [],
           // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
@@ -10768,28 +10792,9 @@ async function launchBrowserdContext(options) {
         });
         throw error;
       }
-      return await finish(context2, () => browser.close());
+      return await finish(context, () => browser.close());
     }
-    const cleared = await clearStaleSingletonLock(options.userDataDir);
-    if (cleared.heldBy) {
-      throw new Error(
-        `profile_in_use: another browser (pid ${cleared.heldBy.pid ?? "unknown"}${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds this profile; close it and try again`
-      );
-    }
-    const context = await chromium.launchPersistentContext(
-      options.userDataDir,
-      {
-        ...launchArgs,
-        acceptDownloads: false,
-        permissions: [],
-        ...contextOptionsFor({
-          contextMode: "persistent",
-          surface,
-          ...options.deviceScaleFactor !== void 0 ? { deviceScaleFactor: options.deviceScaleFactor } : {}
-        })
-      }
-    );
-    return await finish(context);
+    return await launchProfileContext("persistent");
   } catch (error) {
     await proxy?.close();
     throw error;
@@ -10855,10 +10860,363 @@ function adaptContext(context, options = {}) {
   };
 }
 
+// server/services/browserd/daemon/prepare-browser-profile.ts
+import { readFile as readFile2, rm } from "node:fs/promises";
+
+// server/services/browserd/profile-archive.ts
+import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { join as join3, relative, resolve, sep } from "node:path";
+import { gunzipSync, gzipSync } from "node:zlib";
+var MAX_BROWSER_PROFILE_ARCHIVE_BYTES = 256 * 1024 * 1024;
+var MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES = MAX_BROWSER_PROFILE_ARCHIVE_BYTES * 4;
+var TAR_BLOCK_BYTES = 512;
+var EXCLUDED_PROFILE_SEGMENTS = /* @__PURE__ */ new Set([
+  "cache",
+  "code cache",
+  "gpucache",
+  "dawncache",
+  "grshadercache",
+  "shadercache",
+  "singletonlock",
+  "singletoncookie",
+  "singletonsock"
+]);
+var PRIVATE_PROFILE_SEGMENTS = /* @__PURE__ */ new Set([
+  "login data",
+  "login data for account",
+  "affiliation database",
+  "web data",
+  "account web data",
+  "autofillstrikedatabase",
+  "autofillaimodelcache",
+  "history",
+  "media history",
+  "visited links",
+  "top sites",
+  "shortcuts",
+  "favicons",
+  "network action predictor",
+  "dips",
+  "bookmarks",
+  "accountbookmarks",
+  "encryptedbookmarks2",
+  "encryptedaccountbookmarks2",
+  "network persistent state",
+  "transportsecurity",
+  "reporting and nel",
+  "site characteristics database",
+  "download service",
+  "platform notifications",
+  "segmentation platform",
+  "segmentation_platform",
+  "feature engagement tracker",
+  "trust tokens",
+  "conversions",
+  "shared dictionary",
+  "accounts",
+  "gcm store",
+  "sessions",
+  "current session",
+  "last session",
+  "current tabs",
+  "last tabs",
+  "sync data",
+  "extensions",
+  "extension state",
+  "extension activity",
+  "extension rules",
+  "extension scripts",
+  "extension cookies",
+  "local extension settings",
+  "sync extension settings",
+  "managed extension settings"
+]);
+var STORE_COPY_SUFFIX = /(?:-journal|-wal|-shm|\.bak|\.tmp|\.old|~)+$/;
+function isExcludedProfileSegment(segment) {
+  const base = segment.toLowerCase().replace(STORE_COPY_SUFFIX, "");
+  return EXCLUDED_PROFILE_SEGMENTS.has(base) || PRIVATE_PROFILE_SEGMENTS.has(base);
+}
+function isExcludedProfilePath(path) {
+  return path.split(/[\\/]+/).some(isExcludedProfileSegment);
+}
+function assertSafeArchivePath(path) {
+  const normalized = path.replaceAll("\\", "/");
+  if (normalized.startsWith("/") || normalized.split("/").some((segment) => segment === "..")) {
+    throw new Error("browser profile archive contains an unsafe path");
+  }
+}
+function writeTarString(header, value, offset, length) {
+  const bytes = Buffer.from(value, "utf8");
+  if (bytes.byteLength > length) {
+    throw new Error("browser profile path is too long for a portable archive");
+  }
+  bytes.copy(header, offset);
+}
+function writeTarOctal(header, value, offset, length) {
+  const encoded = `${Math.max(0, value).toString(8).padStart(length - 1, "0")}\0`;
+  if (encoded.length > length) {
+    throw new Error("browser profile archive metadata is too large");
+  }
+  header.write(encoded, offset, length, "ascii");
+}
+function makeTarHeader(path, kind, size, mode) {
+  const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "");
+  assertSafeArchivePath(normalized);
+  const header = Buffer.alloc(TAR_BLOCK_BYTES);
+  let name = normalized;
+  let prefix = "";
+  if (Buffer.byteLength(name) > 100) {
+    const slash = normalized.lastIndexOf("/");
+    if (slash <= 0) {
+      throw new Error(
+        "browser profile path is too long for a portable archive"
+      );
+    }
+    prefix = normalized.slice(0, slash);
+    name = normalized.slice(slash + 1);
+    if (Buffer.byteLength(prefix) > 155 || Buffer.byteLength(name) > 100) {
+      throw new Error(
+        "browser profile path is too long for a portable archive"
+      );
+    }
+  }
+  writeTarString(header, name, 0, 100);
+  writeTarOctal(header, mode & 4095, 100, 8);
+  writeTarOctal(header, 0, 108, 8);
+  writeTarOctal(header, 0, 116, 8);
+  writeTarOctal(header, size, 124, 12);
+  writeTarOctal(header, 0, 136, 12);
+  header.fill(32, 148, 156);
+  header[156] = kind === "directory" ? 53 : 48;
+  header.write("ustar\0", 257, "ascii");
+  header.write("00", 263, "ascii");
+  writeTarString(header, "mcpjam", 265, 32);
+  writeTarString(header, "mcpjam", 297, 32);
+  writeTarString(header, prefix, 345, 155);
+  const checksum = header.reduce((sum, byte) => sum + byte, 0);
+  header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
+  return header;
+}
+async function collectProfileEntries(profileDir, currentDir, entries, uncompressedBytes) {
+  const children = await readdir(currentDir, { withFileTypes: true });
+  for (const child of children) {
+    const absolutePath = join3(currentDir, child.name);
+    const archivePath = relative(profileDir, absolutePath).split(sep).join("/");
+    assertSafeArchivePath(archivePath);
+    if (isExcludedProfilePath(archivePath)) continue;
+    const stat2 = await lstat(absolutePath);
+    if (stat2.isDirectory()) {
+      const header2 = makeTarHeader(archivePath, "directory", 0, stat2.mode);
+      entries.push(header2);
+      uncompressedBytes.value += header2.byteLength;
+      if (uncompressedBytes.value > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
+        throw new Error(
+          "browser profile archive exceeds the expanded size limit"
+        );
+      }
+      await collectProfileEntries(
+        profileDir,
+        absolutePath,
+        entries,
+        uncompressedBytes
+      );
+      continue;
+    }
+    if (!stat2.isFile()) continue;
+    if (uncompressedBytes.value + stat2.size > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
+      throw new Error(
+        "browser profile archive exceeds the expanded size limit"
+      );
+    }
+    const contents = await readFile(absolutePath);
+    const header = makeTarHeader(
+      archivePath,
+      "file",
+      contents.byteLength,
+      stat2.mode
+    );
+    const padding = Buffer.alloc(
+      (TAR_BLOCK_BYTES - contents.byteLength % TAR_BLOCK_BYTES) % TAR_BLOCK_BYTES
+    );
+    entries.push(header, contents, padding);
+    uncompressedBytes.value += header.byteLength + contents.byteLength + padding.byteLength;
+    if (uncompressedBytes.value > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
+      throw new Error(
+        "browser profile archive exceeds the expanded size limit"
+      );
+    }
+  }
+}
+function parseTarNumber(header, offset, length) {
+  const raw = header.subarray(offset, offset + length).toString("ascii").replace(/\0.*$/, "").trim();
+  if (!raw) return 0;
+  const value = Number.parseInt(raw, 8);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error("browser profile archive contains invalid metadata");
+  }
+  return value;
+}
+function parseTarString(header, offset, length) {
+  return header.subarray(offset, offset + length).toString("utf8").replace(/\0.*$/, "");
+}
+function isZeroTarBlock(block) {
+  for (const byte of block) {
+    if (byte !== 0) return false;
+  }
+  return true;
+}
+function assertTarChecksum(header) {
+  const expected = parseTarNumber(header, 148, 8);
+  const actual = header.reduce(
+    (sum, byte, index) => sum + (index >= 148 && index < 156 ? 32 : byte),
+    0
+  );
+  if (actual !== expected) {
+    throw new Error("browser profile archive has an invalid checksum");
+  }
+}
+async function ensureSafeDirectory(profileDir, directory) {
+  const absoluteProfileDir = resolve(profileDir);
+  const absoluteDirectory = resolve(directory);
+  if (absoluteDirectory !== absoluteProfileDir && !absoluteDirectory.startsWith(`${absoluteProfileDir}${sep}`)) {
+    throw new Error("browser profile archive contains an unsafe path");
+  }
+  const relativeDirectory = relative(absoluteProfileDir, absoluteDirectory);
+  let current = absoluteProfileDir;
+  for (const segment of relativeDirectory ? relativeDirectory.split(sep) : []) {
+    current = join3(current, segment);
+    try {
+      if ((await lstat(current)).isSymbolicLink()) {
+        throw new Error("browser profile archive targets a symbolic link");
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      await mkdir(current, { mode: 448 });
+    }
+  }
+}
+async function exportBrowserProfileArchive(profileDir) {
+  const entries = [];
+  const uncompressedBytes = { value: 0 };
+  await collectProfileEntries(
+    profileDir,
+    profileDir,
+    entries,
+    uncompressedBytes
+  );
+  entries.push(Buffer.alloc(TAR_BLOCK_BYTES * 2));
+  const archive = gzipSync(Buffer.concat(entries), {
+    portable: true,
+    mtime: 0
+  });
+  if (archive.byteLength > MAX_BROWSER_PROFILE_ARCHIVE_BYTES) {
+    throw new Error("browser profile archive exceeds the 256 MB limit");
+  }
+  return new Uint8Array(archive);
+}
+async function importBrowserProfileArchive(profileDir, archive, options = {}) {
+  const maxUncompressed = options.maxUncompressedBytes ?? MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES;
+  if (archive.byteLength <= 0) {
+    throw new Error("browser profile archive is empty");
+  }
+  if (archive.byteLength > MAX_BROWSER_PROFILE_ARCHIVE_BYTES) {
+    throw new Error("browser profile archive exceeds the 256 MB limit");
+  }
+  let tarball;
+  try {
+    tarball = gunzipSync(Buffer.from(archive), {
+      maxOutputLength: maxUncompressed
+    });
+  } catch (error) {
+    if (error.code === "ERR_BUFFER_TOO_LARGE") {
+      throw new Error(
+        "browser profile archive exceeds the expanded size limit"
+      );
+    }
+    throw error;
+  }
+  await mkdir(profileDir, { recursive: true, mode: 448 });
+  await ensureSafeDirectory(profileDir, profileDir);
+  let offset = 0;
+  let sawEnd = false;
+  while (offset + TAR_BLOCK_BYTES <= tarball.byteLength) {
+    const header = tarball.subarray(offset, offset + TAR_BLOCK_BYTES);
+    offset += TAR_BLOCK_BYTES;
+    if (isZeroTarBlock(header)) {
+      if (sawEnd) break;
+      sawEnd = true;
+      continue;
+    }
+    if (sawEnd) {
+      throw new Error("browser profile archive has data after its end marker");
+    }
+    assertTarChecksum(header);
+    const name = parseTarString(header, 0, 100);
+    const prefix = parseTarString(header, 345, 155);
+    const archivePath = prefix ? `${prefix}/${name}` : name;
+    assertSafeArchivePath(archivePath);
+    const size = parseTarNumber(header, 124, 12);
+    if (size > tarball.byteLength - offset) {
+      throw new Error("browser profile archive is truncated");
+    }
+    if (!archivePath || archivePath === "." || isExcludedProfilePath(archivePath)) {
+      offset += Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+      continue;
+    }
+    const kind = header[156];
+    const target = join3(profileDir, ...archivePath.split("/"));
+    if (kind === 53) {
+      if (size !== 0)
+        throw new Error("browser profile directory has file data");
+      await ensureSafeDirectory(profileDir, target);
+    } else if (kind === 48 || kind === 0) {
+      const parent = resolve(target, "..");
+      await ensureSafeDirectory(profileDir, parent);
+      try {
+        if ((await lstat(target)).isSymbolicLink()) {
+          throw new Error("browser profile archive targets a symbolic link");
+        }
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+      await writeFile(target, tarball.subarray(offset, offset + size), {
+        mode: 384
+      });
+    } else {
+      throw new Error("browser profile archive contains an unsupported entry");
+    }
+    offset += Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
+  }
+  if (!sawEnd) {
+    throw new Error("browser profile archive is missing its end marker");
+  }
+}
+
+// server/services/browserd/daemon/prepare-browser-profile.ts
+async function prepareBrowserProfile(config) {
+  if (!config.profileArchivePath) return false;
+  try {
+    try {
+      const archive = await readFile2(config.profileArchivePath);
+      await importBrowserProfileArchive(
+        config.userDataDir,
+        new Uint8Array(archive)
+      );
+    } finally {
+      await rm(config.profileArchivePath, { force: true });
+    }
+  } catch (cause) {
+    throw new Error(
+      "Saved profile could not be loaded. Save the profile again and retry.",
+      { cause }
+    );
+  }
+  return true;
+}
+
 // server/services/browserd/daemon/main.ts
 import { mkdirSync } from "node:fs";
 import { execFile } from "node:child_process";
-import { readFile as readFile2, unlink as unlink2 } from "node:fs/promises";
 
 // server/services/browserd/daemon/display-resize.ts
 function displayGeometryFor(size, options = {}) {
@@ -11100,278 +11458,6 @@ function defaultHashFile(path) {
   return createHash2("sha256").update(readFileSync(path)).digest("hex");
 }
 
-// server/services/browserd/profile-archive.ts
-import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { join as join3, relative, resolve, sep } from "node:path";
-import { gunzipSync, gzipSync } from "node:zlib";
-var MAX_BROWSER_PROFILE_ARCHIVE_BYTES = 256 * 1024 * 1024;
-var MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES = MAX_BROWSER_PROFILE_ARCHIVE_BYTES * 4;
-var TAR_BLOCK_BYTES = 512;
-var EXCLUDED_PROFILE_SEGMENTS = /* @__PURE__ */ new Set([
-  "cache",
-  "code cache",
-  "gpucache",
-  "dawncache",
-  "grshadercache",
-  "shadercache",
-  "singletonlock",
-  "singletoncookie",
-  "singletonsock"
-]);
-function isExcludedProfilePath(path) {
-  return path.split(/[\\/]+/).some((segment) => EXCLUDED_PROFILE_SEGMENTS.has(segment.toLowerCase()));
-}
-function assertSafeArchivePath(path) {
-  const normalized = path.replaceAll("\\", "/");
-  if (normalized.startsWith("/") || normalized.split("/").some((segment) => segment === "..")) {
-    throw new Error("browser profile archive contains an unsafe path");
-  }
-}
-function writeTarString(header, value, offset, length) {
-  const bytes = Buffer.from(value, "utf8");
-  if (bytes.byteLength > length) {
-    throw new Error("browser profile path is too long for a portable archive");
-  }
-  bytes.copy(header, offset);
-}
-function writeTarOctal(header, value, offset, length) {
-  const encoded = `${Math.max(0, value).toString(8).padStart(length - 1, "0")}\0`;
-  if (encoded.length > length) {
-    throw new Error("browser profile archive metadata is too large");
-  }
-  header.write(encoded, offset, length, "ascii");
-}
-function makeTarHeader(path, kind, size, mode) {
-  const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "");
-  assertSafeArchivePath(normalized);
-  const header = Buffer.alloc(TAR_BLOCK_BYTES);
-  let name = normalized;
-  let prefix = "";
-  if (Buffer.byteLength(name) > 100) {
-    const slash = normalized.lastIndexOf("/");
-    if (slash <= 0) {
-      throw new Error(
-        "browser profile path is too long for a portable archive"
-      );
-    }
-    prefix = normalized.slice(0, slash);
-    name = normalized.slice(slash + 1);
-    if (Buffer.byteLength(prefix) > 155 || Buffer.byteLength(name) > 100) {
-      throw new Error(
-        "browser profile path is too long for a portable archive"
-      );
-    }
-  }
-  writeTarString(header, name, 0, 100);
-  writeTarOctal(header, mode & 4095, 100, 8);
-  writeTarOctal(header, 0, 108, 8);
-  writeTarOctal(header, 0, 116, 8);
-  writeTarOctal(header, size, 124, 12);
-  writeTarOctal(header, 0, 136, 12);
-  header.fill(32, 148, 156);
-  header[156] = kind === "directory" ? 53 : 48;
-  header.write("ustar\0", 257, "ascii");
-  header.write("00", 263, "ascii");
-  writeTarString(header, "mcpjam", 265, 32);
-  writeTarString(header, "mcpjam", 297, 32);
-  writeTarString(header, prefix, 345, 155);
-  const checksum = header.reduce((sum, byte) => sum + byte, 0);
-  header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
-  return header;
-}
-async function collectProfileEntries(profileDir, currentDir, entries, uncompressedBytes) {
-  const children = await readdir(currentDir, { withFileTypes: true });
-  for (const child of children) {
-    const absolutePath = join3(currentDir, child.name);
-    const archivePath = relative(profileDir, absolutePath).split(sep).join("/");
-    assertSafeArchivePath(archivePath);
-    if (isExcludedProfilePath(archivePath)) continue;
-    const stat2 = await lstat(absolutePath);
-    if (stat2.isDirectory()) {
-      const header2 = makeTarHeader(archivePath, "directory", 0, stat2.mode);
-      entries.push(header2);
-      uncompressedBytes.value += header2.byteLength;
-      if (uncompressedBytes.value > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
-        throw new Error(
-          "browser profile archive exceeds the expanded size limit"
-        );
-      }
-      await collectProfileEntries(
-        profileDir,
-        absolutePath,
-        entries,
-        uncompressedBytes
-      );
-      continue;
-    }
-    if (!stat2.isFile()) continue;
-    if (uncompressedBytes.value + stat2.size > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
-      throw new Error("browser profile archive exceeds the expanded size limit");
-    }
-    const contents = await readFile(absolutePath);
-    const header = makeTarHeader(
-      archivePath,
-      "file",
-      contents.byteLength,
-      stat2.mode
-    );
-    const padding = Buffer.alloc(
-      (TAR_BLOCK_BYTES - contents.byteLength % TAR_BLOCK_BYTES) % TAR_BLOCK_BYTES
-    );
-    entries.push(header, contents, padding);
-    uncompressedBytes.value += header.byteLength + contents.byteLength + padding.byteLength;
-    if (uncompressedBytes.value > MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES) {
-      throw new Error(
-        "browser profile archive exceeds the expanded size limit"
-      );
-    }
-  }
-}
-function parseTarNumber(header, offset, length) {
-  const raw = header.subarray(offset, offset + length).toString("ascii").replace(/\0.*$/, "").trim();
-  if (!raw) return 0;
-  const value = Number.parseInt(raw, 8);
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new Error("browser profile archive contains invalid metadata");
-  }
-  return value;
-}
-function parseTarString(header, offset, length) {
-  return header.subarray(offset, offset + length).toString("utf8").replace(/\0.*$/, "");
-}
-function isZeroTarBlock(block) {
-  for (const byte of block) {
-    if (byte !== 0) return false;
-  }
-  return true;
-}
-function assertTarChecksum(header) {
-  const expected = parseTarNumber(header, 148, 8);
-  const actual = header.reduce(
-    (sum, byte, index) => sum + (index >= 148 && index < 156 ? 32 : byte),
-    0
-  );
-  if (actual !== expected) {
-    throw new Error("browser profile archive has an invalid checksum");
-  }
-}
-async function ensureSafeDirectory(profileDir, directory) {
-  const absoluteProfileDir = resolve(profileDir);
-  const absoluteDirectory = resolve(directory);
-  if (absoluteDirectory !== absoluteProfileDir && !absoluteDirectory.startsWith(`${absoluteProfileDir}${sep}`)) {
-    throw new Error("browser profile archive contains an unsafe path");
-  }
-  const relativeDirectory = relative(absoluteProfileDir, absoluteDirectory);
-  let current = absoluteProfileDir;
-  for (const segment of relativeDirectory ? relativeDirectory.split(sep) : []) {
-    current = join3(current, segment);
-    try {
-      if ((await lstat(current)).isSymbolicLink()) {
-        throw new Error("browser profile archive targets a symbolic link");
-      }
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-      await mkdir(current, { mode: 448 });
-    }
-  }
-}
-async function exportBrowserProfileArchive(profileDir) {
-  const entries = [];
-  const uncompressedBytes = { value: 0 };
-  await collectProfileEntries(
-    profileDir,
-    profileDir,
-    entries,
-    uncompressedBytes
-  );
-  entries.push(Buffer.alloc(TAR_BLOCK_BYTES * 2));
-  const archive = gzipSync(Buffer.concat(entries), {
-    portable: true,
-    mtime: 0
-  });
-  if (archive.byteLength > MAX_BROWSER_PROFILE_ARCHIVE_BYTES) {
-    throw new Error("browser profile archive exceeds the 256 MB limit");
-  }
-  return new Uint8Array(archive);
-}
-async function importBrowserProfileArchive(profileDir, archive, options = {}) {
-  const maxUncompressed = options.maxUncompressedBytes ?? MAX_BROWSER_PROFILE_UNCOMPRESSED_BYTES;
-  if (archive.byteLength <= 0) {
-    throw new Error("browser profile archive is empty");
-  }
-  if (archive.byteLength > MAX_BROWSER_PROFILE_ARCHIVE_BYTES) {
-    throw new Error("browser profile archive exceeds the 256 MB limit");
-  }
-  let tarball;
-  try {
-    tarball = gunzipSync(Buffer.from(archive), {
-      maxOutputLength: maxUncompressed
-    });
-  } catch (error) {
-    if (error.code === "ERR_BUFFER_TOO_LARGE") {
-      throw new Error(
-        "browser profile archive exceeds the expanded size limit"
-      );
-    }
-    throw error;
-  }
-  await mkdir(profileDir, { recursive: true, mode: 448 });
-  await ensureSafeDirectory(profileDir, profileDir);
-  let offset = 0;
-  let sawEnd = false;
-  while (offset + TAR_BLOCK_BYTES <= tarball.byteLength) {
-    const header = tarball.subarray(offset, offset + TAR_BLOCK_BYTES);
-    offset += TAR_BLOCK_BYTES;
-    if (isZeroTarBlock(header)) {
-      if (sawEnd) break;
-      sawEnd = true;
-      continue;
-    }
-    if (sawEnd) {
-      throw new Error("browser profile archive has data after its end marker");
-    }
-    assertTarChecksum(header);
-    const name = parseTarString(header, 0, 100);
-    const prefix = parseTarString(header, 345, 155);
-    const archivePath = prefix ? `${prefix}/${name}` : name;
-    assertSafeArchivePath(archivePath);
-    const size = parseTarNumber(header, 124, 12);
-    if (size > tarball.byteLength - offset) {
-      throw new Error("browser profile archive is truncated");
-    }
-    if (!archivePath || archivePath === "." || isExcludedProfilePath(archivePath)) {
-      offset += Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
-      continue;
-    }
-    const kind = header[156];
-    const target = join3(profileDir, ...archivePath.split("/"));
-    if (kind === 53) {
-      if (size !== 0)
-        throw new Error("browser profile directory has file data");
-      await ensureSafeDirectory(profileDir, target);
-    } else if (kind === 48 || kind === 0) {
-      const parent = resolve(target, "..");
-      await ensureSafeDirectory(profileDir, parent);
-      try {
-        if ((await lstat(target)).isSymbolicLink()) {
-          throw new Error("browser profile archive targets a symbolic link");
-        }
-      } catch (error) {
-        if (error.code !== "ENOENT") throw error;
-      }
-      await writeFile(target, tarball.subarray(offset, offset + size), {
-        mode: 384
-      });
-    } else {
-      throw new Error("browser profile archive contains an unsupported entry");
-    }
-    offset += Math.ceil(size / TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES;
-  }
-  if (!sawEnd) {
-    throw new Error("browser profile archive is missing its end marker");
-  }
-}
-
 // server/services/browserd/daemon/main.ts
 function log(message) {
   process.stderr.write(`[mcpjam-browserd] ${message}
@@ -11405,17 +11491,10 @@ function displayHeight(config) {
 async function main() {
   const config = readBrowserdConfig();
   const bundleHash = readBundleHash();
-  if (config.profileArchivePath && config.contextMode === "persistent") {
-    const archive = await readFile2(config.profileArchivePath);
-    await importBrowserProfileArchive(
-      config.userDataDir,
-      new Uint8Array(archive)
-    );
-    await unlink2(config.profileArchivePath).catch(() => {
-    });
-  }
+  const profileImported = await prepareBrowserProfile(config);
   const context = await launchBrowserdContext({
     userDataDir: config.userDataDir,
+    profileImported,
     headless: config.headless,
     extraArgs: extraArgsFor(config),
     contextMode: config.contextMode,

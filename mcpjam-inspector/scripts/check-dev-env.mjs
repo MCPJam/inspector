@@ -140,7 +140,7 @@ export function evaluateDevEnv(input) {
   const nodeMajor = majorOf(nodeVersion);
   const pinnedMajor = majorOf(nvmrcVersion);
   const floorMajor = floorMajorOf(enginesNodeRange);
-  const pinned = String(nvmrcVersion ?? "").trim() || "24.14.0";
+  const pinned = String(nvmrcVersion ?? "").trim() || "24.22.1";
 
   if (!allowUnsupportedNode && nodeMajor !== null) {
     if (pinnedMajor !== null && nodeMajor > pinnedMajor) {

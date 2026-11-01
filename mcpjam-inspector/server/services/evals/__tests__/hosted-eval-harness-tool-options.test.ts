@@ -66,7 +66,7 @@ vi.mock("../../../utils/harness/registry.js", () => ({
     supportsMcpToolApproval: false,
     // The delivery mode under test: no `.mcp.json`, so MCPJam builds the
     // model-facing MCP tools itself instead of consuming `tools`.
-    mcpDelivery: "host-executed",
+    mcpDelivery: "mcpjam",
     supportsModel: vi.fn(() => true),
     // The dispatch reads the evidence-table verdict; this mock's model is one
     // the (mocked) runtime runs.

@@ -4,7 +4,7 @@ import { getManagerConnections } from "../mcp-connections.js";
 /**
  * Project a host's selected MCP servers into HOST-EXECUTED AI SDK tools, for a
  * harness whose runtime cannot make an MCP tool model-callable itself
- * (`mcpDelivery: "host-executed"` — Codex today).
+ * (`mcpDelivery: "mcpjam"` — Codex today).
  *
  * ## Why this exists
  *
@@ -114,6 +114,7 @@ export interface HostExecutedMcpProjection {
 export async function projectSelectedMcpServersAsHostTools(args: {
   manager: MCPJamHandlerOptions["mcpClientManager"];
   selectedServerIds: string[];
+  unavailableServerIds?: readonly string[];
   connectionsByServerId?: ConnectionsByServerId;
   /** Plugin origin per server id (INS-7): a plugin-contributed server with no
    *  live connection fails the turn instead of being silently skipped. */
@@ -183,6 +184,7 @@ export async function projectSelectedMcpServersAsHostTools(args: {
 }): Promise<HostExecutedMcpProjection> {
   const configured = selectDeliverableServerIds({
     selectedServerIds: args.selectedServerIds,
+    unavailableServerIds: args.unavailableServerIds,
     hasLiveConfig: (id) => Boolean(args.manager.getServerConfig(id)),
     ...(args.pluginOrigins ? { pluginOrigins: args.pluginOrigins } : {}),
     onSkipped: (id) =>

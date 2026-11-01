@@ -1,0 +1,599 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  executeForwardedOperation,
+  type GateOperation,
+} from "../execution-gate.js";
+import type { ExecutionControl, Settlement } from "../execution-control.js";
+import { TOOL_APPROVAL_TOKEN_MAX_AGE_MS } from "../../../tool-approval-token.js";
+import { createForwardingMrtrGate } from "../mrtr-gate.js";
+import { forwardingExecutionContext } from "../execution-context.js";
+
+beforeEach(() =>
+  vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "forwarding-gate-test-signing-secret"),
+);
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.useRealTimers();
+});
+const operation: GateOperation = {
+  invocationKey: "one",
+  turnId: "turn",
+  rpcId: 1,
+  method: "tools/call",
+  paramsPresent: true,
+  params: { name: "read", arguments: { b: 2, a: 1 } },
+  expiresAt: Date.now() + 60_000,
+};
+const binding = {
+  subject: "user",
+  projectId: "project",
+  chatSessionId: "chat",
+};
+function fixture(approval = false) {
+  const events: string[] = [];
+  const control = {
+    prepare: vi.fn<ExecutionControl["prepare"]>(async () => {
+      events.push("prepare");
+      return {
+        executionId: "execution",
+        state: "prepared" as const,
+        replayed: false,
+        requireToolApproval: approval,
+      };
+    }),
+    read: vi.fn(async () => ({
+      _id: "execution",
+      method: "tools/call",
+      turnId: "turn",
+      params: null,
+      authority: {
+        userId: "user",
+        projectId: "project",
+        sessionId: "session",
+        serverId: "server",
+        accountId: "account",
+      },
+      state: "settled" as const,
+      outcome: "success",
+      result: { json: '{"answer":42}', url: null, bytes: 13, truncated: false },
+      complete: true,
+    })),
+    requestApproval: vi.fn(
+      async (_id: string, nonceHash: string, expiresAt: number) => {
+        events.push("approval-request");
+        return { nonceHash, expiresAt, state: "pending" };
+      },
+    ),
+    decideApproval: vi.fn(
+      async (_id: string, nonceHash: string, decision: string) => {
+        events.push(decision);
+        return { nonceHash, expiresAt: operation.expiresAt, state: decision };
+      },
+    ),
+    claim: vi.fn(async () => {
+      events.push("claim");
+      return { dispatch: true, state: "dispatched" as const };
+    }),
+    settle: vi.fn(async () => {
+      events.push("settle");
+      return { replayed: false, adopted: false };
+    }),
+  } satisfies Pick<
+    ExecutionControl,
+    | "prepare"
+    | "read"
+    | "requestApproval"
+    | "decideApproval"
+    | "claim"
+    | "settle"
+  >;
+  const dispatch = vi.fn(
+    async (settle: (result: Settlement) => Promise<void>) => {
+      events.push("dispatch");
+      await settle({ outcome: "success", resultJson: '{"answer":42}' });
+      return "answer";
+    },
+  );
+  return { control, events, dispatch };
+}
+
+describe("forwarded execution gate", () => {
+  it("does not send a continuation when its own approval is denied", async () => {
+    const f = fixture(true);
+    const guard = createForwardingMrtrGate({
+      control: f.control,
+      approval: {
+        binding,
+        ask: async ({ approvalId }) => ({ approvalId, decision: "denied" }),
+      },
+      turnId: "turn",
+      expiresAt: operation.expiresAt,
+      signal: new AbortController().signal,
+    });
+    const send = vi.fn(async () => ({}));
+    await forwardingExecutionContext.run(
+      { executionId: "parent" },
+      async () => {
+        await expect(
+          guard({
+            operationId: "operation",
+            round: 1,
+            request: { method: "tools/call", params: { name: "read" } },
+            send,
+          }),
+        ).rejects.toThrow("approval_not_granted");
+      },
+    );
+    expect(send).not.toHaveBeenCalled();
+    expect(f.control.claim).not.toHaveBeenCalled();
+  });
+
+  it("binds a continuation to the live parent without inventing a wire id", async () => {
+    const f = fixture();
+    let count = 0;
+    f.control.prepare.mockImplementation(async () => ({
+      executionId: `execution-${++count}`,
+      state: "prepared",
+      replayed: false,
+      requireToolApproval: false,
+    }));
+    const guard = createForwardingMrtrGate({
+      control: f.control,
+      approval: {
+        binding,
+        ask: async () => {
+          throw new Error("Unexpected approval");
+        },
+      },
+      policy: { mode: "default", denied: {}, known: [], unknownTool: "allow" },
+      turnId: "turn",
+      policyDigest: "a".repeat(64),
+      expiresAt: operation.expiresAt,
+      signal: new AbortController().signal,
+    });
+    await executeForwardedOperation({
+      ...f,
+      operation,
+      dispatch: async () => {
+        await guard({
+          operationId: "operation",
+          round: 0,
+          request: { method: "tools/call", params: {} },
+          send: async () => ({}),
+        });
+        return guard({
+          operationId: "operation",
+          round: 1,
+          request: { method: "tools/call", params: {} },
+          send: async () => ({ isError: true }),
+        });
+      },
+    });
+    expect(f.control.prepare).toHaveBeenCalledTimes(2);
+    expect(f.control.prepare.mock.calls[1][0]).toMatchObject({
+      continuation: {
+        executionId: "execution-1",
+        operationId: "operation",
+        round: 1,
+      },
+    });
+    expect(f.control.prepare.mock.calls[1][0]).not.toHaveProperty("rpcId");
+    expect(f.control.settle).toHaveBeenCalledWith(
+      "execution-2",
+      expect.any(String),
+      expect.objectContaining({ outcome: "tool_error" }),
+    );
+    expect(forwardingExecutionContext.getStore()).toBeUndefined();
+  });
+
+  it("refuses a repeated SDK send after an uncertain outcome", async () => {
+    const f = fixture();
+    const guard = createForwardingMrtrGate({
+      control: f.control,
+      approval: {
+        binding,
+        ask: async () => {
+          throw new Error("Unexpected approval");
+        },
+      },
+      policy: { mode: "default", denied: {}, known: [], unknownTool: "allow" },
+      turnId: "turn",
+      policyDigest: "a".repeat(64),
+      expiresAt: operation.expiresAt,
+      signal: new AbortController().signal,
+    });
+    const send = vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    });
+    const attempt = {
+      operationId: "operation",
+      round: 0,
+      request: { method: "tools/call" as const, params: {} },
+      send,
+    };
+    await forwardingExecutionContext.run(
+      { executionId: "parent" },
+      async () => {
+        await expect(guard(attempt)).rejects.toThrow("fetch failed");
+        await expect(guard(attempt)).rejects.toThrow("already attempted");
+      },
+    );
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it.each([6, 14])(
+    "accepts an approval after %i minutes within the live lease",
+    async (minutes) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const now = Date.now();
+      const f = fixture(true);
+      await executeForwardedOperation({
+        ...f,
+        operation: { ...operation, expiresAt: now + 30 * 60_000 },
+        approval: {
+          binding,
+          ask: async (request) => {
+            expect(request.expiresAt).toBe(
+              now + TOOL_APPROVAL_TOKEN_MAX_AGE_MS,
+            );
+            expect(f.dispatch).not.toHaveBeenCalled();
+            vi.setSystemTime(now + minutes * 60_000);
+            return { approvalId: request.approvalId, decision: "approved" };
+          },
+        },
+      });
+      expect(f.dispatch).toHaveBeenCalledOnce();
+    },
+  );
+  it("does not extend an approval past the current lease", async () => {
+    const f = fixture(true);
+    const expiresAt = Date.now() + 60_000;
+    await executeForwardedOperation({
+      ...f,
+      operation: { ...operation, expiresAt },
+      approval: {
+        binding,
+        ask: async (request) => {
+          expect(request.expiresAt).toBe(expiresAt);
+          return { approvalId: request.approvalId, decision: "approved" };
+        },
+      },
+    });
+    expect(f.control.requestApproval.mock.calls[0][2]).toBe(expiresAt);
+  });
+  it("refuses a signed answer older than the existing approval lifetime", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const now = Date.now();
+    const f = fixture(true);
+    await expect(
+      executeForwardedOperation({
+        ...f,
+        operation: { ...operation, expiresAt: now + 30 * 60_000 },
+        approval: {
+          binding,
+          ask: async (request) => {
+            vi.setSystemTime(now + TOOL_APPROVAL_TOKEN_MAX_AGE_MS + 1_000);
+            return { approvalId: request.approvalId, decision: "approved" };
+          },
+        },
+      }),
+    ).rejects.toThrow("approval_unverified");
+    expect(f.dispatch).not.toHaveBeenCalled();
+    expect(f.control.claim).not.toHaveBeenCalled();
+  });
+  it("records intent and claims before dispatch, and settles the exact raw result", async () => {
+    const f = fixture();
+    expect(await executeForwardedOperation({ ...f, operation })).toBe("answer");
+    expect(f.events).toEqual(["prepare", "claim", "dispatch", "settle"]);
+    expect(f.control.prepare).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paramsJson:
+          '{"present":true,"value":{"arguments":{"a":1,"b":2},"name":"read"}}',
+      }),
+    );
+    expect(f.control.settle).toHaveBeenCalledWith(
+      "execution",
+      expect.any(String),
+      { outcome: "success", resultJson: '{"answer":42}' },
+    );
+  });
+  it("asks once with the server execution identity and verifies the signed answer", async () => {
+    const f = fixture(true);
+    const ask = vi.fn(async (request: { approvalId: string }) => ({
+      approvalId: request.approvalId,
+      decision: "approved" as const,
+    }));
+    await executeForwardedOperation({
+      ...f,
+      operation,
+      approval: { binding, ask },
+    });
+    expect(f.events).toEqual([
+      "prepare",
+      "approval-request",
+      "approved",
+      "claim",
+      "dispatch",
+      "settle",
+    ]);
+    expect(ask).toHaveBeenCalledOnce();
+    expect(ask).toHaveBeenCalledWith(
+      expect.objectContaining({ executionId: "execution", toolName: "read" }),
+    );
+    expect(f.control.requestApproval.mock.calls[0][1]).toMatch(
+      /^[a-f0-9]{64}$/,
+    );
+  });
+  it.each(["denied", "cancelled"] as const)(
+    "does not dispatch an approval answered %s",
+    async (decision) => {
+      const f = fixture(true);
+      await expect(
+        executeForwardedOperation({
+          ...f,
+          operation,
+          approval: {
+            binding,
+            ask: async (r) => ({ approvalId: r.approvalId, decision }),
+          },
+        }),
+      ).rejects.toThrow("approval_not_granted");
+      expect(f.dispatch).not.toHaveBeenCalled();
+      expect(f.control.claim).not.toHaveBeenCalled();
+    },
+  );
+  it("rejects a forged approval and does not offer an unsigned fallback", async () => {
+    const f = fixture(true);
+    await expect(
+      executeForwardedOperation({
+        ...f,
+        operation,
+        approval: {
+          binding,
+          ask: async () => ({ approvalId: "forged", decision: "approved" }),
+        },
+      }),
+    ).rejects.toThrow("approval_unverified");
+    expect(f.dispatch).not.toHaveBeenCalled();
+    expect(f.control.decideApproval).toHaveBeenCalledWith(
+      "execution",
+      expect.any(String),
+      "denied",
+    );
+  });
+  it("fails closed if approval is required but no approval adapter exists", async () => {
+    const f = fixture(true);
+    await expect(
+      executeForwardedOperation({ ...f, operation }),
+    ).rejects.toThrow("approval_unavailable");
+    expect(f.dispatch).not.toHaveBeenCalled();
+    expect(f.control.settle).toHaveBeenCalledWith("execution", undefined, {
+      outcome: "refused",
+    });
+  });
+  it("does not send a policy-denied tool or request a redundant approval", async () => {
+    const f = fixture(true);
+    await expect(
+      executeForwardedOperation({
+        ...f,
+        operation: {
+          ...operation,
+          policy: {
+            mode: "readOnly",
+            denied: { read: { reason: "denyList", classification: "unknown" } },
+            known: ["read"],
+            unknownTool: "deny",
+          },
+        },
+      }),
+    ).rejects.toThrow();
+    expect(f.dispatch).not.toHaveBeenCalled();
+    expect(f.control.requestApproval).not.toHaveBeenCalled();
+  });
+  it("cancels before dispatch when the caller stops while approving", async () => {
+    const f = fixture(true);
+    const abort = new AbortController();
+    await expect(
+      executeForwardedOperation({
+        ...f,
+        operation,
+        signal: abort.signal,
+        approval: {
+          binding,
+          ask: async (r) => {
+            abort.abort();
+            return { approvalId: r.approvalId, decision: "approved" };
+          },
+        },
+      }),
+    ).rejects.toThrow();
+    expect(f.dispatch).not.toHaveBeenCalled();
+    expect(f.control.decideApproval).toHaveBeenCalledWith(
+      "execution",
+      expect.any(String),
+      "cancelled",
+    );
+  });
+  it("does not dispatch when evidence preparation or the dispatch acknowledgement is lost", async () => {
+    const f = fixture();
+    f.control.prepare.mockRejectedValueOnce(new Error("unavailable"));
+    await expect(
+      executeForwardedOperation({ ...f, operation }),
+    ).rejects.toThrow("unavailable");
+    f.control.claim.mockRejectedValueOnce(new Error("lost acknowledgement"));
+    await expect(
+      executeForwardedOperation({ ...f, operation }),
+    ).rejects.toThrow("lost acknowledgement");
+    expect(f.dispatch).not.toHaveBeenCalled();
+  });
+  it("cancels an unanswered approval without waiting for the adapter", async () => {
+    const f = fixture(true);
+    const abort = new AbortController();
+    const ask = vi.fn(async ({ signal }: { signal: AbortSignal }) => {
+      queueMicrotask(() => abort.abort(new Error("cancelled")));
+      return new Promise<never>(() => {
+        expect(signal).toBeDefined();
+      });
+    });
+    await expect(
+      executeForwardedOperation({
+        ...f,
+        operation,
+        signal: abort.signal,
+        approval: { binding, ask },
+      }),
+    ).rejects.toThrow("cancelled");
+    expect(f.control.decideApproval).toHaveBeenCalledWith(
+      "execution",
+      expect.any(String),
+      "cancelled",
+    );
+    expect(f.dispatch).not.toHaveBeenCalled();
+  });
+  it("attempts incomplete evidence when a committed claim acknowledgement is lost", async () => {
+    const f = fixture();
+    f.control.claim.mockRejectedValueOnce(new Error("lost acknowledgement"));
+    await expect(
+      executeForwardedOperation({ ...f, operation }),
+    ).rejects.toThrow("lost acknowledgement");
+    expect(f.control.settle).toHaveBeenCalledWith(
+      "execution",
+      expect.any(String),
+      { outcome: "incomplete" },
+    );
+    expect(f.dispatch).not.toHaveBeenCalled();
+  });
+  it("does not dispatch when neither the claim nor incomplete settlement can be confirmed", async () => {
+    const f = fixture();
+    f.control.claim.mockRejectedValueOnce(new Error("offline"));
+    f.control.settle.mockRejectedValueOnce(new Error("not dispatched"));
+    await expect(
+      executeForwardedOperation({ ...f, operation }),
+    ).rejects.toThrow("Dispatch and evidence could not be confirmed");
+    expect(f.dispatch).not.toHaveBeenCalled();
+  });
+  it("uses one snapshot even if the caller mutates parameters during preparation", async () => {
+    const f = fixture(true);
+    const params = { name: "read", arguments: { value: "original" } };
+    f.control.prepare.mockImplementationOnce(async () => {
+      params.name = "delete";
+      params.arguments.value = "changed";
+      return {
+        executionId: "execution",
+        state: "prepared",
+        replayed: false,
+        requireToolApproval: true,
+      };
+    });
+    const ask = vi.fn(async (r) => ({
+      approvalId: r.approvalId,
+      decision: "approved" as const,
+    }));
+    await executeForwardedOperation({
+      ...f,
+      operation: { ...operation, params },
+      approval: { binding, ask },
+    });
+    expect(ask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: "read",
+        input: {
+          present: true,
+          value: { name: "read", arguments: { value: "original" } },
+        },
+      }),
+    );
+    expect(f.dispatch).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({
+        params: { name: "read", arguments: { value: "original" } },
+      }),
+    );
+  });
+  it("records an uncertain upstream result without replaying the dispatch", async () => {
+    const f = fixture();
+    f.dispatch.mockRejectedValue(new Error("socket reset"));
+    await expect(
+      executeForwardedOperation({ ...f, operation }),
+    ).rejects.toThrow("socket reset");
+    expect(f.dispatch).toHaveBeenCalledOnce();
+    expect(f.control.settle).toHaveBeenCalledWith(
+      "execution",
+      expect.any(String),
+      { outcome: "incomplete" },
+    );
+  });
+  it("a settlement error never retries the side effect or writes a second outcome", async () => {
+    const f = fixture();
+    f.control.settle.mockRejectedValue(new Error("evidence lost"));
+    await expect(
+      executeForwardedOperation({ ...f, operation }),
+    ).rejects.toThrow("evidence lost");
+    expect(f.dispatch).toHaveBeenCalledOnce();
+    expect(f.control.settle).toHaveBeenCalledOnce();
+  });
+  it("retrieves a completed execution only through the replay adapter", async () => {
+    const f = fixture();
+    f.control.prepare.mockResolvedValue({
+      executionId: "execution",
+      state: "settled",
+      replayed: true,
+      requireToolApproval: false,
+    });
+    const replay = vi.fn(async (r) => r.result?.json ?? "missing");
+    expect(await executeForwardedOperation({ ...f, operation, replay })).toBe(
+      '{"answer":42}',
+    );
+    expect(f.dispatch).not.toHaveBeenCalled();
+    expect(replay).toHaveBeenCalledOnce();
+  });
+  it("preserves missing parameters, null, and numeric versus string RPC ids", async () => {
+    for (const op of [
+      { ...operation, paramsPresent: false, params: undefined },
+      { ...operation, params: null },
+      { ...operation, rpcId: "1" },
+    ]) {
+      const f = fixture();
+      await executeForwardedOperation({ ...f, operation: op });
+      expect(f.control.prepare).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rpcId: op.rpcId,
+          paramsJson: op.paramsPresent
+            ? expect.stringContaining('"value":')
+            : '{"present":false}',
+        }),
+      );
+    }
+  });
+});
+
+it("observes an ask that rejects after cancellation during approval registration", async () => {
+  const f = fixture(true);
+  const abort = new AbortController();
+  f.control.requestApproval.mockImplementation(
+    async (_id, nonceHash, expiresAt) => {
+      abort.abort(new Error("cancelled during registration"));
+      return { nonceHash, expiresAt, state: "pending" };
+    },
+  );
+  await expect(
+    executeForwardedOperation({
+      ...f,
+      operation,
+      signal: abort.signal,
+      approval: {
+        binding,
+        ask: async ({ signal }) => {
+          signal.throwIfAborted();
+          throw new Error("unreachable");
+        },
+      },
+    }),
+  ).rejects.toThrow("cancelled during registration");
+  expect(f.dispatch).not.toHaveBeenCalled();
+  expect(f.control.decideApproval).toHaveBeenCalledWith(
+    "execution",
+    expect.any(String),
+    "cancelled",
+  );
+});

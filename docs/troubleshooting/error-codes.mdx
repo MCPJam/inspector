@@ -332,6 +332,23 @@ The server closed the connection without sending a response.
 - Retry the request.
 - Check server-side logs for the crash.
 
+### TLS certificate not trusted
+
+`transport/tls_untrusted`
+
+The server presented a TLS certificate that Node.js could not verify, so no request reached it.
+
+**Likely causes**
+- The certificate comes from a private or corporate CA that Node.js does not trust.
+- The server does not send its intermediate certificates.
+- The certificate is self-signed, expired, or issued for a different hostname.
+- A TLS-inspecting proxy or antivirus replaces the server's certificate.
+
+**Next steps**
+- Fix the certificate on the server: renew it, send the full chain, and match the hostname.
+- If the error suggests `--use-system-ca`, start the inspector with `NODE_OPTIONS=--use-system-ca npx @mcpjam/inspector@latest` so Node.js trusts your system's CAs.
+- Or point Node.js at the CA file: `NODE_EXTRA_CA_CERTS=/path/to/ca.pem npx @mcpjam/inspector@latest`.
+
 ---
 
 ## Auth & OAuth
