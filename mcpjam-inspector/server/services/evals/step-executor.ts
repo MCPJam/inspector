@@ -341,6 +341,9 @@ function snapshotTranscript(state: StepExecutionState) {
       state.widgetRenderObservations,
     ),
     toolErrors: state.toolErrors,
+    // Counted here rather than passed as a `trace`: a trace would also feed
+    // its tool errors in, double-counting `state.toolErrors`.
+    turnCount: state.messages.filter((m) => m.role === "user").length,
   });
 }
 

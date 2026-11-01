@@ -414,7 +414,7 @@ describe("web routes — evals", () => {
 
       expect(status).toBe(401);
       expect(data.code).toBe("UNAUTHORIZED");
-      expect(data.message).toContain("requires OAuth authentication");
+      expect(data.message).toContain("needs you to sign in");
     },
   );
 
