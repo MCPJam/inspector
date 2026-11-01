@@ -159,15 +159,15 @@ describe("the metadata floor, under any entry", () => {
       "rebind.svc.cluster.local": ["169.254.169.254"],
       "v6.svc.cluster.local": ["fe80::1"],
     });
-    expect(
-      await verdict("http://rebind.svc.cluster.local/mcp", resolver),
-    ).toBe("blocked");
+    expect(await verdict("http://rebind.svc.cluster.local/mcp", resolver)).toBe(
+      "blocked",
+    );
     expect(await verdict("http://v6.svc.cluster.local/mcp", resolver)).toBe(
       "blocked",
     );
-    expect(isBlockedEgressAddress("rebind.svc.cluster.local", "169.254.169.254")).toBe(
-      true,
-    );
+    expect(
+      isBlockedEgressAddress("rebind.svc.cluster.local", "169.254.169.254"),
+    ).toBe(true);
     expect(
       admitsPrivateEgress({
         hostname: "rebind.svc.cluster.local",
@@ -261,9 +261,9 @@ describe("redirect hops go through the same decision", () => {
       resolver: dnsTable({ "public.example": ["93.184.216.34"] }),
     });
 
-    await expect(guarded("https://public.example/start")).rejects.toBeInstanceOf(
-      BlockedEgressTargetError,
-    );
+    await expect(
+      guarded("https://public.example/start"),
+    ).rejects.toBeInstanceOf(BlockedEgressTargetError);
     expect(baseFetch).toHaveBeenCalledTimes(1);
   });
 
@@ -379,7 +379,9 @@ describe("the pinned transport hosted MCP connections ride", () => {
       (error: unknown) => error,
     );
     expect(refused).toBeInstanceOf(BlockedEgressTargetError);
-    expect((refused as Error).message).toMatch(/not a publicly routable address/);
+    expect((refused as Error).message).toMatch(
+      /not a publicly routable address/,
+    );
   });
 
   it("refuses a redirect from a listed address into metadata", async () => {

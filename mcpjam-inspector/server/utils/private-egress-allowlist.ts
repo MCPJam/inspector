@@ -137,7 +137,7 @@ function matchableBytes(address: string): AddressBytes | null {
 function cidrContains(cidr: Cidr, bytes: AddressBytes): boolean {
   if (cidr.bytes.length !== bytes.length) return false;
   for (let bit = 0; bit < cidr.prefix; bit += 1) {
-    const mask = 0x80 >> bit % 8;
+    const mask = 0x80 >> (bit % 8);
     const index = Math.floor(bit / 8);
     if ((cidr.bytes[index] & mask) !== (bytes[index] & mask)) return false;
   }
@@ -146,7 +146,7 @@ function cidrContains(cidr: Cidr, bytes: AddressBytes): boolean {
 
 function hasHostBits(bytes: AddressBytes, prefix: number): boolean {
   for (let bit = prefix; bit < bytes.length * 8; bit += 1) {
-    if (bytes[Math.floor(bit / 8)] & (0x80 >> bit % 8)) return true;
+    if (bytes[Math.floor(bit / 8)] & (0x80 >> (bit % 8))) return true;
   }
   return false;
 }
@@ -200,7 +200,8 @@ function parseSuffix(entry: string): string | InvalidAllowlistEntry {
   if (/^\d+$/.test(labels[labels.length - 1])) {
     return {
       entry,
-      reason: "ends in a number, so it would read as an address; list addresses as CIDRs",
+      reason:
+        "ends in a number, so it would read as an address; list addresses as CIDRs",
     };
   }
   return suffix;
@@ -257,7 +258,9 @@ export function parsePrivateEgressAllowlist(
               : undefined;
         if (judged === undefined) return false;
         const bytes = matchableBytes(judged);
-        return bytes !== null && cidrs.some((cidr) => cidrContains(cidr, bytes));
+        return (
+          bytes !== null && cidrs.some((cidr) => cidrContains(cidr, bytes))
+        );
       },
     },
   };

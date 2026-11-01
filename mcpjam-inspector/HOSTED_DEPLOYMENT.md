@@ -160,8 +160,8 @@ MCPJAM_PRIVATE_EGRESS_ALLOWLIST=10.0.0.0/8,fd00::/8,svc.cluster.local
   private is reachable, and the server logs an error at boot naming each bad
   entry. In production the console shows it only with `VERBOSE_LOGS=true`.
 
-The checks query DNS directly, without `/etc/hosts`, so use fully qualified
-names such as `mcp.tools.svc.cluster.local`.
+The preflight check queries DNS directly, without `/etc/hosts`, so use fully
+qualified names such as `mcp.tools.svc.cluster.local`.
 
 ## Organization-derived confidential CIMD (disabled by default)
 
