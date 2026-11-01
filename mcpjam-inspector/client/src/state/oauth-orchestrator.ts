@@ -1,6 +1,8 @@
 import {
   clearOAuthData,
+  clearOAuthFlowState,
   initiateOAuth,
+  readStoredDiscoveryScopes,
   readStoredOAuthConfig,
   resolveStoredIssuer,
 } from "@/lib/oauth/mcp-oauth";
@@ -13,6 +15,7 @@ import {
   selectStoredResourceUrl,
   type BuiltOAuthRequest,
 } from "@/lib/oauth/oauth-request";
+import { authorizationFlowDigest } from "@/lib/oauth/flow-digest";
 import {
   describeAsSlug,
   resolveStepUpAction,
@@ -52,12 +55,13 @@ export type OAuthReauthRequired = {
   normalized: NormalizedError;
   oauthTrace?: OAuthTrace;
 };
-export type OAuthError = { kind: "error"; error: string; oauthTrace?: OAuthTrace };
+export type OAuthError = {
+  kind: "error";
+  error: string;
+  oauthTrace?: OAuthTrace;
+};
 export type OAuthResult =
-  | OAuthReady
-  | OAuthRedirect
-  | OAuthReauthRequired
-  | OAuthError;
+  OAuthReady | OAuthRedirect | OAuthReauthRequired | OAuthError;
 
 function buildOAuthReauthRequired(
   serverName: string,
@@ -80,10 +84,10 @@ function buildOAuthReauthRequired(
   };
 }
 
-function parseOAuthScopes(scopes?: string | string[]): string[] | undefined {
-  const parsed = Array.isArray(scopes)
-    ? scopes
-    : scopes?.split(/[,\s]+/);
+export function parseOAuthScopes(
+  scopes?: string | string[],
+): string[] | undefined {
+  const parsed = Array.isArray(scopes) ? scopes : scopes?.split(/[,\s]+/);
   const normalized = parsed?.map((scope) => scope.trim()).filter(Boolean);
   return normalized && normalized.length > 0 ? normalized : undefined;
 }
@@ -139,7 +143,9 @@ function readStoredClientInfo(serverName: string): {
   }
 }
 
-function normalizeHeaders(headers: unknown): Record<string, string> | undefined {
+function normalizeHeaders(
+  headers: unknown,
+): Record<string, string> | undefined {
   if (!headers) return undefined;
 
   if (typeof Headers !== "undefined" && headers instanceof Headers) {
@@ -320,11 +326,30 @@ export async function ensureAuthorizedForReconnect(
      * re-deriving from the server URL. `undefined` keeps today's behavior.
      */
     resourceMetadataUrl?: string;
+    /**
+     * Keep the server's existing tokens, client registration and discovery
+     * until the callback succeeds, clearing only the previous attempt's flow
+     * state. Set by a mid-session sign-in for one call: abandoning it must
+     * not break every other tool on an already-authorized server.
+     */
+    preserveExistingAuthorization?: boolean;
+    /**
+     * Skip the client-side "this server does not use OAuth" shortcuts. Set
+     * only after the SERVER stamped the connection's effective auth method as
+     * `discover` or `oauth` on a sign-in challenge: the stamp is
+     * authoritative, and a stale client mirror must not swallow the user's
+     * explicit Connect click.
+     */
+    forceInteractiveFlow?: boolean;
+    /** See `MCPOAuthOptions.onAuthorizationRedirect`. */
+    onAuthorizationRedirect?: (flow: {
+      state?: string;
+    }) => void | Promise<void>;
   },
 ): Promise<OAuthResult> {
   // If server is explicitly configured without OAuth, skip OAuth flow entirely
   // This handles the case where a server was saved with "No Authentication"
-  if (server.useOAuth === false) {
+  if (server.useOAuth === false && options?.forceInteractiveFlow !== true) {
     // Also clear any lingering OAuth data in localStorage
     clearOAuthData(server.name);
     return { kind: "ready", serverConfig: server.config, tokens: undefined };
@@ -332,7 +357,11 @@ export async function ensureAuthorizedForReconnect(
 
   // If useOAuth is not explicitly true and there are no OAuth tokens,
   // skip OAuth (handles legacy servers and non-OAuth connections)
-  if (server.useOAuth !== true && !server.oauthTokens) {
+  if (
+    server.useOAuth !== true &&
+    !server.oauthTokens &&
+    options?.forceInteractiveFlow !== true
+  ) {
     // Clear any lingering OAuth data that might cause confusion
     clearOAuthData(server.name);
     return { kind: "ready", serverConfig: server.config, tokens: undefined };
@@ -389,9 +418,17 @@ export async function ensureAuthorizedForReconnect(
             : "Failed to build the OAuth request",
       };
     }
-    clearOAuthData(server.name);
+    if (options?.preserveExistingAuthorization) {
+      clearOAuthFlowState(server.name);
+    } else {
+      clearOAuthData(server.name);
+    }
     options?.beforeRedirect?.(opts);
-    const init = await initiateOAuth(opts);
+    const init = await initiateOAuth(
+      options?.onAuthorizationRedirect
+        ? { ...opts, onAuthorizationRedirect: options.onAuthorizationRedirect }
+        : opts,
+    );
     if (init.success && init.serverConfig) {
       return {
         kind: "ready",
@@ -491,7 +528,7 @@ function stepUpLedgerKey(operation: StepUpOperationKey): string {
 // a prior session's exhausted counter would make a brand-new session throw
 // immediately on its first legitimate step-up. `sessionStorage` scopes the
 // bound to the session, which is exactly the loop we need to bound (§10.5#5).
-function stepUpAttemptsStore(): Storage | undefined {
+export function stepUpAttemptsStore(): Storage | undefined {
   try {
     return typeof sessionStorage !== "undefined" ? sessionStorage : undefined;
   } catch {
@@ -677,12 +714,7 @@ export function resolveInsufficientScopeStepUp(
     // a subsequent step-up unions from the widened base, and record the
     // attempt so the next cross-request challenge is bounded.
     persistRequestedScopes(serverName, issuer, scopes);
-    writeStepUpAttempts(
-      serverName,
-      issuer,
-      attempt + 1,
-      input.operationKey,
-    );
+    writeStepUpAttempts(serverName, issuer, attempt + 1, input.operationKey);
   }
 
   return { action, scopes, attempt };
@@ -747,13 +779,13 @@ export function resetInsufficientScopeStepUp(
 // {@link ensureAuthorizedForReconnect}. This is what makes the step-up CORE
 // reachable end-to-end from a real MCP tool call on the local path.
 
-function readServerUrlForStepUp(server: ServerWithName): string | undefined {
+export function readServerUrlForStepUp(
+  server: ServerWithName,
+): string | undefined {
   const fromConfig = (server.config as any)?.url?.toString?.();
   if (fromConfig) return fromConfig;
   try {
-    return (
-      localStorage.getItem(`mcp-serverUrl-${server.name}`) ?? undefined
-    );
+    return localStorage.getItem(`mcp-serverUrl-${server.name}`) ?? undefined;
   } catch {
     return undefined;
   }
@@ -774,7 +806,7 @@ function readServerUrlForStepUp(server: ServerWithName): string | undefined {
  * blocks private/reserved hosts → SSRF) and cross-origin MCP-Authorization
  * header stripping (`mergeHeadersForResourceMetadataRequest`).
  */
-function validResourceMetadataUrlHint(
+export function validResourceMetadataUrlHint(
   resourceMetadataUrl: string | undefined,
 ): string | undefined {
   const hint = resourceMetadataUrl?.trim();
@@ -789,7 +821,7 @@ function validResourceMetadataUrlHint(
   return undefined;
 }
 
-function readOriginalOAuthScopes(
+export function readOriginalOAuthScopes(
   server: ServerWithName,
 ): string[] | undefined {
   // Mirror buildReconnectOAuthOptions' scope precedence: the flow profile's
@@ -842,6 +874,12 @@ export async function applyToolCallStepUp(
     originalScopes?: string[];
     onTraceUpdate?: (trace: OAuthTrace) => void;
     beforeRedirect?: (oauthOptions: BuiltOAuthRequest) => void;
+    /**
+     * Told the digest of the authorization request's `state` right before the
+     * redirect, so a saved call can be bound to this flow. See
+     * `authorizationFlowDigest`.
+     */
+    onAuthorizationFlow?: (flow: { digest: string }) => void;
     /**
      * Exact MCP operation whose retry budget this challenge consumes.
      * Defaults to a server-wide tools/call bucket only for compatibility with
@@ -903,10 +941,23 @@ export async function applyToolCallStepUp(
   // intent-preserving step-up (and is not a no-op — discovery, AS, and token
   // audience can all change). If the corrected metadata still resolves to the
   // same insufficient scopes, the bounded retry stops the loop by design.
+  //
+  // A BARE challenge (neither a scope nor a pointer) has nothing to widen to
+  // and nothing to rediscover from, so it uses discovery's own scope choice:
+  // the protected resource's `scopes_supported`, else the authorization
+  // server's, unioned with what was requested before. That is the selection
+  // the MCP authorization spec describes and Claude applies; the scopes the
+  // first sign-in actually requested (including a discovery-time challenge
+  // scope) are already in the previously-requested set.
+  const scopesToWiden =
+    challengedScopes ??
+    (resourceMetadataUrl
+      ? undefined
+      : readStoredDiscoveryScopes(server.name, serverUrl));
   const decision = resolveInsufficientScopeStepUp({
     serverName: server.name,
     issuer,
-    challengedScopes,
+    challengedScopes: scopesToWiden,
     originalScopes: options?.originalScopes ?? readOriginalOAuthScopes(server),
     authMode: options?.authMode ?? "interactive",
     maxRetries: options?.maxRetries,
@@ -934,14 +985,10 @@ export async function applyToolCallStepUp(
       resourceMetadataUrl,
       onTraceUpdate: options?.onTraceUpdate,
       beforeRedirect: options?.beforeRedirect,
+      onAuthorizationRedirect: flowDigestHook(options?.onAuthorizationFlow),
     });
   } catch (error) {
-    writeStepUpAttempts(
-      server.name,
-      issuer,
-      decision.attempt,
-      operationKey,
-    );
+    writeStepUpAttempts(server.name, issuer, decision.attempt, operationKey);
     writePendingStepUp(server.name, issuer, false, operationKey);
     throw error;
   }
@@ -967,12 +1014,7 @@ export async function applyToolCallStepUp(
     reauthorization.kind === "error" ||
     reauthorization.kind === "reauth_required"
   ) {
-    writeStepUpAttempts(
-      server.name,
-      issuer,
-      decision.attempt,
-      operationKey,
-    );
+    writeStepUpAttempts(server.name, issuer, decision.attempt, operationKey);
     writePendingStepUp(server.name, issuer, false, operationKey);
   }
 
@@ -994,7 +1036,10 @@ export function resetToolCallStepUp(
   operation?: ToolCallStepUpOperation,
 ): void {
   const serverUrl = readServerUrlForStepUp(server);
-  const issuer = resolveStoredIssuer(server.name, readServerUrlForStepUp(server));
+  const issuer = resolveStoredIssuer(
+    server.name,
+    readServerUrlForStepUp(server),
+  );
   resetInsufficientScopeStepUp(
     server.name,
     issuer,
@@ -1008,10 +1053,34 @@ export function resetToolCallStepUp(
   );
 }
 
-export interface AuthChallengeAttempt {
-  projectId: string;
-  serverId: string;
-  surface: string;
-  callId: string;
-  chatSessionId?: string;
+/**
+ * The `onAuthorizationRedirect` hook that turns the flow's `state` into its
+ * digest before anything sees it. Awaited by the OAuth flow, so the digest is
+ * recorded before the browser leaves.
+ */
+export function flowDigestHook(
+  onFlow: ((flow: { digest: string }) => void) | undefined,
+): ((flow: { state?: string }) => Promise<void>) | undefined {
+  if (!onFlow) return undefined;
+  return async ({ state }) => {
+    const digest = await authorizationFlowDigest(state);
+    if (!digest)
+      throw new Error(
+        "Could not save this sign-in securely. Open MCPJam using HTTPS or localhost and try again.",
+      );
+    onFlow({ digest });
+  };
 }
+
+// Mid-session sign-in: the per-call ledger, the auth-method gate and
+// `applyToolCallAuthChallenge` live in their own module.
+export {
+  applyToolCallAuthChallenge,
+  gateAuthChallenge,
+  hasAuthChallengeAwaitingCallback,
+  markAuthChallengeSignedIn,
+  resetAuthChallenge,
+  type AuthChallengeAttempt,
+  type AuthChallengeGate,
+  type AuthChallengeOutcome,
+} from "./auth-challenge-ledger";

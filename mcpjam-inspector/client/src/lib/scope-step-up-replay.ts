@@ -206,6 +206,10 @@ export function setPendingDirectScopeStepUpReplayFlowDigest(
   ) {
     return;
   }
+  // A step-up that did not save this call (a chat or agent call) may bind it
+  // only if no flow has claimed it yet. A call bound to an earlier, abandoned
+  // sign-in must not be replayed by an unrelated one.
+  if (!expected && pending.flowDigest) return;
   write({ ...pending, flowDigest });
 }
 
@@ -222,6 +226,7 @@ export function setPendingDirectScopeStepUpReplayCredentialBinding(
   if (expected && (!pending || !sameGeneration(pending, expected)))
     throw new Error("This call is no longer waiting for sign-in. Run it again.");
   if (!pending || pending.descriptor.serverName !== serverName) return;
+  if (!expected && pending.credentialBinding) return;
   write({ ...pending, credentialBinding: binding });
 }
 
