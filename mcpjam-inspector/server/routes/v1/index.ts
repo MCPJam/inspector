@@ -16,6 +16,7 @@ import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
 import { mcpEgressRateLimitMiddleware } from "../../middleware/mcp-egress-rate-limit.js";
 import { mcpOperationRateLimit } from "../../middleware/mcp-operation-rate-limit.js";
+import { refuseWhileDraining } from "../../services/lifecycle/admission.js";
 // The guest allowlist lives in its own module so `requireVerifiedAuth` can
 // ask the same question without importing this router (a cycle).
 import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
@@ -138,6 +139,19 @@ for (const family of ["tools", "resources", "prompts"] as const) {
     mcpOperationRateLimit(family),
   );
 }
+
+/**
+ * The v1 routes that start eval runs: every route in `evals.ts` that calls
+ * `launchEvalRun`. Refused while this process drains, and registered ahead of
+ * the mounts, so a refused launch reaches no router.
+ */
+export const V1_EVAL_LAUNCH_ROUTES = [
+  "/projects/:projectId/eval-runs",
+  "/projects/:projectId/eval-run-groups",
+  "/projects/:projectId/eval-runs/:runId/rerun",
+  "/projects/:projectId/eval-description-experiments/:experimentId/start",
+] as const;
+v1.on("POST", [...V1_EVAL_LAUNCH_ROUTES], refuseWhileDraining("eval_run"));
 
 // Each sub-router declares full resource paths; mount them all at the root.
 v1.route("/", servers);
