@@ -248,13 +248,10 @@ export function markPendingDirectScopeStepUpReplayReady(
     pending.descriptor.serverName !== serverName
   )
     return;
-  if (
-    !pending.flowDigest ||
-    !callbackDigest ||
-    pending.flowDigest !== callbackDigest
-  ) {
-    return;
-  }
+  // A call bound to its flow is marked ready only by that flow's callback.
+  // A surface that saved the call without binding a flow keeps the
+  // one-pending-call rule: the next successful sign-in for the server.
+  if (pending.flowDigest && pending.flowDigest !== callbackDigest) return;
   write({ ...pending, phase: "ready" });
 }
 

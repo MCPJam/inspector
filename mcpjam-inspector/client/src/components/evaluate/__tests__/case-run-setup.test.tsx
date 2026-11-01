@@ -18,6 +18,22 @@ vi.mock("@/hooks/use-project-environment-capability", () => ({
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (select: any) => select({ themeMode: "light" }),
 }));
+// The active project sits in another organization whose providers this
+// viewer may manage: the sheet must never hand off there.
+const activeOrg = vi.hoisted(() => ({ handoff: vi.fn(), orgId: vi.fn() }));
+vi.mock("@/state/app-state-context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/state/app-state-context")>()),
+  useOptionalSharedAppState: () => ({
+    activeProjectId: "active",
+    projects: { active: { id: "active", organizationId: "org_active" } },
+  }),
+}));
+vi.mock("@/hooks/use-org-models-handoff", () => ({
+  useOrgModelsHandoff: (organizationId: string | null) => {
+    activeOrg.orgId(organizationId);
+    return activeOrg.handoff;
+  },
+}));
 const props = {
   open: true,
   onOpenChange: vi.fn(),
@@ -27,6 +43,7 @@ const props = {
   models: [],
   trials: 1,
   hostLabel: "Client",
+  onAddProvider: null,
 };
 describe("Case run setup", () => {
   it("keeps run controls inside the drawer and runs only on confirmation", async () => {
@@ -190,5 +207,44 @@ describe("Case run setup reasoning effort", () => {
     );
     expect(screen.queryByText("High")).toBeNull();
     expect(screen.queryByTestId("model-effort-menu")).toBeNull();
+  });
+});
+
+describe("Case run setup — a model search with no match", () => {
+  async function searchMixtral(onAddProvider: (() => void) | null) {
+    activeOrg.orgId.mockClear();
+    const user = userEvent.setup();
+    render(
+      <CaseRunSetup
+        {...props}
+        availableModels={
+          [{ id: "gpt-a", provider: "openai", name: "GPT A" }] as never
+        }
+        onModelsChange={vi.fn()}
+        onAddProvider={onAddProvider}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /Add model/ }));
+    await user.type(screen.getByPlaceholderText("Search models"), "mixtral");
+    expect(
+      await screen.findByText('No models match "mixtral".'),
+    ).toBeInTheDocument();
+    return user;
+  }
+
+  it("offers nothing when the suite's organization offers none", async () => {
+    await searchMixtral(null);
+    expect(
+      screen.queryByRole("button", { name: "Add a provider" }),
+    ).not.toBeInTheDocument();
+    expect(activeOrg.orgId).not.toHaveBeenCalled();
+  });
+
+  it("hands off to the suite's organization", async () => {
+    const onAddProvider = vi.fn();
+    const user = await searchMixtral(onAddProvider);
+    await user.click(screen.getByRole("button", { name: "Add a provider" }));
+    expect(onAddProvider).toHaveBeenCalledTimes(1);
+    expect(activeOrg.handoff).not.toHaveBeenCalled();
   });
 });

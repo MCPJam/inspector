@@ -332,10 +332,9 @@ export interface ToggleRegistryStarInspectorCommand {
  * absent one is a real request — browse the directory — not an error, and a
  * blank one means the same thing (see `searchCatalogServers`).
  *
- * `source` picks WHICH directory (`anthropic-directory` or
- * `chatgpt-directory`); omitted leaves the one already on screen, so a model
- * that does not know there are two cannot silently switch the user's view.
- * `tier` only exists on the Claude source, and switching source clears it.
+ * `source`, when present, is `anthropic-directory` (the Claude directory).
+ * Anything else is `invalid_request`. Omit it to leave the view as it is.
+ * `tier` is a Claude verification tier.
  */
 export interface SearchRegistryDirectoryInspectorCommand {
   id: string;
@@ -372,7 +371,8 @@ export interface OpenEvalSuiteFormInspectorCommand {
 export interface RunEvalSuiteInspectorCommand {
   id: string;
   type: "runEvalSuite";
-  payload: { suite: string };
+  /** `iterations` per case; omitted means the count Setup Run would start at. */
+  payload: { suite: string; iterations?: number };
   timeoutMs?: number;
 }
 

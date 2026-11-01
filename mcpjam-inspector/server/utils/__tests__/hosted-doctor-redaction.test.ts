@@ -523,7 +523,10 @@ describe("hosted doctor answer projection", () => {
     attempts: ProbeHttpAttempt[];
     probe?: Record<string, unknown>;
     connection?: { status: string; detail: string };
-    checks?: Record<string, { status: string; detail: string }>;
+    checks?: Record<
+      string,
+      { status: string; detail: string; findings?: unknown }
+    >;
     error?: unknown;
     initInfo?: unknown;
     capabilities?: unknown;
@@ -1077,18 +1080,43 @@ describe("hosted doctor answer projection", () => {
     expect(JSON.stringify(redacted)).not.toMatch(MARKER);
   });
 
+  const OMITTED =
+    "Hosted diagnostics omit upstream error text; run the doctor locally for the full message.";
+  const CONFORMANCE_CLAUSES = [
+    "the extension is declared without the `resources` capability it depends on",
+    "`skills/list` omitted required `ttlMs` and `cacheScope`",
+    "listed skills omitted required `size` on their files",
+    "`skills/get` omitted required `cacheScope`",
+  ];
+  const CONFORMANCE = `not conformant to the stable Skills extension spec: ${CONFORMANCE_CLAUSES.join("; ")}.`;
+
   it.each([
+    // Server-text findings become counts.
     [
-      "2 of 5 sampled skills failed verification: skill://UNEXPECTED_MARKER_40/a (UNEXPECTED_MARKER_41), skill://b (hash mismatch)",
-      "2 of 5 sampled skills failed verification.",
+      { conformance: [], verification: { failed: 2, sampled: 5 } },
+      `2 of 5 sampled skills failed verification. ${OMITTED}`,
     ],
     [
-      "1 listed entry rejected as malformed: UNEXPECTED_MARKER_42",
-      "1 listed entry rejected as malformed.",
+      { conformance: [], rejected: 1 },
+      `1 listed entry rejected as malformed. ${OMITTED}`,
+    ],
+    [
+      { conformance: [], verification: { failed: 2, sampled: 5 }, rejected: 3 },
+      `2 of 5 sampled skills failed verification. 3 listed entries rejected as malformed. ${OMITTED}`,
+    ],
+    // Conformance clauses are fixed phrases with no server text, so they pass.
+    [{ conformance: CONFORMANCE_CLAUSES }, CONFORMANCE],
+    [
+      {
+        conformance: CONFORMANCE_CLAUSES,
+        verification: { failed: 2, sampled: 5 },
+        rejected: 1,
+      },
+      `${CONFORMANCE} 2 of 5 sampled skills failed verification. 1 listed entry rejected as malformed. ${OMITTED}`,
     ],
   ])(
-    "reports the skills check's findings by their counts only",
-    async (detail, counts) => {
+    "builds the skills check's detail from its findings, never its sentence",
+    async (findings, expected) => {
       const redact = await hostedRedactor();
       const result = doctorResult({
         attempts: [
@@ -1098,17 +1126,92 @@ describe("hosted doctor answer projection", () => {
             8,
           ),
         ],
-        checks: { skills: { status: "error", detail } },
+        checks: {
+          skills: {
+            status: "error",
+            // The SDK's sentence names URIs and reasons the server chose. A
+            // rejected entry's URI is arbitrary text, so it can be shaped
+            // like a finding; none of this is read.
+            detail: `${CONFORMANCE.slice(0, -1)}; 7 of 9 sampled skills failed verification: skill://UNEXPECTED_MARKER_40/a (UNEXPECTED_MARKER_41); 1 listed entry rejected as malformed: 7 of 9 sampled skills failed verification: UNEXPECTED_MARKER_42.`,
+            findings,
+          },
+        },
+      });
+
+      const redacted = redact(result) as any;
+
+      expect(redacted.checks.skills.detail).toBe(expected);
+      expect(JSON.stringify(redacted)).not.toMatch(MARKER);
+    },
+  );
+
+  it.each([
+    // A clause that is not one of the SDK's fixed phrases is dropped.
+    { conformance: ["UNEXPECTED_MARKER_45"] },
+    { conformance: [`${CONFORMANCE_CLAUSES[0]}; UNEXPECTED_MARKER_46`] },
+    // Counts that are not bounded non-negative integers are dropped.
+    { conformance: [], verification: { failed: "UNEXPECTED_MARKER_47", sampled: 5 } },
+    { conformance: [], verification: { failed: 2.5, sampled: 5 } },
+    { conformance: [], rejected: -1 },
+    { conformance: [], rejected: 10_000_000 },
+  ])(
+    "keeps nothing from skills findings that are not the SDK's shape: %j",
+    async (findings) => {
+      const redact = await hostedRedactor();
+      const result = doctorResult({
+        attempts: [
+          answeredAttempt(
+            "https://mcp.example.test/mcp",
+            { status: 200, statusText: "OK", headers: {} },
+            8,
+          ),
+        ],
+        checks: {
+          skills: {
+            status: "error",
+            detail: "UNEXPECTED_MARKER_48",
+            findings,
+          },
+        },
       });
 
       const redacted = redact(result) as any;
 
       expect(redacted.checks.skills.detail).toBe(
-        `${counts} Hosted diagnostics omit upstream error text; run the doctor locally for the full message.`,
+        `Listing or verifying skills failed. ${OMITTED}`,
       );
       expect(JSON.stringify(redacted)).not.toMatch(MARKER);
     },
   );
+
+  it("treats a skills failure without findings like any other step's", async () => {
+    // No findings means the run itself failed (the listing threw), and the
+    // detail is the SDK's error message, which passes only when it is one
+    // of the allowed sentences.
+    const redact = await hostedRedactor();
+    const result = doctorResult({
+      attempts: [
+        answeredAttempt(
+          "https://mcp.example.test/mcp",
+          { status: 200, statusText: "OK", headers: {} },
+          8,
+        ),
+      ],
+      checks: {
+        skills: {
+          status: "error",
+          detail: "2 of 5 sampled skills failed verification: UNEXPECTED_MARKER_49",
+        },
+      },
+    });
+
+    const redacted = redact(result) as any;
+
+    expect(redacted.checks.skills.detail).toBe(
+      `Listing or verifying skills failed. ${OMITTED}`,
+    );
+    expect(JSON.stringify(redacted)).not.toMatch(MARKER);
+  });
 
   it("projects each MCP list item field by field", async () => {
     const redact = await hostedRedactor();

@@ -28,20 +28,11 @@ vi.mock("../../../utils/computers/browser-consent.js", () => ({
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-const configState = vi.hoisted(() => ({
-  enabled: true,
-  hostedBrowser: false,
-  webmcpHosted: false,
-}));
+const configState = vi.hoisted(() => ({ enabled: true }));
 vi.mock("../../../config", () => ({
   get WEBMCP_INSPECTOR_ENABLED() {
     return configState.enabled;
   },
-  hostedBrowserEnabled: () => configState.hostedBrowser,
-  webmcpInspectorHostedEnabled: () => configState.webmcpHosted,
-  // Composed exactly as `config.ts` composes it, for HOSTED_MODE false: the
-  // hosted gate does not apply locally, so the kill switch is the whole answer.
-  webmcpInspectorReachable: () => configState.enabled,
   HOSTED_MODE: false,
   LOCAL_BROWSER_ENABLED: true,
 }));
@@ -577,7 +568,6 @@ describe("webmcp-inspector routes", () => {
   });
 
   it("rejects an in-app hosted session rather than downgrading it", async () => {
-    configState.hostedBrowser = true;
     const { status, body } = await call(
       "/api/mcp/webmcp/sessions",
       json({
@@ -591,7 +581,6 @@ describe("webmcp-inspector routes", () => {
     // Honouring `in-app` would drive one desktop from two places.
     expect(status).toBe(400);
     expect(body.code).toBe("in-app-hosted-unsupported");
-    configState.hostedBrowser = false;
   });
 
   it("bounds the device pixel ratio it will render at", async () => {
@@ -782,29 +771,16 @@ describe("webmcp-inspector routes", () => {
 /**
  * The W5 transport switch. `browserd-provider.ts` shipped tested but
  * unreferenced — nothing selected it, so every session ran locally no matter
- * what. These cover the selection itself, and the three refusals that guard
+ * what. These cover the selection itself, and the two refusals that guard
  * it: a hosted session spends someone's credits, so it must never be the
  * thing that happens by accident.
  */
 describe("POST /sessions — transport selection", () => {
   beforeEach(() => {
-    configState.hostedBrowser = false;
     hostedState.ensureArgs.length = 0;
   });
 
-  it("refuses hosted while the hosted runtime is off", async () => {
-    const { status, body } = await call(
-      "/api/mcp/webmcp/sessions",
-      json({ url: "https://a.test", transport: "hosted", projectId: "p1" }),
-    );
-    expect(status).toBe(503);
-    expect(body.code).toBe("hosted-browser-disabled");
-    // Nothing was reserved: the refusal happens before any seam is touched.
-    expect(hostedState.ensureArgs).toHaveLength(0);
-  });
-
   it("refuses hosted with no project — there is no computer to run on", async () => {
-    configState.hostedBrowser = true;
     const { status, body } = await call(
       "/api/mcp/webmcp/sessions",
       json({ url: "https://a.test", transport: "hosted" }),
@@ -815,7 +791,6 @@ describe("POST /sessions — transport selection", () => {
   });
 
   it("refuses hosted with no Authorization — the computer is billed to someone", async () => {
-    configState.hostedBrowser = true;
     const { status, body } = await call(
       "/api/mcp/webmcp/sessions",
       json({ url: "https://a.test", transport: "hosted", projectId: "p1" }),
@@ -826,7 +801,6 @@ describe("POST /sessions — transport selection", () => {
   });
 
   it("selects the hosted provider and passes the caller's identity through", async () => {
-    configState.hostedBrowser = true;
     const { status } = await call("/api/mcp/webmcp/sessions", {
       method: "POST",
       headers: {
@@ -856,7 +830,6 @@ describe("POST /sessions — transport selection", () => {
   });
 
   it("leaves the LOCAL path untouched — an omitted transport reserves nothing", async () => {
-    configState.hostedBrowser = true;
     // Invalid URL so the request stops at validation without launching a real
     // browser; the point is that the hosted seam is never consulted.
     const { status } = await call(

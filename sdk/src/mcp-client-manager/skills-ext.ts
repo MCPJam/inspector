@@ -23,12 +23,13 @@ import type { ManagedMcpClient } from "./managed-mcp-client.js";
 import type { ClientRequestOptions } from "./types.js";
 import {
   assertDirectoryReadResult,
-  assertSkillsGetResult,
+  assertSkillsGetEnvelope,
   assertSkillsListResult,
 } from "./skills-ext-guards.js";
 import type {
   SkillEntry,
   SkillsDirectoryReadResult,
+  SkillsExtGetResult,
   SkillsExtListResult,
 } from "./skills-ext-types.js";
 
@@ -100,7 +101,8 @@ export async function listSkillsExt(
 }
 
 /**
- * `skills/get` — one skill by URI.
+ * `skills/get` — one skill by URI, with the result's SEP-2549 cache
+ * attributes.
  *
  * Works for skills the listing never mentioned, which is the whole reason the
  * method exists: a skill URI can reach the host from server `instructions`,
@@ -108,14 +110,20 @@ export async function listSkillsExt(
  * `-32602` for a URI it does not serve, and that answer — not an absent
  * listing entry — is what proves non-existence.
  */
+export async function getSkillResultExt(
+  ctx: SkillsExtCallContext,
+  uri: string
+): Promise<SkillsExtGetResult> {
+  const result = await sendSkillsExtRequest(ctx, SkillsExtGetMethod, { uri });
+  return assertSkillsGetEnvelope(result);
+}
+
+/** {@link getSkillResultExt}, unwrapped to the entry. */
 export async function getSkillExt(
   ctx: SkillsExtCallContext,
   uri: string
 ): Promise<SkillEntry> {
-  const result = await sendSkillsExtRequest(ctx, SkillsExtGetMethod, { uri });
-  // The result is an ENVELOPE, `{ skill }` — unwrapped by the guard so the
-  // wire shape stays known in one place.
-  return assertSkillsGetResult(result);
+  return (await getSkillResultExt(ctx, uri)).skill;
 }
 
 /**

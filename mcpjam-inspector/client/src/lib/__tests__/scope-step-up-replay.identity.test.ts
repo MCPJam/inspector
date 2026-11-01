@@ -53,6 +53,29 @@ describe("direct replay identity", () => {
       }),
     ).toBeDefined();
   });
+  it("marks a call saved without a flow binding ready on the server's next sign-in", () => {
+    savePendingDirectScopeStepUpReplay({
+      operation: {
+        resourceUrl: "https://example.test/mcp",
+        method: "tools/call",
+        operation: "read",
+      },
+      descriptor: {
+        kind: "tool",
+        surface: "tools",
+        serverName: "same",
+        toolName: "read",
+        parameters: {},
+      },
+    });
+    markPendingDirectScopeStepUpReplayReady("same", "any-flow");
+    expect(
+      claimPendingDirectScopeStepUpReplay({
+        serverName: "same",
+        surface: "tools",
+      }),
+    ).toBeDefined();
+  });
   it("requires a flow digest and cannot rearm an already claimed call", () => {
     save("a");
     markPendingDirectScopeStepUpReplayReady("same");

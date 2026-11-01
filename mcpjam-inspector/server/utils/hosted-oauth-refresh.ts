@@ -309,8 +309,14 @@ export async function forceRefreshHostedOAuthAccessToken(
         serverName: options?.serverName ?? null,
       });
     }
+    // A login with no refresh token. The backend reports it as
+    // `refresh_token_invalid` plus a `refreshTokenUnavailable` flag, so an
+    // inspector that predates the flag still prompts a reconnect.
+    const refreshTokenUnavailable =
+      code === "refresh_token_unavailable" ||
+      body?.refreshTokenUnavailable === true;
     const isReconnectRequired =
-      code === "refresh_token_invalid" || code === "refresh_token_unavailable";
+      code === "refresh_token_invalid" || refreshTokenUnavailable;
     // The backend's 503: the credential is fine, the authorization server
     // never answered usably. Its `detail` is what that server actually
     // returned ({url, status, body}) — forwarded so the client can name the
@@ -323,8 +329,8 @@ export async function forceRefreshHostedOAuthAccessToken(
       isReconnectRequired
         ? {
             oauthRequired: true,
-            refreshTokenInvalid: code === "refresh_token_invalid",
-            refreshTokenUnavailable: code === "refresh_token_unavailable",
+            refreshTokenInvalid: !refreshTokenUnavailable,
+            refreshTokenUnavailable,
             serverId,
             serverName: options?.serverName ?? null,
             // The authorization server's own RFC 6749 reply ({error,

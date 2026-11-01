@@ -227,20 +227,18 @@ describe("ui_search_registry_directory", () => {
     expect(dispatchInspectorCommandMock).not.toHaveBeenCalled();
   });
 
-  it("dispatches the source when the model picks a directory", async () => {
+  it("dispatches the Claude directory when the model names it", async () => {
     await getTool("ui_search_registry_directory").execute({
       query: "linear",
-      source: "chatgpt-directory",
+      source: "anthropic-directory",
     });
     expect(dispatchInspectorCommandMock).toHaveBeenCalledWith({
       type: "searchRegistryDirectory",
-      payload: { query: "linear", source: "chatgpt-directory" },
+      payload: { query: "linear", source: "anthropic-directory" },
     });
   });
 
-  it("omits an absent source — the user's current view is the default", async () => {
-    // A model that does not know there are two directories must not silently
-    // switch the one the person is looking at.
+  it("omits an absent source — the view on screen stays put", async () => {
     await getTool("ui_search_registry_directory").execute({ query: "linear" });
     const [dispatched] = dispatchInspectorCommandMock.mock.calls[0];
     expect(dispatched.payload.source).toBeUndefined();
@@ -254,14 +252,11 @@ describe("ui_search_registry_directory", () => {
     expect(dispatchInspectorCommandMock).not.toHaveBeenCalled();
   });
 
-  it("names both directories, so the model knows there is a choice", () => {
+  it("names the Claude directory as the only source", () => {
     const schema = getTool("ui_search_registry_directory").inputSchema as {
       properties: { source: { enum: string[] } };
     };
-    expect(schema.properties.source.enum).toEqual([
-      "anthropic-directory",
-      "chatgpt-directory",
-    ]);
+    expect(schema.properties.source.enum).toEqual(["anthropic-directory"]);
   });
 
   it("tells the model where the results actually appear", () => {

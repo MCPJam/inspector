@@ -91,6 +91,12 @@
       "js-yaml": {
         "argparse": "^2.0.1"
       }
+    },
+    "@chromatic-com/playwright": {
+      "storybook": "^10.6.2"
+    },
+    "@google/design.md": {
+      "zod": "^4.6.6"
     }
   }
 }
