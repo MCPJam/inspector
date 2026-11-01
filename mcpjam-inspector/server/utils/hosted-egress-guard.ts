@@ -10,10 +10,15 @@
  * host-tier distinction `isBlockedEgressHost` already draws:
  *
  *   - Always blocked: cloud-metadata addresses and their DNS aliases,
- *     link-local, and the unspecified address. Never a legitimate target
- *     anywhere, in any mode.
+ *     link-local, multicast and reserved space, and the unspecified address.
+ *     Never a legitimate target anywhere, in any mode, and no configuration
+ *     can open one.
  *   - Blocked only when hosted: loopback, `.localhost`, RFC-1918, CGNAT, and
- *     IPv6 ULA.
+ *     IPv6 ULA — unless the operator lists the destination in
+ *     `MCPJAM_PRIVATE_EGRESS_ALLOWLIST`. A self-hosted install runs hosted
+ *     mode on the operator's own network, where its MCP servers and model
+ *     endpoints ARE private addresses; the allowlist names which ones, and
+ *     `admitsPrivateEgress` below is the only place it is read.
  *
  * Validating the URL a caller NAMED is not enough on its own, because a caller
  * does not have to name the address they want reached — they can name a host
@@ -37,6 +42,14 @@
 
 import { promises as dns } from "node:dns";
 import { HOSTED_MODE } from "../config.js";
+import { logger } from "./logger.js";
+import {
+  ipv6Bytes,
+  normalizeEgressHost,
+  parsePrivateEgressAllowlist,
+  type PrivateEgressAllowlist,
+  type PrivateEgressDestination,
+} from "./private-egress-allowlist.js";
 
 /** Parse a dotted-quad IPv4 literal into octets, or null if not well-formed. */
 function parseIpv4Octets(
@@ -49,16 +62,184 @@ function parseIpv4Octets(
   return [o[0], o[1], o[2], o[3]];
 }
 
+/** Metadata aliases: they resolve to link-local, but the names are refused too. */
+const METADATA_NAMES = new Set([
+  "metadata",
+  "metadata.google.internal",
+  "metadata.goog",
+]);
+
+/**
+ * Names that only mean something on the machine itself or its container host:
+ * the loopback aliases `/etc/hosts` ships and Docker's host gateways.
+ */
+const MACHINE_LOCAL_NAMES = new Set([
+  "ip6-localhost",
+  "ip6-loopback",
+  "host.docker.internal",
+  "gateway.docker.internal",
+]);
+
+/** AWS's IPv6 instance metadata address, inside the ULA range. */
+const AWS_IPV6_METADATA = ipv6Bytes("fd00:ec2::254");
+
+type EgressTier = "never" | "private" | "public";
+
+/**
+ * Where a literal hostname or address sits in the threat model above.
+ *
+ *   - `never`: an empty host, cloud-metadata names and addresses (including
+ *     Alibaba's inside CGNAT and AWS's inside ULA), IPv4/IPv6 link-local
+ *     (169.254/16, fe80::/10), multicast and reserved space (224/4, 240/4,
+ *     ff00::/8), and the unspecified address (0.0.0.0/8, ::).
+ *   - `private`: loopback and `.localhost`, the machine-local names above,
+ *     RFC-1918, CGNAT (100.64/10), and IPv6 ULA (fc00::/7).
+ *   - `public`: everything else, including every other name — a name is
+ *     judged again on what it resolves to.
+ */
+function egressTier(hostname: string): EgressTier {
+  // `normalizeEgressHost` strips a terminal dot. It is the same NAME to a
+  // resolver ("localhost." resolves to loopback) but a different STRING to
+  // every comparison below, so `http://metadata.google.internal./` would
+  // otherwise walk past the alias check.
+  const host = normalizeEgressHost(hostname);
+  // Nothing left to judge: fail closed.
+  if (!host) return "never";
+  if (METADATA_NAMES.has(host)) return "never";
+  if (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    MACHINE_LOCAL_NAMES.has(host)
+  ) {
+    return "private";
+  }
+
+  const v4 = parseIpv4Octets(host);
+  if (v4) {
+    const [a, b, c, d] = v4;
+    if (a === 169 && b === 254) return "never"; // link-local incl. cloud metadata
+    if (a === 0) return "never"; // "this network" / unspecified
+    if (a >= 224) return "never"; // multicast 224/4, reserved 240/4
+    if (a === 100 && b === 100 && c === 100 && d === 200) return "never"; // Alibaba metadata
+    if (a === 127) return "private"; // loopback 127.0.0.0/8
+    if (a === 10) return "private"; // 10.0.0.0/8
+    if (a === 192 && b === 168) return "private"; // 192.168.0.0/16
+    if (a === 172 && b >= 16 && b <= 31) return "private"; // 172.16.0.0/12
+    if (a === 100 && b >= 64 && b <= 127) return "private"; // CGNAT 100.64.0.0/10
+    return "public";
+  }
+
+  if (host.includes(":")) {
+    // IPv4-mapped IPv6 (e.g. ::ffff:169.254.169.254) — judge the embedded v4.
+    const mapped = /(?:^|:)((?:\d{1,3}\.){3}\d{1,3})$/.exec(host);
+    if (mapped) return egressTier(mapped[1]);
+    // The SAME address in hex. `new URL()` rewrites the dotted spelling into
+    // this one (`[::ffff:169.254.169.254]` → `[::ffff:a9fe:a9fe]`), so a check
+    // that only knew the dotted form let the metadata endpoint through the
+    // moment the host came from a parsed URL rather than a raw string.
+    const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+    if (mappedHex) {
+      const high = parseInt(mappedHex[1], 16);
+      const low = parseInt(mappedHex[2], 16);
+      return egressTier(
+        `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${
+          low & 0xff
+        }`
+      );
+    }
+    if (host === "::") return "never"; // unspecified
+    if (/^fe[89ab]/.test(host)) return "never"; // link-local fe80::/10
+    if (/^ff[0-9a-f]{2}:/.test(host)) return "never"; // multicast ff00::/8
+    const bytes = ipv6Bytes(host);
+    if (
+      bytes &&
+      AWS_IPV6_METADATA &&
+      bytes.every((byte, i) => byte === AWS_IPV6_METADATA[i])
+    ) {
+      return "never";
+    }
+    if (host === "::1") return "private"; // loopback
+    if (/^f[cd]/.test(host)) return "private"; // ULA fc00::/7
+    return "public";
+  }
+
+  return "public";
+}
+
+/** Read once per distinct value, so a bad value is reported once rather than per request. */
+let loadedAllowlist:
+  | { raw: string | undefined; allowlist: PrivateEgressAllowlist }
+  | undefined;
+
+/**
+ * The operator's `MCPJAM_PRIVATE_EGRESS_ALLOWLIST`, parsed.
+ *
+ * Read when first needed rather than at import: `server/index.ts` loads `.env`
+ * files after its imports have run. A value with any invalid entry admits
+ * nothing (see `private-egress-allowlist.ts`), and says so through the logger
+ * so the refusals that follow have a visible cause.
+ */
+export function loadPrivateEgressAllowlist(): PrivateEgressAllowlist {
+  const raw = process.env.MCPJAM_PRIVATE_EGRESS_ALLOWLIST;
+  if (!loadedAllowlist || loadedAllowlist.raw !== raw) {
+    const { allowlist, invalid } = parsePrivateEgressAllowlist(raw);
+    if (invalid.length > 0) {
+      logger.error(
+        `[egress] MCPJAM_PRIVATE_EGRESS_ALLOWLIST is ignored, so hosted mode will dial no private address: ${invalid
+          .map(({ entry, reason }) => `"${entry}" ${reason}`)
+          .join("; ")}. Fix the entries and restart.`
+      );
+    }
+    loadedAllowlist = { raw, allowlist };
+  }
+  return loadedAllowlist.allowlist;
+}
+
+/**
+ * Whether hosted mode may dial a PRIVATE destination: the one decision the
+ * allowlist feeds, asked by every hosted egress check in this process — the
+ * literal and resolved-address checks below, and the pinned transports
+ * through {@link hostedPrivateEgressAdmission}.
+ *
+ * A name is admitted when it matches a listed suffix; an address (a literal
+ * host, or what a name resolved to) when a listed range covers it. A
+ * `never`-tier name or address is refused first, so no entry — not even
+ * `0.0.0.0/0` — reaches cloud metadata or link-local.
+ */
+export function admitsPrivateEgress(
+  destination: PrivateEgressDestination
+): boolean {
+  if (egressTier(destination.hostname) === "never") return false;
+  if (
+    destination.address !== undefined &&
+    egressTier(destination.address) === "never"
+  ) {
+    return false;
+  }
+  return loadPrivateEgressAllowlist().admits(destination);
+}
+
+/**
+ * The admission to hand a pinned transport (`createStreamingPinnedFetch`),
+ * which asks it on every hop about the name and about each private address
+ * the name resolved to. Undefined when nothing is listed, so a deployment
+ * without an allowlist keeps the transport's own refusals exactly as they are.
+ */
+export function hostedPrivateEgressAdmission():
+  | ((destination: PrivateEgressDestination) => boolean)
+  | undefined {
+  return loadPrivateEgressAllowlist().isEmpty ? undefined : admitsPrivateEgress;
+}
+
 /**
  * Is this hostname one the hosted inspector must refuse?
  *
- *   - ALWAYS blocked: an empty host, cloud-metadata names, IPv4/IPv6
- *     link-local (169.254/16, fe80::/10), and the unspecified address
- *     (0.0.0.0/8, ::) — never a legitimate target in any deployment.
- *   - Blocked only when `blockPrivate` (hosted mode): loopback, RFC-1918
- *     private, CGNAT (100.64/10), and IPv6 ULA (fc00::/7). Left reachable for
- *     local dev, where the inspector legitimately talks to a localhost MCP
- *     server and a widget legitimately renders against one.
+ *   - ALWAYS blocked: the `never` tier of `egressTier` — never a legitimate
+ *     target in any deployment.
+ *   - Blocked only when `blockPrivate` (hosted mode): the `private` tier,
+ *     unless `admitsPrivateEgress` admits it. Left reachable for local dev,
+ *     where the inspector legitimately talks to a localhost MCP server and a
+ *     widget legitimately renders against one.
  *
  * Matches on a literal hostname only; `assertAllowedHostedTargetUrl` is what
  * adds the DNS-resolution pass on top.
@@ -72,65 +253,23 @@ export function isBlockedEgressHost(
   hostname: string,
   blockPrivate: boolean
 ): boolean {
-  let host = hostname.trim().toLowerCase();
-  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
-  // A terminal dot is the same NAME to a resolver ("localhost." resolves to
-  // loopback), but it is a different STRING to every comparison below — so
-  // strip it before judging, or `http://metadata.google.internal./` walks past
-  // the alias check.
-  host = host.replace(/\.+$/, "");
-  // Nothing left to judge: fail closed.
-  if (!host) return true;
+  const tier = egressTier(hostname);
+  if (tier !== "private") return tier === "never";
+  return blockPrivate && !admitsPrivateEgress({ hostname });
+}
 
-  // Cloud metadata DNS aliases (they resolve to link-local, but block the
-  // names too in case resolution is bypassed).
-  if (host === "metadata.google.internal" || host === "metadata.goog") {
-    return true;
-  }
-  if (host === "localhost" || host.endsWith(".localhost")) return blockPrivate;
-
-  const v4 = parseIpv4Octets(host);
-  if (v4) {
-    const [a, b] = v4;
-    if (a === 169 && b === 254) return true; // link-local incl. cloud metadata
-    if (a === 0) return true; // "this network" / unspecified
-    if (!blockPrivate) return false;
-    if (a === 127) return true; // loopback 127.0.0.0/8
-    if (a === 10) return true; // 10.0.0.0/8
-    if (a === 192 && b === 168) return true; // 192.168.0.0/16
-    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64.0.0/10
-    return false;
-  }
-
-  if (host.includes(":")) {
-    // IPv4-mapped IPv6 (e.g. ::ffff:169.254.169.254) — judge the embedded v4.
-    const mapped = /(?:^|:)((?:\d{1,3}\.){3}\d{1,3})$/.exec(host);
-    if (mapped) return isBlockedEgressHost(mapped[1], blockPrivate);
-    // The SAME address in hex. `new URL()` rewrites the dotted spelling into
-    // this one (`[::ffff:169.254.169.254]` → `[::ffff:a9fe:a9fe]`), so a check
-    // that only knew the dotted form let the metadata endpoint through the
-    // moment the host came from a parsed URL rather than a raw string.
-    const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
-    if (mappedHex) {
-      const high = parseInt(mappedHex[1], 16);
-      const low = parseInt(mappedHex[2], 16);
-      return isBlockedEgressHost(
-        `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${
-          low & 0xff
-        }`,
-        blockPrivate
-      );
-    }
-    if (host === "::") return true; // unspecified
-    if (/^fe[89ab]/.test(host)) return true; // link-local fe80::/10
-    if (!blockPrivate) return false;
-    if (host === "::1") return true; // loopback
-    if (/^f[cd]/.test(host)) return true; // ULA fc00::/7
-    return false;
-  }
-
-  return false;
+/**
+ * The hosted verdict on one address `hostname` resolved to. A private answer
+ * is dialable only if the name matches a listed suffix or a listed range
+ * covers the address; a `never` answer is refused whatever is listed.
+ */
+export function isBlockedEgressAddress(
+  hostname: string,
+  address: string
+): boolean {
+  const tier = egressTier(address);
+  if (tier !== "private") return tier === "never";
+  return !admitsPrivateEgress({ hostname, address });
 }
 
 /**
@@ -305,7 +444,7 @@ export async function assertAllowedHostedTargetUrl(
     );
   }
   for (const ip of resolvedIps) {
-    if (isBlockedEgressHost(ip, true)) {
+    if (isBlockedEgressAddress(host, ip)) {
       // The ADDRESS goes on `cause`, not in the message. The message is
       // reported back to whoever supplied the hostname, and naming what it
       // resolved to turns a refusal into a resolution oracle: submit a name,
