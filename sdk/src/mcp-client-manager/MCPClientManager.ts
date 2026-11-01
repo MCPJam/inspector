@@ -4259,47 +4259,43 @@ export class MCPClientManager {
                   declarations,
                   (req.params as { arguments?: unknown } | undefined)?.arguments
                 );
-          return this.withElicitationTimeoutSuspension(
-            serverId,
-            mergedOptions,
-            (callOptions) =>
-              this.guardMrtrLeg(
-                serverId,
-                req,
-                leg,
-                () =>
-                  client.requestWithSchema(
-                    req as Request,
-                    withInputRequired(
-                      defaultResultSchemaForMethod("tools/call")
-                    ),
-                    // Pass `callOptions` through untouched (matching the legacy
-                    // `client.callTool(callParams, callOptions)` sibling): it carries
-                    // the composed elicitation-timeout watchdog signal. Overwriting
-                    // `.signal` with the outer retry `signal` would drop that
-                    // watchdog; the outer abort is already enforced by
-                    // `runRetriedOperation`'s `awaitWithAbort` wrapper.
-                    {
-                      ...callOptions,
-                      allowInputRequired: true,
-                      // Caller-supplied headers win: an explicit override is a
-                      // deliberate act, and the debugger must be able to send a
-                      // deliberately wrong header to exercise a server's -32020.
-                      ...(paramHeaders && Object.keys(paramHeaders).length > 0
-                        ? {
-                            headers: {
-                              ...paramHeaders,
-                              ...(
-                                callOptions as {
-                                  headers?: Record<string, string>;
-                                }
-                              ).headers,
-                            },
-                          }
-                        : {}),
-                    }
-                  ) as Promise<CallToolResult | InputRequiredResult>
-              )
+          // Host approval is local waiting, not upstream server time. Start
+          // the wire budget only when the gate dispatches this exact leg.
+          return this.guardMrtrLeg(serverId, req, leg, () =>
+            this.withElicitationTimeoutSuspension(
+              serverId,
+              mergedOptions,
+              (callOptions) =>
+                client.requestWithSchema(
+                  req as Request,
+                  withInputRequired(defaultResultSchemaForMethod("tools/call")),
+                  // Pass `callOptions` through untouched (matching the legacy
+                  // `client.callTool(callParams, callOptions)` sibling): it carries
+                  // the composed elicitation-timeout watchdog signal. Overwriting
+                  // `.signal` with the outer retry `signal` would drop that
+                  // watchdog; the outer abort is already enforced by
+                  // `runRetriedOperation`'s `awaitWithAbort` wrapper.
+                  {
+                    ...callOptions,
+                    allowInputRequired: true,
+                    // Caller-supplied headers win: an explicit override is a
+                    // deliberate act, and the debugger must be able to send a
+                    // deliberately wrong header to exercise a server's -32020.
+                    ...(paramHeaders && Object.keys(paramHeaders).length > 0
+                      ? {
+                          headers: {
+                            ...paramHeaders,
+                            ...(
+                              callOptions as {
+                                headers?: Record<string, string>;
+                              }
+                            ).headers,
+                          },
+                        }
+                      : {}),
+                  }
+                ) as Promise<CallToolResult | InputRequiredResult>
+            )
           );
         }
       );
