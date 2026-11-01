@@ -21,6 +21,7 @@ import {
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getPluginVersionOperation,
+  getProjectServerOperation,
   getRegistryDirectoryServerOperation,
   getServerPromptOperation,
   installRegistryDirectoryServerOperation,
@@ -383,6 +384,18 @@ function makeClient(overrides: FixtureOverrides = {}): {
     }
     if (/^\/api\/v1\/projects\/[^/]+\/servers$/.test(path)) {
       return Response.json({ items: servers });
+    }
+    const serverRead = path.match(/^\/api\/v1\/projects\/[^/]+\/servers\/([^/]+)$/);
+    if (serverRead && (init?.method ?? "GET") === "GET") {
+      const server = (servers as Array<{ id: string }>).find(
+        (candidate) => candidate.id === decodeURIComponent(serverRead[1]!)
+      );
+      return server
+        ? Response.json(server)
+        : Response.json(
+            { code: "NOT_FOUND", message: "Server not found" },
+            { status: 404 }
+          );
     }
     if (
       /^\/api\/v1\/projects\/[^/]+\/eval-suites$/.test(path) &&
@@ -3045,6 +3058,57 @@ describe("server live operations", () => {
       { client }
     );
     expect(resource.result.requestBody).toEqual({ uri: "file:///a" });
+  });
+});
+
+describe("getProjectServerOperation", () => {
+  it("reads a server by name, as the other server tools accept", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    const server = await getProjectServerOperation.execute(
+      { project: "new", serverId: "echo" },
+      { client }
+    );
+
+    expect(server.id).toBe("server-http");
+    expect(callsTo(fetchMock, "/servers/server-http")).toHaveLength(1);
+  });
+
+  it("still reads a server by id", async () => {
+    const { client } = makeClient({ servers: HTTP_SERVERS });
+
+    const server = await getProjectServerOperation.execute(
+      { project: "new", serverId: "server-disabled" },
+      { client }
+    );
+
+    expect(server.name).toBe("Retired");
+  });
+
+  // Reading a row is not a live operation, so stdio servers stay readable.
+  it("reads a stdio server", async () => {
+    const { client } = makeClient();
+
+    const server = await getProjectServerOperation.execute(
+      { project: "new", serverId: "Docs" },
+      { client }
+    );
+
+    expect(server.transportType).toBe("stdio");
+  });
+
+  it("names the saved servers when the selector matches none", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    await expect(
+      getProjectServerOperation.execute(
+        { project: "new", serverId: "mcpjam-docs" },
+        { client }
+      )
+    ).rejects.toThrow(
+      'Server "mcpjam-docs" was not found in project "New". Available: Echo (id: server-http), Retired (id: server-disabled), Docs (id: server-1).'
+    );
+    expect(callsTo(fetchMock, "/servers/")).toHaveLength(0);
   });
 });
 
