@@ -109,6 +109,7 @@ export async function handleManagedChatTurn(
       modelDefinition,
       turnMode,
       hostRuntimeConfig,
+      harnessHostCapabilities,
       environmentSpec,
       scenarioEnvironment,
       authoritativeConnectionPolicy,
@@ -421,6 +422,7 @@ export async function handleManagedChatTurn(
                 agentLoop: resolvedExecution.agentLoop,
                 ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
                 requireNativeToolDiscovery: resolvedExecution.requireNativeToolDiscovery,
+                harnessHostCapabilities,
               }
             : {}),
           ...(tasksSeam ? { tasks: tasksSeam } : {}),

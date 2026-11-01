@@ -84,6 +84,7 @@ import {
   type EffectiveCapabilitySet,
 } from "../environments/effective-capabilities.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
+import { HOSTED_APP_HANDLERS, qualifyHarnessHostCapabilities } from "../../../shared/harness-host-capabilities.js";
 import { resolveTurnBuiltInToolIds } from "../../utils/built-in-tools/built-in-tool-policy.js";
 import { logger } from "../../utils/logger.js";
 import { listLocalRuntimeSkills } from "../../utils/skill-tools.js";
@@ -730,6 +731,10 @@ export async function resolveManagedTurnSetup(args: {
   }
   return {
     value: {
+      harnessHostCapabilities:
+        resolvedExecution.harness && hostRuntimeConfig
+          ? qualifyHarnessHostCapabilities(hostRuntimeConfig, HOSTED_APP_HANDLERS)
+          : undefined,
       hostedBody,
       initializePins,
       mcpProtocolVersionsByServerId,

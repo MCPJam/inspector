@@ -421,6 +421,7 @@ export interface WebChatTurnPersistContext {
  * here so the helper signature is self-contained.
  */
 export interface WebChatTurnPrepareInputs {
+  harnessHostCapabilities?: MCPJamHandlerOptions["harnessHostCapabilities"];
   requireNativeToolDiscovery?: boolean;
   /** A local ingress has selected its direct-provider path. */
   directProvider?: DirectProviderInput;
@@ -1886,6 +1887,7 @@ export async function streamChatTurn(
     ],
     requireToolApproval: persist.requireToolApproval,
     requireNativeToolDiscovery: persist.requireNativeToolDiscovery,
+    harnessHostCapabilities: prepare.harnessHostCapabilities,
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     // The browser sent this history (MJ-008): its unresolved calls run only
     // under a verified approval.
