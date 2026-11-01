@@ -9,11 +9,20 @@ import {
   type SentryBoundaryOptions,
 } from "./telemetry.js";
 import { sentryInjectedDebugId } from "./sentry-protocol.js";
+import { deploymentPolicy } from "../deployment/managed-settings.js";
 
+/**
+ * The SDK's PostHog and Sentry are off when the user opts out, and whenever
+ * the IT settings file locks the MCPJam server or is invalid.
+ */
 export function sdkTelemetryDisabled(): boolean {
-  return [process.env.DO_NOT_TRACK, process.env.MCPJAM_TELEMETRY_DISABLED].some(
-    (value) => value === "1" || value === "true"
-  );
+  const optedOut = [
+    process.env.DO_NOT_TRACK,
+    process.env.MCPJAM_TELEMETRY_DISABLED,
+  ].some((value) => value === "1" || value === "true");
+  if (optedOut) return true;
+  const policy = deploymentPolicy();
+  return policy.locked || policy.invalid !== undefined;
 }
 
 export function sdkSentryEntryKind(

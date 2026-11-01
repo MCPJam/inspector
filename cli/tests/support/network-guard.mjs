@@ -111,3 +111,11 @@ for (const name of ["spawn", "fork", "execFile"]) {
 }
 
 syncBuiltinESMExports();
+
+// The IT settings file is read from a fixed system path. A test points the
+// product at its own file through this registered global, never through a
+// variable the product reads.
+if (process.env.MCPJAM_TEST_MANAGED_SETTINGS) {
+  globalThis[Symbol.for("mcpjam.managedSettingsPath")] =
+    process.env.MCPJAM_TEST_MANAGED_SETTINGS;
+}

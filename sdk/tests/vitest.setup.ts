@@ -16,9 +16,15 @@ process.env.DO_NOT_TRACK = "1";
 // Identity integration tests unmock this boundary and exercise real transport.
 vi.mock("../src/eval-run-start.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/eval-run-start.js")>();
-  return { ...actual, startEvalRun: vi.fn(async () => ({
+  return { ...actual, startEvalRun: vi.fn(async (options?: { mcpjam?: { baseUrl?: string } }) => ({
     ok: true, runStartId: "503af9f5-1ef4-4424-9629-a61c9ee54e48",
     organizationId: "test-org", projectId: "test-project",
+    // The server the run started on: the explicit one, as the real start resolves it.
+    connection: {
+      auth: { getAuth: async () => "sk_test" },
+      baseUrl: options?.mcpjam?.baseUrl ?? "https://app.mcpjam.com",
+      project: "test-project",
+    },
   })) };
 });
 

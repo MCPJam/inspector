@@ -21,14 +21,13 @@ import {
   formatShowServersHuman,
 } from "../lib/projects-render.js";
 import { writeResult } from "../lib/output.js";
-import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
 import {
   addOrgOption,
   addProjectOption,
   bindOperation,
-  buildCloudClientContext,
   platformOptionsOf,
   runPlatformCommand,
+  type CloudClientContext,
   type PlatformOptions as SharedPlatformOptions,
 } from "../lib/platform-command.js";
 import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
@@ -79,22 +78,14 @@ function requireProject(command: Command, options: PlatformOptions): string {
  * half of the sentence.
  */
 async function resolveHandoffAudience(
-  options: PlatformOptions,
-  timeoutMs: number
+  context: Pick<CloudClientContext, "client" | "webOrigin">
 ): Promise<{ email: string | null; origin: string }> {
   try {
-    const { client, webOrigin } = buildCloudClientContext(options, timeoutMs);
-    try {
-      const me = await client.getMe();
-      return { email: me.email ?? null, origin: webOrigin };
-    } catch {
-      return { email: null, origin: webOrigin };
-    }
+    const me = await context.client.getMe();
+    return { email: me.email ?? null, origin: context.webOrigin };
   } catch {
-    // `buildCloudClientContext` throws when there is no usable credential at all.
-    // The request that produced the link plainly had one, so this is close to
-    // unreachable — but it must not be the thing that breaks the output.
-    return { email: null, origin: DEFAULT_PLATFORM_ORIGIN };
+    // An unresolved account drops that half of the sentence, nothing more.
+    return { email: null, origin: context.webOrigin };
   }
 }
 
@@ -443,11 +434,17 @@ export function registerProjectsCommands(program: Command): void {
         reauthorize: options.reauthorize,
       });
 
-      const created = await runPlatformCommand(
+      // The same client and deployment answer who the link belongs to.
+      const { created, context } = await runPlatformCommand(
         platformOptions,
         globalOptions.timeout,
-        ({ client, signal }) =>
-          connectProjectServerOperation.execute(input, { client, signal })
+        async ({ client, signal, webOrigin }) => ({
+          created: await connectProjectServerOperation.execute(input, {
+            client,
+            signal,
+          }),
+          context: { client, webOrigin },
+        })
       );
 
       if (created.handoffUrl) {
@@ -458,9 +455,7 @@ export function registerProjectsCommands(program: Command): void {
           `Open this link to finish connecting:\n  ${created.handoffUrl}\n`
         );
         process.stderr.write(
-          describeHandoffAudience(
-            await resolveHandoffAudience(platformOptions, globalOptions.timeout)
-          )
+          describeHandoffAudience(await resolveHandoffAudience(context))
         );
         if (options.browser !== false) {
           await openUrlInBrowser(created.handoffUrl).catch(() => {

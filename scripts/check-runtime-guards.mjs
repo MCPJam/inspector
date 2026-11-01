@@ -96,7 +96,8 @@ const checks = {
    * builtin or a `process.env` read there is a crash on both.
    */
   "platform-runtime-safety": {
-    roots: ["sdk/src/platform"],
+    // The address module is shared with the browser and worker bundles too.
+    roots: ["sdk/src/platform", "sdk/src/deployment/address.ts"],
     skipDirectoryNames: ["dist"],
     patterns: [
       { label: "node: builtin specifier", pattern: /["']node:/g },
@@ -118,7 +119,65 @@ const checks = {
       { label: "process.env read", pattern: /process\.env/g },
     ],
   },
+
+  /**
+   * The SDK entry bundles that load where there is no Node: a `node:` import
+   * is a crash at load, which is how the Node-only server resolver would
+   * show up if it leaked in. Their `process.env` reads are guarded with
+   * `typeof process`, so only the import is checked here.
+   */
+  "platform-entry-runtime-safety-dist": {
+    roots: [
+      "sdk/dist/browser.js",
+      "sdk/dist/worker.js",
+      "sdk/dist/model-factory.js",
+    ],
+    patterns: [{ label: "node: builtin specifier", pattern: /["']node:/g }],
+  },
+
+  /**
+   * MCPJam Cloud's address lives in one constant, so no stray default can send
+   * a self-hosted install's traffic to MCPJam Cloud. Comment lines are not
+   * addresses; each allowed file says why it may name the host.
+   */
+  "cloud-default-literals": {
+    roots: ["sdk/src", "cli/src"],
+    skipDirectoryNames: ["dist", "__tests__"],
+    skipFileSuffixes: [".bundled.ts", ".generated.ts"],
+    ignoreCommentLines: true,
+    allowFiles: {
+      "sdk/src/deployment/address.ts": "the one MCPJam Cloud default",
+      "sdk/src/oauth/client-identity.ts":
+        "XAA client identity names MCPJam's own metadata documents (a follow-up outside this guard)",
+      "cli/src/commands/xaa.ts":
+        "XAA help text names the hosted metadata-document reflector (same follow-up)",
+    },
+    patterns: [
+      {
+        label: "hardcoded MCPJam Cloud address",
+        pattern: /app\.mcpjam\.com/g,
+      },
+    ],
+  },
 };
+
+/** A root that is one file is scanned as itself, not walked. */
+function* targets(root, check) {
+  const absolute = path.join(repoRoot, root);
+  if (lstatSync(absolute).isFile()) {
+    yield { fullPath: absolute, relative: root };
+    return;
+  }
+  yield* walk(absolute, check);
+}
+
+const COMMENT_LINE = /^\s*(?:\/\/|\/\*|\*)/;
+
+function lineTextAt(source, offset) {
+  const start = source.lastIndexOf("\n", offset) + 1;
+  const end = source.indexOf("\n", offset);
+  return source.slice(start, end === -1 ? source.length : end);
+}
 
 function lineForOffset(source, offset) {
   let line = 1;
@@ -223,10 +282,7 @@ const violations = [];
 let scannedFiles = 0;
 
 for (const root of check.roots) {
-  for (const { fullPath, relative } of walk(
-    path.join(repoRoot, root),
-    check,
-  )) {
+  for (const { fullPath, relative } of targets(root, check)) {
     let source;
     try {
       source = readFileSync(fullPath, "utf8");
@@ -240,10 +296,17 @@ for (const root of check.roots) {
       continue;
     }
     scannedFiles += 1;
+    if (check.allowFiles?.[relative]) continue;
     for (const { label, pattern } of check.patterns) {
       pattern.lastIndex = 0;
       let match;
       while ((match = pattern.exec(source)) !== null) {
+        if (
+          check.ignoreCommentLines &&
+          COMMENT_LINE.test(lineTextAt(source, match.index))
+        ) {
+          continue;
+        }
         violations.push({
           file: relative,
           line: lineForOffset(source, match.index),

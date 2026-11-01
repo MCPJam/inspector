@@ -9,7 +9,6 @@
  */
 import {
   isMcpjamDeploymentError,
-  MCPJAM_CLOUD_API_URL,
   resolveDeployment,
   type DeploymentSource,
 } from "@mcpjam/sdk/internal/deployment";
@@ -20,6 +19,26 @@ const LEGACY_API_KEY_PREFIX = "mcpjam_";
 
 export type CloudCredentialSource = "flag" | "env" | "oauth" | "missing";
 export type CloudDeploymentSource = DeploymentSource;
+
+const DEPLOYMENT_SOURCE_DESCRIPTIONS: Record<CloudDeploymentSource, string> = {
+  managed: "set by your organization (locked)",
+  "managed-default": "set by your organization",
+  flag: "set by --api-url",
+  env: "set by MCPJAM_API_URL or MCPJAM_BASE_URL",
+  oauth: "the server of your saved login",
+  default: "MCPJam Cloud, the default",
+};
+
+/** Where the server came from, as `cloud status` and the audience line say it. */
+export function describeDeploymentSource(
+  deployment: Pick<CloudDeploymentDescription, "source" | "valid">
+): string {
+  // An invalid settings file sets nothing: its intended policy is unknown.
+  if (deployment.source === "managed" && !deployment.valid) {
+    return "your organization's settings file, which is invalid";
+  }
+  return DEPLOYMENT_SOURCE_DESCRIPTIONS[deployment.source];
+}
 
 export type CloudCredentialDescription = {
   source: CloudCredentialSource;
@@ -84,7 +103,10 @@ export function describeCloudCredential(
 
   let credential: CloudCredentialDescription;
   if (flagKey) {
-    const inspected = inspectExplicitApiKey(flagKey);
+    const inspected = inspectExplicitApiKey(flagKey, {
+      apiUrl: options.apiUrl,
+      env,
+    });
     credential = {
       source: "flag",
       kind: "api-key",
@@ -144,8 +166,9 @@ function describeDeployment(
     return { apiUrl: resolved.apiUrl, source: resolved.source, valid: true };
   } catch (error) {
     if (!isMcpjamDeploymentError(error)) throw error;
+    // An invalid IT settings file names no server; its error names the file.
     return {
-      apiUrl: error.apiUrl ?? MCPJAM_CLOUD_API_URL,
+      apiUrl: error.apiUrl ?? "",
       source: error.source ?? "default",
       valid: false,
       error: error.message,

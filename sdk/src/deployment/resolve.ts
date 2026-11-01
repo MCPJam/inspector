@@ -1,12 +1,14 @@
 /**
  * Which MCPJam server a Node caller talks to. Every CLI command and every SDK
  * Node entry point uses this one order; the first source that names a server
- * wins:
+ * wins, and a locked IT file overrides everything below it:
  *
- *   1. the caller's flag or option (`--api-url`, an SDK `baseUrl`)
- *   2. `MCPJAM_API_URL`, or `MCPJAM_BASE_URL` (the same server, older format)
- *   3. the saved login's server, when the saved login is the credential in use
- *   4. MCPJam Cloud
+ *   1. the IT settings file, with "lock": true
+ *   2. the caller's flag or option (`--api-url`, an SDK `baseUrl`)
+ *   3. `MCPJAM_API_URL`, or `MCPJAM_BASE_URL` (the same server, older format)
+ *   4. the saved login's server, when the saved login is the credential in use
+ *   5. the IT settings file, with "lock": false (the organization default)
+ *   6. MCPJam Cloud
  *
  * A saved login only goes to the server it was made against. When it is the
  * credential and the order picks another server, this refuses before anything
@@ -24,6 +26,10 @@ import {
   type DeploymentAddress,
   type DeploymentSource,
 } from "./address.js";
+import {
+  managedSettingsProblem,
+  readManagedSettings,
+} from "./managed-settings.js";
 
 /**
  * The credential the caller will send:
@@ -41,6 +47,8 @@ export interface ResolvedDeployment extends DeploymentAddress {
 export interface ResolveDeploymentInput {
   /** An explicit API base: `--api-url`, an SDK `apiUrl` option. */
   apiUrl?: string;
+  /** How `apiUrl` is named in errors. Defaults to `--api-url`. */
+  apiUrlLabel?: string;
   /** An explicit app base: an SDK `baseUrl` option. `apiUrl` wins over it. */
   baseUrl?: string;
   /** Defaults to `api-key`, which never consults the saved login. */
@@ -49,13 +57,20 @@ export interface ResolveDeploymentInput {
   authFilePath?: string;
 }
 
-function explicitAddress(
-  input: ResolveDeploymentInput
-): DeploymentAddress | undefined {
+/** A server a flag or variable named, with the name to quote in a refusal. */
+type Named = DeploymentAddress & { label: string; source: "flag" | "env" };
+
+function explicitAddress(input: ResolveDeploymentInput): Named | undefined {
   const apiUrl = input.apiUrl?.trim();
-  if (apiUrl) return parseApiUrl(apiUrl, "--api-url", "flag");
+  const label = input.apiUrlLabel ?? "--api-url";
+  if (apiUrl) {
+    return { ...parseApiUrl(apiUrl, label, "flag"), label, source: "flag" };
+  }
   const baseUrl = input.baseUrl?.trim();
-  if (baseUrl) return parseBaseUrl(baseUrl, "baseUrl", "flag");
+  if (baseUrl) {
+    const address = parseBaseUrl(baseUrl, "baseUrl", "flag");
+    return { ...address, label: "baseUrl", source: "flag" };
+  }
   return undefined;
 }
 
@@ -71,6 +86,25 @@ function savedLoginAddress(
   const stored = readStoredAuth(input.authFilePath ?? getAuthFilePath({ env }));
   if (!stored) return undefined;
   return (stored.apiUrl && tryParseApiUrl(stored.apiUrl)) || MCPJAM_CLOUD;
+}
+
+function at(
+  address: DeploymentAddress,
+  source: DeploymentSource
+): ResolvedDeployment {
+  return { apiUrl: address.apiUrl, baseUrl: address.baseUrl, source };
+}
+
+function lockRefusal(
+  locked: ResolvedDeployment,
+  path: string,
+  other: Named
+): McpjamDeploymentError {
+  return new McpjamDeploymentError(
+    "DEPLOYMENT_LOCKED",
+    `Your organization locks MCPJam to ${locked.apiUrl} (${path}), and ${other.label} names ${other.apiUrl}, so nothing was sent. Remove ${other.label}, or set it to ${locked.apiUrl}.`,
+    { apiUrl: other.apiUrl, source: other.source }
+  );
 }
 
 function loginMismatch(
@@ -94,18 +128,43 @@ export function resolveDeployment(
 ): ResolvedDeployment {
   const env = input.env ?? process.env;
   const credential = input.credential ?? "api-key";
+  const managed = readManagedSettings();
+  if (managed.state === "invalid") {
+    throw new McpjamDeploymentError(
+      "MANAGED_SETTINGS_INVALID",
+      managedSettingsProblem(managed),
+      { source: "managed" }
+    );
+  }
   const explicit = explicitAddress(input);
   const fromEnv = deploymentFromEnv(env);
+  const named: Named | undefined = fromEnv && {
+    ...fromEnv,
+    label: fromEnv.variable,
+    source: "env",
+  };
   const saved =
     credential === "api-key" ? undefined : savedLoginAddress(input, env);
 
-  const chosen: ResolvedDeployment = explicit
-    ? { ...explicit, source: "flag" }
-    : fromEnv
-      ? { ...fromEnv, source: "env" }
-      : saved
-        ? { ...saved, source: "oauth" }
-        : { ...MCPJAM_CLOUD, source: "default" };
+  let chosen: ResolvedDeployment;
+  if (managed.state === "valid" && managed.lock) {
+    chosen = at(managed.deployment, "managed");
+    for (const other of [explicit, named]) {
+      if (other && !sameServer(other, chosen)) {
+        throw lockRefusal(chosen, managed.path, other);
+      }
+    }
+  } else if (explicit) {
+    chosen = at(explicit, "flag");
+  } else if (fromEnv) {
+    chosen = at(fromEnv, "env");
+  } else if (saved) {
+    chosen = at(saved, "oauth");
+  } else if (managed.state === "valid") {
+    chosen = at(managed.deployment, "managed-default");
+  } else {
+    chosen = at(MCPJAM_CLOUD, "default");
+  }
 
   if (credential === "oauth" && saved && !sameServer(saved, chosen)) {
     throw loginMismatch(saved, chosen);
