@@ -589,6 +589,7 @@ export function harnessRuntimeFingerprint(parts: {
    */
   transport?: string;
   nativeForwarding?: string;
+  forwardingConfigurationVersion?: string;
   connectionProfile?: string;
   /**
    * WHERE this turn runs, and — for the local target — exactly what it runs.
@@ -658,6 +659,8 @@ export function harnessRuntimeFingerprint(parts: {
     parts.permissionMode,
     ...(parts.nativeForwarding ? [`native-forwarding:${parts.nativeForwarding}`]
       : []),
+    ...(parts.nativeForwarding && parts.forwardingConfigurationVersion
+      ? [`forwarding-config:${parts.forwardingConfigurationVersion}`] : []),
     ...(parts.connectionProfile
       ? [`connection-profile:${parts.connectionProfile}`] : []),
     ...(pluginDimension ? [pluginDimension] : []),
@@ -1963,7 +1966,10 @@ export async function runHarnessTurn(
               ),
             }
           : {}),
-        ...(useNativeForwarding ? { nativeForwarding: enhancedApps ? "bridge-v1" : "v2" } : {}),
+        ...(useNativeForwarding ? {
+          nativeForwarding: enhancedApps ? "bridge-v1" : "v2",
+          forwardingConfigurationVersion: forwardingRuntime?.configurationVersion,
+        } : {}),
         modelId,
         selectedServers: selectedServers ?? [],
         unavailableServerIds: options.unavailableServerIds,

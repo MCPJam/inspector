@@ -891,6 +891,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   mcpNativeDelivery: "session-config",
   forwardingRuntime: {
     runtimeVersion: "2.1.245",
+    configurationVersion: "tool-search-auto-v1",
     ownedInput: true,
     refresh: withClaudeForwardingResume,
   },
@@ -924,8 +925,13 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
     permissionMode,
     upstream,
     elicitationHandler,
+    forwardingMcpJson,
   }) {
     const env = claudeCodeTurnEnv(permissionMode, modelId, upstream);
+    // This pin disables discovery behind a gateway unless explicitly enabled.
+    // Preserve the existing eager route; small forwarded catalogs stay eager.
+    if (forwardingMcpJson && Object.keys(forwardingMcpJson.mcpServers).length > 0)
+      env.ENABLE_TOOL_SEARCH = "auto";
     if (elicitationHandler) env.MCPJAM_HARNESS_ELICITATION = "1";
     // The HOSTED recipe: shared bootstrap + typed terminal errors, so a
     // provider failure reaches an eval as fields rather than a sentence. A

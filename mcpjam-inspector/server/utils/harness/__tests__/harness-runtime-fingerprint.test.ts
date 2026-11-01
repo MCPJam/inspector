@@ -21,6 +21,13 @@ describe("harnessRuntimeFingerprint", () => {
     permissionMode: "allow-all",
   };
 
+  it("forks forwarded processes when their launch configuration changes", () => {
+    const forwarded = { ...base, nativeForwarding: "v2" };
+    expect(harnessRuntimeFingerprint({ ...forwarded, forwardingConfigurationVersion: "tool-search-auto-v1" })).not.toBe(harnessRuntimeFingerprint(forwarded));
+    expect(harnessRuntimeFingerprint({ ...forwarded, forwardingConfigurationVersion: undefined })).toBe(harnessRuntimeFingerprint(forwarded));
+    expect(harnessRuntimeFingerprint({ ...base, forwardingConfigurationVersion: "unused" })).toBe(harnessRuntimeFingerprint(base));
+  });
+
   it("forks when a selected server disconnects or recovers", () => {
     const healthy = harnessRuntimeFingerprint(base);
     const refused = harnessRuntimeFingerprint({ ...base, unavailableServerIds: ["srv-a"] });
