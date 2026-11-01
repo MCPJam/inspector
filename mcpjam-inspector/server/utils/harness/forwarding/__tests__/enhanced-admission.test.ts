@@ -10,6 +10,7 @@ const caps = {
 function candidate(
   config: Record<string, unknown> = {},
   capabilities: object = caps,
+  serverCapabilities: object = { tools: {} },
 ) {
   return {
     hostCapabilities: { capabilities: {}, gaps: [] },
@@ -24,6 +25,7 @@ function candidate(
         protocolVersion: "2026-07-28",
         transport: "streamable-http",
         clientCapabilities: capabilities,
+        serverCapabilities,
       }),
     } as unknown as MCPClientManager,
     serverIds: ["server"],
@@ -31,6 +33,37 @@ function candidate(
 }
 it("selects the qualified modern bridge before starting the CLI", () => {
   expect(forwardingAdmission(candidate()).delivery).toBe("bridge");
+});
+
+it.each([
+  { logging: {} },
+  { tools: { listChanged: true } },
+  { resources: { subscribe: true } },
+  { prompts: { listChanged: true } },
+  { extensions: { "example.org/future": {} } },
+  { tools: { futureOption: false } },
+])("retains a server whose enhanced behavior is unqualified: %j", serverCapabilities => {
+  const result = forwardingAdmission(candidate({}, caps, serverCapabilities));
+  expect(result.delivery).toBeUndefined();
+  expect(result.gaps.some(gap => gap.startsWith("server-capability:"))).toBe(true);
+});
+
+it.each([{}, {futureSetting: true}])("requires the owned Task handler for a declared server Task extension", settings => {
+  const input = candidate({}, caps, {
+    tools: {}, extensions: { "io.modelcontextprotocol/tasks": settings },
+  });
+  Object.assign(input.manager, {getTasksSupport: () => ({wire:"extension"})});
+  expect(forwardingAdmission(input).delivery).toBeUndefined();
+  expect(forwardingAdmission({...input, ownedTasksAvailable: true}).delivery).toBe("bridge");
+});
+
+it("leaves raw forwarding of server capabilities to the real client", () => {
+  const input = candidate({timeout: 300_000}, {}, {logging:{}});
+  Object.assign(input.manager, {getInitializationInfo: () => ({
+    protocolVersion: "2025-11-25", transport: "streamable-http",
+    clientCapabilities: {}, serverCapabilities: {logging:{}},
+  })});
+  expect(forwardingAdmission({...input, respectToolVisibility:false}).delivery).toBe("native");
 });
 it("keeps a profile with an unsupported App declaration on its configured path", () => {
   expect(forwardingAdmission({ ...candidate(), hostCapabilities: {

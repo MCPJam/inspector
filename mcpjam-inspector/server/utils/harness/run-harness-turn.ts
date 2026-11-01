@@ -1596,13 +1596,18 @@ export async function runHarnessTurn(
       const admission = nativeCandidate ? forwardingAdmission({ manager: mcpClientManager, hostCapabilities: options.harnessHostCapabilities, serverIds: selectedServers ?? [], respectToolVisibility, modelVisibleMcpToolResults, hasClientTools: options.harnessUnavailableAppTools, hasTasks: tasks !== undefined,
             elicitationRuntimeVersion: onHarnessElicitation ? harnessAdapter.pinnedRuntimeVersion : undefined,
             modernInputAvailable: options.harnessOwnedInput === true,
-            ownedTasksAvailable: options.harnessOwnedTasks === true,
+            ownedTasksAvailable: options.harnessOwnedTasks === true && tasks?.mode === "expose",
           })
         : { delivery: undefined, gaps: [] };
       const nativeGaps = admission.gaps;
       const enhancedApps = admission.delivery === "bridge";
       const useNativeForwarding = admission.delivery !== undefined;
       if (options.requireNativeToolDiscovery) {
+        if (nativeGaps.some(gap =>
+          gap === "server-capabilities-unavailable" || gap.startsWith("server-capability:"),
+        )) {
+          assertNativeDiscovery({ required: true });
+        }
         if (
           usesAppHostCapabilities({
             manager: mcpClientManager,

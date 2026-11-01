@@ -2,6 +2,38 @@ import { expect, it } from "vitest";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { serveExtensionTasksFixture } from "../../../../../../sdk/tests/support/extension-tasks-fixture";
 import { enhancedTaskCall } from "../enhanced-tasks";
+import { enhancedMcpResponse } from "../enhanced-mcp";
+
+it("preserves operation metadata on the actual modern wire without accepting forged identity", async () => {
+  const fixture = await serveExtensionTasksFixture({advertiseTasksExtension:false,tools:{inspect:{
+    mode:"sync", result:{content:[{type:"text",text:"done"}]},
+  }}});
+  const manager = new MCPClientManager();
+  try {
+    await manager.connectToServer("server", {url:fixture.url,
+      mcpProtocolVersion:"2026-07-28", clientCapabilities:{extensions:{"io.modelcontextprotocol/ui":{}}},
+    });
+    const response = await enhancedMcpResponse({manager,serverId:"server",
+      signal:new AbortController().signal,respectVisibility:true,
+      message:{jsonrpc:"2.0",id:1,method:"tools/call",params:{name:"inspect",arguments:{},_meta:{
+        "example.org/context":{keep:true},
+        "io.modelcontextprotocol/protocolVersion":"forged",
+        "io.modelcontextprotocol/clientCapabilities":{forged:true},
+      }}},
+    });
+    expect(response.status).toBe(200);
+    const calls = fixture.received.filter(r=>r.method==="tools/call");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].params?._meta).toMatchObject({
+      "example.org/context":{keep:true},
+      "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+    });
+    expect((calls[0].params?._meta as Record<string,unknown>)["io.modelcontextprotocol/clientCapabilities"]).not.toHaveProperty("forged");
+  } finally {
+    await manager.disconnectAllServers();
+    await fixture.close();
+  }
+});
 
 it("creates once, preserves its receipt, and completes through fresh task connections", async () => {
   const fixture = await serveExtensionTasksFixture();

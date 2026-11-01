@@ -40,6 +40,44 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+it("preserves tool operation metadata without replacing upstream client identity", async () => {
+  const executeTool = vi.fn().mockResolvedValue({content:[]});
+  const signal = new AbortController().signal;
+  const metadata = {progressToken:"progress-1", "example.org/context":{value:"keep"}};
+  await handleJsonRpc("server", {id:1, method:"tools/call", params:{
+    name:"inspect", arguments:{value:1}, _meta:{...metadata,
+      "io.modelcontextprotocol/clientCapabilities":{spoofed:true},
+      "io.modelcontextprotocol/clientInfo":{name:"spoofed"},
+      "io.modelcontextprotocol/protocolVersion":"spoofed",
+    },
+  }}, failingManager({executeTool}), "adapter", {signal});
+  expect(executeTool).toHaveBeenCalledExactlyOnceWith("server","inspect",{value:1},
+    {metadata, request:{signal}});
+});
+
+it("refuses malformed tool metadata before dispatch", async () => {
+  const executeTool = vi.fn();
+  const result = await handleJsonRpc("server", {id:1,method:"tools/call",params:{
+    name:"inspect", _meta:[],
+  }}, failingManager({executeTool}), "adapter");
+  expect(result.error).toBeDefined();
+  expect(executeTool).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["resources/list", "listResources", {resources:[{uri:"test:///r", _meta:{future:true}}]}],
+  ["prompts/list", "listPrompts", {prompts:[{name:"p", _meta:{future:true}}]}],
+] as const)("preserves pagination and result metadata for %s", async (method, operation, catalog) => {
+  const result = {...catalog, nextCursor:"next", _meta:{future:"response"}};
+  const execute = vi.fn().mockResolvedValue(result);
+  const signal = new AbortController().signal;
+  const params = {cursor:"current",_meta:{"example.org/context":{keep:true}}};
+  const response = await handleJsonRpc("server",{id:3,method,params},
+    failingManager({[operation]:execute}),"adapter",{signal});
+  expect(response.result).toEqual(result);
+  expect(execute).toHaveBeenCalledExactlyOnceWith("server",params,{signal});
+});
+
 describe("handleJsonRpc failure telemetry", () => {
   it("manager-mode tools/call: reports once AND keeps the success+isError envelope", async () => {
     const { reporter, calls } = makeReporter();

@@ -30,7 +30,10 @@ it("settles the raw Task before publishing it and synthesizing model output", as
       jsonrpc: "2.0",
       id: 7,
       method: "tools/call",
-      params: { name: "work", arguments: { n: 1 } },
+      params: { name: "work", arguments: { n: 1 }, _meta: {
+        progressToken: "task-progress", "example.org/context": {keep:true},
+        "io.modelcontextprotocol/clientCapabilities": {spoofed:true},
+      } },
     },
     signal,
     settle: async (s) => {
@@ -56,7 +59,9 @@ it("settles the raw Task before publishing it and synthesizing model output", as
     "server",
     "work",
     { n: 1 },
-    { allowTaskResult: true, request: { signal } },
+    { allowTaskResult: true, request: { signal }, metadata: {
+      progressToken:"task-progress", "example.org/context":{keep:true},
+    } },
   );
   expect(result.result.content).toEqual(
     expect.arrayContaining([expect.objectContaining({ type: "text" })]),
@@ -97,7 +102,7 @@ it("does not opt an unsupported server into Tasks", async () => {
     "server",
     "sync",
     {},
-    { signal },
+    { request: { signal } },
   );
   expect(onTaskCreated).not.toHaveBeenCalled();
 });
