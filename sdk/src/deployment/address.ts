@@ -233,7 +233,10 @@ export function deploymentFromEnv(
   return base && { ...base, variable: "MCPJAM_BASE_URL" };
 }
 
-type BaseUrlResolver = (explicit: string | undefined) => string;
+type BaseUrlResolver = (
+  explicit: string | undefined,
+  env: DeploymentEnv
+) => string;
 let registeredResolver: BaseUrlResolver | undefined;
 
 /**
@@ -255,7 +258,7 @@ export function resolveBaseUrl(
   explicit: string | undefined,
   env: DeploymentEnv
 ): string {
-  if (registeredResolver) return registeredResolver(explicit);
+  if (registeredResolver) return registeredResolver(explicit, env);
   const value = explicit?.trim();
   if (value) return parseBaseUrl(value, "baseUrl", "flag").baseUrl;
   return (deploymentFromEnv(env) ?? MCPJAM_CLOUD).baseUrl;

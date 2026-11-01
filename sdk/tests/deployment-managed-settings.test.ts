@@ -30,6 +30,7 @@ async function settingsFile(name: string, text: string): Promise<string> {
 
 describe("the IT settings file", () => {
   it("lives at a fixed system path per platform", () => {
+    Reflect.deleteProperty(globalThis, SEAM);
     expect(managedSettingsPath("darwin")).toBe(
       "/Library/Application Support/MCPJam/managed-settings.json"
     );
@@ -66,6 +67,14 @@ describe("the IT settings file", () => {
       },
     });
     expect(deploymentPolicy()).toEqual({ locked: true });
+  });
+
+  it("reads a file saved with a UTF-8 byte-order mark", async () => {
+    await settingsFile(
+      "bom.json",
+      `\uFEFF${JSON.stringify({ version: 1, apiUrl: "https://mcpjam.acme.test/api/v1", lock: true })}`
+    );
+    expect(readManagedSettings()).toMatchObject({ state: "valid", lock: true });
   });
 
   it("reads an unlocked organization default", async () => {
