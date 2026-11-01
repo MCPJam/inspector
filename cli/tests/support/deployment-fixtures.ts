@@ -49,6 +49,7 @@ export function json(response: ServerResponse, status: number, body: unknown) {
 /** A loopback server that records each request and answers from `routes`. */
 export async function startRecorder(
   routes: Record<string, Route> = {},
+  host = "127.0.0.1",
 ): Promise<Recorder> {
   const requests: RecordedRequest[] = [];
   const server = createServer(async (request, response) => {
@@ -71,13 +72,13 @@ export async function startRecorder(
     }
     await route(recorded, response);
   });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(0, host, resolve));
   const address = server.address();
   if (!address || typeof address === "string") {
     throw new Error("Fixture server has no address");
   }
   return {
-    url: `http://127.0.0.1:${address.port}`,
+    url: `http://${host}:${address.port}`,
     port: address.port,
     requests,
     close: () =>
@@ -187,6 +188,8 @@ export type GuardedOptions = {
   onStderr?: (text: string) => void;
   /** Defaults to the sandbox home. */
   cwd?: string;
+  /** The Node binary to run, for checks on other Node versions. */
+  node?: string;
   timeoutMs?: number;
 };
 
@@ -215,7 +218,7 @@ export function runGuarded(
     ...options.env,
   };
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [entry, ...args], {
+    const child = spawn(options.node ?? process.execPath, [entry, ...args], {
       env,
       cwd: options.cwd ?? sandbox.home,
       stdio: ["ignore", "pipe", "pipe"],

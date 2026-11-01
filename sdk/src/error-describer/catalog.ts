@@ -449,11 +449,13 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "Wrong host/port in the server URL.",
       "Firewall is silently dropping packets.",
+      "Your network allows outbound traffic only through a proxy.",
       "Server is overloaded and never accepted the connection.",
     ],
     [
       "Verify the URL is reachable from your machine (e.g. `curl`).",
       "Check firewall / VPN rules.",
+      "Behind a corporate proxy, set `HTTPS_PROXY` to it, and list hosts that must connect directly in `NO_PROXY`.",
     ],
     "etimedout",
   ),
