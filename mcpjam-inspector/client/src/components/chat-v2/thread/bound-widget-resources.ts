@@ -1,5 +1,6 @@
 import {
   readRetainedResourceSource,
+  hasRetainedResourceSource,
   retainedResourceProofSchema,
   type RetainedResourceProof,
 } from "@/shared/retained-app-resources";
@@ -31,7 +32,8 @@ export function useBoundWidgetResources(
     const source = proof.success
       ? readRetainedResourceSource(proof.data.claim.output)
       : undefined;
-    return widget || (source && proof.success)
+    return widget ||
+      (proof.success && hasRetainedResourceSource(proof.data.claim.output))
       ? {
           context: widget ?? (proof.success ? proof.data : undefined),
           serverId: widget?.owner.serverId ?? source?.owner.serverId ?? "",

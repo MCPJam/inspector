@@ -39,6 +39,15 @@ export const retainedResourceProofSchema = z
   })
   .strict();
 export type RetainedResourceProof = z.infer<typeof retainedResourceProofSchema>;
+export function hasRetainedResourceSource(result: unknown): boolean {
+  const envelope = z
+    .object({ _meta: z.record(z.string(), z.unknown()) })
+    .safeParse(result);
+  return (
+    envelope.success &&
+    Object.hasOwn(envelope.data._meta, RETAINED_RESOURCE_SOURCE)
+  );
+}
 export function readRetainedResourceSource(result: unknown) {
   const envelope = z
     .object({
@@ -85,7 +94,7 @@ export function retainedResourceProofFor(
   },
   metadata: unknown,
 ): RetainedResourceProof | undefined {
-  if (!claim.toolCallId || !readRetainedResourceSource(claim.output))
+  if (!claim.toolCallId || !hasRetainedResourceSource(claim.output))
     return undefined;
   const parsed = z
     .object({ mcpjam: z.object({ presentationSig: z.string() }) })

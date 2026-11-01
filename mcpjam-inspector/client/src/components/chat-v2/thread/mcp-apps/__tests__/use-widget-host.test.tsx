@@ -203,3 +203,15 @@ it("binds initial widget loading and subsequent reads to the producer, with no a
   await Promise.resolve();
   expect(signal.aborted).toBe(true);
 });
+
+it.each([2, null])("refuses an unsupported or malformed retained source instead of using ambient resources (%s)", async version => {
+  const {retainedResourceProofFor} = await import("@/shared/retained-app-resources");
+  const proof = retainedResourceProofFor({toolCallId: "call", toolName: "qa_read", input: {}, output: {_meta: {"mcpjam/retainedResourceSource": version === null ? null : {version}}}}, {mcpjam: {presentationSig: "proof"}});
+  if (!proof) throw Error("A reserved source must retain its binding boundary");
+  const {result} = renderHook(() => {const base = useWidgetHost();const bind = useBoundWidgetResources(proof);return {bound: !!bind, host: bind ? bind(base) : base};}, {wrapper: makeWrapper({})});
+  expect(result.current.bound).toBe(true);
+  await expect(result.current.host.services.readResource("original", "test://record")).rejects.toThrow();
+  await expect(result.current.host.services.fetchWidgetContent({serverId: "original", resourceUri: "ui://app"})).rejects.toThrow();
+  expect(readResource).not.toHaveBeenCalled();
+  expect(boundFetch).not.toHaveBeenCalled();
+});
