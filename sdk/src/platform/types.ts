@@ -676,6 +676,18 @@ export interface PlatformChatTurn {
   engine?: string;
   /** The saved host this turn executed as, when it named one. */
   hostId?: string;
+  /** Servers omitted from this interactive turn. Absent on older servers. */
+  skippedServers?: Array<{
+    serverId: string;
+    serverName: string;
+    reason:
+      | "hosted_requires_https"
+      | "hosted_stdio_unsupported"
+      | "needs_sign_in"
+      | "unreachable"
+      | "other";
+    message: string;
+  }>;
   advertisedToolCount?: number;
   excludedToolCount?: number;
   persisted: { outcome: string; version?: number };
@@ -722,6 +734,9 @@ export interface PlatformChatSessionDetail {
 
 /** One turn's entry in a trace read. */
 export interface PlatformChatSessionTraceTurn {
+  setupHashAtTurn?: string;
+  setupStatus?: "complete" | "incomplete";
+  setupIncompleteReasons?: string[];
   browser?: {
     browserSessionId: string;
     bootId?: string;

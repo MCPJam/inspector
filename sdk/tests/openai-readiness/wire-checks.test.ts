@@ -287,6 +287,8 @@ describe("auth", () => {
     });
     expect(byId(findings, "openai.auth.prm-discoverable").status).toBe("violated");
     expect(byId(findings, "openai.auth.runtime-challenge").status).not.toBe("not-applicable");
+    // The design is lazy, so there is no connect-time 401 to ask for.
+    expect(byId(findings, "openai.auth.challenge").status).toBe("not-applicable");
   });
 
   it("grades the OAuth surface of a server that answers anonymously AND publishes PRM", () => {

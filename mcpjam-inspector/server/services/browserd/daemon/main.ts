@@ -15,9 +15,9 @@ import { createVideoRecorder } from "./video-recorder";
 import { ChromiumDriver } from "./chromium-driver";
 import { launchBrowserdContext } from "./chromium-launch";
 import { HandoffLease } from "./lease";
+import { prepareBrowserProfile } from "./prepare-browser-profile";
 import { mkdirSync } from "node:fs";
 import { execFile } from "node:child_process";
-import { readFile, unlink } from "node:fs/promises";
 import { displayGeometryFor, resizeHostedDisplay } from "./display-resize";
 import {
   announcedFeatures,
@@ -31,10 +31,7 @@ import {
   BROWSERD_OBSERVATION_VIEWPORT,
   BROWSERD_PROTOCOL_VERSION,
 } from "../protocol";
-import {
-  exportBrowserProfileArchive,
-  importBrowserProfileArchive,
-} from "../profile-archive";
+import { exportBrowserProfileArchive } from "../profile-archive";
 
 function log(message: string): void {
   process.stderr.write(`[mcpjam-browserd] ${message}\n`);
@@ -89,16 +86,10 @@ function displayHeight(config: { deviceScaleFactor: number }): number {
 async function main(): Promise<void> {
   const config = readBrowserdConfig();
   const bundleHash = readBundleHash();
-  if (config.profileArchivePath && config.contextMode === "persistent") {
-    const archive = await readFile(config.profileArchivePath);
-    await importBrowserProfileArchive(
-      config.userDataDir,
-      new Uint8Array(archive),
-    );
-    await unlink(config.profileArchivePath).catch(() => {});
-  }
+  const profileImported = await prepareBrowserProfile(config);
   const context = await launchBrowserdContext({
     userDataDir: config.userDataDir,
+    profileImported,
     headless: config.headless,
     extraArgs: extraArgsFor(config),
     contextMode: config.contextMode,

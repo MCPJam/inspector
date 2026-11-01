@@ -196,6 +196,18 @@ describe("selectDeliverableServerIds", () => {
     ).toThrow(/Plugin "weather"/);
   });
 
+  it("omits explicitly unavailable plugin and standalone servers even with stale configs", () => {
+    const onSkipped = vi.fn();
+    expect(selectDeliverableServerIds({
+      selectedServerIds: ["refused_plugin", "failed_host", "healthy"],
+      unavailableServerIds: ["refused_plugin", "failed_host"],
+      hasLiveConfig: () => true,
+      pluginOrigins: { refused_plugin: version() },
+      onSkipped,
+    })).toEqual(["healthy"]);
+    expect(onSkipped.mock.calls).toEqual([["refused_plugin"], ["failed_host"]]);
+  });
+
   it("delivers a plugin server that IS live, through the ordinary path", () => {
     const ids = selectDeliverableServerIds({
       selectedServerIds: ["srv_plugin", "srv_host"],
