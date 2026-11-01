@@ -228,7 +228,11 @@ export function useToolExecution({
     [sharedAppState],
   );
 
-  const presentAuthChallengeFromResponse = useToolAuthChallengePresentation(sharedAppState, tools, setExecutionError);
+  const presentAuthChallengeFromResponse = useToolAuthChallengePresentation(
+    sharedAppState,
+    tools,
+    setExecutionError,
+  );
 
   const driveStepUpFromResponse = useCallback(
     (
@@ -262,7 +266,7 @@ export function useToolExecution({
         operation: toolName,
       });
     },
-    [sharedAppState, tools],
+    [sharedAppState],
   );
 
   const storeCompletedToolResult = useCallback(
@@ -500,7 +504,6 @@ export function useToolExecution({
       resetStepUpOnSuccess,
     ],
   );
-
 
   const injectToolResult = useCallback(
     async ({
