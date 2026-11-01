@@ -3126,7 +3126,7 @@ export function useServerState({
             ) === state
           ) {
             const message =
-              "This sign-in is no longer waiting. Return to the call and try again.";
+              "This sign-in is no longer waiting. Return to the chat and try again.";
             failPendingOAuthConnection(message);
             if (!suppressErrorToast) toast.error(message);
           }

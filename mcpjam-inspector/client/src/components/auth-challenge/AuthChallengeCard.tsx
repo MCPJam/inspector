@@ -85,7 +85,7 @@ export function AuthChallengeCard({
   };
 
   const followUp = expired
-    ? "This request expired. Sign in, then run it again."
+    ? "This call expired. Sign in and run it again."
     : card.action === "notify"
       ? "After you sign in, run it again."
       : `It runs again after you sign in. Expires in ${formatRemaining(remaining)}.`;
