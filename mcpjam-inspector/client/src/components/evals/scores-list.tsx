@@ -427,13 +427,14 @@ function ScoreGroup({
 
 /**
  * Who answered a rubric check. Its definition always names Jev, so the row's
- * own model is the one that says which model answered this trial.
+ * own model is the one that says which model answered this trial. A check
+ * that wasn't scored carries the definition's model, not one that answered.
  */
 function rubricCheckAnsweredBy(score: ScoreResult): string | null {
   if (!score.scorerId.startsWith(HOSTED_RUBRIC_CHECKS_SCORER_PREFIX)) {
     return null;
   }
-  if (!score.model) return null;
+  if (score.status !== "scored" || !score.model) return null;
   return `Answered by ${score.model === HOSTED_RUBRIC_CHECKS_MODEL ? "Jev" : score.model}`;
 }
 

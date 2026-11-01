@@ -486,6 +486,18 @@ describe("rubric-check rows name the model that answered", () => {
     expect(screen.queryByText(/^model:/)).not.toBeInTheDocument();
   });
 
+  it("names no one for a check that wasn't scored", () => {
+    render(
+      <ScoresList
+        scores={[finalizeScoreResult(rubric, { kind: "skipped" })]}
+        evaluationConfig={buildEvaluationConfigSnapshot([RUBRIC])}
+      />,
+    );
+    expect(screen.queryByText(/^Answered by/)).not.toBeInTheDocument();
+    // The model it would have used still shows in the details, as before.
+    expect(screen.getByText("model: typesafe-ai/jev")).toBeInTheDocument();
+  });
+
   it("leaves other rows' model line alone", () => {
     render(
       <ScoresList
