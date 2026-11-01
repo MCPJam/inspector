@@ -5,6 +5,7 @@ import { tryGetGuestAuthority } from "./utils/guest-authority.js";
 import { logger as appLogger } from "./utils/logger.js";
 import { telemetryOptedOut } from "../shared/sentry-identity.js";
 import { sandboxOriginOf } from "../shared/sandbox-origin.js";
+import { isPlatformAgentEnabled } from "./utils/platform-agent.js";
 
 export type InspectorEnvMode = "development" | "production";
 
@@ -24,6 +25,8 @@ export interface InspectorClientRuntimeConfig {
   doNotTrack?: boolean;
   /** `MCPJAM_SANDBOX_ORIGIN`; the browser prefers it to its build-time sandbox origin. */
   sandboxOrigin?: string;
+  /** Present only under `MCPJAM_PLATFORM_AGENT=off`: the browser then hides the agent. */
+  platformAgentDisabled?: boolean;
 }
 
 function getInspectorEnvMode(): InspectorEnvMode {
@@ -220,6 +223,7 @@ export function getInspectorClientRuntimeConfig(): InspectorClientRuntimeConfig 
       ? { doNotTrack: true }
       : {}),
     sandboxOrigin: getRuntimeSandboxOrigin(),
+    ...(isPlatformAgentEnabled() ? {} : { platformAgentDisabled: true }),
   };
 }
 

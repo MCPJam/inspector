@@ -169,6 +169,21 @@ MCPJAM_PRIVATE_EGRESS_ALLOWLIST=10.0.0.0/8,fd00::/8,svc.cluster.local
 The checks query DNS directly, without `/etc/hosts`, so use fully qualified
 names such as `mcp.tools.svc.cluster.local`.
 
+## Turning the MCPJam agent off
+
+Ask MCPJam talks to MCPJam's own MCP servers: the platform worker
+(`mcp.mcpjam.com`) and the hosted docs servers. A deployment that cannot reach
+them turns the agent off:
+
+```bash
+MCPJAM_PLATFORM_AGENT=off
+```
+
+The agent's routes then answer `404` with code `FEATURE_NOT_SUPPORTED`
+without dialling anything, the server stops checking the platform worker URL
+at boot, and the app hides the agent's entry points. Any other value, or none,
+keeps the agent.
+
 ## Organization-derived confidential CIMD (disabled by default)
 
 Hosted confidential CIMD is disabled unless `XAA_CIMD_ORG_MASTER_KEY` is set.
