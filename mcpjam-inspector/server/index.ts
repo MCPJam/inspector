@@ -205,25 +205,7 @@ import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
-import {
-  isScheduledEvalsWorkerEnabled,
-  startScheduledEvalsWorker,
-  type ScheduledEvalsWorkerHandle,
-} from "./services/scheduled-evals-worker";
-import {
-  isGithubChecksWorkerEnabled,
-  startGithubChecksWorker,
-  type GithubChecksWorkerHandle,
-} from "./services/github-checks-worker";
-import {
-  startProductionChecksWorker,
-  type ProductionChecksWorkerHandle,
-} from "./services/production-checks-worker";
-import {
-  isBenchWorkerEnabled,
-  startBenchWorker,
-  type BenchWorkerHandle,
-} from "./services/bench-worker";
+import { startBackgroundWorkers } from "./services/background-workers";
 import {
   SERVER_PORT,
   CORS_OPTIONS,
@@ -995,37 +977,8 @@ startProcessVitalsSampler();
 // Attach the WebSocket upgrade listener (computer terminal bridge).
 injectWebSocket(server);
 
-// Scheduled eval runs (synthetic monitors): claim-and-execute polling loop.
-// Env-gated; the backend cron has its own SCHEDULED_EVALS_ENABLED gate.
-let scheduledEvalsWorker: ScheduledEvalsWorkerHandle | undefined;
-if (isScheduledEvalsWorkerEnabled()) {
-  scheduledEvalsWorker = startScheduledEvalsWorker();
-}
-
-// GitHub PR check runs: claim a PR trigger, build its MCP server in a sandbox,
-// run the dedicated eval suite, report an outcome. Env-gated; the backend has
-// its own GITHUB_CHECKS_ENABLED gate and 404s the routes when it is off.
-let githubChecksWorker: GithubChecksWorkerHandle | undefined;
-if (isGithubChecksWorkerEnabled()) {
-  githubChecksWorker = startGithubChecksWorker();
-}
-
-// Hosted Connector Bench runs: claim a benchmark job, run one eval child per
-// matrix cell against the run's pinned server, attach the evidence. Env-gated;
-// the backend has its own BENCHMARK_RUNS_ENABLED gate and 404s the routes when
-// it is off, which parks this loop on a slow poll.
-let benchWorker: BenchWorkerHandle | undefined;
-if (isBenchWorkerEnabled()) {
-  benchWorker = startBenchWorker();
-}
-
-// Production scoring: claim-and-grade polling loop for real User Testing
-// sessions. Started unconditionally and deliberately flagless — it self-gates
-// on the service-token env (a non-peer deployment gets an inert handle), and
-// the feature's single switch is the backend's PRODUCTION_CHECKS_ENABLED,
-// which 404s the claim route and parks this loop on a slow poll when off.
-const productionChecksWorker: ProductionChecksWorkerHandle =
-  startProductionChecksWorker();
+// Claim loops (scheduled evals, GitHub checks, bench, production scoring).
+const backgroundWorkers = startBackgroundWorkers();
 
 const expectedParentPid = Number.parseInt(
   process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
@@ -1081,10 +1034,7 @@ async function shutdown() {
     // Inside the guarded path so a rejecting worker still reaches the rest of
     // shutdown rather than skipping straight to the force-exit deadline.
     await localServerCheckQueue.shutdown();
-    await scheduledEvalsWorker?.stop();
-    await githubChecksWorker?.stop();
-    await benchWorker?.stop();
-    await productionChecksWorker.stop();
+    await backgroundWorkers.stop();
     stopRevokedSessionCache();
     // Abort active synthetic-session runs and write a terminal "failed"
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded
