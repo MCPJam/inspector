@@ -78,15 +78,27 @@ export function getSpendClientIp(c: Context): string | null {
   return edgeAttestationConfigured() ? getAttestedClientIp(c) : getClientIp(c);
 }
 
-export function getAttestedClientIp(c: Context): string | null {
-  const cfConnectingIp = c.req.header("cf-connecting-ip")?.trim();
+// Whether Cloudflare's `cf-*` headers on this request can be believed.
+function cloudflareHeadersTrusted(c: Context): boolean {
+  if (!edgeAttestationConfigured()) return true;
   const presented = c.req.header("x-mcpjam-edge-secret");
-  const attested = !!presented && [process.env.MCPJAM_EDGE_SECRET, process.env.MCPJAM_EDGE_SECRET_PREVIOUS].some(secret => {
+  return !!presented && [process.env.MCPJAM_EDGE_SECRET, process.env.MCPJAM_EDGE_SECRET_PREVIOUS].some(secret => {
     if (!secret) return false;
     const a = Buffer.from(presented), b = Buffer.from(secret);
     return a.length === b.length && timingSafeEqual(a, b);
   });
-  if (cfConnectingIp && (attested || !edgeAttestationConfigured())) return cfConnectingIp;
+}
+
+// Cloudflare's country for the visitor: ISO 3166-1 alpha-2, or XX (unknown)
+// and T1 (Tor). Null when the request did not come through a trusted edge.
+export function getAttestedCountry(c: Context): string | null {
+  const country = c.req.header("cf-ipcountry")?.trim().toUpperCase();
+  return country && cloudflareHeadersTrusted(c) ? country : null;
+}
+
+export function getAttestedClientIp(c: Context): string | null {
+  const cfConnectingIp = c.req.header("cf-connecting-ip")?.trim();
+  if (cfConnectingIp && cloudflareHeadersTrusted(c)) return cfConnectingIp;
   if (edgeAttestationConfigured()) return null;
 
   const trustedHeader =

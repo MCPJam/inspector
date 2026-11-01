@@ -9,6 +9,7 @@ import {
 } from "@/lib/analytics";
 import { refreshServerFeatureFlagsForActor } from "@/lib/server-feature-flags";
 import { HOSTED_MODE } from "@/lib/config";
+import { reapplyAnalyticsConsent } from "@/lib/analytics-consent";
 import { useActorKey } from "@/hooks/use-actor-key";
 import {
   subscribeTelemetryPolicy,
@@ -77,6 +78,7 @@ export function usePostHogIdentify() {
 
     if (isActorChange && previous?.wasAuthed) {
       posthog.reset();
+      reapplyAnalyticsConsent(posthog);
       posthog.register({
         environment: import.meta.env.MODE,
         platform: detectPlatform(),
