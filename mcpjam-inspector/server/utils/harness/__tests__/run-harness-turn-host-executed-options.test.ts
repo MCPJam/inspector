@@ -642,6 +642,15 @@ describe("enrolled Claude forwarding admission", () => {
     expect(projectSpy).toHaveBeenCalledOnce();
     expect(harnessState.stream).toHaveBeenCalledOnce();
   });
+  it("keeps Task await mode on the configured bridge before provisioning forwarding", async () => {
+    forwarding.admission.mockReturnValue({gaps:["tasks"]});
+    await runHarnessTurn({...enrolled(), harnessOwnedTasks:true,
+      tasks:{mode:"await",surface:"chat"},
+    } as never,"none");
+    expect(forwarding.admission).toHaveBeenCalledWith(expect.objectContaining({ownedTasksAvailable:false}));
+    expect(forwarding.prepare).not.toHaveBeenCalled();
+    expect(projectSpy).toHaveBeenCalledOnce();
+  });
   it.each(["flag-disabled", "eval-surface"])("retains the bridge for %s", async reason => {
     if (reason === "flag-disabled") vi.stubEnv("HARNESS_NATIVE_FORWARDING", "false");
     const options = enrolled();
@@ -657,6 +666,17 @@ describe("enrolled Claude forwarding admission", () => {
     expect(forwarding.admission).not.toHaveBeenCalled();
     expect(forwarding.prepare).not.toHaveBeenCalled();
     expect(projectSpy).toHaveBeenCalledOnce();
+  });
+  it("refuses required discovery before starting a runtime when server capabilities are unqualified", async () => {
+    forwarding.admission.mockReturnValue({gaps:["server-capability:logging"]});
+    const result = await runHarnessTurn({
+      ...enrolled(), requireNativeToolDiscovery:true,
+    } as never, "ui");
+    expect(await result.response!.text()).toContain("qualified harness execution route");
+    expect(harnessState.createRuntime).not.toHaveBeenCalled();
+    expect(harnessState.stream).not.toHaveBeenCalled();
+    expect(forwarding.prepare).not.toHaveBeenCalled();
+    expect(projectSpy).not.toHaveBeenCalled();
   });
 });
 
