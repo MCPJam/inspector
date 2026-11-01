@@ -162,6 +162,16 @@ describe("validateToolPolicyNames", () => {
       })
     ).toEqual([]);
   });
+
+  it("does not report an allow name that the runner explicitly defers", () => {
+    expect(validateToolPolicyNames({
+      policy: policy({ allow: ["later_tool", "ghost"] }),
+      availableToolNames: available,
+      deferredToolNames: ["later_tool"],
+    })).toEqual([
+      "Tool policy allow name(s) did not match any available tool: ghost",
+    ]);
+  });
 });
 
 describe("the policy block marker", () => {

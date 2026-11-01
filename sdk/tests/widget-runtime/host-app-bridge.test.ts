@@ -156,16 +156,39 @@ describe("owned resource request callback", () => {
     expect(legacy).not.toHaveBeenCalled();
   });
 
-  it("keeps the callback unavailable without server resource capability", () => {
+  it("answers reads with a clear error when the client disables server resources", async () => {
     const bridge = createHostAppBridge({
       hostInfo: { name: "test", version: "1" },
       hostCapabilities: {},
     });
+    const read = vi.fn();
     registerHostBridgeHandlers(bridge, {
       effectiveHostCapabilities: {},
-      callbacks: { onReadResourceV2: vi.fn() },
+      callbacks: { onReadResourceV2: read },
     });
-    expect(bridge.onreadresource).toBeUndefined();
+    const app = new App(
+      { name: "app", version: "1" },
+      {},
+      { autoResize: false }
+    );
+    const [hostTransport, guestTransport] =
+      InMemoryTransport.createLinkedPair();
+    await bridge.connect(hostTransport);
+    await app.connect(guestTransport);
+    try {
+      await expect(
+        app.readServerResource({ uri: "host-resource://file" })
+      ).rejects.toMatchObject({
+        code: -32601,
+        message: expect.stringContaining(
+          "This host does not allow resource reads."
+        ),
+      });
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+      await bridge.close();
+    }
   });
 });
 
@@ -291,3 +314,12 @@ it.each(["factory", "retained-official"])(
     }
   }
 );
+
+
+it("preserves all text blocks in the standard App follow-up handler", async () => {
+  const onSendFollowUp = vi.fn();
+  const bridge = createHostAppBridge({ hostInfo: { name: "Claude", version: "1" }, hostCapabilities: { message: { text: {} } } });
+  registerHostBridgeHandlers(bridge, { effectiveHostCapabilities: { message: { text: {} } }, callbacks: { onSendFollowUp } });
+  await bridge.onmessage!({ role: "user", content: [{ type: "text", text: "first" }, { type: "text", text: "second" }] }, {} as never);
+  expect(onSendFollowUp).toHaveBeenCalledExactlyOnceWith("first\nsecond");
+});

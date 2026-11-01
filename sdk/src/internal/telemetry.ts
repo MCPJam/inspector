@@ -34,6 +34,7 @@ const TAGS: Record<string, readonly string[]> = {
   severity: ["error", "warning", "info"],
   error_origin: ["user_server", "user_config", "mcpjam", "ambiguous"],
   page_class: ["incident", "routine"],
+  xaa_failure: ["authorization_rejected", "authorization_server_unknown"],
   surface: ["mcpjam_agent", "action", "api", "desktop", "sdk"],
   entrypoint: [
     "uploadEvalArtifact",
@@ -149,11 +150,27 @@ function exceptions(input: unknown, catalog: TelemetryCatalog) {
   return { values: kept, dropped };
 }
 
+// Open-domain tags with a bounded shape instead of a finite vocabulary: the
+// HTTP status an XAA authorization server answered with, and its RFC 6749
+// `error` code (section 5.2 charset, kept short).
+const SHAPED_TAGS: Record<string, (value: unknown) => string | undefined> = {
+  xaa_as_status: (value) =>
+    typeof value === "string" && /^[1-5]\d{2}$/.test(value) ? value : undefined,
+  xaa_as_error: (value) =>
+    typeof value === "string" && /^[\x20-\x21\x23-\x5B\x5D-\x7E]{1,64}$/.test(value)
+      ? value
+      : undefined,
+};
+
 function tags(input: unknown): Fields {
   const source = telemetryRecord(input);
   const output: Fields = {};
   for (const [key, values] of Object.entries(TAGS)) {
     const value = member(source[key], values);
+    if (value) output[key] = value;
+  }
+  for (const [key, shaped] of Object.entries(SHAPED_TAGS)) {
+    const value = shaped(source[key]);
     if (value) output[key] = value;
   }
   return output;
@@ -205,6 +222,7 @@ export function rebuildSentryEvent<T extends object>(
   const ownedFrames = chain.values.flatMap((value) => value.stacktrace?.frames ?? []);
   const facts = rebuildSentryFacts(extra, options);
   const code = typeof facts.code === "string" ? facts.code : typeof facts.slug === "string" ? facts.slug : undefined;
+  const capturedBy = typeof facts.event === "string" ? facts.event : undefined;
   const last = chain.values.at(-1);
   if (last && code) last.value = code;
   return {
@@ -220,10 +238,17 @@ export function rebuildSentryEvent<T extends object>(
     // Exceptions keep Sentry's default hash, which groups source-mapped frames
     // across builds; emitted file/line positions move with every build. A
     // message-only event has no stack, so its finite message is the group.
+    // An exception thrown wholly inside dependency code keeps no frame, so the
+    // event that captured it is what separates it from every other such throw.
+    // With an owned frame the stack already names the throw site, and adding
+    // the event would only split and reopen groups that are correct today.
     fingerprint: [
       ...(chain.values.length ? ["{{ default }}"] : []),
       chain.values.at(-1)?.type ?? message,
       ...(chain.values.length && approvedMessage ? [approvedMessage] : []),
+      ...(chain.values.length && !ownedFrames.length && capturedBy
+        ? [capturedBy]
+        : []),
       ...(code ? [code] : []),
     ],
     extra: {

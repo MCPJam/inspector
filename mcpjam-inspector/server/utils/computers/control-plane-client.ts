@@ -1112,6 +1112,51 @@ export async function getComputerSandboxInfo(args: {
   );
 }
 
+/** The backend owns provider wake and timeout renewal for an existing sandbox. */
+export async function prepareSandboxConnection(args: {
+  providerComputerId: string;
+  signal?: AbortSignal;
+}): Promise<ControlPlaneResult<{ ok: true }>> {
+  const headers = authHeaders();
+  if (!headers)
+    return {
+      ok: false,
+      status: 0,
+      error: "Computers service authentication is unavailable",
+    };
+  return postJson<{ ok: true }>(
+    "/computers/prepare-connection",
+    headers,
+    { providerComputerId: args.providerComputerId },
+    args.signal,
+  );
+}
+
+export type SandboxEgressStatus =
+  | { ok: true }
+  | { ok: false; reason: "egress_busy"; deadline: number }
+  | { ok: false; reason: "unavailable" };
+
+/** Read the backend's policy fence without waking or changing the sandbox. */
+export async function getSandboxEgressStatus(args: {
+  providerComputerId: string;
+  signal?: AbortSignal;
+}): Promise<ControlPlaneResult<SandboxEgressStatus>> {
+  const headers = authHeaders();
+  if (!headers)
+    return {
+      ok: false,
+      status: 0,
+      error: "Computers service authentication is unavailable",
+    };
+  return postJson<SandboxEgressStatus>(
+    "/computers/egress-status",
+    headers,
+    { providerComputerId: args.providerComputerId },
+    args.signal,
+  );
+}
+
 /**
  * Resume a computer that is merely ASLEEP, without reserving one.
  *

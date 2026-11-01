@@ -524,6 +524,47 @@ describe("eval runner reads saved model selections", () => {
     });
   });
 
+  describe("a malformed client profile on a suite run", () => {
+    it("puts the profile error on that case's pending rows", async () => {
+      convexClient.query.mockImplementation(async (name: string) =>
+        name === "testSuites:getTestSuiteRunDetails"
+          ? {
+              iterations: [
+                { _id: "iter-bad-profile", status: "pending", testCaseId: "case-1" },
+              ],
+            }
+          : { status: "running" },
+      );
+      const recorder = {
+        runId: "run-1",
+        suiteId: "suite-1",
+        startIteration: vi.fn(),
+        finishIteration: vi.fn(),
+        finalize: vi.fn(),
+      };
+      await run(
+        { model: SAME_ID, provider: "openrouter", selection: HOSTED },
+        {
+          runId: "run-1",
+          recorder,
+          orgModelConfigTarget: { projectId: "project-1" },
+          suiteHostConfig: { hostStyle: "claude", mcpProfile: { apps: null } },
+        },
+      );
+
+      expect(recorder.finishIteration).toHaveBeenCalledTimes(1);
+      const finished = recorder.finishIteration.mock.calls[0]![0] as {
+        iterationId?: string;
+        status?: string;
+        error?: string;
+      };
+      expect(finished.iterationId).toBe("iter-bad-profile");
+      expect(finished.status).toBe("setup_failed");
+      expect(finished.error).toMatch(/^Invalid client profile at mcpProfile\.apps/);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   describe("the organization requires its own provider keys", () => {
     const SHARED_GATEWAY_MESSAGE =
       "This connection routes through a shared gateway whose upstream provider account can't be verified as the organization's own. Use a direct provider connection.";

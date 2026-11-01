@@ -274,8 +274,8 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     // `{}`. The exact set depends on the discovery state (meta tools
     // `search_mcp_tools` / `load_mcp_tools` are always loaded), which
     // PR 1 already locks down on the eval side via prepareChatV2 tests.
-    expect(prepareStepReturn).toHaveProperty("activeTools");
-    expect(Array.isArray(prepareStepReturn.activeTools)).toBe(true);
+    expect(await prepareStepReturn).toHaveProperty("activeTools");
+    expect(Array.isArray((await prepareStepReturn).activeTools)).toBe(true);
   });
 
   it("forces the initial progressive-discovery step to search tools", async () => {
@@ -327,14 +327,14 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
 
     await consumeDirectChatTurnHeadless(handle);
 
-    expect(prepareStepReturn).toMatchObject({
+    expect(await prepareStepReturn).toMatchObject({
       activeTools: expect.arrayContaining([
         "search_mcp_tools",
         "load_mcp_tools",
       ]),
       toolChoice: { type: "tool", toolName: "search_mcp_tools" },
     });
-    expect(prepareStepReturn.activeTools).not.toContain("show_squad");
+    expect((await prepareStepReturn).activeTools).not.toContain("show_squad");
   });
 
   it("preserves explicit toolChoice instead of forcing initial progressive search", async () => {
@@ -390,10 +390,10 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     await consumeDirectChatTurnHeadless(handle);
 
     expect(streamTextOptions.toolChoice).toBe("none");
-    expect(prepareStepReturn.activeTools).toEqual(
+    expect((await prepareStepReturn).activeTools).toEqual(
       expect.arrayContaining(["search_mcp_tools", "load_mcp_tools"]),
     );
-    expect(prepareStepReturn).not.toHaveProperty("toolChoice");
+    expect(await prepareStepReturn).not.toHaveProperty("toolChoice");
   });
 
   it("keeps non-cataloged injected tools advertisable under progressive discovery", async () => {
@@ -461,18 +461,18 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
       expect.arrayContaining(["computer", "finish_widget"]),
     );
     // ...and survive into the advertised activeTools for the step.
-    expect(prepareStepReturn.activeTools).toEqual(
+    expect((await prepareStepReturn).activeTools).toEqual(
       expect.arrayContaining(["computer", "finish_widget", "search_tools"]),
     );
   });
 
-  it("narrows the request_payload trace tools via prepareAdvertisedTools (step 0)", () => {
+  it("narrows the request_payload trace tools via prepareAdvertisedTools (step 0)", async () => {
     streamTextMock.mockImplementationOnce((options) => {
       options.prepareStep({ stepNumber: 0 });
       return defaultStreamTextReturn();
     });
     let payloadTools: Record<string, unknown> | undefined;
-    runDirectChatTurn({
+    const handle = runDirectChatTurn({
       llmModel: { id: "mock" } as any,
       modelId: "gpt-4-turbo",
       messageHistory: [{ role: "user", content: "hi" } as any],
@@ -493,6 +493,7 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
         },
       },
     });
+    await consumeDirectChatTurnHeadless(handle);
     // The request_payload trace must reflect the narrowed step-0 advertised set
     // (regression: previously it emitted the full tools map).
     expect(payloadTools && Object.keys(payloadTools)).toEqual(["search"]);
@@ -521,9 +522,9 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
       traceEvents: { onRequestPayload },
       onPersist,
     });
-    options.prepareStep({ stepNumber: 0, messages: initial });
+    await options.prepareStep({ stepNumber: 0, messages: initial });
     const next = [...initial, { role: "assistant", content: "search result" }];
-    options.prepareStep({ stepNumber: 1, messages: next });
+    await options.prepareStep({ stepNumber: 1, messages: next });
     next.push({ role: "assistant", content: "after request" });
     await options.onFinish({ steps: [], totalUsage: {}, finishReason: "stop" });
     const result = await consumeDirectChatTurnHeadless(handle);

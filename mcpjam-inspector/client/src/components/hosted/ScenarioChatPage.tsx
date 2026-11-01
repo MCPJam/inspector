@@ -10,6 +10,7 @@ import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { ChatTabV2 } from "@/components/ChatTabV2";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import { useTaskOwnerId } from "@/hooks/use-task-owner-id";
 import { useApiContext } from "@/hooks/hosted/use-hosted-api-context";
 import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -412,6 +413,7 @@ export function ScenarioChatPage({
     isLoading: isWorkOsLoading,
   } = useInspectorAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const taskOwnerId = useTaskOwnerId();
   const themeMode = usePreferencesStore((s) => s.themeMode);
 
   // The embedded Preview iframe is same-origin, so it shares the tab's
@@ -794,6 +796,7 @@ export function ScenarioChatPage({
   }, [session, sessionServersActive]);
 
   useApiContext({
+    taskOwnerId,
     projectId: session?.payload.projectId ?? null,
     serverIdsByName: session ? hostedServerIdsByName : {},
     getAccessToken,
