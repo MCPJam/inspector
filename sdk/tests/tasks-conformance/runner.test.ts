@@ -422,13 +422,14 @@ describe("completion acknowledgements", () => {
     expect(verdict.warnings).toEqual([]);
   });
 
-  it("only advises when there is no raw frame to judge", () => {
+  it("does not judge resultType when there is no raw frame", () => {
     // The decoded ack cannot answer the question: the v2 client consumes
     // `resultType` on the way through, so its absence here is evidence about
     // our client, not about the server.
-    const verdict = validateCompletionAck({}, "tasks/update");
-    expect(verdict.violations).toEqual([]);
-    expect(verdict.warnings[0]).toContain("cannot prove what was on the wire");
+    expect(validateCompletionAck({}, "tasks/update")).toEqual({
+      violations: [],
+      warnings: [],
+    });
   });
 
   it("passes when the raw frame carries the required resultType", () => {
