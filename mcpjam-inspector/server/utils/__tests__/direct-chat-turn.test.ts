@@ -544,6 +544,58 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     );
   });
 
+  it("keeps every call suspended in one step out of the persisted history", async () => {
+    // A lazy-auth server refuses each protected tool, so two parallel calls
+    // can both suspend; each one's temporary error must stay out of history.
+    let options: any;
+    streamTextMock.mockImplementationOnce((value) => {
+      options = value;
+      return defaultStreamTextReturn();
+    });
+    const onPersist = vi.fn();
+    const suspended = new Set(["call-a", "call-b"]);
+    runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "hi" }] as any,
+      systemPrompt: "",
+      tools: {} as any,
+      suspendedToolCallIds: () => suspended,
+      onPersist,
+    });
+    const result = (toolCallId: string) => ({
+      type: "tool-result",
+      toolCallId,
+      toolName: "orders",
+      output: { type: "error-text", value: "suspended" },
+    });
+    await options.onFinish({
+      steps: [
+        {
+          toolResults: ["call-a", "call-b", "call-c"].map((id) => ({
+            toolCallId: id,
+          })),
+          response: {
+            messages: [
+              { role: "tool", content: ["call-a", "call-b", "call-c"].map(result) },
+            ],
+          },
+        },
+      ],
+      totalUsage: {},
+      finishReason: "tool-calls",
+    });
+    const persisted = onPersist.mock.calls[0][0];
+    expect(persisted.toolResults.map((r: any) => r.toolCallId)).toEqual([
+      "call-c",
+    ]);
+    expect(
+      persisted.responseMessages.flatMap((m: any) =>
+        m.content.map((part: any) => part.toolCallId),
+      ),
+    ).toEqual(["call-c"]);
+  });
+
   it("flips `isAborted` true when the abort signal fires", async () => {
     // PR 4a invariant (mirrors PR 3 "Abort no longer skips persistence"):
     // `streamText` can swallow AbortError silently. The helper exposes

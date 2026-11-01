@@ -18,7 +18,11 @@ import {
   type AuthorizedOAuthConnection,
 } from "../../../shared/oauth-connections.js";
 import { setManagerConnections } from "../../utils/mcp-connections.js";
-import { stampAuthChallenge } from "../../utils/connection-effective-auth.js";
+import {
+  recordConnectionEffectiveAuth,
+  stampAuthChallenge,
+  withStampedAuthChallenge,
+} from "../../utils/connection-effective-auth.js";
 import { z } from "zod";
 import type { Context } from "hono";
 import {
@@ -566,6 +570,7 @@ export type ConvexBatchAuthorizeFailure = {
  * dispatch is a silent regression.
  */
 export type ConvexOAuthUnavailableReason =
+  | "refresh_token_unavailable"
   /** The credential is fine; only this machine can reach its authorization server. */
   | "private_authorization_server"
   /** The credential is fine; the authorization server never answered usably. */
@@ -2672,6 +2677,14 @@ export async function createAuthorizedManager(
       }
     }
   }
+  // Every connection's effective auth method, for the stamp a sign-in
+  // challenge carries back to the browser (see `connection-effective-auth`).
+  for (const [serverId, effectiveAuth] of effectiveAuthByServerId) {
+    recordConnectionEffectiveAuth(manager, serverId, effectiveAuth);
+    for (const connection of connectionsByServerId[serverId] ?? []) {
+      recordConnectionEffectiveAuth(manager, connection.key, effectiveAuth);
+    }
+  }
   if (Object.keys(connectionsByServerId).length)
     setManagerConnections(manager, connectionsByServerId);
   setManagerOrganization(manager, batch.organizationId);
@@ -3376,11 +3389,21 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       schema,
       async (manager, body, refusedServers) => {
         await options?.beforeOperation?.(body);
-        return fn(
+        // A failure's sign-in challenge is stamped with the connection's
+        // effective auth method here, where the server is known; the error
+        // mapping below has no server context.
+        return withStampedAuthChallenge(
           manager,
-          body,
-          forwardLogMessagesInto(manager, rpcCollector),
-          refusedServers,
+          typeof (body as { serverId?: unknown })?.serverId === "string"
+            ? (body as { serverId: string }).serverId
+            : undefined,
+          () =>
+            fn(
+              manager,
+              body,
+              forwardLogMessagesInto(manager, rpcCollector),
+              refusedServers,
+            ),
         );
       },
       {

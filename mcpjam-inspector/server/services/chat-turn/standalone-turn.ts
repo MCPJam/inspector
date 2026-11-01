@@ -227,6 +227,9 @@ export async function runStandaloneTurn(
         abortSignal: c.req.raw.signal,
         // The standalone debugger owns this manager beyond the current turn.
         dispose: async () => undefined,
+        // Mid-session sign-in with the spec defaults: a standalone chat has no
+        // host config.
+        authChallenge: {},
         localScopeStepUp: {
           bindingKey: JSON.stringify([
             process.env.CONVEX_HTTP_URL ?? "",

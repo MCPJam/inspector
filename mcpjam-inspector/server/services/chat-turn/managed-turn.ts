@@ -31,7 +31,10 @@ import {
 } from "../../routes/web/auth.js";
 import { createHostedRpcLogCollector } from "../../routes/web/hosted-rpc-logs.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
-import { toolCallCancellationFromMcpProfile } from "../../utils/effective-auth.js";
+import {
+  authChallengeFromMcpProfile,
+  toolCallCancellationFromMcpProfile,
+} from "../../utils/effective-auth.js";
 import { harnessSupportsSkills } from "../../utils/harness/registry.js";
 import { runtimeServersAreOverridden } from "../environments/runtime.js";
 import { withLiveProjectSkills } from "../environments/effective-capabilities.js";
@@ -673,6 +676,17 @@ export async function handleManagedChatTurn(
           ...(modelMrtr ? { modelFormBridge: modelMrtr } : {}),
           ...(taskCreatedBridge ? { taskCreatedBridge } : {}),
           ...(mrtrEngineResume ? { mrtrResume: mrtrEngineResume } : {}),
+          // Mid-session sign-in: the host's reaction is read per turn from
+          // the server-resolved host config, never the body; no host means
+          // the spec defaults. Without a chat session the turn cannot save
+          // the call, so a Connect card is display-only (see `scopeStepUp`).
+          authChallenge: {
+            policy: hostRuntimeConfig
+              ? authChallengeFromMcpProfile(
+                  (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
+                )
+              : undefined,
+          },
           ...(scopeStepUpEnabled && convexBearer
             ? {
                 scopeStepUp: {

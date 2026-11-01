@@ -407,8 +407,11 @@ export interface RunDirectChatTurnOptions {
    * boundary.
    */
   shouldPauseAfterStep?: () => boolean;
-  /** Identifies the temporary tool-error result to omit from trace/history. */
-  suspendedToolCallId?: () => string | undefined;
+  /**
+   * The calls suspended in this turn, whose temporary tool-error results are
+   * omitted from trace/history. Several can suspend in one step.
+   */
+  suspendedToolCallIds?: () => ReadonlySet<string>;
   /**
    * What each step SENDS, derived from the messages the step would send — the
    * history-provenance presentation on browser-facing chat (MJ-009). The
@@ -589,7 +592,7 @@ export function runDirectChatTurn(
     traceStartedAt,
     maxSteps,
     shouldPauseAfterStep,
-    suspendedToolCallId,
+    suspendedToolCallIds,
     transformStepMessages,
   } = options;
   const resolvedMaxSteps =
@@ -703,8 +706,8 @@ export function runDirectChatTurn(
   const scrubSuspendedToolResultMessages = (
     messages: ModelMessage[],
   ): ModelMessage[] => {
-    const suspendedId = suspendedToolCallId?.();
-    if (!suspendedId) return messages;
+    const suspendedIds = suspendedToolCallIds?.();
+    if (!suspendedIds?.size) return messages;
     return messages.flatMap((message) => {
       if (message.role !== "tool" || !Array.isArray((message as any).content)) {
         return [message];
@@ -713,7 +716,7 @@ export function runDirectChatTurn(
         (part: any) =>
           !(
             part?.type === "tool-result" &&
-            part.toolCallId === suspendedId
+            suspendedIds.has(part.toolCallId)
           ),
       );
       return content.length > 0
@@ -1099,8 +1102,9 @@ export function runDirectChatTurn(
             .flatMap((step) => step.toolResults ?? [])
             .filter(
               (result) =>
-                (result as { toolCallId?: unknown }).toolCallId !==
-                suspendedToolCallId?.(),
+                !suspendedToolCallIds?.().has(
+                  String((result as { toolCallId?: unknown }).toolCallId),
+                ),
             ),
           usage: traceTurn.turnUsage,
           finishReason: event.finishReason,

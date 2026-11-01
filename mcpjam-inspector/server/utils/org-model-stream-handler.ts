@@ -87,6 +87,7 @@ import {
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
 import type { MrtrEngineResume } from "./mrtr-hosted-chat.js";
+import type { SettleSuspendedToolCall } from "./direct-chat-scope-step-up.js";
 
 export interface OrgModelHandlerOptions {
   projectId: string;
@@ -175,6 +176,8 @@ export interface OrgModelHandlerOptions {
    */
   maxSteps?: number;
   scopeStepUpResume?: MrtrEngineResume;
+  /** Forwarded; see `MCPJamHandlerOptions.settleSuspendedHistoryToolCall`. */
+  settleSuspendedHistoryToolCall?: SettleSuspendedToolCall;
   /**
    * Extra body fields merged into the per-step Convex `/stream/org` POST.
    * Swarm runs use this to thread `journeyRunId` so the backend BYOK writer
@@ -365,8 +368,10 @@ export interface OrgLocalModelHandlerOptions {
    */
   maxSteps?: number;
   scopeStepUpResume?: MrtrEngineResume;
+  /** History settlement for calls a sign-in suspended. */
+  settleSuspendedHistoryToolCall?: SettleSuspendedToolCall;
   shouldPauseAfterStep?: () => boolean;
-  suspendedToolCallId?: () => string | undefined;
+  suspendedToolCallIds?: () => ReadonlySet<string>;
   /**
    * Progressive tool discovery plan. When `plan.enabled === true`, each
    * step's `activeTools` is recomputed from `discoveryState` via the AI SDK
@@ -695,8 +700,9 @@ export function handleLocalOrgChatModel(
     onStreamComplete,
     chatSessionId: options.chatSessionId,
     scopeStepUpResume: options.scopeStepUpResume,
+    settleSuspendedHistoryToolCall: options.settleSuspendedHistoryToolCall,
     shouldPauseAfterStep: options.shouldPauseAfterStep,
-    suspendedToolCallId: options.suspendedToolCallId,
+    suspendedToolCallIds: options.suspendedToolCallIds,
     onPersist: buildLocalOrgOnPersist({
       options,
       attempts,
@@ -956,6 +962,12 @@ export async function handleHostedOrgChatModel(
     heartbeatIntervalMs: options.heartbeatIntervalMs,
     maxSteps: options.maxSteps,
     scopeStepUpResume: options.scopeStepUpResume,
+    ...(options.settleSuspendedHistoryToolCall
+      ? {
+          settleSuspendedHistoryToolCall:
+            options.settleSuspendedHistoryToolCall,
+        }
+      : {}),
     progressivePlan: options.progressivePlan,
     discoveryState: options.discoveryState,
     failureReporter: options.failureReporter,

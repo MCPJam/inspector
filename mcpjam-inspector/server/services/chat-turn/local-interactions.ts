@@ -1,5 +1,11 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
-import type { ToolSet } from "ai";
+import type { ToolSet, UIMessageChunk } from "ai";
+import { parseToolResultAuthChallenge } from "@mcpjam/sdk";
+import {
+  AUTH_CHALLENGE_REASON,
+  authChallengeCancelledText,
+  authChallengeMayHaveRunText,
+} from "@/shared/auth-challenge";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import { executeToolCallsFromMessages } from "@/shared/http-tool-calls";
@@ -11,13 +17,21 @@ import {
   type ScopeStepUpCancelRequest,
 } from "@/shared/scope-step-up";
 import {
+  AUTH_CHALLENGE_REPEATED_REASON,
+  cancelLocalContinuationForNewMessage,
   claimLocalScopeStepUpContinuation,
   failLocalScopeStepUpContinuation,
   markLocalScopeStepUpWireStarted,
   cancelLocalScopeStepUpContinuation,
   completeLocalScopeStepUpContinuation,
   cancelLocalScopeStepUpContinuationForRequest,
+  settleLocalAuthChallengeHistoryCall,
 } from "../../utils/scope-step-up-continuation.js";
+import {
+  authChallengeInfoFromToolError,
+  emitRepeatedSignInNotice,
+} from "../../utils/auth-challenge-chat.js";
+import type { SettleSuspendedToolCall } from "../../utils/direct-chat-scope-step-up.js";
 import type {
   MrtrEngineResume,
   MrtrChatResumeResolution,
@@ -105,6 +119,7 @@ export function buildLocalScopeStepUpResume(input: {
       }
 
       let replayError: unknown;
+      let replayResult: unknown;
       const execute = originalTool.execute.bind(originalTool);
       const replayTool = {
         ...originalTool,
@@ -114,12 +129,42 @@ export function buildLocalScopeStepUpResume(input: {
         ) => {
           markLocalScopeStepUpWireStarted(claimed.continuationId);
           try {
-            return await execute(toolInput, options);
+            replayResult = await execute(toolInput, options);
+            return replayResult;
           } catch (error) {
             replayError = error;
             throw error;
           }
         },
+      };
+      // A sign-in the server refuses again right after the user signed in is
+      // permanent: the model gets the repeat copy, no second card.
+      const repeatedSignIn = (
+        signal: Parameters<typeof emitRepeatedSignInNotice>[1]["signal"],
+      ): MrtrChatResumeResolution => {
+        failLocalScopeStepUpContinuation(
+          claimed.continuationId,
+          AUTH_CHALLENGE_REPEATED_REASON,
+        );
+        const repeatText = emitRepeatedSignInNotice(
+          { write },
+          {
+            serverId: claimed.serverId,
+            serverName: claimed.serverName,
+            toolCallId: claimed.toolCallId,
+            toolName: claimed.toolName,
+            signal,
+          },
+        );
+        return {
+          kind: "recover",
+          reason: AUTH_CHALLENGE_REPEATED_REASON,
+          toolResultMessage: buildScopeStepUpErrorToolResult(
+            claimed.toolCallId,
+            claimed.toolName,
+            repeatText,
+          ),
+        };
       };
       const replayHistory: ModelMessage[] = [
         {
@@ -153,6 +198,17 @@ export function buildLocalScopeStepUpResume(input: {
           serverId: claimed.serverId,
           toolCallId: claimed.toolCallId,
         });
+        const repeatedAuthChallenge =
+          claimed.reason === AUTH_CHALLENGE_REASON && !repeatedChallenge
+            ? authChallengeInfoFromToolError({
+                error: replayError,
+                serverId: claimed.serverId,
+                toolCallId: claimed.toolCallId,
+              })
+            : undefined;
+        if (repeatedAuthChallenge) {
+          return repeatedSignIn(repeatedAuthChallenge.signal);
+        }
         if (repeatedChallenge) {
           failLocalScopeStepUpContinuation(
             claimed.continuationId,
@@ -191,6 +247,23 @@ export function buildLocalScopeStepUpResume(input: {
           kind: "halted",
           outcome: "failed",
           reason: "tool replay returned no result",
+        };
+      }
+      // A challenged result is a refusal, not a success: it must not settle
+      // the continuation as completed.
+      const resultChallenge = parseToolResultAuthChallenge(replayResult);
+      if (resultChallenge) {
+        if (claimed.reason === AUTH_CHALLENGE_REASON) {
+          return repeatedSignIn(resultChallenge);
+        }
+        failLocalScopeStepUpContinuation(
+          claimed.continuationId,
+          "the retried call returned a sign-in challenge",
+        );
+        return {
+          kind: "recover",
+          reason: "the retried call returned a sign-in challenge",
+          toolResultMessage: resultMessage,
         };
       }
       completeLocalScopeStepUpContinuation(claimed.continuationId);
@@ -241,6 +314,20 @@ export function buildLocalScopeStepUpCancellation(input: {
           },
           transient: true,
         });
+        if (cancelled.reason === AUTH_CHALLENGE_REASON) {
+          return {
+            kind: "recover",
+            reason: "sign-in was not completed",
+            toolResultMessage: buildScopeStepUpErrorToolResult(
+              input.request.toolCallId,
+              cancelled.toolName,
+              authChallengeCancelledText(
+                cancelled.serverName ?? cancelled.serverId,
+                cancelled.toolName,
+              ),
+            ),
+          };
+        }
         return {
           kind: "recover",
           reason: "authorization was not completed",
@@ -258,5 +345,88 @@ export function buildLocalScopeStepUpCancellation(input: {
         };
       }
     },
+  };
+}
+
+/**
+ * History settlement for local turns, plus a cancel the client spliced into
+ * the user's next message.
+ *
+ * The spliced cancel is settled here instead of driving a resume leg: the
+ * named call is answered with the reason-aware copy and the user's message
+ * then runs as a normal turn. Its continuation is cancelled when it still
+ * waits; when it is unknown or already expired the call is answered all the
+ * same, so the message is never dropped. A replay that already started is
+ * answered as one that may have run. Every other call a sign-in suspended
+ * is answered from the store.
+ */
+export function buildLocalSuspendedCallSettlement(input: {
+  bindingKey: string;
+  splicedCancel?: ScopeStepUpCancelRequest;
+  tools: ToolSet;
+  serverNameFor: (serverId: string) => string;
+  getWriter: () => { write: (chunk: UIMessageChunk) => void } | null;
+}): SettleSuspendedToolCall {
+  return ({ toolCallId, toolName }) => {
+    if (input.splicedCancel?.toolCallId === toolCallId) {
+      const cancelled = cancelLocalContinuationForNewMessage({
+        continuationId: input.splicedCancel.continuationId,
+        toolCallId,
+        bindingKey: input.bindingKey,
+      });
+      if (!cancelled.found)
+        return "Sign-in recovery could not be completed. This call was not retried.";
+      const serverId =
+        cancelled.serverId ??
+        (input.tools as Record<string, { _serverId?: unknown }>)[toolName]
+          ?._serverId;
+      const serverName =
+        typeof serverId === "string" ? input.serverNameFor(serverId) : "unknown";
+      if (
+        !cancelled.cancelled &&
+        cancelled.status !== "expired" &&
+        cancelled.status !== "cancelled"
+      ) {
+        return authChallengeMayHaveRunText(
+          serverName,
+          cancelled.toolName ?? toolName,
+        );
+      }
+      if (cancelled.cancelled && cancelled.serverId) {
+        input.getWriter()?.write({
+          type: SCOPE_STEP_UP_FINISHED_DATA_PART_TYPE,
+          data: {
+            version: SCOPE_STEP_UP_VERSION,
+            continuationId: input.splicedCancel.continuationId,
+            serverId: cancelled.serverId,
+            operation: {
+              method: "tools/call",
+              operation: cancelled.toolName ?? toolName,
+            },
+            outcome: "cancelled",
+          },
+          transient: true,
+        } satisfies UIMessageChunk);
+      }
+      // A step-up the store still knows keeps its own copy; anything else the
+      // client cancelled was a sign-in it was showing.
+      if (cancelled.reason !== AUTH_CHALLENGE_REASON) {
+        return "Authorization was not completed, so the tool was not retried.";
+      }
+      return authChallengeCancelledText(
+        serverName,
+        cancelled.toolName ?? toolName,
+      );
+    }
+    const settled = settleLocalAuthChallengeHistoryCall({
+      bindingKey: input.bindingKey,
+      toolCallId,
+    });
+    return settled
+      ? authChallengeCancelledText(
+          settled.serverName ?? input.serverNameFor(settled.serverId),
+          settled.toolName,
+        )
+      : undefined;
   };
 }
