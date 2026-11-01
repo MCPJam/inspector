@@ -11,6 +11,7 @@ import { createConvexClient } from "../v1/convex-client.js";
 import { unsealHarnessProxyToken } from "../../utils/harness/harness-proxy-policy-seal.js";
 import {
   createExecutionControl,
+  ExecutionControlError,
   forwardingOwnerSchema,
 } from "../../utils/harness/forwarding/execution-control.js";
 import { executeForwardedOperation } from "../../utils/harness/forwarding/execution-gate.js";
@@ -46,6 +47,7 @@ const contextSchema = z
     turnId: z.string().min(1).max(512),
     policyDigest: z.string().regex(/^[a-f0-9]{64}$/),
     delivery: z.enum(["native", "bridge"]).optional(),
+    correlationKey: z.string().min(1).max(512).optional(),
   })
   .strict();
 const userSchema = z.object({ _id: z.string() });
@@ -291,7 +293,7 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
             operation: {
               invocationKey: randomUUID(),
               ...(message.method === "tools/call"
-                ? { nativeToolCallId: nativeToolCallId(message.params) }
+                ? { nativeToolCallId: nativeToolCallId(message.params, context.correlationKey) }
                 : {}),
               turnId: caller.turnId,
               policyDigest: context.policyDigest,
@@ -332,6 +334,7 @@ function reportNativeFailure(error: unknown) {
     reportRouteFailure(
       "Native MCP forwarding failed",
       new Error(
+        error instanceof ExecutionControlError ? error.code :
         error instanceof Error ? error.name : "Unknown forwarding failure",
       ),
       { source: "web.harness-forwarding", hop: "user_server_hop" },

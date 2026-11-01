@@ -13,6 +13,7 @@ import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
  * adapter is a COMPILE error.
  */
 import type { ForwardingRuntimeContract } from "./forwarding/runtime-contract.js";
+import { withForwardingResume } from "./forwarding/bridge-refresh.js";
 import { withClaudeForwardingResume } from "./forwarding/claude-resume.js";
 import { createClaudeCodeHarness } from "./claude-code-bootstrap.js";
 import { createHostedClaudeCodeHarness } from "./claude-code-typed-errors.js";
@@ -487,6 +488,8 @@ export type HarnessCreateArgs = {
   modelId: string;
   auth: HarnessAuth;
   elicitationHandler?: boolean;
+  /** Present only after shared forwarding admission and owner authorization. */
+  forwardingMcpJson?: HarnessMcpJson;
   /**
    * The reasoning effort this turn asked for. An adapter that lists efforts in
    * `supportedReasoningEfforts` MUST apply it through its own runtime option;
@@ -888,6 +891,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   mcpNativeDelivery: "session-config",
   forwardingRuntime: {
     runtimeVersion: "2.1.245",
+    ownedInput: true,
     refresh: withClaudeForwardingResume,
   },
   liveApprovalRuntime: true,
@@ -1041,6 +1045,12 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // the same value, so "MCPJam builds these tools, so the host's construction
   // knobs apply" is stated once for both sides.
   mcpDelivery: HARNESS_MCP_DELIVERY.codex,
+  forwardingRuntime: {
+    runtimeVersion: "0.163.0",
+    correlationKey: "callId",
+    ownedInput: true,
+    refresh: withForwardingResume,
+  },
   // INS-8: skills ARE delivered. The adapter writes every `skills` entry to
   // `$HOME/.agents/skills/<name>/SKILL.md` before it starts Codex, the same
   // root the retired exec transport used.
@@ -1072,7 +1082,7 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // run match a Codex run tool-for-tool. Codex's own natives arrive as common
   // names (`bash`, `read`, …), which have no prefix and pass through unchanged.
   parseToolName: parseHarnessToolName,
-  createHarness({ modelId, auth, sandboxPolicy, reasoningEffort, upstream }) {
+  createHarness({ modelId, auth, sandboxPolicy, reasoningEffort, upstream, forwardingMcpJson }) {
     const nativeModel = toCodexNativeModel(modelId, upstream);
     return createCodexAppServer({
       ...(nativeModel ? { model: nativeModel } : {}),
@@ -1081,6 +1091,7 @@ const codexAdapter: HarnessRuntimeAdapter = {
       ...(reasoningEffort ? { reasoningEffort } : {}),
       auth,
       ...(sandboxPolicy ? { sandboxPolicy } : {}),
+      ...(forwardingMcpJson ? { nativeMcpServers: forwardingMcpJson.mcpServers } : {}),
     }) as unknown as HarnessAgentAdapter;
   },
 };

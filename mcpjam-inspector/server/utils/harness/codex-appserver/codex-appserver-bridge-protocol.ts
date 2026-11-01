@@ -13,11 +13,13 @@ import {
   harnessV1BridgeStartBaseSchema,
 } from "@ai-sdk/harness";
 import { z } from "zod/v4";
+import { nativeMcpServersSchema } from "./shared/native-mcp.js";
 
 export const outboundMessageSchema = harnessV1BridgeOutboundMessageSchema;
 export type OutboundMessage = z.infer<typeof outboundMessageSchema>;
 
 export const startMessageSchema = harnessV1BridgeStartBaseSchema.extend({
+  nativeMcpServers: nativeMcpServersSchema.optional(),
   /** Extra instructions, sent as `developerInstructions` so Codex keeps its own
    *  system prompt (see `app-server-protocol.ts`). */
   instructions: z.string().optional(),

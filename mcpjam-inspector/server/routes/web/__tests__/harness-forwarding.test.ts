@@ -1,3 +1,4 @@
+import { ExecutionControlError } from "../../../utils/harness/forwarding/execution-control.js";
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { afterEach, expect, it, vi } from "vitest";
@@ -8,6 +9,7 @@ const state = vi.hoisted(() => ({
   policyDigest: "a".repeat(64),
   gate: vi.fn(),
   disconnect: vi.fn(),
+  report: vi.fn(),
 }));
 const owner = {
   kind: "chat",
@@ -56,6 +58,7 @@ vi.mock("../../../utils/harness/forwarding/execution-gate.js", () => ({
   executeForwardedOperation: state.gate,
 }));
 
+vi.mock("../../../utils/route-error-report.js", () => ({ reportRouteFailure: state.report }));
 afterEach(() => vi.unstubAllEnvs());
 
 it("passes the authorized lease deadline to the gate without a five-minute cap", async () => {
@@ -115,4 +118,21 @@ it("refuses an old sealed policy under a newly bound grant", async () => {
   } finally {
     state.policyDigest = "a".repeat(64);
   }
+});
+
+it.each([
+  [new ExecutionControlError("approval_unavailable"), "approval_unavailable"],
+  [new Error("private upstream credential"), "Error"],
+])("reports safe failure identifiers without upstream error text", async (error, message) => {
+  vi.stubEnv("HARNESS_NATIVE_FORWARDING", "true");
+  vi.stubEnv("HARNESS_FORWARDING_ORGANIZATION_IDS", "internal");
+  state.report.mockClear();
+  state.gate.mockRejectedValueOnce(error);
+  const app = new Hono();
+  app.post("/:serverId", handleNativeForwarding);
+  const header = "x-mcpjam-forwarding-" + createHash("sha256").update(JSON.stringify(["server", "server:server"])).digest("hex").slice(0, 40);
+  const response = await app.request("/server", {method: "POST", headers: {"content-type": "application/json", [header]: "test-grant"}, body: JSON.stringify({jsonrpc: "2.0", id: 1, method: "tools/call", params: {name: "read", _meta: {"claudecode/toolUseId": "toolu_native"}}})});
+  expect(response.status).toBe(409);
+  expect(state.report).toHaveBeenCalledWith("Native MCP forwarding failed", expect.objectContaining({message}), expect.anything());
+  expect(await response.text()).not.toContain("private upstream credential");
 });

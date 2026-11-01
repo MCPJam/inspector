@@ -21,6 +21,7 @@ export const retainedResourceSourceSchema = retainedResourceBindingSchema
   .extend({
     version: z.literal(1),
     profile: z.string().min(1),
+    connectionCapabilities: z.record(z.string(), z.unknown()).optional(),
     attestation: z.string().min(1),
     toolCallId: z.string().min(1),
     turnId: z.string().min(1).optional(),

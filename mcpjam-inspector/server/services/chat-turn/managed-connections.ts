@@ -5,6 +5,8 @@ import {
   harnessElicitationModes,
 } from "../../utils/harness/input-host.js";
 import { isForwardingOrganization } from "../../utils/harness/forwarding/native-turn.js";
+import { qualifiedForwardingRuntime } from "../../utils/harness/forwarding/runtime-contract.js";
+import { getHarnessAdapter } from "../../utils/harness/registry.js";
 import { chatTurnIsolatedServerIds } from "../../utils/plugin-server-isolation.js";
 import {
   HOSTED_ELICITATION_VERSION,
@@ -314,13 +316,15 @@ export async function prepareManagedConnections(args: {
     await elicitationBridge?.dispose();
   });
 
+  const inputHostId = isHostAuthoritative ? hostRuntimeConfig?.hostId : hostId;
   const harnessInput =
     elicitationBridge &&
-    resolvedExecution.harness === "claude-code" &&
+    resolvedExecution.harness &&
+    qualifiedForwardingRuntime(getHarnessAdapter(resolvedExecution.harness))?.ownedInput === true &&
     rawBody.hostedHarnessInputVersion === HOSTED_HARNESS_INPUT_VERSION &&
     process.env.HARNESS_NATIVE_FORWARDING === "true" &&
     turnRail === "hosted" &&
-    hostId && !scenarioId && !rawBody.harnessExecutionTarget
+    typeof inputHostId === "string" && inputHostId.length > 0 && !scenarioId && !rawBody.harnessExecutionTarget
       ? createHarnessInputHost({
           allowedServerIds: new Set(effectiveServerIds),
           modes: harnessElicitationModes(effectiveClientCapabilities),

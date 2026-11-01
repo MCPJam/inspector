@@ -1,6 +1,7 @@
 import { getManagerResourceSnapshot, setManagerResourceSnapshots } from "../../../utils/mcp-connections";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { HOSTED_HARNESS_INPUT_VERSION } from "../../../../shared/hosted-elicitation";
 const m = vi.hoisted(() => ({ order: [] as string[] }));
 vi.mock("../../../routes/web/hosted-elicitation.js", async (original) => ({
   ...(await original<
@@ -70,6 +71,58 @@ describe("managed connection ownership", () => {
   beforeEach(() => {
     m.order = [];
   });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each([
+    { harness: "claude-code" as const, expected: true, resolved: false },
+    { harness: "codex" as const, expected: true, resolved: false },
+    { harness: "cursor" as const, expected: false, resolved: false },
+    { harness: "codex" as const, expected: true, resolved: true },
+  ])(
+    "installs owned input for $harness (saved host: $resolved)",
+    async ({ harness, expected, resolved }) => {
+      vi.stubEnv("HARNESS_NATIVE_FORWARDING", "true");
+      const resources = new TurnResources((error) => {
+        throw error;
+      });
+      const app = new Hono();
+      app.post("/", async (c) => {
+        const prepared = await prepareManagedConnections({
+          c,
+          rawBody: { hostedHarnessInputVersion: HOSTED_HARNESS_INPUT_VERSION },
+          bearerToken: "bearer",
+          rpcCollector: createHostedRpcLogCollector({}),
+          resources,
+          setup: {
+            ...setup,
+            hostId: resolved ? undefined : "host",
+            isHostAuthoritative: resolved,
+            ...(resolved
+              ? {
+                  hostRuntimeConfig: {
+                    hostConfigId: "saved-config",
+                    hostId: "saved-host",
+                    hostStyle: "codex" as const,
+                    modelId: "openai/gpt-5.5",
+                    systemPrompt: "",
+                    temperature: 0,
+                    requireToolApproval: true,
+                  },
+                }
+              : {}),
+            resolvedExecution: { ...setup.resolvedExecution, harness },
+          },
+          onOAuthServerUrls: () => {},
+        });
+        return c.json({ ownedInput: prepared.harnessOwnedInput });
+      });
+      const response = await app.request("/", { method: "POST" });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ownedInput: expected });
+      await resources.dispose();
+    },
+  );
+
   it("withdraws pending elicitations before it disconnects the turn's servers", async () => {
     const resources = new TurnResources((error) => {
       throw error;
