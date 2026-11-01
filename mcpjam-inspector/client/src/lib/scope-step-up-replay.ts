@@ -113,6 +113,17 @@ function write(value: PendingDirectScopeStepUpReplay): void {
     throw new Error("MCPJam couldn’t save this call for sign-in. Please try again.");
 }
 
+// Calls whose sign-in this page is driving. A call saved by an earlier page
+// (the tab reloaded, or came back with Back from the authorization server)
+// was abandoned: a completed sign-in returns to the callback, which settles
+// it. Such a call gives way to the next one instead of blocking it.
+const drivenByThisPage = new Set<string>();
+if (typeof window !== "undefined") {
+  window.addEventListener("pageshow", (event) => {
+    if ((event as PageTransitionEvent).persisted) drivenByThisPage.clear();
+  });
+}
+
 export class PendingDirectReplayConflictError extends Error {
   constructor() {
     super("Another call is waiting for sign-in. Finish that sign-in or wait for it to expire, then try again.");
@@ -129,7 +140,13 @@ export function savePendingDirectScopeStepUpReplay(input: {
   const now = Date.now();
   const previous = input.previous;
   const waiting = readStored();
-  if (!previous && waiting && waiting.expiresAt > now) {
+  if (
+    !previous &&
+    waiting &&
+    waiting.expiresAt > now &&
+    (waiting.phase !== "awaiting_oauth" ||
+      (waiting.callId !== undefined && drivenByThisPage.has(waiting.callId)))
+  ) {
     throw new PendingDirectReplayConflictError();
   }
   if (previous) {
@@ -160,6 +177,7 @@ export function savePendingDirectScopeStepUpReplay(input: {
     ...(input.reason ? { reason: input.reason } : {}),
   };
   write(value);
+  if (value.callId) drivenByThisPage.add(value.callId);
   return value;
 }
 
