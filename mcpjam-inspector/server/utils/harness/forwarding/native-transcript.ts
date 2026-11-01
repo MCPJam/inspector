@@ -85,11 +85,27 @@ export function preserveNativeUiPresentations(
         part.callProviderMetadata,
       ]) {
         const result = readMcpOriginalResult(metadata);
-        if (result !== undefined)
+        if (result !== undefined) {
+          const restored = mergeMcpToolOriginMetadata(metadata, serverId);
+          const callOrigin = mergeMcpToolOriginMetadata(
+            part.callProviderMetadata,
+            serverId,
+          );
+          // The call carries account attribution too; it is not model context.
+          if (
+            restored &&
+            callOrigin?.mcpjam?.connection &&
+            !restored.mcpjam?.connection
+          )
+            restored.mcpjam = {
+              ...restored.mcpjam,
+              connection: callOrigin.mcpjam.connection,
+            };
           presentations.set(part.toolCallId, {
             result,
-            metadata: mergeMcpToolOriginMetadata(metadata, serverId),
+            metadata: restored,
           });
+        }
       }
     }
   }
