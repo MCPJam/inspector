@@ -344,9 +344,9 @@ test("positive controls: the guard sees Sentry when nothing is locked; cloud sta
     const report = await sdk("report", { input: { baseUrl: A.url } }, {});
     assert.deepEqual(report, { ok: true, runId: null });
     const attempts = await waitForAttempts(sandbox, (seen) =>
-      seen.some((attempt) => attempt.host?.endsWith("sentry.io")),
+      seen.some((attempt) => attempt.host?.endsWith(".sentry.io")),
     );
-    assert.ok(attempts.some((attempt) => attempt.host?.endsWith("sentry.io")), JSON.stringify(attempts));
+    assert.ok(attempts.some((attempt) => attempt.host?.endsWith(".sentry.io")), JSON.stringify(attempts));
   });
   await scenario(locked(), async () => {
     const status = await cli(["cloud", "status", "--format", "json"]);
