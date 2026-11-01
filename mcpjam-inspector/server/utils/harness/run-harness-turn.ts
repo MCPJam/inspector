@@ -24,7 +24,7 @@ import {
 import { withAutoApprovedNativeRequests } from "./auto-approve-harness.js";
 import { withHarnessElicitation } from "./with-harness-elicitation.js";
 import { isNativeElicitationProfile } from "./forwarding/native-elicitation-profile.js";
-import { withClaudeForwardingResume } from "./forwarding/claude-resume.js";
+import { qualifiedForwardingRuntime } from "./forwarding/runtime-contract.js";
 import { stampNativeForwardingPolicy,
   forwardingToolPolicy,
 } from "./forwarding/native-policy.js";
@@ -1583,7 +1583,8 @@ export async function runHarnessTurn(
           ? { pluginOrigins: pluginServerOrigins }
           : {}),
       });
-      const nativeCandidate = process.env.HARNESS_NATIVE_FORWARDING === "true" && hasForwardingOrganization(mcpClientManager) && (nativeMcpDelivery || (options.agentLoop === "claude-code" && !hasAccountRouting(accountGroups))) && harnessAdapter.id === "claude-code" && harnessMcpProxy?.plane === "web-authorized" && !scenarioId && !evalIterationId && !journeyRunId && !harnessExecutionTarget && !!hostId && !!selectedServers?.length;
+      const forwardingRuntime = qualifiedForwardingRuntime(harnessAdapter);
+      const nativeCandidate = process.env.HARNESS_NATIVE_FORWARDING === "true" && hasForwardingOrganization(mcpClientManager) && (nativeMcpDelivery || (options.agentLoop === harnessAdapter.id && !hasAccountRouting(accountGroups))) && forwardingRuntime !== undefined && harnessMcpProxy?.plane === "web-authorized" && !scenarioId && !evalIterationId && !journeyRunId && !harnessExecutionTarget && !!hostId && !!selectedServers?.length;
       const admission = nativeCandidate ? forwardingAdmission({ manager: mcpClientManager, serverIds: selectedServers ?? [], respectToolVisibility, modelVisibleMcpToolResults, hasClientTools: options.harnessUnavailableAppTools, hasTasks: tasks !== undefined,
             elicitationRuntimeVersion: onHarnessElicitation ? harnessAdapter.pinnedRuntimeVersion : undefined,
             modernInputAvailable: options.harnessOwnedInput === true,
@@ -2691,7 +2692,10 @@ export async function runHarnessTurn(
           signal: effectiveAbortSignal,
         });
       }
-      if (nativeForwarding) harnessRuntime = withAutoApprovedNativeRequests(withClaudeForwardingResume(harnessRuntime, mcpJson.mcpServers, nativeForwarding.policyDigest), undefined, new Set(), nativeForwarding.isForwardedTool);
+      if (nativeForwarding) {
+        if (!forwardingRuntime) throw new Error("The runtime forwarding contract is not qualified.");
+        harnessRuntime = withAutoApprovedNativeRequests(forwardingRuntime.refresh(harnessRuntime, mcpJson.mcpServers, nativeForwarding.policyDigest), undefined, new Set(), nativeForwarding.isForwardedTool);
+      }
       if (nativeForwarding) onHarnessMcpReady?.(nativeForwarding.logScopeIds);
       if (localPrepared) {
         harnessRuntime = await withLocalRuntimeBootstrap(harnessRuntime, localPrepared.plan.runtime);
