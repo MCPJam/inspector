@@ -235,7 +235,8 @@ const rows: Row[] = [
     credential: "api-key",
     expect: {
       code: "DEPLOYMENT_LOCKED",
-      message: /^Your organization locks MCPJam to https:\/\/a\.example\.test\/api\/v1 \(.+it-locked-a\.json\), and --api-url names https:\/\/b\.example\.test\/api\/v1, so nothing was sent\. Remove --api-url, or set it to https:\/\/a\.example\.test\/api\/v1\.$/,
+      message:
+        /^Your organization locks MCPJam to https:\/\/a\.example\.test\/api\/v1 \(.+it-locked-a\.json\), and --api-url names https:\/\/b\.example\.test\/api\/v1, so nothing was sent\. Remove --api-url, or set it to https:\/\/a\.example\.test\/api\/v1\.$/,
     },
   },
   {
@@ -265,7 +266,10 @@ const rows: Row[] = [
     it: "locked-a",
     login: "for-b",
     credential: "oauth",
-    expect: { code: "LOGIN_DEPLOYMENT_MISMATCH", message: /Run `mcpjam cloud login` to sign in there/ },
+    expect: {
+      code: "LOGIN_DEPLOYMENT_MISMATCH",
+      message: /Run `mcpjam cloud login` to sign in there/,
+    },
   },
   {
     name: "locked to A, signing in while the saved login is for B",
@@ -308,7 +312,8 @@ const rows: Row[] = [
     credential: "api-key",
     expect: {
       code: "MANAGED_SETTINGS_INVALID",
-      message: /^The MCPJam settings file installed by your organization \(.+it-invalid\.json\) needs "lock" set to true or false\. Until an administrator fixes it, commands that contact MCPJam stop before sending anything\.$/,
+      message:
+        /^The MCPJam settings file installed by your organization \(.+it-invalid\.json\) needs "lock" set to true or false\. Until an administrator fixes it, commands that contact MCPJam stop before sending anything\.$/,
     },
   },
   {
