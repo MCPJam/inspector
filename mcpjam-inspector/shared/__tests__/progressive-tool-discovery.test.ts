@@ -8,6 +8,7 @@ import {
   decideProgressivePlan,
   estimateTokens,
   gateToolsToActiveSubset,
+  hydrateDiscoveryStateFromHistory,
   lookupToolIdByModelName,
   META_TOOL_LOAD,
   META_TOOL_NAMES,
@@ -481,6 +482,10 @@ describe("gateToolsToActiveSubset", () => {
     const gated = gateToolsToActiveSubset(fullTools, plan, () => state);
     const exec = (gated.asana_create_task as { execute: Function }).execute;
     await expect(exec({}, {})).rejects.toThrow(/not loaded in this step/);
+    // The hint names the tool by the handle the model loads with — no id.
+    await expect(exec({}, {})).rejects.toThrow(
+      'load_mcp_tools with names=["asana_create_task"]',
+    );
   });
 
   it("executes a cataloged tool once it is loaded", async () => {
@@ -505,5 +510,40 @@ describe("gateToolsToActiveSubset", () => {
     await expect(computer({}, {})).resolves.toEqual({ ran: "computer" });
     const meta = (gated[META_TOOL_SEARCH] as { execute: Function }).execute;
     await expect(meta({}, {})).resolves.toEqual({ meta: true });
+  });
+});
+
+describe("hydrateDiscoveryStateFromHistory", () => {
+  const catalog = buildToolCatalog({
+    asana_create_task: makeMcpTool({ serverId: "asana", fields: {} }),
+    asana_get_task: makeMcpTool({ serverId: "asana", fields: {} }),
+  } as unknown as ToolSet);
+  const loadCall = (input: unknown) => ({
+    role: "assistant",
+    content: [
+      { type: "tool-call", toolCallId: "c1", toolName: META_TOOL_LOAD, input },
+    ],
+  });
+
+  it("restores tools loaded by name", () => {
+    const state = createDiscoveryState();
+    const added = hydrateDiscoveryStateFromHistory(
+      state,
+      [loadCall({ names: ["asana_create_task", "gone_tool"] })],
+      catalog,
+    );
+    expect(added).toBe(1);
+    expect([...state.loadedToolIds]).toEqual(["asana::asana_create_task"]);
+  });
+
+  it("restores tools loaded by id in chats from before the name-only change", () => {
+    const state = createDiscoveryState();
+    const added = hydrateDiscoveryStateFromHistory(
+      state,
+      [loadCall({ toolIds: ["asana::asana_get_task", "gone::tool"] })],
+      catalog,
+    );
+    expect(added).toBe(1);
+    expect([...state.loadedToolIds]).toEqual(["asana::asana_get_task"]);
   });
 });

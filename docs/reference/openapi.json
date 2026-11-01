@@ -16293,7 +16293,7 @@
           },
           "matchOptions": {
             "type": "object",
-            "description": "Absent when the case sets none — omitted from the response rather than sent as `null`."
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). Absent when the case sets none — omitted from the response rather than sent as `null`."
           },
           "assertions": {
             "type": "object",
@@ -16449,7 +16449,7 @@
           },
           "matchOptions": {
             "type": ["object", "null"],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "assertions": {
             "type": ["object", "null"],
@@ -16658,7 +16658,7 @@
           },
           "matchOptions": {
             "type": ["object", "null"],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "assertions": {
             "type": ["object", "null"],
@@ -17069,7 +17069,8 @@
                 "description": "Suite-level floor on per-case iterations: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` clears it."
               },
               "matchOptions": {
-                "type": ["object", "null"]
+                "type": ["object", "null"],
+                "description": "Suite default tool-call match options, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. Fields you omit keep their current values; `null` clears them."
               },
               "defaultAssertions": {
                 "type": ["array", "null"],
@@ -17341,7 +17342,7 @@
           },
           "matchOptions": {
             "type": "object",
-            "description": "Absent when the case sets none — omitted from the response rather than sent as `null`."
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). Absent when the case sets none — omitted from the response rather than sent as `null`."
           },
           "checks": {
             "type": "object",
@@ -17666,7 +17667,7 @@
               "object",
               "null"
             ],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "checks": {
             "type": [
@@ -18287,7 +18288,7 @@
               "object",
               "null"
             ],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "checks": {
             "type": [
@@ -18989,7 +18990,7 @@
           },
           "matchOptions": {
             "type": "object",
-            "description": "Per-case tool-call matching override, in the INTERNAL vocabulary (`toolCallOrder`, `maxExtraToolCalls`, `argumentMatching`).",
+            "description": "Per-case tool-call matching override, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object.",
             "additionalProperties": true
           },
           "predicates": {
@@ -19248,7 +19249,7 @@
                 },
                 "matchOptions": {
                   "type": "object",
-                  "description": "Per-case tool-call matching override, in the INTERNAL vocabulary (`toolCallOrder`, `maxExtraToolCalls`, `argumentMatching`).",
+                  "description": "Per-case tool-call matching override, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object.",
                   "additionalProperties": true
                 },
                 "predicates": {
@@ -19719,7 +19720,8 @@
             "description": "Suite-level floor on per-case iterations, 1–10: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` means no floor — the suite's real state, not a stand-in for 1. PATCH `null` to remove it."
           },
           "matchOptions": {
-            "type": ["object", "null"]
+            "type": ["object", "null"],
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). `null` when the suite sets none."
           },
           "checks": {
             "type": "array",
@@ -19886,7 +19888,8 @@
             "description": "Suite-level floor on per-case iterations, 1–10: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` means no floor — the suite's real state, not a stand-in for 1. PATCH `null` to remove it."
           },
           "matchOptions": {
-            "type": ["object", "null"]
+            "type": ["object", "null"],
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). `null` when the suite sets none."
           },
           "defaultAssertions": {
             "type": "array",
@@ -24394,7 +24397,8 @@
                 "description": "Suite-level floor on per-case iterations: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` clears it."
               },
               "matchOptions": {
-                "type": ["object", "null"]
+                "type": ["object", "null"],
+                "description": "Suite default tool-call match options, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. Fields you omit keep their current values; `null` clears them."
               },
               "checks": {
                 "type": ["array", "null"],
@@ -31707,7 +31711,7 @@
           },
           "modelId": {
             "type": "string",
-            "description": "Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Required on a first turn. A BARE id is rejected with `details.reason: \"MODEL_AMBIGUOUS\"` rather than guessed — an unprefixed id is indistinguishable from a local Ollama model, and guessing would spend on the wrong rail."
+            "description": "Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Optional on a first turn: defaults to the environment model, then the client model, and pins the resolved model for continuations. A BARE id is rejected with `details.reason: \"MODEL_AMBIGUOUS\"` rather than guessed — an unprefixed id is indistinguishable from a local Ollama model, and guessing would spend on the wrong rail."
           },
           "hostId": {
             "type": "string",
@@ -31723,7 +31727,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Target these project servers. Mutually exclusive with `environmentId`. First turn only. Server CONFIGS are never accepted — only ids the project already holds."
+            "description": "Target these project servers; [] explicitly selects no MCP servers and remains empty on continuation. Mutually exclusive with `environmentId`, including when empty. First turn only. Server CONFIGS are never accepted — only ids the project already holds."
           },
           "systemPrompt": {
             "type": "string",
@@ -31911,6 +31915,40 @@
           "hostId": {
             "type": "string",
             "description": "The saved host this turn executed as — the pointer the caller sent, or the host the targeted environment pins. Absent when the turn named no host."
+          },
+          "skippedServers": {
+            "type": "array",
+            "description": "Servers omitted from this turn because they could not connect. The reply still runs when every selected server is skipped.",
+            "items": {
+              "type": "object",
+              "required": [
+                "serverId",
+                "serverName",
+                "reason",
+                "message"
+              ],
+              "properties": {
+                "serverId": {
+                  "type": "string"
+                },
+                "serverName": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "hosted_requires_https",
+                    "hosted_stdio_unsupported",
+                    "needs_sign_in",
+                    "unreachable",
+                    "other"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "advertisedToolCount": {
             "type": "integer",
@@ -32206,6 +32244,9 @@
           "spanCount"
         ],
         "properties": {
+          "setupHashAtTurn": { "type": "string", "description": "Hash of a complete effective setup manifest. Absent when provenance is incomplete." },
+          "setupStatus": { "type": "string", "enum": ["complete", "incomplete"] },
+          "setupIncompleteReasons": { "type": "array", "items": { "type": "string" } },
           "turnId": {
             "type": "string"
           },

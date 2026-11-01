@@ -62,6 +62,8 @@ interface LazyServerOptions {
   weatherRequiresCity?: "rpc-error" | "tool-error";
   /** Also list `get_time`: public, read-only, and takes no arguments. */
   withNoArgPublicTool?: boolean;
+  /** The challenge points at metadata on another origin. */
+  foreignPointer?: boolean;
 }
 
 const servers: http.Server[] = [];
@@ -138,7 +140,10 @@ async function startLazyServer(options: LazyServerOptions): Promise<{
         return;
       }
 
-      const challenge = `Bearer resource_metadata="${origin}${POINTER_PATH}", scope="orders:read"`;
+      const pointer = options.foreignPointer
+        ? "https://elsewhere.invalid/prm"
+        : `${origin}${POINTER_PATH}`;
+      const challenge = `Bearer resource_metadata="${pointer}", scope="orders:read"`;
       const authed = req.headers.authorization === TOKEN;
       if (body?.method === "initialize") {
         if (options.initialize401 && !authed) {
@@ -272,7 +277,7 @@ async function startLazyServer(options: LazyServerOptions): Promise<{
           res.end();
           return;
         }
-        const metaChallenge = `Bearer resource_metadata="${origin}${POINTER_PATH}"${
+        const metaChallenge = `Bearer resource_metadata="${pointer}"${
           options.metaErrorParams === false
             ? ""
             : ', error="invalid_token", error_description="Sign in to see your orders"'
@@ -315,6 +320,34 @@ const byId = <T extends { id: string }>(findings: T[], id: string) =>
 // ── Claude ──────────────────────────────────────────────────────────────
 
 describe("Claude: the probe and the metadata only the protected call reveals", () => {
+  it("reports a refused challenge pointer instead of grading the server authless", async () => {
+    const server = await startLazyServer({
+      refusal: "bearer-401",
+      foreignPointer: true,
+    });
+    const result = gradeClaudeReadiness(
+      await gatherClaudeReadinessEvidence({
+        enteredUrl: server.url,
+        fetchFn: fetch,
+        lazyAuthProbe: {
+          enabled: true,
+          toolName: "get_my_orders",
+          publicToolName: "get_weather",
+        },
+        now: NOW,
+      }),
+    );
+    const prm = byId(result.findings, "claude.auth.prm-discoverable");
+    expect(prm.status).toBe("violated");
+    expect(prm.details).toMatchObject({
+      rejectedPointer: "https://elsewhere.invalid/prm",
+    });
+    expect(
+      byId(result.findings, "claude.auth.first-authorization-server-usable")
+        .status,
+    ).not.toBe("not-applicable");
+  });
+
   it("grades the OAuth lanes of a server whose PRM lives only at the challenge pointer", async () => {
     const server = await startLazyServer({ refusal: "bearer-401" });
 
@@ -443,6 +476,33 @@ describe("Claude: the probe and the metadata only the protected call reveals", (
 // ── OpenAI ──────────────────────────────────────────────────────────────
 
 describe("OpenAI: the runtime challenge, observed", () => {
+  it("names a refused metadata pointer instead of asking for a connect-time 401", async () => {
+    // A correct `_meta` challenge whose pointer is on another origin: the
+    // server is lazy, and the defect is the pointer.
+    const server = await startLazyServer({
+      refusal: "meta",
+      metaShape: "array",
+      foreignPointer: true,
+    });
+    const result = gradeOpenAIReadiness(
+      await gatherOpenAIReadinessEvidence({
+        target: server.url,
+        mode: "mcp-only",
+        fetchFn: fetch,
+        lazyAuthProbe: { enabled: true },
+        now: NOW,
+      }),
+    );
+    expect(byId(result.findings, "openai.auth.challenge").status).toBe(
+      "not-applicable",
+    );
+    const pointer = byId(result.findings, "openai.auth.prm-pointer");
+    expect(pointer.status).toBe("violated");
+    expect(pointer.details).toMatchObject({
+      rejectedPointer: "https://elsewhere.invalid/prm",
+    });
+  });
+
   it("satisfies runtime-challenge from a _meta array on an oauth2 tool, and grades the PRM it names", async () => {
     const server = await startLazyServer({ refusal: "meta", metaShape: "array" });
     const evidence = await gatherOpenAIReadinessEvidence({

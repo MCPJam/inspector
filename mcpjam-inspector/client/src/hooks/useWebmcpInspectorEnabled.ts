@@ -4,6 +4,7 @@ import {
   HOSTED_BROWSER_FEATURE_FLAG,
   LOCAL_BROWSER_FEATURE_FLAG,
 } from "./useComputersEnabled";
+import { useHostedBrowserAvailable } from "./useHostedBrowserAvailability";
 
 /**
  * PostHog rollout gate for the WebMCP Inspector — the `/webmcp` nav tab and
@@ -27,7 +28,12 @@ export const WEBMCP_INSPECTOR_FEATURE_FLAG = HOSTED_MODE
  * hides UI should use `useWebmcpInspectorEnabled`, which fails closed.
  */
 export function useWebmcpInspectorEnabledState(): boolean | undefined {
-  return useFeatureFlagEnabled(WEBMCP_INSPECTOR_FEATURE_FLAG);
+  const flag = useFeatureFlagEnabled(WEBMCP_INSPECTOR_FEATURE_FLAG);
+  // Hosted: the backend's answer, which also knows whether a desktop would
+  // come up. A flag-only answer showed the tab on deployments that could not
+  // launch it.
+  const hosted = useHostedBrowserAvailable("inspector");
+  return HOSTED_MODE ? hosted : flag;
 }
 
 export function useWebmcpInspectorEnabled(): boolean {

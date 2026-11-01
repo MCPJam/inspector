@@ -1,7 +1,10 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import {
+  MCP_APPS_CHECK_IDS,
+  MCP_CHECK_IDS,
   MCP_PROTOCOL_VERSIONS,
+  MCP_TASKS_CHECK_IDS,
   canRunConformance,
   oauthConformanceProfileSchema,
   type HttpServerConfig,
@@ -9,6 +12,7 @@ import {
 } from "@mcpjam/sdk";
 import "../../types/hono";
 import {
+  OAUTH_SESSION_EXPIRED_MESSAGE,
   OAuthConformanceSessionFailedError,
   OAuthConformanceSessionNotFoundError,
   UnsupportedTransportError,
@@ -73,6 +77,8 @@ const protocolSchema = z.object({
   serverId: z.string().min(1),
   /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
   protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
+  /** Run only these checks, as picked before Run; absent ⇒ all of them. */
+  checkIds: z.array(z.enum(MCP_CHECK_IDS)).min(1).optional(),
 });
 
 conformance.post("/protocol", async (c) => {
@@ -98,6 +104,7 @@ conformance.post("/protocol", async (c) => {
     const { result } = await runProtocolConformance({
       ...toHttpResolved(resolved.config as HttpServerConfig),
       protocolVersion: parsed.data.protocolVersion,
+      checkIds: parsed.data.checkIds,
     });
     return c.json({ success: true, result });
   } catch (error) {
@@ -123,6 +130,8 @@ conformance.post("/protocol", async (c) => {
 
 const appsSchema = z.object({
   serverId: z.string().min(1),
+  /** Run only these checks, as picked before Run; absent ⇒ all of them. */
+  checkIds: z.array(z.enum(MCP_APPS_CHECK_IDS)).min(1).optional(),
 });
 
 conformance.post("/apps", async (c) => {
@@ -150,7 +159,10 @@ conformance.post("/apps", async (c) => {
       (serverConfig as any).url = String(serverConfig.url);
     }
 
-    const { result } = await runAppsConformance(serverConfig);
+    const { result } = await runAppsConformance({
+      ...serverConfig,
+      ...(parsed.data.checkIds ? { checkIds: parsed.data.checkIds } : {}),
+    });
     return c.json({ success: true, result });
   } catch (error) {
     reportRouteFailure("[Conformance Apps]", error, {
@@ -178,6 +190,8 @@ const tasksSchema = z.object({
   toolName: z.string().min(1).optional(),
   toolArguments: z.record(z.string(), z.unknown()).optional(),
   pollTimeoutMs: z.number().int().positive().max(120_000).optional(),
+  /** Run only these checks, as picked before Run; absent ⇒ all of them. */
+  checkIds: z.array(z.enum(MCP_TASKS_CHECK_IDS)).min(1).optional(),
 });
 
 conformance.post("/tasks", async (c) => {
@@ -324,7 +338,7 @@ conformance.post("/oauth/authorize", async (c) => {
       return c.json(
         {
           success: false,
-          error: "Session not found or not waiting for authorization",
+          error: OAUTH_SESSION_EXPIRED_MESSAGE,
         },
         404,
       );

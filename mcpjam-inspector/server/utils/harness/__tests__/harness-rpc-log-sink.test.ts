@@ -48,6 +48,32 @@ describe("config gate", () => {
 });
 
 describe("enqueue + batched flush", () => {
+  it("keeps scoped writes on the versioned endpoint even when an old backend refuses it", async () => {
+    configure();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
+    vi.stubGlobal("fetch", fetchMock);
+    for (const scopeId of ["current-turn", undefined]) {
+      enqueueHarnessRpcLog({ serverId: "srv-a", direction: "send", loggedAt: "t", message: { id: 1 }, ...(scopeId ? { scopeId } : {}) });
+    }
+    await flushHarnessRpcLogs();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      `${CONVEX}/harness/rpc-logs/write`, `${CONVEX}/harness/rpc-logs/scoped-write`,
+    ]);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).entries[0]).not.toHaveProperty("scopeId");
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).entries[0]).toHaveProperty("scopeId", "current-turn");
+  });
+
+  it("keeps scoped reads on the versioned endpoint without retrying an unscoped read", async () => {
+    configure();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const servers = [{ serverId: "srv-a", sinceMs: 0, scopeId: "current-turn" }];
+    expect(await readCrossInstanceRpcLogs({ servers })).toEqual({ entries: [], cursors: servers });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${CONVEX}/harness/rpc-logs/scoped-read`);
+  });
+
   it("flushes buffered frames to /write tagged with this instance id", async () => {
     configure();
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
