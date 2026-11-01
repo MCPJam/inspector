@@ -1,3 +1,5 @@
+import { useBoundWidgetResources } from "../../bound-widget-resources";
+import { readResource } from "@/lib/apis/mcp-resources-api";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import React from "react";
 import { renderHook } from "@testing-library/react";
@@ -25,6 +27,9 @@ vi.mock("@/lib/config", () => ({
   VIEW_MOUNT_MODE: "write",
   VIEW_SUBDOMAINS_ENABLED: false,
 }));
+
+const boundFetch = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/session-token", () => ({ authFetch: boundFetch }));
 
 // Isolate the hook from the api/network layer.
 const listResourceTemplatesMock = vi.fn();
@@ -175,4 +180,26 @@ describe("useWidgetHost", () => {
       expect(result.current.surface.kind).toBe("scenario");
     });
   });
+});
+
+
+it("binds initial widget loading and subsequent reads to the producer, with no ambient fallback", async () => {
+  const context = { owner: { kind: "chat" as const, userId: "user", serverId: "original", connectionId: "account-a", harnessSessionId: "lane" }, parentExecutionId: "source" };
+  const Wrapper = makeWrapper({ webManaged: true });
+  const { result, unmount } = renderHook(() => {
+    const host = useWidgetHost(); const bind = useBoundWidgetResources(context);
+    if (!bind) throw new Error("Missing resource binding");
+    return bind(host);
+  }, { wrapper: ({ children }) => <React.StrictMode><Wrapper>{children}</Wrapper></React.StrictMode> });
+  boundFetch.mockResolvedValueOnce(new Response(JSON.stringify({ html: "<p>Original account</p>", csp: { connectDomains: ["https://fixture.test"] } })));
+  await expect(result.current.services.fetchWidgetContent({ serverId: "original", resourceUri: "ui://app", toolInput: {}, toolOutput: {}, toolId: "call", toolName: "app", theme: "light", cspMode: "widget-declared", injectOpenAiCompat: false })).resolves.toMatchObject({ html: "<p>Original account</p>", csp: { connectDomains: ["https://fixture.test"] } });
+  expect(JSON.parse(boundFetch.mock.calls[0][1].body)).toEqual({ context, operation: { method: "widget/content", request: expect.objectContaining({ serverId: "original", resourceUri: "ui://app" }) } });
+  boundFetch.mockResolvedValueOnce(new Response(JSON.stringify({ error: "revoked" }), { status: 409 }));
+  await expect(result.current.services.readResource("original", "test://record")).rejects.toThrow("no longer available");
+  expect(readResource).not.toHaveBeenCalled();
+  expect(JSON.parse(boundFetch.mock.calls[1][1].body).context.owner.connectionId).toBe("account-a");
+  const signal = boundFetch.mock.calls[0][1].signal;
+  unmount();
+  await Promise.resolve();
+  expect(signal.aborted).toBe(true);
 });

@@ -1,3 +1,6 @@
+import type { RetainedResourceProof } from "@/shared/retained-app-resources";
+import type { McpWidgetExecutionContext } from "@/shared/mcp-tool-origin-metadata";
+import { useBoundWidgetResources } from "./bound-widget-resources";
 import { OwnedModelApp } from "@/components/host-workspace/OwnedModelApp";
 import {
   serverDisplayName,
@@ -30,6 +33,8 @@ import type { AppToolInvocationUpdate } from "./app-tool-invocations";
 import { isFailedWidgetResult } from "./widget-result-policy";
 
 export interface WidgetReplayProps {
+  widgetContext?: McpWidgetExecutionContext;
+  resourceProof?: RetainedResourceProof;
   chatSessionId?: string;
   /** Original call attribution, already resolved from provider metadata. */
   serverId?: string;
@@ -111,6 +116,8 @@ export function WidgetReplay(props: WidgetReplayProps) {
 }
 
 function LiveWidgetReplay({
+  widgetContext,
+  resourceProof,
   chatSessionId,
   serverId: attributedServerId,
   toolName,
@@ -147,6 +154,7 @@ function LiveWidgetReplay({
   onRecorderReady,
   onReplayControllerReady,
 }: WidgetReplayProps) {
+  const bindResources = useBoundWidgetResources(widgetContext ?? resourceProof);
   const effectiveToolMeta =
     renderOverride?.toolMetadata ??
     toolMetadata ??
@@ -306,7 +314,7 @@ function LiveWidgetReplay({
       </>
     );
   return (
-    <InspectorWidgetHostProvider>
+    <InspectorWidgetHostProvider bindResources={bindResources}>
       {widget}
       {downloadConfirmDialog}
     </InspectorWidgetHostProvider>

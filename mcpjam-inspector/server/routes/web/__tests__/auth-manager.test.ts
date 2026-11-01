@@ -1,3 +1,4 @@
+import { getManagerResourceSnapshot, setManagerResourceHostConfig } from "../../../utils/mcp-connections";
 import { taskOwnerScope } from "../../../../shared/task-owner.js";
 import { taskConnectionKey } from "../../../utils/task-connection-key.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -916,12 +917,14 @@ describe("web auth manager batching", () => {
             accessLevel: "project_member",
             permissions: { chatOnly: false },
             serverConfig: {
+              updatedAt: 123,
               transportType: "http",
               url: "https://example.com/mcp",
               headers: {},
               useOAuth: true,
             },
             oauthAccessToken: "token-a",
+            oauthCredentialAuthorizedAt: 11,
             oauthConnections: [
               {
                 connectionId: a,
@@ -930,6 +933,7 @@ describe("web auth manager batching", () => {
                 accessToken: "token-a",
               },
               {
+                credentialAuthorizedAt: 22,
                 connectionId: b,
                 isDefault: false,
                 label: "B",
@@ -950,6 +954,10 @@ describe("web auth manager batching", () => {
       undefined,
       { multiConnection: true },
     );
+    setManagerResourceHostConfig(result.manager, "host-config");
+    const alternate = result.connectionsByServerId?.["server-1"].find(c => c.connectionId === b);
+    expect(alternate).toBeDefined();
+    expect(getManagerResourceSnapshot(result.manager, alternate!.key)?.credentialAuthorizedAt).toBe(22);
     expect(admissionMock).toHaveBeenCalledTimes(2);
     expect(admissionMock).toHaveBeenCalledWith(expect.objectContaining({ serverId: "server-1", connectionId: a }));
     expect(admissionMock).toHaveBeenCalledWith(expect.objectContaining({ serverId: "server-1", connectionId: b }));

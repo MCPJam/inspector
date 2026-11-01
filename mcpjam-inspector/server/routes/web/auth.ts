@@ -1,3 +1,4 @@
+import { setManagerResourceSnapshots, setManagerResourceHostConfig, type ManagerResourceSnapshot } from "../../utils/mcp-connections";
 import { taskOwnerScope } from "../../../shared/task-owner.js";
 import {
   setManagerTaskOwnerScope,
@@ -493,6 +494,7 @@ export type ConvexAuthorizeResponse = {
   };
   serverConfig: {
     credentialConfigurationId?: string;
+    updatedAt?: number;
     // The server's stored display name. Absent on older backends; a caller's
     // own `serverNames` still win (see `displayNameForServer`).
     name?: string;
@@ -2650,6 +2652,17 @@ export async function createAuthorizedManager(
   }
   if (Object.keys(connectionsByServerId).length)
     setManagerConnections(manager, connectionsByServerId);
+  const resourceSnapshots = new Map<string, ManagerResourceSnapshot>();
+  for (const [key] of connectionEntries) {
+    const connection = connectionsByKey.get(key);
+    const auth = batch.results[connection?.serverId ?? key];
+    if (!auth?.ok || auth.serverConfig.updatedAt === undefined || auth.serverConfig.httpVariant === "sse") continue;
+    const account = connection ? auth.oauthConnections?.find(c => c.connectionId === connection.connectionId) : undefined;
+    const credentialAuthorizedAt = account ? account.credentialAuthorizedAt ?? account.authorizedAt : auth.oauthCredentialAuthorizedAt ?? null;
+    if (connection && credentialAuthorizedAt === undefined) continue;
+    resourceSnapshots.set(key, {serverUpdatedAt: auth.serverConfig.updatedAt, credentialAuthorizedAt: credentialAuthorizedAt ?? null});
+  }
+  setManagerResourceSnapshots(manager, resourceSnapshots);
   setManagerOrganization(manager, batch.organizationId);
   const ownerScope = taskOwnerScope(projectId, authorizedUserId);
   if (ownerScope)
@@ -3182,6 +3195,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     },
   );
 
+  if (typeof runHostConfig?.hostConfigId === "string") setManagerResourceHostConfig(manager, runHostConfig.hostConfigId);
   return {
     manager,
     body: body as z.infer<S>,
