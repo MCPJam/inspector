@@ -1090,6 +1090,53 @@ describe("ToolsTab", () => {
       // The exact location depends on implementation
     });
 
+    it("keeps a call's error through a failed list refresh", async () => {
+      const serverConfig = createServerConfig();
+      mockListTools.mockResolvedValueOnce({
+        tools: [
+          {
+            name: "failing-tool",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+      });
+      mockExecuteToolApi.mockRejectedValue(new Error("call boom"));
+      render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
+      fireEvent.click(await screen.findByText("failing-tool"));
+      fireEvent.click(await screen.findByRole("button", { name: /^run/i }));
+      await screen.findByText(/call boom/);
+
+      mockListTools.mockRejectedValueOnce(new Error("list down"));
+      fireEvent.click(screen.getByTitle("Refresh tools"));
+      await waitFor(() => expect(mockListTools).toHaveBeenCalledTimes(2));
+      expect(screen.getByText(/call boom/)).toBeInTheDocument();
+      expect(screen.queryByText(/list down/)).not.toBeInTheDocument();
+    });
+
+    it("clears a failed list's error once the list loads", async () => {
+      const serverConfig = createServerConfig();
+      const listed = {
+        tools: [
+          {
+            name: "some-tool",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+      };
+      mockListTools
+        .mockResolvedValueOnce(listed)
+        .mockRejectedValueOnce(new Error("list down"))
+        .mockResolvedValue(listed);
+      render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
+      fireEvent.click(await screen.findByText("some-tool"));
+      fireEvent.click(screen.getByTitle("Refresh tools"));
+      await screen.findByText(/list down/);
+      fireEvent.click(screen.getByTitle("Refresh tools"));
+      await waitFor(() =>
+        expect(screen.queryByText(/list down/)).not.toBeInTheDocument(),
+      );
+    });
+
     it("displays error when tool execution fails", async () => {
       const serverConfig = createServerConfig();
 

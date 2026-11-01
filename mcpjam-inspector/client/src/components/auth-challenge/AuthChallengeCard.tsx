@@ -1,6 +1,11 @@
 import { useEffect, useState, type MouseEvent } from "react";
 import { ChevronDown, ChevronRight, LogIn } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@mcpjam/design-system/collapsible";
 import { cn } from "@/lib/utils";
 import {
   AUTH_CHALLENGE_PERMANENT_MESSAGE,
@@ -64,7 +69,8 @@ export function AuthChallengeCard({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [waitingMessage, setWaitingMessage] = useState<string>();
-  const now = useNow(true);
+  // Ticks only until the card expires; an expired card shows no countdown.
+  const now = useNow(card.expiresAt > Date.now());
   const remaining = card.expiresAt - now;
   const expired = remaining <= 0;
 
@@ -115,59 +121,56 @@ export function AuthChallengeCard({
           {waitingMessage && <p role="status">{waitingMessage}</p>}
         </div>
       </div>
-      <div className="mt-3 flex flex-wrap items-center gap-2 pl-7">
-        <Button
-          size="sm"
-          onClick={handleConnect}
-          disabled={connecting || !server}
-        >
-          Connect
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => dismissAuthChallenge(card)}
-          disabled={connecting}
-        >
-          Not now
-        </Button>
-        <button
-          type="button"
-          className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-          aria-expanded={detailsOpen}
-          onClick={() => setDetailsOpen((open) => !open)}
-        >
-          {detailsOpen ? (
-            <ChevronDown className="size-3" />
-          ) : (
-            <ChevronRight className="size-3" />
-          )}
-          Details
-        </button>
-      </div>
-      {detailsOpen ? (
-        <dl
-          className="mt-3 space-y-2 border-t border-border pt-3 pl-7 text-xs"
-          data-testid="auth-challenge-details"
-        >
-          {scope ? (
+      <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
+        <div className="mt-3 flex flex-wrap items-center gap-2 pl-7">
+          <Button
+            size="sm"
+            onClick={handleConnect}
+            disabled={connecting || !server}
+          >
+            Connect
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => dismissAuthChallenge(card)}
+            disabled={connecting}
+          >
+            Not now
+          </Button>
+          <CollapsibleTrigger className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+            {detailsOpen ? (
+              <ChevronDown className="size-3" />
+            ) : (
+              <ChevronRight className="size-3" />
+            )}
+            Details
+          </CollapsibleTrigger>
+        </div>
+        <CollapsibleContent>
+          <dl
+            className="mt-3 space-y-2 border-t border-border pt-3 pl-7 text-xs"
+            data-testid="auth-challenge-details"
+          >
+            {scope ? (
+              <div>
+                <dt className="text-muted-foreground">Requested scope</dt>
+                <dd className="font-mono break-all">{scope}</dd>
+              </div>
+            ) : null}
+            {description ? (
+              <div>
+                <dt className="text-muted-foreground">Server message</dt>
+                <dd className="break-words">{description}</dd>
+              </div>
+            ) : null}
             <div>
-              <dt className="text-muted-foreground">Requested scope</dt>
-              <dd className="font-mono break-all">{scope}</dd>
+              <dt className="text-muted-foreground">How the host handles it</dt>
+              <dd className="break-words">{card.explanation}</dd>
             </div>
-          ) : null}
-          {description ? (
-            <div>
-              <dt className="text-muted-foreground">Server message</dt>
-              <dd className="break-words">{description}</dd>
-            </div>
-          ) : null}
-          <div>
-            <dt className="text-muted-foreground">How the host handles it</dt>
-            <dd className="break-words">{card.explanation}</dd>
-          </div>
-        </dl>
-      ) : null}
+          </dl>
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 }

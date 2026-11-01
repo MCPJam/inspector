@@ -19,8 +19,10 @@ import {
 import {
   claimPendingDirectScopeStepUpReplay,
   peekPendingDirectScopeStepUpReplay,
+  SIGNED_IN_FOR_ANOTHER_REQUEST_MESSAGE,
   type DirectScopeStepUpReplayDescriptor,
 } from "../scope-step-up-replay";
+import { useAuthChallengeNoticeStore } from "../auth-challenge-chat";
 import { registerScopeStepUpHostBridge } from "../scope-step-up";
 import { authorizationFlowDigest } from "../oauth/flow-digest";
 import { persistRequestedScopes } from "../oauth/requested-scopes";
@@ -439,7 +441,7 @@ describe("auth challenge lifecycle", () => {
       // Another flow's callback does not replay it.
       expect(
         await settleSignInCallback("orders", { state: "flow-other" }),
-      ).toMatch(/not retried/);
+      ).toBe(SIGNED_IN_FOR_ANOTHER_REQUEST_MESSAGE);
       expect(peekPendingDirectScopeStepUpReplay()?.phase).toBe("awaiting_oauth");
     });
 
@@ -627,6 +629,24 @@ describe("auth challenge lifecycle", () => {
       const [card] = Object.values(useAuthChallengeCardStore.getState().cards);
       expect(card.replay).toBeUndefined();
       expect(initiateOAuthMock).not.toHaveBeenCalled();
+    });
+
+    it("records why a widget's challenge did not become a card", async () => {
+      useAuthChallengeNoticeStore.setState({ notices: {} });
+      presentWidgetAuthChallenge({
+        server,
+        signal: http401({ effectiveAuth: "bearer" }),
+        toolName: "list_orders",
+        toolCallId: "call-blocked",
+      });
+      await vi.waitFor(() =>
+        expect(
+          useAuthChallengeNoticeStore.getState().notices["call-blocked"],
+        ).toMatchObject({ reason: "auth-method-blocked" }),
+      );
+      expect(
+        useAuthChallengeNoticeStore.getState().notices["call-blocked"].action,
+      ).not.toBe("passthrough");
     });
 
     it("does nothing without a tool call to render under", async () => {

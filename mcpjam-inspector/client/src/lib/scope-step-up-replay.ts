@@ -1,4 +1,5 @@
 import type { AuthChallengeAttempt } from "@/state/oauth-orchestrator";
+import { readProjectPathSegment } from "@/lib/project-route";
 import {
   SCOPE_STEP_UP_LIVE_TTL_MS,
   type StepUpOperationKey,
@@ -106,11 +107,14 @@ function readStored(): PendingDirectScopeStepUpReplay | undefined {
   }
 }
 
+export const SAVE_CALL_FOR_SIGN_IN_FAILED_MESSAGE =
+  "MCPJam couldn’t save this call for sign-in. Please try again.";
+
 function write(value: PendingDirectScopeStepUpReplay): void {
   const raw = JSON.stringify(value);
   sessionStorage.setItem(PENDING_DIRECT_REPLAY_KEY, raw);
   if (sessionStorage.getItem(PENDING_DIRECT_REPLAY_KEY) !== raw)
-    throw new Error("MCPJam couldn’t save this call for sign-in. Please try again.");
+    throw new Error(SAVE_CALL_FOR_SIGN_IN_FAILED_MESSAGE);
 }
 
 // Calls whose sign-in this page is driving. A call saved by an earlier page
@@ -122,6 +126,11 @@ if (typeof window !== "undefined") {
   window.addEventListener("pageshow", (event) => {
     if ((event as PageTransitionEvent).persisted) drivenByThisPage.clear();
   });
+}
+
+/** The `/p/<id>` project of the current page, or "local" outside one. */
+function currentProjectSegment(): string {
+  return readProjectPathSegment(window.location.pathname) ?? "local";
 }
 
 export class PendingDirectReplayConflictError extends Error {
@@ -144,7 +153,10 @@ export function savePendingDirectScopeStepUpReplay(input: {
     !previous &&
     waiting &&
     waiting.expiresAt > now &&
-    (waiting.phase !== "awaiting_oauth" ||
+    // A signed-in call waiting to replay keeps its slot. A call this page is
+    // signing in or replaying does too; one an earlier page left waiting or
+    // replaying was abandoned.
+    (waiting.phase === "ready" ||
       (waiting.callId !== undefined && drivenByThisPage.has(waiting.callId)))
   ) {
     throw new PendingDirectReplayConflictError();
@@ -165,7 +177,7 @@ export function savePendingDirectScopeStepUpReplay(input: {
     generation: (previous?.generation ?? 0) + 1,
     projectId:
       previous?.projectId ?? input.descriptor.authAttempt?.projectId ??
-      (window.location.pathname.match(/^\/p\/([^/]+)/)?.[1] ?? "local"),
+      currentProjectSegment(),
     phase: "awaiting_oauth",
     operation: input.operation,
     descriptor: input.descriptor,
@@ -189,7 +201,7 @@ export function setPendingDirectScopeStepUpReplayFlowDigest(
 ): void {
   const pending = readStored();
   if (expected && (!pending || !sameGeneration(pending, expected)))
-    throw new Error("The pending call changed. Run it again.");
+    throw new Error("This call is no longer waiting for sign-in. Run it again.");
   if (
     !pending ||
     pending.phase !== "awaiting_oauth" ||
@@ -205,7 +217,7 @@ export function setPendingDirectScopeStepUpReplayFlowDigest(
 }
 
 export const SIGNED_IN_FOR_ANOTHER_REQUEST_MESSAGE =
-  "Signed in, but not from the request that was waiting, so the earlier call was not retried. Run it again.";
+  "Signed in. Run the call again.";
 
 /** Record which credential the pending sign-in authorizes. */
 export function setPendingDirectScopeStepUpReplayCredentialBinding(
@@ -215,7 +227,7 @@ export function setPendingDirectScopeStepUpReplayCredentialBinding(
 ): void {
   const pending = readStored();
   if (expected && (!pending || !sameGeneration(pending, expected)))
-    throw new Error("The pending call changed. Run it again.");
+    throw new Error("This call is no longer waiting for sign-in. Run it again.");
   if (!pending || pending.descriptor.serverName !== serverName) return;
   if (!expected && pending.credentialBinding) return;
   write({ ...pending, credentialBinding: binding });
@@ -297,6 +309,27 @@ export function cancelPendingDirectScopeStepUpReplay(
   sessionStorage.removeItem(PENDING_DIRECT_REPLAY_KEY);
 }
 
+/**
+ * A callback for `serverName` failed. Drop the call it was signing in for,
+ * but not one bound to another flow: an older tab's denied callback must not
+ * cancel the newer call on the same server.
+ */
+export function cancelPendingDirectScopeStepUpReplayForCallback(
+  serverName: string | undefined,
+  callbackDigest: string | undefined,
+): void {
+  const pending = readStored();
+  if (
+    !pending ||
+    pending.phase !== "awaiting_oauth" ||
+    (serverName && pending.descriptor.serverName !== serverName)
+  )
+    return;
+  // The same rule as marking it ready: an unbound call goes with the server.
+  if (pending.flowDigest && pending.flowDigest !== callbackDigest) return;
+  sessionStorage.removeItem(PENDING_DIRECT_REPLAY_KEY);
+}
+
 export function claimPendingDirectScopeStepUpReplay(input: {
   serverName: string;
   surface: DirectScopeStepUpReplayDescriptor["surface"];
@@ -306,16 +339,17 @@ export function claimPendingDirectScopeStepUpReplay(input: {
     !pending ||
     pending.phase !== "ready" ||
     (pending.projectId !== undefined && pending.projectId !==
-      (window.location.pathname.match(/^\/p\/([^/]+)/)?.[1] ?? "local")) ||
+      currentProjectSegment()) ||
     (pending.descriptor.authAttempt &&
       pending.descriptor.authAttempt.projectId !==
-        (window.location.pathname.match(/^\/p\/([^/]+)/)?.[1] ?? "local")) ||
+        currentProjectSegment()) ||
     pending.descriptor.serverName !== input.serverName ||
     pending.descriptor.surface !== input.surface
   ) {
     return undefined;
   }
   write({ ...pending, phase: "replaying" });
+  if (pending.callId) drivenByThisPage.add(pending.callId);
   return pending;
 }
 

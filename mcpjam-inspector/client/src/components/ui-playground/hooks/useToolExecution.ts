@@ -228,7 +228,11 @@ export function useToolExecution({
     [sharedAppState],
   );
 
-  const presentAuthChallengeFromResponse = useToolAuthChallengePresentation(sharedAppState, tools, setExecutionError);
+  const presentAuthChallengeFromResponse = useToolAuthChallengePresentation(
+    sharedAppState,
+    tools,
+    setExecutionError,
+  );
 
   const driveStepUpFromResponse = useCallback(
     (
@@ -241,28 +245,33 @@ export function useToolExecution({
         (response as { insufficientScope?: unknown }).insufficientScope,
       );
       const replayServer = name ? sharedAppState?.servers[name] : undefined;
-      if (name && isActionableStepUpChallenge(challenge)) {
-        savePendingDirectScopeStepUpReplay({
-          operation: {
-            resourceUrl: String((replayServer?.config as any)?.url ?? name),
-            method: "tools/call",
-            operation: toolName,
-          },
-          descriptor: {
-            kind: "tool",
-            surface: "playground",
-            serverName: name,
-            toolName,
-            parameters,
-          },
-        });
-      }
-      driveScopeStepUpFromChallenge(replayServer, challenge, {
-        method: "tools/call",
-        operation: toolName,
-      });
+      const directReplay =
+        name && isActionableStepUpChallenge(challenge)
+          ? savePendingDirectScopeStepUpReplay({
+              operation: {
+                resourceUrl: String(
+                  (replayServer?.config as any)?.url ?? name,
+                ),
+                method: "tools/call",
+                operation: toolName,
+              },
+              descriptor: {
+                kind: "tool",
+                surface: "playground",
+                serverName: name,
+                toolName,
+                parameters,
+              },
+            })
+          : undefined;
+      driveScopeStepUpFromChallenge(
+        replayServer,
+        challenge,
+        { method: "tools/call", operation: toolName },
+        directReplay ? { directReplay } : undefined,
+      );
     },
-    [sharedAppState, tools],
+    [sharedAppState],
   );
 
   const storeCompletedToolResult = useCallback(
@@ -500,7 +509,6 @@ export function useToolExecution({
       resetStepUpOnSuccess,
     ],
   );
-
 
   const injectToolResult = useCallback(
     async ({

@@ -507,8 +507,11 @@ export function settlePendingChatScopeStepUpAfterCallback(
   if (pending.serverName !== serverName) return fail("server_mismatch");
   if (pending.phase !== "awaiting_oauth") return { kind: "ignored" };
   if (pending.event.expiresAt <= Date.now()) return fail("expired");
+  // A callback that cannot be tied to this call's flow never resumes it,
+  // including when neither side has a digest.
   if (
-    (pending.flowDigest || callbackDigest) &&
+    !pending.flowDigest ||
+    !callbackDigest ||
     pending.flowDigest !== callbackDigest
   )
     return fail("flow_mismatch");

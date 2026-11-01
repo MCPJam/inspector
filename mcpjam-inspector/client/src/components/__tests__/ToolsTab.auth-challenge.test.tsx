@@ -300,19 +300,16 @@ describe("ToolsTab mid-session sign-in", () => {
     expect(mockResetAuthChallenge).not.toHaveBeenCalled();
   });
 
-  it("resets both budgets after an ordinary success", async () => {
+  it("resets the step-up budget after an ordinary success", async () => {
     mockExecuteToolApi.mockResolvedValue({
       status: "completed",
       result: { content: [{ type: "text", text: "ok" }] },
     });
     await runTool("list_orders");
-    await waitFor(() =>
-      expect(mockResetAuthChallenge).toHaveBeenCalledWith(server, {
-        method: "tools/call",
-        operation: "list_orders",
-      }, undefined),
-    );
-    expect(mockResetToolCallStepUp).toHaveBeenCalled();
+    await waitFor(() => expect(mockResetToolCallStepUp).toHaveBeenCalled());
+    // The sign-in ledger is kept per call attempt; a call that never had one
+    // has nothing there to clear.
+    expect(mockResetAuthChallenge).not.toHaveBeenCalled();
   });
 
   it.each([false, true])("keeps replay success/error visible through config refresh (error=%s)", async (failed) => {

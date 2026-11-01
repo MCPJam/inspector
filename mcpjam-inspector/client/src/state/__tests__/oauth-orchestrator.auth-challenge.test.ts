@@ -227,6 +227,26 @@ describe("applyToolCallAuthChallenge", () => {
     );
   });
 
+  it("does not start a sign-in it could not record", async () => {
+    const setItem = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("quota");
+      });
+    try {
+      await expect(
+        applyToolCallAuthChallenge(createServer(), signal(), {
+          operation: OPERATION,
+          attempt: ATTEMPT,
+          confirmed: true,
+        }),
+      ).rejects.toThrow("couldn’t save this sign-in");
+      expect(initiateOAuthMock).not.toHaveBeenCalled();
+    } finally {
+      setItem.mockRestore();
+    }
+  });
+
   it("a Back-button re-click retries instead of being refused", async () => {
     const server = createServer();
     await applyToolCallAuthChallenge(server, signal(), {
