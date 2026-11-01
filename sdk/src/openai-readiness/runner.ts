@@ -913,7 +913,15 @@ export async function gatherOpenAIReadinessEvidence(
           discovery,
           trigger.pointer
         );
-        if (rediscovered.prm && rediscovered.prm.discoveredVia !== "not-found") {
+        // Keep a rediscovery that found nothing too when the first one found
+        // nothing: it carries what following the challenge's pointer hit,
+        // including a refused pointer, which is the defect to report.
+        const firstFoundNothing =
+          !auth.prm || auth.prm.discoveredVia === "not-found";
+        if (
+          rediscovered.prm &&
+          (rediscovered.prm.discoveredVia !== "not-found" || firstFoundNothing)
+        ) {
           auth = { ...auth, ...rediscovered };
         }
         lazyAuthProbe.rediscovery = {

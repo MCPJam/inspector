@@ -277,7 +277,7 @@ async function startLazyServer(options: LazyServerOptions): Promise<{
           res.end();
           return;
         }
-        const metaChallenge = `Bearer resource_metadata="${origin}${POINTER_PATH}"${
+        const metaChallenge = `Bearer resource_metadata="${pointer}"${
           options.metaErrorParams === false
             ? ""
             : ', error="invalid_token", error_description="Sign in to see your orders"'
@@ -476,6 +476,33 @@ describe("Claude: the probe and the metadata only the protected call reveals", (
 // ── OpenAI ──────────────────────────────────────────────────────────────
 
 describe("OpenAI: the runtime challenge, observed", () => {
+  it("names a refused metadata pointer instead of asking for a connect-time 401", async () => {
+    // A correct `_meta` challenge whose pointer is on another origin: the
+    // server is lazy, and the defect is the pointer.
+    const server = await startLazyServer({
+      refusal: "meta",
+      metaShape: "array",
+      foreignPointer: true,
+    });
+    const result = gradeOpenAIReadiness(
+      await gatherOpenAIReadinessEvidence({
+        target: server.url,
+        mode: "mcp-only",
+        fetchFn: fetch,
+        lazyAuthProbe: { enabled: true },
+        now: NOW,
+      }),
+    );
+    expect(byId(result.findings, "openai.auth.challenge").status).toBe(
+      "not-applicable",
+    );
+    const pointer = byId(result.findings, "openai.auth.prm-pointer");
+    expect(pointer.status).toBe("violated");
+    expect(pointer.details).toMatchObject({
+      rejectedPointer: "https://elsewhere.invalid/prm",
+    });
+  });
+
   it("satisfies runtime-challenge from a _meta array on an oauth2 tool, and grades the PRM it names", async () => {
     const server = await startLazyServer({ refusal: "meta", metaShape: "array" });
     const evidence = await gatherOpenAIReadinessEvidence({
