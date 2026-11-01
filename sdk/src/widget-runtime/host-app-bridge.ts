@@ -353,7 +353,10 @@ export function registerHostBridgeHandlers(
       // bundler resolution (where `content` is the precise `ContentBlock` union
       // and `.text` is absent on non-text members). Runtime behavior unchanged.
       const items = content as ReadonlyArray<{ type?: string; text?: string }>;
-      const textContent = items.find((item) => item.type === "text")?.text;
+      const textContent = items
+        .filter((item) => item.type === "text" && typeof item.text === "string")
+        .map((item) => item.text)
+        .join("\n");
       if (textContent) {
         callbacks.onSendFollowUp?.(textContent);
       }
