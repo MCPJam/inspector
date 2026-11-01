@@ -954,7 +954,7 @@ describe("web auth manager batching", () => {
       undefined,
       { multiConnection: true },
     );
-    setManagerResourceHostConfig(result.manager, "host-config");
+    setManagerResourceHostConfig(result.manager, "host-config", "host");
     const alternate = result.connectionsByServerId?.["server-1"].find(c => c.connectionId === b);
     expect(alternate).toBeDefined();
     expect(getManagerResourceSnapshot(result.manager, alternate!.key)?.credentialAuthorizedAt).toBe(22);

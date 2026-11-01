@@ -1628,7 +1628,8 @@ export async function runHarnessTurn(
       // box is woken, so an unreachable server fails the turn cheaply.
       const retainedExecutor = retainedResourceExecutor({
         manager: mcpClientManager, existing: hostToolExecutor,
-        enabled: process.env.HARNESS_NATIVE_FORWARDING === "true" &&
+        enabled: harnessAdapter.id === "claude-code" && !harnessExecutionTarget &&
+          harnessMcpProxy?.plane === "web-authorized" && process.env.HARNESS_NATIVE_FORWARDING === "true" &&
           hasForwardingOrganization(mcpClientManager) && !scenarioId &&
           !evalIterationId && !journeyRunId && !!hostId,
         laneId: () => continuity?.laneId, sources: retainedResourceSources,

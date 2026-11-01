@@ -151,11 +151,11 @@ export function getManagerOrganization(
 
 export type ManagerResourceSnapshot = { serverUpdatedAt: number; credentialAuthorizedAt: number | null };
 const resourceSnapshots = new WeakMap<MCPClientManager, Map<string, ManagerResourceSnapshot>>();
-const resourceHostConfigs = new WeakMap<MCPClientManager, string>();
+const resourceHostConfigs = new WeakMap<MCPClientManager, {hostConfigId: string; hostId: string}>();
 export function setManagerResourceSnapshots(manager: MCPClientManager, snapshots: Map<string, ManagerResourceSnapshot>) { resourceSnapshots.set(manager, snapshots); }
-export function setManagerResourceHostConfig(manager: MCPClientManager, hostConfigId: string) { resourceHostConfigs.set(manager, hostConfigId); }
+export function setManagerResourceHostConfig(manager: MCPClientManager, hostConfigId: string, hostId: string) { resourceHostConfigs.set(manager, {hostConfigId, hostId}); }
 export function getManagerResourceSnapshot(manager: MCPClientManager, key: string) {
   const snapshot = resourceSnapshots.get(manager)?.get(key);
-  const hostConfigId = resourceHostConfigs.get(manager);
-  return snapshot && hostConfigId ? {...snapshot, hostConfigId} : undefined;
+  const host = resourceHostConfigs.get(manager);
+  return snapshot && host ? {...snapshot, ...host} : undefined;
 }

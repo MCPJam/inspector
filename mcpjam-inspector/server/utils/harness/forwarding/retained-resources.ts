@@ -25,6 +25,7 @@ export function readRetainedResourceScope(
   expectedDigest?: string,
   snapshot?: {
     hostConfigId: string;
+    hostId: string;
     serverUpdatedAt: number;
     credentialAuthorizedAt: number | null;
   },
@@ -97,6 +98,7 @@ export function retainedResourceExecutor(args: {
   sources: Map<string, RetainedResourcePresentation>;
 }): ModelToolExecutor | undefined {
   if (args.existing || !args.enabled) return args.existing;
+  const prepared = new Map<string, Promise<unknown>>();
   return async (execution, run) => {
     const snapshot = getManagerResourceSnapshot(
       args.manager,
@@ -112,6 +114,9 @@ export function retainedResourceExecutor(args: {
       const selected = Object.values(getManagerConnections(args.manager) ?? {})
         .flat()
         .find((connection) => connection.key === execution.serverKey);
+      const preparationKey = JSON.stringify([laneId, snapshot.hostId, snapshot.hostConfigId]);
+      if (!prepared.has(preparationKey)) prepared.set(preparationKey, requestExecutionControl({resourceOwner: {harnessSessionId: laneId, serverId: selected?.serverId ?? execution.serverKey}, operation: {kind: "prepare_resource_chat", snapshot}}, z.object({ready: z.literal(true)})));
+      await prepared.get(preparationKey);
       const scope = await readRetainedResourceScope(
         {
           harnessSessionId: laneId,

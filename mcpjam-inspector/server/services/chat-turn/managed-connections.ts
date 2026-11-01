@@ -619,7 +619,7 @@ export async function prepareManagedConnections(args: {
       ...(executionScope ? { executionScope } : {}),
     },
   );
-  if (typeof hostRuntimeConfig?.hostConfigId === "string") setManagerResourceHostConfig(manager, hostRuntimeConfig.hostConfigId);
+  if (typeof hostRuntimeConfig?.hostConfigId === "string" && typeof hostRuntimeConfig.hostId === "string") setManagerResourceHostConfig(manager, hostRuntimeConfig.hostConfigId, hostRuntimeConfig.hostId);
   connectedManager = manager;
   taskCreatedBridge?.bindOwner(hostedBody.projectId, authenticatedUserId);
   const pendingApproval = pendingStdioCommandApproval(refusedServers);

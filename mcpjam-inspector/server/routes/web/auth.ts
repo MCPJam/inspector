@@ -3195,7 +3195,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     },
   );
 
-  if (typeof runHostConfig?.hostConfigId === "string") setManagerResourceHostConfig(manager, runHostConfig.hostConfigId);
+  if (typeof runHostConfig?.hostConfigId === "string" && typeof runHostConfig.hostId === "string") setManagerResourceHostConfig(manager, runHostConfig.hostConfigId, runHostConfig.hostId);
   return {
     manager,
     body: body as z.infer<S>,

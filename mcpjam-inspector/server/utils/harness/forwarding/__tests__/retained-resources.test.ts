@@ -41,7 +41,7 @@ function producer(transport = "streamable-http") {
       },
     ],
   });
-  setManagerResourceHostConfig(manager, "original-host-config");
+  setManagerResourceHostConfig(manager, "original-host-config", "original-host");
   setManagerResourceSnapshots(
     manager,
     new Map([
@@ -92,6 +92,7 @@ it("pins the selected alias and the manager's original authorization snapshot", 
         kind: "resource_scope",
         snapshot: {
           hostConfigId: "original-host-config",
+          hostId: "original-host",
           serverUpdatedAt: 123,
           credentialAuthorizedAt: 456,
         },
