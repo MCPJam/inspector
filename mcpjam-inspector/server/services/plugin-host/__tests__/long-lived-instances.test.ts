@@ -9,6 +9,7 @@ import {
   PLUGIN_CONTEXT_REMOVAL_WINDOW,
 } from "../context.js";
 import type { PluginInstanceControlPort } from "../instance-store.js";
+import { PluginContextMemory } from "../context-memory.js";
 import { PluginInvocationError } from "../invocation.js";
 import type { DurablePluginInstanceControl } from "../../../../shared/plugin-invocation-receipts.js";
 
@@ -43,11 +44,17 @@ function store(now: () => number) {
     const row = rows.get(token);
     return row && row.expiresAt > now() ? row : undefined;
   };
+  /** As the backend: no `contextJson` unless it is newer than `known`. */
+  const reply = (row: DurablePluginInstanceControl, known?: number) => {
+    if (known === undefined || (row.contextVersion ?? 0) > known) return row;
+    const { contextJson: _held, ...rest } = row;
+    return rest;
+  };
   const port: PluginInstanceControlPort = {
-    read: async (token) => {
+    read: async (token, _signal, known) => {
       if (rows.has(token) && !live(token))
         throw new Error("INSTANCE_UNAVAILABLE");
-      return rows.get(token) ?? null;
+      return rows.has(token) ? reply(rows.get(token)!, known) : null;
     },
     issue: async () => {
       throw new Error("Unexpected ordinary issue");
@@ -81,7 +88,7 @@ function store(now: () => number) {
         throw new Error("INSTANCE_UNAVAILABLE");
       const next = { ...row, expiresAt: input.expiresAt };
       rows.set(token, next);
-      return next;
+      return reply(next, input.knownContextVersion);
     },
     writeContext: async (token, input) => {
       const before = live(token);
@@ -94,7 +101,8 @@ function store(now: () => number) {
         contextJson: input.contextJson,
       };
       rows.set(token, next);
-      return next;
+      // The port names the version it writes, so it gets no echo.
+      return reply(next, next.contextVersion);
     },
     close: async (token) => {
       rows.delete(token);
@@ -624,5 +632,219 @@ describe("long-lived App limits", () => {
         withoutRenew,
       ),
     ).rejects.toThrow("INSTANCE_RENEWAL_UNAVAILABLE");
+  });
+});
+
+describe("large App context in the durable store", () => {
+  const updateId = "6f1e1c2a-2b8d-4a63-9d2c-3c7a1f0e9b11";
+  /** Context stored at version 1, as `export()` writes it. */
+  const envelope = (text: string) =>
+    JSON.stringify({
+      version: 1,
+      revision: 1,
+      cursor: {
+        operationId: "op-1",
+        fingerprint: "a".repeat(64),
+        sequence: 1,
+        updateId,
+      },
+      context: { updateId, params: { content: [{ type: "text", text }] } },
+      removals: [],
+    });
+  const open = async (clock: () => number, text: string) => {
+    const s = store(clock);
+    const registry = new PluginInstanceRegistry(clock, 100);
+    const { token } = await registry.openActivationPersistent(
+      identity,
+      binding,
+      signal(),
+      s.port,
+    );
+    // Admitted under a client policy past MCPJam's default budgets.
+    s.rows.set(token, {
+      ...s.rows.get(token)!,
+      contextVersion: 1,
+      contextJson: envelope(text),
+    });
+    return { s, token };
+  };
+  const content = (registry: PluginInstanceRegistry, token: string) =>
+    registry.contextSnapshot(token, identity).state?.content;
+
+  it("keeps 2.5 MB through a cold restore, renewal and the next write, sending it only when needed", async () => {
+    let now = 1_000_000;
+    const clock = () => now;
+    const big = "x".repeat(2_500_000);
+    const { s, token } = await open(clock, big);
+    const read = vi.spyOn(s.port, "read");
+    const renew = vi.spyOn(s.port, "renew");
+    const cold = new PluginInstanceRegistry(clock, 100);
+    await cold.getPersistent(token, identity, signal(), s.port);
+    expect(content(cold, token)).toEqual([{ type: "text", text: big }]);
+    // Once held, a read names the version and gets no payload.
+    await cold.getPersistent(token, identity, signal(), s.port);
+    expect(read.mock.calls.map((call) => call[2])).toEqual([undefined, 1]);
+    expect(await read.mock.results[1].value).not.toHaveProperty("contextJson");
+    now += 80;
+    await cold.renewPersistent(
+      token,
+      identity,
+      signal(),
+      async () => {},
+      s.port,
+    );
+    expect(renew.mock.calls[0][1]).toMatchObject({ knownContextVersion: 1 });
+    expect(content(cold, token)).toHaveLength(1);
+    const updated = await cold.changeContextPersistent(
+      token,
+      identity,
+      {
+        kind: "update",
+        request: {
+          operationId: "op-2",
+          sequence: 2,
+          params: { content: [{ type: "text", text: "small" }] },
+        },
+      },
+      signal(),
+      async () => {},
+      s.port,
+    );
+    // The write's reply left out its envelope; the process kept its own.
+    expect(updated.snapshot.state?.content).toEqual([
+      { type: "text", text: "small" },
+    ]);
+    const fresh = new PluginInstanceRegistry(clock, 100);
+    await fresh.getPersistent(token, identity, signal(), s.port);
+    expect(content(fresh, token)).toEqual([{ type: "text", text: "small" }]);
+  });
+
+  it("reads the context again in full when its copy was released before the reply landed", async () => {
+    let now = 1_000_000;
+    const clock = () => now;
+    const { s, token } = await open(clock, "kept");
+    const registry = new PluginInstanceRegistry(clock, 100);
+    await registry.getPersistent(token, identity, signal(), s.port);
+    const read = s.port.read;
+    const known: (number | undefined)[] = [];
+    s.port.read = async (handle, abort, version) => {
+      known.push(version);
+      if (version === undefined) return read(handle, abort);
+      // Another process renewed the lease, and this one's copy expired
+      // while the reply was in flight.
+      s.rows.set(handle, { ...s.rows.get(handle)!, expiresAt: now + 500 });
+      const reply = await read(handle, abort, version);
+      now += 150;
+      return reply;
+    };
+    await registry.getPersistent(token, identity, signal(), s.port);
+    expect(known).toEqual([1, undefined]);
+    expect(content(registry, token)).toEqual([{ type: "text", text: "kept" }]);
+  });
+
+  it("asks for the context in full once its own copy has expired", async () => {
+    let now = 1_000_000;
+    const clock = () => now;
+    const { s, token } = await open(clock, "kept");
+    const registry = new PluginInstanceRegistry(clock, 100);
+    await registry.getPersistent(token, identity, signal(), s.port);
+    // Another process renewed the lease after this one's copy ran out.
+    now += 150;
+    s.rows.set(token, { ...s.rows.get(token)!, expiresAt: now + 500 });
+    const read = s.port.read;
+    const known: (number | undefined)[] = [];
+    s.port.read = async (handle, abort, version) => {
+      known.push(version);
+      return read(handle, abort, version);
+    };
+    await registry.getPersistent(token, identity, signal(), s.port);
+    expect(known).toEqual([undefined]);
+    expect(content(registry, token)).toEqual([{ type: "text", text: "kept" }]);
+  });
+});
+
+describe("App context memory in this process", () => {
+  const now = 1_000_000;
+  const clock = () => now;
+  const s = store(clock);
+  const registry = new PluginInstanceRegistry(
+    clock,
+    100,
+    512,
+    new PluginContextMemory(64 * 1024, 1024 * 1024),
+  );
+  const open = (threadId: string) =>
+    registry.openActivationPersistent(
+      identity,
+      {
+        ...binding,
+        activation: {
+          ...binding.activation,
+          selector: { kind: "thread", threadId },
+        },
+      },
+      signal(),
+      s.port,
+    );
+  const change = (
+    token: string,
+    command: Parameters<PluginInstanceRegistry["changeContextPersistent"]>[2],
+    on = registry,
+  ) =>
+    on.changeContextPersistent(
+      token,
+      identity,
+      command,
+      signal(),
+      async () => {},
+      s.port,
+    );
+  const update = (token: string, text: string, sequence = 1, on = registry) =>
+    change(
+      token,
+      {
+        kind: "update",
+        request: {
+          operationId: `op-${token.slice(0, 8)}-${sequence}`,
+          sequence,
+          params: { content: [{ type: "text", text }] },
+          attach: "user",
+        },
+      },
+      on,
+    );
+
+  it("refuses an update past the actor's budget, and frees it when an App closes", async () => {
+    const first = await open("first");
+    const second = await open("second");
+    await update(first.token, "x".repeat(40_000));
+    await expect(update(second.token, "y".repeat(30_000))).rejects.toThrow(
+      "PLUGIN_CONTEXT_MEMORY_LIMIT",
+    );
+    // Refused before the write: the stored context is unchanged.
+    expect(s.rows.get(second.token)?.contextVersion).toBe(0);
+    await registry.closePersistent(first.token, identity, signal(), s.port);
+    await update(second.token, "y".repeat(30_000));
+    expect(s.rows.get(second.token)?.contextVersion).toBe(1);
+  });
+
+  it("lets the person remove an App's context past the budget", async () => {
+    const big = await open("big");
+    const small = await open("small");
+    const updated = await update(small.token, "a");
+    // Another process stored more for this actor. Restoring it here is never
+    // refused, so the actor is now over its budget.
+    const other = new PluginInstanceRegistry(clock);
+    await update(big.token, "x".repeat(70_000), 1, other);
+    await registry.getPersistent(big.token, identity, signal(), s.port);
+    await expect(update(small.token, "b".repeat(100), 2)).rejects.toThrow(
+      "PLUGIN_CONTEXT_MEMORY_LIMIT",
+    );
+    // Removing a one-character context adds a few bytes of removal state.
+    const removed = await change(small.token, {
+      kind: "remove-all",
+      request: { operationId: "remove", basis: updated.snapshot.cursor ?? 0 },
+    });
+    expect(removed.result).toMatchObject({ outcome: "applied" });
   });
 });

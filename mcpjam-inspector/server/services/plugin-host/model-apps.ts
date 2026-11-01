@@ -1,4 +1,9 @@
-import { PluginContextWorkspace } from "./context.js";
+import {
+  PluginContextWorkspace,
+  type PluginContextRemoveAll,
+  type PluginContextUpdate,
+} from "./context.js";
+import { pluginContextMemory } from "./context-memory.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { PLUGIN_MODEL_APP_META } from "../../../shared/plugin-model-app.js";
 import type { PluginFormOwner, PluginInstanceIdentity } from "./instances.js";
@@ -36,7 +41,10 @@ export class ModelAppRegistry {
     }
   >();
   private readonly sources = new Map<string, string>();
-  constructor(private readonly ttlMs = 30 * 60_000) {}
+  constructor(
+    private readonly ttlMs = 30 * 60_000,
+    private readonly memory = pluginContextMemory,
+  ) {}
   /** Trusted completion only: callers have already passed the original model approval. */
   publish(
     result: unknown,
@@ -163,6 +171,38 @@ export class ModelAppRegistry {
       throw denied();
     return entry;
   }
+  /** A model App has no durable copy, so its context counts against this
+   * process's memory for as long as it is open. */
+  updateContext(
+    token: string,
+    actor: PluginInstanceIdentity,
+    request: PluginContextUpdate,
+  ) {
+    const { context, owner } = this.get(token, actor);
+    const bytes = Buffer.byteLength(JSON.stringify(request.params ?? null));
+    this.memory.check(owner, bytes);
+    const result = context.update(
+      owner.owner.instanceId,
+      owner.owner.generation,
+      request,
+    );
+    this.memory.hold(owner, bytes);
+    return result;
+  }
+  removeContext(
+    token: string,
+    actor: PluginInstanceIdentity,
+    request: PluginContextRemoveAll,
+  ) {
+    const { context, owner } = this.get(token, actor);
+    const result = context.removeAll(
+      owner.owner.instanceId,
+      owner.owner.generation,
+      request,
+    );
+    if (!result.snapshot.state) this.memory.hold(owner, 0);
+    return result;
+  }
   close(token: string, actor: PluginInstanceIdentity) {
     const entry = this.entries.get(token);
     if (!entry) return;
@@ -172,6 +212,7 @@ export class ModelAppRegistry {
     entry.abort.abort();
     entry.invoker.close();
     entry.context.close(entry.owner.owner.instanceId);
+    this.memory.release(entry.owner.owner.instanceId);
     // Retain source tombstones so replaying a completed tool never mints a new App.
   }
 }
