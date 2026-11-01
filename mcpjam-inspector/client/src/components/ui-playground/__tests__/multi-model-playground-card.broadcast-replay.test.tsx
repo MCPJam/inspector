@@ -4,6 +4,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MultiModelPlaygroundCard } from "../multi-model-playground-card";
 import type { MultiModelCardSummary } from "@/components/chat-v2/model-compare-card-header";
 
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => false,
+}));
+
+vi.mock("@/hooks/use-playground-hidden-environment", () => ({
+  usePlaygroundHiddenEnvironment: () => ({
+    wanted: false,
+    failed: false,
+    pluginServerIds: [],
+  }),
+}));
+
 vi.mock("use-stick-to-bottom", () => {
   const StickToBottomComponent = ({
     children,

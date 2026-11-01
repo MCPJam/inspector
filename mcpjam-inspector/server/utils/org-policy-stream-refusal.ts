@@ -34,7 +34,8 @@ export type BackendStreamFailureContext = {
  *
  * `credential_missing` is the org connection's refusal (deleted, disabled, no
  * key) only when it arrives on `/stream/org`; elsewhere the code is left to
- * the ordinary rules.
+ * the ordinary rules. `provider_not_configured` (the model's provider isn't
+ * turned on for the organization) has the same fix and the same slug.
  */
 export function orgPolicyRefusalSlug(
   code: string | undefined,
@@ -42,16 +43,22 @@ export function orgPolicyRefusalSlug(
 ): string | undefined {
   const slug = orgPolicySlugForCode(code);
   if (slug) return slug;
-  if (code === "credential_missing" && context?.endpointPath === ORG_STREAM_PATH)
+  if (
+    (code === "credential_missing" || code === "provider_not_configured") &&
+    context?.endpointPath === ORG_STREAM_PATH
+  )
     return "org/credential_missing";
   return undefined;
 }
 
 /**
- * The organization AI-key policy's refusals that are the backend working as
- * designed: the organization's own configuration said no (it requires its own
- * keys, has no default model set, its connection is gone or its key was
- * rejected) or its own provider is throttling. Recognized as expected
+ * The organization's AI configuration refusals that are the backend working
+ * as designed: the organization's own configuration said no (it requires its
+ * own keys, has no default model set, its connection is gone or its key was
+ * rejected, or the model's provider isn't turned on or has no key, which is
+ * `provider_not_configured` and outside the policy's code list) or its own
+ * provider is throttling. A failed read of a stored key is a different code,
+ * which still counts as ours. Recognized as expected
  * refusals at EVERY status — they arrive as 403, 422 and 503, not only as the
  * 200 spend-precheck shape — so none of them is captured as an MCPJam fault.
  *
@@ -72,7 +79,8 @@ const AI_POLICY_RECOGNIZED_DENIAL_CODES: ReadonlySet<string> = new Set([
   "provider_auth_failed",
   "provider_unavailable",
   "credential_missing",
-] satisfies readonly AiRefusalCode[]);
+  "provider_not_configured",
+] satisfies readonly (AiRefusalCode | "provider_not_configured")[]);
 
 /** See {@link AI_POLICY_RECOGNIZED_DENIAL_CODES}. */
 export function isAiPolicyRecognizedDenialCode(

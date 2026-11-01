@@ -211,8 +211,13 @@ export function HostConfigComparisonMatrix({
         <table
           className={cn(
             "border-collapse text-center text-[13px]",
-            mobileOptimized ? "w-max min-w-full" : "w-full",
+            mobileOptimized ? "table-fixed min-w-full" : "w-full",
           )}
+          style={
+            mobileOptimized
+              ? { width: 140 + displaySubjects.length * 132 }
+              : undefined
+          }
         >
           <colgroup>
             <col
@@ -316,13 +321,21 @@ function VerifiedAtRow({
       {subjects.map((subject) => (
         <td
           key={subject.hostId}
-          className="min-w-[220px] border-l border-border px-3 py-1.5 text-center align-top sm:px-4"
+          className={cn(
+            "border-l border-border px-3 py-1.5 text-center align-top sm:px-4",
+            mobileOptimized ? "min-w-0" : "min-w-[220px]",
+          )}
         >
           <div className="flex min-h-5 items-center justify-center">
             {isVerifiedAtStale(subject.verifiedAt) ? (
               <span
                 title={`Last checked ${formatVerifiedAt(subject.verifiedAt)}`}
-                className="inline-flex items-center gap-1 whitespace-nowrap text-[12px] leading-tight text-muted-foreground"
+                className={cn(
+                  "inline-flex items-center gap-1 text-[12px] leading-tight text-muted-foreground",
+                  mobileOptimized
+                    ? "min-w-0 whitespace-normal"
+                    : "whitespace-nowrap",
+                )}
               >
                 <TriangleAlert className="size-3.5 shrink-0" aria-hidden />
                 {STALE_VERIFIED_AT_LABEL}

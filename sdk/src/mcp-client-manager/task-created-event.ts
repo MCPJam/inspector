@@ -44,6 +44,8 @@ export type TaskCreationSurface =
  */
 export interface TaskCreatedEvent {
   identity: TaskLifecycleIdentity;
+  /** Producing host execution receipt, independent from task identity. */
+  sourceExecutionId?: string;
   wire: LiveTasksWire;
   surface: TaskCreationSurface;
   /** ISO timestamp reported by the server, not a local clock reading. */

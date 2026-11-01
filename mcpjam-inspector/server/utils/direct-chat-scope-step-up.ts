@@ -206,15 +206,16 @@ export async function resumeScopeStepUpBeforeDirectTurn(input: {
 
 export function isSuspendedScopeStepUpOutputChunk(
   chunk: UIMessageChunk,
-  toolCallId: string | undefined,
+  toolCallIds: ReadonlySet<string> | undefined,
 ): boolean {
-  if (!toolCallId) return false;
+  if (!toolCallIds?.size) return false;
   const candidate = chunk as unknown as {
     type?: unknown;
     toolCallId?: unknown;
   };
   return (
-    candidate.toolCallId === toolCallId &&
+    typeof candidate.toolCallId === "string" &&
+    toolCallIds.has(candidate.toolCallId) &&
     typeof candidate.type === "string" &&
     (candidate.type.startsWith("tool-output") ||
       candidate.type === "tool-error")

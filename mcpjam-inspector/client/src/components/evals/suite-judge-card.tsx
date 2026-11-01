@@ -42,6 +42,7 @@ export function SuiteJudgeCard({
   goalJudgeOff = false,
   requireOrgKeys = false,
   onManageOrgProviders,
+  onAddProvider,
 }: {
   slot: JudgeSlot;
   judgeConfig: EvalJudgeConfig | undefined;
@@ -62,6 +63,11 @@ export function SuiteJudgeCard({
    * while the organization requires its own keys (see `useAvailableModels`).
    */
   onManageOrgProviders?: () => void;
+  /**
+   * The same from a model search with no match, under any key policy, or
+   * `null` when the organization offers this viewer none.
+   */
+  onAddProvider: (() => void) | null;
 }) {
   if (slot === "rubricChecks") {
     return (
@@ -92,6 +98,7 @@ export function SuiteJudgeCard({
       rubricEditor={rubricEditor}
       requireOrgKeys={requireOrgKeys}
       onManageOrgProviders={onManageOrgProviders}
+      onAddProvider={onAddProvider}
     />
   );
 }
@@ -105,6 +112,7 @@ function GoalCompletionJudgeCard({
   rubricEditor,
   requireOrgKeys,
   onManageOrgProviders,
+  onAddProvider,
 }: {
   judgeConfig: EvalJudgeConfig | undefined;
   onJudgeConfigChange: (next: EvalJudgeConfig | undefined) => void;
@@ -114,6 +122,11 @@ function GoalCompletionJudgeCard({
   rubricEditor?: React.ReactNode;
   requireOrgKeys: boolean;
   onManageOrgProviders?: () => void;
+  /**
+   * The same from a model search with no match, under any key policy, or
+   * `null` when the organization offers this viewer none.
+   */
+  onAddProvider: (() => void) | null;
 }) {
   const template = judgesCapabilities?.goalCompletion.template;
   return (
@@ -135,6 +148,7 @@ function GoalCompletionJudgeCard({
         onChange={onJudgeConfigChange}
         requireOrgKeys={requireOrgKeys}
         onManageOrgProviders={onManageOrgProviders}
+        onAddProvider={onAddProvider}
       />
       {judgeAccessory}
       {rubricEditor ? (

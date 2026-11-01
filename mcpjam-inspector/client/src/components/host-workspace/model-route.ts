@@ -1,3 +1,4 @@
+import { usesMcpjamClient } from "@/shared/harness-descriptors";
 /**
  * Extension operations need the saved-server authority of the existing web
  * route. A Codex harness turn takes it too: its MCP tools run on the server
@@ -12,10 +13,11 @@ export function shouldUseOwnedExtensionModelRoute(input: {
   /** The client's OpenAI plugin extensions master switch (C1). */
   extensionsEnabled: boolean;
   harness?: string;
+  agentLoop?: string;
   hostId?: string | null;
   actorId?: string | null;
 }): boolean {
   return input.flag && input.admitted && input.extensionsEnabled &&
-    (!input.harness || input.harness === "codex") &&
+    usesMcpjamClient(input) &&
     !!input.hostId && !!input.actorId;
 }
