@@ -470,6 +470,9 @@ export function MultiModelPlaygroundCard({
   const [restoredBroadcastId] = useState(() =>
     recoveryColumn ? broadcastRequest?.id : undefined,
   );
+  const [restoredExecutionRequestId] = useState(() =>
+    recoveryColumn ? deterministicExecutionRequest?.id : undefined,
+  );
   const prepareAuthRecovery = useCallback(
     (continuationId: string) =>
       browserWorkspace
@@ -962,6 +965,7 @@ export function MultiModelPlaygroundCard({
     }
 
     lastExecutionRequestIdRef.current = deterministicExecutionRequest.id;
+    if (deterministicExecutionRequest.id === restoredExecutionRequestId) return;
 
     const deterministicOptions =
       deterministicExecutionRequest.state === "output-error"
@@ -1057,6 +1061,8 @@ export function MultiModelPlaygroundCard({
     });
   }, [
     deterministicExecutionRequest,
+    recoveryStatus,
+    restoredExecutionRequestId,
     hasTraceSnapshot,
     resolvedMcpToolResultImageRendering,
     setMessages,

@@ -909,6 +909,62 @@ describe("PlaygroundMain — multi-host render path", () => {
     }
   });
 
+  it("restores the saved servers that still exist when one was removed", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/playground?comparisonRecovery=subset-recovery",
+    );
+    sessionStorage.setItem(
+      "mcp-comparison-auth-v1:subset-recovery",
+      JSON.stringify({
+        version: 1,
+        id: "subset-recovery",
+        projectId: "local",
+        multiModelEnabled: false,
+        hostIds: [],
+        selectedServers: ["test-server", "gone-server"],
+        modelSelections: null,
+        clickedColumn: "a",
+        continuationId: "c1",
+        columns: [
+          {
+            compareId: "a",
+            order: 0,
+            kind: "model",
+            chatSessionId: "chat-a",
+            hasMessages: true,
+          },
+        ],
+      }),
+    );
+    const selector = {
+      serverConfigs: {},
+      selectedServer: "test-server",
+      selectedMultipleServers: ["test-server"],
+      isMultiSelectEnabled: true,
+      onServerChange: vi.fn(),
+      onMultiServerToggle: vi.fn(),
+      onConnect: vi.fn(),
+    };
+    try {
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          playgroundServerSelectorProps={selector}
+        />,
+      );
+      await waitFor(() =>
+        expect(capturedChatSessionOptions?.selectedServers).toEqual([
+          "test-server",
+        ]),
+      );
+    } finally {
+      sessionStorage.clear();
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
   it("does not report a failed restore when Connect saves the comparison on this page", () => {
     const view = render(<PlaygroundMain {...defaultProps} />);
     // What a comparison Connect click does just before it redirects.

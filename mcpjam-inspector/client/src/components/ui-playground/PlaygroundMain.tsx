@@ -3285,7 +3285,17 @@ export function PlaygroundMain({
         : serverName && servers[serverName]?.connectionStatus === "connected"
           ? [serverName]
           : [];
-    if (same(live, saved)) {
+    const restorable = resolveRestorableServerNames(
+      saved,
+      serversById,
+      Object.keys(servers),
+    );
+    // A saved server that was removed or renamed cannot come back, so the
+    // ones that still exist are the whole restore.
+    if (
+      same(live, saved) ||
+      (restorable.length > 0 && same(live, restorable))
+    ) {
       setComparisonServersRestored(true);
       return;
     }
@@ -3298,11 +3308,6 @@ export function PlaygroundMain({
         : serverName
           ? [serverName]
           : [];
-    const restorable = resolveRestorableServerNames(
-      saved,
-      serversById,
-      Object.keys(servers),
-    );
     if (restorable.length > 0 && same(chosen, restorable)) {
       comparisonSelectionShownRef.current = true;
     } else if (comparisonSelectionShownRef.current) {

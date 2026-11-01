@@ -206,9 +206,24 @@ const model = {
   provider: "openai" as const,
 };
 
-function Harness({ browserWorkspace, extensionBinding, selection, compareKind = "model", broadcastRequest = null, onSendReadinessChange }: {
-  broadcastRequest?: Parameters<typeof MultiModelPlaygroundCard>[0]["broadcastRequest"];
-  onSendReadinessChange?: Parameters<typeof MultiModelPlaygroundCard>[0]["onSendReadinessChange"];
+function Harness({
+  browserWorkspace,
+  extensionBinding,
+  selection,
+  compareKind = "model",
+  broadcastRequest = null,
+  deterministicExecutionRequest = null,
+  onSendReadinessChange,
+}: {
+  broadcastRequest?: Parameters<
+    typeof MultiModelPlaygroundCard
+  >[0]["broadcastRequest"];
+  deterministicExecutionRequest?: Parameters<
+    typeof MultiModelPlaygroundCard
+  >[0]["deterministicExecutionRequest"];
+  onSendReadinessChange?: Parameters<
+    typeof MultiModelPlaygroundCard
+  >[0]["onSendReadinessChange"];
   selection?: Parameters<typeof MultiModelPlaygroundCard>[0]["selection"];
   compareKind?: "model" | "host";
   browserWorkspace?: { id: string; order: number; clientCount: number };
@@ -240,7 +255,7 @@ function Harness({ browserWorkspace, extensionBinding, selection, compareKind = 
         comparisonSummaries={Object.values(summaries)}
         selectedServers={[]}
         broadcastRequest={broadcastRequest}
-        deterministicExecutionRequest={null}
+        deterministicExecutionRequest={deterministicExecutionRequest}
         stopRequestId={0}
         executionConfig={{
           systemPrompt: "",
@@ -861,6 +876,54 @@ describe("comparison redirect restoration", () => {
     expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ text: "new" }),
     );
+  });
+
+  it("applies a tool run that arrives while the column restores, and not the one already there", async () => {
+    let resolve!: (detail: unknown) => void;
+    historyDetail.mockReturnValue(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    const run = (id: number) => ({
+      id,
+      toolName: "lookup",
+      params: {},
+      result: { content: [] },
+      toolMeta: undefined,
+      toolCallId: `run-${id}`,
+    });
+    const applied = (toolCallId: string) =>
+      mockUseChatSession.setMessages.mock.calls.filter(([update]) =>
+        JSON.stringify(
+          typeof update === "function" ? update([]) : update,
+        ).includes(toolCallId),
+      ).length;
+    const workspace = { id: "group", order: 0, clientCount: 1 };
+    const view = render(
+      <Harness
+        browserWorkspace={workspace}
+        deterministicExecutionRequest={run(1)}
+      />,
+    );
+    view.rerender(
+      <Harness
+        browserWorkspace={workspace}
+        deterministicExecutionRequest={run(2)}
+      />,
+    );
+    expect(applied("run-2")).toBe(0);
+    await act(async () =>
+      resolve({
+        session: {
+          chatSessionId: "original-chat",
+          messagesBlobUrl: "https://example.test/history",
+          version: 1,
+        },
+      }),
+    );
+    await waitFor(() => expect(applied("run-2")).toBe(1));
+    expect(applied("run-1")).toBe(0);
   });
 
   it("does not send the turn already present when a column restores", async () => {
