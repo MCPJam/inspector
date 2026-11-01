@@ -62,6 +62,7 @@ import {
   clearPendingDirectScopeStepUpReplay,
   savePendingDirectScopeStepUpReplay,
   PendingDirectReplayConflictError,
+  SAVE_CALL_FOR_SIGN_IN_FAILED_MESSAGE,
   type DirectScopeStepUpReplayDescriptor,
   type PendingDirectScopeStepUpReplay,
 } from "@/lib/scope-step-up-replay";
@@ -228,6 +229,12 @@ export function ToolsTab({
   const [normalizedError, setNormalizedError] = useState<
     import("@mcpjam/sdk/browser").NormalizedError | null
   >(null);
+  // A failed tool LIST, kept apart from the call's own error: refreshing the
+  // list must neither erase the call's error nor leave its own behind.
+  const [listError, setListError] = useState<{
+    message: string;
+    normalized: import("@mcpjam/sdk/browser").NormalizedError | null;
+  } | null>(null);
   const [responseDurationMs, setResponseDurationMs] = useState<number | null>(
     null,
   );
@@ -567,10 +574,7 @@ export function ToolsTab({
       return;
     }
 
-    if (!selectedTool) {
-      setError("");
-      setNormalizedError(null);
-    }
+    setListError(null);
     setFetchingTools(true);
     if (reset) {
       resetLoadedToolState({
@@ -614,16 +618,17 @@ export function ToolsTab({
       if (fetchVersion !== toolFetchVersionRef.current) return;
       const message = err instanceof Error ? err.message : "Unknown error";
       logger.error("Failed to fetch tools", { error: message });
-      setError(message);
       // Preserve the backend-attached `normalized` block when listTools
       // threw a WebApiError, but shape-validate first. Partial payloads
       // would otherwise shadow the real `error` string at render
       // (ResultsPanel prefers normalizedError over error).
-      setNormalizedError(
-        err instanceof WebApiError && isNormalizedError(err.normalized)
-          ? err.normalized
-          : null,
-      );
+      setListError({
+        message,
+        normalized:
+          err instanceof WebApiError && isNormalizedError(err.normalized)
+            ? err.normalized
+            : null,
+      });
     } finally {
       if (fetchVersion === toolFetchVersionRef.current) {
         setFetchingTools(false);
@@ -864,7 +869,7 @@ export function ToolsTab({
             setNormalizedError(null);
             return;
           }
-          setError("MCPJam couldn’t save this call for sign-in. Please try again.");
+          setError(SAVE_CALL_FOR_SIGN_IN_FAILED_MESSAGE);
           setNormalizedError(null);
           recordChatAuthRecoveryFailure("save_failed", {
             toolCallId: options?.pendingReplay?.callId ?? replayDescriptor.authAttempt?.callId,
@@ -1254,9 +1259,7 @@ export function ToolsTab({
       onSearchQueryChange={setSearchQuery}
       onRefresh={handleToolRefresh}
       servedFromCache={servedFromCache}
-      onSelectTool={(name) => {
-          setSelectedTool(name);
-      }}
+      onSelectTool={setSelectedTool}
       savedRequests={filteredSavedRequests}
       highlightedRequestId={highlightedRequestId}
       onLoadRequest={handleLoadRequest}
@@ -1331,8 +1334,10 @@ export function ToolsTab({
       {authChallengeContent}
       <div className="min-h-0 flex-1">
         <ResultsPanel
-          error={error}
-          normalizedError={normalizedError}
+          error={error || listError?.message || ""}
+          normalizedError={
+            error ? normalizedError : (listError?.normalized ?? null)
+          }
           result={result}
           structuredContentValid={structuredContentValid}
           toolMeta={getToolMeta(lastToolName)}
