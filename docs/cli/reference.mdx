@@ -2824,7 +2824,7 @@ The `MCPJAM_API_URL` environment variable is equivalent to `--api-url`, and `MCP
 
 1. Explicit `--api-url` flag
 2. `MCPJAM_API_URL`, or `MCPJAM_BASE_URL`
-3. The server saved with the login, only when the saved login is the credential. A login saved before logins recorded their server counts as an MCPJam Cloud login, and `sk_` API keys never use the saved server.
+3. The server saved with the login, only when the saved login is the credential. A login saved before logins recorded their server counts as an MCPJam Cloud login. A login whose recorded server is not a usable address, such as one with a query that an older CLI accepted, is refused with exit `3`: run `mcpjam cloud login` again. `sk_` API keys never use the saved server.
 4. Production default (`https://app.mcpjam.com/api/v1`)
 
 A saved login is only sent to its own server. When it is the credential and the order picks another server, the command exits `3` (`LOGIN_DEPLOYMENT_MISMATCH`) before any request: run `mcpjam cloud login` for that server, or pass an `sk_` key for it. A saved login never blocks `cloud login`, which replaces it, or `cloud logout`, which contacts no server.

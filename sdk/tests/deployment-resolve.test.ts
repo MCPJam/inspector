@@ -40,6 +40,8 @@ beforeAll(async () => {
   await savedLogin("for-b-spelled", "HTTPS://B.Example.TEST:443/api/v1/");
   await savedLogin("unrecorded");
   await savedLogin("unparsable", "ftp://b.example.test/api/v1");
+  await savedLogin("with-query", `${B}/api/v1?tenant=acme`);
+  await savedLogin("not-a-url", "b.example.test");
   for (const [name, settings] of Object.entries({
     "locked-a": { version: 1, apiUrl: `${A}/api/v1`, lock: true },
     "unlocked-a": { version: 1, apiUrl: `${A}/api/v1`, lock: false },
@@ -67,7 +69,13 @@ type Row = {
   option?: string;
   env?: NodeJS.ProcessEnv;
   login?:
-    "none-saved" | "for-b" | "for-b-spelled" | "unrecorded" | "unparsable";
+    | "none-saved"
+    | "for-b"
+    | "for-b-spelled"
+    | "unrecorded"
+    | "unparsable"
+    | "with-query"
+    | "not-a-url";
   credential: DeploymentCredential;
   expect:
     { baseUrl: string; source: string } | { code: string; message?: RegExp };
@@ -204,10 +212,43 @@ const rows: Row[] = [
     expect: { baseUrl: CLOUD, source: "flag" },
   },
   {
-    name: "login whose recorded server no longer parses counts as Cloud",
+    name: "login whose recorded server is not an http(s) address is refused, not sent to Cloud",
     login: "unparsable",
     credential: "oauth",
-    expect: { baseUrl: CLOUD, source: "oauth" },
+    expect: {
+      code: "LOGIN_DEPLOYMENT_MISMATCH",
+      message: /^Your saved login records the server "ftp:\/\/b\.example\.test\/api\/v1"/,
+    },
+  },
+  {
+    name: "login an older CLI made with a query is refused, the query masked",
+    login: "with-query",
+    credential: "oauth",
+    expect: {
+      code: "LOGIN_DEPLOYMENT_MISMATCH",
+      message: /^Your saved login records the server "https:\/\/b\.example\.test\/api\/v1\?\*\*\*", which is not a usable server address\. Run `mcpjam cloud login`/,
+    },
+  },
+  {
+    name: "login whose recorded server is not a URL is refused without repeating it",
+    login: "not-a-url",
+    credential: "oauth",
+    expect: {
+      code: "LOGIN_DEPLOYMENT_MISMATCH",
+      message: /^Your saved login records a server that is not a usable server address\./,
+    },
+  },
+  {
+    name: "signing in again is never blocked by an unusable recorded server",
+    login: "with-query",
+    credential: "none",
+    expect: { baseUrl: CLOUD, source: "default" },
+  },
+  {
+    name: "an API key is never blocked by an unusable recorded server",
+    login: "with-query",
+    credential: "api-key",
+    expect: { baseUrl: CLOUD, source: "default" },
   },
   {
     name: "signing in reuses the saved login's server",

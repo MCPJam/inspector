@@ -19,6 +19,7 @@ export {
   McpjamDeploymentError,
   parseApiUrl,
   sameServer,
+  trimTrailingSlashes,
   type DeploymentAddress,
   type DeploymentErrorCode,
   type DeploymentSource,

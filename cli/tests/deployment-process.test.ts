@@ -9,7 +9,7 @@
  * controls at the end show the guard sees that traffic when it is on.
  */
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -204,6 +204,54 @@ test("cloud login --api-url A replaces a saved login for B; the sign-in provider
       "/api/v1/me": "edge-secret",
     });
     assert.deepEqual(B.requests, []);
+    assert.deepEqual(await blockedAttempts(sandbox), []);
+  }));
+
+const OFFLINE_SUITE = `schemaVersion: "1"
+mode: agentWorkflow
+reportingMode: standard
+suite:
+  id: s_offline
+  name: Offline
+target:
+  servers:
+    - name: billing
+defaults:
+  model: anthropic/claude-sonnet-4-6
+  repetitions: 1
+  passThreshold: 0.8
+  validity: {}
+cases:
+  - id: c_one
+    title: One case
+    steps:
+      - id: step-1
+        kind: prompt
+        prompt: Say hello.
+`;
+
+test("offline cloud subcommands run through a deployment refusal; --project does not", () =>
+  scenario(async () => {
+    const conflict = { MCPJAM_API_URL: apiA(), MCPJAM_BASE_URL: B.url };
+    const file = path.join(sandbox.home, "suite.yaml");
+    await writeFile(file, OFFLINE_SUITE);
+    const offline = await cli(["cloud", "eval", "validate", "--file", file], conflict);
+    assert.equal(offline.exitCode, 0, offline.stderr);
+    const live = await cli(
+      ["cloud", "eval", "validate", "--file", file, "--project", "p"],
+      conflict,
+    );
+    assert.equal(live.exitCode, 2, live.stderr);
+    assert.equal(errorCode(live), "DEPLOYMENT_CONFLICT");
+
+    await writeSavedLogin(sandbox, `${B.url}/api/v1`);
+    await mkdir(path.join(sandbox.home, ".mcpjam"), { recursive: true });
+    await writeFile(path.join(sandbox.home, ".mcpjam", "project.json"), "{}");
+    const remove = await cli(["cloud", "link", "--remove", "--here"], {
+      MCPJAM_API_URL: apiA(),
+    });
+    assert.equal(remove.exitCode, 0, remove.stderr);
+    assert.deepEqual([A.requests, B.requests], [[], []]);
     assert.deepEqual(await blockedAttempts(sandbox), []);
   }));
 
