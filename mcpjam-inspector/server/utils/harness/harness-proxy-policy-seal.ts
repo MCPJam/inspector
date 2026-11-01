@@ -28,6 +28,7 @@
  * deployment secret, purpose-isolated by the HKDF `info` string exactly as the
  * token's `purpose` claim isolates it from terminal tokens.
  */
+import { MAX_SEALED_PLAINTEXT_BYTES } from "./harness-proxy-limits.js";
 import {
   createCipheriv,
   createDecipheriv,
@@ -53,7 +54,7 @@ const IV_LENGTH = 12;
 const MIN_SECRET_LENGTH = 16;
 /** Bound the sealed plaintext. Over cap the RUN is refused at launch — never
  *  truncated: truncating a deny list silently permits the calls it dropped. */
-export const MAX_SEALED_PLAINTEXT_BYTES = 8 * 1024;
+export { MAX_SEALED_PLAINTEXT_BYTES } from "./harness-proxy-limits.js";
 /** Bound the denied-name count for the same reason. */
 export const MAX_SEALED_DENIED_TOOL_NAMES = 500;
 

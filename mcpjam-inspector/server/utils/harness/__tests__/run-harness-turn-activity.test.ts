@@ -72,6 +72,8 @@ vi.mock("../registry.js", async () => {
     })),
     getHarnessAdapter: vi.fn(() => ({
       id: "claude-code",
+      pinnedRuntimeVersion: "2.1.245",
+      forwardingRuntime: { runtimeVersion: "2.1.245", refresh: (runtime: object) => runtime },
       displayName: "Claude Code",
       defaultPermissionMode: "allow-all",
       supportsSkills: false,

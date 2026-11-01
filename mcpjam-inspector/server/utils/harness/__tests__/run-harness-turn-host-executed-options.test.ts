@@ -81,6 +81,8 @@ vi.mock("../registry.js", () => ({
   })),
   getHarnessAdapter: vi.fn((id = "codex") => ({
     id,
+    pinnedRuntimeVersion: "2.1.245",
+    forwardingRuntime: { runtimeVersion: "2.1.245", refresh: (runtime: object) => runtime },
     displayName: "Codex",
     defaultPermissionMode: "allow-all",
     approvalPermissionMode: "allow-reads",

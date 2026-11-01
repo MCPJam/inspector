@@ -3,7 +3,7 @@ import WebSocket from "ws";
 import { z } from "zod";
 import type { HarnessV1 } from "@ai-sdk/harness";
 import { withBridgeToken } from "@ai-sdk/harness/utils";
-import { MAX_SEALED_PLAINTEXT_BYTES } from "../harness-proxy-policy-seal.js";
+import { MAX_SEALED_PLAINTEXT_BYTES } from "../harness-proxy-limits.js";
 import type { HarnessMcpJson } from "../mcp-config.js";
 
 const bridgeState = z.object({
