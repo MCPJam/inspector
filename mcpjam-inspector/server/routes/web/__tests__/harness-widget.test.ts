@@ -7,6 +7,7 @@ import { ExecutionControlError } from "../../../utils/harness/forwarding/executi
 const state = vi.hoisted(() => ({
   userId: "user",
   scope: vi.fn(),
+  control: vi.fn(),
   retained: vi.fn(),
   manager: vi.fn(),
   gate: vi.fn(),
@@ -33,7 +34,7 @@ vi.mock(
     ...(await original<
       typeof import("../../../utils/harness/forwarding/execution-control.js")
     >()),
-    createExecutionControl: () => ({ widgetScope: state.scope }),
+    createExecutionControl: state.control,
   }),
 );
 vi.mock("../auth.js", async original => ({
@@ -65,6 +66,7 @@ beforeEach(() => {
   vi.stubEnv("HARNESS_NATIVE_FORWARDING", "true");
   vi.stubEnv("HARNESS_FORWARDING_ORGANIZATION_IDS", "internal");
   state.userId = "user";
+  state.control.mockImplementation(() => ({widgetScope: state.scope}));
   state.ask.mockImplementation(async ({ approvalId }) => ({
     approvalId,
     decision: "approved",
@@ -78,7 +80,7 @@ beforeEach(() => {
     organizationId: "internal",
     turnId: "turn",
     expiresAt: Date.now() + 60_000,
-    hostConfig: {},
+    hostConfig: {hostStyle:"claude"},
   });
   state.manager.mockResolvedValue({
     authorizedServerConfigs: { server: { url: "https://fixture.example/mcp" } },
@@ -144,7 +146,7 @@ it("requires the owned-input browser before opening an eliciting widget connecti
     turnId: "turn",
     chatSessionId: "chat",
     expiresAt: Date.now() + 60_000,
-    hostConfig: { clientCapabilities: { elicitation: { form: {} } } },
+    hostConfig: {hostStyle: "claude", clientCapabilities: { elicitation: { form: {} } } },
   });
   expect((await request()).status).toBe(409);
   expect(state.manager).not.toHaveBeenCalled();
@@ -163,7 +165,7 @@ it("presents parent and continuation approvals through the same widget stream", 
     turnId: "turn",
     chatSessionId: "chat",
     expiresAt: Date.now() + 60_000,
-    hostConfig: { clientCapabilities: { elicitation: { form: {} } } },
+    hostConfig: {hostStyle: "claude", clientCapabilities: { elicitation: { form: {} } } },
   });
   state.gate.mockImplementation(async ({ approval, dispatch, operation }) => {
     expect(state.inputGate.mock.calls[0][0].approval).toBe(approval);
@@ -219,12 +221,13 @@ it("does not dispatch when the approval gate refuses", async () => {
   expect(await (await request()).text()).toContain('"type":"error"');
   expect(state.dispatch).not.toHaveBeenCalled();
 });
-it("passes request cancellation to the gate without dispatch", async () => {
+it("stops cancelled requests before connecting or dispatching", async () => {
   state.gate.mockImplementation(async ({ signal }) => signal.throwIfAborted());
   const abort = new AbortController();
   abort.abort();
   await (await request(abort.signal)).text();
-  expect(state.gate.mock.calls[0][0].signal.aborted).toBe(true);
+  expect(state.gate).not.toHaveBeenCalled();
+  expect(state.connect).not.toHaveBeenCalled();
   expect(state.dispatch).not.toHaveBeenCalled();
 });
 
@@ -296,7 +299,7 @@ it("loads initial widget HTML using the same bound resource route", async () => 
 function retainedProof() {
   vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
   vi.stubEnv("HISTORY_PROVENANCE_SECRET", "retained-resource-unit-test-secret");
-  const source = {version: 1 as const, profile: "legacy-profile", toolCallId: "call", owner: {kind: "chat" as const, userId: "user", serverId: "server", connectionId: "original-account", harnessSessionId: "lane"}, digest: "original-digest", projectId: "project", chatSessionId: "chat"};
+  const source = {version: 1 as const, profile: "legacy-profile", toolCallId: "call", turnId: "real-turn", owner: {kind: "chat" as const, userId: "user", serverId: "server", connectionId: "original-account", harnessSessionId: "lane"}, digest: "original-digest", projectId: "project", chatSessionId: "chat"};
   state.retained.mockResolvedValue({binding: source, organizationId: "internal", expiresAt: Date.now() + 60000, hostConfig: {hostStyle: "claude"}});
   const claim = {toolCallId: "call", toolName: "qa_read", input: {}, output: withRetainedResourceSource({content: [{type: "text", text: "App"}]}, {...source, attestation: signAppResourceSource(historyProvenanceContextFor("project", "chat")!, source)!})};
   return {claim, signature: signToolResult(historyProvenanceContextFor("project", "chat")!, claim)!};
@@ -351,4 +354,53 @@ it("reads through the selected non-default connection's actual manager key", asy
   expect(response.status).toBe(200);
   expect(state.connect.mock.calls[0][0]).toBe("alternate");
   expect(state.read.mock.calls[0][0]).toBe("alternate");
+});
+
+
+it("routes a retained App button through the existing widget gate with its exact parent and account", async () => {
+  const proof = retainedProof();
+  const response = await harnessWidgets.request("/widget", {method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({context:proof,toolName:"write",arguments:{value:1}})});
+  expect(response.status).toBe(200);
+  expect(await response.text()).toContain('"type":"result"');
+  expect(state.control).toHaveBeenCalledWith(expect.objectContaining({retainedParent:{toolCallId:"call",turnId:"real-turn",scopeDigest:"original-digest"}}));
+  expect(state.manager.mock.calls[0][7]).toMatchObject({connectionIds:{server:"original-account"},onlySelectedConnections:true});
+  expect(state.gate).toHaveBeenCalledOnce();
+  expect(state.dispatch).toHaveBeenCalledOnce();
+});
+it("refuses retained App tools when the host disables serverTools", async () => {
+  const proof=retainedProof();
+  state.retained.mockResolvedValue({...await state.retained(),hostConfig:{hostStyle:"claude",mcpProfile:{apps:{mcpAppsOverrides:{serverTools:false}}}}});
+  const response=await harnessWidgets.request("/widget",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({context:proof,toolName:"write",arguments:{}})});
+  expect(response.status).toBe(409);
+  expect(state.gate).not.toHaveBeenCalled();
+  expect(state.dispatch).not.toHaveBeenCalled();
+});
+it("checks tool visibility again after approval before sending a retained write", async () => {
+  const proof=retainedProof();
+  state.gate.mockImplementation(async ({dispatch,operation})=>{state.tools=[{name:"write",_meta:{ui:{visibility:["model"]}}}];return dispatch(async()=>{},operation);});
+  const response=await harnessWidgets.request("/widget",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({context:proof,toolName:"write",arguments:{}})});
+  expect(await response.text()).toContain('"type":"error"');
+  expect(state.dispatch).not.toHaveBeenCalled();
+});
+
+
+it("does not write when account authority changes during the final catalog lookup", async () => {
+  const proof=retainedProof();
+  const authorized=await state.manager();
+  let lists=0;
+  authorized.manager.listTools=async()=>{if(++lists===2)state.retained.mockRejectedValue(new ExecutionControlError("scope_mismatch"));return {tools:state.tools};};
+  const response=await harnessWidgets.request("/widget",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({context:proof,toolName:"write",arguments:{}})});
+  expect(await response.text()).toContain('"type":"error"');
+  expect(lists).toBe(2);
+  expect(state.dispatch).not.toHaveBeenCalled();
+});
+it("does not open a server when the App request is cancelled during authorization", async () => {
+  const proof=retainedProof();
+  const abort=new AbortController();
+  const authorized=await state.manager();
+  state.manager.mockImplementationOnce(async()=>{abort.abort();return authorized;});
+  const response=await harnessWidgets.request(new Request("http://localhost/widget",{method:"POST",headers:{"content-type":"application/json"},signal:abort.signal,body:JSON.stringify({context:proof,toolName:"write",arguments:{}})}));
+  await response.text();
+  expect(state.connect).not.toHaveBeenCalled();
+  expect(state.dispatch).not.toHaveBeenCalled();
 });

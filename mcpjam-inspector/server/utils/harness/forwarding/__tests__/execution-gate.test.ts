@@ -466,7 +466,7 @@ describe("forwarded execution gate", () => {
   it("does not dispatch when neither the claim nor incomplete settlement can be confirmed", async () => {
     const f = fixture();
     f.control.claim.mockRejectedValueOnce(new Error("offline"));
-    f.control.settle.mockRejectedValueOnce(new Error("not dispatched"));
+    f.control.settle.mockRejectedValue(new Error("not dispatched"));
     await expect(
       executeForwardedOperation({ ...f, operation }),
     ).rejects.toThrow("Dispatch and evidence could not be confirmed");
@@ -596,4 +596,23 @@ it("observes an ask that rejects after cancellation during approval registration
     expect.any(String),
     "cancelled",
   );
+});
+
+it("settles a cancelled approval even when lost authority prevents the decision update", async () => {
+  const f=fixture(true);
+  f.control.decideApproval.mockRejectedValueOnce(new Error("account changed"));
+  await expect(executeForwardedOperation({...f,operation,approval:{binding,ask:async()=>{throw Error("owner unavailable");}}})).rejects.toThrow("account changed");
+  expect(f.control.settle).toHaveBeenCalledWith("execution",undefined,{outcome:"cancelled"});
+  expect(f.control.claim).not.toHaveBeenCalled();
+  expect(f.dispatch).not.toHaveBeenCalled();
+});
+
+it("closes an approved receipt when authority is lost before claim commits", async () => {
+  const f=fixture(true);
+  f.control.claim.mockRejectedValueOnce(new Error("scope changed before claim"));
+  f.control.settle.mockRejectedValueOnce(new Error("dispatch_mismatch"));
+  await expect(executeForwardedOperation({...f,operation,approval:{binding,ask:async r=>({approvalId:r.approvalId,decision:"approved"})}})).rejects.toThrow("scope changed before claim");
+  expect(f.control.settle).toHaveBeenNthCalledWith(1,"execution",expect.any(String),{outcome:"incomplete"});
+  expect(f.control.settle).toHaveBeenNthCalledWith(2,"execution",undefined,{outcome:"cancelled"});
+  expect(f.dispatch).not.toHaveBeenCalled();
 });
