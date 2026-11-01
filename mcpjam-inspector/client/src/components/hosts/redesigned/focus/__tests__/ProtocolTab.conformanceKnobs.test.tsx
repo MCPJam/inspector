@@ -312,10 +312,10 @@ describe("ProtocolTab mid-session sign-in controls", () => {
     expect(unauthorizedCombo()).toHaveTextContent(
       "Prompt to sign in (default)",
     );
-    expect(unauthorizedTriggerCombo()).toHaveTextContent("Any 401 (default)");
+    expect(unauthorizedTriggerCombo()).toHaveTextContent("Any sign-in request (default)");
     expect(toolResultCombo()).toHaveTextContent("Pass through (default)");
     expect(toolResultTriggerCombo()).toHaveTextContent(
-      "oauth2 + error and error_description (default)",
+      "OAuth sign-in and error details (default)",
     );
     expect(stored()).toEqual({});
     expect(screen.getByTestId("profile").textContent).toBe("<no-profile>");
@@ -329,13 +329,13 @@ describe("ProtocolTab mid-session sign-in controls", () => {
     await user.click(screen.getByRole("option", { name: "Notify" }));
     await user.click(unauthorizedTriggerCombo());
     await user.click(
-      screen.getByRole("option", { name: "Needs WWW-Authenticate: Bearer" }),
+      screen.getByRole("option", { name: "Needs a Bearer challenge" }),
     );
     await user.click(toolResultCombo());
     await user.click(screen.getByRole("option", { name: "Prompt to sign in" }));
     await user.click(toolResultTriggerCombo());
     await user.click(
-      screen.getByRole("option", { name: "Tool declares oauth2" }),
+      screen.getByRole("option", { name: "Tool supports OAuth sign-in" }),
     );
 
     expect(stored()).toEqual({

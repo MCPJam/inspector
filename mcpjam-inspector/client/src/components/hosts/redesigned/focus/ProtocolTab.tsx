@@ -124,9 +124,9 @@ const UNAUTHORIZED_CHALLENGE_TRIGGER_LABELS: Record<
   UnauthorizedChallengeTrigger,
   string
 > = {
-  any: "Any 401",
-  "bearer-header": "Needs WWW-Authenticate: Bearer",
-  "resource-metadata": "Needs resource_metadata",
+  any: "Any sign-in request",
+  "bearer-header": "Needs a Bearer challenge",
+  "resource-metadata": "Needs a resource metadata link",
 };
 
 const TOOL_RESULT_AUTH_CHALLENGE_TRIGGER_LABELS: Record<
@@ -134,8 +134,8 @@ const TOOL_RESULT_AUTH_CHALLENGE_TRIGGER_LABELS: Record<
   string
 > = {
   any: "Any",
-  "oauth2-scheme": "Tool declares oauth2",
-  "oauth2-scheme+error-params": "oauth2 + error and error_description",
+  "oauth2-scheme": "Tool supports OAuth sign-in",
+  "oauth2-scheme+error-params": "OAuth sign-in and error details",
 };
 
 const UNAUTHORIZED_CHALLENGE_DESCRIPTIONS: Record<AuthChallengeAction, string> =
@@ -173,10 +173,9 @@ const TOOL_RESULT_TRIGGER_DESCRIPTIONS: Record<
   string
 > = {
   any: "Every tool result carrying the challenge counts.",
-  "oauth2-scheme":
-    "Only counts when the tool declares an oauth2 entry in securitySchemes.",
+  "oauth2-scheme": "Only counts when the tool supports OAuth sign-in.",
   "oauth2-scheme+error-params":
-    "Only counts when the tool declares an oauth2 entry in securitySchemes and the challenge has both error and error_description.",
+    "Only counts when the tool supports OAuth sign-in and the request includes an error code and description.",
 };
 
 /** Narrow an untrusted JSON value to one of a closed set of literals. */
@@ -1492,8 +1491,9 @@ export function ProtocolTab({
               Mid-session sign-in
             </span>
             <p className="text-[11px] leading-snug text-muted-foreground">
-              What this client does when a server refuses a call until the
-              user signs in. Takes effect on the next call, with no reconnect.
+              Sets what this client does when a server refuses a call until
+              the user signs in. Applies to the next call, with no reconnect
+              needed.
             </p>
           </div>
           <div className="mt-2 flex flex-col divide-y divide-border/50 rounded-md border border-border/50">
