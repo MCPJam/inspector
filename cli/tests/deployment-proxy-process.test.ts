@@ -174,6 +174,21 @@ test(`through the proxy on Node ${NODE_VERSION}: the API and the update check tu
     assert.deepEqual(await blockedAttempts(sandbox), []);
   }));
 
+test(`a proxy given without a scheme tunnels on Node ${NODE_VERSION}; an unusable one stops nothing`, { skip: !OPENSSL }, () =>
+  scenario(async () => {
+    const run = await cli(
+      ["cloud", "whoami", "--api-url", "https://mcpjam.acme.test/api/v1", "--api-key", "sk_acme", "--format", "json"],
+      { HTTPS_PROXY: `127.0.0.1:${proxyPort}`, MCPJAM_NO_UPDATE_CHECK: "1" },
+    );
+    assert.equal(run.exitCode, 0, run.stderr);
+    assert.ok(proxied.includes("CONNECT mcpjam.acme.test:443"), proxied.join("\n"));
+
+    const help = await cli(["--help"], { HTTPS_PROXY: "socks5://127.0.0.1:1080", MCPJAM_NO_UPDATE_CHECK: "1" });
+    assert.equal(help.exitCode, 0, help.stderr);
+    assert.match(help.stderr, /HTTPS_PROXY is not an http\(s\) proxy URL/);
+    assert.deepEqual(await blockedAttempts(sandbox), []);
+  }));
+
 test(`loopback and NO_PROXY connect directly on Node ${NODE_VERSION}`, { skip: !OPENSSL }, () =>
   scenario(async () => {
     const proxyUrl = `http://127.0.0.1:${proxyPort}`;

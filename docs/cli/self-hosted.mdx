@@ -77,7 +77,7 @@ The file is invalid when it is not JSON, when `version`, `apiUrl` or `lock` is m
 
 ## Corporate proxy
 
-When `HTTPS_PROXY` or `HTTP_PROXY` is set (either case), every request the CLI process makes goes through the proxy and honors `NO_PROXY`. `localhost`, `127.0.0.1` and `[::1]` always connect directly, so local MCP servers and the local Inspector keep working.
+When `HTTPS_PROXY` or `HTTP_PROXY` is set (either case), every `fetch` request the CLI process makes goes through the proxy and honors `NO_PROXY`: MCPJam's API, model providers and MCP servers over HTTP. `localhost`, `127.0.0.1` and `[::1]` always connect directly, so local MCP servers and the local Inspector keep working. A value without a scheme, such as `proxy.corp.com:8080`, means `http://`; a value that is not an http(s) URL is ignored with a warning. Two connections do not use the proxy yet: the relay connection of `mcpjam cloud tunnel` and the `mcpjam oauth` debugging proxy.
 
 The update check runs in a separate short-lived process that uses Node.js's own proxy support. On Node.js older than 22.21, or 24.x older than 24.5, the check is skipped while a proxy is set rather than sent directly.
 
