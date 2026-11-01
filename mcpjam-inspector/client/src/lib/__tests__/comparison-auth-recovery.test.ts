@@ -5,6 +5,7 @@ import {
   prepareComparisonAuthRecovery,
   readComparisonAuthRecovery,
   clearComparisonAuthRecovery,
+  markComparisonColumnRestored,
 } from "../comparison-auth-recovery";
 
 describe("comparison OAuth restoration", () => {
@@ -47,6 +48,35 @@ describe("comparison OAuth restoration", () => {
     expect(readComparisonAuthRecovery("p1")).toBeNull();
     a();
     b();
+    layout();
+  });
+  it("clears the saved comparison once every column has restored", () => {
+    const layout = registerComparisonLayout("restored", {
+      projectId: "p1",
+      multiModelEnabled: true,
+      hostIds: [],
+      modelSelections: [],
+      selectedServers: [],
+    });
+    const lanes = ["low", "high"].map((compareId, order) =>
+      registerComparisonColumn("restored", {
+        compareId,
+        kind: "model",
+        order,
+        chatSessionId: `chat-${compareId}`,
+        hasMessages: true,
+      }),
+    );
+    expect(prepareComparisonAuthRecovery("restored", "low", "call1")).toEqual({
+      ok: true,
+    });
+    markComparisonColumnRestored("p1", { kind: "model", compareId: "low" });
+    expect(readComparisonAuthRecovery("p1")).not.toBeNull();
+    markComparisonColumnRestored("p1", { kind: "model", compareId: "high" });
+    expect(readComparisonAuthRecovery("p1")).toBeNull();
+    expect(window.location.search).toBe("");
+    expect(sessionStorage.getItem("mcp-comparison-auth-v1:restored")).toBeNull();
+    lanes.forEach((unregister) => unregister());
     layout();
   });
   it("keeps an early click retryable until every column is registered", () => {

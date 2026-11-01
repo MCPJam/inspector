@@ -2374,8 +2374,12 @@ export function PlaygroundMain({
   // Deriving this fresh from already-correct persisted data has no state
   // to fall out of sync in the first place, including across a remount.
   const isComparingHosts = canEnableMultiHost && selectedHostIds.length > 1;
+  // Whether this page load came back from a comparison's sign-in. Read once:
+  // a Connect click on this page adds the request before it redirects.
+  const [comparisonRecoveryRequested, setComparisonRecoveryRequested] =
+    useState(hasComparisonAuthRecoveryRequest);
   const comparisonRecoveryMissing =
-    hasComparisonAuthRecoveryRequest() && !comparisonRecovery;
+    comparisonRecoveryRequested && !comparisonRecovery;
   const comparisonRecoveryGroupId = comparisonRecovery?.id ?? chatSessionId;
   const comparisonLayoutRestoredRef = useRef(false);
   useEffect(() => {
@@ -3362,13 +3366,51 @@ export function PlaygroundMain({
     [playgroundServerSelectorProps, serverName, servers, serversById],
   );
 
+  const comparisonSelectionShownRef = useRef(false);
   useEffect(() => {
-    if (comparisonRecovery && !comparisonServersRestored &&
-      comparisonRecovery.selectedServers.length === multiSelectedServerNames.length &&
-      comparisonRecovery.selectedServers.every((name) => multiSelectedServerNames.includes(name))) {
+    if (!comparisonRecovery || comparisonServersRestored) return;
+    const same = (names: readonly string[], expected: readonly string[]) =>
+      names.length === expected.length &&
+      expected.every((name) => names.includes(name));
+    const saved = comparisonRecovery.selectedServers;
+    const live =
+      multiSelectedServerNames.length > 0
+        ? multiSelectedServerNames
+        : serverName && servers[serverName]?.connectionStatus === "connected"
+          ? [serverName]
+          : [];
+    if (same(live, saved)) {
+      setComparisonServersRestored(true);
+      return;
+    }
+    // Once the selector shows the saved servers, a different choice is the
+    // user's own. It wins even while a saved server never reconnects.
+    const multi = playgroundServerSelectorProps?.selectedMultipleServers;
+    const chosen =
+      Array.isArray(multi) && multi.length > 0
+        ? multi
+        : serverName
+          ? [serverName]
+          : [];
+    const restorable = resolveRestorableServerNames(
+      saved,
+      serversById,
+      Object.keys(servers),
+    );
+    if (restorable.length > 0 && same(chosen, restorable)) {
+      comparisonSelectionShownRef.current = true;
+    } else if (comparisonSelectionShownRef.current) {
       setComparisonServersRestored(true);
     }
-  }, [comparisonRecovery, comparisonServersRestored, multiSelectedServerNames]);
+  }, [
+    comparisonRecovery,
+    comparisonServersRestored,
+    multiSelectedServerNames,
+    playgroundServerSelectorProps,
+    serverName,
+    servers,
+    serversById,
+  ]);
 
   const comparisonServersRestoredRef = useRef(false);
   useEffect(() => {
@@ -3983,6 +4025,7 @@ export function PlaygroundMain({
   const resetMultiModelSessions = useCallback(() => {
     clearComparisonAuthRecovery();
     setComparisonRecovery(null);
+    setComparisonRecoveryRequested(false);
     clearMultiModelUiState();
     setMultiModelSessionGeneration((previous) => previous + 1);
   }, [clearMultiModelUiState]);

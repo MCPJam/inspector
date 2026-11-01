@@ -9,6 +9,7 @@ import {
   type ExtensionOwnerIdentity,
 } from "@/components/host-workspace/extension-owners";
 import {
+  markComparisonColumnRestored,
   readComparisonAuthRecovery,
   registerComparisonColumn,
   prepareComparisonAuthRecovery,
@@ -447,6 +448,11 @@ export function MultiModelPlaygroundCard({
   const [recoveryStatus, setRecoveryStatus] = useState<
     "loading" | "ready" | "failed"
   >(recoveryColumn ? "loading" : "ready");
+  // The turn already present when a restored column mounts is in its history.
+  // A turn sent while the column restores is new, and waits for it.
+  const [restoredBroadcastId] = useState(() =>
+    recoveryColumn ? broadcastRequest?.id : undefined,
+  );
   const prepareAuthRecovery = useCallback(
     (continuationId: string) =>
       browserWorkspace
@@ -622,6 +628,10 @@ export function MultiModelPlaygroundCard({
             recoveryResult: "column_restored",
           });
           setRecoveryStatus("ready");
+          markComparisonColumnRestored(hostedContext?.projectId ?? "local", {
+            kind: recoveryColumn.kind,
+            compareId: recoveryColumn.compareId,
+          });
         }
       })
       .catch(() => {
@@ -838,13 +848,7 @@ export function MultiModelPlaygroundCard({
   }, [modelContextQueue]);
 
   useEffect(() => {
-    if (recoveryStatus !== "ready") {
-      // Ignore a broadcast already present during restoration, including one
-      // arriving while history is loading. Only a new user turn may run.
-      if (broadcastRequest)
-        lastBroadcastRequestIdRef.current = broadcastRequest.id;
-      return;
-    }
+    if (recoveryStatus !== "ready") return;
     if (!isSessionBootstrapComplete) return;
 
     if (!broadcastRequest) {
@@ -856,6 +860,7 @@ export function MultiModelPlaygroundCard({
     }
 
     lastBroadcastRequestIdRef.current = broadcastRequest.id;
+    if (broadcastRequest.id === restoredBroadcastId) return;
 
     if (broadcastRequest.prependMessages.length > 0) {
       setMessages((previous) => [
@@ -877,6 +882,7 @@ export function MultiModelPlaygroundCard({
   }, [
     broadcastRequest,
     recoveryStatus,
+    restoredBroadcastId,
     drainModelContextQueue,
     isSessionBootstrapComplete,
     sendMessage,

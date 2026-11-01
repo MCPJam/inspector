@@ -59,10 +59,10 @@ How a host reacts to each signal is a setting on the client you are emulating. O
 
 | Setting | Options | Default |
 | --- | --- | --- |
-| **On HTTP 401** | Prompt to sign in, Notify, Pass through | Prompt to sign in |
-| **What counts as a 401 challenge** | Any 401, Needs `WWW-Authenticate: Bearer`, Needs `resource_metadata` | Any 401 |
-| **On tool-result `_meta` challenge (ChatGPT style)** | Prompt to sign in, Notify, Pass through | Pass through |
-| **What counts as a `_meta` challenge** | Any, Tool declares `oauth2`, `oauth2` + `error` and `error_description` | `oauth2` + `error` and `error_description` |
+| **When the server asks for sign-in** (HTTP 401) | Prompt to sign in, Notify, Pass through | Prompt to sign in |
+| **What counts as a server sign-in request** | Any sign-in request (any 401), Needs a Bearer challenge (`WWW-Authenticate: Bearer`), Needs a resource metadata link (`resource_metadata`) | Any sign-in request |
+| **When a tool result asks for sign-in (ChatGPT style)** (`_meta["mcp/www_authenticate"]`) | Prompt to sign in, Notify, Pass through | Pass through |
+| **What counts as a tool result sign-in request** | Any, Tool supports OAuth sign-in (declares `oauth2`), OAuth sign-in and error details (`oauth2` plus `error` and `error_description`) | OAuth sign-in and error details |
 
 The actions:
 
@@ -89,9 +89,9 @@ The host presets set these values from each vendor's published documentation. MC
 
 | Preset | Values that differ from the defaults | Source |
 | --- | --- | --- |
-| Claude, Claude Desktop | 401 trigger: Needs `WWW-Authenticate: Bearer` | Anthropic's lazy authentication guide |
-| Claude Code | On HTTP 401: Notify. 401 trigger: Needs `WWW-Authenticate: Bearer` | Anthropic's lazy authentication guide, which says Claude Code tells you to re-authenticate with `/mcp` instead of showing a Connect card, and does not retry the call |
-| ChatGPT | On tool-result `_meta` challenge: Prompt to sign in | OpenAI's Apps SDK authentication guide |
+| Claude, Claude Desktop | Server sign-in trigger: Needs a Bearer challenge | Anthropic's lazy authentication guide |
+| Claude Code | When the server asks for sign-in: Notify. Server sign-in trigger: Needs a Bearer challenge | Anthropic's lazy authentication guide, which says Claude Code tells you to re-authenticate with `/mcp` instead of showing a Connect card, and does not retry the call |
+| ChatGPT | When a tool result asks for sign-in: Prompt to sign in | OpenAI's Apps SDK authentication guide |
 
 Every other preset uses the defaults.
 
@@ -115,8 +115,8 @@ When the action is **Prompt to sign in** or **Notify**, MCPJam shows a card in p
 
 ### After you sign in
 
-- The original call resumes after sign-in using the tool-approval policy in **Clients**. OAuth does not add a separate **Run again** prompt.
-- If the server still asks for sign-in right after you signed in, MCPJam does not retry. The call fails with a message saying the server still asked for sign-in. Your account may not have access to that tool.
+- The original call runs again on its own, whether it reads or writes. It uses the tool-approval policy in **Clients**; OAuth does not add a separate **Run again** prompt.
+- If the server asks for sign-in again right after you signed in, MCPJam does not retry. The call fails with a message asking you to check that your account has access to the server, then try again.
 
 ## Which servers can sign in
 

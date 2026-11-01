@@ -905,6 +905,45 @@ describe("PlaygroundMain — multi-host render path", () => {
     }
   });
 
+  it("does not report a failed restore when Connect saves the comparison on this page", () => {
+    const view = render(<PlaygroundMain {...defaultProps} />);
+    // What a comparison Connect click does just before it redirects.
+    act(() => {
+      window.history.replaceState({}, "", "/playground?comparisonRecovery=just-saved");
+    });
+    try {
+      view.rerender(<PlaygroundMain {...defaultProps} />);
+      expect(
+        screen.queryByText(/couldn’t restore this comparison/),
+      ).not.toBeInTheDocument();
+    } finally {
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("follows a single-server change made after the saved server is back", async () => {
+    window.history.replaceState({}, "", "/playground?comparisonRecovery=single-recovery");
+    sessionStorage.setItem("mcp-comparison-auth-v1:single-recovery", JSON.stringify({
+      version: 1, id: "single-recovery", projectId: "local", multiModelEnabled: false,
+      hostIds: [], selectedServers: ["test-server"], modelSelections: null, clickedColumn: "a", continuationId: "c1",
+      columns: [{ compareId: "a", order: 0, kind: "model", chatSessionId: "chat-a", hasMessages: true }],
+    }));
+    const saved = mockSharedAppState.servers["test-server"];
+    mockSharedAppState.servers["test-server"] = { ...saved, connectionStatus: "connecting" };
+    mockSharedAppState.servers["other-server"] = { connectionStatus: "connected" };
+    try {
+      const view = render(<PlaygroundMain {...defaultProps} />);
+      expect(capturedChatSessionOptions?.selectedServers).toEqual(["test-server"]);
+      // The saved server never reconnects; the user picks another one.
+      view.rerender(<PlaygroundMain {...defaultProps} serverName="other-server" />);
+      await waitFor(() => expect(capturedChatSessionOptions?.selectedServers).toEqual(["other-server"]));
+    } finally {
+      mockSharedAppState.servers["test-server"] = saved;
+      delete mockSharedAppState.servers["other-server"];
+      sessionStorage.clear(); window.history.replaceState({}, "", "/");
+    }
+  });
+
   it("selects MCPJam as the previewed client when no current client is selected", async () => {
     multiHostFixture.multiHostEnabled = false;
     multiHostFixture.hostList = [

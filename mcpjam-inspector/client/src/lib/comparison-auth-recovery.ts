@@ -155,6 +155,28 @@ export function readComparisonAuthRecovery(
     return null;
   }
 }
+const restoredColumns = new Map<string, Set<string>>();
+/**
+ * A restored column loaded its history. Once every saved column has, the
+ * saved comparison is cleared, so a later reload starts from the current
+ * layout instead of bringing the old one back.
+ */
+export function markComparisonColumnRestored(
+  projectId: string,
+  column: Pick<ComparisonRecoveryColumn, "kind" | "compareId">,
+) {
+  const record = readComparisonAuthRecovery(projectId);
+  if (!record) return;
+  const done = restoredColumns.get(record.id) ?? new Set<string>();
+  restoredColumns.set(record.id, done);
+  done.add(`${column.kind}:${column.compareId}`);
+  if (
+    record.columns.every((lane) => done.has(`${lane.kind}:${lane.compareId}`))
+  ) {
+    restoredColumns.delete(record.id);
+    clearComparisonAuthRecovery();
+  }
+}
 export function clearComparisonAuthRecovery() {
   const url = new URL(window.location.href);
   const id = url.searchParams.get(PARAM);

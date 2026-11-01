@@ -184,7 +184,8 @@ const model = {
   provider: "openai" as const,
 };
 
-function Harness({ browserWorkspace, extensionBinding, selection, compareKind = "model" }: {
+function Harness({ browserWorkspace, extensionBinding, selection, compareKind = "model", broadcastRequest = null }: {
+  broadcastRequest?: Parameters<typeof MultiModelPlaygroundCard>[0]["broadcastRequest"];
   selection?: Parameters<typeof MultiModelPlaygroundCard>[0]["selection"];
   compareKind?: "model" | "host";
   browserWorkspace?: { id: string; order: number; clientCount: number };
@@ -214,7 +215,7 @@ function Harness({ browserWorkspace, extensionBinding, selection, compareKind = 
         selection={selection}
         comparisonSummaries={Object.values(summaries)}
         selectedServers={[]}
-        broadcastRequest={null}
+        broadcastRequest={broadcastRequest}
         deterministicExecutionRequest={null}
         stopRequestId={0}
         executionConfig={{
@@ -726,6 +727,66 @@ describe("comparison redirect restoration", () => {
     expect(mockUseChatSession.startChatWithMessages).not.toHaveBeenCalled();
     expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
   });
+  it("sends a turn that arrives while the column restores, and not the one already there", async () => {
+    let resolve!: (detail: unknown) => void;
+    historyDetail.mockReturnValue(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    const turn = (id: number, text: string) => ({
+      id,
+      text,
+      prependMessages: [],
+    });
+    const workspace = { id: "group", order: 0, clientCount: 1 };
+    const view = render(
+      <Harness browserWorkspace={workspace} broadcastRequest={turn(1, "old")} />,
+    );
+    view.rerender(
+      <Harness browserWorkspace={workspace} broadcastRequest={turn(2, "new")} />,
+    );
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    await act(async () =>
+      resolve({
+        session: {
+          chatSessionId: "original-chat",
+          messagesBlobUrl: "https://example.test/history",
+          version: 1,
+        },
+      }),
+    );
+    await waitFor(() =>
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1),
+    );
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "new" }),
+    );
+  });
+
+  it("does not send the turn already present when a column restores", async () => {
+    historyDetail.mockResolvedValue({
+      session: {
+        chatSessionId: "original-chat",
+        messagesBlobUrl: "https://example.test/history",
+        version: 1,
+      },
+    });
+    render(
+      <Harness
+        browserWorkspace={{ id: "group", order: 0, clientCount: 1 }}
+        broadcastRequest={{ id: 1, text: "old", prependMessages: [] }}
+      />,
+    );
+    await waitFor(() =>
+      expect(mockUseChatSession.loadChatSession).toHaveBeenCalled(),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("status")).not.toBeInTheDocument(),
+    );
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+  });
+
   it("shows a terminal column error when history fails", async () => {
     historyDetail.mockRejectedValue(new Error("missing history"));
     render(<Harness />);
