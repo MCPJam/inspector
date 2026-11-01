@@ -4,7 +4,6 @@ import {
   MCP_TASKS_CHECK_IDS,
   decideOutcome,
   findDeclarationViolations,
-  findCreatedTaskId,
   findRawTaskStates,
   sentRequestIds,
   validateCompletionAck,
@@ -448,40 +447,6 @@ describe("completion acknowledgements", () => {
   });
 });
 
-describe("findCreatedTaskId", () => {
-  it("finds a task in either era's shape", () => {
-    expect(
-      findCreatedTaskId({ resultType: "task", taskId: "t1", status: "working" })
-    ).toBe("t1");
-    expect(findCreatedTaskId({ task: { taskId: "t2" } })).toBe("t2");
-  });
-
-  it("treats resultType task with no id as a task", () => {
-    expect(
-      findCreatedTaskId({ resultType: "task", status: "working" })
-    ).toBeDefined();
-  });
-
-  it("does not treat a normal tool result with stray task keys as a task", () => {
-    expect(
-      findCreatedTaskId({
-        content: [{ type: "text", text: "ok" }],
-        taskId: "stray",
-        task: { taskId: "stray" },
-      })
-    ).toBeUndefined();
-  });
-
-  it("treats a full legacy task as a task even when content rides along", () => {
-    expect(
-      findCreatedTaskId({
-        content: [{ type: "text", text: "ok" }],
-        task: { taskId: "t3", status: "working" },
-      })
-    ).toBe("t3");
-  });
-});
-
 describe("shape validators", () => {
   it("requires a flat CreateTaskResult; extra fields warn instead of failing", () => {
     expect(
@@ -688,8 +653,6 @@ describe("MCPTasksConformanceTest", () => {
       "tasks-ttl-integer-shape": "passed",
       "tasks-undeclared-capability-names-requirements": "passed",
       "tasks-input-required-update-completes": "skipped",
-      // A 2025-11-25-only rule; this connection is 2026-07-28.
-      "tasks-legacy-ignores-extension-declaration": "skipped",
     });
     expect(result.passed).toBe(true);
     expect(result.discovery).toMatchObject({
@@ -864,7 +827,7 @@ describe("MCPTasksConformanceTest", () => {
     expect(check?.warnings?.[0]).toContain("pre-final draft");
   });
 
-  it("does not warn when a server merely advertises the extension on 2025-11-25", async () => {
+  it("flags a server advertising the extension on 2025-11-25 without failing", async () => {
     const manager = extensionManager({
       getNegotiatedProtocolVersion: () => "2025-11-25",
       getServerCapabilities: () => ({
@@ -899,12 +862,9 @@ describe("MCPTasksConformanceTest", () => {
       (c) => c.id === "tasks-wire-resolvable"
     );
     expect(wireCheck?.status).toBe("passed");
-    // Advertising is allowed; acting on the declaration is what SEP-2663
-    // forbids, and the dedicated check judges that.
-    expect(wireCheck?.warnings).toBeUndefined();
-    expect(
-      statusMap(result)["tasks-legacy-ignores-extension-declaration"]
-    ).toBe("passed");
+    expect(wireCheck?.warnings?.[0]).toContain(
+      "must use the 2025-11-25 tasks capability"
+    );
     expect(statusMap(result)["tasks-inline-result"]).toBe("passed");
     // Extension-only checks do not apply to the legacy wire.
     expect(statusMap(result)["tasks-undeclared-capability-rejected"]).toBe(
@@ -914,18 +874,6 @@ describe("MCPTasksConformanceTest", () => {
       "skipped"
     );
     expect(statusMap(result)["tasks-mcp-name-routing"]).toBe("skipped");
-  });
-
-  it("does not apply the 2025-11-25 declaration check to a 2026-07-28 connection", async () => {
-    const result = await runAgainst(extensionManager(), {
-      config: { toolName: "long_job", pollTimeoutMs: 500 },
-    });
-
-    expect(
-      result.checks.find(
-        (c) => c.id === "tasks-legacy-ignores-extension-declaration"
-      )
-    ).toMatchObject({ status: "skipped", skipReason: "not-applicable" });
   });
 
   it("auto-selects the probe tool on the legacy wire, where taskSupport survives", async () => {
@@ -995,7 +943,7 @@ describe("MCPTasksConformanceTest", () => {
       )
       // Eleven, not six: the gap-program checks that also need a created task
       // report the same honest gap. The SCORED tally is still six, because they
-      // are pending under `mcp-tasks@2026-10-31.1`.
+      // are pending under `mcp-tasks@2026-08-22.1`.
     ).toHaveLength(11);
     expect(result.incompleteReason).toContain("--tool-name");
     expect(result.incompleteReason).toContain("long_job");

@@ -286,7 +286,7 @@ export const TASKS_CHECK_CATALOG = {
   "tasks-wire-resolvable": {
     title: "Tasks Wire Resolvable",
     description:
-      "The negotiated protocol version and advertised capabilities resolve to exactly one tasks wire.",
+      "The negotiated protocol version and advertised capabilities resolve to exactly one tasks wire, and the server does not advertise capabilities for the other era.",
   },
   "tasks-declaration-hygiene": {
     title: "Per-Version Declaration Hygiene",
@@ -352,10 +352,5 @@ export const TASKS_CHECK_CATALOG = {
     title: "Undeclared Capability Error Names What Is Missing",
     description:
       "A -32021 rejection carries error.data.requiredCapabilities naming the capability the client failed to declare.",
-  },
-  "tasks-legacy-ignores-extension-declaration": {
-    title: "Extension Declaration Ignored On 2025-11-25",
-    description:
-      "On a 2025-11-25 connection, a tools/call that declares the tasks extension and sends no `params.task` must not come back as a task: the extension does not apply to that version.",
   },
 } as const satisfies Record<MCPTasksCheckId, ConformanceCheckInfo>;

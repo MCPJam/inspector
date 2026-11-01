@@ -2,7 +2,6 @@ export {
   MCPTasksConformanceTest,
   decideOutcome,
   describeUndeclaredProbe,
-  findCreatedTaskId,
   findDeclarationViolations,
   findRawTaskStates,
   sentRequestIds,

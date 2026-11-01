@@ -37,9 +37,6 @@ export const MCP_TASKS_CHECK_IDS = [
   "tasks-input-required-update-completes",
   "tasks-ttl-integer-shape",
   "tasks-undeclared-capability-names-requirements",
-  // Scored, unlike the block above: a SEP-2663 MUST NOT (the extension
-  // declaration does not enable tasks on 2025-11-25).
-  "tasks-legacy-ignores-extension-declaration",
 ] as const;
 
 export type MCPTasksCheckId = (typeof MCP_TASKS_CHECK_IDS)[number];

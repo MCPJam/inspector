@@ -34,12 +34,6 @@ import {
   type ExtensionTasksFixtureOptions,
   type ServedExtensionTasksFixture,
 } from "../support/extension-tasks-fixture.js";
-import {
-  LEGACY_TASK_ID,
-  serveLegacyTasksFixture,
-  type LegacyTasksFixtureOptions,
-  type ServedLegacyTasksFixture,
-} from "../support/legacy-tasks-fixture.js";
 
 /**
  * A lifecycle that reaches `completed` on the second poll with no elicitation
@@ -136,19 +130,15 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     });
     expect(result.discovery.createdTaskId).toBeTruthy();
     expect(result.checks).toHaveLength(MCP_TASKS_CHECK_IDS.length);
-    // Two skips are expected and correct: this fixture's task completes
-    // without ever asking for input, so the `input_required` round trip is not
+    // One skip is expected and correct: this fixture's task completes without
+    // ever asking for input, so the `input_required` round trip is not
     // applicable to it (a task that never asks is the normal case, not a
-    // defect), and the 2025-11-25 declaration rule does not apply to a
-    // 2026-07-28 connection. Everything else ran.
+    // defect). Everything else ran.
     expect(
       result.checks
         .filter((entry) => entry.status === "skipped")
         .map((entry) => [entry.id, entry.skipReason])
-    ).toEqual([
-      ["tasks-input-required-update-completes", "not-applicable"],
-      ["tasks-legacy-ignores-extension-declaration", "not-applicable"],
-    ]);
+    ).toEqual([["tasks-input-required-update-completes", "not-applicable"]]);
   });
 
   it("passes the undeclared-capability checks against a conformant fixture, having actually sent the probes", async () => {
@@ -219,12 +209,9 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
       "tasks-ttl-integer-shape": "passed",
       "tasks-undeclared-capability-names-requirements": "passed",
       "tasks-input-required-update-completes": "skipped",
-      // A 2025-11-25-only rule; this connection is 2026-07-28.
-      "tasks-legacy-ignores-extension-declaration": "skipped",
     });
-    // Green DESPITE the skips, because both are `not-applicable` (this task
-    // never asks for input; the declaration rule is 2025-11-25-only) rather
-    // than `could-not-run`.
+    // Green DESPITE the skip, because the skipped check is `not-applicable`
+    // (this task never asks for input) rather than `could-not-run`.
     expect(result.passed).toBe(true);
     expect(result.profile).toMatchObject({
       profileId: "mcp-tasks",
@@ -342,15 +329,12 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
       "tasks-wire-resolvable",
     ]);
     expect(unrunChecks(result)).toHaveLength(11);
-    // The only inapplicable check is the 2025-11-25-only declaration rule.
     expect(
-      result.checks
-        .filter(
-          (entry) =>
-            entry.status === "skipped" && entry.skipReason === "not-applicable"
-        )
-        .map((entry) => entry.id)
-    ).toEqual(["tasks-legacy-ignores-extension-declaration"]);
+      result.checks.filter(
+        (entry) =>
+          entry.status === "skipped" && entry.skipReason === "not-applicable"
+      )
+    ).toHaveLength(0);
 
     // The reason has to tell the user what to do and why the runner could not
     // do it for them.
@@ -360,7 +344,7 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     expect(result.incompleteReason).toContain("2026-07-28");
     expect(result.incompleteReason).toContain(TASK_TOOL_NAME);
     // The SUMMARY counts only the scored checks, so it still reads 6: the five
-    // new task-dependent gaps are pending under `mcp-tasks@2026-10-31.1`.
+    // new task-dependent gaps are pending under `mcp-tasks@2026-08-22.1`.
     expect(result.summary).toContain("6 could not run");
     expect(result.summary).toContain("pending");
     expect(result.categorySummary.creation.couldNotRun).toBe(2);
@@ -449,77 +433,4 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
       true
     );
   }, 20_000);
-});
-
-describe("MCPTasksConformanceTest against the 2025-11-25 legacy fixture", () => {
-  const LEGACY_CHECK = "tasks-legacy-ignores-extension-declaration";
-  const legacyOpened: ServedLegacyTasksFixture[] = [];
-
-  afterEach(async () => {
-    for (const fixture of legacyOpened.splice(0)) {
-      await fixture.close().catch(() => {});
-    }
-  });
-
-  async function serveLegacy(
-    options: LegacyTasksFixtureOptions = {}
-  ): Promise<ServedLegacyTasksFixture> {
-    const fixture = await serveLegacyTasksFixture(options);
-    legacyOpened.push(fixture);
-    return fixture;
-  }
-
-  // No toolName: on 2025-11-25 `execution.taskSupport` survives, so the
-  // runner picks the fixture's tool itself.
-  function runLegacy(
-    fixture: ServedLegacyTasksFixture
-  ): Promise<MCPTasksConformanceResult> {
-    return new MCPTasksConformanceTest({
-      url: fixture.url,
-      mcpProtocolVersion: "2025-11-25",
-      timeout: 10_000,
-      pollTimeoutMs: 5_000,
-    } as never).run();
-  }
-
-  /** `tools/call`s that declared the extension and sent no `params.task`. */
-  function declaringCalls(fixture: ServedLegacyTasksFixture) {
-    return fixture.received.filter(
-      (entry) =>
-        entry.method === "tools/call" &&
-        declaresTasksExtension(entry.params) &&
-        entry.params?.task === undefined
-    );
-  }
-
-  it("passes when the server ignores the declaration, having actually sent it", async () => {
-    const fixture = await serveLegacy();
-    const result = await runLegacy(fixture);
-
-    expect(check(result, LEGACY_CHECK).status).toBe("passed");
-    expect(declaringCalls(fixture)).toHaveLength(1);
-    // The probe declares the extension on purpose, so hygiene must not
-    // count it against the client.
-    expect(check(result, "tasks-declaration-hygiene").status).toBe("passed");
-  });
-
-  it("fails, and counts, when a declaring tools/call comes back as a task", async () => {
-    const fixture = await serveLegacy({ honorExtensionDeclaration: true });
-    const result = await runLegacy(fixture);
-
-    const verdict = check(result, LEGACY_CHECK);
-    expect(verdict.status).toBe("failed");
-    expect(verdict.details).toMatchObject({ taskId: LEGACY_TASK_ID });
-    // Scored, not pending: a MUST NOT.
-    expect(result.profile?.pendingCheckIds ?? []).not.toContain(LEGACY_CHECK);
-    expect(result.passed).toBe(false);
-  });
-
-  it("does not warn when the server only advertises the extension", async () => {
-    const fixture = await serveLegacy({ advertiseTasksExtension: true });
-    const result = await runLegacy(fixture);
-
-    expect(check(result, "tasks-wire-resolvable").warnings).toBeUndefined();
-    expect(check(result, LEGACY_CHECK).status).toBe("passed");
-  });
 });
