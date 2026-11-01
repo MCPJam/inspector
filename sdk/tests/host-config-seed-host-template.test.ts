@@ -10,6 +10,7 @@ import {
 import { XAA_MCP_EXTENSION } from "../src/xaa/mcp-init.js";
 import { readXaaEnterprisePolicy } from "../src/xaa/enterprise-policy.js";
 import { canonicalizeHostConfigV2 } from "../src/host-config/internal.js";
+import { BUNDLED_HOST_COMPAT_CATALOG } from "../src/host-compat/catalog.generated.js";
 
 const ALL_IDS: HostTemplateId[] = [
   "mcpjam",
@@ -51,6 +52,23 @@ describe("seedHostTemplate", () => {
   // differ from the absent value, and every other persona leaves all four
   // absent. Values come from docs, not a probe, so re-check them when a
   // manual measurement pass lands.
+  // A template and the shipped host catalog describe the same host, so the
+  // same "Claude" must start sign-in on the same 401 either way.
+  it.each(["claude", "claude-desktop", "claude-code"] as const)(
+    "seeds the %s sign-in trigger the bundled host catalog ships",
+    (id) => {
+      const catalogProfile = (
+        BUNDLED_HOST_COMPAT_CATALOG.hostsById as Record<
+          string,
+          { mcpProfile?: { unauthorizedChallengeTrigger?: string } }
+        >
+      )[id]?.mcpProfile;
+      expect(seedHostTemplate(id).mcpProfile?.unauthorizedChallengeTrigger).toBe(
+        catalogProfile?.unauthorizedChallengeTrigger
+      );
+    }
+  );
+
   it("seeds the documented sign-in knobs, and only on Claude, Claude Code and ChatGPT", () => {
     const KEYS = [
       "unauthorizedChallenge",
@@ -59,8 +77,8 @@ describe("seedHostTemplate", () => {
       "toolResultAuthChallengeTrigger",
     ] as const;
     const expected: Partial<Record<HostTemplateId, Record<string, string>>> = {
-      claude: { unauthorizedChallengeTrigger: "resource-metadata" },
-      "claude-desktop": { unauthorizedChallengeTrigger: "resource-metadata" },
+      claude: { unauthorizedChallengeTrigger: "bearer-header" },
+      "claude-desktop": { unauthorizedChallengeTrigger: "bearer-header" },
       "claude-code": {
         unauthorizedChallenge: "notify",
         unauthorizedChallengeTrigger: "bearer-header",
