@@ -1,3 +1,4 @@
+import { assertNativeDiscovery } from "../../utils/harness/native-discovery.js";
 import { buildSetupManifest } from "../../services/chat-turn/setup-manifest.js";
 import {
   resolveChatSessionEnvironment,
@@ -1199,6 +1200,7 @@ async function handleTurn(c: Context): Promise<Response> {
       assertUnambiguousModelId(fallback);
       pins.modelId = fallback;
     }
+    assertNativeDiscovery({ required: existing?.resumeConfig?.requireNativeToolDiscovery === true || target.resolvedEnvironment?.host.runtimeConfig.requireNativeToolDiscovery === true || target.host?.runtimeConfig.requireNativeToolDiscovery === true });
     const resolvedModelDefinition = await resolveHostModelDefinition({
       modelId: pins.modelId,
       projectId,

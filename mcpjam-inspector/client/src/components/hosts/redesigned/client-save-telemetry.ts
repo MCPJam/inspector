@@ -234,6 +234,8 @@ const CLIENT_SETTING_DETECTORS = {
     "tool_visibility",
     (config) => config.respectToolVisibility,
   ),
+  // Backend-only requirement; the editor has no control that changes it.
+  requireNativeToolDiscovery: () => [],
   progressiveToolDiscovery: one(
     "progressive_tool_discovery",
     (config) => config.progressiveToolDiscovery,

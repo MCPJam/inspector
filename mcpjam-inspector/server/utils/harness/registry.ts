@@ -1053,6 +1053,7 @@ const codexAdapter: HarnessRuntimeAdapter = {
   mcpDelivery: HARNESS_MCP_DELIVERY.codex,
   forwardingRuntime: {
     runtimeVersion: "0.163.0",
+    configurationVersion: "native-mcp-v1",
     correlationKey: "callId",
     ownedInput: true,
     refresh: withForwardingResume,

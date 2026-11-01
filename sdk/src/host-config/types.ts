@@ -1038,6 +1038,8 @@ export type HostConfigInputV2 = {
   systemPromptDefault?: SystemPromptDefault;
   temperature: number;
   requireToolApproval: boolean;
+  /** Refuse execution unless native discovery is qualified for this route. */
+  requireNativeToolDiscovery?: boolean;
   // Host-level opt-in for progressive MCP tool discovery. Optional + defaults
   // to undefined ("off") so pre-feature rows hash byte-identically.
   // JSON.stringify drops undefined, so `undefined` and `false` hash distinctly
@@ -1149,6 +1151,7 @@ export type CanonicalHostConfigV2 = {
   systemPromptDefault?: SystemPromptDefault;
   temperature: number;
   requireToolApproval: boolean;
+  requireNativeToolDiscovery?: boolean;
   // Mirrors HostConfigInputV2.progressiveToolDiscovery. Optional so absent
   // rows hash byte-identically to pre-feature rows.
   progressiveToolDiscovery?: boolean;
