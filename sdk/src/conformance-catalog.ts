@@ -338,10 +338,10 @@ export const TASKS_CHECK_CATALOG = {
     description:
       "tasks/cancel is acknowledged with an empty result rather than a task state, and the task's observable status is allowed to remain non-terminal afterwards.",
   },
-  "tasks-input-required-update-completes": {
-    title: "Input Required Round Trip Completes",
+  "tasks-update-ack-shape": {
+    title: "Update Acknowledged With An Empty Result",
     description:
-      "A task that reports input_required advances past it once tasks/update supplies the requested inputResponses, and reaches a terminal status.",
+      'tasks/update answering a task\'s input_required is acknowledged with an empty result carrying resultType "complete"; the task is not required to reach a terminal status afterwards.',
   },
   "tasks-ttl-integer-shape": {
     title: "TTL And Poll Interval Are Integers",

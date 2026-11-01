@@ -207,6 +207,11 @@ export interface ExtensionTasksMisbehavior {
   omitStatusPayload?: boolean;
   /** Serve a fabricated task for an unknown id instead of `-32602`. */
   answerUnknownTaskId?: boolean;
+  /**
+   * Merge these members into the `tasks/update` acknowledgement — violates
+   * tasks.md:377, which requires an empty result.
+   */
+  updateAckExtras?: Record<string, unknown>;
 }
 
 export interface ExtensionTasksFixtureOptions {
@@ -852,7 +857,7 @@ export async function serveExtensionTasksFixture(
         }
         // An EMPTY, eventually-consistent acknowledgement (tasks.md:374-381):
         // the observable status does not move until a later `tasks/get`.
-        return { ...taskResultTypeField() };
+        return { ...taskResultTypeField(), ...misbehavior.updateAckExtras };
       }
 
       case "tasks/cancel": {

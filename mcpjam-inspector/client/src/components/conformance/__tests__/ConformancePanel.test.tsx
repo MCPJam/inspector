@@ -1781,7 +1781,12 @@ describe("ConformanceTab", () => {
     render(<ConformanceTab server={createHttpServer()} />);
     await runToCompletion();
 
-    expect(mockRunTasks).toHaveBeenCalledWith("http-server");
+    // The app's list, never the suite default: the full suite includes
+    // `tasks-update-ack-shape`, which needs answers the app cannot send.
+    const [serverName, options] = mockRunTasks.mock.calls[0]!;
+    expect(serverName).toBe("http-server");
+    expect(options.checkIds).not.toContain("tasks-update-ack-shape");
+    expect(options.checkIds).toContain("tasks-wire-resolvable");
     expect(within(suiteHeader("tasks")).getByText("PASSED")).toBeDefined();
   });
 

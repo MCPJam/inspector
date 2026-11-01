@@ -108,7 +108,6 @@ describe("the mcp-tasks profile", () => {
   it("states exactly which shipped tasks checks it leaves unscored", () => {
     expect([...unscoredCheckIds(TASKS)].sort()).toEqual([
       "tasks-cancel-ack-shape",
-      "tasks-input-required-update-completes",
       "tasks-invalid-task-id-rejected",
       "tasks-status-payload-shape",
       "tasks-ttl-integer-shape",

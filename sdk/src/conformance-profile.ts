@@ -134,8 +134,16 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
 };
 
 /**
- * `mcp-tasks` v2026-08-22.1 — the eight checks the Tasks suite shipped before
- * the gap program's scenario depth.
+ * `mcp-tasks` v2026-11-01.1 — the eight checks the Tasks suite shipped before
+ * the gap program's scenario depth, plus `tasks-update-ack-shape`.
+ *
+ * That ninth check is promoted on its own because it asserts nothing beyond
+ * two MUSTs the extension states outright for the `tasks/update`
+ * acknowledgement (an empty result, `resultType: "complete"`). It is not
+ * applicable unless the operator supplies `inputResponses` for a task that asks
+ * for input, so a run that creates a task without them scores as it did under
+ * v2026-08-22.1. A run that creates no task was already incomplete; this check
+ * joins its siblings there as could-not-run.
  *
  * A SEPARATE profile rather than a section of `mcp-protocol`, which was the
  * open design question. Two reasons settled it:
@@ -151,7 +159,7 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
  */
 const MCP_TASKS_PROFILE: ConformanceProfile = {
   id: "mcp-tasks",
-  version: "2026-08-22.1",
+  version: "2026-11-01.1",
   scored: [
     "tasks-wire-resolvable",
     "tasks-declaration-hygiene",
@@ -161,6 +169,7 @@ const MCP_TASKS_PROFILE: ConformanceProfile = {
     "tasks-ttl-shape",
     "tasks-inline-result",
     "tasks-mcp-name-routing",
+    "tasks-update-ack-shape",
   ] satisfies MCPTasksCheckId[],
 };
 
