@@ -3232,10 +3232,10 @@ export default function App() {
               callbackContext.chatAuthContinuationId,
             ),
           )
-          .catch(() => {
-            // Without a verified digest, do not cancel a different pending flow.
+          .catch((error: unknown) => {
             console.warn(
-              "Could not settle the failed sign-in callback; no call was cancelled.",
+              "Could not cancel the chat call waiting on this sign-in.",
+              error,
             );
           });
       }

@@ -6,6 +6,7 @@ import {
   peekPendingDirectScopeStepUpReplay,
   claimPendingDirectScopeStepUpReplay,
   clearPendingDirectScopeStepUpReplay,
+  cancelPendingDirectScopeStepUpReplayForCallback,
 } from "../scope-step-up-replay";
 const save = (callId: string) => {
   savePendingDirectScopeStepUpReplay({
@@ -190,6 +191,48 @@ describe("direct replay identity", () => {
       }),
     );
     expect(() => save("b")).not.toThrow();
+  });
+  it("lets the next call replace one a reload left replaying", () => {
+    sessionStorage.setItem(
+      "mcp-scope-step-up-replay-v1",
+      JSON.stringify({
+        version: 1,
+        callId: "replaying-before-reload",
+        generation: 1,
+        phase: "replaying",
+        operation: {
+          resourceUrl: "https://example.test/mcp",
+          method: "tools/call",
+          operation: "read",
+        },
+        descriptor: {
+          kind: "tool",
+          surface: "tools",
+          serverName: "same",
+          toolName: "read",
+          parameters: {},
+        },
+        returnPath: "/p/p1/tools",
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      }),
+    );
+    expect(() => save("b")).not.toThrow();
+  });
+  it("keeps a call this page is replaying", () => {
+    save("a");
+    markPendingDirectScopeStepUpReplayReady("same", "flow-a");
+    expect(
+      claimPendingDirectScopeStepUpReplay({ serverName: "same", surface: "tools" }),
+    ).toBeDefined();
+    expect(() => save("b")).toThrow("Another call is waiting");
+  });
+  it("a failed callback from another flow does not cancel the call", () => {
+    save("a");
+    cancelPendingDirectScopeStepUpReplayForCallback("same", "flow-older-tab");
+    expect(peekPendingDirectScopeStepUpReplay()).toBeDefined();
+    cancelPendingDirectScopeStepUpReplayForCallback("same", "flow-a");
+    expect(peekPendingDirectScopeStepUpReplay()).toBeUndefined();
   });
   it("keeps a signed-in call that is waiting to be replayed", () => {
     save("a");

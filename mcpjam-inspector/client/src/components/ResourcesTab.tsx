@@ -209,11 +209,16 @@ export function ResourcesTab({
   // Resources state
   const [resources, setResources] = useState<MCPResource[]>([]);
   const [selectedResource, setSelectedResource] = useState<string>("");
+  const selectedResourceRef = useRef(selectedResource);
+  selectedResourceRef.current = selectedResource;
   const [resourceContent, setResourceContent] =
     useState<MCPReadResourceResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetchingResources, setFetchingResources] = useState(false);
   const [error, setError] = useState<string>("");
+  // A failed LIST, kept apart from a read's own error: each refresh clears it
+  // and leaves the read's error alone.
+  const [listError, setListError] = useState<string>("");
   /** Why a sign-in challenge did not become a Connect card. Text only. */
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
@@ -233,6 +238,7 @@ export function ResourcesTab({
   const [templateLoading, setTemplateLoading] = useState(false);
   const [fetchingTemplates, setFetchingTemplates] = useState(false);
   const [templateError, setTemplateError] = useState<string>("");
+  const [templateListError, setTemplateListError] = useState<string>("");
   const [templateOverrides, setTemplateOverrides] = useState<
     Record<string, string>
   >({});
@@ -286,6 +292,8 @@ export function ResourcesTab({
     setSelectedResource("");
     setResourceContent(null);
     setError("");
+    setListError("");
+    setTemplateListError("");
     setNextCursor(undefined);
     setTemplates([]);
     setSelectedTemplate("");
@@ -340,6 +348,7 @@ export function ResourcesTab({
       setLoadingMore(true);
     } else {
       setFetchingResources(true);
+      setListError("");
       setResources([]);
       setNextCursor(undefined);
       // Clear stale provenance at the start of a non-append (re)fetch so a
@@ -361,6 +370,17 @@ export function ResourcesTab({
         setResources((prev) => [...prev, ...serverResources]);
       } else {
         setResources(serverResources);
+        // A resource that left a complete list is no longer selectable. A
+        // paged list may hold it on a later page, so it stays.
+        const selected = selectedResourceRef.current;
+        if (
+          typeof result.nextCursor !== "string" &&
+          selected &&
+          !serverResources.some((resource) => resource.uri === selected)
+        ) {
+          setSelectedResource("");
+          setResourceContent(null);
+        }
       }
       // The response body is untyped, so a non-string `nextCursor` is not a
       // cursor and ends the listing. A repeated cursor is NOT an ending: the
@@ -373,7 +393,7 @@ export function ResourcesTab({
       setResourcesServedFromCache(result.servedFromCache);
     } catch (err) {
       if (fetchVersion !== resourcesFetchVersionRef.current) return;
-      setError(`Network error fetching resources: ${err}`);
+      setListError(`Network error fetching resources: ${err}`);
     } finally {
       if (fetchVersion === resourcesFetchVersionRef.current) {
         setFetchingResources(false);
@@ -390,6 +410,7 @@ export function ResourcesTab({
     }
 
     setFetchingTemplates(true);
+    setTemplateListError("");
     setTemplates([]);
     // Clear stale provenance at the start of a template (re)fetch so a
     // failed/in-flight refresh cannot keep showing the previous badge.
@@ -405,7 +426,7 @@ export function ResourcesTab({
       setTemplatesServedFromCache(serverTemplates.servedFromCache);
     } catch (err) {
       if (fetchVersion !== templatesFetchVersionRef.current) return;
-      setTemplateError(`Could not fetch resource templates: ${err}`);
+      setTemplateListError(`Could not fetch resource templates: ${err}`);
     } finally {
       if (fetchVersion === templatesFetchVersionRef.current) {
         setFetchingTemplates(false);
@@ -1320,10 +1341,10 @@ export function ResourcesTab({
   const resourcesCenterContent = (
     <div className="h-full flex flex-col bg-background">
       {authChallengeBlock}
-      {error ? (
+      {error || listError ? (
         <div className="p-4">
           <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-            {error}
+            {error || listError}
           </div>
         </div>
       ) : loading ? (
@@ -1381,10 +1402,10 @@ export function ResourcesTab({
   const templatesCenterContent = (
     <div className="h-full flex flex-col bg-background">
       {authChallengeBlock}
-      {templateError ? (
+      {templateError || templateListError ? (
         <div className="p-4">
           <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-            {templateError}
+            {templateError || templateListError}
           </div>
         </div>
       ) : templateLoading ? (
