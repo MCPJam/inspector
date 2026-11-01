@@ -2,6 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { PLUGIN_INSTANCE_CONTEXT_BYTES } from "../../../shared/plugin-invocation-receipts.js";
 import {
+  MODEL_CONTEXT_POLICY_CEILINGS,
+  MODEL_CONTEXT_POLICY_DEFAULTS,
+} from "@mcpjam/sdk/host-config/internal";
+import {
   createPluginSession,
   reducePluginSession,
   pluginContextForTurn,
@@ -10,6 +14,7 @@ import {
 } from "@mcpjam/sdk/internal/plugin-host";
 import {
   parsePluginModelContext,
+  type PluginContextLimits,
   type PluginContextRemoveAllResult,
   type PluginContextSnapshot,
   type PluginModelContext,
@@ -171,7 +176,11 @@ export class PluginContextWorkspace {
     )
       throw new PluginInvocationError("INSTANCE_CONTEXT_INVALID");
     if (saved.context) {
-      const params = parsePluginModelContext(saved.context.params);
+      // Admitted when it was stored, under whatever policy held then.
+      const params = parsePluginModelContext(
+        saved.context.params,
+        MODEL_CONTEXT_POLICY_CEILINGS,
+      );
       const next = reducePluginSession(this.state, {
         type: "context",
         instanceId,
@@ -209,8 +218,14 @@ export class PluginContextWorkspace {
     return copy;
   }
 
-  /** The caller validates the private lease and fresh authority before this commit. */
-  update(instanceId: string, generation: number, request: PluginContextUpdate) {
+  /** The caller validates the private lease and fresh authority before this
+   * commit. `limits` are the budgets this new update is admitted against. */
+  update(
+    instanceId: string,
+    generation: number,
+    request: PluginContextUpdate,
+    limits: PluginContextLimits = MODEL_CONTEXT_POLICY_DEFAULTS,
+  ) {
     const instance = this.state.instances[instanceId];
     if (
       !instance ||
@@ -218,7 +233,7 @@ export class PluginContextWorkspace {
       instance.generation !== generation
     )
       throw new PluginInvocationError("INSTANCE_CONTEXT_UNAVAILABLE");
-    const params = parsePluginModelContext(request.params);
+    const params = parsePluginModelContext(request.params, limits);
     const fingerprint = createHash("sha256")
       .update(JSON.stringify(params))
       .digest("hex");
