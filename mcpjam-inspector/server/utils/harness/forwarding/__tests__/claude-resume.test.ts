@@ -1,3 +1,4 @@
+import { refreshForwardingBridge } from "../bridge-refresh.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocketServer } from "ws";
 import { createHostedClaudeCodeHarness } from "../../claude-code-typed-errors.js";
@@ -5,7 +6,6 @@ import type { HarnessV1NetworkSandboxSession } from "@ai-sdk/harness";
 import { sealHarnessProxyToken } from "../../harness-proxy-policy-seal.js";
 import {
   patchClaudeForwardingResume,
-  refreshClaudeForwarding,
   withClaudeForwardingResume,
 } from "../claude-resume.js";
 
@@ -80,7 +80,7 @@ async function bridge(
 describe("Claude forwarding refresh", () => {
   it("waits for the matching acknowledgement and sends no start or resume", async () => {
     const target = await bridge("ok", 30);
-    await refreshClaudeForwarding(target);
+    await refreshForwardingBridge(target);
     expect(target.messages).toEqual([
       { type: "mcpjam-refresh-mcp", id: expect.any(String), servers },
     ]);
@@ -89,14 +89,14 @@ describe("Claude forwarding refresh", () => {
     "refuses continuation on %s",
     async (reply) => {
       const target = await bridge(reply);
-      await expect(refreshClaudeForwarding(target)).rejects.toThrow();
+      await expect(refreshForwardingBridge(target)).rejects.toThrow();
       expect(target.messages).toHaveLength(1);
     },
   );
   it("cancels without allowing a late acknowledgement", async () => {
     const target = await bridge("silent");
     const abort = new AbortController();
-    const promise = refreshClaudeForwarding({
+    const promise = refreshForwardingBridge({
       ...target,
       signal: abort.signal,
     });
@@ -257,7 +257,7 @@ describe("Claude forwarding refresh", () => {
             },
           },
         }),
-      ).rejects.toThrow("paused Claude process is unavailable");
+      ).rejects.toThrow("paused harness process is unavailable");
       expect(doStart).toHaveBeenCalledOnce();
       expect(unavailable).not.toHaveBeenCalled();
     },

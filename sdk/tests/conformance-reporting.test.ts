@@ -308,8 +308,8 @@ describe("report score", () => {
         ],
         readiness: [
           {
-            id: "readiness-metadata-quality",
-            title: "Metadata Quality",
+            id: "readiness-cache-ttl-useful",
+            title: "Useful Cache TTLs",
             severity: "warning",
             specStrength: "SHOULD",
             message: "…",
