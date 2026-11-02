@@ -260,7 +260,8 @@ export function OAuthStepRow({
           (expanded || showsMessageShut(step.status, step.skipReason)) ? (
             <ResultMessage
               message={step.error.message}
-              tone={step.status === "failed" ? "error" : "neutral"}
+              // An unscored failure is reported, not counted: grey, as in CheckRow.
+              tone={step.status === "failed" && !pending ? "error" : "neutral"}
               expanded={expanded}
             />
           ) : null}

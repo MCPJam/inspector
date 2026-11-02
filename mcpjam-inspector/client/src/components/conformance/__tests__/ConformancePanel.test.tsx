@@ -1263,6 +1263,10 @@ describe("ConformanceTab", () => {
     fireEvent.click(suiteHeader("oauth"));
     const row = screen.getByText(left.title).closest("div")!.parentElement!;
     expect(within(row).getByText("unscored")).toBeInTheDocument();
+    // Its failure is reported, not counted: grey, not red.
+    const message = screen.getByText("profile shape is wrong");
+    expect(message).toHaveClass("text-muted-foreground");
+    expect(message).not.toHaveClass("text-red-600");
     expect(screen.queryByText(/^Not conformant\./)).toBeNull();
     // The suite's badge follows the score, not the unscored failure.
     expect(
