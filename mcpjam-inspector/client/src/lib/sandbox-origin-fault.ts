@@ -37,9 +37,10 @@
 const REPORTED_KEY = "mcpjam.sandbox-origin-fault-reported";
 
 // Without a sandbox origin, widgets share the app's origin, cookies and
-// storage; HOSTED_DEPLOYMENT.md explains the isolation it provides.
+// storage. HOSTED_DEPLOYMENT.md explains the isolation it provides and names
+// the two settings that configure it.
 const MESSAGE =
-  "No sandbox origin is configured. Set MCPJAM_SANDBOX_ORIGIN on the server, or VITE_MCPJAM_SANDBOX_ORIGIN at build time.";
+  "No sandbox origin is configured. Ask your administrator to set the sandbox origin.";
 
 type SessionFlagStorage = Pick<Storage, "getItem" | "setItem">;
 
