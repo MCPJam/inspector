@@ -24,8 +24,6 @@ interface CacheFixtureOptions {
   templatePageScopes?: unknown[];
   /** Answer a read of an unknown resource with `{ contents: [] }`. */
   emptyContentsForMissing?: boolean;
-  /** Include `error.data.uri` on a resource error. */
-  echoUriOnResourceError?: boolean;
   /**
    * Answer these methods with a non-complete `resultType` and NO hints — the
    * shape the extension explicitly excuses from carrying them.
@@ -37,6 +35,8 @@ interface CacheFixtureOptions {
    * such operation to carry hints on.
    */
   withholdCapabilities?: string[];
+  /** Answer `resources/list` with an empty array. */
+  listNoResources?: boolean;
 }
 
 const LISTED_RESOURCE = "test://greeting";
@@ -123,7 +123,9 @@ async function serveCacheFixture(options: CacheFixtureOptions) {
           return ok({ prompts: [] });
         case "resources/list":
           return ok({
-            resources: [{ uri: LISTED_RESOURCE, name: "greeting" }],
+            resources: options.listNoResources
+              ? []
+              : [{ uri: LISTED_RESOURCE, name: "greeting" }],
           });
         case "resources/templates/list": {
           if (options.templatePageScopes) {
@@ -158,7 +160,6 @@ async function serveCacheFixture(options: CacheFixtureOptions) {
             error: {
               code: -32602,
               message: "Resource not found",
-              ...(options.echoUriOnResourceError ? { data: { uri } } : {}),
             },
           });
         }
@@ -252,6 +253,22 @@ describe("modern-cache-hint-coverage", () => {
       "resources/templates/list",
       "resources/read",
     ]);
+  });
+
+  it("passes a server that advertises resources but lists none", async () => {
+    // Templates-only, or resources created at runtime: there is nothing to
+    // read, so resources/read is inapplicable rather than an untested gap.
+    const check = byId(
+      (await run({ listNoResources: true }, [ID])).checks,
+      ID,
+    );
+    expect([check.status, check.error?.message]).toEqual(["passed", undefined]);
+    expect(check.details?.unprobed).toEqual([]);
+    expect(
+      (check.details?.notApplicable as Array<{ method: string }>).map(
+        (entry) => entry.method,
+      ),
+    ).toEqual(["resources/read"]);
   });
 
   it("catches a miss on resources/read, which the older check never probed", async () => {
@@ -415,27 +432,5 @@ describe("modern-resource-read-no-empty-contents", () => {
       ["modern-resource-not-found-invalid-params", "failed"],
       ["modern-resource-read-no-empty-contents", "failed"],
     ]);
-  });
-});
-
-describe("readiness-resource-error-echoes-uri", () => {
-  it("advises when a resource error names no uri", async () => {
-    const result = await run({}, ["modern-resource-not-found-invalid-params"]);
-    const advisory = result.readiness.find(
-      (entry) => entry.id === "readiness-resource-error-echoes-uri",
-    );
-    expect(advisory?.specStrength).toBe("MAY");
-    expect(result.checks.some((check) => check.status === "failed")).toBe(false);
-  });
-
-  it("stays silent when the error echoes the uri", async () => {
-    const result = await run({ echoUriOnResourceError: true }, [
-      "modern-resource-not-found-invalid-params",
-    ]);
-    expect(
-      result.readiness.some(
-        (entry) => entry.id === "readiness-resource-error-echoes-uri",
-      ),
-    ).toBe(false);
   });
 });

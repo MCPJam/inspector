@@ -1,3 +1,4 @@
+import { setManagerResourceSnapshots, setManagerResourceHostConfig, type ManagerResourceSnapshot } from "../../utils/mcp-connections";
 import { taskOwnerScope } from "../../../shared/task-owner.js";
 import {
   setManagerTaskOwnerScope,
@@ -495,6 +496,7 @@ export type ConvexAuthorizeResponse = {
   };
   serverConfig: {
     credentialConfigurationId?: string;
+    updatedAt?: number;
     // The server's stored display name. Absent on older backends; a caller's
     // own `serverNames` still win (see `displayNameForServer`).
     name?: string;
@@ -1648,6 +1650,10 @@ export async function createAuthorizedManager(
         const selectedId = options.onlySelectedConnections
           ? options.connectionIds?.[id]
           : undefined;
+        // Selected-account authorization returns one credential, not the account list.
+        if (selectedId && !auth.oauthConnections && auth.oauthCredentialId === selectedId && auth.oauthAccessToken) {
+          auth.oauthConnections = [{connectionId: selectedId, accessToken: auth.oauthAccessToken, credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt, isDefault: false}];
+        }
         const live = (auth.oauthConnections ?? []).filter(
           (c) =>
             c.accessToken &&
@@ -2046,6 +2052,7 @@ export async function createAuthorizedManager(
   const admittedServerIds = uniqueServerIds.filter(
     (serverId) => !Object.hasOwn(refusedServers, serverId),
   );
+  const reconstructibleHeaderServers = new Set<string>();
   const configEntries = await Promise.all(
     admittedServerIds.map(async (serverId) => {
       try {
@@ -2065,14 +2072,18 @@ export async function createAuthorizedManager(
         ) as EffectiveAuthMethod;
         // `recoveredOAuthTokens` first: it is the freshest, minted moments ago
         // by PASS 1b for a credential the backend could not refresh itself.
+        const storedOAuthToken = recoveredOAuthTokens[serverId] ?? auth.oauthAccessToken;
         const oauthToken =
-          recoveredOAuthTokens[serverId] ??
-          auth.oauthAccessToken ??
+          storedOAuthToken ??
           callerOAuthTokenUnlessRefused(
             auth,
             effectiveAuth,
             oauthTokens?.[serverId],
           );
+        if (auth.serverConfig.transportType === "http" &&
+            (typeof storedOAuthToken === "string" || !oauthToken)) {
+          reconstructibleHeaderServers.add(serverId);
+        }
         const displayServerName = displayNameForServer(
           serverId,
           serverNamesById,
@@ -2674,6 +2685,18 @@ export async function createAuthorizedManager(
   }
   if (Object.keys(connectionsByServerId).length)
     setManagerConnections(manager, connectionsByServerId);
+  const resourceSnapshots = new Map<string, ManagerResourceSnapshot>();
+  for (const [key] of connectionEntries) {
+    const connection = connectionsByKey.get(key);
+    const serverId = connection?.serverId ?? key;
+    const auth = batch.results[serverId];
+    if (!auth?.ok || auth.serverConfig.updatedAt === undefined || auth.serverConfig.httpVariant === "sse") continue;
+    const account = connection ? auth.oauthConnections?.find(c => c.connectionId === connection.connectionId) : undefined;
+    const credentialAuthorizedAt = account ? account.credentialAuthorizedAt ?? account.authorizedAt : auth.oauthCredentialAuthorizedAt ?? null;
+    if (connection && credentialAuthorizedAt === undefined) continue;
+    resourceSnapshots.set(key, {serverUpdatedAt: auth.serverConfig.updatedAt, credentialAuthorizedAt: credentialAuthorizedAt ?? null, credentialId: connection?.connectionId ?? auth.oauthCredentialId ?? undefined, headersReconstructible: !!connection || reconstructibleHeaderServers.has(serverId)});
+  }
+  setManagerResourceSnapshots(manager, resourceSnapshots);
   setManagerOrganization(manager, batch.organizationId);
   const ownerScope = taskOwnerScope(projectId, authorizedUserId);
   if (ownerScope)
@@ -3206,6 +3229,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     },
   );
 
+  if (typeof runHostConfig?.hostConfigId === "string" && typeof runHostConfig.hostId === "string") setManagerResourceHostConfig(manager, runHostConfig.hostConfigId, runHostConfig.hostId);
   return {
     manager,
     body: body as z.infer<S>,

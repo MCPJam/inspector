@@ -79,10 +79,12 @@ export function toolCatalogFingerprint(
  * right one of them. Reading them apart is how that goes wrong.
  */
 export function runtimeConfigFingerprint(input: {
+  nativeMcpServers?: unknown;
   webSearch?: boolean | undefined;
   tools?: readonly TurnFingerprintTool[] | undefined;
 }): string {
   return stableStringify({
+    ...(input.nativeMcpServers ? { nativeMcpEnabled: true } : {}),
     webSearch: input.webSearch ?? false,
     tools: toolCatalogFingerprint(input.tools ?? []),
   });
