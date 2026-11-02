@@ -7,11 +7,11 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import type { ServerWithName } from "@/hooks/use-app-state";
-import {
-  isHttpServer,
-  type ConformanceSelection,
-  type ProtocolVersionPin,
+import type {
+  ConformanceSelection,
+  ProtocolVersionPin,
 } from "@/hooks/use-conformance-run";
+import { runnableSelection } from "@/hooks/conformance-suite-state";
 import { useAppNavigate, useCurrentLocationParts } from "@/lib/app-navigation";
 import { toast } from "@/lib/toast";
 import type { ConformancePersistConfig } from "@/components/conformance/PersistConformanceRun";
@@ -31,7 +31,10 @@ import {
 import { ConformanceServerList } from "./ConformanceServerList";
 import { ConformanceSettings } from "./ConformanceSettings";
 import { ConformanceSetup } from "./ConformanceSetup";
-import { useConformanceProbeStore } from "@/hooks/use-conformance-probes";
+import {
+  probesAfterRun,
+  useConformanceProbeStore,
+} from "@/hooks/use-conformance-probes";
 
 const LAST_SERVER_KEY = "mcpjam.conformance.lastServer.v1";
 
@@ -143,7 +146,7 @@ export function ConformanceTab({
   const [homeVersion, setHomeVersion] = useState(0);
   // The server whose Conformance Settings are open, over the run view.
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
-  // The tools each server's checks may call: set in step 2 or Settings, and
+  // The tools each server's checks may call: set in step 2, and
   // used by every later run of that server, Run again included.
   const { probesFor, setProbes } = useConformanceProbeStore();
   // Defaults changed here while their save is in flight: Run again right
@@ -267,7 +270,15 @@ export function ConformanceTab({
         onCancel={() => setSetupOpen(false)}
         onRun={(serverName, versionPin, selection, probes) => {
           setSetupOpen(false);
-          setProbes(serverName, probes);
+          setProbes(
+            serverName,
+            probesAfterRun(
+              probesFor(serverName),
+              probes,
+              runnableSelection(selection, versionPin)?.protocol,
+              versionPin,
+            ),
+          );
           startRun(serverName, versionPin, selection);
           // The checks picked here become the server's defaults: Settings
           // opens on them and the server list's Run reuses them. A failed
@@ -399,12 +410,6 @@ export function ConformanceTab({
                 : undefined)
             }
             onSave={(selection) => saveDefaults(settingsServer, selection)}
-            probes={probesFor(settingsServer)}
-            onProbesChange={(probes) => setProbes(settingsServer, probes)}
-            canListTools={servers?.some(
-              (offered) =>
-                offered.name === settingsServer && isHttpServer(offered),
-            )}
             onBack={() => setSettingsFor(null)}
           />
         ) : null)}

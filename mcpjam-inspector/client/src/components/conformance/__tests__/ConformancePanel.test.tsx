@@ -1503,8 +1503,9 @@ describe("ConformanceTab", () => {
       });
     });
 
-    /** Setup to step 2 with the Protocol suite open. */
-    async function openProtocolChecks() {
+    /** Setup on 2026-07-28, where the checks that call a tool run. */
+    async function toStep2(pin = "2026-07-28") {
+      const user = userEvent.setup();
       const alpha = createHttpServer({ name: "alpha" });
       render(
         <ConformanceTab
@@ -1514,7 +1515,18 @@ describe("ConformanceTab", () => {
         />,
       );
       fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+      if (pin !== "auto") {
+        await user.click(
+          screen.getByRole("combobox", { name: "Select protocol version" }),
+        );
+        await user.click(screen.getByRole("option", { name: pin }));
+      }
       fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    }
+
+    /** Setup to step 2 with the Protocol suite open. */
+    async function openProtocolChecks() {
+      await toStep2();
       fireEvent.click(
         screen.getByRole("button", { name: /^Protocol.*checks selected$/ }),
       );
@@ -1608,16 +1620,7 @@ describe("ConformanceTab", () => {
 
     it("flags the checks that need an input before the suite is opened", async () => {
       const user = userEvent.setup();
-      const alpha = createHttpServer({ name: "alpha" });
-      render(
-        <ConformanceTab
-          server={alpha}
-          servers={[alpha]}
-          onSelectServer={vi.fn()}
-        />,
-      );
-      fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      await toStep2();
 
       // Closed: the header says how many picked checks still need one.
       const header = screen.getByRole("button", {
@@ -1648,6 +1651,46 @@ describe("ConformanceTab", () => {
       expect(
         within(header).getByText("1 check needs input"),
       ).toBeInTheDocument();
+    });
+
+    it("asks for no tool on Auto, where these checks do not run", async () => {
+      await toStep2("auto");
+      const header = screen.getByRole("button", {
+        name: /^Protocol.*checks selected$/,
+      });
+      expect(within(header).queryByText(/need(s)? input/)).toBeNull();
+      fireEvent.click(header);
+      expect(screen.queryByText("Needs input")).toBeNull();
+      expect(
+        screen.queryByRole("combobox", { name: "Tool that emits logs" }),
+      ).toBeNull();
+      expect(mockListTools).not.toHaveBeenCalled();
+    });
+
+    it("lists the tools once for every field, across pages", async () => {
+      mockListTools.mockReset();
+      mockListTools
+        .mockResolvedValueOnce({
+          tools: [{ name: "echo", annotations: { readOnlyHint: true } }],
+          nextCursor: "page-2",
+        })
+        .mockResolvedValueOnce({
+          tools: [{ name: "ask_user", annotations: { readOnlyHint: true } }],
+        });
+      const user = userEvent.setup();
+      await openProtocolChecks();
+
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that asks for input" }),
+      );
+      expect(
+        screen.getByRole("option", { name: "ask_user · read-only" }),
+      ).toBeInTheDocument();
+      // Two fields, two pages: one call per page, not one per field.
+      expect(mockListTools).toHaveBeenCalledTimes(2);
+      expect(mockListTools).toHaveBeenLastCalledWith(
+        expect.objectContaining({ cursor: "page-2" }),
+      );
     });
 
     it("never sends a tool for a check left out of the run", async () => {

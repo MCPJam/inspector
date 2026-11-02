@@ -15,10 +15,11 @@ import {
 } from "@/hooks/use-conformance-run";
 import {
   probeInputStatus,
+  probesApply,
   type ConformanceProbeKey,
   type ConformanceProbes,
 } from "@/hooks/use-conformance-probes";
-import { ProbeCheckExtra } from "./ConformanceProbeField";
+import { ProbeCheckExtra, useProbeTools } from "./ConformanceProbeField";
 import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { toast } from "@/lib/toast";
 import { startConnectToast } from "@/lib/connect-toast";
@@ -114,6 +115,12 @@ export function ConformanceSetup({
   const serverLabelId = useId();
   const versionLabelId = useId();
   const picked = servers.find((server) => server.name === serverName);
+  // Only HTTP servers run the protocol suite, and the checks that call a
+  // tool run only on a pinned 2026-07-28 run, so only then is a tool asked
+  // for. One tools list serves every field.
+  const probeServer =
+    picked && isHttpServer(picked) && probesApply(versionPin) ? picked : null;
+  const probeTools = useProbeTools(probeServer);
   // Picked from the project's list before this session loaded it: it has no
   // runtime entry until it connects.
   const pickedName =
@@ -351,16 +358,14 @@ export function ConformanceSetup({
                 versionPin={versionPin}
                 selection={selection}
                 onChange={setSelection}
-                // Only HTTP servers run the protocol suite, so only they
-                // are asked for a tool to call.
                 renderProtocolExtra={
-                  picked && isHttpServer(picked)
+                  probeServer
                     ? (checkId, isPicked, checkTitle) => (
                         <ProbeCheckExtra
                           checkId={checkId}
                           checkTitle={checkTitle}
                           isPicked={isPicked}
-                          serverName={picked.name}
+                          tools={probeTools}
                           probes={probes}
                           onProbesChange={setProbes}
                           onValidChange={(key, valid) =>
@@ -371,7 +376,7 @@ export function ConformanceSetup({
                     : undefined
                 }
                 protocolInputStatus={
-                  picked && isHttpServer(picked)
+                  probeServer
                     ? (checkId) => probeInputStatus(checkId, probes)
                     : undefined
                 }

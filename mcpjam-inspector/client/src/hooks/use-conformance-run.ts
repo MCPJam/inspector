@@ -326,7 +326,11 @@ export function useConformanceRun({
       try {
         // Only the tools a check in this run calls: a tool named for a
         // check left out is never executed.
-        const probes = probesForRun(probesRef.current ?? {}, checkIds);
+        const probes = probesForRun(
+          probesRef.current ?? {},
+          checkIds,
+          versionPin,
+        );
         const { result } = await runProtocolConformance(serverName, {
           protocolVersion: versionPin === "auto" ? undefined : versionPin,
           ...(checkIds ? { checkIds } : {}),

@@ -168,14 +168,14 @@ export interface ChecksSectionProps {
   showAllErrors?: boolean;
 }
 
+/** Set by {@link ToolCallArgsEditor}: the arguments are sent, not expected. */
+const ArgsToSendContext = createContext(false);
+
 /**
  * Where the raw-JSON editors report an unparsable draft, keyed by editor
  * instance rather than row index: a row deleted or reordered above unmounts
  * or re-keys the editor, and the registration follows the instance.
  */
-/** Set by {@link ToolCallArgsEditor}: the arguments are sent, not expected. */
-const ArgsToSendContext = createContext(false);
-
 const InvalidDraftRegistry = createContext<
   ((editorId: string, invalid: boolean) => void) | null
 >(null);

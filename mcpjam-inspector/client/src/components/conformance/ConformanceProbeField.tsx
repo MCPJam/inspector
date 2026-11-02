@@ -7,7 +7,7 @@
  * modify data) and never picks for the operator, for the same reason the SDK
  * does not: nothing a server advertises says a tool is safe to call.
  */
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef } from "react";
 import { Label } from "@mcpjam/design-system/label";
 import {
   Select,
@@ -16,7 +16,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { listTools } from "@/lib/apis/mcp-tools-api";
+import type { ServerWithName } from "@/hooks/use-app-state";
+import {
+  useServerToolsData,
+  type ToolsDataStatus,
+} from "@/lib/host-compat/use-host-compat";
 import { ToolCallArgsEditor } from "@/components/evals/checks-section";
 import {
   PROBE_CHECKS,
@@ -32,7 +36,7 @@ const PROBE_COPY: Record<ConformanceProbeKey, { label: string; hint: string }> =
   {
     logProbe: {
       label: "Tool that emits logs",
-      hint: "Called up to 3 times: without a log level, at debug, and at warning. Pick one that writes logs and is safe to repeat.",
+      hint: "Pick a tool that writes logs and is safe to call repeatedly. It is called up to 3 times.",
     },
     inputRequiredProbe: {
       label: "Tool that asks for input",
@@ -58,58 +62,50 @@ function sortForSafety(tools: ToolOption[]): ToolOption[] {
   );
 }
 
-/** The server's tools, listed once per field. */
-function useServerTools(serverName: string) {
-  const [tools, setTools] = useState<ToolOption[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    setTools(null);
-    setError(null);
-    listTools({ serverId: serverName })
-      .then((result) => {
-        if (cancelled) return;
-        setTools(
-          sortForSafety(
-            (result.tools ?? []).map((tool) => ({
-              name: tool.name,
-              readOnly: tool.annotations?.readOnlyHint === true,
-              destructive:
-                tool.annotations?.readOnlyHint !== true &&
-                tool.annotations?.destructiveHint !== false,
-              argProperties: tool.inputSchema?.properties,
-            })),
-          ),
-        );
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : String(err));
-        setTools([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [serverName]);
-  return { tools, error };
+/** The server's tools for every probe field, listed once. */
+export interface ProbeTools {
+  tools: ToolOption[];
+  status: ToolsDataStatus;
+}
+
+/**
+ * One list for all the fields: every page, and only once the server is
+ * connected, retried like the other surfaces that list a server's tools.
+ */
+export function useProbeTools(server: ServerWithName | null): ProbeTools {
+  const { data, status } = useServerToolsData(server, { allPages: true });
+  const tools = useMemo(
+    () =>
+      sortForSafety(
+        (data?.tools ?? []).map((tool) => ({
+          name: tool.name,
+          readOnly: tool.annotations?.readOnlyHint === true,
+          destructive:
+            tool.annotations?.readOnlyHint !== true &&
+            tool.annotations?.destructiveHint !== false,
+          argProperties: tool.inputSchema?.properties,
+        })),
+      ),
+    [data],
+  );
+  return { tools, status };
 }
 
 export function ConformanceProbeField({
   probeKey,
-  serverName,
+  tools: { tools: options, status },
   probe,
   onChange,
   onValidChange,
 }: {
   probeKey: ConformanceProbeKey;
-  serverName: string;
+  tools: ProbeTools;
   probe: ConformanceProbe | undefined;
   onChange: (probe: ConformanceProbe | undefined) => void;
   /** False while the Raw JSON box holds text that does not parse. */
   onValidChange?: (valid: boolean) => void;
 }) {
   const id = useId();
-  const { tools, error: toolsError } = useServerTools(serverName);
   // The editor reports validity from an effect keyed on this callback, so it
   // must keep one identity while the parent re-renders.
   const onValidChangeRef = useRef(onValidChange);
@@ -121,7 +117,6 @@ export function ConformanceProbeField({
     [],
   );
   const toolName = probe?.toolName ?? NONE;
-  const options = tools ?? [];
   // A saved tool the server no longer lists stays selectable, so opening the
   // list never silently drops a choice.
   const listed = options.some((tool) => tool.name === toolName);
@@ -146,11 +141,11 @@ export function ConformanceProbeField({
       <Select
         value={toolName}
         onValueChange={changeTool}
-        disabled={tools === null}
+        disabled={status === "loading" || status === "idle"}
       >
         <SelectTrigger id={id} className="h-8 w-full text-xs">
           <SelectValue
-            placeholder={tools === null ? "Loading tools..." : "Not set"}
+            placeholder={status === "loading" ? "Loading tools..." : "Not set"}
           />
         </SelectTrigger>
         <SelectContent>
@@ -177,9 +172,14 @@ export function ConformanceProbeField({
           ? "Without a tool, this check reports that it could not run."
           : copy.hint}
       </p>
-      {toolsError ? (
+      {status === "failed" ? (
         <p className="text-xs text-destructive">
-          Couldn't list this server's tools: {toolsError}
+          Couldn't list this server's tools. Check its connection, then open
+          this step again.
+        </p>
+      ) : status === "idle" ? (
+        <p className="text-xs text-muted-foreground">
+          Connect this server to list its tools.
         </p>
       ) : null}
       {selected?.destructive ? (
@@ -211,7 +211,7 @@ export function ProbeCheckExtra({
   checkId,
   checkTitle,
   isPicked,
-  serverName,
+  tools,
   probes,
   onProbesChange,
   onValidChange,
@@ -219,7 +219,7 @@ export function ProbeCheckExtra({
   checkId: string;
   checkTitle: (id: string) => string | undefined;
   isPicked: (id: string) => boolean;
-  serverName: string;
+  tools: ProbeTools;
   probes: ConformanceProbes;
   onProbesChange: (probes: ConformanceProbes) => void;
   onValidChange?: (key: ConformanceProbeKey, valid: boolean) => void;
@@ -240,7 +240,7 @@ export function ProbeCheckExtra({
   return (
     <ConformanceProbeField
       probeKey={key}
-      serverName={serverName}
+      tools={tools}
       probe={probes[key]}
       onChange={(probe) => {
         const next = { ...probes };

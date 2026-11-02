@@ -13,8 +13,13 @@
  * blocked site data); the page then behaves as if nothing was chosen, which
  * is the default.
  */
-import { useCallback, useState } from "react";
-import type { MCPCheckId } from "@mcpjam/sdk/browser";
+import { useCallback, useRef, useState } from "react";
+import {
+  CHECK_ERAS,
+  PROTOCOL_VERSION_ERAS,
+  type MCPCheckId,
+} from "@mcpjam/sdk/browser";
+import type { ProtocolVersionPin } from "@/hooks/use-conformance-run";
 import type {
   ConformanceProbe,
   ConformanceProbes,
@@ -40,6 +45,31 @@ export function probeKeyFor(checkId: string): ConformanceProbeKey | undefined {
 }
 
 /**
+ * Whether a probe's tool is called on a run with this pin: one of its checks
+ * runs in the pin's era (and, with `checkIds`, is picked). Never on "auto":
+ * an unpinned client does not offer 2026-07-28, so the run stays in the
+ * legacy era, where these checks do not apply.
+ */
+function probeRuns(
+  key: ConformanceProbeKey,
+  pin: ProtocolVersionPin,
+  checkIds?: readonly string[],
+): boolean {
+  if (pin === "auto") return false;
+  const era = PROTOCOL_VERSION_ERAS[pin];
+  return PROBE_CHECKS[key].some(
+    (id) =>
+      (CHECK_ERAS[id] as readonly string[]).includes(era) &&
+      (checkIds === undefined || checkIds.includes(id)),
+  );
+}
+
+/** Whether any probe applies with this pin: the fields show only then. */
+export function probesApply(pin: ProtocolVersionPin): boolean {
+  return PROBE_KEYS.some((key) => probeRuns(key, pin));
+}
+
+/**
  * Whether a check that calls a tool has one: "missing" or "set". Nothing for
  * a check that calls none.
  */
@@ -60,15 +90,31 @@ export function probeInputStatus(
 export function probesForRun(
   probes: ConformanceProbes,
   checkIds: readonly string[] | undefined,
+  pin: ProtocolVersionPin,
 ): ConformanceProbes {
-  const runs = (key: ConformanceProbeKey) =>
-    checkIds === undefined ||
-    PROBE_CHECKS[key].some((id) => checkIds.includes(id));
   return Object.fromEntries(
-    PROBE_KEYS.filter((key) => probes[key] && runs(key)).map((key) => [
-      key,
-      probes[key],
-    ]),
+    PROBE_KEYS.filter(
+      (key) => probes[key] && probeRuns(key, pin, checkIds),
+    ).map((key) => [key, probes[key]]),
+  ) as ConformanceProbes;
+}
+
+/**
+ * What a server keeps after a run: the draft's tool for each probe whose
+ * checks ran, the saved one for the rest. A tool picked only for checks that
+ * were then left out is not saved, so no later run calls it unasked.
+ */
+export function probesAfterRun(
+  saved: ConformanceProbes,
+  draft: ConformanceProbes,
+  checkIds: readonly string[] | undefined,
+  pin: ProtocolVersionPin,
+): ConformanceProbes {
+  return Object.fromEntries(
+    PROBE_KEYS.flatMap((key) => {
+      const probe = probeRuns(key, pin, checkIds) ? draft[key] : saved[key];
+      return probe ? [[key, probe]] : [];
+    }),
   ) as ConformanceProbes;
 }
 
@@ -127,8 +173,13 @@ export function useConformanceProbeStore(): {
   setProbes: (serverName: string, probes: ConformanceProbes) => void;
 } {
   const [changed, setChanged] = useState<Record<string, ConformanceProbes>>({});
+  // Read from storage once per server: the tab asks on every render, and a
+  // fresh object each time would also look like a change to its readers.
+  const loaded = useRef<Record<string, ConformanceProbes>>({});
   const probesFor = useCallback(
-    (serverName: string) => changed[serverName] ?? readStoredProbes(serverName),
+    (serverName: string) =>
+      changed[serverName] ??
+      (loaded.current[serverName] ??= readStoredProbes(serverName)),
     [changed],
   );
   const setProbes = useCallback(
