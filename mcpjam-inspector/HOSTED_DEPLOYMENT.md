@@ -28,14 +28,20 @@ VITE_MCPJAM_SANDBOX_ORIGIN=https://sandbox.example.com
 SANDBOX_HOSTS=sandbox.example.com
 ```
 
-The sandbox origin must be an `http://` or `https://` origin (anything else is
-ignored, and the runtime value then falls back to the build-time one), and:
+The sandbox origin must be an `http://` or `https://` origin, and:
 
 - A different registrable origin from the host app (e.g. host on
   `app.example.com`, sandbox on `sandbox.example.com`), so the browser scopes
   cookies and storage separately.
 - Reachable by browsers. The same MCPJam backend serves both DNS names — no
   separate deploy is required.
+
+An `MCPJAM_SANDBOX_ORIGIN` that is not an http(s) origin is ignored, with a
+warning in the server log, and the browser uses the image's build-time
+`VITE_MCPJAM_SANDBOX_ORIGIN` instead. On an image built by MCPJam's Railway
+pipeline that is `https://sandbox.mcpjam.com`, so widgets would load from
+MCPJam's sandbox host, not yours. An image built without one falls back to the
+app's own origin (see Fallback behavior below).
 
 `SANDBOX_HOSTS` must list that hostname. A host on this list serves **exactly
 two paths** and answers `404` for everything else — no app shell, no assets, no
@@ -112,10 +118,15 @@ in `WEB_ALLOWED_ORIGINS` so the host page is allowed to frame the sandbox.
 
 `/health` reports `sandboxIsolation`:
 
-- `ok` — a sandbox hostname is configured and it is not the app's own host.
+- `ok` — a sandbox hostname is configured, it is not the app's own host, and
+  `MCPJAM_SANDBOX_ORIGIN`, when set, names a listed host.
 - `same-origin` — `SANDBOX_HOSTS` contains the app's host from
-  `MCPJAM_HOSTED_ORIGIN`. Widgets are not isolated, and that hostname has
-  stopped serving the app.
+  `MCPJAM_HOSTED_ORIGIN`, so that hostname has stopped serving the app, or
+  `MCPJAM_SANDBOX_ORIGIN` is the app's own origin. Either way widgets are not
+  isolated.
+- `unpartitioned` — `MCPJAM_SANDBOX_ORIGIN` names a host that `SANDBOX_HOSTS`
+  does not list, so the host widgets load from still serves the app shell and
+  `/api`.
 - `unset` — nothing is partitioned, or `MCPJAM_HOSTED_ORIGIN` could not be
   parsed to compare against.
 

@@ -247,6 +247,7 @@ export {
 // Imported as well as re-exported: `MRTR_CONTINUATION_LEASE_TTL_MS` below is
 // derived from the call timeout, and a re-export does not bind the name here.
 import { WEB_CALL_TIMEOUT_MS } from "../shared/hosted-web-timeouts.js";
+import { sandboxOriginOf } from "../shared/sandbox-origin.js";
 
 // ── Hosted elicitation (MCP 2025-11-25) ─────────────────────────────────────
 // An elicitation blocks a `tools/call` on a HUMAN, so these are human-scale.
@@ -429,15 +430,22 @@ export const SANDBOX_HOSTS = parseSandboxHosts(
  * Whether widget content is isolated from the app, as far as the DEPLOY can
  * tell.
  *
- *   "ok"          — at least one sandbox hostname, none of them the app's own.
- *   "same-origin" — the app's own host is listed as a sandbox host. Widgets
- *                   share cookies and storage with the app, and the partition
- *                   makes that hostname stop serving the app.
- *   "unset"       — no sandbox hostname is configured, or MCPJAM_HOSTED_ORIGIN
- *                   could not be parsed to compare against. Either way the
- *                   isolation is unconfirmed.
+ *   "ok"            — at least one sandbox hostname, none of them the app's
+ *                     own, and MCPJAM_SANDBOX_ORIGIN, when set, names one of
+ *                     them.
+ *   "same-origin"   — the app's own host is a sandbox host: listed in
+ *                     SANDBOX_HOSTS, which makes that hostname stop serving
+ *                     the app, or named by MCPJAM_SANDBOX_ORIGIN. Widgets
+ *                     share cookies and storage with the app.
+ *   "unpartitioned" — MCPJAM_SANDBOX_ORIGIN names a host SANDBOX_HOSTS does
+ *                     not list, so the host widgets load from still serves
+ *                     the app shell and /api.
+ *   "unset"         — no sandbox hostname is configured, or
+ *                     MCPJAM_HOSTED_ORIGIN could not be parsed to compare
+ *                     against. Either way the isolation is unconfirmed.
  */
-export type SandboxIsolationStatus = "ok" | "same-origin" | "unset";
+export type SandboxIsolationStatus =
+  "ok" | "same-origin" | "unpartitioned" | "unset";
 
 /**
  * A browser cannot answer this. A page served at sandbox.mcpjam.com with
@@ -450,6 +458,9 @@ export type SandboxIsolationStatus = "ok" | "same-origin" | "unset";
 export function resolveSandboxIsolation(
   sandboxHosts: ReadonlySet<string> = SANDBOX_HOSTS,
   hostedOrigin: string = MCPJAM_HOSTED_ORIGIN,
+  sandboxOrigin: string | null = sandboxOriginOf(
+    process.env.MCPJAM_SANDBOX_ORIGIN,
+  ),
 ): SandboxIsolationStatus {
   if (sandboxHosts.size === 0) {
     return "unset";
@@ -464,5 +475,11 @@ export function resolveSandboxIsolation(
     return "unset";
   }
 
-  return sandboxHosts.has(appHost) ? "same-origin" : "ok";
+  if (sandboxHosts.has(appHost)) return "same-origin";
+  // An invalid MCPJAM_SANDBOX_ORIGIN is ignored here as it is in the browser,
+  // which then uses its build-time value; this process cannot see that one.
+  if (sandboxOrigin === null) return "ok";
+  const sandboxHost = new URL(sandboxOrigin).hostname.toLowerCase();
+  if (sandboxHost === appHost) return "same-origin";
+  return sandboxHosts.has(sandboxHost) ? "ok" : "unpartitioned";
 }

@@ -1,8 +1,9 @@
 /**
  * Client configuration
  *
- * Environment-based configuration that's determined at build time.
- * Uses Vite's import.meta.env for static replacement.
+ * Environment-based configuration, settled at build time through Vite's
+ * `import.meta.env`, except `SANDBOX_ORIGIN`: it prefers the value the server
+ * serves in its runtime config and falls back to the build-time one.
  */
 import { sandboxOriginOf } from "@/shared/sandbox-origin";
 import { getRuntimeSandboxOrigin } from "./runtime-config";
