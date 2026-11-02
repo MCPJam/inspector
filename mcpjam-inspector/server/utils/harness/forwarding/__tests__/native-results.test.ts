@@ -1,6 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { nativeToolCallId, readNativeToolResult } from "../native-results.js";
+
+it("uses only the runtime-selected metadata key for result correlation", () => {
+  const params = { _meta: { callId: "codex-call", "claudecode/toolUseId": "claude-call" } };
+  expect(nativeToolCallId(params, "callId")).toBe("codex-call");
+  expect(nativeToolCallId(params)).toBe("claude-call");
+  expect(nativeToolCallId({ _meta: { "claudecode/toolUseId": "other" } }, "callId")).toBeUndefined();
+  expect(nativeToolCallId({ _meta: { callId: 42 } }, "callId")).toBeUndefined();
+});
 import type { ExecutionControl } from "../execution-control.js";
+import { ExecutionControlError } from "../execution-control.js";
 
 function fixture() {
   const result = {
@@ -43,6 +52,19 @@ function fixture() {
 }
 
 describe("native tool result correlation", () => {
+  it.each(["control_409", "control_403", "invalid_control_response"])(
+    "does not claim a dispatched tool was refused when result lookup fails (%s)",
+    async (code) => {
+      const f = fixture();
+      const onReceipt = vi.fn();
+      f.control.nativeResult.mockRejectedValueOnce(new ExecutionControlError(code));
+      await expect(
+        readNativeToolResult(f.control, "turn", "native-call", onReceipt),
+      ).rejects.toThrow("The tool may have run, but its final result could not be confirmed.");
+      expect(f.control.nativeResult).toHaveBeenCalledExactlyOnceWith("turn", "native-call");
+      expect(onReceipt).not.toHaveBeenCalled();
+    },
+  );
   it("reads only the native metadata identity, not matching arguments", () => {
     expect(
       nativeToolCallId({

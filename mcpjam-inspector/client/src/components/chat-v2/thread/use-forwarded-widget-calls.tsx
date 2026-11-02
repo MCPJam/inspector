@@ -6,9 +6,11 @@ import {
 import { z } from "zod";
 import { authFetch } from "@/lib/session-token";
 import { parseSSEStream } from "@/lib/sse";
+import type { RetainedResourceProof } from "@/shared/retained-app-resources";
 import type { McpWidgetExecutionContext } from "@/shared/mcp-tool-origin-metadata";
 import { ToolPart } from "./parts/tool-part";
 import { toast } from "@/lib/toast";
+import { HOSTED_HARNESS_INPUT_VERSION } from "@/shared/hosted-elicitation";
 
 type Pending = {
   key: string;
@@ -60,7 +62,7 @@ export function useForwardedWidgetCalls(
   return {
     approvals: pending.map((entry) => (
       <ToolPart
-        key={entry.key}
+        key={entry.id}
         chatSessionId={chatSessionId}
         part={{
           type: "dynamic-tool",
@@ -80,7 +82,7 @@ export function useForwardedWidgetCalls(
       />
     )),
     call: async (
-      context: McpWidgetExecutionContext,
+      context: McpWidgetExecutionContext | RetainedResourceProof,
       name: string,
       input: Record<string, unknown>,
     ): Promise<CallToolResult> => {
@@ -92,7 +94,7 @@ export function useForwardedWidgetCalls(
       try {
         const response = await authFetch("/api/web/harness-forwarding/widget", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", "x-mcpjam-harness-input-version": String(HOSTED_HARNESS_INPUT_VERSION) },
           body: JSON.stringify({ context, toolName: name, arguments: input }),
           signal: abort.signal,
         });
@@ -105,6 +107,8 @@ export function useForwardedWidgetCalls(
           if (!parsed.success) continue;
           const event = parsed.data;
           if (event.type === "approval") {
+            if (cancelPending)
+              abort.signal.removeEventListener("abort", cancelPending);
             // A proxy can keep the response open after fetch aborts. Revoke
             // the pending approval explicitly, using its existing signed id.
             cancelPending = () => {

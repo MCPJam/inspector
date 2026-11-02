@@ -414,6 +414,11 @@ interface TestTemplateEditorProps {
    */
   onManageOrgProviders?: () => void;
   /**
+   * The same from a model search with no match, under any key policy, or
+   * `null` when the organization offers this viewer none.
+   */
+  onAddProvider: (() => void) | null;
+  /**
    * Iterations for the entire suite, already subscribed by the parent via
    * `getAllTestCasesAndIterationsBySuite`. We filter to the current case
    * locally instead of opening a second `listTestIterations` subscription
@@ -1054,6 +1059,7 @@ export function TestTemplateEditor({
   availableModels,
   requireOrgKeys = false,
   onManageOrgProviders,
+  onAddProvider,
   suiteIterations,
   suiteRuns: listedSuiteRuns = [],
   onExportDraft,
@@ -4761,6 +4767,7 @@ export function TestTemplateEditor({
                     availableModels={availableModels}
                     requireOrgKeys={requireOrgKeys}
                     onManageOrgProviders={onManageOrgProviders}
+                    onAddProvider={onAddProvider}
                     disabled={isRunningCompare}
                     onModelsChange={setSelectedModelValues}
                     {...(isEnvironmentSuite

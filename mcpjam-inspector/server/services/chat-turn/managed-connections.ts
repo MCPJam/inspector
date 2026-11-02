@@ -1,6 +1,17 @@
+import { setManagerResourceHostConfig } from "../../utils/mcp-connections";
 import { TurnResources } from "./resources.js";
+import {
+  createHarnessInputHost,
+  harnessElicitationModes,
+} from "../../utils/harness/input-host.js";
+import { isForwardingOrganization } from "../../utils/harness/forwarding/native-turn.js";
+import { qualifiedForwardingRuntime } from "../../utils/harness/forwarding/runtime-contract.js";
+import { getHarnessAdapter } from "../../utils/harness/registry.js";
 import { chatTurnIsolatedServerIds } from "../../utils/plugin-server-isolation.js";
-import { HOSTED_ELICITATION_VERSION } from "../../../shared/hosted-elicitation.js";
+import {
+  HOSTED_ELICITATION_VERSION,
+  HOSTED_HARNESS_INPUT_VERSION,
+} from "../../../shared/hosted-elicitation.js";
 import { hasServiceCredential } from "../service-credential.js";
 import { PluginInvocationError } from "../plugin-host/invocation.js";
 import { describePluginError } from "../../../shared/plugin-diagnostics.js";
@@ -27,7 +38,10 @@ import { buildHostConnectionPins } from "../host-connection-pins.js";
 import { refreshConnectionProfiles } from "../../utils/connection-profile-refresh.js";
 import { type Context } from "hono";
 import { TaskCreatedSink } from "@mcpjam/sdk";
-import { isCompatibleHostedTasksVersion } from "@/shared/hosted-task-created";
+import {
+  isCompatibleHostedTasksVersion,
+  hostedTaskOwnerRequestId,
+} from "@/shared/hosted-task-created";
 import { HostedTaskCreatedBridge } from "../../utils/hosted-task-created-bridge.js";
 import { recordHostedTask } from "../hosted-task-registry.js";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
@@ -132,6 +146,7 @@ export async function prepareManagedConnections(args: {
     selectedServerIds,
     selectedServerNames,
     scenarioId,
+    hostId,
     accessVersion,
     modelDefinition,
     turnMode,
@@ -301,6 +316,23 @@ export async function prepareManagedConnections(args: {
     await elicitationBridge?.dispose();
   });
 
+  const inputHostId = isHostAuthoritative ? hostRuntimeConfig?.hostId : hostId;
+  const harnessInput =
+    elicitationBridge &&
+    resolvedExecution.harness &&
+    qualifiedForwardingRuntime(getHarnessAdapter(resolvedExecution.harness))?.ownedInput === true &&
+    rawBody.hostedHarnessInputVersion === HOSTED_HARNESS_INPUT_VERSION &&
+    process.env.HARNESS_NATIVE_FORWARDING === "true" &&
+    (turnRail === "hosted" || turnRail === "org") &&
+    typeof inputHostId === "string" && inputHostId.length > 0 && !scenarioId && !rawBody.harnessExecutionTarget
+      ? createHarnessInputHost({
+          allowedServerIds: new Set(effectiveServerIds),
+          modes: harnessElicitationModes(effectiveClientCapabilities),
+          handle: elicitationBridge.callback,
+          signal: c.req.raw.signal,
+        })
+      : undefined;
+
   const mrtrBridge =
     mrtrEnabled && convexBearer
       ? new HostedMrtrBridge({
@@ -326,6 +358,16 @@ export async function prepareManagedConnections(args: {
       (rawBody as Record<string, unknown>).hostedTasksVersion,
     )
       ? new HostedTaskCreatedBridge({
+          requestedOwnerScope:
+            typeof (rawBody as Record<string, unknown>).hostedTaskOwnerScope ===
+            "string"
+              ? ((rawBody as Record<string, unknown>)
+                  .hostedTaskOwnerScope as string)
+              : undefined,
+          ownerRequestId: hostedTaskOwnerRequestId(
+            (rawBody as Record<string, unknown>).hostedTaskOwnerRequestId,
+            (rawBody as Record<string, unknown>).hostedTaskOwnerVersion,
+          ),
           serverNamesById:
             buildServerNamesById(effectiveServerIds, effectiveServerNames) ??
             {},
@@ -562,11 +604,17 @@ export async function prepareManagedConnections(args: {
       // Registered SYNCHRONOUSLY inside createAuthorizedManager (before the
       // connect microtask) so `buildCapabilities` advertises `elicitation`
       // for MRTR-capable servers — same race discipline as elicitation.
-      ...(mrtrBridge
+      ...(mrtrBridge || harnessInput
         ? {
-            mrtrInputCollectorForServer: (serverId: string) =>
+            mrtrInputCollectorForServer: (
+              serverId: string,
+              organizationId?: string | null,
+            ) =>
               modelMrtr?.collectorForServer(serverId) ??
-              mrtrBridge.mrtrInputCollectorForServer(serverId),
+              mrtrBridge?.mrtrInputCollectorForServer(serverId) ??
+              (isForwardingOrganization(organizationId)
+                ? harnessInput?.collectMrtrForServer(serverId)
+                : undefined),
           }
         : {}),
       // Same scope the bash tool reserves under, so a plugin's stdio
@@ -575,7 +623,9 @@ export async function prepareManagedConnections(args: {
       ...(executionScope ? { executionScope } : {}),
     },
   );
+  if (typeof hostRuntimeConfig?.hostConfigId === "string" && typeof hostRuntimeConfig.hostId === "string") setManagerResourceHostConfig(manager, hostRuntimeConfig.hostConfigId, hostRuntimeConfig.hostId);
   connectedManager = manager;
+  taskCreatedBridge?.bindOwner(hostedBody.projectId, authenticatedUserId);
   const pendingApproval = pendingStdioCommandApproval(refusedServers);
   if (pendingApproval) throw pendingApproval;
   if (Array.isArray(hostedBody.messages) && hostedBody.messages.length <= 1)
@@ -690,6 +740,7 @@ export async function prepareManagedConnections(args: {
 
   return {
     tasksSeam,
+    harnessOwnedInput: !!harnessInput,
     scopeStepUpResumeRequest,
     scopeStepUpCancelRequest,
     scopeStepUpEnabled,

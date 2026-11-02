@@ -10,6 +10,7 @@ export {
   toolTaskSupport,
   validateCreateTaskShape,
   validateCompletionAck,
+  failedTaskLacksStatusMessage,
   validateTaskStatusPayload,
   validateTaskTtlIntegerShape,
   validateTaskTtlShape,
@@ -30,9 +31,15 @@ export type {
   MCPTasksCheckStatus,
   MCPTasksConformanceConfig,
   MCPTasksConformanceResult,
+  MCPTasksReadinessId,
+  MCPTasksReadinessWarning,
   MCPTasksRunOutcome,
   MCPTasksSkipReason,
   NormalizedMCPTasksConformanceConfig,
 } from "./types.js";
 
-export { MCP_TASKS_CHECK_CATEGORIES, MCP_TASKS_CHECK_IDS } from "./types.js";
+export {
+  MCP_TASKS_CHECK_CATEGORIES,
+  MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
+} from "./types.js";

@@ -18,6 +18,7 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { bridgeControlPlugin } from "./lib/bridge-control-plugin.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const inspectorRoot = join(__dirname, "..");
@@ -99,7 +100,7 @@ async function bundleEntry(relativeEntry, { layer = false } = {}) {
     // time are Node builtins (`layer/launcher.mjs` enforces that), so `ws` is
     // compiled in rather than read from the vendor pack.
     external: layer ? [] : EXTERNAL,
-    ...(layer ? { plugins: [stubOptionalNatives] } : {}),
+    plugins: [bridgeControlPlugin, ...(layer ? [stubOptionalNatives] : [])],
     // The bridge runs inside a disposable sandbox and its stack traces are the
     // only debugging surface there, so keep it readable.
     minify: false,

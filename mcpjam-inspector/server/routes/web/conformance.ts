@@ -1,7 +1,10 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import {
+  MCP_APPS_CHECK_IDS,
+  MCP_CHECK_IDS,
   MCP_PROTOCOL_VERSIONS,
+  MCP_TASKS_CHECK_IDS,
   oauthConformanceProfileSchema,
   type MCPServerConfig,
 } from "@mcpjam/sdk";
@@ -25,6 +28,7 @@ import {
   startOAuthConformance,
   submitOAuthConformanceCode,
 } from "../shared/conformance";
+import { conformanceProbeFields } from "../shared/conformance-probes";
 import { authorizeServer, toHttpConfig } from "./auth.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
@@ -238,6 +242,10 @@ const protocolSchema = z
   .object({
     /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
     protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
+    /** Run only these checks, as picked before Run; absent ⇒ all of them. */
+    checkIds: z.array(z.enum(MCP_CHECK_IDS)).min(1).optional(),
+    /** Tools named as safe for the checks that must call one. */
+    ...conformanceProbeFields,
   })
   .passthrough(); // project/guest fields pass through to resolveHostedHttpConfig
 
@@ -254,6 +262,9 @@ conformanceWeb.post("/protocol", async (c) =>
       const { result } = await runProtocolConformance({
         ...resolved,
         protocolVersion: parsed.protocolVersion,
+        checkIds: parsed.checkIds,
+        logProbe: parsed.logProbe,
+        inputRequiredProbe: parsed.inputRequiredProbe,
       });
       return { success: true, result };
     } catch (error) {
@@ -264,14 +275,25 @@ conformanceWeb.post("/protocol", async (c) =>
 
 // ── POST /apps ──────────────────────────────────────────────────────────
 
+const appsSchema = z
+  .object({
+    /** Run only these checks, as picked before Run; absent ⇒ all of them. */
+    checkIds: z.array(z.enum(MCP_APPS_CHECK_IDS)).min(1).optional(),
+  })
+  .passthrough(); // project/guest fields pass through to resolveHostedServerConfig
+
 conformanceWeb.post("/apps", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
     const body = await readJsonBody<Record<string, unknown>>(c);
     const config = await resolveHostedServerConfig(c, bearerToken, body);
+    const parsed = parseWithSchema(appsSchema, body);
 
     try {
-      const { result } = await runAppsConformance(config);
+      const { result } = await runAppsConformance({
+        ...config,
+        ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
+      });
       return { success: true, result };
     } catch (error) {
       throw toWebError(error);
@@ -315,6 +337,8 @@ const tasksSchema = z
     toolName: z.string().min(1).optional(),
     toolArguments: z.record(z.string(), z.unknown()).optional(),
     pollTimeoutMs: z.number().int().positive().max(120_000).optional(),
+    /** Run only these checks, as picked before Run; absent ⇒ all of them. */
+    checkIds: z.array(z.enum(MCP_TASKS_CHECK_IDS)).min(1).optional(),
   })
   .passthrough(); // project/guest fields pass through to resolveHostedServerConfig
 
@@ -330,6 +354,7 @@ conformanceWeb.post("/tasks", async (c) =>
         runTasksConformance({
           ...config,
           timeout: HOSTED_TASKS_CALL_TIMEOUT_MS,
+          ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
           ...(parsed.toolName ? { toolName: parsed.toolName } : {}),
           ...(parsed.toolArguments
             ? { toolArguments: parsed.toolArguments }
