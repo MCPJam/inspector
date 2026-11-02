@@ -21,6 +21,7 @@ import {
   type MCPAppsConformanceResult,
   type MCPConformanceConfig,
   type MCPConformanceResult,
+  type MCPCheckId,
   type MCPServerConfig,
   type McpProtocolVersion,
   type MCPTasksConformanceConfig,
@@ -29,6 +30,7 @@ import {
   type OAuthConformanceProfile,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
+import type { ConformanceProbes } from "./conformance-probes.js";
 import {
   createSession,
   getSession,
@@ -140,6 +142,8 @@ export interface ResolvedHttpConfig {
   customHeaders?: Record<string, string>;
   /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
   protocolVersion?: McpProtocolVersion;
+  /** Run only these checks; absent ⇒ every check the revision has. */
+  checkIds?: MCPCheckId[];
 }
 
 export class UnsupportedTransportError extends Error {
@@ -158,13 +162,18 @@ export function assertHttpSupported(
 }
 
 export async function runProtocolConformance(
-  input: ResolvedHttpConfig,
+  input: ResolvedHttpConfig & ConformanceProbes,
 ): Promise<{ result: MCPConformanceResult }> {
   const config: MCPConformanceConfig = {
     serverUrl: input.serverUrl,
     accessToken: input.accessToken,
     customHeaders: input.customHeaders,
     protocolVersion: input.protocolVersion,
+    ...(input.checkIds ? { checkIds: input.checkIds } : {}),
+    ...(input.logProbe ? { logProbe: input.logProbe } : {}),
+    ...(input.inputRequiredProbe
+      ? { inputRequiredProbe: input.inputRequiredProbe }
+      : {}),
     // Checking the URL the caller named is not the same as checking the
     // addresses we end up dialing: a target can answer `302 Location:
     // http://169.254.169.254/`. This re-checks each hop. A no-op outside hosted
@@ -230,7 +239,7 @@ export async function runLocalDirectoryReadiness(input: {
     publisher: input.publisher,
     target: input.target,
     submissionMode: input.submissionMode,
-    headers: Object.keys(headers).length > 0 ? headers : undefined,
+    mcpHeaders: Object.keys(headers).length > 0 ? headers : undefined,
     fetchFn: createConformanceFetch("MCP server"),
   });
   return { result };

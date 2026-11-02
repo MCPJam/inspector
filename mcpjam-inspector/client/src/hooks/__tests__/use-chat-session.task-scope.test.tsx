@@ -4,6 +4,7 @@ import { useChatSession } from "../use-chat-session";
 import {
   getTrackedTasks,
   setTrackedTaskScope,
+  setTrackedTaskOwner,
 } from "@/lib/task-tracker";
 
 /**
@@ -197,6 +198,7 @@ describe("useChatSession task-created scope capture", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    setTrackedTaskOwner(null, null);
     setTrackedTaskScope(undefined);
     mockState.chatOnData = null;
     mockState.transportOptions = [];
@@ -248,4 +250,97 @@ describe("useChatSession task-created scope capture", () => {
 
     expect(getTrackedTasks().map((t) => t.scope)).toEqual(["proj-a"]);
   });
+  it("uses per-request owners when overlapping bound replies arrive out of order", async () => {
+    setTrackedTaskOwner("project", "actor-a");
+    await renderChatSession();
+    const transport = mockState.transportOptions.at(-1)!;
+    const first = transport.body!() as {
+      hostedTaskOwnerRequestId: string;
+      hostedTaskOwnerScope: string;
+    };
+    setTrackedTaskOwner("project", "actor-b");
+    const second = transport.body!() as {
+      hostedTaskOwnerRequestId: string;
+      hostedTaskOwnerScope: string;
+    };
+    expect(first.hostedTaskOwnerRequestId).not.toBe(
+      second.hostedTaskOwnerRequestId,
+    );
+    const reply = (
+      ownerRequestId: string,
+      sourceExecutionId: string,
+      ownerScope: string,
+    ) => {
+      const part = taskCreatedPart("same");
+      return {
+        ...part,
+        data: {
+          ...part.data,
+          connectionId: "account",
+          ownerRequestId,
+          sourceExecutionId,
+          ownerScope,
+        },
+      };
+    };
+    act(() => {
+      mockState.chatOnData?.(
+        reply(
+          second.hostedTaskOwnerRequestId,
+          "b",
+          second.hostedTaskOwnerScope,
+        ),
+      );
+      mockState.chatOnData?.(
+        reply(first.hostedTaskOwnerRequestId, "a", first.hostedTaskOwnerScope),
+      );
+    });
+    expect(getTrackedTasks().map((task) => task.sourceExecutionId)).toEqual([
+      "b",
+    ]);
+    setTrackedTaskOwner("project", "actor-a");
+    expect(getTrackedTasks().map((task) => task.sourceExecutionId)).toEqual([
+      "a",
+    ]);
+    expect(getTrackedTasks()[0].serverId).toBe("convex-doc-id");
+  });
+
+  it("does not assign an uncorrelated bound reply to the currently signed-in actor", async () => {
+    setTrackedTaskOwner("project", "actor-a");
+    await renderChatSession();
+    const part = taskCreatedPart("unknown");
+    act(() =>
+      mockState.chatOnData?.({
+        ...part,
+        data: {
+          ...part.data,
+          connectionId: "account",
+          ownerRequestId: "unknown-request",
+        },
+      }),
+    );
+    expect(getTrackedTasks()).toEqual([]);
+  });
+
+  it("rejects an authenticated owner mismatch even for a known request", async () => {
+    setTrackedTaskOwner("project", "actor-a");
+    await renderChatSession();
+    const request = mockState.transportOptions.at(-1)!.body!() as {
+      hostedTaskOwnerRequestId: string;
+    };
+    const part = taskCreatedPart("wrong-owner");
+    act(() =>
+      mockState.chatOnData?.({
+        ...part,
+        data: {
+          ...part.data,
+          connectionId: "account",
+          ownerRequestId: request.hostedTaskOwnerRequestId,
+          ownerScope: "another-owner",
+        },
+      }),
+    );
+    expect(getTrackedTasks()).toEqual([]);
+  });
+
 });

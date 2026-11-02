@@ -5,6 +5,7 @@ import { BootstrapNotReadyError } from "@/lib/app-ready";
 import {
   clearTrackedTasksForScope,
   setTrackedTaskScope,
+  setTrackedTaskOwner,
 } from "@/lib/task-tracker";
 import {
   getDefaultClientCapabilities,
@@ -17,6 +18,8 @@ type GetAccessTokenFn = (options?: {
 }) => Promise<string | undefined | null>;
 
 export interface ApiContext {
+  /** User id resolved by Convex for the active bearer, including guests. */
+  taskOwnerId?: string | null;
   projectId: string | null;
   serverIdsByName: Record<string, string>;
   clientCapabilities?: Record<string, unknown>;
@@ -283,6 +286,7 @@ export function setApiContext(next: ApiContext | null): void {
     clearTrackedTasksForScope(previousProjectId);
   }
   setTrackedTaskScope(nextProjectId);
+  setTrackedTaskOwner(nextProjectId, next?.taskOwnerId);
 
   apiContext = next
     ? {

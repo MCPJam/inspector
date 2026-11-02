@@ -4,6 +4,10 @@
  * @packageDocumentation
  */
 
+// The Node resolver for every MCPJam request this entry can make, the IT
+// settings file and its lock included.
+import "./deployment/node-entry.js";
+
 // MCPClientManager from new modular implementation
 export { MCPClientManager } from "./mcp-client-manager/index.js";
 
@@ -255,12 +259,47 @@ export {
   isUnauthorized401,
   isInsufficientScopeError,
   extractInsufficientScopeChallenge,
+  extractAuthChallenge,
+  attachAuthChallenge,
   unwrapEraNegotiationCause,
   classifyNegotiationFailureClass,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./mcp-client-manager/index.js";
 export type { InsufficientScopeChallenge } from "./mcp-client-manager/index.js";
+// Mid-session sign-in ("lazy authentication") challenges.
+export {
+  AUTH_CHALLENGE_ACTIONS,
+  AUTH_CHALLENGE_LIMITS,
+  AUTH_CHALLENGE_POLICY_DEFAULTS,
+  TOOL_RESULT_AUTH_CHALLENGE_META_KEY,
+  TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
+  UNAUTHORIZED_CHALLENGE_TRIGGERS,
+  authChallengeNotifyText,
+  authChallengePolicyFrom,
+  decideAuthChallengeAction,
+  describeAuthChallengeDecision,
+  hasOAuth2Scheme,
+  parseAuthChallengeSignal,
+  parseChallengeHeader,
+  parseToolResultAuthChallenge,
+  resolveToolSecuritySchemes,
+} from "./mcp-client-manager/auth-challenge.js";
+export type {
+  AuthChallengeAction,
+  AuthChallengeDecision,
+  AuthChallengeDecisionReason,
+  AuthChallengeEffectiveAuth,
+  AuthChallengeFacets,
+  AuthChallengePolicy,
+  AuthChallengeSignal,
+  AuthChallengeSource,
+  ToolResultAuthChallengeTrigger,
+  ToolSecurityScheme,
+  ToolSecuritySchemeResolution,
+  ToolSecuritySchemeSource,
+  UnauthorizedChallengeTrigger,
+} from "./mcp-client-manager/auth-challenge.js";
 export type { RetryPolicy } from "./retry.js";
 export {
   DEFAULT_RETRY_POLICY,
@@ -761,6 +800,7 @@ export {
   computeConformanceScore,
   describeConformanceScore,
   pooledConformanceScore,
+  scorableOAuthIds,
   scoreFromAppsResult,
   scoreFromOAuthResult,
   scoreFromProtocolResult,
@@ -1315,6 +1355,8 @@ export type {
   MCPTasksCheckStatus,
   MCPTasksConformanceConfig,
   MCPTasksConformanceResult,
+  MCPTasksReadinessId,
+  MCPTasksReadinessWarning,
   MCPTasksRunOutcome,
   MCPTasksSkipReason,
 } from "./tasks-conformance/index.js";
@@ -1322,6 +1364,7 @@ export {
   decideOutcome,
   MCP_TASKS_CHECK_CATEGORIES,
   MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
   resolveProbeTool,
 } from "./tasks-conformance/index.js";
 
@@ -1855,6 +1898,7 @@ export type {
   MrtrOperationState,
   MrtrLegResult,
   MrtrLegSender,
+  MrtrLegMiddleware,
   MrtrSupportedModes,
   MrtrInputCollector,
   MrtrValidateResponse,
@@ -1912,6 +1956,7 @@ export {
   canDeclareTasksExtension,
   readDeclaredInputCapabilities,
   TaskInputRejectedError,
+  validateEmbeddedClientRequest,
   DEFAULT_TASK_INPUT_LIMITS,
   createStrictElicitationContentValidator,
   retryAfterMsFromError,

@@ -58,6 +58,29 @@ describe("identity", () => {
     expect(legacy).not.toBe(extension);
   });
 
+  it("keeps matching task IDs and answered inputs separate across accounts", () => {
+    const engine = new TaskLifecycleEngine();
+    const a = identity("same", { connectionId: "a" });
+    const b = identity("same", { connectionId: "b" });
+    expect(taskLifecycleKey(a)).not.toBe(taskLifecycleKey(b));
+    expect(taskLifecycleKey(a)).not.toBe(taskLifecycleKey(identity("same")));
+    engine.register(a);
+    engine.register(b);
+    expect(engine.all()).toHaveLength(2);
+    engine.markInputKeysResponded(a, ["accepted"]);
+    expect(engine.get(a)?.respondedInputKeys.has("accepted")).toBe(true);
+    expect(engine.get(b)?.respondedInputKeys.has("accepted")).toBe(false);
+  });
+
+  it("refuses identity delimiters and empty account pins", () => {
+    expect(() =>
+      taskLifecycleKey(identity("same", { connectionId: "a\u0000b" }))
+    ).toThrow("Invalid task identity");
+    expect(() =>
+      taskLifecycleKey(identity("same", { connectionId: "" }))
+    ).toThrow("Invalid task identity");
+  });
+
   it("keeps the auth scope in the key", () => {
     expect(taskLifecycleKey(identity("t1", { scope: "projA" }))).not.toBe(
       taskLifecycleKey(identity("t1", { scope: "projB" }))
