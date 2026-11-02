@@ -417,7 +417,7 @@ describe("completion acknowledgements", () => {
     // message must quote what the server actually sent.
     expect(
       validateCompletionAck({}, "tasks/update", { resultType: "task" })
-        .violations[0],
+        .violations[0]
     ).toContain('resultType "task" rather than "complete"');
   });
 
