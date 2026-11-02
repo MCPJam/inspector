@@ -28,7 +28,10 @@ import {
   startOAuthConformance,
   submitOAuthConformanceCode,
 } from "../shared/conformance";
-import { conformanceProbeFields } from "../shared/conformance-probes";
+import {
+  conformanceInputResponsesSchema,
+  conformanceProbeFields,
+} from "../shared/conformance-probes";
 import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 const conformance = new Hono();
@@ -200,6 +203,7 @@ const tasksSchema = z.object({
    *  carry no task metadata to pick from. */
   toolName: z.string().min(1).optional(),
   toolArguments: z.record(z.string(), z.unknown()).optional(),
+  inputResponses: conformanceInputResponsesSchema,
   pollTimeoutMs: z.number().int().positive().max(120_000).optional(),
   /** Run only these checks, as picked before Run; absent ⇒ all of them. */
   checkIds: z.array(z.enum(MCP_TASKS_CHECK_IDS)).min(1).optional(),

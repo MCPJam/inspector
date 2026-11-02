@@ -16,6 +16,7 @@ import {
 import {
   probeInputStatus,
   probesApply,
+  tasksProbeRuns,
   type ConformanceProbeKey,
   type ConformanceProbes,
 } from "@/hooks/use-conformance-probes";
@@ -93,10 +94,10 @@ export function ConformanceSetup({
   ) => void;
 }) {
   // The tools the checks that must call one may use, set in step 2's list,
-  // and whether each one's arguments box parses.
+  // and whether each one's arguments box (and the Tasks answers) parses.
   const [probes, setProbes] = useState<ConformanceProbes>({});
   const [probeValid, setProbeValid] = useState<
-    Partial<Record<ConformanceProbeKey, boolean>>
+    Partial<Record<ConformanceProbeKey | "answers", boolean>>
   >({});
   // A draft until Run, so Cancel leaves the page's selection as it was.
   const [serverName, setServerName] = useState(initialServerName);
@@ -116,10 +117,15 @@ export function ConformanceSetup({
   const versionLabelId = useId();
   const picked = servers.find((server) => server.name === serverName);
   // Only HTTP servers run the protocol suite, and the checks that call a
-  // tool run only on a pinned 2026-07-28 run, so only then is a tool asked
-  // for. One tools list serves every field.
-  const probeServer =
-    picked && isHttpServer(picked) && probesApply(versionPin) ? picked : null;
+  // tool run only on a pinned 2026-07-28 run, so only then is a protocol tool
+  // asked for. The Tasks suite runs on any server and pin, so its tool is
+  // asked for whenever a Tasks check that calls it is picked. One tools list
+  // serves every field.
+  const protocolProbes = Boolean(
+    picked && isHttpServer(picked) && probesApply(versionPin),
+  );
+  const tasksProbe = tasksProbeRuns(selection.tasks);
+  const probeServer = picked && (protocolProbes || tasksProbe) ? picked : null;
   const probeTools = useProbeTools(probeServer);
   // Picked from the project's list before this session loaded it: it has no
   // runtime entry until it connects.
@@ -359,28 +365,41 @@ export function ConformanceSetup({
                 selection={selection}
                 onChange={setSelection}
                 showAdvice
-                renderProtocolExtra={
+                renderCheckExtra={
                   probeServer
-                    ? (checkId, isPicked, checkTitle) => (
-                        <ProbeCheckExtra
-                          checkId={checkId}
-                          checkTitle={checkTitle}
-                          isPicked={isPicked}
-                          tools={probeTools}
-                          probes={probes}
-                          onProbesChange={setProbes}
-                          onValidChange={(key, valid) =>
-                            setProbeValid((prev) => ({ ...prev, [key]: valid }))
-                          }
-                        />
-                      )
+                    ? (suite, checkId, isPicked, checkTitle) =>
+                        (suite === "protocol" && protocolProbes) ||
+                        (suite === "tasks" && tasksProbe) ? (
+                          <ProbeCheckExtra
+                            checkId={checkId}
+                            checkTitle={checkTitle}
+                            isPicked={isPicked}
+                            tools={probeTools}
+                            probes={probes}
+                            onProbesChange={setProbes}
+                            onValidChange={(part, valid) =>
+                              setProbeValid((prev) => ({
+                                ...prev,
+                                [part]: valid,
+                              }))
+                            }
+                          />
+                        ) : null
                     : undefined
                 }
-                protocolInputStatus={
-                  probeServer
-                    ? (checkId) => probeInputStatus(checkId, probes)
-                    : undefined
-                }
+                checkInputStatus={(suite, checkId) => {
+                  if (suite === "protocol" && protocolProbes) {
+                    return probeInputStatus(checkId, probes);
+                  }
+                  // The Tasks tool is optional where the server marks which
+                  // tool creates a task, so an unset one is not flagged.
+                  if (suite === "tasks" && tasksProbe) {
+                    return probeInputStatus(checkId, probes) === "set"
+                      ? "set"
+                      : undefined;
+                  }
+                  return undefined;
+                }}
               />
             </div>
 

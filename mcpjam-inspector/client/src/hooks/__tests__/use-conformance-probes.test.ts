@@ -6,11 +6,18 @@ import {
   probesApply,
   probesForRun,
   readStoredProbes,
+  tasksProbeRuns,
+  tasksRunOptions,
   useConformanceProbeStore,
 } from "../use-conformance-probes";
 
 const logProbe = { toolName: "echo", arguments: { message: "hi" } };
 const inputRequiredProbe = { toolName: "ask" };
+const tasksProbe = {
+  toolName: "long-job",
+  arguments: { seconds: 2 },
+  inputResponses: { confirm: { action: "accept" } },
+};
 
 describe("probesForRun", () => {
   it("sends every probe when every check runs", () => {
@@ -70,14 +77,26 @@ describe("probesAfterRun", () => {
       probesAfterRun(
         saved,
         draft,
-        ["modern-logs-require-log-level"],
+        { protocol: ["modern-logs-require-log-level"] },
         "2026-07-28",
       ),
     ).toEqual({ logProbe, inputRequiredProbe });
   });
 
   it("drops a tool cleared for a check that ran", () => {
-    expect(probesAfterRun(saved, {}, undefined, "2026-07-28")).toEqual({});
+    expect(probesAfterRun(saved, {}, {}, "2026-07-28")).toEqual({});
+  });
+
+  it("keeps the Tasks tool by the Tasks picks, on any pin", () => {
+    const other = { toolName: "other-job" };
+    // Tasks left out: the saved tool stays, the draft's is not saved.
+    expect(
+      probesAfterRun({ tasksProbe }, { tasksProbe: other }, { tasks: [] }, "auto"),
+    ).toEqual({ tasksProbe });
+    // Tasks ran: the draft's tool is saved.
+    expect(
+      probesAfterRun({ tasksProbe }, { tasksProbe: other }, {}, "auto"),
+    ).toEqual({ tasksProbe: other });
   });
 });
 
@@ -141,5 +160,56 @@ describe("useConformanceProbeStore", () => {
       JSON.stringify({ logProbe: { toolName: "" }, inputRequiredProbe }),
     );
     expect(readStoredProbes("alpha")).toEqual({ inputRequiredProbe });
+  });
+});
+
+describe("Tasks probe", () => {
+  beforeEach(() => window.localStorage.clear());
+
+  it("is called only for the Tasks checks that need a task", () => {
+    expect(probeKeyFor("tasks-update-ack-shape")).toBe("tasksProbe");
+    // Reads the wire the server negotiated; never calls the tool.
+    expect(probeKeyFor("tasks-wire-resolvable")).toBeUndefined();
+    expect(tasksProbeRuns(undefined)).toBe(true);
+    expect(tasksProbeRuns(["tasks-wire-resolvable"])).toBe(false);
+  });
+
+  it("stays out of the protocol run", () => {
+    expect(
+      probesForRun({ logProbe, tasksProbe }, undefined, "2026-07-28"),
+    ).toEqual({ logProbe });
+  });
+
+  it("sends the tool, its arguments and the answers with the Tasks run", () => {
+    expect(tasksRunOptions({ tasksProbe }, undefined)).toEqual({
+      toolName: "long-job",
+      toolArguments: { seconds: 2 },
+      inputResponses: { confirm: { action: "accept" } },
+    });
+    // No picked check calls it: only the picks go.
+    expect(
+      tasksRunOptions({ tasksProbe }, { tasks: ["tasks-wire-resolvable"] }),
+    ).toEqual({ checkIds: ["tasks-wire-resolvable"] });
+  });
+
+  it("keeps its answers across a reload, and only on the Tasks probe", () => {
+    window.localStorage.setItem(
+      "mcpjam.conformance.probes.v1:alpha",
+      JSON.stringify({
+        tasksProbe,
+        logProbe: { ...logProbe, inputResponses: { confirm: true } },
+      }),
+    );
+    expect(readStoredProbes("alpha")).toEqual({ tasksProbe, logProbe });
+  });
+
+  it("drops answers that are not an object", () => {
+    window.localStorage.setItem(
+      "mcpjam.conformance.probes.v1:alpha",
+      JSON.stringify({ tasksProbe: { ...tasksProbe, inputResponses: [1] } }),
+    );
+    expect(readStoredProbes("alpha")).toEqual({
+      tasksProbe: { toolName: "long-job", arguments: { seconds: 2 } },
+    });
   });
 });

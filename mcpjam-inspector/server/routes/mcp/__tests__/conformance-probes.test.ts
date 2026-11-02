@@ -175,3 +175,50 @@ describe("POST /api/mcp/conformance tasks and oauth advice picks", () => {
     expect(startOAuthConformanceMock).not.toHaveBeenCalled();
   });
 });
+
+describe("POST /api/mcp/conformance/tasks task tool", () => {
+  function postTasks(body: Record<string, unknown>) {
+    return createTestApp().request("/api/mcp/conformance/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ serverId: "test-server", ...body }),
+    });
+  }
+
+  beforeEach(() => {
+    runTasksConformanceMock.mockReset();
+    runTasksConformanceMock.mockResolvedValue({ result: { checks: [] } });
+  });
+
+  it("forwards the tool, its arguments and the input answers", async () => {
+    const inputResponses = {
+      confirm: { action: "accept", content: { ok: true } },
+    };
+    const res = await postTasks({
+      toolName: "long-job",
+      toolArguments: { seconds: 2 },
+      inputResponses,
+    });
+
+    expect(res.status).toBe(200);
+    expect(runTasksConformanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: "long-job",
+        toolArguments: { seconds: 2 },
+        inputResponses,
+      }),
+    );
+  });
+
+  it.each([
+    ["answers that are not an object", { inputResponses: ["yes"] }],
+    [
+      "answers over the size cap",
+      { inputResponses: { confirm: "x".repeat(10_001) } },
+    ],
+  ])("rejects %s", async (_label, body) => {
+    const res = await postTasks({ toolName: "long-job", ...body });
+    expect(res.status).toBe(400);
+    expect(runTasksConformanceMock).not.toHaveBeenCalled();
+  });
+});

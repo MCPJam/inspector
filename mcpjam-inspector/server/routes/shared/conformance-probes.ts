@@ -33,6 +33,20 @@ export const conformanceProbeFields = {
   inputRequiredProbe: conformanceProbeSchema.optional(),
 };
 
+/**
+ * Answers the Tasks suite sends with `tasks/update` when its task asks for
+ * input, keyed by `inputRequests` key. Opt-in: what a task asks is
+ * server-defined, so without them the update acknowledgement check is not
+ * applicable. Both routes accept the same shape.
+ */
+export const conformanceInputResponsesSchema = z
+  .record(z.string(), z.unknown())
+  .optional()
+  .refine(
+    (value) => value === undefined || JSON.stringify(value).length <= 10_000,
+    "Input responses must serialize to at most 10,000 characters",
+  );
+
 export type ConformanceProbes = Pick<
   MCPConformanceConfig,
   "logProbe" | "inputRequiredProbe"

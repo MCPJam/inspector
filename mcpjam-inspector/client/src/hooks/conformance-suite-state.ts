@@ -210,14 +210,6 @@ export const NOT_SELECTED = {
 export const isSelected = (checkIds: readonly string[] | undefined) =>
   checkIds === undefined || checkIds.length > 0;
 
-/**
- * The Tasks checks the app runs. `tasks-update-ack-shape` needs
- * `inputResponses`, which the app has no way to supply, so it is left out of
- * the picker, the rows and every run rather than shown as never applicable.
- */
-export const APP_TASKS_CHECK_IDS: readonly MCPTasksCheckId[] =
-  MCP_TASKS_CHECK_IDS.filter((id) => id !== "tasks-update-ack-shape");
-
 function knownIds<T extends string>(
   picked: readonly string[] | undefined,
   known: readonly T[],
@@ -255,7 +247,7 @@ export function runnableSelection(
     protocol: knownIds(selection.protocol, protocolIds),
     protocolAdvice: knownIds(selection.protocolAdvice, adviceIds),
     apps: knownIds(selection.apps, MCP_APPS_CHECK_IDS),
-    tasks: knownIds(selection.tasks, APP_TASKS_CHECK_IDS),
+    tasks: knownIds(selection.tasks, MCP_TASKS_CHECK_IDS),
     tasksAdvice: knownIds(selection.tasksAdvice, MCP_TASKS_READINESS_IDS),
     oauthAdvice: knownIds(selection.oauthAdvice, MCP_OAUTH_READINESS_IDS),
   };

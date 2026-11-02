@@ -1673,7 +1673,7 @@ describe("ConformanceTab", () => {
       ).toBeInTheDocument();
     });
 
-    it("asks for no tool on Auto, where these checks do not run", async () => {
+    it("asks for no protocol tool on Auto, where these checks do not run", async () => {
       await toStep2("auto");
       const header = screen.getByRole("button", {
         name: /^Protocol.*checks selected$/,
@@ -1684,7 +1684,53 @@ describe("ConformanceTab", () => {
       expect(
         screen.queryByRole("combobox", { name: "Tool that emits logs" }),
       ).toBeNull();
-      expect(mockListTools).not.toHaveBeenCalled();
+    });
+
+    it("asks once for the Tasks tool on any pin, and for answers under the update check", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await toStep2("auto");
+      fireEvent.click(
+        screen.getByRole("button", { name: /^Tasks.*checks selected$/ }),
+      );
+      const tool = await screen.findByRole("combobox", {
+        name: "Tool that creates a task",
+      });
+      await waitFor(() => expect(tool).toBeEnabled());
+      // One field: the other checks that call it point to it.
+      expect(
+        screen.getAllByRole("combobox", { name: "Tool that creates a task" }),
+      ).toHaveLength(1);
+      expect(
+        screen.getAllByText(/^Calls the tool set under/).length,
+      ).toBeGreaterThan(0);
+      // The answers need a tool first.
+      expect(
+        screen.queryByRole("textbox", {
+          name: "Answers to the task's questions (optional)",
+        }),
+      ).toBeNull();
+
+      await user.click(tool);
+      await user.click(screen.getByRole("option", { name: "echo · read-only" }));
+
+      const answers = screen.getByRole("textbox", {
+        name: "Answers to the task's questions (optional)",
+      });
+      fireEvent.change(answers, { target: { value: "[1]" } });
+      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
+      fireEvent.change(answers, {
+        target: { value: '{"confirm": {"action": "accept"}}' },
+      });
+      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeEnabled();
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() =>
+        expect(mockRunTasks).toHaveBeenCalledWith("alpha", {
+          toolName: "echo",
+          inputResponses: { confirm: { action: "accept" } },
+        }),
+      );
     });
 
     it("lists the tools once for every field, across pages", async () => {
@@ -2463,12 +2509,8 @@ describe("ConformanceTab", () => {
     render(<ConformanceTab server={createHttpServer()} />);
     await runToCompletion();
 
-    // The app's list, never the suite default: the full suite includes
-    // `tasks-update-ack-shape`, which needs answers the app cannot send.
-    const [serverName, options] = mockRunTasks.mock.calls[0]!;
-    expect(serverName).toBe("http-server");
-    expect(options.checkIds).not.toContain("tasks-update-ack-shape");
-    expect(options.checkIds).toContain("tasks-wire-resolvable");
+    // The whole suite, and no tool, since none was set.
+    expect(mockRunTasks).toHaveBeenCalledWith("http-server", {});
     expect(within(suiteHeader("tasks")).getByText("PASSED")).toBeDefined();
   });
 

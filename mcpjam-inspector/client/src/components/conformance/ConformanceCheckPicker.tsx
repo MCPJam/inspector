@@ -200,8 +200,8 @@ export function ConformanceCheckPicker({
   countLabel = (picked) => `${picked} checks selected`,
   defaultOpen = false,
   showAdvice = false,
-  renderProtocolExtra,
-  protocolInputStatus,
+  renderCheckExtra,
+  checkInputStatus,
 }: {
   versionPin: ProtocolVersionPin;
   selection: ConformanceSelection;
@@ -214,16 +214,21 @@ export function ConformanceCheckPicker({
    */
   showAdvice?: boolean;
   /**
-   * What a protocol check or advice shows under it: the tool it calls, for
-   * the ones that must call one. Given whether each is picked, and its title.
+   * What a check or advice shows under it: the tool it calls, for the ones
+   * that must call one. Given its suite, whether each in that suite is
+   * picked, and their titles.
    */
-  renderProtocolExtra?: (
+  renderCheckExtra?: (
+    suite: CheckSuite,
     checkId: string,
     isPicked: (id: string) => boolean,
     checkTitle: (id: string) => string | undefined,
   ) => ReactNode;
-  /** Whether a protocol check that needs an input (a tool to call) has it. */
-  protocolInputStatus?: (checkId: string) => "missing" | "set" | undefined;
+  /** Whether a check that needs an input (a tool to call) has it. */
+  checkInputStatus?: (
+    suite: CheckSuite,
+    checkId: string,
+  ) => "missing" | "set" | undefined;
 }) {
   const catalogs = checkCatalogs(versionPin);
   const advice = adviceCatalogs(versionPin);
@@ -277,8 +282,9 @@ export function ConformanceCheckPicker({
       {CHECK_SUITES.map((suite) => {
         const catalog = catalogs[suite];
         const picked = pickedIds(selection, suite, catalog);
-        const inputStatus =
-          suite === "protocol" ? protocolInputStatus : undefined;
+        const inputStatus = checkInputStatus
+          ? (checkId: string) => checkInputStatus(suite, checkId)
+          : undefined;
         const adviceSuite = suite === "apps" ? undefined : suite;
         const suiteAdvice = adviceSuite
           ? adviceSection(adviceSuite, picked.size > 0)
@@ -290,11 +296,10 @@ export function ConformanceCheckPicker({
             catalog.find((item) => item.id === id) ??
             suiteAdvice?.catalog.find((item) => item.id === id)
           )?.title;
-        const renderExtra =
-          suite === "protocol" && renderProtocolExtra
-            ? (entry: CatalogEntry) =>
-                renderProtocolExtra(entry.id, isPicked, titleOf)
-            : undefined;
+        const renderExtra = renderCheckExtra
+          ? (entry: CatalogEntry) =>
+              renderCheckExtra(suite, entry.id, isPicked, titleOf)
+          : undefined;
         const renderTag = (entry: CatalogEntry) => {
           const status = inputStatus?.(entry.id);
           return status ? (
