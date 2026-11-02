@@ -49,6 +49,7 @@ function runAgainst(
   options: {
     config?: Record<string, unknown>;
     sentMessages?: unknown[];
+    receivedMessages?: unknown[];
   } = {}
 ) {
   vi.spyOn(operations, "withEphemeralClient").mockImplementation((async (
@@ -60,6 +61,9 @@ function runAgainst(
     activeRpcLogger = rpcLogger;
     for (const message of options.sentMessages ?? []) {
       rpcLogger?.({ direction: "send", message, serverId: "srv" });
+    }
+    for (const message of options.receivedMessages ?? []) {
+      rpcLogger?.({ direction: "receive", message, serverId: "srv" });
     }
     return (fn as (m: unknown, id: string) => Promise<unknown>)(manager, "srv");
   }) as never);
@@ -412,6 +416,15 @@ describe("completion acknowledgements", () => {
     ).toContain('rather than "complete"');
   });
 
+  it("names the raw frame's wrong resultType, not the decoded one", () => {
+    // The v2 client consumes `resultType`, so the decoded ack has none; the
+    // message must quote what the server actually sent.
+    expect(
+      validateCompletionAck({}, "tasks/update", { resultType: "task" })
+        .violations[0]
+    ).toContain('resultType "task" rather than "complete"');
+  });
+
   it("FAILS an absent resultType when the raw frame proves it was absent", () => {
     // `UpdateTaskResult` marks the member required. Nothing else grades it:
     // the Tasks suite runs its own runner, which installs no wire recorder, so
@@ -422,13 +435,14 @@ describe("completion acknowledgements", () => {
     expect(verdict.warnings).toEqual([]);
   });
 
-  it("only advises when there is no raw frame to judge", () => {
+  it("does not judge resultType when there is no raw frame", () => {
     // The decoded ack cannot answer the question: the v2 client consumes
     // `resultType` on the way through, so its absence here is evidence about
     // our client, not about the server.
-    const verdict = validateCompletionAck({}, "tasks/update");
-    expect(verdict.violations).toEqual([]);
-    expect(verdict.warnings[0]).toContain("cannot prove what was on the wire");
+    expect(validateCompletionAck({}, "tasks/update")).toEqual({
+      violations: [],
+      warnings: [],
+    });
   });
 
   it("passes when the raw frame carries the required resultType", () => {
@@ -623,8 +637,27 @@ describe("MCPTasksConformanceTest", () => {
           params: { name: "long_job", _meta: extensionDeclaration() },
         },
         {
+          id: 2,
           method: "tasks/get",
           params: { taskId: "task-1", _meta: extensionDeclaration() },
+        },
+      ],
+      // The raw frame `tasks-status-payload-shape` reads; a fake manager
+      // produces none of its own.
+      receivedMessages: [
+        {
+          jsonrpc: "2.0",
+          id: 2,
+          result: {
+            resultType: "complete",
+            taskId: "task-1",
+            status: "completed",
+            createdAt: "2026-07-27T00:00:00Z",
+            lastUpdatedAt: "2026-07-27T00:00:01Z",
+            ttlMs: 60_000,
+            pollIntervalMs: 1,
+            result: { content: [{ type: "text", text: "done" }] },
+          },
         },
       ],
     });
@@ -639,20 +672,16 @@ describe("MCPTasksConformanceTest", () => {
       "tasks-ttl-shape": "passed",
       "tasks-inline-result": "passed",
       "tasks-mcp-name-routing": "passed",
-      // The scenario depth added by the conformance-gap program, all outside
-      // the `mcp-tasks` profile's scored set. The one skip is correct: this
+      // The scenario depth added by the conformance-gap program, all scored
+      // since `mcp-tasks@2026-11-01.2`. The update-ack skip is correct: this
       // task completes without ever asking for input, so there is no
-      // `input_required` round trip to grade.
+      // `tasks/update` acknowledgement to grade.
       "tasks-invalid-task-id-rejected": "passed",
-      // Skipped against the FAKE manager by design: it reads raw inbound
-      // frames (the only place a malformed status payload survives the SDK's
-      // own validation), and a fake manager produces none. The fixture-backed
-      // `scenarios.integration.test.ts` is where it is exercised.
-      "tasks-status-payload-shape": "skipped",
+      "tasks-status-payload-shape": "passed",
       "tasks-cancel-ack-shape": "passed",
       "tasks-ttl-integer-shape": "passed",
       "tasks-undeclared-capability-names-requirements": "passed",
-      "tasks-input-required-update-completes": "skipped",
+      "tasks-update-ack-shape": "skipped",
     });
     expect(result.passed).toBe(true);
     expect(result.discovery).toMatchObject({
@@ -862,7 +891,9 @@ describe("MCPTasksConformanceTest", () => {
       (c) => c.id === "tasks-wire-resolvable"
     );
     expect(wireCheck?.status).toBe("passed");
-    expect(wireCheck?.warnings?.[0]).toContain("treated as absent");
+    expect(wireCheck?.warnings?.[0]).toContain(
+      "must use the 2025-11-25 tasks capability"
+    );
     expect(statusMap(result)["tasks-inline-result"]).toBe("passed");
     // Extension-only checks do not apply to the legacy wire.
     expect(statusMap(result)["tasks-undeclared-capability-rejected"]).toBe(
@@ -940,8 +971,10 @@ describe("MCPTasksConformanceTest", () => {
         (c) => c.status === "skipped" && c.skipReason === "could-not-run"
       )
       // Eleven, not six: the gap-program checks that also need a created task
-      // report the same honest gap. The SCORED tally is still six, because they
-      // are pending under `mcp-tasks@2026-08-22.1`.
+      // report the same honest gap. The SCORED tally is eight — the six plus
+      // `tasks-ttl-integer-shape` (since `mcp-tasks@2026-10-31.1`) and
+      // `tasks-update-ack-shape` (since `mcp-tasks@2026-11-01.1`) — and the
+      // rest are pending.
     ).toHaveLength(11);
     expect(result.incompleteReason).toContain("--tool-name");
     expect(result.incompleteReason).toContain("long_job");

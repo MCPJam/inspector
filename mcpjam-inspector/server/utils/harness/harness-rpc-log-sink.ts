@@ -167,7 +167,7 @@ export async function flushHarnessRpcLogs(): Promise<void> {
       const path = scoped
         ? "/harness/rpc-logs/scoped-write"
         : "/harness/rpc-logs/write";
-      await fetch(new URL(path, base), {
+      const response = await fetch(new URL(path, base), {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -176,6 +176,10 @@ export async function flushHarnessRpcLogs(): Promise<void> {
         body: JSON.stringify({
           entries: batch.map((e) => ({ ...e, instanceId: INSTANCE_ID })),
         }),
+      });
+      if (!response.ok) logger.warn("[harness-rpc-log-sink] write rejected", {
+        status: response.status,
+        entries: batch.length,
       });
     } catch (err) {
       logger.warn(

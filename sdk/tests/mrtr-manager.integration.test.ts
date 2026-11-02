@@ -144,6 +144,30 @@ describe("MCPClientManager × modern MRTR fixture over HTTP", () => {
     expect(sent).toEqual([0]);
   });
 
+  it("does not spend the server timeout while a continuation awaits approval", async () => {
+    const sent: number[] = [];
+    manager.setElicitationHandler("fixture", async () => ({
+      action: "decline",
+    }));
+    manager.setMrtrInputCollector("fixture", acceptAllCollector("blue"), {
+      aroundLeg: async ({ round, send }) => {
+        if (round > 0) await new Promise((resolve) => setTimeout(resolve, 1600));
+        sent.push(round);
+        return send();
+      },
+    });
+    await connect();
+    await manager.listTools("fixture");
+    const result = await manager.executeTool(
+      "fixture",
+      "confirm",
+      { topic: "color" },
+      { timeout: 1000 }
+    );
+    expect(result).toMatchObject({ content: [{ text: "answer:blue" }] });
+    expect(sent).toEqual([0, 1]);
+  });
+
   it("reconstructs tool output-schema validation on the final result", async () => {
     manager.setMrtrInputCollector("fixture", acceptAllCollector("typed-ok"));
     await connect();
