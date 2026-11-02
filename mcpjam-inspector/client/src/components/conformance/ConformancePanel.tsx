@@ -393,16 +393,19 @@ export function ConformanceContent({
     );
 
   // Suites finished so far, for the headline while the run is going. One
-  // that cannot run on this server counts as finished.
-  const suiteStates = [protocol, apps, tasks, oauth];
+  // that cannot run on this server counts as finished; one left out of the
+  // run is neither done nor to do.
+  const runSuites = [protocol, apps, tasks, oauth].filter(
+    (suite) => !suite.notSelected,
+  );
   const runProgress = {
-    done: suiteStates.filter(
+    done: runSuites.filter(
       (suite) =>
         suite.status !== "idle" &&
         suite.status !== "running" &&
         suite.status !== "needs-authorization",
     ).length,
-    total: suiteStates.length,
+    total: runSuites.length,
   };
   // The Overview of a started run shows the run's own header, not the tabs.
   const liveRun = hasStarted && view === "overview";

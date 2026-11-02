@@ -129,22 +129,26 @@ export function ConformanceSetup({
     if (onConnectServer) void connect(name);
     else toast.error(`Connect ${name} to continue.`);
   };
-  // The page's own pick, when the steps open on one that is not connected:
-  // once, through the latest `connect`, so the effect keys on nothing else.
-  const connectOnOpen = useRef(() => {});
+  // The page's own pick, when it is not connected: on open, or when it
+  // arrives after the steps opened (the server list was still loading). Once
+  // per server, through the latest `connect`, so the effect keys on the pick.
+  const connectPagePick = useRef(() => {});
   useEffect(() => {
-    connectOnOpen.current = () => {
-      if (initialServerName && needsConnect(initialServerName)) {
-        void connect(initialServerName);
+    connectPagePick.current = () => {
+      // Not when the user already chose another server.
+      if (!initialServerName || (picked && picked.name !== initialServerName)) {
+        return;
       }
+      if (needsConnect(initialServerName)) void connect(initialServerName);
     };
   });
-  const connectedOnOpen = useRef(false);
+  const pagePickTried = useRef<string | null>(null);
   useEffect(() => {
-    if (connectedOnOpen.current || !onConnectServer) return;
-    connectedOnOpen.current = true;
-    connectOnOpen.current();
-  }, [onConnectServer]);
+    if (!onConnectServer || !initialServerName) return;
+    if (pagePickTried.current === initialServerName) return;
+    pagePickTried.current = initialServerName;
+    connectPagePick.current();
+  }, [onConnectServer, initialServerName]);
   // Opened while the server list was still loading: take the page's pick
   // once it arrives, unless the user already chose one.
   const [pageServerName, setPageServerName] = useState(initialServerName);
@@ -152,16 +156,22 @@ export function ConformanceSetup({
     setPageServerName(initialServerName);
     if (!picked && initialServerName) setServerName(initialServerName);
   }
-  // The last Connect that did not end connected, kept per server so the
-  // alert names the one it failed on.
-  const [connectFailure, setConnectFailure] = useState<{
-    serverName: string;
-    needsSignIn: boolean;
-  } | null>(null);
+  // Each server's last connect that did not end connected. Per server: two
+  // connects can settle out of order, and one must not erase the other's.
+  const [connectFailures, setConnectFailures] = useState<
+    Readonly<Record<string, { needsSignIn: boolean }>>
+  >({});
+  const clearFailure = (name: string) =>
+    setConnectFailures((prev) => {
+      if (!(name in prev)) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
   const connect = async (name: string, signIn = false) => {
     if (!onConnectServer) return;
     setServerName(name);
-    setConnectFailure(null);
+    clearFailure(name);
     setConnecting((names) => (names.includes(name) ? names : [...names, name]));
     // Picking connects on its own, so the toast is what says it is happening.
     const progress = startConnectToast(name);
@@ -172,29 +182,27 @@ export function ConformanceSetup({
       outcome = "failed";
     }
     setConnecting((names) => names.filter((other) => other !== name));
-    if (outcome === "ready") progress.connected();
-    else
-      progress.failed(
-        outcome === "reauth"
-          ? `${name} needs you to sign in again.`
-          : `Couldn't connect to ${name}.`,
-      );
-    if (outcome !== "ready") {
-      setConnectFailure({
-        serverName: name,
-        needsSignIn: outcome === "reauth",
-      });
+    if (outcome === "ready") {
+      progress.connected();
+      return;
     }
+    progress.failed(
+      outcome === "reauth"
+        ? `${name} needs you to sign in again. Sign in below to continue.`
+        : `Couldn't connect to ${name}. Retry below, or edit its connection.`,
+    );
+    setConnectFailures((prev) => ({
+      ...prev,
+      [name]: { needsSignIn: outcome === "reauth" },
+    }));
   };
   // Connected some other way (Edit connection, the server menu): the failure
   // is over, so a later drop does not bring the old alert back.
-  if (canContinue && connectFailure?.serverName === pickedName) {
-    setConnectFailure(null);
+  if (canContinue && pickedName && pickedName in connectFailures) {
+    clearFailure(pickedName);
   }
   const failure =
-    pickedName && !canContinue && connectFailure?.serverName === pickedName
-      ? connectFailure
-      : null;
+    pickedName && !canContinue ? (connectFailures[pickedName] ?? null) : null;
   const noServers =
     !projectServersLoading &&
     servers.length === 0 &&

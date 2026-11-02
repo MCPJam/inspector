@@ -1111,6 +1111,30 @@ describe("ConformanceTab", () => {
     expect(screen.queryByText("Fully conformant.")).toBeNull();
   });
 
+  it("counts only the suites the run covers in its progress", async () => {
+    setupSuccessfulRunMocks();
+    mockRunProtocol.mockReturnValue(new Promise(() => {}));
+    const alpha = createHttpServer({ name: "alpha" });
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        serverDefaults={{ alpha: { tasks: [], oauth: false } }}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+
+    // Tasks and OAuth are left out: two suites, Apps done, Protocol going.
+    expect(
+      await screen.findByText(
+        "Running conformance checks. 1 of 2 suites done.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("goes back to the server list from History's Overview after a run", async () => {
     setupSuccessfulRunMocks();
     const alpha = createHttpServer({ name: "alpha" });
@@ -1618,6 +1642,67 @@ describe("ConformanceTab", () => {
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
   });
 
+  it("connects the page's server when it arrives after step 1 opened", async () => {
+    const onConnectServer = vi.fn(async () => "ready" as const);
+    const props = { onSelectServer: vi.fn(), onConnectServer };
+    // The server list is still loading when Run opens the steps.
+    const { rerender } = render(
+      <ConformanceTab server={null} servers={[]} {...props} />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    expect(onConnectServer).not.toHaveBeenCalled();
+
+    const alpha = createHttpServer({
+      name: "alpha",
+      connectionStatus: "disconnected",
+    });
+    rerender(<ConformanceTab server={alpha} servers={[alpha]} {...props} />);
+    await waitFor(() =>
+      expect(onConnectServer).toHaveBeenCalledWith("alpha", { signIn: false }),
+    );
+    expect(onConnectServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps each server's connect failure when they settle out of order", async () => {
+    const user = userEvent.setup();
+    const alpha = createHttpServer({ name: "alpha" });
+    const beta = createHttpServer({
+      name: "beta",
+      connectionStatus: "disconnected",
+    });
+    const gamma = createHttpServer({
+      name: "gamma",
+      connectionStatus: "disconnected",
+    });
+    const settle: Record<string, (outcome: "failed") => void> = {};
+    const onConnectServer = vi.fn(
+      (name: string) =>
+        new Promise<"failed">((resolve) => (settle[name] = resolve)),
+    );
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha, beta, gamma]}
+        onSelectServer={vi.fn()}
+        onConnectServer={onConnectServer}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+
+    // beta, then gamma: gamma's connect fails first, beta's after it.
+    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
+    await user.click(serverRow("beta"));
+    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
+    await user.click(serverRow("gamma"));
+    await act(async () => settle.gamma!("failed"));
+    await act(async () => settle.beta!("failed"));
+
+    // gamma is the one picked, and its failure is still the one shown.
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      `Couldn't connect to "gamma"`,
+    );
+  });
+
   it("connects a server that dropped before Run again, then runs", async () => {
     setupSuccessfulRunMocks();
     const connected = createHttpServer({ name: "alpha" });
@@ -1685,7 +1770,7 @@ describe("ConformanceTab", () => {
     expect(alert).toHaveTextContent(`Couldn't connect to "alpha"`);
     expect(alert).toHaveTextContent("connect ECONNREFUSED 127.0.0.1:3000");
     expect(error).toHaveBeenCalledWith(
-      "Couldn't connect to alpha.",
+      "Couldn't connect to alpha. Retry below, or edit its connection.",
       expect.objectContaining({ id: expect.anything() }),
     );
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
