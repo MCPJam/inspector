@@ -12,6 +12,7 @@ import {
   getAttestedClientIp,
   getClientIp,
   ipRateLimitKey,
+  resolveTrustedClientIpHeader,
 } from "../utils/client-ip.js";
 import { getSystemLogger } from "../utils/request-logger.js";
 import { resolveTelemetryPolicy } from "../services/telemetry-privacy-policy.js";
@@ -1624,10 +1625,14 @@ relayRoutes.all("*", async (c) => {
   }
 
   const headers = new Headers();
+  // The header an operator's ingress writes the client address into is one
+  // more client address, whatever its name.
+  const trustedClientIpHeader = resolveTrustedClientIpHeader();
   for (const [key, value] of Object.entries(c.req.header())) {
     const name = key.toLowerCase();
     if (
       !STRIPPED_REQUEST_HEADERS.has(name) &&
+      name !== trustedClientIpHeader &&
       !name.startsWith(STRIPPED_REQUEST_HEADER_PREFIX)
     ) {
       headers.set(key, value);

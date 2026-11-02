@@ -247,7 +247,7 @@ export function createStreamTranslator(input: {
         // view of the same call would show every host tool twice.
         if (mcp.server === relayServerName) return undefined;
         return {
-          toolName: `${mcp.server}__${mcp.tool}`,
+          toolName: `mcp__${mcp.server}__${mcp.tool}`,
           input: mcp.arguments ?? {},
           dynamic: true,
         };

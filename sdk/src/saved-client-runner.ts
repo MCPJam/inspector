@@ -1,3 +1,5 @@
+import { backendFetch } from "./deployment/address.js";
+import { resolveDeployment } from "./deployment/resolve.js";
 import { PlatformApiClient } from "./platform/client.js";
 import type { MCPClientManager } from "./mcp-client-manager/MCPClientManager.js";
 import { HostRunner } from "./HostRunner.js";
@@ -98,11 +100,15 @@ export async function createSavedClientRunner(
   input: EvalSuiteSingleClientOptions,
   signal: AbortSignal
 ): Promise<{ executor: HostRunner; selectedClient: SelectedEvalClient }> {
+  // One server for the client read and the model lease, by the shared order.
+  const deployment = resolveDeployment({
+    baseUrl: input.baseUrl,
+    credential: "api-key",
+  });
   const api = new PlatformApiClient({
     getAuth: () => input.apiKey,
-    ...(input.baseUrl
-      ? { baseUrl: `${input.baseUrl.replace(/\/$/, "")}/api/v1` }
-      : {}),
+    baseUrl: deployment.apiUrl,
+    fetch: backendFetch(),
   });
   const client = await abortableSetup(
     api.getClient(
@@ -250,7 +256,7 @@ export async function createSavedClientRunner(
       apiKey: input.apiKey,
       mcpClientManager: input.manager,
       mcpjamProject: input.projectId,
-      baseUrls: input.baseUrl ? { mcpjam: input.baseUrl } : undefined,
+      baseUrls: { mcpjam: deployment.baseUrl },
     }),
     selectedClient: {
       id: client.id,

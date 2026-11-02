@@ -1,3 +1,4 @@
+import { assertNativeDiscovery } from "../../utils/harness/native-discovery.js";
 import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { readTasksPolicy } from "@mcpjam/sdk";
@@ -905,6 +906,7 @@ async function runJourneyFanOut(
     const targetSponsored = targetHasSponsored(target);
     const targetSignal = targetSponsored ? sessionSignal : creditSignal;
     try {
+      assertNativeDiscovery({ required: target.requireNativeToolDiscovery });
       // Nothing left that could start: a spend cap or platform limit already
       // stopped everything this target has. Its attempts stay pending for the
       // run-level finalize (never claimed, so sponsored ones are refunded).
@@ -1536,6 +1538,7 @@ async function runJourneyFanOut(
               requireToolApproval: target.requireToolApproval,
               respectToolVisibility: target.respectToolVisibility,
               progressiveToolDiscovery: target.progressiveToolDiscovery,
+              requireNativeToolDiscovery: target.requireNativeToolDiscovery,
               builtInToolIds: target.builtInToolIds,
               // The unattended browser's only authorization. Threading it is
               // what makes `browser` reachable on a swarm target at all: the
