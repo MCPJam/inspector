@@ -455,10 +455,13 @@ type SavedSuiteReport = {
 function SavedSuiteRow({
   report,
   runSettled,
+  cases,
 }: {
   report: SavedSuiteReport;
   /** The run as a whole is over, so an unsettled suite will never finish. */
   runSettled: boolean;
+  /** Checks already in hand, as in a shared artifact; skips the fetch. */
+  cases?: SavedReportCase[];
 }) {
   const copy = SUITE_COPY[report.suiteKind as keyof typeof SUITE_COPY] ?? {
     title: report.suiteKind,
@@ -531,6 +534,7 @@ function SavedSuiteRow({
       ) : (
         <SuiteReportCases
           reportUrl={report.reportUrl}
+          inlineCases={cases}
           incompleteReason={report.incompleteReason}
           load={expanded || override !== null}
         />
@@ -553,16 +557,21 @@ type SavedReportCase = {
  */
 function SuiteReportCases({
   reportUrl,
+  inlineCases,
   incompleteReason,
   load,
 }: {
   reportUrl?: string | null;
+  inlineCases?: SavedReportCase[];
   incompleteReason: string | null;
   load: boolean;
 }) {
-  const [cases, setCases] = useState<SavedReportCase[] | null | "error">(null);
+  const [fetched, setCases] = useState<SavedReportCase[] | null | "error">(
+    null,
+  );
+  const cases = inlineCases ?? fetched;
   useEffect(() => {
-    if (!load || !reportUrl || cases !== null) return;
+    if (inlineCases || !load || !reportUrl || fetched !== null) return;
     let cancelled = false;
     fetchArtifact(reportUrl)
       .then((response) => {
@@ -581,7 +590,7 @@ function SuiteReportCases({
     return () => {
       cancelled = true;
     };
-  }, [load, reportUrl, cases]);
+  }, [inlineCases, load, reportUrl, fetched]);
 
   return (
     <div>
@@ -590,7 +599,7 @@ function SuiteReportCases({
           {incompleteReason}
         </p>
       ) : null}
-      {!reportUrl || cases === "error" ? (
+      {(!reportUrl && !inlineCases) || cases === "error" ? (
         <p className="py-3 pl-7 text-[13px] text-muted-foreground">
           The detailed report for this suite is not available. Run the checks
           again to generate a new one.
@@ -638,15 +647,74 @@ function SuiteReportCases({
   );
 }
 
+/** One suite as a shared artifact stores it: the redacted SDK report. */
+type SharedSuiteReport = {
+  outcome?: string;
+  incompleteReason?: string;
+  score?: {
+    score?: number;
+    outcome?: string;
+    applicable?: number;
+    passed?: number;
+    failed?: number;
+    couldNotRun?: number;
+  };
+  groups?: Array<{ cases?: SavedReportCase[] }>;
+};
+
+type SharedConformanceArtifact = {
+  score?: number | null;
+  outcome?: ConformanceRunListItem["outcome"];
+  applicable?: number;
+  passed?: number;
+  failed?: number;
+  couldNotRun?: number;
+  notApplicable?: number;
+  protocolVersion?: string | null;
+  requestedSuites?: string[];
+  verification?: string;
+  createdAt?: number;
+  reports?: Record<string, SharedSuiteReport>;
+};
+
+/** A shared suite in the shape the run page's rows read, from its own score. */
+function sharedSuiteRow(
+  suiteKind: string,
+  report: SharedSuiteReport,
+): { report: SavedSuiteReport; cases: SavedReportCase[] } {
+  const score = report.score ?? {};
+  return {
+    report: {
+      suiteKind,
+      status: "completed",
+      outcome: score.outcome ?? report.outcome ?? null,
+      incompleteReason: report.incompleteReason ?? null,
+      score: typeof score.score === "number" ? score.score : null,
+      applicable: score.applicable ?? 0,
+      passed: score.passed ?? 0,
+      failed: score.failed ?? 0,
+      couldNotRun: score.couldNotRun ?? 0,
+    },
+    cases: (report.groups ?? []).flatMap((group) => group.cases ?? []),
+  };
+}
+
 export function ConformanceSharedPage({ token }: { token: string }) {
   const { loading, error, artifact } = useSharedArtifact({
     resourceType: "conformanceRun",
     token,
   });
-  const body =
+  const run =
     artifact && typeof artifact === "object"
-      ? (artifact as Record<string, unknown>)
+      ? (artifact as SharedConformanceArtifact)
       : {};
+  const reports = run.reports ?? {};
+  const suiteKinds = [
+    ...(run.requestedSuites ?? []).filter((kind) => kind in reports),
+    ...Object.keys(reports).filter(
+      (kind) => !(run.requestedSuites ?? []).includes(kind),
+    ),
+  ];
 
   return (
     <SharedArtifactPage
@@ -654,25 +722,53 @@ export function ConformanceSharedPage({ token }: { token: string }) {
       loading={loading}
       error={error}
     >
-      <p className="text-sm text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+        {run.verification === "client_reported" ? (
+          <Badge variant="secondary">Client-reported</Badge>
+        ) : (
+          <Badge variant="outline">MCPJam-verified</Badge>
+        )}
+        {typeof run.createdAt === "number" ? (
+          <span>{detailDateFormat.format(run.createdAt)}</span>
+        ) : null}
+      </div>
+      <OverallScoreCard
+        score={
+          run.outcome
+            ? {
+                score: run.score ?? null,
+                outcome: run.outcome,
+                applicable: run.applicable ?? 0,
+                passed: run.passed ?? 0,
+                failed: run.failed ?? 0,
+                couldNotRun: run.couldNotRun ?? 0,
+                notApplicable: run.notApplicable ?? 0,
+              }
+            : undefined
+        }
+        serverName="Shared run"
+        version={run.protocolVersion ?? "Auto"}
+      />
+      {suiteKinds.length > 0 ? (
+        <div className="overflow-hidden rounded-lg border border-border bg-popover">
+          {suiteKinds.map((kind) => {
+            const row = sharedSuiteRow(kind, reports[kind]!);
+            return (
+              <SavedSuiteRow
+                key={kind}
+                report={row.report}
+                cases={row.cases}
+                runSettled
+              />
+            );
+          })}
+        </div>
+      ) : null}
+      <p className="text-xs text-muted-foreground">
         Read-only shared result. Credentials, raw HTTP evidence, and rerun
         controls are not included. Guests who opened this link are auditable
         browser sessions, not verified individuals.
       </p>
-      {body.verification === "client_reported" ? (
-        <Badge variant="secondary">Client-reported</Badge>
-      ) : (
-        <Badge variant="outline">MCPJam-verified</Badge>
-      )}
-      <p className="text-sm">
-        Outcome {String(body.outcome ?? "unknown")}
-        {typeof body.score === "number"
-          ? ` · score ${Math.round(body.score)}`
-          : ""}
-      </p>
-      <pre className="max-h-[70vh] overflow-auto rounded bg-muted/40 p-3 text-xs">
-        {JSON.stringify(body, null, 2)}
-      </pre>
     </SharedArtifactPage>
   );
 }

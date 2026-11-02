@@ -3097,6 +3097,12 @@ export default function App() {
     window.location.pathname.length > 1
       ? window.location.pathname.replace(/\/+$/, "")
       : window.location.pathname;
+  // A conformance share link is public, so its reader need not have the
+  // Conformance beta. The bare `/conformance/shared` is the same page once the
+  // token is stripped from the address bar.
+  const isConformanceSharedRoute =
+    barePathname === routePaths.conformanceShared ||
+    barePathname.startsWith(`${routePaths.conformanceShared}/`);
   const isBareCaniuseRoute =
     barePathname === routePaths.embedHostCompare ||
     barePathname === routePaths.embedScore ||
@@ -3107,7 +3113,7 @@ export default function App() {
     barePathname.startsWith(`${routePaths.embedBench}/`) ||
     barePathname.startsWith(`${routePaths.benchResults}/`) ||
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
-    barePathname.startsWith(`${routePaths.conformanceShared}/`) ||
+    isConformanceSharedRoute ||
     barePathname.startsWith(`${routePaths.evalsShared}/`) ||
     barePathname.startsWith(`${routePaths.capabilities}/`);
   // The WorkOS Initiate Login URL, where an IdP-initiated login (the Okta app
@@ -3119,12 +3125,6 @@ export default function App() {
   // visitor to Playground mid-sign-in, stranding exactly the enterprise entry
   // point this route exists to fix.
   const isLoginInitiationRoute = barePathname === routePaths.login;
-  // A conformance share link is public, so its reader need not have the
-  // Conformance beta. The bare `/conformance/shared` is the same page once the
-  // token is stripped from the address bar.
-  const isConformanceSharedRoute =
-    barePathname === routePaths.conformanceShared ||
-    barePathname.startsWith(`${routePaths.conformanceShared}/`);
 
   const defaultHubRoute = useMemo((): "home" | "connect" | "servers" => {
     return "home";
