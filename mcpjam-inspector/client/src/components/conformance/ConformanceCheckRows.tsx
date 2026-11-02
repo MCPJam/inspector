@@ -130,6 +130,37 @@ export function UnscoredTag() {
   );
 }
 
+/**
+ * On a check that needs an input before it can run (a tool to call). Amber
+ * while a picked check has none, so it shows before anything is opened.
+ */
+export function NeedsInputTag({
+  status,
+  picked = true,
+}: {
+  status: "missing" | "set";
+  picked?: boolean;
+}) {
+  const missing = status === "missing";
+  return (
+    <span
+      title={
+        missing
+          ? "Pick a tool for this check. Without one it reports that it could not run."
+          : "This check calls the tool set for it."
+      }
+      className={cn(
+        "shrink-0 rounded-sm border px-1 py-px text-xs leading-none",
+        missing && picked
+          ? "border-warning/50 bg-warning/10 text-warning-foreground"
+          : "border-border/60 text-muted-foreground",
+      )}
+    >
+      {missing ? "Needs input" : "Input set"}
+    </span>
+  );
+}
+
 export function CheckRow({
   check,
   pending = false,
@@ -367,10 +398,13 @@ export function CatalogRow({
   selected,
   onSelectedChange,
   children,
+  tag,
 }: {
   entry: CatalogEntry;
   /** Shown under the row, e.g. the tool a picked check will call. */
   children?: ReactNode;
+  /** Shown after the title, e.g. that the check needs an input. */
+  tag?: ReactNode;
   /**
    * Set, the row carries a checkbox showing whether it runs. Without
    * `onSelectedChange` the checkbox is disabled: the suite's own checkbox
@@ -410,6 +444,7 @@ export function CatalogRow({
           <span className="flex-1 min-w-0 truncate text-sm text-muted-foreground">
             {entry.title}
           </span>
+          {tag}
           {entry.note && (
             <span className="flex-shrink-0 text-xs text-muted-foreground/70">
               {entry.note}
@@ -443,12 +478,15 @@ export function CatalogList({
   isSelected,
   onSelectedChange,
   renderExtra,
+  renderTag,
 }: {
   catalog: CatalogEntry[];
   /** The rest of the line after "N checks in this suite", punctuation included. */
   note: string;
   /** What a row shows under it; see `CatalogRow`'s children. */
   renderExtra?: (entry: CatalogEntry) => ReactNode;
+  /** What a row shows after its title; see `CatalogRow`'s tag. */
+  renderTag?: (entry: CatalogEntry) => ReactNode;
   /**
    * Each row carries a checkbox showing whether it runs; with
    * `onSelectedChange` too, the user picks rows one by one.
@@ -472,6 +510,7 @@ export function CatalogList({
                   onSelectedChange(entry.id, selected),
               }
             : {})}
+          tag={renderTag?.(entry)}
         >
           {renderExtra?.(entry)}
         </CatalogRow>

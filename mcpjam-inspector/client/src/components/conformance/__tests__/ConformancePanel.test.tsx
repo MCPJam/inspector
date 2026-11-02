@@ -1491,7 +1491,14 @@ describe("ConformanceTab", () => {
       mockListTools.mockResolvedValue({
         tools: [
           { name: "delete_row", annotations: { destructiveHint: true } },
-          { name: "echo", annotations: { readOnlyHint: true } },
+          {
+            name: "echo",
+            annotations: { readOnlyHint: true },
+            inputSchema: {
+              type: "object",
+              properties: { message: { type: "string" } },
+            },
+          },
         ],
       });
     });
@@ -1545,13 +1552,11 @@ describe("ConformanceTab", () => {
         screen.getByRole("option", { name: "echo · read-only" }),
       );
 
-      const args = screen.getByRole("textbox", {
-        name: "Tool that emits logs arguments",
-      });
+      // The arguments editor Evals uses, here with its Raw JSON switch on.
+      fireEvent.click(screen.getByRole("switch"));
+      const args = screen.getByRole("textbox", { name: "Arguments" });
       fireEvent.change(args, { target: { value: "[1]" } });
-      expect(
-        screen.getByText("Arguments must be a JSON object."),
-      ).toBeInTheDocument();
+      expect(screen.getByText("Expected a JSON object")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
       fireEvent.change(args, { target: { value: '{"message": "hi"}' } });
       expect(screen.getByRole("button", { name: RUN_LABEL })).toBeEnabled();
@@ -1581,6 +1586,68 @@ describe("ConformanceTab", () => {
           expect.objectContaining(sent),
         ),
       );
+    });
+
+    it("offers the tool's own argument names", async () => {
+      const user = userEvent.setup();
+      await openProtocolChecks();
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      await user.click(
+        screen.getByRole("option", { name: "echo · read-only" }),
+      );
+
+      await user.click(screen.getByRole("button", { name: "Add argument" }));
+      await user.click(screen.getByText("Select arg…"));
+
+      expect(
+        await screen.findByRole("option", { name: /message/ }),
+      ).toBeInTheDocument();
+    });
+
+    it("flags the checks that need an input before the suite is opened", async () => {
+      const user = userEvent.setup();
+      const alpha = createHttpServer({ name: "alpha" });
+      render(
+        <ConformanceTab
+          server={alpha}
+          servers={[alpha]}
+          onSelectServer={vi.fn()}
+        />,
+      );
+      fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+      // Closed: the header says how many picked checks still need one.
+      const header = screen.getByRole("button", {
+        name: /^Protocol.*checks selected$/,
+      });
+      expect(header).toHaveAttribute("aria-expanded", "false");
+      expect(
+        within(header).getByText("3 checks need input"),
+      ).toBeInTheDocument();
+
+      fireEvent.click(header);
+      expect(screen.getAllByText("Needs input")).toHaveLength(3);
+      await waitFor(() =>
+        expect(
+          screen.getByRole("combobox", { name: "Tool that emits logs" }),
+        ).toBeEnabled(),
+      );
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      await user.click(
+        screen.getByRole("option", { name: "echo · read-only" }),
+      );
+
+      // One tool serves both logging checks.
+      expect(screen.getAllByText("Input set")).toHaveLength(2);
+      expect(screen.getAllByText("Needs input")).toHaveLength(1);
+      expect(
+        within(header).getByText("1 check needs input"),
+      ).toBeInTheDocument();
     });
 
     it("never sends a tool for a check left out of the run", async () => {

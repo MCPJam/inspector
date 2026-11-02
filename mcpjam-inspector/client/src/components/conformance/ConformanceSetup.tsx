@@ -13,9 +13,10 @@ import {
   type ConformanceSelection,
   type ProtocolVersionPin,
 } from "@/hooks/use-conformance-run";
-import type {
-  ConformanceProbeKey,
-  ConformanceProbes,
+import {
+  probeInputStatus,
+  type ConformanceProbeKey,
+  type ConformanceProbes,
 } from "@/hooks/use-conformance-probes";
 import { ProbeCheckExtra } from "./ConformanceProbeField";
 import { ProgressStepper } from "@/components/shared/progress-stepper";
@@ -367,6 +368,11 @@ export function ConformanceSetup({
                           }
                         />
                       )
+                    : undefined
+                }
+                protocolInputStatus={
+                  picked && isHttpServer(picked)
+                    ? (checkId) => probeInputStatus(checkId, probes)
                     : undefined
                 }
               />

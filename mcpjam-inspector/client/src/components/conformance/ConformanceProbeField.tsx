@@ -7,7 +7,7 @@
  * modify data) and never picks for the operator, for the same reason the SDK
  * does not: nothing a server advertises says a tool is safe to call.
  */
-import { useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Label } from "@mcpjam/design-system/label";
 import {
   Select,
@@ -16,8 +16,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { Textarea } from "@mcpjam/design-system/textarea";
 import { listTools } from "@/lib/apis/mcp-tools-api";
+import { ToolCallArgsEditor } from "@/components/evals/checks-section";
 import {
   PROBE_CHECKS,
   probeKeyFor,
@@ -44,6 +44,8 @@ interface ToolOption {
   name: string;
   readOnly: boolean;
   destructive: boolean;
+  /** The tool's input schema properties: the argument names to offer. */
+  argProperties?: Record<string, unknown>;
 }
 
 /** Read-only tools first: they are the likeliest safe choice. */
@@ -54,24 +56,6 @@ function sortForSafety(tools: ToolOption[]): ToolOption[] {
       Number(a.destructive) - Number(b.destructive) ||
       a.name.localeCompare(b.name),
   );
-}
-
-/** The arguments box's text as an object, or why it is not one. */
-function parseArguments(text: string): {
-  value?: Record<string, unknown>;
-  error?: string;
-} {
-  const trimmed = text.trim();
-  if (!trimmed) return {};
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { error: "Arguments must be a JSON object." };
-    }
-    return { value: parsed as Record<string, unknown> };
-  } catch {
-    return { error: "Arguments are not valid JSON." };
-  }
 }
 
 /** The server's tools, listed once per field. */
@@ -93,6 +77,7 @@ function useServerTools(serverName: string) {
               destructive:
                 tool.annotations?.readOnlyHint !== true &&
                 tool.annotations?.destructiveHint !== false,
+              argProperties: tool.inputSchema?.properties,
             })),
           ),
         );
@@ -120,15 +105,21 @@ export function ConformanceProbeField({
   serverName: string;
   probe: ConformanceProbe | undefined;
   onChange: (probe: ConformanceProbe | undefined) => void;
-  /** False while the arguments box holds something that is not an object. */
+  /** False while the Raw JSON box holds text that does not parse. */
   onValidChange?: (valid: boolean) => void;
 }) {
   const id = useId();
   const { tools, error: toolsError } = useServerTools(serverName);
-  const [argumentsText, setArgumentsText] = useState(() =>
-    probe?.arguments ? JSON.stringify(probe.arguments, null, 2) : "",
+  // The editor reports validity from an effect keyed on this callback, so it
+  // must keep one identity while the parent re-renders.
+  const onValidChangeRef = useRef(onValidChange);
+  useEffect(() => {
+    onValidChangeRef.current = onValidChange;
+  });
+  const reportInvalid = useCallback(
+    (invalid: boolean) => onValidChangeRef.current?.(!invalid),
+    [],
   );
-  const [argumentsError, setArgumentsError] = useState<string | null>(null);
   const toolName = probe?.toolName ?? NONE;
   const options = tools ?? [];
   // A saved tool the server no longer lists stays selectable, so opening the
@@ -137,31 +128,15 @@ export function ConformanceProbeField({
   const selected = options.find((tool) => tool.name === toolName);
   const copy = PROBE_COPY[probeKey];
 
-  const changeTool = (next: string) => {
-    if (next === NONE) {
-      setArgumentsError(null);
-      onValidChange?.(true);
-      onChange(undefined);
-      return;
-    }
-    const parsed = parseArguments(argumentsText);
-    onChange({
-      toolName: next,
-      ...(parsed.value ? { arguments: parsed.value } : {}),
-    });
-  };
+  // Another tool takes other arguments, so a new pick starts with none.
+  const changeTool = (next: string) =>
+    onChange(next === NONE ? undefined : { toolName: next });
 
-  const changeArguments = (text: string) => {
-    setArgumentsText(text);
-    const parsed = parseArguments(text);
-    setArgumentsError(parsed.error ?? null);
-    onValidChange?.(!parsed.error);
-    if (parsed.error || toolName === NONE) return;
+  const changeArguments = (args: Record<string, unknown>) =>
     onChange({
       toolName,
-      ...(parsed.value ? { arguments: parsed.value } : {}),
+      ...(Object.keys(args).length > 0 ? { arguments: args } : {}),
     });
-  };
 
   return (
     <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-3">
@@ -214,18 +189,14 @@ export function ConformanceProbeField({
         </p>
       ) : null}
       {toolName !== NONE ? (
-        <>
-          <Textarea
-            aria-label={`${copy.label} arguments`}
-            placeholder='Arguments as JSON, e.g. {"message": "hi"} (optional)'
-            value={argumentsText}
-            onChange={(event) => changeArguments(event.target.value)}
-            className="min-h-16 font-mono text-xs"
-          />
-          {argumentsError ? (
-            <p className="text-xs text-destructive">{argumentsError}</p>
-          ) : null}
-        </>
+        // Keyed by tool: the Raw JSON switch starts over for each one.
+        <ToolCallArgsEditor
+          key={toolName}
+          value={probe?.arguments ?? {}}
+          onChange={changeArguments}
+          argProperties={selected?.argProperties}
+          onInvalidChange={reportInvalid}
+        />
       ) : null}
     </div>
   );

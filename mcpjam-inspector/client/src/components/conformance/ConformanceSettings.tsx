@@ -7,7 +7,10 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import type { ConformanceSelection } from "@/hooks/use-conformance-run";
-import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
+import {
+  probeInputStatus,
+  type ConformanceProbes,
+} from "@/hooks/use-conformance-probes";
 import { ProbeCheckExtra } from "./ConformanceProbeField";
 import { toast } from "@/lib/toast";
 import {
@@ -114,6 +117,11 @@ export function ConformanceSettings({
                         onProbesChange={onProbesChange}
                       />
                     )
+                  : undefined
+              }
+              protocolInputStatus={
+                canListTools && onProbesChange
+                  ? (checkId) => probeInputStatus(checkId, probes ?? {})
                   : undefined
               }
             />

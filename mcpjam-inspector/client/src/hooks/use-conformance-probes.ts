@@ -40,6 +40,19 @@ export function probeKeyFor(checkId: string): ConformanceProbeKey | undefined {
 }
 
 /**
+ * Whether a check that calls a tool has one: "missing" or "set". Nothing for
+ * a check that calls none.
+ */
+export function probeInputStatus(
+  checkId: string,
+  probes: ConformanceProbes,
+): "missing" | "set" | undefined {
+  const key = probeKeyFor(checkId);
+  if (!key) return undefined;
+  return probes[key] ? "set" : "missing";
+}
+
+/**
  * Only the probes a run's protocol checks call. A tool is called only for a
  * check that runs, so one named for a check left out is not sent at all.
  * `checkIds` absent means every check.

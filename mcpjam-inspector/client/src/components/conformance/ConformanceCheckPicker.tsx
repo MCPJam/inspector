@@ -15,7 +15,11 @@ import type {
   ProtocolVersionPin,
 } from "@/hooks/use-conformance-run";
 import { cn } from "@/lib/utils";
-import { CatalogList, type CatalogEntry } from "./ConformanceCheckRows";
+import {
+  CatalogList,
+  NeedsInputTag,
+  type CatalogEntry,
+} from "./ConformanceCheckRows";
 import {
   APPS_CATALOG,
   OAUTH_CATALOG,
@@ -158,6 +162,7 @@ export function ConformanceCheckPicker({
   countLabel = (picked) => `${picked} checks selected`,
   defaultOpen = false,
   renderProtocolExtra,
+  protocolInputStatus,
 }: {
   versionPin: ProtocolVersionPin;
   selection: ConformanceSelection;
@@ -173,6 +178,8 @@ export function ConformanceCheckPicker({
     isPicked: (id: string) => boolean,
     checkTitle: (id: string) => string | undefined,
   ) => ReactNode;
+  /** Whether a protocol check that needs an input (a tool to call) has it. */
+  protocolInputStatus?: (checkId: string) => "missing" | "set" | undefined;
 }) {
   const catalogs = checkCatalogs(versionPin);
   return (
@@ -180,6 +187,8 @@ export function ConformanceCheckPicker({
       {CHECK_SUITES.map((suite) => {
         const catalog = catalogs[suite];
         const picked = pickedIds(selection, suite, catalog);
+        const inputStatus =
+          suite === "protocol" ? protocolInputStatus : undefined;
         return (
           <SuiteChecks
             key={suite}
@@ -213,6 +222,18 @@ export function ConformanceCheckPicker({
                       (id) => catalog.find((item) => item.id === id)?.title,
                     )
                 : undefined
+            }
+            renderTag={(entry) => {
+              const status = inputStatus?.(entry.id);
+              return status ? (
+                <NeedsInputTag status={status} picked={picked.has(entry.id)} />
+              ) : null;
+            }}
+            needsInputCount={
+              catalog.filter(
+                (entry) =>
+                  picked.has(entry.id) && inputStatus?.(entry.id) === "missing",
+              ).length
             }
           />
         );
@@ -252,6 +273,8 @@ function SuiteChecks({
   onCheckChange,
   listNote = ".",
   renderExtra,
+  renderTag,
+  needsInputCount = 0,
 }: {
   title: string;
   description: string;
@@ -264,6 +287,9 @@ function SuiteChecks({
   onCheckChange?: (id: string, picked: boolean) => void;
   listNote?: string;
   renderExtra?: (entry: CatalogEntry) => ReactNode;
+  renderTag?: (entry: CatalogEntry) => ReactNode;
+  /** Picked checks still missing an input, flagged on the closed header. */
+  needsInputCount?: number;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const checked =
@@ -290,7 +316,16 @@ function SuiteChecks({
           className="flex min-w-0 grow items-start gap-3 text-left"
         >
           <span className="flex min-w-0 grow flex-col gap-0.5">
-            <span className="text-sm font-semibold">{title}</span>
+            <span className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-semibold">{title}</span>
+              {needsInputCount > 0 ? (
+                <span className="rounded-sm border border-warning/50 bg-warning/10 px-1.5 py-px text-xs text-warning-foreground">
+                  {needsInputCount === 1
+                    ? "1 check needs input"
+                    : `${needsInputCount} checks need input`}
+                </span>
+              ) : null}
+            </span>
             <span className="text-sm text-muted-foreground">{description}</span>
           </span>
           <span className="shrink-0 text-sm font-medium text-muted-foreground tabular-nums">
@@ -312,6 +347,7 @@ function SuiteChecks({
             isSelected={isPicked}
             onSelectedChange={onCheckChange}
             renderExtra={renderExtra}
+            renderTag={renderTag}
           />
         </div>
       </Collapse>
