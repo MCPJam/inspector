@@ -269,6 +269,7 @@ export function ConformanceContent({
     oauthScore,
     pooledScore,
     oauthNotScored,
+    oauthUnscored,
     isRunning,
     openAuthorizationWindow,
     skipOAuth,
@@ -739,6 +740,7 @@ export function ConformanceContent({
                           <OAuthStepRow
                             key={`${runVersion}-${step.step}`}
                             step={step}
+                            pending={oauthUnscored.includes(step.step)}
                           />
                         ))}
                       </div>

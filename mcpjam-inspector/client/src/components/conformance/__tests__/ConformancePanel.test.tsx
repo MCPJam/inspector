@@ -54,6 +54,7 @@ vi.mock("@/components/oauth/utils", () => ({
 }));
 
 import { toast } from "@/lib/toast";
+import { OAUTH_CATALOG } from "../conformance-catalogs";
 import { ConformanceTab } from "../ConformanceTab";
 import {
   ConformanceServerPicker,
@@ -800,12 +801,13 @@ describe("ConformanceTab", () => {
     fireEvent.click(oauth);
     expect(oauth).toHaveAttribute("aria-expanded", "true");
     // The open suite lists its checks under the same count. OAuth runs as
-    // one flow, so its checks' boxes are locked to the suite's box.
+    // one flow, so a check's box says whether it COUNTS: unchecked, it still
+    // runs, unscored.
     const count = oauth.textContent?.match(/(\d+) checks selected/)?.[1];
     const oauthRow = oauth.parentElement!.parentElement!;
     expect(
       within(oauthRow).getByText(
-        `${count} checks in this suite. They run together as one sign-in flow.`,
+        `${count} checks in this suite. They run together as one sign-in flow, so an unchecked check still runs but does not count toward the score.`,
       ),
     ).toBeInTheDocument();
     const oauthBox = within(oauthRow).getByRole("checkbox", {
@@ -816,9 +818,16 @@ describe("ConformanceTab", () => {
       .filter((box) => box !== oauthBox);
     expect(oauthChecks).toHaveLength(Number(count));
     for (const box of oauthChecks) {
-      expect(box).toBeDisabled();
+      expect(box).toBeEnabled();
       expect(box).toHaveAttribute("data-state", "checked");
     }
+    fireEvent.click(oauthChecks[0]!);
+    expect(oauthChecks[0]).toHaveAttribute("data-state", "unchecked");
+    expect(oauthBox).toHaveAttribute("data-state", "indeterminate");
+    expect(oauth).toHaveTextContent(`${Number(count) - 1} checks selected`);
+    // The suite's box puts every check back, then leaves the flow out.
+    fireEvent.click(oauthBox);
+    expect(oauthChecks[0]).toHaveAttribute("data-state", "checked");
     fireEvent.click(oauthBox);
     for (const box of oauthChecks) {
       expect(box).toHaveAttribute("data-state", "unchecked");
@@ -1189,6 +1198,81 @@ describe("ConformanceTab", () => {
     // The page's home, not the run it just left.
     expect(screen.getByRole("list", { name: "Servers" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
+  });
+
+  it("runs an unchecked OAuth check but leaves it out of the score", async () => {
+    const left = OAUTH_CATALOG[0]!;
+    setupSuccessfulRunMocks({
+      oauth: createOAuthResult({
+        passed: false,
+        outcome: "failed",
+        steps: [
+          {
+            step: left.id as OAuthConformanceResult["steps"][number]["step"],
+            title: left.title,
+            summary: "…",
+            status: "failed",
+            durationMs: 1,
+            logs: [],
+            httpAttempts: [],
+            error: { message: "profile shape is wrong" },
+          },
+          {
+            step: "oauth_token_format",
+            title: "Token Format",
+            summary: "…",
+            status: "passed",
+            durationMs: 1,
+            logs: [],
+            httpAttempts: [],
+          },
+        ],
+      }),
+    });
+    const alpha = createHttpServer({ name: "alpha" });
+    const onSaveServerDefaults = vi.fn(async () => {});
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onSaveServerDefaults={onSaveServerDefaults}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /^OAuth.*checks selected$/ }),
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: `Run ${left.title}` }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+
+    // Saved with the server's defaults, and the flow still ran.
+    expect(onSaveServerDefaults).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ oauthUnscored: [left.id] }),
+    );
+    await waitFor(() => expect(mockStartOAuth).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+    );
+
+    // The failed step reads as unscored, and does not fail the run.
+    fireEvent.click(suiteHeader("oauth"));
+    const row = screen.getByText(left.title).closest("div")!.parentElement!;
+    expect(within(row).getByText("unscored")).toBeInTheDocument();
+    // Its failure is reported, not counted: grey, not red.
+    const message = screen.getByText("profile shape is wrong");
+    expect(message).toHaveClass("text-muted-foreground");
+    expect(message).not.toHaveClass("text-red-600");
+    expect(screen.queryByText(/^Not conformant\./)).toBeNull();
+    // The suite's badge follows the score, not the unscored failure.
+    expect(
+      within(suiteHeader("oauth")).getByText("PASSED"),
+    ).toBeInTheDocument();
+    expect(within(suiteHeader("oauth")).queryByText("FAILED")).toBeNull();
   });
 
   it("starts step 2 from the server's default checks", () => {

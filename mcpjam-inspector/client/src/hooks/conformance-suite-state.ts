@@ -172,13 +172,16 @@ export function oauthStateFromResult(
 /**
  * The checks a run covers. A missing list runs the whole suite, so a check
  * added later still runs; an empty one, or `oauth: false`, leaves the suite
- * out. OAuth runs as one flow, so it is all or nothing.
+ * out. OAuth runs as one flow, so it RUNS all or nothing; `oauthUnscored`
+ * names steps that still run but do not count toward the score.
  */
 export interface ConformanceSelection {
   protocol?: MCPCheckId[];
   apps?: MCPAppsCheckId[];
   tasks?: MCPTasksCheckId[];
   oauth?: boolean;
+  /** OAuth steps that run with the flow but are left out of the score. */
+  oauthUnscored?: string[];
 }
 
 export const NOT_SELECTED = {

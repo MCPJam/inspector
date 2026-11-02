@@ -61,8 +61,9 @@ import type {
 import type {
   MCPTasksConformanceResult,
 } from "./tasks-conformance/types.js";
-import type {
-  ConformanceResult as OAuthConformanceResult,
+import {
+  CONFORMANCE_CHECK_METADATA,
+  type ConformanceResult as OAuthConformanceResult,
 } from "./oauth-conformance/types.js";
 
 /** MUSTs own this many of the 100 points; advice owns the remainder. */
@@ -355,6 +356,17 @@ export function scoreFromTasksResult(
 }
 
 /**
+ * The ids an OAuth score may leave out: only the listed post-flow checks. A
+ * flow step (discovery, registration, token) always counts, so a stored list
+ * naming one cannot pass a flow that broke there.
+ */
+export function scorableOAuthIds(ids: readonly string[] | undefined): string[] {
+  return (ids ?? []).filter((id) =>
+    Object.prototype.hasOwnProperty.call(CONFORMANCE_CHECK_METADATA, id)
+  );
+}
+
+/**
  * OAuth is the outlier twice over.
  *
  * Its `"not-applicable"` outcome (the server serves without auth, which the
@@ -370,14 +382,32 @@ export function scoreFromTasksResult(
  */
 export function scoreFromOAuthResult(
   result: OAuthConformanceResult,
+  options?: {
+    /**
+     * Checks the caller leaves out of the score (see `scorableOAuthIds`;
+     * flow steps always count). OAuth's steps are one
+     * sequential sign-in flow, so they all still RUN; these are reported as
+     * pending (unscored), exactly like a profile's pending checks: out of the
+     * counts and out of the verdict.
+     */
+    unscoredCheckIds?: readonly string[];
+  }
 ): ConformanceScore {
+  const unscored = scorableOAuthIds(options?.unscoredCheckIds);
   if (result.outcome === "not-applicable") {
+    // Unscored steps stay pending here too, so the score and a report that
+    // marks them pending count them the same way.
+    const unscoredIds = new Set(unscored);
+    const pending = result.steps.filter((step) =>
+      unscoredIds.has(step.step)
+    ).length;
     return scoreFromCounts(
       {
         passed: 0,
         failed: 0,
         couldNotRun: 0,
-        notApplicable: result.steps.length,
+        notApplicable: result.steps.length - pending,
+        pending,
       },
       [],
       "passed",
@@ -391,5 +421,10 @@ export function scoreFromOAuthResult(
     ...(step.skipReason ? { skipReason: step.skipReason } : {}),
     ...(step.error?.message ? { error: { message: step.error.message } } : {}),
   }));
-  return computeConformanceScore(checks, [], result.protocolVersion);
+  return computeConformanceScore(
+    checks,
+    [],
+    result.protocolVersion,
+    unscored.length > 0 ? { pendingCheckIds: [...unscored] } : undefined
+  );
 }

@@ -115,6 +115,21 @@ function RowChevron({ expanded }: { expanded: boolean }) {
   );
 }
 
+/**
+ * The tag on a result that does not count toward the score: a check the
+ * profile does not score yet, or an OAuth step the server's settings leave out.
+ */
+export function UnscoredTag() {
+  return (
+    <span
+      title="Reported for information only. Unscored checks don't count toward the score or the verdict."
+      className="shrink-0 rounded-sm border border-border/60 px-1 py-px text-xs leading-none text-muted-foreground"
+    >
+      unscored
+    </span>
+  );
+}
+
 export function CheckRow({
   check,
   pending = false,
@@ -141,14 +156,7 @@ export function CheckRow({
             muted={pending}
           />
         </span>
-        {pending ? (
-          <span
-            title="Reported for information only. Unscored checks don't count toward the score or the verdict."
-            className="shrink-0 rounded-sm border border-border/60 px-1 py-px text-xs leading-none text-muted-foreground"
-          >
-            unscored
-          </span>
-        ) : null}
+        {pending ? <UnscoredTag /> : null}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span
             className={cn(
@@ -220,7 +228,14 @@ export function CheckRow({
   );
 }
 
-export function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
+export function OAuthStepRow({
+  step,
+  pending = false,
+}: {
+  step: OAuthConformanceStepResult;
+  /** Left out of the score by the server's settings: it ran, but is unscored. */
+  pending?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -232,15 +247,21 @@ export function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
         aria-expanded={expanded}
       >
         <span className="mt-0.5">
-          <StatusIcon status={step.status} skipReason={step.skipReason} />
+          <StatusIcon
+            status={step.status}
+            skipReason={step.skipReason}
+            muted={pending}
+          />
         </span>
+        {pending ? <UnscoredTag /> : null}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="text-sm">{step.title}</span>
           {step.error &&
           (expanded || showsMessageShut(step.status, step.skipReason)) ? (
             <ResultMessage
               message={step.error.message}
-              tone={step.status === "failed" ? "error" : "neutral"}
+              // An unscored failure is reported, not counted: grey, as in CheckRow.
+              tone={step.status === "failed" && !pending ? "error" : "neutral"}
               expanded={expanded}
             />
           ) : null}

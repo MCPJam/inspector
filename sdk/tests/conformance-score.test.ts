@@ -18,6 +18,7 @@ import {
   type ConformanceScore,
 } from "../src/conformance-score.js";
 import type { OutcomeCheckLike } from "../src/conformance-outcome.js";
+import { toConformanceReport } from "../src/conformance-reporting.js";
 import type { MCPConformanceResult } from "../src/mcp-conformance/types.js";
 import type { ConformanceResult as OAuthConformanceResult } from "../src/oauth-conformance/types.js";
 
@@ -489,8 +490,8 @@ describe("suite adapters", () => {
           httpAttempts: [],
         },
         {
-          step: "verify_list_tools",
-          title: "List Tools",
+          step: "oauth_token_format",
+          title: "Token format",
           summary: "…",
           status: "skipped",
           skipReason: "could-not-run",
@@ -516,6 +517,134 @@ describe("suite adapters", () => {
     expect(score.applicable).toBe(2);
     expect(score.couldNotRun).toBe(1);
     expect(score.score).toBe(50);
+  });
+
+  it("leaves the steps a caller unscores out of the counts and the verdict", () => {
+    // The flow still ran every step; the unrun one is simply not graded.
+    const score = scoreFromOAuthResult(oauthResult(), {
+      unscoredCheckIds: ["oauth_token_format"],
+    });
+
+    expect(score.applicable).toBe(1);
+    expect(score.couldNotRun).toBe(0);
+    expect(score.pending).toBe(1);
+    expect(score.score).toBe(100);
+    expect(score.outcome).toBe("passed");
+  });
+
+  it("marks unscored OAuth steps pending in the report, with the same score", () => {
+    const report = toConformanceReport(oauthResult(), {
+      oauthUnscoredCheckIds: ["oauth_token_format"],
+    });
+    const cases = report.groups.flatMap((group) => group.cases);
+
+    expect(cases.find((c) => c.id === "oauth_token_format")?.pending).toBe(
+      true
+    );
+    expect(cases.find((c) => c.id === "request_without_token")?.pending).toBe(
+      undefined
+    );
+    expect(report.score?.pending).toBe(1);
+    expect(report.score?.score).toBe(100);
+  });
+
+  it("passes the report when its only failure is an unscored step", () => {
+    const failing = oauthResult({
+      passed: false,
+      outcome: "failed",
+      steps: [
+        oauthResult().steps[0]!,
+        {
+          ...oauthResult().steps[1]!,
+          status: "failed",
+          skipReason: undefined,
+          error: { message: "listing failed" },
+        },
+      ],
+    });
+    const report = toConformanceReport(failing, {
+      oauthUnscoredCheckIds: ["oauth_token_format"],
+    });
+
+    expect(report.score?.outcome).toBe("passed");
+    expect(report.outcome).toBe("passed");
+    expect(report.passed).toBe(true);
+    expect(report.groups[0]?.passed).toBe(true);
+    // Without the exclusion it is the flow's own failure.
+    expect(toConformanceReport(failing).outcome).toBe("failed");
+  });
+
+  it("keeps a suite report's passed and outcome in step with a not-applicable flow", () => {
+    const failingOnlyUnscored = oauthResult({
+      passed: false,
+      outcome: "failed",
+      steps: [
+        oauthResult().steps[0]!,
+        {
+          ...oauthResult().steps[1]!,
+          status: "failed",
+          skipReason: undefined,
+          error: { message: "listing failed" },
+        },
+      ],
+    });
+    const report = toConformanceReport(
+      {
+        name: "OAuth suite",
+        serverUrl: "https://mcp.example.com/mcp",
+        passed: false,
+        summary: "…",
+        durationMs: 2,
+        results: [
+          {
+            ...oauthResult({ outcome: "not-applicable", passed: false }),
+            label: "no auth",
+          },
+          { ...failingOnlyUnscored, label: "dcr" },
+        ],
+      },
+      { oauthUnscoredCheckIds: ["oauth_token_format"] }
+    );
+
+    expect(report.outcome).toBe("passed");
+    expect(report.passed).toBe(true);
+  });
+
+  it("still counts a flow step a caller tries to unscore", () => {
+    // Only the listed post-flow checks can be left out; a broken flow step
+    // is the flow's own failure.
+    const failing = oauthResult({
+      passed: false,
+      outcome: "failed",
+      steps: [
+        { ...oauthResult().steps[0]!, status: "failed" },
+        { ...oauthResult().steps[1]!, status: "passed", skipReason: undefined },
+      ],
+    });
+    const options = { unscoredCheckIds: ["request_without_token"] };
+    const report = toConformanceReport(failing, {
+      oauthUnscoredCheckIds: options.unscoredCheckIds,
+    });
+
+    expect(scoreFromOAuthResult(failing, options).pending).toBe(0);
+    expect(scoreFromOAuthResult(failing, options).outcome).toBe("failed");
+    expect(report.outcome).toBe("failed");
+    expect(
+      report.groups[0]?.cases.find((c) => c.id === "request_without_token")
+        ?.pending
+    ).toBeUndefined();
+  });
+
+  it("counts unscored steps as pending on a not-applicable flow too", () => {
+    const score = scoreFromOAuthResult(
+      oauthResult({ outcome: "not-applicable" }),
+      { unscoredCheckIds: ["oauth_token_format"] }
+    );
+
+    expect(score.score).toBeNull();
+    expect(score.notApplicable).toBe(1);
+    expect(score.pending).toBe(1);
+    expect(score.outcome).toBe("passed");
   });
 
   it("returns a scoreless result for a server without auth — OPTIONAL costs nothing", () => {
