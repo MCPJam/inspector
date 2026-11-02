@@ -153,6 +153,10 @@ describe("OrganizationDefaultModelCard", () => {
     expect(
       screen.queryByTestId("org-ai-model-embedding"),
     ).not.toBeInTheDocument();
+    // An older backend that doesn't report the decision kind gets no row.
+    expect(
+      screen.queryByTestId("org-ai-model-decision"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(/Fast|Smart|role/)).not.toBeInTheDocument();
   });
 
@@ -777,7 +781,6 @@ describe("OrganizationDefaultModelCard", () => {
       "gpt-5-mini",
     );
   });
-
 
   describe("the decision model row", () => {
     const LUNA = orgSelection("conn_openai", "openai/gpt-6-luna", "gpt-6-luna");
