@@ -370,6 +370,15 @@ export function scoreFromTasksResult(
  */
 export function scoreFromOAuthResult(
   result: OAuthConformanceResult,
+  options?: {
+    /**
+     * Steps the caller leaves out of the score. OAuth's steps are one
+     * sequential sign-in flow, so they all still RUN; these are reported as
+     * pending (unscored), exactly like a profile's pending checks: out of the
+     * counts and out of the verdict.
+     */
+    unscoredCheckIds?: readonly string[];
+  },
 ): ConformanceScore {
   if (result.outcome === "not-applicable") {
     return scoreFromCounts(
@@ -391,5 +400,11 @@ export function scoreFromOAuthResult(
     ...(step.skipReason ? { skipReason: step.skipReason } : {}),
     ...(step.error?.message ? { error: { message: step.error.message } } : {}),
   }));
-  return computeConformanceScore(checks, [], result.protocolVersion);
+  const unscored = options?.unscoredCheckIds ?? [];
+  return computeConformanceScore(
+    checks,
+    [],
+    result.protocolVersion,
+    unscored.length > 0 ? { pendingCheckIds: [...unscored] } : undefined,
+  );
 }

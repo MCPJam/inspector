@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { CHECK_ERAS, MCP_CHECK_IDS } from "@mcpjam/sdk/browser";
 import { runnableSelection } from "@/hooks/use-conformance-run";
-import { checkCatalogs, withPicked } from "../ConformanceCheckPicker";
+import {
+  checkCatalogs,
+  withOAuthStep,
+  withOAuthSuite,
+  withPicked,
+} from "../ConformanceCheckPicker";
+import { OAUTH_CATALOG } from "../conformance-catalogs";
 
 const modernOnly = MCP_CHECK_IDS.filter(
   (id) => !(CHECK_ERAS[id] as readonly string[]).includes("legacy"),
@@ -68,5 +74,34 @@ describe("runnableSelection", () => {
     expect(checkCatalogs("auto").tasks.map((entry) => entry.id)).not.toContain(
       "tasks-update-ack-shape",
     );
+  });
+});
+
+describe("OAuth checks that do not count", () => {
+  const ids = OAUTH_CATALOG.map((entry) => entry.id);
+
+  it("records an unchecked OAuth check as unscored, and the flow still runs", () => {
+    const next = withOAuthStep({}, ids[0]!, false);
+    expect(next).toEqual({ oauth: true, oauthUnscored: [ids[0]] });
+    expect(withOAuthStep(next, ids[0]!, true)).toEqual({ oauth: true });
+  });
+
+  it("leaves the flow out once no check counts", () => {
+    let selection = {};
+    for (const id of ids) selection = withOAuthStep(selection, id, false);
+    expect(selection).toEqual({ oauth: false });
+  });
+
+  it("turns the flow on with only the checked one counting", () => {
+    const next = withOAuthStep({ oauth: false }, ids[1]!, true);
+    expect(next.oauth).toBe(true);
+    expect(next.oauthUnscored).toHaveLength(ids.length - 1);
+    expect(next.oauthUnscored).not.toContain(ids[1]);
+  });
+
+  it("puts every check back with the suite's box", () => {
+    expect(
+      withOAuthSuite({ oauth: true, oauthUnscored: [ids[0]!] }, true),
+    ).toEqual({ oauth: true });
   });
 });

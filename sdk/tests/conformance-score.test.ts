@@ -18,6 +18,7 @@ import {
   type ConformanceScore,
 } from "../src/conformance-score.js";
 import type { OutcomeCheckLike } from "../src/conformance-outcome.js";
+import { toConformanceReport } from "../src/conformance-reporting.js";
 import type { MCPConformanceResult } from "../src/mcp-conformance/types.js";
 import type { ConformanceResult as OAuthConformanceResult } from "../src/oauth-conformance/types.js";
 
@@ -516,6 +517,35 @@ describe("suite adapters", () => {
     expect(score.applicable).toBe(2);
     expect(score.couldNotRun).toBe(1);
     expect(score.score).toBe(50);
+  });
+
+  it("leaves the steps a caller unscores out of the counts and the verdict", () => {
+    // The flow still ran every step; the unrun one is simply not graded.
+    const score = scoreFromOAuthResult(oauthResult(), {
+      unscoredCheckIds: ["verify_list_tools"],
+    });
+
+    expect(score.applicable).toBe(1);
+    expect(score.couldNotRun).toBe(0);
+    expect(score.pending).toBe(1);
+    expect(score.score).toBe(100);
+    expect(score.outcome).toBe("passed");
+  });
+
+  it("marks unscored OAuth steps pending in the report, with the same score", () => {
+    const report = toConformanceReport(oauthResult(), {
+      oauthUnscoredCheckIds: ["verify_list_tools"],
+    });
+    const cases = report.groups.flatMap((group) => group.cases);
+
+    expect(cases.find((c) => c.id === "verify_list_tools")?.pending).toBe(
+      true,
+    );
+    expect(cases.find((c) => c.id === "request_without_token")?.pending).toBe(
+      undefined,
+    );
+    expect(report.score?.pending).toBe(1);
+    expect(report.score?.score).toBe(100);
   });
 
   it("returns a scoreless result for a server without auth — OPTIONAL costs nothing", () => {

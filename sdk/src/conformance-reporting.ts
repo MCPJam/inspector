@@ -316,6 +316,7 @@ function reportCaseFromCheck(
 
 function reportCaseFromOAuthStep(
   step: OAuthConformanceStepResult,
+  unscoredIds?: ReadonlySet<string>,
 ): ConformanceReportCase {
   const output = summarizeHttpAttempts(step);
   return {
@@ -323,6 +324,7 @@ function reportCaseFromOAuthStep(
     title: step.title || step.step,
     category: "oauth",
     status: step.status,
+    ...(unscoredIds?.has(step.step) ? { pending: true } : {}),
     durationMs: step.durationMs,
     description: step.summary,
     ...(step.error?.message ? { error: step.error.message } : {}),
@@ -463,6 +465,7 @@ function oauthGroupFromResult(
   result: OAuthConformanceResult,
   title: string,
   index: number,
+  unscoredIds?: ReadonlySet<string>,
 ): ConformanceReportGroup {
   return {
     id: `oauth-${index + 1}`,
@@ -471,7 +474,9 @@ function oauthGroupFromResult(
     passed: result.passed,
     durationMs: result.durationMs,
     summary: result.summary,
-    cases: result.steps.map(reportCaseFromOAuthStep),
+    cases: result.steps.map((step) =>
+      reportCaseFromOAuthStep(step, unscoredIds),
+    ),
   };
 }
 
@@ -628,9 +633,22 @@ function createAppsReport(
   };
 }
 
+/** What only the OAuth report reads. */
+export interface OAuthReportOptions {
+  /**
+   * Steps left out of the score. They still run with the flow and stay in
+   * the report, marked `pending`, so a reader sees them unscored.
+   */
+  oauthUnscoredCheckIds?: readonly string[];
+}
+
 function createOAuthReport(
   result: OAuthConformanceResult | OAuthConformanceSuiteResult,
+  options?: OAuthReportOptions,
 ): ConformanceReport {
+  const unscoredCheckIds = options?.oauthUnscoredCheckIds ?? [];
+  const unscoredIds = new Set(unscoredCheckIds);
+  const scoreOptions = { unscoredCheckIds };
   if ("results" in result) {
     return {
       schemaVersion: 1,
@@ -638,10 +656,14 @@ function createOAuthReport(
       name: result.name,
       passed: result.passed,
       ...suiteOutcomeFields(result.results),
-      score: pooledConformanceScore(result.results.map(scoreFromOAuthResult)),
+      score: pooledConformanceScore(
+        result.results.map((entry) =>
+          scoreFromOAuthResult(entry, scoreOptions),
+        ),
+      ),
       durationMs: result.durationMs,
       groups: result.results.map((entry, index) =>
-        oauthGroupFromResult(entry, entry.label, index),
+        oauthGroupFromResult(entry, entry.label, index, unscoredIds),
       ),
     };
   }
@@ -652,13 +674,14 @@ function createOAuthReport(
     name: "OAuth Conformance",
     passed: result.passed,
     ...outcomeFields(result),
-    score: scoreFromOAuthResult(result),
+    score: scoreFromOAuthResult(result, scoreOptions),
     durationMs: result.durationMs,
     groups: [
       oauthGroupFromResult(
         result,
         `${result.protocolVersion}/${result.registrationStrategy}`,
         0,
+        unscoredIds,
       ),
     ],
   };
@@ -1022,9 +1045,11 @@ export function toConformanceReport(
 ): ConformanceReport;
 export function toConformanceReport(
   result: OAuthConformanceResult,
+  options?: OAuthReportOptions,
 ): ConformanceReport;
 export function toConformanceReport(
   result: OAuthConformanceSuiteResult,
+  options?: OAuthReportOptions,
 ): ConformanceReport;
 export function toConformanceReport(
   result: MCPAppsConformanceResult,
@@ -1046,9 +1071,11 @@ export function toConformanceReport(
 ): ConformanceReport;
 export function toConformanceReport(
   result: SupportedConformanceResult,
+  options?: OAuthReportOptions,
 ): ConformanceReport;
 export function toConformanceReport(
   result: SupportedConformanceResult,
+  options?: OAuthReportOptions,
 ): ConformanceReport {
   // First: readiness is not a suite, and every discriminator below is written
   // for suite shapes.
@@ -1087,7 +1114,7 @@ export function toConformanceReport(
   }
 
   if (isOAuthSingleResult(result) || isOAuthSuiteResult(result)) {
-    return createOAuthReport(result);
+    return createOAuthReport(result, options);
   }
 
   throw new Error("Unsupported conformance result shape");

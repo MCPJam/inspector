@@ -157,6 +157,11 @@ export interface UseConformanceRunResult {
   tasksScore?: ConformanceScore;
   oauthScore?: ConformanceScore;
   pooledScore?: ConformanceScore;
+  /**
+   * The OAuth steps this run leaves out of its score, as picked when it
+   * started: they ran, and read as unscored.
+   */
+  oauthUnscored: readonly string[];
   /** True when OAuth produced a score object with nothing applicable in it. */
   oauthNotScored: boolean;
   isRunning: boolean;
@@ -186,6 +191,7 @@ export function useConformanceRun({
   // Read when a run starts; the caller passes it once, before Run.
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
+  const [oauthUnscored, setOAuthUnscored] = useState<readonly string[]>([]);
   const [runVersion, setRunVersion] = useState(0);
 
   const activeServerNameRef = useRef(server.name);
@@ -655,6 +661,8 @@ export function useConformanceRun({
     // Saved defaults are plain strings: send only ids this build knows and,
     // when pinned, ones that version runs.
     const picked = runnableSelection(selectionRef.current, versionPin);
+    // Fixed for this run: a Settings change afterwards is for the next one.
+    setOAuthUnscored(picked?.oauthUnscored ?? []);
     const promises: Promise<void>[] = [];
     if (httpServerNow) {
       if (isSelected(picked?.protocol)) {
@@ -711,8 +719,13 @@ export function useConformanceRun({
     [tasks.result]
   );
   const oauthScore = useMemo(
-    () => (oauth.result ? scoreFromOAuthResult(oauth.result) : undefined),
-    [oauth.result]
+    () =>
+      oauth.result
+        ? scoreFromOAuthResult(oauth.result, {
+            unscoredCheckIds: oauthUnscored,
+          })
+        : undefined,
+    [oauth.result, oauthUnscored]
   );
   const pooledScore = useMemo(() => {
     const parts = [protocolScore, appsScore, tasksScore, oauthScore].filter(
@@ -744,6 +757,7 @@ export function useConformanceRun({
     tasksScore,
     oauthScore,
     pooledScore,
+    oauthUnscored,
     oauthNotScored: oauthScore !== undefined && oauthScore.score === null,
     isRunning,
   };
