@@ -16,6 +16,7 @@ import type { ForwardingRuntimeContract } from "./forwarding/runtime-contract.js
 import { withForwardingResume } from "./forwarding/bridge-refresh.js";
 import { withClaudeForwardingResume } from "./forwarding/claude-resume.js";
 import { createClaudeCodeHarness } from "./claude-code-bootstrap.js";
+import { withWarmBridgeBootstrap } from "./warm-bridge-files.js";
 import { createHostedClaudeCodeHarness } from "./claude-code-typed-errors.js";
 export { patchClaudeCodeHarnessBootstrap } from "./claude-code-bootstrap.js";
 import { createCursor } from "@ai-sdk/harness-cursor";
@@ -348,6 +349,8 @@ type HarnessRuntimeAdapterBase = {
   /** Whether this harness must run inside an attached personal computer. Drives
    *  the availability preflight (data-plane requirement). */
   requiresComputer: boolean;
+  /** Can attach without dispatching a prompt, with fresh per-turn settings. */
+  supportsWarmBridge?: true;
   /** Permission mode handed to `HarnessAgent` — the runtime's only honored mode
    *  today is "allow-all"; modeled per-adapter so it isn't a hardcoded constant. */
   defaultPermissionMode: HarnessV1PermissionMode;
@@ -485,6 +488,8 @@ type HarnessRuntimeAdapterBase = {
  *  are delivered outside the VM, see `buildBrokerDummyAuth`; an
  *  external-account harness gets its customer credential in `auth` instead.) */
 export type HarnessCreateArgs = {
+  /** Shorter only for an attach-only attempt; cold startup retains its budget. */
+  startupTimeoutMs?: number;
   modelId: string;
   auth: HarnessAuth;
   elicitationHandler?: boolean;
@@ -845,6 +850,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   // against the AI Gateway verifies it. See `HARNESS_REASONING_EFFORTS`.
   supportedReasoningEfforts: HARNESS_REASONING_EFFORTS["claude-code"],
   requiresComputer: true,
+  supportsWarmBridge: true,
   // MCPJam brokers the model credential: Convex mints a lease, E2B injects it
   // outside the VM, and the model proxy meters the spend.
   modelAccess: HARNESS_DESCRIPTORS["claude-code"].modelAccess,
@@ -920,6 +926,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   // No `model` here: the adapter no longer reads one at construction. The
   // turn hands `toNativeModel(modelId)` to `HarnessAgent` instead.
   createHarness({
+    startupTimeoutMs,
     modelId,
     auth,
     mcpJson,
@@ -944,7 +951,8 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
     // local session swaps this bootstrap for the Inspector layer's
     // (`withLocalRuntimeBootstrap`): the bridge it runs is the one compiled
     // into the layer and re-hashed before every exec.
-    return createHostedClaudeCodeHarness({
+    return withWarmBridgeBootstrap(createHostedClaudeCodeHarness({
+      ...(startupTimeoutMs === undefined ? {} : { startupTimeoutMs }),
       mcpServers: mcpJson.mcpServers,
       auth,
       // WITH an effort the turn asks for adaptive thinking (the only shape the
@@ -983,7 +991,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
               thinking: { type: "disabled" as const },
               env: { ...env, CLAUDE_CODE_EFFORT_LEVEL: "unset" },
             }),
-    });
+    }));
   },
 };
 
@@ -1019,6 +1027,7 @@ const codexAdapter: HarnessRuntimeAdapter = {
   displayName: HARNESS_DESCRIPTORS["codex"].displayName,
   supportedReasoningEfforts: HARNESS_REASONING_EFFORTS["codex"],
   requiresComputer: true,
+  supportsWarmBridge: true,
   // Brokered, same as Claude Code — an OpenAI-protocol lease instead of an
   // Anthropic one — or on the organization's own OpenAI key.
   modelAccess: HARNESS_DESCRIPTORS["codex"].modelAccess,
@@ -1095,9 +1104,10 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // run match a Codex run tool-for-tool. Codex's own natives arrive as common
   // names (`bash`, `read`, …), which have no prefix and pass through unchanged.
   parseToolName: parseHarnessToolName,
-  createHarness({ modelId, auth, sandboxPolicy, reasoningEffort, upstream, forwardingMcpJson }) {
+  createHarness({ modelId, auth, sandboxPolicy, reasoningEffort, upstream, forwardingMcpJson, startupTimeoutMs }) {
     const nativeModel = toCodexNativeModel(modelId, upstream);
-    return createCodexAppServer({
+    return withWarmBridgeBootstrap(createCodexAppServer({
+      ...(startupTimeoutMs === undefined ? {} : { startupTimeoutMs }),
       ...(nativeModel ? { model: nativeModel } : {}),
       // Forwarded on the bridge `start` message, which sends it as
       // `turn/start` `effort`.
@@ -1105,7 +1115,7 @@ const codexAdapter: HarnessRuntimeAdapter = {
       auth,
       ...(sandboxPolicy ? { sandboxPolicy } : {}),
       ...(forwardingMcpJson ? { nativeMcpServers: forwardingMcpJson.mcpServers } : {}),
-    }) as unknown as HarnessAgentAdapter;
+    })) as unknown as HarnessAgentAdapter;
   },
 };
 

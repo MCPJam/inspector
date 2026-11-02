@@ -8,13 +8,13 @@
     {
       "harnessId": "claude-code",
       "bootstrapDir": ".harness-bootstrap/claude-code",
-      "identity": "a3c6110787fd6dc1",
+      "identity": "c637f275896b1747",
       "runtimeVersion": "2.1.245"
     },
     {
       "harnessId": "codex",
       "bootstrapDir": ".harness-bootstrap/codex-appserver",
-      "identity": "cf6f4025fcd1bf51",
+      "identity": "413393e08a6e1b93",
       "runtimeVersion": "0.163.0"
     },
     {

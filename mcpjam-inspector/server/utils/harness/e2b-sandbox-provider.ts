@@ -533,7 +533,7 @@ export function createE2BHarnessSandboxProvider(
         const handle = await sandbox.commands.run(command, {
           background: true,
           cwd: workingDirectory ?? cwd,
-          envs: mergeEnv(env),
+          envs: mergeEnv(stateDir ? { ...env, MCPJAM_HOSTED_BRIDGE: "1" } : env),
           // 0, never the default: E2B kills a command when its timeout
           // expires "even when `background` is set", and the default is 60s.
           // With it, every bridge died a minute after it started — mid-turn

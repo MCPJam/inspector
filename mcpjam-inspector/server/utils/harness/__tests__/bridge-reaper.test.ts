@@ -1,5 +1,6 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { warmBridgeCommand } from "../warm-bridge-files.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -163,6 +164,40 @@ describe.runIf(process.platform === "linux")("against real bridges", () => {
     expect(reap(join(dir, "chat-b", "bridge"))).toBe(String(idle.pid));
     expect(await exited(idle)).toBe("SIGTERM");
     expect(running(paused)).toBe(true);
+  });
+
+  it("preserves another chat's authenticated warm process until its window expires", async () => {
+    const dir = root();
+    const stateDir = join(dir, "chat-a", "bridge");
+    const idle = await bridge(stateDir, "waiting");
+    const command = (park: boolean, token = "channel") => warmBridgeCommand({
+      directory: stateDir, port: 4100, configuration: "runtime", token, park,
+    });
+    expect(execFileSync("/bin/sh", ["-c", command(true)], { encoding: "utf8" })).toBe("ready");
+    expect(execFileSync("/bin/sh", ["-c", command(false)], { encoding: "utf8" })).toBe("ready");
+    expect(() => execFileSync("/bin/sh", ["-c", command(false, "other-token")])).toThrow();
+    expect(reap(join(dir, "chat-b", "bridge"))).toBe("");
+    expect(running(idle)).toBe(true);
+    const path = join(stateDir, "mcpjam-warm.json");
+    const saved = JSON.parse(readFileSync(path, "utf8"));
+    writeFileSync(path, JSON.stringify({ ...saved, expiresAt: 0 }));
+    expect(() => execFileSync("/bin/sh", ["-c", command(false)])).toThrow();
+    expect(reap(join(dir, "chat-b", "bridge"))).toBe(String(idle.pid));
+    await exited(idle);
+  });
+
+  it("rejects a recycled process identity instead of keeping its warm marker", async () => {
+    const dir = root();
+    const stateDir = join(dir, "chat-a", "bridge");
+    const idle = await bridge(stateDir, "waiting");
+    const args = { directory: stateDir, port: 4100, configuration: "runtime", token: "channel" };
+    execFileSync("/bin/sh", ["-c", warmBridgeCommand({ ...args, park: true })]);
+    const path = join(stateDir, "mcpjam-warm.json");
+    const saved = JSON.parse(readFileSync(path, "utf8"));
+    writeFileSync(path, JSON.stringify({ ...saved, birthIdentity: "0" }));
+    expect(() => execFileSync("/bin/sh", ["-c", warmBridgeCommand({ ...args, park: false })])).toThrow();
+    expect(reap(join(dir, "chat-b", "bridge"))).toBe(String(idle.pid));
+    await exited(idle);
   });
 
   it("stops the spawning chat's own older bridge, even one paused on an approval", async () => {

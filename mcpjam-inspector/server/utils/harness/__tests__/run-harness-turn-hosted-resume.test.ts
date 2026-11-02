@@ -1,15 +1,5 @@
-/**
- * A resumed hosted turn respawns its bridge and resumes the conversation from
- * disk; it never hands the adapter the last turn's bridge to reattach to. A
- * reattach whose bridge is gone — reaped as idle by another chat's spawn, or
- * stopped with its computer — is retried by the adapter for its whole 120s
- * startup timeout before it falls back: the two-minute stall this pins shut.
- *
- * The one exception is an approval decision: the paused turn lives in its
- * bridge (which the reaper never stops), so the continuation reattaches.
- *
- * The module mocks are the ones `run-harness-turn-provenance.test.ts` drives
- * a turn with.
+/** Hosted continuations pass live candidates to the bounded runtime guard.
+ * Approval decisions retain their original paused-turn continuation.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
@@ -58,6 +48,7 @@ vi.mock("../registry.js", () => ({
   })),
   getHarnessAdapter: vi.fn(() => ({
     id: "claude-code",
+    supportsWarmBridge: true,
     displayName: "Claude Code",
     defaultPermissionMode: "allow-all",
     supportsSkills: false,
@@ -179,7 +170,7 @@ describe("runHarnessTurn hosted resume", () => {
     harnessState.approvalContinuations = [];
   });
 
-  it("resumes the session from disk instead of reattaching to the last bridge", async () => {
+  it("passes the prior bridge to the bounded hosted runtime for validation", async () => {
     harnessState.claimedState = {
       harnessSessionId: "harness-session-0",
       computerId: "computer-1",
@@ -200,13 +191,13 @@ describe("runHarnessTurn hosted resume", () => {
         type: "resume-session",
         harnessId: "claude-code",
         specificationVersion: "harness-v1",
-        data: { claudeSessionId: "claude-1" },
+        data: { claudeSessionId: "claude-1", bridge: BRIDGE },
       },
     });
   });
 
   it("A pauses, B runs, A decides: the decision reattaches to A's bridge", async () => {
-    // B's turn on the same computer reaped only bridges between turns; A's,
+    // B's turn on the same computer preserves paused approvals; A's,
     // paused on the approval, is still there and still holds the turn.
     const paused = {
       type: "continue-turn",
