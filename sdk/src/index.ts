@@ -800,6 +800,7 @@ export {
   computeConformanceScore,
   describeConformanceScore,
   pooledConformanceScore,
+  scorableOAuthIds,
   scoreFromAppsResult,
   scoreFromOAuthResult,
   scoreFromProtocolResult,

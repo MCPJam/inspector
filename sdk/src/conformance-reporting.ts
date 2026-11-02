@@ -9,6 +9,7 @@ import {
   scoreFromOAuthResult,
   scoreFromProtocolResult,
   scoreFromTasksResult,
+  scorableOAuthIds,
   type ConformanceScore,
 } from "./conformance-score.js";
 import { deepJsonSafe } from "./json-safe.js";
@@ -316,7 +317,7 @@ function reportCaseFromCheck(
 
 function reportCaseFromOAuthStep(
   step: OAuthConformanceStepResult,
-  unscoredIds?: ReadonlySet<string>,
+  unscoredIds?: ReadonlySet<string>
 ): ConformanceReportCase {
   const output = summarizeHttpAttempts(step);
   return {
@@ -467,7 +468,7 @@ function oauthGroupFromResult(
   index: number,
   unscoredIds?: ReadonlySet<string>,
   /** The flow's verdict once its unscored steps are out; see `oauthVerdict`. */
-  passed: boolean = result.passed,
+  passed: boolean = result.passed
 ): ConformanceReportGroup {
   return {
     id: `oauth-${index + 1}`,
@@ -477,7 +478,7 @@ function oauthGroupFromResult(
     durationMs: result.durationMs,
     summary: result.summary,
     cases: result.steps.map((step) =>
-      reportCaseFromOAuthStep(step, unscoredIds),
+      reportCaseFromOAuthStep(step, unscoredIds)
     ),
   };
 }
@@ -653,7 +654,7 @@ export interface OAuthReportOptions {
 function oauthVerdict(
   result: OAuthConformanceResult,
   score: ConformanceScore,
-  filtered: boolean,
+  filtered: boolean
 ): { passed: boolean; outcome?: string; incompleteReason?: string } {
   if (!filtered || result.outcome === "not-applicable") {
     return {
@@ -675,18 +676,18 @@ function oauthVerdict(
 
 function createOAuthReport(
   result: OAuthConformanceResult | OAuthConformanceSuiteResult,
-  options?: OAuthReportOptions,
+  options?: OAuthReportOptions
 ): ConformanceReport {
-  const unscoredCheckIds = options?.oauthUnscoredCheckIds ?? [];
+  const unscoredCheckIds = scorableOAuthIds(options?.oauthUnscoredCheckIds);
   const unscoredIds = new Set(unscoredCheckIds);
   const filtered = unscoredIds.size > 0;
   const scoreOptions = { unscoredCheckIds };
   if ("results" in result) {
     const scores = result.results.map((entry) =>
-      scoreFromOAuthResult(entry, scoreOptions),
+      scoreFromOAuthResult(entry, scoreOptions)
     );
     const verdicts = result.results.map((entry, index) =>
-      oauthVerdict(entry, scores[index]!, filtered),
+      oauthVerdict(entry, scores[index]!, filtered)
     );
     const outcome = suiteOutcomeFields(verdicts);
     return {
@@ -705,8 +706,8 @@ function createOAuthReport(
           entry.label,
           index,
           unscoredIds,
-          verdicts[index]!.passed,
-        ),
+          verdicts[index]!.passed
+        )
       ),
     };
   }
@@ -727,7 +728,7 @@ function createOAuthReport(
         `${result.protocolVersion}/${result.registrationStrategy}`,
         0,
         unscoredIds,
-        verdict.passed,
+        verdict.passed
       ),
     ],
   };
@@ -1091,11 +1092,11 @@ export function toConformanceReport(
 ): ConformanceReport;
 export function toConformanceReport(
   result: OAuthConformanceResult,
-  options?: OAuthReportOptions,
+  options?: OAuthReportOptions
 ): ConformanceReport;
 export function toConformanceReport(
   result: OAuthConformanceSuiteResult,
-  options?: OAuthReportOptions,
+  options?: OAuthReportOptions
 ): ConformanceReport;
 export function toConformanceReport(
   result: MCPAppsConformanceResult,
@@ -1117,11 +1118,11 @@ export function toConformanceReport(
 ): ConformanceReport;
 export function toConformanceReport(
   result: SupportedConformanceResult,
-  options?: OAuthReportOptions,
+  options?: OAuthReportOptions
 ): ConformanceReport;
 export function toConformanceReport(
   result: SupportedConformanceResult,
-  options?: OAuthReportOptions,
+  options?: OAuthReportOptions
 ): ConformanceReport {
   // First: readiness is not a suite, and every discriminator below is written
   // for suite shapes.

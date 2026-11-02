@@ -28,6 +28,7 @@ import {
   type MCPTasksCheckId,
   pooledConformanceScore,
   scoreFromAppsResult,
+  scorableOAuthIds,
   scoreFromOAuthResult,
   scoreFromProtocolResult,
   scoreFromTasksResult,
@@ -662,7 +663,7 @@ export function useConformanceRun({
     // when pinned, ones that version runs.
     const picked = runnableSelection(selectionRef.current, versionPin);
     // Fixed for this run: a Settings change afterwards is for the next one.
-    setOAuthUnscored(picked?.oauthUnscored ?? []);
+    setOAuthUnscored(scorableOAuthIds(picked?.oauthUnscored));
     const promises: Promise<void>[] = [];
     if (httpServerNow) {
       if (isSelected(picked?.protocol)) {

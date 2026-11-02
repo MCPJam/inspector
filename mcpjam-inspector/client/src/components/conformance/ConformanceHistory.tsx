@@ -698,7 +698,7 @@ function SuiteReportCases({
               {check.error ? (
                 <span
                   className={
-                    check.status === "failed"
+                    check.status === "failed" && !check.pending
                       ? "text-[13px] font-medium text-red-600 dark:text-red-400"
                       : "text-[13px] text-muted-foreground"
                   }
