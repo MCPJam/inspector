@@ -20,6 +20,8 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { gatherClaudeReadinessEvidence } from "../../src/claude-readiness/gather.js";
+import { gradeClaudeReadiness } from "../../src/claude-readiness/runner.js";
 import { resolveLazyAuthProbeMode } from "../../src/directory-readiness/lazy-auth.js";
 import { probeLazyAuthentication } from "../../src/directory-readiness/lazy-auth-probe.js";
 import { dialToolListing, dialInitialize } from "../../src/directory-readiness/mcp-dial.js";
@@ -56,6 +58,8 @@ interface LazyServerOptions {
   weatherRequiresCity?: "rpc-error" | "tool-error";
   /** Also list `get_time`: public, read-only, and takes no arguments. */
   withNoArgPublicTool?: boolean;
+  /** The challenge points at metadata on another origin. */
+  foreignPointer?: boolean;
 }
 
 const servers: http.Server[] = [];
@@ -132,7 +136,10 @@ async function startLazyServer(options: LazyServerOptions): Promise<{
         return;
       }
 
-      const challenge = `Bearer resource_metadata="${origin}${POINTER_PATH}", scope="orders:read"`;
+      const pointer = options.foreignPointer
+        ? "https://elsewhere.invalid/prm"
+        : `${origin}${POINTER_PATH}`;
+      const challenge = `Bearer resource_metadata="${pointer}", scope="orders:read"`;
       const authed = req.headers.authorization === TOKEN;
       if (body?.method === "initialize") {
         if (options.initialize401 && !authed) {
@@ -308,7 +315,243 @@ const byId = <T extends { id: string }>(findings: T[], id: string) =>
 
 // ── Claude ──────────────────────────────────────────────────────────────
 
+describe("Claude: the probe and the metadata only the protected call reveals", () => {
+  it("reports a refused challenge pointer instead of grading the server authless", async () => {
+    const server = await startLazyServer({
+      refusal: "bearer-401",
+      foreignPointer: true,
+    });
+    const result = gradeClaudeReadiness(
+      await gatherClaudeReadinessEvidence({
+        enteredUrl: server.url,
+        fetchFn: fetch,
+        lazyAuthProbe: {
+          enabled: true,
+          toolName: "get_my_orders",
+          publicToolName: "get_weather",
+        },
+        now: NOW,
+      }),
+    );
+    const prm = byId(result.findings, "claude.auth.prm-discoverable");
+    expect(prm.status).toBe("violated");
+    expect(prm.details).toMatchObject({
+      rejectedPointer: "https://elsewhere.invalid/prm",
+    });
+    expect(
+      byId(result.findings, "claude.auth.first-authorization-server-usable")
+        .status,
+    ).not.toBe("not-applicable");
+  });
+
+  it("grades the OAuth lanes of a server whose PRM lives only at the challenge pointer", async () => {
+    const server = await startLazyServer({ refusal: "bearer-401" });
+
+    // WITHOUT the probe the server reads as authless: nothing at the
+    // well-known paths, and an initialize that succeeds anonymously.
+    const unprobed = gradeClaudeReadiness(
+      await gatherClaudeReadinessEvidence({
+        enteredUrl: server.url,
+        fetchFn: fetch,
+        now: NOW,
+      }),
+    );
+    expect(byId(unprobed.findings, "claude.auth.prm-discoverable").status).toBe(
+      "not-applicable",
+    );
+
+    const evidence = await gatherClaudeReadinessEvidence({
+      enteredUrl: server.url,
+      fetchFn: fetch,
+      // The run holds a credential. The probe must not use it.
+      mcpHeaders: { authorization: TOKEN },
+      lazyAuthProbe: {
+        enabled: true,
+        toolName: "get_my_orders",
+        publicToolName: "get_weather",
+      },
+      now: NOW,
+    });
+    const result = gradeClaudeReadiness(evidence);
+
+    expect(evidence.lazyAuthProbe?.rediscovery).toMatchObject({
+      trigger: "resource_metadata",
+      source: "http_401",
+      prmFound: true,
+      discoveredVia: "www-authenticate",
+    });
+    for (const id of [
+      "claude.auth.prm-discoverable",
+      "claude.auth.prm-resource-matches-entered-url",
+      "claude.auth.first-authorization-server-usable",
+      "claude.auth.pkce-s256-advertised",
+      "claude.auth.client-acquisition-path",
+      "claude.auth.unauthenticated-challenge",
+      "claude.auth.challenge-names-resource-metadata",
+    ]) {
+      expect(byId(result.findings, id).status, id).toBe("satisfied");
+    }
+    expect(
+      result.badges.find((badge) => badge.id === "claude.features.lazy-authentication"),
+    ).toMatchObject({ state: "supported", provenance: "wire" });
+
+    // Two calls, read-only tools only, and no credential on any of them.
+    const calls = toolCalls(server.hits);
+    expect(calls.map((hit) => hit.tool)).toEqual(["get_weather", "get_my_orders"]);
+    expect(calls.every((hit) => hit.authorization === undefined)).toBe(true);
+    expect(server.hits.some((hit) => hit.tool === "cancel_order")).toBe(false);
+    // The anonymous session is the probe's own: its initialize carried nothing.
+    const anonymousInitializes = server.hits.filter(
+      (hit) => hit.rpc === "initialize" && hit.authorization === undefined,
+    );
+    expect(anonymousInitializes.length).toBeGreaterThanOrEqual(2);
+    expect(evidence.lazyAuthProbe?.protocolVersion).toBe("2025-06-18");
+    expect(evidence.lazyAuthProbe?.eraNote).toMatch(/session-based/);
+  });
+
+  it("calls a headerless 401 unsupported, quoting Claude's trigger", async () => {
+    const server = await startLazyServer({ refusal: "bare-401", prmAt: "well-known" });
+    const result = gradeClaudeReadiness(
+      await gatherClaudeReadinessEvidence({
+        enteredUrl: server.url,
+        fetchFn: fetch,
+        lazyAuthProbe: { enabled: true, toolName: "get_my_orders", publicToolName: "get_weather" },
+        now: NOW,
+      }),
+    );
+    const badge = result.badges.find(
+      (entry) => entry.id === "claude.features.lazy-authentication",
+    )!;
+    expect(badge.state).toBe("unsupported");
+    expect(badge.detail).toMatch(/Claude starts sign-in only on HTTP 401 with WWW-Authenticate/);
+    expect(byId(result.findings, "claude.auth.unauthenticated-challenge").status).toBe(
+      "violated",
+    );
+    // The PRM is still graded: it is published at the well-known path.
+    expect(byId(result.findings, "claude.auth.prm-discoverable").status).toBe("satisfied");
+  });
+
+  it("calls a _meta-only refusal unsupported, and never follows its pointer", async () => {
+    const server = await startLazyServer({ refusal: "meta" });
+    const evidence = await gatherClaudeReadinessEvidence({
+      enteredUrl: server.url,
+      fetchFn: fetch,
+      lazyAuthProbe: { enabled: true, toolName: "get_my_orders", publicToolName: "get_weather" },
+      now: NOW,
+    });
+    const result = gradeClaudeReadiness(evidence);
+    const badge = result.badges.find(
+      (entry) => entry.id === "claude.features.lazy-authentication",
+    )!;
+    expect(badge.state).toBe("unsupported");
+    expect(badge.detail).toMatch(/a 200 isError result is an ordinary tool failure to Claude/);
+    // Claude acts on the HTTP challenge only, so the `_meta` pointer is one
+    // Claude never reaches; discovery is not re-run from it.
+    expect(evidence.lazyAuthProbe?.rediscovery).toBeUndefined();
+    expect(server.hits.some((hit) => hit.path === POINTER_PATH)).toBe(false);
+  });
+
+  it("records a server that refuses initialize as not lazy", async () => {
+    const server = await startLazyServer({ refusal: "bearer-401", initialize401: true });
+    const evidence = await gatherClaudeReadinessEvidence({
+      enteredUrl: server.url,
+      fetchFn: fetch,
+      lazyAuthProbe: { enabled: true, toolName: "get_my_orders" },
+      now: NOW,
+    });
+    expect(evidence.lazyAuthProbe?.initialize).toMatchObject({ ok: false, status: 401 });
+    expect(evidence.lazyAuthProbe?.reason).toMatch(/not lazy/);
+    expect(toolCalls(server.hits)).toEqual([]);
+    const badge = gradeClaudeReadiness(evidence).badges.find(
+      (entry) => entry.id === "claude.features.lazy-authentication",
+    )!;
+    expect(badge.state).toBe("unsupported");
+  });
+});
+
+// ── OpenAI ──────────────────────────────────────────────────────────────
+
+describe("the probe's empty arguments", () => {
+  it.each(["rpc-error", "tool-error"] as const)(
+    "reads a public tool that rejects them (%s) as inconclusive, not as refused",
+    async (validation) => {
+      const server = await startLazyServer({
+        refusal: "bearer-401",
+        prmAt: "well-known",
+        weatherRequiresCity: validation,
+      });
+      const evidence = await gatherClaudeReadinessEvidence({
+        enteredUrl: server.url,
+        fetchFn: fetch,
+        lazyAuthProbe: { enabled: true, toolName: "get_my_orders", publicToolName: "get_weather" },
+        now: NOW,
+      });
+      expect(evidence.lazyAuthProbe?.publicCall).toMatchObject({
+        toolName: "get_weather",
+        invalidArguments: true,
+      });
+      const badge = gradeClaudeReadiness(evidence).badges.find(
+        (entry) => entry.id === "claude.features.lazy-authentication",
+      );
+      expect(badge?.state).not.toBe("unsupported");
+    },
+  );
+
+  it("picks a public tool that takes no required arguments", async () => {
+    const server = await startLazyServer({
+      refusal: "bearer-401",
+      prmAt: "well-known",
+      weatherRequiresCity: "tool-error",
+      withNoArgPublicTool: true,
+    });
+    const evidence = await gatherClaudeReadinessEvidence({
+      enteredUrl: server.url,
+      fetchFn: fetch,
+      lazyAuthProbe: { enabled: true },
+      now: NOW,
+    });
+    expect(toolCalls(server.hits).map((hit) => hit.tool)).toEqual([
+      "get_time",
+      "get_my_orders",
+    ]);
+    expect(
+      gradeClaudeReadiness(evidence).badges.find(
+        (entry) => entry.id === "claude.features.lazy-authentication",
+      ),
+    ).toMatchObject({ state: "supported" });
+  });
+
+  it("skips the public call, without calling, when every public tool needs arguments", async () => {
+    const server = await startLazyServer({
+      refusal: "bearer-401",
+      prmAt: "well-known",
+      weatherRequiresCity: "rpc-error",
+    });
+    const evidence = await gatherClaudeReadinessEvidence({
+      enteredUrl: server.url,
+      fetchFn: fetch,
+      lazyAuthProbe: { enabled: true },
+      now: NOW,
+    });
+    expect(evidence.lazyAuthProbe?.publicCallSkipped).toMatch(/required inputs/);
+    expect(toolCalls(server.hits).map((hit) => hit.tool)).toEqual(["get_my_orders"]);
+  });
+});
+
 describe("the gate", () => {
+  it("refuses a truthy non-boolean and makes no call", async () => {
+    const server = await startLazyServer({ refusal: "bearer-401" });
+    const evidence = await gatherClaudeReadinessEvidence({
+      enteredUrl: server.url,
+      fetchFn: fetch,
+      lazyAuthProbe: { enabled: "true" as unknown as boolean, toolName: "get_my_orders" },
+      now: NOW,
+    });
+    expect(evidence.lazyAuthProbe).toMatchObject({ attempted: false });
+    expect(evidence.lazyAuthProbe?.reason).toMatch(/boolean/);
+    expect(toolCalls(server.hits)).toEqual([]);
+  });
+
   it("refuses a named tool that is not annotated read-only, without calling it", async () => {
     const server = await startLazyServer({ refusal: "bearer-401" });
     const mode = resolveLazyAuthProbeMode({ enabled: true, toolName: "cancel_order" });
