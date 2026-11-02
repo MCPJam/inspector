@@ -152,8 +152,15 @@ type PendingCall = {
   // JSON-RPC 2.0 call ID counter
   let callId = 0;
 
+  // An MCP Apps widget runs its own JSON-RPC client in this window with
+  // numeric ids, and the host's replies reach every message listener. The
+  // prefix keeps our ids out of the widget's range and marks the replies we
+  // hide from the widget's transport, which reports any reply it did not
+  // request as an unknown message ID.
+  const REQUEST_ID_PREFIX = "openai-compat:";
+
   // Pending calls awaiting responses (for callTool)
-  const pendingCalls = new Map<number, PendingCall>();
+  const pendingCalls = new Map<string, PendingCall>();
 
   // Pending checkout calls awaiting responses (notification + callId pattern)
   const pendingCheckoutCalls = new Map<number, PendingCall>();
@@ -187,8 +194,8 @@ type PendingCall = {
   const sendRequest = (
     method: string,
     params: Record<string, unknown>,
-  ): { id: number } => {
-    const id = ++callId;
+  ): { id: string } => {
+    const id = `${REQUEST_ID_PREFIX}${++callId}`;
     window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
     return { id };
   };
@@ -641,7 +648,7 @@ type PendingCall = {
 
   // ── Listen for incoming JSON-RPC responses & notifications ─────────
 
-  window.addEventListener("message", (event: MessageEvent) => {
+  const onMessage = (event: MessageEvent): void => {
     // Only accept messages from our parent (sandbox proxy)
     if (event.source !== window.parent) return;
 
@@ -653,6 +660,16 @@ type PendingCall = {
       data.id != null &&
       (data.result !== undefined || data.error !== undefined)
     ) {
+      if (
+        typeof data.id !== "string" ||
+        !data.id.startsWith(REQUEST_ID_PREFIX)
+      ) {
+        return;
+      }
+      // This capture listener is registered before any widget script runs,
+      // so it fires first and can stop the widget's listeners from seeing
+      // our replies.
+      event.stopImmediatePropagation();
       const pending = pendingCalls.get(data.id);
       if (pending) {
         pendingCalls.delete(data.id);
@@ -741,7 +758,8 @@ type PendingCall = {
         }
       }
     }
-  });
+  };
+  window.addEventListener("message", onMessage, true);
 
   // ── Listen for file operation responses (non-JSON-RPC) ─────────────
   // Only attach this listener when at least one file-op method is
@@ -783,20 +801,11 @@ type PendingCall = {
 
   const PROTOCOL_VERSION = "2026-01-26";
 
-  const initId = ++callId;
-  window.parent.postMessage(
-    {
-      jsonrpc: "2.0",
-      id: initId,
-      method: "ui/initialize",
-      params: {
-        appInfo: { name: "openai-compat", version: "1.0.0" },
-        appCapabilities: {},
-        protocolVersion: PROTOCOL_VERSION,
-      },
-    },
-    "*",
-  );
+  const { id: initId } = sendRequest("ui/initialize", {
+    appInfo: { name: "openai-compat", version: "1.0.0" },
+    appCapabilities: {},
+    protocolVersion: PROTOCOL_VERSION,
+  });
 
   // Wait for the initialize response, then send initialized notification
   pendingCalls.set(initId, {

@@ -2640,6 +2640,9 @@ export function canonicalizeHostConfigV2(
       throw new Error("hostConfigV2: agentLoop requires a computer attachment");
     }
   }
+  if (input.requireNativeToolDiscovery !== undefined && typeof input.requireNativeToolDiscovery !== "boolean") {
+    throw new Error("hostConfigV2: requireNativeToolDiscovery must be a boolean");
+  }
   const serverIds = sortUniqueServerIds(input.serverIds);
   const optionalServerIds = sortUniqueServerIds(input.optionalServerIds);
   const hostContext = requireRecord(input.hostContext, "hostContext");
@@ -2664,6 +2667,7 @@ export function canonicalizeHostConfigV2(
     systemPrompt: input.systemPrompt,
     temperature: input.temperature,
     requireToolApproval: input.requireToolApproval,
+    ...(input.requireNativeToolDiscovery !== undefined ? { requireNativeToolDiscovery: input.requireNativeToolDiscovery } : {}),
     // Preserve undefined-vs-set: absent hashes byte-identically to a
     // pre-feature row; explicit `false` writes a key and hashes distinctly.
     progressiveToolDiscovery: input.progressiveToolDiscovery,

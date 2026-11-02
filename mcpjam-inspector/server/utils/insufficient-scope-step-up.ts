@@ -43,10 +43,10 @@ export function scopeStepUpInfoFromToolError(
   context: ScopeStepUpToolError
 ): InsufficientScopeInfo | undefined {
   const challenge = extractInsufficientScopeChallenge(context.error);
-  if (
-    !challenge ||
-    (!challenge.requiredScope?.trim() && !challenge.resourceMetadataUrl?.trim())
-  ) {
+  // A challenge with neither a scope nor a metadata pointer is actionable
+  // too: the re-authorization falls back to the previously requested scopes
+  // and discovery's `scopes_supported`, as Claude does.
+  if (!challenge) {
     return undefined;
   }
   return {
