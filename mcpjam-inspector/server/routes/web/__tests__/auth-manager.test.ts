@@ -81,6 +81,20 @@ function fetchUrl(input: Parameters<typeof fetch>[0]): string {
 }
 
 describe("web auth manager batching", () => {
+  it.each([false, true])("marks headers as reproducible only when the effective OAuth token is stored (stored=%s)", async stored => {
+    global.fetch = vi.fn(async () => Response.json({results: {"server-1": {
+      ok: true, role: "member", accessLevel: "project_member", permissions: {chatOnly: false},
+      ...(stored ? {oauthAccessToken: "stored-token", oauthCredentialId: "saved-account"} : {}),
+      serverConfig: {updatedAt: 123, transportType: "http", url: "https://fixture.example/mcp", useOAuth: true},
+    }}}));
+    const result = await createAuthorizedManager({}, "bearer", "project", ["server-1"], 10_000, {"server-1": "caller-token"}, undefined, {lazyConnect: true});
+    const config = result.authorizedServerConfigs?.["server-1"];
+    if (!config || !("url" in config)) throw Error("Missing HTTP config");
+    expect(new Headers(config.requestInit?.headers).get("authorization")).toBe(`Bearer ${stored ? "stored" : "caller"}-token`);
+    setManagerResourceHostConfig(result.manager, "host-config", "host");
+    expect(getManagerResourceSnapshot(result.manager, "server-1")?.headersReconstructible).toBe(stored);
+  });
+
   const originalFetch = global.fetch;
   const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
 

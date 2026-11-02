@@ -29,7 +29,7 @@ import {
   SuiteRow,
   VerdictBadge,
 } from "./conformance-ui";
-import { CatalogList } from "./ConformanceCheckRows";
+import { CatalogList, UnscoredTag } from "./ConformanceCheckRows";
 import { suiteCatalog } from "./conformance-catalogs";
 
 export type ConformanceRunListItem = {
@@ -614,6 +614,8 @@ type SavedReportCase = {
   status: string;
   skipReason?: string;
   error?: string;
+  /** Left out of the score: a profile's pending check or an unscored OAuth step. */
+  pending?: boolean;
 };
 
 /**
@@ -675,8 +677,13 @@ function SuiteReportCases({
             className="flex items-start gap-2.5 border-b border-border/60 py-1.75 pl-7 pr-1 last:border-0"
           >
             <span className="mt-0.5">
-              <StatusIcon status={check.status} skipReason={check.skipReason} />
+              <StatusIcon
+                status={check.status}
+                skipReason={check.skipReason}
+                muted={check.pending === true}
+              />
             </span>
+            {check.pending ? <UnscoredTag /> : null}
             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
               <span
                 className={
@@ -691,7 +698,7 @@ function SuiteReportCases({
               {check.error ? (
                 <span
                   className={
-                    check.status === "failed"
+                    check.status === "failed" && !check.pending
                       ? "text-[13px] font-medium text-red-600 dark:text-red-400"
                       : "text-[13px] text-muted-foreground"
                   }

@@ -20,8 +20,10 @@
  * A key the file does not name is off. It is read once per process, so a
  * change applies on restart. A file that cannot be read or is not a JSON
  * object answers every flag off, never PostHog; an entry whose answer is
- * neither a boolean nor a variant name is off. Both are reported through the
- * logger.
+ * neither a boolean nor a variant name is off. The server reads the file at
+ * boot (`loadFeatureFlagFileAtBoot`) and prints both problems on stderr; a
+ * process that never ran the boot step reports them through the logger at
+ * the first evaluation. A report never quotes the file.
  */
 import { readFileSync } from "node:fs";
 import { telemetryOptedOut } from "../../shared/sentry-identity.js";
@@ -36,19 +38,32 @@ export type FeatureFlagSource =
 
 let loadedFile: { path: string; answers: FeatureFlagAnswers } | undefined;
 
-function readFlagFile(path: string): FeatureFlagAnswers {
+type Report = (problem: string) => void;
+
+function readFlagFile(path: string, report: Report): FeatureFlagAnswers {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? "unknown error";
+    report(
+      `[flags] MCPJAM_FEATURE_FLAGS_FILE could not be read (${code}), so every feature flag is off. Fix the file and restart.`,
+    );
+    return {};
+  }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(path, "utf8"));
-  } catch (error) {
-    logger.error(
-      "[flags] MCPJAM_FEATURE_FLAGS_FILE could not be read as JSON, so every feature flag is off. Fix the file and restart.",
-      error,
+    parsed = JSON.parse(text);
+  } catch {
+    // Not the parser's message: it quotes the start of the file, which may be
+    // something other than flags.
+    report(
+      "[flags] MCPJAM_FEATURE_FLAGS_FILE is not valid JSON, so every feature flag is off. Fix the file and restart.",
     );
     return {};
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    logger.error(
+    report(
       "[flags] MCPJAM_FEATURE_FLAGS_FILE must hold one JSON object of flag keys to answers, so every feature flag is off. Fix the file and restart.",
     );
     return {};
@@ -64,7 +79,7 @@ function readFlagFile(path: string): FeatureFlagAnswers {
     .filter((entry) => !isAnswer(entry))
     .map(([key]) => `"${key}"`);
   if (invalid.length > 0) {
-    logger.error(
+    report(
       `[flags] MCPJAM_FEATURE_FLAGS_FILE answers ${invalid.join(", ")} with something other than true, false or a variant name, so those flags are off. Fix the file and restart.`,
     );
   }
@@ -73,13 +88,35 @@ function readFlagFile(path: string): FeatureFlagAnswers {
   return Object.fromEntries(valid);
 }
 
-export function resolveFeatureFlagSource(): FeatureFlagSource {
-  const path = process.env.MCPJAM_FEATURE_FLAGS_FILE?.trim();
+function flagFilePath(): string | undefined {
+  return process.env.MCPJAM_FEATURE_FLAGS_FILE?.trim() || undefined;
+}
+
+function loadFlagFile(path: string, report: Report): FeatureFlagAnswers {
+  if (loadedFile?.path !== path) {
+    loadedFile = { path, answers: readFlagFile(path, report) };
+  }
+  return loadedFile.answers;
+}
+
+/**
+ * Reads `MCPJAM_FEATURE_FLAGS_FILE` at boot, when it is set, so a missing or
+ * malformed file is reported before the first flag is evaluated. On stderr,
+ * because the logger prints in production only with `VERBOSE_LOGS=true`, and
+ * under DO_NOT_TRACK, where a flag file is used, it reports nowhere else.
+ */
+export function loadFeatureFlagFileAtBoot(): void {
+  const path = flagFilePath();
   if (path) {
-    if (loadedFile?.path !== path) {
-      loadedFile = { path, answers: readFlagFile(path) };
-    }
-    return { kind: "file", answers: loadedFile.answers };
+    loadFlagFile(path, (problem) => process.stderr.write(`${problem}\n`));
+  }
+}
+
+export function resolveFeatureFlagSource(): FeatureFlagSource {
+  const path = flagFilePath();
+  if (path) {
+    const answers = loadFlagFile(path, (problem) => logger.error(problem));
+    return { kind: "file", answers };
   }
   return telemetryOptedOut(process.env.DO_NOT_TRACK)
     ? { kind: "off" }

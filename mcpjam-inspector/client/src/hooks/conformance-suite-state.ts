@@ -172,13 +172,16 @@ export function oauthStateFromResult(
 /**
  * The checks a run covers. A missing list runs the whole suite, so a check
  * added later still runs; an empty one, or `oauth: false`, leaves the suite
- * out. OAuth runs as one flow, so it is all or nothing.
+ * out. OAuth runs as one flow, so it RUNS all or nothing; `oauthUnscored`
+ * names steps that still run but do not count toward the score.
  */
 export interface ConformanceSelection {
   protocol?: MCPCheckId[];
   apps?: MCPAppsCheckId[];
   tasks?: MCPTasksCheckId[];
   oauth?: boolean;
+  /** OAuth steps that run with the flow but are left out of the score. */
+  oauthUnscored?: string[];
 }
 
 export const NOT_SELECTED = {
@@ -189,6 +192,14 @@ export const NOT_SELECTED = {
 
 export const isSelected = (checkIds: readonly string[] | undefined) =>
   checkIds === undefined || checkIds.length > 0;
+
+/**
+ * The Tasks checks the app runs. `tasks-update-ack-shape` needs
+ * `inputResponses`, which the app has no way to supply, so it is left out of
+ * the picker, the rows and every run rather than shown as never applicable.
+ */
+export const APP_TASKS_CHECK_IDS: readonly MCPTasksCheckId[] =
+  MCP_TASKS_CHECK_IDS.filter((id) => id !== "tasks-update-ack-shape");
 
 function knownIds<T extends string>(
   picked: readonly string[] | undefined,
@@ -221,6 +232,6 @@ export function runnableSelection(
     ...selection,
     protocol: knownIds(selection.protocol, protocolIds),
     apps: knownIds(selection.apps, MCP_APPS_CHECK_IDS),
-    tasks: knownIds(selection.tasks, MCP_TASKS_CHECK_IDS),
+    tasks: knownIds(selection.tasks, APP_TASKS_CHECK_IDS),
   };
 }

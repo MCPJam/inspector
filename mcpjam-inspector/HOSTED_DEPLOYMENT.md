@@ -28,14 +28,20 @@ VITE_MCPJAM_SANDBOX_ORIGIN=https://sandbox.example.com
 SANDBOX_HOSTS=sandbox.example.com
 ```
 
-The sandbox origin must be an `http://` or `https://` origin (anything else is
-ignored, and the runtime value then falls back to the build-time one), and:
+The sandbox origin must be an `http://` or `https://` origin, and:
 
 - A different registrable origin from the host app (e.g. host on
   `app.example.com`, sandbox on `sandbox.example.com`), so the browser scopes
   cookies and storage separately.
 - Reachable by browsers. The same MCPJam backend serves both DNS names — no
   separate deploy is required.
+
+An `MCPJAM_SANDBOX_ORIGIN` that is not an http(s) origin is ignored, with a
+warning in the server log, and the browser uses the image's build-time
+`VITE_MCPJAM_SANDBOX_ORIGIN` instead. On an image built by MCPJam's Railway
+pipeline that is `https://sandbox.mcpjam.com`, so widgets would load from
+MCPJam's sandbox host, not yours. An image built without one falls back to the
+app's own origin (see Fallback behavior below).
 
 `SANDBOX_HOSTS` must list that hostname. A host on this list serves **exactly
 two paths** and answers `404` for everything else — no app shell, no assets, no
@@ -112,10 +118,15 @@ in `WEB_ALLOWED_ORIGINS` so the host page is allowed to frame the sandbox.
 
 `/health` reports `sandboxIsolation`:
 
-- `ok` — a sandbox hostname is configured and it is not the app's own host.
+- `ok` — a sandbox hostname is configured, it is not the app's own host, and
+  `MCPJAM_SANDBOX_ORIGIN`, when set, names a listed host.
 - `same-origin` — `SANDBOX_HOSTS` contains the app's host from
-  `MCPJAM_HOSTED_ORIGIN`. Widgets are not isolated, and that hostname has
-  stopped serving the app.
+  `MCPJAM_HOSTED_ORIGIN`, so that hostname has stopped serving the app, or
+  `MCPJAM_SANDBOX_ORIGIN` is the app's own origin. Either way widgets are not
+  isolated.
+- `unpartitioned` — `MCPJAM_SANDBOX_ORIGIN` names a host that `SANDBOX_HOSTS`
+  does not list, so the host widgets load from still serves the app shell and
+  `/api`.
 - `unset` — nothing is partitioned, or `MCPJAM_HOSTED_ORIGIN` could not be
   parsed to compare against.
 
@@ -166,8 +177,60 @@ MCPJAM_PRIVATE_EGRESS_ALLOWLIST=10.0.0.0/8,fd00::/8,svc.cluster.local
   private is reachable, and the server logs an error at boot naming each bad
   entry. In production the console shows it only with `VERBOSE_LOGS=true`.
 
-The checks query DNS directly, without `/etc/hosts`, so use fully qualified
-names such as `mcp.tools.svc.cluster.local`.
+The preflight check queries DNS directly, without `/etc/hosts`, so use fully
+qualified names such as `mcp.tools.svc.cluster.local`.
+
+## Client address behind your own ingress
+
+Rate limits and guest spend budgets are kept per client address. By default
+the server believes `CF-Connecting-IP` whenever a request carries it, which is
+right behind a Cloudflare edge. Behind any other ingress it is not: a client
+can send its own `CF-Connecting-IP`, and common ingresses such as Traefik and
+ingress-nginx pass it through untouched, so every request can claim a new
+address and get a new budget.
+
+Name the header your ingress overwrites with the client's address:
+
+```bash
+# Server runtime. One header name, in any case.
+MCPJAM_TRUSTED_CLIENT_IP_HEADER=x-real-ip
+```
+
+With it set:
+
+- The address comes from that header only. `CF-Connecting-IP`, `X-Real-IP`
+  and `X-Forwarded-For` are not read unless you named one of them.
+- If the header holds a comma-separated list, the last entry is used, never
+  an earlier one that a client could have written.
+- A request without the header did not come through your ingress. Most limits
+  then use its TCP peer address. The limits that only trust an address the
+  deployment can vouch for give it no budget of its own when it also carries
+  `CF-Connecting-IP`, `X-Real-IP` or `X-Forwarded-For`, because its peer may
+  then be a proxy.
+- A value that is not one header name, such as `x-real-ip,x-forwarded-for`,
+  stops the server at startup:
+
+  ```
+  MCPJAM_TRUSTED_CLIENT_IP_HEADER must be one HTTP header name such as x-real-ip (got "x-real-ip,x-forwarded-for")
+  ```
+
+Your ingress must overwrite the header on every request, not append to it or
+set it only when it is missing, and the server must be reachable only through
+that ingress. `X-Forwarded-For` qualifies only if your ingress rewrites the
+whole value.
+
+Unset, the server keeps believing `CF-Connecting-IP`.
+
+### With an edge secret
+
+A deployment behind Cloudflare can also set `MCPJAM_EDGE_SECRET` (and
+`MCPJAM_EDGE_SECRET_PREVIOUS` while rotating it) and have the edge send that
+value in an `x-mcpjam-edge-secret` header. A request with the secret keeps its
+`CF-Connecting-IP` even when `MCPJAM_TRUSTED_CLIENT_IP_HEADER` is set. For
+guest spend budgets and the limits that only trust a vouched-for address, the
+edge secret is then the only proof: a request without it gets no budget of its
+own, whatever the trusted header says. The other limits read the trusted
+header for it.
 
 ## Turning the MCPJam agent off
 

@@ -119,6 +119,8 @@ describe("the widget host's sandbox origin", () => {
 
     expect(surface.sandboxOrigin).toBe("");
     expect(src?.origin).toBe("https://inspector.customer.example");
-    expect(warn).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("[SandboxedIframe]"),
+    );
   });
 });

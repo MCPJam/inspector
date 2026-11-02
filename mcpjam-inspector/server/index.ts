@@ -202,6 +202,8 @@ import { registerPreviewIdentityRoute } from "./routes/preview-identity";
 import { createXaaWebRouter } from "./routes/web/xaa";
 import workosAuthkitRoutes from "./routes/workos-authkit";
 import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
+import { resolveTrustedClientIpHeader } from "./utils/client-ip.js";
+import { loadFeatureFlagFileAtBoot } from "./utils/feature-flag-source.js";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
@@ -683,6 +685,14 @@ app.route("/api/surface-link", surfaceLinkRoutes);
 // at boot rather than at the first WorkOS call. Unset — every deployment — this
 // is a no-op.
 resolveWorkosApiBaseUrl(process.env);
+// Same for `MCPJAM_TRUSTED_CLIENT_IP_HEADER` (mirror of server/app.ts): a value
+// that is not one header name fails here, not in every request that asks for a
+// client address. Unset, this is a no-op.
+resolveTrustedClientIpHeader(process.env);
+// And `MCPJAM_FEATURE_FLAGS_FILE` (mirror of server/app.ts): a missing or
+// malformed file is reported on stderr now, not at the first flag evaluation.
+// Unset, this is a no-op.
+loadFeatureFlagFileAtBoot();
 
 // Mounted in EVERY runtime, hosted included. AuthKit's `initialize()` makes no
 // network call at all unless the page's own cookies carry `workos-has-session`

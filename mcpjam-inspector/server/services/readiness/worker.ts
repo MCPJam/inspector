@@ -78,7 +78,8 @@ export interface ExecuteHostedReadinessOptions {
   /** From the SAVED project server, never from a worker-supplied URL. */
   target: string;
   submissionMode?: OpenAISubmissionMode;
-  headers?: Record<string, string>;
+  /** Sent only on MCP requests to the target, never on discovery. */
+  mcpHeaders?: Record<string, string>;
   /** The DNS-pinned transport. */
   fetchFn: typeof fetch;
   /** The requester's opt-in, read off the run row at start. */
@@ -219,7 +220,7 @@ export async function executeHostedReadinessRun(
       publisher: options.publisher,
       target: options.target,
       submissionMode: options.submissionMode,
-      headers: options.headers,
+      mcpHeaders: options.mcpHeaders,
       fetchFn: options.fetchFn,
       signal: controller.signal,
       // The requester's opt-in decides whether a requester exists AT ALL. A

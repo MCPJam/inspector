@@ -2,6 +2,7 @@ import type { MCPClientManager } from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config";
 import { isNativeElicitationProfile } from "./native-elicitation-profile.js";
 import { isEnhancedModelPolicy } from "../harness-connection-profile.js";
+import type { HarnessHostCapabilityQualification } from "@/shared/harness-host-capabilities";
 
 type Candidate = {
   manager: Pick<MCPClientManager, "getServerConfig"> & {
@@ -19,13 +20,38 @@ type Candidate = {
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   hasClientTools?: boolean;
   hasTasks?: boolean;
+  hostCapabilities?: HarnessHostCapabilityQualification;
   /** Set only with a live owned elicitation handler for this pinned runtime. */
   elicitationRuntimeVersion?: string;
 };
 
+/** UI host promises participate only on connections that declare MCP Apps. */
+export function usesAppHostCapabilities(
+  candidate: Pick<Candidate, "manager" | "serverIds">,
+): boolean {
+  return candidate.serverIds.some((serverId) => {
+    const caps =
+      candidate.manager.getInitializationInfo(serverId)?.clientCapabilities ??
+      candidate.manager.getServerConfig(serverId)?.clientCapabilities;
+    const extensions = (
+      caps as { extensions?: Record<string, unknown> } | undefined
+    )?.extensions;
+    return !!extensions?.["io.modelcontextprotocol/ui"];
+  });
+}
+
 /** Unqualified profiles keep their configured bridge before a turn starts. */
 export function nativeForwardingGaps(candidate: Candidate): string[] {
   const gaps = new Set<string>();
+  if (usesAppHostCapabilities(candidate)) {
+    if (!candidate.hostCapabilities) gaps.add("host-capabilities-missing");
+    else {
+      if (candidate.hostCapabilities.gaps.length)
+        gaps.add("unsupported-host-capabilities");
+      if (Object.keys(candidate.hostCapabilities.capabilities).length)
+        gaps.add("app-host-capabilities");
+    }
+  }
   if (candidate.hasClientTools) gaps.add("client-tools");
   if (candidate.hasTasks) gaps.add("tasks");
   if (candidate.respectToolVisibility !== false) gaps.add("tool-visibility");
