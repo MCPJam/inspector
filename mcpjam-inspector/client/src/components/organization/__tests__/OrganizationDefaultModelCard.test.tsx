@@ -378,18 +378,12 @@ describe("OrganizationDefaultModelCard", () => {
         },
       ],
     });
-    await user.click(
-      screen.getByRole("button", { name: "Set embedding model" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Set embedding model" }));
     const editor = screen.getByTestId("org-ai-model-embedding-editor");
     await user.click(
-      within(editor).getByRole("combobox", {
-        name: "Embedding model provider",
-      }),
+      within(editor).getByRole("combobox", { name: "Embedding model provider" }),
     );
-    expect(
-      screen.getByRole("option", { name: "Future Cloud" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Future Cloud" })).toBeInTheDocument();
   });
 
   it("builds an org selection from an eligible connection and a typed model", async () => {
@@ -777,14 +771,13 @@ describe("OrganizationDefaultModelCard", () => {
     );
     const editor = screen.getByTestId("org-ai-model-default-editor");
     expect(
-      within(editor).getByRole("combobox", {
-        name: "Default AI model provider",
-      }),
+      within(editor).getByRole("combobox", { name: "Default AI model provider" }),
     ).toHaveTextContent("OpenAI");
     expect(within(editor).getByLabelText("Default AI model id")).toHaveValue(
       "gpt-5-mini",
     );
   });
+
 
   describe("the decision model row", () => {
     const LUNA = orgSelection("conn_openai", "openai/gpt-6-luna", "gpt-6-luna");

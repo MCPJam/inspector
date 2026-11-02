@@ -496,15 +496,12 @@ describe("buildOrgModelSelection", () => {
     ["google", "models/gemini-2.5-flash"],
     ["openai", "meta-llama/Llama-4"],
     ["bedrock", "arn:aws:bedrock:region:account:inference-profile/model"],
-  ])(
-    "keeps %s's namespace around a native path",
-    (providerKey, nativeModelId) => {
-      expect(orgModelIds(providerKey, nativeModelId)).toEqual({
-        modelId: `${providerKey}/${nativeModelId}`,
-        nativeModelId,
-      });
-    },
-  );
+  ])("keeps %s's namespace around a native path", (providerKey, nativeModelId) => {
+    expect(orgModelIds(providerKey, nativeModelId)).toEqual({
+      modelId: `${providerKey}/${nativeModelId}`,
+      nativeModelId,
+    });
+  });
 
   it("refuses a connection without an id or a model that is not an id", () => {
     expect(
@@ -574,9 +571,7 @@ describe("the default model editor's helpers", () => {
     ["http_500", "Provider unavailable", "warning"],
     ["http_503", "Provider unavailable", "warning"],
   ])("classifies HTTP check %s as %s", (code, label, tone) => {
-    expect(
-      orgAiModelCheckPresentation({ ok: false, code, checkedAt: 1 }),
-    ).toEqual({
+    expect(orgAiModelCheckPresentation({ ok: false, code, checkedAt: 1 })).toEqual({
       label,
       tone,
     });

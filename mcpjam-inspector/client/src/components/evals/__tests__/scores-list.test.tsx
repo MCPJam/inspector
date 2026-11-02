@@ -506,5 +506,8 @@ describe("rubric-check rows name the model that answered", () => {
       />,
     );
     expect(screen.queryByText(/^Answered by/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText("model: anthropic/claude-sonnet-4-6"),
+    ).toBeInTheDocument();
   });
 });
