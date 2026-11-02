@@ -172,19 +172,29 @@ export function useConformanceProbeStore(): {
   probesFor: (serverName: string) => ConformanceProbes;
   setProbes: (serverName: string, probes: ConformanceProbes) => void;
 } {
-  const [changed, setChanged] = useState<Record<string, ConformanceProbes>>({});
+  // Maps, not objects: a server may be named `constructor` or `__proto__`.
+  const [changed, setChanged] = useState<
+    ReadonlyMap<string, ConformanceProbes>
+  >(() => new Map());
   // Read from storage once per server: the tab asks on every render, and a
   // fresh object each time would also look like a change to its readers.
-  const loaded = useRef<Record<string, ConformanceProbes>>({});
+  const loaded = useRef(new Map<string, ConformanceProbes>());
   const probesFor = useCallback(
-    (serverName: string) =>
-      changed[serverName] ??
-      (loaded.current[serverName] ??= readStoredProbes(serverName)),
+    (serverName: string) => {
+      const set = changed.get(serverName);
+      if (set) return set;
+      let stored = loaded.current.get(serverName);
+      if (!stored) {
+        stored = readStoredProbes(serverName);
+        loaded.current.set(serverName, stored);
+      }
+      return stored;
+    },
     [changed],
   );
   const setProbes = useCallback(
     (serverName: string, probes: ConformanceProbes) => {
-      setChanged((prev) => ({ ...prev, [serverName]: probes }));
+      setChanged((prev) => new Map(prev).set(serverName, probes));
       writeStoredProbes(serverName, probes);
     },
     [],

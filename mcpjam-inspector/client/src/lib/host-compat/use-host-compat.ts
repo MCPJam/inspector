@@ -16,7 +16,11 @@ const TOOLS_FETCH_MAX_ATTEMPTS = 3;
 /** A server that never stops paging must not hold the list open forever. */
 const TOOLS_MAX_PAGES = 50;
 
-/** Every page of a server's tools, following `nextCursor`. */
+/**
+ * Every page of a server's tools, following `nextCursor`. Stopped by the page
+ * cap, the result keeps the last `nextCursor`, so a reader can tell the list
+ * is not complete.
+ */
 async function listAllTools(
   serverName: string,
 ): Promise<ListToolsResultWithMetadata> {
@@ -28,7 +32,7 @@ async function listAllTools(
     tools.push(...page.tools);
     toolsMetadata = { ...toolsMetadata, ...page.toolsMetadata };
   }
-  return { ...page, tools, toolsMetadata, nextCursor: undefined };
+  return { ...page, tools, toolsMetadata };
 }
 
 export type ToolsDataStatus = "idle" | "loading" | "ready" | "failed";

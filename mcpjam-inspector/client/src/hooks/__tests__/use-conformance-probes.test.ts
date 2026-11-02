@@ -93,6 +93,16 @@ describe("useConformanceProbeStore", () => {
     expect(first).toEqual({ logProbe });
   });
 
+  it("keeps a server named like an object property apart", () => {
+    const { result } = renderHook(() => useConformanceProbeStore());
+    for (const name of ["constructor", "toString", "__proto__"]) {
+      expect(result.current.probesFor(name)).toEqual({});
+    }
+    act(() => result.current.setProbes("constructor", { logProbe }));
+    expect(result.current.probesFor("constructor")).toEqual({ logProbe });
+    expect(result.current.probesFor("__proto__")).toEqual({});
+  });
+
   it("ignores a stored entry that is not a probe", () => {
     window.localStorage.setItem(
       "mcpjam.conformance.probes.v1:alpha",

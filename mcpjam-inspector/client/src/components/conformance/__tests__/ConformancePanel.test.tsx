@@ -1693,6 +1693,21 @@ describe("ConformanceTab", () => {
       );
     });
 
+    it("says when the server pages past what can be listed", async () => {
+      // Never stops paging: the list stops at its cap and says so.
+      mockListTools.mockReset();
+      mockListTools.mockResolvedValue({
+        tools: [{ name: "echo", annotations: { readOnlyHint: true } }],
+        nextCursor: "more",
+      });
+      await openProtocolChecks();
+
+      expect(mockListTools).toHaveBeenCalledTimes(50);
+      expect(
+        screen.getAllByText(/lists more tools than can be shown here/)[0],
+      ).toBeInTheDocument();
+    });
+
     it("never sends a tool for a check left out of the run", async () => {
       const user = userEvent.setup();
       setupSuccessfulRunMocks();

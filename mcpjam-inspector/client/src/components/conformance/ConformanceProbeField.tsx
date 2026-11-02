@@ -66,6 +66,8 @@ function sortForSafety(tools: ToolOption[]): ToolOption[] {
 export interface ProbeTools {
   tools: ToolOption[];
   status: ToolsDataStatus;
+  /** The server kept paging past the cap: `tools` is not the whole list. */
+  truncated?: boolean;
 }
 
 /**
@@ -88,12 +90,12 @@ export function useProbeTools(server: ServerWithName | null): ProbeTools {
       ),
     [data],
   );
-  return { tools, status };
+  return { tools, status, truncated: Boolean(data?.nextCursor) };
 }
 
 export function ConformanceProbeField({
   probeKey,
-  tools: { tools: options, status },
+  tools: { tools: options, status, truncated },
   probe,
   onChange,
   onValidChange,
@@ -176,6 +178,11 @@ export function ConformanceProbeField({
         <p className="text-xs text-destructive">
           Couldn't list this server's tools. Check its connection, then open
           this step again.
+        </p>
+      ) : truncated ? (
+        <p className="text-xs text-muted-foreground">
+          This server lists more tools than can be shown here. Only the first{" "}
+          {options.length} are offered.
         </p>
       ) : status === "idle" ? (
         <p className="text-xs text-muted-foreground">
