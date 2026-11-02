@@ -153,7 +153,7 @@ describe("a hosted server under DO_NOT_TRACK", () => {
 
   it("control: without it, the guard sees the server reach PostHog and Sentry", () => {
     const vendors = controlAttempts.filter(isTelemetryVendor).map((a) => a.target);
-    expect(vendors.some((host) => host.endsWith("posthog.com")), control.output()).toBe(true);
-    expect(vendors.some((host) => host.endsWith("sentry.io")), control.output()).toBe(true);
+    expect(vendors.some((host) => /(^|\.)posthog\.com$/i.test(host)), control.output()).toBe(true);
+    expect(vendors.some((host) => /(^|\.)sentry\.io$/i.test(host)), control.output()).toBe(true);
   });
 });
