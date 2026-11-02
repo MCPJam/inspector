@@ -846,9 +846,14 @@ export {
   CHECK_ERAS,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_LOG_LEVELS,
   PROTOCOL_VERSION_ERAS,
 } from "./mcp-conformance/types.js";
-export type { MCPCheckEra, MCPCheckId } from "./mcp-conformance/types.js";
+export type {
+  MCPCheckEra,
+  MCPCheckId,
+  MCPLogLevel,
+} from "./mcp-conformance/types.js";
 export { MCP_APPS_CHECK_IDS } from "./apps-conformance/types.js";
 export type { MCPAppsCheckId } from "./apps-conformance/types.js";
 export { MCP_TASKS_CHECK_IDS } from "./tasks-conformance/types.js";

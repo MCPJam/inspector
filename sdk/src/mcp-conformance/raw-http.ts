@@ -550,3 +550,12 @@ export function jsonRpcNotifications(
         message.id === undefined
     );
 }
+
+/** `notifications/message` records carried on a response. */
+export function logRecords(
+  result: RawHttpResult
+): Array<Record<string, unknown>> {
+  return jsonRpcNotifications(result).filter(
+    (notification) => notification.method === "notifications/message"
+  );
+}

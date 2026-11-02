@@ -1,6 +1,7 @@
 import {
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_LOG_LEVELS,
   PROTOCOL_VERSION_ERAS,
   type MCPCheckCategory,
   type MCPCheckEra,
@@ -92,6 +93,21 @@ function normalizeToolProbe(
   }
 
   return { toolName, arguments: probe.arguments };
+}
+
+function normalizeLogProbe(
+  probe: MCPConformanceConfig["logProbe"],
+): NormalizedMCPConformanceConfig["logProbe"] {
+  const normalized = normalizeToolProbe(probe, "logProbe");
+  if (!normalized || probe?.level === undefined) {
+    return normalized;
+  }
+  if (!(MCP_LOG_LEVELS as readonly string[]).includes(probe.level)) {
+    throw new Error(
+      `MCP conformance logProbe.level must be one of ${MCP_LOG_LEVELS.join(", ")}, got ${JSON.stringify(probe.level)}`,
+    );
+  }
+  return { ...normalized, level: probe.level };
 }
 
 /**
@@ -237,7 +253,7 @@ export function normalizeMCPConformanceConfig(
       config.inputRequiredProbe,
       "inputRequiredProbe",
     ),
-    logProbe: normalizeToolProbe(config.logProbe, "logProbe"),
+    logProbe: normalizeLogProbe(config.logProbe),
     fixtures: normalizeFixtures(config.fixtures),
   };
 }

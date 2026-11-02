@@ -96,7 +96,6 @@ export const MCP_CHECK_IDS = [
   // are safe to call. Skips with an explanation when no fixture is supplied.
   "modern-tool-output-schema-conformant",
   "modern-logs-require-log-level",
-  "modern-log-level-filtering",
   "modern-subscription-ack-precedes-notifications",
   "modern-subscription-filter-and-tagging",
   "modern-subscription-graceful-close",
@@ -258,7 +257,6 @@ export const CHECK_ERAS: Record<MCPCheckId, MCPCheckEras> = {
   "modern-resource-read-no-empty-contents": ["modern"],
   "modern-tool-output-schema-conformant": ["modern"],
   "modern-logs-require-log-level": ["modern"],
-  "modern-log-level-filtering": ["modern"],
   "modern-subscription-ack-precedes-notifications": ["modern"],
   "modern-subscription-filter-and-tagging": ["modern"],
   "modern-subscription-graceful-close": ["modern"],
@@ -280,6 +278,20 @@ export interface MCPCheckResult {
   };
   details?: Record<string, unknown>;
 }
+
+/** The spec's `LoggingLevel` values, from least to most severe (syslog order). */
+export const MCP_LOG_LEVELS = [
+  "debug",
+  "info",
+  "notice",
+  "warning",
+  "error",
+  "critical",
+  "alert",
+  "emergency",
+] as const;
+
+export type MCPLogLevel = (typeof MCP_LOG_LEVELS)[number];
 
 export interface MCPConformanceConfig {
   serverUrl: string;
@@ -312,22 +324,28 @@ export interface MCPConformanceConfig {
     arguments?: Record<string, unknown>;
   };
   /**
-   * Tool the modern logging checks may call to make the server emit log
-   * records. Supplying it asserts that it produces logs when requested,
-   * including warning-or-higher logs for `modern-log-level-filtering`.
-   * It must be safe to call repeatedly: the checks call it without a level,
-   * with debug, and with warning when both checks are selected.
+   * Tool the modern logging probes may call to make the server emit log
+   * records. Supplying it asserts that it produces logs when requested.
+   * It must be safe to call repeatedly: `modern-logs-require-log-level` calls
+   * it without a level and with debug, and the
+   * `readiness-log-level-filtering` advice calls it once more with `level`.
    * Opt-in for the same reason as
    * {@link MCPConformanceConfig.inputRequiredProbe}: no metadata says which
    * tool logs, and the check must not fire arbitrary side-effecting tools.
    *
-   * Absent ⇒ the checks report could-not-run, except that unrequested logs
-   * observed on an ordinary request still fail the opt-in check. A successful
-   * supplied tool call that produces no requested logs fails rather than skips.
+   * Absent ⇒ the check reports could-not-run, except that unrequested logs
+   * observed on an ordinary request still fail it, and the advice is not
+   * produced. A successful supplied tool call that produces no requested logs
+   * fails the check rather than skipping it.
    */
   logProbe?: {
     toolName: string;
     arguments?: Record<string, unknown>;
+    /**
+     * The level the filtering advice requests: the tool should log at this
+     * level or above. Only the advice reads it. Absent ⇒ `"warning"`.
+     */
+    level?: MCPLogLevel;
   };
   /**
    * Operator-supplied primitives that are SAFE TO EXECUTE, generalizing the
@@ -389,6 +407,7 @@ export interface NormalizedMCPConformanceConfig {
   logProbe?: {
     toolName: string;
     arguments?: Record<string, unknown>;
+    level?: MCPLogLevel;
   };
   /**
    * See {@link MCPConformanceConfig.fixtures}. Always present after
@@ -442,6 +461,11 @@ export const MCP_READINESS_IDS = [
   // unique within a server) are SHOULDs from 2025-11-25 on. Informational
   // until advice has a grading rubric.
   "readiness-tool-name-conventions",
+  // The 2026-07-28 logging page says a server "MAY send" log notifications at
+  // or above the requested level. Sending none is allowed, and lower-level logs
+  // are only outside that MAY, so this is informational advice for the
+  // operator who supplied a logging tool, never a violation.
+  "readiness-log-level-filtering",
 ] as const;
 
 export type MCPReadinessId = (typeof MCP_READINESS_IDS)[number];

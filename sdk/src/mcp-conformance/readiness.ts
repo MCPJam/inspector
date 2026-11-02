@@ -15,12 +15,13 @@
 
 import type { Tool } from "@modelcontextprotocol/client";
 import { listTools } from "../operations.js";
-import type {
-  MCPClientCheckContext,
-  MCPReadinessSpecStrength,
-  MCPReadinessWarning,
-  MCPServerSurfaceSnapshot,
-  RawHttpCheckContext,
+import {
+  MCP_LOG_LEVELS,
+  type MCPClientCheckContext,
+  type MCPReadinessSpecStrength,
+  type MCPReadinessWarning,
+  type MCPServerSurfaceSnapshot,
+  type RawHttpCheckContext,
 } from "./types.js";
 import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
@@ -28,6 +29,7 @@ import {
   jsonRpcResult,
   legacyHeaders,
   legacyInitialize,
+  logRecords,
   rawHeadersProbe,
   modernHeaders,
   modernRequestBody,
@@ -674,6 +676,92 @@ async function resourceErrorUriWarning(
   );
 }
 
+/**
+ * Log level filtering: call the operator's logging tool asking for logs at
+ * `logProbe.level` (default `warning`) and look at what comes back.
+ *
+ * The 2026-07-28 logging page says the server "MAY send" log notifications at
+ * or above the requested level. Sending none is allowed, and nothing states
+ * lower-level logs as a violation, so both findings are informational. They
+ * are still worth showing: the operator told us this tool logs, so silence or
+ * lower-level logs usually mean the server's filtering is off.
+ *
+ * A call that does not complete cleanly proves nothing about filtering, so it
+ * yields no advice. Modern era only, and only when a `logProbe` is supplied:
+ * no metadata says which tool logs, and advice never calls a tool on a guess.
+ */
+async function logLevelFilteringWarning(
+  ctx: RawHttpCheckContext
+): Promise<MCPReadinessWarning | undefined> {
+  const probe = ctx.config.logProbe;
+  if (ctx.config.era !== "modern" || !probe) {
+    return undefined;
+  }
+  const level = probe.level ?? "warning";
+  const version = ctx.config.protocolVersion ?? "2026-07-28";
+  const response = await rawRequest(ctx, {
+    headers: {
+      ...modernHeaders({
+        protocolVersion: version,
+        method: "tools/call",
+        name: probe.toolName,
+      }),
+    },
+    body: modernRequestBody({
+      id: 9403,
+      method: "tools/call",
+      params: { name: probe.toolName, arguments: probe.arguments ?? {} },
+      protocolVersion: version,
+      logLevel: level,
+    }),
+    timeoutMs: ctx.config.checkTimeout,
+  });
+
+  const result = jsonRpcResult(response);
+  if (
+    response.bodyError ||
+    response.status < 200 ||
+    response.status >= 300 ||
+    jsonRpcError(response) ||
+    result?.resultType !== "complete" ||
+    result.isError === true
+  ) {
+    return undefined;
+  }
+
+  const levels = logRecords(response).map(
+    (record) => (record.params as Record<string, unknown> | undefined)?.level
+  );
+  const details = { probedTool: probe.toolName, requestedLogLevel: level };
+  if (levels.length === 0) {
+    return informational(
+      "readiness-log-level-filtering",
+      "Log Level Filtering",
+      "MAY",
+      `No logs came back when ${JSON.stringify(probe.toolName)} was called asking for "${level}" logs. The spec lets a server send none, but if this tool logs at "${level}" or above, the server may be dropping those logs, or the tool did not log on this call`,
+      { ...details, logNotificationCount: 0 }
+    );
+  }
+
+  const known = MCP_LOG_LEVELS as readonly unknown[];
+  const invalidOrLowerLevels = levels.filter(
+    (found) =>
+      !known.includes(found) || known.indexOf(found) < known.indexOf(level)
+  );
+  if (invalidOrLowerLevels.length === 0) {
+    return undefined;
+  }
+  return informational(
+    "readiness-log-level-filtering",
+    "Log Level Filtering",
+    "MAY",
+    `The server sent logs below the requested "${level}" level, or with an unknown level: ${invalidOrLowerLevels
+      .map((found) => JSON.stringify(found) ?? "undefined")
+      .join(", ")}. The spec only has the server send logs at or above the requested level`,
+    { ...details, logNotificationCount: levels.length, invalidOrLowerLevels }
+  );
+}
+
 export async function collectRawReadiness(
   ctx: RawHttpCheckContext
 ): Promise<MCPReadinessWarning[]> {
@@ -684,6 +772,7 @@ export async function collectRawReadiness(
     sessionTerminationWarning(ctx),
     protocolVersionHeaderWarning(ctx),
     resourceErrorUriWarning(ctx),
+    logLevelFilteringWarning(ctx),
   ];
   const settled = await Promise.allSettled(probes);
   return settled.flatMap((outcome) =>

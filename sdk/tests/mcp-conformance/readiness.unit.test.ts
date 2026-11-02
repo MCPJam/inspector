@@ -501,3 +501,146 @@ describe("raw readiness advice", () => {
     ).toEqual([]);
   });
 });
+
+describe("log level filtering advice", () => {
+  function logContext(
+    fetchFn: typeof fetch,
+    logProbe?: NormalizedMCPConformanceConfig["logProbe"],
+    era: "legacy" | "modern" = "modern"
+  ): RawHttpCheckContext {
+    const config = normalizeMCPConformanceConfig({
+      serverUrl: SERVER_URL,
+      fetchFn,
+      protocolVersion: era === "modern" ? "2026-07-28" : undefined,
+      checkTimeout: 500,
+      logProbe,
+    });
+    return { config, serverUrl: SERVER_URL, fetchFn: config.fetchFn };
+  }
+
+  /** Answers every request; a `tools/call` streams `levels` first. */
+  function logServer(
+    levels: unknown[],
+    result: Record<string, unknown> = { resultType: "complete", content: [] }
+  ) {
+    const toolCalls: Array<Record<string, unknown>> = [];
+    const fetchFn = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (body.method !== "tools/call") {
+        return new Response("{}", { status: 404 });
+      }
+      toolCalls.push(body);
+      const messages = [
+        ...levels.map((level) => ({
+          jsonrpc: "2.0",
+          method: "notifications/message",
+          params: { level, data: "log" },
+        })),
+        { jsonrpc: "2.0", id: body.id, result },
+      ];
+      return new Response(
+        messages
+          .map(
+            (message) => `event: message\ndata: ${JSON.stringify(message)}\n\n`
+          )
+          .join(""),
+        { headers: { "Content-Type": "text/event-stream" } }
+      );
+    }) as unknown as typeof fetch;
+    return { fetchFn, toolCalls };
+  }
+
+  async function advice(context: RawHttpCheckContext) {
+    const warnings = await collectRawReadiness(context);
+    return warnings.find(
+      (item) => item.id === "readiness-log-level-filtering"
+    );
+  }
+
+  it("calls no tool and gives no advice without a logProbe", async () => {
+    const server = logServer(["debug"]);
+    expect(await advice(logContext(server.fetchFn))).toBeUndefined();
+    expect(server.toolCalls).toEqual([]);
+  });
+
+  it("gives no advice on a legacy run", async () => {
+    const server = logServer([]);
+    expect(
+      await advice(
+        logContext(server.fetchFn, { toolName: "emit-log" }, "legacy")
+      )
+    ).toBeUndefined();
+    expect(server.toolCalls).toEqual([]);
+  });
+
+  it("asks for warning by default and flags an unknown level", async () => {
+    const server = logServer(["warning", "bogus"]);
+    const found = await advice(
+      logContext(server.fetchFn, {
+        toolName: "emit-log",
+        arguments: { count: 2 },
+      })
+    );
+    expect(found).toMatchObject({
+      specStrength: "MAY",
+      informational: true,
+      details: {
+        probedTool: "emit-log",
+        requestedLogLevel: "warning",
+        invalidOrLowerLevels: ["bogus"],
+      },
+    });
+    expect(server.toolCalls[0]?.params).toMatchObject({
+      name: "emit-log",
+      arguments: { count: 2 },
+      _meta: { "io.modelcontextprotocol/logLevel": "warning" },
+    });
+  });
+
+  it("flags no logs at the picked level", async () => {
+    const server = logServer([]);
+    const found = await advice(
+      logContext(server.fetchFn, { toolName: "emit-log", level: "error" })
+    );
+    expect(found?.message).toMatch(/^No logs came back/);
+    expect(found?.details).toMatchObject({
+      requestedLogLevel: "error",
+      logNotificationCount: 0,
+    });
+  });
+
+  it("gives no advice when every log is at or above the level", async () => {
+    const server = logServer(["error", "critical"]);
+    expect(
+      await advice(
+        logContext(server.fetchFn, { toolName: "emit-log", level: "error" })
+      )
+    ).toBeUndefined();
+  });
+
+  for (const [label, result] of [
+    ["a tool error", { resultType: "complete", content: [], isError: true }],
+    ["an unfinished call", { resultType: "input_required", inputRequests: [] }],
+  ] as const) {
+    it(`gives no advice for ${label}`, async () => {
+      const server = logServer([], result);
+      expect(
+        await advice(logContext(server.fetchFn, { toolName: "emit-log" }))
+      ).toBeUndefined();
+    });
+  }
+
+  it("rejects an unknown logProbe level", () => {
+    expect(() =>
+      normalizeMCPConformanceConfig({
+        serverUrl: SERVER_URL,
+        logProbe: {
+          toolName: "emit-log",
+          level: "loud" as NonNullable<
+            NormalizedMCPConformanceConfig["logProbe"]
+          >["level"],
+        },
+      })
+    ).toThrow(/logProbe.level must be one of debug, info/);
+  });
+});
