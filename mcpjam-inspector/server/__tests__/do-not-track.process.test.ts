@@ -77,7 +77,7 @@ describe("a hosted server under DO_NOT_TRACK", () => {
   let controlAttempts: NetworkAttempt[];
 
   beforeAll(async () => {
-    [optedOut, control, brokenFlags] = await Promise.all([
+    const started = await Promise.allSettled([
       startGuardedServer({
         env: {
           DO_NOT_TRACK: "1",
@@ -94,6 +94,13 @@ describe("a hosted server under DO_NOT_TRACK", () => {
         files: { "flags.json": "{ not json" },
       }),
     ]);
+    // Keep every server that booted, so afterAll stops it even when another
+    // failed to start; then report the failure.
+    [optedOut, control, brokenFlags] = started.map((result) =>
+      result.status === "fulfilled" ? result.value : undefined,
+    ) as GuardedServer[];
+    const failure = started.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
     brokenFlagsBootOutput = brokenFlags.output();
     await brokenFlags.stop();
     optedOutBoot = optedOut.attempts();
