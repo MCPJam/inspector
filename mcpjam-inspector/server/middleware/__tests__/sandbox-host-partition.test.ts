@@ -276,13 +276,16 @@ describe("boot invariant", () => {
     const { logged, health } = await bootWith({
       sandboxHosts: "sandbox.mcpjam.com,sandbox-staging.mcpjam.com",
       hostedOrigin: "https://inspector.customer.test",
-      sandboxOrigin: "https://sandbox.customer.test",
+      sandboxOrigin:
+        "https://ops:hunter2@sandbox.customer.test/proxy?token=abc",
     });
 
     expect(health).toBe("unpartitioned");
     expect(logged).toHaveLength(1);
-    expect(logged[0]).toContain("https://sandbox.customer.test");
+    expect(logged[0]).toContain("(https://sandbox.customer.test)");
     expect(logged[0]).toContain("SANDBOX_HOSTS");
+    // Only the origin is logged: no credentials, path or query.
+    expect(logged[0]).not.toMatch(/hunter2|token=|\/proxy/);
   });
 
   it("reports same-origin when MCPJAM_SANDBOX_ORIGIN is the app's own origin", async () => {
