@@ -50,7 +50,6 @@ export const PLATFORM_FEATURE_KEYS = [
   "conformance",
   "unified-sessions",
   "unified-share-evals",
-  "unified-share-conformance",
   "github-checks",
   "scheduled-evals",
 ] as const;
@@ -81,7 +80,6 @@ export const PLATFORM_FEATURES: Readonly<Record<PlatformFeatureKey, string>> = {
   conformance: "Conformance",
   "unified-sessions": "The unified sessions feed",
   "unified-share-evals": "Eval run sharing",
-  "unified-share-conformance": "Conformance run sharing",
   "github-checks": "GitHub checks",
   "scheduled-evals": "Scheduled evals",
 };
@@ -99,9 +97,10 @@ export const PLATFORM_FEATURES: Readonly<Record<PlatformFeatureKey, string>> = {
 export type OperationFeature =
   PlatformFeatureKey | readonly PlatformFeatureKey[] | null;
 
+// A conformance run shares under `conformance`, the feature of its tab.
 const SHARE_FAMILY: readonly PlatformFeatureKey[] = [
   "unified-share-evals",
-  "unified-share-conformance",
+  "conformance",
   "sandboxes",
 ];
 

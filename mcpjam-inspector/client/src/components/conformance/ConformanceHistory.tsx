@@ -6,16 +6,14 @@
  * redacted artifact at `/conformance/shared/:token`.
  */
 
-import { useCallback, useEffect, useState } from "react";
-import { useAction, useQuery } from "convex/react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
+import { useEffect, useState } from "react";
+import { useQuery } from "convex/react";
 import { Loader2, Share2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FlaskConical } from "lucide-react";
 import { buildConformanceRunPath, useAppNavigate } from "@/lib/app-navigation";
-import { toast } from "@/lib/toast";
 import { ShareDialog } from "@/components/sharing/ShareDialog";
 import { ResourceSharePanel } from "@/components/sharing/ResourceSharePanel";
 import { SharedArtifactPage } from "@/components/sharing/SharedArtifactPage";
@@ -257,115 +255,52 @@ export function ConformanceHistory({
 }
 
 /**
- * Share for one saved run. With unified sharing it opens the share dialog;
- * without, it copies a link (or turns an existing one off). Only a finished
- * run can be shared.
+ * Share for one saved run: opens the share dialog. Only a finished run can be
+ * shared.
  */
 export function ConformanceRunShareButton({
   runId,
   finished,
-  sharingEnabled,
 }: {
   runId: string;
   finished: boolean;
-  sharingEnabled: boolean;
 }) {
-  const setSharing = useAction("conformanceRuns:setSharing" as any);
-  const unifiedShare =
-    useFeatureFlagEnabled("unified-share-conformance") === true;
-  const [shareBusy, setShareBusy] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
-
-  const copyShare = useCallback(
-    async (enabled: boolean) => {
-      setShareBusy(true);
-      try {
-        const result = (await setSharing({
-          runId,
-          enabled,
-        })) as { enabled: boolean; token?: string | null; shareUrl?: string };
-        if (result.enabled && (result.shareUrl || result.token)) {
-          const url =
-            result.shareUrl ??
-            `${window.location.origin}/conformance/shared/${result.token}`;
-          await navigator.clipboard.writeText(url);
-          toast.success("Share link copied");
-        } else {
-          toast.success("Sharing turned off");
-        }
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : "Could not update sharing",
-        );
-      } finally {
-        setShareBusy(false);
-      }
-    },
-    [runId, setSharing],
-  );
 
   return (
     <>
-      {unifiedShare ? (
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={!finished}
-          onClick={() => setShareOpen(true)}
-          data-testid="conformance-share-open"
-        >
-          <Share2 className="size-3.5" aria-hidden /> Share
-        </Button>
-      ) : sharingEnabled ? (
-        // A run already shared keeps this one, so its link can still be
-        // turned off.
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={shareBusy || !finished}
-          onClick={() => void copyShare(false)}
-        >
-          <Share2 className="size-3.5" aria-hidden /> Shareable
-        </Button>
-      ) : (
-        // No "Private" label: a private run is the default. This is the
-        // only way to create a link while unified sharing is off.
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={shareBusy || !finished}
-          onClick={() => void copyShare(true)}
-        >
-          <Share2 className="size-3.5" aria-hidden /> Share
-        </Button>
-      )}
-      {unifiedShare ? (
-        <ShareDialog
-          open={shareOpen}
-          onOpenChange={setShareOpen}
-          title="Share conformance run"
-          description="A frozen redacted snapshot. Guests who redeem the link are auditable browser sessions, not verified individuals."
-        >
-          <ResourceSharePanel
-            resourceType="conformanceRun"
-            resourceId={runId}
-            disabledReason={
-              finished ? null : "Only a finished run can be shared"
-            }
-            footerSlot={
-              <p className="text-xs text-muted-foreground">
-                Viewers see a frozen snapshot. Revoking access is immediate even
-                though the artifact itself does not change.
-              </p>
-            }
-            linkLabel="Share link"
-            buildShareUrl={(token) =>
-              `${window.location.origin}${buildConformanceSharePath(token)}`
-            }
-            testIdPrefix="conformance-share"
-          />
-        </ShareDialog>
-      ) : null}
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={!finished}
+        onClick={() => setShareOpen(true)}
+        data-testid="conformance-share-open"
+      >
+        <Share2 className="size-3.5" aria-hidden /> Share
+      </Button>
+      <ShareDialog
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        title="Share conformance run"
+        description="A frozen redacted snapshot. Guests who redeem the link are auditable browser sessions, not verified individuals."
+      >
+        <ResourceSharePanel
+          resourceType="conformanceRun"
+          resourceId={runId}
+          disabledReason={finished ? null : "Only a finished run can be shared"}
+          footerSlot={
+            <p className="text-xs text-muted-foreground">
+              Viewers see a frozen snapshot. Revoking access is immediate even
+              though the artifact itself does not change.
+            </p>
+          }
+          linkLabel="Share link"
+          buildShareUrl={(token) =>
+            `${window.location.origin}${buildConformanceSharePath(token)}`
+          }
+          testIdPrefix="conformance-share"
+        />
+      </ShareDialog>
     </>
   );
 }
@@ -436,11 +371,7 @@ export function ConformanceRunDetailPage({
           <span className="text-muted-foreground/70">/</span>
           <span className="truncate font-semibold">{serverName}</span>
           <div className="ml-auto flex items-center gap-2">
-            <ConformanceRunShareButton
-              runId={detail._id}
-              finished={finished}
-              sharingEnabled={detail.sharingEnabled}
-            />
+            <ConformanceRunShareButton runId={detail._id} finished={finished} />
             <Button size="sm" onClick={() => navigate("/conformance")}>
               Run again
             </Button>
