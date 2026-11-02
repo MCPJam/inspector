@@ -422,6 +422,12 @@ describe("ConformanceTab", () => {
       screen.getByText("Nothing applicable to score on this server."),
     ).toBeInTheDocument();
     expect(screen.queryByText("%")).toBeNull();
+    const appsHeader = screen.getByText(SUITE_COPY.apps.title).closest("button")!;
+    expect(within(appsHeader).getByText("NOT APPLICABLE")).toBeInTheDocument();
+    expect(within(appsHeader).getByText(SUITE_COPY.apps.description)).toBeInTheDocument();
+    expect(appsHeader).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(appsHeader);
+    expect(appsHeader).toHaveAttribute("aria-expanded", "true");
   });
 
   it("reads suites that ran no checks as incomplete, not as nothing applicable", async () => {

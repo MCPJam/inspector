@@ -569,7 +569,7 @@ function SavedSuiteRow({
       subtitle={
         noResult
           ? "This suite did not report a result for this run."
-          : notApplicable
+          : notApplicable && report.suiteKind !== "apps"
             ? (report.incompleteReason ??
               "Nothing here applied to this server, so it was not scored.")
             : copy.description
@@ -592,9 +592,11 @@ function SavedSuiteRow({
         <CatalogList
           catalog={suiteCatalog(report.suiteKind)}
           note={
-            report.status === "skipped"
-              ? ". Not run."
-              : ". None apply to this server."
+            report.suiteKind === "apps"
+              ? ""
+              : report.status === "skipped"
+                ? ". Not run."
+                : ". None apply to this server."
           }
         />
       ) : (

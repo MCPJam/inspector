@@ -222,6 +222,19 @@ describe("ConformanceRunDetailPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows absent Apps without an explanation or percentage", () => {
+    useArtifactQueryMock.mockReturnValue(run([
+      report({ suiteKind: "apps", score: null, applicable: 0, passed: 0 }),
+    ]));
+    render(<ConformanceRunDetailPage runId="run_1" />);
+    const header = screen.getByText("Apps").closest("button")!;
+    expect(within(header).getByText("NOT APPLICABLE")).toBeInTheDocument();
+    expect(within(header).queryByText("%")).toBeNull();
+    expect(screen.queryByText("Nothing here applied to this server, so it was not scored.")).toBeNull();
+    fireEvent.click(header);
+    expect(header).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("shows a suite with nothing applicable as NOT APPLICABLE, without a score", () => {
     useArtifactQueryMock.mockReturnValue(
       run([
