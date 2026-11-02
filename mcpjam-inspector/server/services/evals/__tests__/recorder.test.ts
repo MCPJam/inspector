@@ -586,8 +586,10 @@ describe("startSuiteRunWithRecorder", () => {
   });
 
   it.each([
+    // A budget refusal has no retry time, so it is not a 429: the v1 spec
+    // promises `Retry-After` on every 429.
     ["PLATFORM_FEE_REQUIRED", 403, "FORBIDDEN"],
-    ["ORGANIZATION_SPEND_BUDGET_REACHED", 429, "RATE_LIMITED"],
+    ["ORGANIZATION_SPEND_BUDGET_REACHED", 403, "FORBIDDEN"],
   ])(
     "answers the %s precreate refusal with a %i, without paging",
     async (reason, status, code) => {
