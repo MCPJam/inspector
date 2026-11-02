@@ -163,7 +163,7 @@ export function ConformanceSetup({
   >({});
   const clearFailure = (name: string) =>
     setConnectFailures((prev) => {
-      if (!(name in prev)) return prev;
+      if (!Object.hasOwn(prev, name)) return prev;
       const next = { ...prev };
       delete next[name];
       return next;
@@ -198,11 +198,15 @@ export function ConformanceSetup({
   };
   // Connected some other way (Edit connection, the server menu): the failure
   // is over, so a later drop does not bring the old alert back.
-  if (canContinue && pickedName && pickedName in connectFailures) {
+  // Own keys only: `in` also finds what every object inherits, so a server
+  // named `constructor` would read as failed and clear on every render.
+  if (canContinue && pickedName && Object.hasOwn(connectFailures, pickedName)) {
     clearFailure(pickedName);
   }
   const failure =
-    pickedName && !canContinue ? (connectFailures[pickedName] ?? null) : null;
+    pickedName && !canContinue && Object.hasOwn(connectFailures, pickedName)
+      ? connectFailures[pickedName]!
+      : null;
   const noServers =
     !projectServersLoading &&
     servers.length === 0 &&

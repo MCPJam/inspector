@@ -1663,6 +1663,23 @@ describe("ConformanceTab", () => {
     expect(onConnectServer).toHaveBeenCalledTimes(1);
   });
 
+  it("reads no failure for a server named like an object built-in", () => {
+    // `in` would find the inherited `constructor` and loop on clearing it.
+    const server = createHttpServer({ name: "constructor" });
+    render(
+      <ConformanceTab
+        server={server}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+        onConnectServer={vi.fn(async () => "ready" as const)}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+  });
+
   it("keeps each server's connect failure when they settle out of order", async () => {
     const user = userEvent.setup();
     const alpha = createHttpServer({ name: "alpha" });

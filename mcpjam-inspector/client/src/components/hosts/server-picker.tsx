@@ -858,12 +858,7 @@ export function ServerPicker({
               ? selection.groupId
               : null
           }
-          onSelectServer={(serverId) => {
-            void handleSelectServer(serverId);
-            // Picking a server readies it: one that can connect starts in
-            // the background, so there is no separate Connect to remember.
-            serverRows.find((row) => row.id === serverId)?.onConnect?.();
-          }}
+          onSelectServer={(serverId) => void handleSelectServer(serverId)}
           onSelectGroup={(groupId) => void handleSelectGroup(groupId)}
           onCreateGroup={handleCreateGroup}
           deriveName={deriveName}
