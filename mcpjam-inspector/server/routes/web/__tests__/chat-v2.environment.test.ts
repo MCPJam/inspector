@@ -339,6 +339,9 @@ describe("web chat-v2 — environment execution target", () => {
     });
 
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
       if (String(input).endsWith("/web/authorize-project")) {
         return new Response(
           JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }),
@@ -769,6 +772,9 @@ describe("web chat-v2 — environment execution target", () => {
     function needsSignIn(serverId: string) {
       const answer = global.fetch;
       global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
         const response = await answer(input, init);
         if (!String(input).endsWith("/web/authorize-batch")) return response;
         const batch = await response.json();
@@ -833,6 +839,59 @@ describe("web chat-v2 — environment execution target", () => {
         selectedServers: ["env-server-1", "env-server-2"],
         unavailableServerIds: ["env-server-1"],
       }));
+    });
+
+    it("fails the turn on a stdio command this device has not approved, so the chat can ask", async () => {
+      vi.stubEnv(
+        "MCPJAM_STDIO_APPROVALS_FILE",
+        `${process.env.TMPDIR ?? "/tmp"}/chat-v2-approvals-${process.pid}-missing.json`,
+      );
+      const stdio = {
+        transportType: "stdio",
+        command: "node",
+        args: ["server.js"],
+        env: {},
+      };
+      const answer = global.fetch;
+      global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
+        const url = String(input);
+        if (url.endsWith("/web/authorize-batch-local")) {
+          return Response.json({
+            results: {
+              "env-server-2": {
+                ok: true,
+                role: "member",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                serverConfig: stdio,
+              },
+            },
+          });
+        }
+        const response = await answer(input, init);
+        if (!url.endsWith("/web/authorize-batch")) return response;
+        const batch = await response.json();
+        batch.results["env-server-2"].serverConfig = stdio;
+        return Response.json(batch);
+      }) as typeof fetch;
+
+      const response = await environmentTurn();
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({
+        code: "STDIO_COMMAND_APPROVAL_REQUIRED",
+        details: {
+          reason: "stdio_command_approval_required",
+          serverId: "env-server-2",
+          approval: { command: "node", args: ["server.js"] },
+        },
+      });
+      expect(prepareChatV2Mock).not.toHaveBeenCalled();
+      expect(disconnectAllServersMock).toHaveBeenCalled();
+      vi.unstubAllEnvs();
     });
 
     it("runs without an unavailable server selected by the environment", async () => {
@@ -1424,6 +1483,9 @@ describe("web chat-v2 — plugin capability attribution", () => {
       new Response("ok", { status: 200 })
     );
     global.fetch = vi.fn(async (input: any, init: any) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
       if (String(input).endsWith("/web/authorize-project")) {
         return new Response(
           JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }),
@@ -1597,6 +1659,9 @@ describe("web chat-v2 — turn provenance (P1)", () => {
       return new Response("ok", { status: 200 });
     });
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
       if (String(input).endsWith("/web/authorize-project")) {
         return new Response(
           JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }),

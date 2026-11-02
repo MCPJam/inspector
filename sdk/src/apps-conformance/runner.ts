@@ -649,28 +649,10 @@ export class MCPAppsConformanceTest {
                     `Tool ${tool.name} uses deprecated _meta["ui/resourceUri"]; prefer _meta.ui.resourceUri`,
                   );
                 }
-
-                if (tool.name.length < 1 || tool.name.length > 128) {
-                  warnings.push(
-                    `Tool ${tool.name} name SHOULD be between 1 and 128 characters (has ${tool.name.length})`,
-                  );
-                }
-                if (!/^[A-Za-z0-9_\-.]+$/.test(tool.name)) {
-                  warnings.push(
-                    `Tool ${tool.name} name SHOULD only contain A-Z, a-z, 0-9, underscore, hyphen, or dot`,
-                  );
-                }
               }
 
-              const seenNames = new Set<string>();
-              for (const tool of uiTools) {
-                if (seenNames.has(tool.name)) {
-                  warnings.push(
-                    `Tool name "${tool.name}" appears more than once; names SHOULD be unique within a server`,
-                  );
-                }
-                seenNames.add(tool.name);
-              }
+              // Tool-name conventions are core MCP rules, so they are advised
+              // on every tool by the protocol suite, not here.
 
               if (violations.length > 0) {
                 checks.push(

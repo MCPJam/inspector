@@ -414,6 +414,9 @@ const LAUNCH_REJECTION_STATUS: Record<string, 400 | 404> = {
   ENV_ARCHIVED: 400,
   ENV_CROSS_PROJECT: 404,
   ENV_NOT_FOUND: 404,
+  // The client pins a saved browser profile the launcher cannot use. The
+  // backend's message names the client, never the profile id.
+  BROWSER_PROFILE_NOT_DELIVERABLE: 400,
 };
 
 export function environmentLaunchRejectionError(

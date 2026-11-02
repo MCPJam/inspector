@@ -250,6 +250,18 @@ function mcpToolResultToModelOutput(
   );
 }
 
+/** Use the same App privacy and content policy outside an AI SDK agent loop. */
+export function projectMcpToolResultForModel(
+  result: CallToolResult,
+  toolMeta: Parameters<typeof isMcpAppTool>[0],
+  options: McpModelVisibleToolResultPolicy & { readResource?: McpLinkedResourceReader; abortSignal?: AbortSignal } = {}
+) {
+  const visible = isMcpAppTool(toolMeta)
+    ? scrubMetaAndStructuredContentFromToolResult(result)
+    : isChatGPTAppTool(toolMeta) ? scrubStructuredContentFromToolResult(result) : result;
+  return mcpToolResultToModelOutput(visible, options);
+}
+
 /**
  * Converts MCP tools to Vercel AI SDK format.
  *
@@ -322,49 +334,17 @@ export async function convertMCPToolsToVercelTools(
     // MCPJam also passes abortSignal from its local executor so linked
     // resource reads can stop promptly when the user cancels the turn.
     // Note: Type assertion needed due to slight type misalignment between CallToolResult and JSONValue
-    const toModelOutput = isMcpAppTool(toolMeta)
-      ? (opts: {
-          toolCallId: string;
-          input: unknown;
-          output: unknown;
-          abortSignal?: AbortSignal;
-        }) => {
-          const scrubbed = scrubMetaAndStructuredContentFromToolResult(
-            opts.output as CallToolResult
-          );
-          return mcpToolResultToModelOutput(scrubbed, {
-            modelVisibleMcpToolResults,
-            readResource,
-            abortSignal: opts.abortSignal,
-          });
-        }
-      : isChatGPTAppTool(toolMeta)
-        ? (opts: {
-            toolCallId: string;
-            input: unknown;
-            output: unknown;
-            abortSignal?: AbortSignal;
-          }) => {
-            const scrubbed = scrubStructuredContentFromToolResult(
-              opts.output as CallToolResult
-            );
-            return mcpToolResultToModelOutput(scrubbed, {
-              modelVisibleMcpToolResults,
-              readResource,
-              abortSignal: opts.abortSignal,
-            });
-          }
-        : (opts: {
-            toolCallId: string;
-            input: unknown;
-            output: unknown;
-            abortSignal?: AbortSignal;
-          }) =>
-            mcpToolResultToModelOutput(opts.output as CallToolResult, {
-              modelVisibleMcpToolResults,
-              readResource,
-              abortSignal: opts.abortSignal,
-            });
+    const toModelOutput = (opts: {
+      toolCallId: string;
+      input: unknown;
+      output: unknown;
+      abortSignal?: AbortSignal;
+    }) =>
+      projectMcpToolResultForModel(opts.output as CallToolResult, toolMeta, {
+        modelVisibleMcpToolResults,
+        readResource,
+        abortSignal: opts.abortSignal,
+      });
 
     let vercelTool: Tool;
 

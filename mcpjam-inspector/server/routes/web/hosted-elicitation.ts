@@ -181,6 +181,8 @@ export interface HostedElicitationBridgeOptions {
   convexBearer: string;
   projectId: string;
   chatSessionId?: string;
+  /** Remote harness requests are delivered by the actor-owned chat query. */
+  delivery?: "stream" | "owned-chat-query";
   /** Display labels only; `serverId` stays the trusted anchor. */
   serverNamesById: Record<string, string>;
   /** The turn's abort signal — a closed stream must not leave a pending row. */
@@ -252,7 +254,10 @@ export class HostedElicitationBridge {
   private disposal: Promise<void> | undefined;
   private disposed = false;
 
-  constructor(private readonly options: HostedElicitationBridgeOptions) {}
+  constructor(private readonly options: HostedElicitationBridgeOptions) {
+    if (options.delivery === "owned-chat-query" && !options.chatSessionId)
+      throw new Error("Owned elicitation delivery requires a chat session");
+  }
 
   attachStreamWriter(writer: ElicitationChunkWriter): void {
     this.writer = writer;
@@ -264,13 +269,20 @@ export class HostedElicitationBridge {
    * SDK gates advertisement on a handler being present — registering is what
    * makes `elicitation` appear in `initialize`.
    */
-  readonly callback: ElicitationCallback = async (request) => {
+  readonly callback = async (
+    request: Parameters<ElicitationCallback>[0],
+    requestSignal?: AbortSignal,
+  ): Promise<ElicitResult> => {
+    const signal = requestSignal && this.options.abortSignal
+      ? AbortSignal.any([requestSignal, this.options.abortSignal])
+      : requestSignal ?? this.options.abortSignal;
     const mode: HostedElicitationMode = request.mode === "url" ? "url" : "form";
     const serverId = request.serverId ?? "unknown";
 
     // Pre-writer: nothing can render this, and its consumer is the very stream
     // that hasn't been created yet. Fail fast rather than deadlock to TTL.
-    if ((!this.writer && !this.options.pluginWorkspaceId) || this.disposed) {
+    if ((!this.writer && !this.options.pluginWorkspaceId &&
+      this.options.delivery !== "owned-chat-query") || this.disposed) {
       logger.warn(
         "[elicitation] request arrived with no live stream; cancelling",
         { serverId, mode, disposed: this.disposed },
@@ -310,7 +322,7 @@ export class HostedElicitationBridge {
             expiresAt,
           });
         }
-        if (this.disposed || this.options.abortSignal?.aborted) {
+        if (this.disposed || signal?.aborted) {
           source?.release();
           return CANCEL;
         }
@@ -338,7 +350,7 @@ export class HostedElicitationBridge {
 
       // Storage creation may settle after the request was disposed. Withdraw the
       // newly created row rather than publishing an orphaned, answerable form.
-      if (this.disposed || this.options.abortSignal?.aborted) {
+      if (this.disposed || signal?.aborted) {
         source?.release();
         await this.cancelRow(rendezvousId);
         return CANCEL;
@@ -378,7 +390,7 @@ export class HostedElicitationBridge {
     }
 
     try {
-      const result = await this.awaitAnswer({ rendezvousId, expiresAt, mode });
+      const result = await this.awaitAnswer({ rendezvousId, expiresAt, mode, signal });
       return source?.deliver ? await source.deliver(result) : result;
     } finally {
       this.pending.delete(rendezvousId);
@@ -578,7 +590,7 @@ export class HostedElicitationBridge {
   private async serviceRoute<T>(
     path: string,
     body: unknown,
-    opts: { bindToTurn: boolean },
+    opts: { bindToTurn: boolean; signal?: AbortSignal },
   ): Promise<T> {
     // Every service call is bounded. Without a deadline a stalled Convex
     // request would park the poll loop forever: the tool call would outlive its
@@ -596,7 +608,7 @@ export class HostedElicitationBridge {
       ELICITATION_SERVICE_ROUTE_TIMEOUT_MS,
     );
     const onTurnAbort = () => controller.abort();
-    const turnSignal = opts.bindToTurn ? this.options.abortSignal : undefined;
+    const turnSignal = opts.bindToTurn ? opts.signal ?? this.options.abortSignal : undefined;
     if (turnSignal) {
       if (turnSignal.aborted) controller.abort();
       else turnSignal.addEventListener("abort", onTurnAbort, { once: true });
@@ -625,11 +637,11 @@ export class HostedElicitationBridge {
     }
   }
 
-  private async poll(rendezvousId: string): Promise<PollResult | null> {
+  private async poll(rendezvousId: string, signal?: AbortSignal): Promise<PollResult | null> {
     const payload = await this.serviceRoute<{
       ok: boolean;
       elicitation: PollResult | null;
-    }>("/elicitations/poll", { rendezvousId }, { bindToTurn: true });
+    }>("/elicitations/poll", { rendezvousId }, { bindToTurn: true, signal });
     return payload.elicitation ?? null;
   }
 
@@ -676,14 +688,16 @@ export class HostedElicitationBridge {
     rendezvousId: string;
     expiresAt: number;
     mode: HostedElicitationMode;
+    signal?: AbortSignal;
   }): Promise<ElicitResult> {
-    const { rendezvousId, expiresAt, mode } = args;
+    const { rendezvousId, expiresAt, mode, signal } = args;
     let consecutiveFailures = 0;
 
     for (;;) {
-      if (this.options.abortSignal?.aborted || this.disposed) {
-        // Client hung up: withdraw the row, and don't emit — nobody is reading.
+      if (signal?.aborted || this.disposed) {
         void this.cancelRow(rendezvousId);
+        if (!this.options.abortSignal?.aborted && !this.disposed)
+          this.emit({ kind: "resolved", rendezvousId, outcome: "cancelled" });
         return CANCEL;
       }
 
@@ -696,9 +710,11 @@ export class HostedElicitationBridge {
 
       let result: PollResult | null;
       try {
-        result = await this.poll(rendezvousId);
+        result = await this.poll(rendezvousId, signal);
+        if (signal?.aborted || this.disposed) continue;
         consecutiveFailures = 0;
       } catch (error) {
+        if (signal?.aborted || this.disposed) continue;
         consecutiveFailures += 1;
         if (consecutiveFailures >= ELICITATION_POLL_MAX_FAILURES) {
           logger.error(
@@ -710,12 +726,12 @@ export class HostedElicitationBridge {
           this.emit({ kind: "resolved", rendezvousId, outcome: "cancelled" });
           return CANCEL;
         }
-        await this.waitOnePollInterval();
+        await this.waitOnePollInterval(signal);
         continue;
       }
 
       if (!result || result.status === "pending") {
-        await this.waitOnePollInterval();
+        await this.waitOnePollInterval(signal);
         continue;
       }
 
@@ -747,11 +763,11 @@ export class HostedElicitationBridge {
    * scheduled-evals worker). Wakes early on abort so a closed stream resolves
    * immediately instead of sleeping out the interval.
    */
-  private waitOnePollInterval(): Promise<void> {
+  private waitOnePollInterval(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return Promise.resolve();
     const delay =
       ELICITATION_POLL_INTERVAL_MS + Math.random() * ELICITATION_POLL_JITTER_MS;
     return new Promise((resolve) => {
-      const signal = this.options.abortSignal;
       const timer = setTimeout(() => {
         signal?.removeEventListener("abort", onAbort);
         resolve();

@@ -206,9 +206,9 @@ payload, which invariant 2 forbids.
 
 Two kinds means a custom non-deterministic evaluator that is not a model-graded rubric reads as
 `judge` — the timeout and concurrency scorers in `sdk/tests/eval-scores.test.ts` are real examples.
-`kind` is therefore a presentation split, and no judge behaviour may branch on it: rubric display,
-reviewer calibration and gate eligibility key off the judge's own definition, its `model` and
-template version, never off `kind`.
+`kind` is therefore a presentation split, and no judge behaviour may branch on it: rubric display
+and reviewer calibration key off the judge's own definition, its `model` and template version,
+never off `kind`.
 
 ## Authoring
 

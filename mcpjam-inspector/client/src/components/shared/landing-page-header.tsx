@@ -3,13 +3,13 @@
  *
  * Layout:
  *   Row: [title] | [tabs]                          [actions]
- *   Description
+ *   Description, when the page has one
  *
  * On a phone the three do not fit one line, so the title keeps its action
  * beside it and the tabs take a line of their own:
  *   Row: [title]                                   [actions]
  *   Row: [tabs]
- *   Description
+ *   Description, when the page has one
  *
  * The detail-route counterpart is DetailPageHeader; this one is the version
  * with no way back out, so it carries the line that says what the page is for.
@@ -39,7 +39,8 @@ export function LandingPageHeader<T extends string>({
   testId,
 }: {
   title: string;
-  description: ReactNode;
+  /** Omit when the title and tabs already say what the page is. */
+  description?: ReactNode;
   /** Omit on a landing with a single view. */
   tabs?: {
     value: T;
@@ -95,7 +96,11 @@ export function LandingPageHeader<T extends string>({
           </div>
         ) : null}
       </div>
-      <p className="mt-2 w-full text-sm text-muted-foreground">{description}</p>
+      {description ? (
+        <p className="mt-2 w-full text-sm text-muted-foreground">
+          {description}
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -52,8 +52,11 @@ export type Settlement = {
 };
 export type ExecutionIntent = {
   invocationKey: string;
+  policyDigest?: string;
+  nativeToolCallId?: string;
   turnId: string;
-  rpcId: string | number;
+  rpcId?: string | number;
+  continuation?: { executionId: string; operationId: string; round: number };
   method: string;
   paramsJson: string;
   expiresAt: number;
@@ -117,49 +120,51 @@ export class ExecutionControlError extends Error {
 export function createExecutionControl(args: {
   owner: ForwardingOwner;
   token?: string;
+  widgetParentId?: string;
+  retainedParent?: {toolCallId: string; turnId: string; scopeDigest: string};
   baseUrl?: string;
   fetch?: typeof fetch;
 }) {
-  const transport = args.fetch ?? fetch;
-  const base = args.baseUrl ?? getConvexHttpUrl();
-  if (!base) throw new ExecutionControlError("control_unavailable");
-  const url = new URL("/internal/v1/harness-forwarding/executions", base);
-  const credential = requireServiceCredential("Native MCP forwarding");
+  if (Number(!!args.token) + Number(!!args.widgetParentId) + Number(!!args.retainedParent) > 1) throw new ExecutionControlError("ambiguous_parent");
   async function post<T>(
     operation: object,
     schema: z.ZodType<T>,
     mode: "grant" | "owner" | "settle" = "grant",
   ): Promise<T> {
-    if (mode === "grant" && !args.token)
+    if (mode === "grant" && !args.token && !args.widgetParentId && !args.retainedParent)
       throw new ExecutionControlError("grant_unavailable");
-    const body = JSON.stringify(
-      mode === "settle"
+    const body = mode === "settle"
         ? { operation }
         : {
             owner: args.owner,
-            ...(mode === "grant" ? { token: args.token } : {}),
+            ...(mode === "grant"
+              ? args.retainedParent ? {retainedParent: args.retainedParent} : args.widgetParentId
+                ? { widgetParentId: args.widgetParentId }
+                : { token: args.token }
+              : {}),
             operation,
-          },
-    );
-    if (Buffer.byteLength(body) > 8 * 1024 * 1024)
-      throw new ExecutionControlError("evidence_too_large");
-    const response = await transport(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        [INSPECTOR_SERVICE_TOKEN_HEADER]: credential,
-      },
-      body,
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!response.ok)
-      throw new ExecutionControlError(`control_${response.status}`);
-    const parsed = schema.safeParse(await response.json());
-    if (!parsed.success)
-      throw new ExecutionControlError("invalid_control_response");
-    return parsed.data;
+          };
+    return requestExecutionControl(body, schema, args);
   }
   return {
+    widgetScope: () =>
+      post(
+        { kind: "authorize" },
+        z.object({
+          projectId: z.string(),
+          organizationId: z.string(),
+          turnId: z.string(),
+          expiresAt: z.number(),
+          hostConfig: z.record(z.string(), z.unknown()),
+          chatSessionId: z.string().optional(),
+        }),
+      ),
+    bindPolicy: (turnId: string, policyDigest: string) =>
+      post(
+        { kind: "bind_policy", turnId, policyDigest },
+        z.object({ bound: z.literal(true) }),
+        "owner",
+      ),
     authorize: () =>
       post(
         { kind: "authorize" },
@@ -169,10 +174,19 @@ export function createExecutionControl(args: {
           organizationId: z.string(),
           projectId: z.string(),
           expiresAt: z.number(),
+          turnId: z.string().min(1),
+          policyDigest: z.string().regex(/^[a-f0-9]{64}$/),
+          chatSessionId: z.string().nullable().optional(),
         }),
       ),
     turnApprovals: (turnId: string) =>
       post({ kind: "turn_approvals", turnId }, z.array(receipt), "owner"),
+    nativeResult: (turnId: string, nativeToolCallId: string) =>
+      post(
+        { kind: "native_result", turnId, nativeToolCallId },
+        receipt,
+        "owner",
+      ),
     approvalContext: (executionId: string) =>
       post({ kind: "approval_context", executionId }, receipt, "owner"),
     answerApproval: (
@@ -233,3 +247,29 @@ export function createExecutionControl(args: {
   };
 }
 export type ExecutionControl = ReturnType<typeof createExecutionControl>;
+
+export async function requestExecutionControl<T>(request: object, schema: z.ZodType<T>, args: { baseUrl?: string; fetch?: typeof fetch } = {}): Promise<T> {
+  const transport = args.fetch ?? fetch;
+  const base = args.baseUrl ?? getConvexHttpUrl();
+  if (!base) throw new ExecutionControlError("control_unavailable");
+  const url = new URL("/internal/v1/harness-forwarding/executions", base);
+  const credential = requireServiceCredential("Native MCP forwarding");
+  const body = JSON.stringify(request);
+    if (Buffer.byteLength(body) > 8 * 1024 * 1024)
+      throw new ExecutionControlError("evidence_too_large");
+    const response = await transport(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [INSPECTOR_SERVICE_TOKEN_HEADER]: credential,
+      },
+      body,
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok)
+      throw new ExecutionControlError(`control_${response.status}`);
+    const parsed = schema.safeParse(await response.json());
+    if (!parsed.success)
+      throw new ExecutionControlError("invalid_control_response");
+    return parsed.data;
+}
