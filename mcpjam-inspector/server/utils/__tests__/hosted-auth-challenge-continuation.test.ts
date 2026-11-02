@@ -618,7 +618,7 @@ describe("hosted sign-in continuations", () => {
             bearer: "bearer",
             continuationId: hostedAuthChallengeContinuationId(BASE),
           }),
-        ).resolves.toMatchObject({ cancelled: false, isSignIn: true });
+        ).resolves.toMatchObject({ cancelled: false, isSignIn: true, mayHaveRun: true });
         expect(store.scrub).not.toHaveBeenCalled();
       },
     );

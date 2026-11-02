@@ -99,18 +99,19 @@ export async function settleHostedAuthChallengeHistoryCall(input: {
 export async function cancelHostedContinuationForNewMessage(input: {
   bearer: string;
   continuationId: string;
-}): Promise<{ cancelled: boolean; isSignIn: boolean }> {
+}): Promise<{ cancelled: boolean; isSignIn: boolean; mayHaveRun: boolean }> {
   const isSignIn = isHostedAuthChallengeContinuationId(input.continuationId);
   const cancelled = await cancelContinuation(input.bearer, {
     continuationId: input.continuationId,
     reason: "the user sent a new message instead of signing in",
   });
-  if (!cancelled.ok || !answeredAsNotRun(cancelled.status))
-    return { cancelled: false, isSignIn };
+  if (!cancelled.ok) return { cancelled: false, isSignIn, mayHaveRun: false };
+  if (!answeredAsNotRun(cancelled.status))
+    return { cancelled: false, isSignIn, mayHaveRun: true };
   await scrubContinuation(input.bearer, {
     continuationId: input.continuationId,
   });
-  return { cancelled: true, isSignIn };
+  return { cancelled: true, isSignIn, mayHaveRun: false };
 }
 
 /**

@@ -225,6 +225,18 @@ export function authChallengeCancelledText(
   return `Not run: MCP server "${serverName}" asked the user to sign in before "${toolName}" could run, and the user did not sign in. Do not retry this call unless the user asks.`;
 }
 
+/**
+ * The tool result for a call whose replay after sign-in started but whose
+ * outcome never came back. It may have run, so it must not be retried as if
+ * it had not.
+ */
+export function authChallengeMayHaveRunText(
+  serverName: string,
+  toolName: string,
+): string {
+  return `"${toolName}" on MCP server "${serverName}" was retried after the user signed in, but its result never came back, so it may have run. Do not retry this call unless the user asks.`;
+}
+
 /** The tool result after sign-in when the server still refuses the call. */
 export function authChallengeRepeatText(
   serverName: string,
