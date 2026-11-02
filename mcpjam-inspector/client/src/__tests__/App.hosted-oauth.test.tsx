@@ -6047,6 +6047,21 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
+  it("keeps a conformance share link open for a reader without the conformance flag", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/conformance/shared/share-token");
+    mockHandleOAuthCallback.mockReset();
+
+    mockUseFeatureFlagEnabled.mockImplementation(() => false);
+
+    render(<App />);
+
+    // Give the gate the same chance it gets on `/conformance` above.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(window.location.pathname).toMatch(/^\/conformance\/shared/);
+  });
+
   it("leaves the conformance server choice to the page, so the last-selected server is restored", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();

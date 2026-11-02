@@ -3119,6 +3119,12 @@ export default function App() {
   // visitor to Playground mid-sign-in, stranding exactly the enterprise entry
   // point this route exists to fix.
   const isLoginInitiationRoute = barePathname === routePaths.login;
+  // A conformance share link is public, so its reader need not have the
+  // Conformance beta. The bare `/conformance/shared` is the same page once the
+  // token is stripped from the address bar.
+  const isConformanceSharedRoute =
+    barePathname === routePaths.conformanceShared ||
+    barePathname.startsWith(`${routePaths.conformanceShared}/`);
 
   const defaultHubRoute = useMemo((): "home" | "connect" | "servers" => {
     return "home";
@@ -5741,7 +5747,11 @@ export default function App() {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "client-config") {
       navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (activeTab === "conformance" && conformanceEnabled !== true) {
+    } else if (
+      activeTab === "conformance" &&
+      !isConformanceSharedRoute &&
+      conformanceEnabled !== true
+    ) {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (
       activeTab === "compatibility" &&
@@ -5761,6 +5771,7 @@ export default function App() {
     }
   }, [
     conformanceEnabled,
+    isConformanceSharedRoute,
     compatibilityEnabled,
     defaultHubRoute,
     registryEnabled,
