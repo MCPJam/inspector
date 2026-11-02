@@ -54,8 +54,10 @@ export const MCP_TASKS_READINESS_IDS = [
 
 export type MCPTasksReadinessId = (typeof MCP_TASKS_READINESS_IDS)[number];
 
-export interface MCPTasksReadinessWarning
-  extends Omit<MCPReadinessWarning, "id"> {
+export interface MCPTasksReadinessWarning extends Omit<
+  MCPReadinessWarning,
+  "id"
+> {
   id: MCPTasksReadinessId;
 }
 

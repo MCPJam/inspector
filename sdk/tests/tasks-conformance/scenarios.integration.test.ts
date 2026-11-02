@@ -114,9 +114,12 @@ describe("tasks-invalid-task-id-rejected", () => {
     expect(entry.status).toBe("passed");
     expect(entry.warnings).toBeUndefined();
     const advice = result.readiness?.find(
-      (warning) => warning.id === "tasks-readiness-unknown-task-id-mutations",
+      (warning) => warning.id === "tasks-readiness-unknown-task-id-mutations"
     );
-    expect(advice).toMatchObject({ specStrength: "SHOULD", informational: true });
+    expect(advice).toMatchObject({
+      specStrength: "SHOULD",
+      informational: true,
+    });
     expect(advice?.message).toContain("tasks/update");
   });
 
