@@ -548,6 +548,44 @@ describe("suite adapters", () => {
     expect(report.score?.score).toBe(100);
   });
 
+  it("passes the report when its only failure is an unscored step", () => {
+    const failing = oauthResult({
+      passed: false,
+      outcome: "failed",
+      steps: [
+        oauthResult().steps[0]!,
+        {
+          ...oauthResult().steps[1]!,
+          status: "failed",
+          skipReason: undefined,
+          error: { message: "listing failed" },
+        },
+      ],
+    });
+    const report = toConformanceReport(failing, {
+      oauthUnscoredCheckIds: ["verify_list_tools"],
+    });
+
+    expect(report.score?.outcome).toBe("passed");
+    expect(report.outcome).toBe("passed");
+    expect(report.passed).toBe(true);
+    expect(report.groups[0]?.passed).toBe(true);
+    // Without the exclusion it is the flow's own failure.
+    expect(toConformanceReport(failing).outcome).toBe("failed");
+  });
+
+  it("counts unscored steps as pending on a not-applicable flow too", () => {
+    const score = scoreFromOAuthResult(
+      oauthResult({ outcome: "not-applicable" }),
+      { unscoredCheckIds: ["verify_list_tools"] },
+    );
+
+    expect(score.score).toBeNull();
+    expect(score.notApplicable).toBe(1);
+    expect(score.pending).toBe(1);
+    expect(score.outcome).toBe("passed");
+  });
+
   it("returns a scoreless result for a server without auth — OPTIONAL costs nothing", () => {
     const score = scoreFromOAuthResult(
       oauthResult({ outcome: "not-applicable" }),

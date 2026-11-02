@@ -380,13 +380,21 @@ export function scoreFromOAuthResult(
     unscoredCheckIds?: readonly string[];
   },
 ): ConformanceScore {
+  const unscored = options?.unscoredCheckIds ?? [];
   if (result.outcome === "not-applicable") {
+    // Unscored steps stay pending here too, so the score and a report that
+    // marks them pending count them the same way.
+    const unscoredIds = new Set(unscored);
+    const pending = result.steps.filter((step) =>
+      unscoredIds.has(step.step),
+    ).length;
     return scoreFromCounts(
       {
         passed: 0,
         failed: 0,
         couldNotRun: 0,
-        notApplicable: result.steps.length,
+        notApplicable: result.steps.length - pending,
+        pending,
       },
       [],
       "passed",
@@ -400,7 +408,6 @@ export function scoreFromOAuthResult(
     ...(step.skipReason ? { skipReason: step.skipReason } : {}),
     ...(step.error?.message ? { error: { message: step.error.message } } : {}),
   }));
-  const unscored = options?.unscoredCheckIds ?? [];
   return computeConformanceScore(
     checks,
     [],

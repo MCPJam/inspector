@@ -1217,6 +1217,15 @@ describe("ConformanceTab", () => {
             httpAttempts: [],
             error: { message: "profile shape is wrong" },
           },
+          {
+            step: "oauth_token_format",
+            title: "Token Format",
+            summary: "…",
+            status: "passed",
+            durationMs: 1,
+            logs: [],
+            httpAttempts: [],
+          },
         ],
       }),
     });
@@ -1255,6 +1264,11 @@ describe("ConformanceTab", () => {
     const row = screen.getByText(left.title).closest("div")!.parentElement!;
     expect(within(row).getByText("unscored")).toBeInTheDocument();
     expect(screen.queryByText(/^Not conformant\./)).toBeNull();
+    // The suite's badge follows the score, not the unscored failure.
+    expect(
+      within(suiteHeader("oauth")).getByText("PASSED"),
+    ).toBeInTheDocument();
+    expect(within(suiteHeader("oauth")).queryByText("FAILED")).toBeNull();
   });
 
   it("starts step 2 from the server's default checks", () => {

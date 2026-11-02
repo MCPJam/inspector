@@ -727,6 +727,16 @@ export function useConformanceRun({
         : undefined,
     [oauth.result, oauthUnscored]
   );
+  // The suite's badge follows its score once steps are left out of it: a
+  // failure in an unscored step must not read FAILED beside a passing score.
+  // A not-applicable flow is "unavailable" and keeps its own treatment.
+  const oauthShown = useMemo<OAuthSuiteState>(
+    () =>
+      oauth.status === "done" && oauthUnscored.length > 0 && oauthScore
+        ? { ...oauth, verdict: oauthScore.outcome }
+        : oauth,
+    [oauth, oauthUnscored, oauthScore]
+  );
   const pooledScore = useMemo(() => {
     const parts = [protocolScore, appsScore, tasksScore, oauthScore].filter(
       (part): part is ConformanceScore => part !== undefined
@@ -744,7 +754,7 @@ export function useConformanceRun({
     protocol,
     apps,
     tasks,
-    oauth,
+    oauth: oauthShown,
     versionPin,
     setVersionPin,
     runVersion,

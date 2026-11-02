@@ -466,12 +466,14 @@ function oauthGroupFromResult(
   title: string,
   index: number,
   unscoredIds?: ReadonlySet<string>,
+  /** The flow's verdict once its unscored steps are out; see `oauthVerdict`. */
+  passed: boolean = result.passed,
 ): ConformanceReportGroup {
   return {
     id: `oauth-${index + 1}`,
     title,
     target: result.serverUrl,
-    passed: result.passed,
+    passed,
     durationMs: result.durationMs,
     summary: result.summary,
     cases: result.steps.map((step) =>
@@ -642,39 +644,81 @@ export interface OAuthReportOptions {
   oauthUnscoredCheckIds?: readonly string[];
 }
 
+/**
+ * A flow's verdict once its unscored steps are out. With none left out it is
+ * the flow's own; otherwise the filtered score decides, so a failure in an
+ * unscored step cannot fail the report its score passes. A not-applicable
+ * flow keeps its own verdict: it judged nothing either way.
+ */
+function oauthVerdict(
+  result: OAuthConformanceResult,
+  score: ConformanceScore,
+  filtered: boolean,
+): { passed: boolean; outcome?: string; incompleteReason?: string } {
+  if (!filtered || result.outcome === "not-applicable") {
+    return {
+      passed: result.passed,
+      outcome: result.outcome,
+      ...(result.incompleteReason
+        ? { incompleteReason: result.incompleteReason }
+        : {}),
+    };
+  }
+  return {
+    passed: score.outcome === "passed",
+    outcome: score.outcome,
+    ...(score.outcome === "incomplete" && result.incompleteReason
+      ? { incompleteReason: result.incompleteReason }
+      : {}),
+  };
+}
+
 function createOAuthReport(
   result: OAuthConformanceResult | OAuthConformanceSuiteResult,
   options?: OAuthReportOptions,
 ): ConformanceReport {
   const unscoredCheckIds = options?.oauthUnscoredCheckIds ?? [];
   const unscoredIds = new Set(unscoredCheckIds);
+  const filtered = unscoredIds.size > 0;
   const scoreOptions = { unscoredCheckIds };
   if ("results" in result) {
+    const scores = result.results.map((entry) =>
+      scoreFromOAuthResult(entry, scoreOptions),
+    );
+    const verdicts = result.results.map((entry, index) =>
+      oauthVerdict(entry, scores[index]!, filtered),
+    );
     return {
       schemaVersion: 1,
       kind: "oauth-conformance",
       name: result.name,
-      passed: result.passed,
-      ...suiteOutcomeFields(result.results),
-      score: pooledConformanceScore(
-        result.results.map((entry) =>
-          scoreFromOAuthResult(entry, scoreOptions),
-        ),
-      ),
+      passed: filtered
+        ? verdicts.every((verdict) => verdict.passed)
+        : result.passed,
+      ...suiteOutcomeFields(verdicts),
+      score: pooledConformanceScore(scores),
       durationMs: result.durationMs,
       groups: result.results.map((entry, index) =>
-        oauthGroupFromResult(entry, entry.label, index, unscoredIds),
+        oauthGroupFromResult(
+          entry,
+          entry.label,
+          index,
+          unscoredIds,
+          verdicts[index]!.passed,
+        ),
       ),
     };
   }
 
+  const score = scoreFromOAuthResult(result, scoreOptions);
+  const verdict = oauthVerdict(result, score, filtered);
   return {
     schemaVersion: 1,
     kind: "oauth-conformance",
     name: "OAuth Conformance",
-    passed: result.passed,
-    ...outcomeFields(result),
-    score: scoreFromOAuthResult(result, scoreOptions),
+    passed: verdict.passed,
+    ...outcomeFields(verdict),
+    score,
     durationMs: result.durationMs,
     groups: [
       oauthGroupFromResult(
@@ -682,6 +726,7 @@ function createOAuthReport(
         `${result.protocolVersion}/${result.registrationStrategy}`,
         0,
         unscoredIds,
+        verdict.passed,
       ),
     ],
   };
