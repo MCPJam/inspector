@@ -99,6 +99,15 @@ export async function prepareTargetGrounding(args: {
     if (args.signal.aborted) return;
     if (!mayRunAfterSetup(setup))
       throw new SwarmSetupError(setup, platformFailure, cause);
+    // The target runs on setup's evidence; the reason records that the model's
+    // report was unreadable, reported missing data, or claimed unbacked items.
+    if (setup.status === "completed" && setup.reason)
+      logger.info("[swarm.runner] setup report disregarded", {
+        ...identity,
+        setupReason: setup.reason,
+        missingCount: setup.missing.length,
+        unsupportedClaims: setup.unsupportedClaims,
+      });
   }
   const deadline = withDeadline(
     args.signal,
