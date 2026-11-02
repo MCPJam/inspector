@@ -41,6 +41,12 @@ vi.mock("@/lib/apis/mcp-conformance-api", () => ({
   completeOAuthConformance: (...args: unknown[]) => mockCompleteOAuth(...args),
 }));
 
+// Step 2 lists a server's tools for the checks that must call one.
+const mockListTools = vi.fn(async () => ({ tools: [] as unknown[] }));
+vi.mock("@/lib/apis/mcp-tools-api", () => ({
+  listTools: (...args: unknown[]) => mockListTools(...args),
+}));
+
 vi.mock("@/components/oauth/utils", () => ({
   deriveOAuthProfileFromServer: () => ({
     serverUrl: "https://test.com",
@@ -1236,6 +1242,128 @@ describe("ConformanceTab", () => {
       "data-state",
       "unchecked",
     );
+  });
+
+  describe("tools the checks may call", () => {
+    beforeEach(() => {
+      mockListTools.mockResolvedValue({
+        tools: [
+          { name: "delete_row", annotations: { destructiveHint: true } },
+          { name: "echo", annotations: { readOnlyHint: true } },
+        ],
+      });
+    });
+
+    /** Setup to step 2 with the Protocol suite open. */
+    async function openProtocolChecks() {
+      const alpha = createHttpServer({ name: "alpha" });
+      render(
+        <ConformanceTab
+          server={alpha}
+          servers={[alpha]}
+          onSelectServer={vi.fn()}
+        />,
+      );
+      fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /^Protocol.*checks selected$/ }),
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("combobox", { name: "Tool that emits logs" }),
+        ).toBeEnabled(),
+      );
+    }
+
+    it("asks under the check which tool to call, and runs with it", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await openProtocolChecks();
+
+      // One field per tool, under the first check that calls it.
+      expect(
+        screen.getByRole("combobox", { name: "Tool that asks for input" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("Calls the tool set under Logs Require A Log Level."),
+      ).toBeInTheDocument();
+
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      // Read-only tools first, and a warning on one that may modify data.
+      const options = screen.getAllByRole("option").map((o) => o.textContent);
+      expect(options).toEqual([
+        "Not set",
+        "echo · read-only",
+        "delete_row · may modify data",
+      ]);
+      await user.click(
+        screen.getByRole("option", { name: "echo · read-only" }),
+      );
+
+      const args = screen.getByRole("textbox", {
+        name: "Tool that emits logs arguments",
+      });
+      fireEvent.change(args, { target: { value: "[1]" } });
+      expect(
+        screen.getByText("Arguments must be a JSON object."),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
+      fireEvent.change(args, { target: { value: '{"message": "hi"}' } });
+      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeEnabled();
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      const sent = {
+        probes: {
+          logProbe: { toolName: "echo", arguments: { message: "hi" } },
+        },
+      };
+      await waitFor(() =>
+        expect(mockRunProtocol).toHaveBeenCalledWith(
+          "alpha",
+          expect.objectContaining(sent),
+        ),
+      );
+
+      // Kept for the server: Run again calls the same tool.
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+      );
+      mockRunProtocol.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+      await waitFor(() =>
+        expect(mockRunProtocol).toHaveBeenCalledWith(
+          "alpha",
+          expect.objectContaining(sent),
+        ),
+      );
+    });
+
+    it("never sends a tool for a check left out of the run", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await openProtocolChecks();
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      await user.click(
+        screen.getByRole("option", { name: "echo · read-only" }),
+      );
+
+      // Both checks that would call it are left out.
+      for (const title of ["Logs Require A Log Level", "Log Level Filtering"]) {
+        fireEvent.click(screen.getByRole("checkbox", { name: `Run ${title}` }));
+      }
+      expect(
+        screen.queryByRole("combobox", { name: "Tool that emits logs" }),
+      ).toBeNull();
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+      expect(mockRunProtocol.mock.calls[0]![1]).not.toHaveProperty("probes");
+    });
   });
 
   it("keeps at least one check in Settings", async () => {
