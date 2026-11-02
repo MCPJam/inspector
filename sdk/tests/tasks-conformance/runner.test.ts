@@ -412,6 +412,15 @@ describe("completion acknowledgements", () => {
     ).toContain('rather than "complete"');
   });
 
+  it("names the raw frame's wrong resultType, not the decoded one", () => {
+    // The v2 client consumes `resultType`, so the decoded ack has none; the
+    // message must quote what the server actually sent.
+    expect(
+      validateCompletionAck({}, "tasks/update", { resultType: "task" })
+        .violations[0]
+    ).toContain('resultType "task" rather than "complete"');
+  });
+
   it("FAILS an absent resultType when the raw frame proves it was absent", () => {
     // `UpdateTaskResult` marks the member required. Nothing else grades it:
     // the Tasks suite runs its own runner, which installs no wire recorder, so
@@ -422,13 +431,14 @@ describe("completion acknowledgements", () => {
     expect(verdict.warnings).toEqual([]);
   });
 
-  it("only advises when there is no raw frame to judge", () => {
+  it("does not judge resultType when there is no raw frame", () => {
     // The decoded ack cannot answer the question: the v2 client consumes
     // `resultType` on the way through, so its absence here is evidence about
     // our client, not about the server.
-    const verdict = validateCompletionAck({}, "tasks/update");
-    expect(verdict.violations).toEqual([]);
-    expect(verdict.warnings[0]).toContain("cannot prove what was on the wire");
+    expect(validateCompletionAck({}, "tasks/update")).toEqual({
+      violations: [],
+      warnings: [],
+    });
   });
 
   it("passes when the raw frame carries the required resultType", () => {
