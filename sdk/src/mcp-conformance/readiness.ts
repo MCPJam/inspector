@@ -71,7 +71,10 @@ function informational(
   message: string,
   details?: Record<string, unknown>
 ): MCPReadinessWarning {
-  return { ...warning(id, title, specStrength, message, details), informational: true };
+  return {
+    ...warning(id, title, specStrength, message, details),
+    informational: true,
+  };
 }
 
 function toolOrderWarning(
@@ -390,7 +393,10 @@ async function sessionTerminationWarning(
       )}`,
       // A probe that never completed is reported as such rather than as a
       // status, so the advice cannot read as though both were observed.
-      { getStatus: get?.status ?? "not observed", deleteStatus: del?.status ?? "not observed" }
+      {
+        getStatus: get?.status ?? "not observed",
+        deleteStatus: del?.status ?? "not observed",
+      }
     );
   }
 
@@ -651,7 +657,9 @@ async function logLevelFilteringWarning(
     "MAY",
     `The server sent logs below the requested "${level}" level, or with an unknown level: ${invalidOrLowerLevels
       .map((found) => JSON.stringify(found) ?? "undefined")
-      .join(", ")}. The spec only has the server send logs at or above the requested level`,
+      .join(
+        ", "
+      )}. The spec only has the server send logs at or above the requested level`,
     { ...details, logNotificationCount: levels.length, invalidOrLowerLevels }
   );
 }

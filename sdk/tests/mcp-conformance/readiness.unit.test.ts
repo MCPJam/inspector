@@ -236,8 +236,9 @@ describe("client readiness advice", () => {
       tools,
       nextCursor: undefined,
     } as never);
-    const find = (warnings: Awaited<ReturnType<typeof collectClientReadiness>>) =>
-      warnings.find((item) => item.id === "readiness-tool-name-conventions");
+    const find = (
+      warnings: Awaited<ReturnType<typeof collectClientReadiness>>
+    ) => warnings.find((item) => item.id === "readiness-tool-name-conventions");
 
     const modern = clientContext({ protocolVersion: "2026-07-28" });
     expect(
@@ -361,13 +362,16 @@ describe("raw readiness advice", () => {
       }
       const body = String(init?.body ?? "");
       if (body.includes("initialize")) {
-        return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), {
-          status: 200,
-          headers: {
-            "content-type": "application/json",
-            "mcp-session-id": "session-1",
-          },
-        });
+        return new Response(
+          JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+              "mcp-session-id": "session-1",
+            },
+          }
+        );
       }
       return new Response("Bad Request", { status: 400 });
     }) as unknown as typeof fetch;
@@ -413,7 +417,11 @@ describe("raw readiness advice", () => {
         return new Response(null, { status: 200 });
       }
       return new Response(
-        JSON.stringify({ jsonrpc: "2.0", id: 8100, result: { tools: [], resultType: "complete" } }),
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 8100,
+          result: { tools: [], resultType: "complete" },
+        }),
         { status: 200, headers: { "content-type": "application/json" } }
       );
     }) as unknown as typeof fetch;
@@ -529,9 +537,7 @@ describe("log level filtering advice", () => {
 
   async function advice(context: RawHttpCheckContext) {
     const warnings = await collectRawReadiness(context);
-    return warnings.find(
-      (item) => item.id === "readiness-log-level-filtering"
-    );
+    return warnings.find((item) => item.id === "readiness-log-level-filtering");
   }
 
   it("calls no tool and gives no advice without a logProbe", async () => {
