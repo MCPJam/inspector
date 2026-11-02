@@ -134,8 +134,14 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
 };
 
 /**
- * `mcp-tasks` v2026-08-22.1 — the eight checks the Tasks suite shipped before
- * the gap program's scenario depth.
+ * `mcp-tasks` v2026-10-31.1 — the eight checks the Tasks suite shipped before
+ * the gap program's scenario depth, plus `tasks-ttl-integer-shape`.
+ *
+ * v2026-08-22.1 → v2026-10-31.1 promotes `tasks-ttl-integer-shape`. The
+ * extension's schema types `ttlMs` and `pollIntervalMs` as integers
+ * (`@format int` in schema.ts, `"type": "integer"` in schema.json), and the
+ * schema is the source of truth for every message, so a fractional value is a
+ * spec violation, not a style choice.
  *
  * A SEPARATE profile rather than a section of `mcp-protocol`, which was the
  * open design question. Two reasons settled it:
@@ -151,7 +157,7 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
  */
 const MCP_TASKS_PROFILE: ConformanceProfile = {
   id: "mcp-tasks",
-  version: "2026-08-22.1",
+  version: "2026-10-31.1",
   scored: [
     "tasks-wire-resolvable",
     "tasks-declaration-hygiene",
@@ -161,6 +167,7 @@ const MCP_TASKS_PROFILE: ConformanceProfile = {
     "tasks-ttl-shape",
     "tasks-inline-result",
     "tasks-mcp-name-routing",
+    "tasks-ttl-integer-shape",
   ] satisfies MCPTasksCheckId[],
 };
 

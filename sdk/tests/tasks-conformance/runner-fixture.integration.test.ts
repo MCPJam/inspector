@@ -200,13 +200,14 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
       "tasks-ttl-shape": "passed",
       "tasks-inline-result": "passed",
       "tasks-mcp-name-routing": "passed",
-      // The scenario depth added by the conformance-gap program. All of them
-      // are outside the `mcp-tasks` profile's scored set, so they report these
-      // verdicts without moving the number.
+      // Promoted to scored in `mcp-tasks@2026-10-31.1`.
+      "tasks-ttl-integer-shape": "passed",
+      // The rest of the scenario depth added by the conformance-gap program.
+      // These are outside the `mcp-tasks` profile's scored set, so they report
+      // these verdicts without moving the number.
       "tasks-invalid-task-id-rejected": "passed",
       "tasks-status-payload-shape": "passed",
       "tasks-cancel-ack-shape": "passed",
-      "tasks-ttl-integer-shape": "passed",
       "tasks-undeclared-capability-names-requirements": "passed",
       "tasks-input-required-update-completes": "skipped",
     });
@@ -220,7 +221,6 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
         "tasks-input-required-update-completes",
         "tasks-invalid-task-id-rejected",
         "tasks-status-payload-shape",
-        "tasks-ttl-integer-shape",
         "tasks-undeclared-capability-names-requirements",
       ],
     });
@@ -343,9 +343,10 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     expect(result.incompleteReason).toContain("execution.taskSupport");
     expect(result.incompleteReason).toContain("2026-07-28");
     expect(result.incompleteReason).toContain(TASK_TOOL_NAME);
-    // The SUMMARY counts only the scored checks, so it still reads 6: the five
-    // new task-dependent gaps are pending under `mcp-tasks@2026-08-22.1`.
-    expect(result.summary).toContain("6 could not run");
+    // The SUMMARY counts only the scored checks, so it reads 7: the six
+    // original task-dependent checks plus `tasks-ttl-integer-shape`, scored
+    // since `mcp-tasks@2026-10-31.1`. The other new gaps stay pending.
+    expect(result.summary).toContain("7 could not run");
     expect(result.summary).toContain("pending");
     expect(result.categorySummary.creation.couldNotRun).toBe(2);
     expect(result.discovery.createdTaskId).toBeUndefined();
