@@ -49,7 +49,7 @@ describe("computeConformanceScore", () => {
     expect(clean.outcome).toBe("passed");
 
     const withAdvice = computeConformanceScore(passing(26), [
-      { id: "readiness-metadata-quality", tier: "should" },
+      { id: "readiness-cache-ttl-useful", tier: "should" },
     ]);
     expect(withAdvice.score).toBe(98);
     expect(withAdvice.outcome).toBe("passed");
@@ -336,8 +336,8 @@ describe("suite adapters", () => {
       categorySummary: {} as MCPConformanceResult["categorySummary"],
       readiness: [
         {
-          id: "readiness-metadata-quality",
-          title: "Metadata Quality",
+          id: "readiness-cache-ttl-useful",
+          title: "Useful Cache TTLs",
           severity: "warning",
           specStrength: "SHOULD",
           message: "…",
@@ -404,10 +404,10 @@ describe("suite adapters", () => {
             informational: true,
           },
           {
-            id: "readiness-resource-error-echoes-uri",
-            title: "Resource Errors Name Their URI",
+            id: "readiness-tool-name-conventions",
+            title: "Tool Name Conventions",
             severity: "warning",
-            specStrength: "MAY",
+            specStrength: "SHOULD",
             message: "…",
             informational: true,
           },
