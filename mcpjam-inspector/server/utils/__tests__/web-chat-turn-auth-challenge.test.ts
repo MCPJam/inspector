@@ -14,6 +14,21 @@ const handlers = vi.hoisted(() => ({
   mcpjamFree: vi.fn(async () => new Response("mcpjam")),
   hostedOrg: vi.fn(async () => new Response("org-hosted")),
   localOrg: vi.fn(async () => new Response("org-local")),
+  direct: vi.fn((_options: unknown) => new Response("direct")),
+  persist: vi.fn(async (_input: unknown) => undefined),
+}));
+
+vi.mock("../../services/chat-turn/direct-provider.js", () => ({
+  prepareDirectProvider: vi.fn(async () => ({ model: {} })),
+}));
+
+vi.mock("../../services/chat-turn/direct-stream.js", () => ({
+  streamDirectChatWithLiveTrace: handlers.direct,
+}));
+
+vi.mock("../chat-ingestion.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../chat-ingestion.js")>()),
+  persistChatSessionToConvex: handlers.persist,
 }));
 
 const store = vi.hoisted(() => ({
@@ -393,5 +408,55 @@ describe("hosted chat: mid-session sign-in wiring", () => {
       const options = await dispatch(false, "authz-abc");
       expect(options.scopeStepUpResume).toMatchObject({ toolCallId: "call-1" });
     });
+  });
+});
+
+describe("direct-provider chat: calls a sign-in suspended", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example.com");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("settles them in the history it streams, and saves that history", async () => {
+    // The real scrubber returns a new array, so the stream and the transcript
+    // only agree if they share the one the stream was handed.
+    const orchestration = await import("../chat-v2-orchestration.js");
+    const base = await vi.mocked(orchestration.prepareChatV2)();
+    vi.mocked(orchestration.prepareChatV2).mockResolvedValueOnce({
+      ...base,
+      scrubMessages: (messages: unknown[]) => [...messages],
+    } as never);
+    const turn = args({ chatSessionId: "chat-1", scopeStepUp: true });
+    Object.assign(turn.prepare, { directProvider: {} });
+
+    await streamWebChatTurn(turn as never);
+    const options = handlers.direct.mock.calls.at(-1)?.[0] as any;
+    expect(typeof options.settleSuspendedHistoryToolCall).toBe("function");
+
+    // What the stream does before the model runs: answer the suspended call
+    // in the history it was given.
+    options.messageHistory.push({
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call-settled",
+          toolName: "get_my_orders",
+          output: { type: "error-text", value: "sign in to continue" },
+        },
+      ],
+    });
+    await options.onPersist({
+      responseMessages: [],
+      turnTrace: { turnId: "turn-1", spans: [] },
+    });
+    expect(handlers.persist).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(handlers.persist.mock.calls[0]?.[0])).toContain(
+      "call-settled",
+    );
   });
 });
