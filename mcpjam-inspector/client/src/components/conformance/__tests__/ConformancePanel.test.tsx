@@ -1555,6 +1555,8 @@ describe("ConformanceTab", () => {
     });
     const onConnectServer = vi.fn(async () => "ready" as const);
     const error = vi.spyOn(toast, "error");
+    const loading = vi.spyOn(toast, "loading");
+    const success = vi.spyOn(toast, "success");
     render(
       <ConformanceTab
         server={alpha}
@@ -1571,8 +1573,17 @@ describe("ConformanceTab", () => {
     await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
     await user.click(serverRow("beta"));
     expect(onConnectServer).toHaveBeenCalledWith("beta", { signIn: false });
+    // One toast says it is connecting, then settles into the result.
+    expect(loading).toHaveBeenCalledWith("Connecting beta...");
+    await waitFor(() =>
+      expect(success).toHaveBeenCalledWith("beta connected", {
+        id: loading.mock.results[0]!.value,
+      }),
+    );
     expect(error).not.toHaveBeenCalled();
     error.mockRestore();
+    loading.mockRestore();
+    success.mockRestore();
   });
 
   it("lists the project's servers not loaded yet, and connects one from step 1", async () => {
@@ -1591,8 +1602,8 @@ describe("ConformanceTab", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
-    // Listed as not connected, with Connect, like User Testing's picker.
-    await user.click(screen.getByRole("button", { name: "Connect notion" }));
+    // Listed as not connected; picking it connects it.
+    await user.click(serverRow("notion"));
     expect(onConnectServer).toHaveBeenCalledWith("notion", { signIn: false });
     expect(screen.getByRole("button", { name: SERVER_FIELD })).toHaveTextContent(
       "notion",
@@ -1657,6 +1668,7 @@ describe("ConformanceTab", () => {
     });
     const onConnectServer = vi.fn(async () => "failed" as const);
     const onEditServer = vi.fn();
+    const error = vi.spyOn(toast, "error");
     render(
       <ConformanceTab
         server={server}
@@ -1672,6 +1684,10 @@ describe("ConformanceTab", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(`Couldn't connect to "alpha"`);
     expect(alert).toHaveTextContent("connect ECONNREFUSED 127.0.0.1:3000");
+    expect(error).toHaveBeenCalledWith(
+      "Couldn't connect to alpha.",
+      expect.objectContaining({ id: expect.anything() }),
+    );
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
 
     fireEvent.click(
@@ -1771,7 +1787,7 @@ describe("ConformanceTab", () => {
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 
-  it("lists servers with their status, and Connect only where it can connect", async () => {
+  it("lists servers with their status, and no Connect", async () => {
     const user = userEvent.setup();
     const alpha = createHttpServer({
       name: "alpha",
@@ -1779,13 +1795,11 @@ describe("ConformanceTab", () => {
     });
     const beta = createHttpServer({ name: "beta" });
     const onSelect = vi.fn();
-    const onConnect = vi.fn();
     render(
       <ConformanceServerPicker
         servers={[alpha, beta]}
         selectedName="alpha"
         onSelect={onSelect}
-        onConnect={onConnect}
       />,
     );
 
@@ -1798,13 +1812,8 @@ describe("ConformanceTab", () => {
     expect(screen.getByRole("button", { name: "Add server" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Disconnected" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Connected" })).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Connect beta" }),
-    ).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Connect alpha" }));
-    expect(onConnect).toHaveBeenCalledWith("alpha");
-    expect(onSelect).not.toHaveBeenCalled();
+    // Picking a server connects it, so no row offers Connect.
+    expect(screen.queryByRole("button", { name: /^Connect / })).toBeNull();
 
     await user.click(serverRow("beta"));
     expect(onSelect).toHaveBeenCalledWith("beta");

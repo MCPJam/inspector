@@ -14,6 +14,7 @@ import type {
 } from "@/hooks/use-conformance-run";
 import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { toast } from "@/lib/toast";
+import { startConnectToast } from "@/lib/connect-toast";
 import type {
   ConformanceConnectOutcome,
   ConformanceConnectServer,
@@ -162,6 +163,8 @@ export function ConformanceSetup({
     setServerName(name);
     setConnectFailure(null);
     setConnecting((names) => (names.includes(name) ? names : [...names, name]));
+    // Picking connects on its own, so the toast is what says it is happening.
+    const progress = startConnectToast(name);
     let outcome: ConformanceConnectOutcome;
     try {
       outcome = await onConnectServer(name, { signIn });
@@ -169,6 +172,13 @@ export function ConformanceSetup({
       outcome = "failed";
     }
     setConnecting((names) => names.filter((other) => other !== name));
+    if (outcome === "ready") progress.connected();
+    else
+      progress.failed(
+        outcome === "reauth"
+          ? `${name} needs you to sign in again.`
+          : `Couldn't connect to ${name}.`,
+      );
     if (outcome !== "ready") {
       setConnectFailure({
         serverName: name,
@@ -241,12 +251,8 @@ export function ConformanceSetup({
                   servers={servers}
                   moreServerNames={projectServerNames}
                   loading={projectServersLoading}
-                  connectingNames={connecting}
                   selectedName={serverName}
                   onSelect={selectServer}
-                  onConnect={
-                    onConnectServer ? (name) => void connect(name) : undefined
-                  }
                   labelledBy={serverLabelId}
                 />
                 {noServers ? (
