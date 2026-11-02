@@ -862,7 +862,9 @@ describe("MCPTasksConformanceTest", () => {
       (c) => c.id === "tasks-wire-resolvable"
     );
     expect(wireCheck?.status).toBe("passed");
-    expect(wireCheck?.warnings?.[0]).toContain("treated as absent");
+    expect(wireCheck?.warnings?.[0]).toContain(
+      "must use the 2025-11-25 tasks capability"
+    );
     expect(statusMap(result)["tasks-inline-result"]).toBe("passed");
     // Extension-only checks do not apply to the legacy wire.
     expect(statusMap(result)["tasks-undeclared-capability-rejected"]).toBe(
