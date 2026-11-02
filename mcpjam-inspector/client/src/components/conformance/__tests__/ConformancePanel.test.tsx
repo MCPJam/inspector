@@ -313,11 +313,11 @@ describe("ConformanceTab", () => {
         protocolVersion: "2025-11-25",
         readiness: [
           {
-            id: "readiness-metadata-quality",
-            title: "Metadata Quality",
+            id: "readiness-cache-ttl-useful",
+            title: "Useful Cache TTLs",
             severity: "warning",
             specStrength: "SHOULD",
-            message: "2 tool(s) have no description",
+            message: "Cacheable results advertise ttlMs: 0",
           },
         ],
       } as Partial<MCPConformanceResult>),
@@ -375,7 +375,7 @@ describe("ConformanceTab", () => {
     expect(screen.getByText("4/4")).toBeInTheDocument();
 
     // The advisory that deducted is visible, tier and all.
-    expect(screen.getByText("Metadata Quality")).toBeInTheDocument();
+    expect(screen.getByText("Useful Cache TTLs")).toBeInTheDocument();
     expect(screen.getByText("(SHOULD)")).toBeInTheDocument();
   });
 

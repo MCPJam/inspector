@@ -24,8 +24,6 @@ interface CacheFixtureOptions {
   templatePageScopes?: unknown[];
   /** Answer a read of an unknown resource with `{ contents: [] }`. */
   emptyContentsForMissing?: boolean;
-  /** Include `error.data.uri` on a resource error. */
-  echoUriOnResourceError?: boolean;
   /**
    * Answer these methods with a non-complete `resultType` and NO hints — the
    * shape the extension explicitly excuses from carrying them.
@@ -158,7 +156,6 @@ async function serveCacheFixture(options: CacheFixtureOptions) {
             error: {
               code: -32602,
               message: "Resource not found",
-              ...(options.echoUriOnResourceError ? { data: { uri } } : {}),
             },
           });
         }
@@ -415,27 +412,5 @@ describe("modern-resource-read-no-empty-contents", () => {
       ["modern-resource-not-found-invalid-params", "failed"],
       ["modern-resource-read-no-empty-contents", "failed"],
     ]);
-  });
-});
-
-describe("readiness-resource-error-echoes-uri", () => {
-  it("advises when a resource error names no uri", async () => {
-    const result = await run({}, ["modern-resource-not-found-invalid-params"]);
-    const advisory = result.readiness.find(
-      (entry) => entry.id === "readiness-resource-error-echoes-uri",
-    );
-    expect(advisory?.specStrength).toBe("MAY");
-    expect(result.checks.some((check) => check.status === "failed")).toBe(false);
-  });
-
-  it("stays silent when the error echoes the uri", async () => {
-    const result = await run({ echoUriOnResourceError: true }, [
-      "modern-resource-not-found-invalid-params",
-    ]);
-    expect(
-      result.readiness.some(
-        (entry) => entry.id === "readiness-resource-error-echoes-uri",
-      ),
-    ).toBe(false);
   });
 });
