@@ -1,3 +1,4 @@
+export { toolResultAuthChallengeFindings } from "../host-compat/tool-auth-compatibility.js";
 import {
   environmentNamesFor,
   resolveSuiteHostTargets,
@@ -1842,6 +1843,12 @@ export const checkHostCompatibilityOperation: PlatformOperation<
       tools: rawTools.map((tool) => ({
         name: String(tool.name),
         _meta: tool._meta as Record<string, unknown> | undefined,
+        // KEPT, not dropped: the per-tool auth declaration is what tells a
+        // host whether to act on a tool-result sign-in challenge. `_meta`
+        // (and any `_meta.securitySchemes` in it) rides along above.
+        ...(tool.securitySchemes !== undefined
+          ? { securitySchemes: tool.securitySchemes }
+          : {}),
       })),
     };
 
