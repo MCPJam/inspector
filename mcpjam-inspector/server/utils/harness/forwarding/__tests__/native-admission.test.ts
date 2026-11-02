@@ -19,6 +19,7 @@ function candidate(
   },
 ) {
   return {
+    hostCapabilities: { capabilities: {}, gaps: [] },
     manager: {
       getServerConfig: () => config,
       getInitializationInfo: () => initialized,
@@ -29,6 +30,11 @@ function candidate(
 }
 
 describe("native profile admission", () => {
+  it("does not apply dormant widget promises to a plain native connection", () => {
+    expect(nativeForwardingGaps({ ...candidate(), hostCapabilities: {
+      capabilities: { futureCapability: {} }, gaps: ["host-capability:futureCapability"],
+    } })).toEqual([]);
+  });
   it("requires new elicitation qualification when the installed runtime pin changes", () => {
     expect(harnessPinnedVersion("claude-code")).toBe("2.1.245");
   });

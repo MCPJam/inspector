@@ -1,3 +1,4 @@
+import { withRetainedResourceSource, readRetainedResourceSource } from "@/shared/retained-app-resources";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
@@ -37,6 +38,8 @@ import {
   signHistoryForPersistence,
   signToolCall,
   signToolResult,
+  signAppResourceSource,
+  verifyAppResourceSource,
   UNVERIFIED_TOOL_RESULT_NOTICE,
   verifyAssistantText,
   verifyClientHistory,
@@ -65,7 +68,9 @@ it.each([false, true])("authenticates saved presentation separately from model o
     },
     parentExecutionId: "parent",
   };
-  const raw = { content: [], _meta: { private: "original" } };
+  const source = {version: 1 as const, toolCallId: "call", owner: widgetContext.owner, digest: "binding-digest", profile: "original-profile", projectId: ctx.projectId, chatSessionId: ctx.chatSessionId};
+  const unsigned = { content: [], _meta: { private: "original" } };
+  const raw = retained ? withRetainedResourceSource(unsigned, {...source, attestation: signAppResourceSource(ctx, source)!}) : unsigned;
   const messages: ModelMessage[] = [
     {
       role: "assistant",
@@ -101,6 +106,17 @@ it.each([false, true])("authenticates saved presentation separately from model o
   );
   const checked = verifyClientHistory(ui, ctx);
   expect(checked.unverifiedToolResults).toBe(0);
+  if (retained) {
+    const restored = JSON.stringify(preserveNativeUiPresentations(messages, checked.messages));
+    const binding = readRetainedResourceSource(raw);
+    expect(binding).toBeDefined();
+    if (!binding) throw Error("Missing retained source");
+    const {attestation, ...claim} = binding;
+    expect(restored).toContain(attestation);
+    expect(verifyAppResourceSource(ctx, claim, attestation)).toBe(true);
+    expect(verifyAppResourceSource(otherChat, claim, attestation)).toBe(false);
+    expect(verifyAppResourceSource(ctx, claim, signToolResult(ctx, {toolCallId: "call", toolName: "list_issues", input: {}, output: claim}))).toBe(false);
+  }
   expect(
     JSON.stringify(preserveNativeUiPresentations(messages, checked.messages)),
   ).toContain('"private":"original"');
