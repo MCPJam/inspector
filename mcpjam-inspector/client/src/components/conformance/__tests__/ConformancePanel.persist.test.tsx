@@ -8,8 +8,11 @@ const mockRunApps = vi.fn();
 const mockRunTasks = vi.fn();
 const mockStartOAuth = vi.fn();
 
-const { startRun } = vi.hoisted(() => ({
+const { startRun, finalizeRun, cancelRun, upsertReport } = vi.hoisted(() => ({
+  upsertReport: vi.fn().mockResolvedValue(undefined),
   startRun: vi.fn().mockResolvedValue({ runId: "run_1" }),
+  finalizeRun: vi.fn().mockResolvedValue({ runId: "run_1" }),
+  cancelRun: vi.fn().mockResolvedValue({ cancelled: true }),
 }));
 
 vi.mock("@/lib/apis/mcp-conformance-api", () => ({
@@ -33,13 +36,21 @@ vi.mock("@/components/oauth/utils", () => ({
   }),
 }));
 
-vi.mock("convex/react", () => ({
-  useMutation: (name: string) => {
-    if (name === "conformanceRuns:startRun") return startRun;
-    return vi.fn().mockResolvedValue(undefined);
-  },
-  useAction: () => vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock("convex/react", async () => {
+  const { getFunctionName } = await import("convex/server");
+  return {
+    useMutation: (ref: unknown) => {
+      // String names and typed references (makeFunctionReference) both arrive.
+      const name =
+        typeof ref === "string" ? ref : getFunctionName(ref as never);
+      if (name === "conformanceRuns:startRun") return startRun;
+      if (name === "conformanceRuns:finalizeRun") return finalizeRun;
+      if (name === "conformanceRuns:cancelRun") return cancelRun;
+      return vi.fn().mockResolvedValue(undefined);
+    },
+    useAction: () => upsertReport,
+  };
+});
 
 vi.mock(
   "@/components/conformance/directory-readiness/DirectoryReadinessSection",
@@ -48,7 +59,7 @@ vi.mock(
   }),
 );
 
-import { ConformanceTab } from "../ConformancePanel";
+import { ConformanceTab } from "../ConformanceTab";
 import { RUN_LABEL } from "../ConformancePageChrome";
 
 function createHttpServer(): ServerWithName {
@@ -69,9 +80,63 @@ function hang() {
   return new Promise(() => {});
 }
 
+function mockPassingSuites() {
+  const base = {
+    passed: true,
+    outcome: "passed",
+    serverUrl: "https://example.com/mcp",
+    target: "https://example.com/mcp",
+    summary: "ok",
+    durationMs: 1,
+    checks: [],
+    categorySummary: {},
+  };
+  mockRunProtocol.mockResolvedValue({ success: true, result: base });
+  mockRunApps.mockResolvedValue({
+    success: true,
+    result: {
+      ...base,
+      discovery: {
+        toolCount: 0,
+        uiToolCount: 0,
+        listedResourceCount: 0,
+        listedUiResourceCount: 0,
+        checkedUiResourceCount: 0,
+      },
+    },
+  });
+  mockRunTasks.mockResolvedValue({
+    success: true,
+    result: {
+      ...base,
+      discovery: {
+        protocolVersion: "2025-11-25",
+        wire: "legacy",
+        toolCount: 0,
+        taskCapableToolCount: 0,
+      },
+    },
+  });
+  mockStartOAuth.mockResolvedValue({
+    phase: "complete",
+    result: {
+      passed: true,
+      outcome: "passed",
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "cimd",
+      serverUrl: "https://example.com/mcp",
+      summary: "ok",
+      durationMs: 1,
+      steps: [],
+    },
+  });
+}
+
 describe("ConformanceTab persist", () => {
   beforeEach(() => {
     startRun.mockClear();
+    finalizeRun.mockClear();
+    cancelRun.mockClear();
     mockRunProtocol.mockImplementation(hang);
     mockRunApps.mockImplementation(hang);
     mockRunTasks.mockImplementation(hang);
@@ -114,5 +179,166 @@ describe("ConformanceTab persist", () => {
     await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
 
     await waitFor(() => expect(startRun).toHaveBeenCalledTimes(1));
+  });
+
+  it("cancels a run the page leaves before it finalizes", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(
+      <ConformanceTab
+        server={createHttpServer()}
+        persist={{ projectId: "proj_1", serverId: "srv_1" }}
+      />,
+    );
+    await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await waitFor(() => expect(startRun).toHaveBeenCalledTimes(1));
+
+    unmount();
+
+    expect(cancelRun).toHaveBeenCalledWith({ runId: "run_1" });
+    expect(finalizeRun).not.toHaveBeenCalled();
+  });
+
+  it("cancels a run whose id arrives after the page left", async () => {
+    const user = userEvent.setup();
+    let resolveStart: (value: { runId: string }) => void = () => {};
+    startRun.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveStart = resolve)),
+    );
+    const { unmount } = render(
+      <ConformanceTab
+        server={createHttpServer()}
+        persist={{ projectId: "proj_1", serverId: "srv_1" }}
+      />,
+    );
+    await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await waitFor(() => expect(startRun).toHaveBeenCalledTimes(1));
+
+    unmount();
+    expect(cancelRun).not.toHaveBeenCalled();
+    resolveStart({ runId: "run_2" });
+
+    await waitFor(() =>
+      expect(cancelRun).toHaveBeenCalledWith({ runId: "run_2" }),
+    );
+  });
+
+  it("cancels a run whose finalize fails after the page left", async () => {
+    const user = userEvent.setup();
+    mockPassingSuites();
+    let rejectFinalize: (error: Error) => void = () => {};
+    finalizeRun.mockImplementationOnce(
+      () => new Promise((_, reject) => (rejectFinalize = reject)),
+    );
+    const { unmount } = render(
+      <ConformanceTab
+        server={createHttpServer()}
+        persist={{ projectId: "proj_1", serverId: "srv_1" }}
+      />,
+    );
+    await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await waitFor(() => expect(finalizeRun).toHaveBeenCalledTimes(1));
+
+    unmount();
+    expect(cancelRun).not.toHaveBeenCalled();
+    rejectFinalize(new Error("finalize failed"));
+
+    await waitFor(() =>
+      expect(cancelRun).toHaveBeenCalledWith({ runId: "run_1" }),
+    );
+  });
+
+  it("finalizes a finished run without a link to it, and does not cancel it on leave", async () => {
+    const user = userEvent.setup();
+    mockPassingSuites();
+    const { unmount } = render(
+      <ConformanceTab
+        server={createHttpServer()}
+        persist={{ projectId: "proj_1", serverId: "srv_1" }}
+      />,
+    );
+    await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+
+    await waitFor(() =>
+      expect(finalizeRun).toHaveBeenCalledWith({ runId: "run_1" }),
+    );
+    // The results are already on screen and the run is in History.
+    expect(
+      screen.queryByRole("button", { name: "View saved run" }),
+    ).not.toBeInTheDocument();
+
+    unmount();
+    expect(cancelRun).not.toHaveBeenCalled();
+  });
+
+  it("saves the OAuth checks a server leaves out as pending in the report", async () => {
+    const user = userEvent.setup();
+    mockPassingSuites();
+    mockStartOAuth.mockResolvedValue({
+      phase: "complete",
+      result: {
+        passed: false,
+        outcome: "failed",
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "cimd",
+        serverUrl: "https://example.com/mcp",
+        summary: "OAuth summary",
+        durationMs: 1,
+        steps: [
+          {
+            step: "verify_profile_shape",
+            title: "Profile Shape",
+            summary: "…",
+            status: "failed",
+            durationMs: 1,
+            logs: [],
+            httpAttempts: [],
+            error: { message: "bad shape" },
+          },
+          {
+            step: "oauth_token_format",
+            title: "Token Format",
+            summary: "…",
+            status: "passed",
+            durationMs: 1,
+            logs: [],
+            httpAttempts: [],
+          },
+        ],
+      },
+    });
+    render(
+      <ConformanceTab
+        server={createHttpServer()}
+        persist={{ projectId: "proj_1", serverId: "srv_1" }}
+        serverDefaults={{
+          "http-server": { oauthUnscored: ["verify_profile_shape"] },
+        }}
+      />,
+    );
+    await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await waitFor(() =>
+      expect(finalizeRun).toHaveBeenCalledWith({ runId: "run_1" }),
+    );
+
+    const oauthUpload = upsertReport.mock.calls
+      .map(([payload]) => payload)
+      .find(
+        (payload: { suiteKind?: string; report?: unknown }) =>
+          payload.suiteKind === "oauth" && payload.report,
+      ) as {
+      report: {
+        score: { pending: number; failed: number };
+        groups: Array<{ cases: Array<{ id: string; pending?: boolean }> }>;
+      };
+    };
+    const cases = oauthUpload.report.groups.flatMap((group) => group.cases);
+    expect(cases.find((c) => c.id === "verify_profile_shape")?.pending).toBe(
+      true,
+    );
+    expect(cases.find((c) => c.id === "oauth_token_format")?.pending).toBe(
+      undefined,
+    );
+    // The backend recomputes from these cases: the failure is not counted.
+    expect(oauthUpload.report.score).toMatchObject({ pending: 1, failed: 0 });
   });
 });

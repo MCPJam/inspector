@@ -1,4 +1,5 @@
 import { HOSTED_MODE } from "../config.js";
+import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { buildLocalScopeStepUpResume, buildLocalScopeStepUpCancellation, readProtectedResourceUrl } from "../services/chat-turn/local-interactions.js";
 import { createLocalScopeStepUpContinuation } from "./scope-step-up-continuation.js";
 import { prepareDirectProvider, type DirectProviderInput } from "../services/chat-turn/direct-provider.js";
@@ -162,6 +163,7 @@ import { buildServerNamesById } from "./../routes/web/auth.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getSpendClientIp } from "./client-ip.js";
 import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
+import { preserveNativeUiPresentations } from "./harness/forwarding/native-transcript.js";
 import { ranTurnSelection } from "./session-model-selection";
 import type { HarnessBox } from "./harness/harness-box.js";
 import {
@@ -287,6 +289,7 @@ export interface WebChatTurnPersistContext {
   systemPrompt?: string;
   temperature?: number;
   requireToolApproval?: boolean;
+  requireNativeToolDiscovery?: boolean;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   /** Resolved host harness (absent ⇒ emulated). Routes a claude-code host
    *  through the real Claude Code runtime via handleMCPJamFreeChatModel. */
@@ -418,6 +421,8 @@ export interface WebChatTurnPersistContext {
  * here so the helper signature is self-contained.
  */
 export interface WebChatTurnPrepareInputs {
+  harnessHostCapabilities?: MCPJamHandlerOptions["harnessHostCapabilities"];
+  requireNativeToolDiscovery?: boolean;
   /** A local ingress has selected its direct-provider path. */
   directProvider?: DirectProviderInput;
   localMcpRuntimeRequired?: boolean;
@@ -576,6 +581,7 @@ export interface WebChatTurnRuntime {
    * client speaks the hosted-elicitation handshake; see `chat-v2.ts`.
    */
   elicitationBridge?: HostedElicitationBridge;
+  harnessOwnedInput?: boolean;
   /**
    * Hosted MRTR (§12.5, PR5) bridge — attached to the stream writer so the
    * suspending collector can emit `data-mrtr-input-required` parts. Present only
@@ -725,6 +731,7 @@ export async function streamChatTurn(
   source: "managed" | "standalone",
 ): Promise<Response> {
   const { manager, prepare, persist, runtime } = args;
+  if (!persist.harness) assertNativeDiscovery({ required: persist.requireNativeToolDiscovery });
   const { c } = runtime;
   if (source === "standalone" && (HOSTED_MODE || persist.projectId ||
       persist.environmentId || persist.scenarioId || persist.harness)) {
@@ -1361,11 +1368,13 @@ export async function streamChatTurn(
         ...(secretScrubber ? { secretScrubber } : {}),
         modelId,
         // Backfill origin cannot be stored on a session selection.
-        modelSelection: prepare.routingSelectionOrigin ? undefined : ranTurnSelection({
-          selection: prepare.routingSelection,
-          model: prepare.modelDefinition,
-          reasoningEffort: prepare.reasoningEffort,
-        }),
+        modelSelection: prepare.routingSelectionOrigin
+          ? undefined
+          : ranTurnSelection({
+              selection: prepare.routingSelection,
+              model: prepare.modelDefinition,
+              reasoningEffort: prepare.reasoningEffort,
+            }),
         modelSource,
         ...(persist.projectId ? { projectId: persist.projectId } : {}),
         sourceType: persist.sourceType,
@@ -1399,7 +1408,12 @@ export async function streamChatTurn(
               // and history that verified on the way in (MJ-009).
               provenance
                 ? signHistoryForPersistence(
-                    stripPluginModelContext(fullHistory),
+                    stripPluginModelContext(
+                      preserveNativeUiPresentations(
+                        fullHistory,
+                        uiMessagesForTurn,
+                      ),
+                    ),
                     provenance,
                     allTools as ToolSet,
                   )
@@ -1433,6 +1447,7 @@ export async function streamChatTurn(
                   ? { reasoningEffort: prepare.reasoningEffort }
                   : {}),
                 requireToolApproval: persist.requireToolApproval,
+                requireNativeToolDiscovery: persist.requireNativeToolDiscovery,
                 respectToolVisibility: persist.respectToolVisibility,
                 modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
                 mcpToolResultImageRendering:
@@ -1636,6 +1651,7 @@ export async function streamChatTurn(
         })
       : { runtimeLocation: "cloud", providerKey };
 
+    assertNativeDiscovery({ required: persist.requireNativeToolDiscovery });
     const orgMaxSteps =
       orgRuntime.runtimeLocation === "local"
         ? resolveLocalOrgMaxSteps(undefined)
@@ -1870,6 +1886,8 @@ export async function streamChatTurn(
       ...Array.from(unavailableServers?.keys() ?? []),
     ],
     requireToolApproval: persist.requireToolApproval,
+    requireNativeToolDiscovery: persist.requireNativeToolDiscovery,
+    harnessHostCapabilities: prepare.harnessHostCapabilities,
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     // The browser sent this history (MJ-008): its unresolved calls run only
     // under a verified approval.
@@ -1934,6 +1952,11 @@ export async function streamChatTurn(
       ? { onSecretEnvDelivered: persist.onSecretEnvDelivered }
       : {}),
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+    ...(runtime.elicitationBridge
+      ? { onHarnessElicitation: runtime.elicitationBridge.callback }
+      : {}),
+    harnessOwnedInput: runtime.harnessOwnedInput,
+    harnessOwnedTasks: runtime.taskCreatedBridge?.canDeliverOwnedTasks === true,
     // Hosted MRTR (§12.5) resume: emulated engine only. On a fresh resume
     // request the engine drives one retry leg (reconstructing tool
     // output-schema validation) before the first model call, splices the
@@ -1974,10 +1997,7 @@ export async function streamChatTurn(
       );
       emitTurnNotices(writer);
       runtime.rpcCollector?.attachStreamWriter(writer);
-      // NOTE: for HARNESS hosts this writer exists but elicitation still won't
-      // fire — harness MCP traffic goes through separate /api/web/harness-mcp
-      // requests, not this turn's manager, so the callback is never invoked.
-      // Attaching is harmless and keeps the three sites uniform.
+      // Native Claude elicitation uses this same owned bridge and writer.
       runtime.elicitationBridge?.attachStreamWriter(writer);
       // MRTR suspend emits `data-mrtr-input-required` on this same stream.
       runtime.mrtrBridge?.attachStreamWriter(writer);

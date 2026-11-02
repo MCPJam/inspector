@@ -80,6 +80,11 @@ interface JudgesSectionProps {
    * while the organization requires its own keys (see `useAvailableModels`).
    */
   onManageOrgProviders?: () => void;
+  /**
+   * The same from a model search with no match, under any key policy, or
+   * `null` when the organization offers this viewer none.
+   */
+  onAddProvider: (() => void) | null;
 }
 
 /**
@@ -216,6 +221,7 @@ export function JudgeModelControl({
   saveModelSelections,
   requireOrgKeys = false,
   onManageOrgProviders,
+  onAddProvider,
 }: {
   id: string;
   value: EvalJudgeConfig | undefined;
@@ -224,6 +230,11 @@ export function JudgeModelControl({
   saveModelSelections?: boolean;
   requireOrgKeys?: boolean;
   onManageOrgProviders?: () => void;
+  /**
+   * The same from a model search with no match, under any key policy, or
+   * `null` when the organization offers this viewer none.
+   */
+  onAddProvider: (() => void) | null;
 }) {
   const deploymentStoresSelections = useModelSelectionsSupported();
   const saveSelections = saveModelSelections ?? deploymentStoresSelections;
@@ -237,6 +248,7 @@ export function JudgeModelControl({
       selection={gc?.judgeSelection}
       requireOrgKeys={requireOrgKeys}
       onManageOrgProviders={onManageOrgProviders}
+      onAddProvider={onAddProvider}
       availableModels={availableModels}
       selectionsSupported={saveSelections}
       managedDefaultModelId={MANAGED_DEFAULT_JUDGE_MODEL}
@@ -273,6 +285,7 @@ export function JudgesSection({
   saveModelSelections,
   requireOrgKeys = false,
   onManageOrgProviders,
+  onAddProvider,
 }: JudgesSectionProps) {
   const costNote = requireOrgKeys
     ? JUDGE_ORG_PROVIDER_COST_NOTE
@@ -375,6 +388,7 @@ export function JudgesSection({
               selection={gc?.judgeSelection}
               requireOrgKeys={requireOrgKeys}
               onManageOrgProviders={onManageOrgProviders}
+              onAddProvider={onAddProvider}
               availableModels={availableModels}
               selectionsSupported={saveSelections}
               managedDefaultModelId={MANAGED_DEFAULT_JUDGE_MODEL}

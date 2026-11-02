@@ -14,6 +14,8 @@ import {
   getConformanceClientCredentialsDynamicRegistrationMetadata,
 } from "../oauth/client-identity.js";
 import { createOAuthStateMachine } from "../oauth/state-machines/factory.js";
+import { classifyUnauthenticatedProbe } from "../oauth/state-machines/shared/challenges.js";
+import { responseFailureFindingKey } from "../oauth/state-machines/shared/response-error.js";
 import { isLoopbackOAuthUrl } from "../oauth/ssrf-guard.js";
 import {
   getStepInfo,
@@ -181,6 +183,40 @@ function resolveStepInfo(step: ConformanceStepId): OAuthStepInfo {
   return getStepInfo(step);
 }
 
+const INVALID_CLIENT_TOKEN_FAILURE = /^Token request failed: \d{3}: invalid_client$/;
+
+/**
+ * The token endpoint refused the client itself (RFC 6749 §5.2
+ * `invalid_client`): a wrong client ID or secret, or a secret that never
+ * reached the request. The raw "Token request failed: 401 …" line reads as if
+ * the user's own login failed, so lead with what to check and keep the
+ * provider's code, endpoint and own reason under Details. Only a run that
+ * sent a secret is pointed at it: a CIMD or public client sent none, so its
+ * client ID and registration are what to check. `undefined` for any other
+ * failure, which keeps its message as-is.
+ */
+function describeTokenClientRejection(
+  message: string,
+  tokenEndpoint: string | undefined,
+  sentClientSecret: boolean,
+): StepResult["error"] | undefined {
+  const key = responseFailureFindingKey(message);
+  if (!key || !INVALID_CLIENT_TOKEN_FAILURE.test(key)) {
+    return undefined;
+  }
+  return {
+    message: sentClientSecret
+      ? "The authorization server rejected this run's OAuth client credentials during token exchange. Verify the client ID and secret in server settings."
+      : "The authorization server rejected this run's OAuth client during token exchange. Verify the client ID and how the client is registered.",
+    details: [
+      "Provider code: invalid_client",
+      ...(tokenEndpoint ? [`Endpoint: ${tokenEndpoint}`] : []),
+      // Already redacted and capped by describeTokenRequestFailure.
+      `Provider response: ${message}`,
+    ].join("\n"),
+  };
+}
+
 function buildStepResult(
   step: StepResult["step"],
   status: StepResult["status"],
@@ -249,7 +285,7 @@ async function probeAuthorizationRequirement(
     if (response.status >= 200 && response.status < 300) {
       return {
         requirement: "not-required",
-        detail: `the server answered an unauthenticated initialize with HTTP ${response.status} instead of challenging`,
+        detail: `the server answered a request without a token with HTTP ${response.status}`,
       };
     }
 
@@ -262,7 +298,7 @@ async function probeAuthorizationRequirement(
 
     return {
       requirement: "inconclusive",
-      detail: `the server answered an unauthenticated initialize with HTTP ${response.status}`,
+      detail: `the server answered a request without a token with HTTP ${response.status}`,
     };
   } catch (error) {
     // A transport failure says nothing about authorization. Fall through to
@@ -289,6 +325,24 @@ function buildSkippedStepResult(
     message ? { message } : undefined,
   );
   return { ...result, skipReason };
+}
+
+// The single row an authorization-optional run reports: the probe IS
+// `request_without_token`, and it is the only thing actually observed — not a
+// manufactured list of every flow step that "would have" run.
+function buildAuthNotRequiredStep(
+  protocolVersion: string,
+  detail: string,
+  evidence?: Pick<StepResult, "durationMs" | "logs" | "httpAttempts" | "http">,
+): StepResult {
+  return {
+    ...buildSkippedStepResult(
+      "request_without_token",
+      "not-applicable",
+      `Authorization is OPTIONAL in ${protocolVersion} and this server does not require it — ${detail}`,
+    ),
+    ...evidence,
+  };
 }
 
 /**
@@ -337,7 +391,7 @@ function buildSummary(
   outcome: OAuthRunOutcome,
 ): string {
   if (outcome === "not-applicable") {
-    return `OAuth conformance not applicable for ${config.serverUrl}: the server served an unauthenticated request instead of challenging, and authorization is OPTIONAL in ${config.protocolVersion}`;
+    return "No login required: the server answered without a token.";
   }
 
   if (outcome === "passed") {
@@ -429,6 +483,8 @@ export class OAuthConformanceTest {
     let redirectUrl: string | undefined;
     /** Set when the pre-flight probe finds the server requires no auth. */
     let notApplicableReason: string | undefined;
+    /** Set when the probe was challenged with a non-401 (a 403 + Bearer). */
+    let nonCompliantChallengeStatus = false;
 
     const updateState = (updates: Partial<OAuthFlowState>) => {
       state = { ...state, ...updates };
@@ -574,14 +630,10 @@ export class OAuthConformanceTest {
 
       if (authRequirement.requirement === "not-required") {
         notApplicableReason = authRequirement.detail;
-        // One step, not a manufactured list of every flow step that "would
-        // have" run: the probe IS `request_without_token`, and it is the only
-        // thing actually observed.
         steps.push(
-          buildSkippedStepResult(
-            "request_without_token",
-            "not-applicable",
-            `Authorization is OPTIONAL in ${this.config.protocolVersion} and this server does not require it — ${authRequirement.detail}`,
+          buildAuthNotRequiredStep(
+            this.config.protocolVersion,
+            authRequirement.detail,
           ),
         );
       }
@@ -729,12 +781,21 @@ export class OAuthConformanceTest {
             const durationMs = Date.now() - stepStartedAt;
             const logs = (state.infoLogs ?? []).slice(beforeLogs);
             const attempts = resolveAttempts(activeCollector, beforeHistory, state);
+            const message =
+              error instanceof Error ? error.message : String(error);
             steps.push(
-              buildStepResult("token_request", "failed", durationMs, logs, attempts, {
-                message:
-                  error instanceof Error ? error.message : String(error),
-                details: error,
-              }),
+              buildStepResult(
+                "token_request",
+                "failed",
+                durationMs,
+                logs,
+                attempts,
+                describeTokenClientRejection(
+                  message,
+                  state.authorizationServerMetadata?.token_endpoint,
+                  Boolean(tokenClientSecret),
+                ) ?? { message, details: error },
+              ),
             );
             break;
           } finally {
@@ -840,15 +901,22 @@ export class OAuthConformanceTest {
         activeCollector = undefined;
 
         if (state.currentStep === startStep) {
+          const message = state.error || `Step ${startStep} did not advance`;
           const failure = buildStepResult(
             startStep,
             "failed",
             durationMs,
             logs,
             attempts,
-            {
-              message: state.error || `Step ${startStep} did not advance`,
-            },
+            (startStep === "token_request"
+              ? describeTokenClientRejection(
+                  message,
+                  state.authorizationServerMetadata?.token_endpoint,
+                  // Mirrors buildTokenRequestClientAuth: "none" drops the secret.
+                  Boolean(state.clientSecret) &&
+                    state.tokenEndpointAuthMethod !== "none",
+                )
+              : undefined) ?? { message },
           );
 
           // A successful iteration is named for the state it REACHED, so the
@@ -872,6 +940,70 @@ export class OAuthConformanceTest {
           break;
         }
 
+        // The machines move to `received_401_unauthorized` for every probe
+        // answer they continue past — a 401, a 403 carrying a Bearer
+        // challenge, and a 200 — so arriving there says nothing about what the
+        // server sent. Grade the probe's real status: only a 401 is the
+        // challenge MCP requires. This catches what the pre-flight could not
+        // (it was inconclusive, then the flow's own probe got through).
+        if (
+          startStep === "request_without_token" &&
+          state.currentStep === "received_401_unauthorized" &&
+          state.lastResponse
+        ) {
+          const probeStatus = state.lastResponse.status;
+          const probe = classifyUnauthenticatedProbe({
+            status: probeStatus,
+            statusText: state.lastResponse.statusText,
+            wwwAuthenticateHeader:
+              state.lastResponse.headers?.["www-authenticate"],
+          });
+
+          if (probe.kind === "anonymous_allowed") {
+            notApplicableReason = `the server answered a request without a token with HTTP ${probeStatus}`;
+            // Replace the transition into the probe with the same single row
+            // the pre-flight reports, keeping the probe's evidence.
+            const previous = steps[steps.length - 1];
+            const transition =
+              previous?.step === "request_without_token" ? previous : undefined;
+            const row = buildAuthNotRequiredStep(
+              this.config.protocolVersion,
+              notApplicableReason,
+              {
+                durationMs: (transition?.durationMs ?? 0) + durationMs,
+                logs: [...(transition?.logs ?? []), ...logs],
+                httpAttempts: [...(transition?.httpAttempts ?? []), ...attempts],
+                http: attempts[attempts.length - 1] ?? transition?.http,
+              },
+            );
+            if (transition) {
+              steps[steps.length - 1] = row;
+            } else {
+              steps.push(row);
+            }
+            break;
+          }
+
+          if (probe.kind === "challenged" && !probe.specCompliant) {
+            // Red, but the flow continues: the challenge still carries
+            // everything discovery needs, so the remaining steps are graded.
+            nonCompliantChallengeStatus = true;
+            steps.push(
+              buildStepResult(
+                state.currentStep,
+                "failed",
+                durationMs,
+                logs,
+                attempts,
+                {
+                  message: `MCP server returned HTTP ${probeStatus} to a request without a token; MCP requires 401 Unauthorized`,
+                },
+              ),
+            );
+            continue;
+          }
+        }
+
         steps.push(
           buildStepResult(state.currentStep, "passed", durationMs, logs, attempts),
         );
@@ -887,7 +1019,14 @@ export class OAuthConformanceTest {
 
       if (
         state.currentStep === "complete" &&
-        steps.every((step) => step.status !== "failed") &&
+        // A non-401 challenge is red but leaves a complete flow to probe, so
+        // it does not withhold the checks below.
+        steps.every(
+          (step) =>
+            step.status !== "failed" ||
+            (nonCompliantChallengeStatus &&
+              step.step === "received_401_unauthorized"),
+        ) &&
         this.config.oauthConformanceChecks
       ) {
         const oauthCheckRedirectUrl = redirectUrl;

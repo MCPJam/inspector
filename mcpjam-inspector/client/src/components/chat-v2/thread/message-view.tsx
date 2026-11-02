@@ -68,6 +68,11 @@ interface MessageViewProps {
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
+  onForwardingToolApprovalResponse?: (options: {
+    id: string;
+    approved: boolean;
+  }) => void;
+  isStreaming?: boolean;
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
   showInlineEdit?: boolean;
   minimalMode?: boolean;
@@ -202,6 +207,8 @@ function areMessageViewPropsEqual(
   next: Readonly<MessageViewProps>,
 ) {
   return (
+    !next.isStreaming &&
+    prev.isStreaming === next.isStreaming &&
     !shouldRerenderMessage(prev.message, next.message) &&
     prev.model === next.model &&
     prev.onSendFollowUp === next.onSendFollowUp &&
@@ -222,6 +229,8 @@ function areMessageViewPropsEqual(
     prev.displayMode === next.displayMode &&
     prev.onDisplayModeChange === next.onDisplayModeChange &&
     prev.onToolApprovalResponse === next.onToolApprovalResponse &&
+    prev.onForwardingToolApprovalResponse ===
+      next.onForwardingToolApprovalResponse &&
     prev.toolRenderOverrides === next.toolRenderOverrides &&
     prev.showInlineEdit === next.showInlineEdit &&
     prev.minimalMode === next.minimalMode &&
@@ -455,6 +464,7 @@ function MessageViewImpl({
   displayMode,
   onDisplayModeChange,
   onToolApprovalResponse,
+  onForwardingToolApprovalResponse,
   toolRenderOverrides,
   showInlineEdit = true,
   minimalMode = false,
@@ -669,6 +679,9 @@ function MessageViewImpl({
                   displayMode={displayMode}
                   onDisplayModeChange={onDisplayModeChange}
                   onToolApprovalResponse={onToolApprovalResponse}
+                  onForwardingToolApprovalResponse={
+                    onForwardingToolApprovalResponse
+                  }
                   messageParts={message.parts}
                   toolRenderOverrides={toolRenderOverrides}
                   showInlineEdit={showInlineEdit}

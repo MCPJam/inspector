@@ -11,7 +11,10 @@ import {
   projectResolutionError,
   resolveProject,
 } from "@mcpjam/sdk/platform";
-import { describeCloudCredential } from "../lib/credential-describe.js";
+import {
+  describeCloudCredential,
+  describeDeploymentSource,
+} from "../lib/credential-describe.js";
 import {
   describeProjectScope,
   resolveProjectSelector,
@@ -31,6 +34,7 @@ import {
   runPlatformOperation,
   type PlatformOptions,
 } from "../lib/platform-command.js";
+import { declareMcpjamUse } from "../lib/deployment-preflight.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
 type LinkOptions = PlatformOptions & {
@@ -52,6 +56,7 @@ type CloudStatusReport = {
   deployment: {
     apiUrl: string;
     source: string;
+    description: string;
     valid: boolean;
     error?: string;
   };
@@ -85,8 +90,8 @@ function nearestLinkPath(): string | undefined {
 }
 
 export function registerCloudLinkCommands(cloud: Command): void {
-  cloud
-    .command("status")
+  // Offline: reports a refused deployment in-band instead of stopping on it.
+  declareMcpjamUse(cloud.command("status"), { when: () => false })
     .description(
       "Show how this CLI would authenticate and which Cloud project it would use, without calling the network."
     )
@@ -180,6 +185,7 @@ export function registerCloudLinkCommands(cloud: Command): void {
         deployment: {
           apiUrl: deployment.apiUrl,
           source: deployment.source,
+          description: describeDeploymentSource(deployment),
           valid: deployment.valid,
           ...(deployment.error ? { error: deployment.error } : {}),
         },
@@ -200,8 +206,10 @@ export function registerCloudLinkCommands(cloud: Command): void {
       }
     });
 
-  cloud
-    .command("link")
+  // `--remove` only deletes the local link file.
+  declareMcpjamUse(cloud.command("link"), {
+    when: (options) => options.remove !== true,
+  })
     .description(
       "Pin this directory to a Cloud project by writing .mcpjam/project.json. The file contains no secrets and is committed by default; per-developer setups may gitignore it."
     )

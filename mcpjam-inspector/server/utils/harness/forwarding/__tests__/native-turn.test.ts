@@ -1,4 +1,4 @@
-import { setManagerOrganization } from "../../../mcp-connections";
+import { setManagerOrganization, setManagerResourceHostConfig, setManagerResourceSnapshots } from "../../../mcp-connections";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { unsealHarnessProxyToken } from "../../harness-proxy-policy-seal";
@@ -12,6 +12,7 @@ import {
 const mocks = vi.hoisted(() => ({
   stop: vi.fn(async () => {}),
   present: vi.fn(),
+  bind: vi.fn(async () => ({ bound: true })),
   url: "https://forward.example/api/web/harness-mcp/server",
 }));
 vi.mock("../approval", () => ({
@@ -19,6 +20,10 @@ vi.mock("../approval", () => ({
     mocks.present();
     return mocks.stop;
   },
+}));
+vi.mock("../execution-control", async (original) => ({
+  ...(await original<typeof import("../execution-control")>()),
+  createExecutionControl: () => ({ bindPolicy: mocks.bind }),
 }));
 vi.mock("../../harness-proxy-strategy", () => ({
   resolveHarnessProxyUrl: async () => mocks.url,
@@ -35,6 +40,7 @@ beforeEach(() => {
   vi.stubEnv("CONVEX_HTTP_URL", "https://backend.example");
   mocks.present.mockClear();
   mocks.stop.mockClear();
+  mocks.bind.mockClear();
 });
 afterEach(() => vi.unstubAllEnvs());
 const owner = {
@@ -55,19 +61,30 @@ describe("native turn configuration", () => {
       writer: { write: vi.fn() },
     });
     const entry = prepared.mcpJson.mcpServers.server;
-    expect(prepared.logScopeIds).toEqual({ server: nativeRpcLogScope(owner, "turn") });
+    expect(entry.timeout).toBeGreaterThan(59_000);
+    expect(entry.timeout).toBeLessThanOrEqual(60_000);
+    expect(prepared.logScopeIds).toEqual({
+      server: nativeRpcLogScope(owner, "turn"),
+    });
     expect(new URL(entry.url).searchParams.get("native")).toBe("1");
     expect(JSON.stringify(prepared.mcpJson)).not.toContain(
       "private-user-bearer",
     );
     expect(Object.keys(entry.headers!)).toEqual([
+      "Connection",
       "X-MCPJam-Forwarding-Context",
     ]);
+    expect(entry.headers!.Connection).toBe("close");
     const opened = unsealHarnessProxyToken(
       entry.headers!["X-MCPJam-Forwarding-Context"],
       "server",
     );
-    expect(JSON.parse(opened!.token)).toEqual({ owner, turnId: "turn" });
+    expect(JSON.parse(opened!.token)).toEqual({
+      owner,
+      turnId: "turn",
+      policyDigest: prepared.policyDigest,
+    });
+    expect(mocks.bind).toHaveBeenCalledWith("turn", prepared.policyDigest);
     expect(prepared.isForwardedTool("mcp__server__read")).toBe(true);
     expect(prepared.isForwardedTool("Bash")).toBe(false);
     await prepared.stop();
@@ -96,6 +113,7 @@ describe("native turn configuration", () => {
     };
     expect(
       nativeForwardingSelection({
+        manager: new MCPClientManager({}),
         laneId: "lane",
         hostId: "host",
         serverIds: ["server"],
@@ -108,6 +126,7 @@ describe("native turn configuration", () => {
     });
     expect(() =>
       nativeForwardingSelection({
+        manager: new MCPClientManager({}),
         laneId: "lane",
         hostId: "host",
         serverIds: ["server"],
@@ -157,4 +176,27 @@ it("rejects incomplete, substituted or mismatched broker ownership", () => {
     }),
   ).toBeNull();
   expect(readNativeForwardingResult(payload)).toBeUndefined();
+});
+
+it("seals the adapter correlation key and refuses to reuse its policy digest for a different key", async () => {
+  const prepare = (correlationKey: string) => prepareNativeForwarding({
+    owners: [owner], origin: "https://forward.example", expiresAt: Date.now() + 60000,
+    turnId: "turn", strategy: {plane: "web-authorized", mode: "relay"},
+    authHeader: "private-user-bearer", writer: {write: vi.fn()}, correlationKey,
+  });
+  const codex = await prepare("callId");
+  const other = await prepare("otherRuntime/callId");
+  const opened = unsealHarnessProxyToken(codex.mcpJson.mcpServers.server.headers!["X-MCPJam-Forwarding-Context"], "server");
+  expect(JSON.parse(opened!.token).correlationKey).toBe("callId");
+  expect(codex.policyDigest).not.toBe(other.policyDigest);
+  await codex.stop();
+  await other.stop();
+});
+
+it("pins the authorized default OAuth account when there is no multi-account group", () => {
+  const manager = new MCPClientManager({});
+  setManagerResourceHostConfig(manager, "host-config", "host");
+  setManagerResourceSnapshots(manager, new Map([["server", {serverUpdatedAt: 1, credentialAuthorizedAt: 2, credentialId: "captured-account"}]]));
+  expect(nativeForwardingSelection({manager, laneId: "lane", hostId: "host", serverIds: ["server"], connections: {}}).servers)
+    .toEqual([{serverId: "server", connectionId: "captured-account"}]);
 });

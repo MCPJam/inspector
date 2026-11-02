@@ -16,16 +16,8 @@ import {
 /**
  * The upstream-directory half of the Registry tab.
  *
- * Two mirrors, one surface: Anthropic's Claude connectors directory (~2,000
- * entries, synced daily) and OpenAI's ChatGPT app directory (~2,900 entries,
- * uploaded weekly). These sit beside the organization's own shelf as the
- * public catalogs on the Registry tab.
- *
- * ONE SOURCE AT A TIME, Claude by default. The backend's browse and search are
- * source-scoped index reads, so a "both" mode would be a second query and a
- * merge with no defensible ordering — and the facet is how a person says which
- * catalog they are looking at, which is information the cards themselves
- * cannot carry as clearly.
+ * One public catalog: Anthropic's Claude connectors directory. It sits beside
+ * the organization's own shelf. ChatGPT listings are not a catalog we browse.
  *
  * Gated by the same `REGISTRY_FEATURE_ENABLED` switch as the rest of the
  * Registry tab, so a directory that queries while the route is dark cannot
@@ -46,38 +38,39 @@ export const DIRECTORY_TIERS = [
 ] as const;
 export type DirectoryTier = (typeof DIRECTORY_TIERS)[number];
 
-export const DIRECTORY_SOURCES = [
-  "anthropic-directory",
-  "chatgpt-directory",
-] as const;
+export const DIRECTORY_SOURCES = ["anthropic-directory"] as const;
 export type DirectorySource = (typeof DIRECTORY_SOURCES)[number];
 
-/** Claude's directory is the daily, reliable one; it is what opens. */
+/** Claude's directory is the one the page browses. */
 export const DEFAULT_DIRECTORY_SOURCE: DirectorySource = "anthropic-directory";
 
 export const DIRECTORY_SOURCE_LABELS: Record<DirectorySource, string> = {
   "anthropic-directory": "Claude directory",
-  "chatgpt-directory": "ChatGPT directory",
 };
 
 /**
- * The card badge. "Listed in ChatGPT" is PROVENANCE, deliberately not a
- * quality claim: OpenAI accepting a submission is not a verification tier of
- * ours, and their own docs distinguish connectors they maintain from
- * third-party remote servers.
+ * Card provenance. "Listed in ChatGPT" is deliberately not a quality claim:
+ * a leftover row from that catalog is a listing, not a verification tier.
+ * It is not a source the page can browse.
  */
-export const DIRECTORY_SOURCE_BADGES: Record<DirectorySource, string> = {
+const PROVENANCE_BADGES: Record<string, string> = {
   "anthropic-directory": "From Claude directory",
   "chatgpt-directory": "Listed in ChatGPT",
 };
 
-/**
- * Verification tiers are a CLAUDE concept. The ChatGPT directory publishes no
- * equivalent, so the facet is hidden there rather than shown filtering nothing
- * — an always-empty filter reads as "no partners listed", which is false.
- */
+/** Verification tiers are published by the Claude directory. */
 export function sourceHasTiers(source: DirectorySource): boolean {
   return source === "anthropic-directory";
+}
+
+/**
+ * A session can still be holding a source we no longer browse. Query and
+ * report the Claude directory instead of an empty result with no way back.
+ */
+export function activeDirectorySource(source: string): DirectorySource {
+  return (DIRECTORY_SOURCES as readonly string[]).includes(source)
+    ? (source as DirectorySource)
+    : DEFAULT_DIRECTORY_SOURCE;
 }
 
 /**
@@ -99,10 +92,10 @@ export function directorySourceLabel(source: string): string {
     : "another catalog";
 }
 
-/** The card's provenance line, same rule. */
+/** The card's provenance line, including a source we no longer browse. */
 export function directorySourceBadge(source: string): string {
-  return isKnownSource(source)
-    ? DIRECTORY_SOURCE_BADGES[source]
+  return Object.hasOwn(PROVENANCE_BADGES, source)
+    ? PROVENANCE_BADGES[source]
     : "From an upstream directory";
 }
 
@@ -203,10 +196,9 @@ export function isConnectableDirectoryRow(
 /**
  * Why this particular row cannot be connected, in words that are true of it.
  *
- * About 37% of the ChatGPT directory is a hosted SaaS server whose endpoint
- * OpenAI proxies and never publishes. Telling someone that is a "local desktop
- * extension" sends them looking for an installer that does not exist, so the
- * text keys on `unavailableReason` first and `rowType` only as the fallback.
+ * A hosted listing can hide its endpoint. Calling that a "local desktop
+ * extension" sends someone looking for an installer that does not exist, so
+ * the text keys on `unavailableReason` first and `rowType` only as the fallback.
  */
 export function describeUnavailable(
   server: Pick<DirectoryServer, "rowType" | "unavailableReason">
@@ -532,10 +524,11 @@ export function useServerDirectory({
   const [source, setSource] = useState<DirectorySource>(
     DEFAULT_DIRECTORY_SOURCE
   );
-  // OFF by default. About 37% of the ChatGPT directory has no published
-  // endpoint, and hiding a third of a catalog before anyone asked would make
-  // the directory look smaller than it is — the full census is the point.
+  // OFF by default. Hiding rows that cannot be installed before anyone asked
+  // would make the directory look smaller than it is. The full census is the
+  // point.
   const [connectableOnly, setConnectableOnly] = useState(false);
+  const browseSource = activeDirectorySource(source);
 
   useEffect(() => {
     const handle = window.setTimeout(
@@ -551,11 +544,11 @@ export function useServerDirectory({
   // listing we already have.
   const searchArgs = useMemo(
     () => ({
-      source,
+      source: browseSource,
       ...(debouncedQuery ? { q: debouncedQuery } : {}),
       // A tier the current source does not publish is not sent at all — it
       // would filter every row out and read as an empty directory.
-      ...(tier === "all" || !sourceHasTiers(source)
+      ...(tier === "all" || !sourceHasTiers(browseSource)
         ? {}
         : { verifiedTier: tier }),
       // `connectableOnly`, NOT `endpointKind: 'fixed'`. `options` (pick a
@@ -568,7 +561,7 @@ export function useServerDirectory({
       // with what is on screen; filtering in the hook desyncs the two.
       ...(connectableOnly ? { connectableOnly: true } : {}),
     }),
-    [connectableOnly, debouncedQuery, source, tier]
+    [browseSource, connectableOnly, debouncedQuery, tier]
   );
 
   const {
@@ -586,9 +579,7 @@ export function useServerDirectory({
     enabled && isAuthenticated && projectId ? ({ projectId } as any) : "skip"
   ) as DirectoryConnection[] | undefined;
 
-  // Public, so a signed-out browser still sees how fresh each mirror is. One
-  // of the two is a manual weekly upload, which makes "as of" a real product
-  // fact rather than an operational detail.
+  // Public, so a signed-out browser still sees how fresh the mirror is.
   const sourceStatuses = useQuery(
     "serverCatalogQueries:getCatalogSourceStatus" as any,
     enabled ? ({} as any) : "skip"
@@ -620,7 +611,9 @@ export function useServerDirectory({
     if (!sourceHasTiers(next)) setTier("all");
   }, []);
 
-  const status_ = sourceStatuses?.find((entry) => entry.source === source);
+  const status_ = sourceStatuses?.find(
+    (entry) => entry.source === browseSource
+  );
   const lastSyncedAt =
     // For a snapshot source the SCRAPE time is the honest answer: ingesting on
     // Friday a sweep taken on Tuesday makes the catalog Tuesday-fresh.
@@ -737,12 +730,12 @@ export function useServerDirectory({
     setQuery,
     tier,
     setTier,
-    source,
+    source: browseSource,
     setSource: selectSource,
     connectableOnly,
     setConnectableOnly,
     /** Whether the current source publishes verification tiers at all. */
-    hasTiers: sourceHasTiers(source),
+    hasTiers: sourceHasTiers(browseSource),
     /** When the current source's catalog was last refreshed upstream. */
     lastSyncedAt,
     connect,

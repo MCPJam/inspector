@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAction, useQuery } from "convex/react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
-import { Loader2, Lock, Share2 } from "lucide-react";
+import { Loader2, Share2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -29,6 +29,8 @@ import {
   SuiteRow,
   VerdictBadge,
 } from "./conformance-ui";
+import { CatalogList, UnscoredTag } from "./ConformanceCheckRows";
+import { suiteCatalog } from "./conformance-catalogs";
 
 export type ConformanceRunListItem = {
   _id: string;
@@ -46,6 +48,8 @@ export type ConformanceRunListItem = {
   passed: number;
   failed: number;
   couldNotRun: number;
+  /** Absent on rows read from a build that predates the field. */
+  notApplicable?: number;
   requestedSuites: string[];
   protocolVersion: string | null;
   actorLabel: string | null;
@@ -67,8 +71,8 @@ export type ConformanceRunListItem = {
 };
 
 /** Where a run came from, in the words the History table uses. */
-const HISTORY_SOURCE_LABEL: Record<string, string> = {
-  ui: "Inspector",
+export const HISTORY_SOURCE_LABEL: Record<string, string> = {
+  ui: "UI",
   sdk: "SDK",
   cli: "CLI",
   github_action: "GitHub",
@@ -76,14 +80,14 @@ const HISTORY_SOURCE_LABEL: Record<string, string> = {
   api: "API",
 };
 
-const historyDateFormat = new Intl.DateTimeFormat("en-US", {
+export const historyDateFormat = new Intl.DateTimeFormat("en-US", {
   month: "short",
   day: "numeric",
   hour: "numeric",
   minute: "2-digit",
 });
 
-function RunResultBadge({ run }: { run: ConformanceRunListItem }) {
+export function RunResultBadge({ run }: { run: ConformanceRunListItem }) {
   const base =
     "inline-flex h-5.5 shrink-0 items-center rounded-sm px-2 text-[11px] font-semibold tracking-[0.06em]";
   const neutral = "bg-muted text-muted-foreground";
@@ -252,6 +256,120 @@ export function ConformanceHistory({
   );
 }
 
+/**
+ * Share for one saved run. With unified sharing it opens the share dialog;
+ * without, it copies a link (or turns an existing one off). Only a finished
+ * run can be shared.
+ */
+export function ConformanceRunShareButton({
+  runId,
+  finished,
+  sharingEnabled,
+}: {
+  runId: string;
+  finished: boolean;
+  sharingEnabled: boolean;
+}) {
+  const setSharing = useAction("conformanceRuns:setSharing" as any);
+  const unifiedShare =
+    useFeatureFlagEnabled("unified-share-conformance") === true;
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+
+  const copyShare = useCallback(
+    async (enabled: boolean) => {
+      setShareBusy(true);
+      try {
+        const result = (await setSharing({
+          runId,
+          enabled,
+        })) as { enabled: boolean; token?: string | null; shareUrl?: string };
+        if (result.enabled && (result.shareUrl || result.token)) {
+          const url =
+            result.shareUrl ??
+            `${window.location.origin}/conformance/shared/${result.token}`;
+          await navigator.clipboard.writeText(url);
+          toast.success("Share link copied");
+        } else {
+          toast.success("Sharing turned off");
+        }
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Could not update sharing",
+        );
+      } finally {
+        setShareBusy(false);
+      }
+    },
+    [runId, setSharing],
+  );
+
+  return (
+    <>
+      {unifiedShare ? (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!finished}
+          onClick={() => setShareOpen(true)}
+          data-testid="conformance-share-open"
+        >
+          <Share2 className="size-3.5" aria-hidden /> Share
+        </Button>
+      ) : sharingEnabled ? (
+        // A run already shared keeps this one, so its link can still be
+        // turned off.
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={shareBusy || !finished}
+          onClick={() => void copyShare(false)}
+        >
+          <Share2 className="size-3.5" aria-hidden /> Shareable
+        </Button>
+      ) : (
+        // No "Private" label: a private run is the default. This is the
+        // only way to create a link while unified sharing is off.
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={shareBusy || !finished}
+          onClick={() => void copyShare(true)}
+        >
+          <Share2 className="size-3.5" aria-hidden /> Share
+        </Button>
+      )}
+      {unifiedShare ? (
+        <ShareDialog
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          title="Share conformance run"
+          description="A frozen redacted snapshot. Guests who redeem the link are auditable browser sessions, not verified individuals."
+        >
+          <ResourceSharePanel
+            resourceType="conformanceRun"
+            resourceId={runId}
+            disabledReason={
+              finished ? null : "Only a finished run can be shared"
+            }
+            footerSlot={
+              <p className="text-xs text-muted-foreground">
+                Viewers see a frozen snapshot. Revoking access is immediate even
+                though the artifact itself does not change.
+              </p>
+            }
+            linkLabel="Share link"
+            buildShareUrl={(token) =>
+              `${window.location.origin}${buildConformanceSharePath(token)}`
+            }
+            testIdPrefix="conformance-share"
+          />
+        </ShareDialog>
+      ) : null}
+    </>
+  );
+}
+
 export function ConformanceRunDetailPage({
   runId,
   serverNames,
@@ -282,41 +400,6 @@ export function ConformanceRunDetailPage({
       })
     | null
   >("conformanceRuns:getRun", runId ? { runId } : "skip");
-  const setSharing = useAction("conformanceRuns:setSharing" as any);
-  const unifiedShare =
-    useFeatureFlagEnabled("unified-share-conformance") === true;
-  const [shareBusy, setShareBusy] = useState(false);
-  const [shareOpen, setShareOpen] = useState(false);
-
-  const copyShare = useCallback(
-    async (enabled: boolean) => {
-      if (!detail) return;
-      setShareBusy(true);
-      try {
-        const result = (await setSharing({
-          runId: detail._id,
-          enabled,
-        })) as { enabled: boolean; token?: string | null; shareUrl?: string };
-        if (result.enabled && (result.shareUrl || result.token)) {
-          const url =
-            result.shareUrl ??
-            `${window.location.origin}/conformance/shared/${result.token}`;
-          await navigator.clipboard.writeText(url);
-          toast.success("Share link copied");
-        } else {
-          toast.success("Sharing turned off");
-        }
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : "Could not update sharing",
-        );
-      } finally {
-        setShareBusy(false);
-      }
-    },
-    [detail, setSharing],
-  );
-
   if (detail === undefined) {
     return (
       <p className="p-6 text-sm text-muted-foreground" role="status">
@@ -353,34 +436,11 @@ export function ConformanceRunDetailPage({
           <span className="text-muted-foreground/70">/</span>
           <span className="truncate font-semibold">{serverName}</span>
           <div className="ml-auto flex items-center gap-2">
-            {unifiedShare ? (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!finished}
-                onClick={() => setShareOpen(true)}
-                data-testid="conformance-share-open"
-              >
-                <Share2 className="size-3.5" aria-hidden /> Share
-              </Button>
-            ) : (
-              <Button
-                variant={detail.sharingEnabled ? "secondary" : "outline"}
-                size="sm"
-                disabled={shareBusy || !finished}
-                onClick={() => void copyShare(!detail.sharingEnabled)}
-              >
-                {detail.sharingEnabled ? (
-                  <>
-                    <Share2 className="size-3.5" aria-hidden /> Shareable
-                  </>
-                ) : (
-                  <>
-                    <Lock className="size-3.5" aria-hidden /> Private
-                  </>
-                )}
-              </Button>
-            )}
+            <ConformanceRunShareButton
+              runId={detail._id}
+              finished={finished}
+              sharingEnabled={detail.sharingEnabled}
+            />
             <Button size="sm" onClick={() => navigate("/conformance")}>
               Run again
             </Button>
@@ -389,38 +449,8 @@ export function ConformanceRunDetailPage({
         <p className="text-sm text-muted-foreground">
           {detailDateFormat.format(detail.createdAt)} ·{" "}
           {HISTORY_SOURCE_LABEL[detail.source] ?? detail.source}
-          {detail.verification === "client_reported"
-            ? " · Client-reported"
-            : ""}
         </p>
       </div>
-      {unifiedShare ? (
-        <ShareDialog
-          open={shareOpen}
-          onOpenChange={setShareOpen}
-          title="Share conformance run"
-          description="A frozen redacted snapshot. Guests who redeem the link are auditable browser sessions, not verified individuals."
-        >
-          <ResourceSharePanel
-            resourceType="conformanceRun"
-            resourceId={detail._id}
-            disabledReason={
-              finished ? null : "Only a finished run can be shared"
-            }
-            footerSlot={
-              <p className="text-xs text-muted-foreground">
-                Viewers see a frozen snapshot. Revoking access is immediate even
-                though the artifact itself does not change.
-              </p>
-            }
-            linkLabel="Share link"
-            buildShareUrl={(token) =>
-              `${window.location.origin}${buildConformanceSharePath(token)}`
-            }
-            testIdPrefix="conformance-share"
-          />
-        </ShareDialog>
-      ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-8 pt-6 pb-8">
         <OverallScoreCard
@@ -433,6 +463,7 @@ export function ConformanceRunDetailPage({
                   passed: detail.passed,
                   failed: detail.failed,
                   couldNotRun: detail.couldNotRun,
+                  notApplicable: detail.notApplicable,
                 }
               : undefined
           }
@@ -450,7 +481,7 @@ export function ConformanceRunDetailPage({
           </p>
         ) : null}
 
-        <div className="mt-3 overflow-hidden rounded-lg border border-border bg-card">
+        <div className="mt-3 overflow-hidden rounded-lg border border-border bg-popover">
           {detail.reports.map((report) => (
             <SavedSuiteRow
               key={report.suiteKind}
@@ -468,7 +499,7 @@ export function ConformanceRunDetailPage({
   );
 }
 
-const detailDateFormat = new Intl.DateTimeFormat("en-US", {
+export const detailDateFormat = new Intl.DateTimeFormat("en-US", {
   month: "short",
   day: "numeric",
   year: "numeric",
@@ -510,11 +541,13 @@ function SavedSuiteRow({
     report.status === "skipped" ||
     (settled && report.score == null && report.applicable === 0);
   const [override, setOverride] = useState<boolean | null>(null);
+  // A suite that did not apply stays shut but still opens on click, to its
+  // list of checks.
   const expanded =
-    !notApplicable &&
     !noResult &&
     (override ??
-      (report.outcome === "failed" || report.outcome === "incomplete"));
+      (!notApplicable &&
+        (report.outcome === "failed" || report.outcome === "incomplete")));
 
   const badge = noResult ? (
     <VerdictBadge label="NO RESULT" tone="neutral" />
@@ -552,14 +585,25 @@ function SavedSuiteRow({
             }
       }
       expanded={expanded}
-      collapsible={!notApplicable && !noResult}
+      collapsible={!noResult}
       onToggle={() => setOverride(!expanded)}
     >
-      <SuiteReportCases
-        reportUrl={report.reportUrl}
-        incompleteReason={notApplicable ? null : report.incompleteReason}
-        load={expanded || override !== null}
-      />
+      {notApplicable ? (
+        <CatalogList
+          catalog={suiteCatalog(report.suiteKind)}
+          note={
+            report.status === "skipped"
+              ? ". Not run."
+              : ". None apply to this server."
+          }
+        />
+      ) : (
+        <SuiteReportCases
+          reportUrl={report.reportUrl}
+          incompleteReason={report.incompleteReason}
+          load={expanded || override !== null}
+        />
+      )}
     </SuiteRow>
   );
 }
@@ -570,6 +614,8 @@ type SavedReportCase = {
   status: string;
   skipReason?: string;
   error?: string;
+  /** Left out of the score: a profile's pending check or an unscored OAuth step. */
+  pending?: boolean;
 };
 
 /**
@@ -631,8 +677,13 @@ function SuiteReportCases({
             className="flex items-start gap-2.5 border-b border-border/60 py-1.75 pl-7 pr-1 last:border-0"
           >
             <span className="mt-0.5">
-              <StatusIcon status={check.status} skipReason={check.skipReason} />
+              <StatusIcon
+                status={check.status}
+                skipReason={check.skipReason}
+                muted={check.pending === true}
+              />
             </span>
+            {check.pending ? <UnscoredTag /> : null}
             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
               <span
                 className={
@@ -647,7 +698,7 @@ function SuiteReportCases({
               {check.error ? (
                 <span
                   className={
-                    check.status === "failed"
+                    check.status === "failed" && !check.pending
                       ? "text-[13px] font-medium text-red-600 dark:text-red-400"
                       : "text-[13px] text-muted-foreground"
                   }

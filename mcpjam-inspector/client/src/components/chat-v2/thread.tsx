@@ -376,7 +376,7 @@ export function Thread({
       <div
         className={cn(
           "flex-1 min-h-0 min-w-0 pb-4",
-          isChatgptDark && "text-[#DFDFDF]"
+          isChatgptDark && "text-[#DFDFDF]",
         )}
         style={
           chatgptFamilyDarkBackground
@@ -409,7 +409,10 @@ export function Thread({
           tornDownWidgetIds={tornDownWidgetIds}
           displayMode={displayMode}
           onDisplayModeChange={onDisplayModeChange}
-          onToolApprovalResponse={isLoading ? undefined : onToolApprovalResponse}
+          onToolApprovalResponse={
+            isLoading ? undefined : onToolApprovalResponse
+          }
+          onForwardingToolApprovalResponse={onToolApprovalResponse}
           toolRenderOverrides={toolRenderOverrides}
           showInlineEdit={showInlineEdit}
           minimalMode={minimalMode}

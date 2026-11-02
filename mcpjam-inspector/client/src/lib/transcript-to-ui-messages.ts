@@ -6,6 +6,7 @@ import { type UIMessage } from "@ai-sdk/react";
 import {
   mergeMcpToolOriginMetadata,
   readMcpToolOriginServerId,
+  mergeMcpOriginalResult,
 } from "@/shared/mcp-tool-origin-metadata";
 import { readHydratedToolOutput } from "@/shared/hydrated-tool-output";
 import { getMessageTimestampMs, withMessageTimestamp } from "@mcpjam/chat-ui";
@@ -338,7 +339,10 @@ function convertParts(
         }
       }
     } else if (partType === "tool-call") {
-      const providerMetadata = readToolOriginMetadata(part);
+      const providerMetadata = mergeMcpOriginalResult(
+        readToolOriginMetadata(part),
+        part.result,
+      );
       // A tool-call with no merged tool-result row is UNRESOLVED — a turn
       // suspended mid-call (SEP-2350 scope step-up, MRTR). It must hydrate as
       // "input-available": stamping "output-available" with a synthetic `{}`

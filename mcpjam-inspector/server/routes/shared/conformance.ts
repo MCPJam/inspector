@@ -21,6 +21,7 @@ import {
   type MCPAppsConformanceResult,
   type MCPConformanceConfig,
   type MCPConformanceResult,
+  type MCPCheckId,
   type MCPServerConfig,
   type McpProtocolVersion,
   type MCPTasksConformanceConfig,
@@ -29,9 +30,11 @@ import {
   type OAuthConformanceProfile,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
+import type { ConformanceProbes } from "./conformance-probes.js";
 import {
   createSession,
   getSession,
+  touchSession,
   setSessionError,
   setSessionResult,
   submitAuthorizationCode,
@@ -139,6 +142,8 @@ export interface ResolvedHttpConfig {
   customHeaders?: Record<string, string>;
   /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
   protocolVersion?: McpProtocolVersion;
+  /** Run only these checks; absent ⇒ every check the revision has. */
+  checkIds?: MCPCheckId[];
 }
 
 export class UnsupportedTransportError extends Error {
@@ -157,13 +162,18 @@ export function assertHttpSupported(
 }
 
 export async function runProtocolConformance(
-  input: ResolvedHttpConfig,
+  input: ResolvedHttpConfig & ConformanceProbes,
 ): Promise<{ result: MCPConformanceResult }> {
   const config: MCPConformanceConfig = {
     serverUrl: input.serverUrl,
     accessToken: input.accessToken,
     customHeaders: input.customHeaders,
     protocolVersion: input.protocolVersion,
+    ...(input.checkIds ? { checkIds: input.checkIds } : {}),
+    ...(input.logProbe ? { logProbe: input.logProbe } : {}),
+    ...(input.inputRequiredProbe
+      ? { inputRequiredProbe: input.inputRequiredProbe }
+      : {}),
     // Checking the URL the caller named is not the same as checking the
     // addresses we end up dialing: a target can answer `302 Location:
     // http://169.254.169.254/`. This re-checks each hop. A no-op outside hosted
@@ -229,7 +239,7 @@ export async function runLocalDirectoryReadiness(input: {
     publisher: input.publisher,
     target: input.target,
     submissionMode: input.submissionMode,
-    headers: Object.keys(headers).length > 0 ? headers : undefined,
+    mcpHeaders: Object.keys(headers).length > 0 ? headers : undefined,
     fetchFn: createConformanceFetch("MCP server"),
   });
   return { result };
@@ -258,12 +268,12 @@ export interface StartOAuthConformanceInput {
   /** Public callback URL that the authorization server will redirect to. */
   redirectUrl: string;
   oauthProfile?: OAuthConformanceProfile;
-  /** How long to wait for the runner to produce an auth URL before assuming it
-   * completed without needing user auth. Defaults to 3s. */
-  authorizationUrlGraceMs?: number;
+  /**
+   * Hosted only: the caller starting the run (`principalKey`). Only that
+   * caller can then deliver its code or read its result. Local runs omit it.
+   */
+  owner?: string;
 }
-
-const DEFAULT_GRACE_MS = 3_000;
 
 export async function startOAuthConformance(
   input: StartOAuthConformanceInput,
@@ -273,7 +283,10 @@ export async function startOAuthConformance(
     normalizeCustomHeaders(input.oauthProfile?.customHeaders) ??
     input.defaultCustomHeaders;
 
-  const session = createSession({ redirectUrl: input.redirectUrl });
+  const session = createSession({
+    redirectUrl: input.redirectUrl,
+    owner: input.owner,
+  });
   const { controller } = session;
 
   const oauthConfig: OAuthConformanceConfig = {
@@ -334,16 +347,11 @@ export async function startOAuthConformance(
   runnerPromise.catch(() => undefined);
 
   // Race the runner against `awaitAuthorizationUrl`: whichever settles first
-  // tells us whether user authorization is needed.
-  const graceMs = input.authorizationUrlGraceMs ?? DEFAULT_GRACE_MS;
-  const graceTimer = new Promise<"grace">((resolve) => {
-    setTimeout(() => resolve("grace"), graceMs);
-  });
-
+  // tells us whether user authorization is needed. No deadline: slow discovery
+  // must still hand back the URL, or the runner waits out the consent window.
   const outcome = await Promise.race([
     controller.awaitAuthorizationUrl.then(() => "authorization_needed" as const),
     runnerPromise.then(() => "complete" as const, () => "complete" as const),
-    graceTimer,
   ]);
 
   if (outcome === "authorization_needed" && session.authorizationUrl) {
@@ -355,9 +363,8 @@ export async function startOAuthConformance(
     };
   }
 
-  // Either the runner finished without needing user auth, or we hit the grace
-  // deadline. In either case, awaiting the runner either gives us a result or
-  // surfaces its error.
+  // The runner finished without needing user auth: awaiting it either gives us
+  // a result or surfaces its error.
   const result = await runnerPromise;
   return { phase: "complete", result };
 }
@@ -366,17 +373,26 @@ export interface SubmitOAuthConformanceCodeInput {
   sessionId: string;
   code: string;
   state?: string;
+  /** The caller that started the run; see `StartOAuthConformanceInput.owner`. */
+  owner?: string;
 }
 
 /** Returns whether a session accepted the code (false when unknown/expired). */
 export function submitOAuthConformanceCode(
   input: SubmitOAuthConformanceCodeInput,
 ): boolean {
-  return submitAuthorizationCode(input.sessionId, input.code, input.state);
+  return submitAuthorizationCode(
+    input.sessionId,
+    input.code,
+    input.state,
+    input.owner,
+  );
 }
 
 export interface CompleteOAuthConformanceInput {
   sessionId: string;
+  /** The caller that started the run; see `StartOAuthConformanceInput.owner`. */
+  owner?: string;
   /** How long to long-poll before returning `pending`. Defaults to 25s. */
   pollTimeoutMs?: number;
   /** Interval between polls. Defaults to 500ms. */
@@ -387,6 +403,10 @@ export class OAuthConformanceSessionNotFoundError extends Error {
   readonly code = "notFound" as const;
 }
 
+/** What the user sees when their session is gone: it expired while idle. */
+export const OAUTH_SESSION_EXPIRED_MESSAGE =
+  "Authorization took too long. Run the checks again.";
+
 export class OAuthConformanceSessionFailedError extends Error {
   readonly code = "runnerFailed" as const;
 }
@@ -394,12 +414,13 @@ export class OAuthConformanceSessionFailedError extends Error {
 export async function completeOAuthConformance(
   input: CompleteOAuthConformanceInput,
 ): Promise<CompleteOAuthConformanceResult> {
-  const session = getSession(input.sessionId);
+  const session = getSession(input.sessionId, input.owner);
   if (!session) {
     throw new OAuthConformanceSessionNotFoundError(
-      "Session not found or expired",
+      OAUTH_SESSION_EXPIRED_MESSAGE,
     );
   }
+  touchSession(input.sessionId);
   if (session.result) {
     return { phase: "complete", result: session.result };
   }
@@ -413,9 +434,11 @@ export async function completeOAuthConformance(
 
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-    const current = getSession(input.sessionId);
+    const current = getSession(input.sessionId, input.owner);
     if (!current) {
-      throw new OAuthConformanceSessionNotFoundError("Session expired");
+      throw new OAuthConformanceSessionNotFoundError(
+        OAUTH_SESSION_EXPIRED_MESSAGE,
+      );
     }
     if (current.result) {
       return { phase: "complete", result: current.result };

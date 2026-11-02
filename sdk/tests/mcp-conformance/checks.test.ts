@@ -135,6 +135,76 @@ describe("mcp conformance unit checks", () => {
     });
   });
 
+  it("reports the connect handshake's duration on server-initialize", async () => {
+    // Only the clock is controlled: fake timers left the run waiting on a
+    // timer nothing advanced, which timed the test out under CI load.
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      mockedOperations.withEphemeralClient.mockImplementation(
+        async (_config, fn) => {
+          // The handshake happens inside the connect, before the callback.
+          now += 420;
+          return fn(
+            {
+              getManagedClient: vi.fn().mockReturnValue({}),
+              getInitializationInfo: vi.fn().mockReturnValue({
+                protocolVersion: "2025-11-25",
+              }),
+              listResourceTemplates: vi.fn().mockResolvedValue({
+                resourceTemplates: [],
+              }),
+            } as any,
+            "server-1",
+          );
+        },
+      );
+      mockedOperations.listTools.mockResolvedValue({ tools: [] } as any);
+      mockedOperations.listPrompts.mockResolvedValue({ prompts: [] } as any);
+      mockedOperations.listResources.mockResolvedValue({
+        resources: [],
+      } as any);
+
+      const result = await new MCPConformanceTest({
+        serverUrl: "https://example.com/mcp",
+        checkIds: ["server-initialize"],
+      }).run();
+
+      expect(result.checks[0]).toMatchObject({
+        id: "server-initialize",
+        status: "passed",
+        durationMs: 420,
+      });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("reports how long a failed connect took on server-initialize", async () => {
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      mockedOperations.withEphemeralClient.mockImplementation(async () => {
+        now += 1_500;
+        throw new Error("connect ECONNREFUSED");
+      });
+
+      const result = await new MCPConformanceTest({
+        serverUrl: "https://example.com/mcp",
+        protocolVersion: "2025-11-25",
+        checkIds: ["server-initialize"],
+      }).run();
+
+      expect(result.checks[0]).toMatchObject({
+        id: "server-initialize",
+        status: "failed",
+        durationMs: 1_500,
+      });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it("reports protocol checks in the protocol category", async () => {
     mockedOperations.withEphemeralClient.mockImplementation(
       async (_config, fn) =>
