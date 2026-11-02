@@ -7,8 +7,11 @@ import {
   CONFORMANCE_CHECK_METADATA,
   MCP_APPS_CHECK_IDS,
   MCP_CHECK_IDS,
+  MCP_READINESS_IDS,
   PROTOCOL_CHECK_CATALOG,
   PROTOCOL_VERSION_ERAS,
+  READINESS_CATALOG,
+  READINESS_ERAS,
   TASKS_CHECK_CATALOG,
   type OAuthConformanceCheckId,
 } from "@mcpjam/sdk/browser";
@@ -32,6 +35,25 @@ export function protocolCatalog(pin: ProtocolVersionPin): CatalogEntry[] {
     return {
       id,
       ...PROTOCOL_CHECK_CATALOG[id],
+      note:
+        pinnedEra === undefined && eras.length === 1
+          ? `${eras[0]} only`
+          : undefined,
+    };
+  });
+}
+
+/** The protocol suite's advice, narrowed by a pin like its checks. */
+export function protocolAdviceCatalog(pin: ProtocolVersionPin): CatalogEntry[] {
+  const pinnedEra = pin === "auto" ? undefined : PROTOCOL_VERSION_ERAS[pin];
+  return MCP_READINESS_IDS.filter((id) => {
+    const eras = READINESS_ERAS[id] as readonly string[];
+    return pinnedEra === undefined || eras.includes(pinnedEra);
+  }).map((id) => {
+    const eras = READINESS_ERAS[id] as readonly string[];
+    return {
+      id,
+      ...READINESS_CATALOG[id],
       note:
         pinnedEra === undefined && eras.length === 1
           ? `${eras[0]} only`

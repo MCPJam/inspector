@@ -847,12 +847,15 @@ export {
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
   MCP_LOG_LEVELS,
+  MCP_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
+  READINESS_ERAS,
 } from "./mcp-conformance/types.js";
 export type {
   MCPCheckEra,
   MCPCheckId,
   MCPLogLevel,
+  MCPReadinessId,
 } from "./mcp-conformance/types.js";
 export { MCP_APPS_CHECK_IDS } from "./apps-conformance/types.js";
 export type { MCPAppsCheckId } from "./apps-conformance/types.js";
@@ -932,6 +935,7 @@ export {
 export {
   APPS_CHECK_CATALOG,
   PROTOCOL_CHECK_CATALOG,
+  READINESS_CATALOG,
   TASKS_CHECK_CATALOG,
 } from "./conformance-catalog.js";
 export type { ConformanceCheckInfo } from "./conformance-catalog.js";

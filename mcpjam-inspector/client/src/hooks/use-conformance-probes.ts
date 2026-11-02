@@ -4,8 +4,8 @@
  *
  * Two 2026-07-28 checks can only observe something on a tool call: the logging
  * check needs a tool that emits logs (the log level filtering advice calls the
- * same tool, at the operator's log level), and the undeclared-capability
- * check needs one that asks for input. The SDK never picks a tool on its own,
+ * same tool, at the operator's log level, and has its own row), and the
+ * undeclared-capability check needs one that asks for input. The SDK never picks a tool on its own,
  * because nothing a server advertises says whether calling a tool charges a
  * card or deletes a row. Without one, those checks report could-not-run.
  *
@@ -19,7 +19,9 @@ import {
   CHECK_ERAS,
   MCP_LOG_LEVELS,
   PROTOCOL_VERSION_ERAS,
+  READINESS_ERAS,
   type MCPCheckId,
+  type MCPReadinessId,
 } from "@mcpjam/sdk/browser";
 import type { ProtocolVersionPin } from "@/hooks/use-conformance-run";
 import type {
@@ -32,12 +34,28 @@ export type ConformanceProbeKey = keyof ConformanceProbes;
 
 export const PROBE_KEYS = ["logProbe", "inputRequiredProbe"] as const;
 
-/** The checks each probe is called for. */
-export const PROBE_CHECKS: Record<ConformanceProbeKey, readonly MCPCheckId[]> =
-  {
-    logProbe: ["modern-logs-require-log-level"],
-    inputRequiredProbe: ["modern-undeclared-capability-error"],
-  };
+/**
+ * The checks, and advice, each probe is called for. The first one picked shows
+ * the tool field; the others point to it.
+ */
+export const PROBE_CHECKS: Record<
+  ConformanceProbeKey,
+  readonly (MCPCheckId | MCPReadinessId)[]
+> = {
+  logProbe: ["modern-logs-require-log-level", "readiness-log-level-filtering"],
+  inputRequiredProbe: ["modern-undeclared-capability-error"],
+};
+
+/** The advice that asks for a log level, so its row shows the level field. */
+export const LOG_LEVEL_ADVICE: MCPReadinessId = "readiness-log-level-filtering";
+
+function isAdvice(id: string): id is MCPReadinessId {
+  return Object.hasOwn(READINESS_ERAS, id);
+}
+
+function erasOf(id: MCPCheckId | MCPReadinessId): readonly string[] {
+  return isAdvice(id) ? READINESS_ERAS[id] : CHECK_ERAS[id];
+}
 
 /** The probe a check calls, if it calls one. */
 export function probeKeyFor(checkId: string): ConformanceProbeKey | undefined {
@@ -48,22 +66,24 @@ export function probeKeyFor(checkId: string): ConformanceProbeKey | undefined {
 
 /**
  * Whether a probe's tool is called on a run with this pin: one of its checks
- * runs in the pin's era (and, with `checkIds`, is picked). Never on "auto":
- * an unpinned client does not offer 2026-07-28, so the run stays in the
- * legacy era, where these checks do not apply.
+ * or advice runs in the pin's era (and, with `checkIds` / `readinessIds`, is
+ * picked). Never on "auto": an unpinned client does not offer 2026-07-28, so
+ * the run stays in the legacy era, where these checks do not apply.
  */
 function probeRuns(
   key: ConformanceProbeKey,
   pin: ProtocolVersionPin,
   checkIds?: readonly string[],
+  readinessIds?: readonly string[],
 ): boolean {
   if (pin === "auto") return false;
   const era = PROTOCOL_VERSION_ERAS[pin];
-  return PROBE_CHECKS[key].some(
-    (id) =>
-      (CHECK_ERAS[id] as readonly string[]).includes(era) &&
-      (checkIds === undefined || checkIds.includes(id)),
-  );
+  return PROBE_CHECKS[key].some((id) => {
+    const picked = isAdvice(id) ? readinessIds : checkIds;
+    return (
+      erasOf(id).includes(era) && (picked === undefined || picked.includes(id))
+    );
+  });
 }
 
 /** Whether any probe applies with this pin: the fields show only then. */
@@ -85,18 +105,19 @@ export function probeInputStatus(
 }
 
 /**
- * Only the probes a run's protocol checks call. A tool is called only for a
- * check that runs, so one named for a check left out is not sent at all.
- * `checkIds` absent means every check.
+ * Only the probes a run's protocol checks and advice call. A tool is called
+ * only for one that runs, so one named for checks left out is not sent at
+ * all. `checkIds` / `readinessIds` absent means every check / every advice.
  */
 export function probesForRun(
   probes: ConformanceProbes,
   checkIds: readonly string[] | undefined,
   pin: ProtocolVersionPin,
+  readinessIds?: readonly string[],
 ): ConformanceProbes {
   return Object.fromEntries(
     PROBE_KEYS.filter(
-      (key) => probes[key] && probeRuns(key, pin, checkIds),
+      (key) => probes[key] && probeRuns(key, pin, checkIds, readinessIds),
     ).map((key) => [key, probes[key]]),
   ) as ConformanceProbes;
 }
@@ -111,10 +132,13 @@ export function probesAfterRun(
   draft: ConformanceProbes,
   checkIds: readonly string[] | undefined,
   pin: ProtocolVersionPin,
+  readinessIds?: readonly string[],
 ): ConformanceProbes {
   return Object.fromEntries(
     PROBE_KEYS.flatMap((key) => {
-      const probe = probeRuns(key, pin, checkIds) ? draft[key] : saved[key];
+      const probe = probeRuns(key, pin, checkIds, readinessIds)
+        ? draft[key]
+        : saved[key];
       return probe ? [[key, probe]] : [];
     }),
   ) as ConformanceProbes;

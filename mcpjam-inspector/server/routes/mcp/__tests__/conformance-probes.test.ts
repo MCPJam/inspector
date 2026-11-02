@@ -96,3 +96,22 @@ describe("POST /api/mcp/conformance/protocol probe tools", () => {
     expect(runProtocolConformanceMock).not.toHaveBeenCalled();
   });
 });
+
+describe("POST /api/mcp/conformance/protocol advice picks", () => {
+  it("forwards the picked advice, an empty list included", async () => {
+    await postProtocol({ readinessIds: ["readiness-log-level-filtering"] });
+    await postProtocol({ readinessIds: [] });
+    await postProtocol({});
+
+    const inputs = runProtocolConformanceMock.mock.calls.map(
+      (call) => call[0].readinessIds,
+    );
+    expect(inputs).toEqual([["readiness-log-level-filtering"], [], undefined]);
+  });
+
+  it("rejects an unknown advice id before running anything", async () => {
+    const res = await postProtocol({ readinessIds: ["readiness-made-up"] });
+    expect(res.status).toBe(400);
+    expect(runProtocolConformanceMock).not.toHaveBeenCalled();
+  });
+});

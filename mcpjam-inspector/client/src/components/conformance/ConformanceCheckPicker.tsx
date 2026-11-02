@@ -4,7 +4,8 @@
  *
  * A suite list left `undefined` means the whole suite, so a check added to the
  * suite later is picked without anyone opting in. OAuth runs as one sign-in
- * flow, so its checks follow the suite's checkbox.
+ * flow, so its checks follow the suite's checkbox. The protocol suite's
+ * advice (no points) can be listed under its checks and picked the same way.
  */
 
 import { useState, type ReactNode } from "react";
@@ -24,6 +25,7 @@ import {
   APPS_CATALOG,
   OAUTH_CATALOG,
   TASKS_CATALOG,
+  protocolAdviceCatalog,
   protocolCatalog,
 } from "./conformance-catalogs";
 import { Collapse, SUITE_COPY } from "./conformance-ui";
@@ -42,9 +44,12 @@ export function checkCatalogs(
   };
 }
 
+/** A list of picks in the selection: a suite's checks, or protocol advice. */
+type PickList = CheckSuite | "protocolAdvice";
+
 function pickedIds(
   selection: ConformanceSelection,
-  suite: CheckSuite,
+  suite: PickList,
   catalog: CatalogEntry[],
 ): Set<string> {
   const picked = selection[suite] as readonly string[] | undefined;
@@ -54,10 +59,10 @@ function pickedIds(
   );
 }
 
-/** The selection with `ids` picked or left out of one suite. */
+/** The selection with `ids` picked or left out of one suite, or the advice. */
 export function withPicked(
   selection: ConformanceSelection,
-  suite: CheckSuite,
+  suite: PickList,
   catalog: CatalogEntry[],
   ids: string[],
   picked: boolean,
@@ -71,7 +76,11 @@ export function withPicked(
   // pick, or a change here would drop them from the saved defaults.
   const shown = new Set(catalog.map((entry) => entry.id));
   const stored = selection[suite] as readonly string[] | undefined;
-  const all = checkCatalogs("auto")[suite].map((entry) => entry.id);
+  const all = (
+    suite === "protocolAdvice"
+      ? protocolAdviceCatalog("auto")
+      : checkCatalogs("auto")[suite]
+  ).map((entry) => entry.id);
   const kept = all.filter((id) =>
     shown.has(id) ? next.has(id) : stored === undefined || stored.includes(id),
   );
@@ -161,6 +170,7 @@ export function ConformanceCheckPicker({
   onChange,
   countLabel = (picked) => `${picked} checks selected`,
   defaultOpen = false,
+  showProtocolAdvice = false,
   renderProtocolExtra,
   protocolInputStatus,
 }: {
@@ -170,8 +180,13 @@ export function ConformanceCheckPicker({
   countLabel?: (picked: number, total: number) => string;
   defaultOpen?: boolean;
   /**
-   * What a protocol check shows under it: the tool it calls, for the checks
-   * that must call one. Given whether each check is picked, and its title.
+   * List the protocol suite's advice under its checks, to pick like them.
+   * Off in Conformance Settings: the saved defaults hold check lists only.
+   */
+  showProtocolAdvice?: boolean;
+  /**
+   * What a protocol check or advice shows under it: the tool it calls, for
+   * the ones that must call one. Given whether each is picked, and its title.
    */
   renderProtocolExtra?: (
     checkId: string,
@@ -182,6 +197,9 @@ export function ConformanceCheckPicker({
   protocolInputStatus?: (checkId: string) => "missing" | "set" | undefined;
 }) {
   const catalogs = checkCatalogs(versionPin);
+  const adviceCatalog = showProtocolAdvice
+    ? protocolAdviceCatalog(versionPin)
+    : [];
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-card">
       {CHECK_SUITES.map((suite) => {
@@ -189,6 +207,33 @@ export function ConformanceCheckPicker({
         const picked = pickedIds(selection, suite, catalog);
         const inputStatus =
           suite === "protocol" ? protocolInputStatus : undefined;
+        // Advice runs only with the suite, so with no check picked none of
+        // it runs.
+        const advicePicked =
+          suite === "protocol" && picked.size > 0
+            ? pickedIds(selection, "protocolAdvice", adviceCatalog)
+            : new Set<string>();
+        const isPicked = (id: string) => picked.has(id) || advicePicked.has(id);
+        const titleOf = (id: string) =>
+          (
+            catalog.find((item) => item.id === id) ??
+            adviceCatalog.find((item) => item.id === id)
+          )?.title;
+        const renderExtra =
+          suite === "protocol" && renderProtocolExtra
+            ? (entry: CatalogEntry) =>
+                renderProtocolExtra(entry.id, isPicked, titleOf)
+            : undefined;
+        const renderTag = (entry: CatalogEntry) => {
+          const status = inputStatus?.(entry.id);
+          return status ? (
+            <NeedsInputTag
+              status={status}
+              picked={isPicked(entry.id)}
+              advice={adviceCatalog.some((item) => item.id === entry.id)}
+            />
+          ) : null;
+        };
         return (
           <SuiteChecks
             key={suite}
@@ -198,37 +243,56 @@ export function ConformanceCheckPicker({
             pickedCount={picked.size}
             countLabel={countLabel}
             defaultOpen={defaultOpen}
-            onSuiteChange={(value) =>
+            onSuiteChange={(value) => {
+              const next = withPicked(
+                selection,
+                suite,
+                catalog,
+                catalog.map((entry) => entry.id),
+                value,
+              );
+              // The suite's box covers its advice too.
               onChange(
-                withPicked(
-                  selection,
-                  suite,
-                  catalog,
-                  catalog.map((entry) => entry.id),
-                  value,
-                ),
-              )
-            }
+                suite === "protocol" && adviceCatalog.length > 0
+                  ? withPicked(
+                      next,
+                      "protocolAdvice",
+                      adviceCatalog,
+                      adviceCatalog.map((entry) => entry.id),
+                      value,
+                    )
+                  : next,
+              );
+            }}
             isPicked={(id) => picked.has(id)}
             onCheckChange={(id, value) =>
               onChange(withPicked(selection, suite, catalog, [id], value))
             }
-            renderExtra={
-              suite === "protocol" && renderProtocolExtra
-                ? (entry) =>
-                    renderProtocolExtra(
-                      entry.id,
-                      (id) => picked.has(id),
-                      (id) => catalog.find((item) => item.id === id)?.title,
-                    )
+            renderExtra={renderExtra}
+            renderTag={renderTag}
+            advice={
+              suite === "protocol" && adviceCatalog.length > 0
+                ? {
+                    catalog: adviceCatalog,
+                    pickedCount: advicePicked.size,
+                    isPicked: (id) => advicePicked.has(id),
+                    // Nothing to pick while no check is: none of it runs.
+                    onChange:
+                      picked.size > 0
+                        ? (id, value) =>
+                            onChange(
+                              withPicked(
+                                selection,
+                                "protocolAdvice",
+                                adviceCatalog,
+                                [id],
+                                value,
+                              ),
+                            )
+                        : undefined,
+                  }
                 : undefined
             }
-            renderTag={(entry) => {
-              const status = inputStatus?.(entry.id);
-              return status ? (
-                <NeedsInputTag status={status} picked={picked.has(entry.id)} />
-              ) : null;
-            }}
             needsInputCount={
               catalog.filter(
                 (entry) =>
@@ -275,6 +339,7 @@ function SuiteChecks({
   renderExtra,
   renderTag,
   needsInputCount = 0,
+  advice,
 }: {
   title: string;
   description: string;
@@ -290,14 +355,19 @@ function SuiteChecks({
   renderTag?: (entry: CatalogEntry) => ReactNode;
   /** Picked checks still missing an input, flagged on the closed header. */
   needsInputCount?: number;
+  /** The suite's advice, listed under its checks; the suite's box covers it. */
+  advice?: {
+    catalog: CatalogEntry[];
+    pickedCount: number;
+    isPicked: (id: string) => boolean;
+    onChange?: (id: string, picked: boolean) => void;
+  };
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const total = catalog.length + (advice?.catalog.length ?? 0);
+  const pickedTotal = pickedCount + (advice?.pickedCount ?? 0);
   const checked =
-    pickedCount === 0
-      ? false
-      : pickedCount === catalog.length
-        ? true
-        : "indeterminate";
+    pickedTotal === 0 ? false : pickedTotal === total ? true : "indeterminate";
   return (
     <div className="border-b border-border/60 last:border-b-0">
       <div className="flex items-start gap-3 p-4 transition-colors hover:bg-muted/30">
@@ -349,6 +419,18 @@ function SuiteChecks({
             renderExtra={renderExtra}
             renderTag={renderTag}
           />
+          {advice ? (
+            <div className="border-t border-border/60">
+              <CatalogList
+                catalog={advice.catalog}
+                heading={`Advice: ${advice.catalog.length} tips that cost no points. They run with the checks above.`}
+                isSelected={advice.isPicked}
+                onSelectedChange={advice.onChange}
+                renderExtra={renderExtra}
+                renderTag={renderTag}
+              />
+            </div>
+          ) : null}
         </div>
       </Collapse>
     </div>

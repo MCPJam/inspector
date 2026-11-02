@@ -2,10 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   APPS_CHECK_CATALOG,
   PROTOCOL_CHECK_CATALOG,
+  READINESS_CATALOG,
   TASKS_CHECK_CATALOG,
   type ConformanceCheckInfo,
 } from "../src/conformance-catalog.js";
-import { MCP_CHECK_IDS } from "../src/mcp-conformance/types.js";
+import {
+  MCP_CHECK_IDS,
+  MCP_READINESS_IDS,
+  READINESS_ERAS,
+} from "../src/mcp-conformance/types.js";
 import { MCP_APPS_CHECK_IDS } from "../src/apps-conformance/types.js";
 import { MCP_TASKS_CHECK_IDS } from "../src/tasks-conformance/types.js";
 import { CORE_CHECKS } from "../src/mcp-conformance/checks/core.js";
@@ -83,6 +88,15 @@ describe("conformance catalog", () => {
   it("covers every tasks check id, and only those", () => {
     expect(Object.keys(TASKS_CHECK_CATALOG).sort()).toEqual(
       [...MCP_TASKS_CHECK_IDS].sort(),
+    );
+  });
+
+  it("covers every advice id, and only those, with eras for each", () => {
+    expect(Object.keys(READINESS_CATALOG).sort()).toEqual(
+      [...MCP_READINESS_IDS].sort(),
+    );
+    expect(Object.keys(READINESS_ERAS).sort()).toEqual(
+      [...MCP_READINESS_IDS].sort(),
     );
   });
 

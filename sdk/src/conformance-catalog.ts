@@ -17,7 +17,7 @@
  * exhaustive over its suite's id union.
  */
 
-import type { MCPCheckId } from "./mcp-conformance/types.js";
+import type { MCPCheckId, MCPReadinessId } from "./mcp-conformance/types.js";
 import type { MCPAppsCheckId } from "./apps-conformance/types.js";
 import type { MCPTasksCheckId } from "./tasks-conformance/types.js";
 
@@ -349,3 +349,55 @@ export const TASKS_CHECK_CATALOG = {
       "A -32021 rejection carries error.data.requiredCapabilities naming the capability the client failed to declare.",
   },
 } as const satisfies Record<MCPTasksCheckId, ConformanceCheckInfo>;
+
+/**
+ * Protocol suite advice (the readiness channel). Keys follow
+ * `MCP_READINESS_IDS` order. The titles ARE the canonical strings:
+ * `mcp-conformance/readiness.ts` reads each warning's title from here.
+ */
+export const READINESS_CATALOG = {
+  "readiness-tool-order-deterministic": {
+    title: "Deterministic Tool Order",
+    description:
+      "tools/list returns the tools in the same order on every call.",
+  },
+  "readiness-deprecated-feature-use": {
+    title: "Deprecated Feature Use",
+    description:
+      "The server does not rely on features or revisions that newer ones replaced.",
+  },
+  "readiness-cache-ttl-useful": {
+    title: "Useful Cache TTLs",
+    description:
+      "Cacheable results advertise a ttlMs above 0, so clients can reuse them.",
+  },
+  "readiness-oauth-iss-advertised": {
+    title: "Authorization Response iss",
+    description:
+      "The authorization server advertises authorization_response_iss_parameter_supported.",
+  },
+  "readiness-parse-error-handling": {
+    title: "Parse Error Handling",
+    description:
+      "An unparseable JSON body is rejected, or answered with a JSON-RPC -32700 Parse error.",
+  },
+  "readiness-session-termination": {
+    title: "Explicit Session Termination",
+    description:
+      "A DELETE ends the session or gets 405. A 2026-07-28 server answers stray GET and DELETE with 405.",
+  },
+  "readiness-protocol-version-header-required": {
+    title: "Protocol Version Header Required",
+    description: "A POST without the MCP-Protocol-Version header is rejected.",
+  },
+  "readiness-tool-name-conventions": {
+    title: "Tool Name Conventions",
+    description:
+      "Tool names are unique and 1 to 128 characters of A-Z, a-z, 0-9, underscore, hyphen, or dot.",
+  },
+  "readiness-log-level-filtering": {
+    title: "Log Level Filtering",
+    description:
+      "A tool called at a log level sends logs at or above that level.",
+  },
+} as const satisfies Record<MCPReadinessId, ConformanceCheckInfo>;

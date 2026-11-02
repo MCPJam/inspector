@@ -38,8 +38,20 @@ describe("probesForRun", () => {
     ).toEqual({ logProbe });
   });
 
+  it("keeps the log tool for the log level advice alone", () => {
+    // The logging check is left out, but the advice still calls the tool.
+    expect(
+      probesForRun({ logProbe }, ["ping"], "2026-07-28", [
+        "readiness-log-level-filtering",
+      ]),
+    ).toEqual({ logProbe });
+    // With the advice left out too, it is not sent.
+    expect(probesForRun({ logProbe }, ["ping"], "2026-07-28", [])).toEqual({});
+  });
+
   it("maps each check to the tool it calls", () => {
     expect(probeKeyFor("modern-logs-require-log-level")).toBe("logProbe");
+    expect(probeKeyFor("readiness-log-level-filtering")).toBe("logProbe");
     expect(probeKeyFor("modern-undeclared-capability-error")).toBe(
       "inputRequiredProbe",
     );

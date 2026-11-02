@@ -4,6 +4,7 @@ import {
   MCP_APPS_CHECK_IDS,
   MCP_CHECK_IDS,
   MCP_PROTOCOL_VERSIONS,
+  MCP_READINESS_IDS,
   MCP_TASKS_CHECK_IDS,
   canRunConformance,
   oauthConformanceProfileSchema,
@@ -80,6 +81,8 @@ const protocolSchema = z.object({
   protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
   /** Run only these checks, as picked before Run; absent ⇒ all of them. */
   checkIds: z.array(z.enum(MCP_CHECK_IDS)).min(1).optional(),
+  /** Run only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds: z.array(z.enum(MCP_READINESS_IDS)).optional(),
   /** Tools named as safe for the checks that must call one. */
   ...conformanceProbeFields,
 });
@@ -108,6 +111,7 @@ conformance.post("/protocol", async (c) => {
       ...toHttpResolved(resolved.config as HttpServerConfig),
       protocolVersion: parsed.data.protocolVersion,
       checkIds: parsed.data.checkIds,
+      readinessIds: parsed.data.readinessIds,
       logProbe: parsed.data.logProbe,
       inputRequiredProbe: parsed.data.inputRequiredProbe,
     });

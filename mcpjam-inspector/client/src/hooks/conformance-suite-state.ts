@@ -18,10 +18,13 @@ import {
   CHECK_ERAS,
   MCP_APPS_CHECK_IDS,
   MCP_CHECK_IDS,
+  MCP_READINESS_IDS,
   MCP_TASKS_CHECK_IDS,
   PROTOCOL_VERSION_ERAS,
+  READINESS_ERAS,
   type MCPAppsCheckId,
   type MCPCheckId,
+  type MCPReadinessId,
   type MCPTasksCheckId,
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
@@ -177,6 +180,12 @@ export function oauthStateFromResult(
  */
 export interface ConformanceSelection {
   protocol?: MCPCheckId[];
+  /**
+   * The protocol suite's advice, which costs no points. Missing runs all of
+   * it; empty runs none. It runs only with the protocol suite, so only when
+   * at least one protocol check is picked.
+   */
+  protocolAdvice?: MCPReadinessId[];
   apps?: MCPAppsCheckId[];
   tasks?: MCPTasksCheckId[];
   oauth?: boolean;
@@ -228,9 +237,15 @@ export function runnableSelection(
       pinnedEra === undefined ||
       (CHECK_ERAS[id] as readonly string[]).includes(pinnedEra),
   );
+  const adviceIds = MCP_READINESS_IDS.filter(
+    (id) =>
+      pinnedEra === undefined ||
+      (READINESS_ERAS[id] as readonly string[]).includes(pinnedEra),
+  );
   return {
     ...selection,
     protocol: knownIds(selection.protocol, protocolIds),
+    protocolAdvice: knownIds(selection.protocolAdvice, adviceIds),
     apps: knownIds(selection.apps, MCP_APPS_CHECK_IDS),
     tasks: knownIds(selection.tasks, APP_TASKS_CHECK_IDS),
   };

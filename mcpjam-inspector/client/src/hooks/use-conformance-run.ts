@@ -25,6 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type MCPAppsCheckId,
   type MCPCheckId,
+  type MCPReadinessId,
   type MCPTasksCheckId,
   pooledConformanceScore,
   scoreFromAppsResult,
@@ -320,20 +321,27 @@ export function useConformanceRun({
   );
 
   const runProtocol = useCallback(
-    async (runToken: number, serverName: string, checkIds?: MCPCheckId[]) => {
+    async (
+      runToken: number,
+      serverName: string,
+      checkIds?: MCPCheckId[],
+      readinessIds?: MCPReadinessId[]
+    ) => {
       if (!httpServer) return;
       setProtocol({ status: "running" });
       try {
-        // Only the tools a check in this run calls: a tool named for a
-        // check left out is never executed.
+        // Only the tools a check or advice in this run calls: a tool named
+        // for one left out is never executed.
         const probes = probesForRun(
           probesRef.current ?? {},
           checkIds,
           versionPin,
+          readinessIds,
         );
         const { result } = await runProtocolConformance(serverName, {
           protocolVersion: versionPin === "auto" ? undefined : versionPin,
           ...(checkIds ? { checkIds } : {}),
+          ...(readinessIds ? { readinessIds } : {}),
           ...(probes.logProbe || probes.inputRequiredProbe ? { probes } : {}),
         });
         if (!isRunActive(runToken, serverName)) return;
@@ -690,7 +698,12 @@ export function useConformanceRun({
     if (httpServerNow) {
       if (isSelected(picked?.protocol)) {
         promises.push(
-          runProtocol(runToken, currentServer.name, picked?.protocol)
+          runProtocol(
+            runToken,
+            currentServer.name,
+            picked?.protocol,
+            picked?.protocolAdvice
+          )
         );
       } else {
         setProtocol(NOT_SELECTED);

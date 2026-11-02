@@ -22,6 +22,7 @@ import {
   type MCPConformanceConfig,
   type MCPConformanceResult,
   type MCPCheckId,
+  type MCPReadinessId,
   type MCPServerConfig,
   type McpProtocolVersion,
   type MCPTasksConformanceConfig,
@@ -144,6 +145,8 @@ export interface ResolvedHttpConfig {
   protocolVersion?: McpProtocolVersion;
   /** Run only these checks; absent ⇒ every check the revision has. */
   checkIds?: MCPCheckId[];
+  /** Run only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds?: MCPReadinessId[];
 }
 
 export class UnsupportedTransportError extends Error {
@@ -170,6 +173,7 @@ export async function runProtocolConformance(
     customHeaders: input.customHeaders,
     protocolVersion: input.protocolVersion,
     ...(input.checkIds ? { checkIds: input.checkIds } : {}),
+    ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
     ...(input.logProbe ? { logProbe: input.logProbe } : {}),
     ...(input.inputRequiredProbe
       ? { inputRequiredProbe: input.inputRequiredProbe }

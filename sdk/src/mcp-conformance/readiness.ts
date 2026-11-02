@@ -14,10 +14,12 @@
  */
 
 import type { Tool } from "@modelcontextprotocol/client";
+import { READINESS_CATALOG } from "../conformance-catalog.js";
 import { listTools } from "../operations.js";
 import {
   MCP_LOG_LEVELS,
   type MCPClientCheckContext,
+  type MCPReadinessId,
   type MCPReadinessSpecStrength,
   type MCPReadinessWarning,
   type MCPServerSurfaceSnapshot,
@@ -50,12 +52,19 @@ const DEPRECATED_MODERN_CAPABILITIES: Array<{
 
 function warning(
   id: MCPReadinessWarning["id"],
-  title: string,
   specStrength: MCPReadinessSpecStrength,
   message: string,
   details?: Record<string, unknown>
 ): MCPReadinessWarning {
-  return { id, title, severity: "warning", specStrength, message, details };
+  return {
+    id,
+    // One title per advice, shared with the static catalog UIs list.
+    title: READINESS_CATALOG[id].title,
+    severity: "warning",
+    specStrength,
+    message,
+    details,
+  };
 }
 
 /**
@@ -66,15 +75,22 @@ function warning(
  */
 function informational(
   id: MCPReadinessWarning["id"],
-  title: string,
   specStrength: MCPReadinessSpecStrength,
   message: string,
   details?: Record<string, unknown>
 ): MCPReadinessWarning {
   return {
-    ...warning(id, title, specStrength, message, details),
+    ...warning(id, specStrength, message, details),
     informational: true,
   };
+}
+
+/** Whether the run asked for this advice: all of it, unless `readinessIds` narrows it. */
+function adviceSelected(
+  config: { readinessIds?: readonly MCPReadinessId[] },
+  id: MCPReadinessId
+): boolean {
+  return config.readinessIds === undefined || config.readinessIds.includes(id);
 }
 
 function toolOrderWarning(
@@ -87,7 +103,6 @@ function toolOrderWarning(
 
   return warning(
     "readiness-tool-order-deterministic",
-    "Deterministic Tool Order",
     "SHOULD",
     "tools/list returned the tools in a different order on a repeated call; a stable order keeps client-side caches, diffs, and model prompts stable across calls",
     { firstListing: first, secondListing: second }
@@ -146,7 +161,6 @@ function toolNameConventionsWarning(
 
   return informational(
     "readiness-tool-name-conventions",
-    "Tool Name Conventions",
     "SHOULD",
     `Tool names break the spec's naming conventions: ${problems.join("; ")}`,
     { badLength, badCharacters, duplicates }
@@ -213,7 +227,6 @@ function deprecatedFeatureWarning(
 
   return warning(
     "readiness-deprecated-feature-use",
-    "Deprecated Feature Use",
     "SHOULD",
     `Server advertises superseded functionality: ${findings.join("; ")}`,
     { findings }
@@ -231,33 +244,39 @@ export async function collectClientReadiness(
 ): Promise<MCPReadinessWarning[]> {
   const warnings: MCPReadinessWarning[] = [];
 
-  try {
-    const secondListing = await listTools(ctx.manager, {
-      serverId: ctx.serverId,
-    });
-    const orderWarning = toolOrderWarning(
-      surface.toolNames,
-      secondListing.tools.map((tool) => tool.name)
-    );
-    if (orderWarning) {
-      warnings.push(orderWarning);
+  if (adviceSelected(ctx.config, "readiness-tool-order-deterministic")) {
+    try {
+      const secondListing = await listTools(ctx.manager, {
+        serverId: ctx.serverId,
+      });
+      const orderWarning = toolOrderWarning(
+        surface.toolNames,
+        secondListing.tools.map((tool) => tool.name)
+      );
+      if (orderWarning) {
+        warnings.push(orderWarning);
+      }
+    } catch {
+      // A server without tools (or one that failed the repeat listing) simply
+      // yields no ordering advice.
     }
-  } catch {
-    // A server without tools (or one that failed the repeat listing) simply
-    // yields no ordering advice.
   }
 
-  const toolNameWarning = toolNameConventionsWarning(ctx, surface.tools);
-  if (toolNameWarning) {
-    warnings.push(toolNameWarning);
+  if (adviceSelected(ctx.config, "readiness-tool-name-conventions")) {
+    const toolNameWarning = toolNameConventionsWarning(ctx, surface.tools);
+    if (toolNameWarning) {
+      warnings.push(toolNameWarning);
+    }
   }
 
-  const deprecated = deprecatedFeatureWarning(
-    ctx,
-    surface.serverCapabilities ?? {}
-  );
-  if (deprecated) {
-    warnings.push(deprecated);
+  if (adviceSelected(ctx.config, "readiness-deprecated-feature-use")) {
+    const deprecated = deprecatedFeatureWarning(
+      ctx,
+      surface.serverCapabilities ?? {}
+    );
+    if (deprecated) {
+      warnings.push(deprecated);
+    }
   }
 
   return warnings;
@@ -287,7 +306,6 @@ async function cacheTtlWarning(
 
   return warning(
     "readiness-cache-ttl-useful",
-    "Useful Cache TTLs",
     "SHOULD",
     "Cacheable results advertise ttlMs: 0, so no client can reuse them; a non-zero TTL on stable listings removes a round trip per call",
     { method: "tools/list", ttlMs }
@@ -326,7 +344,6 @@ async function parseErrorHandlingWarning(
 
   return warning(
     "readiness-parse-error-handling",
-    "Parse Error Handling",
     "MAY",
     `The server answered an unparseable JSON body with HTTP ${result.status} and no JSON-RPC -32700 Parse error. No MCP revision mandates a particular response here, but accepting garbage as success hides transport corruption from clients`,
     { status: result.status }
@@ -386,7 +403,6 @@ async function sessionTerminationWarning(
     }
     return warning(
       "readiness-session-termination",
-      "Explicit Session Termination",
       "SHOULD",
       `A 2026-07-28 server SHOULD answer stray GET/DELETE traffic from older clients with HTTP 405 Method Not Allowed; ${offenders.join(
         ", "
@@ -426,7 +442,6 @@ async function sessionTerminationWarning(
 
   return warning(
     "readiness-session-termination",
-    "Explicit Session Termination",
     "SHOULD",
     `DELETE with the session id got HTTP ${deleteResult.status}. Clients SHOULD send this DELETE when abandoning a session; the server should terminate it (2xx) or decline with 405 Method Not Allowed (MAY)`,
     { status: deleteResult.status }
@@ -503,7 +518,6 @@ async function oauthIssWarning(
     ? undefined
     : warning(
         "readiness-oauth-iss-advertised",
-        "Authorization Response iss",
         "RECOMMENDED",
         `Authorization server ${issuer} does not advertise authorization_response_iss_parameter_supported; emitting iss lets clients detect authorization-server mix-up attacks`,
         { issuer }
@@ -569,7 +583,6 @@ async function protocolVersionHeaderWarning(
 
   return informational(
     "readiness-protocol-version-header-required",
-    "Protocol Version Header Required",
     "SHOULD",
     `The server answered a POST carrying no MCP-Protocol-Version header with HTTP ${result.status} and no error. SEP-2243 makes the header REQUIRED on every POST; tolerating its absence is permitted only for servers that still support pre-2025-06-18 clients, and it denies intermediaries the routing signal the header exists to provide`,
     { status: result.status }
@@ -636,7 +649,6 @@ async function logLevelFilteringWarning(
   if (levels.length === 0) {
     return informational(
       "readiness-log-level-filtering",
-      "Log Level Filtering",
       "MAY",
       `No logs came back when ${JSON.stringify(probe.toolName)} was called asking for "${level}" logs. The spec lets a server send none, but if this tool logs at "${level}" or above, the server may be dropping those logs, or the tool did not log on this call`,
       { ...details, logNotificationCount: 0 }
@@ -653,7 +665,6 @@ async function logLevelFilteringWarning(
   }
   return informational(
     "readiness-log-level-filtering",
-    "Log Level Filtering",
     "MAY",
     `The server sent logs below the requested "${level}" level, or with an unknown level: ${invalidOrLowerLevels
       .map((found) => JSON.stringify(found) ?? "undefined")
@@ -667,15 +678,25 @@ async function logLevelFilteringWarning(
 export async function collectRawReadiness(
   ctx: RawHttpCheckContext
 ): Promise<MCPReadinessWarning[]> {
-  const probes = [
-    cacheTtlWarning(ctx),
-    oauthIssWarning(ctx),
-    parseErrorHandlingWarning(ctx),
-    sessionTerminationWarning(ctx),
-    protocolVersionHeaderWarning(ctx),
-    logLevelFilteringWarning(ctx),
+  const probes: Array<
+    [MCPReadinessId, () => Promise<MCPReadinessWarning | undefined>]
+  > = [
+    ["readiness-cache-ttl-useful", () => cacheTtlWarning(ctx)],
+    ["readiness-oauth-iss-advertised", () => oauthIssWarning(ctx)],
+    ["readiness-parse-error-handling", () => parseErrorHandlingWarning(ctx)],
+    ["readiness-session-termination", () => sessionTerminationWarning(ctx)],
+    [
+      "readiness-protocol-version-header-required",
+      () => protocolVersionHeaderWarning(ctx),
+    ],
+    ["readiness-log-level-filtering", () => logLevelFilteringWarning(ctx)],
   ];
-  const settled = await Promise.allSettled(probes);
+  // An advice left out never sends its probe, not just its result.
+  const settled = await Promise.allSettled(
+    probes
+      .filter(([id]) => adviceSelected(ctx.config, id))
+      .map(([, probe]) => probe())
+  );
   return settled.flatMap((outcome) =>
     outcome.status === "fulfilled" && outcome.value ? [outcome.value] : []
   );

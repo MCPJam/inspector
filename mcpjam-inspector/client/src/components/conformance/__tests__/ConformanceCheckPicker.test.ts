@@ -7,7 +7,7 @@ import {
   withOAuthSuite,
   withPicked,
 } from "../ConformanceCheckPicker";
-import { OAUTH_CATALOG } from "../conformance-catalogs";
+import { OAUTH_CATALOG, protocolAdviceCatalog } from "../conformance-catalogs";
 
 const modernOnly = MCP_CHECK_IDS.filter(
   (id) => !(CHECK_ERAS[id] as readonly string[]).includes("legacy"),
@@ -30,6 +30,59 @@ describe("withPicked", () => {
     expect(
       withPicked(without, "protocol", pinned, ["ping"], true).protocol,
     ).toBeUndefined();
+  });
+});
+
+describe("protocol advice picks", () => {
+  it("lists only the advice a pinned version can give", () => {
+    const legacy = protocolAdviceCatalog("2025-11-25").map((entry) => entry.id);
+    expect(legacy).not.toContain("readiness-log-level-filtering");
+    expect(
+      protocolAdviceCatalog("2026-07-28").map((entry) => entry.id),
+    ).toContain("readiness-log-level-filtering");
+    // Auto lists all of it and tags the era-only ones.
+    expect(
+      protocolAdviceCatalog("auto").find(
+        (entry) => entry.id === "readiness-log-level-filtering",
+      )?.note,
+    ).toBe("modern only");
+  });
+
+  it("keeps the advice a pin hides, and goes back to all of it", () => {
+    const pinned = protocolAdviceCatalog("2025-11-25");
+    const without = withPicked(
+      {},
+      "protocolAdvice",
+      pinned,
+      ["readiness-parse-error-handling"],
+      false,
+    );
+    expect(without.protocolAdvice).not.toContain(
+      "readiness-parse-error-handling",
+    );
+    expect(without.protocolAdvice).toContain("readiness-log-level-filtering");
+    expect(
+      withPicked(
+        without,
+        "protocolAdvice",
+        pinned,
+        ["readiness-parse-error-handling"],
+        true,
+      ).protocolAdvice,
+    ).toBeUndefined();
+  });
+
+  it("keeps an empty list, which runs no advice", () => {
+    const all = protocolAdviceCatalog("auto");
+    const none = withPicked(
+      {},
+      "protocolAdvice",
+      all,
+      all.map((entry) => entry.id),
+      false,
+    );
+    expect(none.protocolAdvice).toEqual([]);
+    expect(runnableSelection(none, "2026-07-28")?.protocolAdvice).toEqual([]);
   });
 });
 

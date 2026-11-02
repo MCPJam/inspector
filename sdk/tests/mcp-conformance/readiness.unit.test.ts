@@ -627,3 +627,92 @@ describe("log level filtering advice", () => {
     ).toThrow(/logProbe.level must be one of debug, info/);
   });
 });
+
+describe("picking advice with readinessIds", () => {
+  function countingFetch() {
+    const seen = { requests: 0 };
+    const fetchFn = (async () => {
+      seen.requests += 1;
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof fetch;
+    return { fetchFn, seen };
+  }
+
+  function pickedContext(
+    fetchFn: typeof fetch,
+    readinessIds: NormalizedMCPConformanceConfig["readinessIds"]
+  ): RawHttpCheckContext {
+    const config = normalizeMCPConformanceConfig({
+      serverUrl: SERVER_URL,
+      fetchFn,
+      protocolVersion: "2026-07-28",
+      checkTimeout: 500,
+      logProbe: { toolName: "emit-log" },
+      readinessIds,
+    });
+    return { config, serverUrl: SERVER_URL, fetchFn: config.fetchFn };
+  }
+
+  it("sends no probe at all when the list is empty", async () => {
+    const server = countingFetch();
+    expect(
+      await collectRawReadiness(pickedContext(server.fetchFn, []))
+    ).toEqual([]);
+    expect(server.seen.requests).toBe(0);
+  });
+
+  it("sends only the picked advice's probe", async () => {
+    const server = countingFetch();
+    const warnings = await collectRawReadiness(
+      pickedContext(server.fetchFn, ["readiness-parse-error-handling"])
+    );
+    expect(warnings.map((item) => item.id)).toEqual([
+      "readiness-parse-error-handling",
+    ]);
+    expect(server.seen.requests).toBe(1);
+  });
+
+  it("skips client advice left out, including the repeat tools/list", async () => {
+    const context = clientContext({
+      protocolVersion: "2026-07-28",
+      serverCapabilities: { logging: {} },
+    });
+    const warnings = await collectClientReadiness(
+      {
+        ...context,
+        config: {
+          ...context.config,
+          readinessIds: ["readiness-deprecated-feature-use"],
+        },
+      },
+      surface({
+        tools: [tool("bad name")],
+        serverCapabilities: { logging: {} },
+      })
+    );
+    expect(warnings.map((item) => item.id)).toEqual([
+      "readiness-deprecated-feature-use",
+    ]);
+    expect(mockedOperations.listTools).not.toHaveBeenCalled();
+  });
+
+  it("keeps an empty list and rejects an unknown id", () => {
+    expect(
+      normalizeMCPConformanceConfig({ serverUrl: SERVER_URL, readinessIds: [] })
+        .readinessIds
+    ).toEqual([]);
+    expect(
+      normalizeMCPConformanceConfig({ serverUrl: SERVER_URL }).readinessIds
+    ).toBeUndefined();
+    expect(() =>
+      normalizeMCPConformanceConfig({
+        serverUrl: SERVER_URL,
+        readinessIds: [
+          "readiness-made-up" as NonNullable<
+            NormalizedMCPConformanceConfig["readinessIds"]
+          >[number],
+        ],
+      })
+    ).toThrow(/Unknown MCP conformance readiness id: readiness-made-up/);
+  });
+});

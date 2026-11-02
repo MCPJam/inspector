@@ -4,6 +4,7 @@ import {
   MCP_APPS_CHECK_IDS,
   MCP_CHECK_IDS,
   MCP_PROTOCOL_VERSIONS,
+  MCP_READINESS_IDS,
   MCP_TASKS_CHECK_IDS,
   oauthConformanceProfileSchema,
   type MCPServerConfig,
@@ -244,6 +245,8 @@ const protocolSchema = z
     protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
     /** Run only these checks, as picked before Run; absent ⇒ all of them. */
     checkIds: z.array(z.enum(MCP_CHECK_IDS)).min(1).optional(),
+    /** Run only this advice; absent ⇒ all of it, empty ⇒ none. */
+    readinessIds: z.array(z.enum(MCP_READINESS_IDS)).optional(),
     /** Tools named as safe for the checks that must call one. */
     ...conformanceProbeFields,
   })
@@ -263,6 +266,7 @@ conformanceWeb.post("/protocol", async (c) =>
         ...resolved,
         protocolVersion: parsed.protocolVersion,
         checkIds: parsed.checkIds,
+        readinessIds: parsed.readinessIds,
         logProbe: parsed.logProbe,
         inputRequiredProbe: parsed.inputRequiredProbe,
       });

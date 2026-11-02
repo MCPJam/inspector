@@ -1646,7 +1646,8 @@ describe("ConformanceTab", () => {
       ).toBeInTheDocument();
 
       fireEvent.click(header);
-      expect(screen.getAllByText("Needs input")).toHaveLength(2);
+      // The two checks, and the advice that calls the log tool too.
+      expect(screen.getAllByText("Needs input")).toHaveLength(3);
       await waitFor(() =>
         expect(
           screen.getByRole("combobox", { name: "Tool that emits logs" }),
@@ -1659,7 +1660,7 @@ describe("ConformanceTab", () => {
         screen.getByRole("option", { name: "echo · read-only" }),
       );
 
-      expect(screen.getAllByText("Input set")).toHaveLength(1);
+      expect(screen.getAllByText("Input set")).toHaveLength(2);
       expect(screen.getAllByText("Needs input")).toHaveLength(1);
       expect(
         within(header).getByText("1 check needs input"),
@@ -1732,9 +1733,12 @@ describe("ConformanceTab", () => {
         screen.getByRole("option", { name: "echo · read-only" }),
       );
 
-      // The check that would call it is left out.
+      // The check and the advice that would call it are left out.
       fireEvent.click(
         screen.getByRole("checkbox", { name: "Run Logs Require A Log Level" }),
+      );
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Run Log Level Filtering" }),
       );
       expect(
         screen.queryByRole("combobox", { name: "Tool that emits logs" }),
@@ -1743,6 +1747,68 @@ describe("ConformanceTab", () => {
       fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
       await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
       expect(mockRunProtocol.mock.calls[0]![1]).not.toHaveProperty("probes");
+      expect(mockRunProtocol.mock.calls[0]![1].readinessIds).not.toContain(
+        "readiness-log-level-filtering",
+      );
+    });
+
+    it("lists the advice under the checks, and moves the log tool to it when only it calls the tool", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await openProtocolChecks();
+      expect(
+        screen.getByText(/^Advice: \d+ tips that cost no points/),
+      ).toBeInTheDocument();
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      await user.click(
+        screen.getByRole("option", { name: "echo · read-only" }),
+      );
+      // Under the advice row: a pointer to the check's tool, and the level.
+      expect(
+        screen.getByText("Calls the tool set under Logs Require A Log Level."),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("combobox", { name: "Log level to request" }),
+      ).toBeInTheDocument();
+
+      // Only the advice calls it now, so the tool field moves to its row.
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Run Logs Require A Log Level" }),
+      );
+      expect(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      ).toHaveTextContent("echo");
+      // Another advice left out is not asked for.
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Run Parse Error Handling" }),
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+      const sent = mockRunProtocol.mock.calls[0]![1];
+      expect(sent.probes).toEqual({ logProbe: { toolName: "echo" } });
+      expect(sent.checkIds).not.toContain("modern-logs-require-log-level");
+      expect(sent.readinessIds).toContain("readiness-log-level-filtering");
+      expect(sent.readinessIds).not.toContain("readiness-parse-error-handling");
+    });
+
+    it("turns the advice off with the suite's box, and offers none with no check picked", async () => {
+      await openProtocolChecks();
+      const suite = screen.getByRole("checkbox", { name: "Run Protocol" });
+      fireEvent.click(suite);
+      expect(suite).toHaveAttribute("data-state", "unchecked");
+      const advice = screen.getByRole("checkbox", {
+        name: "Run Log Level Filtering",
+      });
+      expect(advice).toHaveAttribute("data-state", "unchecked");
+      expect(advice).toBeDisabled();
+
+      fireEvent.click(suite);
+      expect(suite).toHaveAttribute("data-state", "checked");
+      expect(advice).toHaveAttribute("data-state", "checked");
+      expect(advice).toBeEnabled();
     });
   });
 

@@ -1298,6 +1298,7 @@ export {
   MCP_PROTOCOL_VERSION_ERA_IDS,
   MCP_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
+  READINESS_ERAS,
   canRunConformance,
   isHttpServerConfig,
 } from "./mcp-conformance/index.js";

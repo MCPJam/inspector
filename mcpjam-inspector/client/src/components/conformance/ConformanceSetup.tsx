@@ -358,6 +358,7 @@ export function ConformanceSetup({
                 versionPin={versionPin}
                 selection={selection}
                 onChange={setSelection}
+                showProtocolAdvice
                 renderProtocolExtra={
                   probeServer
                     ? (checkId, isPicked, checkTitle) => (

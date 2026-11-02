@@ -300,6 +300,14 @@ export interface MCPConformanceConfig {
   checkTimeout?: number;
   categories?: MCPCheckCategory[];
   checkIds?: MCPCheckId[];
+  /**
+   * Run only these advice probes (the readiness channel). Absent ⇒ every
+   * advice. Unlike `checkIds`, an empty list means NO advice: advice never
+   * decides the verdict, so turning all of it off is a real choice. An advice
+   * left out never sends its probe, so the log level filtering advice, for
+   * one, does not call the `logProbe` tool.
+   */
+  readinessIds?: MCPReadinessId[];
   fetchFn?: typeof fetch;
   clientName?: string;
   /**
@@ -392,6 +400,8 @@ export interface NormalizedMCPConformanceConfig {
   checkTimeout: number;
   categories: MCPCheckCategory[];
   checkIds?: MCPCheckId[];
+  /** See {@link MCPConformanceConfig.readinessIds}. Absent ⇒ every advice. */
+  readinessIds?: MCPReadinessId[];
   fetchFn: typeof fetch;
   clientName: string;
   /** Validated protocol pin (see {@link MCPConformanceConfig.protocolVersion}). */
@@ -464,6 +474,25 @@ export const MCP_READINESS_IDS = [
 ] as const;
 
 export type MCPReadinessId = (typeof MCP_READINESS_IDS)[number];
+
+/**
+ * The eras each advice can show up in, so a UI lists only the advice a pinned
+ * run can produce. Mirrors the era guards in `readiness.ts`: an advice listed
+ * for an era may still find nothing to say there (its probe decides).
+ */
+export const READINESS_ERAS: Record<MCPReadinessId, MCPCheckEras> = {
+  "readiness-tool-order-deterministic": ["legacy", "modern"],
+  // Modern: removed capabilities. Legacy: a revision older than 2025-11-25.
+  "readiness-deprecated-feature-use": ["legacy", "modern"],
+  "readiness-cache-ttl-useful": ["modern"],
+  "readiness-oauth-iss-advertised": ["legacy", "modern"],
+  "readiness-parse-error-handling": ["legacy", "modern"],
+  "readiness-session-termination": ["legacy", "modern"],
+  "readiness-protocol-version-header-required": ["modern"],
+  // Legacy: only when the server negotiates 2025-11-25.
+  "readiness-tool-name-conventions": ["legacy", "modern"],
+  "readiness-log-level-filtering": ["modern"],
+};
 
 /**
  * How strongly the spec states the advice. Everything on the readiness channel

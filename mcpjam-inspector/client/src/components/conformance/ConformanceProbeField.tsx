@@ -24,6 +24,7 @@ import {
 } from "@/lib/host-compat/use-host-compat";
 import { ToolCallArgsEditor } from "@/components/evals/checks-section";
 import {
+  LOG_LEVEL_ADVICE,
   PROBE_CHECKS,
   probeKeyFor,
   type ConformanceProbe,
@@ -96,12 +97,58 @@ export function useProbeTools(server: ServerWithName | null): ProbeTools {
   return { tools, status, truncated: Boolean(data?.nextCursor) };
 }
 
+const FIELD_BOX =
+  "space-y-2 rounded-md border border-border/60 bg-muted/20 p-3";
+
+/**
+ * The level the log level filtering advice asks the log tool for. Kept on the
+ * log probe, so it needs a tool first.
+ */
+function LogLevelField({
+  probe,
+  onChange,
+}: {
+  probe: ConformanceProbe;
+  onChange: (probe: ConformanceProbe) => void;
+}) {
+  const id = useId();
+  return (
+    <>
+      <Label htmlFor={id} className="text-xs">
+        Log level to request
+      </Label>
+      <Select
+        value={probe.level ?? DEFAULT_LOG_LEVEL}
+        onValueChange={(next) =>
+          onChange({ ...probe, level: next as MCPLogLevel })
+        }
+      >
+        <SelectTrigger id={id} className="h-8 w-full text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {MCP_LOG_LEVELS.map((name) => (
+            <SelectItem key={name} value={name}>
+              {name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <p className="text-xs text-muted-foreground">
+        We call the tool once at this level. If it sends lower-level logs, or no
+        logs, you get a tip.
+      </p>
+    </>
+  );
+}
+
 export function ConformanceProbeField({
   probeKey,
   tools: { tools: options, status, truncated },
   probe,
   onChange,
   onValidChange,
+  showLevel = false,
 }: {
   probeKey: ConformanceProbeKey;
   tools: ProbeTools;
@@ -109,9 +156,10 @@ export function ConformanceProbeField({
   onChange: (probe: ConformanceProbe | undefined) => void;
   /** False while the Raw JSON box holds text that does not parse. */
   onValidChange?: (valid: boolean) => void;
+  /** Also ask for the log level, under the log level filtering advice. */
+  showLevel?: boolean;
 }) {
   const id = useId();
-  const levelId = useId();
   // The editor reports validity from an effect keyed on this callback, so it
   // must keep one identity while the parent re-renders.
   const onValidChangeRef = useRef(onValidChange);
@@ -143,11 +191,8 @@ export function ConformanceProbeField({
       ...level,
     });
 
-  const changeLevel = (next: string) =>
-    onChange({ ...probe, toolName, level: next as MCPLogLevel });
-
   return (
-    <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-3">
+    <div className={FIELD_BOX}>
       <Label htmlFor={id} className="text-xs">
         {copy.label}
       </Label>
@@ -216,40 +261,18 @@ export function ConformanceProbeField({
           onInvalidChange={reportInvalid}
         />
       ) : null}
-      {probeKey === "logProbe" && toolName !== NONE ? (
-        <>
-          <Label htmlFor={levelId} className="text-xs">
-            Log level to request
-          </Label>
-          <Select
-            value={probe?.level ?? DEFAULT_LOG_LEVEL}
-            onValueChange={changeLevel}
-          >
-            <SelectTrigger id={levelId} className="h-8 w-full text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {MCP_LOG_LEVELS.map((name) => (
-                <SelectItem key={name} value={name}>
-                  {name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-muted-foreground">
-            Advice only, no points. The tool runs once at this level and should
-            send logs at or above it.
-          </p>
-        </>
+      {showLevel && probe ? (
+        <LogLevelField probe={probe} onChange={onChange} />
       ) : null}
     </div>
   );
 }
 
 /**
- * What a protocol check row shows under it for its probe: the field, under
- * the first picked check that calls the tool, and a pointer to it under the
- * others. Nothing for a check that calls no tool or is not picked.
+ * What a protocol check or advice row shows under it for its probe: the
+ * field, under the first picked one that calls the tool, and a pointer to it
+ * under the others. The log level filtering advice also asks for its log
+ * level. Nothing for a row that calls no tool or is not picked.
  */
 export function ProbeCheckExtra({
   checkId,
@@ -273,26 +296,39 @@ export function ProbeCheckExtra({
   const owner = PROBE_CHECKS[key].find(
     (id) => checkTitle(id) !== undefined && isPicked(id),
   );
-  if (owner !== checkId) {
+  const probe = probes[key];
+  const setProbe = (next: ConformanceProbe | undefined) => {
+    const all = { ...probes };
+    if (next) all[key] = next;
+    else delete all[key];
+    onProbesChange(all);
+  };
+  const showLevel = checkId === LOG_LEVEL_ADVICE;
+  if (owner === checkId) {
     return (
-      <p className="text-xs text-muted-foreground">
-        Calls the tool set under {owner ? checkTitle(owner) : "the check above"}
-        .
-      </p>
+      <ConformanceProbeField
+        probeKey={key}
+        tools={tools}
+        probe={probe}
+        onChange={setProbe}
+        onValidChange={(valid) => onValidChange?.(key, valid)}
+        showLevel={showLevel}
+      />
     );
   }
-  return (
-    <ConformanceProbeField
-      probeKey={key}
-      tools={tools}
-      probe={probes[key]}
-      onChange={(probe) => {
-        const next = { ...probes };
-        if (probe) next[key] = probe;
-        else delete next[key];
-        onProbesChange(next);
-      }}
-      onValidChange={(valid) => onValidChange?.(key, valid)}
-    />
+  const pointer = (
+    <p className="text-xs text-muted-foreground">
+      Calls the tool set under {owner ? checkTitle(owner) : "the check above"}.
+    </p>
+  );
+  return showLevel && probe ? (
+    <div className="space-y-2">
+      {pointer}
+      <div className={FIELD_BOX}>
+        <LogLevelField probe={probe} onChange={setProbe} />
+      </div>
+    </div>
+  ) : (
+    pointer
   );
 }

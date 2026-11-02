@@ -137,17 +137,24 @@ export function UnscoredTag() {
 export function NeedsInputTag({
   status,
   picked = true,
+  advice = false,
 }: {
   status: "missing" | "set";
   picked?: boolean;
+  /** On an advice row, which is left out, not "could not run", without one. */
+  advice?: boolean;
 }) {
   const missing = status === "missing";
   return (
     <span
       title={
-        missing
-          ? "Pick a tool for this check. Without one it reports that it could not run."
-          : "This check calls the tool set for it."
+        advice
+          ? missing
+            ? "Pick a tool for this advice. Without one it does not run."
+            : "This advice calls the tool set for it."
+          : missing
+            ? "Pick a tool for this check. Without one it reports that it could not run."
+            : "This check calls the tool set for it."
       }
       className={cn(
         "shrink-0 rounded-sm border px-1 py-px text-xs leading-none",
@@ -474,7 +481,8 @@ export function CatalogRow({
  */
 export function CatalogList({
   catalog,
-  note,
+  note = ".",
+  heading,
   isSelected,
   onSelectedChange,
   renderExtra,
@@ -482,7 +490,9 @@ export function CatalogList({
 }: {
   catalog: CatalogEntry[];
   /** The rest of the line after "N checks in this suite", punctuation included. */
-  note: string;
+  note?: string;
+  /** Replaces that line, for a list that is not the suite's checks. */
+  heading?: string;
   /** What a row shows under it; see `CatalogRow`'s children. */
   renderExtra?: (entry: CatalogEntry) => ReactNode;
   /** What a row shows after its title; see `CatalogRow`'s tag. */
@@ -497,7 +507,7 @@ export function CatalogList({
   return (
     <div className="pl-7">
       <div className="py-1 text-xs text-muted-foreground">
-        {catalog.length} checks in this suite{note}
+        {heading ?? `${catalog.length} checks in this suite${note}`}
       </div>
       {catalog.map((entry) => (
         <CatalogRow

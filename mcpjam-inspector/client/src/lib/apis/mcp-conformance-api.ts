@@ -4,6 +4,7 @@ import type {
   MCPAppsConformanceResult,
   MCPCheckId,
   MCPLogLevel,
+  MCPReadinessId,
   MCPTasksCheckId,
   MCPTasksConformanceResult,
   McpProtocolVersion,
@@ -72,6 +73,8 @@ export async function runProtocolConformance(
   options?: {
     protocolVersion?: McpProtocolVersion;
     checkIds?: MCPCheckId[];
+    /** The advice to run; absent runs all of it, empty runs none. */
+    readinessIds?: MCPReadinessId[];
     probes?: ConformanceProbes;
   },
 ): Promise<{ success: boolean; result: MCPConformanceResult }> {
@@ -80,6 +83,7 @@ export async function runProtocolConformance(
       ? { protocolVersion: options.protocolVersion }
       : {}),
     ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
+    ...(options?.readinessIds ? { readinessIds: options.readinessIds } : {}),
     ...(options?.probes?.logProbe ? { logProbe: options.probes.logProbe } : {}),
     ...(options?.probes?.inputRequiredProbe
       ? { inputRequiredProbe: options.probes.inputRequiredProbe }
