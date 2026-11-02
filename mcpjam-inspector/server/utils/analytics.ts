@@ -71,10 +71,11 @@ function serverPlatform(): string {
 
 let client: PostHog | null = null;
 
-// Feature evaluation controls product availability, independently of tracking.
-// Callers using this exception must suppress feature-flag exposure events, and
-// reach it only when `resolveFeatureFlagSource` names PostHog: never under
-// DO_NOT_TRACK, and never when a flag file answers instead.
+// Feature evaluation controls product availability, so it bypasses
+// `isAnalyticsDisabled()`. DO_NOT_TRACK still stops it: callers reach this
+// client only when `resolveFeatureFlagSource` names PostHog, which it never
+// does under DO_NOT_TRACK or when a flag file answers instead. Callers must
+// also suppress feature-flag exposure events.
 function getClient(forFeatureFlags = false): PostHog | null {
   if (!forFeatureFlags && isAnalyticsDisabled()) return null;
   if (!client) {

@@ -10,7 +10,9 @@
  * mode reports its missing service credential through the logger; not in use,
  * where the browser asks for its flags and posts to the `/tlm` relay; and not
  * at shutdown, which flushes analytics — and the flags served come from the
- * flag file. The control boots the same server without the opt-out and shows
+ * flag file. A broken flag file is reported on stderr at boot, in production
+ * and without verbose logging. The control boots the same server without the
+ * opt-out and shows
  * the guard sees PostHog and Sentry attempts, so silence above is a result
  * rather than a guard that sees nothing.
  */
@@ -67,13 +69,15 @@ async function exercise(server: GuardedServer) {
 describe("a hosted server under DO_NOT_TRACK", () => {
   let optedOut: GuardedServer;
   let control: GuardedServer;
+  let brokenFlags: GuardedServer;
+  let brokenFlagsBootOutput: string;
   let optedOutUse: Awaited<ReturnType<typeof exercise>>;
   let optedOutBoot: NetworkAttempt[];
   let optedOutExit: number | null;
   let controlAttempts: NetworkAttempt[];
 
   beforeAll(async () => {
-    [optedOut, control] = await Promise.all([
+    [optedOut, control, brokenFlags] = await Promise.all([
       startGuardedServer({
         env: {
           DO_NOT_TRACK: "1",
@@ -82,7 +86,16 @@ describe("a hosted server under DO_NOT_TRACK", () => {
         files: { "flags.json": FLAG_FILE },
       }),
       startGuardedServer({}),
+      startGuardedServer({
+        env: {
+          DO_NOT_TRACK: "1",
+          MCPJAM_FEATURE_FLAGS_FILE: "flags.json",
+        },
+        files: { "flags.json": "{ not json" },
+      }),
     ]);
+    brokenFlagsBootOutput = brokenFlags.output();
+    await brokenFlags.stop();
     optedOutBoot = optedOut.attempts();
     optedOutUse = await exercise(optedOut);
     await exercise(control);
@@ -92,7 +105,7 @@ describe("a hosted server under DO_NOT_TRACK", () => {
   }, 180_000);
 
   afterAll(async () => {
-    for (const server of [optedOut, control]) {
+    for (const server of [optedOut, control, brokenFlags]) {
       if (!server) continue;
       await server.stop();
       removeScratch(server);
@@ -130,6 +143,12 @@ describe("a hosted server under DO_NOT_TRACK", () => {
         "registry-enabled": false,
       },
     });
+  });
+
+  it("prints a broken flag file's problem at boot, without verbose logging", () => {
+    expect(brokenFlagsBootOutput).toContain(
+      "[flags] MCPJAM_FEATURE_FLAGS_FILE is not valid JSON, so every feature flag is off. Fix the file and restart.",
+    );
   });
 
   it("control: without it, the guard sees the server reach PostHog and Sentry", () => {

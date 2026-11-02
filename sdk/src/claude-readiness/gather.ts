@@ -29,6 +29,7 @@
  * Node entry only — exported from `sdk/src/index.ts`, never from `browser.ts`.
  */
 
+import { resolveMcpHeaders } from "../directory-readiness/discovery.js";
 import {
   dialMcpServer,
   type DirectoryDialOptions,
@@ -154,7 +155,7 @@ export async function gatherClaudeReadinessEvidence(
         fetchFn: options.fetchFn,
         timeoutMs: options.timeoutMs,
         maxRedirects: options.maxRedirects,
-        headers: options.headers,
+        mcpHeaders: resolveMcpHeaders(options),
         signal: options.signal,
       }
     : undefined;
