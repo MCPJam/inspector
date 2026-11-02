@@ -512,9 +512,10 @@ describe("tasks-undeclared-capability-names-requirements", () => {
 });
 
 describe("the mcp-tasks profile", () => {
-  it("keeps every new check out of the verdict", async () => {
-    // The point of landing them pending: a fixture that breaks one of them is
-    // still not reported as non-conformant until a profile version says so.
+  it("fails the verdict on a promoted check", async () => {
+    // These checks landed pending, so a fixture that broke one was not called
+    // non-conformant. Since v2026-11-01.2 the profile scores every tasks
+    // check, so the same break now fails the run.
     const fixture = await serve(quickPhases(), {
       misbehave: { answerUnknownTaskId: true },
     });
@@ -525,10 +526,10 @@ describe("the mcp-tasks profile", () => {
     expect(check(result, "tasks-invalid-task-id-rejected").status).toBe(
       "failed",
     );
-    expect(result.outcome).not.toBe("failed");
+    expect(result.outcome).toBe("failed");
     expect(result.profile).toMatchObject({
       profileId: "mcp-tasks",
-      pendingCheckIds: ["tasks-invalid-task-id-rejected"],
+      pendingCheckIds: [],
     });
   });
 });
