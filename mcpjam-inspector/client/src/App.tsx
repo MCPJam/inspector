@@ -1714,6 +1714,13 @@ export function ConformanceRoute() {
   // The page picks its server from its own select, not the header tabs, and
   // offers every server: Run connects one that is not connected.
   const servers = Object.values<ServerWithName>(appState.servers);
+  // Each server's logo, as it announced it when it connected (the Servers
+  // tab's cards use the same one). Servers without one show initials.
+  const serverIcons: Record<string, string> = {};
+  for (const server of servers) {
+    const src = server.initializationInfo?.serverVersion?.icons?.[0]?.src;
+    if (src) serverIcons[server.name] = src;
+  }
   const editingServer = editing
     ? (appState.servers[editing.name] ?? editing.snapshot)
     : undefined;
@@ -1772,6 +1779,7 @@ export function ConformanceRoute() {
           (server: { name: string }) => server.name,
         )}
         projectServersLoading={projectServersLoading}
+        serverIcons={serverIcons}
         onViewRun={
           convexProjectId
             ? (runId) =>

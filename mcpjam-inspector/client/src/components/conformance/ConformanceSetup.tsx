@@ -4,7 +4,7 @@
  * its Run starts the run with them.
  */
 
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -109,20 +109,41 @@ export function ConformanceSetup({
   // The run needs the server live, so the steps wait until it is: the picker
   // connects it in place.
   const canContinue = picked?.connectionStatus === "connected";
-  // A server that is not connected can be picked, but the steps wait for it:
-  // say so once, when it is picked, rather than under the field.
-  const selectServer = (name: string) => {
-    setServerName(name);
+  // Picking a server readies it: one that is not connected starts
+  // connecting in the background, with no separate Connect to remember.
+  const needsConnect = (name: string) => {
     const status = servers.find(
       (server) => server.name === name,
     )?.connectionStatus;
-    const underway =
+    return !(
       connecting.includes(name) ||
       status === "connected" ||
       status === "connecting" ||
-      status === "oauth-flow";
-    if (!underway) toast.error(`Connect ${name} to continue.`);
+      status === "oauth-flow"
+    );
   };
+  const selectServer = (name: string) => {
+    setServerName(name);
+    if (!needsConnect(name)) return;
+    if (onConnectServer) void connect(name);
+    else toast.error(`Connect ${name} to continue.`);
+  };
+  // The page's own pick, when the steps open on one that is not connected:
+  // once, through the latest `connect`, so the effect keys on nothing else.
+  const connectOnOpen = useRef(() => {});
+  useEffect(() => {
+    connectOnOpen.current = () => {
+      if (initialServerName && needsConnect(initialServerName)) {
+        void connect(initialServerName);
+      }
+    };
+  });
+  const connectedOnOpen = useRef(false);
+  useEffect(() => {
+    if (connectedOnOpen.current || !onConnectServer) return;
+    connectedOnOpen.current = true;
+    connectOnOpen.current();
+  }, [onConnectServer]);
   // Opened while the server list was still loading: take the page's pick
   // once it arrives, unless the user already chose one.
   const [pageServerName, setPageServerName] = useState(initialServerName);

@@ -367,7 +367,7 @@ export function ConformanceServerPicker({
           )}
         >
           <Server className="size-3.5 shrink-0 text-muted-foreground" />
-          <span id={valueId} className="min-w-0 truncate text-xs font-medium">
+          <span id={valueId} className="min-w-0 truncate text-sm font-medium">
             {selected ?? "Select server"}
           </span>
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
