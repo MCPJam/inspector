@@ -109,6 +109,7 @@ export interface SystemLogContext extends CommonLogContext {
     | "model_reported_missing"
     | "unsupported_claim"
     | "entity_record_limit"
+    | "call_record_limit"
     | "write_errored";
   requestId: null;
   route: null;
