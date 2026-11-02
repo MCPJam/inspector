@@ -89,45 +89,6 @@ function toolOrderWarning(
   );
 }
 
-function metadataQualityWarning(
-  tools: Tool[],
-  serverName: string | undefined
-): MCPReadinessWarning | undefined {
-  const missingDescription = tools
-    .filter((tool) => !tool.description?.trim())
-    .map((tool) => tool.name);
-  const missingTitle = tools
-    .filter((tool) => !tool.title?.trim() && !tool.annotations?.title?.trim())
-    .map((tool) => tool.name);
-  const problems: string[] = [];
-
-  if (missingDescription.length > 0) {
-    problems.push(`${missingDescription.length} tool(s) have no description`);
-  }
-  if (missingTitle.length > 0) {
-    problems.push(
-      `${missingTitle.length} tool(s) have no human-readable title`
-    );
-  }
-  if (!serverName?.trim()) {
-    problems.push("the server does not report an identity name");
-  }
-
-  if (problems.length === 0) {
-    return undefined;
-  }
-
-  return warning(
-    "readiness-metadata-quality",
-    "Metadata Quality",
-    "SHOULD",
-    `Primitive metadata is incomplete: ${problems.join(
-      "; "
-    )}. Models and human operators both select primitives from this metadata`,
-    { missingDescription, missingTitle }
-  );
-}
-
 /**
  * The core "Tool Names" SHOULDs (length, character set, uniqueness), checked
  * over every tool. They first appear in 2025-11-25, so an older negotiated
@@ -279,14 +240,6 @@ export async function collectClientReadiness(
   } catch {
     // A server without tools (or one that failed the repeat listing) simply
     // yields no ordering advice.
-  }
-
-  const metadataWarning = metadataQualityWarning(
-    surface.tools,
-    ctx.initializationInfo?.serverVersion?.name
-  );
-  if (metadataWarning) {
-    warnings.push(metadataWarning);
   }
 
   const toolNameWarning = toolNameConventionsWarning(ctx, surface.tools);
@@ -615,65 +568,6 @@ async function protocolVersionHeaderWarning(
   );
 }
 
-/**
- * SEP-2164's error example carries the requested uri in `error.data`:
- *
- *   { "code": -32602, "message": "Resource not found",
- *     "data": { "uri": "file:///nonexistent.txt" } }
- *
- * ADVICE, at the weakest strength, because the spec shows it and never states
- * it — there is no MUST or SHOULD attached. Promoting an example to a
- * requirement is how a conformance suite acquires false positives, and the
- * `-32602` code itself is already a MUST covered by a real check. What the echo
- * actually buys is diagnosis: a client batching several reads gets an error per
- * request id, and without the uri a human reading a log cannot tell which read
- * failed.
- */
-async function resourceErrorUriWarning(
-  ctx: RawHttpCheckContext
-): Promise<MCPReadinessWarning | undefined> {
-  if (ctx.config.era !== "modern") {
-    return undefined;
-  }
-  const version = ctx.config.protocolVersion ?? "2026-07-28";
-  const missingUri = `mcpjam-readiness://missing/${version}`;
-  const result = await rawRequest(ctx, {
-    headers: {
-      ...modernHeaders({
-        protocolVersion: version,
-        method: "resources/read",
-        name: missingUri,
-      }),
-    },
-    body: modernRequestBody({
-      id: 9402,
-      method: "resources/read",
-      params: { uri: missingUri },
-      protocolVersion: version,
-    }),
-    timeoutMs: Math.min(ctx.config.checkTimeout, 5_000),
-  });
-
-  const error = jsonRpcError(result);
-  if (!error) {
-    // No error at all is a different finding, and it belongs to the check that
-    // asserts the -32602 MUST — not to advice about the error's contents.
-    return undefined;
-  }
-  const data = error.data as { uri?: unknown } | undefined;
-  if (typeof data?.uri === "string") {
-    return undefined;
-  }
-
-  return informational(
-    "readiness-resource-error-echoes-uri",
-    "Resource Errors Name Their URI",
-    "MAY",
-    `The server's error for an unreadable resource carries no error.data.uri. The spec's own example echoes it, and without it a client that batches reads cannot tell a human which uri failed`,
-    { probedUri: missingUri, jsonRpcCode: error.code }
-  );
-}
-
 export async function collectRawReadiness(
   ctx: RawHttpCheckContext
 ): Promise<MCPReadinessWarning[]> {
@@ -683,7 +577,6 @@ export async function collectRawReadiness(
     parseErrorHandlingWarning(ctx),
     sessionTerminationWarning(ctx),
     protocolVersionHeaderWarning(ctx),
-    resourceErrorUriWarning(ctx),
   ];
   const settled = await Promise.allSettled(probes);
   return settled.flatMap((outcome) =>

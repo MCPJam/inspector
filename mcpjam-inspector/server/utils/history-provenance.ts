@@ -260,7 +260,7 @@ function hmac(key: Buffer, prefix: string, fields: readonly unknown[]): string {
 }
 
 type ItemKind = "assistant-text" | "assistant-reasoning" | "assistant-file";
-type ToolKind = "tool-call" | "tool-result";
+type ToolKind = "tool-call" | "tool-result" | "app-resource-source";
 
 const ITEM_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -572,6 +572,16 @@ export function verifyToolResult(
     toolResultContent(claim),
     signature,
   );
+}
+
+/** Host-only account source attestation has a separate purpose from server tool results. */
+export function signAppResourceSource(ctx: ProvenanceContext, source: unknown): string | null {
+  const digest = canonicalDigest(source);
+  return digest ? toolSignature(ctx, "app-resource-source", [digest]) : null;
+}
+export function verifyAppResourceSource(ctx: ProvenanceContext, source: unknown, signature: unknown): boolean {
+  const digest = canonicalDigest(source);
+  return checkToolSignature(ctx, "app-resource-source", digest ? [digest] : null, signature);
 }
 
 // ── metadata helpers ───────────────────────────────────────────────────────
