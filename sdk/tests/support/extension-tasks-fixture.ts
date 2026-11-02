@@ -212,6 +212,11 @@ export interface ExtensionTasksMisbehavior {
    * tasks.md:377, which requires an empty result.
    */
   updateAckExtras?: Record<string, unknown>;
+  /**
+   * Answer `tasks/update` with this value as the whole `result` — a non-object
+   * is not an empty result at all (tasks.md:377).
+   */
+  updateAckOverride?: unknown;
 }
 
 export interface ExtensionTasksFixtureOptions {
@@ -857,6 +862,9 @@ export async function serveExtensionTasksFixture(
         }
         // An EMPTY, eventually-consistent acknowledgement (tasks.md:374-381):
         // the observable status does not move until a later `tasks/get`.
+        if ("updateAckOverride" in misbehavior) {
+          return misbehavior.updateAckOverride;
+        }
         return { ...taskResultTypeField(), ...misbehavior.updateAckExtras };
       }
 

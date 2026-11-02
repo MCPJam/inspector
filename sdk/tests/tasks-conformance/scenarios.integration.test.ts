@@ -324,6 +324,23 @@ describe("tasks-update-ack-shape", () => {
     expect(entry.error?.message).toContain("status");
   });
 
+  it("fails a success response whose result is not an object", async () => {
+    // The client rejects this locally, but it is the server's answer, not a
+    // rejection, so it is graded rather than read as could not run.
+    const entry = check(
+      await run(
+        await serve(defaultTaskPhases(), {
+          misbehave: { updateAckOverride: "ok" },
+        }),
+        [ID],
+        { inputResponses: RESPONSES },
+      ),
+      ID,
+    );
+    expect(entry.status).toBe("failed");
+    expect(entry.error?.message).toContain("did not return a result object");
+  });
+
   it("is not applicable, naming what it needs, when no responses are configured", async () => {
     // Answers are opt-in operator setup, not something the server owes.
     const fixture = await serve(defaultTaskPhases());

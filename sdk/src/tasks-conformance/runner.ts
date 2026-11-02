@@ -18,6 +18,7 @@ import type {
   ListToolsResult,
   RpcLogEvent,
 } from "../mcp-client-manager/index.js";
+import { isInvalidTaskExtPayloadError } from "../mcp-client-manager/tasks-ext-guards.js";
 import {
   MCP_ERROR_CODES,
   PRE_RENUMBER_DRAFT_ERROR_CODES,
@@ -182,6 +183,20 @@ function errorMessage(error: unknown): string {
 function readRequiredCapabilities(error: unknown): unknown {
   const data = (error as { data?: unknown } | null)?.data;
   return isRecord(data) ? data.requiredCapabilities : undefined;
+}
+
+/**
+ * True for the client's local refusal of a response the server DID send — a
+ * frame that fails the JSON-RPC schema, or an extension result that is not an
+ * object. Matched by name as well, since the transport's zod may be a separate
+ * copy from ours.
+ */
+function isMalformedResponseError(error: unknown): boolean {
+  return (
+    isInvalidTaskExtPayloadError(error) ||
+    error instanceof z.ZodError ||
+    (error instanceof Error && error.name === "ZodError")
+  );
 }
 
 function errorCode(error: unknown): number | undefined {
@@ -2580,32 +2595,44 @@ export class MCPTasksConformanceTest {
 
     const answered = Object.keys(responses);
     const receivedBefore = received.length;
-    let ack: unknown;
+    let ackVerdict: ShapeVerdict;
     try {
-      ack = await manager.updateTask(
+      const ack = await manager.updateTask(
         serverId,
         taskId,
         responses as never
       );
+      // "the server MUST acknowledge the request with an empty result". The
+      // envelope member `resultType` and the `_meta` container are part of
+      // every result, so they are not "content" — anything else is the server
+      // answering with state the client is told to re-poll for.
+      ackVerdict = validateCompletionAck(
+        ack,
+        "tasks/update",
+        findRawResult(received.slice(receivedBefore))
+      );
     } catch (error) {
-      return {
-        outcome: "update-rejected",
-        requested,
-        answered,
-        message: errorMessage(error),
-        code: errorCode(error),
+      // A success response whose `result` is not an object is the server's
+      // answer, not a rejection, and it is not an empty result. The client
+      // refuses it before it can be logged: the HTTP transport throws a
+      // ZodError for a frame that is not a valid JSON-RPC message, and the
+      // extension guard throws for a result that is not an object.
+      if (!isMalformedResponseError(error)) {
+        return {
+          outcome: "update-rejected",
+          requested,
+          answered,
+          message: errorMessage(error),
+          code: errorCode(error),
+        };
+      }
+      ackVerdict = {
+        violations: [
+          "tasks/update did not return a result object; the client rejected the response as malformed",
+        ],
+        warnings: [],
       };
     }
-
-    // "the server MUST acknowledge the request with an empty result". The
-    // envelope member `resultType` and the `_meta` container are part of every
-    // result, so they are not "content" — anything else is the server answering
-    // with state the client is told to re-poll for.
-    const ackVerdict = validateCompletionAck(
-      ack,
-      "tasks/update",
-      findRawResult(received.slice(receivedBefore))
-    );
 
     const polled = await this.pollToTerminal(manager, serverId, "extension", taskId);
     return {
