@@ -853,8 +853,15 @@ async function collectCacheableOperations(
     probes.push({ method: operation.method, result });
 
     if (operation.method === "resources/list") {
-      const listed = jsonRpcResult(result)?.resources;
-      listedNoResources = Array.isArray(listed) && listed.length === 0;
+      const listResult = jsonRpcResult(result);
+      const listed = listResult?.resources;
+      // Empty only when the walk is OVER: an empty page that still carries a
+      // `nextCursor` (even "") says nothing about the pages after it.
+      listedNoResources =
+        Array.isArray(listed) &&
+        listed.length === 0 &&
+        (listResult?.nextCursor === undefined ||
+          listResult?.nextCursor === null);
       const first = Array.isArray(listed) ? listed[0] : undefined;
       const uri = (first as { uri?: unknown } | undefined)?.uri;
       if (typeof uri === "string" && uri.length > 0) {

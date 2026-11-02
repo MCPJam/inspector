@@ -39,6 +39,8 @@ interface CacheFixtureOptions {
   withholdCapabilities?: string[];
   /** Answer `resources/list` with an empty array. */
   listNoResources?: boolean;
+  /** With `listNoResources`, still send a `nextCursor` on that empty page. */
+  emptyPageCursor?: string;
 }
 
 const LISTED_RESOURCE = "test://greeting";
@@ -128,6 +130,9 @@ async function serveCacheFixture(options: CacheFixtureOptions) {
             resources: options.listNoResources
               ? []
               : [{ uri: LISTED_RESOURCE, name: "greeting" }],
+            ...(options.emptyPageCursor !== undefined
+              ? { nextCursor: options.emptyPageCursor }
+              : {}),
           });
         case "resources/templates/list": {
           if (options.templatePageScopes) {
@@ -261,16 +266,28 @@ describe("modern-cache-hint-coverage", () => {
   it("passes a server that advertises resources but lists none", async () => {
     // Templates-only, or resources created at runtime: there is nothing to
     // read, so resources/read is inapplicable rather than an untested gap.
-    const check = byId(
-      (await run({ listNoResources: true }, [ID])).checks,
-      ID,
-    );
+    const check = byId((await run({ listNoResources: true }, [ID])).checks, ID);
     expect([check.status, check.error?.message]).toEqual(["passed", undefined]);
     expect(check.details?.unprobed).toEqual([]);
     expect(
       (check.details?.notApplicable as Array<{ method: string }>).map(
-        (entry) => entry.method,
-      ),
+        (entry) => entry.method
+      )
+    ).toEqual(["resources/read"]);
+  });
+
+  it("keeps resources/read a gap when the empty page has a nextCursor", async () => {
+    // A later page may hold a resource, so an empty FIRST page is not proof
+    // there is nothing to read. An empty-string cursor still counts.
+    const check = byId(
+      (await run({ listNoResources: true, emptyPageCursor: "" }, [ID])).checks,
+      ID
+    );
+    expect(check.status).toBe("skipped");
+    expect(
+      (check.details?.unprobed as Array<{ method: string }>).map(
+        (entry) => entry.method
+      )
     ).toEqual(["resources/read"]);
   });
 
