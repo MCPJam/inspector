@@ -688,14 +688,15 @@ function createOAuthReport(
     const verdicts = result.results.map((entry, index) =>
       oauthVerdict(entry, scores[index]!, filtered),
     );
+    const outcome = suiteOutcomeFields(verdicts);
     return {
       schemaVersion: 1,
       kind: "oauth-conformance",
       name: result.name,
-      passed: filtered
-        ? verdicts.every((verdict) => verdict.passed)
-        : result.passed,
-      ...suiteOutcomeFields(verdicts),
+      // From the published outcome, which reads a not-applicable flow as
+      // passed even though the flow's own `passed` is false.
+      passed: filtered ? outcome.outcome === "passed" : result.passed,
+      ...outcome,
       score: pooledConformanceScore(scores),
       durationMs: result.durationMs,
       groups: result.results.map((entry, index) =>

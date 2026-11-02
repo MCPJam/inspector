@@ -574,6 +574,42 @@ describe("suite adapters", () => {
     expect(toConformanceReport(failing).outcome).toBe("failed");
   });
 
+  it("keeps a suite report's passed and outcome in step with a not-applicable flow", () => {
+    const failingOnlyUnscored = oauthResult({
+      passed: false,
+      outcome: "failed",
+      steps: [
+        oauthResult().steps[0]!,
+        {
+          ...oauthResult().steps[1]!,
+          status: "failed",
+          skipReason: undefined,
+          error: { message: "listing failed" },
+        },
+      ],
+    });
+    const report = toConformanceReport(
+      {
+        name: "OAuth suite",
+        serverUrl: "https://mcp.example.com/mcp",
+        passed: false,
+        summary: "…",
+        durationMs: 2,
+        results: [
+          {
+            ...oauthResult({ outcome: "not-applicable", passed: false }),
+            label: "no auth",
+          },
+          { ...failingOnlyUnscored, label: "dcr" },
+        ],
+      },
+      { oauthUnscoredCheckIds: ["verify_list_tools"] },
+    );
+
+    expect(report.outcome).toBe("passed");
+    expect(report.passed).toBe(true);
+  });
+
   it("counts unscored steps as pending on a not-applicable flow too", () => {
     const score = scoreFromOAuthResult(
       oauthResult({ outcome: "not-applicable" }),
