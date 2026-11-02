@@ -480,6 +480,7 @@ export type {
   LocalEvalRunReport,
   McpjamInferenceConnection,
   RunSuiteFileOptions,
+  SuiteFileAuthRequired,
   SuiteFileCaseRun,
   SuiteFileImportApproval,
   SuiteFileInferenceMode,
@@ -739,7 +740,7 @@ export type {
   DirectoryLazyAuthToolCall,
 } from "./directory-readiness/lazy-auth.js";
 export { probeLazyAuthentication } from "./directory-readiness/lazy-auth-probe.js";
-
+export type { ProbeLazyAuthenticationOptions } from "./directory-readiness/lazy-auth-probe.js";
 
 // Claude directory readiness. Pure data and data reasoning only — the runner
 // and the dialing checks are deliberately not re-exported here, so importing
@@ -750,6 +751,7 @@ export * from "./claude-readiness/index.js";
 // that importing the result model can never pull a transport in with it.
 export {
   discoverClaudeAuthEvidence,
+  discoverClaudeAuthMetadata,
   traceConnectorRedirects,
 } from "./claude-readiness/discovery.js";
 export type { ClaudeDiscoveryOptions } from "./claude-readiness/discovery.js";
@@ -763,6 +765,11 @@ export type { GatherClaudeReadinessEvidenceOptions } from "./claude-readiness/ga
 export {
   probeDynamicRegistration,
   probeRefreshRotation,
+  probeStepUpChallenge,
+} from "./claude-readiness/intrusive-probes.js";
+export type {
+  ClaudeIntrusiveProbeOptions,
+  ClaudeStepUpProbeOptions,
 } from "./claude-readiness/intrusive-probes.js";
 
 // OpenAI plugin-directory readiness. Same rule as the Claude barrel above:
@@ -797,6 +804,7 @@ export type { GatherMuseReadinessEvidenceOptions } from "./muse-readiness/gather
 // that importing the result model can never pull a transport in with it.
 export {
   discoverOpenAIAuthEvidence,
+  discoverOpenAIAuthMetadata,
   discoverOpenAIImportedSkills,
   fetchOpenAIDomainVerification,
   traceOpenAIEndpoint,
