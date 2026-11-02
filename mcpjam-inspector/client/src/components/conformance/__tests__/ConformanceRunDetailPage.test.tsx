@@ -301,6 +301,37 @@ describe("ConformanceRunDetailPage", () => {
     );
   });
 
+  it("keeps an unscored check's saved failure grey, like the live row", async () => {
+    fetchArtifactMock.mockResolvedValue(
+      reportBody([
+        { id: "ping", title: "Ping", status: "failed", error: "pong missing" },
+        {
+          id: "oauth_token_format",
+          title: "Token format",
+          status: "failed",
+          error: "not a JWT",
+          pending: true,
+        },
+      ]),
+    );
+    useArtifactQueryMock.mockReturnValue(
+      run([
+        report({
+          outcome: "failed",
+          score: 0,
+          passed: 0,
+          failed: 1,
+          status: "failed",
+        }),
+      ]),
+    );
+    render(<ConformanceRunDetailPage runId="run_1" />);
+
+    await screen.findByText("Token format");
+    expect(screen.getByText("pong missing").className).toMatch(/text-red-600/);
+    expect(screen.getByText("not a JWT").className).not.toMatch(/text-red/);
+  });
+
   it("fetches a passing suite's report only when it is opened", async () => {
     fetchArtifactMock.mockResolvedValue(
       reportBody([{ id: "ping", title: "Ping", status: "passed" }]),
