@@ -584,6 +584,81 @@ describe("startSuiteRunWithRecorder", () => {
       },
     );
   });
+
+  it.each([
+    ["PLATFORM_FEE_REQUIRED", 403, "FORBIDDEN"],
+    ["ORGANIZATION_SPEND_BUDGET_REACHED", 429, "RATE_LIMITED"],
+  ])(
+    "answers the %s precreate refusal with a %i, without paging",
+    async (reason, status, code) => {
+      const { ConvexError } = await import("convex/values");
+      const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+      const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+      const action = vi
+        .fn()
+        .mockRejectedValueOnce(
+          new ConvexError({ code: reason, message: "The backend says why." }),
+        );
+      const mutation = vi
+        .fn()
+        .mockResolvedValueOnce({ runId: "run-1", testCases: [] })
+        .mockResolvedValue(undefined);
+
+      try {
+        await expect(
+          startSuiteRunWithRecorder({
+            convexClient: { mutation, action } as any,
+            suiteId: "suite-1",
+          }),
+        ).rejects.toMatchObject({
+          status,
+          code,
+          message: "The backend says why.",
+          details: { reason },
+        });
+
+        expect(errorSpy).not.toHaveBeenCalled();
+        expect(warnSpy).toHaveBeenCalledWith(
+          "[evals] Suite run iterations refused",
+          expect.objectContaining({ runId: "run-1", status }),
+        );
+        // A refused run still ends failed rather than pending.
+        expect(mutation).toHaveBeenCalledWith(
+          "testSuites:updateTestSuiteRun",
+          expect.objectContaining({ runId: "run-1", status: "failed" }),
+        );
+      } finally {
+        errorSpy.mockRestore();
+        warnSpy.mockRestore();
+      }
+    },
+  );
+
+  it("keeps PLATFORM_FEE_UNAVAILABLE on the retryable 500 path", async () => {
+    const { ConvexError } = await import("convex/values");
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const action = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ConvexError({ code: "PLATFORM_FEE_UNAVAILABLE" }),
+      );
+    const mutation = vi
+      .fn()
+      .mockResolvedValueOnce({ runId: "run-1", testCases: [] })
+      .mockResolvedValue(undefined);
+
+    try {
+      await expect(
+        startSuiteRunWithRecorder({
+          convexClient: { mutation, action } as any,
+          suiteId: "suite-1",
+        }),
+      ).rejects.toMatchObject({ status: 500, details: { runId: "run-1" } });
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 });
 
 describe("createSuiteRunRecorder", () => {

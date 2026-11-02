@@ -21,6 +21,7 @@ import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
 import { findPrecreatedIterationByCase } from "./precreated-iteration.js";
 import { retrySuiteStartOnConflict } from "./suite-start-retry.js";
 import { rerunRefusalError } from "./rerun-refusal.js";
+import { platformFeeRefusalError } from "./platform-fee-refusal.js";
 import { localHarnessCapabilities, runnerCapabilities } from "./runner-capabilities.js";
 import type { RunCiMetadata, RunLauncher } from "../../utils/launch-context.js";
 import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
@@ -928,10 +929,30 @@ export const startSuiteRunWithRecorder = async ({
     });
   } catch (error) {
     const cause = error instanceof Error ? error.message : String(error);
-    logger.error("[evals] Failed to pre-create suite run iterations", error, {
-      suiteId,
-      runId,
-    });
+    // Defense in depth: the run-start pre-check normally rejects out-of-quota
+    // launches before the run row exists, but a launch that races another to
+    // exhaust the cap can still trip the reserve here. Preserve the billing
+    // payload so the client renders the proper upgrade message. The eval_step
+    // fee is charged here and not at run start, so an organization out of
+    // credits is first refused at this step.
+    const refusal =
+      asBillingRouteError(error) ??
+      asAiRefusalRouteError(error) ??
+      platformFeeRefusalError(error);
+    if (refusal) {
+      // The organization's limits working as designed, so no Sentry page.
+      logger.warn("[evals] Suite run iterations refused", {
+        suiteId,
+        runId,
+        code: refusal.code,
+        status: refusal.status,
+      });
+    } else {
+      logger.error("[evals] Failed to pre-create suite run iterations", error, {
+        suiteId,
+        runId,
+      });
+    }
     try {
       await convexClient.mutation(
         "testSuites:markSetupPendingIterationsFailed" as any,
@@ -951,18 +972,10 @@ export const startSuiteRunWithRecorder = async ({
       status: "failed",
       notes: "Failed to prepare eval test attempts.",
     });
-    // Defense in depth: the run-start pre-check normally rejects out-of-quota
-    // launches before the run row exists, but a launch that races another to
-    // exhaust the cap can still trip the reserve here. Preserve the billing
-    // payload so the client renders the proper upgrade message; the run was
-    // already finalized failed above, so no pending group is left behind.
-    const billing = asBillingRouteError(error);
-    if (billing) {
-      throw billing;
-    }
-    const aiRefusal = asAiRefusalRouteError(error);
-    if (aiRefusal) {
-      throw aiRefusal;
+    // The run was already finalized failed above, so no pending group is left
+    // behind.
+    if (refusal) {
+      throw refusal;
     }
     // `cause` is logged above and recorded on the run; the response carries
     // only the run id (MJ-020, MJ-021).
