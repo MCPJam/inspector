@@ -115,9 +115,9 @@ describe("parsePrivateEgressAllowlist — how entries match", () => {
     const list = allowlist("10.0.0.0/8");
     expect(list.admits({ hostname: "[::ffff:10.1.2.3]" })).toBe(true);
     expect(list.admits({ hostname: "[::ffff:a01:203]" })).toBe(true);
-    expect(list.admits({ hostname: "n.example", address: "::ffff:10.1.2.3" })).toBe(
-      true,
-    );
+    expect(
+      list.admits({ hostname: "n.example", address: "::ffff:10.1.2.3" }),
+    ).toBe(true);
     // An IPv6 range does not reach a mapped address, which is IPv4.
     expect(allowlist("::/0").admits({ hostname: "[::ffff:10.1.2.3]" })).toBe(
       false,

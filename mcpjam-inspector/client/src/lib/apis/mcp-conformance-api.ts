@@ -45,15 +45,38 @@ export interface OAuthStartInput {
 
 // ── Public API ──────────────────────────────────────────────────────────
 
+/** A tool named as safe for a protocol check to call, with its arguments. */
+export interface ConformanceProbe {
+  toolName: string;
+  arguments?: Record<string, unknown>;
+}
+
+/**
+ * The tools the checks that must call one may use: `logProbe` for the two
+ * logging checks, `inputRequiredProbe` for the undeclared-capability check.
+ */
+export interface ConformanceProbes {
+  logProbe?: ConformanceProbe;
+  inputRequiredProbe?: ConformanceProbe;
+}
+
 export async function runProtocolConformance(
   serverNameOrId: string,
-  options?: { protocolVersion?: McpProtocolVersion; checkIds?: MCPCheckId[] },
+  options?: {
+    protocolVersion?: McpProtocolVersion;
+    checkIds?: MCPCheckId[];
+    probes?: ConformanceProbes;
+  },
 ): Promise<{ success: boolean; result: MCPConformanceResult }> {
   const versionFields = {
     ...(options?.protocolVersion
       ? { protocolVersion: options.protocolVersion }
       : {}),
     ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
+    ...(options?.probes?.logProbe ? { logProbe: options.probes.logProbe } : {}),
+    ...(options?.probes?.inputRequiredProbe
+      ? { inputRequiredProbe: options.probes.inputRequiredProbe }
+      : {}),
   };
   return runByMode({
     local: () =>

@@ -188,6 +188,9 @@ describe("web chat-v2 loop guard", () => {
     listCloudRuntimeSkillsMock.mockResolvedValue([]);
     persistChatSessionToConvexMock.mockResolvedValue(undefined);
     global.fetch = vi.fn(async (input) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
       const url = String(input);
       if (url === `${CONVEX_URL}/web/authorize-project`) {
         return new Response(JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }), {

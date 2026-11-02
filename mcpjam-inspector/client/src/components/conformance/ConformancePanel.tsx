@@ -41,6 +41,7 @@ import {
   type ConformanceView,
 } from "./ConformancePageChrome";
 import { toast } from "@/lib/toast";
+import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
 import {
   useConformanceRun,
   type ConformanceSelection,
@@ -67,6 +68,40 @@ export type ConformanceConnectServer = (
   name: string,
   options?: { signIn?: boolean },
 ) => Promise<ConformanceConnectOutcome>;
+
+/** A suite's SHOULD/MAY advice, shown above its checks. */
+function ReadinessAdvice({
+  readiness,
+}: {
+  readiness?: Array<{
+    id: string;
+    title: string;
+    specStrength: string;
+    message: string;
+  }>;
+}) {
+  if (!readiness || readiness.length === 0) return null;
+  return (
+    <div className="my-2 space-y-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2.5">
+      {readiness.map((warning) => (
+        // Title on its own line, the advice under it: easier to scan than one
+        // run-on line.
+        <div key={warning.id} className="flex items-start gap-2 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <span>
+              <span className="font-medium">{warning.title}</span>{" "}
+              <span className="text-muted-foreground">
+                ({warning.specStrength})
+              </span>
+            </span>
+            <span className="text-muted-foreground">{warning.message}</span>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function SuiteBadge({ state }: { state: SuiteState }) {
   if (state.status === "running") {
@@ -159,7 +194,7 @@ function SuiteSection({
       notice={
         state.status === "error" && state.error ? (
           <div className="px-4 pb-3 pl-11">
-            <div className="rounded-sm border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap break-words">
+            <div className="rounded-sm border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-sm text-red-600 dark:text-red-400 whitespace-pre-wrap break-words">
               {state.error}
             </div>
           </div>
@@ -180,7 +215,7 @@ function SuiteSection({
       ) : running ? (
         // Mid-run with nothing to show yet: the catalog would read as
         // "not run yet", which is exactly wrong while the run is live.
-        <div className="flex items-center gap-2 py-3 pl-7 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 py-3 pl-7 text-sm text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
           Running {catalog.length} checks...
         </div>
@@ -208,10 +243,13 @@ export function ConformanceContent({
   onRequestRun,
   onOpenSettings,
   settingsLoading = false,
+  onShowHome,
+  serverIconUrl,
   autoStart = false,
   onAutoStart,
   initialVersionPin,
   selection,
+  probes,
 }: {
   server: ServerWithName;
   persist?: ConformancePersistConfig;
@@ -229,6 +267,13 @@ export function ConformanceContent({
   onRequestRun?: () => void;
   /** Opens this server's Conformance Settings. */
   onOpenSettings?: () => void;
+  /** The server's logo, when the project or the server provides one. */
+  serverIconUrl?: string;
+  /**
+   * Overview's tab after a finished run: back to the page's home (the server
+   * list) instead of the run, which History still holds.
+   */
+  onShowHome?: () => void;
   /** The saved defaults Settings edits have not loaded yet. */
   settingsLoading?: boolean;
   /** Run once on mount: the setup steps just chose this server. */
@@ -237,6 +282,8 @@ export function ConformanceContent({
   initialVersionPin?: ProtocolVersionPin;
   /** What to run, as picked in the setup steps. */
   selection?: ConformanceSelection;
+  /** The tools the checks that must call one may use. */
+  probes?: ConformanceProbes;
 }) {
   // Run state, per-suite scores and the pooled headline all live in the shared
   // hook — score.mcpjam.com runs the same four suites and must pool them the
@@ -245,6 +292,7 @@ export function ConformanceContent({
     server,
     initialVersionPin,
     selection,
+    probes,
   });
   const {
     protocol,
@@ -260,6 +308,7 @@ export function ConformanceContent({
     oauthScore,
     pooledScore,
     oauthNotScored,
+    oauthUnscored,
     isRunning,
     openAuthorizationWindow,
     skipOAuth,
@@ -383,6 +432,21 @@ export function ConformanceContent({
       (suite) => suite.status === "done" || suite.status === "error",
     );
 
+  // Suites finished so far, for the headline while the run is going. One
+  // that cannot run on this server counts as finished; one left out of the
+  // run is neither done nor to do.
+  const runSuites = [protocol, apps, tasks, oauth].filter(
+    (suite) => !suite.notSelected,
+  );
+  const runProgress = {
+    done: runSuites.filter(
+      (suite) =>
+        suite.status !== "idle" &&
+        suite.status !== "running" &&
+        suite.status !== "needs-authorization",
+    ).length,
+    total: runSuites.length,
+  };
   // The Overview of a started run shows the run's own header, not the tabs.
   const liveRun = hasStarted && view === "overview";
 
@@ -516,7 +580,15 @@ export function ConformanceContent({
       ) : (
         <ConformanceHeader
           view={view}
-          onViewChange={onViewChange}
+          onViewChange={(next) =>
+            next === "overview" &&
+            hasStarted &&
+            !isRunning &&
+            !isConnecting &&
+            onShowHome
+              ? onShowHome()
+              : onViewChange(next)
+          }
           showHistory={showHistory}
         >
           {runButton}
@@ -543,12 +615,14 @@ export function ConformanceContent({
                     (versionPin === "auto" ? "Auto" : versionPin)
                   }
                   isRunning={isRunning}
+                  progress={runProgress}
+                  serverIconUrl={serverIconUrl}
                   oauthNotScored={oauthNotScored}
                   blockedBySignIn={blockedBySignIn}
                 />
 
                 {waitingOnAuthorization > 0 && (
-                  <div className="mt-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs leading-relaxed">
+                  <div className="mt-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm leading-relaxed">
                     This server requires sign-in, and this run had no valid
                     session, so the checks that need it could not run.
                     Reconnect the server with OAuth from the server menu, or
@@ -573,29 +647,9 @@ export function ConformanceContent({
                   >
                     {protocol.result ? (
                       <div>
-                        {(protocol.result.readiness ?? []).length > 0 && (
-                          <div className="my-2 space-y-1 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2">
-                            {(protocol.result.readiness ?? []).map(
-                              (warning) => (
-                                <div
-                                  key={warning.id}
-                                  className="flex items-start gap-1.5 text-[11px]"
-                                >
-                                  <AlertTriangle className="mt-0.5 h-3 w-3 flex-shrink-0 text-amber-500" />
-                                  <span className="min-w-0">
-                                    <span className="font-medium">
-                                      {warning.title}
-                                    </span>{" "}
-                                    <span className="text-muted-foreground">
-                                      ({warning.specStrength})
-                                    </span>{" "}
-                                    — {warning.message}
-                                  </span>
-                                </div>
-                              ),
-                            )}
-                          </div>
-                        )}
+                        <ReadinessAdvice
+                          readiness={protocol.result.readiness}
+                        />
                         {protocol.result.checks.map((check) => (
                           <CheckRow
                             key={`${runVersion}-${check.id}`}
@@ -639,6 +693,7 @@ export function ConformanceContent({
                   >
                     {tasks.result ? (
                       <div>
+                        <ReadinessAdvice readiness={tasks.result.readiness} />
                         {tasks.result.checks.map((check) => (
                           <CheckRow
                             key={`${runVersion}-${check.id}`}
@@ -665,7 +720,7 @@ export function ConformanceContent({
                     {oauth.waitingForAuth ? (
                       // Always offer a way forward: a blocked popup used to
                       // leave this spinner alone until the session expired.
-                      <div className="space-y-2 px-1 py-3 text-xs">
+                      <div className="space-y-2 px-1 py-3 text-sm">
                         <div className="flex items-center gap-2 text-muted-foreground">
                           {oauth.popupBlocked ? (
                             <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
@@ -699,6 +754,7 @@ export function ConformanceContent({
                           <OAuthStepRow
                             key={`${runVersion}-${step.step}`}
                             step={step}
+                            pending={oauthUnscored.includes(step.step)}
                           />
                         ))}
                       </div>

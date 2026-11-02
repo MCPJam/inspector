@@ -114,7 +114,7 @@ describe("modern App delivery", () => {
       "server",
       "show",
       {},
-      { signal },
+      { request: { signal } },
     );
   });
   it("uses the CLI protocol downstream and cancels App resource reads", async () => {
@@ -147,6 +147,16 @@ describe("modern App delivery", () => {
         message: message("tools/call", { name: "show" }),
       }),
     ).rejects.toThrow("stateless");
+    expect(m.executeTool).not.toHaveBeenCalled();
+  });
+  it("refuses a newly connected server that added unqualified capabilities", async () => {
+    const m = manager();
+    m.getInitializationInfo.mockReturnValue({
+      protocolVersion:"2026-07-28", serverCapabilities:{tools:{},logging:{}},
+    } as never);
+    await expect(enhancedMcpResponse({
+      ...args(m), message:message("tools/call",{name:"show"}),
+    })).rejects.toThrow("no longer match");
     expect(m.executeTool).not.toHaveBeenCalled();
   });
 });

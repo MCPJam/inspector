@@ -792,6 +792,9 @@ async function collectCacheableOperations(
   // client session, and a check that could only run as part of a full suite
   // would be untestable in isolation.
   let resourceUri = ctx.surface?.resourceUris[0];
+  // A `resources/list` that ANSWERED with an empty array, as distinct from one
+  // that never produced a result. Only the second leaves a requirement untested.
+  let listedNoResources = false;
 
   let id = 7150;
   for (const operation of CACHEABLE_OPERATIONS) {
@@ -816,10 +819,16 @@ async function collectCacheableOperations(
       // Listed after `resources/list` in CACHEABLE_OPERATIONS precisely so the
       // uri discovered there is available here.
       if (!resourceUri) {
-        unprobed.push({
+        // NOT a gap when the list answered empty, for the same reason an
+        // unadvertised capability is not: a server whose resources come only
+        // from templates, or are created at runtime, has nothing to read, so
+        // nothing about the caching MUST went unverified. Counting it as
+        // unprobed held a fully-hinted server at could-not-run forever.
+        (listedNoResources ? notApplicable : unprobed).push({
           method: operation.method,
-          reason:
-            "server lists no resource to read, and probing a missing uri would grade an error response",
+          reason: listedNoResources
+            ? "server lists no resources, so there is no resources/read to carry hints"
+            : "server lists no resource to read, and probing a missing uri would grade an error response",
         });
         continue;
       }
@@ -845,6 +854,7 @@ async function collectCacheableOperations(
 
     if (operation.method === "resources/list") {
       const listed = jsonRpcResult(result)?.resources;
+      listedNoResources = Array.isArray(listed) && listed.length === 0;
       const first = Array.isArray(listed) ? listed[0] : undefined;
       const uri = (first as { uri?: unknown } | undefined)?.uri;
       if (typeof uri === "string" && uri.length > 0) {
