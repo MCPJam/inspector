@@ -33,6 +33,7 @@ import {
   SelectItem,
   SelectTrigger,
 } from "@mcpjam/design-system/select";
+import { tableHeadLabelClass } from "@mcpjam/design-system/table";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { cn } from "@/lib/utils";
 import { SwarmsEmptyHero } from "@/components/swarms/swarms-empty-hero";
@@ -647,8 +648,7 @@ const SWARM_RUN_ROW_PAD = "flex w-full items-center gap-3 px-4";
  * Env / Client / Model / Score read as a single row of column labels rather
  * than a mix of labels and form fields.
  */
-export const SWARM_COLUMN_HEADER =
-  "flex w-full min-w-0 items-center justify-end gap-1 text-sm font-medium text-muted-foreground";
+export const SWARM_COLUMN_HEADER = `flex w-full min-w-0 items-center justify-end gap-1 ${tableHeadLabelClass}`;
 
 /**
  * Ghost select — a column label that happens to open a menu. The `dark:`

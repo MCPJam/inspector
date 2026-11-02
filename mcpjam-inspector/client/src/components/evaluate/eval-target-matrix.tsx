@@ -52,6 +52,7 @@ import type {
 
 import type { HostListItem } from "@/hooks/useClients";
 import { clientDisplayName } from "@/lib/client-display-name";
+import { EvalTargetMatrixHead } from "./eval-target-matrix-head";
 
 type TargetMatrixHost = Pick<
   HostListItem,
@@ -225,16 +226,7 @@ export function EvalTargetMatrix({
         </div>
       )}
       <table className="w-full table-fixed border-collapse text-left text-sm">
-        <thead className="text-xs text-muted-foreground">
-          <tr className="border-b border-border">
-            <th scope="col" className="w-[40%] px-2 py-2 font-medium">
-              Client
-            </th>
-            <th scope="col" className="px-2 py-2 font-medium">
-              Models
-            </th>
-          </tr>
-        </thead>
+        <EvalTargetMatrixHead />
         <tbody>
           {rows.map((row) => (
             <motion.tr

@@ -4,6 +4,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
+import { tableHeadLabelClass } from "@mcpjam/design-system/table";
 import type { ServerWithName } from "@/state/app-types";
 import { getHostProfiles } from "@/lib/host-compat/profiles";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
@@ -211,7 +212,9 @@ export function HostCompatMatrix({
       <table className="w-full border-collapse text-left">
         <thead>
           <tr className="bg-muted/30">
-            <th className="sticky left-0 z-10 bg-muted/30 px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            <th
+              className={`sticky left-0 z-10 bg-muted/30 px-3 py-2 ${tableHeadLabelClass}`}
+            >
               Server
             </th>
             {hosts.map((h) => {

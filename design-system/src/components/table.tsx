@@ -76,6 +76,13 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
   );
 }
 
+/**
+ * The readable column label: small caps in the body text color, not muted.
+ * Use it for any table or list header so every surface reads the same.
+ */
+const tableHeadLabelClass =
+  "text-[11px] font-semibold uppercase tracking-[0.06em] text-foreground";
+
 function TableCell({ className, ...props }: React.ComponentProps<"td">) {
   return (
     <td
@@ -111,4 +118,5 @@ export {
   TableRow,
   TableCell,
   TableCaption,
+  tableHeadLabelClass,
 };
