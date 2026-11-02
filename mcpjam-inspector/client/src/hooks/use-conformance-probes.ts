@@ -23,7 +23,10 @@ import {
   type MCPCheckId,
   type MCPReadinessId,
 } from "@mcpjam/sdk/browser";
-import type { ProtocolVersionPin } from "@/hooks/use-conformance-run";
+import type {
+  ConformanceSelection,
+  ProtocolVersionPin,
+} from "@/hooks/use-conformance-run";
 import type {
   ConformanceProbe,
   ConformanceProbes,
@@ -120,6 +123,27 @@ export function probesForRun(
       (key) => probes[key] && probeRuns(key, pin, checkIds, readinessIds),
     ).map((key) => [key, probes[key]]),
   ) as ConformanceProbes;
+}
+
+/**
+ * What a protocol run sends for the picked checks and advice: those lists,
+ * and only the tools they call, so a tool named for one left out is never
+ * executed.
+ */
+export function protocolRunOptions(
+  probes: ConformanceProbes,
+  picked: ConformanceSelection | undefined,
+  pin: ProtocolVersionPin,
+) {
+  const checkIds = picked?.protocol;
+  const readinessIds = picked?.protocolAdvice;
+  const sent = probesForRun(probes, checkIds, pin, readinessIds);
+  return {
+    protocolVersion: pin === "auto" ? undefined : pin,
+    ...(checkIds ? { checkIds } : {}),
+    ...(readinessIds ? { readinessIds } : {}),
+    ...(sent.logProbe || sent.inputRequiredProbe ? { probes: sent } : {}),
+  };
 }
 
 /**

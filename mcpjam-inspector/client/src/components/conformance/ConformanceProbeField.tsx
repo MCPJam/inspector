@@ -135,8 +135,8 @@ function LogLevelField({
         </SelectContent>
       </Select>
       <p className="text-xs text-muted-foreground">
-        We call the tool once at this level. If it sends lower-level logs, or no
-        logs, you get a tip.
+        Calls the tool once at this level. You get a tip if it sends lower-level
+        logs or none.
       </p>
     </>
   );

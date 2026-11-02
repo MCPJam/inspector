@@ -24,8 +24,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // transitive deps that break the Vite browser bundle.
 import {
   type MCPAppsCheckId,
-  type MCPCheckId,
-  type MCPReadinessId,
   type MCPTasksCheckId,
   pooledConformanceScore,
   scoreFromAppsResult,
@@ -46,7 +44,7 @@ import {
 } from "@/lib/apis/mcp-conformance-api";
 import { deriveOAuthProfileFromServer } from "@/components/oauth/utils";
 import {
-  probesForRun,
+  protocolRunOptions,
   type ConformanceProbes,
 } from "@/hooks/use-conformance-probes";
 import { resolveServerOAuthProtocolSelection } from "@/state/oauth-orchestrator";
@@ -324,26 +322,15 @@ export function useConformanceRun({
     async (
       runToken: number,
       serverName: string,
-      checkIds?: MCPCheckId[],
-      readinessIds?: MCPReadinessId[]
+      picked?: ConformanceSelection
     ) => {
       if (!httpServer) return;
       setProtocol({ status: "running" });
       try {
-        // Only the tools a check or advice in this run calls: a tool named
-        // for one left out is never executed.
-        const probes = probesForRun(
-          probesRef.current ?? {},
-          checkIds,
-          versionPin,
-          readinessIds,
+        const { result } = await runProtocolConformance(
+          serverName,
+          protocolRunOptions(probesRef.current ?? {}, picked, versionPin)
         );
-        const { result } = await runProtocolConformance(serverName, {
-          protocolVersion: versionPin === "auto" ? undefined : versionPin,
-          ...(checkIds ? { checkIds } : {}),
-          ...(readinessIds ? { readinessIds } : {}),
-          ...(probes.logProbe || probes.inputRequiredProbe ? { probes } : {}),
-        });
         if (!isRunActive(runToken, serverName)) return;
         setProtocol({ status: "done", result, verdict: verdictOf(result) });
       } catch (err) {
@@ -697,14 +684,7 @@ export function useConformanceRun({
     const promises: Promise<void>[] = [];
     if (httpServerNow) {
       if (isSelected(picked?.protocol)) {
-        promises.push(
-          runProtocol(
-            runToken,
-            currentServer.name,
-            picked?.protocol,
-            picked?.protocolAdvice
-          )
-        );
+        promises.push(runProtocol(runToken, currentServer.name, picked));
       } else {
         setProtocol(NOT_SELECTED);
       }
