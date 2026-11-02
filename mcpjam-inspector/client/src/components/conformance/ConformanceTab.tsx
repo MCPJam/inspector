@@ -11,6 +11,7 @@ import type {
   ConformanceSelection,
   ProtocolVersionPin,
 } from "@/hooks/use-conformance-run";
+import { runnableSelection } from "@/hooks/conformance-suite-state";
 import { useAppNavigate, useCurrentLocationParts } from "@/lib/app-navigation";
 import { toast } from "@/lib/toast";
 import type { ConformancePersistConfig } from "@/components/conformance/PersistConformanceRun";
@@ -30,6 +31,10 @@ import {
 import { ConformanceServerList } from "./ConformanceServerList";
 import { ConformanceSettings } from "./ConformanceSettings";
 import { ConformanceSetup } from "./ConformanceSetup";
+import {
+  probesAfterRun,
+  useConformanceProbeStore,
+} from "@/hooks/use-conformance-probes";
 
 const LAST_SERVER_KEY = "mcpjam.conformance.lastServer.v1";
 
@@ -141,6 +146,9 @@ export function ConformanceTab({
   const [homeVersion, setHomeVersion] = useState(0);
   // The server whose Conformance Settings are open, over the run view.
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
+  // The tools each server's checks may call: set in step 2, and
+  // used by every later run of that server, Run again included.
+  const { probesFor, setProbes } = useConformanceProbeStore();
   // Defaults changed here while their save is in flight: Run again right
   // after a change in Settings must already run the new checks. Each entry
   // goes once its save settles, so the saved rows (a teammate's changes
@@ -258,9 +266,19 @@ export function ConformanceTab({
         defaultsLoaded={serverDefaultsLoaded}
         onConnectServer={onConnectServer}
         onEditServer={onEditServer}
+        probesFor={probesFor}
         onCancel={() => setSetupOpen(false)}
-        onRun={(serverName, versionPin, selection) => {
+        onRun={(serverName, versionPin, selection, probes) => {
           setSetupOpen(false);
+          setProbes(
+            serverName,
+            probesAfterRun(
+              probesFor(serverName),
+              probes,
+              runnableSelection(selection, versionPin)?.protocol,
+              versionPin,
+            ),
+          );
           startRun(serverName, versionPin, selection);
           // The checks picked here become the server's defaults: Settings
           // opens on them and the server list's Run reuses them. A failed
@@ -361,6 +379,7 @@ export function ConformanceTab({
       selection={
         defaultsFor(server.name) ?? (startsHere ? start?.selection : undefined)
       }
+      probes={probesFor(server.name)}
     />
   );
   // Also closed while the defaults reload, e.g. after a project switch: it

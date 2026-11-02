@@ -25,6 +25,7 @@ import {
   startOAuthConformance,
   submitOAuthConformanceCode,
 } from "../shared/conformance";
+import { conformanceProbeFields } from "../shared/conformance-probes";
 import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 const conformance = new Hono();
@@ -79,6 +80,8 @@ const protocolSchema = z.object({
   protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
   /** Run only these checks, as picked before Run; absent ⇒ all of them. */
   checkIds: z.array(z.enum(MCP_CHECK_IDS)).min(1).optional(),
+  /** Tools named as safe for the checks that must call one. */
+  ...conformanceProbeFields,
 });
 
 conformance.post("/protocol", async (c) => {
@@ -105,6 +108,8 @@ conformance.post("/protocol", async (c) => {
       ...toHttpResolved(resolved.config as HttpServerConfig),
       protocolVersion: parsed.data.protocolVersion,
       checkIds: parsed.data.checkIds,
+      logProbe: parsed.data.logProbe,
+      inputRequiredProbe: parsed.data.inputRequiredProbe,
     });
     return c.json({ success: true, result });
   } catch (error) {

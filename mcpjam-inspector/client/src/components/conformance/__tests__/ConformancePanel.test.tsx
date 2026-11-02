@@ -41,6 +41,12 @@ vi.mock("@/lib/apis/mcp-conformance-api", () => ({
   completeOAuthConformance: (...args: unknown[]) => mockCompleteOAuth(...args),
 }));
 
+// Step 2 lists a server's tools for the checks that must call one.
+const mockListTools = vi.fn(async () => ({ tools: [] as unknown[] }));
+vi.mock("@/lib/apis/mcp-tools-api", () => ({
+  listTools: (...args: unknown[]) => mockListTools(...args),
+}));
+
 vi.mock("@/components/oauth/utils", () => ({
   deriveOAuthProfileFromServer: () => ({
     serverUrl: "https://test.com",
@@ -1478,6 +1484,253 @@ describe("ConformanceTab", () => {
       "data-state",
       "unchecked",
     );
+  });
+
+  describe("tools the checks may call", () => {
+    beforeEach(() => {
+      mockListTools.mockResolvedValue({
+        tools: [
+          { name: "delete_row", annotations: { destructiveHint: true } },
+          {
+            name: "echo",
+            annotations: { readOnlyHint: true },
+            inputSchema: {
+              type: "object",
+              properties: { message: { type: "string" } },
+            },
+          },
+        ],
+      });
+    });
+
+    /** Setup on 2026-07-28, where the checks that call a tool run. */
+    async function toStep2(pin = "2026-07-28") {
+      const user = userEvent.setup();
+      const alpha = createHttpServer({ name: "alpha" });
+      render(
+        <ConformanceTab
+          server={alpha}
+          servers={[alpha]}
+          onSelectServer={vi.fn()}
+        />,
+      );
+      fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+      if (pin !== "auto") {
+        await user.click(
+          screen.getByRole("combobox", { name: "Select protocol version" }),
+        );
+        await user.click(screen.getByRole("option", { name: pin }));
+      }
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    }
+
+    /** Setup to step 2 with the Protocol suite open. */
+    async function openProtocolChecks() {
+      await toStep2();
+      fireEvent.click(
+        screen.getByRole("button", { name: /^Protocol.*checks selected$/ }),
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("combobox", { name: "Tool that emits logs" }),
+        ).toBeEnabled(),
+      );
+    }
+
+    it("asks under the check which tool to call, and runs with it", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await openProtocolChecks();
+
+      // One field per tool, under the first check that calls it.
+      expect(
+        screen.getByRole("combobox", { name: "Tool that asks for input" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("Calls the tool set under Logs Require A Log Level."),
+      ).toBeInTheDocument();
+
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      // Read-only tools first, and a warning on one that may modify data.
+      const options = screen.getAllByRole("option").map((o) => o.textContent);
+      expect(options).toEqual([
+        "Not set",
+        "echo · read-only",
+        "delete_row · may modify data",
+      ]);
+      await user.click(
+        screen.getByRole("option", { name: "echo · read-only" }),
+      );
+
+      // The arguments editor Evals uses, here with its Raw JSON switch on.
+      fireEvent.click(screen.getByRole("switch"));
+      const args = screen.getByRole("textbox", { name: "Arguments" });
+      fireEvent.change(args, { target: { value: "[1]" } });
+      expect(screen.getByText("Expected a JSON object")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
+      fireEvent.change(args, { target: { value: '{"message": "hi"}' } });
+      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeEnabled();
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      const sent = {
+        probes: {
+          logProbe: { toolName: "echo", arguments: { message: "hi" } },
+        },
+      };
+      await waitFor(() =>
+        expect(mockRunProtocol).toHaveBeenCalledWith(
+          "alpha",
+          expect.objectContaining(sent),
+        ),
+      );
+
+      // Kept for the server: Run again calls the same tool.
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+      );
+      mockRunProtocol.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+      await waitFor(() =>
+        expect(mockRunProtocol).toHaveBeenCalledWith(
+          "alpha",
+          expect.objectContaining(sent),
+        ),
+      );
+    });
+
+    it("offers the tool's own argument names", async () => {
+      const user = userEvent.setup();
+      await openProtocolChecks();
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      await user.click(
+        screen.getByRole("option", { name: "echo · read-only" }),
+      );
+
+      await user.click(screen.getByRole("button", { name: "Add argument" }));
+      await user.click(screen.getByText("Select arg…"));
+
+      expect(
+        await screen.findByRole("option", { name: /message/ }),
+      ).toBeInTheDocument();
+    });
+
+    it("flags the checks that need an input before the suite is opened", async () => {
+      const user = userEvent.setup();
+      await toStep2();
+
+      // Closed: the header says how many picked checks still need one.
+      const header = screen.getByRole("button", {
+        name: /^Protocol.*checks selected$/,
+      });
+      expect(header).toHaveAttribute("aria-expanded", "false");
+      expect(
+        within(header).getByText("3 checks need input"),
+      ).toBeInTheDocument();
+
+      fireEvent.click(header);
+      expect(screen.getAllByText("Needs input")).toHaveLength(3);
+      await waitFor(() =>
+        expect(
+          screen.getByRole("combobox", { name: "Tool that emits logs" }),
+        ).toBeEnabled(),
+      );
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      await user.click(
+        screen.getByRole("option", { name: "echo · read-only" }),
+      );
+
+      // One tool serves both logging checks.
+      expect(screen.getAllByText("Input set")).toHaveLength(2);
+      expect(screen.getAllByText("Needs input")).toHaveLength(1);
+      expect(
+        within(header).getByText("1 check needs input"),
+      ).toBeInTheDocument();
+    });
+
+    it("asks for no tool on Auto, where these checks do not run", async () => {
+      await toStep2("auto");
+      const header = screen.getByRole("button", {
+        name: /^Protocol.*checks selected$/,
+      });
+      expect(within(header).queryByText(/need(s)? input/)).toBeNull();
+      fireEvent.click(header);
+      expect(screen.queryByText("Needs input")).toBeNull();
+      expect(
+        screen.queryByRole("combobox", { name: "Tool that emits logs" }),
+      ).toBeNull();
+      expect(mockListTools).not.toHaveBeenCalled();
+    });
+
+    it("lists the tools once for every field, across pages", async () => {
+      mockListTools.mockReset();
+      mockListTools
+        .mockResolvedValueOnce({
+          tools: [{ name: "echo", annotations: { readOnlyHint: true } }],
+          nextCursor: "page-2",
+        })
+        .mockResolvedValueOnce({
+          tools: [{ name: "ask_user", annotations: { readOnlyHint: true } }],
+        });
+      const user = userEvent.setup();
+      await openProtocolChecks();
+
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that asks for input" }),
+      );
+      expect(
+        screen.getByRole("option", { name: "ask_user · read-only" }),
+      ).toBeInTheDocument();
+      // Two fields, two pages: one call per page, not one per field.
+      expect(mockListTools).toHaveBeenCalledTimes(2);
+      expect(mockListTools).toHaveBeenLastCalledWith(
+        expect.objectContaining({ cursor: "page-2" }),
+      );
+    });
+
+    it("says when the server pages past what can be listed", async () => {
+      // Never stops paging: the list stops at its cap and says so.
+      mockListTools.mockReset();
+      mockListTools.mockResolvedValue({
+        tools: [{ name: "echo", annotations: { readOnlyHint: true } }],
+        nextCursor: "more",
+      });
+      await openProtocolChecks();
+
+      expect(mockListTools).toHaveBeenCalledTimes(50);
+      expect(
+        screen.getAllByText(/lists more tools than can be shown here/)[0],
+      ).toBeInTheDocument();
+    });
+
+    it("never sends a tool for a check left out of the run", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await openProtocolChecks();
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      await user.click(
+        screen.getByRole("option", { name: "echo · read-only" }),
+      );
+
+      // Both checks that would call it are left out.
+      for (const title of ["Logs Require A Log Level", "Log Level Filtering"]) {
+        fireEvent.click(screen.getByRole("checkbox", { name: `Run ${title}` }));
+      }
+      expect(
+        screen.queryByRole("combobox", { name: "Tool that emits logs" }),
+      ).toBeNull();
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+      expect(mockRunProtocol.mock.calls[0]![1]).not.toHaveProperty("probes");
+    });
   });
 
   it("keeps at least one check in Settings", async () => {

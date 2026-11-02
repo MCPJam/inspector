@@ -41,6 +41,7 @@ import {
   type ConformanceView,
 } from "./ConformancePageChrome";
 import { toast } from "@/lib/toast";
+import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
 import {
   useConformanceRun,
   type ConformanceSelection,
@@ -248,6 +249,7 @@ export function ConformanceContent({
   onAutoStart,
   initialVersionPin,
   selection,
+  probes,
 }: {
   server: ServerWithName;
   persist?: ConformancePersistConfig;
@@ -280,6 +282,8 @@ export function ConformanceContent({
   initialVersionPin?: ProtocolVersionPin;
   /** What to run, as picked in the setup steps. */
   selection?: ConformanceSelection;
+  /** The tools the checks that must call one may use. */
+  probes?: ConformanceProbes;
 }) {
   // Run state, per-suite scores and the pooled headline all live in the shared
   // hook — score.mcpjam.com runs the same four suites and must pool them the
@@ -288,6 +292,7 @@ export function ConformanceContent({
     server,
     initialVersionPin,
     selection,
+    probes,
   });
   const {
     protocol,
