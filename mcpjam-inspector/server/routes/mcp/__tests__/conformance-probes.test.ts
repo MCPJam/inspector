@@ -45,7 +45,11 @@ beforeEach(() => {
 describe("POST /api/mcp/conformance/protocol probe tools", () => {
   it("forwards the named probe tools to the protocol run", async () => {
     const res = await postProtocol({
-      logProbe: { toolName: "emit-logs", arguments: { count: 2 } },
+      logProbe: {
+        toolName: "emit-logs",
+        arguments: { count: 2 },
+        level: "info",
+      },
       inputRequiredProbe: { toolName: "ask-user" },
     });
 
@@ -53,7 +57,11 @@ describe("POST /api/mcp/conformance/protocol probe tools", () => {
     expect(runProtocolConformanceMock).toHaveBeenCalledWith(
       expect.objectContaining({
         serverUrl: "https://example.test/mcp",
-        logProbe: { toolName: "emit-logs", arguments: { count: 2 } },
+        logProbe: {
+          toolName: "emit-logs",
+          arguments: { count: 2 },
+          level: "info",
+        },
         inputRequiredProbe: { toolName: "ask-user" },
       }),
     );
@@ -69,6 +77,14 @@ describe("POST /api/mcp/conformance/protocol probe tools", () => {
   it.each([
     ["an empty tool name", { logProbe: { toolName: "  " } }],
     ["an unknown key", { logProbe: { toolName: "emit-logs", tool: "x" } }],
+    [
+      "an unknown log level",
+      { logProbe: { toolName: "emit-logs", level: "loud" } },
+    ],
+    [
+      "a log level on the input probe",
+      { inputRequiredProbe: { toolName: "ask-user", level: "info" } },
+    ],
     [
       "arguments that are not an object",
       { inputRequiredProbe: { toolName: "ask-user", arguments: [1, 2] } },

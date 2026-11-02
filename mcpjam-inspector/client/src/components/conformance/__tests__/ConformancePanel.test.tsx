@@ -1542,13 +1542,14 @@ describe("ConformanceTab", () => {
       setupSuccessfulRunMocks();
       await openProtocolChecks();
 
-      // One field per tool, under the first check that calls it.
+      // One field per tool, under the check that calls it.
       expect(
         screen.getByRole("combobox", { name: "Tool that asks for input" }),
       ).toBeInTheDocument();
+      // The log level shows only once a tool is picked.
       expect(
-        screen.getByText("Calls the tool set under Logs Require A Log Level."),
-      ).toBeInTheDocument();
+        screen.queryByRole("combobox", { name: "Log level to request" }),
+      ).toBeNull();
 
       await user.click(
         screen.getByRole("combobox", { name: "Tool that emits logs" }),
@@ -1573,10 +1574,23 @@ describe("ConformanceTab", () => {
       fireEvent.change(args, { target: { value: '{"message": "hi"}' } });
       expect(screen.getByRole("button", { name: RUN_LABEL })).toBeEnabled();
 
+      // The level the log level advice asks for: the SDK's default until
+      // picked.
+      const level = screen.getByRole("combobox", {
+        name: "Log level to request",
+      });
+      expect(level).toHaveTextContent("warning");
+      await user.click(level);
+      await user.click(screen.getByRole("option", { name: "info" }));
+
       fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
       const sent = {
         probes: {
-          logProbe: { toolName: "echo", arguments: { message: "hi" } },
+          logProbe: {
+            toolName: "echo",
+            arguments: { message: "hi" },
+            level: "info",
+          },
         },
       };
       await waitFor(() =>
@@ -1628,11 +1642,11 @@ describe("ConformanceTab", () => {
       });
       expect(header).toHaveAttribute("aria-expanded", "false");
       expect(
-        within(header).getByText("3 checks need input"),
+        within(header).getByText("2 checks need input"),
       ).toBeInTheDocument();
 
       fireEvent.click(header);
-      expect(screen.getAllByText("Needs input")).toHaveLength(3);
+      expect(screen.getAllByText("Needs input")).toHaveLength(2);
       await waitFor(() =>
         expect(
           screen.getByRole("combobox", { name: "Tool that emits logs" }),
@@ -1645,8 +1659,7 @@ describe("ConformanceTab", () => {
         screen.getByRole("option", { name: "echo · read-only" }),
       );
 
-      // One tool serves both logging checks.
-      expect(screen.getAllByText("Input set")).toHaveLength(2);
+      expect(screen.getAllByText("Input set")).toHaveLength(1);
       expect(screen.getAllByText("Needs input")).toHaveLength(1);
       expect(
         within(header).getByText("1 check needs input"),
@@ -1719,10 +1732,10 @@ describe("ConformanceTab", () => {
         screen.getByRole("option", { name: "echo · read-only" }),
       );
 
-      // Both checks that would call it are left out.
-      for (const title of ["Logs Require A Log Level", "Log Level Filtering"]) {
-        fireEvent.click(screen.getByRole("checkbox", { name: `Run ${title}` }));
-      }
+      // The check that would call it is left out.
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Run Logs Require A Log Level" }),
+      );
       expect(
         screen.queryByRole("combobox", { name: "Tool that emits logs" }),
       ).toBeNull();

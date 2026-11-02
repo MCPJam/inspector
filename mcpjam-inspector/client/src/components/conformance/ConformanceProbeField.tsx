@@ -16,6 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import { MCP_LOG_LEVELS, type MCPLogLevel } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import {
   useServerToolsData,
@@ -31,6 +32,8 @@ import {
 } from "@/hooks/use-conformance-probes";
 
 const NONE = "__none__";
+/** What the SDK asks for when the operator picks no level. */
+const DEFAULT_LOG_LEVEL: MCPLogLevel = "warning";
 
 const PROBE_COPY: Record<ConformanceProbeKey, { label: string; hint: string }> =
   {
@@ -108,6 +111,7 @@ export function ConformanceProbeField({
   onValidChange?: (valid: boolean) => void;
 }) {
   const id = useId();
+  const levelId = useId();
   // The editor reports validity from an effect keyed on this callback, so it
   // must keep one identity while the parent re-renders.
   const onValidChangeRef = useRef(onValidChange);
@@ -125,15 +129,22 @@ export function ConformanceProbeField({
   const selected = options.find((tool) => tool.name === toolName);
   const copy = PROBE_COPY[probeKey];
 
-  // Another tool takes other arguments, so a new pick starts with none.
+  const level = probe?.level ? { level: probe.level } : {};
+
+  // Another tool takes other arguments, so a new pick starts with none. The
+  // log level is not about the tool, so it stays.
   const changeTool = (next: string) =>
-    onChange(next === NONE ? undefined : { toolName: next });
+    onChange(next === NONE ? undefined : { toolName: next, ...level });
 
   const changeArguments = (args: Record<string, unknown>) =>
     onChange({
       toolName,
       ...(Object.keys(args).length > 0 ? { arguments: args } : {}),
+      ...level,
     });
+
+  const changeLevel = (next: string) =>
+    onChange({ ...probe, toolName, level: next as MCPLogLevel });
 
   return (
     <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-3">
@@ -204,6 +215,32 @@ export function ConformanceProbeField({
           argProperties={selected?.argProperties}
           onInvalidChange={reportInvalid}
         />
+      ) : null}
+      {probeKey === "logProbe" && toolName !== NONE ? (
+        <>
+          <Label htmlFor={levelId} className="text-xs">
+            Log level to request
+          </Label>
+          <Select
+            value={probe?.level ?? DEFAULT_LOG_LEVEL}
+            onValueChange={changeLevel}
+          >
+            <SelectTrigger id={levelId} className="h-8 w-full text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {MCP_LOG_LEVELS.map((name) => (
+                <SelectItem key={name} value={name}>
+                  {name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Advice only, no points: the tool is called once at this level, and
+            it should send logs at or above it.
+          </p>
+        </>
       ) : null}
     </div>
   );

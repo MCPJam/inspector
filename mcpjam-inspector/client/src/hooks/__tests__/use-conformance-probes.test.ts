@@ -103,6 +103,26 @@ describe("useConformanceProbeStore", () => {
     expect(result.current.probesFor("__proto__")).toEqual({});
   });
 
+  it("keeps the log probe's level and drops one it cannot send", () => {
+    window.localStorage.setItem(
+      "mcpjam.conformance.probes.v1:alpha",
+      JSON.stringify({
+        logProbe: { ...logProbe, level: "info" },
+        inputRequiredProbe: { ...inputRequiredProbe, level: "info" },
+      }),
+    );
+    expect(readStoredProbes("alpha")).toEqual({
+      logProbe: { ...logProbe, level: "info" },
+      inputRequiredProbe,
+    });
+
+    window.localStorage.setItem(
+      "mcpjam.conformance.probes.v1:alpha",
+      JSON.stringify({ logProbe: { ...logProbe, level: "loud" } }),
+    );
+    expect(readStoredProbes("alpha")).toEqual({ logProbe });
+  });
+
   it("ignores a stored entry that is not a probe", () => {
     window.localStorage.setItem(
       "mcpjam.conformance.probes.v1:alpha",

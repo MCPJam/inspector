@@ -3,6 +3,7 @@ import type {
   MCPAppsCheckId,
   MCPAppsConformanceResult,
   MCPCheckId,
+  MCPLogLevel,
   MCPTasksCheckId,
   MCPTasksConformanceResult,
   McpProtocolVersion,
@@ -49,11 +50,17 @@ export interface OAuthStartInput {
 export interface ConformanceProbe {
   toolName: string;
   arguments?: Record<string, unknown>;
+  /**
+   * `logProbe` only: the log level the log level filtering advice asks for.
+   * Absent means the SDK's default, `warning`.
+   */
+  level?: MCPLogLevel;
 }
 
 /**
- * The tools the checks that must call one may use: `logProbe` for the two
- * logging checks, `inputRequiredProbe` for the undeclared-capability check.
+ * The tools the checks that must call one may use: `logProbe` for the logging
+ * check and the log level filtering advice, `inputRequiredProbe` for the
+ * undeclared-capability check.
  */
 export interface ConformanceProbes {
   logProbe?: ConformanceProbe;

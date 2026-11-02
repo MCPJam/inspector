@@ -2,8 +2,9 @@
  * The tools an operator names as safe for the protocol suite to call, kept
  * per server.
  *
- * Three 2026-07-28 checks can only observe something on a tool call: the two
- * logging checks need a tool that emits logs, and the undeclared-capability
+ * Two 2026-07-28 checks can only observe something on a tool call: the logging
+ * check needs a tool that emits logs (the log level filtering advice calls the
+ * same tool, at the operator's log level), and the undeclared-capability
  * check needs one that asks for input. The SDK never picks a tool on its own,
  * because nothing a server advertises says whether calling a tool charges a
  * card or deletes a row. Without one, those checks report could-not-run.
@@ -16,6 +17,7 @@
 import { useCallback, useRef, useState } from "react";
 import {
   CHECK_ERAS,
+  MCP_LOG_LEVELS,
   PROTOCOL_VERSION_ERAS,
   type MCPCheckId,
 } from "@mcpjam/sdk/browser";
@@ -133,6 +135,17 @@ function isProbe(value: unknown): value is ConformanceProbe {
   );
 }
 
+/** A saved probe without a `level` the log probe cannot send. */
+function withoutBadLevel(
+  probe: ConformanceProbe,
+  allowLevel: boolean,
+): ConformanceProbe {
+  const { level, ...rest } = probe;
+  return allowLevel && (MCP_LOG_LEVELS as readonly unknown[]).includes(level)
+    ? { ...rest, level }
+    : rest;
+}
+
 /** What was saved for `serverName`, dropping anything malformed. */
 export function readStoredProbes(serverName: string): ConformanceProbes {
   try {
@@ -140,9 +153,16 @@ export function readStoredProbes(serverName: string): ConformanceProbes {
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     return {
-      ...(isProbe(parsed.logProbe) ? { logProbe: parsed.logProbe } : {}),
+      ...(isProbe(parsed.logProbe)
+        ? { logProbe: withoutBadLevel(parsed.logProbe, true) }
+        : {}),
       ...(isProbe(parsed.inputRequiredProbe)
-        ? { inputRequiredProbe: parsed.inputRequiredProbe }
+        ? {
+            inputRequiredProbe: withoutBadLevel(
+              parsed.inputRequiredProbe,
+              false,
+            ),
+          }
         : {}),
     };
   } catch {
