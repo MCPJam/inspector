@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { logger } from "../logger.js";
 import {
+  loadFeatureFlagFileAtBoot,
   resolveFeatureFlagSource,
   rolloutAnswerWithoutPostHog,
 } from "../feature-flag-source.js";
@@ -130,6 +131,31 @@ describe("a broken flag file", () => {
     );
   });
 
+  it("names the read error's code, not its message", () => {
+    const error = vi.spyOn(logger, "error").mockImplementation(() => undefined);
+    const path = join(dir, "absent.json");
+    vi.stubEnv("MCPJAM_FEATURE_FLAGS_FILE", path);
+
+    resolveFeatureFlagSource();
+    expect(error).toHaveBeenCalledWith(
+      "[flags] MCPJAM_FEATURE_FLAGS_FILE could not be read (ENOENT), so every feature flag is off. Fix the file and restart.",
+    );
+  });
+
+  it("never quotes the file when it is not JSON", () => {
+    const error = vi.spyOn(logger, "error").mockImplementation(() => undefined);
+    vi.stubEnv(
+      "MCPJAM_FEATURE_FLAGS_FILE",
+      flagFile("OPENAI_API_KEY=sk-test-123\n"),
+    );
+
+    resolveFeatureFlagSource();
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0]).toEqual([
+      "[flags] MCPJAM_FEATURE_FLAGS_FILE is not valid JSON, so every feature flag is off. Fix the file and restart.",
+    ]);
+  });
+
   it("keeps a __proto__ key a flag name rather than a prototype", () => {
     vi.stubEnv(
       "MCPJAM_FEATURE_FLAGS_FILE",
@@ -141,5 +167,49 @@ describe("a broken flag file", () => {
       "constructor",
     ]);
     expect(rolloutAnswerWithoutPostHog("toString")).toBe(false);
+  });
+});
+
+describe("loadFeatureFlagFileAtBoot", () => {
+  it("prints a broken file's problems on stderr once, at boot", () => {
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const error = vi.spyOn(logger, "error").mockImplementation(() => undefined);
+    vi.stubEnv("MCPJAM_FEATURE_FLAGS_FILE", flagFile("{ not json"));
+
+    loadFeatureFlagFileAtBoot();
+    expect(stderr).toHaveBeenCalledTimes(1);
+    expect(stderr).toHaveBeenCalledWith(
+      "[flags] MCPJAM_FEATURE_FLAGS_FILE is not valid JSON, so every feature flag is off. Fix the file and restart.\n",
+    );
+
+    // The first evaluation reuses the boot read: no second report.
+    expect(resolveFeatureFlagSource()).toEqual({ kind: "file", answers: {} });
+    expect(stderr).toHaveBeenCalledTimes(1);
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("answers from the file it read at boot", () => {
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const path = flagFile(JSON.stringify({ "evaluate-enabled": true }));
+    vi.stubEnv("MCPJAM_FEATURE_FLAGS_FILE", path);
+
+    loadFeatureFlagFileAtBoot();
+    writeFileSync(path, JSON.stringify({ "evaluate-enabled": false }));
+    expect(rolloutAnswerWithoutPostHog("evaluate-enabled")).toBe(true);
+    expect(stderr).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when no file is named", () => {
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+
+    loadFeatureFlagFileAtBoot();
+    expect(stderr).not.toHaveBeenCalled();
+    expect(resolveFeatureFlagSource()).toEqual({ kind: "posthog" });
   });
 });
