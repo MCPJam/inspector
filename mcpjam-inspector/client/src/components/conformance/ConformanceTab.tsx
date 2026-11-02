@@ -66,6 +66,7 @@ export function ConformanceTab({
   onViewRun,
   projectServerNames,
   projectServersLoading,
+  serverIcons,
 }: {
   server?: ServerWithName | null;
   persist?: ConformancePersistConfig;
@@ -98,6 +99,8 @@ export function ConformanceTab({
   projectServerNames?: readonly string[];
   /** The project's server list has not arrived yet. */
   projectServersLoading?: boolean;
+  /** Each server's logo URL, by server name, where one is known. */
+  serverIcons?: Record<string, string>;
 }) {
   // The tab lives in the URL (`?view=history`, which a run's page links back
   // with), so a refresh, Back/Forward and the sidebar's plain `/conformance`
@@ -135,6 +138,9 @@ export function ConformanceTab({
   } | null>(null);
   // Which start already ran: switching servers and back must not run again.
   const startedIdRef = useRef(0);
+  // Bumped to send a finished run's view back to the page's home: its key
+  // changes, so it mounts fresh, on the server list.
+  const [homeVersion, setHomeVersion] = useState(0);
   // The server whose Conformance Settings are open, over the run view.
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
   // The tools each server's checks may call: set in step 2 or Settings, and
@@ -221,6 +227,7 @@ export function ConformanceTab({
     recentServers.length > 0 && onViewRun ? (
       <ConformanceServerList
         runs={recentServers}
+        serverIcons={serverIcons}
         onViewRun={onViewRun}
         disabled={!serverDefaultsLoaded || selectionIsReconnecting}
         onRun={(serverName) =>
@@ -324,11 +331,16 @@ export function ConformanceTab({
   const settingsServer = settingsFor ?? undefined;
   const content = (
     <ConformanceContent
-      key={`${server.name}#${start?.id ?? 0}`}
+      key={`${server.name}#${start?.id ?? 0}#${homeVersion}`}
       server={server}
       persist={persist}
       view={activeView}
       onViewChange={changeView}
+      onShowHome={() => {
+        setHomeVersion((version) => version + 1);
+        changeView("overview");
+      }}
+      serverIconUrl={serverIcons?.[server.name]}
       showHistory={showHistory}
       history={history}
       home={home}

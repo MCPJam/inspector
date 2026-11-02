@@ -18,7 +18,12 @@ import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
  */
 const LOOPBACK = ["localhost", "127.0.0.1", "[::1]"];
 
+/**
+ * `*` means every host, and undici honors it only as the whole value: in a
+ * list it matches nothing. So a value that contains it stays `*`.
+ */
 function noProxyWithLoopback(noProxy: string | null): string {
+  if (noProxy?.split(/[,\s]/).includes("*")) return "*";
   return [...(noProxy ? [noProxy] : []), ...LOOPBACK].join(",");
 }
 
@@ -35,12 +40,16 @@ export interface CliProxy {
  * `proxy.corp:8080` means `http://proxy.corp:8080`, as it does to curl. A
  * value that is still not an http(s) URL is unusable: handed to undici, it
  * throws while the CLI starts, which stopped every command, `--help` too.
+ * The parsed form is returned because Node's own proxy support, which the
+ * update check uses, ignores a scheme written in capitals.
  */
 function usableProxyUrl(value: string): string | null {
   const url = /^[a-z][a-z\d+.-]*:\/\//i.test(value) ? value : `http://${value}`;
   if (!URL.canParse(url)) return null;
-  const { protocol } = new URL(url);
-  return protocol === "http:" || protocol === "https:" ? url : null;
+  const parsed = new URL(url);
+  return parsed.protocol === "http:" || parsed.protocol === "https:"
+    ? parsed.href
+    : null;
 }
 
 export function cliProxy(env: NodeJS.ProcessEnv = process.env): CliProxy {

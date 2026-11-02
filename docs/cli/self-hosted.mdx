@@ -77,13 +77,13 @@ The file is invalid when it is not JSON, when `version`, `apiUrl` or `lock` is m
 
 ## Corporate proxy
 
-When `HTTPS_PROXY` or `HTTP_PROXY` is set (either case), every `fetch` request the CLI process makes goes through the proxy and honors `NO_PROXY`: MCPJam's API, model providers and MCP servers over HTTP. `localhost`, `127.0.0.1` and `[::1]` always connect directly, so local MCP servers and the local Inspector keep working. A value without a scheme, such as `proxy.corp.com:8080`, means `http://`; a value that is not an http(s) URL is ignored with a warning. Two connections do not use the proxy yet: the relay connection of `mcpjam cloud tunnel` and the `mcpjam oauth` debugging proxy.
+When `HTTPS_PROXY` or `HTTP_PROXY` is set (either case), the CLI process sends its `fetch` requests through the proxy and honors `NO_PROXY`: MCPJam's API, model providers and MCP servers over HTTP. `HTTPS_PROXY` covers `https` destinations and `HTTP_PROXY` covers `http` ones; with only `HTTP_PROXY` set, `https` requests use it too. `localhost`, `127.0.0.1` and `[::1]` always connect directly, so local MCP servers and the local Inspector keep working. A value without a scheme, such as `proxy.corp.com:8080`, means `http://`; a value that is not an http(s) URL is ignored with a warning. Two connections do not use the proxy yet: the relay connection of `mcpjam cloud tunnel` and the `mcpjam oauth` debugging proxy.
 
 The update check runs in a separate short-lived process that uses Node.js's own proxy support. On Node.js older than 22.21, or 24.x older than 24.5, the check is skipped while a proxy is set rather than sent directly.
 
-For a TLS-inspecting proxy or a private CA, trust its root certificate the Node.js way: `NODE_EXTRA_CA_CERTS=/path/to/ca.pem`, or `NODE_OPTIONS=--use-system-ca` to use the system store. Set either in the environment the CLI starts in.
+For a TLS-inspecting proxy or a private CA, trust its root certificate the Node.js way: `NODE_EXTRA_CA_CERTS=/path/to/ca.pem`, or, on Node.js 22.15 or later, `NODE_OPTIONS=--use-system-ca` to use the system store; older releases refuse to start with that option. Set either in the environment the CLI starts in.
 
-As a library, the SDK never changes the process-wide proxy. Configure your own Node.js process, for example with `NODE_USE_ENV_PROXY=1`.
+As a library, the SDK never changes the process-wide proxy. Configure your own Node.js process, for example with `NODE_USE_ENV_PROXY=1` on Node.js 22.21 or later, or 24.5 or later; on older releases, install a proxy-aware dispatcher such as undici's `EnvHttpProxyAgent`.
 
 ## Check the setup
 

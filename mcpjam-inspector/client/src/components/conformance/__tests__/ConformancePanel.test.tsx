@@ -60,6 +60,7 @@ vi.mock("@/components/oauth/utils", () => ({
 }));
 
 import { toast } from "@/lib/toast";
+import { OAUTH_CATALOG } from "../conformance-catalogs";
 import { ConformanceTab } from "../ConformanceTab";
 import {
   ConformanceServerPicker,
@@ -806,12 +807,13 @@ describe("ConformanceTab", () => {
     fireEvent.click(oauth);
     expect(oauth).toHaveAttribute("aria-expanded", "true");
     // The open suite lists its checks under the same count. OAuth runs as
-    // one flow, so its checks' boxes are locked to the suite's box.
+    // one flow, so a check's box says whether it COUNTS: unchecked, it still
+    // runs, unscored.
     const count = oauth.textContent?.match(/(\d+) checks selected/)?.[1];
     const oauthRow = oauth.parentElement!.parentElement!;
     expect(
       within(oauthRow).getByText(
-        `${count} checks in this suite. They run together as one sign-in flow.`,
+        `${count} checks in this suite. They run together as one sign-in flow, so an unchecked check still runs but does not count toward the score.`,
       ),
     ).toBeInTheDocument();
     const oauthBox = within(oauthRow).getByRole("checkbox", {
@@ -822,9 +824,16 @@ describe("ConformanceTab", () => {
       .filter((box) => box !== oauthBox);
     expect(oauthChecks).toHaveLength(Number(count));
     for (const box of oauthChecks) {
-      expect(box).toBeDisabled();
+      expect(box).toBeEnabled();
       expect(box).toHaveAttribute("data-state", "checked");
     }
+    fireEvent.click(oauthChecks[0]!);
+    expect(oauthChecks[0]).toHaveAttribute("data-state", "unchecked");
+    expect(oauthBox).toHaveAttribute("data-state", "indeterminate");
+    expect(oauth).toHaveTextContent(`${Number(count) - 1} checks selected`);
+    // The suite's box puts every check back, then leaves the flow out.
+    fireEvent.click(oauthBox);
+    expect(oauthChecks[0]).toHaveAttribute("data-state", "checked");
     fireEvent.click(oauthBox);
     for (const box of oauthChecks) {
       expect(box).toHaveAttribute("data-state", "unchecked");
@@ -1024,7 +1033,7 @@ describe("ConformanceTab", () => {
 
     const card = screen.getByRole("list", { name: "Servers" });
     expect(card).toHaveTextContent("alpha");
-    expect(card).toHaveTextContent("Last run Oct 28, 2026");
+    expect(card).toHaveTextContent("Last run Oct 28, 2026 · Protocol Auto");
     expect(card).toHaveTextContent("PASSED");
     expect(card).toHaveTextContent("100%");
     expect(card).toHaveTextContent("22/22");
@@ -1039,6 +1048,237 @@ describe("ConformanceTab", () => {
     await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
     expect(mockRunTasks).not.toHaveBeenCalled();
     expect(mockStartOAuth).not.toHaveBeenCalled();
+  });
+
+  it("shows a server's logo on its card, and initials without one", () => {
+    const alpha = createHttpServer({ name: "alpha" });
+    const beta = createHttpServer({ name: "beta" });
+    const run = (id: string) => ({
+      _id: id,
+      projectId: "proj_1",
+      targetKind: "server",
+      targetKey: `server:${id}`,
+      serverId: id,
+      source: "ui",
+      verification: "mcpjam_verified" as const,
+      status: "completed",
+      outcome: "passed" as const,
+      incompleteReason: null,
+      score: 100,
+      applicable: 3,
+      passed: 3,
+      failed: 0,
+      couldNotRun: 0,
+      requestedSuites: ["protocol"],
+      protocolVersion: "2025-11-25",
+      actorLabel: null,
+      ciMetadata: null,
+      createdAt: Date.UTC(2026, 9, 28, 12),
+      completedAt: null,
+      durationMs: null,
+      sharingEnabled: false,
+    });
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha, beta]}
+        onSelectServer={vi.fn()}
+        lastRuns={{ alpha: run("srv_a"), beta: run("srv_b") }}
+        onViewRun={vi.fn()}
+        serverIcons={{ alpha: "https://example.test/alpha.png" }}
+      />,
+    );
+
+    const [alphaCard, betaCard] = within(
+      screen.getByRole("list", { name: "Servers" }),
+    ).getAllByRole("listitem");
+    expect(alphaCard!.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://example.test/alpha.png",
+    );
+    expect(alphaCard).toHaveTextContent("Protocol 2025-11-25");
+    expect(betaCard!.querySelector("img")).toBeNull();
+    expect(betaCard).toHaveTextContent("Be");
+  });
+
+  it("shows progress, not a score, until the run finishes", async () => {
+    setupSuccessfulRunMocks();
+    // Protocol never answers: the run stays going.
+    mockRunProtocol.mockReturnValue(new Promise(() => {}));
+    const alpha = createHttpServer({ name: "alpha" });
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+      />,
+    );
+    clickRun();
+
+    expect(
+      await screen.findByText(
+        /^Running conformance checks\. \d of 4 suites done\.$/,
+      ),
+    ).toBeInTheDocument();
+    // Apps and Tasks finished, yet no headline number claims a result.
+    await waitFor(() => expect(mockRunTasks).toHaveBeenCalled());
+    expect(screen.queryByText(/^\d+\/\d+ · partial$/)).toBeNull();
+    expect(screen.queryByText("Fully conformant.")).toBeNull();
+  });
+
+  it("counts only the suites the run covers in its progress", async () => {
+    setupSuccessfulRunMocks();
+    mockRunProtocol.mockReturnValue(new Promise(() => {}));
+    const alpha = createHttpServer({ name: "alpha" });
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        serverDefaults={{ alpha: { tasks: [], oauth: false } }}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+
+    // Tasks and OAuth are left out: two suites, Apps done, Protocol going.
+    expect(
+      await screen.findByText(
+        "Running conformance checks. 1 of 2 suites done.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("goes back to the server list from History's Overview after a run", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const lastRun = {
+      _id: "run_9",
+      projectId: "proj_1",
+      targetKind: "server",
+      targetKey: "server:srv_1",
+      serverId: "srv_1",
+      source: "ui",
+      verification: "mcpjam_verified" as const,
+      status: "completed",
+      outcome: "passed" as const,
+      incompleteReason: null,
+      score: 100,
+      applicable: 22,
+      passed: 22,
+      failed: 0,
+      couldNotRun: 0,
+      requestedSuites: ["protocol"],
+      protocolVersion: null,
+      actorLabel: null,
+      ciMetadata: null,
+      createdAt: Date.UTC(2026, 9, 28, 12),
+      completedAt: null,
+      durationMs: null,
+      sharingEnabled: false,
+    };
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        history={<p>History table</p>}
+        lastRuns={{ alpha: lastRun }}
+        onViewRun={vi.fn()}
+      />,
+    );
+    fireEvent.click(
+      within(screen.getByRole("list", { name: "Servers" })).getByRole(
+        "button",
+        { name: "Run alpha" },
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Conformance History" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+
+    // The page's home, not the run it just left.
+    expect(screen.getByRole("list", { name: "Servers" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
+  });
+
+  it("runs an unchecked OAuth check but leaves it out of the score", async () => {
+    const left = OAUTH_CATALOG[0]!;
+    setupSuccessfulRunMocks({
+      oauth: createOAuthResult({
+        passed: false,
+        outcome: "failed",
+        steps: [
+          {
+            step: left.id as OAuthConformanceResult["steps"][number]["step"],
+            title: left.title,
+            summary: "…",
+            status: "failed",
+            durationMs: 1,
+            logs: [],
+            httpAttempts: [],
+            error: { message: "profile shape is wrong" },
+          },
+          {
+            step: "oauth_token_format",
+            title: "Token Format",
+            summary: "…",
+            status: "passed",
+            durationMs: 1,
+            logs: [],
+            httpAttempts: [],
+          },
+        ],
+      }),
+    });
+    const alpha = createHttpServer({ name: "alpha" });
+    const onSaveServerDefaults = vi.fn(async () => {});
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onSaveServerDefaults={onSaveServerDefaults}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /^OAuth.*checks selected$/ }),
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: `Run ${left.title}` }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+
+    // Saved with the server's defaults, and the flow still ran.
+    expect(onSaveServerDefaults).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ oauthUnscored: [left.id] }),
+    );
+    await waitFor(() => expect(mockStartOAuth).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+    );
+
+    // The failed step reads as unscored, and does not fail the run.
+    fireEvent.click(suiteHeader("oauth"));
+    const row = screen.getByText(left.title).closest("div")!.parentElement!;
+    expect(within(row).getByText("unscored")).toBeInTheDocument();
+    // Its failure is reported, not counted: grey, not red.
+    const message = screen.getByText("profile shape is wrong");
+    expect(message).toHaveClass("text-muted-foreground");
+    expect(message).not.toHaveClass("text-red-600");
+    expect(screen.queryByText(/^Not conformant\./)).toBeNull();
+    // The suite's badge follows the score, not the unscored failure.
+    expect(
+      within(suiteHeader("oauth")).getByText("PASSED"),
+    ).toBeInTheDocument();
+    expect(within(suiteHeader("oauth")).queryByText("FAILED")).toBeNull();
   });
 
   it("starts step 2 from the server's default checks", () => {
@@ -1171,7 +1411,7 @@ describe("ConformanceTab", () => {
     error.mockRestore();
   });
 
-  it("keeps the finished run when the setup steps are cancelled", async () => {
+  it("goes back to History when the setup steps are cancelled", async () => {
     setupSuccessfulRunMocks();
     const alpha = createHttpServer({ name: "alpha" });
     render(
@@ -1187,9 +1427,11 @@ describe("ConformanceTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Conformance History" }));
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByText("History table")).toBeInTheDocument();
 
+    // Overview, after a finished run, is the page's home again.
     fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
-    expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
   });
 
   it("waits for the saved defaults before step 2", () => {
@@ -1500,8 +1742,7 @@ describe("ConformanceTab", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("waits in step 1 until the server is connected from the picker", async () => {
-    const user = userEvent.setup();
+  it("connects the page's server when step 1 opens, and waits for it", async () => {
     setupSuccessfulRunMocks();
     const disconnected = createHttpServer({
       name: "alpha",
@@ -1517,21 +1758,13 @@ describe("ConformanceTab", () => {
       />,
     );
 
+    // No Connect to click: it starts connecting in the background.
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await waitFor(() =>
+      expect(onConnectServer).toHaveBeenCalledWith("alpha", { signIn: false }),
+    );
+    expect(onConnectServer).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
-
-    // Picking it says what is missing, in a toast rather than under the field.
-    const error = vi.spyOn(toast, "error");
-    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
-    await user.click(serverRow("alpha"));
-    expect(error).toHaveBeenCalledWith("Connect alpha to continue.");
-    expect(screen.queryByText("Connect alpha to continue.")).toBeNull();
-    error.mockRestore();
-
-    // The picker connects it in place, as in User Testing.
-    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
-    await user.click(screen.getByRole("button", { name: "Connect alpha" }));
-    expect(onConnectServer).toHaveBeenCalledWith("alpha", { signIn: false });
     expect(mockRunProtocol).not.toHaveBeenCalled();
 
     // The connect lands: the page re-renders with the connected server.
@@ -1547,6 +1780,46 @@ describe("ConformanceTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
     await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+  });
+
+  it("connects a server as soon as it is picked in step 1", async () => {
+    const user = userEvent.setup();
+    const alpha = createHttpServer({ name: "alpha" });
+    const beta = createHttpServer({
+      name: "beta",
+      connectionStatus: "disconnected",
+    });
+    const onConnectServer = vi.fn(async () => "ready" as const);
+    const error = vi.spyOn(toast, "error");
+    const loading = vi.spyOn(toast, "loading");
+    const success = vi.spyOn(toast, "success");
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha, beta]}
+        onSelectServer={vi.fn()}
+        onConnectServer={onConnectServer}
+      />,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    // alpha is connected already: nothing to do on open.
+    expect(onConnectServer).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
+    await user.click(serverRow("beta"));
+    expect(onConnectServer).toHaveBeenCalledWith("beta", { signIn: false });
+    // One toast says it is connecting, then settles into the result.
+    expect(loading).toHaveBeenCalledWith("Connecting beta...");
+    await waitFor(() =>
+      expect(success).toHaveBeenCalledWith("beta connected", {
+        id: loading.mock.results[0]!.value,
+      }),
+    );
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
+    loading.mockRestore();
+    success.mockRestore();
   });
 
   it("lists the project's servers not loaded yet, and connects one from step 1", async () => {
@@ -1565,8 +1838,8 @@ describe("ConformanceTab", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
-    // Listed as not connected, with Connect, like User Testing's picker.
-    await user.click(screen.getByRole("button", { name: "Connect notion" }));
+    // Listed as not connected; picking it connects it.
+    await user.click(serverRow("notion"));
     expect(onConnectServer).toHaveBeenCalledWith("notion", { signIn: false });
     expect(screen.getByRole("button", { name: SERVER_FIELD })).toHaveTextContent(
       "notion",
@@ -1579,6 +1852,84 @@ describe("ConformanceTab", () => {
       <ConformanceTab server={alpha} servers={[alpha, notion]} {...props} />,
     );
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+  });
+
+  it("connects the page's server when it arrives after step 1 opened", async () => {
+    const onConnectServer = vi.fn(async () => "ready" as const);
+    const props = { onSelectServer: vi.fn(), onConnectServer };
+    // The server list is still loading when Run opens the steps.
+    const { rerender } = render(
+      <ConformanceTab server={null} servers={[]} {...props} />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    expect(onConnectServer).not.toHaveBeenCalled();
+
+    const alpha = createHttpServer({
+      name: "alpha",
+      connectionStatus: "disconnected",
+    });
+    rerender(<ConformanceTab server={alpha} servers={[alpha]} {...props} />);
+    await waitFor(() =>
+      expect(onConnectServer).toHaveBeenCalledWith("alpha", { signIn: false }),
+    );
+    expect(onConnectServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads no failure for a server named like an object built-in", () => {
+    // `in` would find the inherited `constructor` and loop on clearing it.
+    const server = createHttpServer({ name: "constructor" });
+    render(
+      <ConformanceTab
+        server={server}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+        onConnectServer={vi.fn(async () => "ready" as const)}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+  });
+
+  it("keeps each server's connect failure when they settle out of order", async () => {
+    const user = userEvent.setup();
+    const alpha = createHttpServer({ name: "alpha" });
+    const beta = createHttpServer({
+      name: "beta",
+      connectionStatus: "disconnected",
+    });
+    const gamma = createHttpServer({
+      name: "gamma",
+      connectionStatus: "disconnected",
+    });
+    const settle: Record<string, (outcome: "failed") => void> = {};
+    const onConnectServer = vi.fn(
+      (name: string) =>
+        new Promise<"failed">((resolve) => (settle[name] = resolve)),
+    );
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha, beta, gamma]}
+        onSelectServer={vi.fn()}
+        onConnectServer={onConnectServer}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+
+    // beta, then gamma: gamma's connect fails first, beta's after it.
+    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
+    await user.click(serverRow("beta"));
+    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
+    await user.click(serverRow("gamma"));
+    await act(async () => settle.gamma!("failed"));
+    await act(async () => settle.beta!("failed"));
+
+    // gamma is the one picked, and its failure is still the one shown.
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      `Couldn't connect to "gamma"`,
+    );
   });
 
   it("connects a server that dropped before Run again, then runs", async () => {
@@ -1624,7 +1975,6 @@ describe("ConformanceTab", () => {
   });
 
   it("names the server and offers Retry or Edit when the connect fails", async () => {
-    const user = userEvent.setup();
     const server = createHttpServer({
       name: "alpha",
       connectionStatus: "failed",
@@ -1632,6 +1982,7 @@ describe("ConformanceTab", () => {
     });
     const onConnectServer = vi.fn(async () => "failed" as const);
     const onEditServer = vi.fn();
+    const error = vi.spyOn(toast, "error");
     render(
       <ConformanceTab
         server={server}
@@ -1642,12 +1993,15 @@ describe("ConformanceTab", () => {
       />,
     );
 
+    // Opening step 1 connects the page's server in the background.
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
-    await user.click(screen.getByRole("button", { name: "Connect alpha" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(`Couldn't connect to "alpha"`);
     expect(alert).toHaveTextContent("connect ECONNREFUSED 127.0.0.1:3000");
+    expect(error).toHaveBeenCalledWith(
+      "Couldn't connect to alpha. Retry below, or edit its connection.",
+      expect.objectContaining({ id: expect.anything() }),
+    );
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
 
     fireEvent.click(
@@ -1662,7 +2016,6 @@ describe("ConformanceTab", () => {
   });
 
   it("clears the connect alert once the server connects some other way", async () => {
-    const user = userEvent.setup();
     const server = createHttpServer({
       name: "alpha",
       connectionStatus: "failed",
@@ -1676,9 +2029,8 @@ describe("ConformanceTab", () => {
       <ConformanceTab server={server} servers={[server]} {...props} />,
     );
 
+    // Opening step 1 connects the page's server in the background.
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
-    await user.click(screen.getByRole("button", { name: "Connect alpha" }));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
 
     // Fixed from Edit connection, which reconnects without the picker.
@@ -1698,7 +2050,6 @@ describe("ConformanceTab", () => {
   });
 
   it("asks to sign in again when the connect needs reauthorization", async () => {
-    const user = userEvent.setup();
     const server = createHttpServer({
       name: "alpha",
       connectionStatus: "disconnected",
@@ -1713,9 +2064,8 @@ describe("ConformanceTab", () => {
       />,
     );
 
+    // Opening step 1 connects the page's server in the background.
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
-    await user.click(screen.getByRole("button", { name: "Connect alpha" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("It needs you to sign in again.");
 
@@ -1751,7 +2101,7 @@ describe("ConformanceTab", () => {
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 
-  it("lists servers with their status, and Connect only where it can connect", async () => {
+  it("lists servers with their status, and no Connect", async () => {
     const user = userEvent.setup();
     const alpha = createHttpServer({
       name: "alpha",
@@ -1759,13 +2109,11 @@ describe("ConformanceTab", () => {
     });
     const beta = createHttpServer({ name: "beta" });
     const onSelect = vi.fn();
-    const onConnect = vi.fn();
     render(
       <ConformanceServerPicker
         servers={[alpha, beta]}
         selectedName="alpha"
         onSelect={onSelect}
-        onConnect={onConnect}
       />,
     );
 
@@ -1778,13 +2126,8 @@ describe("ConformanceTab", () => {
     expect(screen.getByRole("button", { name: "Add server" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Disconnected" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Connected" })).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Connect beta" }),
-    ).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Connect alpha" }));
-    expect(onConnect).toHaveBeenCalledWith("alpha");
-    expect(onSelect).not.toHaveBeenCalled();
+    // Picking a server connects it, so no row offers Connect.
+    expect(screen.queryByRole("button", { name: /^Connect / })).toBeNull();
 
     await user.click(serverRow("beta"));
     expect(onSelect).toHaveBeenCalledWith("beta");
@@ -1909,7 +2252,12 @@ describe("ConformanceTab", () => {
     render(<ConformanceTab server={createHttpServer()} />);
     await runToCompletion();
 
-    expect(mockRunTasks).toHaveBeenCalledWith("http-server");
+    // The app's list, never the suite default: the full suite includes
+    // `tasks-update-ack-shape`, which needs answers the app cannot send.
+    const [serverName, options] = mockRunTasks.mock.calls[0]!;
+    expect(serverName).toBe("http-server");
+    expect(options.checkIds).not.toContain("tasks-update-ack-shape");
+    expect(options.checkIds).toContain("tasks-wire-resolvable");
     expect(within(suiteHeader("tasks")).getByText("PASSED")).toBeDefined();
   });
 

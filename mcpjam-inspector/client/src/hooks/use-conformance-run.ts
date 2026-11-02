@@ -28,6 +28,7 @@ import {
   type MCPTasksCheckId,
   pooledConformanceScore,
   scoreFromAppsResult,
+  scorableOAuthIds,
   scoreFromOAuthResult,
   scoreFromProtocolResult,
   scoreFromTasksResult,
@@ -53,6 +54,7 @@ import {
   createOAuthState,
   createProtocolState,
   createTasksState,
+  APP_TASKS_CHECK_IDS,
   isHttpServer,
   isSelected,
   NOT_SELECTED,
@@ -166,6 +168,11 @@ export interface UseConformanceRunResult {
   tasksScore?: ConformanceScore;
   oauthScore?: ConformanceScore;
   pooledScore?: ConformanceScore;
+  /**
+   * The OAuth steps this run leaves out of its score, as picked when it
+   * started: they ran, and read as unscored.
+   */
+  oauthUnscored: readonly string[];
   /** True when OAuth produced a score object with nothing applicable in it. */
   oauthNotScored: boolean;
   isRunning: boolean;
@@ -199,6 +206,7 @@ export function useConformanceRun({
   // Read when the protocol suite starts, like the selection.
   const probesRef = useRef(probes);
   probesRef.current = probes;
+  const [oauthUnscored, setOAuthUnscored] = useState<readonly string[]>([]);
   const [runVersion, setRunVersion] = useState(0);
 
   const activeServerNameRef = useRef(server.name);
@@ -672,6 +680,8 @@ export function useConformanceRun({
     // Saved defaults are plain strings: send only ids this build knows and,
     // when pinned, ones that version runs.
     const picked = runnableSelection(selectionRef.current, versionPin);
+    // Fixed for this run: a Settings change afterwards is for the next one.
+    setOAuthUnscored(scorableOAuthIds(picked?.oauthUnscored));
     const promises: Promise<void>[] = [];
     if (httpServerNow) {
       if (isSelected(picked?.protocol)) {
@@ -688,7 +698,15 @@ export function useConformanceRun({
       setApps(NOT_SELECTED);
     }
     if (isSelected(picked?.tasks)) {
-      promises.push(runTasks(runToken, currentServer.name, picked?.tasks));
+      // Never "all": the suite's full list includes a check the app cannot
+      // feed, so an unset selection still sends the app's list explicitly.
+      promises.push(
+        runTasks(
+          runToken,
+          currentServer.name,
+          picked?.tasks ?? [...APP_TASKS_CHECK_IDS]
+        )
+      );
     } else {
       setTasks(NOT_SELECTED);
     }
@@ -720,8 +738,23 @@ export function useConformanceRun({
     [tasks.result]
   );
   const oauthScore = useMemo(
-    () => (oauth.result ? scoreFromOAuthResult(oauth.result) : undefined),
-    [oauth.result]
+    () =>
+      oauth.result
+        ? scoreFromOAuthResult(oauth.result, {
+            unscoredCheckIds: oauthUnscored,
+          })
+        : undefined,
+    [oauth.result, oauthUnscored]
+  );
+  // The suite's badge follows its score once steps are left out of it: a
+  // failure in an unscored step must not read FAILED beside a passing score.
+  // A not-applicable flow is "unavailable" and keeps its own treatment.
+  const oauthShown = useMemo<OAuthSuiteState>(
+    () =>
+      oauth.status === "done" && oauthUnscored.length > 0 && oauthScore
+        ? { ...oauth, verdict: oauthScore.outcome }
+        : oauth,
+    [oauth, oauthUnscored, oauthScore]
   );
   const pooledScore = useMemo(() => {
     const parts = [protocolScore, appsScore, tasksScore, oauthScore].filter(
@@ -740,7 +773,7 @@ export function useConformanceRun({
     protocol,
     apps,
     tasks,
-    oauth,
+    oauth: oauthShown,
     versionPin,
     setVersionPin,
     runVersion,
@@ -753,6 +786,7 @@ export function useConformanceRun({
     tasksScore,
     oauthScore,
     pooledScore,
+    oauthUnscored,
     oauthNotScored: oauthScore !== undefined && oauthScore.score === null,
     isRunning,
   };

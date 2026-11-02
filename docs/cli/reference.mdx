@@ -2831,7 +2831,7 @@ A saved login is only sent to its own server. When it is the credential and the 
 
 `--api-header` values are sent on MCPJam API requests and the login settings request only, never to the sign-in provider. MCPJam API requests never follow a redirect: a `3xx` answer exits `2` (`BACKEND_REDIRECT_REFUSED`).
 
-An IT settings file can set or lock the server ahead of all of these; see [Self-hosted MCPJam](/cli/self-hosted) for the file, the lock and corporate proxies.
+A locked IT settings file sets the server ahead of all of these, and an unlocked one takes the place of the production default; see [Self-hosted MCPJam](/cli/self-hosted) for the file, the lock and corporate proxies.
 
 **Login output fields:**
 
