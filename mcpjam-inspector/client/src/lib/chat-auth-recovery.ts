@@ -2,7 +2,7 @@ import { useMemo, useSyncExternalStore } from "react";
 import { captureSentryMessage } from "@/lib/sentry";
 
 export const CHAT_AUTH_RECOVERY_MESSAGE =
-  "MCPJam couldn’t continue this call after sign-in. Please try again.";
+  "Could not retry the call after sign-in. Run it again.";
 const KEY = "mcp-chat-auth-recovery-v1";
 export type RecoveryReason =
   | "comparison_restore_failed"

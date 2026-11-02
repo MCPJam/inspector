@@ -111,7 +111,7 @@ function write(value: PendingDirectScopeStepUpReplay): void {
   const raw = JSON.stringify(value);
   sessionStorage.setItem(PENDING_DIRECT_REPLAY_KEY, raw);
   if (sessionStorage.getItem(PENDING_DIRECT_REPLAY_KEY) !== raw)
-    throw new Error("MCPJam couldn’t save this call for sign-in. Please try again.");
+    throw new Error("Could not save the call for sign-in. Try again.");
 }
 
 // Calls whose sign-in this page is driving. A call saved by an earlier page
