@@ -28,6 +28,7 @@ import {
   type MCPTasksConformanceConfig,
   type MCPTasksConformanceResult,
   type OAuthConformanceConfig,
+  type MCPOAuthReadinessId,
   type OAuthConformanceProfile,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
@@ -272,6 +273,8 @@ export interface StartOAuthConformanceInput {
   /** Public callback URL that the authorization server will redirect to. */
   redirectUrl: string;
   oauthProfile?: OAuthConformanceProfile;
+  /** Report only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds?: MCPOAuthReadinessId[];
   /**
    * Hosted only: the caller starting the run (`principalKey`). Only that
    * caller can then deliver its code or read its result. Local runs omit it.
@@ -320,6 +323,7 @@ export async function startOAuthConformance(
     // verifying the server *rejects* bad input is half of OAuth conformance.
     // The runner only reaches them once the happy path passes end to end.
     oauthConformanceChecks: true,
+    ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
     // The OAuth suite dials URLs it DISCOVERS — authorization, token,
     // registration and metadata endpoints all come out of the target's own
     // documents — so the profile URL it was handed is the one address here that

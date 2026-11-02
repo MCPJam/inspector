@@ -117,6 +117,8 @@ describe("useConformanceServerData", () => {
     await result.current.saveDefaults!("alpha", {
       protocol: ["ping"],
       protocolAdvice: [],
+      tasksAdvice: [],
+      oauthAdvice: [],
       oauth: false,
     });
     // The backend stores check lists only and would refuse the whole save.

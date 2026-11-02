@@ -7,12 +7,16 @@ import {
   CONFORMANCE_CHECK_METADATA,
   MCP_APPS_CHECK_IDS,
   MCP_CHECK_IDS,
+  MCP_OAUTH_READINESS_IDS,
   MCP_READINESS_IDS,
+  MCP_TASKS_READINESS_IDS,
+  OAUTH_READINESS_CATALOG,
   PROTOCOL_CHECK_CATALOG,
   PROTOCOL_VERSION_ERAS,
   READINESS_CATALOG,
   READINESS_ERAS,
   TASKS_CHECK_CATALOG,
+  TASKS_READINESS_CATALOG,
   type OAuthConformanceCheckId,
 } from "@mcpjam/sdk/browser";
 import { APP_TASKS_CHECK_IDS } from "@/hooks/conformance-suite-state";
@@ -61,6 +65,14 @@ export function protocolAdviceCatalog(pin: ProtocolVersionPin): CatalogEntry[] {
     };
   });
 }
+
+export const TASKS_ADVICE_CATALOG: CatalogEntry[] = MCP_TASKS_READINESS_IDS.map(
+  (id) => ({ id, ...TASKS_READINESS_CATALOG[id] }),
+);
+
+export const OAUTH_ADVICE_CATALOG: CatalogEntry[] = MCP_OAUTH_READINESS_IDS.map(
+  (id) => ({ id, ...OAUTH_READINESS_CATALOG[id] }),
+);
 
 export const APPS_CATALOG: CatalogEntry[] = MCP_APPS_CHECK_IDS.map((id) => ({
   id,

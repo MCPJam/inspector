@@ -18,14 +18,18 @@ import {
   CHECK_ERAS,
   MCP_APPS_CHECK_IDS,
   MCP_CHECK_IDS,
+  MCP_OAUTH_READINESS_IDS,
   MCP_READINESS_IDS,
   MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
   READINESS_ERAS,
   type MCPAppsCheckId,
   type MCPCheckId,
+  type MCPOAuthReadinessId,
   type MCPReadinessId,
   type MCPTasksCheckId,
+  type MCPTasksReadinessId,
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -188,7 +192,11 @@ export interface ConformanceSelection {
   protocolAdvice?: MCPReadinessId[];
   apps?: MCPAppsCheckId[];
   tasks?: MCPTasksCheckId[];
+  /** The Tasks suite's advice, read like `protocolAdvice`. */
+  tasksAdvice?: MCPTasksReadinessId[];
   oauth?: boolean;
+  /** The OAuth suite's advice, read like `protocolAdvice`. */
+  oauthAdvice?: MCPOAuthReadinessId[];
   /** OAuth steps that run with the flow but are left out of the score. */
   oauthUnscored?: string[];
 }
@@ -248,5 +256,7 @@ export function runnableSelection(
     protocolAdvice: knownIds(selection.protocolAdvice, adviceIds),
     apps: knownIds(selection.apps, MCP_APPS_CHECK_IDS),
     tasks: knownIds(selection.tasks, APP_TASKS_CHECK_IDS),
+    tasksAdvice: knownIds(selection.tasksAdvice, MCP_TASKS_READINESS_IDS),
+    oauthAdvice: knownIds(selection.oauthAdvice, MCP_OAUTH_READINESS_IDS),
   };
 }

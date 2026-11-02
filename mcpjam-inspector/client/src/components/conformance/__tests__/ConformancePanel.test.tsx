@@ -819,9 +819,13 @@ describe("ConformanceTab", () => {
     const oauthBox = within(oauthRow).getByRole("checkbox", {
       name: "Run OAuth",
     });
+    // The OAuth advice has its own box, covered by the suite's.
+    const issAdvice = within(oauthRow).getByRole("checkbox", {
+      name: "Run Authorization Response iss",
+    });
     const oauthChecks = within(oauthRow)
       .getAllByRole("checkbox")
-      .filter((box) => box !== oauthBox);
+      .filter((box) => box !== oauthBox && box !== issAdvice);
     expect(oauthChecks).toHaveLength(Number(count));
     for (const box of oauthChecks) {
       expect(box).toBeEnabled();
@@ -838,6 +842,8 @@ describe("ConformanceTab", () => {
     for (const box of oauthChecks) {
       expect(box).toHaveAttribute("data-state", "unchecked");
     }
+    expect(issAdvice).toHaveAttribute("data-state", "unchecked");
+    expect(issAdvice).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(
@@ -1756,9 +1762,10 @@ describe("ConformanceTab", () => {
       const user = userEvent.setup();
       setupSuccessfulRunMocks();
       await openProtocolChecks();
+      // Protocol, Tasks and OAuth each list theirs; Apps has none.
       expect(
-        screen.getByText(/^Advice: \d+ tips that cost no points/),
-      ).toBeInTheDocument();
+        screen.getAllByText(/^Advice: \d+ tips?, run with the checks above\.$/),
+      ).toHaveLength(3);
       await user.click(
         screen.getByRole("combobox", { name: "Tool that emits logs" }),
       );

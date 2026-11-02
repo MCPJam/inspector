@@ -1,10 +1,11 @@
 import { DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL } from "../oauth/client-identity.js";
 import { getSupportedRegistrationStrategies } from "../oauth/state-machines/factory.js";
-import type {
-  NormalizedOAuthConformanceConfig,
-  OAuthConformanceAuthConfig,
-  OAuthConformanceClientConfig,
-  OAuthConformanceConfig,
+import {
+  MCP_OAUTH_READINESS_IDS,
+  type NormalizedOAuthConformanceConfig,
+  type OAuthConformanceAuthConfig,
+  type OAuthConformanceClientConfig,
+  type OAuthConformanceConfig,
 } from "./types.js";
 
 function deriveServerName(serverUrl: string): string {
@@ -126,6 +127,22 @@ export function normalizeOAuthConformanceConfig(
       timeout: config.verification?.timeout ?? 30_000,
     },
     oauthConformanceChecks: config.oauthConformanceChecks ?? false,
+    ...(config.readinessIds !== undefined
+      ? { readinessIds: normalizeReadinessIds(config.readinessIds) }
+      : {}),
     onProgress: config.onProgress ?? (() => {}),
   };
+}
+
+/** Unlike check ids elsewhere, an empty list stays empty: no advice at all. */
+function normalizeReadinessIds(
+  readinessIds: NonNullable<OAuthConformanceConfig["readinessIds"]>
+): NonNullable<OAuthConformanceConfig["readinessIds"]> {
+  const normalized = Array.from(new Set(readinessIds));
+  for (const readinessId of normalized) {
+    if (!MCP_OAUTH_READINESS_IDS.includes(readinessId)) {
+      throw new Error(`Unknown OAuth conformance readiness id: ${readinessId}`);
+    }
+  }
+  return normalized;
 }

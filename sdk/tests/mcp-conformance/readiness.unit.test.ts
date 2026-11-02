@@ -280,55 +280,18 @@ describe("raw readiness advice", () => {
     expect(ttl?.details).toMatchObject({ method: "tools/list", ttlMs: 0 });
   });
 
-  it("recommends emitting iss when the authorization server does not advertise it", async () => {
+  it("leaves iss advice to the OAuth suite and fetches no OAuth metadata", async () => {
+    const urls: string[] = [];
     const fetchFn = (async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.endsWith("/.well-known/oauth-protected-resource")) {
-        return new Response(
-          JSON.stringify({ authorization_servers: ["https://as.example.com"] }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-      if (url.endsWith("/.well-known/oauth-authorization-server")) {
-        return new Response(
-          JSON.stringify({ issuer: "https://as.example.com" }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
+      urls.push(String(input));
       return new Response("{}", { status: 404 });
     }) as unknown as typeof fetch;
 
     const warnings = await collectRawReadiness(rawContext(fetchFn));
-    const iss = warnings.find(
-      (item) => item.id === "readiness-oauth-iss-advertised"
+    expect(warnings.map((item) => item.id)).not.toContain(
+      "readiness-oauth-iss-advertised"
     );
-
-    expect(iss?.specStrength).toBe("RECOMMENDED");
-    expect(iss?.details).toMatchObject({ issuer: "https://as.example.com" });
-  });
-
-  it("stays silent when iss is advertised", async () => {
-    const fetchFn = (async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.endsWith("/.well-known/oauth-protected-resource")) {
-        return new Response(
-          JSON.stringify({ authorization_servers: ["https://as.example.com"] }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-      if (url.endsWith("/.well-known/oauth-authorization-server")) {
-        return new Response(
-          JSON.stringify({
-            issuer: "https://as.example.com",
-            authorization_response_iss_parameter_supported: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-      return new Response("{}", { status: 404 });
-    }) as unknown as typeof fetch;
-
-    expect(await collectRawReadiness(rawContext(fetchFn))).toEqual([]);
+    expect(urls.filter((url) => url.includes("/.well-known/"))).toEqual([]);
   });
 
   it("advises when unparseable JSON is accepted as success, and stays silent on any rejection", async () => {

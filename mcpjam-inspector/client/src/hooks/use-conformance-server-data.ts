@@ -19,6 +19,8 @@ type ServerSettingsRow = {
   defaultChecks: ConformanceSelection;
 };
 
+const ADVICE_KEYS = new Set(["protocolAdvice", "tasksAdvice", "oauthAdvice"]);
+
 /**
  * Convex drops `undefined` poorly: send only the keys that are set. Advice
  * picks stay out: the saved defaults hold check lists only, so the backend
@@ -27,7 +29,7 @@ type ServerSettingsRow = {
 function definedOnly(selection: ConformanceSelection): ConformanceSelection {
   return Object.fromEntries(
     Object.entries(selection).filter(
-      ([key, value]) => value !== undefined && key !== "protocolAdvice",
+      ([key, value]) => value !== undefined && !ADVICE_KEYS.has(key),
     ),
   ) as ConformanceSelection;
 }

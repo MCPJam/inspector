@@ -5,7 +5,9 @@ import {
   MCP_CHECK_IDS,
   MCP_PROTOCOL_VERSIONS,
   MCP_READINESS_IDS,
+  MCP_OAUTH_READINESS_IDS,
   MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
   canRunConformance,
   oauthConformanceProfileSchema,
   type HttpServerConfig,
@@ -201,6 +203,8 @@ const tasksSchema = z.object({
   pollTimeoutMs: z.number().int().positive().max(120_000).optional(),
   /** Run only these checks, as picked before Run; absent ⇒ all of them. */
   checkIds: z.array(z.enum(MCP_TASKS_CHECK_IDS)).min(1).optional(),
+  /** Report only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds: z.array(z.enum(MCP_TASKS_READINESS_IDS)).optional(),
 });
 
 conformance.post("/tasks", async (c) => {
@@ -257,6 +261,8 @@ const oauthStartSchema = z.object({
   serverId: z.string().min(1),
   oauthProfile: oauthConformanceProfileSchema.optional(),
   callbackOrigin: z.string().optional(),
+  /** Report only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds: z.array(z.enum(MCP_OAUTH_READINESS_IDS)).optional(),
 });
 
 conformance.post("/oauth/start", async (c) => {
@@ -273,7 +279,8 @@ conformance.post("/oauth/start", async (c) => {
       );
     }
 
-    const { serverId, oauthProfile, callbackOrigin } = parsed.data;
+    const { serverId, oauthProfile, callbackOrigin, readinessIds } =
+      parsed.data;
     const resolved = resolveServerConfig(c.mcpClientManager, serverId);
     if ("error" in resolved) {
       return c.json({ success: false, ...resolved }, 400);
@@ -299,6 +306,7 @@ conformance.post("/oauth/start", async (c) => {
       defaultCustomHeaders: http.customHeaders,
       redirectUrl: `${callbackOrigin.replace(/\/$/, "")}/oauth/callback/debug`,
       oauthProfile,
+      readinessIds,
     });
     return c.json(result);
   } catch (error) {

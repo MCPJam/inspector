@@ -1,13 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
 
-const { runProtocolConformanceMock } = vi.hoisted(() => ({
+const {
+  runProtocolConformanceMock,
+  runTasksConformanceMock,
+  startOAuthConformanceMock,
+} = vi.hoisted(() => ({
   runProtocolConformanceMock: vi.fn(),
+  runTasksConformanceMock: vi.fn(),
+  startOAuthConformanceMock: vi.fn(),
 }));
 
 vi.mock("../../shared/conformance", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../shared/conformance")>()),
   runProtocolConformance: runProtocolConformanceMock,
+  runTasksConformance: runTasksConformanceMock,
+  startOAuthConformance: startOAuthConformanceMock,
 }));
 
 import conformance from "../conformance.js";
@@ -113,5 +121,57 @@ describe("POST /api/mcp/conformance/protocol advice picks", () => {
     const res = await postProtocol({ readinessIds: ["readiness-made-up"] });
     expect(res.status).toBe(400);
     expect(runProtocolConformanceMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/mcp/conformance tasks and oauth advice picks", () => {
+  function post(path: string, body: Record<string, unknown>) {
+    return createTestApp().request(`/api/mcp/conformance/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ serverId: "test-server", ...body }),
+    });
+  }
+
+  beforeEach(() => {
+    runTasksConformanceMock.mockReset();
+    runTasksConformanceMock.mockResolvedValue({ result: { checks: [] } });
+    startOAuthConformanceMock.mockReset();
+    startOAuthConformanceMock.mockResolvedValue({ phase: "complete" });
+  });
+
+  it("forwards the picked Tasks advice", async () => {
+    await post("tasks", {
+      readinessIds: ["tasks-readiness-failed-status-message"],
+    });
+    expect(runTasksConformanceMock.mock.calls[0]![0].readinessIds).toEqual([
+      "tasks-readiness-failed-status-message",
+    ]);
+  });
+
+  it("forwards the picked OAuth advice, an empty list included", async () => {
+    await post("oauth/start", {
+      callbackOrigin: "http://localhost:5173",
+      readinessIds: [],
+    });
+    expect(startOAuthConformanceMock.mock.calls[0]![0].readinessIds).toEqual(
+      [],
+    );
+  });
+
+  it.each([
+    ["tasks", { readinessIds: ["readiness-log-level-filtering"] }],
+    [
+      "oauth/start",
+      {
+        callbackOrigin: "http://localhost:5173",
+        readinessIds: ["tasks-readiness-failed-status-message"],
+      },
+    ],
+  ])("rejects another suite's advice id on %s", async (path, body) => {
+    const res = await post(path, body);
+    expect(res.status).toBe(400);
+    expect(runTasksConformanceMock).not.toHaveBeenCalled();
+    expect(startOAuthConformanceMock).not.toHaveBeenCalled();
   });
 });

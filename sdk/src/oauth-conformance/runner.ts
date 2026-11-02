@@ -42,6 +42,7 @@ import {
   runInvalidRedirectCheck,
 } from "./checks/oauth-negative.js";
 import { runTokenFormatCheck } from "./checks/oauth-token-format.js";
+import { oauthReadiness } from "./readiness.js";
 import {
   buildUnauthenticatedMcpRequest,
   runUnauthenticatedChallengeCheck,
@@ -1453,6 +1454,8 @@ export class OAuthConformanceTest {
       credentials: buildCredentials(state),
       verification,
       ...(profileId ? { profileId } : {}),
+      ...oauthReadiness(this.config, state),
     };
   }
 }
+

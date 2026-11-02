@@ -448,85 +448,8 @@ async function sessionTerminationWarning(
   );
 }
 
-function metadataUrl(serverUrl: string, wellKnown: string): string {
-  const url = new URL(serverUrl);
-  return new URL(wellKnown, `${url.protocol}//${url.host}`).toString();
-}
-
 /**
- * A plain JSON document fetched over HTTP — OAuth metadata, not MCP traffic.
- *
- * `record: false` is load-bearing. These documents are not JSON-RPC and never
- * were, so letting them into the run-wide wire record fed them to
- * `wire-schema-valid`, which graded them against `JSONRPCMessage` and reported
- * both metadata documents as missing `id` and `jsonrpc` — on every server,
- * including ones with nothing else to report.
- *
- * This is the ONLY caller in this module that opts out, and deliberately so.
- * Every other `rawRequest` here speaks JSON-RPC to the MCP endpoint, including
- * the deliberately malformed body in `parseErrorHandlingWarning`, whose
- * response is exactly the kind of frame the wire check exists to grade.
- */
-async function fetchJson(
-  ctx: RawHttpCheckContext,
-  url: string
-): Promise<Record<string, unknown> | undefined> {
-  const result = await rawRequest(ctx, {
-    url,
-    method: "GET",
-    includeBaseHeaders: false,
-    headers: { Accept: "application/json" },
-    record: false,
-  });
-  return result.status === 200 &&
-    result.json !== null &&
-    typeof result.json === "object"
-    ? (result.json as Record<string, unknown>)
-    : undefined;
-}
-
-/**
- * RFC 9207 advises an authorization server to echo `iss` on the authorization
- * response so a client can detect mix-up attacks. It is RECOMMENDED, not
- * required, so its absence is advice — probed only when the resource actually
- * advertises OAuth metadata.
- */
-async function oauthIssWarning(
-  ctx: RawHttpCheckContext
-): Promise<MCPReadinessWarning | undefined> {
-  const resourceMetadata = await fetchJson(
-    ctx,
-    metadataUrl(ctx.serverUrl, "/.well-known/oauth-protected-resource")
-  );
-  const authorizationServers = resourceMetadata?.authorization_servers;
-  const issuer = Array.isArray(authorizationServers)
-    ? authorizationServers[0]
-    : undefined;
-  if (typeof issuer !== "string") {
-    return undefined;
-  }
-
-  const asMetadata = await fetchJson(
-    ctx,
-    metadataUrl(issuer, "/.well-known/oauth-authorization-server")
-  );
-  if (!asMetadata) {
-    return undefined;
-  }
-
-  return asMetadata.authorization_response_iss_parameter_supported === true
-    ? undefined
-    : warning(
-        "readiness-oauth-iss-advertised",
-        "RECOMMENDED",
-        `Authorization server ${issuer} does not advertise authorization_response_iss_parameter_supported; emitting iss lets clients detect authorization-server mix-up attacks`,
-        { issuer }
-      );
-}
-
-/**
- * Readiness advice that only the raw wire (or unauthenticated metadata
- * endpoints) can show. Each probe is independently guarded: readiness is
+ * Readiness advice that only the raw wire can show. Each probe is independently guarded: readiness is
  * advisory, so a probe that throws contributes nothing and never fails a run.
  */
 /**
@@ -682,7 +605,6 @@ export async function collectRawReadiness(
     [MCPReadinessId, () => Promise<MCPReadinessWarning | undefined>]
   > = [
     ["readiness-cache-ttl-useful", () => cacheTtlWarning(ctx)],
-    ["readiness-oauth-iss-advertised", () => oauthIssWarning(ctx)],
     ["readiness-parse-error-handling", () => parseErrorHandlingWarning(ctx)],
     ["readiness-session-termination", () => sessionTerminationWarning(ctx)],
     [

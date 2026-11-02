@@ -446,7 +446,6 @@ export const MCP_READINESS_IDS = [
   "readiness-tool-order-deterministic",
   "readiness-deprecated-feature-use",
   "readiness-cache-ttl-useful",
-  "readiness-oauth-iss-advertised",
   // No revision maps an unparseable POST body to any HTTP status or JSON-RPC
   // error — the transports docs are silent — so answering garbage with a
   // success status is ADVICE (JSON-RPC 2.0 names -32700 for it), never a
@@ -485,7 +484,6 @@ export const READINESS_ERAS: Record<MCPReadinessId, MCPCheckEras> = {
   // Modern: removed capabilities. Legacy: a revision older than 2025-11-25.
   "readiness-deprecated-feature-use": ["legacy", "modern"],
   "readiness-cache-ttl-useful": ["modern"],
-  "readiness-oauth-iss-advertised": ["legacy", "modern"],
   "readiness-parse-error-handling": ["legacy", "modern"],
   "readiness-session-termination": ["legacy", "modern"],
   "readiness-protocol-version-header-required": ["modern"],

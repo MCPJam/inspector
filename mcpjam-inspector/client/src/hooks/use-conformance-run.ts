@@ -24,7 +24,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // transitive deps that break the Vite browser bundle.
 import {
   type MCPAppsCheckId,
+  type MCPOAuthReadinessId,
   type MCPTasksCheckId,
+  type MCPTasksReadinessId,
   pooledConformanceScore,
   scoreFromAppsResult,
   scorableOAuthIds,
@@ -373,14 +375,14 @@ export function useConformanceRun({
     async (
       runToken: number,
       serverName: string,
-      checkIds?: MCPTasksCheckId[]
+      picked: {
+        checkIds: MCPTasksCheckId[];
+        readinessIds?: MCPTasksReadinessId[];
+      }
     ) => {
       setTasks({ status: "running" });
       try {
-        const { result } = await runTasksConformance(
-          serverName,
-          ...(checkIds ? [{ checkIds }] : []),
-        );
+        const { result } = await runTasksConformance(serverName, picked);
         if (!isRunActive(runToken, serverName)) return;
         // The tasks suite reports a real third outcome: checks that apply but
         // could not be exercised leave the run incomplete, never passing.
@@ -536,7 +538,11 @@ export function useConformanceRun({
   );
 
   const runOAuth = useCallback(
-    async (runToken: number, currentServer: ServerWithName) => {
+    async (
+      runToken: number,
+      currentServer: ServerWithName,
+      readinessIds?: MCPOAuthReadinessId[]
+    ) => {
       if (!isHttpServer(currentServer)) return;
 
       const serverName = currentServer.name;
@@ -582,6 +588,7 @@ export function useConformanceRun({
           serverNameOrId: serverName,
           oauthProfile: { ...baseProfile, protocolVersion },
           callbackOrigin,
+          readinessIds,
         });
 
         if (!isRunActive(runToken, serverName)) return;
@@ -698,18 +705,17 @@ export function useConformanceRun({
       // Never "all": the suite's full list includes a check the app cannot
       // feed, so an unset selection still sends the app's list explicitly.
       promises.push(
-        runTasks(
-          runToken,
-          currentServer.name,
-          picked?.tasks ?? [...APP_TASKS_CHECK_IDS]
-        )
+        runTasks(runToken, currentServer.name, {
+          checkIds: picked?.tasks ?? [...APP_TASKS_CHECK_IDS],
+          readinessIds: picked?.tasksAdvice,
+        })
       );
     } else {
       setTasks(NOT_SELECTED);
     }
     if (httpServerNow) {
       if (picked?.oauth !== false) {
-        promises.push(runOAuth(runToken, currentServer));
+        promises.push(runOAuth(runToken, currentServer, picked?.oauthAdvice));
       } else {
         setOAuth(NOT_SELECTED);
       }

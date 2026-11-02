@@ -5,7 +5,9 @@ import {
   MCP_CHECK_IDS,
   MCP_PROTOCOL_VERSIONS,
   MCP_READINESS_IDS,
+  MCP_OAUTH_READINESS_IDS,
   MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
   oauthConformanceProfileSchema,
   type MCPServerConfig,
 } from "@mcpjam/sdk";
@@ -343,6 +345,8 @@ const tasksSchema = z
     pollTimeoutMs: z.number().int().positive().max(120_000).optional(),
     /** Run only these checks, as picked before Run; absent ⇒ all of them. */
     checkIds: z.array(z.enum(MCP_TASKS_CHECK_IDS)).min(1).optional(),
+    /** Report only this advice; absent ⇒ all of it, empty ⇒ none. */
+    readinessIds: z.array(z.enum(MCP_TASKS_READINESS_IDS)).optional(),
   })
   .passthrough(); // project/guest fields pass through to resolveHostedServerConfig
 
@@ -359,6 +363,7 @@ conformanceWeb.post("/tasks", async (c) =>
           ...config,
           timeout: HOSTED_TASKS_CALL_TIMEOUT_MS,
           ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
+          ...(parsed.readinessIds ? { readinessIds: parsed.readinessIds } : {}),
           ...(parsed.toolName ? { toolName: parsed.toolName } : {}),
           ...(parsed.toolArguments
             ? { toolArguments: parsed.toolArguments }
@@ -384,6 +389,8 @@ const oauthStartSchema = z
   .object({
     oauthProfile: oauthConformanceProfileSchema.optional(),
     callbackOrigin: z.string().optional(),
+    /** Report only this advice; absent ⇒ all of it, empty ⇒ none. */
+    readinessIds: z.array(z.enum(MCP_OAUTH_READINESS_IDS)).optional(),
   })
   .passthrough(); // project/guest fields pass through to resolveHostedHttpConfig
 
@@ -427,6 +434,7 @@ conformanceWeb.post("/oauth/start", async (c) =>
           ""
         )}/oauth/callback/debug`,
         oauthProfile: parsed.oauthProfile,
+        readinessIds: parsed.readinessIds,
         owner: principalKey(c),
       });
       return started.phase === "complete"

@@ -19,7 +19,11 @@
 
 import type { MCPCheckId, MCPReadinessId } from "./mcp-conformance/types.js";
 import type { MCPAppsCheckId } from "./apps-conformance/types.js";
-import type { MCPTasksCheckId } from "./tasks-conformance/types.js";
+import type { MCPOAuthReadinessId } from "./oauth-conformance/types.js";
+import type {
+  MCPTasksCheckId,
+  MCPTasksReadinessId,
+} from "./tasks-conformance/types.js";
 
 export interface ConformanceCheckInfo {
   title: string;
@@ -371,11 +375,6 @@ export const READINESS_CATALOG = {
     description:
       "Cacheable results advertise a ttlMs above 0, so clients can reuse them.",
   },
-  "readiness-oauth-iss-advertised": {
-    title: "Authorization Response iss",
-    description:
-      "The authorization server advertises authorization_response_iss_parameter_supported.",
-  },
   "readiness-parse-error-handling": {
     title: "Parse Error Handling",
     description:
@@ -401,3 +400,26 @@ export const READINESS_CATALOG = {
       "A tool called at a log level sends logs at or above that level.",
   },
 } as const satisfies Record<MCPReadinessId, ConformanceCheckInfo>;
+
+/** Tasks suite advice. Keys follow `MCP_TASKS_READINESS_IDS` order. */
+export const TASKS_READINESS_CATALOG = {
+  "tasks-readiness-failed-status-message": {
+    title: "Failed Task Status Message",
+    description:
+      "A failed task carries a statusMessage that says why it failed.",
+  },
+  "tasks-readiness-unknown-task-id-mutations": {
+    title: "Unknown Task Id On Update And Cancel",
+    description:
+      "tasks/update and tasks/cancel reject an unknown task id with -32602 (Invalid params).",
+  },
+} as const satisfies Record<MCPTasksReadinessId, ConformanceCheckInfo>;
+
+/** OAuth suite advice. Keys follow `MCP_OAUTH_READINESS_IDS` order. */
+export const OAUTH_READINESS_CATALOG = {
+  "readiness-oauth-iss-advertised": {
+    title: "Authorization Response iss",
+    description:
+      "The authorization server advertises authorization_response_iss_parameter_supported.",
+  },
+} as const satisfies Record<MCPOAuthReadinessId, ConformanceCheckInfo>;

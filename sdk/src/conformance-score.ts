@@ -440,7 +440,13 @@ export function scoreFromOAuthResult(
   }));
   return computeConformanceScore(
     checks,
-    [],
+    // The typed advice channel, read like the protocol suite's readiness.
+    (result.readiness ?? [])
+      .filter((warning) => warning.informational !== true)
+      .map((warning) => ({
+        id: warning.id,
+        tier: warning.specStrength === "MAY" ? "may" : "should",
+      })),
     result.protocolVersion,
     unscored.length > 0 ? { pendingCheckIds: [...unscored] } : undefined
   );

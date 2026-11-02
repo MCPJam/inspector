@@ -1,8 +1,10 @@
 import type { MCPServerConfig } from "../mcp-client-manager/index.js";
 import {
   MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
   type MCPTasksCheckId,
   type MCPTasksConformanceConfig,
+  type MCPTasksReadinessId,
   type NormalizedMCPTasksConformanceConfig,
 } from "./types.js";
 
@@ -23,6 +25,24 @@ function normalizeCheckIds(
   return normalized;
 }
 
+/** Unlike check ids, an empty list stays empty: it means no advice at all. */
+function normalizeReadinessIds(
+  readinessIds: MCPTasksConformanceConfig["readinessIds"]
+): MCPTasksReadinessId[] | undefined {
+  if (readinessIds === undefined) {
+    return undefined;
+  }
+
+  const normalized = Array.from(new Set(readinessIds));
+  for (const readinessId of normalized) {
+    if (!MCP_TASKS_READINESS_IDS.includes(readinessId)) {
+      throw new Error(`Unknown MCP Tasks readiness id: ${readinessId}`);
+    }
+  }
+
+  return normalized;
+}
+
 function deriveTarget(config: MCPServerConfig): string {
   return ("url" in config ? config.url : config.command) ?? "";
 }
@@ -30,8 +50,15 @@ function deriveTarget(config: MCPServerConfig): string {
 export function normalizeMCPTasksConformanceConfig(
   config: MCPTasksConformanceConfig
 ): NormalizedMCPTasksConformanceConfig {
-  const { checkIds, toolName, toolArguments, pollTimeoutMs, inputResponses, ...rest } =
-    config;
+  const {
+    checkIds,
+    readinessIds,
+    toolName,
+    toolArguments,
+    pollTimeoutMs,
+    inputResponses,
+    ...rest
+  } = config;
   const serverConfig = rest as MCPServerConfig;
   const target = deriveTarget(serverConfig).trim();
 
@@ -45,6 +72,9 @@ export function normalizeMCPTasksConformanceConfig(
     timeout: serverConfig.timeout ?? 30_000,
     pollTimeoutMs: pollTimeoutMs ?? 30_000,
     checkIds: normalizeCheckIds(checkIds),
+    ...(readinessIds !== undefined
+      ? { readinessIds: normalizeReadinessIds(readinessIds) }
+      : {}),
     ...(toolName ? { toolName } : {}),
     ...(toolArguments ? { toolArguments } : {}),
     ...(inputResponses ? { inputResponses } : {}),

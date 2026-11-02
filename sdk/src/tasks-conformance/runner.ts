@@ -13,6 +13,7 @@
  */
 
 import { z } from "zod";
+import { TASKS_READINESS_CATALOG } from "../conformance-catalog.js";
 import type { MCPClientManager } from "../mcp-client-manager/MCPClientManager.js";
 import type {
   ListToolsResult,
@@ -1925,7 +1926,10 @@ export class MCPTasksConformanceTest {
                 readiness.push({
                   id: "tasks-readiness-failed-status-message",
                   checkId: "tasks-status-payload-shape",
-                  title: "Failed Task Status Message",
+                  title:
+                    TASKS_READINESS_CATALOG[
+                      "tasks-readiness-failed-status-message"
+                    ].title,
                   severity: "warning",
                   specStrength: "SHOULD",
                   message:
@@ -2093,7 +2097,10 @@ export class MCPTasksConformanceTest {
                 readiness.push({
                   id: "tasks-readiness-unknown-task-id-mutations",
                   checkId: "tasks-invalid-task-id-rejected",
-                  title: "Unknown Task Id On Update And Cancel",
+                  title:
+                    TASKS_READINESS_CATALOG[
+                      "tasks-readiness-unknown-task-id-mutations"
+                    ].title,
                   severity: "warning",
                   specStrength: "SHOULD",
                   message: `An unknown task id should be rejected with -32602 (Invalid params): ${wrongAnswers.join("; ")}.`,
@@ -2460,6 +2467,11 @@ export class MCPTasksConformanceTest {
                   incompleteReason: `all ${pending.length} selected check(s) ran but are unscored by profile ${profile.id}@${profile.version}, so this run establishes no conformance verdict`,
                 }
               : decideOutcome(scored);
+          // Advice the caller left out is not reported.
+          const pickedAdvice = this.config.readinessIds;
+          const pickedReadiness = readiness.filter(
+            (warning) => !pickedAdvice || pickedAdvice.includes(warning.id)
+          );
 
           return {
             passed: verdict.outcome === "passed",
@@ -2469,7 +2481,9 @@ export class MCPTasksConformanceTest {
               : {}),
             target: this.config.target,
             checks,
-            ...(readiness.length > 0 ? { readiness } : {}),
+            ...(pickedReadiness.length > 0
+              ? { readiness: pickedReadiness }
+              : {}),
             summary:
               pending.length > 0
                 ? `${buildSummary(scored)}, ${pending.length} pending (unscored by profile ${profile.id}@${profile.version})`
