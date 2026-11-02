@@ -73,6 +73,8 @@ The conformance run tells the two anonymous shapes apart by what the server publ
 
 For a server that allows anonymous access, the run records the `200` on the first step and continues; nothing about allowing anonymous access counts against the server.
 
+The conformance run grades the OAuth flow itself. It does not call a protected tool to see how the server refuses it. How a host reacts to that refusal differs — Claude starts sign-in on an HTTP `401` with `WWW-Authenticate`, while ChatGPT's tool-level sign-in reads `_meta["mcp/www_authenticate"]` on an `isError` tool result — and the directory readiness checks can drive that call for you with `mcpjam readiness check claude --lazy-auth-tool <name>` (or `readiness check openai`).
+
 ## Scenarios
 
 ### I just added OAuth to my MCP server
