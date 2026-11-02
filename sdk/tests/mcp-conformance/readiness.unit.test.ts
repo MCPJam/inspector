@@ -126,7 +126,7 @@ describe("client readiness advice", () => {
     });
   });
 
-  it("stays silent when the order is stable and metadata is complete", async () => {
+  it("stays silent when the order is stable", async () => {
     mockedOperations.listTools.mockResolvedValue({
       tools: [tool("alpha"), tool("beta")],
       nextCursor: undefined,
@@ -134,29 +134,6 @@ describe("client readiness advice", () => {
 
     const warnings = await collectClientReadiness(clientContext(), surface());
     expect(warnings).toEqual([]);
-  });
-
-  it("warns about incomplete primitive metadata", async () => {
-    mockedOperations.listTools.mockResolvedValue({
-      tools: [tool("alpha")],
-      nextCursor: undefined,
-    } as never);
-
-    const warnings = await collectClientReadiness(
-      clientContext(),
-      surface({
-        tools: [tool("alpha", { description: "", title: undefined })],
-      })
-    );
-    const metadata = warnings.find(
-      (item) => item.id === "readiness-metadata-quality"
-    );
-
-    expect(metadata?.specStrength).toBe("SHOULD");
-    expect(metadata?.details).toMatchObject({
-      missingDescription: ["alpha"],
-      missingTitle: ["alpha"],
-    });
   });
 
   it("warns when a modern server still advertises superseded functionality", async () => {

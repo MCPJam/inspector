@@ -17,9 +17,16 @@ import type {
   ConformanceRunReportV1,
   ConformanceSuiteKind,
 } from "./conformance-run-types.js";
+import {
+  backendFetch,
+  isMcpjamDeploymentError,
+} from "./deployment/address.js";
+import { resolveDeployment } from "./deployment/resolve.js";
 
-export const DEFAULT_MCPJAM_BASE_URL = "https://app.mcpjam.com";
 export const DEFAULT_MCPJAM_PROJECT = "default";
+
+/** Ingest is MCPJam's own API: a redirect is refused, never followed. */
+const sendToMcpjam = backendFetch();
 
 export type ConformanceRunSource =
   | "ui"
@@ -42,6 +49,11 @@ export type ConformanceTargetInput = {
 export type ReportConformanceRunOptions = {
   apiKey?: string;
   baseUrl?: string;
+  /**
+   * Extra headers for a deployment behind an edge authenticator. Sent first,
+   * so `authorization` and `content-type` stay the ones this module sets.
+   */
+  headers?: Readonly<Record<string, string>>;
   project?: string;
   /**
    * Force the source. Overrides CI detection — pass it only when the caller
@@ -77,28 +89,39 @@ export type ReportConformanceRunOutput = {
 type RuntimeConfig = {
   apiKey: string;
   baseUrl: string;
+  headers: Readonly<Record<string, string>>;
   project: string;
   timeoutMs: number;
 };
-
-function trimTrailingSlash(value: string): string {
-  return value.endsWith("/") ? value.slice(0, -1) : value;
-}
 
 function resolveApiKey(input: Pick<ReportConformanceRunOptions, "apiKey">) {
   return input.apiKey ?? process.env.MCPJAM_API_KEY;
 }
 
+/** Throws `McpjamDeploymentError` when the configured address is refused. */
 function resolveBaseUrl(input: Pick<ReportConformanceRunOptions, "baseUrl">) {
-  return trimTrailingSlash(
-    input.baseUrl ?? process.env.MCPJAM_BASE_URL ?? DEFAULT_MCPJAM_BASE_URL
-  );
+  return resolveDeployment({ baseUrl: input.baseUrl, credential: "api-key" })
+    .baseUrl;
 }
 
 function resolveProject(input: Pick<ReportConformanceRunOptions, "project">) {
   const project = input.project ?? process.env.MCPJAM_PROJECT_ID;
   const trimmed = typeof project === "string" ? project.trim() : "";
   return trimmed || DEFAULT_MCPJAM_PROJECT;
+}
+
+function runtimeConfig(options: ReportConformanceRunOptions): RuntimeConfig {
+  const apiKey = resolveApiKey(options);
+  if (!apiKey) {
+    throw new Error("MCPJAM_API_KEY is required to upload conformance results");
+  }
+  return {
+    apiKey,
+    baseUrl: resolveBaseUrl(options),
+    headers: options.headers ?? {},
+    project: resolveProject(options),
+    timeoutMs: options.timeoutMs ?? 30_000,
+  };
 }
 
 function ingestPath(config: RuntimeConfig, suffix: string): string {
@@ -129,9 +152,10 @@ async function postJson(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.timeoutMs);
   try {
-    const response = await fetch(endpoint, {
+    const response = await sendToMcpjam(endpoint, {
       method: "POST",
       headers: {
+        ...config.headers,
         authorization: `Bearer ${config.apiKey}`,
         "content-type": "application/json",
       },
@@ -170,16 +194,7 @@ export async function startConformanceRun(
   >,
   options: ReportConformanceRunOptions = {}
 ): Promise<ReportConformanceRunOutput> {
-  const apiKey = resolveApiKey(options);
-  if (!apiKey) {
-    throw new Error("MCPJAM_API_KEY is required to upload conformance results");
-  }
-  const config: RuntimeConfig = {
-    apiKey,
-    baseUrl: resolveBaseUrl(options),
-    project: resolveProject(options),
-    timeoutMs: options.timeoutMs ?? 30_000,
-  };
+  const config = runtimeConfig(options);
   const ci = options.ci ?? detectConformanceCiMetadata();
   const source = detectSource(options);
   const externalRunId =
@@ -214,16 +229,7 @@ export async function uploadConformanceSuiteReport(
   report: ConformanceReport,
   options: ReportConformanceRunOptions = {}
 ): Promise<void> {
-  const apiKey = resolveApiKey(options);
-  if (!apiKey) {
-    throw new Error("MCPJAM_API_KEY is required to upload conformance results");
-  }
-  const config: RuntimeConfig = {
-    apiKey,
-    baseUrl: resolveBaseUrl(options),
-    project: resolveProject(options),
-    timeoutMs: options.timeoutMs ?? 30_000,
-  };
+  const config = runtimeConfig(options);
   await postJson(config, "runs/reports", {
     runId,
     suiteKind,
@@ -236,16 +242,7 @@ export async function heartbeatConformanceRun(
   runId: string,
   options: ReportConformanceRunOptions = {}
 ): Promise<void> {
-  const apiKey = resolveApiKey(options);
-  if (!apiKey) {
-    throw new Error("MCPJAM_API_KEY is required to upload conformance results");
-  }
-  const config: RuntimeConfig = {
-    apiKey,
-    baseUrl: resolveBaseUrl(options),
-    project: resolveProject(options),
-    timeoutMs: options.timeoutMs ?? 30_000,
-  };
+  const config = runtimeConfig(options);
   await postJson(config, "runs/heartbeat", { runId });
 }
 
@@ -253,16 +250,7 @@ export async function finalizeConformanceRun(
   runId: string,
   options: ReportConformanceRunOptions = {}
 ): Promise<ReportConformanceRunOutput> {
-  const apiKey = resolveApiKey(options);
-  if (!apiKey) {
-    throw new Error("MCPJAM_API_KEY is required to upload conformance results");
-  }
-  const config: RuntimeConfig = {
-    apiKey,
-    baseUrl: resolveBaseUrl(options),
-    project: resolveProject(options),
-    timeoutMs: options.timeoutMs ?? 30_000,
-  };
+  const config = runtimeConfig(options);
   const finalized = await postJson(config, "runs/finalize", { runId });
   return {
     runId: String(finalized.runId ?? runId),
@@ -305,6 +293,9 @@ export async function reportConformanceRunSafely(
   try {
     return await reportConformanceRun(report, options);
   } catch (error) {
+    // A refused address is a decision about where results may go, not a
+    // flaky upload, so it is never downgraded to a warning.
+    if (isMcpjamDeploymentError(error)) throw error;
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`Warning: conformance upload failed: ${message}\n`);
     return null;

@@ -4,20 +4,63 @@ import {
   reportConformanceRunSafely,
   toConformanceReport,
   type ConformanceReport,
+  type ConformanceRunReportV1,
   type ConformanceSuiteKind,
 } from "@mcpjam/sdk";
+import { isMcpjamDeploymentError } from "@mcpjam/sdk/internal/deployment";
 import type { Command } from "commander";
+import {
+  resolveCliDeployment,
+  resolvePlatformExtraHeaders,
+} from "./platform-client.js";
 
-export function addConformanceUploadOptions<T extends Command>(command: T): T {
-  return command
-    .option(
-      "--upload",
-      "Upload this suite's result into MCPJam run history",
-    )
-    .option(
-      "--require-upload",
-      "Fail if reporting is configured but the UI record cannot be written",
-    ) as T;
+/** Whether this invocation asked for an upload by flag. */
+export function requestsUpload(options: {
+  upload?: unknown;
+  requireUpload?: unknown;
+}): boolean {
+  return options.upload === true || options.requireUpload === true;
+}
+
+/**
+ * Upload a conformance report to the server this command resolved at start,
+ * with `MCPJAM_API_KEY` and the `MCPJAM_API_HEADERS` an edge authenticator
+ * needs. Resolved here rather than left to the SDK, which reads only its own
+ * variables.
+ *
+ * A failed upload is a warning unless `requireUpload`; a refused address
+ * always stops the command, because the result had nowhere it may go.
+ */
+export async function uploadConformanceReport(
+  report: ConformanceRunReportV1,
+  args: { serverUrl?: string; requireUpload?: boolean; command: Command },
+): Promise<void> {
+  const env = process.env;
+  const { baseUrl } = resolveCliDeployment({ credential: "api-key" }, { env });
+  const headers = resolvePlatformExtraHeaders({}, env);
+  const apiKey = env.MCPJAM_API_KEY?.trim();
+  const options = {
+    serverUrl: args.serverUrl,
+    defaultSource: "cli" as const,
+    baseUrl,
+    ...(apiKey ? { apiKey } : {}),
+    ...(headers ? { headers } : {}),
+  };
+  try {
+    const uploaded = args.requireUpload
+      ? await reportConformanceRun(report, options)
+      : await reportConformanceRunSafely(report, options);
+    if (uploaded?.runUrl && !args.command.optsWithGlobals().quiet) {
+      process.stderr.write(`Uploaded: ${uploaded.runUrl}\n`);
+    }
+    if (args.requireUpload && !uploaded) {
+      throw new Error("Conformance upload did not return a run record");
+    }
+  } catch (error) {
+    if (args.requireUpload || isMcpjamDeploymentError(error)) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`Warning: conformance upload failed: ${message}\n`);
+  }
 }
 
 export async function maybeUploadSingleSuite(args: {
@@ -35,8 +78,7 @@ export async function maybeUploadSingleSuite(args: {
   // against a staging server has not asked for that result to land in a
   // project's shared history. `mcpjam conformance run` is the command that
   // treats configured reporting as consent.
-  const shouldUpload = args.upload === true || args.requireUpload === true;
-  if (!shouldUpload) return;
+  if (!requestsUpload(args)) return;
 
   const suiteReport =
     args.report ?? toConformanceReport(args.result as never);
@@ -45,25 +87,5 @@ export async function maybeUploadSingleSuite(args: {
     reports: { [args.suiteKind]: suiteReport },
     startedAt: Date.now() - (suiteReport.durationMs ?? 0),
   });
-  try {
-    const uploaded = args.requireUpload
-      ? await reportConformanceRun(report, {
-          serverUrl: args.serverUrl,
-          defaultSource: "cli",
-        })
-      : await reportConformanceRunSafely(report, {
-          serverUrl: args.serverUrl,
-          defaultSource: "cli",
-        });
-    if (uploaded?.runUrl && !args.command.optsWithGlobals().quiet) {
-      process.stderr.write(`Uploaded: ${uploaded.runUrl}\n`);
-    }
-    if (args.requireUpload && !uploaded) {
-      throw new Error("Conformance upload did not return a run record");
-    }
-  } catch (error) {
-    if (args.requireUpload) throw error;
-    const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`Warning: conformance upload failed: ${message}\n`);
-  }
+  await uploadConformanceReport(report, args);
 }
