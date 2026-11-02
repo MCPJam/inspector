@@ -469,6 +469,49 @@ describe("suite adapters", () => {
     expect(tasks.protocolVersion).toBe("2025-11-25");
   });
 
+  it("scores typed tasks readiness by spec strength, informational for free", () => {
+    const tasksResult = (informational: boolean) =>
+      ({
+        passed: true,
+        outcome: "passed" as const,
+        target: "node server.js",
+        summary: "",
+        durationMs: 1,
+        categorySummary: {},
+        checks: [
+          {
+            id: "tasks-wire-resolvable",
+            category: "dispatch",
+            title: "Wire Resolvable",
+            description: "…",
+            status: "passed" as const,
+            durationMs: 1,
+          },
+        ],
+        readiness: [
+          {
+            id: "tasks-readiness-failed-status-message",
+            title: "Failed Task Status Message",
+            severity: "warning",
+            specStrength: "SHOULD",
+            message: "…",
+            ...(informational ? { informational: true } : {}),
+          },
+        ],
+        discovery: { wire: "extension", toolCount: 1, taskCapableToolCount: 1 },
+      }) as never;
+
+    const free = scoreFromTasksResult(tasksResult(true));
+    expect(free.advisories).toEqual([]);
+    expect(free.score).toBe(100);
+
+    const scored = scoreFromTasksResult(tasksResult(false));
+    expect(scored.advisories).toEqual([
+      { id: "tasks-readiness-failed-status-message", tier: "should" },
+    ]);
+    expect(scored.advicePointsLost).toBe(2);
+  });
+
   function oauthResult(
     overrides: Partial<OAuthConformanceResult> = {},
   ): OAuthConformanceResult {

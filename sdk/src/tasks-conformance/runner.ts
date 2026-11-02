@@ -51,6 +51,7 @@ import {
   type MCPTasksCheckResult,
   type MCPTasksConformanceConfig,
   type MCPTasksConformanceResult,
+  type MCPTasksReadinessWarning,
   type MCPTasksRunOutcome,
   type NormalizedMCPTasksConformanceConfig,
 } from "./types.js";
@@ -123,7 +124,7 @@ export const CHECK_METADATA: Record<
     category: "lifecycle",
     title: "Invalid Task Id Rejected",
     description:
-      "tasks/get for a task id the server never issued is rejected with -32602 (Invalid params); the same rejection on tasks/update and tasks/cancel is a SHOULD and only warns.",
+      "tasks/get for a task id the server never issued is rejected with -32602 (Invalid params); the same rejection on tasks/update and tasks/cancel is a SHOULD and is reported as advice.",
   },
   "tasks-status-payload-shape": {
     id: "tasks-status-payload-shape",
@@ -740,12 +741,8 @@ export function validateTaskStatusPayload(task: unknown): ShapeVerdict {
       } else if (typeof task.error.code !== "number") {
         violations.push("a failed task's `error` must carry a numeric code");
       }
-      if (task.statusMessage === undefined) {
-        // "SHOULD include a `statusMessage` field with diagnostic information"
-        warnings.push(
-          "a failed task carries no `statusMessage`; the extension recommends one so a human can see why"
-        );
-      }
+      // The `statusMessage` SHOULD is advice, not a payload requirement: see
+      // {@link failedTaskLacksStatusMessage}.
       break;
     case "input_required":
       if (!isRecord(task.inputRequests)) {
@@ -763,6 +760,18 @@ export function validateTaskStatusPayload(task: unknown): ShapeVerdict {
   }
 
   return { violations, warnings };
+}
+
+/**
+ * tasks.md:835 — a failed task's `tasks/get` response "SHOULD include a
+ * `statusMessage` field with diagnostic information about the failure".
+ */
+export function failedTaskLacksStatusMessage(task: unknown): boolean {
+  return (
+    isRecord(task) &&
+    task.status === "failed" &&
+    task.statusMessage === undefined
+  );
 }
 
 /**
@@ -1331,6 +1340,9 @@ export class MCPTasksConformanceTest {
       this.config.checkIds ?? MCP_TASKS_CHECK_IDS
     );
     const checks: MCPTasksCheckResult[] = [];
+    // The extension's SHOULDs, reported beside the verdict rather than as a
+    // check's warnings.
+    const readiness: MCPTasksReadinessWarning[] = [];
     const sent: unknown[] = [];
     // The RAW inbound bytes. Every task check that has to judge the
     // discriminator reads this, because by the time a result reaches the
@@ -1904,6 +1916,17 @@ export class MCPTasksConformanceTest {
                   warnings.add(`${String(state.status)}: ${warning}`);
                 }
               }
+              if (rawStates.some(failedTaskLacksStatusMessage)) {
+                readiness.push({
+                  id: "tasks-readiness-failed-status-message",
+                  title: "Failed Task Status Message",
+                  severity: "warning",
+                  specStrength: "SHOULD",
+                  message:
+                    "A failed task carries no `statusMessage`; the extension recommends one so a human can see why it failed.",
+                  informational: true,
+                });
+              }
               const observedStatuses = [
                 ...new Set(rawStates.map((state) => String(state.status))),
               ];
@@ -2043,21 +2066,33 @@ export class MCPTasksConformanceTest {
               );
             } else {
               const probe = await this.probeUnknownTaskId(manager, serverId);
-              const warnings: string[] = [];
               // tasks.md:795 — `-32602` is a MUST for `tasks/get` and only a
               // SHOULD for the two mutating methods, so the same wrong answer
               // is a failure on one and advice on the others.
-              for (const entry of probe.mutations) {
-                if (entry.outcome === "local-failure") continue;
-                if (entry.code !== INVALID_PARAMS) {
-                  warnings.push(
-                    `${entry.method} answered an unknown task id with ${
+              const wrongAnswers = probe.mutations
+                .filter(
+                  (entry) =>
+                    entry.outcome !== "local-failure" &&
+                    entry.code !== INVALID_PARAMS
+                )
+                .map(
+                  (entry) =>
+                    `${entry.method} answered with ${
                       entry.outcome === "answered"
                         ? "a normal result"
                         : String(entry.code)
-                    } rather than -32602; the extension states that as a SHOULD`
-                  );
-                }
+                    }`
+                );
+              if (wrongAnswers.length > 0) {
+                readiness.push({
+                  id: "tasks-readiness-unknown-task-id-mutations",
+                  title: "Unknown Task Id On Update And Cancel",
+                  severity: "warning",
+                  specStrength: "SHOULD",
+                  message: `An unknown task id should be rejected with -32602 (Invalid params): ${wrongAnswers.join("; ")}.`,
+                  details: { probedTaskId: probe.taskId, wrongAnswers },
+                  informational: true,
+                });
               }
               const detail = { probedTaskId: probe.taskId, ...probe.detail };
               checks.push(
@@ -2073,8 +2108,7 @@ export class MCPTasksConformanceTest {
                     ? passed(
                         "tasks-invalid-task-id-rejected",
                         Date.now() - stepStartedAt,
-                        detail,
-                        warnings
+                        detail
                       )
                     : failed(
                         "tasks-invalid-task-id-rejected",
@@ -2428,6 +2462,7 @@ export class MCPTasksConformanceTest {
               : {}),
             target: this.config.target,
             checks,
+            ...(readiness.length > 0 ? { readiness } : {}),
             summary:
               pending.length > 0
                 ? `${buildSummary(scored)}, ${pending.length} pending (unscored by profile ${profile.id}@${profile.version})`

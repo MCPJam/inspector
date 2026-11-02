@@ -317,6 +317,7 @@ function scoreFromWarningChecks(
   checks: Array<OutcomeCheckLike & { warnings?: string[] }>,
   protocolVersion?: string,
   profileStamp?: Pick<ConformanceProfileStamp, "pendingCheckIds">,
+  typedAdvisories: ScoredAdvisory[] = [],
 ): ConformanceScore {
   // Warnings on a PENDING check must not cost points either: the check is not
   // being scored, and letting its advice deduct would move the number a
@@ -324,12 +325,15 @@ function scoreFromWarningChecks(
   const { scored } = partitionByStamp(checks, profileStamp);
   return computeConformanceScore(
     checks,
-    scored.flatMap((check) =>
-      (check.warnings ?? []).map((_, index) => ({
-        id: `${check.id}-warning-${index + 1}`,
-        tier: "may" as const,
-      })),
-    ),
+    [
+      ...scored.flatMap((check) =>
+        (check.warnings ?? []).map((_, index) => ({
+          id: `${check.id}-warning-${index + 1}`,
+          tier: "may" as const,
+        })),
+      ),
+      ...typedAdvisories,
+    ],
     protocolVersion,
     profileStamp,
   );
@@ -351,6 +355,14 @@ export function scoreFromTasksResult(
     // reason the protocol suite does: a stored report must score the way it did
     // when it was produced.
     result.profile,
+    // The typed advice channel, read like the protocol suite's readiness:
+    // `informational` advice is reported but never costs points.
+    (result.readiness ?? [])
+      .filter((warning) => warning.informational !== true)
+      .map((warning) => ({
+        id: warning.id,
+        tier: warning.specStrength === "MAY" ? "may" : "should",
+      })),
   );
 }
 

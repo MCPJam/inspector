@@ -1354,6 +1354,8 @@ export type {
   MCPTasksCheckStatus,
   MCPTasksConformanceConfig,
   MCPTasksConformanceResult,
+  MCPTasksReadinessId,
+  MCPTasksReadinessWarning,
   MCPTasksRunOutcome,
   MCPTasksSkipReason,
 } from "./tasks-conformance/index.js";
@@ -1361,6 +1363,7 @@ export {
   decideOutcome,
   MCP_TASKS_CHECK_CATEGORIES,
   MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
   resolveProbeTool,
 } from "./tasks-conformance/index.js";
 

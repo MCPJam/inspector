@@ -4,6 +4,7 @@ import type {
 } from "../conformance-outcome.js";
 import type { ConformanceProfileStamp } from "../conformance-profile.js";
 import type { MCPServerConfig } from "../mcp-client-manager/index.js";
+import type { MCPReadinessWarning } from "../mcp-conformance/types.js";
 import type { TasksWire } from "../mcp-client-manager/tasks-dispatch.js";
 
 export const MCP_TASKS_CHECK_CATEGORIES = [
@@ -40,6 +41,23 @@ export const MCP_TASKS_CHECK_IDS = [
 ] as const;
 
 export type MCPTasksCheckId = (typeof MCP_TASKS_CHECK_IDS)[number];
+
+/**
+ * The Tasks suite's advice channel: the extension's SHOULDs, typed with their
+ * spec strength like the protocol suite's readiness warnings. Informational
+ * until advice has a grading rubric.
+ */
+export const MCP_TASKS_READINESS_IDS = [
+  "tasks-readiness-failed-status-message",
+  "tasks-readiness-unknown-task-id-mutations",
+] as const;
+
+export type MCPTasksReadinessId = (typeof MCP_TASKS_READINESS_IDS)[number];
+
+export interface MCPTasksReadinessWarning
+  extends Omit<MCPReadinessWarning, "id"> {
+  id: MCPTasksReadinessId;
+}
 
 export type MCPTasksCheckStatus = "passed" | "failed" | "skipped";
 
@@ -144,6 +162,8 @@ export interface MCPTasksConformanceResult {
   incompleteReason?: string;
   target: string;
   checks: MCPTasksCheckResult[];
+  /** SHOULD/MAY advice, beside the verdict. Absent when there is none. */
+  readiness?: MCPTasksReadinessWarning[];
   summary: string;
   durationMs: number;
   categorySummary: Record<

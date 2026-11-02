@@ -68,6 +68,36 @@ export type ConformanceConnectServer = (
   options?: { signIn?: boolean },
 ) => Promise<ConformanceConnectOutcome>;
 
+/** A suite's SHOULD/MAY advice, shown above its checks. */
+function ReadinessAdvice({
+  readiness,
+}: {
+  readiness?: Array<{
+    id: string;
+    title: string;
+    specStrength: string;
+    message: string;
+  }>;
+}) {
+  if (!readiness || readiness.length === 0) return null;
+  return (
+    <div className="my-2 space-y-1 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2">
+      {readiness.map((warning) => (
+        <div key={warning.id} className="flex items-start gap-1.5 text-[11px]">
+          <AlertTriangle className="mt-0.5 h-3 w-3 flex-shrink-0 text-amber-500" />
+          <span className="min-w-0">
+            <span className="font-medium">{warning.title}</span>{" "}
+            <span className="text-muted-foreground">
+              ({warning.specStrength})
+            </span>{" "}
+            — {warning.message}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function SuiteBadge({ state }: { state: SuiteState }) {
   if (state.status === "running") {
     return <VerdictBadge label="RUNNING" tone="neutral" spinning />;
@@ -573,29 +603,9 @@ export function ConformanceContent({
                   >
                     {protocol.result ? (
                       <div>
-                        {(protocol.result.readiness ?? []).length > 0 && (
-                          <div className="my-2 space-y-1 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2">
-                            {(protocol.result.readiness ?? []).map(
-                              (warning) => (
-                                <div
-                                  key={warning.id}
-                                  className="flex items-start gap-1.5 text-[11px]"
-                                >
-                                  <AlertTriangle className="mt-0.5 h-3 w-3 flex-shrink-0 text-amber-500" />
-                                  <span className="min-w-0">
-                                    <span className="font-medium">
-                                      {warning.title}
-                                    </span>{" "}
-                                    <span className="text-muted-foreground">
-                                      ({warning.specStrength})
-                                    </span>{" "}
-                                    — {warning.message}
-                                  </span>
-                                </div>
-                              ),
-                            )}
-                          </div>
-                        )}
+                        <ReadinessAdvice
+                          readiness={protocol.result.readiness}
+                        />
                         {protocol.result.checks.map((check) => (
                           <CheckRow
                             key={`${runVersion}-${check.id}`}
@@ -639,6 +649,7 @@ export function ConformanceContent({
                   >
                     {tasks.result ? (
                       <div>
+                        <ReadinessAdvice readiness={tasks.result.readiness} />
                         {tasks.result.checks.map((check) => (
                           <CheckRow
                             key={`${runVersion}-${check.id}`}
