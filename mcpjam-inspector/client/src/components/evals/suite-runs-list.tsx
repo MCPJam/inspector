@@ -12,6 +12,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
+import { tableHeadLabelClass } from "@mcpjam/design-system/table";
 import {
   evalStatusLeftBorderClasses,
   formatDuration,
@@ -38,8 +39,7 @@ import { CrossHostDashboard } from "./cross-host/cross-host-dashboard";
 const RUNS_LIST_ROW_GRID =
   "grid w-full grid-cols-[minmax(0,1fr)_3rem_3.5rem_minmax(9.5rem,1.15fr)_0.875rem] items-center gap-x-3";
 
-const RUNS_LIST_METRIC_HEADER_CLASS =
-  "text-right text-[11px] font-medium uppercase tracking-[0.06em] tabular-nums";
+const RUNS_LIST_METRIC_HEADER_CLASS = "text-right tabular-nums";
 
 const RUNS_LIST_METRIC_CELL_CLASS =
   "text-right text-xs font-mono tabular-nums text-muted-foreground";
@@ -250,7 +250,8 @@ export function SuiteRunsList({
         className={cn(
           RUNS_LIST_ROW_GRID,
           evalSurfaceHeaderClass,
-          "shrink-0 rounded-t-2xl px-4 py-2 text-xs font-medium text-muted-foreground",
+          "shrink-0 rounded-t-2xl px-4 py-2",
+          tableHeadLabelClass,
         )}
       >
         <div className="min-w-0 truncate">Run</div>

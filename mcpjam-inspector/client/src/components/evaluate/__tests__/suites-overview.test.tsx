@@ -210,9 +210,21 @@ describe("SuitesOverview", () => {
     });
     expect(clientFilter).toBeVisible();
     expect(serverFilter).toBeVisible();
-    expect(clientFilter).toHaveClass("text-muted-foreground", "border-0");
-    expect(clientFilter).not.toHaveClass("rounded-full");
-    expect(serverFilter).toHaveClass("text-muted-foreground", "border-0");
+    // Read as column labels: the readable header style, not muted gray.
+    expect(clientFilter).toHaveClass(
+      "text-foreground",
+      "uppercase",
+      "border-0",
+    );
+    expect(clientFilter).not.toHaveClass(
+      "text-muted-foreground",
+      "rounded-full",
+    );
+    expect(serverFilter).toHaveClass(
+      "text-foreground",
+      "uppercase",
+      "border-0",
+    );
     expect(serverFilter).not.toHaveClass("rounded-full");
     expect(screen.getAllByText("Client")).toHaveLength(1);
     expect(screen.getAllByText("Server")).toHaveLength(1);

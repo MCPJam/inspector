@@ -15,6 +15,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
+import { tableHeadLabelClass } from "@mcpjam/design-system/table";
 import { cn } from "@/lib/utils";
 import type { RunMetricsByRun } from "../evals/run-metrics";
 import type { EvalSuiteRun, EvalSuiteRunListItem } from "../evals/types";
@@ -170,8 +171,7 @@ function LaneRow({
   );
 }
 
-const HEADER_CLASS =
-  "whitespace-nowrap border-b border-border px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground";
+const HEADER_CLASS = `whitespace-nowrap border-b border-border px-3 py-2 text-left ${tableHeadLabelClass}`;
 
 function LaneSection({
   lane,

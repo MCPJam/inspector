@@ -10,6 +10,7 @@ import { useMemo, useState, type MouseEvent } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { AlertTriangle, Loader2, Play, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import { tableHeadLabelClass } from "@mcpjam/design-system/table";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -241,10 +242,7 @@ function OverviewBody({
     >
       <div className={cn(ROW_PAD, "border-b border-border/40 pb-3")} role="row">
         <div className={DATA_COLS}>
-          <span
-            role="columnheader"
-            className="text-xs font-medium text-muted-foreground"
-          >
+          <span role="columnheader" className={tableHeadLabelClass}>
             Suite
           </span>
           <div role="columnheader" aria-label="Client" className="min-w-0">
@@ -280,13 +278,13 @@ function OverviewBody({
           </div>
           <span
             role="columnheader"
-            className="text-right text-xs font-medium text-muted-foreground"
+            className={cn("text-right", tableHeadLabelClass)}
           >
             Pass rate
           </span>
           <span
             role="columnheader"
-            className="text-right text-xs font-medium text-muted-foreground"
+            className={cn("text-right", tableHeadLabelClass)}
           >
             Last run
           </span>

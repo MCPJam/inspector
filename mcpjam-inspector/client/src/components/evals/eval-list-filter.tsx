@@ -5,12 +5,12 @@ import {
   SelectTrigger,
 } from "@mcpjam/design-system/select";
 import { cn } from "@mcpjam/design-system/cn";
+import { tableHeadLabelClass } from "@mcpjam/design-system/table";
 import { runHistoryFilterClass } from "./run-history-table";
 
 export const ALL_EVAL_FILTER_VALUES = "__all__";
 
-export const evalListFilterHeaderClass =
-  "h-auto max-w-full gap-1 rounded-sm border-0 bg-transparent px-0 py-0 text-xs font-medium text-muted-foreground shadow-none hover:bg-transparent hover:text-foreground focus-visible:border-0 focus-visible:ring-2 focus-visible:ring-ring dark:bg-transparent dark:hover:bg-transparent data-[size=sm]:h-auto";
+export const evalListFilterHeaderClass = `h-auto max-w-full gap-1 rounded-sm border-0 bg-transparent px-0 py-0 ${tableHeadLabelClass} shadow-none hover:bg-transparent hover:text-foreground/75 focus-visible:border-0 focus-visible:ring-2 focus-visible:ring-ring dark:bg-transparent dark:hover:bg-transparent data-[size=sm]:h-auto`;
 
 export type EvalListFilterLabel =
   | "Client"
@@ -42,7 +42,7 @@ export function EvalListFilter({
   options: string[];
   onChange: (value: string) => void;
   disabled?: boolean;
-  /** `header` is a ghost trigger that matches a muted column label. */
+  /** `header` is a ghost trigger that reads as a column label. */
   variant?: "chip" | "header";
   className?: string;
   formatOption?: (option: string) => string;

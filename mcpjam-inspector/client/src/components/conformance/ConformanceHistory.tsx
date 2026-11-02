@@ -12,6 +12,7 @@ import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Loader2, Share2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
+import { tableHeadLabelClass } from "@mcpjam/design-system/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FlaskConical } from "lucide-react";
 import { buildConformanceRunPath, useAppNavigate } from "@/lib/app-navigation";
@@ -188,7 +189,7 @@ export function ConformanceHistory({
     );
   }
 
-  const header = "text-[11px] font-semibold tracking-[0.06em] text-foreground";
+  const header = tableHeadLabelClass;
 
   return (
     <section className="space-y-3" aria-label="Run history">

@@ -11,6 +11,7 @@ import {
   formatCriterion,
   type PredicateKind,
 } from "@/shared/predicate-kinds";
+import { tableHeadLabelClass } from "@mcpjam/design-system/table";
 
 /**
  * Deterministic rubric scorecard for one run, with the advisory
@@ -63,14 +64,14 @@ export function RunScorecardSection({
       {criteria.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full text-left text-[11px]">
-            <thead className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            <thead className={tableHeadLabelClass}>
               <tr>
-                <th className="py-1 pr-2 font-medium">Evaluator</th>
-                <th className="py-1 px-2 text-right font-medium">Passed</th>
-                <th className="py-1 px-2 text-right font-medium">Failed</th>
-                <th className="py-1 px-2 text-right font-medium">Pending</th>
+                <th className="py-1 pr-2">Evaluator</th>
+                <th className="py-1 px-2 text-right">Passed</th>
+                <th className="py-1 px-2 text-right">Failed</th>
+                <th className="py-1 px-2 text-right">Pending</th>
                 <th
-                  className="py-1 pl-2 text-right font-medium"
+                  className="py-1 pl-2 text-right"
                   title="Grading itself broke — not the same as failing the evaluator"
                 >
                   Not graded
