@@ -4,7 +4,7 @@
  * its Run starts the run with them.
  */
 
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -14,6 +14,7 @@ import type {
 } from "@/hooks/use-conformance-run";
 import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { toast } from "@/lib/toast";
+import { startConnectToast } from "@/lib/connect-toast";
 import type {
   ConformanceConnectOutcome,
   ConformanceConnectServer,
@@ -109,20 +110,45 @@ export function ConformanceSetup({
   // The run needs the server live, so the steps wait until it is: the picker
   // connects it in place.
   const canContinue = picked?.connectionStatus === "connected";
-  // A server that is not connected can be picked, but the steps wait for it:
-  // say so once, when it is picked, rather than under the field.
-  const selectServer = (name: string) => {
-    setServerName(name);
+  // Picking a server readies it: one that is not connected starts
+  // connecting in the background, with no separate Connect to remember.
+  const needsConnect = (name: string) => {
     const status = servers.find(
       (server) => server.name === name,
     )?.connectionStatus;
-    const underway =
+    return !(
       connecting.includes(name) ||
       status === "connected" ||
       status === "connecting" ||
-      status === "oauth-flow";
-    if (!underway) toast.error(`Connect ${name} to continue.`);
+      status === "oauth-flow"
+    );
   };
+  const selectServer = (name: string) => {
+    setServerName(name);
+    if (!needsConnect(name)) return;
+    if (onConnectServer) void connect(name);
+    else toast.error(`Connect ${name} to continue.`);
+  };
+  // The page's own pick, when it is not connected: on open, or when it
+  // arrives after the steps opened (the server list was still loading). Once
+  // per server, through the latest `connect`, so the effect keys on the pick.
+  const connectPagePick = useRef(() => {});
+  useEffect(() => {
+    connectPagePick.current = () => {
+      // Not when the user already chose another server.
+      if (!initialServerName || (picked && picked.name !== initialServerName)) {
+        return;
+      }
+      if (needsConnect(initialServerName)) void connect(initialServerName);
+    };
+  });
+  const pagePickTried = useRef<string | null>(null);
+  useEffect(() => {
+    if (!onConnectServer || !initialServerName) return;
+    if (pagePickTried.current === initialServerName) return;
+    pagePickTried.current = initialServerName;
+    connectPagePick.current();
+  }, [onConnectServer, initialServerName]);
   // Opened while the server list was still loading: take the page's pick
   // once it arrives, unless the user already chose one.
   const [pageServerName, setPageServerName] = useState(initialServerName);
@@ -130,17 +156,25 @@ export function ConformanceSetup({
     setPageServerName(initialServerName);
     if (!picked && initialServerName) setServerName(initialServerName);
   }
-  // The last Connect that did not end connected, kept per server so the
-  // alert names the one it failed on.
-  const [connectFailure, setConnectFailure] = useState<{
-    serverName: string;
-    needsSignIn: boolean;
-  } | null>(null);
+  // Each server's last connect that did not end connected. Per server: two
+  // connects can settle out of order, and one must not erase the other's.
+  const [connectFailures, setConnectFailures] = useState<
+    Readonly<Record<string, { needsSignIn: boolean }>>
+  >({});
+  const clearFailure = (name: string) =>
+    setConnectFailures((prev) => {
+      if (!Object.hasOwn(prev, name)) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
   const connect = async (name: string, signIn = false) => {
     if (!onConnectServer) return;
     setServerName(name);
-    setConnectFailure(null);
+    clearFailure(name);
     setConnecting((names) => (names.includes(name) ? names : [...names, name]));
+    // Picking connects on its own, so the toast is what says it is happening.
+    const progress = startConnectToast(name);
     let outcome: ConformanceConnectOutcome;
     try {
       outcome = await onConnectServer(name, { signIn });
@@ -148,21 +182,30 @@ export function ConformanceSetup({
       outcome = "failed";
     }
     setConnecting((names) => names.filter((other) => other !== name));
-    if (outcome !== "ready") {
-      setConnectFailure({
-        serverName: name,
-        needsSignIn: outcome === "reauth",
-      });
+    if (outcome === "ready") {
+      progress.connected();
+      return;
     }
+    progress.failed(
+      outcome === "reauth"
+        ? `${name} needs you to sign in again. Sign in below to continue.`
+        : `Couldn't connect to ${name}. Retry below, or edit its connection.`,
+    );
+    setConnectFailures((prev) => ({
+      ...prev,
+      [name]: { needsSignIn: outcome === "reauth" },
+    }));
   };
   // Connected some other way (Edit connection, the server menu): the failure
   // is over, so a later drop does not bring the old alert back.
-  if (canContinue && connectFailure?.serverName === pickedName) {
-    setConnectFailure(null);
+  // Own keys only: `in` also finds what every object inherits, so a server
+  // named `constructor` would read as failed and clear on every render.
+  if (canContinue && pickedName && Object.hasOwn(connectFailures, pickedName)) {
+    clearFailure(pickedName);
   }
   const failure =
-    pickedName && !canContinue && connectFailure?.serverName === pickedName
-      ? connectFailure
+    pickedName && !canContinue && Object.hasOwn(connectFailures, pickedName)
+      ? connectFailures[pickedName]!
       : null;
   const noServers =
     !projectServersLoading &&
@@ -220,12 +263,8 @@ export function ConformanceSetup({
                   servers={servers}
                   moreServerNames={projectServerNames}
                   loading={projectServersLoading}
-                  connectingNames={connecting}
                   selectedName={serverName}
                   onSelect={selectServer}
-                  onConnect={
-                    onConnectServer ? (name) => void connect(name) : undefined
-                  }
                   labelledBy={serverLabelId}
                 />
                 {noServers ? (
