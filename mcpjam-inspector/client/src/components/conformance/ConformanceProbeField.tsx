@@ -237,8 +237,8 @@ export function ConformanceProbeField({
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
-            Advice only, no points: the tool is called once at this level, and
-            it should send logs at or above it.
+            Advice only, no points. The tool runs once at this level and should
+            send logs at or above it.
           </p>
         </>
       ) : null}
