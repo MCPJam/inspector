@@ -79,8 +79,7 @@ describe("SANDBOX_ORIGIN", () => {
       getStorage: () => ({ getItem: () => null, setItem: () => undefined }),
     });
     expect(fault?.shouldCapture).toBe(true);
-    expect(fault?.message).toContain("MCPJAM_SANDBOX_ORIGIN");
-    expect(fault?.message).toContain("VITE_MCPJAM_SANDBOX_ORIGIN");
+    expect(fault?.message).toContain("No sandbox origin is configured");
   });
 
   it("does not fault when only the runtime origin is set", async () => {
