@@ -110,9 +110,20 @@ describe("the mcp-tasks profile", () => {
       "tasks-cancel-ack-shape",
       "tasks-invalid-task-id-rejected",
       "tasks-status-payload-shape",
-      "tasks-ttl-integer-shape",
       "tasks-undeclared-capability-names-requirements",
     ]);
+  });
+
+  it("scores the integer TTL check from v2026-10-31.1", () => {
+    // The extension's schema types ttlMs and pollIntervalMs as integers, so
+    // the check is a schema requirement rather than advice.
+    expect(TASKS.scored).toContain("tasks-ttl-integer-shape");
+  });
+
+  it("scores the update acknowledgement check from v2026-11-01.1", () => {
+    // The extension MUSTs an empty result with resultType "complete".
+    expect(TASKS.version).toBe("2026-11-01.1");
+    expect(TASKS.scored).toContain("tasks-update-ack-shape");
   });
 });
 

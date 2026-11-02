@@ -200,6 +200,8 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
       "tasks-ttl-shape": "passed",
       "tasks-inline-result": "passed",
       "tasks-mcp-name-routing": "passed",
+      // Promoted to scored in `mcp-tasks@2026-10-31.1`.
+      "tasks-ttl-integer-shape": "passed",
       "tasks-update-ack-shape": "skipped",
       // The rest of the scenario depth added by the conformance-gap program.
       // These are outside the `mcp-tasks` profile's scored set, so they report
@@ -207,7 +209,6 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
       "tasks-invalid-task-id-rejected": "passed",
       "tasks-status-payload-shape": "passed",
       "tasks-cancel-ack-shape": "passed",
-      "tasks-ttl-integer-shape": "passed",
       "tasks-undeclared-capability-names-requirements": "passed",
     });
     // Green DESPITE the skip, because the skipped check is `not-applicable`
@@ -219,7 +220,6 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
         "tasks-cancel-ack-shape",
         "tasks-invalid-task-id-rejected",
         "tasks-status-payload-shape",
-        "tasks-ttl-integer-shape",
         "tasks-undeclared-capability-names-requirements",
       ],
     });
@@ -342,10 +342,11 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     expect(result.incompleteReason).toContain("execution.taskSupport");
     expect(result.incompleteReason).toContain("2026-07-28");
     expect(result.incompleteReason).toContain(TASK_TOOL_NAME);
-    // The SUMMARY counts only the scored checks, so it reads 7: the original
-    // six plus `tasks-update-ack-shape` (scored since `mcp-tasks@2026-11-01.1`).
-    // The other four task-dependent gaps are pending.
-    expect(result.summary).toContain("7 could not run");
+    // The SUMMARY counts only the scored checks, so it reads 8: the six
+    // original task-dependent checks plus `tasks-ttl-integer-shape` (scored
+    // since `mcp-tasks@2026-10-31.1`) and `tasks-update-ack-shape` (scored
+    // since `mcp-tasks@2026-11-01.1`). The other new gaps stay pending.
+    expect(result.summary).toContain("8 could not run");
     expect(result.summary).toContain("pending");
     expect(result.categorySummary.creation.couldNotRun).toBe(2);
     expect(result.discovery.createdTaskId).toBeUndefined();

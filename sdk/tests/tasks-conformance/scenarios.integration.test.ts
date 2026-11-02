@@ -256,6 +256,96 @@ describe("tasks-ttl-integer-shape", () => {
     expect(entry.error?.message).toContain("not an integer");
   });
 
+  it("fails a fractional pollIntervalMs on a mid-run poll even when the final task is clean", async () => {
+    const phases: TaskPhase[] = [
+      { status: "working", ttlMs: 60_000, pollIntervalMs: 5 },
+      { status: "working", pollIntervalMs: 2.5 },
+      {
+        status: "completed",
+        pollIntervalMs: 5,
+        result: { content: [{ type: "text", text: "done" }], isError: false },
+      },
+    ];
+    const entry = check(await run(await serve(phases), [ID]), ID);
+    expect(entry.status).toBe("failed");
+    expect(entry.error?.message).toContain(
+      "tasks/get working: pollIntervalMs is 2.5, which is not an integer",
+    );
+  });
+
+  it("still judges the raw payloads when no tasks/get answer could be decoded", async () => {
+    const phases = quickPhases();
+    phases[0] = { ...phases[0]!, ttlMs: 1500.5 };
+    const entry = check(
+      await run(
+        await serve(phases, { misbehave: { getResultType: "bogus" } }),
+        [ID],
+      ),
+      ID,
+    );
+    expect(entry.status).toBe("failed");
+    expect(entry.error?.message).toContain(
+      "tools/call: ttlMs is 1500.5, which is not an integer",
+    );
+  });
+
+  it("still judges the creation payload when the client cannot decode it as a task", async () => {
+    const phases = quickPhases();
+    phases[0] = { ...phases[0]!, ttlMs: 1500.5 };
+    const entry = check(
+      await run(
+        await serve(phases, { misbehave: { omitCreateResultType: true } }),
+        [ID],
+      ),
+      ID,
+    );
+    expect(entry.status).toBe("failed");
+    expect(entry.error?.message).toContain(
+      "tools/call: ttlMs is 1500.5, which is not an integer",
+    );
+  });
+
+  it("does not treat an ordinary tool result that carries a taskId as a task", async () => {
+    const fixture = await serve(quickPhases(), {
+      tools: {
+        [TASK_TOOL_NAME]: {
+          mode: "sync",
+          result: {
+            content: [{ type: "text", text: "plain" }],
+            taskId: "not-a-task",
+            ttlMs: 1500.5,
+          },
+        },
+      },
+    });
+    const entry = check(await run(fixture, [ID]), ID);
+    expect(entry.status).toBe("skipped");
+  });
+
+  it("grades a discriminated creation result even when it carries extra content", async () => {
+    const phases = quickPhases();
+    phases[0] = {
+      ...phases[0]!,
+      ttlMs: 1500.5,
+      extra: { content: [{ type: "text", text: "extra" }] },
+    };
+    const entry = check(await run(await serve(phases), [ID]), ID);
+    expect(entry.status).toBe("failed");
+    expect(entry.error?.message).toContain(
+      "tools/call: ttlMs is 1500.5, which is not an integer",
+    );
+  });
+
+  it("fails a whole number beyond the schema's safe-integer range", async () => {
+    const phases = quickPhases();
+    phases[1] = { ...phases[1]!, ttlMs: Number.MAX_SAFE_INTEGER + 1 };
+    const entry = check(await run(await serve(phases), [ID]), ID);
+    expect(entry.status).toBe("failed");
+    expect(entry.error?.message).toContain(
+      "outside the schema's integer range",
+    );
+  });
+
   it("only warns on a negative ttlMs, which the extension never forbids", async () => {
     const phases = quickPhases();
     phases[1] = { ...phases[1]!, ttlMs: -1 };

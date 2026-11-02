@@ -863,7 +863,8 @@ export async function serveExtensionTasksFixture(
         // An EMPTY, eventually-consistent acknowledgement (tasks.md:374-381):
         // the observable status does not move until a later `tasks/get`.
         if ("updateAckOverride" in misbehavior) {
-          return misbehavior.updateAckOverride;
+          // Deliberately off-type: the point is a result that is not an object.
+          return misbehavior.updateAckOverride as Record<string, unknown>;
         }
         return { ...taskResultTypeField(), ...misbehavior.updateAckExtras };
       }

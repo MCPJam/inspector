@@ -862,7 +862,9 @@ describe("MCPTasksConformanceTest", () => {
       (c) => c.id === "tasks-wire-resolvable"
     );
     expect(wireCheck?.status).toBe("passed");
-    expect(wireCheck?.warnings?.[0]).toContain("treated as absent");
+    expect(wireCheck?.warnings?.[0]).toContain(
+      "must use the 2025-11-25 tasks capability"
+    );
     expect(statusMap(result)["tasks-inline-result"]).toBe("passed");
     // Extension-only checks do not apply to the legacy wire.
     expect(statusMap(result)["tasks-undeclared-capability-rejected"]).toBe(
@@ -940,9 +942,10 @@ describe("MCPTasksConformanceTest", () => {
         (c) => c.status === "skipped" && c.skipReason === "could-not-run"
       )
       // Eleven, not six: the gap-program checks that also need a created task
-      // report the same honest gap. The SCORED tally is seven — the six plus
-      // `tasks-update-ack-shape`, scored since `mcp-tasks@2026-11-01.1` — and
-      // the rest are pending.
+      // report the same honest gap. The SCORED tally is eight — the six plus
+      // `tasks-ttl-integer-shape` (since `mcp-tasks@2026-10-31.1`) and
+      // `tasks-update-ack-shape` (since `mcp-tasks@2026-11-01.1`) — and the
+      // rest are pending.
     ).toHaveLength(11);
     expect(result.incompleteReason).toContain("--tool-name");
     expect(result.incompleteReason).toContain("long_job");

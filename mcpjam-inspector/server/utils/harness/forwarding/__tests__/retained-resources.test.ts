@@ -1,3 +1,4 @@
+import type { ModelToolExecutor } from "../../../model-tool-executor";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MCPClientManager } from "@mcpjam/sdk";
 import {
@@ -46,7 +47,7 @@ function producer(transport = "streamable-http") {
   setManagerResourceSnapshots(
     manager,
     new Map([
-      ["alternate", { serverUpdatedAt: 123, credentialAuthorizedAt: 456 }],
+      ["alternate", { serverUpdatedAt: 123, credentialAuthorizedAt: 456, headersReconstructible: true }],
     ]),
   );
   const args = {
@@ -130,10 +131,10 @@ it("refuses changed producer authority before dispatch", async () => {
   await expect(p.executor(execution, run)).rejects.toThrow("scope_mismatch");
   expect(run).not.toHaveBeenCalled();
 });
-it("preserves the existing executor and the disabled path", () => {
+it("preserves the disabled path", () => {
   const p = producer();
   const existing = vi.fn();
-  expect(retainedResourceExecutor({ ...p, existing })).toBe(existing);
+  expect(retainedResourceExecutor({ ...p, existing, enabled: false })).toBe(existing);
   expect(retainedResourceExecutor({ ...p, enabled: false })).toBeUndefined();
 });
 it("checks each resource leg and refuses duplicate sends", async () => {
@@ -174,11 +175,57 @@ it("refuses tools in a resource continuation", async () => {
 it("pins an ungrouped shared account using its canonical authorization identity", async () => {
   const p=producer();
   setManagerConnections(p.manager,{});
-  setManagerResourceSnapshots(p.manager,new Map([["server",{serverUpdatedAt:123,credentialAuthorizedAt:456,credentialId:"shared-account"}]]));
+  setManagerResourceSnapshots(p.manager,new Map([["server",{serverUpdatedAt:123,credentialAuthorizedAt:456,credentialId:"shared-account",headersReconstructible:true}]]));
   vi.mocked(requestExecutionControl).mockResolvedValue({binding:{owner:{kind:"chat",userId:"user",harnessSessionId:"lane",serverId:"server",connectionId:"shared-account"},digest:"digest",projectId:"project",chatSessionId:"chat"}});
   const run=vi.fn(async()=>({content:[]}));
   await p.executor({...execution,serverKey:"server"},run);
   expect(requestExecutionControl).toHaveBeenLastCalledWith({resourceOwner:{harnessSessionId:"lane",serverId:"server",connectionId:"shared-account"},operation:{kind:"resource_scope",snapshot:{hostId:"original-host",hostConfigId:"original-host-config",serverUpdatedAt:123,credentialAuthorizedAt:456}}},expect.anything());
   expect(p.sources.get("call")?.owner.connectionId).toBe("shared-account");
   expect(run).toHaveBeenCalledOnce();
+});
+
+it("binds resources while preserving an existing form executor", async () => {
+  const p = producer();
+  vi.mocked(requestExecutionControl).mockResolvedValue({ binding: {
+    owner: { kind: "chat", userId: "user", harnessSessionId: "lane", serverId: "server", connectionId: "account-b" },
+    digest: "digest", projectId: "project", chatSessionId: "chat",
+  }});
+  const raw = { content: [{ type: "text", text: "preserved" }] };
+  const run = vi.fn(async () => raw);
+  const existing = vi.fn(async (input, execute) => { expect(input).toBe(execution); return execute(); });
+  const bound = retainedResourceExecutor({ ...p, existing });
+  expect(await bound!(execution, run)).toBe(raw);
+  expect(existing).toHaveBeenCalledOnce();
+  expect(run).toHaveBeenCalledOnce();
+  expect(p.sources.get("call")?.owner.connectionId).toBe("account-b");
+});
+
+it("snapshots the negotiated capabilities without restoring withheld configured claims", async () => {
+  const p = producer();
+  const negotiated = {extensions: {"openai/form": {enabled: true}}};
+  const initialized = p.manager.getInitializationInfo("alternate");
+  if (!initialized) throw Error("Missing initialization fixture");
+  vi.mocked(p.manager.getInitializationInfo).mockReturnValue({...initialized, clientCapabilities: negotiated});
+  vi.mocked(p.manager.getServerConfig).mockReturnValue({url: "https://fixture.example/mcp", clientCapabilities: {extensions: {"openai/elicitation": {form: {}}}}});
+  vi.mocked(requestExecutionControl).mockResolvedValue({binding: {
+    owner: {kind: "chat", userId: "user", harnessSessionId: "lane", serverId: "server", connectionId: "account-b"},
+    digest: "digest", projectId: "project", chatSessionId: "chat",
+  }});
+  await p.executor(execution, async () => ({content: []}));
+  negotiated.extensions["openai/form"].enabled = false;
+  expect(p.sources.get("call")?.connectionCapabilities).toEqual({extensions: {"openai/form": {enabled: true}}});
+});
+
+it("preserves caller-only execution without minting a retained source", async () => {
+  const p = producer();
+  setManagerResourceSnapshots(p.manager, new Map([["alternate", {serverUpdatedAt: 123, credentialAuthorizedAt: null, headersReconstructible: false}]]));
+  const raw = {content: [{type: "text", text: "caller-only result"}]};
+  const run = vi.fn(async () => raw);
+  const existing = vi.fn<ModelToolExecutor>(async (_execution, execute) => execute());
+  const executor = retainedResourceExecutor({...p, existing});
+  expect(await executor!(execution, run)).toBe(raw);
+  expect(existing).toHaveBeenCalledOnce();
+  expect(run).toHaveBeenCalledOnce();
+  expect(requestExecutionControl).not.toHaveBeenCalled();
+  expect(p.sources.size).toBe(0);
 });

@@ -4,6 +4,10 @@
  * @packageDocumentation
  */
 
+// The Node resolver for every MCPJam request this entry can make, the IT
+// settings file and its lock included.
+import "./deployment/node-entry.js";
+
 // MCPClientManager from new modular implementation
 export { MCPClientManager } from "./mcp-client-manager/index.js";
 
