@@ -470,6 +470,59 @@ describe("suite adapters", () => {
     expect(tasks.protocolVersion).toBe("2025-11-25");
   });
 
+  it("scores typed tasks readiness by spec strength, informational for free", () => {
+    const tasksResult = (informational: boolean, pending = false) =>
+      ({
+        passed: true,
+        outcome: "passed" as const,
+        target: "node server.js",
+        summary: "",
+        durationMs: 1,
+        categorySummary: {},
+        checks: [
+          {
+            id: "tasks-status-payload-shape",
+            category: "lifecycle",
+            title: "Status Payload Shape",
+            description: "…",
+            status: "passed" as const,
+            durationMs: 1,
+          },
+        ],
+        readiness: [
+          {
+            id: "tasks-readiness-failed-status-message",
+            checkId: "tasks-status-payload-shape",
+            title: "Failed Task Status Message",
+            severity: "warning",
+            specStrength: "SHOULD",
+            message: "…",
+            ...(informational ? { informational: true } : {}),
+          },
+        ],
+        ...(pending
+          ? { profile: { pendingCheckIds: ["tasks-status-payload-shape"] } }
+          : {}),
+        discovery: { wire: "extension", toolCount: 1, taskCapableToolCount: 1 },
+      }) as never;
+
+    const free = scoreFromTasksResult(tasksResult(true));
+    expect(free.advisories).toEqual([]);
+    expect(free.score).toBe(100);
+
+    const scored = scoreFromTasksResult(tasksResult(false));
+    expect(scored.advisories).toEqual([
+      { id: "tasks-readiness-failed-status-message", tier: "should" },
+    ]);
+    expect(scored.advicePointsLost).toBe(2);
+
+    // Advice from a check the profile does not score yet costs nothing, even
+    // without `informational`: the same rule as a pending check's warnings.
+    const pending = scoreFromTasksResult(tasksResult(false, true));
+    expect(pending.advisories).toEqual([]);
+    expect(pending.advicePointsLost).toBe(0);
+  });
+
   function oauthResult(
     overrides: Partial<OAuthConformanceResult> = {},
   ): OAuthConformanceResult {

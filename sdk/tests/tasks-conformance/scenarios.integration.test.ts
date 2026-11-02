@@ -102,17 +102,25 @@ describe("tasks-invalid-task-id-rejected", () => {
     expect(entry.error?.message).toContain("answered instead of rejected");
   });
 
-  it("only WARNS when the mutating methods use another code", async () => {
+  it("only ADVISES when the mutating methods use another code", async () => {
     // tasks.md:795 makes -32602 a MUST for `tasks/get` and a SHOULD for
     // `tasks/update` and `tasks/cancel`, so the same wrong answer must not
     // fail on the two where the spec only recommends it.
     const fixture = await serve(quickPhases(), {
       unknownTaskCodeForMutations: -32603,
     });
-    const entry = check(await run(fixture, [ID]), ID);
+    const result = await run(fixture, [ID]);
+    const entry = check(result, ID);
     expect(entry.status).toBe("passed");
-    expect(entry.warnings?.join(" ")).toContain("tasks/update");
-    expect(entry.warnings?.join(" ")).toContain("SHOULD");
+    expect(entry.warnings).toBeUndefined();
+    const advice = result.readiness?.find(
+      (warning) => warning.id === "tasks-readiness-unknown-task-id-mutations"
+    );
+    expect(advice).toMatchObject({
+      specStrength: "SHOULD",
+      informational: true,
+    });
+    expect(advice?.message).toContain("tasks/update");
   });
 
   it("runs even when no task could be created", async () => {
@@ -214,6 +222,26 @@ describe("tasks-status-payload-shape", () => {
     const entry = check(await run(await serve(phases), [ID]), ID);
     expect(entry.status).toBe("failed");
     expect(entry.error?.message).toContain("`error`");
+  });
+
+  it("advises, as a SHOULD, when a failed task carries no statusMessage", async () => {
+    // tasks.md:835 — the response "SHOULD include a `statusMessage`".
+    const phases = failedTaskPhases();
+    phases[phases.length - 1] = {
+      ...phases[phases.length - 1]!,
+      statusMessage: undefined,
+    };
+    const result = await run(await serve(phases), [ID]);
+    const entry = check(result, ID);
+    expect(entry.status).toBe("passed");
+    expect(entry.warnings).toBeUndefined();
+    expect(result.readiness).toEqual([
+      expect.objectContaining({
+        id: "tasks-readiness-failed-status-message",
+        specStrength: "SHOULD",
+        informational: true,
+      }),
+    ]);
   });
 });
 
