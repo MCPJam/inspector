@@ -35,7 +35,7 @@ export const MCP_TASKS_CHECK_IDS = [
   "tasks-invalid-task-id-rejected",
   "tasks-status-payload-shape",
   "tasks-cancel-ack-shape",
-  "tasks-input-required-update-completes",
+  "tasks-update-ack-shape",
   "tasks-ttl-integer-shape",
   "tasks-undeclared-capability-names-requirements",
 ] as const;
@@ -127,8 +127,8 @@ export type MCPTasksConformanceConfig = MCPServerConfig & {
    * OPT-IN, for the same reason the protocol suite's fixtures are: what a task
    * is asking for is server-defined, and inventing an answer would submit
    * arbitrary content into somebody's workflow. Absent ⇒
-   * `tasks-input-required-update-completes` reports a skip naming what it
-   * needs, and the run stops polling as soon as the task parks on
+   * `tasks-update-ack-shape` is not applicable and names what it needs, and
+   * the run stops polling as soon as the task parks on
    * `input_required` (further polls cannot advance it) rather than burning
    * `pollTimeoutMs`.
    */

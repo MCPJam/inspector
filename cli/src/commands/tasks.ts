@@ -77,7 +77,7 @@ const TASKS_CHECK_IDS_BY_CATEGORY: Record<
     "tasks-invalid-task-id-rejected",
     "tasks-status-payload-shape",
     "tasks-cancel-ack-shape",
-    "tasks-input-required-update-completes",
+    "tasks-update-ack-shape",
     "tasks-ttl-integer-shape",
     "tasks-undeclared-capability-names-requirements",
   ],
@@ -731,7 +731,7 @@ export function registerTasksCommands(program: Command): void {
       .option("--tool-args <json>", "Tool arguments as a JSON object")
       .option(
         "--input-responses <json>",
-        'Responses to submit when the probed task reports input_required, keyed by inputRequests key: {"name":{"result":{"action":"accept","content":{"name":"Ada"}}}}. Without it the run stops as soon as the task parks on input_required, and the round-trip check reports what it needs.'
+        'Responses to submit when the probed task reports input_required, keyed by inputRequests key: {"name":{"result":{"action":"accept","content":{"name":"Ada"}}}}. Without it the run stops as soon as the task parks on input_required, and the tasks/update acknowledgement check is not applicable.'
       )
       .option(
         "--poll-timeout <ms>",

@@ -218,7 +218,7 @@ function SuiteChecks({
             <span className="text-sm font-semibold">{title}</span>
             <span className="text-sm text-muted-foreground">{description}</span>
           </span>
-          <span className="shrink-0 text-xs font-medium text-muted-foreground tabular-nums">
+          <span className="shrink-0 text-sm font-medium text-muted-foreground tabular-nums">
             {countLabel(pickedCount, catalog.length)}
           </span>
           <ChevronRight

@@ -84,7 +84,7 @@ function ResultMessage({
   return (
     <span
       className={cn(
-        "block rounded-sm border px-2 py-1.5 text-xs whitespace-pre-wrap break-words",
+        "block rounded-sm border px-2 py-1.5 text-sm whitespace-pre-wrap break-words",
         tone === "error"
           ? "border-red-500/20 bg-red-500/5 text-red-600 dark:text-red-400"
           : "border-border/60 bg-muted/30 text-muted-foreground",
@@ -100,6 +100,19 @@ export function pendingIdSet(
   result: { profile?: { pendingCheckIds?: string[] } } | undefined,
 ): Set<string> {
   return new Set(result?.profile?.pendingCheckIds ?? []);
+}
+
+/** Says a result row opens: nothing else on it does. */
+function RowChevron({ expanded }: { expanded: boolean }) {
+  return (
+    <ChevronRight
+      aria-hidden="true"
+      className={cn(
+        "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none",
+        expanded && "rotate-90",
+      )}
+    />
+  );
 }
 
 export function CheckRow({
@@ -131,7 +144,7 @@ export function CheckRow({
         {pending ? (
           <span
             title="Reported for information only. Unscored checks don't count toward the score or the verdict."
-            className="shrink-0 rounded-sm border border-border/60 px-1 py-px text-[10px] leading-none text-muted-foreground"
+            className="shrink-0 rounded-sm border border-border/60 px-1 py-px text-xs leading-none text-muted-foreground"
           >
             unscored
           </span>
@@ -139,7 +152,7 @@ export function CheckRow({
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span
             className={cn(
-              "text-[13px]",
+              "text-sm",
               check.status === "skipped" &&
                 check.skipReason !== "could-not-run" &&
                 "text-muted-foreground",
@@ -160,21 +173,22 @@ export function CheckRow({
         </span>
         {/* A skipped check never ran: its 0ms says nothing. */}
         {check.status !== "skipped" && (
-          <span className="flex-shrink-0 pt-0.5 text-[10px] text-muted-foreground">
+          <span className="flex-shrink-0 pt-0.5 text-xs text-muted-foreground">
             {check.durationMs}ms
           </span>
         )}
+        <RowChevron expanded={expanded} />
       </button>
       <Collapse open={expanded}>
         <div className="space-y-2 pb-2 pl-14 pr-1">
-          <div className="text-xs text-muted-foreground whitespace-pre-wrap break-words">
+          <div className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
             {check.description}
           </div>
 
           {detailEntries.length > 0 && (
             <div className="rounded-sm bg-muted/20 px-2 py-1.5 space-y-1">
               {detailEntries.map(([key, value]) => (
-                <div key={key} className="text-xs">
+                <div key={key} className="text-sm">
                   <span className="font-medium text-foreground/80">
                     {formatDetailLabel(key)}:
                   </span>{" "}
@@ -187,7 +201,7 @@ export function CheckRow({
           )}
 
           {warnings && warnings.length > 0 && (
-            <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
+            <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-sm text-muted-foreground">
               <div className="mb-1 flex items-center gap-1 font-medium text-foreground/70">
                 <AlertTriangle className="h-3 w-3" />
                 Warnings
@@ -221,7 +235,7 @@ export function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
           <StatusIcon status={step.status} skipReason={step.skipReason} />
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="text-[13px]">{step.title}</span>
+          <span className="text-sm">{step.title}</span>
           {step.error &&
           (expanded || showsMessageShut(step.status, step.skipReason)) ? (
             <ResultMessage
@@ -232,28 +246,29 @@ export function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
           ) : null}
         </span>
         {step.status !== "skipped" && (
-          <span className="flex-shrink-0 pt-0.5 text-[10px] text-muted-foreground">
+          <span className="flex-shrink-0 pt-0.5 text-xs text-muted-foreground">
             {step.durationMs}ms
           </span>
         )}
+        <RowChevron expanded={expanded} />
       </button>
       <Collapse open={expanded}>
         <div className="space-y-2 pb-2 pl-14 pr-1">
-          <div className="text-xs text-muted-foreground whitespace-pre-wrap break-words">
+          <div className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
             {step.summary}
           </div>
 
           {typeof step.error?.details === "string" && (
-            <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
+            <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-sm text-muted-foreground">
               <div className="mb-1 font-medium text-foreground/70">Details</div>
-              <div className="whitespace-pre-wrap break-all font-mono text-[10px]">
+              <div className="whitespace-pre-wrap break-all font-mono text-xs">
                 {step.error.details}
               </div>
             </div>
           )}
 
           {step.teachableMoments && step.teachableMoments.length > 0 && (
-            <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
+            <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-sm text-muted-foreground">
               <div className="mb-1 font-medium text-foreground/70">
                 Why this matters
               </div>
@@ -266,7 +281,7 @@ export function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
           )}
 
           {step.warnings && step.warnings.length > 0 && (
-            <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
+            <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-sm text-muted-foreground">
               <div className="mb-1 flex items-center gap-1 font-medium text-foreground/70">
                 <AlertTriangle className="h-3 w-3" />
                 Warnings
@@ -283,7 +298,7 @@ export function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
               server "does not implement" something without learning which
               URLs were tried — the difference between a verdict and a fix. */}
           {step.httpAttempts && step.httpAttempts.length > 0 && (
-            <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
+            <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-sm text-muted-foreground">
               <div className="mb-1 font-medium text-foreground/70">
                 {step.httpAttempts.length === 1 ? "Request" : "Requests tried"}
               </div>
@@ -293,15 +308,15 @@ export function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
                     key={`${attempt.request.url}-${index}`}
                     className="flex items-baseline gap-2"
                   >
-                    <span className="flex-shrink-0 font-mono text-[10px] uppercase text-foreground/60">
+                    <span className="flex-shrink-0 font-mono text-xs uppercase text-foreground/60">
                       {attempt.request.method}
                     </span>
-                    <span className="min-w-0 break-all font-mono text-[10px]">
+                    <span className="min-w-0 break-all font-mono text-xs">
                       {attempt.request.url}
                     </span>
                     {attempt.response && (
                       <span
-                        className={`flex-shrink-0 font-mono text-[10px] ${
+                        className={`flex-shrink-0 font-mono text-xs ${
                           attempt.response.status >= 400
                             ? "text-red-400"
                             : "text-foreground/60"
@@ -368,11 +383,11 @@ export function CatalogRow({
           {selectable ? null : (
             <MinusCircle className="h-3.5 w-3.5 text-muted-foreground/50 flex-shrink-0" />
           )}
-          <span className="flex-1 min-w-0 truncate text-xs text-muted-foreground">
+          <span className="flex-1 min-w-0 truncate text-sm text-muted-foreground">
             {entry.title}
           </span>
           {entry.note && (
-            <span className="flex-shrink-0 text-[10px] text-muted-foreground/70">
+            <span className="flex-shrink-0 text-xs text-muted-foreground/70">
               {entry.note}
             </span>
           )}
@@ -385,7 +400,7 @@ export function CatalogRow({
         </button>
       </div>
       <Collapse open={expanded && Boolean(entry.description)}>
-        <div className="px-6 pb-2 text-xs text-muted-foreground whitespace-pre-wrap break-words">
+        <div className="px-6 pb-2 text-sm text-muted-foreground whitespace-pre-wrap break-words">
           {entry.description}
         </div>
       </Collapse>
@@ -415,7 +430,7 @@ export function CatalogList({
 }) {
   return (
     <div className="pl-7">
-      <div className="py-1 text-[11px] text-muted-foreground">
+      <div className="py-1 text-xs text-muted-foreground">
         {catalog.length} checks in this suite{note}
       </div>
       {catalog.map((entry) => (

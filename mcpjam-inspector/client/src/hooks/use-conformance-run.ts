@@ -49,6 +49,7 @@ import {
   createOAuthState,
   createProtocolState,
   createTasksState,
+  APP_TASKS_CHECK_IDS,
   isHttpServer,
   isSelected,
   NOT_SELECTED,
@@ -670,7 +671,15 @@ export function useConformanceRun({
       setApps(NOT_SELECTED);
     }
     if (isSelected(picked?.tasks)) {
-      promises.push(runTasks(runToken, currentServer.name, picked?.tasks));
+      // Never "all": the suite's full list includes a check the app cannot
+      // feed, so an unset selection still sends the app's list explicitly.
+      promises.push(
+        runTasks(
+          runToken,
+          currentServer.name,
+          picked?.tasks ?? [...APP_TASKS_CHECK_IDS]
+        )
+      );
     } else {
       setTasks(NOT_SELECTED);
     }

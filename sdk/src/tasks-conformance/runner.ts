@@ -18,6 +18,7 @@ import type {
   ListToolsResult,
   RpcLogEvent,
 } from "../mcp-client-manager/index.js";
+import { isInvalidTaskExtPayloadError } from "../mcp-client-manager/tasks-ext-guards.js";
 import {
   MCP_ERROR_CODES,
   PRE_RENUMBER_DRAFT_ERROR_CODES,
@@ -140,12 +141,12 @@ export const CHECK_METADATA: Record<
     description:
       "tasks/cancel is acknowledged with an empty result rather than a task state, and the task's observable status is allowed to remain non-terminal afterwards.",
   },
-  "tasks-input-required-update-completes": {
-    id: "tasks-input-required-update-completes",
+  "tasks-update-ack-shape": {
+    id: "tasks-update-ack-shape",
     category: "lifecycle",
-    title: "Input Required Round Trip Completes",
+    title: "Update Acknowledged With An Empty Result",
     description:
-      "A task that reports input_required advances past it once tasks/update supplies the requested inputResponses, and reaches a terminal status.",
+      'tasks/update answering a task\'s input_required is acknowledged with an empty result carrying resultType "complete"; the task is not required to reach a terminal status afterwards.',
   },
   "tasks-ttl-integer-shape": {
     id: "tasks-ttl-integer-shape",
@@ -183,6 +184,20 @@ function errorMessage(error: unknown): string {
 function readRequiredCapabilities(error: unknown): unknown {
   const data = (error as { data?: unknown } | null)?.data;
   return isRecord(data) ? data.requiredCapabilities : undefined;
+}
+
+/**
+ * True for the client's local refusal of a response the server DID send — a
+ * frame that fails the JSON-RPC schema, or an extension result that is not an
+ * object. Matched by name as well, since the transport's zod may be a separate
+ * copy from ours.
+ */
+function isMalformedResponseError(error: unknown): boolean {
+  return (
+    isInvalidTaskExtPayloadError(error) ||
+    error instanceof z.ZodError ||
+    (error instanceof Error && error.name === "ZodError")
+  );
 }
 
 function errorCode(error: unknown): number | undefined {
@@ -1324,7 +1339,6 @@ interface InputRequiredLeg {
   /** Result members beyond the envelope; a conforming ack has none. */
   ackVerdict?: ShapeVerdict;
   polled?: { task?: Record<string, unknown>; error?: unknown };
-  finalStatus?: string;
 }
 
 export class MCPTasksConformanceTest {
@@ -1769,13 +1783,18 @@ export class MCPTasksConformanceTest {
             }
           }
 
-          if (selected.has("tasks-input-required-update-completes")) {
+          // Grades only the acknowledgement: "On success, the server MUST
+          // acknowledge the request with an empty result" and "MUST be set to
+          // `complete` on UpdateTaskResult". What the task does afterwards is
+          // not graded — it may go back to `working`, ask for more input, or
+          // take longer than `pollTimeoutMs`, and the extension allows all three.
+          if (selected.has("tasks-update-ack-shape")) {
             const stepStartedAt = Date.now();
             if (wire !== "extension") {
               checks.push(
                 notApplicable(
-                  "tasks-input-required-update-completes",
-                  "the input_required round trip is an extension-wire flow"
+                  "tasks-update-ack-shape",
+                  "tasks/update is an extension-wire method"
                 )
               );
             } else if (!createdTaskId) {
@@ -1783,76 +1802,62 @@ export class MCPTasksConformanceTest {
               // untested because the run could not provoke a task at all.
               // `noTask` already draws that distinction (and reports the
               // no-probe-tool case the way resolution decided).
-              checks.push(noTask("tasks-input-required-update-completes"));
+              checks.push(noTask("tasks-update-ack-shape"));
             } else if (!inputRequiredTask) {
               // A task that completes without ever asking for anything is the
-              // normal case, and there is genuinely no round trip to grade —
-              // so this one IS an inapplicability.
+              // normal case, and there is genuinely no update to grade — so
+              // this one IS an inapplicability.
               checks.push(
                 notApplicable(
-                  "tasks-input-required-update-completes",
-                  `task ${createdTaskId} never reported input_required, so there was no round trip to complete`
+                  "tasks-update-ack-shape",
+                  `task ${createdTaskId} never reported input_required, so there was no tasks/update to send`
                 )
               );
             } else if (!inputLeg || inputLeg.outcome === "no-responses-configured") {
+              // Answers are opt-in operator setup, not a server obligation, so
+              // leaving them out costs the server nothing.
               checks.push(
-                couldNotRun(
-                  "tasks-input-required-update-completes",
+                notApplicable(
+                  "tasks-update-ack-shape",
                   `task requested input for ${JSON.stringify(
                     inputLeg?.requested ?? []
-                  )} but no inputResponses were configured; supply inputResponses so the tasks/update leg can be exercised`,
-                  { requested: inputLeg?.requested ?? [] }
+                  )} but no inputResponses were configured; supply inputResponses to exercise tasks/update`
                 )
               );
             } else if (inputLeg.outcome === "update-rejected") {
+              // The MUST is conditioned on success, and the answers are
+              // operator-supplied, so a rejection leaves no acknowledgement to
+              // grade rather than proving a defect.
               checks.push(
-                failed(
-                  "tasks-input-required-update-completes",
-                  Date.now() - stepStartedAt,
-                  `tasks/update was rejected for a task that reported input_required (${
-                    inputLeg.code ?? "no code"
-                  }: ${inputLeg.message ?? "no message"})`,
+                couldNotRun(
+                  "tasks-update-ack-shape",
+                  `tasks/update was rejected (${inputLeg.code ?? "no code"}: ${
+                    inputLeg.message ?? "no message"
+                  }), so there was no acknowledgement to grade; check the configured inputResponses`,
                   { requested: inputLeg.requested, answered: inputLeg.answered }
                 )
               );
             } else {
-              const problems: string[] = [
-                ...(inputLeg.ackVerdict?.violations ?? []),
-              ];
-              const ackWarnings = inputLeg.ackVerdict?.warnings ?? [];
-              if (
-                inputLeg.finalStatus === undefined ||
-                !TERMINAL_STATUSES.has(inputLeg.finalStatus)
-              ) {
-                problems.push(
-                  `the task did not reach a terminal status after the update (last observed ${JSON.stringify(
-                    inputLeg.finalStatus ?? null
-                  )} within ${this.config.pollTimeoutMs}ms)`
-                );
-              }
+              const violations = inputLeg.ackVerdict?.violations ?? [];
+              const details = {
+                requested: inputLeg.requested,
+                answered: inputLeg.answered,
+              };
               checks.push(
-                problems.length === 0
+                violations.length === 0
                   ? passed(
-                      "tasks-input-required-update-completes",
+                      "tasks-update-ack-shape",
                       Date.now() - stepStartedAt,
-                      {
-                        requested: inputLeg.requested,
-                        answered: inputLeg.answered,
-                        finalStatus: inputLeg.finalStatus,
-                      },
-                      ackWarnings
+                      details,
+                      inputLeg.ackVerdict?.warnings ?? []
                     )
                   : failed(
-                      "tasks-input-required-update-completes",
+                      "tasks-update-ack-shape",
                       Date.now() - stepStartedAt,
-                      `the input_required round trip did not complete: ${problems.join(
+                      `tasks/update was not acknowledged with an empty result: ${violations.join(
                         "; "
                       )}`,
-                      {
-                        requested: inputLeg.requested,
-                        answered: inputLeg.answered,
-                        finalStatus: inputLeg.finalStatus,
-                      }
+                      details
                     )
               );
             }
@@ -2712,11 +2717,12 @@ export class MCPTasksConformanceTest {
    * task lifecycle a poll-only runner can never reach.
    *
    * Returns what happened rather than a verdict, so the check below can tell
-   * "the operator supplied no answers" (a skip) from "the update was rejected"
-   * and from "the update was acknowledged but the task never moved" (both
-   * failures). The ack shape is asserted here because the spec is specific
-   * about it: "On success, the server MUST acknowledge the request with an
-   * empty result."
+   * "the operator supplied no answers" from "the update was rejected" (neither
+   * leaves an acknowledgement to grade) and from "the update was
+   * acknowledged". The ack shape is asserted here because the spec is
+   * specific about it: "On success, the server MUST acknowledge the request
+   * with an empty result." The task is still polled afterwards so downstream
+   * checks read the state it reached, not the gate it was parked on.
    */
   private async runInputRequiredLeg(
     manager: MCPClientManager,
@@ -2737,32 +2743,44 @@ export class MCPTasksConformanceTest {
 
     const answered = Object.keys(responses);
     const receivedBefore = received.length;
-    let ack: unknown;
+    let ackVerdict: ShapeVerdict;
     try {
-      ack = await manager.updateTask(
+      const ack = await manager.updateTask(
         serverId,
         taskId,
         responses as never
       );
+      // "the server MUST acknowledge the request with an empty result". The
+      // envelope member `resultType` and the `_meta` container are part of
+      // every result, so they are not "content" — anything else is the server
+      // answering with state the client is told to re-poll for.
+      ackVerdict = validateCompletionAck(
+        ack,
+        "tasks/update",
+        findRawResult(received.slice(receivedBefore))
+      );
     } catch (error) {
-      return {
-        outcome: "update-rejected",
-        requested,
-        answered,
-        message: errorMessage(error),
-        code: errorCode(error),
+      // A success response whose `result` is not an object is the server's
+      // answer, not a rejection, and it is not an empty result. The client
+      // refuses it before it can be logged: the HTTP transport throws a
+      // ZodError for a frame that is not a valid JSON-RPC message, and the
+      // extension guard throws for a result that is not an object.
+      if (!isMalformedResponseError(error)) {
+        return {
+          outcome: "update-rejected",
+          requested,
+          answered,
+          message: errorMessage(error),
+          code: errorCode(error),
+        };
+      }
+      ackVerdict = {
+        violations: [
+          "tasks/update did not return a result object; the client rejected the response as malformed",
+        ],
+        warnings: [],
       };
     }
-
-    // "the server MUST acknowledge the request with an empty result". The
-    // envelope member `resultType` and the `_meta` container are part of every
-    // result, so they are not "content" — anything else is the server answering
-    // with state the client is told to re-poll for.
-    const ackVerdict = validateCompletionAck(
-      ack,
-      "tasks/update",
-      findRawResult(received.slice(receivedBefore))
-    );
 
     const polled = await this.pollToTerminal(manager, serverId, "extension", taskId);
     return {
@@ -2771,7 +2789,6 @@ export class MCPTasksConformanceTest {
       answered,
       ackVerdict,
       polled,
-      finalStatus: polled.task ? String(polled.task.status) : undefined,
     };
   }
 

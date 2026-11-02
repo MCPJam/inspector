@@ -153,7 +153,7 @@ describe("tasks-status-payload-shape", () => {
     //     in — `inspectedPayloads` is 3 here.
     // (2) The violating frame is one the client never surfaced AT ALL: without
     //     `inputRequests` the decoder cannot resolve the `input_required`
-    //     variant, so the round-trip check beside this one reports the task
+    //     variant, so the update-ack check beside this one reports the task
     //     "never reported input_required". A check reading the decoded task
     //     would therefore see nothing wrong; the wire is the only witness.
     const result = await run(
@@ -166,7 +166,7 @@ describe("tasks-status-payload-shape", () => {
           result: { content: [{ type: "text", text: "done" }], isError: false },
         },
       ]),
-      [ID, "tasks-input-required-update-completes"],
+      [ID, "tasks-update-ack-shape"],
       {
         inputResponses: {
           [DEFAULT_INPUT_REQUEST_KEY]: {
@@ -184,7 +184,7 @@ describe("tasks-status-payload-shape", () => {
 
     // The decoded view never saw the state the raw frame was rejected for.
     expect(
-      check(result, "tasks-input-required-update-completes").error?.message,
+      check(result, "tasks-update-ack-shape").error?.message,
     ).toContain("never reported input_required");
   });
 
@@ -387,32 +387,82 @@ describe("tasks-ttl-integer-shape", () => {
   });
 });
 
-describe("tasks-input-required-update-completes", () => {
-  const ID: MCPTasksCheckId = "tasks-input-required-update-completes";
+describe("tasks-update-ack-shape", () => {
+  const ID: MCPTasksCheckId = "tasks-update-ack-shape";
   const RESPONSES = {
     [DEFAULT_INPUT_REQUEST_KEY]: {
       result: { action: "accept", content: { name: "Ada" } },
     },
   };
 
-  it("completes the round trip when responses are supplied", async () => {
+  it("passes an empty acknowledgement", async () => {
     const fixture = await serve(defaultTaskPhases());
     const result = await run(fixture, [ID], { inputResponses: RESPONSES });
     const entry = check(result, ID);
     expect([entry.status, entry.error?.message]).toEqual(["passed", undefined]);
-    expect(entry.details).toMatchObject({ finalStatus: "completed" });
     // The wire is the witness: a `tasks/update` really left the process.
     expect(
       fixture.received.filter((request) => request.method === "tasks/update"),
     ).not.toHaveLength(0);
   });
 
-  it("skips, naming what it needs, when no responses are configured", async () => {
+  it("does not require the task to finish after the update", async () => {
+    // The extension lets an answered task go back to `working` or ask for more
+    // input, and sets no deadline. A task still running when polling gives up
+    // is behavior the spec permits, so the acknowledgement alone decides.
+    const phases = defaultTaskPhases().filter(
+      (phase) => phase.status !== "completed",
+    );
+    const entry = check(
+      await run(await serve(phases), [ID], {
+        inputResponses: RESPONSES,
+        pollTimeoutMs: 300,
+      }),
+      ID,
+    );
+    expect([entry.status, entry.error?.message]).toEqual(["passed", undefined]);
+  });
+
+  it("fails an acknowledgement that carries task state", async () => {
+    const entry = check(
+      await run(
+        await serve(defaultTaskPhases(), {
+          misbehave: { updateAckExtras: { status: "working" } },
+        }),
+        [ID],
+        { inputResponses: RESPONSES },
+      ),
+      ID,
+    );
+    expect(entry.status).toBe("failed");
+    expect(entry.error?.message).toContain("empty result");
+    expect(entry.error?.message).toContain("status");
+  });
+
+  it("fails a success response whose result is not an object", async () => {
+    // The client rejects this locally, but it is the server's answer, not a
+    // rejection, so it is graded rather than read as could not run.
+    const entry = check(
+      await run(
+        await serve(defaultTaskPhases(), {
+          misbehave: { updateAckOverride: "ok" },
+        }),
+        [ID],
+        { inputResponses: RESPONSES },
+      ),
+      ID,
+    );
+    expect(entry.status).toBe("failed");
+    expect(entry.error?.message).toContain("did not return a result object");
+  });
+
+  it("is not applicable, naming what it needs, when no responses are configured", async () => {
+    // Answers are opt-in operator setup, not something the server owes.
     const fixture = await serve(defaultTaskPhases());
     const entry = check(await run(fixture, [ID]), ID);
     expect([entry.status, entry.skipReason]).toEqual([
       "skipped",
-      "could-not-run",
+      "not-applicable",
     ]);
     expect(entry.error?.message).toContain("inputResponses");
     expect(entry.error?.message).toContain(DEFAULT_INPUT_REQUEST_KEY);
@@ -443,7 +493,9 @@ describe("tasks-input-required-update-completes", () => {
     ]);
   });
 
-  it("fails when tasks/update is rejected for a task that asked for input", async () => {
+  it("could not run when tasks/update is rejected", async () => {
+    // The MUST is conditioned on success and the answers are the operator's,
+    // so a rejection leaves nothing to grade rather than proving a defect.
     const fixture = await serve(defaultTaskPhases(), {
       rejectUpdateWithInvalidParams: true,
     });
@@ -451,7 +503,10 @@ describe("tasks-input-required-update-completes", () => {
       await run(fixture, [ID], { inputResponses: RESPONSES }),
       ID,
     );
-    expect(entry.status).toBe("failed");
+    expect([entry.status, entry.skipReason]).toEqual([
+      "skipped",
+      "could-not-run",
+    ]);
     expect(entry.error?.message).toContain("rejected");
   });
 });

@@ -56,4 +56,17 @@ describe("runnableSelection", () => {
   it("leaves an absent selection absent", () => {
     expect(runnableSelection(undefined, "auto")).toBeUndefined();
   });
+
+  it("never runs the tasks update acknowledgement check, which the app cannot feed", () => {
+    // It needs `inputResponses`, and the app has no way to supply them, so a
+    // saved pick of it is dropped like an unknown id.
+    const selection = runnableSelection(
+      { tasks: ["tasks-update-ack-shape", "tasks-wire-resolvable"] },
+      "auto",
+    );
+    expect(selection?.tasks).toEqual(["tasks-wire-resolvable"]);
+    expect(checkCatalogs("auto").tasks.map((entry) => entry.id)).not.toContain(
+      "tasks-update-ack-shape",
+    );
+  });
 });
