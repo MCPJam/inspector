@@ -470,7 +470,7 @@ describe("suite adapters", () => {
   });
 
   it("scores typed tasks readiness by spec strength, informational for free", () => {
-    const tasksResult = (informational: boolean) =>
+    const tasksResult = (informational: boolean, pending = false) =>
       ({
         passed: true,
         outcome: "passed" as const,
@@ -480,9 +480,9 @@ describe("suite adapters", () => {
         categorySummary: {},
         checks: [
           {
-            id: "tasks-wire-resolvable",
-            category: "dispatch",
-            title: "Wire Resolvable",
+            id: "tasks-status-payload-shape",
+            category: "lifecycle",
+            title: "Status Payload Shape",
             description: "…",
             status: "passed" as const,
             durationMs: 1,
@@ -491,6 +491,7 @@ describe("suite adapters", () => {
         readiness: [
           {
             id: "tasks-readiness-failed-status-message",
+            checkId: "tasks-status-payload-shape",
             title: "Failed Task Status Message",
             severity: "warning",
             specStrength: "SHOULD",
@@ -498,6 +499,9 @@ describe("suite adapters", () => {
             ...(informational ? { informational: true } : {}),
           },
         ],
+        ...(pending
+          ? { profile: { pendingCheckIds: ["tasks-status-payload-shape"] } }
+          : {}),
         discovery: { wire: "extension", toolCount: 1, taskCapableToolCount: 1 },
       }) as never;
 
@@ -510,6 +514,12 @@ describe("suite adapters", () => {
       { id: "tasks-readiness-failed-status-message", tier: "should" },
     ]);
     expect(scored.advicePointsLost).toBe(2);
+
+    // Advice from a check the profile does not score yet costs nothing, even
+    // without `informational`: the same rule as a pending check's warnings.
+    const pending = scoreFromTasksResult(tasksResult(false, true));
+    expect(pending.advisories).toEqual([]);
+    expect(pending.advicePointsLost).toBe(0);
   });
 
   function oauthResult(

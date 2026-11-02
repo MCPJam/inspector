@@ -59,6 +59,11 @@ export interface MCPTasksReadinessWarning extends Omit<
   "id"
 > {
   id: MCPTasksReadinessId;
+  /**
+   * The check that produced this advice. Advice from a check the profile does
+   * not score yet costs no points, like a pending check's warnings.
+   */
+  checkId: MCPTasksCheckId;
 }
 
 export type MCPTasksCheckStatus = "passed" | "failed" | "skipped";

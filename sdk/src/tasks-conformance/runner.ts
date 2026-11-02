@@ -1924,6 +1924,7 @@ export class MCPTasksConformanceTest {
               if (rawStates.some(failedTaskLacksStatusMessage)) {
                 readiness.push({
                   id: "tasks-readiness-failed-status-message",
+                  checkId: "tasks-status-payload-shape",
                   title: "Failed Task Status Message",
                   severity: "warning",
                   specStrength: "SHOULD",
@@ -2091,6 +2092,7 @@ export class MCPTasksConformanceTest {
               if (wrongAnswers.length > 0) {
                 readiness.push({
                   id: "tasks-readiness-unknown-task-id-mutations",
+                  checkId: "tasks-invalid-task-id-rejected",
                   title: "Unknown Task Id On Update And Cancel",
                   severity: "warning",
                   specStrength: "SHOULD",

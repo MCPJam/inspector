@@ -317,12 +317,14 @@ function scoreFromWarningChecks(
   checks: Array<OutcomeCheckLike & { warnings?: string[] }>,
   protocolVersion?: string,
   profileStamp?: Pick<ConformanceProfileStamp, "pendingCheckIds">,
-  typedAdvisories: ScoredAdvisory[] = []
+  typedAdvisories: Array<ScoredAdvisory & { checkId: string }> = []
 ): ConformanceScore {
   // Warnings on a PENDING check must not cost points either: the check is not
   // being scored, and letting its advice deduct would move the number a
-  // profile bump is supposed to gate.
+  // profile bump is supposed to gate. Typed advice follows the check it came
+  // from for the same reason.
   const { scored } = partitionByStamp(checks, profileStamp);
+  const scoredIds = new Set(scored.map((check) => check.id));
   return computeConformanceScore(
     checks,
     [
@@ -332,7 +334,9 @@ function scoreFromWarningChecks(
           tier: "may" as const,
         }))
       ),
-      ...typedAdvisories,
+      ...typedAdvisories
+        .filter((advisory) => scoredIds.has(advisory.checkId))
+        .map(({ id, tier }) => ({ id, tier })),
     ],
     protocolVersion,
     profileStamp,
@@ -361,6 +365,7 @@ export function scoreFromTasksResult(
       .filter((warning) => warning.informational !== true)
       .map((warning) => ({
         id: warning.id,
+        checkId: warning.checkId,
         tier: warning.specStrength === "MAY" ? "may" : "should",
       }))
   );
