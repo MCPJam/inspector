@@ -216,12 +216,7 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     expect(result.passed).toBe(true);
     expect(result.profile).toMatchObject({
       profileId: "mcp-tasks",
-      pendingCheckIds: [
-        "tasks-cancel-ack-shape",
-        "tasks-invalid-task-id-rejected",
-        "tasks-status-payload-shape",
-        "tasks-undeclared-capability-names-requirements",
-      ],
+      pendingCheckIds: [],
     });
   });
 
@@ -342,12 +337,10 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     expect(result.incompleteReason).toContain("execution.taskSupport");
     expect(result.incompleteReason).toContain("2026-07-28");
     expect(result.incompleteReason).toContain(TASK_TOOL_NAME);
-    // The SUMMARY counts only the scored checks, so it reads 8: the six
-    // original task-dependent checks plus `tasks-ttl-integer-shape` (scored
-    // since `mcp-tasks@2026-10-31.1`) and `tasks-update-ack-shape` (scored
-    // since `mcp-tasks@2026-11-01.1`). The other new gaps stay pending.
-    expect(result.summary).toContain("8 could not run");
-    expect(result.summary).toContain("pending");
+    // Every tasks check is scored since `mcp-tasks@2026-11-01.2`, so the
+    // SUMMARY counts all 11 unrun checks and names nothing pending.
+    expect(result.summary).toContain("11 could not run");
+    expect(result.summary).not.toContain("pending");
     expect(result.categorySummary.creation.couldNotRun).toBe(2);
     expect(result.discovery.createdTaskId).toBeUndefined();
   });

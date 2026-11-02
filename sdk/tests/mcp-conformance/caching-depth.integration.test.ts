@@ -35,6 +35,8 @@ interface CacheFixtureOptions {
    * such operation to carry hints on.
    */
   withholdCapabilities?: string[];
+  /** Answer `resources/list` with an empty array. */
+  listNoResources?: boolean;
 }
 
 const LISTED_RESOURCE = "test://greeting";
@@ -121,7 +123,9 @@ async function serveCacheFixture(options: CacheFixtureOptions) {
           return ok({ prompts: [] });
         case "resources/list":
           return ok({
-            resources: [{ uri: LISTED_RESOURCE, name: "greeting" }],
+            resources: options.listNoResources
+              ? []
+              : [{ uri: LISTED_RESOURCE, name: "greeting" }],
           });
         case "resources/templates/list": {
           if (options.templatePageScopes) {
@@ -249,6 +253,22 @@ describe("modern-cache-hint-coverage", () => {
       "resources/templates/list",
       "resources/read",
     ]);
+  });
+
+  it("passes a server that advertises resources but lists none", async () => {
+    // Templates-only, or resources created at runtime: there is nothing to
+    // read, so resources/read is inapplicable rather than an untested gap.
+    const check = byId(
+      (await run({ listNoResources: true }, [ID])).checks,
+      ID,
+    );
+    expect([check.status, check.error?.message]).toEqual(["passed", undefined]);
+    expect(check.details?.unprobed).toEqual([]);
+    expect(
+      (check.details?.notApplicable as Array<{ method: string }>).map(
+        (entry) => entry.method,
+      ),
+    ).toEqual(["resources/read"]);
   });
 
   it("catches a miss on resources/read, which the older check never probed", async () => {

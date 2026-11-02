@@ -28,6 +28,7 @@ import {
   startOAuthConformance,
   submitOAuthConformanceCode,
 } from "../shared/conformance";
+import { conformanceProbeFields } from "../shared/conformance-probes";
 import { authorizeServer, toHttpConfig } from "./auth.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
@@ -243,6 +244,8 @@ const protocolSchema = z
     protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
     /** Run only these checks, as picked before Run; absent ⇒ all of them. */
     checkIds: z.array(z.enum(MCP_CHECK_IDS)).min(1).optional(),
+    /** Tools named as safe for the checks that must call one. */
+    ...conformanceProbeFields,
   })
   .passthrough(); // project/guest fields pass through to resolveHostedHttpConfig
 
@@ -260,6 +263,8 @@ conformanceWeb.post("/protocol", async (c) =>
         ...resolved,
         protocolVersion: parsed.protocolVersion,
         checkIds: parsed.checkIds,
+        logProbe: parsed.logProbe,
+        inputRequiredProbe: parsed.inputRequiredProbe,
       });
       return { success: true, result };
     } catch (error) {

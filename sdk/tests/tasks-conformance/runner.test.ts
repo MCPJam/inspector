@@ -49,6 +49,7 @@ function runAgainst(
   options: {
     config?: Record<string, unknown>;
     sentMessages?: unknown[];
+    receivedMessages?: unknown[];
   } = {}
 ) {
   vi.spyOn(operations, "withEphemeralClient").mockImplementation((async (
@@ -60,6 +61,9 @@ function runAgainst(
     activeRpcLogger = rpcLogger;
     for (const message of options.sentMessages ?? []) {
       rpcLogger?.({ direction: "send", message, serverId: "srv" });
+    }
+    for (const message of options.receivedMessages ?? []) {
+      rpcLogger?.({ direction: "receive", message, serverId: "srv" });
     }
     return (fn as (m: unknown, id: string) => Promise<unknown>)(manager, "srv");
   }) as never);
@@ -633,8 +637,27 @@ describe("MCPTasksConformanceTest", () => {
           params: { name: "long_job", _meta: extensionDeclaration() },
         },
         {
+          id: 2,
           method: "tasks/get",
           params: { taskId: "task-1", _meta: extensionDeclaration() },
+        },
+      ],
+      // The raw frame `tasks-status-payload-shape` reads; a fake manager
+      // produces none of its own.
+      receivedMessages: [
+        {
+          jsonrpc: "2.0",
+          id: 2,
+          result: {
+            resultType: "complete",
+            taskId: "task-1",
+            status: "completed",
+            createdAt: "2026-07-27T00:00:00Z",
+            lastUpdatedAt: "2026-07-27T00:00:01Z",
+            ttlMs: 60_000,
+            pollIntervalMs: 1,
+            result: { content: [{ type: "text", text: "done" }] },
+          },
         },
       ],
     });
@@ -649,16 +672,12 @@ describe("MCPTasksConformanceTest", () => {
       "tasks-ttl-shape": "passed",
       "tasks-inline-result": "passed",
       "tasks-mcp-name-routing": "passed",
-      // The scenario depth added by the conformance-gap program, all outside
-      // the `mcp-tasks` profile's scored set except `tasks-update-ack-shape`.
-      // Its skip is correct: this task completes without ever asking for
-      // input, so there is no `tasks/update` acknowledgement to grade.
+      // The scenario depth added by the conformance-gap program, all scored
+      // since `mcp-tasks@2026-11-01.2`. The update-ack skip is correct: this
+      // task completes without ever asking for input, so there is no
+      // `tasks/update` acknowledgement to grade.
       "tasks-invalid-task-id-rejected": "passed",
-      // Skipped against the FAKE manager by design: it reads raw inbound
-      // frames (the only place a malformed status payload survives the SDK's
-      // own validation), and a fake manager produces none. The fixture-backed
-      // `scenarios.integration.test.ts` is where it is exercised.
-      "tasks-status-payload-shape": "skipped",
+      "tasks-status-payload-shape": "passed",
       "tasks-cancel-ack-shape": "passed",
       "tasks-ttl-integer-shape": "passed",
       "tasks-undeclared-capability-names-requirements": "passed",
