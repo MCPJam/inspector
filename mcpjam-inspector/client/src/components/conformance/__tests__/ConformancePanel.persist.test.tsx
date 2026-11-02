@@ -8,7 +8,8 @@ const mockRunApps = vi.fn();
 const mockRunTasks = vi.fn();
 const mockStartOAuth = vi.fn();
 
-const { startRun, finalizeRun, cancelRun } = vi.hoisted(() => ({
+const { startRun, finalizeRun, cancelRun, upsertReport } = vi.hoisted(() => ({
+  upsertReport: vi.fn().mockResolvedValue(undefined),
   startRun: vi.fn().mockResolvedValue({ runId: "run_1" }),
   finalizeRun: vi.fn().mockResolvedValue({ runId: "run_1" }),
   cancelRun: vi.fn().mockResolvedValue({ cancelled: true }),
@@ -47,7 +48,7 @@ vi.mock("convex/react", async () => {
       if (name === "conformanceRuns:cancelRun") return cancelRun;
       return vi.fn().mockResolvedValue(undefined);
     },
-    useAction: () => vi.fn().mockResolvedValue(undefined),
+    useAction: () => upsertReport,
   };
 });
 
@@ -267,5 +268,77 @@ describe("ConformanceTab persist", () => {
 
     unmount();
     expect(cancelRun).not.toHaveBeenCalled();
+  });
+
+  it("saves the OAuth checks a server leaves out as pending in the report", async () => {
+    const user = userEvent.setup();
+    mockPassingSuites();
+    mockStartOAuth.mockResolvedValue({
+      phase: "complete",
+      result: {
+        passed: false,
+        outcome: "failed",
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "cimd",
+        serverUrl: "https://example.com/mcp",
+        summary: "OAuth summary",
+        durationMs: 1,
+        steps: [
+          {
+            step: "verify_profile_shape",
+            title: "Profile Shape",
+            summary: "…",
+            status: "failed",
+            durationMs: 1,
+            logs: [],
+            httpAttempts: [],
+            error: { message: "bad shape" },
+          },
+          {
+            step: "oauth_token_format",
+            title: "Token Format",
+            summary: "…",
+            status: "passed",
+            durationMs: 1,
+            logs: [],
+            httpAttempts: [],
+          },
+        ],
+      },
+    });
+    render(
+      <ConformanceTab
+        server={createHttpServer()}
+        persist={{ projectId: "proj_1", serverId: "srv_1" }}
+        serverDefaults={{
+          "http-server": { oauthUnscored: ["verify_profile_shape"] },
+        }}
+      />,
+    );
+    await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await waitFor(() =>
+      expect(finalizeRun).toHaveBeenCalledWith({ runId: "run_1" }),
+    );
+
+    const oauthUpload = upsertReport.mock.calls
+      .map(([payload]) => payload)
+      .find(
+        (payload: { suiteKind?: string; report?: unknown }) =>
+          payload.suiteKind === "oauth" && payload.report,
+      ) as {
+      report: {
+        score: { pending: number; failed: number };
+        groups: Array<{ cases: Array<{ id: string; pending?: boolean }> }>;
+      };
+    };
+    const cases = oauthUpload.report.groups.flatMap((group) => group.cases);
+    expect(cases.find((c) => c.id === "verify_profile_shape")?.pending).toBe(
+      true,
+    );
+    expect(cases.find((c) => c.id === "oauth_token_format")?.pending).toBe(
+      undefined,
+    );
+    // The backend recomputes from these cases: the failure is not counted.
+    expect(oauthUpload.report.score).toMatchObject({ pending: 1, failed: 0 });
   });
 });

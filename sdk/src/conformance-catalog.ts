@@ -321,7 +321,7 @@ export const TASKS_CHECK_CATALOG = {
   "tasks-invalid-task-id-rejected": {
     title: "Invalid Task Id Rejected",
     description:
-      "tasks/get for a task id the server never issued is rejected with -32602 (Invalid params); the same rejection on tasks/update and tasks/cancel is a SHOULD and only warns.",
+      "tasks/get for a task id the server never issued is rejected with -32602 (Invalid params); the same rejection on tasks/update and tasks/cancel is a SHOULD and is reported as advice.",
   },
   "tasks-status-payload-shape": {
     title: "Status Payload Shape",

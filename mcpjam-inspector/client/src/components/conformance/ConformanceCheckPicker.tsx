@@ -99,6 +99,58 @@ export function nothingPicked(
   );
 }
 
+/**
+ * OAuth's checks are steps of one sign-in flow, so they cannot be run one by
+ * one: the suite's checkbox decides whether the flow runs, and a check's box
+ * decides whether it COUNTS. An unchecked check still runs and reads as
+ * unscored (`oauthUnscored`).
+ */
+function isOAuthStepScored(selection: ConformanceSelection, id: string) {
+  return (
+    selection.oauth !== false && !(selection.oauthUnscored ?? []).includes(id)
+  );
+}
+
+function oauthScoredCount(selection: ConformanceSelection): number {
+  return OAUTH_CATALOG.filter((entry) => isOAuthStepScored(selection, entry.id))
+    .length;
+}
+
+/** The suite's box: run the flow with every check counting, or not at all. */
+export function withOAuthSuite(
+  selection: ConformanceSelection,
+  run: boolean,
+): ConformanceSelection {
+  const next: ConformanceSelection = { ...selection, oauth: run };
+  delete next.oauthUnscored;
+  return next;
+}
+
+/** One check's box: whether it counts toward the score. */
+export function withOAuthStep(
+  selection: ConformanceSelection,
+  id: string,
+  scored: boolean,
+): ConformanceSelection {
+  // Checking a box while the flow is off turns it on with only that check
+  // counting, as the other suites' rows do.
+  const unscored = new Set(
+    selection.oauth === false
+      ? OAUTH_CATALOG.map((entry) => entry.id)
+      : (selection.oauthUnscored ?? []),
+  );
+  if (scored) unscored.delete(id);
+  else unscored.add(id);
+  // Nothing left counting: the flow would run for no score, so leave it out.
+  if (OAUTH_CATALOG.every((entry) => unscored.has(entry.id))) {
+    return withOAuthSuite(selection, false);
+  }
+  const next: ConformanceSelection = { ...selection, oauth: true };
+  if (unscored.size > 0) next.oauthUnscored = [...unscored];
+  else delete next.oauthUnscored;
+  return next;
+}
+
 export function ConformanceCheckPicker({
   versionPin,
   selection,
@@ -113,7 +165,6 @@ export function ConformanceCheckPicker({
   defaultOpen?: boolean;
 }) {
   const catalogs = checkCatalogs(versionPin);
-  const runOAuth = selection.oauth !== false;
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-card">
       {CHECK_SUITES.map((suite) => {
@@ -150,13 +201,15 @@ export function ConformanceCheckPicker({
         title={SUITE_COPY.oauth.title}
         description={SUITE_COPY.oauth.description}
         catalog={OAUTH_CATALOG}
-        pickedCount={runOAuth ? OAUTH_CATALOG.length : 0}
+        pickedCount={oauthScoredCount(selection)}
         countLabel={countLabel}
         defaultOpen={defaultOpen}
-        onSuiteChange={(value) => onChange({ ...selection, oauth: value })}
-        // Shown, but locked to the suite's checkbox.
-        isPicked={() => runOAuth}
-        listNote=". They run together as one sign-in flow."
+        onSuiteChange={(value) => onChange(withOAuthSuite(selection, value))}
+        isPicked={(id) => isOAuthStepScored(selection, id)}
+        onCheckChange={(id, value) =>
+          onChange(withOAuthStep(selection, id, value))
+        }
+        listNote=". They run together as one sign-in flow, so an unchecked check still runs but does not count toward the score."
       />
     </div>
   );
