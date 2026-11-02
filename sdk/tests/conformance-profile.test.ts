@@ -108,7 +108,6 @@ describe("the mcp-tasks profile", () => {
   it("states exactly which shipped tasks checks it leaves unscored", () => {
     expect([...unscoredCheckIds(TASKS)].sort()).toEqual([
       "tasks-cancel-ack-shape",
-      "tasks-input-required-update-completes",
       "tasks-invalid-task-id-rejected",
       "tasks-status-payload-shape",
       "tasks-undeclared-capability-names-requirements",
@@ -118,8 +117,13 @@ describe("the mcp-tasks profile", () => {
   it("scores the integer TTL check from v2026-10-31.1", () => {
     // The extension's schema types ttlMs and pollIntervalMs as integers, so
     // the check is a schema requirement rather than advice.
-    expect(TASKS.version).toBe("2026-10-31.1");
     expect(TASKS.scored).toContain("tasks-ttl-integer-shape");
+  });
+
+  it("scores the update acknowledgement check from v2026-11-01.1", () => {
+    // The extension MUSTs an empty result with resultType "complete".
+    expect(TASKS.version).toBe("2026-11-01.1");
+    expect(TASKS.scored).toContain("tasks-update-ack-shape");
   });
 });
 

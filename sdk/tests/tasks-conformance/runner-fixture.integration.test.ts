@@ -131,14 +131,14 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     expect(result.discovery.createdTaskId).toBeTruthy();
     expect(result.checks).toHaveLength(MCP_TASKS_CHECK_IDS.length);
     // One skip is expected and correct: this fixture's task completes without
-    // ever asking for input, so the `input_required` round trip is not
+    // ever asking for input, so the `tasks/update` acknowledgement is not
     // applicable to it (a task that never asks is the normal case, not a
     // defect). Everything else ran.
     expect(
       result.checks
         .filter((entry) => entry.status === "skipped")
         .map((entry) => [entry.id, entry.skipReason])
-    ).toEqual([["tasks-input-required-update-completes", "not-applicable"]]);
+    ).toEqual([["tasks-update-ack-shape", "not-applicable"]]);
   });
 
   it("passes the undeclared-capability checks against a conformant fixture, having actually sent the probes", async () => {
@@ -202,6 +202,7 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
       "tasks-mcp-name-routing": "passed",
       // Promoted to scored in `mcp-tasks@2026-10-31.1`.
       "tasks-ttl-integer-shape": "passed",
+      "tasks-update-ack-shape": "skipped",
       // The rest of the scenario depth added by the conformance-gap program.
       // These are outside the `mcp-tasks` profile's scored set, so they report
       // these verdicts without moving the number.
@@ -209,7 +210,6 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
       "tasks-status-payload-shape": "passed",
       "tasks-cancel-ack-shape": "passed",
       "tasks-undeclared-capability-names-requirements": "passed",
-      "tasks-input-required-update-completes": "skipped",
     });
     // Green DESPITE the skip, because the skipped check is `not-applicable`
     // (this task never asks for input) rather than `could-not-run`.
@@ -218,7 +218,6 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
       profileId: "mcp-tasks",
       pendingCheckIds: [
         "tasks-cancel-ack-shape",
-        "tasks-input-required-update-completes",
         "tasks-invalid-task-id-rejected",
         "tasks-status-payload-shape",
         "tasks-undeclared-capability-names-requirements",
@@ -343,10 +342,11 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     expect(result.incompleteReason).toContain("execution.taskSupport");
     expect(result.incompleteReason).toContain("2026-07-28");
     expect(result.incompleteReason).toContain(TASK_TOOL_NAME);
-    // The SUMMARY counts only the scored checks, so it reads 7: the six
-    // original task-dependent checks plus `tasks-ttl-integer-shape`, scored
-    // since `mcp-tasks@2026-10-31.1`. The other new gaps stay pending.
-    expect(result.summary).toContain("7 could not run");
+    // The SUMMARY counts only the scored checks, so it reads 8: the six
+    // original task-dependent checks plus `tasks-ttl-integer-shape` (scored
+    // since `mcp-tasks@2026-10-31.1`) and `tasks-update-ack-shape` (scored
+    // since `mcp-tasks@2026-11-01.1`). The other new gaps stay pending.
+    expect(result.summary).toContain("8 could not run");
     expect(result.summary).toContain("pending");
     expect(result.categorySummary.creation.couldNotRun).toBe(2);
     expect(result.discovery.createdTaskId).toBeUndefined();
