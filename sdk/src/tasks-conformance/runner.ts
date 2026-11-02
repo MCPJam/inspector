@@ -674,7 +674,7 @@ export function validateCompletionAck(
     // discriminates on this member, so a wrong value actively misdirects it.
     violations.push(
       `the acknowledgement carried resultType ${JSON.stringify(
-        ack.resultType
+        observed.resultType
       )} rather than "complete"`
     );
   }
