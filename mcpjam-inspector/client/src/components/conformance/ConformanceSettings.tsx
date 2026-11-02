@@ -7,6 +7,8 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import type { ConformanceSelection } from "@/hooks/use-conformance-run";
+import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
+import { ProbeCheckExtra } from "./ConformanceProbeField";
 import { toast } from "@/lib/toast";
 import {
   ConformanceCheckPicker,
@@ -18,12 +20,21 @@ export function ConformanceSettings({
   serverName,
   defaults,
   onSave,
+  probes,
+  onProbesChange,
+  canListTools = false,
   onBack,
 }: {
   serverName: string;
   /** The saved defaults; absent means every check. */
   defaults?: ConformanceSelection;
   onSave: (selection: ConformanceSelection) => Promise<void>;
+  /** The tools this server's checks may call, kept in the browser. */
+  probes?: ConformanceProbes;
+  /** Saves them; the arguments box is saved only once it parses. */
+  onProbesChange?: (probes: ConformanceProbes) => void;
+  /** An HTTP server: the only kind that runs the protocol suite. */
+  canListTools?: boolean;
   onBack: () => void;
 }) {
   // Shown at once while the save goes out; the saved row catches up after.
@@ -91,6 +102,20 @@ export function ConformanceSettings({
               onChange={change}
               countLabel={(picked, total) => `${picked} of ${total}`}
               defaultOpen
+              renderProtocolExtra={
+                canListTools && onProbesChange
+                  ? (checkId, isPicked, checkTitle) => (
+                      <ProbeCheckExtra
+                        checkId={checkId}
+                        checkTitle={checkTitle}
+                        isPicked={isPicked}
+                        serverName={serverName}
+                        probes={probes ?? {}}
+                        onProbesChange={onProbesChange}
+                      />
+                    )
+                  : undefined
+              }
             />
           </section>
         </div>

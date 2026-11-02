@@ -8,10 +8,16 @@ import { useId, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import type { ServerWithName } from "@/hooks/use-app-state";
-import type {
-  ConformanceSelection,
-  ProtocolVersionPin,
+import {
+  isHttpServer,
+  type ConformanceSelection,
+  type ProtocolVersionPin,
 } from "@/hooks/use-conformance-run";
+import type {
+  ConformanceProbeKey,
+  ConformanceProbes,
+} from "@/hooks/use-conformance-probes";
+import { ProbeCheckExtra } from "./ConformanceProbeField";
 import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { toast } from "@/lib/toast";
 import type {
@@ -47,6 +53,7 @@ export function ConformanceSetup({
   defaultsLoaded = true,
   onConnectServer,
   onEditServer,
+  probesFor,
   onCancel,
   onRun,
 }: {
@@ -72,13 +79,22 @@ export function ConformanceSetup({
   onConnectServer?: ConformanceConnectServer;
   /** Opens a server's connection settings, offered when a connect fails. */
   onEditServer?: (serverName: string) => void;
+  /** The tools a server's checks may call, as last set for it. */
+  probesFor?: (serverName: string) => ConformanceProbes;
   onCancel: () => void;
   onRun: (
     serverName: string,
     versionPin: ProtocolVersionPin,
     selection: ConformanceSelection,
+    probes: ConformanceProbes,
   ) => void;
 }) {
+  // The tools the checks that must call one may use, set in step 2's list,
+  // and whether each one's arguments box parses.
+  const [probes, setProbes] = useState<ConformanceProbes>({});
+  const [probeValid, setProbeValid] = useState<
+    Partial<Record<ConformanceProbeKey, boolean>>
+  >({});
   // A draft until Run, so Cancel leaves the page's selection as it was.
   const [serverName, setServerName] = useState(initialServerName);
   const [versionPin, setVersionPin] = useState(initialVersionPin);
@@ -173,6 +189,8 @@ export function ConformanceSetup({
     if (serverName !== selectionFor) {
       setSelection(startingSelection(serverName));
       setSelectionFor(serverName);
+      setProbes(serverName ? (probesFor?.(serverName) ?? {}) : {});
+      setProbeValid({});
     }
     setStep(1);
   };
@@ -293,6 +311,25 @@ export function ConformanceSetup({
                 versionPin={versionPin}
                 selection={selection}
                 onChange={setSelection}
+                // Only HTTP servers run the protocol suite, so only they
+                // are asked for a tool to call.
+                renderProtocolExtra={
+                  picked && isHttpServer(picked)
+                    ? (checkId, isPicked, checkTitle) => (
+                        <ProbeCheckExtra
+                          checkId={checkId}
+                          checkTitle={checkTitle}
+                          isPicked={isPicked}
+                          serverName={picked.name}
+                          probes={probes}
+                          onProbesChange={setProbes}
+                          onValidChange={(key, valid) =>
+                            setProbeValid((prev) => ({ ...prev, [key]: valid }))
+                          }
+                        />
+                      )
+                    : undefined
+                }
               />
             </div>
 
@@ -303,10 +340,12 @@ export function ConformanceSetup({
               <Button
                 disabled={
                   !canContinue ||
-                  nothingPicked(selection, checkCatalogs(versionPin))
+                  nothingPicked(selection, checkCatalogs(versionPin)) ||
+                  Object.values(probeValid).includes(false)
                 }
                 onClick={() => {
-                  if (serverName) onRun(serverName, versionPin, selection);
+                  if (serverName)
+                    onRun(serverName, versionPin, selection, probes);
                 }}
               >
                 {RUN_LABEL}

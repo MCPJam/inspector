@@ -43,6 +43,10 @@ import {
   submitOAuthConformanceCode,
 } from "@/lib/apis/mcp-conformance-api";
 import { deriveOAuthProfileFromServer } from "@/components/oauth/utils";
+import {
+  probesForRun,
+  type ConformanceProbes,
+} from "@/hooks/use-conformance-probes";
 import { resolveServerOAuthProtocolSelection } from "@/state/oauth-orchestrator";
 import {
   createAppsState,
@@ -130,6 +134,12 @@ export interface UseConformanceRunOptions {
   initialVersionPin?: ProtocolVersionPin;
   /** What to run, as picked before Run. Absent ⇒ every check of every suite. */
   selection?: ConformanceSelection;
+  /**
+   * Tools named as safe for the checks that must call one, as set in the
+   * check list. Absent ⇒ nothing on the server is executed, and those checks
+   * report could-not-run.
+   */
+  probes?: ConformanceProbes;
 }
 
 export interface UseConformanceRunResult {
@@ -166,6 +176,7 @@ export function useConformanceRun({
   deferOAuthAuthorization = false,
   initialVersionPin = "auto",
   selection,
+  probes,
 }: UseConformanceRunOptions): UseConformanceRunResult {
   const httpServer = isHttpServer(server);
   const [protocol, setProtocol] = useState<ProtocolSuiteState>(() =>
@@ -185,6 +196,9 @@ export function useConformanceRun({
   // Read when a run starts; the caller passes it once, before Run.
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
+  // Read when the protocol suite starts, like the selection.
+  const probesRef = useRef(probes);
+  probesRef.current = probes;
   const [runVersion, setRunVersion] = useState(0);
 
   const activeServerNameRef = useRef(server.name);
@@ -302,9 +316,13 @@ export function useConformanceRun({
       if (!httpServer) return;
       setProtocol({ status: "running" });
       try {
+        // Only the tools a check in this run calls: a tool named for a
+        // check left out is never executed.
+        const probes = probesForRun(probesRef.current ?? {}, checkIds);
         const { result } = await runProtocolConformance(serverName, {
           protocolVersion: versionPin === "auto" ? undefined : versionPin,
           ...(checkIds ? { checkIds } : {}),
+          ...(probes.logProbe || probes.inputRequiredProbe ? { probes } : {}),
         });
         if (!isRunActive(runToken, serverName)) return;
         setProtocol({ status: "done", result, verdict: verdictOf(result) });

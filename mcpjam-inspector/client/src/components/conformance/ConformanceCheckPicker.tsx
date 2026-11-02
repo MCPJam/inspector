@@ -7,7 +7,7 @@
  * flow, so its checks follow the suite's checkbox.
  */
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import type {
@@ -105,12 +105,22 @@ export function ConformanceCheckPicker({
   onChange,
   countLabel = (picked) => `${picked} checks selected`,
   defaultOpen = false,
+  renderProtocolExtra,
 }: {
   versionPin: ProtocolVersionPin;
   selection: ConformanceSelection;
   onChange: (selection: ConformanceSelection) => void;
   countLabel?: (picked: number, total: number) => string;
   defaultOpen?: boolean;
+  /**
+   * What a protocol check shows under it: the tool it calls, for the checks
+   * that must call one. Given whether each check is picked, and its title.
+   */
+  renderProtocolExtra?: (
+    checkId: string,
+    isPicked: (id: string) => boolean,
+    checkTitle: (id: string) => string | undefined,
+  ) => ReactNode;
 }) {
   const catalogs = checkCatalogs(versionPin);
   const runOAuth = selection.oauth !== false;
@@ -142,6 +152,16 @@ export function ConformanceCheckPicker({
             isPicked={(id) => picked.has(id)}
             onCheckChange={(id, value) =>
               onChange(withPicked(selection, suite, catalog, [id], value))
+            }
+            renderExtra={
+              suite === "protocol" && renderProtocolExtra
+                ? (entry) =>
+                    renderProtocolExtra(
+                      entry.id,
+                      (id) => picked.has(id),
+                      (id) => catalog.find((item) => item.id === id)?.title,
+                    )
+                : undefined
             }
           />
         );
@@ -178,6 +198,7 @@ function SuiteChecks({
   isPicked,
   onCheckChange,
   listNote = ".",
+  renderExtra,
 }: {
   title: string;
   description: string;
@@ -189,6 +210,7 @@ function SuiteChecks({
   isPicked?: (id: string) => boolean;
   onCheckChange?: (id: string, picked: boolean) => void;
   listNote?: string;
+  renderExtra?: (entry: CatalogEntry) => ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const checked =
@@ -236,6 +258,7 @@ function SuiteChecks({
             note={listNote}
             isSelected={isPicked}
             onSelectedChange={onCheckChange}
+            renderExtra={renderExtra}
           />
         </div>
       </Collapse>
