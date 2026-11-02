@@ -607,6 +607,28 @@ describe("suite adapters", () => {
     expect(score.score).toBe(98);
   });
 
+  it("counts the same advice once across an OAuth suite's flows", () => {
+    // Every flow hits the same authorization server, so each reports it.
+    const flow = scoreFromOAuthResult(
+      oauthResult({
+        readiness: [
+          {
+            id: "readiness-oauth-iss-advertised",
+            title: "Authorization Response iss",
+            severity: "warning",
+            specStrength: "RECOMMENDED",
+            message: "…",
+          },
+        ],
+      }),
+      { unscoredCheckIds: ["oauth_token_format"] },
+    );
+    const pooled = pooledConformanceScore([flow, flow, flow]);
+
+    expect(pooled.advisories).toHaveLength(1);
+    expect(pooled.advicePointsLost).toBe(2);
+  });
+
   it("marks unscored OAuth steps pending in the report, with the same score", () => {
     const report = toConformanceReport(oauthResult(), {
       oauthUnscoredCheckIds: ["oauth_token_format"],

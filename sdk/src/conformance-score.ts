@@ -221,7 +221,16 @@ export function pooledConformanceScore(
     // bucket carries no field, and reading it as NaN would poison the pool.
     pending: sum(parts, (part) => part.pending ?? 0),
   };
-  const advisories = parts.flatMap((part) => part.advisories ?? []);
+  // Once per advice id: an OAuth suite runs one flow per strategy against the
+  // same authorization server, and each flow reports the same advice. Ids are
+  // unique across suites, so this holds for a run-wide pool too.
+  const advisories = [
+    ...new Map(
+      parts
+        .flatMap((part) => part.advisories ?? [])
+        .map((advisory) => [advisory.id, advisory] as const),
+    ).values(),
+  ];
 
   // Worst-of, failure outranking incomplete — the same ordering the CLI exit
   // codes and suite reports use. Scoreless parts carry "passed" (nothing
