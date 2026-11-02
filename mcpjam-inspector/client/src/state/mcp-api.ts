@@ -18,7 +18,6 @@ import {
 import {
   getHostedScenarioAccessVersion,
   getHostedScenarioId,
-  getHostedOAuthToken,
 } from "@/lib/apis/web/context";
 import { BootstrapNotReadyError } from "@/lib/app-ready";
 import {
@@ -147,8 +146,7 @@ async function safeValidateHostedServer(
   }
 > {
   try {
-    const oauthToken =
-      extractOAuthToken(serverConfig) ?? getHostedOAuthToken(serverId);
+    const oauthToken = extractOAuthToken(serverConfig);
     return await validateHostedServer(
         serverId,
         oauthToken,

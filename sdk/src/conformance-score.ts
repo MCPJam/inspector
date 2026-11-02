@@ -14,9 +14,12 @@
  *     how much advice fired.
  *   - SEP-1730 sets tier lines at 100% and 80%; the 95/5 split keeps advice
  *     from ever demoting a MUST-clean server across either line. The 95–100
- *     band is reserved for runs that are MUST-clean and complete (a failed or
- *     incomplete run caps at 94), so a violating server can never outrank a
- *     clean-but-advised one and reading ≥95 always means the same thing.
+ *     band is reserved for runs that are MUST-clean and complete, so a
+ *     violating server can never outrank a clean-but-advised one and reading
+ *     ≥95 always means the same thing.
+ *   - A failed or incomplete run scores the plain share of applicable checks
+ *     that passed (capped at 94), so the number never disagrees with the
+ *     passed/applicable fraction shown beside it.
  *   - RFC 2119 makes RECOMMENDED the SHOULD tier ("SHOULD — this word, or the
  *     adjective RECOMMENDED") and MAY the weakest, hence −2 / −1.
  *
@@ -58,8 +61,9 @@ import type {
 import type {
   MCPTasksConformanceResult,
 } from "./tasks-conformance/types.js";
-import type {
-  ConformanceResult as OAuthConformanceResult,
+import {
+  CONFORMANCE_CHECK_METADATA,
+  type ConformanceResult as OAuthConformanceResult,
 } from "./oauth-conformance/types.js";
 
 /** MUSTs own this many of the 100 points; advice owns the remainder. */
@@ -128,23 +132,25 @@ function scoreFromCounts(
 
   let score: number | null = null;
   if (applicable > 0) {
-    const mustPoints = (MUST_POINTS * counts.passed) / applicable;
-    const advicePoints = ADVICE_POINTS - advicePointsLost;
-    score = Math.round(mustPoints + advicePoints);
-    // The bands must mean something, so two caps guard them:
+    // The bands must mean something, so the two outcomes score differently:
     //
-    //   - 95–100 is reserved for runs that are MUST-clean AND complete. With
-    //     a large enough denominator, one failure costs less than the 5-point
-    //     advice budget (95·25/26 + 5 ≈ 96), which would rank a violating
-    //     server above a clean-but-advised one. A failed or incomplete run
-    //     therefore caps at 94: reading ≥95 always means every applicable
-    //     MUST passed and was exercised.
-    //   - 100 is reserved for the run with nothing left to say. Rounding
-    //     alone would print 100 from 95·(n−1)/n + 5 once n ≈ 190.
+    //   - A failed or incomplete run scores the share of applicable checks
+    //     that passed, so the number always matches the fraction beside it.
+    //     The advice budget is only earned by a MUST-clean run: granting it
+    //     here printed 3% next to 0/36. It caps at 94, so reading ≥95 always
+    //     means every applicable MUST passed and was exercised (one failure
+    //     in 62 would otherwise round to 98).
+    //   - A passed run is MUST-clean, so its 95 points are whole and only
+    //     advice moves it within 95–100. 100 is reserved for the run with
+    //     nothing left to say.
     if (outcome !== "passed") {
-      score = Math.min(score, MUST_POINTS - 1);
-    } else if (advisories.length > 0) {
-      score = Math.min(score, 99);
+      score = Math.min(
+        Math.round((100 * counts.passed) / applicable),
+        MUST_POINTS - 1,
+      );
+    } else {
+      score = MUST_POINTS + ADVICE_POINTS - advicePointsLost;
+      if (advisories.length > 0) score = Math.min(score, 99);
     }
   }
 
@@ -312,19 +318,27 @@ function scoreFromWarningChecks(
   checks: Array<OutcomeCheckLike & { warnings?: string[] }>,
   protocolVersion?: string,
   profileStamp?: Pick<ConformanceProfileStamp, "pendingCheckIds">,
+  typedAdvisories: Array<ScoredAdvisory & { checkId: string }> = []
 ): ConformanceScore {
   // Warnings on a PENDING check must not cost points either: the check is not
   // being scored, and letting its advice deduct would move the number a
-  // profile bump is supposed to gate.
+  // profile bump is supposed to gate. Typed advice follows the check it came
+  // from for the same reason.
   const { scored } = partitionByStamp(checks, profileStamp);
+  const scoredIds = new Set(scored.map((check) => check.id));
   return computeConformanceScore(
     checks,
-    scored.flatMap((check) =>
-      (check.warnings ?? []).map((_, index) => ({
-        id: `${check.id}-warning-${index + 1}`,
-        tier: "may" as const,
-      })),
-    ),
+    [
+      ...scored.flatMap((check) =>
+        (check.warnings ?? []).map((_, index) => ({
+          id: `${check.id}-warning-${index + 1}`,
+          tier: "may" as const,
+        }))
+      ),
+      ...typedAdvisories
+        .filter((advisory) => scoredIds.has(advisory.checkId))
+        .map(({ id, tier }) => ({ id, tier })),
+    ],
     protocolVersion,
     profileStamp,
   );
@@ -346,6 +360,26 @@ export function scoreFromTasksResult(
     // reason the protocol suite does: a stored report must score the way it did
     // when it was produced.
     result.profile,
+    // The typed advice channel, read like the protocol suite's readiness:
+    // `informational` advice is reported but never costs points.
+    (result.readiness ?? [])
+      .filter((warning) => warning.informational !== true)
+      .map((warning) => ({
+        id: warning.id,
+        checkId: warning.checkId,
+        tier: warning.specStrength === "MAY" ? "may" : "should",
+      }))
+  );
+}
+
+/**
+ * The ids an OAuth score may leave out: only the listed post-flow checks. A
+ * flow step (discovery, registration, token) always counts, so a stored list
+ * naming one cannot pass a flow that broke there.
+ */
+export function scorableOAuthIds(ids: readonly string[] | undefined): string[] {
+  return (ids ?? []).filter((id) =>
+    Object.prototype.hasOwnProperty.call(CONFORMANCE_CHECK_METADATA, id)
   );
 }
 
@@ -365,14 +399,32 @@ export function scoreFromTasksResult(
  */
 export function scoreFromOAuthResult(
   result: OAuthConformanceResult,
+  options?: {
+    /**
+     * Checks the caller leaves out of the score (see `scorableOAuthIds`;
+     * flow steps always count). OAuth's steps are one
+     * sequential sign-in flow, so they all still RUN; these are reported as
+     * pending (unscored), exactly like a profile's pending checks: out of the
+     * counts and out of the verdict.
+     */
+    unscoredCheckIds?: readonly string[];
+  }
 ): ConformanceScore {
+  const unscored = scorableOAuthIds(options?.unscoredCheckIds);
   if (result.outcome === "not-applicable") {
+    // Unscored steps stay pending here too, so the score and a report that
+    // marks them pending count them the same way.
+    const unscoredIds = new Set(unscored);
+    const pending = result.steps.filter((step) =>
+      unscoredIds.has(step.step)
+    ).length;
     return scoreFromCounts(
       {
         passed: 0,
         failed: 0,
         couldNotRun: 0,
-        notApplicable: result.steps.length,
+        notApplicable: result.steps.length - pending,
+        pending,
       },
       [],
       "passed",
@@ -386,5 +438,10 @@ export function scoreFromOAuthResult(
     ...(step.skipReason ? { skipReason: step.skipReason } : {}),
     ...(step.error?.message ? { error: { message: step.error.message } } : {}),
   }));
-  return computeConformanceScore(checks, [], result.protocolVersion);
+  return computeConformanceScore(
+    checks,
+    [],
+    result.protocolVersion,
+    unscored.length > 0 ? { pendingCheckIds: [...unscored] } : undefined
+  );
 }

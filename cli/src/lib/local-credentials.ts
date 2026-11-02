@@ -3,9 +3,15 @@ import {
   type McpjamInferenceConnection,
   type SuiteFileInferenceOptions,
 } from "@mcpjam/sdk";
+import { trimTrailingSlashes } from "@mcpjam/sdk/internal/deployment";
 import { isPlatformApiError, resolveProject } from "@mcpjam/sdk/platform";
 import { resolveCloudProjectArgs } from "./cloud-scope.js";
-import { CliError, usageError } from "./output.js";
+import {
+  CliError,
+  deploymentCliError,
+  deploymentRefusalOf,
+  usageError,
+} from "./output.js";
 import { resolvePlatformCredential } from "./platform-auth.js";
 import {
   buildPlatformClient,
@@ -46,18 +52,6 @@ export function readProviderKeys(
   return keys;
 }
 
-/**
- * `value` without its trailing slashes. `replace(/\/+$/, "")` is the shorter
- * spelling, but CodeQL rates it `js/polynomial-redos` (high): on input shaped
- * like `"a" + "/".repeat(n) + "b"` the engine retries `\/+$` from every
- * position. Same behaviour, linear.
- */
-function trimTrailingSlashes(value: string): string {
-  let end = value.length;
-  while (end > 0 && value[end - 1] === "/") end -= 1;
-  return value.slice(0, end);
-}
-
 function baseUrlFromEnv(
   env: NodeJS.ProcessEnv,
   name: string,
@@ -96,16 +90,6 @@ export function readProviderBaseUrls(
     ...(anthropic ? { anthropic } : {}),
     ...(ollama ? { ollama } : {}),
   };
-}
-
-/**
- * The MCPJam app base for an API base URL — `/api/v1` stripped EXACTLY once,
- * because the lease client appends it again. A deployment under a path prefix
- * keeps its prefix.
- */
-export function appBaseFromApiBase(apiBaseUrl: string): string {
-  const trimmed = trimTrailingSlashes(apiBaseUrl);
-  return trimmed.replace(/\/api\/v1$/, "");
 }
 
 export type McpjamResolverOptions = {
@@ -210,6 +194,8 @@ export function createMcpjamConnectionResolver(
       );
     } catch (error) {
       if (error instanceof CliError) throw refusalFromCliError(error);
+      const refusal = deploymentRefusalOf(error);
+      if (refusal) throw refusalFromCliError(deploymentCliError(refusal));
       if (isPlatformApiError(error)) {
         const auth =
           error.status === 401 ||
@@ -241,7 +227,7 @@ export function createMcpjamConnectionResolver(
       });
     }
     return {
-      baseUrl: appBaseFromApiBase(built.baseUrl),
+      baseUrl: built.appBaseUrl,
       projectId: resolution.project.id,
       getAuth: () => credential.getAuth(),
       ...(headers ? { headers } : {}),

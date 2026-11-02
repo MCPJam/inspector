@@ -75,4 +75,85 @@ describe("OverallScoreCard", () => {
       screen.queryByText("Nothing applicable to score on this server."),
     ).toBeNull();
   });
+
+  // Staging QA (Asana): a server that needs sign-in, run without a session.
+  const signInBlocked: ScoreSummary = {
+    score: 16,
+    outcome: "failed",
+    applicable: 62,
+    passed: 10,
+    failed: 1,
+    couldNotRun: 51,
+    pending: 15,
+    notApplicable: 3,
+  };
+
+  it("names the sign-in instead of a verdict when checks were refused for credentials", () => {
+    render(
+      <OverallScoreCard
+        score={signInBlocked}
+        serverName="Asana"
+        version="Auto"
+        blockedBySignIn={66}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Incomplete. 51 checks could not run because sign-in failed. 1 check failed. Reconnect the server and run again.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Not conformant/)).toBeNull();
+  });
+
+  it("counts only the checks sign-in blocked, and the rest on their own", () => {
+    render(
+      <OverallScoreCard
+        score={{
+          ...signInBlocked,
+          couldNotRun: 2,
+          failed: 0,
+          outcome: "incomplete",
+        }}
+        serverName="Asana"
+        version="Auto"
+        blockedBySignIn={1}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Incomplete. 1 check could not run because sign-in failed. 1 more could not run. Reconnect the server and run again.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("lists every count on its own and marks a score with unrun checks partial", () => {
+    render(
+      <OverallScoreCard
+        score={signInBlocked}
+        serverName="Asana"
+        version="Auto"
+      />,
+    );
+    expect(
+      screen.getByText("Not conformant. 1 check failed."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "10 passed · 1 failed · 51 could not run · 15 unscored · 3 not applicable",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("10/62 · partial")).toBeInTheDocument();
+  });
+
+  it("does not mark a complete run partial", () => {
+    render(
+      <OverallScoreCard
+        score={passedScore(100)}
+        serverName="srv"
+        version="Auto"
+      />,
+    );
+    expect(screen.getByText("10/10")).toBeInTheDocument();
+    expect(screen.getByText("10 passed")).toBeInTheDocument();
+  });
 });

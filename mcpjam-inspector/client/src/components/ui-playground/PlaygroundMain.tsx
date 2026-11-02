@@ -285,7 +285,6 @@ import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-av
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
-import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { resolvePlaygroundClientColumn } from "@/lib/playground-client-columns";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import { useHostContextStore } from "@/stores/client-context-store";
@@ -965,15 +964,6 @@ export function PlaygroundMain({
         .filter((serverId): serverId is string => !!serverId),
     [selectedServers, serversByName],
   );
-  const hostedOAuthTokens = useMemo(
-    () =>
-      buildOAuthTokensByServerId(
-        selectedServers,
-        (name) => serversByName.get(name),
-        (name) => appState.servers[name]?.oauthTokens?.access_token,
-      ),
-    [selectedServers, serversByName, appState.servers],
-  );
 
   // Mirror the previewed host's chat-execution fields (system prompt,
   // temperature, tool approval, selected servers) into the chat session
@@ -1388,7 +1378,6 @@ export function PlaygroundMain({
         : {}),
       projectId: convexProjectId,
       selectedServerIds: hostedSelectedServerIds,
-      oauthTokens: hostedOAuthTokens,
       // ENVIRONMENT MODE (Phase 2) and host mode are mutually exclusive on the
       // wire — `normalizeExecutionTarget` 400s a body carrying both pointers.
       ...(isEnvironmentMode
@@ -6880,7 +6869,6 @@ export function PlaygroundMain({
                           hostedContext={{
                             projectId: convexProjectId,
                             selectedServerIds: hostedSelectedServerIds,
-                            oauthTokens: hostedOAuthTokens,
                             hostId: column.compareId,
                           }}
                           hostedOrgModelConfig={hostedOrgModelConfig}
@@ -7022,7 +7010,6 @@ export function PlaygroundMain({
                             hostedContext={{
                               projectId: convexProjectId,
                               selectedServerIds: hostedSelectedServerIds,
-                              oauthTokens: hostedOAuthTokens,
                               ...(previewedHostId
                                 ? { hostId: previewedHostId }
                                 : {}),

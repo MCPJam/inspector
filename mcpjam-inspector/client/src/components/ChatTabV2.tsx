@@ -132,7 +132,6 @@ import { useProjectMembers } from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { HOSTED_MODE } from "@/lib/config";
-import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
@@ -424,20 +423,8 @@ export function ChatTabV2({
         .filter((serverId): serverId is string => !!serverId),
     [selectedConnectedServerNames, serversByName]
   );
-  const hostedOAuthTokens = useMemo(
-    () =>
-      buildOAuthTokensByServerId(
-        selectedConnectedServerNames,
-        (name) => serversByName.get(name),
-        (name) => appState.servers[name]?.oauthTokens?.access_token
-      ),
-    [selectedConnectedServerNames, serversByName, appState.servers]
-  );
   const effectiveHostedSelectedServerIds =
     hostedContext?.selectedServerIds ?? hostedSelectedServerIds;
-  const effectiveHostedOAuthTokens = hostedScenarioId
-    ? undefined
-    : hostedContext?.oauthTokens ?? hostedOAuthTokens;
   const isHostedDirectGuest =
     HOSTED_MODE &&
     !isConvexAuthenticated &&
@@ -519,7 +506,6 @@ export function ChatTabV2({
       ...hostedContext,
       projectId: effectiveHostedProjectId,
       selectedServerIds: effectiveHostedSelectedServerIds,
-      oauthTokens: effectiveHostedOAuthTokens,
     },
     executionConfig,
     // Phase 3: forward the resolved chat-tab host style so direct
@@ -2809,7 +2795,6 @@ export function ChatTabV2({
                             ...hostedContext,
                             projectId: effectiveHostedProjectId,
                             selectedServerIds: effectiveHostedSelectedServerIds,
-                            oauthTokens: effectiveHostedOAuthTokens,
                           }}
                           onOAuthRequired={handleOAuthRequired}
                           onSummaryChange={handleMultiModelSummaryChange}

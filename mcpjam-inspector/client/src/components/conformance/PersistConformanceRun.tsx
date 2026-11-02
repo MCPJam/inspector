@@ -52,11 +52,18 @@ function suiteReport(
     error?: string;
     verdict?: string;
     result?: unknown;
-  }
+  },
+  /** OAuth steps this run leaves out of its score; marked pending in the report. */
+  oauthUnscored?: readonly string[]
 ): ConformanceReport {
   if (state.result) {
     try {
-      const report = toConformanceReport(state.result as never);
+      const report = toConformanceReport(
+        state.result as never,
+        kind === "oauth" && oauthUnscored?.length
+          ? { oauthUnscoredCheckIds: oauthUnscored }
+          : undefined
+      );
       if (state.status === "error" && report.outcome === "passed") {
         return {
           ...report,
@@ -180,7 +187,7 @@ export function PersistConformanceRun({
   snapshot: RunSnapshot;
   /**
    * The saved run's id once it is finalized, and null when a new run starts,
-   * so the live view can link to the run it just saved.
+   * so the live view can offer Share for the run it just saved.
    */
   onSavedRun?: (runId: string | null) => void;
 }) {
@@ -355,7 +362,7 @@ export function PersistConformanceRun({
           runId,
           suiteKind: kind,
           status: "completed",
-          report: suiteReport(kind, state),
+          report: suiteReport(kind, state, snapshotRef.current.oauthUnscored),
         });
         return;
       }
@@ -365,7 +372,7 @@ export function PersistConformanceRun({
           runId,
           suiteKind: kind,
           status: state.status === "error" ? "failed" : "completed",
-          report: suiteReport(kind, state),
+          report: suiteReport(kind, state, snapshotRef.current.oauthUnscored),
         });
       }
     };

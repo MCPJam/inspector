@@ -103,7 +103,7 @@ test("the score line goes to stderr with denominator and version, and honors --q
     assert.equal(lines.length, 1);
     assert.equal(
       lines[0],
-      "Score: 51/100 — 1/2 applicable checks passed, 1 failed, 1 advisory (−2) [2025-11-25]\n",
+      "Score: 50/100 — 1/2 applicable checks passed, 1 failed, 1 advisory (−2) [2025-11-25]\n",
     );
 
     lines.length = 0;

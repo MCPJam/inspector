@@ -49,18 +49,27 @@ export type LiveTasksWire = Exclude<TasksWire, "none">;
 export interface TaskLifecycleIdentity {
   scope?: string;
   serverId: string;
+  /** Selected credential binding; never substitute a later default account. */
+  connectionId?: string;
   wire: LiveTasksWire;
   taskId: string;
 }
 
 /** Composite key for {@link TaskLifecycleIdentity}. NUL-joined: no field may contain it. */
 export function taskLifecycleKey(identity: TaskLifecycleIdentity): string {
-  return [
+  const parts = [
     identity.scope ?? "",
     identity.serverId,
     identity.wire,
     identity.taskId,
-  ].join("\u0000");
+  ];
+  if (identity.connectionId !== undefined) parts.push(identity.connectionId);
+  if (
+    parts.some((part) => part.includes("\u0000")) ||
+    identity.connectionId === ""
+  )
+    throw new Error("Invalid task identity");
+  return parts.join("\u0000");
 }
 
 /**

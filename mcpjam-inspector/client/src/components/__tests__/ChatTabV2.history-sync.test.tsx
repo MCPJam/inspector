@@ -140,10 +140,6 @@ vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
 }));
 
-vi.mock("@/lib/oauth/oauth-tokens", () => ({
-  buildOAuthTokensByServerId: vi.fn(() => ({})),
-}));
-
 vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => ({
     servers: {
@@ -557,28 +553,6 @@ describe("ChatTabV2 history sync", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
-  });
-
-  it("suppresses hosted OAuth token fallback for scenario contexts", () => {
-    render(
-      <ChatTabV2
-        {...defaultProps}
-        hostedContext={{
-          scenarioId: "cbx_test",
-          accessVersion: 1,
-          projectId: "project-1",
-          selectedServerIds: ["server-1"],
-        }}
-      />
-    );
-
-    expect(lastUseChatSessionOptionsRef.current?.hostedContext).toMatchObject({
-      scenarioId: "cbx_test",
-      accessVersion: 1,
-    });
-    expect(
-      lastUseChatSessionOptionsRef.current?.hostedContext?.oauthTokens
-    ).toBeUndefined();
   });
 
   it("loads org model config from the effective hosted project id", () => {

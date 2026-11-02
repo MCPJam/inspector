@@ -125,6 +125,7 @@ export function CiEvalsTab({
     availableModels,
     requireOrgKeys,
     onManageOrgProviders,
+    onAddProvider,
   } = useEvalTabContext({
     isAuthenticated,
     projectId: convexProjectId,
@@ -842,6 +843,7 @@ export function CiEvalsTab({
                     availableModels={availableModels}
                     requireOrgKeys={requireOrgKeys}
                     onManageOrgProviders={onManageOrgProviders}
+                    onAddProvider={onAddProvider}
                     route={route}
                     userMap={userMap}
                     navigation={ciNavigation}

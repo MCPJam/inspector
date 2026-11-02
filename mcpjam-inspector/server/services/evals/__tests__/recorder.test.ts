@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "ai";
+import { logger } from "../../../utils/logger";
 import {
   createSuiteRunRecorder,
   startSuiteRunWithRecorder,
@@ -769,6 +770,226 @@ describe("createSuiteRunRecorder", () => {
     expect((endCall?.[1] as any).endOffsetMs).toBeGreaterThanOrEqual(
       (endCall?.[1] as any).startOffsetMs,
     );
+  });
+
+  describe("pairing the pre-created row", () => {
+    const backendSnapshot = (model: string) => ({
+      title: "Case",
+      // The backend stores the case's first prompt, wherever it sits.
+      query: "Say OK.",
+      model,
+      provider: "anthropic",
+    });
+    const startWith = async (
+      iterations: unknown[],
+      args: Parameters<
+        ReturnType<typeof createSuiteRunRecorder>["startIteration"]
+      >[0],
+    ) => {
+      const query = vi.fn(async (ref: string) => {
+        if (ref === "testSuites:getTestSuiteRunDetails") return { iterations };
+        throw new Error(`unexpected query ${ref}`);
+      });
+      const mutation = vi.fn(async () => undefined);
+      const recorder = createSuiteRunRecorder({
+        convexClient: { query, mutation } as any,
+        suiteId: "suite-1",
+        runId: "run-1",
+      });
+      return { iterationId: await recorder.startIteration(args), mutation };
+    };
+
+    it("pairs a case that starts with a tool call, whose query the runner synthesizes", async () => {
+      const { iterationId, mutation } = await startWith(
+        [
+          {
+            _id: "iter-sonnet",
+            testCaseId: "tc1",
+            iterationNumber: 1,
+            testCaseSnapshot: backendSnapshot("claude-sonnet-4.5"),
+          },
+          {
+            _id: "iter-haiku",
+            testCaseId: "tc1",
+            iterationNumber: 1,
+            testCaseSnapshot: backendSnapshot("claude-haiku-4.5"),
+          },
+        ],
+        {
+          testCaseId: "tc1",
+          testCaseSnapshot: {
+            ...backendSnapshot("claude-haiku-4.5"),
+            query: 'Pinned tool call: read_me on "excalidraw"',
+            expectedToolCalls: [],
+          },
+          iterationNumber: 1,
+          startedAt: Date.now(),
+        },
+      );
+
+      expect(iterationId).toBe("iter-haiku");
+      expect(mutation).toHaveBeenCalledWith("testSuites:startTestIteration", {
+        iterationId: "iter-haiku",
+      });
+    });
+
+    it("pairs each of two cases with the same title and prompt with its own row", async () => {
+      const { iterationId } = await startWith(
+        [
+          {
+            _id: "iter-a",
+            testCaseId: "tc-a",
+            iterationNumber: 1,
+            testCaseSnapshot: backendSnapshot("claude-haiku-4.5"),
+          },
+          {
+            _id: "iter-b",
+            testCaseId: "tc-b",
+            iterationNumber: 1,
+            testCaseSnapshot: backendSnapshot("claude-haiku-4.5"),
+          },
+        ],
+        {
+          testCaseId: "tc-b",
+          testCaseSnapshot: {
+            ...backendSnapshot("claude-haiku-4.5"),
+            expectedToolCalls: [],
+          },
+          iterationNumber: 1,
+          startedAt: Date.now(),
+        },
+      );
+
+      expect(iterationId).toBe("iter-b");
+    });
+
+    it("keeps pairing rows without a case id by snapshot, as replays of SDK runs create them", async () => {
+      const { iterationId } = await startWith(
+        [
+          {
+            _id: "iter-first",
+            iterationNumber: 1,
+            testCaseSnapshot: {
+              ...backendSnapshot("claude-haiku-4.5"),
+              title: "First",
+            },
+          },
+          {
+            _id: "iter-second",
+            iterationNumber: 1,
+            testCaseSnapshot: {
+              ...backendSnapshot("claude-haiku-4.5"),
+              title: "Second",
+            },
+          },
+        ],
+        {
+          testCaseSnapshot: {
+            ...backendSnapshot("claude-haiku-4.5"),
+            title: "Second",
+            expectedToolCalls: [],
+          },
+          iterationNumber: 1,
+          startedAt: Date.now(),
+        },
+      );
+
+      expect(iterationId).toBe("iter-second");
+    });
+
+    it("pairs the requested iteration of the case", async () => {
+      const row = (id: string, iterationNumber: number) => ({
+        _id: id,
+        testCaseId: "tc1",
+        iterationNumber,
+        testCaseSnapshot: backendSnapshot("claude-haiku-4.5"),
+      });
+      const { iterationId } = await startWith(
+        [row("iter-1", 1), row("iter-2", 2)],
+        {
+          testCaseId: "tc1",
+          testCaseSnapshot: {
+            ...backendSnapshot("claude-haiku-4.5"),
+            expectedToolCalls: [],
+          },
+          iterationNumber: 2,
+          startedAt: Date.now(),
+        },
+      );
+
+      expect(iterationId).toBe("iter-2");
+    });
+
+    it("tells apart one model configured under two providers", async () => {
+      const row = (id: string, provider: string) => ({
+        _id: id,
+        testCaseId: "tc1",
+        iterationNumber: 1,
+        testCaseSnapshot: { ...backendSnapshot("gpt-4o"), provider },
+      });
+      const { iterationId } = await startWith(
+        [row("iter-openai", "openai"), row("iter-azure", "azure")],
+        {
+          testCaseId: "tc1",
+          testCaseSnapshot: {
+            ...backendSnapshot("gpt-4o"),
+            provider: "azure",
+            expectedToolCalls: [],
+          },
+          iterationNumber: 1,
+          startedAt: Date.now(),
+        },
+      );
+
+      expect(iterationId).toBe("iter-azure");
+    });
+
+    it("pairs nothing when neither the test nor the row has a case id", async () => {
+      const { iterationId } = await startWith(
+        [
+          {
+            _id: "other-case",
+            iterationNumber: 1,
+            testCaseSnapshot: backendSnapshot("claude-haiku-4.5"),
+          },
+        ],
+        { iterationNumber: 1, startedAt: Date.now() },
+      );
+
+      expect(iterationId).toBeUndefined();
+    });
+  });
+
+  it("treats a run whose details answer null as deleted, without logging a pairing miss", async () => {
+    // A deleted run answers null (PLB-52) rather than throwing "not found".
+    const query = vi.fn(async (ref: string) => {
+      if (ref === "testSuites:getTestSuiteRunDetails") return null;
+      throw new Error(`unexpected query ${ref}`);
+    });
+    const recorder = createSuiteRunRecorder({
+      convexClient: { query, mutation: vi.fn() } as any,
+      suiteId: "suite-1",
+      runId: "run-1",
+    });
+    const errorSpy = vi.spyOn(logger, "error");
+    const start = () =>
+      recorder.startIteration({
+        testCaseId: "tc1",
+        iterationNumber: 1,
+        startedAt: Date.now(),
+      });
+
+    expect(await start()).toBeUndefined();
+    expect(await start()).toBeUndefined();
+    const pairingMisses = errorSpy.mock.calls.filter(
+      ([message]) =>
+        message === "[evals] Could not find pre-created iteration for",
+    );
+    errorSpy.mockRestore();
+
+    expect(pairingMisses).toHaveLength(0);
+    expect(recorder.isRunDeleted?.()).toBe(true);
+    expect(query).toHaveBeenCalledTimes(1);
   });
 
   it("flips runDeleted when finishIteration's shared finalize sees 'not found', short-circuiting subsequent startIteration", async () => {

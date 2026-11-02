@@ -33,6 +33,7 @@ import scenarios from "./scenarios.js";
 import swarmRuns from "./swarm-runs.js";
 import swarmGenerate from "./swarm-generate.js";
 import { harnessForwardingApprovals } from "./harness-forwarding.js";
+import { harnessWidgets } from "./harness-widget.js";
 import { harnessMcp } from "./harness-mcp.js";
 import apps from "./apps.js";
 import evals from "./evals.js";
@@ -287,6 +288,7 @@ web.route("/chat-v2", chatV2);
 // /guest-token. `sessionAuthMiddleware` already bypasses /api/web/*. The Claude
 // Code harness (in a cloud sandbox) connects its MCP through here.
 web.use("/harness-forwarding/*", bearerAuthMiddleware, denyGuests("Forwarding approval"));
+web.route("/harness-forwarding", harnessWidgets);
 web.route("/harness-forwarding", harnessForwardingApprovals);
 web.route("/harness-mcp", harnessMcp);
 web.route("/mcpjam-agent", mcpjamAgent);

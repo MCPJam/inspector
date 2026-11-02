@@ -16,6 +16,8 @@
  */
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { HarnessMcpJson } from "../../mcp-config.js";
+import { renderCodexNativeMcpServers } from "../shared/native-mcp.js";
 import { RELAY_MCP_SERVER_NAME } from "../shared/tool-names.js";
 
 /** TOML string literal. JSON's string grammar is a subset of TOML's basic
@@ -37,6 +39,7 @@ const tomlString = (value: string): string => JSON.stringify(value);
  */
 
 export type CodexHomeInput = {
+  nativeMcpServers?: HarnessMcpJson["mcpServers"];
   /** Where to write. Created if absent. */
   codexHome: string;
   /** The OpenAI-protocol base URL (MCPJam's metered model proxy). */
@@ -181,6 +184,8 @@ export function renderCodexConfigToml(input: CodexHomeInput): string {
         : []),
     );
   }
+
+  if (input.nativeMcpServers) lines.push(...renderCodexNativeMcpServers({ mcpServers: input.nativeMcpServers }));
 
   for (const path of new Set(input.untrustedProjectPaths ?? [])) {
     lines.push("", `[projects.${tomlString(path)}]`, 'trust_level = "untrusted"');

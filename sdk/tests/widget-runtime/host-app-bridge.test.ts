@@ -314,3 +314,12 @@ it.each(["factory", "retained-official"])(
     }
   }
 );
+
+
+it("preserves all text blocks in the standard App follow-up handler", async () => {
+  const onSendFollowUp = vi.fn();
+  const bridge = createHostAppBridge({ hostInfo: { name: "Claude", version: "1" }, hostCapabilities: { message: { text: {} } } });
+  registerHostBridgeHandlers(bridge, { effectiveHostCapabilities: { message: { text: {} } }, callbacks: { onSendFollowUp } });
+  await bridge.onmessage!({ role: "user", content: [{ type: "text", text: "first" }, { type: "text", text: "second" }] }, {} as never);
+  expect(onSendFollowUp).toHaveBeenCalledExactlyOnceWith("first\nsecond");
+});
