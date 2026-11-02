@@ -109,6 +109,7 @@ export async function handleManagedChatTurn(
       modelDefinition,
       turnMode,
       hostRuntimeConfig,
+      harnessHostCapabilities,
       environmentSpec,
       scenarioEnvironment,
       authoritativeConnectionPolicy,
@@ -420,6 +421,8 @@ export async function handleManagedChatTurn(
                 harness: resolvedExecution.harness,
                 agentLoop: resolvedExecution.agentLoop,
                 ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
+                requireNativeToolDiscovery: resolvedExecution.requireNativeToolDiscovery,
+                harnessHostCapabilities,
               }
             : {}),
           ...(tasksSeam ? { tasks: tasksSeam } : {}),
@@ -504,6 +507,7 @@ export async function handleManagedChatTurn(
           },
         },
         persist: {
+          requireNativeToolDiscovery: resolvedExecution.requireNativeToolDiscovery,
           executionBindingVersion: resolvedExecution.executionBindingVersion,
           executionTarget: toResumeExecutionTarget(executionTarget),
           chatSessionId: body.chatSessionId,
@@ -521,7 +525,7 @@ export async function handleManagedChatTurn(
           ...(scenarioBox ? { scenarioBox } : {}),
           ...(scenarioParticipant ? { scenarioParticipant: true } : {}),
           authenticatedUserId,
-          ...(hostId ? { hostId } : {}),
+          ...(sourceType === "direct" && typeof hostRuntimeConfig?.hostId === "string" ? { hostId: hostRuntimeConfig.hostId } : hostId ? { hostId } : {}),
           originalMessages: messages,
           ...(resolvedExecution.harness
             ? {
@@ -623,6 +627,7 @@ export async function handleManagedChatTurn(
                   requestedTemperature: temperature,
                   resolvedTemperature,
                   requireToolApproval,
+                  requireNativeToolDiscovery: resolvedExecution.requireNativeToolDiscovery,
                   respectToolVisibility,
                   modelVisibleMcpToolResults:
                     resolvedExecution.modelVisibleMcpToolResults,

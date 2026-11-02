@@ -411,6 +411,9 @@ describe.each([true])(
         return v1Response(request.method, url.pathname);
       });
       global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
         const url = String(input);
         if (url === `${CONVEX_URL}/web/authorize-project`) {
           return v1Json({
@@ -906,6 +909,9 @@ describe.each([true])(
         backendUp = true;
         const edges = global.fetch;
         global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
           if (String(input) !== CLAIM_URL) return edges(input, init);
           if (!backendUp) return v1Json({ ok: false });
           const { nonceHash } = JSON.parse(String(init?.body ?? "{}"));

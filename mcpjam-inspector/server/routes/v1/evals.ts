@@ -2733,6 +2733,7 @@ function hostConfigDtoToInput(dto: any): Record<string, unknown> {
     clientCapabilities: dto.clientCapabilities,
     hostContext: dto.hostContext,
     ...opt("progressiveToolDiscovery"),
+    ...opt("requireNativeToolDiscovery"),
     ...opt("respectToolVisibility"),
     ...opt("modelVisibleMcpToolResults"),
     ...opt("mcpToolResultImageRendering"),
