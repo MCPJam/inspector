@@ -157,11 +157,11 @@ export function readComparisonAuthRecovery(
 }
 const restoredColumns = new Map<string, Set<string>>();
 /**
- * A restored column loaded its history. Once every saved column has, the
- * saved comparison is cleared, so a later reload starts from the current
- * layout instead of bringing the old one back.
+ * A restored column loaded its history, or failed to. Once every saved column
+ * has settled, the saved comparison is cleared, so a later reload starts from
+ * the current layout instead of bringing the old one back.
  */
-export function markComparisonColumnRestored(
+export function markComparisonColumnSettled(
   projectId: string,
   column: Pick<ComparisonRecoveryColumn, "kind" | "compareId">,
 ) {

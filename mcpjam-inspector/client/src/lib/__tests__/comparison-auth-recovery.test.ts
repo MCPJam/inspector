@@ -5,7 +5,7 @@ import {
   prepareComparisonAuthRecovery,
   readComparisonAuthRecovery,
   clearComparisonAuthRecovery,
-  markComparisonColumnRestored,
+  markComparisonColumnSettled,
 } from "../comparison-auth-recovery";
 
 describe("comparison OAuth restoration", () => {
@@ -70,9 +70,9 @@ describe("comparison OAuth restoration", () => {
     expect(prepareComparisonAuthRecovery("restored", "low", "call1")).toEqual({
       ok: true,
     });
-    markComparisonColumnRestored("p1", { kind: "model", compareId: "low" });
+    markComparisonColumnSettled("p1", { kind: "model", compareId: "low" });
     expect(readComparisonAuthRecovery("p1")).not.toBeNull();
-    markComparisonColumnRestored("p1", { kind: "model", compareId: "high" });
+    markComparisonColumnSettled("p1", { kind: "model", compareId: "high" });
     expect(readComparisonAuthRecovery("p1")).toBeNull();
     expect(window.location.search).toBe("");
     expect(sessionStorage.getItem("mcp-comparison-auth-v1:restored")).toBeNull();

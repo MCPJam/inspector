@@ -12,7 +12,7 @@ import {
   type ExtensionOwnerIdentity,
 } from "@/components/host-workspace/extension-owners";
 import {
-  markComparisonColumnRestored,
+  markComparisonColumnSettled,
   readComparisonAuthRecovery,
   registerComparisonColumn,
   prepareComparisonAuthRecovery,
@@ -682,7 +682,7 @@ export function MultiModelPlaygroundCard({
             recoveryResult: "column_restored",
           });
           setRecoveryStatus("ready");
-          markComparisonColumnRestored(hostedContext?.projectId ?? "local", {
+          markComparisonColumnSettled(hostedContext?.projectId ?? "local", {
             kind: recoveryColumn.kind,
             compareId: recoveryColumn.compareId,
           });
@@ -695,6 +695,12 @@ export function MultiModelPlaygroundCard({
           chatSessionId: recoveryColumn.chatSessionId,
           projectId: hostedContext?.projectId,
           recoveryResult: "column_restore_failed",
+        });
+        // A failed column is settled too: left saved, the next reload would
+        // bring the sign-in-time layout back and fail the same way.
+        markComparisonColumnSettled(hostedContext?.projectId ?? "local", {
+          kind: recoveryColumn.kind,
+          compareId: recoveryColumn.compareId,
         });
       });
     return () => {

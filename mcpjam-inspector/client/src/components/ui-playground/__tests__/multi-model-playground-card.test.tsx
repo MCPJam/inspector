@@ -959,5 +959,8 @@ describe("comparison redirect restoration", () => {
     );
     expect(mockUseChatSession.loadChatSession).not.toHaveBeenCalled();
     expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    // A reload must not bring the failed comparison back.
+    expect(window.location.search).toBe("");
+    expect(sessionStorage.getItem("mcp-comparison-auth-v1:group")).toBeNull();
   });
 });
