@@ -562,7 +562,6 @@ export function ConformanceContent({
                   <ConformanceRunShareButton
                     runId={savedRunId}
                     finished={!isRunning}
-                    sharingEnabled={false}
                   />
                 ) : (
                   // Not saved yet: Share waits for the run to finish.

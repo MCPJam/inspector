@@ -8,22 +8,18 @@ import {
 } from "@testing-library/react";
 import type { ConformanceRunListItem } from "../ConformanceHistory";
 
-const {
-  navigateMock,
-  useArtifactQueryMock,
-  fetchArtifactMock,
-  setSharingMock,
-} = vi.hoisted(() => ({
-  navigateMock: vi.fn(),
-  useArtifactQueryMock: vi.fn(),
-  setSharingMock: vi.fn(),
-  fetchArtifactMock: vi.fn(),
-}));
+const { navigateMock, useArtifactQueryMock, fetchArtifactMock } = vi.hoisted(
+  () => ({
+    navigateMock: vi.fn(),
+    useArtifactQueryMock: vi.fn(),
+    fetchArtifactMock: vi.fn(),
+  }),
+);
 
 vi.mock("convex/react", () => ({
   useQuery: vi.fn(),
   useMutation: () => vi.fn(),
-  useAction: () => setSharingMock,
+  useAction: () => vi.fn(),
 }));
 
 vi.mock("@/lib/artifact-urls", () => ({
@@ -36,8 +32,14 @@ vi.mock("@/lib/app-navigation", async (importOriginal) => {
   return { ...actual, useAppNavigate: () => navigateMock };
 });
 
-vi.mock("posthog-js/react", () => ({
-  useFeatureFlagEnabled: () => false,
+// The panel reads share settings from Convex; these specs only need to know
+// which resource the dialog opened for.
+vi.mock("@/components/sharing/ResourceSharePanel", () => ({
+  ResourceSharePanel: (props: { resourceType: string; resourceId: string }) => (
+    <div data-testid="stub-share-panel">
+      {props.resourceType}:{props.resourceId}
+    </div>
+  ),
 }));
 
 import { ConformanceRunDetailPage } from "../ConformanceHistory";
@@ -120,7 +122,6 @@ describe("ConformanceRunDetailPage", () => {
   beforeEach(() => {
     useArtifactQueryMock.mockReset();
     fetchArtifactMock.mockReset();
-    setSharingMock.mockReset();
   });
 
   it("says it is loading until the run arrives", () => {
@@ -146,28 +147,37 @@ describe("ConformanceRunDetailPage", () => {
     expect(screen.getByRole("button", { name: "Run again" })).toBeDefined();
   });
 
-  it("offers Share on a private run, which turns sharing on", async () => {
-    setSharingMock.mockResolvedValue({ enabled: false });
+  it("opens the share dialog for this run from Share", () => {
     useArtifactQueryMock.mockReturnValue(run([report()]));
     render(<ConformanceRunDetailPage runId="run_1" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
-    await waitFor(() =>
-      expect(setSharingMock).toHaveBeenCalledWith({
-        runId: "run_1",
-        enabled: true,
-      }),
+    expect(screen.getByTestId("stub-share-panel")).toHaveTextContent(
+      "conformanceRun:run_1",
     );
   });
 
-  it("keeps a way to stop sharing a run that is already shared", () => {
+  it("keeps Share disabled while the run is still going", () => {
+    useArtifactQueryMock.mockReturnValue(
+      run([report({ status: "running", outcome: null })], {
+        status: "running",
+        outcome: null,
+      }),
+    );
+    render(<ConformanceRunDetailPage runId="run_1" />);
+
+    expect(screen.getByRole("button", { name: "Share" })).toBeDisabled();
+  });
+
+  it("opens the same dialog for a run shared with the old toggle", () => {
     useArtifactQueryMock.mockReturnValue(
       run([report()], { sharingEnabled: true }),
     );
     render(<ConformanceRunDetailPage runId="run_1" />);
-    expect(
-      screen.getByRole("button", { name: /Shareable/ }),
-    ).toBeInTheDocument();
+
+    expect(screen.queryByRole("button", { name: /Shareable/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    expect(screen.getByTestId("stub-share-panel")).toBeInTheDocument();
   });
 
   it("names the server from the project's saved servers", () => {
