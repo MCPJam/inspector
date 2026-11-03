@@ -858,6 +858,12 @@ export const startSuiteRunWithRecorder = async ({
     if (aiRefusal) {
       throw aiRefusal;
     }
+    // An organization already over its spend budget is refused by the
+    // allowance pre-check, before any run row exists.
+    const feeRefusal = platformFeeRefusalError(error);
+    if (feeRefusal) {
+      throw feeRefusal;
+    }
     // The environment resolves to no model — no override on it, none pinned on
     // its client — so the backend refused before creating anything. Remediable
     // and specific, so it gets its own 409 rather than surfacing as an opaque
@@ -946,6 +952,9 @@ export const startSuiteRunWithRecorder = async ({
         runId,
         code: refusal.code,
         status: refusal.status,
+        // `code` is FORBIDDEN for every 403 refusal; the backend code tells
+        // them apart.
+        reason: refusal.details?.reason ?? refusal.details?.code,
       });
     } else {
       logger.error("[evals] Failed to pre-create suite run iterations", error, {

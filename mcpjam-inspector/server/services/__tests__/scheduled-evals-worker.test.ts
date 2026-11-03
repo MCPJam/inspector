@@ -3,6 +3,7 @@ import {
   classifyFailure,
   startScheduledEvalsWorker,
 } from "../scheduled-evals-worker";
+import { platformFeeRefusalError } from "../evals/platform-fee-refusal";
 
 const CLAIM = {
   triggerId: "trig-1",
@@ -120,6 +121,14 @@ describe("classifyFailure", () => {
     expect(
       classifyFailure(
         new Error('{"code":"ORGANIZATION_SPEND_BUDGET_REACHED"}'),
+      ),
+    ).toBe("quota_exhausted");
+    // The recorder's 403 names the code in `details.reason`, not its message.
+    expect(
+      classifyFailure(
+        platformFeeRefusalError({
+          data: { code: "ORGANIZATION_SPEND_BUDGET_REACHED" },
+        }),
       ),
     ).toBe("quota_exhausted");
   });
