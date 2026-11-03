@@ -559,8 +559,8 @@ export class MCPAppsConformanceTest {
                 skippedResult(
                   "ui-tools-present",
                   "not-applicable",
-                  "Not applicable",
-                ),
+                  "Not applicable"
+                )
               );
             } else if (uiTools.length === 0) {
               checks.push(

@@ -422,6 +422,8 @@ describe("ConformanceTab", () => {
       screen.getByText("Nothing applicable to score on this server."),
     ).toBeInTheDocument();
     expect(screen.queryByText("%")).toBeNull();
+    const protocolHeader = screen.getByText(SUITE_COPY.protocol.title).closest("button")!;
+    expect(within(protocolHeader).getByText("NOT APPLICABLE")).toBeInTheDocument();
     const appsHeader = screen.getByText(SUITE_COPY.apps.title).closest("button")!;
     expect(within(appsHeader).getByText("NOT APPLICABLE")).toBeInTheDocument();
     expect(within(appsHeader).getByText(SUITE_COPY.apps.description)).toBeInTheDocument();

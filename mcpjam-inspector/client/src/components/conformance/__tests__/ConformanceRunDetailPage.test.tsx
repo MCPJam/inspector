@@ -233,6 +233,7 @@ describe("ConformanceRunDetailPage", () => {
     expect(screen.queryByText("Nothing here applied to this server, so it was not scored.")).toBeNull();
     fireEvent.click(header);
     expect(header).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/^7 checks in this suite\.$/)).toBeInTheDocument();
   });
 
   it("shows a suite with nothing applicable as NOT APPLICABLE, without a score", () => {
@@ -265,23 +266,23 @@ describe("ConformanceRunDetailPage", () => {
     expect(fetchArtifactMock).not.toHaveBeenCalled();
   });
 
-  it("says a skipped suite was not run, not that nothing applies", () => {
+  it.each(["oauth", "apps"])("keeps the skipped %s reason and not-run note", (suiteKind) => {
     useArtifactQueryMock.mockReturnValue(
       run([
         report(),
         report({
-          suiteKind: "oauth",
+          suiteKind,
           status: "skipped",
           score: null,
           applicable: 0,
           passed: 0,
-          incompleteReason: "OAuth was skipped.",
+          incompleteReason: `${suiteKind} was skipped.`,
         }),
       ]),
     );
     render(<ConformanceRunDetailPage runId="run_1" />);
 
-    const oauth = screen.getByText("OAuth was skipped.").closest("button")!;
+    const oauth = screen.getByText(`${suiteKind} was skipped.`).closest("button")!;
     fireEvent.click(oauth);
     expect(screen.getByText(/checks in this suite\. Not run\./)).toBeInTheDocument();
     expect(screen.queryByText(/None apply to this server/)).toBeNull();

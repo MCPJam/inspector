@@ -540,6 +540,12 @@ function SavedSuiteRow({
   const notApplicable =
     report.status === "skipped" ||
     (settled && report.score == null && report.applicable === 0);
+  const absentApps =
+    report.suiteKind === "apps" &&
+    report.status === "completed" &&
+    report.outcome === "passed" &&
+    report.score == null &&
+    report.applicable === 0;
   const [override, setOverride] = useState<boolean | null>(null);
   // A suite that did not apply stays shut but still opens on click, to its
   // list of checks.
@@ -569,7 +575,7 @@ function SavedSuiteRow({
       subtitle={
         noResult
           ? "This suite did not report a result for this run."
-          : notApplicable && report.suiteKind !== "apps"
+          : notApplicable && !absentApps
             ? (report.incompleteReason ??
               "Nothing here applied to this server, so it was not scored.")
             : copy.description
@@ -592,10 +598,10 @@ function SavedSuiteRow({
         <CatalogList
           catalog={suiteCatalog(report.suiteKind)}
           note={
-            report.suiteKind === "apps"
-              ? ""
-              : report.status === "skipped"
-                ? ". Not run."
+            report.status === "skipped"
+              ? ". Not run."
+              : absentApps
+                ? "."
                 : ". None apply to this server."
           }
         />
