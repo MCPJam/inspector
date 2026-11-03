@@ -2329,10 +2329,10 @@ export class MCPTasksConformanceTest {
               const unnamed = rejections.filter(
                 (probe) => !isRecord(probe.requiredCapabilities)
               );
-              // Naming the tasks extension specifically is what the extension's
-              // own examples show, and it is what makes the error actionable —
-              // but the SCHEMA only says `ClientCapabilities`, so demanding the
-              // exact key would promote an example to a requirement. Advice.
+              // The core spec: a `-32021` "whose `data.requiredCapabilities`
+              // lists the missing capabilities" (basic/index.mdx, a MUST). The
+              // missing capability here IS the tasks extension, so an object
+              // that does not name it under `extensions` breaks that MUST too.
               const unspecific = rejections.filter((probe) => {
                 const capabilities = probe.requiredCapabilities;
                 if (!isRecord(capabilities)) return false;
@@ -2342,13 +2342,29 @@ export class MCPTasksConformanceTest {
                   !(MCP_TASKS_EXTENSION_ID in extensions)
                 );
               });
+              const problems = [
+                ...(unnamed.length > 0
+                  ? [
+                      `${unnamed.length} -32021 rejection(s) carried no error.data.requiredCapabilities OBJECT: ${unnamed
+                        .map((probe) => probe.method)
+                        .join(", ")}. The core schema types it as ClientCapabilities and requires it; a client told it is missing a capability, but not which one, cannot act on the error`,
+                    ]
+                  : []),
+                ...(unspecific.length > 0
+                  ? [
+                      `${unspecific.length} -32021 rejection(s) carry a requiredCapabilities object that does not name ${MCP_TASKS_EXTENSION_ID} under \`extensions\`: ${unspecific
+                        .map((probe) => probe.method)
+                        .join(", ")}. The core spec requires it to list the missing capabilities, and the missing one is the tasks extension`,
+                    ]
+                  : []),
+              ];
               checks.push(
                 rejections.length === 0
                   ? couldNotRun(
                       "tasks-undeclared-capability-names-requirements",
                       "no request was rejected with -32021, so no error payload named a required capability"
                     )
-                  : unnamed.length === 0
+                  : problems.length === 0
                     ? passed(
                         "tasks-undeclared-capability-names-requirements",
                         Date.now() - stepStartedAt,
@@ -2357,23 +2373,15 @@ export class MCPTasksConformanceTest {
                             method: probe.method,
                             requiredCapabilities: probe.requiredCapabilities,
                           })),
-                        },
-                        unspecific.length > 0
-                          ? [
-                              `${unspecific.length} -32021 rejection(s) carry a requiredCapabilities object that does not name ${MCP_TASKS_EXTENSION_ID} under \`extensions\`: ${unspecific
-                                .map((probe) => probe.method)
-                                .join(", ")}. The extension's own examples do, and a client cannot act on a requirement it cannot identify`,
-                            ]
-                          : undefined
+                        }
                       )
                     : failed(
                         "tasks-undeclared-capability-names-requirements",
                         Date.now() - stepStartedAt,
-                        `${unnamed.length} -32021 rejection(s) carried no error.data.requiredCapabilities OBJECT: ${unnamed
-                          .map((probe) => probe.method)
-                          .join(", ")}. The core schema types it as ClientCapabilities and requires it; a client told it is missing a capability, but not which one, cannot act on the error`,
+                        problems.join(" "),
                         {
                           unnamed: unnamed.map((probe) => probe.method),
+                          unspecific: unspecific.map((probe) => probe.method),
                         }
                       )
               );

@@ -1102,6 +1102,26 @@ describe("undeclared task requests (-32021)", () => {
     ]);
   });
 
+  it("fails a -32021 whose requiredCapabilities does not name the extension", async () => {
+    // The core spec: the error's `data.requiredCapabilities` "lists the
+    // missing capabilities" (a MUST). The missing one is the tasks extension.
+    const result = await runProbe({
+      "tasks/get": () => {
+        throw Object.assign(new Error("missing capability"), {
+          code: -32021,
+          data: { requiredCapabilities: { elicitation: {} } },
+        });
+      },
+    });
+
+    const check = result.checks.find(
+      (c) => c.id === "tasks-undeclared-capability-names-requirements"
+    );
+    expect(check?.status).toBe("failed");
+    expect(check?.error?.message).toContain("does not name");
+    expect(check?.details).toMatchObject({ unspecific: ["tasks/get"] });
+  });
+
   for (const method of [
     "tasks/get",
     "tasks/update",

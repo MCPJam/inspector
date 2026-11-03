@@ -178,10 +178,13 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
  * that need a task need one the scored lifecycle checks already need, so a run
  * that creates none was already incomplete.
  *
- * v2026-11-01.2 → v2026-11-02.1 keeps the same checks but tightens one:
- * `tasks-undeclared-creation-refused` now fails a refusal with any code other
- * than `-32021`, which tasks.md:63 states as a MUST. It used to pass with a
- * warning, so a server refusing with another code scores lower.
+ * v2026-11-01.2 → v2026-11-02.1 keeps the same checks but tightens two, each
+ * of which used to pass with a warning:
+ *   - `tasks-undeclared-creation-refused` fails a refusal with any code other
+ *     than `-32021`, which tasks.md:63 states as a MUST.
+ *   - `tasks-undeclared-capability-names-requirements` fails a `-32021` whose
+ *     `requiredCapabilities` does not name the tasks extension; the core spec
+ *     requires it to list the missing capabilities (basic/index.mdx, a MUST).
  *
  * A SEPARATE profile rather than a section of `mcp-protocol`, which was the
  * open design question. Two reasons settled it:
