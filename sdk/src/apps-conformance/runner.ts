@@ -26,6 +26,7 @@ import {
   type MCPAppsSkipReason,
   type MCPAppsConformanceConfig,
   type MCPAppsConformanceResult,
+  type MCPAppsReadinessWarning,
   type MCPAppsResourceReadOutcome,
   type NormalizedMCPAppsConformanceConfig,
 } from "./types.js";
@@ -483,6 +484,8 @@ export class MCPAppsConformanceTest {
         this.config.serverConfig as MCPServerConfig,
         async (manager, serverId) => {
           const checks: MCPAppsCheckResult[] = [];
+          // Advice reported beside the verdict rather than as check warnings.
+          const readiness: MCPAppsReadinessWarning[] = [];
           let tools: MCPListedTool[] = [];
           let resources: MCPResource[] = [];
           let toolsError: unknown;
@@ -606,7 +609,7 @@ export class MCPAppsConformanceTest {
               );
             } else {
               const violations: string[] = [];
-              const warnings: string[] = [];
+              const legacyFieldTools: string[] = [];
 
               for (const tool of uiTools) {
                 const sourceTool = tools.find((entry) => entry.name === tool.name);
@@ -661,10 +664,23 @@ export class MCPAppsConformanceTest {
                 }
 
                 if (tool.usesLegacyField) {
-                  warnings.push(
-                    `Tool ${tool.name} uses deprecated _meta["ui/resourceUri"]; prefer _meta.ui.resourceUri`,
-                  );
+                  legacyFieldTools.push(tool.name);
                 }
+              }
+
+              // apps.mdx: the flat field "is deprecated" and "will be removed
+              // before GA". No SHOULD or MAY, so it is a deprecation notice.
+              if (legacyFieldTools.length > 0) {
+                readiness.push({
+                  id: "apps-readiness-deprecated-resource-uri",
+                  checkId: "ui-tool-metadata-valid",
+                  title: "Deprecated ui/resourceUri Field",
+                  severity: "warning",
+                  specStrength: "Deprecation Notice",
+                  message: `${legacyFieldTools.join(", ")} still use _meta["ui/resourceUri"], which will be removed before GA; use _meta.ui.resourceUri instead.`,
+                  details: { tools: legacyFieldTools },
+                  informational: true,
+                });
               }
 
               // Tool-name conventions are core MCP rules, so they are advised
@@ -680,8 +696,6 @@ export class MCPAppsConformanceTest {
                       violations,
                       uiToolNames: uiTools.map((tool) => tool.name),
                     },
-                    undefined,
-                    warnings,
                   ),
                 );
               } else {
@@ -693,7 +707,6 @@ export class MCPAppsConformanceTest {
                       uiToolCount: uiTools.length,
                       uiToolNames: uiTools.map((tool) => tool.name),
                     },
-                    warnings,
                   ),
                 );
               }
@@ -1049,6 +1062,7 @@ export class MCPAppsConformanceTest {
               ? { protocolVersion: negotiatedProtocolVersion }
               : {}),
             checks,
+            ...(readiness.length > 0 ? { readiness } : {}),
             summary: buildSummary(checks),
             durationMs: Date.now() - startedAt,
             categorySummary: summarizeChecks(checks),

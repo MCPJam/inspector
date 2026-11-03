@@ -256,7 +256,7 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     // §15.4: any readiness advice is reported but never changes the verdict.
     for (const item of result.readiness) {
       expect(item.severity).toBe("warning");
-      expect(["SHOULD", "RECOMMENDED", "MAY"]).toContain(item.specStrength);
+      expect(["SHOULD", "MAY"]).toContain(item.specStrength);
       expect(item.message.length).toBeGreaterThan(0);
     }
     // The point of §15.4 is that advice never becomes a violation. `passed` is

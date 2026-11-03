@@ -220,7 +220,7 @@ describe("OAuthConformanceTest", () => {
       expect.objectContaining({
         id: "readiness-oauth-iss-advertised",
         title: "Authorization Response iss",
-        specStrength: "RECOMMENDED",
+        specStrength: "SHOULD",
         details: { issuer: expect.stringContaining("auth.example.com") },
       }),
     ]);

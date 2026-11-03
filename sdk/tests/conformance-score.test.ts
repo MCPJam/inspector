@@ -149,7 +149,7 @@ describe("computeConformanceScore", () => {
     expect(score.outcome).toBe("passed");
   });
 
-  it("weights SHOULD/RECOMMENDED advice at 2 points and MAY at 1", () => {
+  it("weights SHOULD advice at 2 points and MAY at 1", () => {
     const should = computeConformanceScore(passing(10), [
       { id: "a", tier: "should" },
     ]);
@@ -355,7 +355,7 @@ describe("suite adapters", () => {
     };
   }
 
-  it("maps protocol readiness onto tiers by spec strength, RECOMMENDED folding into SHOULD", () => {
+  it("maps protocol readiness onto tiers by spec strength", () => {
     const score = scoreFromProtocolResult(
       protocolResult({
         readiness: [
@@ -363,7 +363,7 @@ describe("suite adapters", () => {
             id: "readiness-tool-order-deterministic",
             title: "Deterministic Tool Order",
             severity: "warning",
-            specStrength: "RECOMMENDED",
+            specStrength: "SHOULD",
             message: "…",
           },
         ],
@@ -593,7 +593,7 @@ describe("suite adapters", () => {
             id: "readiness-oauth-iss-advertised",
             title: "Authorization Response iss",
             severity: "warning",
-            specStrength: "RECOMMENDED",
+            specStrength: "SHOULD",
             message: "…",
           },
         ],
@@ -616,7 +616,7 @@ describe("suite adapters", () => {
             id: "readiness-oauth-iss-advertised",
             title: "Authorization Response iss",
             severity: "warning",
-            specStrength: "RECOMMENDED",
+            specStrength: "SHOULD",
             message: "…",
           },
         ],

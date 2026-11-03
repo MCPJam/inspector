@@ -356,7 +356,19 @@ function scoreFromWarningChecks(
 export function scoreFromAppsResult(
   result: MCPAppsConformanceResult,
 ): ConformanceScore {
-  return scoreFromWarningChecks(result.checks, result.protocolVersion);
+  return scoreFromWarningChecks(
+    result.checks,
+    result.protocolVersion,
+    undefined,
+    // The typed advice channel, read like the Tasks suite's.
+    (result.readiness ?? [])
+      .filter((warning) => warning.informational !== true)
+      .map((warning) => ({
+        id: warning.id,
+        checkId: warning.checkId,
+        tier: warning.specStrength === "MAY" ? "may" : "should",
+      }))
+  );
 }
 
 export function scoreFromTasksResult(

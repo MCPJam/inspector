@@ -6,6 +6,7 @@ import type {
   MCPReadResourceResult,
   MCPServerConfig,
 } from "../mcp-client-manager/index.js";
+import type { MCPReadinessWarning } from "../mcp-conformance/types.js";
 
 export const MCP_APPS_CHECK_CATEGORIES = ["tools", "resources"] as const;
 
@@ -22,6 +23,26 @@ export const MCP_APPS_CHECK_IDS = [
 ] as const;
 
 export type MCPAppsCheckId = (typeof MCP_APPS_CHECK_IDS)[number];
+
+/**
+ * The Apps suite's advice channel, typed with its spec strength like the
+ * protocol suite's readiness warnings. Informational until advice has a
+ * grading rubric.
+ */
+export const MCP_APPS_READINESS_IDS = [
+  "apps-readiness-deprecated-resource-uri",
+] as const;
+
+export type MCPAppsReadinessId = (typeof MCP_APPS_READINESS_IDS)[number];
+
+export interface MCPAppsReadinessWarning extends Omit<
+  MCPReadinessWarning,
+  "id"
+> {
+  id: MCPAppsReadinessId;
+  /** The check that produced this advice. */
+  checkId: MCPAppsCheckId;
+}
 
 export type MCPAppsCheckStatus = "passed" | "failed" | "skipped";
 
@@ -98,6 +119,8 @@ export interface MCPAppsConformanceResult {
    */
   protocolVersion?: string;
   checks: MCPAppsCheckResult[];
+  /** SHOULD/MAY advice, beside the verdict. Absent when there is none. */
+  readiness?: MCPAppsReadinessWarning[];
   summary: string;
   durationMs: number;
   categorySummary: Record<

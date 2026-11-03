@@ -38,9 +38,14 @@ function SpecWord({ word }: { word: string }) {
   );
 }
 
-/** MAY is optional; SHOULD and RECOMMENDED are what the spec asks for. */
+/** MAY is optional; SHOULD is what the spec asks for. */
 function isOptional(item: AdviceItem): boolean {
   return item.specStrength === "MAY";
+}
+
+/** A field the spec deprecates without a SHOULD or MAY. */
+function isDeprecation(item: AdviceItem): boolean {
+  return item.specStrength === "Deprecation Notice";
 }
 
 export function ConformanceAdvice({ groups }: { groups: AdviceGroup[] }) {
@@ -75,9 +80,10 @@ export function ConformanceAdvice({ groups }: { groups: AdviceGroup[] }) {
       </button>
       {/* Outside the toggle: a link can't sit inside a button. */}
       <p className="px-4 pb-4 pl-11 text-sm text-muted-foreground">
-        None of these fail a check. Suggested (<SpecWord word="SHOULD" /> or{" "}
-        <SpecWord word="RECOMMENDED" />) means the spec asks for it. Optional (
-        <SpecWord word="MAY" />) means it helps but the spec doesn't require it.
+        None of these fail a check. Suggested (<SpecWord word="SHOULD" />) means
+        the spec asks for it. Optional (<SpecWord word="MAY" />) means it helps
+        but the spec doesn't require it. A deprecation notice means the spec
+        will remove something the server still uses.
       </p>
       <Collapse open={open}>
         <ul className="border-t border-border/60 px-4">
@@ -93,8 +99,9 @@ export function ConformanceAdvice({ groups }: { groups: AdviceGroup[] }) {
               <span className="flex min-w-0 flex-col gap-0.5 text-sm">
                 <span>
                   <span className="font-medium text-info">
-                    {isOptional(item) ? "Optional" : "Suggested"} (
-                    {item.specStrength})
+                    {isDeprecation(item)
+                      ? "Deprecation notice"
+                      : `${isOptional(item) ? "Optional" : "Suggested"} (${item.specStrength})`}
                   </span>{" "}
                   <span className="text-muted-foreground">{item.suite}</span>{" "}
                   <span className="font-medium">{item.title}</span>

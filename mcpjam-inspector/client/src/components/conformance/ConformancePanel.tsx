@@ -621,6 +621,10 @@ export function ConformanceContent({
                       readiness: protocol.result?.readiness,
                     },
                     {
+                      suite: SUITE_COPY.apps.title,
+                      readiness: apps.result?.readiness,
+                    },
+                    {
                       suite: SUITE_COPY.tasks.title,
                       readiness: tasks.result?.readiness,
                     },
