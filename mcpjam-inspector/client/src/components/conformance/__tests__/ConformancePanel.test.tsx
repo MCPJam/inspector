@@ -1292,7 +1292,8 @@ describe("ConformanceTab", () => {
     const row = screen.getByText(left.title).closest("div")!.parentElement!;
     expect(within(row).getByText("unscored")).toBeInTheDocument();
     // Its failure is reported, not counted: grey, not red.
-    const message = screen.getByText("profile shape is wrong");
+    // The tone is on the box around the clamped text.
+    const message = screen.getByText("profile shape is wrong").parentElement;
     expect(message).toHaveClass("text-muted-foreground");
     expect(message).not.toHaveClass("text-red-600");
     expect(screen.queryByText(/^Not conformant\./)).toBeNull();
@@ -2516,7 +2517,9 @@ describe("ConformanceTab", () => {
     expect(screen.queryByText(/Not applicable to the legacy era/)).toBeNull();
 
     clickRow("No Session Id Minted");
-    const reason = screen.getByText(/Not applicable to the legacy era/);
+    const reason = screen.getByText(
+      /Not applicable to the legacy era/,
+    ).parentElement;
     expect(reason).toHaveClass("text-muted-foreground");
     expect(reason).not.toHaveClass("text-red-600");
   });
@@ -3487,13 +3490,15 @@ describe("ConformanceTab", () => {
         .closest("button"),
     ).toBe(pendingRow);
     // An unscored finding reads as information, not as a failure that counts.
-    expect(screen.getByText("schema mismatch")).toHaveClass(
+    expect(screen.getByText("schema mismatch").parentElement).toHaveClass(
       "text-muted-foreground",
     );
 
     const scoredRow = screen.getByText("Ping").closest("button");
     expect(scoredRow).not.toHaveTextContent("unscored");
-    expect(screen.getByText("pong missing")).toHaveClass("text-red-600");
+    expect(screen.getByText("pong missing").parentElement).toHaveClass(
+      "text-red-600",
+    );
   });
 
   it("badges an incomplete tasks run distinctly from a passing one", async () => {
