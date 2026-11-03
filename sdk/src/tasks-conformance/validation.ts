@@ -2,6 +2,7 @@ import type { MCPServerConfig } from "../mcp-client-manager/index.js";
 import {
   MCP_TASKS_CHECK_IDS,
   MCP_TASKS_READINESS_IDS,
+  RENAMED_MCP_TASKS_CHECK_IDS,
   type MCPTasksCheckId,
   type MCPTasksConformanceConfig,
   type MCPTasksReadinessId,
@@ -15,7 +16,18 @@ function normalizeCheckIds(
     return undefined;
   }
 
-  const normalized = Array.from(new Set(checkIds));
+  // A renamed id runs under its current name.
+  const normalized = Array.from(
+    new Set(
+      checkIds.map((id) =>
+        Object.hasOwn(RENAMED_MCP_TASKS_CHECK_IDS, id)
+          ? RENAMED_MCP_TASKS_CHECK_IDS[
+              id as keyof typeof RENAMED_MCP_TASKS_CHECK_IDS
+            ]
+          : (id as MCPTasksCheckId)
+      )
+    )
+  );
   for (const checkId of normalized) {
     if (!MCP_TASKS_CHECK_IDS.includes(checkId)) {
       throw new Error(`Unknown MCP Tasks conformance check id: ${checkId}`);

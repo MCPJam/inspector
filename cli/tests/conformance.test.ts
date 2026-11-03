@@ -73,6 +73,14 @@ test("buildConfig rejects unknown categories and check ids", () => {
   );
 });
 
+test("buildConfig accepts a retired check id, which the SDK runs as advice", () => {
+  const config = buildConfig({
+    url: "https://example.com/mcp",
+    checkId: ["modern-log-level-filtering"],
+  });
+  assert.deepEqual(config.checkIds, ["modern-log-level-filtering"]);
+});
+
 test("buildConfig preserves validated conformance filters", () => {
   const config = buildConfig({
     url: "https://example.com/mcp",
