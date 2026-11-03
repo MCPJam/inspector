@@ -393,6 +393,46 @@ describe("ConformanceTab", () => {
     );
   });
 
+  it("labels a score pooled across disagreeing versions as mixed", async () => {
+    setupSuccessfulRunMocks({
+      protocol: createProtocolResult({
+        checks: [
+          {
+            id: "ping",
+            category: "core",
+            title: "Ping",
+            description: "Ping.",
+            status: "passed",
+            durationMs: 1,
+          },
+        ],
+        protocolVersion: "2025-03-26",
+      } as Partial<MCPConformanceResult>),
+    });
+    // Tasks negotiates 2026-07-28, so the pool records no single version.
+    mockRunTasks.mockResolvedValue({
+      success: true,
+      result: createTasksResult({
+        checks: [
+          {
+            id: "tasks-wire-resolvable",
+            category: "dispatch",
+            title: "Tasks Wire Resolvable",
+            description: "wire",
+            status: "passed",
+            durationMs: 1,
+          },
+        ],
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+
+    expect(screen.getByText(/PROTOCOL MIXED VERSIONS/)).toBeInTheDocument();
+    expect(screen.queryByText(/PROTOCOL AUTO/)).toBeNull();
+  });
+
   it("shows no number when nothing was applicable", async () => {
     const notApplicable = (id: string) => ({
       id,

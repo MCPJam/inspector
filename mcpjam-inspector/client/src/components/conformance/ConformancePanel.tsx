@@ -55,6 +55,7 @@ import {
   ConformanceRunShareButton,
   detailDateFormat,
 } from "./ConformanceHistory";
+import { scoreVersionLabel } from "./conformance-score-version";
 import {
   PersistConformanceRun,
   type ConformancePersistConfig,
@@ -599,10 +600,7 @@ export function ConformanceContent({
                 <OverallScoreCard
                   score={pooledScore}
                   serverName={server.name}
-                  version={
-                    pooledScore?.protocolVersion ??
-                    (versionPin === "auto" ? "Auto" : versionPin)
-                  }
+                  version={scoreVersionLabel(snapshot)}
                   isRunning={isRunning}
                   progress={runProgress}
                   serverIconUrl={serverIconUrl}
