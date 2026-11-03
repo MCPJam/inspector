@@ -285,9 +285,11 @@ describe("agent-driven calls and mid-session sign-in", () => {
             hasErrorParams: false,
           },
         } as never,
-      })
+      }),
     );
-    await renderLoaded({ server: { name: "srv" } as unknown as ServerWithName });
+    await renderLoaded({
+      server: { name: "srv" } as unknown as ServerWithName,
+    });
     const response = await dispatch({
       type: "getPrompt",
       payload: { prompt: "summarize", arguments: { topic: "MCP" } },
@@ -299,7 +301,9 @@ describe("agent-driven calls and mid-session sign-in", () => {
         details: { source: "http_401", requiredScope: "files:read" },
       },
     });
-    expect(document.querySelector('[data-testid="auth-challenge-card"]')).toBeNull();
+    expect(
+      document.querySelector('[data-testid="auth-challenge-card"]'),
+    ).toBeNull();
     expect(mockApplyToolCallStepUp).not.toHaveBeenCalled();
   });
 });
