@@ -324,7 +324,9 @@ export function scoreFromAppsResult(
     result.checks,
     result.protocolVersion,
     undefined,
-    // The typed advice channel, read like the Tasks suite's.
+    // The typed advice channel, read like the Tasks suite's. A "Deprecation
+    // Notice" costs 0 points only because it is `informational`; without
+    // that flag the tier mapping below would charge it as a SHOULD.
     (result.readiness ?? [])
       .filter((warning) => warning.informational !== true)
       .map((warning) => ({
