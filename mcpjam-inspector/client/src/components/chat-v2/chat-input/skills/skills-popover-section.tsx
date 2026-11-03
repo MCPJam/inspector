@@ -18,7 +18,11 @@ import {
   type ServerSkillSummary,
 } from "@/lib/apis/server-skills-api";
 import { buildServerSkillToolOutput } from "@/shared/server-skill-banner";
-import { assignServerSlugs, assignSkillRefs } from "@/shared/server-skill-refs";
+import {
+  assignServerSlugs,
+  assignSkillRefs,
+  manifestDigestSetHash,
+} from "@/shared/server-skill-refs";
 import type { ServerSkillsSectionServer } from "@/components/skills/ServerSkillsSection";
 import { track } from "@/lib/analytics";
 
@@ -330,6 +334,8 @@ export function SkillsPopoverSection({
             ref: item.ref,
             serverLabel: item.serverLabel,
             skillUri: result.skill.skillUri,
+            // The held entry, exactly as `loadSkill` records it.
+            digestSet: await manifestDigestSetHash(result.skill.resources),
             content: result.skill.content,
           }),
         });

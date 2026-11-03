@@ -43,7 +43,7 @@ listTools: PASS (8 tools)
 
 Each conformance run walks through:
 
-1. **Initial request** — sends an unauthenticated request to trigger a 401
+1. **Initial request** — sends an unauthenticated request to trigger a 401 (or, for a server that allows anonymous access, notes the 200 and continues — see [Servers that allow anonymous access](#servers-that-allow-anonymous-access))
 2. **Discovery** — fetches resource metadata and authorization server metadata
 3. **Registration** — registers the client via CIMD, DCR, or pre-registered credentials
 4. **Authorization** — obtains an authorization code (interactive, headless, or client_credentials)
@@ -58,6 +58,22 @@ When `--conformance-checks` is enabled, six additional negative checks run after
 - **Invalid token** — confirms the MCP server rejects an obviously invalid bearer token with HTTP 401
 - **Invalid redirect** — attempts a token request with a mismatched redirect URI to look for exact-match enforcement; this check may be skipped if the request is rejected for a different reason first
 - **Token format** — validates the token response has the expected fields
+
+## Servers that allow anonymous access
+
+Some servers let a client connect, list tools, and call public tools without signing in, and ask for sign-in only when a protected tool is called. This is often called *lazy authentication* or mid-session sign-in. It is a supported pattern: authorization is optional in every MCP revision, and a server that publishes Protected Resource Metadata has opted in for the tools that need it.
+
+The conformance run tells the two anonymous shapes apart by what the server publishes:
+
+| Unauthenticated `initialize` | Protected Resource Metadata at the well-known path | Result |
+|---|---|---|
+| `401` with `WWW-Authenticate` | — | Full run, starting from the challenge |
+| `200` | Published | Full run, starting from proactive discovery: resource metadata, authorization server metadata, registration, authorization, token exchange, and the authenticated request are all graded |
+| `200` | Not published (`404`) | `not-applicable`: the server does not use OAuth |
+
+For a server that allows anonymous access, the run records the `200` on the first step and continues; nothing about allowing anonymous access counts against the server.
+
+The conformance run grades the OAuth flow itself. It does not call a protected tool to see how the server refuses it. How a host reacts to that refusal differs — Claude starts sign-in on an HTTP `401` with `WWW-Authenticate`, while ChatGPT's tool-level sign-in reads `_meta["mcp/www_authenticate"]` on an `isError` tool result — and the directory readiness checks can drive that call for you with `mcpjam readiness check claude --lazy-auth-tool <name>` (or `readiness check openai`).
 
 ## Scenarios
 
@@ -256,7 +272,8 @@ supported way to persist live tokens.
 
 | Step that failed | Likely cause | Fix |
 |-----------------|-------------|-----|
-| `request_without_token` returned 200 | Server allows anonymous access or missing `WWW-Authenticate` | Return 401 with `WWW-Authenticate: Bearer resource_metadata="..."` |
+| `request_without_token` returned 200 and the run is `not-applicable` | The server served the unauthenticated request and publishes no Protected Resource Metadata, so it does not use OAuth | Nothing to fix if the server is meant to be public. If some tools need sign-in, publish Protected Resource Metadata at `/.well-known/oauth-protected-resource` with the resource path appended; the run then grades discovery and the full flow |
+| `request_without_token` returned 200 and the run continued | The server allows anonymous access and publishes Protected Resource Metadata (lazy authentication) | Expected. Discovery and the flow are graded from the published metadata |
 | `request_resource_metadata` 404 | `/.well-known/oauth-protected-resource` missing or wrong Content-Type | Ensure the endpoint exists and returns `application/json` |
 | `received_resource_metadata` — resource validation failed | Protected Resource Metadata is missing its required `resource` field, uses a non-HTTPS URL, or advertises a resource on a different origin than the server URL | Ensure your PRM document includes a `resource` field that is an HTTPS URL on the same origin as the MCP server (RFC 9728 §2) |
 | `received_resource_metadata` — AS URL mismatch | `authorization_servers` points to a URL without AS metadata | Verify the AS URL has `/.well-known/oauth-authorization-server` |

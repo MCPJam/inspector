@@ -257,7 +257,7 @@ export function registerSessionsCommands(program: Command): void {
           )
           .option(
             "--model <modelId>",
-            'Provider-prefixed model id, e.g. "anthropic/claude-sonnet-5". Required to start a session; a bare id is rejected rather than guessed.'
+            'Provider-prefixed model id, e.g. "anthropic/claude-sonnet-5". Omit it on the first turn to use the environment or client model; the resolved model stays pinned. A bare id is rejected rather than guessed.'
           )
           .option(
             "--client <hostId>",
@@ -271,6 +271,7 @@ export function registerSessionsCommands(program: Command): void {
             "--server <serverId...>",
             "Run against these project servers (mutually exclusive with --environment)"
           )
+          .option("--no-servers", "Start with no MCP servers; the empty selection stays pinned.")
           .option("--system-prompt <text>", "System prompt for the session")
           .option(
             "--tool-mode <mode>",
@@ -305,7 +306,7 @@ export function registerSessionsCommands(program: Command): void {
       modelId: options.model,
       hostId: options.client,
       environmentId: options.environment,
-      serverIds: options.server,
+      serverIds: sendServerIds(options),
       systemPrompt: options.systemPrompt,
       toolMode: options.toolMode as "read_only" | "auto" | undefined,
       maxSteps: parseIntegerOption(options.maxSteps, "--max-steps", {
@@ -398,6 +399,7 @@ type SendOptions = BrowserOptions & {
   client?: string;
   environment?: string;
   server?: string[];
+  servers?: boolean;
   systemPrompt?: string;
   toolMode?: string;
   maxSteps?: string;
@@ -405,6 +407,12 @@ type SendOptions = BrowserOptions & {
   temperature?: string;
   effort?: string;
 };
+
+function sendServerIds(options: SendOptions): string[] | undefined {
+  if (options.servers !== false) return options.server;
+  if (options.server !== undefined) throw usageError("Use either --server or --no-servers.");
+  return [];
+}
 
 type ShowOptions = PlatformOptions & {
   project?: string;

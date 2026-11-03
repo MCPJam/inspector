@@ -502,6 +502,7 @@ mcpjamAgent.post("/", async (c) => {
               authHeader,
               projectId: body.projectId,
               chatSessionId: body.chatSessionId,
+              isGuest,
               // Web search follows the turn: platform-paid when the turn is.
               ...(billingFeature ? { billingFeature } : {}),
               // And its failures are the agent's failures.

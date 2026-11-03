@@ -1,7 +1,13 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import {
+  MCP_APPS_CHECK_IDS,
+  MCP_CHECK_IDS,
   MCP_PROTOCOL_VERSIONS,
+  MCP_READINESS_IDS,
+  MCP_OAUTH_READINESS_IDS,
+  MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
   canRunConformance,
   oauthConformanceProfileSchema,
   type HttpServerConfig,
@@ -9,6 +15,7 @@ import {
 } from "@mcpjam/sdk";
 import "../../types/hono";
 import {
+  OAUTH_SESSION_EXPIRED_MESSAGE,
   OAuthConformanceSessionFailedError,
   OAuthConformanceSessionNotFoundError,
   UnsupportedTransportError,
@@ -21,6 +28,10 @@ import {
   startOAuthConformance,
   submitOAuthConformanceCode,
 } from "../shared/conformance";
+import {
+  conformanceInputResponsesSchema,
+  conformanceProbeFields,
+} from "../shared/conformance-probes";
 import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
 const conformance = new Hono();
@@ -73,6 +84,12 @@ const protocolSchema = z.object({
   serverId: z.string().min(1),
   /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
   protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
+  /** Run only these checks, as picked before Run; absent ⇒ all of them. */
+  checkIds: z.array(z.enum(MCP_CHECK_IDS)).min(1).optional(),
+  /** Run only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds: z.array(z.enum(MCP_READINESS_IDS)).optional(),
+  /** Tools named as safe for the checks that must call one. */
+  ...conformanceProbeFields,
 });
 
 conformance.post("/protocol", async (c) => {
@@ -98,6 +115,11 @@ conformance.post("/protocol", async (c) => {
     const { result } = await runProtocolConformance({
       ...toHttpResolved(resolved.config as HttpServerConfig),
       protocolVersion: parsed.data.protocolVersion,
+      checkIds: parsed.data.checkIds,
+      readinessIds: parsed.data.readinessIds,
+      logProbe: parsed.data.logProbe,
+      inputRequiredProbe: parsed.data.inputRequiredProbe,
+      toolCallProbe: parsed.data.toolCallProbe,
     });
     return c.json({ success: true, result });
   } catch (error) {
@@ -123,6 +145,8 @@ conformance.post("/protocol", async (c) => {
 
 const appsSchema = z.object({
   serverId: z.string().min(1),
+  /** Run only these checks, as picked before Run; absent ⇒ all of them. */
+  checkIds: z.array(z.enum(MCP_APPS_CHECK_IDS)).min(1).optional(),
 });
 
 conformance.post("/apps", async (c) => {
@@ -150,7 +174,10 @@ conformance.post("/apps", async (c) => {
       (serverConfig as any).url = String(serverConfig.url);
     }
 
-    const { result } = await runAppsConformance(serverConfig);
+    const { result } = await runAppsConformance({
+      ...serverConfig,
+      ...(parsed.data.checkIds ? { checkIds: parsed.data.checkIds } : {}),
+    });
     return c.json({ success: true, result });
   } catch (error) {
     reportRouteFailure("[Conformance Apps]", error, {
@@ -177,7 +204,12 @@ const tasksSchema = z.object({
    *  carry no task metadata to pick from. */
   toolName: z.string().min(1).optional(),
   toolArguments: z.record(z.string(), z.unknown()).optional(),
+  inputResponses: conformanceInputResponsesSchema,
   pollTimeoutMs: z.number().int().positive().max(120_000).optional(),
+  /** Run only these checks, as picked before Run; absent ⇒ all of them. */
+  checkIds: z.array(z.enum(MCP_TASKS_CHECK_IDS)).min(1).optional(),
+  /** Report only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds: z.array(z.enum(MCP_TASKS_READINESS_IDS)).optional(),
 });
 
 conformance.post("/tasks", async (c) => {
@@ -234,6 +266,8 @@ const oauthStartSchema = z.object({
   serverId: z.string().min(1),
   oauthProfile: oauthConformanceProfileSchema.optional(),
   callbackOrigin: z.string().optional(),
+  /** Report only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds: z.array(z.enum(MCP_OAUTH_READINESS_IDS)).optional(),
 });
 
 conformance.post("/oauth/start", async (c) => {
@@ -250,7 +284,8 @@ conformance.post("/oauth/start", async (c) => {
       );
     }
 
-    const { serverId, oauthProfile, callbackOrigin } = parsed.data;
+    const { serverId, oauthProfile, callbackOrigin, readinessIds } =
+      parsed.data;
     const resolved = resolveServerConfig(c.mcpClientManager, serverId);
     if ("error" in resolved) {
       return c.json({ success: false, ...resolved }, 400);
@@ -276,6 +311,7 @@ conformance.post("/oauth/start", async (c) => {
       defaultCustomHeaders: http.customHeaders,
       redirectUrl: `${callbackOrigin.replace(/\/$/, "")}/oauth/callback/debug`,
       oauthProfile,
+      readinessIds,
     });
     return c.json(result);
   } catch (error) {
@@ -324,7 +360,7 @@ conformance.post("/oauth/authorize", async (c) => {
       return c.json(
         {
           success: false,
-          error: "Session not found or not waiting for authorization",
+          error: OAUTH_SESSION_EXPIRED_MESSAGE,
         },
         404,
       );

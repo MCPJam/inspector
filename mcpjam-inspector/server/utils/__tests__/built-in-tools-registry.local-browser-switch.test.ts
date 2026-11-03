@@ -99,15 +99,10 @@ describe("resolveHostTools — the local browser kill switch", () => {
     // not ask for, which is the dishonesty the engine resolver refuses to
     // commit for bash.
     configState.localBrowser = false;
-    process.env.HOSTED_BROWSER_TOOLS_ENABLED = "1";
-    try {
-      const tools = resolveHostTools(
-        { builtInToolIds: ["browser"], computer },
-        localCtx,
-      );
-      expect(Object.keys(tools ?? {})).not.toContain("browser_navigate");
-    } finally {
-      delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
-    }
+    const tools = resolveHostTools(
+      { builtInToolIds: ["browser"], computer },
+      localCtx,
+    );
+    expect(Object.keys(tools ?? {})).not.toContain("browser_navigate");
   });
 });

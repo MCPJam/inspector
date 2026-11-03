@@ -34,6 +34,7 @@ export interface HostListItem {
   hostStyle?: string | null;
   /** Runtime selector returned by the client list; absent on older backends. */
   harness?: HostConfigDtoV2["harness"] | null;
+  agentLoop?: HostConfigDtoV2["agentLoop"] | null;
   serverCount: number;
   // Additive (PR: standalone hosts). Older backends omit these; readers must
   // treat absent as null/false rather than assume presence.

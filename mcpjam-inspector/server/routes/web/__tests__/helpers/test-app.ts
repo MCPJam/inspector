@@ -92,3 +92,25 @@ export async function expectError<T = unknown>(
   }
   return data;
 }
+
+/** Backend boundary fixture; the real turn resolver and execution policy still run. */
+export function chatEnvironmentFixture(
+  runtimeConfig: Record<string, unknown>,
+  serverIds: string[] = [],
+) {
+  return {
+    specVersion: 1,
+    environmentOrigin: "adhoc",
+    environmentRef: {
+      environmentId: "chat-environment",
+      name: "Chat",
+      revision: 1,
+    },
+    host: { hostId: "chat-host", runtimeConfig },
+    servers: { effectiveServerIds: serverIds },
+    skills: [],
+    pluginVersions: [],
+    selectedSecretIds: [],
+    serverConfigHashes: {},
+  };
+}

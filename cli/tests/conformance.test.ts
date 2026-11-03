@@ -73,6 +73,14 @@ test("buildConfig rejects unknown categories and check ids", () => {
   );
 });
 
+test("buildConfig accepts a retired check id, which the SDK runs as advice", () => {
+  const config = buildConfig({
+    url: "https://example.com/mcp",
+    checkId: ["modern-log-level-filtering"],
+  });
+  assert.deepEqual(config.checkIds, ["modern-log-level-filtering"]);
+});
+
 test("buildConfig preserves validated conformance filters", () => {
   const config = buildConfig({
     url: "https://example.com/mcp",
@@ -365,4 +373,62 @@ test("fixtures: a malformed file is a usage error, never a silent empty set", as
     (error: unknown) =>
       error instanceof CliError && /Could not read fixtures file/.test(error.message),
   );
+});
+
+test("log probe: no flags means the SDK sees no logProbe key", () => {
+  const config = buildConfig({ url: "https://example.com/mcp" });
+  assert.equal("logProbe" in config, false);
+});
+
+test("log probe: the three flags thread into logProbe", async () => {
+  let captured: ReturnType<typeof buildConfig> | undefined;
+  const program = buildConformanceCommand((options) => {
+    captured = buildConfig(options as Parameters<typeof buildConfig>[0]);
+  });
+
+  await program.parseAsync(
+    [
+      "protocol",
+      "conformance",
+      "--url",
+      "https://example.com/mcp",
+      "--log-probe-tool",
+      "emit-log",
+      "--log-probe-args",
+      '{"count":2}',
+      "--log-probe-level",
+      "error",
+    ],
+    { from: "user" },
+  );
+
+  assert.deepEqual(captured?.logProbe, {
+    toolName: "emit-log",
+    arguments: { count: 2 },
+    level: "error",
+  });
+});
+
+test("log probe: a tool alone sends no arguments or level", () => {
+  const config = buildConfig({
+    url: "https://example.com/mcp",
+    logProbeTool: "emit-log",
+  });
+  assert.deepEqual(config.logProbe, { toolName: "emit-log" });
+});
+
+test("log probe: bad flags are usage errors", () => {
+  for (const [options, pattern] of [
+    [{ logProbeLevel: "error" }, /need --log-probe-tool/],
+    [{ logProbeArgs: "{}" }, /need --log-probe-tool/],
+    [{ logProbeTool: "   " }, /needs a tool name/],
+    [{ logProbeTool: "emit-log", logProbeLevel: "loud" }, /Unknown log level/],
+    [{ logProbeTool: "emit-log", logProbeArgs: "[]" }, /JSON object/],
+  ] as const) {
+    assert.throws(
+      () => buildConfig({ url: "https://example.com/mcp", ...options }),
+      (error: unknown) =>
+        error instanceof CliError && pattern.test(error.message),
+    );
+  }
 });

@@ -18,6 +18,7 @@ import { Card, CardContent } from "@mcpjam/design-system/card";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 import type { OrgAiModelKind } from "@/hooks/useOrgAiConfig";
 import type { EligibleProvider } from "./OrganizationDefaultModelEditor";
+import { orgAiModelRowText } from "./org-ai-config-presentation";
 import {
   ModelRow,
   type DefaultModelRowAccess,
@@ -119,6 +120,10 @@ export function OrganizationDefaultModelCard({
               <ModelRow
                 key={kind}
                 kind={kind}
+                text={orgAiModelRowText(kind, {
+                  kinds: aiModels.kinds,
+                  defaultSet: Boolean(aiModels.models.default?.selection),
+                })}
                 entry={entry}
                 suggestion={entry ? undefined : suggestions[kind]}
                 providers={providers}

@@ -87,7 +87,7 @@ vi.mock("../registry.js", () => ({
     supportsSkills: false,
     skillsBaseDir: "/home/user/.claude/skills",
     skillsWriteOptions: { trailingNewline: true },
-    mcpDelivery: "native",
+    mcpDelivery: "harness",
     mcpNativeDelivery: "session-config",
     supportsModel: vi.fn(() => true),
     createHarness: vi.fn(() => ({ harnessId: "claude-code" })),

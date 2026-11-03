@@ -127,8 +127,10 @@ export interface PinnedHostExecutionSpec {
    */
   computerUnavailableReason?: string;
   harness?: Harness;
+  agentLoop?: Harness;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
+  requireNativeToolDiscovery?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   /**
@@ -140,6 +142,12 @@ export interface PinnedHostExecutionSpec {
    * the backend strips down to just `{ requestTimeout }`).
    */
   mcpProfile?: HostConfigMcpProfileV1;
+  /**
+   * The host's style, frozen with the target so sparse `mcpProfile` app
+   * overrides resolve against the same preset an eval run uses. Absent on
+   * runs created before the backend pinned it.
+   */
+  hostStyle?: string;
   /**
    * Pinned MCP client capabilities advertised on INITIALIZE, captured at
    * run-create time. Passed into `createAuthorizedManager` so the run negotiates

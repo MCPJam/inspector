@@ -13,11 +13,13 @@
  */
 
 import { z } from "zod";
+import { TASKS_READINESS_CATALOG } from "../conformance-catalog.js";
 import type { MCPClientManager } from "../mcp-client-manager/MCPClientManager.js";
 import type {
   ListToolsResult,
   RpcLogEvent,
 } from "../mcp-client-manager/index.js";
+import { isInvalidTaskExtPayloadError } from "../mcp-client-manager/tasks-ext-guards.js";
 import {
   MCP_ERROR_CODES,
   PRE_RENUMBER_DRAFT_ERROR_CODES,
@@ -29,6 +31,11 @@ import { ensureTasksExtensionEraGateShadow } from "../mcp-client-manager/tasks-e
 import { TASK_CREATED_META_KEY } from "../mcp-client-manager/transport-utils.js";
 import { deepJsonSafe } from "../json-safe.js";
 import { withEphemeralClient } from "../operations.js";
+import {
+  AUTHORIZATION_REQUIRED_MESSAGE,
+  authorizationRequiredDetails,
+  isAuthorizationRefusal,
+} from "../conformance-authorization.js";
 import {
   buildOutcomeSummary,
   decideConformanceOutcome,
@@ -46,7 +53,9 @@ import {
   type MCPTasksCheckResult,
   type MCPTasksConformanceConfig,
   type MCPTasksConformanceResult,
+  type MCPTasksReadinessWarning,
   type MCPTasksRunOutcome,
+  type MCPTasksUncheckedAdvice,
   type NormalizedMCPTasksConformanceConfig,
 } from "./types.js";
 import { normalizeMCPTasksConformanceConfig } from "./validation.js";
@@ -62,7 +71,7 @@ export const CHECK_METADATA: Record<
     category: "dispatch",
     title: "Tasks Wire Resolvable",
     description:
-      "The negotiated protocol version and advertised capabilities resolve to exactly one tasks wire, and the server does not advertise capabilities for the other era.",
+      "The negotiated protocol version and advertised capabilities resolve to exactly one tasks wire.",
   },
   "tasks-declaration-hygiene": {
     id: "tasks-declaration-hygiene",
@@ -118,7 +127,7 @@ export const CHECK_METADATA: Record<
     category: "lifecycle",
     title: "Invalid Task Id Rejected",
     description:
-      "tasks/get for a task id the server never issued is rejected with -32602 (Invalid params); the same rejection on tasks/update and tasks/cancel is a SHOULD and only warns.",
+      "tasks/get for a task id the server never issued is rejected with -32602 (Invalid params); the same rejection on tasks/update and tasks/cancel is a SHOULD and is reported as advice.",
   },
   "tasks-status-payload-shape": {
     id: "tasks-status-payload-shape",
@@ -134,12 +143,12 @@ export const CHECK_METADATA: Record<
     description:
       "tasks/cancel is acknowledged with an empty result rather than a task state, and the task's observable status is allowed to remain non-terminal afterwards.",
   },
-  "tasks-input-required-update-completes": {
-    id: "tasks-input-required-update-completes",
+  "tasks-update-ack-shape": {
+    id: "tasks-update-ack-shape",
     category: "lifecycle",
-    title: "Input Required Round Trip Completes",
+    title: "Update Acknowledged With An Empty Result",
     description:
-      "A task that reports input_required advances past it once tasks/update supplies the requested inputResponses, and reaches a terminal status.",
+      'tasks/update answering a task\'s input_required is acknowledged with an empty result carrying resultType "complete"; the task is not required to reach a terminal status afterwards.',
   },
   "tasks-ttl-integer-shape": {
     id: "tasks-ttl-integer-shape",
@@ -177,6 +186,33 @@ function errorMessage(error: unknown): string {
 function readRequiredCapabilities(error: unknown): unknown {
   const data = (error as { data?: unknown } | null)?.data;
   return isRecord(data) ? data.requiredCapabilities : undefined;
+}
+
+/**
+ * Whether a `-32021`'s `requiredCapabilities` names the tasks extension. The
+ * core spec requires it to list the missing capabilities (a MUST), and for a
+ * non-declaring tasks request the missing one is this extension.
+ */
+function namesTasksExtension(requiredCapabilities: unknown): boolean {
+  return (
+    isRecord(requiredCapabilities) &&
+    isRecord(requiredCapabilities.extensions) &&
+    MCP_TASKS_EXTENSION_ID in requiredCapabilities.extensions
+  );
+}
+
+/**
+ * True for the client's local refusal of a response the server DID send — a
+ * frame that fails the JSON-RPC schema, or an extension result that is not an
+ * object. Matched by name as well, since the transport's zod may be a separate
+ * copy from ours.
+ */
+function isMalformedResponseError(error: unknown): boolean {
+  return (
+    isInvalidTaskExtPayloadError(error) ||
+    error instanceof z.ZodError ||
+    (error instanceof Error && error.name === "ZodError")
+  );
 }
 
 function errorCode(error: unknown): number | undefined {
@@ -461,8 +497,7 @@ export interface ShapeVerdict {
  * Validates a `CreateTaskResult`-shaped payload (flat, `resultType: "task"`).
  *
  * Extra fields the spec does not define (e.g. a redundant nested `task`
- * object) are WARNINGS, not violations — the spec does not forbid additional
- * fields, so an otherwise-valid result must not fail conformance for them.
+ * object) are not judged: the spec does not forbid additional fields.
  *
  * `resultType` is REQUIRED here, present or absent (tasks.md:102): "Servers
  * MUST set `resultType` to `"task"` when returning a `CreateTaskResult` so
@@ -501,18 +536,13 @@ export function validateCreateTaskShape(result: unknown): ShapeVerdict {
       "task creation result must carry a server-generated taskId"
     );
   }
-  if (isRecord(result.task)) {
-    warnings.push(
-      "extension task creation result carries a redundant nested `task` object; the spec defines the flat top-level fields only (extra fields are allowed, so this is not a failure)"
-    );
-  }
   return { violations, warnings };
 }
 
 /**
  * Validates the era-native TTL / poll-interval shapes on a task payload.
- * Wrong types on the era-native fields are violations; the mere PRESENCE of
- * the other era's field is a warning (extra fields are not forbidden).
+ * Wrong types on the era-native fields are violations. The other era's field
+ * is not judged: extra fields are allowed and no spec rule covers it.
  */
 export function validateTaskTtlShape(
   wire: TasksWire,
@@ -539,11 +569,6 @@ export function validateTaskTtlShape(
     ) {
       violations.push("extension task pollIntervalMs must be a number");
     }
-    if (task.ttl !== undefined) {
-      warnings.push(
-        "extension task also carries a legacy `ttl` field; clients read `ttlMs` (extra fields are allowed, so this is not a failure)"
-      );
-    }
   } else {
     if (task.ttl !== undefined && typeof task.ttl !== "number") {
       violations.push("legacy task ttl must be a number when present");
@@ -553,11 +578,6 @@ export function validateTaskTtlShape(
       typeof task.pollInterval !== "number"
     ) {
       violations.push("legacy task pollInterval must be a number");
-    }
-    if (task.ttlMs !== undefined) {
-      warnings.push(
-        "legacy task also carries an extension `ttlMs` field; clients read `ttl` (extra fields are allowed, so this is not a failure)"
-      );
     }
   }
 
@@ -610,7 +630,7 @@ export function validateCompletionAck(
    * the client's return value. `resultType` is a wire-only member the v2 client
    * consumes on the way through, so the decoded `ack` cannot answer whether the
    * server sent it — only this can. Absent when the frame could not be
-   * correlated, and then the member is reported as advice rather than judged.
+   * correlated, and then the member is not judged.
    */
   rawAck?: Record<string, unknown>,
 ): ShapeVerdict {
@@ -629,7 +649,6 @@ export function validateCompletionAck(
     };
   }
   const violations: string[] = [];
-  const warnings: string[] = [];
   const extras = Object.keys(ack).filter(
     (key) => key !== "resultType" && key !== "_meta"
   );
@@ -651,19 +670,18 @@ export function validateCompletionAck(
   // It cannot be judged from the decoded `ack` either — the v2 client consumes
   // `resultType` on the way through, so a conforming server's ack arrives here
   // without it. Reading the rpc log is the same move `tasks-status-payload-shape`
-  // already makes, and for the same reason.
+  // already makes, and for the same reason. With no raw frame a missing member
+  // is not judged: every connection is rpc-logged, so that should not happen,
+  // and blaming the server for what our own client stripped would be wrong.
   const observed = rawAck ?? (ack as Record<string, unknown>);
   const canJudgeResultType = rawAck !== undefined;
   const resultTypeName =
     method === "tasks/cancel" ? "CancelTaskResult" : "UpdateTaskResult";
 
   if (observed.resultType === undefined) {
-    const message = `the acknowledgement omits resultType "complete"; the extension's ${resultTypeName} marks it required`;
     if (canJudgeResultType) {
-      violations.push(message);
-    } else {
-      warnings.push(
-        `${message} (read from the decoded result, which cannot prove what was on the wire)`
+      violations.push(
+        `the acknowledgement omits resultType "complete"; the extension's ${resultTypeName} marks it required`
       );
     }
   } else if (observed.resultType !== "complete") {
@@ -671,11 +689,11 @@ export function validateCompletionAck(
     // discriminates on this member, so a wrong value actively misdirects it.
     violations.push(
       `the acknowledgement carried resultType ${JSON.stringify(
-        ack.resultType
+        observed.resultType
       )} rather than "complete"`
     );
   }
-  return { violations, warnings };
+  return { violations, warnings: [] };
 }
 
 /**
@@ -737,12 +755,8 @@ export function validateTaskStatusPayload(task: unknown): ShapeVerdict {
       } else if (typeof task.error.code !== "number") {
         violations.push("a failed task's `error` must carry a numeric code");
       }
-      if (task.statusMessage === undefined) {
-        // "SHOULD include a `statusMessage` field with diagnostic information"
-        warnings.push(
-          "a failed task carries no `statusMessage`; the extension recommends one so a human can see why"
-        );
-      }
+      // The `statusMessage` SHOULD is advice, not a payload requirement: see
+      // {@link failedTaskLacksStatusMessage}.
       break;
     case "input_required":
       if (!isRecord(task.inputRequests)) {
@@ -763,16 +777,27 @@ export function validateTaskStatusPayload(task: unknown): ShapeVerdict {
 }
 
 /**
+ * tasks.md:835 — a failed task's `tasks/get` response "SHOULD include a
+ * `statusMessage` field with diagnostic information about the failure".
+ */
+export function failedTaskLacksStatusMessage(task: unknown): boolean {
+  return (
+    isRecord(task) &&
+    task.status === "failed" &&
+    task.statusMessage === undefined
+  );
+}
+
+/**
  * The extension's `Task` interface states both durations in INTEGER
  * milliseconds ("Time-to-live duration from creation in integer milliseconds",
- * "Suggested polling interval in integer milliseconds"). `schema.json` renders
- * them as plain `number`, which is why this is separate from
- * {@link validateTaskTtlShape} — that check asserts the era-native FIELD, and
- * widening it would re-grade servers already judged by it.
+ * "Suggested polling interval in integer milliseconds"), and the schema agrees:
+ * schema.ts tags both `@format int` and `schema.json` types them `"integer"`.
+ * This is separate from {@link validateTaskTtlShape} because that check asserts
+ * the era-native FIELD, and widening it would re-grade servers already judged
+ * by it.
  *
- * A NEGATIVE `ttlMs` warns rather than fails: the spec never states a lower
- * bound, and `null` (not a negative number) is how it spells "unlimited", so a
- * negative value is nonsensical without being forbidden.
+ * A negative value is not judged: the spec states no lower bound.
  */
 export function validateTaskTtlIntegerShape(
   wire: TasksWire,
@@ -797,20 +822,19 @@ export function validateTaskTtlIntegerShape(
 
   for (const [name, value] of fields) {
     if (value === undefined || value === null) continue;
-    if (typeof value !== "number") {
-      // The era-native TYPE is the other check's subject; here a non-number is
-      // reported for completeness rather than double-counted as a new defect.
-      warnings.push(`${name} is not a number, so its integer shape was not judged`);
-      continue;
-    }
+    // The era-native TYPE is `tasks-ttl-shape`'s subject, not this check's.
+    if (typeof value !== "number") continue;
     if (!Number.isInteger(value)) {
       violations.push(`${name} is ${value}, which is not an integer`);
       continue;
     }
-    if (value < 0) {
-      warnings.push(
-        `${name} is ${value}; the extension states no lower bound, but it spells "unlimited" as null rather than as a negative number`
+    // schema.json bounds both fields to ±9007199254740991, the safe-integer
+    // range, so a larger whole number is out of schema too.
+    if (!Number.isSafeInteger(value)) {
+      violations.push(
+        `${name} is ${value}, which is outside the schema's integer range`
       );
+      continue;
     }
   }
 
@@ -1081,6 +1105,49 @@ export function findRawTaskStates(
   return found;
 }
 
+/**
+ * The raw `CreateTaskResult` for `taskId`: the `tools/call` response that
+ * created it, verbatim. A creation result is `Result & Task`, so it carries the
+ * same `ttlMs` / `pollIntervalMs` a `tasks/get` answer does and is held to the
+ * same types.
+ */
+export function findRawCreationTask(
+  messages: unknown[],
+  taskId: string,
+  toolsCallRequestIds: ReadonlySet<string>
+): Record<string, unknown> | undefined {
+  for (const message of messages) {
+    if (!isRecord(message)) continue;
+    const result = isRecord(message.result) ? message.result : undefined;
+    if (!result || result.taskId !== taskId) continue;
+    const id = message.id;
+    if (
+      (typeof id === "string" || typeof id === "number") &&
+      toolsCallRequestIds.has(String(id))
+    ) {
+      return result;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Whether a raw `tools/call` result is a task rather than an ordinary
+ * `CallToolResult` that happens to carry a `taskId` — extra fields are allowed
+ * on a tool result, so the id alone is not evidence that a task was created.
+ * The `resultType: "task"` discriminator is evidence on its own (a task may
+ * carry extra fields too); without it, the shape decides: a known task
+ * `status` and no `content`.
+ */
+function isRawTaskShaped(result: Record<string, unknown>): boolean {
+  if (result.resultType === "task") return true;
+  return (
+    typeof result.status === "string" &&
+    TASK_STATUSES.has(result.status) &&
+    !Array.isArray(result.content)
+  );
+}
+
 /** JSON-RPC ids of the outbound requests for `method`, as strings. */
 export function sentRequestIds(
   sent: unknown[],
@@ -1260,7 +1327,6 @@ interface InputRequiredLeg {
   /** Result members beyond the envelope; a conforming ack has none. */
   ackVerdict?: ShapeVerdict;
   polled?: { task?: Record<string, unknown>; error?: unknown };
-  finalStatus?: string;
 }
 
 export class MCPTasksConformanceTest {
@@ -1276,6 +1342,10 @@ export class MCPTasksConformanceTest {
       this.config.checkIds ?? MCP_TASKS_CHECK_IDS
     );
     const checks: MCPTasksCheckResult[] = [];
+    // The extension's SHOULDs, reported beside the verdict rather than as a
+    // check's warnings.
+    const readiness: MCPTasksReadinessWarning[] = [];
+    const uncheckedAdvice: MCPTasksUncheckedAdvice[] = [];
     const sent: unknown[] = [];
     // The RAW inbound bytes. Every task check that has to judge the
     // discriminator reads this, because by the time a result reaches the
@@ -1303,33 +1373,18 @@ export class MCPTasksConformanceTest {
           const wire = support.wire;
           const protocolVersion =
             manager.getNegotiatedProtocolVersion(serverId);
-          const capabilities = manager.getServerCapabilities(serverId);
 
           if (selected.has("tasks-wire-resolvable")) {
             const stepStartedAt = Date.now();
-            const warnings: string[] = [];
-            const extensions = (capabilities as { extensions?: unknown })
-              ?.extensions;
-            const advertisesExtension =
-              isRecord(extensions) && MCP_TASKS_EXTENSION_ID in extensions;
-
-            if (advertisesExtension && protocolVersion === "2025-11-25") {
-              // SEP-2663: on 2025-11-25 the extension capability MUST be
-              // treated as absent. Advertising it is a server-side smell, not
-              // a client failure, so it surfaces as a warning.
-              warnings.push(
-                `server advertises ${MCP_TASKS_EXTENSION_ID} on 2025-11-25, where it must be treated as absent`
-              );
-            }
-
+            // Listing the extension on 2025-11-25 is not judged: nothing
+            // forbids it, and SEP-2663 only forbids USING it there.
             checks.push(
               protocolVersion
-                ? passed(
-                    "tasks-wire-resolvable",
-                    Date.now() - stepStartedAt,
-                    { protocolVersion, wire, support },
-                    warnings
-                  )
+                ? passed("tasks-wire-resolvable", Date.now() - stepStartedAt, {
+                    protocolVersion,
+                    wire,
+                    support,
+                  })
                 : failed(
                     "tasks-wire-resolvable",
                     Date.now() - stepStartedAt,
@@ -1521,28 +1576,77 @@ export class MCPTasksConformanceTest {
                     { tool: probeTool.name, outcome: creation.outcome }
                   )
                 );
-              } else {
+              } else if (
+                creation.outcome === "refused" &&
+                creation.code !== MISSING_REQUIRED_CLIENT_CAPABILITY &&
+                creationResult instanceof Error &&
+                errorCode(creationResult) === creation.code
+              ) {
+                // The DECLARED call failed with the same code, so the refusal
+                // is about the tool name or arguments, not the missing
+                // capability. Blaming -32021 here would point the developer
+                // at a problem they do not have.
                 checks.push(
-                  passed(
+                  couldNotRun(
                     "tasks-undeclared-creation-refused",
-                    stepDurationMs,
+                    `the tools/call fails with ${creation.code} even with the tasks extension declared, so the undeclared refusal cannot be tied to the missing capability; check --tool-name and --tool-args`,
                     {
                       tool: probeTool.name,
                       outcome: creation.outcome,
-                      ...(creation.outcome === "refused"
-                        ? { undeclaredCreationCode: creation.code }
-                        : {}),
-                    },
-                    creation.outcome === "refused" &&
-                      creation.code !== MISSING_REQUIRED_CLIENT_CAPABILITY
-                      ? [
-                          creation.code ===
-                          OBSOLETE_MISSING_REQUIRED_CLIENT_CAPABILITY
-                            ? `the undeclared tools/call was rejected with -32003, the code the tasks extension carried before it was corrected to -32021; no task was created (which is what tasks.md:61 requires) but the server is running against a pre-final draft`
-                            : `the undeclared tools/call was rejected with ${creation.code} rather than -32021; no task was created (which is what tasks.md:61 requires) but the refusal is not the one the extension names`,
-                        ]
-                      : undefined
+                      undeclaredCreationCode: creation.code,
+                    }
                   )
+                );
+              } else if (
+                creation.outcome === "refused" &&
+                creation.code !== MISSING_REQUIRED_CLIENT_CAPABILITY
+              ) {
+                // tasks.md:63 — a server that cannot serve the request without
+                // a `CreateTaskResult` "MUST return an error with the code
+                // `-32021`". A refusal with any other code breaks that MUST.
+                checks.push(
+                  failed(
+                    "tasks-undeclared-creation-refused",
+                    stepDurationMs,
+                    creation.code ===
+                      OBSOLETE_MISSING_REQUIRED_CLIENT_CAPABILITY
+                      ? "the undeclared tools/call was rejected with -32003, the code the tasks extension carried before it was corrected to -32021; a refusal must use -32021 (tasks.md:63)"
+                      : `the undeclared tools/call was rejected with ${creation.code}; a refusal must use -32021 (Missing Required Client Capability) (tasks.md:63)`,
+                    {
+                      tool: probeTool.name,
+                      outcome: creation.outcome,
+                      undeclaredCreationCode: creation.code,
+                    }
+                  )
+                );
+              } else if (
+                creation.outcome === "refused" &&
+                !namesTasksExtension(creation.requiredCapabilities)
+              ) {
+                // tasks.md:63 — the `-32021` is returned "indicating the
+                // required extension in the error response".
+                checks.push(
+                  failed(
+                    "tasks-undeclared-creation-refused",
+                    stepDurationMs,
+                    `the undeclared tools/call was rejected with -32021, but its error.data.requiredCapabilities does not name ${MCP_TASKS_EXTENSION_ID} under \`extensions\`; the refusal must indicate the required extension (tasks.md:63)`,
+                    {
+                      tool: probeTool.name,
+                      outcome: creation.outcome,
+                      undeclaredCreationCode: creation.code,
+                      requiredCapabilities: creation.requiredCapabilities,
+                    }
+                  )
+                );
+              } else {
+                checks.push(
+                  passed("tasks-undeclared-creation-refused", stepDurationMs, {
+                    tool: probeTool.name,
+                    outcome: creation.outcome,
+                    ...(creation.outcome === "refused"
+                      ? { undeclaredCreationCode: creation.code }
+                      : {}),
+                  })
                 );
               }
             }
@@ -1702,13 +1806,18 @@ export class MCPTasksConformanceTest {
             }
           }
 
-          if (selected.has("tasks-input-required-update-completes")) {
+          // Grades only the acknowledgement: "On success, the server MUST
+          // acknowledge the request with an empty result" and "MUST be set to
+          // `complete` on UpdateTaskResult". What the task does afterwards is
+          // not graded — it may go back to `working`, ask for more input, or
+          // take longer than `pollTimeoutMs`, and the extension allows all three.
+          if (selected.has("tasks-update-ack-shape")) {
             const stepStartedAt = Date.now();
             if (wire !== "extension") {
               checks.push(
                 notApplicable(
-                  "tasks-input-required-update-completes",
-                  "the input_required round trip is an extension-wire flow"
+                  "tasks-update-ack-shape",
+                  "tasks/update is an extension-wire method"
                 )
               );
             } else if (!createdTaskId) {
@@ -1716,76 +1825,62 @@ export class MCPTasksConformanceTest {
               // untested because the run could not provoke a task at all.
               // `noTask` already draws that distinction (and reports the
               // no-probe-tool case the way resolution decided).
-              checks.push(noTask("tasks-input-required-update-completes"));
+              checks.push(noTask("tasks-update-ack-shape"));
             } else if (!inputRequiredTask) {
               // A task that completes without ever asking for anything is the
-              // normal case, and there is genuinely no round trip to grade —
-              // so this one IS an inapplicability.
+              // normal case, and there is genuinely no update to grade — so
+              // this one IS an inapplicability.
               checks.push(
                 notApplicable(
-                  "tasks-input-required-update-completes",
-                  `task ${createdTaskId} never reported input_required, so there was no round trip to complete`
+                  "tasks-update-ack-shape",
+                  `task ${createdTaskId} never reported input_required, so there was no tasks/update to send`
                 )
               );
             } else if (!inputLeg || inputLeg.outcome === "no-responses-configured") {
+              // Answers are opt-in operator setup, not a server obligation, so
+              // leaving them out costs the server nothing.
               checks.push(
-                couldNotRun(
-                  "tasks-input-required-update-completes",
+                notApplicable(
+                  "tasks-update-ack-shape",
                   `task requested input for ${JSON.stringify(
                     inputLeg?.requested ?? []
-                  )} but no inputResponses were configured; supply inputResponses so the tasks/update leg can be exercised`,
-                  { requested: inputLeg?.requested ?? [] }
+                  )} but no inputResponses were configured; supply inputResponses to exercise tasks/update`
                 )
               );
             } else if (inputLeg.outcome === "update-rejected") {
+              // The MUST is conditioned on success, and the answers are
+              // operator-supplied, so a rejection leaves no acknowledgement to
+              // grade rather than proving a defect.
               checks.push(
-                failed(
-                  "tasks-input-required-update-completes",
-                  Date.now() - stepStartedAt,
-                  `tasks/update was rejected for a task that reported input_required (${
-                    inputLeg.code ?? "no code"
-                  }: ${inputLeg.message ?? "no message"})`,
+                couldNotRun(
+                  "tasks-update-ack-shape",
+                  `tasks/update was rejected (${inputLeg.code ?? "no code"}: ${
+                    inputLeg.message ?? "no message"
+                  }), so there was no acknowledgement to grade; check the configured inputResponses`,
                   { requested: inputLeg.requested, answered: inputLeg.answered }
                 )
               );
             } else {
-              const problems: string[] = [
-                ...(inputLeg.ackVerdict?.violations ?? []),
-              ];
-              const ackWarnings = inputLeg.ackVerdict?.warnings ?? [];
-              if (
-                inputLeg.finalStatus === undefined ||
-                !TERMINAL_STATUSES.has(inputLeg.finalStatus)
-              ) {
-                problems.push(
-                  `the task did not reach a terminal status after the update (last observed ${JSON.stringify(
-                    inputLeg.finalStatus ?? null
-                  )} within ${this.config.pollTimeoutMs}ms)`
-                );
-              }
+              const violations = inputLeg.ackVerdict?.violations ?? [];
+              const details = {
+                requested: inputLeg.requested,
+                answered: inputLeg.answered,
+              };
               checks.push(
-                problems.length === 0
+                violations.length === 0
                   ? passed(
-                      "tasks-input-required-update-completes",
+                      "tasks-update-ack-shape",
                       Date.now() - stepStartedAt,
-                      {
-                        requested: inputLeg.requested,
-                        answered: inputLeg.answered,
-                        finalStatus: inputLeg.finalStatus,
-                      },
-                      ackWarnings
+                      details,
+                      inputLeg.ackVerdict?.warnings ?? []
                     )
                   : failed(
-                      "tasks-input-required-update-completes",
+                      "tasks-update-ack-shape",
                       Date.now() - stepStartedAt,
-                      `the input_required round trip did not complete: ${problems.join(
+                      `tasks/update was not acknowledged with an empty result: ${violations.join(
                         "; "
                       )}`,
-                      {
-                        requested: inputLeg.requested,
-                        answered: inputLeg.answered,
-                        finalStatus: inputLeg.finalStatus,
-                      }
+                      details
                     )
               );
             }
@@ -1849,6 +1944,33 @@ export class MCPTasksConformanceTest {
                   warnings.add(`${String(state.status)}: ${warning}`);
                 }
               }
+              if (rawStates.some(failedTaskLacksStatusMessage)) {
+                readiness.push({
+                  id: "tasks-readiness-failed-status-message",
+                  checkId: "tasks-status-payload-shape",
+                  title:
+                    TASKS_READINESS_CATALOG[
+                      "tasks-readiness-failed-status-message"
+                    ].title,
+                  severity: "warning",
+                  specStrength: "SHOULD",
+                  message:
+                    "A failed task carries no `statusMessage`; the extension recommends one so a human can see why it failed.",
+                  informational: true,
+                });
+              } else if (
+                !rawStates.some((state) => state.status === "failed")
+              ) {
+                uncheckedAdvice.push({
+                  id: "tasks-readiness-failed-status-message",
+                  title:
+                    TASKS_READINESS_CATALOG[
+                      "tasks-readiness-failed-status-message"
+                    ].title,
+                  reason:
+                    "Not checked: the task didn't fail, so there was no failure reason to look at.",
+                });
+              }
               const observedStatuses = [
                 ...new Set(rawStates.map((state) => String(state.status))),
               ];
@@ -1878,6 +2000,20 @@ export class MCPTasksConformanceTest {
 
           if (selected.has("tasks-ttl-integer-shape")) {
             const stepStartedAt = Date.now();
+            let integerTaskId = createdTaskId;
+            if (!integerTaskId && rawCreation) {
+              // The client could not decode the creation as a task, but the raw
+              // frame names one. Use it only when the frame is task-shaped, not
+              // an ordinary tool result that carries a `taskId` field.
+              const raw = findRawCreationTask(
+                received,
+                rawCreation.taskId,
+                sentRequestIds(sent, "tools/call")
+              );
+              if (raw && isRawTaskShaped(raw)) {
+                integerTaskId = rawCreation.taskId;
+              }
+            }
             if (wire !== "extension") {
               // "integer milliseconds" is the EXTENSION's `Task` interface
               // talking. The legacy wire's `ttl`/`pollInterval` carry no such
@@ -1889,28 +2025,77 @@ export class MCPTasksConformanceTest {
                   "the integer-milliseconds statement belongs to the tasks extension; the legacy wire states no such bound"
                 )
               );
-            } else if (!finalTask) {
+            } else if (!integerTaskId) {
               checks.push(noTask("tasks-ttl-integer-shape"));
             } else {
-              const verdict = validateTaskTtlIntegerShape(wire, finalTask);
-              checks.push(
-                verdict.violations.length === 0
-                  ? passed(
-                      "tasks-ttl-integer-shape",
-                      Date.now() - stepStartedAt,
-                      undefined,
-                      verdict.warnings
-                    )
-                  : failed(
-                      "tasks-ttl-integer-shape",
-                      Date.now() - stepStartedAt,
-                      `task TTL/poll interval are not integer milliseconds: ${verdict.violations.join(
-                        "; "
-                      )}`,
-                      undefined,
-                      undefined
-                    )
+              // EVERY task payload the server sent, not just the last. The
+              // creation result and each `tasks/get` answer are all a `Task`,
+              // both values MAY change across polls (tasks.md:308, :340), so a
+              // fractional value on any one of them breaks the schema even when
+              // the final one is clean. Read raw, like the status-payload check,
+              // so the decoder cannot hide a value — and so a bad creation
+              // result is still judged when no `tasks/get` was ever answered,
+              // or when the client could not decode the creation as a task at
+              // all (the raw frame still names its `taskId`). The decoded final
+              // task is the fallback when no raw frame was captured.
+              const creationPayload = findRawCreationTask(
+                received,
+                integerTaskId,
+                sentRequestIds(sent, "tools/call")
               );
+              const rawStates = findRawTaskStates(
+                received,
+                integerTaskId,
+                sentRequestIds(sent, "tasks/get")
+              );
+              const payloads: Array<{ source: string; task: unknown }> = [
+                // Only a task-shaped creation is a `Task`; an ordinary tool
+                // result may carry a `taskId` and other extra fields.
+                ...(creationPayload && isRawTaskShaped(creationPayload)
+                  ? [{ source: "tools/call", task: creationPayload }]
+                  : []),
+                ...rawStates.map((state) => ({
+                  source: `tasks/get ${String(state.status)}`,
+                  task: state,
+                })),
+              ];
+              if (payloads.length === 0 && finalTask) {
+                payloads.push({ source: "final task", task: finalTask });
+              }
+              if (payloads.length === 0) {
+                checks.push(noTask("tasks-ttl-integer-shape"));
+              } else {
+                // Deduped: a server re-sends the same snapshot on every poll.
+                const violations = new Set<string>();
+                const warnings = new Set<string>();
+                for (const { source, task } of payloads) {
+                  const verdict = validateTaskTtlIntegerShape(wire, task);
+                  for (const violation of verdict.violations) {
+                    violations.add(`${source}: ${violation}`);
+                  }
+                  for (const warning of verdict.warnings) {
+                    warnings.add(`${source}: ${warning}`);
+                  }
+                }
+                const details = { inspectedPayloads: payloads.length };
+                checks.push(
+                  violations.size === 0
+                    ? passed(
+                        "tasks-ttl-integer-shape",
+                        Date.now() - stepStartedAt,
+                        details,
+                        warnings.size > 0 ? [...warnings] : undefined
+                      )
+                    : failed(
+                        "tasks-ttl-integer-shape",
+                        Date.now() - stepStartedAt,
+                        `task TTL/poll interval are not integer milliseconds: ${[
+                          ...violations,
+                        ].join("; ")}`,
+                        details
+                      )
+                );
+              }
             }
           }
 
@@ -1925,21 +2110,37 @@ export class MCPTasksConformanceTest {
               );
             } else {
               const probe = await this.probeUnknownTaskId(manager, serverId);
-              const warnings: string[] = [];
               // tasks.md:795 — `-32602` is a MUST for `tasks/get` and only a
               // SHOULD for the two mutating methods, so the same wrong answer
               // is a failure on one and advice on the others.
-              for (const entry of probe.mutations) {
-                if (entry.outcome === "local-failure") continue;
-                if (entry.code !== INVALID_PARAMS) {
-                  warnings.push(
-                    `${entry.method} answered an unknown task id with ${
+              const wrongAnswers = probe.mutations
+                .filter(
+                  (entry) =>
+                    entry.outcome !== "local-failure" &&
+                    entry.code !== INVALID_PARAMS
+                )
+                .map(
+                  (entry) =>
+                    `${entry.method} answered with ${
                       entry.outcome === "answered"
                         ? "a normal result"
                         : String(entry.code)
-                    } rather than -32602; the extension states that as a SHOULD`
-                  );
-                }
+                    }`
+                );
+              if (wrongAnswers.length > 0) {
+                readiness.push({
+                  id: "tasks-readiness-unknown-task-id-mutations",
+                  checkId: "tasks-invalid-task-id-rejected",
+                  title:
+                    TASKS_READINESS_CATALOG[
+                      "tasks-readiness-unknown-task-id-mutations"
+                    ].title,
+                  severity: "warning",
+                  specStrength: "SHOULD",
+                  message: `An unknown task id should be rejected with -32602 (Invalid params): ${wrongAnswers.join("; ")}.`,
+                  details: { probedTaskId: probe.taskId, wrongAnswers },
+                  informational: true,
+                });
               }
               const detail = { probedTaskId: probe.taskId, ...probe.detail };
               checks.push(
@@ -1955,8 +2156,7 @@ export class MCPTasksConformanceTest {
                     ? passed(
                         "tasks-invalid-task-id-rejected",
                         Date.now() - stepStartedAt,
-                        detail,
-                        warnings
+                        detail
                       )
                     : failed(
                         "tasks-invalid-task-id-rejected",
@@ -2154,26 +2354,40 @@ export class MCPTasksConformanceTest {
               const unnamed = rejections.filter(
                 (probe) => !isRecord(probe.requiredCapabilities)
               );
-              // Naming the tasks extension specifically is what the extension's
-              // own examples show, and it is what makes the error actionable —
-              // but the SCHEMA only says `ClientCapabilities`, so demanding the
-              // exact key would promote an example to a requirement. Advice.
-              const unspecific = rejections.filter((probe) => {
-                const capabilities = probe.requiredCapabilities;
-                if (!isRecord(capabilities)) return false;
-                const extensions = capabilities.extensions;
-                return (
-                  !isRecord(extensions) ||
-                  !(MCP_TASKS_EXTENSION_ID in extensions)
-                );
-              });
+              // The core spec: a `-32021` "whose `data.requiredCapabilities`
+              // lists the missing capabilities" (basic/index.mdx, a MUST). The
+              // missing capability here IS the tasks extension, so an object
+              // that does not name it under `extensions` breaks that MUST too.
+              const unspecific = rejections.filter(
+                (probe) =>
+                  isRecord(probe.requiredCapabilities) &&
+                  !namesTasksExtension(probe.requiredCapabilities)
+              );
+              const unnamedMethods = unnamed
+                .map((probe) => probe.method)
+                .join(", ");
+              const unspecificMethods = unspecific
+                .map((probe) => probe.method)
+                .join(", ");
+              const problems = [
+                ...(unnamed.length > 0
+                  ? [
+                      `${unnamed.length} -32021 rejection(s) carried no error.data.requiredCapabilities OBJECT: ${unnamedMethods}. The core schema types it as ClientCapabilities and requires it; a client told it is missing a capability, but not which one, cannot act on the error`,
+                    ]
+                  : []),
+                ...(unspecific.length > 0
+                  ? [
+                      `${unspecific.length} -32021 rejection(s) carry a requiredCapabilities object that does not name ${MCP_TASKS_EXTENSION_ID} under \`extensions\`: ${unspecificMethods}. The core spec requires it to list the missing capabilities, and the missing one is the tasks extension`,
+                    ]
+                  : []),
+              ];
               checks.push(
                 rejections.length === 0
                   ? couldNotRun(
                       "tasks-undeclared-capability-names-requirements",
                       "no request was rejected with -32021, so no error payload named a required capability"
                     )
-                  : unnamed.length === 0
+                  : problems.length === 0
                     ? passed(
                         "tasks-undeclared-capability-names-requirements",
                         Date.now() - stepStartedAt,
@@ -2182,23 +2396,15 @@ export class MCPTasksConformanceTest {
                             method: probe.method,
                             requiredCapabilities: probe.requiredCapabilities,
                           })),
-                        },
-                        unspecific.length > 0
-                          ? [
-                              `${unspecific.length} -32021 rejection(s) carry a requiredCapabilities object that does not name ${MCP_TASKS_EXTENSION_ID} under \`extensions\`: ${unspecific
-                                .map((probe) => probe.method)
-                                .join(", ")}. The extension's own examples do, and a client cannot act on a requirement it cannot identify`,
-                            ]
-                          : undefined
+                        }
                       )
                     : failed(
                         "tasks-undeclared-capability-names-requirements",
                         Date.now() - stepStartedAt,
-                        `${unnamed.length} -32021 rejection(s) carried no error.data.requiredCapabilities OBJECT: ${unnamed
-                          .map((probe) => probe.method)
-                          .join(", ")}. The core schema types it as ClientCapabilities and requires it; a client told it is missing a capability, but not which one, cannot act on the error`,
+                        problems.join(" "),
                         {
                           unnamed: unnamed.map((probe) => probe.method),
+                          unspecific: unspecific.map((probe) => probe.method),
                         }
                       )
               );
@@ -2301,6 +2507,14 @@ export class MCPTasksConformanceTest {
                   incompleteReason: `all ${pending.length} selected check(s) ran but are unscored by profile ${profile.id}@${profile.version}, so this run establishes no conformance verdict`,
                 }
               : decideOutcome(scored);
+          // Advice the caller left out is not reported.
+          const pickedAdvice = this.config.readinessIds;
+          const pickedReadiness = readiness.filter(
+            (warning) => !pickedAdvice || pickedAdvice.includes(warning.id)
+          );
+          const pickedUnchecked = uncheckedAdvice.filter(
+            (entry) => !pickedAdvice || pickedAdvice.includes(entry.id)
+          );
 
           return {
             passed: verdict.outcome === "passed",
@@ -2310,6 +2524,12 @@ export class MCPTasksConformanceTest {
               : {}),
             target: this.config.target,
             checks,
+            ...(pickedReadiness.length > 0
+              ? { readiness: pickedReadiness }
+              : {}),
+            ...(pickedUnchecked.length > 0
+              ? { uncheckedAdvice: pickedUnchecked }
+              : {}),
             summary:
               pending.length > 0
                 ? `${buildSummary(scored)}, ${pending.length} pending (unscored by profile ${profile.id}@${profile.version})`
@@ -2341,22 +2561,39 @@ export class MCPTasksConformanceTest {
         }
       );
     } catch (error) {
-      const failure = failed(
-        "tasks-wire-resolvable",
-        Date.now() - startedAt,
-        `Failed to connect to ${this.config.target}: ${errorMessage(error)}`,
-        undefined,
-        error
-      );
+      // Refused for credentials: nothing was reached, so every selected check
+      // could not run — `incomplete`, not `failed`. Each one is reported, so
+      // the run names what it was asked rather than one stand-in check.
+      const results: MCPTasksCheckResult[] = isAuthorizationRefusal(error)
+        ? [...selected].map((id) =>
+            couldNotRun(
+              id,
+              AUTHORIZATION_REQUIRED_MESSAGE,
+              authorizationRequiredDetails(error)
+            )
+          )
+        : [
+            failed(
+              "tasks-wire-resolvable",
+              Date.now() - startedAt,
+              `Failed to connect to ${this.config.target}: ${errorMessage(error)}`,
+              undefined,
+              error
+            ),
+          ];
+      const verdict = decideOutcome(results);
       return {
-        passed: false,
-        outcome: "failed",
+        passed: verdict.outcome === "passed",
+        outcome: verdict.outcome,
+        ...(verdict.incompleteReason
+          ? { incompleteReason: verdict.incompleteReason }
+          : {}),
         target: this.config.target,
-        checks: [failure],
-        summary: buildSummary([failure]),
+        checks: results,
+        summary: buildSummary(results),
         durationMs: Date.now() - startedAt,
-        categorySummary: summarizeChecks([failure]),
-        profile: buildConformanceProfileStamp({ profile, checks: [failure] }),
+        categorySummary: summarizeChecks(results),
+        profile: buildConformanceProfileStamp({ profile, checks: results }),
         discovery: {
           wire: "none",
           toolCount: 0,
@@ -2392,9 +2629,9 @@ export class MCPTasksConformanceTest {
    *
    *   - `created`  — a `CreateTaskResult` came back: the violation.
    *   - `answered` — a normal tool result: conformant.
-   *   - `refused`  — a JSON-RPC error response: also conformant (no task was
-   *     handed to a non-declaring client), with `-32021` being the refusal the
-   *     spec names and any other code carried through as a warning.
+   *   - `refused`  — a JSON-RPC error response. Conformant only with `-32021`
+   *     whose `requiredCapabilities` names the tasks extension, the refusal
+   *     tasks.md:63 requires; anything else fails the check.
    *   - `errored`  — no JSON-RPC response exists at all. Same v2 discriminator
    *     as {@link runUndeclaredProbe}: `ProtocolError` carries a NUMERIC code
    *     and is minted only from a server error response, while local and
@@ -2416,7 +2653,12 @@ export class MCPTasksConformanceTest {
   ): Promise<
     | { outcome: "created"; taskId: string; discriminated: boolean }
     | { outcome: "answered" }
-    | { outcome: "refused"; code: number; message: string }
+    | {
+        outcome: "refused";
+        code: number;
+        message: string;
+        requiredCapabilities: unknown;
+      }
     | { outcome: "errored"; message: string }
   > {
     const receivedBefore = received.length;
@@ -2451,7 +2693,12 @@ export class MCPTasksConformanceTest {
       const message = errorMessage(error);
       return code === undefined
         ? { outcome: "errored", message }
-        : { outcome: "refused", code, message };
+        : {
+            outcome: "refused",
+            code,
+            message,
+            requiredCapabilities: readRequiredCapabilities(error),
+          };
     }
   }
 
@@ -2542,11 +2789,12 @@ export class MCPTasksConformanceTest {
    * task lifecycle a poll-only runner can never reach.
    *
    * Returns what happened rather than a verdict, so the check below can tell
-   * "the operator supplied no answers" (a skip) from "the update was rejected"
-   * and from "the update was acknowledged but the task never moved" (both
-   * failures). The ack shape is asserted here because the spec is specific
-   * about it: "On success, the server MUST acknowledge the request with an
-   * empty result."
+   * "the operator supplied no answers" from "the update was rejected" (neither
+   * leaves an acknowledgement to grade) and from "the update was
+   * acknowledged". The ack shape is asserted here because the spec is
+   * specific about it: "On success, the server MUST acknowledge the request
+   * with an empty result." The task is still polled afterwards so downstream
+   * checks read the state it reached, not the gate it was parked on.
    */
   private async runInputRequiredLeg(
     manager: MCPClientManager,
@@ -2567,32 +2815,44 @@ export class MCPTasksConformanceTest {
 
     const answered = Object.keys(responses);
     const receivedBefore = received.length;
-    let ack: unknown;
+    let ackVerdict: ShapeVerdict;
     try {
-      ack = await manager.updateTask(
+      const ack = await manager.updateTask(
         serverId,
         taskId,
         responses as never
       );
+      // "the server MUST acknowledge the request with an empty result". The
+      // envelope member `resultType` and the `_meta` container are part of
+      // every result, so they are not "content" — anything else is the server
+      // answering with state the client is told to re-poll for.
+      ackVerdict = validateCompletionAck(
+        ack,
+        "tasks/update",
+        findRawResult(received.slice(receivedBefore))
+      );
     } catch (error) {
-      return {
-        outcome: "update-rejected",
-        requested,
-        answered,
-        message: errorMessage(error),
-        code: errorCode(error),
+      // A success response whose `result` is not an object is the server's
+      // answer, not a rejection, and it is not an empty result. The client
+      // refuses it before it can be logged: the HTTP transport throws a
+      // ZodError for a frame that is not a valid JSON-RPC message, and the
+      // extension guard throws for a result that is not an object.
+      if (!isMalformedResponseError(error)) {
+        return {
+          outcome: "update-rejected",
+          requested,
+          answered,
+          message: errorMessage(error),
+          code: errorCode(error),
+        };
+      }
+      ackVerdict = {
+        violations: [
+          "tasks/update did not return a result object; the client rejected the response as malformed",
+        ],
+        warnings: [],
       };
     }
-
-    // "the server MUST acknowledge the request with an empty result". The
-    // envelope member `resultType` and the `_meta` container are part of every
-    // result, so they are not "content" — anything else is the server answering
-    // with state the client is told to re-poll for.
-    const ackVerdict = validateCompletionAck(
-      ack,
-      "tasks/update",
-      findRawResult(received.slice(receivedBefore))
-    );
 
     const polled = await this.pollToTerminal(manager, serverId, "extension", taskId);
     return {
@@ -2601,7 +2861,6 @@ export class MCPTasksConformanceTest {
       answered,
       ackVerdict,
       polled,
-      finalStatus: polled.task ? String(polled.task.status) : undefined,
     };
   }
 
@@ -2730,13 +2989,11 @@ export class MCPTasksConformanceTest {
       }
       // A server that has already finished and forgotten the task answers the
       // unknown-id error, which is a legitimate outcome for a probe that runs
-      // after the task reached a terminal status. Reported, not failed.
+      // after the task reached a terminal status. Not judged.
       if (code === INVALID_PARAMS) {
         return {
           problems: [],
-          warnings: [
-            `tasks/cancel for the already-terminal task ${taskId} was answered with -32602; the server no longer knows the task, which the extension permits`,
-          ],
+          warnings: [],
           detail: { taskId, cancelCode: code },
         };
       }

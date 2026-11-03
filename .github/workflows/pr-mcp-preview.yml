@@ -50,7 +50,7 @@ concurrency:
 
 env:
   PREVIEW_COMMENT_MARKER: "<!-- mcpjam-mcp-preview -->"
-  NODE_VERSION: "24.14.0"
+  NODE_VERSION: "24.22.1"
 
 jobs:
   upsert-mcp-preview:

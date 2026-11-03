@@ -33,6 +33,10 @@ export const CLIENT_SETTING_IDS = [
   "mcp.tool_call_cancellation.modern",
   "mcp.tool_list_changed.listens",
   "mcp.tool_list_changed.refetches",
+  "mcp.unauthorized_challenge",
+  "mcp.unauthorized_challenge_trigger",
+  "mcp.tool_result_auth_challenge",
+  "mcp.tool_result_auth_challenge_trigger",
   "mcp.initialize.supported_protocol_versions",
   "mcp.initialize.client_info",
   "mcp.apps.sandbox.csp",
@@ -108,6 +112,26 @@ const mcpProfileChanges: SettingDetector = (saved, draft) => {
       "mcp.tool_list_changed.refetches",
       before?.toolListChanged?.refetches,
       after?.toolListChanged?.refetches,
+    ],
+    [
+      "mcp.unauthorized_challenge",
+      before?.unauthorizedChallenge,
+      after?.unauthorizedChallenge,
+    ],
+    [
+      "mcp.unauthorized_challenge_trigger",
+      before?.unauthorizedChallengeTrigger,
+      after?.unauthorizedChallengeTrigger,
+    ],
+    [
+      "mcp.tool_result_auth_challenge",
+      before?.toolResultAuthChallenge,
+      after?.toolResultAuthChallenge,
+    ],
+    [
+      "mcp.tool_result_auth_challenge_trigger",
+      before?.toolResultAuthChallengeTrigger,
+      after?.toolResultAuthChallengeTrigger,
     ],
     [
       "mcp.initialize.supported_protocol_versions",
@@ -234,6 +258,8 @@ const CLIENT_SETTING_DETECTORS = {
     "tool_visibility",
     (config) => config.respectToolVisibility,
   ),
+  // Backend-only requirement; the editor has no control that changes it.
+  requireNativeToolDiscovery: () => [],
   progressiveToolDiscovery: one(
     "progressive_tool_discovery",
     (config) => config.progressiveToolDiscovery,
@@ -259,6 +285,7 @@ const CLIENT_SETTING_DETECTORS = {
   computer: one("computer", (config) => config.computer),
   browserProfileId: one("browser_profile", (config) => config.browserProfileId),
   harness: one("harness", (config) => config.harness),
+  agentLoop: one("harness", (config) => config.agentLoop),
   connectionDefaults: (saved, draft) => [
     ...(equal(
       saved.connectionDefaults.headers,

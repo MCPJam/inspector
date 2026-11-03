@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import { BehaviorTab } from "../BehaviorTab";
 
@@ -81,7 +81,7 @@ describe("BehaviorTab harness gray-out", () => {
     expect(screen.getByTestId("model-selector")).not.toHaveAttribute(
       "data-disabled",
     );
-    expect(screen.getByDisplayValue("No system prompt applied")).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "System prompt" })).toBeEnabled();
   });
 
   it("leaves approval EDITABLE for claude-code now that its proxy phase landed", () => {
@@ -311,29 +311,56 @@ describe("saved system prompt status", () => {
           sourceUrl: "https://platform.claude.com",
         },
       },
-      "Default system prompt applied",
     ],
-    ["Custom text", undefined, "Custom system prompt applied"],
-    ["", {}, "No system prompt applied"],
-    ["", undefined, "No system prompt applied"],
+    ["Custom text", undefined],
+    ["", {}],
+    ["", undefined],
   ] as const)(
-    "conceals text and renders saved state",
-    (text, metadata, status) => {
+    "shows editable text and preserves saved attribution",
+    (text, metadata) => {
       renderBehaviorTab({ systemPrompt: text, systemPromptDefault: metadata });
-      expect(screen.getByDisplayValue(status)).toBeDisabled();
-      expect(screen.getByDisplayValue(status)).toHaveClass(
-        "resize-none",
-        "italic",
-      );
-      expect(screen.getByText("Not editable")).toBeInTheDocument();
+      const editor = screen.getByRole("textbox", { name: "System prompt" });
+      expect(editor).toBeEnabled();
+      expect(editor).toHaveValue(text);
+      expect(screen.queryByText("Not editable")).not.toBeInTheDocument();
       if (metadata && "source" in metadata) {
         expect(
           screen.getByText("Source: OpenAI · 2026-10-01"),
         ).toBeInTheDocument();
         expect(screen.queryByRole("link")).not.toBeInTheDocument();
       }
-      if (text)
-        expect(screen.queryByDisplayValue(text)).not.toBeInTheDocument();
+    },
+  );
+});
+
+describe("system prompt editing", () => {
+  it.each(["A custom prompt", ""])(
+    "updates the draft to %j and clears default attribution",
+    (text) => {
+      const draft = {
+        ...emptyHostConfigInputV2({ systemPrompt: "Original prompt" }),
+        systemPromptDefault: {
+          source: {
+            publisher: "OpenAI",
+            catalogEntryId: "entry",
+            revision: "revision",
+            sourceUrl: "https://example.com/prompt",
+          },
+        },
+      };
+      const onDraftChange = vi.fn();
+      render(
+        <BehaviorTab draft={draft} onDraftChange={onDraftChange} attention={[]} />,
+      );
+      fireEvent.change(screen.getByRole("textbox", { name: "System prompt" }), {
+        target: { value: text },
+      });
+      expect(onDraftChange).toHaveBeenCalledTimes(1);
+      expect(onDraftChange.mock.calls[0][0](draft)).toEqual({
+        ...draft,
+        systemPrompt: text,
+        systemPromptDefault: undefined,
+      });
     },
   );
 });

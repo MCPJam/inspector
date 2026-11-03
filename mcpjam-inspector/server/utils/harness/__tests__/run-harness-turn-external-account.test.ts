@@ -87,7 +87,7 @@ vi.mock("../registry.js", () => ({
         template: "Bearer {}",
       },
     },
-    mcpDelivery: "native",
+    mcpDelivery: "harness",
     mcpNativeDelivery: "session-config",
     // Never consulted on this path — declared so a regression that starts
     // consulting it is visible rather than silently permissive.

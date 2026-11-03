@@ -1,3 +1,4 @@
+import type { HarnessStartupPhase } from "@/shared/harness-startup";
 // Inspector transcript renderer for Playground, Evals, and session review
 // (Sessions, User Testing, Swarms, and share dialogs). Provider-free external
 // embedders use @mcpjam/chat-ui; shared adaptation and primitives live there.
@@ -28,7 +29,10 @@ import {
   getScenarioChatBackground,
   getScenarioHostFamily,
 } from "@/lib/scenario-client-style";
-import { type ReasoningDisplayMode } from "./thread/parts/reasoning-part";
+import {
+  LIVE_CHAT_REASONING_DISPLAY_MODE,
+  type ReasoningDisplayMode,
+} from "./thread/parts/reasoning-part";
 import { TranscriptThread } from "./thread/transcript-thread";
 import {
   getLastRenderableConversationMessage,
@@ -53,6 +57,7 @@ import type { McpToolResultImageRenderingPolicy } from "@/lib/client-config-v2";
 export const TRANSCRIPT_COLUMN_CLASS = "min-w-0 w-full max-w-4xl mx-auto px-4";
 
 interface ThreadProps {
+  harnessStartupPhase?: HarnessStartupPhase | null;
   chatSessionId?: string;
   messages: UIMessage[];
   sendFollowUpMessage: (text: string) => void;
@@ -156,6 +161,7 @@ function getMessageToolCallIds(messages: UIMessage[]): Set<string> {
 }
 
 export function Thread({
+  harnessStartupPhase,
   chatSessionId,
   messages,
   sendFollowUpMessage,
@@ -179,7 +185,7 @@ export function Thread({
   minimalMode = false,
   interactive = true,
   widgetPolicy = "live",
-  reasoningDisplayMode = "inline",
+  reasoningDisplayMode = LIVE_CHAT_REASONING_DISPLAY_MODE,
   mcpToolResultImageRendering,
   focusMessageId = null,
   highlightedMessageIds = [],
@@ -373,7 +379,7 @@ export function Thread({
       <div
         className={cn(
           "flex-1 min-h-0 min-w-0 pb-4",
-          isChatgptDark && "text-[#DFDFDF]"
+          isChatgptDark && "text-[#DFDFDF]",
         )}
         style={
           chatgptFamilyDarkBackground
@@ -406,7 +412,10 @@ export function Thread({
           tornDownWidgetIds={tornDownWidgetIds}
           displayMode={displayMode}
           onDisplayModeChange={onDisplayModeChange}
-          onToolApprovalResponse={isLoading ? undefined : onToolApprovalResponse}
+          onToolApprovalResponse={
+            isLoading ? undefined : onToolApprovalResponse
+          }
+          onForwardingToolApprovalResponse={onToolApprovalResponse}
           toolRenderOverrides={toolRenderOverrides}
           showInlineEdit={showInlineEdit}
           minimalMode={minimalMode}
@@ -453,12 +462,13 @@ export function Thread({
 
         {shouldShowStandaloneThinkingIndicator && (
           <div className={TRANSCRIPT_COLUMN_CLASS}>
-            <ThinkingIndicator model={model} />
+            <ThinkingIndicator model={model} startupPhase={harnessStartupPhase} />
           </div>
         )}
 
         {showFullscreenChatOverlay && (
           <FullscreenChatOverlay
+            startupPhase={harnessStartupPhase}
             chatSessionId={chatSessionId}
             messages={messages}
             modelProvider={model.provider}

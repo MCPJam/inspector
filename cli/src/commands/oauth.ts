@@ -1,5 +1,6 @@
 import {
   reportIncomplete,
+  reportReadiness,
   reportScore,
 } from "../lib/conformance-exit-code.js";
 import {
@@ -427,6 +428,7 @@ export function registerOAuthCommands(program: Command): void {
       // incomplete run gets the same third exit code as every other suite —
       // "we never established anything" is a different failure from "the
       // server violated the spec", and a human must not have to dig for why.
+      reportReadiness(result, command);
       reportIncomplete(result, command);
       await maybeUploadSingleSuite({
         suiteKind: "oauth",
@@ -522,6 +524,7 @@ export function registerOAuthCommands(program: Command): void {
       }
       for (const run of result.results) {
         reportScore(scoreFromOAuthResult(run), command, run.label);
+        reportReadiness(run, command);
         reportIncomplete(run, command);
       }
       // Worst-of the flows, matching the shared ordering: a violation (1)

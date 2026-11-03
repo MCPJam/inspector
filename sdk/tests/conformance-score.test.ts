@@ -1,10 +1,11 @@
 /**
- * The conformance score: MUSTs own 95 points, advice owns 5, and the
- * denominator rules from `conformance-outcome.ts` keep the number honest.
- * Every property asserted here is one a caller will quote to a server author,
- * so each has a test: not-applicable costs nothing, could-not-run caps below
- * 100, advice can never breach the 95-point MUST floor, and 100 means
- * "everything applicable passed and nothing was left to advise".
+ * The conformance score: every applicable check is worth one point, the score
+ * is the share that passed rounded DOWN to one decimal, and SHOULD/MAY advice
+ * is worth 0. The denominator rules from `conformance-outcome.ts` keep the
+ * number honest. Every property asserted here is one a caller will quote to a
+ * server author, so each has a test: not-applicable costs nothing,
+ * could-not-run keeps a run below 100, advice never moves the number, and 100
+ * means "every applicable check ran and passed".
  */
 
 import {
@@ -18,6 +19,7 @@ import {
   type ConformanceScore,
 } from "../src/conformance-score.js";
 import type { OutcomeCheckLike } from "../src/conformance-outcome.js";
+import { toConformanceReport } from "../src/conformance-reporting.js";
 import type { MCPConformanceResult } from "../src/mcp-conformance/types.js";
 import type { ConformanceResult as OAuthConformanceResult } from "../src/oauth-conformance/types.js";
 
@@ -43,17 +45,18 @@ function passing(count: number): OutcomeCheckLike[] {
 }
 
 describe("computeConformanceScore", () => {
-  it("scores 100 only when every applicable check passed and no advice fired", () => {
+  it("scores 100 when every applicable check passed, advice or not", () => {
     const clean = computeConformanceScore(passing(26));
     expect(clean.score).toBe(100);
     expect(clean.outcome).toBe("passed");
 
     const withAdvice = computeConformanceScore(passing(26), [
-      { id: "readiness-metadata-quality", tier: "should" },
+      { id: "readiness-deprecated-feature-use", tier: "should" },
     ]);
-    expect(withAdvice.score).toBe(98);
+    expect(withAdvice.score).toBe(100);
     expect(withAdvice.outcome).toBe("passed");
-    expect(withAdvice.advicePointsLost).toBe(2);
+    expect(withAdvice.advisories).toHaveLength(1);
+    expect(withAdvice.advicePointsLost).toBe(0);
   });
 
   it("leaves not-applicable checks out of the denominator entirely — the no-auth case", () => {
@@ -78,80 +81,68 @@ describe("computeConformanceScore", () => {
 
     expect(score.outcome).toBe("incomplete");
     expect(score.applicable).toBe(26);
-    // 95 × 25/26 + 5 = 96.3 — but an incomplete run is barred from the
-    // MUST-clean band, so it reads 94 at most.
-    expect(score.score).toBe(94);
+    // 25/26 = 96.15%.
+    expect(score.score).toBe(96.1);
   });
 
-  it("reserves the 95–100 band for MUST-clean, complete runs", () => {
-    // With a large denominator one failure costs less than the 5-point advice
-    // budget (95 × 199/200 + 5 = 99.5), which would rank a violating server
-    // above a clean-but-advised one. The band cap prevents exactly that.
-    const failedOne = computeConformanceScore([
-      ...passing(199),
-      check("failed-one", "failed"),
-    ]);
-    expect(failedOne.score).toBe(94);
-    expect(failedOne.outcome).toBe("failed");
+  it("scores a failed or incomplete run as the share that passed, advice aside", () => {
+    const blocked = computeConformanceScore(
+      Array.from({ length: 36 }, (_, index) =>
+        check(`unrun-${index}`, "skipped", "could-not-run"),
+      ),
+      [{ id: "advice", tier: "should" }],
+    );
+    expect(blocked.outcome).toBe("incomplete");
+    expect(blocked.score).toBe(0);
 
-    const unrunOne = computeConformanceScore([
-      ...passing(199),
-      check("unrun-one", "skipped", "could-not-run"),
-    ]);
-    expect(unrunOne.score).toBe(94);
-
-    // A MUST-clean run with advice stays in the band but below 100 — rounding
-    // alone would have printed 100 here.
-    const advisedOnly = computeConformanceScore(passing(200), [
-      { id: "advice", tier: "may" },
-    ]);
-    expect(advisedOnly.score).toBe(99);
-    expect(advisedOnly.outcome).toBe("passed");
+    const failing = computeConformanceScore(
+      [
+        ...passing(22),
+        check("failed-1", "failed"),
+        check("failed-2", "failed"),
+        check("failed-3", "failed"),
+      ],
+      [{ id: "advice", tier: "should" }],
+    );
+    expect(failing.score).toBe(88);
   });
 
-  it("keeps a MUST-clean server at or above 95 no matter how much advice fired", () => {
+  it("rounds down to one decimal, so a run with any failure never shows 100", () => {
+    const score = (passed: number, failed: number) =>
+      computeConformanceScore([
+        ...passing(passed),
+        ...Array.from({ length: failed }, (_, index) =>
+          check(`failed-${index}`, "failed")
+        ),
+      ]).score;
+
+    expect(score(149, 1)).toBe(99.3);
+    expect(score(199, 1)).toBe(99.5);
+    // Rounding to nearest would print 100 here.
+    expect(score(1999, 1)).toBe(99.9);
+    expect(score(2, 1)).toBe(66.6);
+    expect(score(150, 0)).toBe(100);
+  });
+
+  it("gives SHOULD and MAY advice 0 points, however much fired", () => {
     const advisories = Array.from({ length: 40 }, (_, index) => ({
       id: `advice-${index + 1}`,
-      tier: "should" as const,
+      tier: index % 2 === 0 ? ("should" as const) : ("may" as const),
     }));
-    const score = computeConformanceScore(passing(10), advisories);
+    const advised = computeConformanceScore(passing(10), advisories);
 
-    // SEP-2484: SHOULD-level findings are warnings, not failures. The advice
-    // deduction floors at the 5-point advice budget, so no volume of advice
-    // can demote a MUST-clean server across SEP-1730's 80/100 tier lines.
-    expect(score.score).toBe(95);
-    expect(score.advicePointsLost).toBe(5);
-    expect(score.outcome).toBe("passed");
-  });
+    // SEP-2484: SHOULD-level findings are warnings, not failures.
+    expect(advised.score).toBe(100);
+    expect(advised.advisories).toHaveLength(40);
+    expect(advised.advicePointsLost).toBe(0);
+    expect(advised.outcome).toBe("passed");
 
-  it("weights SHOULD/RECOMMENDED advice at 2 points and MAY at 1", () => {
-    const should = computeConformanceScore(passing(10), [
-      { id: "a", tier: "should" },
-    ]);
-    const may = computeConformanceScore(passing(10), [{ id: "a", tier: "may" }]);
-
-    expect(should.score).toBe(98);
-    expect(may.score).toBe(99);
-  });
-
-  it("never ranks a violating server above a MUST-clean one", () => {
-    // The ordering property the bands guarantee: any failed run scores below
-    // the floor (95) of any MUST-clean run, whatever the denominators.
+    // So any failure ranks below a clean run, whatever advice it carries.
     const oneFailure = computeConformanceScore([
       ...passing(25),
       check("failed", "failed"),
     ]);
-    const maxAdvice = computeConformanceScore(
-      passing(26),
-      Array.from({ length: 10 }, (_, index) => ({
-        id: `advice-${index}`,
-        tier: "should" as const,
-      })),
-    );
-
-    expect(oneFailure.score).toBeLessThan(maxAdvice.score!);
-    expect(maxAdvice.score).toBe(95);
-    expect(oneFailure.score).toBe(94);
+    expect(oneFailure.score).toBeLessThan(advised.score!);
   });
 
   it("returns null when nothing was applicable — no number over a vacuous run", () => {
@@ -171,8 +162,8 @@ describe("computeConformanceScore", () => {
       check("bad", "failed"),
     ]);
     expect(failed.outcome).toBe("failed");
-    // 95 × 3/4 + 5 = 76.25 → 76, under the band cap.
-    expect(failed.score).toBe(76);
+    // 3/4 = 75%: a failed run scores its passed share.
+    expect(failed.score).toBe(75);
   });
 });
 
@@ -188,10 +179,10 @@ describe("pooledConformanceScore", () => {
     expect(pooled.applicable).toBe(39);
     expect(pooled.passed).toBe(30);
     expect(pooled.failed).toBe(9);
-    // 95 × 30/39 + 5 = 78 — an average of suite scores (≈ (100+5)/2 = 52 or
-    // a naive mean of 100 and 5) would say something different; summing is
-    // what keeps the 0-for-9 OAuth run visible.
-    expect(pooled.score).toBe(78);
+    // 30/39 = 76.9% — an average of suite scores (a naive mean of 100 and 0
+    // is 50) would say something different; summing is what keeps the 0-for-9
+    // OAuth run visible.
+    expect(pooled.score).toBe(76.9);
     expect(pooled.outcome).toBe("failed");
   });
 
@@ -267,7 +258,7 @@ describe("describeConformanceScore", () => {
     );
 
     expect(line).toBe(
-      "91/100 — 24/26 applicable checks passed, 2 failed, 1 advisory (−2) [2025-11-25]",
+      "92.3/100 — 24/26 applicable checks passed, 2 failed, 1 advisory [2025-11-25]"
     );
   });
 
@@ -312,15 +303,15 @@ describe("suite adapters", () => {
       categorySummary: {} as MCPConformanceResult["categorySummary"],
       readiness: [
         {
-          id: "readiness-metadata-quality",
-          title: "Metadata Quality",
+          id: "readiness-deprecated-feature-use",
+          title: "Deprecated Feature Use",
           severity: "warning",
           specStrength: "SHOULD",
           message: "…",
         },
         {
-          id: "readiness-parse-error-handling",
-          title: "Parse Error Handling",
+          id: "readiness-session-termination",
+          title: "Explicit Session Termination",
           severity: "warning",
           specStrength: "MAY",
           message: "…",
@@ -330,15 +321,15 @@ describe("suite adapters", () => {
     };
   }
 
-  it("maps protocol readiness onto tiers by spec strength, RECOMMENDED folding into SHOULD", () => {
+  it("maps protocol readiness onto tiers by spec strength", () => {
     const score = scoreFromProtocolResult(
       protocolResult({
         readiness: [
           {
-            id: "readiness-oauth-iss-advertised",
-            title: "iss",
+            id: "readiness-tool-order-deterministic",
+            title: "Deterministic Tool Order",
             severity: "warning",
-            specStrength: "RECOMMENDED",
+            specStrength: "SHOULD",
             message: "…",
           },
         ],
@@ -346,28 +337,27 @@ describe("suite adapters", () => {
     );
 
     expect(score.advisories).toEqual([
-      { id: "readiness-oauth-iss-advertised", tier: "should" },
+      { id: "readiness-tool-order-deterministic", tier: "should" },
     ]);
-    expect(score.score).toBe(98);
+    expect(score.score).toBe(100);
     expect(score.protocolVersion).toBe("2025-11-25");
   });
 
-  it("scores protocol checks with the readiness deduction applied", () => {
+  it("lists protocol readiness advice without letting it move the score", () => {
     const score = scoreFromProtocolResult(protocolResult());
-    // 1/1 applicable passed; SHOULD (−2) + MAY (−1) advice → 97.
-    expect(score.score).toBe(97);
+    // 1/1 applicable passed; the SHOULD and MAY advice are worth 0.
+    expect(score.advisories).toHaveLength(2);
+    expect(score.score).toBe(100);
     expect(score.notApplicable).toBe(1);
   });
 
   /**
    * Advice about behavior the spec EXPLICITLY PERMITS — a MAY the server is
-   * entitled to take, or a non-normative example — is reported and must not
-   * cost points. `readiness.ts` says as much in prose about the
-   * protocol-version header ("reported and never scored"); before this the
-   * scoring path deducted anyway, so a legacy-tolerant server lost SHOULD
-   * points for doing something streamable-http.mdx allows in as many words.
+   * entitled to take, or a non-normative example — is reported but not listed
+   * as an advisory. `readiness.ts` says as much in prose about the
+   * protocol-version header ("reported and never scored").
    */
-  it("reports informational advice without deducting for it", () => {
+  it("leaves informational advice out of the advisory list", () => {
     const score = scoreFromProtocolResult(
       protocolResult({
         readiness: [
@@ -380,10 +370,10 @@ describe("suite adapters", () => {
             informational: true,
           },
           {
-            id: "readiness-resource-error-echoes-uri",
-            title: "Resource Errors Name Their URI",
+            id: "readiness-tool-name-conventions",
+            title: "Tool Name Conventions",
             severity: "warning",
-            specStrength: "MAY",
+            specStrength: "SHOULD",
             message: "…",
             informational: true,
           },
@@ -431,7 +421,7 @@ describe("suite adapters", () => {
     expect(apps.advisories.every((advisory) => advisory.tier === "may")).toBe(
       true,
     );
-    expect(apps.score).toBe(98);
+    expect(apps.score).toBe(100);
 
     const tasks = scoreFromTasksResult({
       ...base,
@@ -443,6 +433,58 @@ describe("suite adapters", () => {
       },
     } as never);
     expect(tasks.protocolVersion).toBe("2025-11-25");
+  });
+
+  it("lists typed tasks readiness by spec strength, informational left out", () => {
+    const tasksResult = (informational: boolean, pending = false) =>
+      ({
+        passed: true,
+        outcome: "passed" as const,
+        target: "node server.js",
+        summary: "",
+        durationMs: 1,
+        categorySummary: {},
+        checks: [
+          {
+            id: "tasks-status-payload-shape",
+            category: "lifecycle",
+            title: "Status Payload Shape",
+            description: "…",
+            status: "passed" as const,
+            durationMs: 1,
+          },
+        ],
+        readiness: [
+          {
+            id: "tasks-readiness-failed-status-message",
+            checkId: "tasks-status-payload-shape",
+            title: "Failed Task Status Message",
+            severity: "warning",
+            specStrength: "SHOULD",
+            message: "…",
+            ...(informational ? { informational: true } : {}),
+          },
+        ],
+        ...(pending
+          ? { profile: { pendingCheckIds: ["tasks-status-payload-shape"] } }
+          : {}),
+        discovery: { wire: "extension", toolCount: 1, taskCapableToolCount: 1 },
+      }) as never;
+
+    const free = scoreFromTasksResult(tasksResult(true));
+    expect(free.advisories).toEqual([]);
+    expect(free.score).toBe(100);
+
+    const scored = scoreFromTasksResult(tasksResult(false));
+    expect(scored.advisories).toEqual([
+      { id: "tasks-readiness-failed-status-message", tier: "should" },
+    ]);
+    expect(scored.score).toBe(100);
+
+    // Advice from a check the profile does not score yet is not listed, even
+    // without `informational`: the same rule as a pending check's warnings.
+    const pending = scoreFromTasksResult(tasksResult(false, true));
+    expect(pending.advisories).toEqual([]);
   });
 
   function oauthResult(
@@ -465,8 +507,8 @@ describe("suite adapters", () => {
           httpAttempts: [],
         },
         {
-          step: "verify_list_tools",
-          title: "List Tools",
+          step: "oauth_token_format",
+          title: "Token format",
           summary: "…",
           status: "skipped",
           skipReason: "could-not-run",
@@ -485,13 +527,184 @@ describe("suite adapters", () => {
   it("scores OAuth from the step evidence, not the suite's own verdict", () => {
     // The runner can currently stamp outcome "passed" over could-not-run
     // steps; the score must not inherit that. 1 passed + 1 unrun of 2
-    // applicable → 95 × 1/2 + 5 = 52.5 → 53, outcome incomplete.
+    // applicable → 1/2 = 50%, outcome incomplete.
     const score = scoreFromOAuthResult(oauthResult());
 
     expect(score.outcome).toBe("incomplete");
     expect(score.applicable).toBe(2);
     expect(score.couldNotRun).toBe(1);
-    expect(score.score).toBe(53);
+    expect(score.score).toBe(50);
+  });
+
+  it("leaves the steps a caller unscores out of the counts and the verdict", () => {
+    // The flow still ran every step; the unrun one is simply not graded.
+    const score = scoreFromOAuthResult(oauthResult(), {
+      unscoredCheckIds: ["oauth_token_format"],
+    });
+
+    expect(score.applicable).toBe(1);
+    expect(score.couldNotRun).toBe(0);
+    expect(score.pending).toBe(1);
+    expect(score.score).toBe(100);
+    expect(score.outcome).toBe("passed");
+  });
+
+  it("lists OAuth advice like protocol advice", () => {
+    const score = scoreFromOAuthResult(
+      oauthResult({
+        readiness: [
+          {
+            id: "readiness-oauth-iss-advertised",
+            title: "Authorization Response iss",
+            severity: "warning",
+            specStrength: "SHOULD",
+            message: "…",
+          },
+        ],
+      }),
+      { unscoredCheckIds: ["oauth_token_format"] }
+    );
+
+    expect(score.advisories).toEqual([
+      { id: "readiness-oauth-iss-advertised", tier: "should" },
+    ]);
+    expect(score.score).toBe(100);
+  });
+
+  it("counts the same advice once across an OAuth suite's flows", () => {
+    // Every flow hits the same authorization server, so each reports it.
+    const flow = scoreFromOAuthResult(
+      oauthResult({
+        readiness: [
+          {
+            id: "readiness-oauth-iss-advertised",
+            title: "Authorization Response iss",
+            severity: "warning",
+            specStrength: "SHOULD",
+            message: "…",
+          },
+        ],
+      }),
+      { unscoredCheckIds: ["oauth_token_format"] },
+    );
+    const pooled = pooledConformanceScore([flow, flow, flow]);
+
+    expect(pooled.advisories).toHaveLength(1);
+  });
+
+  it("marks unscored OAuth steps pending in the report, with the same score", () => {
+    const report = toConformanceReport(oauthResult(), {
+      oauthUnscoredCheckIds: ["oauth_token_format"],
+    });
+    const cases = report.groups.flatMap((group) => group.cases);
+
+    expect(cases.find((c) => c.id === "oauth_token_format")?.pending).toBe(
+      true
+    );
+    expect(cases.find((c) => c.id === "request_without_token")?.pending).toBe(
+      undefined
+    );
+    expect(report.score?.pending).toBe(1);
+    expect(report.score?.score).toBe(100);
+  });
+
+  it("passes the report when its only failure is an unscored step", () => {
+    const failing = oauthResult({
+      passed: false,
+      outcome: "failed",
+      steps: [
+        oauthResult().steps[0]!,
+        {
+          ...oauthResult().steps[1]!,
+          status: "failed",
+          skipReason: undefined,
+          error: { message: "listing failed" },
+        },
+      ],
+    });
+    const report = toConformanceReport(failing, {
+      oauthUnscoredCheckIds: ["oauth_token_format"],
+    });
+
+    expect(report.score?.outcome).toBe("passed");
+    expect(report.outcome).toBe("passed");
+    expect(report.passed).toBe(true);
+    expect(report.groups[0]?.passed).toBe(true);
+    // Without the exclusion it is the flow's own failure.
+    expect(toConformanceReport(failing).outcome).toBe("failed");
+  });
+
+  it("keeps a suite report's passed and outcome in step with a not-applicable flow", () => {
+    const failingOnlyUnscored = oauthResult({
+      passed: false,
+      outcome: "failed",
+      steps: [
+        oauthResult().steps[0]!,
+        {
+          ...oauthResult().steps[1]!,
+          status: "failed",
+          skipReason: undefined,
+          error: { message: "listing failed" },
+        },
+      ],
+    });
+    const report = toConformanceReport(
+      {
+        name: "OAuth suite",
+        serverUrl: "https://mcp.example.com/mcp",
+        passed: false,
+        summary: "…",
+        durationMs: 2,
+        results: [
+          {
+            ...oauthResult({ outcome: "not-applicable", passed: false }),
+            label: "no auth",
+          },
+          { ...failingOnlyUnscored, label: "dcr" },
+        ],
+      },
+      { oauthUnscoredCheckIds: ["oauth_token_format"] }
+    );
+
+    expect(report.outcome).toBe("passed");
+    expect(report.passed).toBe(true);
+  });
+
+  it("still counts a flow step a caller tries to unscore", () => {
+    // Only the listed post-flow checks can be left out; a broken flow step
+    // is the flow's own failure.
+    const failing = oauthResult({
+      passed: false,
+      outcome: "failed",
+      steps: [
+        { ...oauthResult().steps[0]!, status: "failed" },
+        { ...oauthResult().steps[1]!, status: "passed", skipReason: undefined },
+      ],
+    });
+    const options = { unscoredCheckIds: ["request_without_token"] };
+    const report = toConformanceReport(failing, {
+      oauthUnscoredCheckIds: options.unscoredCheckIds,
+    });
+
+    expect(scoreFromOAuthResult(failing, options).pending).toBe(0);
+    expect(scoreFromOAuthResult(failing, options).outcome).toBe("failed");
+    expect(report.outcome).toBe("failed");
+    expect(
+      report.groups[0]?.cases.find((c) => c.id === "request_without_token")
+        ?.pending
+    ).toBeUndefined();
+  });
+
+  it("counts unscored steps as pending on a not-applicable flow too", () => {
+    const score = scoreFromOAuthResult(
+      oauthResult({ outcome: "not-applicable" }),
+      { unscoredCheckIds: ["oauth_token_format"] }
+    );
+
+    expect(score.score).toBeNull();
+    expect(score.notApplicable).toBe(1);
+    expect(score.pending).toBe(1);
+    expect(score.outcome).toBe("passed");
   });
 
   it("returns a scoreless result for a server without auth — OPTIONAL costs nothing", () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 
 import { ReadOnlyTranscript } from "../read-only-transcript";
 import { assistantParts } from "./factories";
@@ -37,5 +37,28 @@ describe("reasoning display modes", () => {
     const toggle = container.querySelector("button[aria-expanded='false']");
     expect(toggle).not.toBeNull();
     expect(toggle?.textContent).toContain("Reasoning");
+  });
+
+  it("stays open while more reasoning streams in", () => {
+    const streaming = (text: string) =>
+      assistantParts([{ type: "reasoning", text, state: "streaming" }]);
+    const { container, rerender } = render(
+      <ReadOnlyTranscript
+        messages={[streaming("first")]}
+        reasoningDisplayMode="collapsed"
+      />,
+    );
+    fireEvent.click(container.querySelector("button[aria-expanded]")!);
+    rerender(
+      <ReadOnlyTranscript
+        messages={[streaming("first second")]}
+        reasoningDisplayMode="collapsed"
+      />,
+    );
+    expect(
+      container
+        .querySelector("button[aria-expanded]")
+        ?.getAttribute("aria-expanded"),
+    ).toBe("true");
   });
 });

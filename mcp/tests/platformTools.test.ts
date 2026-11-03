@@ -628,8 +628,6 @@ describe("platform tool registration", () => {
       "create_eval_cases",
       "generate_eval_cases",
       "import_eval_cases",
-      "run_eval_case",
-      "run_eval_suite",
       "backtest_eval_run",
       "backtest_eval_run_judge",
       "ensure_adhoc_environment",
@@ -637,7 +635,6 @@ describe("platform tool registration", () => {
       "generate_personas",
       "create_goal",
       "generate_goals",
-      "launch_goal_run",
       "create_swarm",
       "publish_study",
       "create_client",
@@ -664,9 +661,6 @@ describe("platform tool registration", () => {
       "update_project",
       "archive_goal",
     ]);
-    // Writes whose effect leaves the caller's organization.
-    const EXTERNAL_COMMUNICATION = new Set(["send_feedback"]);
-
     const names = new Set(registrations.map((registration) => registration.name));
     for (const name of [...ADDITIVE_WRITES, ...IDEMPOTENT_WRITES]) {
       expect(names, `${name} is not a registered tool`).toContain(name);
@@ -678,6 +672,9 @@ describe("platform tool registration", () => {
         .annotations;
     for (const name of [
       "call_server_tool",
+      "run_eval_suite",
+      "run_eval_case",
+      "launch_goal_run",
       "send_chat_message",
       "update_project",
       "update_project_server",
@@ -709,6 +706,13 @@ describe("platform tool registration", () => {
       expect(annotationsOf(name)?.idempotentHint, name).toBe(false);
     }
 
+    for (const name of ["get_me", "list_projects", "get_eval_run", "update_eval_case"]) {
+      expect(annotationsOf(name)?.openWorldHint, name).toBe(false);
+    }
+    for (const name of ["list_server_tools", "call_server_tool", "run_eval_case", "publish_study", "send_feedback"]) {
+      expect(annotationsOf(name)?.openWorldHint, name).toBe(true);
+    }
+
     for (const registration of registrations) {
       const { title, ...hints } = registration.config.annotations ?? {};
       // Claude's directory reads `annotations.title` and ignores the top-level
@@ -720,16 +724,18 @@ describe("platform tool registration", () => {
       );
 
       if (hints.readOnlyHint === true) {
-        expect(hints, registration.name).toEqual({ readOnlyHint: true });
+        expect(hints, registration.name).toEqual({
+          readOnlyHint: true,
+          destructiveHint: false,
+          openWorldHint: expect.any(Boolean),
+        });
         continue;
       }
       expect(hints, registration.name).toEqual({
         readOnlyHint: false,
         destructiveHint: !ADDITIVE_WRITES.has(registration.name),
         idempotentHint: IDEMPOTENT_WRITES.has(registration.name),
-        ...(EXTERNAL_COMMUNICATION.has(registration.name)
-          ? { openWorldHint: true }
-          : {}),
+        openWorldHint: expect.any(Boolean),
       });
     }
   });

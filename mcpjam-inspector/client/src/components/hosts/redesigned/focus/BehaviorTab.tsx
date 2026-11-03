@@ -215,6 +215,7 @@ export function BehaviorTab({
     modelSelectionsSupported,
     requireOrgKeys,
     onManageOrgProviders,
+    onAddProvider,
   } = useAvailableModels();
   // A harness client lists only what its runtime can run — the same filter as
   // the Playground picker, so a Codex client cannot be saved on a Claude model.
@@ -388,6 +389,7 @@ export function BehaviorTab({
                 availableModels={availableModels}
                 requireOrgKeys={requireOrgKeys}
                 onManageOrgProviders={onManageOrgProviders}
+                onAddProvider={onAddProvider}
                 onModelChange={(model) => {
                   // Always written with the id: a selection left over from
                   // the previous model would disagree with it. Only where the
@@ -863,18 +865,18 @@ export function BehaviorTab({
 
       <FocusBlock title={fSystemPrompt.label}>
         <div className="space-y-2">
-          <p className="text-xs text-muted-foreground">Not editable</p>
           <Textarea
-            rows={2}
-            disabled
-            value={
-              draft.systemPrompt
-                ? draft.systemPromptDefault?.source
-                  ? "Default system prompt applied"
-                  : "Custom system prompt applied"
-                : "No system prompt applied"
+            aria-label={fSystemPrompt.label}
+            rows={10}
+            value={draft.systemPrompt}
+            onChange={(e) =>
+              update({
+                systemPrompt: e.target.value,
+                systemPromptDefault: undefined,
+              })
             }
-            className="resize-none italic text-muted-foreground"
+            placeholder="You are a helpful assistant…"
+            disabled={readOnly}
           />
           <p className="text-xs text-muted-foreground">
             {draft.systemPrompt && draft.systemPromptDefault?.source ? (

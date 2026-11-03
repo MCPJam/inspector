@@ -27,6 +27,17 @@
 import { describe, expect, it } from "vitest";
 import { resolveExecutionContext } from "../host-execution-context";
 
+describe("required native discovery is host-owned", () => {
+  it("retains the saved requirement under override precedence", () => {
+    const resolved = resolveExecutionContext({ hostConfig: { harness: "codex", requireNativeToolDiscovery: true }, overrides: { progressiveToolDiscovery: false }, precedence: "override-wins" });
+    expect(resolved.requireNativeToolDiscovery).toBe(true);
+  });
+  it("refuses malformed and emulated requirements", () => {
+    expect(() => resolveExecutionContext({ hostConfig: { requireNativeToolDiscovery: "yes" }, precedence: "host-wins" })).toThrow("must be a boolean");
+    expect(() => resolveExecutionContext({ hostConfig: { requireNativeToolDiscovery: true }, precedence: "host-wins" })).toThrow("requires a qualified harness");
+  });
+});
+
 describe("resolveExecutionContext — harness (host-only, server-authoritative)", () => {
   it("reads harness from hostConfig, never from overrides, under override-wins", () => {
     // The Playground (host-bound direct) path uses override-wins so the owner's
@@ -60,13 +71,12 @@ describe("resolveExecutionContext — harness (host-only, server-authoritative)"
     expect(result.harness).toBeUndefined();
   });
 
-  it("ignores an unknown harness value (closed read)", () => {
-    const result = resolveExecutionContext({
+  it("refuses an unknown harness value without changing engines", () => {
+    expect(() => resolveExecutionContext({
       hostConfig: { harness: "totally-not-a-harness" },
       overrides: {},
       precedence: "host-wins",
-    });
-    expect(result.harness).toBeUndefined();
+    })).toThrow("unsupported agent runtime");
   });
 
   it("reads the codex harness (membership via the SDK source of truth)", () => {

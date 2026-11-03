@@ -833,6 +833,13 @@ export function useEvalHandlers({
             throw new Error(
               "Live suite servers are unavailable. Connect them before running from eval chat.",
             );
+          // Replay uses saved counts and cannot honor a per-run override.
+          if (options?.iterationOverride !== undefined) {
+            fail(
+              "Replay cannot honor the requested iteration count. Connect the suite servers and try again.",
+            );
+            return;
+          }
           await handleReplayRun(suite, rerunEligibility.replayableLatestRun, {
             throwOnFailure: options?.throwOnFailure,
           });
@@ -854,6 +861,13 @@ export function useEvalHandlers({
               throw new Error(
                 "Live suite servers are unavailable. Connect them before running from eval chat.",
               );
+            // Replay uses saved counts and cannot honor a per-run override.
+            if (options?.iterationOverride !== undefined) {
+              fail(
+                "Replay cannot honor the requested iteration count. Connect the suite servers and try again.",
+              );
+              return;
+            }
             await handleReplayRun(suite, rerunEligibility.replayableLatestRun, {
               throwOnFailure: options?.throwOnFailure,
             });

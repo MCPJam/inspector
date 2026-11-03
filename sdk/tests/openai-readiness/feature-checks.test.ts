@@ -883,6 +883,7 @@ describe("badges", () => {
         clientIdMetadataDocuments: false,
         checkout: false,
         profileIdentification: false,
+        lazyAuthentication: false,
       },
       STAMP
     );

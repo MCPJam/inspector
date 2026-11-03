@@ -29,7 +29,9 @@ export type HostRuntimeConfig = RuntimeExecutionFields & {
   requireToolApproval: boolean;
   respectToolVisibility?: boolean;
   hostStyle: string;
+  hostCapabilitiesOverride?: Record<string, unknown>;
   progressiveToolDiscovery?: boolean;
+  requireNativeToolDiscovery?: boolean;
   builtInToolIds?: string[];
   /** Shared local-only preference; never added to hosted tool configuration. */
   localBrowserEnabled?: boolean;
@@ -37,6 +39,7 @@ export type HostRuntimeConfig = RuntimeExecutionFields & {
   // that predates the endpoint returns omitted → emulated path. Omitted by the
   // backend for guest actors.
   harness?: Harness;
+  agentLoop?: Harness;
   // The host's saved model selection, with its saved `settings` (reasoning
   // effort). Optional so a backend that does not project it yet reads as "no
   // saved effort". Only meaningful for the model it names.

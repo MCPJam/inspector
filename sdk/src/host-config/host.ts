@@ -194,6 +194,7 @@ export function canonicalToPublic(c: CanonicalHostConfigV2): HostJson {
       : { systemPromptDefault: c.systemPromptDefault }),
     temperature: c.temperature,
     requireToolApproval: c.requireToolApproval,
+    ...(c.requireNativeToolDiscovery !== undefined ? { requireNativeToolDiscovery: c.requireNativeToolDiscovery } : {}),
     servers: c.serverIds,
     optionalServers: c.optionalServerIds,
     connectionDefaults: c.connectionDefaults,
@@ -221,6 +222,7 @@ export function canonicalToPublic(c: CanonicalHostConfigV2): HostJson {
   if (c.harness !== undefined) {
     out.harness = c.harness;
   }
+  if (c.agentLoop !== undefined) out.agentLoop = c.agentLoop;
   if (c.hostCapabilitiesOverride !== undefined) {
     out.hostCapabilitiesOverride = c.hostCapabilitiesOverride;
   }
@@ -290,6 +292,7 @@ export class Host {
   }
   temperature: number;
   requireToolApproval: boolean;
+  requireNativeToolDiscovery?: boolean;
 
   /** Opt into progressive MCP tool discovery (search/load meta-tools). */
   progressiveToolDiscovery?: boolean;
@@ -320,6 +323,8 @@ export class Host {
    * harness, which executes inside the host's attached `computer`.
    */
   harness?: Harness;
+  /** Run a vendor harness while preserving this host's MCPJam client. */
+  agentLoop?: Harness;
 
   /** Required servers. Mutable — `requireServer`/`removeRequiredServer` are sugar. */
   servers: ServerId[];
@@ -407,12 +412,14 @@ export class Host {
     this.promptDefault = cfg.systemPromptDefault;
     this.temperature = cfg.temperature ?? DEFAULT_TEMPERATURE;
     this.requireToolApproval = cfg.requireToolApproval ?? false;
+    this.requireNativeToolDiscovery = cfg.requireNativeToolDiscovery;
     this.progressiveToolDiscovery = cfg.progressiveToolDiscovery;
     this.respectToolVisibility = cfg.respectToolVisibility;
     this.modelVisibleMcpToolResults = cfg.modelVisibleMcpToolResults;
     this.mcpToolResultImageRendering = cfg.mcpToolResultImageRendering;
     this.computer = cfg.computer;
     this.harness = cfg.harness;
+    this.agentLoop = cfg.agentLoop;
     this.servers = cfg.servers ? dedup(cfg.servers) : [];
     this.optionalServers = cfg.optionalServers
       ? dedup(cfg.optionalServers)
@@ -588,12 +595,14 @@ export class Host {
       systemPromptDefault: this.promptDefault,
       temperature: this.temperature,
       requireToolApproval: this.requireToolApproval,
+      requireNativeToolDiscovery: this.requireNativeToolDiscovery,
       progressiveToolDiscovery: this.progressiveToolDiscovery,
       respectToolVisibility: this.respectToolVisibility,
       modelVisibleMcpToolResults: this.modelVisibleMcpToolResults,
       mcpToolResultImageRendering: this.mcpToolResultImageRendering,
       computer: this.computer,
       harness: this.harness,
+      agentLoop: this.agentLoop,
       servers: this.servers,
       optionalServers: this.optionalServers,
       skillSelection: this.skillSelection,
@@ -613,6 +622,7 @@ export class Host {
       systemPromptDefault: snap.systemPromptDefault,
       temperature: snap.temperature,
       requireToolApproval: snap.requireToolApproval,
+      requireNativeToolDiscovery: snap.requireNativeToolDiscovery,
       serverIds: snap.servers,
       optionalServerIds: snap.optionalServers,
       connectionDefaults: snap.connectionDefaults,
@@ -639,6 +649,7 @@ export class Host {
     if (snap.harness !== undefined) {
       input.harness = snap.harness;
     }
+    if (snap.agentLoop !== undefined) input.agentLoop = snap.agentLoop;
     // `{ mode: "all-visible" }` is forwarded — the canonicalizer collapses it
     // to absent (one identity per behavior); explicit — including
     // explicit-empty — survives.
