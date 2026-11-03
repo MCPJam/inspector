@@ -1365,11 +1365,11 @@ export class MCPTasksConformanceTest {
             // forbids it, and SEP-2663 only forbids USING it there.
             checks.push(
               protocolVersion
-                ? passed(
-                    "tasks-wire-resolvable",
-                    Date.now() - stepStartedAt,
-                    { protocolVersion, wire, support }
-                  )
+                ? passed("tasks-wire-resolvable", Date.now() - stepStartedAt, {
+                    protocolVersion,
+                    wire,
+                    support,
+                  })
                 : failed(
                     "tasks-wire-resolvable",
                     Date.now() - stepStartedAt,
