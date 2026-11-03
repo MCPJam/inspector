@@ -108,9 +108,10 @@ export function readStoredAuth(filePath: string): StoredPlatformAuth | null {
     clientId: record.clientId,
     tokenEndpoint: record.tokenEndpoint,
     accessToken: record.accessToken,
-    // Hand-edited files may hold a non-URL; dropping it here means readers
-    // fall back to the default base URL instead of producing broken requests.
-    ...(typeof record.apiUrl === "string" && URL.canParse(record.apiUrl)
+    // Kept as written, even when it is not a URL: dropping it would make the
+    // login look like one made before logins recorded their server, and send
+    // its token to MCPJam Cloud. The resolver refuses an unusable value.
+    ...(typeof record.apiUrl === "string" && record.apiUrl.trim()
       ? { apiUrl: record.apiUrl }
       : {}),
     ...(typeof record.refreshToken === "string"

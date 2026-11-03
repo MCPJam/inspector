@@ -334,9 +334,10 @@ test("cloud status reports an invalid --api-url in JSON and exits 1", async () =
   assert.equal(payload.credential.valid, true);
   assert.equal(payload.credential.redactedKey, "sk_…YYYY");
   assert.equal(payload.deployment.valid, false);
-  assert.equal(payload.deployment.apiUrl, "not-a-url");
+  assert.equal(payload.deployment.apiUrl, "");
   assert.match(payload.deployment.error ?? "", /Invalid --api-url/);
   assert.doesNotMatch(run.stdout, /sk_test_xxxxYYYY/);
+  assert.doesNotMatch(run.stdout, /not-a-url/);
 });
 
 test("other Cloud commands still reject a legacy --api-key with exit 2", async () => {

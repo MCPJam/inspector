@@ -251,7 +251,7 @@ An incomplete run carries a root `incompleteReason` naming the checks that did n
 
 - The runner always advertises the MCP Apps UI extension capability so servers do not hide their MCP Apps surface when custom client capabilities are provided.
 - Deprecated `_meta["ui/resourceUri"]` is accepted but reported as a warning.
-- Tool name SHOULD validations (length, character set, uniqueness) surface as warnings, not failures.
+- Tool name conventions (length, character set, uniqueness) are core MCP rules, so this suite does not check them. The protocol suite reports them on every tool as the advice item `readiness-tool-name-conventions`, on protocol 2025-11-25 and later.
 - `permissions` are validated against the SEP-1865 object shape, for example `geolocation: {}` instead of booleans.
 - Exit codes are CI-friendly: `0` when all selected checks pass, `1` when any check fails, `2` for invalid command usage or config files, and `3` when the run is incomplete because a selected check could not be run.
 

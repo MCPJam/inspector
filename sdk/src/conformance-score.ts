@@ -61,8 +61,9 @@ import type {
 import type {
   MCPTasksConformanceResult,
 } from "./tasks-conformance/types.js";
-import type {
-  ConformanceResult as OAuthConformanceResult,
+import {
+  CONFORMANCE_CHECK_METADATA,
+  type ConformanceResult as OAuthConformanceResult,
 } from "./oauth-conformance/types.js";
 
 /** MUSTs own this many of the 100 points; advice owns the remainder. */
@@ -220,7 +221,16 @@ export function pooledConformanceScore(
     // bucket carries no field, and reading it as NaN would poison the pool.
     pending: sum(parts, (part) => part.pending ?? 0),
   };
-  const advisories = parts.flatMap((part) => part.advisories ?? []);
+  // Once per advice id: an OAuth suite runs one flow per strategy against the
+  // same authorization server, and each flow reports the same advice. Ids are
+  // unique across suites, so this holds for a run-wide pool too.
+  const advisories = [
+    ...new Map(
+      parts
+        .flatMap((part) => part.advisories ?? [])
+        .map((advisory) => [advisory.id, advisory] as const),
+    ).values(),
+  ];
 
   // Worst-of, failure outranking incomplete — the same ordering the CLI exit
   // codes and suite reports use. Scoreless parts carry "passed" (nothing
@@ -317,19 +327,27 @@ function scoreFromWarningChecks(
   checks: Array<OutcomeCheckLike & { warnings?: string[] }>,
   protocolVersion?: string,
   profileStamp?: Pick<ConformanceProfileStamp, "pendingCheckIds">,
+  typedAdvisories: Array<ScoredAdvisory & { checkId: string }> = []
 ): ConformanceScore {
   // Warnings on a PENDING check must not cost points either: the check is not
   // being scored, and letting its advice deduct would move the number a
-  // profile bump is supposed to gate.
+  // profile bump is supposed to gate. Typed advice follows the check it came
+  // from for the same reason.
   const { scored } = partitionByStamp(checks, profileStamp);
+  const scoredIds = new Set(scored.map((check) => check.id));
   return computeConformanceScore(
     checks,
-    scored.flatMap((check) =>
-      (check.warnings ?? []).map((_, index) => ({
-        id: `${check.id}-warning-${index + 1}`,
-        tier: "may" as const,
-      })),
-    ),
+    [
+      ...scored.flatMap((check) =>
+        (check.warnings ?? []).map((_, index) => ({
+          id: `${check.id}-warning-${index + 1}`,
+          tier: "may" as const,
+        }))
+      ),
+      ...typedAdvisories
+        .filter((advisory) => scoredIds.has(advisory.checkId))
+        .map(({ id, tier }) => ({ id, tier })),
+    ],
     protocolVersion,
     profileStamp,
   );
@@ -351,6 +369,26 @@ export function scoreFromTasksResult(
     // reason the protocol suite does: a stored report must score the way it did
     // when it was produced.
     result.profile,
+    // The typed advice channel, read like the protocol suite's readiness:
+    // `informational` advice is reported but never costs points.
+    (result.readiness ?? [])
+      .filter((warning) => warning.informational !== true)
+      .map((warning) => ({
+        id: warning.id,
+        checkId: warning.checkId,
+        tier: warning.specStrength === "MAY" ? "may" : "should",
+      }))
+  );
+}
+
+/**
+ * The ids an OAuth score may leave out: only the listed post-flow checks. A
+ * flow step (discovery, registration, token) always counts, so a stored list
+ * naming one cannot pass a flow that broke there.
+ */
+export function scorableOAuthIds(ids: readonly string[] | undefined): string[] {
+  return (ids ?? []).filter((id) =>
+    Object.prototype.hasOwnProperty.call(CONFORMANCE_CHECK_METADATA, id)
   );
 }
 
@@ -370,14 +408,32 @@ export function scoreFromTasksResult(
  */
 export function scoreFromOAuthResult(
   result: OAuthConformanceResult,
+  options?: {
+    /**
+     * Checks the caller leaves out of the score (see `scorableOAuthIds`;
+     * flow steps always count). OAuth's steps are one
+     * sequential sign-in flow, so they all still RUN; these are reported as
+     * pending (unscored), exactly like a profile's pending checks: out of the
+     * counts and out of the verdict.
+     */
+    unscoredCheckIds?: readonly string[];
+  }
 ): ConformanceScore {
+  const unscored = scorableOAuthIds(options?.unscoredCheckIds);
   if (result.outcome === "not-applicable") {
+    // Unscored steps stay pending here too, so the score and a report that
+    // marks them pending count them the same way.
+    const unscoredIds = new Set(unscored);
+    const pending = result.steps.filter((step) =>
+      unscoredIds.has(step.step)
+    ).length;
     return scoreFromCounts(
       {
         passed: 0,
         failed: 0,
         couldNotRun: 0,
-        notApplicable: result.steps.length,
+        notApplicable: result.steps.length - pending,
+        pending,
       },
       [],
       "passed",
@@ -391,5 +447,16 @@ export function scoreFromOAuthResult(
     ...(step.skipReason ? { skipReason: step.skipReason } : {}),
     ...(step.error?.message ? { error: { message: step.error.message } } : {}),
   }));
-  return computeConformanceScore(checks, [], result.protocolVersion);
+  return computeConformanceScore(
+    checks,
+    // The typed advice channel, read like the protocol suite's readiness.
+    (result.readiness ?? [])
+      .filter((warning) => warning.informational !== true)
+      .map((warning) => ({
+        id: warning.id,
+        tier: warning.specStrength === "MAY" ? "may" : "should",
+      })),
+    result.protocolVersion,
+    unscored.length > 0 ? { pendingCheckIds: [...unscored] } : undefined
+  );
 }

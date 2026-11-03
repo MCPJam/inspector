@@ -193,6 +193,7 @@ export type HostConfigInputV2 = {
    * hostConfig row.
    */
   progressiveToolDiscovery?: boolean;
+  requireNativeToolDiscovery?: boolean;
   /**
    * Host/client policies for which MCP tool-result content/resource shapes are
    * exposed to the model. Optional so untouched hosts use runtime defaults
@@ -307,6 +308,7 @@ export type HostConfigDtoV2 = {
   respectToolVisibility?: boolean;
   /** Surfaced verbatim — see HostConfigInputV2.progressiveToolDiscovery. */
   progressiveToolDiscovery?: boolean;
+  requireNativeToolDiscovery?: boolean;
   /** Surfaced verbatim — see HostConfigInputV2.modelVisibleMcpToolResults. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /** Surfaced verbatim — see HostConfigInputV2.mcpToolResultImageRendering. */
@@ -440,6 +442,7 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
     // feature; treat that as the spec default (filter app-only tools).
     respectToolVisibility: dto.respectToolVisibility ?? true,
     progressiveToolDiscovery: dto.progressiveToolDiscovery,
+    requireNativeToolDiscovery: dto.requireNativeToolDiscovery,
     modelVisibleMcpToolResults: dto.modelVisibleMcpToolResults
       ? cloneModelVisibleMcpToolResults(dto.modelVisibleMcpToolResults)
       : undefined,
@@ -726,6 +729,12 @@ export function isMcpProfileEmpty(profile: HostConfigMcpProfileV1): boolean {
     profile.toolParamHeaderMirroring === undefined &&
     profile.paginationTraversal === undefined &&
     profile.mrtrSupport === undefined &&
+    // Mid-session sign-in knobs. Each is a single enum, so presence is
+    // content: a profile carrying only one of them must survive the save.
+    profile.unauthorizedChallenge === undefined &&
+    profile.unauthorizedChallengeTrigger === undefined &&
+    profile.toolResultAuthChallenge === undefined &&
+    profile.toolResultAuthChallengeTrigger === undefined &&
     // A record, so emptiness is per-leaf: `{}` carries nothing (the
     // canonicalizer drops it), but any boolean leaf is a real setting.
     (profile.toolListChanged === undefined ||
@@ -1040,6 +1049,7 @@ export function hostConfigInputsEqual(
   // (backend hashes them distinctly). A strict !== covers all three since
   // we never coerce undefined to false elsewhere in the input pipeline.
   if (a.progressiveToolDiscovery !== b.progressiveToolDiscovery) return false;
+  if (a.requireNativeToolDiscovery !== b.requireNativeToolDiscovery) return false;
   if (
     !optionalModelVisibleMcpToolResultsEq(
       a.modelVisibleMcpToolResults,

@@ -35,6 +35,7 @@ import { logger } from "../../utils/logger.js";
 import {
   resumeScopeStepUpBeforeDirectTurn,
   isSuspendedScopeStepUpOutputChunk,
+  type SettleSuspendedToolCall,
 } from "../../utils/direct-chat-scope-step-up.js";
 import type { MrtrEngineResume } from "../../utils/mrtr-hosted-chat.js";
 
@@ -158,8 +159,10 @@ export function streamDirectChatWithLiveTrace(options: {
   /** Session this stream persists to; required to attribute a persist receipt. */
   chatSessionId?: string;
   scopeStepUpResume?: MrtrEngineResume;
+  /** History settlement for calls a sign-in suspended. */
+  settleSuspendedHistoryToolCall?: SettleSuspendedToolCall;
   shouldPauseAfterStep?: () => boolean;
-  suspendedToolCallId?: () => string | undefined;
+  suspendedToolCallIds?: () => ReadonlySet<string>;
 }): Response {
   const {
     provider,
@@ -173,8 +176,9 @@ export function streamDirectChatWithLiveTrace(options: {
     onPersistError,
     chatSessionId: receiptChatSessionId,
     scopeStepUpResume,
+    settleSuspendedHistoryToolCall,
     shouldPauseAfterStep,
-    suspendedToolCallId,
+    suspendedToolCallIds,
     ...turnOptions
   } = options;
   // `runDirectChatTurn` awaits `onPersist` but discards its return value, so
@@ -236,6 +240,7 @@ export function streamDirectChatWithLiveTrace(options: {
         writer,
         messageHistory: turnOptions.messageHistory,
         resume: scopeStepUpResume,
+        settleSuspendedToolCall: settleSuspendedHistoryToolCall,
       });
       if (!shouldRunModel) return;
       handle = runDirectChatTurn({
@@ -254,7 +259,7 @@ export function streamDirectChatWithLiveTrace(options: {
             }
           : undefined,
         shouldPauseAfterStep,
-        suspendedToolCallId,
+        suspendedToolCallIds,
         onPersistError:
           onPersistError ??
           ((error) => {
@@ -299,7 +304,7 @@ export function streamDirectChatWithLiveTrace(options: {
           },
         })) {
           if (
-            isSuspendedScopeStepUpOutputChunk(chunk, suspendedToolCallId?.())
+            isSuspendedScopeStepUpOutputChunk(chunk, suspendedToolCallIds?.())
           ) {
             continue;
           }

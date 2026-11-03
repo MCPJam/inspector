@@ -1,3 +1,5 @@
+import { enhancedTaskCall } from "./enhanced-tasks.js";
+import type { ToolTaskSeamOptions } from "@mcpjam/sdk";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { isVisibleToAppOnly } from "@mcpjam/sdk/widget-runtime";
 import { handleJsonRpc } from "../../../services/mcp-http-bridge.js";
@@ -6,6 +8,7 @@ import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import type { NativeMessage } from "./native-wire.js";
 import type { Settlement } from "./execution-control.js";
 import { enhancedModelOutput } from "./enhanced-model-output.js";
+import { enhancedServerCapabilityGaps } from "./server-capabilities.js";
 
 export async function enhancedToolPolicy(
   manager: MCPClientManager,
@@ -43,6 +46,7 @@ export async function enhancedMcpResponse(args: {
   signal: AbortSignal;
   respectVisibility: boolean;
   settle?: (value: Settlement) => Promise<void>;
+  tasks?: ToolTaskSeamOptions;
   modelOutput?: Parameters<typeof enhancedModelOutput>[2];
 }): Promise<Response> {
   if (
@@ -52,35 +56,50 @@ export async function enhancedMcpResponse(args: {
     throw new Error(
       "The enhanced App connection requires the stateless MCP protocol.",
     );
+  if (enhancedServerCapabilityGaps({
+    manager: args.manager,
+    serverIds: [args.serverId],
+    ownedTasksAvailable: args.tasks !== undefined,
+  }).length) {
+    throw new Error("The server capabilities no longer match a qualified enhanced connection.");
+  }
   if (!args.message) return new Response(null, { status: 405 });
   const params = args.message.params;
-  const response: unknown = await handleJsonRpc(
-    args.serverId,
-    args.message,
-    args.manager,
-    "adapter",
-    {
-      signal: args.signal,
-      downstreamProtocolVersion:
-        args.message.method === "initialize" &&
-        isRecord(params) &&
-        typeof params.protocolVersion === "string"
-          ? params.protocolVersion
-          : undefined,
-    },
-  );
+  const response: unknown =
+    args.tasks && args.message.method === "tools/call"
+      ? await enhancedTaskCall({
+          ...args,
+          message: args.message,
+          tasks: args.tasks,
+        })
+      : await handleJsonRpc(
+          args.serverId,
+          args.message,
+          args.manager,
+          "adapter",
+          {
+            signal: args.signal,
+            downstreamProtocolVersion:
+              args.message.method === "initialize" &&
+              isRecord(params) &&
+              typeof params.protocolVersion === "string"
+                ? params.protocolVersion
+                : undefined,
+          },
+        );
   if (response === null) return new Response(null, { status: 202 });
   const raw = JSON.stringify(response);
   if (!isRecord(response)) throw new Error("Invalid enhanced MCP response.");
-  await args.settle?.({
-    outcome:
-      "error" in response
-        ? "protocol_error"
-        : isRecord(response.result) && response.result.isError === true
-          ? "tool_error"
-          : "success",
-    resultJson: raw,
-  });
+  if (!(args.tasks && args.message.method === "tools/call"))
+    await args.settle?.({
+      outcome:
+        "error" in response
+          ? "protocol_error"
+          : isRecord(response.result) && response.result.isError === true
+            ? "tool_error"
+            : "success",
+      resultJson: raw,
+    });
   let delivered = response;
   if (args.message.method === "tools/call" && isRecord(response.result)) {
     const catalog = await args.manager.listTools(args.serverId, undefined, {

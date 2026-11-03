@@ -1,6 +1,13 @@
 import type {
   MCPConformanceResult,
+  MCPAppsCheckId,
   MCPAppsConformanceResult,
+  MCPCheckId,
+  MCPLogLevel,
+  MCPOAuthReadinessId,
+  MCPReadinessId,
+  MCPTasksCheckId,
+  MCPTasksReadinessId,
   MCPTasksConformanceResult,
   McpProtocolVersion,
   ConformanceResult as OAuthConformanceResult,
@@ -38,17 +45,54 @@ export interface OAuthStartInput {
     customHeaders?: Array<{ key: string; value: string }>;
   };
   callbackOrigin?: string;
+  /** The advice to report; absent reports all of it, empty none. */
+  readinessIds?: MCPOAuthReadinessId[];
 }
 
 // ── Public API ──────────────────────────────────────────────────────────
 
+/** A tool named as safe for a protocol check to call, with its arguments. */
+export interface ConformanceProbe {
+  toolName: string;
+  arguments?: Record<string, unknown>;
+  /**
+   * `logProbe` only: the log level the log level filtering advice asks for.
+   * Absent means the SDK's default, `warning`.
+   */
+  level?: MCPLogLevel;
+}
+
+/**
+ * The tools the checks that must call one may use: `logProbe` for the logging
+ * check and the log level filtering advice, `inputRequiredProbe` for the
+ * undeclared-capability check.
+ */
+export interface ConformanceProbes {
+  logProbe?: ConformanceProbe;
+  inputRequiredProbe?: ConformanceProbe;
+}
+
 export async function runProtocolConformance(
   serverNameOrId: string,
-  options?: { protocolVersion?: McpProtocolVersion },
+  options?: {
+    protocolVersion?: McpProtocolVersion;
+    checkIds?: MCPCheckId[];
+    /** The advice to run; absent runs all of it, empty runs none. */
+    readinessIds?: MCPReadinessId[];
+    probes?: ConformanceProbes;
+  },
 ): Promise<{ success: boolean; result: MCPConformanceResult }> {
-  const versionFields = options?.protocolVersion
-    ? { protocolVersion: options.protocolVersion }
-    : {};
+  const versionFields = {
+    ...(options?.protocolVersion
+      ? { protocolVersion: options.protocolVersion }
+      : {}),
+    ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
+    ...(options?.readinessIds ? { readinessIds: options.readinessIds } : {}),
+    ...(options?.probes?.logProbe ? { logProbe: options.probes.logProbe } : {}),
+    ...(options?.probes?.inputRequiredProbe
+      ? { inputRequiredProbe: options.probes.inputRequiredProbe }
+      : {}),
+  };
   return runByMode({
     local: () =>
       localPost("/api/mcp/conformance/protocol", {
@@ -67,15 +111,21 @@ export async function runProtocolConformance(
 
 export async function runAppsConformance(
   serverNameOrId: string,
+  options?: { checkIds?: MCPAppsCheckId[] },
 ): Promise<{ success: boolean; result: MCPAppsConformanceResult }> {
+  const checkFields = options?.checkIds ? { checkIds: options.checkIds } : {};
   return runByMode({
     local: () =>
       localPost("/api/mcp/conformance/apps", {
         serverId: serverNameOrId,
+        ...checkFields,
       }),
     hosted: () => {
       const request = buildServerRequest(serverNameOrId);
-      return webPost("/api/web/conformance/apps", request);
+      return webPost("/api/web/conformance/apps", {
+        ...request,
+        ...checkFields,
+      });
     },
   });
 }
@@ -87,9 +137,17 @@ export async function runAppsConformance(
  */
 export async function runTasksConformance(
   serverNameOrId: string,
-  options?: { toolName?: string; toolArguments?: Record<string, unknown> },
+  options?: {
+    toolName?: string;
+    toolArguments?: Record<string, unknown>;
+    checkIds?: MCPTasksCheckId[];
+    /** The advice to report; absent reports all of it, empty none. */
+    readinessIds?: MCPTasksReadinessId[];
+  },
 ): Promise<{ success: boolean; result: MCPTasksConformanceResult }> {
   const optionFields = {
+    ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
+    ...(options?.readinessIds ? { readinessIds: options.readinessIds } : {}),
     ...(options?.toolName ? { toolName: options.toolName } : {}),
     ...(options?.toolArguments ? { toolArguments: options.toolArguments } : {}),
   };
@@ -118,6 +176,7 @@ export async function startOAuthConformance(
         serverId: input.serverNameOrId,
         oauthProfile: input.oauthProfile,
         callbackOrigin: input.callbackOrigin,
+        ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
       }),
     hosted: () => {
       const request = buildServerRequest(input.serverNameOrId);
@@ -125,6 +184,7 @@ export async function startOAuthConformance(
         ...request,
         oauthProfile: input.oauthProfile,
         callbackOrigin: input.callbackOrigin,
+        ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
       });
     },
   });

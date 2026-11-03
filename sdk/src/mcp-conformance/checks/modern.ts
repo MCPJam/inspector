@@ -45,8 +45,8 @@ import {
 } from "./helpers.js";
 import {
   jsonRpcError,
-  jsonRpcNotifications,
   jsonRpcResult,
+  logRecords,
   MAX_TOOLS_LIST_PAGES,
   modernHeaders,
   modernRequestBody,
@@ -297,13 +297,6 @@ const MODERN_CHECK_METADATA = {
     title: "Logs Require A Log Level",
     description:
       "No log notifications are emitted for a request that carried no modern log level.",
-  },
-  "modern-log-level-filtering": {
-    id: "modern-log-level-filtering",
-    category: "core",
-    title: "Log Level Filtering",
-    description:
-      "A supplied logging tool emits warning-or-higher logs when requested, without emitting lower-level logs.",
   },
   "modern-no-session-id": {
     id: "modern-no-session-id",
@@ -792,6 +785,9 @@ async function collectCacheableOperations(
   // client session, and a check that could only run as part of a full suite
   // would be untestable in isolation.
   let resourceUri = ctx.surface?.resourceUris[0];
+  // A `resources/list` that ANSWERED with an empty array, as distinct from one
+  // that never produced a result. Only the second leaves a requirement untested.
+  let listedNoResources = false;
 
   let id = 7150;
   for (const operation of CACHEABLE_OPERATIONS) {
@@ -816,10 +812,16 @@ async function collectCacheableOperations(
       // Listed after `resources/list` in CACHEABLE_OPERATIONS precisely so the
       // uri discovered there is available here.
       if (!resourceUri) {
-        unprobed.push({
+        // NOT a gap when the list answered empty, for the same reason an
+        // unadvertised capability is not: a server whose resources come only
+        // from templates, or are created at runtime, has nothing to read, so
+        // nothing about the caching MUST went unverified. Counting it as
+        // unprobed held a fully-hinted server at could-not-run forever.
+        (listedNoResources ? notApplicable : unprobed).push({
           method: operation.method,
-          reason:
-            "server lists no resource to read, and probing a missing uri would grade an error response",
+          reason: listedNoResources
+            ? "server lists no resources, so there is no resources/read to carry hints"
+            : "server lists no resource to read, and probing a missing uri would grade an error response",
         });
         continue;
       }
@@ -845,6 +847,7 @@ async function collectCacheableOperations(
 
     if (operation.method === "resources/list") {
       const listed = jsonRpcResult(result)?.resources;
+      listedNoResources = Array.isArray(listed) && listed.length === 0;
       const first = Array.isArray(listed) ? listed[0] : undefined;
       const uri = (first as { uri?: unknown } | undefined)?.uri;
       if (typeof uri === "string" && uri.length > 0) {
@@ -2137,88 +2140,6 @@ async function runLogLevelCheck(
     : passedResult(meta, Date.now() - startedAt, details);
 }
 
-/** Syslog severity order, from least to most severe. */
-const LOG_LEVELS = [
-  "debug",
-  "info",
-  "notice",
-  "warning",
-  "error",
-  "critical",
-  "alert",
-  "emergency",
-] as const;
-
-async function runLogLevelFilteringCheck(
-  ctx: RawHttpCheckContext,
-  state: ModernRunState
-): Promise<MCPCheckResult> {
-  const meta = MODERN_CHECK_METADATA["modern-log-level-filtering"];
-  const startedAt = Date.now();
-  const probe = ctx.config.logProbe;
-  if (!probe) {
-    return couldNotRunResult(
-      meta,
-      "No logProbe configured. Configure a safe tool that produces warning-or-higher logs when requested."
-    );
-  }
-
-  const requested = await captureLogProbe(ctx, state, meta, {
-    id: 7902,
-    method: "tools/call",
-    params: { name: probe.toolName, arguments: probe.arguments ?? {} },
-    name: probe.toolName,
-    logLevel: "warning",
-  });
-  if ("unavailable" in requested) return requested.unavailable;
-  const unavailable = unavailableLogProbe(
-    meta,
-    requested.response,
-    probe.toolName
-  );
-  if (unavailable) return unavailable;
-
-  const records = logRecords(requested.response);
-  const details = {
-    probedTool: probe.toolName,
-    requestedLogLevel: "warning",
-    logNotificationCountWithLevel: records.length,
-  };
-  if (records.length === 0) {
-    return failedResult(
-      meta,
-      Date.now() - startedAt,
-      SUPPLIED_TOOL_NO_LOGS,
-      details
-    );
-  }
-
-  const levels = records.map(
-    (record) => (record.params as Record<string, unknown> | undefined)?.level
-  );
-  const invalidOrLowerLevels = levels.filter(
-    (level) =>
-      typeof level !== "string" ||
-      LOG_LEVELS.indexOf(level as (typeof LOG_LEVELS)[number]) <
-        LOG_LEVELS.indexOf("warning")
-  );
-  return invalidOrLowerLevels.length > 0
-    ? failedResult(
-        meta,
-        Date.now() - startedAt,
-        "Server emitted invalid or lower-than-warning log levels for a request that asked for warning logs",
-        { ...details, invalidOrLowerLevels }
-      )
-    : passedResult(meta, Date.now() - startedAt, { ...details, levels });
-}
-
-/** `notifications/message` records carried on a response. */
-function logRecords(result: RawHttpResult): Array<Record<string, unknown>> {
-  return jsonRpcNotifications(result).filter(
-    (notification) => notification.method === "notifications/message"
-  );
-}
-
 async function runNoSessionIdCheck(
   ctx: RawHttpCheckContext,
   state: ModernRunState
@@ -2688,8 +2609,6 @@ async function runModernCheck(
       return await runToolOutputSchemaCheck(ctx, state);
     case "modern-logs-require-log-level":
       return await runLogLevelCheck(ctx, state);
-    case "modern-log-level-filtering":
-      return await runLogLevelFilteringCheck(ctx, state);
     case "modern-no-session-id":
       return await runNoSessionIdCheck(ctx, state);
     case "modern-subscription-ack-precedes-notifications":
@@ -2731,8 +2650,8 @@ async function runXMcpHeaderDeclarationsCheck(
     return notApplicableResult(meta, "Server does not advertise the tools capability");
   }
 
-  // Shared with the readiness sibling: one bounded, cycle-safe walk, so a
-  // cursor bug cannot exist in one and not the other.
+  // Shared with the other full-listing checks: one bounded, cycle-safe walk,
+  // so a cursor bug cannot exist in one and not the other.
   const walk = await walkToolsList({
     startId: 7300,
     request: ({ id, cursor }) =>

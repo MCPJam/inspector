@@ -1,7 +1,13 @@
+import { harnessStartupPart } from "@/shared/harness-startup";
+import { withRetainedResourceSource } from "@/shared/retained-app-resources";
+import { retainedResourceExecutor, type RetainedResourcePresentation } from "./forwarding/retained-resources";
 import { nativeForwardingSelection, prepareNativeForwarding, hasForwardingOrganization,
   nativeToolMetadata,
 } from "./forwarding/native-turn.js";
 import { forwardingAdmission } from "./forwarding/enhanced-admission.js";
+import { usesAppHostCapabilities } from "./forwarding/native-admission.js";
+import { assertNativeDiscovery } from "./native-discovery.js";
+import { harnessOrgUpstream } from "@/shared/harness-model-support";
 import {
   presentNativeTranscript,
   type NativeResultPresentation,
@@ -20,7 +26,9 @@ import {
   sessionResumeStateFrom,
 } from "./local/resume-state.js";
 import { withAutoApprovedNativeRequests } from "./auto-approve-harness.js";
-import { withClaudeForwardingResume } from "./forwarding/claude-resume.js";
+import { withHarnessElicitation } from "./with-harness-elicitation.js";
+import { isNativeElicitationProfile } from "./forwarding/native-elicitation-profile.js";
+import { qualifiedForwardingRuntime } from "./forwarding/runtime-contract.js";
 import { stampNativeForwardingPolicy,
   forwardingToolPolicy,
 } from "./forwarding/native-policy.js";
@@ -33,6 +41,7 @@ import { toToolResultOutput } from "./tool-result-output.js";
 export { toToolResultOutput } from "./tool-result-output.js";
 import {
   mergeMcpToolConnectionMetadata,
+  mergeMcpOriginalResult,
   toolConnectionAttribution,
   type McpConnectionAttribution,
 } from "@/shared/mcp-tool-origin-metadata";
@@ -584,6 +593,8 @@ export function harnessRuntimeFingerprint(parts: {
    */
   transport?: string;
   nativeForwarding?: string;
+  forwardingConfigurationVersion?: string;
+  requireNativeToolDiscovery?: boolean;
   connectionProfile?: string;
   /**
    * WHERE this turn runs, and — for the local target — exactly what it runs.
@@ -653,6 +664,9 @@ export function harnessRuntimeFingerprint(parts: {
     parts.permissionMode,
     ...(parts.nativeForwarding ? [`native-forwarding:${parts.nativeForwarding}`]
       : []),
+    ...((parts.nativeForwarding || parts.requireNativeToolDiscovery) && parts.forwardingConfigurationVersion
+      ? [`forwarding-config:${parts.forwardingConfigurationVersion}`] : []),
+    ...(parts.requireNativeToolDiscovery ? ["native-discovery:required"] : []),
     ...(parts.connectionProfile
       ? [`connection-profile:${parts.connectionProfile}`] : []),
     ...(pluginDimension ? [pluginDimension] : []),
@@ -774,6 +788,7 @@ export async function runHarnessTurn(
     onStreamComplete,
     onStreamWriterReady,
     onHarnessMcpReady,
+    onHarnessElicitation,
     onToolCall,
     onToolResult,
     onStepFinish,
@@ -1159,6 +1174,7 @@ export async function runHarnessTurn(
     // which shows the raw result and projects for the model alone. Claimed once
     // per tool result and then dropped, so the map cannot outgrow the turn.
     const hostExecutedRawResults = new Map<string, unknown>();
+    const retainedResourceSources = new Map<string, RetainedResourcePresentation>();
     let pendingScopeChallenge: HarnessScopeStepUpEvent | undefined;
     let suspendedHarnessToolCallId: string | undefined;
     let scopeStepUpCreation: Promise<void> | undefined;
@@ -1380,10 +1396,18 @@ export async function runHarnessTurn(
       // wake / broker start / session connect / model stream / finalize) so
       // "takes forever" can be attributed instead of guessed.
       const tStart = Date.now();
+      const startupBinding = chatSessionId && options.harnessStartupRequestId
+        ? { chatSessionId, requestId: options.harnessStartupRequestId }
+        : undefined;
+      const reportStartup = (phase: Parameters<typeof harnessStartupPart>[0]) => {
+        if (startupBinding) writer.write(harnessStartupPart(phase, startupBinding));
+      };
+      reportStartup("preparing");
       let tClaim = tStart;
       let tSandbox = tStart;
       let tBroker = tStart;
       let tConnect = tStart;
+      let tDispatch = tStart;
       let resumedSession = false;
 
       // 0. Capability prechecks — BEFORE any credential/sandbox work (defense in
@@ -1511,7 +1535,7 @@ export async function runHarnessTurn(
       // Account selectors and resource conversion must execute together in
       // the inspector; native sandbox MCP clients cannot own that dispatch.
       const accountGroups = evalIterationId ? {} : getManagerConnections(mcpClientManager) ?? {};
-      const nativeMcpDelivery =
+      let nativeMcpDelivery =
         resolveAgentLoop({ agentLoop: options.agentLoop, harness: options.agentLoop ? undefined : harnessAdapter.id, defaultMcpClient: harnessAdapter.mcpDelivery === "harness" ? "harness" : "mcpjam", hasAccountRouting: hasAccountRouting(accountGroups) }).mcpClient === "harness";
       // Fail closed: with MCP servers selected but no plane strategy, a NATIVE
       // adapter would silently get zero MCP tools (the exact failure we hit).
@@ -1576,13 +1600,58 @@ export async function runHarnessTurn(
           ? { pluginOrigins: pluginServerOrigins }
           : {}),
       });
-      const nativeCandidate = process.env.HARNESS_NATIVE_FORWARDING === "true" && hasForwardingOrganization(mcpClientManager) && nativeMcpDelivery && harnessAdapter.id === "claude-code" && harnessMcpProxy?.plane === "web-authorized" && !scenarioId && !evalIterationId && !journeyRunId && !harnessExecutionTarget && !!hostId && !!selectedServers?.length;
-      const admission = nativeCandidate ? forwardingAdmission({ manager: mcpClientManager, serverIds: selectedServers ?? [], respectToolVisibility, modelVisibleMcpToolResults, hasClientTools: options.harnessUnavailableAppTools, hasTasks: tasks !== undefined,
+      const forwardingRuntime = qualifiedForwardingRuntime(harnessAdapter);
+      const nativeCandidate = process.env.HARNESS_NATIVE_FORWARDING === "true" && hasForwardingOrganization(mcpClientManager) && (nativeMcpDelivery || (forwardingRuntime !== undefined && !hasAccountRouting(accountGroups))) && forwardingRuntime !== undefined && harnessMcpProxy?.plane === "web-authorized" && !scenarioId && !evalIterationId && !journeyRunId && !harnessExecutionTarget && !!hostId && !!selectedServers?.length;
+      const admission = nativeCandidate ? forwardingAdmission({ manager: mcpClientManager, hostCapabilities: options.harnessHostCapabilities, serverIds: selectedServers ?? [], respectToolVisibility, modelVisibleMcpToolResults, hasClientTools: options.harnessUnavailableAppTools, hasTasks: tasks !== undefined,
+            elicitationRuntimeVersion: onHarnessElicitation ? harnessAdapter.pinnedRuntimeVersion : undefined,
+            modernInputAvailable: options.harnessOwnedInput === true,
+            ownedTasksAvailable: options.harnessOwnedTasks === true && tasks?.mode === "expose",
           })
         : { delivery: undefined, gaps: [] };
       const nativeGaps = admission.gaps;
       const enhancedApps = admission.delivery === "bridge";
       const useNativeForwarding = admission.delivery !== undefined;
+      if (options.requireNativeToolDiscovery) {
+        if (nativeGaps.some(gap =>
+          gap === "server-capabilities-unavailable" || gap.startsWith("server-capability:"),
+        )) {
+          assertNativeDiscovery({ required: true });
+        }
+        if (
+          usesAppHostCapabilities({
+            manager: mcpClientManager,
+            serverIds: selectedServers ?? [],
+          }) &&
+          (!options.harnessHostCapabilities || options.harnessHostCapabilities.gaps.length)
+        ) {
+          assertNativeDiscovery({ required: true });
+        }
+        if (!selectedServers?.length || scenarioParticipant) {
+          assertNativeDiscovery({ required: true });
+        }
+        for (const serverId of selectedServers ?? []) {
+          assertNativeDiscovery({
+            required: true,
+            harnessId: harnessAdapter.id,
+            route: {
+              runtimeVersion: harnessAdapter.pinnedRuntimeVersion ?? "",
+              adapterVersion: forwardingRuntime?.configurationVersion ?? "",
+              protocolVersion: mcpClientManager.getInitializationInfo(serverId)?.protocolVersion ?? "",
+              modelId,
+              delivery: useNativeForwarding
+                ? enhancedApps ? "forwarded-bridge" : "forwarded-native"
+                : nativeMcpDelivery ? "native-proxy" : "host-tools",
+              venue: !harnessExecutionTarget && harnessMcpProxy?.plane === "web-authorized" ? "hosted" : "local",
+              surface: sourceType === "eval" ? "eval" : sourceType === "swarm" ? "swarm" : "chat",
+              funding: org.brokeredEndpoint === "platform" ? "platform" : "organization",
+              upstreamProfile: org.brokeredEndpoint === "platform" ? "gateway" : harnessOrgUpstream(harnessAdapter.id)?.profile ?? "gateway",
+            },
+          });
+        }
+      }
+      // Enrolled client profiles keep their existing delivery unless this exact
+      // server/profile combination qualifies for the forwarding adapter.
+      nativeMcpDelivery ||= useNativeForwarding;
       if (nativeCandidate && !useNativeForwarding)
         logger.info(
           `[harness] retaining configured bridge (${nativeGaps.join(", ")})`, { gaps: nativeGaps },
@@ -1613,6 +1682,14 @@ export async function runHarnessTurn(
       // start — there is no `tools/list_changed` subscription, so a mid-turn
       // schema change is only picked up on the next turn. Done here, before the
       // box is woken, so an unreachable server fails the turn cheaply.
+      const retainedExecutor = retainedResourceExecutor({
+        manager: mcpClientManager, existing: hostToolExecutor,
+        enabled: forwardingRuntime !== undefined && !harnessExecutionTarget &&
+          harnessMcpProxy?.plane === "web-authorized" && process.env.HARNESS_NATIVE_FORWARDING === "true" &&
+          hasForwardingOrganization(mcpClientManager) && !scenarioId &&
+          !evalIterationId && !journeyRunId && !!hostId,
+        laneId: () => continuity?.laneId, sources: retainedResourceSources, turnId,
+      });
       const hostExecutedMcp =
         !nativeMcpDelivery && (selectedServers?.length ?? 0) > 0
           ? await projectSelectedMcpServersAsHostTools({
@@ -1630,7 +1707,7 @@ export async function runHarnessTurn(
               // The plugin executor an emulated turn wraps its tools with:
               // a server's OpenAI form reaches the composer card, and an App
               // result becomes an owned model App with its own context.
-              ...(hostToolExecutor ? { executor: hostToolExecutor } : {}),
+              ...(retainedExecutor ? { executor: retainedExecutor } : {}),
               // …and, for the same reason, no proxy to extract a SEP-2350
               // challenge either. Publish straight into the turn's step-up
               // intake so a hosted-OAuth server pauses this turn instead of
@@ -1932,6 +2009,8 @@ export async function runHarnessTurn(
 
       const runtimeFingerprint = harnessRuntimeFingerprint({
         harnessId: harnessAdapter.id,
+        requireNativeToolDiscovery: options.requireNativeToolDiscovery,
+        forwardingConfigurationVersion: forwardingRuntime?.configurationVersion,
         ...(nativeMcpDelivery && harnessMcpProxy?.plane === "web-authorized"
           ? {
               connectionProfile: harnessConnectionFingerprint(
@@ -1941,7 +2020,9 @@ export async function runHarnessTurn(
               ),
             }
           : {}),
-        ...(useNativeForwarding ? { nativeForwarding: enhancedApps ? "bridge-v1" : "v2" } : {}),
+        ...(useNativeForwarding ? {
+          nativeForwarding: enhancedApps ? "bridge-v1" : "v2",
+        } : {}),
         modelId,
         selectedServers: selectedServers ?? [],
         unavailableServerIds: options.unavailableServerIds,
@@ -2298,6 +2379,7 @@ export async function runHarnessTurn(
         };
         sandboxId = harnessSandboxBinding.sandboxId;
       } else {
+        reportStartup("computer");
         const resolved = await resolveHarnessSandbox({
           bearer: authHeader,
           projectId,
@@ -2536,9 +2618,10 @@ export async function runHarnessTurn(
         // stays true and the turn's own teardown releases it.
         auth = externalAccountAuth;
       } else {
+        reportStartup("authorization");
         brokerRunId = turnRunId;
         const broker = await org.start({
-          ...(useNativeForwarding ? { nativeForwarding: nativeForwardingSelection({ laneId: continuity?.laneId, hostId, serverIds: selectedServers ?? [], connections: accountGroups }) } : {}),
+          ...(useNativeForwarding ? { nativeForwarding: nativeForwardingSelection({ manager: mcpClientManager, laneId: continuity?.laneId, hostId, serverIds: selectedServers ?? [], connections: accountGroups }) } : {}),
           // The project and the execution scope are fields of `box`'s COMPUTER
           // arm (set where `box` is built, above), so the ephemeral path has no
           // way to send either: the backend derives project + billing org from
@@ -2582,6 +2665,8 @@ export async function runHarnessTurn(
         if (useNativeForwarding) {
           if (!broker.forwarding || !harnessMcpProxy) throw new Error("Native forwarding was not confirmed.");
           nativeForwarding = await prepareNativeForwarding({ ...broker.forwarding, expiresAt: broker.expiresAt, turnId: turnRunId, promptIndex, strategy: harnessMcpProxy, authHeader, policies: harnessToolPolicy, writer,
+            correlationKey: forwardingRuntime?.correlationKey,
+            tasks,
             ...(enhancedApps
               ? {
                   delivery: "bridge",
@@ -2590,6 +2675,7 @@ export async function runHarnessTurn(
                     selectedServers ?? [],
                     respectToolVisibility !== false,
                     modelVisibleMcpToolResults,
+                    tasks?.mode === "expose",
                   ),
                 }
               : {}),
@@ -2625,6 +2711,15 @@ export async function runHarnessTurn(
       // take it at all. Writing the branch here is what makes "the servers
       // cannot be silently dropped at construction" a compile-time fact instead
       // of a convention.
+      const elicitationServerIds = new Set(
+        onHarnessElicitation && nativeForwarding
+          ? (selectedServers ?? []).filter((id) => {
+              const info = mcpClientManager.getInitializationInfo(id);
+              return info?.protocolVersion === "2025-11-25" &&
+                isNativeElicitationProfile(info.clientCapabilities, harnessAdapter.pinnedRuntimeVersion);
+            })
+          : [],
+      );
       let harnessRuntime =
         harnessAdapter.mcpDelivery === "harness" &&
         harnessAdapter.mcpNativeDelivery === "session-config"
@@ -2633,6 +2728,9 @@ export async function runHarnessTurn(
               auth,
               mcpJson,
               permissionMode,
+              ...(options.requireNativeToolDiscovery ? { requireNativeToolDiscovery: true } : {}),
+              ...(nativeForwarding ? { forwardingMcpJson: mcpJson } : {}),
+              elicitationHandler: elicitationServerIds.size > 0,
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
                 : {}),
@@ -2642,6 +2740,8 @@ export async function runHarnessTurn(
               modelId,
               auth,
               permissionMode,
+              ...(options.requireNativeToolDiscovery ? { requireNativeToolDiscovery: true } : {}),
+              ...(nativeForwarding ? { forwardingMcpJson: mcpJson } : {}),
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
                 : {}),
@@ -2650,7 +2750,18 @@ export async function runHarnessTurn(
                 ? { sandboxPolicy: commandSandboxPolicy }
                 : {}),
             });
-      if (nativeForwarding) harnessRuntime = withAutoApprovedNativeRequests(withClaudeForwardingResume(harnessRuntime, mcpJson.mcpServers, nativeForwarding.policyDigest), undefined, new Set(), nativeForwarding.isForwardedTool);
+      if (elicitationServerIds.size > 0 && onHarnessElicitation) {
+        harnessRuntime = withHarnessElicitation(harnessRuntime, {
+          keyToServerId: harnessKeyToServerId,
+          allowedServerIds: elicitationServerIds,
+          handle: onHarnessElicitation,
+          signal: effectiveAbortSignal,
+        });
+      }
+      if (nativeForwarding) {
+        if (!forwardingRuntime) throw new Error("The runtime forwarding contract is not qualified.");
+        harnessRuntime = withAutoApprovedNativeRequests(forwardingRuntime.refresh(harnessRuntime, mcpJson.mcpServers, nativeForwarding.policyDigest), undefined, new Set(), nativeForwarding.isForwardedTool);
+      }
       if (nativeForwarding) onHarnessMcpReady?.(nativeForwarding.logScopeIds);
       if (localPrepared) {
         harnessRuntime = await withLocalRuntimeBootstrap(harnessRuntime, localPrepared.plan.runtime);
@@ -3200,6 +3311,7 @@ export async function runHarnessTurn(
       for (const continuation of approvalContinuations) {
         logger.info("[harness] approval answered", { harness: harnessAdapter.id, turnId, approvalId: continuation.approvalId, approvalDecision: "user" });
       }
+      reportStartup("agent");
       let session: Awaited<ReturnType<typeof agent.createSession>>;
       if (resumeFromApproval && resumable) {
         // No fresh fallback here: if the paused continuation is stale (computer
@@ -3249,6 +3361,7 @@ export async function runHarnessTurn(
         } as unknown as UIMessageChunk);
       }
       tConnect = Date.now();
+      reportStartup("ready");
       // Session is up: the finalizer + heartbeat now own the continuity lane, so
       // the pre-session cleanup in onFinishEngine no longer needs to free it.
       sessionEstablished = true;
@@ -3352,6 +3465,8 @@ export async function runHarnessTurn(
         // `messages` to the last user message, so stream() would re-prompt).
         // Everything above this line is ours; everything at or below it is the
         // model's turn. See `modelInvoked`.
+        tDispatch = Date.now();
+        logger.info(`[harness][dispatch] setup=${tDispatch - tStart}ms session=${tDispatch - tConnect}ms`, { harnessId: harnessAdapter.id, turnId });
         modelInvoked = true;
         const res = resumeFromApproval
           ? await agent.continueStream({
@@ -3790,6 +3905,14 @@ export async function runHarnessTurn(
             const hasRawHostExecuted = hostExecutedRawResults.has(toolCallId);
             const rawHostExecuted = hostExecutedRawResults.get(toolCallId);
             hostExecutedRawResults.delete(toolCallId);
+            const retainedSource = retainedResourceSources.get(toolCallId);
+            retainedResourceSources.delete(toolCallId);
+            const hostPresentation = withRetainedResourceSource(rawHostExecuted, retainedSource ? {...retainedSource, version: 1, toolCallId} : undefined);
+            const modelOutput = (part as { output?: unknown }).output ??
+              (part as { result?: unknown }).result;
+            if (hasRawHostExecuted && !errorEvent) {
+              nativePresentations.set(toolCallId, { result: hostPresentation, metadata: { mcpjam: { resultPresentation: true } } });
+            }
             const output = errorEvent
               ? harnessToolErrorText(part)
               : hasRawHostExecuted
@@ -3881,7 +4004,7 @@ export async function runHarnessTurn(
             }
             // Provider-executed (in-sandbox) — see tool-input-available above.
             const rawNativeResult = nativeForwarding && meta.serverId && !policyBlock
-              ? await nativeForwarding.readToolResult(meta.serverId, toolCallId)
+              ? await nativeForwarding.readToolResult(meta.serverId, toolCallId, meta.toolName)
               : undefined;
             if (rawNativeResult !== undefined)
               nativePresentations.set(toolCallId, {
@@ -3902,8 +4025,10 @@ export async function runHarnessTurn(
             } else {
               emitToolOutput(writer, {
                 toolCallId,
-                output: enhancedApps ? output : (rawNativeResult ?? output),
-                providerMetadata: nativeToolMetadata(
+                output: hasRawHostExecuted && !errorEvent ? modelOutput : enhancedApps ? output : (rawNativeResult ?? output),
+                providerMetadata: hasRawHostExecuted && !errorEvent
+                  ? mergeMcpOriginalResult({ mcpjam: { resultPresentation: true } }, hostPresentation)
+                  : nativeToolMetadata(
                   nativeForwarding,
                   meta.serverId,
                   toolCallId,
@@ -3974,7 +4099,7 @@ export async function runHarnessTurn(
             pendingResults.push({
               toolCallId,
               toolName: meta.toolName,
-              output,
+              output: hasRawHostExecuted && !errorEvent ? modelOutput : output,
               isError,
               ...(meta.serverId ? { serverId: meta.serverId } : {}),
             });
@@ -4409,7 +4534,7 @@ export async function runHarnessTurn(
             tSandbox - tClaim
           }ms brokerStart=${tBroker - tSandbox}ms sessionConnect=${
             tConnect - tBroker
-          }ms modelStream=${tStream - tConnect}ms total=${
+          }ms dispatchSetup=${tDispatch - tStart}ms modelStream=${tStream - tConnect}ms total=${
             tStream - tStart
           }ms resumed=${resumedSession}${bootstrapLog.text}`,
           // `harnessId` rides both outcome lines so the feature-health monitor

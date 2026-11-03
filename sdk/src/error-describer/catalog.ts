@@ -449,11 +449,13 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "Wrong host/port in the server URL.",
       "Firewall is silently dropping packets.",
+      "Your network allows outbound traffic only through a proxy.",
       "Server is overloaded and never accepted the connection.",
     ],
     [
       "Verify the URL is reachable from your machine (e.g. `curl`).",
       "Check firewall / VPN rules.",
+      "From the MCPJam CLI behind a corporate proxy, set `HTTPS_PROXY` to it, and list hosts that must connect directly in `NO_PROXY`.",
     ],
     "etimedout",
   ),
@@ -562,6 +564,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "Re-authenticate using the Reconnect button on the server card.",
       "If using OAuth, run through the OAuth flow again from Servers.",
+      "From the CLI, sign in with `mcpjam oauth login --url <server-url> --credentials-out <file>`, then retry with `--credentials-file <file>`.",
     ],
     "unauthorized-401",
   ),

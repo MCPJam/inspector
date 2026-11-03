@@ -20,25 +20,22 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type {
-  MCPConformanceResult,
-  MCPAppsConformanceResult,
-  MCPTasksConformanceResult,
-} from "@mcpjam/sdk";
 // Browser-safe SDK entry — the top-level `@mcpjam/sdk` pulls Node-only
 // transitive deps that break the Vite browser bundle.
 import {
-  canRunConformance,
+  type MCPAppsCheckId,
+  type MCPOAuthReadinessId,
+  type MCPTasksCheckId,
+  type MCPTasksReadinessId,
   pooledConformanceScore,
   scoreFromAppsResult,
+  scorableOAuthIds,
   scoreFromOAuthResult,
   scoreFromProtocolResult,
   scoreFromTasksResult,
   type ConformanceScore,
-  type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
-import type { OAuthConformanceStartResult } from "@/lib/apis/mcp-conformance-api";
 import {
   completeOAuthConformance,
   runAppsConformance,
@@ -48,75 +45,35 @@ import {
   submitOAuthConformanceCode,
 } from "@/lib/apis/mcp-conformance-api";
 import { deriveOAuthProfileFromServer } from "@/components/oauth/utils";
+import {
+  protocolRunOptions,
+  type ConformanceProbes,
+} from "@/hooks/use-conformance-probes";
 import { resolveServerOAuthProtocolSelection } from "@/state/oauth-orchestrator";
+import {
+  createAppsState,
+  createOAuthState,
+  createProtocolState,
+  createTasksState,
+  APP_TASKS_CHECK_IDS,
+  isHttpServer,
+  isSelected,
+  NOT_SELECTED,
+  oauthStateFromResult,
+  runnableSelection,
+  verdictOf,
+  type AppsSuiteState,
+  type ConformanceSelection,
+  type OAuthSuiteState,
+  type ProtocolSuiteState,
+  type ProtocolVersionPin,
+  type TasksSuiteState,
+} from "@/hooks/conformance-suite-state";
 import {
   assertSavedSecretTargets,
   loadSavedClientSecret,
   oauthTargetUrl,
 } from "@/lib/oauth/saved-client-secret";
-
-export type SuiteStatus =
-  | "idle"
-  | "running"
-  /**
-   * The OAuth suite reached the authorization step and is holding: it has a
-   * session and a URL, and is waiting for an explicit go-ahead. Only reachable
-   * under `deferOAuthAuthorization`.
-   */
-  | "needs-authorization"
-  | "done"
-  | "error"
-  | "unavailable";
-
-/** "auto" ⇒ no pin: the run adopts whatever version the server negotiates. */
-export type ProtocolVersionPin = "auto" | McpProtocolVersion;
-
-export interface SuiteState {
-  status: SuiteStatus;
-  error?: string;
-  unavailableReason?: string;
-  /**
-   * The verdict of a finished run. "Done" only says the run ended — a suite
-   * that finished with failures must not read as green.
-   */
-  verdict?: "passed" | "failed" | "incomplete";
-}
-
-export interface ProtocolSuiteState extends SuiteState {
-  result?: MCPConformanceResult;
-}
-
-export interface AppsSuiteState extends SuiteState {
-  result?: MCPAppsConformanceResult;
-}
-
-export interface TasksSuiteState extends SuiteState {
-  result?: MCPTasksConformanceResult;
-}
-
-export interface OAuthSuiteState extends SuiteState {
-  result?: OAuthConformanceStartResult["result"];
-  sessionId?: string;
-  waitingForAuth?: boolean;
-  /**
-   * The authorization URL while the suite needs or waits for the browser:
-   * the explicit authorize step opens it, and a waiting suite offers it again
-   * in case the popup never appeared.
-   */
-  authorizationUrl?: string;
-  /**
-   * The browser refused to open the authorization popup. Opening it runs
-   * after several awaits, outside the click that started the run, which is
-   * exactly what popup blockers refuse; without this the suite waited on a
-   * window that never existed until the session expired.
-   */
-  popupBlocked?: boolean;
-  /**
-   * The user chose Skip OAuth. The suite reads "unavailable" like a server
-   * that needs no auth, but its checks were never run, not ruled out.
-   */
-  skipped?: boolean;
-}
 
 /**
  * The authorization URL comes from the target's own metadata. A `javascript:`
@@ -141,81 +98,25 @@ function openAuthorizationPopup(authorizationUrl: string): Window | null {
   );
 }
 
-export function isHttpServer(server: ServerWithName): boolean {
-  // `server.config` is typed required but can be undefined during hosted
-  // hydration — guard before using the `in` operator to avoid a TypeError.
-  return !!server.config && "url" in server.config;
-}
-
-function suiteState(
-  suite: "protocol" | "oauth" | "apps" | "tasks",
-  server: ServerWithName
-): SuiteState {
-  // The SDK's `canRunConformance` is the source of truth for which suites
-  // support which transports. It handles null/undefined configs gracefully.
-  const support = canRunConformance(
-    suite,
-    server.config as Parameters<typeof canRunConformance>[1]
-  );
-  return support.supported
-    ? { status: "idle" }
-    : { status: "unavailable", unavailableReason: support.reason };
-}
-
-export function createProtocolState(
-  server: ServerWithName
-): ProtocolSuiteState {
-  return suiteState("protocol", server);
-}
-
-export function createAppsState(server: ServerWithName): AppsSuiteState {
-  return suiteState("apps", server);
-}
-
-export function createTasksState(server: ServerWithName): TasksSuiteState {
-  return suiteState("tasks", server);
-}
-
-export function createOAuthState(server: ServerWithName): OAuthSuiteState {
-  return suiteState("oauth", server);
-}
-
-/** Every suite reports the same three-value outcome; render it, don't flatten it. */
-function verdictOf(result: {
-  outcome?: string;
-  passed?: boolean;
-}): "passed" | "failed" | "incomplete" {
-  if (result.outcome === "incomplete") return "incomplete";
-  return result.passed ? "passed" : "failed";
-}
-
-/**
- * A server that requires no authorization has no OAuth obligations to test —
- * authorization is OPTIONAL in every MCP revision — so the suite reports
- * `not-applicable`. That is not a result to render as red: it reuses the same
- * "unavailable" treatment as a transport that cannot run the suite.
- */
-export function oauthStateFromResult(
-  result: NonNullable<OAuthConformanceStartResult["result"]>
-): OAuthSuiteState {
-  if (result.outcome === "not-applicable") {
-    return {
-      status: "unavailable",
-      unavailableReason: result.summary,
-      // Kept so the score pool can see the run: a not-applicable OAuth run
-      // contributes its "nothing to score here" tally instead of vanishing.
-      result,
-    };
-  }
-  return {
-    status: "done",
-    result,
-    // OAuth reports the same three-value verdict as the other suites (plus its
-    // own not-applicable, handled above), so an incomplete flow is badged
-    // amber rather than flattened to failed.
-    verdict: verdictOf(result),
-  };
-}
+export {
+  createAppsState,
+  createOAuthState,
+  createProtocolState,
+  createTasksState,
+  isHttpServer,
+  oauthStateFromResult,
+  runnableSelection,
+};
+export type {
+  AppsSuiteState,
+  ConformanceSelection,
+  OAuthSuiteState,
+  ProtocolSuiteState,
+  ProtocolVersionPin,
+  SuiteState,
+  SuiteStatus,
+  TasksSuiteState,
+} from "@/hooks/conformance-suite-state";
 
 export interface UseConformanceRunOptions {
   server: ServerWithName;
@@ -232,6 +133,16 @@ export interface UseConformanceRunOptions {
    * deduction.
    */
   deferOAuthAuthorization?: boolean;
+  /** The revision the first run tests against, e.g. one picked before Run. */
+  initialVersionPin?: ProtocolVersionPin;
+  /** What to run, as picked before Run. Absent ⇒ every check of every suite. */
+  selection?: ConformanceSelection;
+  /**
+   * Tools named as safe for the checks that must call one, as set in the
+   * check list. Absent ⇒ nothing on the server is executed, and those checks
+   * report could-not-run.
+   */
+  probes?: ConformanceProbes;
 }
 
 export interface UseConformanceRunResult {
@@ -258,6 +169,11 @@ export interface UseConformanceRunResult {
   tasksScore?: ConformanceScore;
   oauthScore?: ConformanceScore;
   pooledScore?: ConformanceScore;
+  /**
+   * The OAuth steps this run leaves out of its score, as picked when it
+   * started: they ran, and read as unscored.
+   */
+  oauthUnscored: readonly string[];
   /** True when OAuth produced a score object with nothing applicable in it. */
   oauthNotScored: boolean;
   isRunning: boolean;
@@ -266,6 +182,9 @@ export interface UseConformanceRunResult {
 export function useConformanceRun({
   server,
   deferOAuthAuthorization = false,
+  initialVersionPin = "auto",
+  selection,
+  probes,
 }: UseConformanceRunOptions): UseConformanceRunResult {
   const httpServer = isHttpServer(server);
   const [protocol, setProtocol] = useState<ProtocolSuiteState>(() =>
@@ -280,7 +199,15 @@ export function useConformanceRun({
   const [oauth, setOAuth] = useState<OAuthSuiteState>(() =>
     createOAuthState(server)
   );
-  const [versionPin, setVersionPin] = useState<ProtocolVersionPin>("auto");
+  const [versionPin, setVersionPin] =
+    useState<ProtocolVersionPin>(initialVersionPin);
+  // Read when a run starts; the caller passes it once, before Run.
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+  // Read when the protocol suite starts, like the selection.
+  const probesRef = useRef(probes);
+  probesRef.current = probes;
+  const [oauthUnscored, setOAuthUnscored] = useState<readonly string[]>([]);
   const [runVersion, setRunVersion] = useState(0);
 
   const activeServerNameRef = useRef(server.name);
@@ -394,13 +321,18 @@ export function useConformanceRun({
   );
 
   const runProtocol = useCallback(
-    async (runToken: number, serverName: string) => {
+    async (
+      runToken: number,
+      serverName: string,
+      picked?: ConformanceSelection
+    ) => {
       if (!httpServer) return;
       setProtocol({ status: "running" });
       try {
-        const { result } = await runProtocolConformance(serverName, {
-          protocolVersion: versionPin === "auto" ? undefined : versionPin,
-        });
+        const { result } = await runProtocolConformance(
+          serverName,
+          protocolRunOptions(probesRef.current ?? {}, picked, versionPin)
+        );
         if (!isRunActive(runToken, serverName)) return;
         setProtocol({ status: "done", result, verdict: verdictOf(result) });
       } catch (err) {
@@ -415,10 +347,17 @@ export function useConformanceRun({
   );
 
   const runApps = useCallback(
-    async (runToken: number, serverName: string) => {
+    async (
+      runToken: number,
+      serverName: string,
+      checkIds?: MCPAppsCheckId[]
+    ) => {
       setApps({ status: "running" });
       try {
-        const { result } = await runAppsConformance(serverName);
+        const { result } = await runAppsConformance(
+          serverName,
+          ...(checkIds ? [{ checkIds }] : []),
+        );
         if (!isRunActive(runToken, serverName)) return;
         setApps({ status: "done", result, verdict: verdictOf(result) });
       } catch (err) {
@@ -433,10 +372,17 @@ export function useConformanceRun({
   );
 
   const runTasks = useCallback(
-    async (runToken: number, serverName: string) => {
+    async (
+      runToken: number,
+      serverName: string,
+      picked: {
+        checkIds: MCPTasksCheckId[];
+        readinessIds?: MCPTasksReadinessId[];
+      }
+    ) => {
       setTasks({ status: "running" });
       try {
-        const { result } = await runTasksConformance(serverName);
+        const { result } = await runTasksConformance(serverName, picked);
         if (!isRunActive(runToken, serverName)) return;
         // The tasks suite reports a real third outcome: checks that apply but
         // could not be exercised leave the run incomplete, never passing.
@@ -592,7 +538,11 @@ export function useConformanceRun({
   );
 
   const runOAuth = useCallback(
-    async (runToken: number, currentServer: ServerWithName) => {
+    async (
+      runToken: number,
+      currentServer: ServerWithName,
+      readinessIds?: MCPOAuthReadinessId[]
+    ) => {
       if (!isHttpServer(currentServer)) return;
 
       const serverName = currentServer.name;
@@ -638,6 +588,7 @@ export function useConformanceRun({
           serverNameOrId: serverName,
           oauthProfile: { ...baseProfile, protocolVersion },
           callbackOrigin,
+          readinessIds,
         });
 
         if (!isRunActive(runToken, serverName)) return;
@@ -730,18 +681,48 @@ export function useConformanceRun({
     setTasks(createTasksState(currentServer));
     setOAuth(createOAuthState(currentServer));
 
+    // A suite left out before Run reads as not selected, not as one that
+    // does not apply to the server.
+    // Saved defaults are plain strings: send only ids this build knows and,
+    // when pinned, ones that version runs.
+    const picked = runnableSelection(selectionRef.current, versionPin);
+    // Fixed for this run: a Settings change afterwards is for the next one.
+    setOAuthUnscored(scorableOAuthIds(picked?.oauthUnscored));
     const promises: Promise<void>[] = [];
     if (httpServerNow) {
-      promises.push(runProtocol(runToken, currentServer.name));
+      if (isSelected(picked?.protocol)) {
+        promises.push(runProtocol(runToken, currentServer.name, picked));
+      } else {
+        setProtocol(NOT_SELECTED);
+      }
     }
-    promises.push(runApps(runToken, currentServer.name));
-    promises.push(runTasks(runToken, currentServer.name));
+    if (isSelected(picked?.apps)) {
+      promises.push(runApps(runToken, currentServer.name, picked?.apps));
+    } else {
+      setApps(NOT_SELECTED);
+    }
+    if (isSelected(picked?.tasks)) {
+      // Never "all": the suite's full list includes a check the app cannot
+      // feed, so an unset selection still sends the app's list explicitly.
+      promises.push(
+        runTasks(runToken, currentServer.name, {
+          checkIds: picked?.tasks ?? [...APP_TASKS_CHECK_IDS],
+          readinessIds: picked?.tasksAdvice,
+        })
+      );
+    } else {
+      setTasks(NOT_SELECTED);
+    }
     if (httpServerNow) {
-      promises.push(runOAuth(runToken, currentServer));
+      if (picked?.oauth !== false) {
+        promises.push(runOAuth(runToken, currentServer, picked?.oauthAdvice));
+      } else {
+        setOAuth(NOT_SELECTED);
+      }
     }
 
     await Promise.allSettled(promises);
-  }, [beginRun, runApps, runOAuth, runProtocol, runTasks, server]);
+  }, [beginRun, runApps, runOAuth, runProtocol, runTasks, server, versionPin]);
 
   // Scores are derived, never stored: each finished suite contributes, and
   // the headline pools their COUNTS (not an average of suite scores), so a
@@ -760,8 +741,23 @@ export function useConformanceRun({
     [tasks.result]
   );
   const oauthScore = useMemo(
-    () => (oauth.result ? scoreFromOAuthResult(oauth.result) : undefined),
-    [oauth.result]
+    () =>
+      oauth.result
+        ? scoreFromOAuthResult(oauth.result, {
+            unscoredCheckIds: oauthUnscored,
+          })
+        : undefined,
+    [oauth.result, oauthUnscored]
+  );
+  // The suite's badge follows its score once steps are left out of it: a
+  // failure in an unscored step must not read FAILED beside a passing score.
+  // A not-applicable flow is "unavailable" and keeps its own treatment.
+  const oauthShown = useMemo<OAuthSuiteState>(
+    () =>
+      oauth.status === "done" && oauthUnscored.length > 0 && oauthScore
+        ? { ...oauth, verdict: oauthScore.outcome }
+        : oauth,
+    [oauth, oauthUnscored, oauthScore]
   );
   const pooledScore = useMemo(() => {
     const parts = [protocolScore, appsScore, tasksScore, oauthScore].filter(
@@ -780,7 +776,7 @@ export function useConformanceRun({
     protocol,
     apps,
     tasks,
-    oauth,
+    oauth: oauthShown,
     versionPin,
     setVersionPin,
     runVersion,
@@ -793,6 +789,7 @@ export function useConformanceRun({
     tasksScore,
     oauthScore,
     pooledScore,
+    oauthUnscored,
     oauthNotScored: oauthScore !== undefined && oauthScore.score === null,
     isRunning,
   };

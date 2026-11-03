@@ -47,7 +47,7 @@ import { ResourcesTab } from "./components/ResourcesTab";
 import { PromptsTab } from "./components/PromptsTab";
 import { SkillsTab } from "./components/SkillsTab";
 import { LearningTab } from "./components/LearningTab";
-import { TasksTab } from "./components/TasksTab";
+import { TaskAccountsTab } from "./components/TaskAccountsTab";
 import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
@@ -78,11 +78,8 @@ import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconci
 import { TracingTab } from "./components/TracingTab";
 import { WebmcpInspectorTab } from "./components/webmcp-inspector/WebmcpInspectorTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
-import {
-  ConformanceTab,
-  type ConformanceConnectServer,
-} from "./components/conformance/ConformancePanel";
-import { AddServerModal } from "./components/connection/AddServerModal";
+import type { ConformanceConnectServer } from "./components/conformance/ConformancePanel";
+import { ConformanceTab } from "./components/conformance/ConformanceTab";
 import { ServerDetailModal } from "./components/connection/ServerDetailModal";
 import {
   ConformanceHistory,
@@ -239,6 +236,7 @@ import type {
   PlaygroundServerSelectorProps,
 } from "./components/ActiveServerSelector";
 import { useProjectServers } from "./hooks/useViews";
+import { useConformanceServerData } from "./hooks/use-conformance-server-data";
 import { HostedShellGate } from "./components/hosted/HostedShellGate";
 import { resolveHostedShellGateState } from "./components/hosted/hosted-shell-gate-state";
 import {
@@ -299,7 +297,6 @@ import {
   writeAppSignInReturnPath,
 } from "./lib/app-signin-return-path";
 import { isHostedTabBlocked } from "./lib/hosted-tab-policy";
-import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import type { OAuthTrace } from "./lib/oauth/oauth-trace";
 import {
   formatBillingFeatureName,
@@ -389,6 +386,7 @@ import {
 } from "./components/hosts/host-verify-deep-link";
 import type { HostFocusTabId } from "./components/hosts/redesigned/types";
 import {
+  buildConformanceRunPath,
   buildHostsPath,
   buildOrganizationPath,
   buildOrganizationSwitchTarget,
@@ -1680,20 +1678,29 @@ export function ConformanceRoute() {
     appState,
     selectedServerEntry,
     setSelectedServer,
-    activeProject,
     convexProjectId,
     isAuthenticated,
     ensureServersReady,
-    handleConnect,
     handleUpdate,
     handleDisconnect,
     handleReconnect,
   } = useAppRouteContext();
-  const { serversByName, serversById } = useProjectServers({
+  const {
+    servers: projectServers,
+    serversByName,
+    serversById,
+    isLoading: projectServersLoading,
+  } = useProjectServers({
     isAuthenticated,
     projectId: convexProjectId,
   });
-  const [isAddingServer, setIsAddingServer] = useState(false);
+  const navigate = useAppNavigate();
+  const { defaultsByServer, defaultsLoaded, lastRunByServer, saveDefaults } =
+    useConformanceServerData({
+      projectId: convexProjectId,
+      serversById,
+      serversByName,
+    });
   // The name the edit form is open on, plus the server as it was then: a
   // rename drops the old name from `appState.servers` before the new one
   // lands, and without the snapshot the form would close mid-save.
@@ -1707,6 +1714,13 @@ export function ConformanceRoute() {
   // The page picks its server from its own select, not the header tabs, and
   // offers every server: Run connects one that is not connected.
   const servers = Object.values<ServerWithName>(appState.servers);
+  // Each server's logo, as it announced it when it connected (the Servers
+  // tab's cards use the same one). Servers without one show initials.
+  const serverIcons: Record<string, string> = {};
+  for (const server of servers) {
+    const src = server.initializationInfo?.serverVersion?.icons?.[0]?.src;
+    if (src) serverIcons[server.name] = src;
+  }
   const editingServer = editing
     ? (appState.servers[editing.name] ?? editing.snapshot)
     : undefined;
@@ -1742,7 +1756,6 @@ export function ConformanceRoute() {
         servers={servers}
         onSelectServer={setSelectedServer}
         onConnectServer={connectServer}
-        onAddServer={() => setIsAddingServer(true)}
         onEditServer={editServer}
         persist={
           convexProjectId
@@ -1758,23 +1771,23 @@ export function ConformanceRoute() {
             />
           ) : undefined
         }
-      />
-      {/* Added and edited here, not on Connect: the page keeps its place. */}
-      <AddServerModal
-        isOpen={isAddingServer}
-        onClose={() => setIsAddingServer(false)}
-        onSubmit={(formData) => {
-          track("connecting_server", { location: "conformance" });
-          handleConnect(formData);
-          setIsAddingServer(false);
-        }}
-        // Same project defaults as the Servers tab's form. No `projectId`:
-        // its protocol-version pin is only persisted by the Servers tab.
-        projectClientConfig={activeProject?.clientConfig}
-        projectXaaDefaultIdentity={
-          activeProject?.xaaTestDefaults?.defaultIdentity ?? null
+        serverDefaults={defaultsByServer}
+        serverDefaultsLoaded={defaultsLoaded}
+        onSaveServerDefaults={saveDefaults}
+        lastRuns={lastRunByServer}
+        projectServerNames={projectServers?.map(
+          (server: { name: string }) => server.name,
+        )}
+        projectServersLoading={projectServersLoading}
+        serverIcons={serverIcons}
+        onViewRun={
+          convexProjectId
+            ? (runId) =>
+                navigate(buildConformanceRunPath(runId, convexProjectId))
+            : undefined
         }
       />
+      {/* Edited here, not on Connect: the page keeps its place. */}
       {editingServer ? (
         <ServerDetailModal
           isOpen
@@ -2472,7 +2485,7 @@ export function TasksRoute() {
   const { selectedMCPConfig, appState } = useAppRouteContext();
   return (
     <div className="h-full overflow-hidden">
-      <TasksTab
+      <TaskAccountsTab
         serverConfig={selectedMCPConfig}
         serverName={appState.selectedServer}
         isActive
@@ -4991,15 +5004,6 @@ export default function App() {
     optimisticallyDeletedOrganizationIds,
   ]);
 
-  const oauthTokensByServerId = useMemo(
-    () =>
-      buildOAuthTokensByServerId(
-        Object.keys(hostedServerIdsByName),
-        (name) => hostedServerIdsByName[name],
-        (name) => appState.servers[name]?.oauthTokens?.access_token,
-      ),
-    [hostedServerIdsByName, appState.servers],
-  );
   const hostedMcpProfilePins = useMemo(() => {
     const rawClientInfo = activeMcpProfile?.initialize?.clientInfo;
     const clientInfo =
@@ -5130,6 +5134,8 @@ export default function App() {
     appState.servers,
   ]);
   useApiContext({
+    taskOwnerId:
+      typeof currentUser?._id === "string" ? currentUser._id : undefined,
     projectId: convexProjectId,
     serverIdsByName: hostedServerIdsByName,
     clientCapabilities: hostedClientCapabilities,
@@ -5147,7 +5153,6 @@ export default function App() {
     clientConfigSyncPending:
       isClientConfigSyncPending || isProjectServerConfigLoading,
     getAccessToken,
-    oauthTokensByServerId,
     // `ApiContext.isAuthenticated` means "WorkOS user is signed in",
     // not "Convex is authenticated". Convex reports authenticated for guest
     // sessions too (because `useUnifiedConvexAuth` returns a placeholder user

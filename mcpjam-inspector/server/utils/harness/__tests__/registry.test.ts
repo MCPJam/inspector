@@ -1,3 +1,5 @@
+import { harnessToolOrigin } from "@/shared/tool-origin";
+import { qualifiedForwardingRuntime } from "../forwarding/runtime-contract.js";
 import { describe, expect, it, vi } from "vitest";
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
 import { HARNESS_MCP_DELIVERY } from "@/shared/harness-mcp-delivery";
@@ -50,8 +52,9 @@ describe("harness registry", () => {
     const a = getHarnessAdapter("codex");
     expect(a.id).toBe("codex");
     expect(a.displayName).toBe("Codex");
-    // Codex: MCP servers arrive as HOST-EXECUTED tools (MCPJam's gate is the
-    // single authority), no native plugin install, pauses for tool approval on
+    // Codex defaults to host-executed tools; qualified forwarding is selected
+    // per run. MCPJam's gate stays the authority, with no native plugin install.
+    // It pauses for tool approval on
     // the app-server adapter — and skills ARE delivered (INS-8), under its own
     // root.
     expect(a.transport).toBe("app-server");
@@ -537,6 +540,9 @@ async function drive() {
     options: {
       ...start.model ? { model: start.model } : {},
       ...start.maxTurns !== void 0 ? { maxTurns: start.maxTurns } : {},
+      hooks: {
+        PreToolUse: []
+      },
       ...permissionOptions,
       mcpServers,
       cwd: workdir,
@@ -565,6 +571,9 @@ function emitUserToolResults(msg) {
 async function runBridge(options) {
   const handleInbound = async (msg, ws) => {
     switch (msg.type) {
+      case "abort":
+        turnAbort?.abort();
+        return;
       case "resume":
         activeSocket = ws;
         replay(ws, msg.lastSeenEventId);
@@ -1000,6 +1009,16 @@ function addUsage(total, usage) {
     expect(() => getHarnessAdapter("pi")).toThrow(/Unsupported harness/);
   });
 
+  it("recognizes Claude's actual native ToolSearch without relabelling an MCP tool", () => {
+    const nativeTools = getHarnessAdapter("claude-code").listBuiltinTools();
+    const call = {
+      rawToolName: "ToolSearch", toolName: "ToolSearch",
+      hostTools: {}, nativeTools,
+    };
+    expect(harnessToolOrigin(call)).toBe("native");
+    expect(harnessToolOrigin({ ...call, serverId: "server" })).toBe("mcp");
+  });
+
   describe("native MCP delivery", () => {
     const mcpJson = {
       mcpServers: {
@@ -1017,6 +1036,35 @@ function addUsage(total, usage) {
       expect(runtime.harnessId).toBe("claude-code");
       expect(createClaudeCodeHarness).toHaveBeenLastCalledWith(expect.objectContaining({
         mcpServers: mcpJson.mcpServers,
+      }));
+    });
+
+    it("enables the private elicitation channel only with an installed handler", () => {
+      const adapter = getHarnessAdapter("claude-code");
+      adapter.createHarness({ modelId: "anthropic/claude-haiku-4.5", auth: {}, mcpJson, elicitationHandler: true });
+      expect(createClaudeCodeHarness).toHaveBeenLastCalledWith(expect.objectContaining({
+        env: expect.objectContaining({ MCPJAM_HARNESS_ELICITATION: "1" }),
+      }));
+      adapter.createHarness({ modelId: "anthropic/claude-haiku-4.5", auth: {}, mcpJson });
+      expect(createClaudeCodeHarness).not.toHaveBeenLastCalledWith(expect.objectContaining({
+        env: expect.objectContaining({ MCPJAM_HARNESS_ELICITATION: "1" }),
+      }));
+    });
+
+    it("enables threshold-based native search for forwarding or a qualified request", () => {
+      const adapter = getHarnessAdapter("claude-code");
+      adapter.createHarness({ modelId: "anthropic/claude-haiku-4.5", auth: {}, mcpJson, forwardingMcpJson: mcpJson });
+      expect(createClaudeCodeHarness).toHaveBeenLastCalledWith(expect.objectContaining({
+        env: expect.objectContaining({ ENABLE_TOOL_SEARCH: "auto" }),
+      }));
+      expect(adapter.forwardingRuntime?.configurationVersion).toBe("tool-search-auto-v1");
+      adapter.createHarness({ modelId: "anthropic/claude-haiku-4.5", auth: {}, mcpJson });
+      expect(createClaudeCodeHarness).not.toHaveBeenLastCalledWith(expect.objectContaining({
+        env: expect.objectContaining({ ENABLE_TOOL_SEARCH: expect.anything() }),
+      }));
+      adapter.createHarness({ modelId: "anthropic/claude-haiku-4.5", auth: {}, mcpJson, requireNativeToolDiscovery: true });
+      expect(createClaudeCodeHarness).toHaveBeenLastCalledWith(expect.objectContaining({
+        env: expect.objectContaining({ ENABLE_TOOL_SEARCH: "auto" }),
       }));
     });
 
@@ -1583,4 +1631,14 @@ describe("the organization's own key (native upstream profiles)", () => {
     expect(settings?.env?.MCPJAM_HARNESS_UPSTREAM_PROFILE).toBeUndefined();
     expect(settings?.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
   });
+});
+
+it("keeps every declared forwarding contract aligned with its qualified runtime pin", () => {
+  for (const id of registeredHarnessIds()) {
+    const adapter = getHarnessAdapter(id);
+    if (adapter.forwardingRuntime) expect(qualifiedForwardingRuntime(adapter)).toBe(adapter.forwardingRuntime);
+  }
+  expect(getHarnessAdapter("codex").forwardingRuntime).toMatchObject({runtimeVersion: PINNED_CODEX_VERSION, correlationKey: "callId"});
+  expect(getHarnessAdapter("claude-code").forwardingRuntime).toBeDefined();
+  expect(getHarnessAdapter("cursor").forwardingRuntime).toBeUndefined();
 });

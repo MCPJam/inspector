@@ -1,4 +1,5 @@
 import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
+import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 import { AdmissionWaitBudget } from "../services/sessionSimulation/admission-retry.js";
@@ -76,6 +77,7 @@ import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.j
 import type { HarnessPolicyBlockRecord } from "./harness/harness-proxy-policy-enforcement.js";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import type { InsufficientScopeInfo } from "../routes/web/hosted-elicitation.js";
+import type { HarnessElicitationHandler } from "./harness/with-harness-elicitation.js";
 import type { ScopeStepUpRequiredEvent } from "@/shared/scope-step-up";
 import {
   buildFinishChunk,
@@ -95,6 +97,10 @@ import {
 } from "@/shared/http-tool-calls";
 import { isMrtrSuspendSignalShape } from "@/shared/mrtr-continuation";
 import { isScopeStepUpSuspendSignal } from "./scope-step-up-continuation.js";
+import {
+  settleSuspendedHistoryToolCalls,
+  type SettleSuspendedToolCall,
+} from "./direct-chat-scope-step-up.js";
 import {
   spliceMrtrToolResult,
   hasUnresolvedToolCall,
@@ -912,6 +918,9 @@ function applyToolRefresh(
 }
 
 export interface MCPJamHandlerOptions {
+  harnessStartupRequestId?: string;
+  /** Effective saved App declaration, qualified by the caller's installed handlers. */
+  harnessHostCapabilities?: import("@/shared/harness-host-capabilities").HarnessHostCapabilityQualification;
   /** Durable callers must finish this write before the next external effect. */
   durableCheckpoint?: (state: {
     phase: "model" | "tools" | "ready" | "complete";
@@ -1219,6 +1228,7 @@ export interface MCPJamHandlerOptions {
    * host's intent directly.
    */
   requireToolApproval?: boolean;
+  requireNativeToolDiscovery?: boolean;
   /**
    * Host/client policy for eligible MCP tool-result content/resources.
    * Controls only model-facing tool output; raw results remain available to
@@ -1295,6 +1305,14 @@ export interface MCPJamHandlerOptions {
   /** SEP-2350 resume descriptor; driven before the first model step. */
   scopeStepUpResume?: MrtrEngineResume;
   /**
+   * History settlement for mid-session sign-in. A call that a sign-in
+   * suspended can come back unresolved because the user sent another message
+   * instead of signing in; this answers it with the reason-aware text before
+   * the first model step, on every engine path and whether or not the history
+   * is client-supplied. Skipped on a resume, like the approval settlement.
+   */
+  settleSuspendedHistoryToolCall?: SettleSuspendedToolCall;
+  /**
    * Creates a continuation for an exact harness-proxied tools/call. The
    * harness supplies its model-visible toolCallId after correlating the proxy
    * request with the streamed tool-input part.
@@ -1320,6 +1338,9 @@ export interface MCPJamHandlerOptions {
   onStreamComplete?: () => Promise<void> | void;
   /** Starts log delivery only after the harness's MCP route and owner scopes are fixed. */
   onHarnessMcpReady?: (scopeIds?: Record<string, string>) => void;
+  onHarnessElicitation?: HarnessElicitationHandler;
+  harnessOwnedInput?: boolean;
+  harnessOwnedTasks?: boolean;
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
@@ -3628,6 +3649,80 @@ function collectToolCallIds(messages: ModelMessage[]): Set<string> {
  * its tool, and SILENTLY — re-sending it would ask the browser to run it. The
  * model is never shown it or its answer (`presentHistoryForModel`).
  */
+/**
+ * Answer inherited calls a mid-session sign-in suspended, before the
+ * approval settlement below would answer them as unapproved. The answer is
+ * the reason-aware cancel text, never a run: the user moved on without
+ * signing in. Each call is re-introduced on this response first, like the
+ * unapproved ones, so the client has a part to attach the answer to.
+ */
+async function settleSuspendedSignInHistoryToolCalls(args: {
+  writer: StepContext["writer"];
+  messageHistory: ModelMessage[];
+  tools: ToolSet;
+  mcpClientManager: MCPClientManager;
+  traceTurn: LiveTraceTurnContext;
+  stepIndex: number;
+  settle: SettleSuspendedToolCall;
+  onToolResult?: (event: MCPJamToolResultEvent) => void | Promise<void>;
+  onToolCall?: (event: MCPJamToolCallEvent) => void;
+}): Promise<void> {
+  const answers = await settleSuspendedHistoryToolCalls({
+    messageHistory: args.messageHistory,
+    settle: args.settle,
+  });
+  if (answers.length === 0) return;
+  const calls = new Map<string, ToolCallPart>();
+  for (const msg of args.messageHistory) {
+    if (msg?.role !== "assistant") continue;
+    const content = (msg as AssistantModelMessage).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (part.type === "tool-call") calls.set(part.toolCallId, part);
+    }
+  }
+  for (const answer of answers) {
+    for (const result of (answer as ToolModelMessage).content) {
+      if (result.type !== "tool-result") continue;
+      const part = calls.get(result.toolCallId);
+      if (!part) continue;
+      emitToolInput(args.writer, {
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+        input: part.input ?? {},
+        ...(part.providerOptions
+          ? { providerMetadata: part.providerOptions }
+          : {}),
+      });
+      if (args.onToolCall) {
+        try {
+          args.onToolCall({
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            input: part.input,
+            stepIndex: args.stepIndex,
+            promptIndex: args.traceTurn.promptIndex,
+            serverId: readToolServerId(args.tools, part.toolName),
+          });
+        } catch (error) {
+          logger.warn(
+            "[mcpjam-stream-handler] onToolCall callback failed (suspended sign-in call)",
+            { error: error instanceof Error ? error.message : String(error) },
+          );
+        }
+      }
+    }
+  }
+  await emitToolResults(
+    args.writer,
+    args.mcpClientManager,
+    answers,
+    args.traceTurn,
+    args.stepIndex,
+    args.onToolResult,
+  );
+}
+
 async function settleUnapprovedHistoryToolCalls(args: {
   writer: StepContext["writer"];
   messageHistory: ModelMessage[];
@@ -5159,6 +5254,7 @@ export async function runChatEngineLoop(
   options: MCPJamHandlerOptions,
   streamSink: "ui" | "none",
 ): Promise<ChatEngineLoopResult> {
+  assertNativeDiscovery({ required: options.requireNativeToolDiscovery });
   const {
     messages,
     modelId,
@@ -5552,6 +5648,22 @@ export async function runChatEngineLoop(
       // call in the history is unresolved, so nothing planted beside the
       // resumed call can run on that path either; it only keeps the turn
       // paused.
+      if (
+        options.settleSuspendedHistoryToolCall &&
+        !(scopeStepUpResume ?? mrtrResume)
+      ) {
+        await settleSuspendedSignInHistoryToolCalls({
+          writer: safeWriter,
+          messageHistory,
+          tools,
+          mcpClientManager,
+          traceTurn,
+          stepIndex: effectiveSteps(),
+          settle: options.settleSuspendedHistoryToolCall,
+          onToolResult,
+          onToolCall,
+        });
+      }
       if (options.clientSuppliedHistory && !(scopeStepUpResume ?? mrtrResume)) {
         await settleUnapprovedHistoryToolCalls({
           writer: safeWriter,
@@ -6108,6 +6220,7 @@ export async function handleMCPJamFreeChatModel(
   options = { ...options, harness: dispatch.harnessId };
   assertAgentLoopResume(options.agentLoop, Boolean(options.scopeStepUpResume));
   const useHarness = Boolean((options.agentLoop ?? options.harness) && !options.scopeStepUpResume);
+  if (!useHarness) assertNativeDiscovery({ required: options.requireNativeToolDiscovery });
   const result = await (useHarness
     ? runHarnessTurn(options, "ui")
     : runChatEngineLoop(options, "ui"));

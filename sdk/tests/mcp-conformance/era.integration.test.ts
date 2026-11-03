@@ -165,13 +165,13 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
 
     // Exit gate: no false failures, no crash.
     expect(result.checks.filter((c) => c.status === "failed")).toEqual([]);
-    // NOT `passed`: five modern obligations cannot be exercised here — the
+    // NOT `passed`: four modern obligations cannot be exercised here — the
     // -32021 path needs an `inputRequiredProbe` this fixture does not
     // configure, a declared outputSchema can only be graded against a real
     // `tools/call` result and so needs a safe-to-execute fixture, a graceful
     // subscription close is server-initiated and cannot be induced by a
-    // client-side probe, and both logging checks need a `logProbe` naming a
-    // tool that actually logs — without one, silence proves nothing. All five
+    // client-side probe, and the logging check needs a `logProbe` naming a
+    // tool that actually logs — without one, silence proves nothing. All four
     // report `could-not-run`, so the run is honestly `incomplete` rather than
     // green.
     expect(result.outcome).toBe("incomplete");
@@ -181,7 +181,6 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
         .map((c) => c.id)
         .sort(),
     ).toEqual([
-      "modern-log-level-filtering",
       "modern-logs-require-log-level",
       "modern-subscription-graceful-close",
       "modern-tool-output-schema-conformant",
@@ -304,13 +303,13 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     }).run();
 
     expect(result.checks.filter((c) => c.status === "failed")).toEqual([]);
-    // NOT `passed`: five modern obligations cannot be exercised here — the
+    // NOT `passed`: four modern obligations cannot be exercised here — the
     // -32021 path needs an `inputRequiredProbe` this fixture does not
     // configure, a declared outputSchema can only be graded against a real
     // `tools/call` result and so needs a safe-to-execute fixture, a graceful
     // subscription close is server-initiated and cannot be induced by a
-    // client-side probe, and both logging checks need a `logProbe` naming a
-    // tool that actually logs — without one, silence proves nothing. All five
+    // client-side probe, and the logging check needs a `logProbe` naming a
+    // tool that actually logs — without one, silence proves nothing. All four
     // report `could-not-run`, so the run is honestly `incomplete` rather than
     // green.
     expect(result.outcome).toBe("incomplete");
@@ -320,7 +319,6 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
         .map((c) => c.id)
         .sort(),
     ).toEqual([
-      "modern-log-level-filtering",
       "modern-logs-require-log-level",
       "modern-subscription-graceful-close",
       "modern-tool-output-schema-conformant",

@@ -1,3 +1,4 @@
+import { PLUGIN_APP_REPLY_MAX_BYTES } from "@/shared/plugin-app-ui-limits";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createThreadAppApi, type ThreadAppHandle } from "../thread-app-api";
 const fetch = vi.hoisted(() => vi.fn());
@@ -23,6 +24,21 @@ const response = (value: unknown, status = 200) =>
 const signal = () => AbortSignal.timeout(1000);
 describe("thread App authenticated transport", () => {
   beforeEach(() => fetch.mockReset());
+  it("binds resource reads to the original instance without retrying transport loss", async () => {
+    const api = createThreadAppApi(scope, "model/");
+    fetch.mockResolvedValueOnce(response({ contents: [] }));
+    await api.resource(handle, { method: "resources/read", uri: "test://item" }, signal());
+    expect(fetch.mock.calls[0][0]).toBe("/api/web/apps/plugin-instances/model/resources");
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ projectId: "project", pluginWorkspace: scope.pluginWorkspace, instanceToken: "opaque", operation: { method: "resources/read", uri: "test://item" } });
+    fetch.mockReset().mockRejectedValueOnce(new Error("network lost"));
+    await expect(api.resource(handle, { method: "resources/read", uri: "test://item" }, signal())).rejects.toThrow("network lost");
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  it.each(["malformed", "oversized"])("rejects %s resource replies", async kind => {
+    fetch.mockResolvedValueOnce(new Response(kind === "malformed" ? "not-json" : "x".repeat(PLUGIN_APP_REPLY_MAX_BYTES + 1)));
+    await expect(createThreadAppApi(scope, "model/").resource(handle, { method: "resources/list" }, signal())).rejects.toMatchObject({ code: kind === "malformed" ? "INSTANCE_RESPONSE_INVALID" : "INSTANCE_RESPONSE_TOO_LARGE" });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
   it("asks about a plugin with no server by plugin, never a made-up server", async () => {
     fetch
       .mockResolvedValueOnce(response({ available: false }))

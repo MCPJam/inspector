@@ -21,6 +21,11 @@ import {
   type McpProtocolVersion,
 } from "../mcp-client-manager/mcp-protocol-version.js";
 import {
+  AUTH_CHALLENGE_ACTIONS,
+  TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
+  UNAUTHORIZED_CHALLENGE_TRIGGERS,
+} from "../mcp-client-manager/auth-challenge.js";
+import {
   HARNESS_IDS,
   HOST_CONFIG_SCHEMA_VERSION_V2,
   isHarness,
@@ -917,9 +922,19 @@ function canonicalizeMcpProfile(
   // omit-when-absent discipline: absent → spec-conforming, hashes stable.
   // One validation loop; the top-level re-key below sorts every emitted
   // field into canonical position.
+  //
+  // The four sign-in knobs follow the same rule even though, for the `_meta`
+  // pair, absent means "do not act" (see the types.ts block): what is absent
+  // is omitted, and the literal equal to the absent value is stored as given
+  // and hashes distinctly. No cross-field check: a trigger stored beside a
+  // `"passthrough"` action is inert at runtime, not invalid.
   const conformanceKnobs = [
     ["paginationTraversal", PAGINATION_TRAVERSAL_MODES],
     ["mrtrSupport", MRTR_SUPPORT_MODES],
+    ["unauthorizedChallenge", AUTH_CHALLENGE_ACTIONS],
+    ["unauthorizedChallengeTrigger", UNAUTHORIZED_CHALLENGE_TRIGGERS],
+    ["toolResultAuthChallenge", AUTH_CHALLENGE_ACTIONS],
+    ["toolResultAuthChallengeTrigger", TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS],
   ] as const;
   for (const [key, modes] of conformanceKnobs) {
     const value = input[key];
@@ -2625,6 +2640,9 @@ export function canonicalizeHostConfigV2(
       throw new Error("hostConfigV2: agentLoop requires a computer attachment");
     }
   }
+  if (input.requireNativeToolDiscovery !== undefined && typeof input.requireNativeToolDiscovery !== "boolean") {
+    throw new Error("hostConfigV2: requireNativeToolDiscovery must be a boolean");
+  }
   const serverIds = sortUniqueServerIds(input.serverIds);
   const optionalServerIds = sortUniqueServerIds(input.optionalServerIds);
   const hostContext = requireRecord(input.hostContext, "hostContext");
@@ -2649,6 +2667,7 @@ export function canonicalizeHostConfigV2(
     systemPrompt: input.systemPrompt,
     temperature: input.temperature,
     requireToolApproval: input.requireToolApproval,
+    ...(input.requireNativeToolDiscovery !== undefined ? { requireNativeToolDiscovery: input.requireNativeToolDiscovery } : {}),
     // Preserve undefined-vs-set: absent hashes byte-identically to a
     // pre-feature row; explicit `false` writes a key and hashes distinctly.
     progressiveToolDiscovery: input.progressiveToolDiscovery,

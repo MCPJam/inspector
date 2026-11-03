@@ -57,34 +57,21 @@ describe("MCPConformanceTest", () => {
         profileVersion: profile.version,
         checkerVersion: CONFORMANCE_CHECKER_VERSION,
         // Every gap-program check ran (or era-skipped) and reported a real
-        // verdict, but this profile version scores none of them yet — so they
-        // are reported and excluded from the number.
-        pendingCheckIds: [
-          "modern-cache-hint-coverage",
-          "modern-cache-hint-values-valid",
-          "modern-cache-scope-stable-across-pages",
-          "modern-header-names-case-insensitive",
-          "modern-log-level-filtering",
-          "modern-missing-method-header-rejected",
-          "modern-resource-read-no-empty-contents",
-          "modern-tool-output-schema-conformant",
-          "wire-schema-valid",
-        ],
+        // verdict. v2026-11-01.1 scores the seven the revision states as
+        // requirements; this one stays reported but out of the number.
+        pendingCheckIds: ["modern-tool-output-schema-conformant"],
       });
       // The digest is stamped only because the schema pass actually ran.
       expect(result.profile?.schemaDigest).toMatch(/^[0-9a-f]{64}$/);
       const score = scoreFromProtocolResult(result);
-      expect(score.pending).toBe(9);
-      // Every legacy-applicable check EXCEPT the pending one is in the
-      // denominator; the modern-only checks era-skipped out of it, which is the
-      // pre-existing behavior this must not disturb.
+      expect(score.pending).toBe(1);
+      // The pending check is modern-only, so it era-skipped out of this
+      // legacy denominator already: every legacy-applicable check is scored,
+      // `wire-schema-valid` included.
       const legacyApplicable = result.checks.filter(
         (check) => CHECK_ERAS[check.id].includes("legacy"),
       ).length;
-      // The modern-only pending checks era-skipped out of the legacy
-      // denominator already; only `wire-schema-valid` is both legacy-applicable
-      // and unscored, so exactly one comes off.
-      expect(score.applicable).toBe(legacyApplicable - 1);
+      expect(score.applicable).toBe(legacyApplicable);
     } finally {
       await mockServer.stop();
     }

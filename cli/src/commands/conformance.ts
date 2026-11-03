@@ -11,8 +11,10 @@ import {
   scoreFromProtocolResult,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_LOG_LEVELS,
   MCP_PROTOCOL_VERSIONS,
   type MCPConformanceConfig,
+  type MCPLogLevel,
   MCPConformanceSuite,
   MCPConformanceTest,
 } from "@mcpjam/sdk";
@@ -31,6 +33,7 @@ import { maybeUploadSingleSuite } from "../lib/conformance-upload.js";
 import { parseReporterFormat } from "../lib/reporting.js";
 import {
   parseHeadersOption,
+  parseJsonRecord,
   parsePositiveInteger,
 } from "../lib/server-config.js";
 import {
@@ -54,6 +57,9 @@ export interface ProtocolConformanceOptions {
   fixturesFile?: string;
   fixtureTool?: string[];
   fixturePrompt?: string[];
+  logProbeTool?: string;
+  logProbeArgs?: string;
+  logProbeLevel?: string;
 }
 
 export function registerProtocolCommands(program: Command): void {
@@ -113,6 +119,18 @@ export function registerProtocolCommands(program: Command): void {
       "Name of a prompt that is safe to render with no arguments. Repeat for multiple. For prompts that need arguments, use --fixtures-file.",
       (value: string, previous: string[] = []) => [...previous, value],
       [],
+    )
+    .option(
+      "--log-probe-tool <name>",
+      "Name of a tool that writes logs and is safe to call a few times. Lets the 2026-07-28 logging check and log level advice run. Nothing is called without this.",
+    )
+    .option(
+      "--log-probe-args <json>",
+      "Arguments for --log-probe-tool, as a JSON object. Default: {}.",
+    )
+    .option(
+      "--log-probe-level <level>",
+      `Log level the advice asks --log-probe-tool for: ${MCP_LOG_LEVELS.join(", ")}. Default: warning.`,
     )
     .option(
       "--reporter <reporter>",
@@ -243,6 +261,45 @@ function resolveFixtures(
   return { toolCalls, promptGets };
 }
 
+/**
+ * The tool the logging probes may call. `--log-probe-args` and
+ * `--log-probe-level` only describe that call, so either one without a tool
+ * is a usage error instead of a flag that is silently ignored.
+ */
+function resolveLogProbe(
+  options: ProtocolConformanceOptions,
+): MCPConformanceConfig["logProbe"] | undefined {
+  const toolName = options.logProbeTool?.trim();
+  if (!toolName) {
+    if (
+      options.logProbeArgs !== undefined ||
+      options.logProbeLevel !== undefined
+    ) {
+      throw usageError(
+        "--log-probe-args and --log-probe-level need --log-probe-tool.",
+      );
+    }
+    return undefined;
+  }
+
+  const level = options.logProbeLevel?.trim();
+  if (
+    level !== undefined &&
+    !(MCP_LOG_LEVELS as readonly string[]).includes(level)
+  ) {
+    throw usageError(
+      `Unknown log level: ${level}. Known: ${MCP_LOG_LEVELS.join(", ")}`,
+    );
+  }
+  const args = parseJsonRecord(options.logProbeArgs, "Log probe arguments");
+
+  return {
+    toolName,
+    ...(args ? { arguments: args } : {}),
+    ...(level ? { level: level as MCPLogLevel } : {}),
+  };
+}
+
 function readFixturesFile(
   path: string,
 ): NonNullable<MCPConformanceConfig["fixtures"]> {
@@ -338,6 +395,7 @@ export function buildConfig(
   }
 
   const fixtures = resolveFixtures(options);
+  const logProbe = resolveLogProbe(options);
 
   const protocolVersion = options.protocolVersion?.trim();
   if (
@@ -364,5 +422,6 @@ export function buildConfig(
       ? { protocolVersion: protocolVersion as MCPConformanceConfig["protocolVersion"] }
       : {}),
     ...(fixtures ? { fixtures } : {}),
+    ...(logProbe ? { logProbe } : {}),
   };
 }

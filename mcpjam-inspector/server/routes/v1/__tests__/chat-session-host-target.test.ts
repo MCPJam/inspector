@@ -334,6 +334,15 @@ afterEach(() => {
 });
 
 describe("host targeting dispatches the real harness", () => {
+  it("refuses required discovery on this unqualified API route before provisioning", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec({ harness: "claude-code", modelId: MODEL, requireNativeToolDiscovery: true }));
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    expect(response.status).toBe(409);
+    expect(await response.text()).toContain("Native tool discovery");
+    expect(acquirePlaygroundHarnessBoxMock).not.toHaveBeenCalled();
+    expect(resolveTurnRuntimeMock).not.toHaveBeenCalled();
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+  });
   it("continues with deleted pinned servers reported as skipped", async () => {
     resolveEnvironmentForRuntimeMock.mockRejectedValueOnce(new WebRouteError(
       400, ErrorCode.VALIDATION_ERROR, "Server gone is not an available server in this project.",
@@ -1287,6 +1296,19 @@ describe("continuing a session a HOST established", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("retains the discovery requirement when the current client no longer requires it", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([]), { status: 200 })));
+    queryMock.mockResolvedValue(hostEstablishedSession({
+      resumeConfig: { modelId: MODEL, toolMode: "auto", requireNativeToolDiscovery: true },
+    }));
+    const response = await turn(continuation({ hostId: HOST }));
+    expect(response.status).toBe(409);
+    expect(await response.text()).toContain("Native tool discovery");
+    expect(acquirePlaygroundHarnessBoxMock).not.toHaveBeenCalled();
+    expect(resolveTurnRuntimeMock).not.toHaveBeenCalled();
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
   });
 
   it("pins NO server set for a host-only first turn", async () => {

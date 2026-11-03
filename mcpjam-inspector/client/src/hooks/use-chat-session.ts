@@ -1,3 +1,4 @@
+import { isCurrentHarnessStartup, isHarnessStartupPart, type HarnessStartupPhase } from "@/shared/harness-startup";
 import { nextResumedVersion } from "./use-resumed-thread-persistence";
 import { isForwardingApprovalId, withoutForwardingGateParts, stripForwardingRequestBody } from "@/shared/forwarding-approval";
 import { dispatchAppToolCall } from "@mcpjam/widget-react";
@@ -86,6 +87,10 @@ import {
 import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvex, useConvexAuth } from "convex/react";
+import {
+  useOwnedChatElicitations,
+  mergeChatElicitations,
+} from "./use-owned-chat-elicitations";
 import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import { ModelDefinition, type ModelProvider } from "@/shared/types";
 import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
@@ -247,6 +252,7 @@ import {
 } from "@/shared/hosted-rpc-log";
 import {
   HOSTED_ELICITATION_VERSION,
+  HOSTED_HARNESS_INPUT_VERSION,
   isHostedElicitationDataPart,
   type HostedElicitationAction,
   type HostedElicitationRequestEvent,
@@ -297,9 +303,12 @@ import {
 import { noteTurnNoticePart } from "@/lib/turn-notice-parts";
 import {
   HOSTED_TASKS_VERSION,
+  HOSTED_TASK_OWNER_VERSION,
   isTaskCreatedDataPart,
 } from "@/shared/hosted-task-created";
-import { getTrackedTaskScope, trackTask } from "@/lib/task-tracker";
+import { TaskOwnerRequests } from "@/lib/task-owner-requests";
+import { trackCreatedTask } from "@/lib/task-created-tracking";
+import { getTrackedTaskScope, getOwnedTaskScope } from "@/lib/task-tracker";
 import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
 import { useHarnessAgentActivityStore } from "@/stores/harness-agent-activity-store";
 import { useHarnessLiveOutputStore } from "@/stores/harness-live-output-store";
@@ -679,6 +688,7 @@ export interface SetSelectedModelOptions {
 }
 
 export interface UseChatSessionReturn {
+  harnessStartupPhase: HarnessStartupPhase | null;
   /**
    * Elicitation requests whose tool call is blocked on this user right now.
    * Turn-scoped: they arrive as transient stream parts and are dropped when the
@@ -2040,7 +2050,6 @@ export function useChatSession(
   const hostedProjectId = hostedContext?.projectId;
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedEnsureServerIds = hostedContext?.ensureServerIds;
-  const hostedOAuthTokens = hostedContext?.oauthTokens;
   const hostedScenarioId = hostedContext?.scenarioId;
   const hostedHostId = hostedContext?.hostId;
   // A hidden environment rides a CLIENT-turn context: it needs the client it
@@ -2526,9 +2535,18 @@ export function useChatSession(
     [],
   );
 
+  const harnessStartupRequestRef = useRef<string | null>(null);
+  const [harnessStartupPhase, setHarnessStartupPhase] = useState<HarnessStartupPhase | null>(null);
   const paidFallbackNotices = useRef(new Set<string>());
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
+      if (isHarnessStartupPart(part)) {
+        if (isCurrentHarnessStartup(part, {
+          chatSessionId: chatSessionIdRef.current,
+          requestId: harnessStartupRequestRef.current,
+        })) setHarnessStartupPhase(part.data.phase === "ready" ? null : part.data.phase);
+        return;
+      }
       if (noteTurnNoticePart(part, chatSessionIdRef.current)) return;
       if (part && typeof part === "object" && "type" in part && part.type === "data-platform-paid-fallback") {
         const session = chatSessionIdRef.current ?? "new";
@@ -2670,8 +2688,14 @@ export function useChatSession(
           if (event.kind === "resolved") {
             store.resolveContinuation(event.continuationId);
             if (event.pluginModelOperation) {
-              for (const [key, answer] of ownedMrtrAnswers.current) if (key.startsWith(`${event.continuationId}:`)) { answer.dispose(); ownedMrtrAnswers.current.delete(key); }
-              void acknowledgeHostedMrtrContinuation(event.continuationId).catch(() => {});
+              for (const [key, answer] of ownedMrtrAnswers.current)
+                if (key.startsWith(`${event.continuationId}:`)) {
+                  answer.dispose();
+                  ownedMrtrAnswers.current.delete(key);
+                }
+              void acknowledgeHostedMrtrContinuation(
+                event.continuationId,
+              ).catch(() => {});
             }
             if (event.indeterminate) {
               // Exactly-once: a side-effecting call may or may not have run, so
@@ -2758,7 +2782,8 @@ export function useChatSession(
             // The SDK can start a client-tool continuation before React effects.
             // Preserve unversioned surfaces; only advance an existing cursor.
             if (
-              (receipt.outcome === "saved" || receipt.outcome === "duplicate") &&
+              (receipt.outcome === "saved" ||
+                receipt.outcome === "duplicate") &&
               typeof receipt.version === "number" &&
               resumedVersionRef.current?.sessionId === receipt.chatSessionId &&
               resumedVersionRef.current.version !== null
@@ -2819,40 +2844,11 @@ export function useChatSession(
           const message = HARNESS_RESET_MESSAGES[part.data.reason];
           if (message) toast.info(message);
         } else if (isTaskCreatedDataPart(part)) {
-          // Track it and stop. Deliberately NO navigation: a chat turn must
-          // not yank the user out of the conversation to a task list.
-          //
-          // `trackTask` needs nothing added for at-least-once delivery — it
-          // dedupes on the full task identity, so a duplicated part is a
-          // no-op. The scope is passed EXPLICITLY, from the value captured at
-          // submit: letting `trackTask` stamp the live active scope was the
-          // bug — a part delivered after a mid-stream project switch filed
-          // the task under the NEW project.
-          //
-          // Keyed by server NAME when the server sent one: the tracker and the
-          // Tasks tab both read by name, while a hosted `serverId` is a Convex
-          // document id, so tracking under the id files the task where the
-          // Tasks tab never looks.
-          trackTask({
-            taskId: part.data.taskId,
-            serverId: part.data.serverName ?? part.data.serverId,
-            wire: part.data.wire,
-            // Required by the tracker. The server's own timestamp when it sent
-            // one; a local reading only as a last resort, since the tracker
-            // renders it as the handle's age.
-            createdAt: part.data.createdAt ?? new Date().toISOString(),
-            ...(part.data.toolName ? { toolName: part.data.toolName } : {}),
-            ...(part.data.status ? { status: part.data.status } : {}),
-            ...(part.data.ttlMs !== undefined
-              ? { ttlMs: part.data.ttlMs }
-              : {}),
-            ...(part.data.pollIntervalMs !== undefined
-              ? { pollIntervalMs: part.data.pollIntervalMs }
-              : {}),
-            ...(turnTaskScopeRef.current !== undefined
-              ? { scope: turnTaskScopeRef.current }
-              : {}),
-          });
+          trackCreatedTask(
+            part.data,
+            turnTaskScopeRef.current,
+            taskOwnerRequests.current,
+          );
         }
         return;
       }
@@ -3578,6 +3574,8 @@ export function useChatSession(
 
   const handleChatError = useCallback(
     (chatError: Error) => {
+      harnessStartupRequestRef.current = null;
+      setHarnessStartupPhase(null);
       // Every chat failure used to end here and go no further: this handler
       // passed the error only to `notifyMCPJamLimitError`, a rate-limit filter
       // that no-ops everything else. A hosted 502 produced zero client
@@ -3647,6 +3645,7 @@ export function useChatSession(
   // was submitted under — never to whatever scope happens to be active when a
   // late part arrives after a project switch.
   const turnTaskScopeRef = useRef<string | undefined>(undefined);
+  const taskOwnerRequests = useRef(new TaskOwnerRequests());
 
   const sendIdentity = {
     install: convexClient.url,
@@ -3774,11 +3773,6 @@ export function useChatSession(
         serverIds: servers?.serverIds ?? hostedSelectedServerIds,
         serverNames: servers?.serverNames ?? selectedServers,
         accessScope: "chat_v2",
-        ...(isHostedDirectChat &&
-        hostedOAuthTokens &&
-        Object.keys(hostedOAuthTokens).length > 0
-          ? { oauthTokens: hostedOAuthTokens }
-          : {}),
         ...(hostedScenarioId ? { scenarioId: hostedScenarioId } : {}),
         ...(hostedScenarioId && Number.isFinite(hostedAccessVersion)
           ? { accessVersion: hostedAccessVersion }
@@ -3813,6 +3807,7 @@ export function useChatSession(
         // any server that elicits. The server only registers its callback —
         // and therefore only advertises `elicitation` — when it sees this.
         hostedElicitationVersion: HOSTED_ELICITATION_VERSION,
+        hostedHarnessInputVersion: HOSTED_HARNESS_INPUT_VERSION,
         // Handshake: tells the server this bundle can render a suspended MRTR
         // (`input_required`) round AND resume it (§12.5). The server only
         // registers the suspending collector — and therefore only takes the
@@ -3901,6 +3896,13 @@ export function useChatSession(
         // to request approval for, or defers one nothing will ever ask about
         // — and that second one stalls the turn.
         turnRequireToolApprovalRef.current = requireToolApprovalRef.current;
+        harnessStartupRequestRef.current = crypto.randomUUID();
+        setHarnessStartupPhase(null);
+        const taskOwnerScope = getOwnedTaskScope();
+        const ownerRequestId = taskOwnerRequests.current.capture(
+          generateId(),
+          taskOwnerScope,
+        );
         const widgetModelContext = pendingWidgetModelContextRef.current;
         pendingWidgetModelContextRef.current = undefined;
         const rewind =
@@ -3908,8 +3910,18 @@ export function useChatSession(
             ? rewindRef.current.lineage
             : undefined;
         return {
+          harnessStartupRequestId: harnessStartupRequestRef.current,
+          ...(ownerRequestId
+            ? {
+                hostedTaskOwnerVersion: HOSTED_TASK_OWNER_VERSION,
+                hostedTaskOwnerRequestId: ownerRequestId,
+                hostedTaskOwnerScope: taskOwnerScope,
+              }
+            : {}),
           model: selectedModel,
-          ...(requestChoice.kind === "picked" ? { modelSelection: requestChoice.selection } : {}),
+          ...(requestChoice.kind === "picked"
+            ? { modelSelection: requestChoice.selection }
+            : {}),
           ...(shouldSendClientApiKey ? { apiKey } : {}),
           // Always send the user's slider value. The server's `prepareChatV2`
           // already drops temperature for GPT-5 before the LLM call (its API
@@ -3919,7 +3931,11 @@ export function useChatSession(
           // helper's 0.7 fallback regardless of the slider.
           // An effort and a temperature are mutually exclusive: the routes
           // refuse (or drop) a temperature under an effort, so send only one.
-          ...(requestChoice.kind === "inherit" ? {} : requestEffort ? { reasoningEffort: requestEffort } : { temperature }),
+          ...(requestChoice.kind === "inherit"
+            ? {}
+            : requestEffort
+              ? { reasoningEffort: requestEffort }
+              : { temperature }),
           systemPrompt,
           ...(shouldUseOrgAwareChatApi
             ? buildHostedBody()
@@ -3977,15 +3993,26 @@ export function useChatSession(
           // legacy cloud-family resolution. `localMcpRuntimeRequired` keeps an
           // org-runtime model's turn on this server's runtime resolution, which
           // local-only MCP servers and an explicit local-harness ask both need.
-          ...(!HOSTED_MODE ? {
-            ...(personalBrowserEngine && !hostedScenarioId ? {
-              browserEngine: sendLocalBrowser ? "local" : "cloud",
-            } : {}),
-            ...(sendLocalEngine ? { computerEngine: "local" } : {}),
-            ...((localMcpRuntimeRequired || (localHarnessRequested && selectedModelUsesOrgRuntime)) ? { localMcpRuntimeRequired: true } : {}),
-            ...(selectedModel.provider === "ollama" ? { ollamaBaseUrl: getOllamaBaseUrl() } : {}),
-            ...(selectedModel.provider === "azure" ? { azureBaseUrl: getAzureBaseUrl() } : {}),
-          } : {}),
+          ...(!HOSTED_MODE
+            ? {
+                ...(personalBrowserEngine && !hostedScenarioId
+                  ? {
+                      browserEngine: sendLocalBrowser ? "local" : "cloud",
+                    }
+                  : {}),
+                ...(sendLocalEngine ? { computerEngine: "local" } : {}),
+                ...(localMcpRuntimeRequired ||
+                (localHarnessRequested && selectedModelUsesOrgRuntime)
+                  ? { localMcpRuntimeRequired: true }
+                  : {}),
+                ...(selectedModel.provider === "ollama"
+                  ? { ollamaBaseUrl: getOllamaBaseUrl() }
+                  : {}),
+                ...(selectedModel.provider === "azure"
+                  ? { azureBaseUrl: getAzureBaseUrl() }
+                  : {}),
+              }
+            : {}),
           requireToolApproval: requireToolApprovalRef.current,
           respectToolVisibility: respectToolVisibilityRef.current,
           ...(modelVisibleMcpToolResultsRef.current !== undefined
@@ -4091,7 +4118,6 @@ export function useChatSession(
     options.pluginGlobalContext,
     chatSessionId,
     hostedSelectedServerIds,
-    hostedOAuthTokens,
     hostedScenarioId,
     hostedHostId,
     hostedExecutionTarget,
@@ -6188,6 +6214,13 @@ export function useChatSession(
     setPendingElicitations((queue) => (queue.length > 0 ? [] : queue));
   }, [isStreaming]);
 
+  const ownedElicitations = useOwnedChatElicitations({
+    enabled:
+      isAuthenticated && (HOSTED_MODE || hostedRequiresWebChatApi),
+    projectId: hostedProjectId ?? undefined,
+    chatSessionId,
+  });
+
   const respondToElicitation = useCallback(
     async (answer: {
       rendezvousId: string;
@@ -6232,6 +6265,8 @@ export function useChatSession(
    * a suspended operation's stream always ends while its round is pending.)
    */
   const stopChat = useCallback(() => {
+    harnessStartupRequestRef.current = null;
+    setHarnessStartupPhase(null);
     savedClientSendGuard.cancel();
     sendPreparationGuard.cancel();
     const store = useHostedMrtrStore.getState();
@@ -6258,7 +6293,19 @@ export function useChatSession(
       ? describeAutoResumeStop(heldBack.reason)
       : null;
 
+  useEffect(() => {
+    if (status !== "submitted" && status !== "streaming") {
+      setHarnessStartupPhase(null);
+      harnessStartupRequestRef.current = null;
+    }
+  }, [status]);
+  useEffect(() => {
+    setHarnessStartupPhase(null);
+    harnessStartupRequestRef.current = null;
+  }, [chatSessionId]);
+
   return {
+    harnessStartupPhase: status === "submitted" || status === "streaming" ? harnessStartupPhase : null,
     // Chat state
     messages,
     setMessages,
@@ -6348,7 +6395,10 @@ export function useChatSession(
     traceViewsSupported,
 
     // Elicitation (hosted): a server is blocking a tool call on this user.
-    pendingElicitations,
+    pendingElicitations: mergeChatElicitations(
+      pendingElicitations,
+      ownedElicitations,
+    ),
     respondToElicitation,
     elicitationResponding,
     urlElicitationRequired,
