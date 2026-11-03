@@ -6,6 +6,7 @@ import {
 import { authorizationFlowDigest } from "@/lib/oauth/flow-digest";
 import {
   getScopeStepUpHostBridge,
+  resolveCredentialBinding,
   whenChatTurnsSettle,
 } from "@/lib/scope-step-up";
 import {
@@ -91,20 +92,12 @@ export async function connectAuthChallenge(
 
   // The binding is resolved before anything is saved: a hosted credential
   // that is not this user's is never replaced, and its call is not replayed.
+  // Ownership the bridge cannot confirm, with no bridge or no resolver,
+  // binds as shared, the rule every step-up follows.
   const bridge = getScopeStepUpHostBridge();
-  let binding: StepUpCredentialBinding = card.connectionId
-    ? { kind: "owned", credentialId: card.connectionId }
+  const binding: StepUpCredentialBinding = card.connectionId
+    ? await resolveCredentialBinding(server, card.connectionId)
     : { kind: "none" };
-  if (card.connectionId && bridge?.resolveCredentialBinding) {
-    try {
-      binding = await bridge.resolveCredentialBinding(
-        server,
-        card.connectionId,
-      );
-    } catch {
-      binding = { kind: "shared", credentialId: card.connectionId };
-    }
-  }
 
   // Saved before the redirect, so the callback has something to settle.
   const savedReplay = Boolean(

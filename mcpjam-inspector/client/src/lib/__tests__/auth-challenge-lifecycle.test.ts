@@ -541,6 +541,15 @@ describe("auth challenge lifecycle", () => {
       }
     });
 
+    it("treats a credential no bridge can confirm as shared", async () => {
+      const card = await presentCard({ connectionId: "unconfirmed-cred" });
+      await connectAuthChallenge(card, server, { isTrusted: true });
+      expect(peekPendingDirectScopeStepUpReplay()?.credentialBinding).toEqual({
+        kind: "shared",
+        credentialId: "unconfirmed-cred",
+      });
+    });
+
     it("drops the saved call when sign-in fails before redirecting", async () => {
       initiateOAuthMock.mockResolvedValueOnce({
         success: false,
@@ -604,6 +613,50 @@ describe("auth challenge lifecycle", () => {
         replay: card.replay,
       });
       expect(repeat).toMatchObject({ kind: "notice", reason: "permanent" });
+    });
+  });
+
+  describe("telemetry", () => {
+    const signInEvents = () =>
+      trackMock.mock.calls.filter(([name]) =>
+        String(name).startsWith("auth_challenge_"),
+      );
+
+    it("sends only closed-vocabulary fields, never scopes, URLs or server text", async () => {
+      const card = await presentCard();
+      await connectAuthChallenge(card, server, { isTrusted: true });
+      await settleSignInCallback("orders", { state: "flow-1" });
+      // A second call: dismissed, then a failed start.
+      const dismissed = await presentCard({
+        operation: { ...OPERATION, operation: "write" },
+      });
+      dismissAuthChallenge(dismissed);
+      localStorage.clear();
+      sessionStorage.clear();
+      initiateOAuthMock.mockRejectedValueOnce(
+        new Error("https://as.example/boom"),
+      );
+      const failing = await presentCard();
+      await connectAuthChallenge(failing, server, { isTrusted: true });
+
+      const prompt = {
+        location: "tools",
+        source: "http_401",
+        action: "prompt",
+      };
+      expect(signInEvents()).toEqual([
+        ["auth_challenge_card_shown", prompt],
+        ["auth_challenge_connect_clicked", prompt],
+        ["auth_challenge_completed", { location: "oauth_callback" }],
+        ["auth_challenge_card_shown", prompt],
+        ["auth_challenge_dismissed", prompt],
+        ["auth_challenge_card_shown", prompt],
+        ["auth_challenge_connect_clicked", prompt],
+        [
+          "auth_challenge_failed",
+          { location: "tools", source: "http_401", stage: "start" },
+        ],
+      ]);
     });
   });
 
