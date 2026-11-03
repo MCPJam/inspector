@@ -14,7 +14,12 @@ const state = vi.hoisted(() => ({
     { connectionId: "b", label: "B", isDefault: false },
   ],
   revision: 0,
+  hosted: true,
+  requestKey: "ready" as string | null,
   listener: (() => {}) as () => void,
+}));
+vi.mock("@/lib/apis/mode-client", () => ({
+  isHostedMode: () => state.hosted,
 }));
 vi.mock("@/hooks/use-hosted-oauth-connections", () => ({
   useHostedOAuthConnections: () => ({
@@ -28,6 +33,7 @@ vi.mock("@/lib/apis/web/context", () => ({
     return () => {};
   },
   getApiContextRevision: () => state.revision,
+  getServerRequestKey: () => state.requestKey,
   tryResolveProjectServer: () => ({ projectId: "project", serverId: "server" }),
 }));
 vi.mock("../TasksTab", () => ({
@@ -54,10 +60,36 @@ describe("Task account view", () => {
     setTrackedTaskScope("project");
     setTrackedTaskOwner("project", "owner");
     state.revision = 0;
+    state.hosted = true;
+    state.requestKey = "ready";
     state.accounts = [
       { connectionId: "a", label: "A", isDefault: true },
       { connectionId: "b", label: "B", isDefault: false },
     ];
+  });
+  it("waits for project settings before mounting task controls, then resumes automatically", () => {
+    state.requestKey = null;
+    renderView();
+    expect(screen.queryByTestId("target")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Loading project settings",
+    );
+
+    act(() => {
+      state.requestKey = "ready";
+      state.revision++;
+      state.listener();
+    });
+    expect(screen.getByTestId("target")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Loading project settings..."),
+    ).not.toBeInTheDocument();
+  });
+  it("keeps local task controls available without a hosted request context", () => {
+    state.hosted = false;
+    state.requestKey = null;
+    renderView();
+    expect(screen.getByTestId("target")).toBeInTheDocument();
   });
   it("opens the saved task's account and does not follow later default changes", () => {
     trackTask({

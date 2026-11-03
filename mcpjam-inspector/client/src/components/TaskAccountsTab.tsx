@@ -11,6 +11,7 @@ import { TasksTab, type TasksTabProps } from "./TasksTab";
 import { useHostedOAuthConnections } from "@/hooks/use-hosted-oauth-connections";
 import {
   getApiContextRevision,
+  getServerRequestKey,
   subscribeApiContext,
   tryResolveProjectServer,
 } from "@/lib/apis/web/context";
@@ -21,6 +22,7 @@ import {
   taskAccountOptions,
   type TaskAccountOption,
 } from "@/lib/task-account-options";
+import { isHostedMode } from "@/lib/apis/mode-client";
 
 export function TaskAccountsTab(props: TasksTabProps) {
   useSyncExternalStore(subscribeApiContext, getApiContextRevision);
@@ -28,6 +30,22 @@ export function TaskAccountsTab(props: TasksTabProps) {
   const server = props.serverName
     ? tryResolveProjectServer(props.serverName)
     : null;
+  // Task capability checks start on mount. Wait for the same request context
+  // they use, and let the context subscription resume the panel automatically.
+  if (
+    isHostedMode() &&
+    props.serverName &&
+    getServerRequestKey(props.serverName) === null
+  ) {
+    return (
+      <div
+        role="status"
+        className="flex h-full items-center justify-center text-sm text-muted-foreground"
+      >
+        Loading project settings...
+      </div>
+    );
+  }
   if (!scope || !server) return <TasksTab {...props} />;
   return (
     <TaskAccountPanel
