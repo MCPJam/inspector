@@ -34,6 +34,7 @@ export function TaskAccountsTab(props: TasksTabProps) {
   // they use, and let the context subscription resume the panel automatically.
   if (
     isHostedMode() &&
+    props.serverConfig &&
     props.serverName &&
     getServerRequestKey(props.serverName) === null
   ) {

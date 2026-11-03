@@ -34,7 +34,8 @@ vi.mock("@/lib/apis/web/context", () => ({
   },
   getApiContextRevision: () => state.revision,
   getServerRequestKey: () => state.requestKey,
-  tryResolveProjectServer: () => ({ projectId: "project", serverId: "server" }),
+  tryResolveProjectServer: (name: string) =>
+    name === "none" ? null : { projectId: "project", serverId: "server" },
 }));
 vi.mock("../TasksTab", () => ({
   TasksTab: ({ taskTarget }: { taskTarget?: unknown }) => (
@@ -90,6 +91,14 @@ describe("Task account view", () => {
     state.requestKey = null;
     renderView();
     expect(screen.getByTestId("target")).toBeInTheDocument();
+  });
+  it("keeps the no-server state available instead of waiting for project settings", () => {
+    state.requestKey = null;
+    render(<TaskAccountsTab serverName="none" />);
+    expect(target()).toBeNull();
+    expect(
+      screen.queryByText("Loading project settings..."),
+    ).not.toBeInTheDocument();
   });
   it("opens the saved task's account and does not follow later default changes", () => {
     trackTask({
