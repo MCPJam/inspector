@@ -249,7 +249,7 @@ describe("ToolsTab mid-session sign-in", () => {
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     await waitFor(() =>
       expect(screen.getByTestId("auth-challenge-notice")).toHaveTextContent(
-        "Click Connect to sign in.",
+        "Sign-in did not start. Try again.",
       ),
     );
     expect(initiateOAuthMock).not.toHaveBeenCalled();

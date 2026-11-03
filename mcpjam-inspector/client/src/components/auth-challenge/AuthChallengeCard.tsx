@@ -250,7 +250,7 @@ export function authChallengeConnectMessage(
     case "permanent":
       return AUTH_CHALLENGE_PERMANENT_MESSAGE;
     case "refused":
-      return "Click Connect to sign in.";
+      return "Sign-in did not start. Try again.";
     default:
       return undefined;
   }
