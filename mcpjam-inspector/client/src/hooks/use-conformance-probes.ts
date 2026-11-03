@@ -9,6 +9,10 @@
  * because nothing a server advertises says whether calling a tool charges a
  * card or deletes a row. Without one, those checks report could-not-run.
  *
+ * The Tasks suite calls one tool to create the task its checks inspect. On a
+ * server that uses the Tasks extension no tool says it creates a task, so
+ * without one those checks could not run either.
+ *
  * Kept in browser storage, keyed by server name, so a choice survives a reload
  * and Run again reuses it. Storage can be missing or throw (private windows,
  * blocked site data); the page then behaves as if nothing was chosen, which
@@ -22,6 +26,7 @@ import {
   READINESS_ERAS,
   type MCPCheckId,
   type MCPReadinessId,
+  type MCPTasksCheckId,
 } from "@mcpjam/sdk/browser";
 import type {
   ConformanceSelection,
@@ -35,19 +40,56 @@ import type {
 export type { ConformanceProbe, ConformanceProbes };
 export type ConformanceProbeKey = keyof ConformanceProbes;
 
-export const PROBE_KEYS = ["logProbe", "inputRequiredProbe"] as const;
+export const PROBE_KEYS = [
+  "logProbe",
+  "inputRequiredProbe",
+  "tasksProbe",
+] as const;
 
-/**
- * The checks, and advice, each probe is called for. The first one picked shows
- * the tool field; the others point to it.
- */
-export const PROBE_CHECKS: Record<
-  ConformanceProbeKey,
+type ProtocolProbeKey = Exclude<ConformanceProbeKey, "tasksProbe">;
+
+const PROTOCOL_PROBE_CHECKS: Record<
+  ProtocolProbeKey,
   readonly (MCPCheckId | MCPReadinessId)[]
 > = {
   logProbe: ["modern-logs-require-log-level", "readiness-log-level-filtering"],
   inputRequiredProbe: ["modern-undeclared-capability-error"],
 };
+
+/**
+ * The Tasks checks that inspect the task the tool creates (or, for the two
+ * creation checks, the call itself). The others never call it, and the Tasks
+ * advice only reads what these checks already saw.
+ */
+const TASKS_PROBE_CHECKS: readonly MCPTasksCheckId[] = [
+  "tasks-result-type-discipline",
+  "tasks-undeclared-creation-refused",
+  "tasks-undeclared-capability-rejected",
+  "tasks-ttl-shape",
+  "tasks-inline-result",
+  "tasks-mcp-name-routing",
+  "tasks-status-payload-shape",
+  "tasks-cancel-ack-shape",
+  "tasks-update-ack-shape",
+  "tasks-ttl-integer-shape",
+  "tasks-undeclared-capability-names-requirements",
+];
+
+/**
+ * The checks, and advice, each probe is called for. The first one picked shows
+ * the tool field; the others point to it.
+ */
+export const PROBE_CHECKS: Record<ConformanceProbeKey, readonly string[]> = {
+  ...PROTOCOL_PROBE_CHECKS,
+  tasksProbe: TASKS_PROBE_CHECKS,
+};
+
+function isProtocolProbe(key: ConformanceProbeKey): key is ProtocolProbeKey {
+  return key !== "tasksProbe";
+}
+
+/** The check that sends the Tasks answers, so its row shows the answers box. */
+export const TASK_ANSWERS_CHECK: MCPTasksCheckId = "tasks-update-ack-shape";
 
 /** The advice that asks for a log level, so its row shows the level field. */
 export const LOG_LEVEL_ADVICE: MCPReadinessId = "readiness-log-level-filtering";
@@ -68,20 +110,21 @@ export function probeKeyFor(checkId: string): ConformanceProbeKey | undefined {
 }
 
 /**
- * Whether a probe's tool is called on a run with this pin: one of its checks
- * or advice runs in the pin's era (and, with `checkIds` / `readinessIds`, is
- * picked). Never on "auto": an unpinned client does not offer 2026-07-28, so
- * the run stays in the legacy era, where these checks do not apply.
+ * Whether a protocol probe's tool is called on a run with this pin: one of
+ * its checks or advice runs in the pin's era (and, with `checkIds` /
+ * `readinessIds`, is picked). Never on "auto": an unpinned client does not
+ * offer 2026-07-28, so the run stays in the legacy era, where these checks do
+ * not apply.
  */
 function probeRuns(
-  key: ConformanceProbeKey,
+  key: ProtocolProbeKey,
   pin: ProtocolVersionPin,
   checkIds?: readonly string[],
   readinessIds?: readonly string[],
 ): boolean {
   if (pin === "auto") return false;
   const era = PROTOCOL_VERSION_ERAS[pin];
-  return PROBE_CHECKS[key].some((id) => {
+  return PROTOCOL_PROBE_CHECKS[key].some((id) => {
     const picked = isAdvice(id) ? readinessIds : checkIds;
     return (
       erasOf(id).includes(era) && (picked === undefined || picked.includes(id))
@@ -89,9 +132,23 @@ function probeRuns(
   });
 }
 
-/** Whether any probe applies with this pin: the fields show only then. */
+/**
+ * Whether a Tasks run with these picks (absent means all) calls the Tasks
+ * probe. The Tasks suite runs its own client on every pin, so the picks alone
+ * decide.
+ */
+export function tasksProbeRuns(checkIds?: readonly string[]): boolean {
+  return TASKS_PROBE_CHECKS.some(
+    (id) => checkIds === undefined || checkIds.includes(id),
+  );
+}
+
+/**
+ * Whether any protocol probe applies with this pin: the protocol fields show
+ * only then.
+ */
 export function probesApply(pin: ProtocolVersionPin): boolean {
-  return PROBE_KEYS.some((key) => probeRuns(key, pin));
+  return PROBE_KEYS.some((key) => isProtocolProbe(key) && probeRuns(key, pin));
 }
 
 /**
@@ -120,7 +177,10 @@ export function probesForRun(
 ): ConformanceProbes {
   return Object.fromEntries(
     PROBE_KEYS.filter(
-      (key) => probes[key] && probeRuns(key, pin, checkIds, readinessIds),
+      (key) =>
+        isProtocolProbe(key) &&
+        probes[key] &&
+        probeRuns(key, pin, checkIds, readinessIds),
     ).map((key) => [key, probes[key]]),
   ) as ConformanceProbes;
 }
@@ -147,22 +207,53 @@ export function protocolRunOptions(
 }
 
 /**
+ * What a Tasks run sends for the picked checks and advice: those lists, the
+ * tool that creates the task (and its arguments) only when a picked check
+ * calls it, and the input answers only when the update acknowledgement check
+ * runs: the SDK submits them through `tasks/update` for any task that asks.
+ */
+export function tasksRunOptions(
+  probes: ConformanceProbes,
+  picked: ConformanceSelection | undefined,
+) {
+  const checkIds = picked?.tasks;
+  const readinessIds = picked?.tasksAdvice;
+  const probe = tasksProbeRuns(checkIds) ? probes.tasksProbe : undefined;
+  const sendsAnswers =
+    checkIds === undefined || checkIds.includes(TASK_ANSWERS_CHECK);
+  return {
+    ...(checkIds ? { checkIds } : {}),
+    ...(readinessIds ? { readinessIds } : {}),
+    ...(probe
+      ? {
+          toolName: probe.toolName,
+          ...(probe.arguments ? { toolArguments: probe.arguments } : {}),
+          ...(probe.inputResponses && sendsAnswers
+            ? { inputResponses: probe.inputResponses }
+            : {}),
+        }
+      : {}),
+  };
+}
+
+/**
  * What a server keeps after a run: the draft's tool for each probe whose
  * checks ran, the saved one for the rest. A tool picked only for checks that
  * were then left out is not saved, so no later run calls it unasked.
+ * `picked` holds each suite's picks; a list absent means all of it.
  */
 export function probesAfterRun(
   saved: ConformanceProbes,
   draft: ConformanceProbes,
-  checkIds: readonly string[] | undefined,
+  picked: ConformanceSelection | undefined,
   pin: ProtocolVersionPin,
-  readinessIds?: readonly string[],
 ): ConformanceProbes {
   return Object.fromEntries(
     PROBE_KEYS.flatMap((key) => {
-      const probe = probeRuns(key, pin, checkIds, readinessIds)
-        ? draft[key]
-        : saved[key];
+      const ran = isProtocolProbe(key)
+        ? probeRuns(key, pin, picked?.protocol, picked?.protocolAdvice)
+        : tasksProbeRuns(picked?.tasks);
+      const probe = ran ? draft[key] : saved[key];
       return probe ? [[key, probe]] : [];
     }),
   ) as ConformanceProbes;
@@ -183,15 +274,29 @@ function isProbe(value: unknown): value is ConformanceProbe {
   );
 }
 
-/** A saved probe without a `level` the log probe cannot send. */
-function withoutBadLevel(
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A saved probe keeping only the extras its key can send: a valid `level` on
+ * the log probe, an object `inputResponses` on the Tasks probe.
+ */
+function withOwnExtras(
   probe: ConformanceProbe,
-  allowLevel: boolean,
+  key: ConformanceProbeKey,
 ): ConformanceProbe {
-  const { level, ...rest } = probe;
-  return allowLevel && (MCP_LOG_LEVELS as readonly unknown[]).includes(level)
-    ? { ...rest, level }
-    : rest;
+  const { level, inputResponses, ...rest } = probe;
+  return {
+    ...rest,
+    ...(key === "logProbe" &&
+    (MCP_LOG_LEVELS as readonly unknown[]).includes(level)
+      ? { level }
+      : {}),
+    ...(key === "tasksProbe" && isRecord(inputResponses)
+      ? { inputResponses }
+      : {}),
+  };
 }
 
 /** What was saved for `serverName`, dropping anything malformed. */
@@ -200,19 +305,12 @@ export function readStoredProbes(serverName: string): ConformanceProbes {
     const raw = window.localStorage.getItem(STORAGE_PREFIX + serverName);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return {
-      ...(isProbe(parsed.logProbe)
-        ? { logProbe: withoutBadLevel(parsed.logProbe, true) }
-        : {}),
-      ...(isProbe(parsed.inputRequiredProbe)
-        ? {
-            inputRequiredProbe: withoutBadLevel(
-              parsed.inputRequiredProbe,
-              false,
-            ),
-          }
-        : {}),
-    };
+    return Object.fromEntries(
+      PROBE_KEYS.flatMap((key) => {
+        const probe = parsed[key];
+        return isProbe(probe) ? [[key, withOwnExtras(probe, key)]] : [];
+      }),
+    ) as ConformanceProbes;
   } catch {
     // Unreadable storage or a corrupt entry: as if nothing was chosen.
     return {};
@@ -222,7 +320,7 @@ export function readStoredProbes(serverName: string): ConformanceProbes {
 function writeStoredProbes(serverName: string, probes: ConformanceProbes) {
   try {
     const key = STORAGE_PREFIX + serverName;
-    if (!probes.logProbe && !probes.inputRequiredProbe) {
+    if (PROBE_KEYS.every((name) => !probes[name])) {
       window.localStorage.removeItem(key);
     } else {
       window.localStorage.setItem(key, JSON.stringify(probes));

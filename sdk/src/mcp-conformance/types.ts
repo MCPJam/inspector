@@ -299,7 +299,11 @@ export interface MCPConformanceConfig {
   customHeaders?: Record<string, string>;
   checkTimeout?: number;
   categories?: MCPCheckCategory[];
-  checkIds?: MCPCheckId[];
+  /**
+   * Run only these checks. A retired id ({@link RETIRED_MCP_CHECK_IDS}) runs
+   * the advice that replaced it.
+   */
+  checkIds?: (MCPCheckId | RetiredMCPCheckId)[];
   /**
    * Run only these advice probes (the readiness channel). Absent ⇒ every
    * advice. Unlike `checkIds`, an empty list means NO advice: advice never
@@ -473,6 +477,17 @@ export const MCP_READINESS_IDS = [
 ] as const;
 
 export type MCPReadinessId = (typeof MCP_READINESS_IDS)[number];
+
+/**
+ * Check ids an older SDK accepted that are no longer checks, each with the
+ * advice that runs the same test now. Kept so configs and `--check-id` values
+ * written for that SDK still run instead of failing as unknown.
+ */
+export const RETIRED_MCP_CHECK_IDS = {
+  "modern-log-level-filtering": "readiness-log-level-filtering",
+} as const satisfies Record<string, MCPReadinessId>;
+
+export type RetiredMCPCheckId = keyof typeof RETIRED_MCP_CHECK_IDS;
 
 /**
  * The eras each advice can show up in, so a UI lists only the advice a pinned

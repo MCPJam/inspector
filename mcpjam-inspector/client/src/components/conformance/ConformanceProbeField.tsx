@@ -7,8 +7,16 @@
  * modify data) and never picks for the operator, for the same reason the SDK
  * does not: nothing a server advertises says a tool is safe to call.
  */
-import { useCallback, useEffect, useId, useMemo, useRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Label } from "@mcpjam/design-system/label";
+import { Textarea } from "@mcpjam/design-system/textarea";
 import {
   Select,
   SelectContent,
@@ -26,6 +34,7 @@ import { ToolCallArgsEditor } from "@/components/evals/checks-section";
 import {
   LOG_LEVEL_ADVICE,
   PROBE_CHECKS,
+  TASK_ANSWERS_CHECK,
   probeKeyFor,
   type ConformanceProbe,
   type ConformanceProbeKey,
@@ -36,17 +45,25 @@ const NONE = "__none__";
 /** What the SDK asks for when the operator picks no level. */
 const DEFAULT_LOG_LEVEL: MCPLogLevel = "warning";
 
-const PROBE_COPY: Record<ConformanceProbeKey, { label: string; hint: string }> =
-  {
-    logProbe: {
-      label: "Tool that emits logs",
-      hint: "Pick a tool that writes logs and is safe to call repeatedly. It is called up to 3 times.",
-    },
-    inputRequiredProbe: {
-      label: "Tool that asks for input",
-      hint: "Called once. Pick one that asks the user for input before it finishes.",
-    },
-  };
+const PROBE_COPY: Record<
+  ConformanceProbeKey,
+  { label: string; hint: string; unsetHint?: string }
+> = {
+  logProbe: {
+    label: "Tool that emits logs",
+    hint: "Pick a tool that writes logs and is safe to call repeatedly. It is called up to 3 times.",
+  },
+  inputRequiredProbe: {
+    label: "Tool that asks for input",
+    hint: "Called once. Pick one that asks the user for input before it finishes.",
+  },
+  tasksProbe: {
+    label: "Tool that creates a task",
+    hint: "Called up to 2 times, to create the task these checks inspect.",
+    unsetHint:
+      "Without a tool, these checks could not run on a server that uses the Tasks extension.",
+  },
+};
 
 interface ToolOption {
   name: string;
@@ -142,13 +159,112 @@ function LogLevelField({
   );
 }
 
+/**
+ * The answers `tasks/update` sends when the task asks for input, as raw JSON:
+ * what a task asks is server-defined, so there is no form to build. Empty
+ * means none, and then the update acknowledgement check is not applicable.
+ * Kept on the Tasks probe, so it needs a tool first.
+ */
+/** The Tasks routes refuse answers that serialize past this (a 400). */
+const MAX_ANSWERS_CHARS = 10_000;
+
+function TaskAnswersField({
+  probe,
+  onChange,
+  onInvalidChange,
+}: {
+  probe: ConformanceProbe;
+  onChange: (probe: ConformanceProbe) => void;
+  onInvalidChange: (invalid: boolean) => void;
+}) {
+  const id = useId();
+  const messageId = `${id}-message`;
+  const [text, setText] = useState(() =>
+    probe.inputResponses ? JSON.stringify(probe.inputResponses, null, 2) : "",
+  );
+  const [error, setError] = useState<string | null>(null);
+  // Gone (its tool cleared or changed) means nothing left to fix.
+  const onInvalidChangeRef = useRef(onInvalidChange);
+  useEffect(() => {
+    onInvalidChangeRef.current = onInvalidChange;
+  });
+  useEffect(() => () => onInvalidChangeRef.current(false), []);
+
+  const withAnswers = (inputResponses?: Record<string, unknown>) => {
+    const next = { ...probe };
+    if (inputResponses) next.inputResponses = inputResponses;
+    else delete next.inputResponses;
+    return next;
+  };
+
+  const change = (next: string) => {
+    setText(next);
+    if (next.trim() === "") {
+      setError(null);
+      onInvalidChange(false);
+      onChange(withAnswers());
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(next);
+    } catch {
+      parsed = undefined;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      setError("Enter a JSON object, keyed by the task's input request keys.");
+      onInvalidChange(true);
+      return;
+    }
+    if (JSON.stringify(parsed).length > MAX_ANSWERS_CHARS) {
+      setError("Keep the answers under 10,000 characters.");
+      onInvalidChange(true);
+      return;
+    }
+    setError(null);
+    onInvalidChange(false);
+    onChange(withAnswers(parsed as Record<string, unknown>));
+  };
+
+  return (
+    <>
+      <Label htmlFor={id} className="text-xs">
+        Answers to the task's questions (optional)
+      </Label>
+      <Textarea
+        id={id}
+        value={text}
+        onChange={(event) => change(event.target.value)}
+        placeholder={
+          '{ "confirm": { "action": "accept", "content": { "ok": true } } }'
+        }
+        className="min-h-20 font-mono text-xs"
+        aria-invalid={error !== null}
+        aria-describedby={messageId}
+      />
+      {error ? (
+        <p id={messageId} className="text-xs text-destructive">
+          {error}
+        </p>
+      ) : (
+        <p id={messageId} className="text-xs text-muted-foreground">
+          Sent when the task asks for input. Without answers, this check does
+          not apply.
+        </p>
+      )}
+    </>
+  );
+}
+
 export function ConformanceProbeField({
   probeKey,
   tools: { tools: options, status, truncated },
   probe,
   onChange,
   onValidChange,
+  onAnswersValidChange,
   showLevel = false,
+  showAnswers = false,
 }: {
   probeKey: ConformanceProbeKey;
   tools: ProbeTools;
@@ -156,8 +272,12 @@ export function ConformanceProbeField({
   onChange: (probe: ConformanceProbe | undefined) => void;
   /** False while the Raw JSON box holds text that does not parse. */
   onValidChange?: (valid: boolean) => void;
+  /** False while the answers box holds text that is not a JSON object. */
+  onAnswersValidChange?: (valid: boolean) => void;
   /** Also ask for the log level, under the log level filtering advice. */
   showLevel?: boolean;
+  /** Also ask for the Tasks answers, under the update acknowledgement check. */
+  showAnswers?: boolean;
 }) {
   const id = useId();
   // The editor reports validity from an effect keyed on this callback, so it
@@ -178,9 +298,13 @@ export function ConformanceProbeField({
   const copy = PROBE_COPY[probeKey];
 
   const level = probe?.level ? { level: probe.level } : {};
+  const answers = probe?.inputResponses
+    ? { inputResponses: probe.inputResponses }
+    : {};
 
-  // Another tool takes other arguments, so a new pick starts with none. The
-  // log level is not about the tool, so it stays.
+  // Another tool takes other arguments, and asks other questions, so a new
+  // pick starts with neither. The log level is not about the tool, so it
+  // stays.
   const changeTool = (next: string) =>
     onChange(next === NONE ? undefined : { toolName: next, ...level });
 
@@ -189,6 +313,7 @@ export function ConformanceProbeField({
       toolName,
       ...(Object.keys(args).length > 0 ? { arguments: args } : {}),
       ...level,
+      ...answers,
     });
 
   return (
@@ -227,7 +352,8 @@ export function ConformanceProbeField({
       </Select>
       <p className="text-xs text-muted-foreground">
         {toolName === NONE
-          ? "Without a tool, this check reports that it could not run."
+          ? (copy.unsetHint ??
+            "Without a tool, this check reports that it could not run.")
           : copy.hint}
       </p>
       {status === "failed" ? (
@@ -264,15 +390,28 @@ export function ConformanceProbeField({
       {showLevel && probe ? (
         <LogLevelField probe={probe} onChange={onChange} />
       ) : null}
+      {showAnswers && probe ? (
+        // Keyed by tool: another tool's answers start over.
+        <TaskAnswersField
+          key={`answers:${probe.toolName}`}
+          probe={probe}
+          onChange={onChange}
+          onInvalidChange={(invalid) => onAnswersValidChange?.(!invalid)}
+        />
+      ) : null}
     </div>
   );
 }
 
 /**
- * What a protocol check or advice row shows under it for its probe: the
- * field, under the first picked one that calls the tool, and a pointer to it
- * under the others. The log level filtering advice also asks for its log
- * level. Nothing for a row that calls no tool or is not picked.
+ * What a check or advice row shows under it for its probe: the field, under
+ * the first picked one that calls the tool, and a pointer to it under the
+ * others. The log level filtering advice also asks for its log level, and the
+ * Tasks update acknowledgement check for the task's answers. Nothing for a
+ * row that calls no tool or is not picked.
+ *
+ * `onValidChange` names what it reports on: a probe key for its arguments,
+ * or `answers` for the Tasks answers.
  */
 export function ProbeCheckExtra({
   checkId,
@@ -289,7 +428,10 @@ export function ProbeCheckExtra({
   tools: ProbeTools;
   probes: ConformanceProbes;
   onProbesChange: (probes: ConformanceProbes) => void;
-  onValidChange?: (key: ConformanceProbeKey, valid: boolean) => void;
+  onValidChange?: (
+    part: ConformanceProbeKey | "answers",
+    valid: boolean,
+  ) => void;
 }) {
   const key = probeKeyFor(checkId);
   if (!key || !isPicked(checkId)) return null;
@@ -304,6 +446,8 @@ export function ProbeCheckExtra({
     onProbesChange(all);
   };
   const showLevel = checkId === LOG_LEVEL_ADVICE;
+  const showAnswers = checkId === TASK_ANSWERS_CHECK;
+  const reportAnswers = (valid: boolean) => onValidChange?.("answers", valid);
   if (owner === checkId) {
     return (
       <ConformanceProbeField
@@ -312,7 +456,9 @@ export function ProbeCheckExtra({
         probe={probe}
         onChange={setProbe}
         onValidChange={(valid) => onValidChange?.(key, valid)}
+        onAnswersValidChange={reportAnswers}
         showLevel={showLevel}
+        showAnswers={showAnswers}
       />
     );
   }
@@ -321,11 +467,21 @@ export function ProbeCheckExtra({
       Calls the tool set under {owner ? checkTitle(owner) : "the check above"}.
     </p>
   );
-  return showLevel && probe ? (
+  return (showLevel || showAnswers) && probe ? (
     <div className="space-y-2">
       {pointer}
       <div className={FIELD_BOX}>
-        <LogLevelField probe={probe} onChange={setProbe} />
+        {showLevel ? (
+          <LogLevelField probe={probe} onChange={setProbe} />
+        ) : (
+          // Keyed by tool: another tool's answers start over.
+          <TaskAnswersField
+            key={`answers:${probe.toolName}`}
+            probe={probe}
+            onChange={setProbe}
+            onInvalidChange={(invalid) => reportAnswers(!invalid)}
+          />
+        )}
       </div>
     </div>
   ) : (

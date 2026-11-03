@@ -25,8 +25,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type MCPAppsCheckId,
   type MCPOAuthReadinessId,
-  type MCPTasksCheckId,
-  type MCPTasksReadinessId,
   pooledConformanceScore,
   scoreFromAppsResult,
   scorableOAuthIds,
@@ -47,6 +45,7 @@ import {
 import { deriveOAuthProfileFromServer } from "@/components/oauth/utils";
 import {
   protocolRunOptions,
+  tasksRunOptions,
   type ConformanceProbes,
 } from "@/hooks/use-conformance-probes";
 import { resolveServerOAuthProtocolSelection } from "@/state/oauth-orchestrator";
@@ -55,7 +54,6 @@ import {
   createOAuthState,
   createProtocolState,
   createTasksState,
-  APP_TASKS_CHECK_IDS,
   isHttpServer,
   isSelected,
   NOT_SELECTED,
@@ -375,14 +373,14 @@ export function useConformanceRun({
     async (
       runToken: number,
       serverName: string,
-      picked: {
-        checkIds: MCPTasksCheckId[];
-        readinessIds?: MCPTasksReadinessId[];
-      }
+      picked?: ConformanceSelection
     ) => {
       setTasks({ status: "running" });
       try {
-        const { result } = await runTasksConformance(serverName, picked);
+        const { result } = await runTasksConformance(
+          serverName,
+          tasksRunOptions(probesRef.current ?? {}, picked)
+        );
         if (!isRunActive(runToken, serverName)) return;
         // The tasks suite reports a real third outcome: checks that apply but
         // could not be exercised leave the run incomplete, never passing.
@@ -702,14 +700,7 @@ export function useConformanceRun({
       setApps(NOT_SELECTED);
     }
     if (isSelected(picked?.tasks)) {
-      // Never "all": the suite's full list includes a check the app cannot
-      // feed, so an unset selection still sends the app's list explicitly.
-      promises.push(
-        runTasks(runToken, currentServer.name, {
-          checkIds: picked?.tasks ?? [...APP_TASKS_CHECK_IDS],
-          readinessIds: picked?.tasksAdvice,
-        })
-      );
+      promises.push(runTasks(runToken, currentServer.name, picked));
     } else {
       setTasks(NOT_SELECTED);
     }

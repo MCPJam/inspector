@@ -55,6 +55,7 @@ import {
   type MCPTasksConformanceResult,
   type MCPTasksReadinessWarning,
   type MCPTasksRunOutcome,
+  type MCPTasksUncheckedAdvice,
   type NormalizedMCPTasksConformanceConfig,
 } from "./types.js";
 import { normalizeMCPTasksConformanceConfig } from "./validation.js";
@@ -1358,6 +1359,7 @@ export class MCPTasksConformanceTest {
     // The extension's SHOULDs, reported beside the verdict rather than as a
     // check's warnings.
     const readiness: MCPTasksReadinessWarning[] = [];
+    const uncheckedAdvice: MCPTasksUncheckedAdvice[] = [];
     const sent: unknown[] = [];
     // The RAW inbound bytes. Every task check that has to judge the
     // discriminator reads this, because by the time a result reaches the
@@ -1936,6 +1938,18 @@ export class MCPTasksConformanceTest {
                     "A failed task carries no `statusMessage`; the extension recommends one so a human can see why it failed.",
                   informational: true,
                 });
+              } else if (
+                !rawStates.some((state) => state.status === "failed")
+              ) {
+                uncheckedAdvice.push({
+                  id: "tasks-readiness-failed-status-message",
+                  title:
+                    TASKS_READINESS_CATALOG[
+                      "tasks-readiness-failed-status-message"
+                    ].title,
+                  reason:
+                    "Not checked: the task didn't fail, so there was no failure reason to look at.",
+                });
               }
               const observedStatuses = [
                 ...new Set(rawStates.map((state) => String(state.status))),
@@ -2472,6 +2486,9 @@ export class MCPTasksConformanceTest {
           const pickedReadiness = readiness.filter(
             (warning) => !pickedAdvice || pickedAdvice.includes(warning.id)
           );
+          const pickedUnchecked = uncheckedAdvice.filter(
+            (entry) => !pickedAdvice || pickedAdvice.includes(entry.id)
+          );
 
           return {
             passed: verdict.outcome === "passed",
@@ -2483,6 +2500,9 @@ export class MCPTasksConformanceTest {
             checks,
             ...(pickedReadiness.length > 0
               ? { readiness: pickedReadiness }
+              : {}),
+            ...(pickedUnchecked.length > 0
+              ? { uncheckedAdvice: pickedUnchecked }
               : {}),
             summary:
               pending.length > 0

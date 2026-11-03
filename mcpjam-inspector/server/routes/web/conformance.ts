@@ -31,7 +31,10 @@ import {
   startOAuthConformance,
   submitOAuthConformanceCode,
 } from "../shared/conformance";
-import { conformanceProbeFields } from "../shared/conformance-probes";
+import {
+  conformanceInputResponsesSchema,
+  conformanceProbeFields,
+} from "../shared/conformance-probes";
 import { authorizeServer, toHttpConfig } from "./auth.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
@@ -342,6 +345,7 @@ const tasksSchema = z
      *  tools carry no task metadata to pick from. */
     toolName: z.string().min(1).optional(),
     toolArguments: z.record(z.string(), z.unknown()).optional(),
+    inputResponses: conformanceInputResponsesSchema,
     pollTimeoutMs: z.number().int().positive().max(120_000).optional(),
     /** Run only these checks, as picked before Run; absent ⇒ all of them. */
     checkIds: z.array(z.enum(MCP_TASKS_CHECK_IDS)).min(1).optional(),
@@ -367,6 +371,9 @@ conformanceWeb.post("/tasks", async (c) =>
           ...(parsed.toolName ? { toolName: parsed.toolName } : {}),
           ...(parsed.toolArguments
             ? { toolArguments: parsed.toolArguments }
+            : {}),
+          ...(parsed.inputResponses
+            ? { inputResponses: parsed.inputResponses }
             : {}),
           pollTimeoutMs: Math.min(
             parsed.pollTimeoutMs ?? HOSTED_TASKS_POLL_TIMEOUT_MS,

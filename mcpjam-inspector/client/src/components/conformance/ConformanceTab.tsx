@@ -276,9 +276,8 @@ export function ConformanceTab({
             probesAfterRun(
               probesFor(serverName),
               probes,
-              runnable?.protocol,
+              runnable,
               versionPin,
-              runnable?.protocolAdvice,
             ),
           );
           startRun(serverName, versionPin, selection);

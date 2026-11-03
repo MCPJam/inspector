@@ -60,16 +60,24 @@ export interface ConformanceProbe {
    * Absent means the SDK's default, `warning`.
    */
   level?: MCPLogLevel;
+  /**
+   * `tasksProbe` only: the answers `tasks/update` sends when the task asks
+   * for input, keyed by `inputRequests` key. Absent means the update
+   * acknowledgement check is not applicable.
+   */
+  inputResponses?: Record<string, unknown>;
 }
 
 /**
  * The tools the checks that must call one may use: `logProbe` for the logging
  * check and the log level filtering advice, `inputRequiredProbe` for the
- * undeclared-capability check.
+ * undeclared-capability check, `tasksProbe` for the Tasks checks that need a
+ * created task.
  */
 export interface ConformanceProbes {
   logProbe?: ConformanceProbe;
   inputRequiredProbe?: ConformanceProbe;
+  tasksProbe?: ConformanceProbe;
 }
 
 export async function runProtocolConformance(
@@ -140,6 +148,7 @@ export async function runTasksConformance(
   options?: {
     toolName?: string;
     toolArguments?: Record<string, unknown>;
+    inputResponses?: Record<string, unknown>;
     checkIds?: MCPTasksCheckId[];
     /** The advice to report; absent reports all of it, empty none. */
     readinessIds?: MCPTasksReadinessId[];
@@ -150,6 +159,9 @@ export async function runTasksConformance(
     ...(options?.readinessIds ? { readinessIds: options.readinessIds } : {}),
     ...(options?.toolName ? { toolName: options.toolName } : {}),
     ...(options?.toolArguments ? { toolArguments: options.toolArguments } : {}),
+    ...(options?.inputResponses
+      ? { inputResponses: options.inputResponses }
+      : {}),
   };
   return runByMode({
     local: () =>

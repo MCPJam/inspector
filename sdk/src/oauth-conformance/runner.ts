@@ -1496,4 +1496,3 @@ export class OAuthConformanceTest {
     };
   }
 }
-

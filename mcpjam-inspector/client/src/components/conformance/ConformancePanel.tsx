@@ -4,6 +4,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { DirectoryReadinessSection } from "@/components/conformance/directory-readiness/DirectoryReadinessSection";
 import { OAuthPopupBlockedDialog } from "@/components/conformance/OAuthPopupBlockedDialog";
 import { Loader2, AlertTriangle, Settings, Share2 } from "lucide-react";
+import { UncheckedAdvice } from "@/components/conformance/UncheckedAdvice";
 import type { ServerWithName } from "@/hooks/use-app-state";
 // Import from the browser-safe SDK entry — the top-level `@mcpjam/sdk` pulls
 // Node-only transitive deps (MCP client SDK uses `node:stream`, etc.) which
@@ -709,6 +710,9 @@ export function ConformanceContent({
                     {tasks.result ? (
                       <div>
                         <ReadinessAdvice readiness={tasks.result.readiness} />
+                        <UncheckedAdvice
+                          unchecked={tasks.result.uncheckedAdvice}
+                        />
                         {tasks.result.checks.map((check) => (
                           <CheckRow
                             key={`${runVersion}-${check.id}`}

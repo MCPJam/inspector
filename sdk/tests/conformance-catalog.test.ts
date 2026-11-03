@@ -93,10 +93,10 @@ describe("conformance catalog", () => {
 
   it("covers every advice id, and only those, with eras for each", () => {
     expect(Object.keys(READINESS_CATALOG).sort()).toEqual(
-      [...MCP_READINESS_IDS].sort(),
+      [...MCP_READINESS_IDS].sort()
     );
     expect(Object.keys(READINESS_ERAS).sort()).toEqual(
-      [...MCP_READINESS_IDS].sort(),
+      [...MCP_READINESS_IDS].sort()
     );
   });
 

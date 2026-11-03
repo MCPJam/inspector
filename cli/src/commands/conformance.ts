@@ -13,6 +13,7 @@ import {
   MCP_CHECK_IDS,
   MCP_LOG_LEVELS,
   MCP_PROTOCOL_VERSIONS,
+  RETIRED_MCP_CHECK_IDS,
   type MCPConformanceConfig,
   type MCPLogLevel,
   MCPConformanceSuite,
@@ -270,6 +271,11 @@ function resolveLogProbe(
   options: ProtocolConformanceOptions,
 ): MCPConformanceConfig["logProbe"] | undefined {
   const toolName = options.logProbeTool?.trim();
+  // A blank name is a mistake, not an omitted flag: without this the probe
+  // would be dropped and the logging check could not run.
+  if (options.logProbeTool !== undefined && !toolName) {
+    throw usageError("--log-probe-tool needs a tool name.");
+  }
   if (!toolName) {
     if (
       options.logProbeArgs !== undefined ||
@@ -387,11 +393,22 @@ export function buildConfig(
   }
 
   const checkIds = options.checkId?.filter(Boolean);
-  const invalidCheckIds = collectInvalidEntries(checkIds, MCP_CHECK_IDS);
+  const invalidCheckIds = collectInvalidEntries(checkIds, [
+    ...MCP_CHECK_IDS,
+    ...Object.keys(RETIRED_MCP_CHECK_IDS),
+  ]);
   if (invalidCheckIds.length > 0) {
     throw usageError(
       `Unknown check id${invalidCheckIds.length === 1 ? "" : "s"}: ${invalidCheckIds.join(", ")}`,
     );
+  }
+  // A retired id still runs (the SDK swaps in its advice); say what changed.
+  for (const id of checkIds ?? []) {
+    if (Object.hasOwn(RETIRED_MCP_CHECK_IDS, id)) {
+      process.stderr.write(
+        `Note: check ${id} is now the ${RETIRED_MCP_CHECK_IDS[id as keyof typeof RETIRED_MCP_CHECK_IDS]} advice. Running that instead.\n`,
+      );
+    }
   }
 
   const fixtures = resolveFixtures(options);
