@@ -156,7 +156,8 @@ describe("protocol checks that run out of time", () => {
   );
 
   it("resets the timeout count when a later request receives an answer", async () => {
-    const listTools = vi.fn()
+    const listTools = vi
+      .fn()
       .mockResolvedValueOnce({ tools: [] })
       .mockRejectedValueOnce(requestTimeout);
     const listPrompts = vi.fn().mockResolvedValue({ prompts: [] });
