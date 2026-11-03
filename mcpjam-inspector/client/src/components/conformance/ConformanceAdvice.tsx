@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { ChevronRight, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Collapse } from "./conformance-ui";
+import { Collapse, SUITE_COPY } from "./conformance-ui";
 
 export interface AdviceItem {
   id: string;
@@ -20,6 +20,23 @@ export interface AdviceItem {
 export interface AdviceGroup {
   suite: string;
   readiness?: readonly AdviceItem[];
+}
+
+const ADVICE_SUITES = ["protocol", "apps", "tasks", "oauth"] as const;
+
+/** A suite's run state, read only for the advice its result carries. */
+interface AdviceSource {
+  result?: { readiness?: readonly AdviceItem[] } | null;
+}
+
+/** One group per suite, in the order the panel lists the suites. */
+export function suiteAdviceGroups(
+  runs: Record<(typeof ADVICE_SUITES)[number], AdviceSource>,
+): AdviceGroup[] {
+  return ADVICE_SUITES.map((suite) => ({
+    suite: SUITE_COPY[suite].title,
+    readiness: runs[suite].result?.readiness,
+  }));
 }
 
 /** The spec's requirement words are defined by BCP 14 (RFC 2119 + RFC 8174). */
