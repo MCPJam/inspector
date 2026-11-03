@@ -182,7 +182,7 @@ export function SuiteRow({
         </span>
         <span className="flex shrink-0 items-center gap-4">
           {badge}
-          <span className="flex w-22 shrink-0 items-baseline justify-end gap-1">
+          <span className="flex shrink-0 items-baseline gap-1">
             {score ? (
               <>
                 <span className="text-xl font-medium tabular-nums">
