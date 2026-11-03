@@ -954,7 +954,7 @@ describe("comparison redirect restoration", () => {
     render(<Harness />);
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(
-        "couldn’t restore this comparison chat",
+        "Could not restore this comparison chat. Run the comparison again.",
       ),
     );
     expect(mockUseChatSession.loadChatSession).not.toHaveBeenCalled();

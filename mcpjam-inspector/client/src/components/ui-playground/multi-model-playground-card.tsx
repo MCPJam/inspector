@@ -119,6 +119,11 @@ export interface PlaygroundDeterministicExecutionRequest {
   replaceExisting?: boolean;
 }
 
+// A failed column clears the saved comparison, so a reload starts from the
+// current layout; running the comparison again is what recovers it.
+const COMPARISON_RESTORE_FAILED_MESSAGE =
+  "Could not restore this comparison chat. Run the comparison again.";
+
 function InvokingIndicator({
   toolName,
   customMessage,
@@ -666,7 +671,7 @@ export function MultiModelPlaygroundCard({
           detail.session.chatSessionId !== recoveryColumn.chatSessionId ||
           (recoveryColumn.hasMessages && !detail.session.messagesBlobUrl)
         )
-          throw new Error("Comparison history could not be loaded. Reload to try again.");
+          throw new Error(COMPARISON_RESTORE_FAILED_MESSAGE);
         await recoveryLoaderRef.current(
           {
             ...detail.session,
@@ -1180,7 +1185,7 @@ export function MultiModelPlaygroundCard({
             className="p-3 text-sm text-muted-foreground"
           >
             {recoveryStatus === "failed"
-              ? "MCPJam couldn’t restore this comparison chat. Reload to try again."
+              ? COMPARISON_RESTORE_FAILED_MESSAGE
               : "Restoring comparison chat…"}
           </div>
         )}
