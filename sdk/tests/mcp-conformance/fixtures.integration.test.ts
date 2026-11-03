@@ -213,10 +213,10 @@ describe("nothing is executed without a fixture", () => {
         await run(
           { noOutputSchemas: true, repeatToolsCursor: true },
           undefined,
-          [ID],
+          [ID]
         )
       ).checks,
-      ID,
+      ID
     );
     expect([check.status, check.skipReason]).toEqual([
       "skipped",

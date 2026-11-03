@@ -1593,7 +1593,17 @@ async function runToolOutputSchemaCheck(
   const startedAt = Date.now();
   const fixtures = ctx.config.fixtures.toolCalls;
 
-  const capabilities = advertisedCapabilities(await discoverOnce(ctx, state));
+  // An unreadable discover answer says nothing about the server's tools, so it
+  // cannot make the check not applicable.
+  const discover = await discoverOnce(ctx, state);
+  if (jsonRpcResult(discover) === undefined) {
+    return couldNotRunResult(
+      meta,
+      `server/discover did not return a usable result (HTTP ${discover.status}), so whether any tool declares an outputSchema is unknown`,
+      { httpStatus: discover.status }
+    );
+  }
+  const capabilities = advertisedCapabilities(discover);
   if (capabilities.tools === undefined) {
     return notApplicableResult(
       meta,
@@ -1788,7 +1798,10 @@ async function toolOutputSchemas(
     const outputSchema = (tool as { outputSchema?: unknown }).outputSchema;
     if (outputSchema !== undefined) schemas.set(tool.name, outputSchema);
   }
-  if (schemas.size > 0 || (ctx.surface?.tools.length ?? 0) > 0) {
+  // The client snapshot is one aggregate `listTools` call with no record of
+  // whether it read every page, so only a schema it holds is trusted. To show
+  // that NO tool declares one, walk the raw listing, which reports completion.
+  if (schemas.size > 0) {
     return { schemas, complete: true };
   }
 
