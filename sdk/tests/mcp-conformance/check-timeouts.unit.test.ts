@@ -93,6 +93,27 @@ describe("protocol checks that run out of time", () => {
     expect(result.checks[1]).toMatchObject({ status: "passed" });
   });
 
+  it("aborts the timed-out request before the next check starts", async () => {
+    let activeSignal: AbortSignal | undefined;
+    const listTools = vi.fn().mockImplementation(async () => {
+      expect(activeSignal?.aborted).toBe(true);
+      return { tools: [] };
+    });
+    serveManager({
+      pingServer: vi.fn().mockImplementation((_id, options) => {
+        activeSignal = options.signal;
+        return new Promise(() => {});
+      }),
+      listTools,
+    });
+
+    const result = await run(["ping", "tools-list"]);
+
+    expect(result.checks[0]?.details?.timedOut).toBe(true);
+    expect(result.checks[1]?.status).toBe("passed");
+    expect(listTools).toHaveBeenCalledTimes(1);
+  });
+
   it("skips the rest once two checks in a row time out", async () => {
     const listTools = vi.fn().mockRejectedValue(requestTimeout);
     serveManager({

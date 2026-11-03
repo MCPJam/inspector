@@ -102,7 +102,9 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
     async run(ctx) {
       const startedAt = Date.now();
       try {
-        const result = await ctx.manager.pingServer(ctx.serverId);
+        const result = await ctx.manager.pingServer(ctx.serverId, {
+          signal: ctx.config.signal,
+        });
         return passedResult(this, Date.now() - startedAt, {
           result: result as Record<string, unknown>,
         });
@@ -140,7 +142,7 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
         // returns an `EmptyResult` the manager discards). A clean resolve —
         // no thrown JSON-RPC error — is the pass condition; there is no
         // result body to inspect.
-        await ctx.client.setLoggingLevel("info");
+        await ctx.client.setLoggingLevel("info", { signal: ctx.config.signal });
 
         return passedResult(this, Date.now() - startedAt, {
           level: "info",
@@ -192,7 +194,9 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
       }
 
       try {
-        const result = await ctx.client.complete(completionReference);
+        const result = await ctx.client.complete(completionReference, {
+          signal: ctx.config.signal,
+        });
         if (!Array.isArray(result.completion.values)) {
           return failedResult(
             this,

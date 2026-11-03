@@ -196,20 +196,21 @@ async function resolveHostedServerConfig(
 /**
  * Bound a whole conformance run by wall-clock, not just its individual legs.
  * Losing the race rejects with a 504 so the route always answers inside the
- * hosted budget; the run itself keeps unwinding in the background (its legs
- * are individually timed out) and closes its own client.
+ * hosted budget. Cancellable runs abort their active work at the same deadline.
  */
 async function withHostedDeadline<T>(
   run: Promise<T>,
   deadlineMs: number,
-  message: string
+  message: string,
+  controller?: AbortController
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new WebRouteError(504, ErrorCode.TIMEOUT, message)),
-      deadlineMs
-    );
+    timer = setTimeout(() => {
+      const error = new WebRouteError(504, ErrorCode.TIMEOUT, message);
+      reject(error);
+      controller?.abort(error);
+    }, deadlineMs);
   });
   // Never leave the losing run as an unhandled rejection.
   run.catch(() => {});
@@ -284,10 +285,12 @@ conformanceWeb.post("/protocol", async (c) =>
     });
     const parsed = parseWithSchema(protocolSchema, body);
 
+    const controller = new AbortController();
     try {
       const { result } = await withHostedDeadline(
         runProtocolConformance({
           ...resolved,
+          signal: controller.signal,
           protocolVersion: parsed.protocolVersion,
           checkIds: parsed.checkIds,
           readinessIds: parsed.readinessIds,
@@ -298,6 +301,7 @@ conformanceWeb.post("/protocol", async (c) =>
         }),
         HOSTED_SUITE_DEADLINE_MS,
         suiteDeadlineMessage("Protocol"),
+        controller
       );
       return { success: true, result };
     } catch (error) {
@@ -322,14 +326,17 @@ conformanceWeb.post("/apps", async (c) =>
     const config = await resolveHostedServerConfig(c, bearerToken, body);
     const parsed = parseWithSchema(appsSchema, body);
 
+    const controller = new AbortController();
     try {
       const { result } = await withHostedDeadline(
         runAppsConformance({
           ...config,
+          signal: controller.signal,
           ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
         }),
         HOSTED_SUITE_DEADLINE_MS,
         suiteDeadlineMessage("Apps"),
+        controller
       );
       return { success: true, result };
     } catch (error) {

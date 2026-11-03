@@ -1,3 +1,5 @@
+import { awaitWithSignal } from "./abort-signal.js";
+
 /**
  * A server that does not answer in time has not broken a rule; it has left
  * the rule untested.
@@ -53,22 +55,33 @@ function formatSeconds(ms: number): string {
 }
 
 /**
- * Settle with `onTimeout()` if `run` has not settled within `timeoutMs`. The
- * abandoned run keeps going until its own requests time out; the race still
- * holds its rejection handler, so a late rejection is never unhandled.
+ * Cancel a check's requests at its deadline and report the untested result.
  */
 export async function withDeadline<T>(
-  run: Promise<T>,
+  run: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
-  onTimeout: () => T
+  onTimeout: () => T,
+  parentSignal?: AbortSignal
 ): Promise<T> {
+  parentSignal?.throwIfAborted();
+  const controller = new AbortController();
+  const signal = parentSignal
+    ? AbortSignal.any([parentSignal, controller.signal])
+    : controller.signal;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<T>((resolve) => {
-    timer = setTimeout(() => resolve(onTimeout()), timeoutMs);
+    timer = setTimeout(() => {
+      resolve(onTimeout());
+      controller.abort(new DOMException("Check timed out", "TimeoutError"));
+    }, timeoutMs);
   });
   try {
-    return await Promise.race([run, deadline]);
+    return await awaitWithSignal(
+      Promise.race([run(signal), deadline]),
+      parentSignal
+    );
   } finally {
     if (timer) clearTimeout(timer);
+    controller.abort();
   }
 }

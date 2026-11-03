@@ -34,20 +34,13 @@ import { TOOL_CHECKS } from "./checks/tools.js";
 import { PROMPT_CHECKS } from "./checks/prompts.js";
 import {
   errorMessage,
-  eraSkipMessage,
   failedResult,
   couldNotRunResult,
-  notApplicableResult,
-  timedOutResult,
 } from "./checks/helpers.js";
-import {
-  isRequestTimeoutError,
-  isTimedOutCheck,
-  withDeadline,
-} from "../conformance-timeout.js";
+import { awaitWithSignal } from "../abort-signal.js";
+import { eraGate, runSelectedClientChecks } from "./client-check-runner.js";
 import type {
   MCPCheckCategory,
-  MCPCheckEra,
   MCPCheckId,
   MCPCheckResult,
   MCPClientCheckContext,
@@ -59,11 +52,8 @@ import type {
   NormalizedMCPConformanceConfig,
   RawHttpCheckContext,
 } from "./types.js";
-import { CHECK_ERAS, MCP_CHECK_CATEGORIES } from "./types.js";
-import {
-  collectClientReadiness,
-  collectRawReadiness,
-} from "./readiness.js";
+import { MCP_CHECK_CATEGORIES } from "./types.js";
+import { collectClientReadiness, collectRawReadiness } from "./readiness.js";
 import { WireObservationRecorder } from "./wire-observations.js";
 import { createCapturingFetch } from "./raw-capture.js";
 import {
@@ -161,6 +151,7 @@ function createServerConfig(
   // wrapper sits on the Client's `baseFetch`. The two stacks never share an
   // exchange.
   const recordingFetch: typeof fetch = async (input, init) => {
+    init?.signal?.throwIfAborted();
     // ONE CAPTURE PER CALL. A single shared instance appends every exchange to
     // one array, and reading the last element after an `await` is only correct
     // while nothing else is in flight — which is never true here: the client
@@ -219,26 +210,9 @@ function createServerConfig(
   };
 }
 
-/**
- * Era gate for a client-backed check. Returns a `skipped` result (never
- * filtered out — the check still appears in the report) when the check does
- * not apply to the run's era per {@link CHECK_ERAS}, else `undefined` so the
- * check runs normally. Skipped checks never fail a run (the verdict is
- * `checks.every(c => c.status !== "failed")`).
- */
-function eraGate(
-  check: MCPClientCheckDefinition,
-  era: MCPCheckEra,
-  protocolVersion: string | undefined,
-): MCPCheckResult | undefined {
-  if (CHECK_ERAS[check.id].includes(era)) {
-    return undefined;
-  }
-  return notApplicableResult(check, eraSkipMessage(era, protocolVersion));
-}
-
 async function safeListResourceTemplates(
   ctx: Pick<MCPClientCheckContext, "manager" | "serverId">,
+  signal?: AbortSignal
 ): Promise<string[]> {
   try {
     // Conformance is a raw-evidence surface: bypass the SEP-2549 response
@@ -246,7 +220,7 @@ async function safeListResourceTemplates(
     const result = await ctx.manager.listResourceTemplates(
       ctx.serverId,
       undefined,
-      { cacheMode: "bypass" },
+      { cacheMode: "bypass", signal }
     );
     return (result.resourceTemplates ?? []).map((template) => template.uriTemplate);
   } catch {
@@ -256,9 +230,10 @@ async function safeListResourceTemplates(
 
 async function safeListTools(
   ctx: Pick<MCPClientCheckContext, "manager" | "serverId">,
+  signal?: AbortSignal
 ) {
   try {
-    return await listTools(ctx.manager, { serverId: ctx.serverId });
+    return await listTools(ctx.manager, { serverId: ctx.serverId, signal });
   } catch {
     return {
       tools: [],
@@ -269,9 +244,10 @@ async function safeListTools(
 
 async function safeListPrompts(
   ctx: Pick<MCPClientCheckContext, "manager" | "serverId">,
+  signal?: AbortSignal
 ) {
   try {
-    return await listPrompts(ctx.manager, { serverId: ctx.serverId });
+    return await listPrompts(ctx.manager, { serverId: ctx.serverId, signal });
   } catch {
     return {
       prompts: [],
@@ -282,9 +258,10 @@ async function safeListPrompts(
 
 async function safeListResources(
   ctx: Pick<MCPClientCheckContext, "manager" | "serverId">,
+  signal?: AbortSignal
 ) {
   try {
-    return await listResources(ctx.manager, { serverId: ctx.serverId });
+    return await listResources(ctx.manager, { serverId: ctx.serverId, signal });
   } catch {
     return {
       resources: [],
@@ -292,16 +269,6 @@ async function safeListResources(
     };
   }
 }
-
-/** Timeouts in a row after which the remaining client checks are skipped. */
-const MAX_TIMEOUTS_IN_A_ROW = 2;
-
-/** These checks read connection data without asking the server for an answer. */
-const CONNECTION_DATA_CHECK_IDS = new Set<MCPCheckId>([
-  "server-initialize",
-  "modern-client-handshake",
-  "capabilities-consistent",
-]);
 
 async function runClientChecks(
   config: NormalizedMCPConformanceConfig,
@@ -341,6 +308,7 @@ async function runClientChecks(
     return await withEphemeralClient(
       createServerConfig(config, recorder),
       async (manager, serverId) => {
+        config.signal?.throwIfAborted();
         const connectDurationMs = Date.now() - connectStartedAt;
         // `getManagedClient()` works for every era — the modern pin and the
         // legacy path both resolve to a `ManagedMcpClient` (the stateless
@@ -365,13 +333,19 @@ async function runClientChecks(
               }
             : config;
 
-        const [toolsResult, promptsResult, resourcesResult, availableResourceTemplates] =
-          await Promise.all([
-            safeListTools({ manager, serverId }),
-            safeListPrompts({ manager, serverId }),
-            safeListResources({ manager, serverId }),
-            safeListResourceTemplates({ manager, serverId }),
-          ]);
+        const [
+          toolsResult,
+          promptsResult,
+          resourcesResult,
+          availableResourceTemplates,
+        ] = await Promise.all([
+          safeListTools({ manager, serverId }, config.signal),
+          safeListPrompts({ manager, serverId }, config.signal),
+          safeListResources({ manager, serverId }, config.signal),
+          safeListResourceTemplates({ manager, serverId }, config.signal),
+        ]);
+
+        config.signal?.throwIfAborted();
 
         // A server may answer a list method with an unusable payload; the
         // snapshot models "nothing discovered" rather than throwing, so a
@@ -412,80 +386,10 @@ async function runClientChecks(
           return { checks: [], config: effectiveConfig, surface, readiness };
         }
 
-        const results: MCPCheckResult[] = [];
-        let connectionLost = false;
-        // Checks in a row that ran out of time. A timeout leaves the session
-        // usable, but at this many the server has stopped answering, and each
-        // check after would wait out the full limit for the same silence.
-        let timeoutStreak = 0;
-
-        for (const check of selectedClientChecks) {
-          // Era gate first: an era-inapplicable check is a deterministic skip
-          // that never runs `check.run`, so it neither observes nor affects
-          // the `connectionLost` sequencing below.
-          const eraSkip = eraGate(
-            check,
-            effectiveConfig.era,
-            effectiveConfig.protocolVersion,
-          );
-          if (eraSkip) {
-            results.push(eraSkip);
-            continue;
-          }
-
-          if (connectionLost) {
-            results.push(
-              couldNotRunResult(
-                check,
-                "Skipping check because the MCP client session is no longer healthy",
-              ),
-            );
-            continue;
-          }
-
-          if (timeoutStreak >= MAX_TIMEOUTS_IN_A_ROW) {
-            results.push(
-              couldNotRunResult(
-                check,
-                "Skipped because the server stopped responding."
-              )
-            );
-            continue;
-          }
-
-          try {
-            const result = await withDeadline(
-              check.run(ctx),
-              config.checkTimeout,
-              () => timedOutResult(check, config.checkTimeout)
-            );
-            // Only an answer ends the streak; a skip asked the server nothing.
-            if (isTimedOutCheck(result)) timeoutStreak += 1;
-            else if (
-              result.status !== "skipped" &&
-              !CONNECTION_DATA_CHECK_IDS.has(check.id)
-            ) {
-              timeoutStreak = 0;
-            }
-            results.push(result);
-          } catch (error) {
-            if (isRequestTimeoutError(error)) {
-              timeoutStreak += 1;
-              results.push(timedOutResult(check, config.checkTimeout));
-              continue;
-            }
-            results.push(
-              failedResult(
-                check,
-                0,
-                errorMessage(error),
-                undefined,
-                error,
-              ),
-            );
-            connectionLost = true;
-          }
-        }
+        const results = await runSelectedClientChecks(
+          selectedClientChecks,
+          ctx
+        );
 
         return {
           checks: results,
@@ -497,10 +401,12 @@ async function runClientChecks(
       {
         clientName: config.clientName,
         timeout: config.checkTimeout,
-      },
+        signal: config.signal,
+      }
     );
 
   } catch (error) {
+    config.signal?.throwIfAborted();
     // Refused for credentials on an Auto run: the connection that would have
     // negotiated the era never completed, so the era is UNKNOWN — not the
     // legacy default. Gating against that default would report the other
@@ -667,6 +573,7 @@ export class MCPConformanceTest {
   }
 
   async run(): Promise<MCPConformanceResult> {
+    this.config.signal?.throwIfAborted();
     const startedAt = Date.now();
     const selectedCheckIds = buildCheckSelection(this.config);
     // ONE record for the whole run, opened before the first byte moves. The
@@ -680,6 +587,7 @@ export class MCPConformanceTest {
       recorder,
     );
 
+    this.config.signal?.throwIfAborted();
     const rawContext: RawHttpCheckContext = {
       config: clientRun.config,
       serverUrl: clientRun.config.serverUrl,
@@ -701,13 +609,17 @@ export class MCPConformanceTest {
       transportChecks,
       modernChecks,
       rawReadiness,
-    ] = await Promise.all([
-      runProtocolChecks(rawContext, rawSelection),
-      runSecurityChecks(rawContext, rawSelection),
-      runTransportChecks(rawContext, rawSelection),
-      runModernChecks(rawContext, rawSelection),
-      collectRawReadiness(rawContext),
-    ]);
+    ] = await awaitWithSignal(
+      Promise.all([
+        runProtocolChecks(rawContext, rawSelection),
+        runSecurityChecks(rawContext, rawSelection),
+        runTransportChecks(rawContext, rawSelection),
+        runModernChecks(rawContext, rawSelection),
+        collectRawReadiness(rawContext),
+      ]),
+      this.config.signal
+    );
+    this.config.signal?.throwIfAborted();
 
     // LAST, and deliberately not inside the `Promise.all` above: its subject is
     // everything the other families made the server say, so it has to run after

@@ -82,8 +82,10 @@ function ensureUiCapability(config: MCPServerConfig): MCPServerConfig {
 export function normalizeMCPAppsConformanceConfig(
   config: MCPAppsConformanceConfig,
 ): NormalizedMCPAppsConformanceConfig {
-  const { checkIds, ...serverConfig } = config;
-  const normalizedServerConfig = ensureUiCapability(serverConfig as MCPServerConfig);
+  const { checkIds, signal, ...serverConfig } = config;
+  const normalizedServerConfig = ensureUiCapability(
+    serverConfig as MCPServerConfig
+  );
   const target = deriveTarget(normalizedServerConfig).trim();
 
   if (!target) {
@@ -92,6 +94,7 @@ export function normalizeMCPAppsConformanceConfig(
 
   return {
     serverConfig: normalizedServerConfig,
+    signal,
     target,
     timeout: normalizedServerConfig.timeout ?? 30_000,
     checkIds: normalizeCheckIds(checkIds),

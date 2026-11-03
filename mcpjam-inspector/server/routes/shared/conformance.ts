@@ -139,6 +139,7 @@ export type CompleteOAuthConformanceResult =
 // ── Protocol ────────────────────────────────────────────────────────────
 
 export interface ResolvedHttpConfig {
+  signal?: AbortSignal;
   serverUrl: string;
   accessToken?: string;
   customHeaders?: Record<string, string>;
@@ -172,6 +173,7 @@ export async function runProtocolConformance(
 ): Promise<{ result: MCPConformanceResult }> {
   const config: MCPConformanceConfig = {
     serverUrl: input.serverUrl,
+    signal: input.signal,
     accessToken: input.accessToken,
     customHeaders: input.customHeaders,
     protocolVersion: input.protocolVersion,

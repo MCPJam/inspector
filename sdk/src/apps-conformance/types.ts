@@ -49,6 +49,8 @@ export interface MCPAppsCheckResult {
 }
 
 export type MCPAppsConformanceConfig = MCPServerConfig & {
+  /** Cancel this run and its active requests. */
+  signal?: AbortSignal;
   checkIds?: MCPAppsCheckId[];
 };
 
@@ -63,6 +65,7 @@ export type MCPAppsConformanceSuiteRun = Partial<
 };
 
 export interface NormalizedMCPAppsConformanceConfig {
+  signal?: AbortSignal;
   serverConfig: MCPServerConfig;
   target: string;
   timeout: number;

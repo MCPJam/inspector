@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const runProtocolConformanceMock = vi.hoisted(() => vi.fn());
+const runAppsConformanceMock = vi.hoisted(() => vi.fn());
 const authorizeServerMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../auth.js", async () => {
@@ -42,7 +43,7 @@ vi.mock("../auth.js", async () => {
 
 vi.mock("../../shared/conformance", () => ({
   runProtocolConformance: runProtocolConformanceMock,
-  runAppsConformance: vi.fn(),
+  runAppsConformance: runAppsConformanceMock,
   runTasksConformance: vi.fn(),
   startOAuthConformance: vi.fn(),
   completeOAuthConformance: vi.fn(),
@@ -52,9 +53,12 @@ vi.mock("../../shared/conformance", () => ({
   OAuthConformanceSessionFailedError: class extends Error {},
 }));
 
-async function postProtocol(body: Record<string, unknown>) {
+async function postSuite(
+  suite: "protocol" | "apps",
+  body: Record<string, unknown>
+) {
   const { default: conformanceWeb } = await import("../conformance.js");
-  return conformanceWeb.request("/protocol", {
+  return conformanceWeb.request(`/${suite}`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -63,6 +67,9 @@ async function postProtocol(body: Record<string, unknown>) {
     body: JSON.stringify({ projectId: "p1", serverId: "s1", ...body }),
   });
 }
+
+const postProtocol = (body: Record<string, unknown>) =>
+  postSuite("protocol", body);
 
 beforeEach(async () => {
   vi.clearAllMocks();
@@ -75,6 +82,9 @@ beforeEach(async () => {
       transportType: "http",
       url: "https://mcp.example.test/mcp",
     },
+  });
+  runAppsConformanceMock.mockResolvedValue({
+    result: { outcome: "passed", checks: [] },
   });
   runProtocolConformanceMock.mockResolvedValue({
     result: { outcome: "passed", checks: [] },
@@ -145,20 +155,39 @@ describe("POST /api/web/conformance/protocol time limits", () => {
     );
   });
 
-  it("answers 504 with its own message when the run outlives the hosted limit", async () => {
-    vi.useFakeTimers();
-    // A run that never settles: only the route-level deadline can end it.
-    runProtocolConformanceMock.mockReturnValue(new Promise(() => {}));
+  it.each(["protocol", "apps"] as const)(
+    "cancels the %s runner and answers 504 at the hosted deadline",
+    async (suite) => {
+      vi.useFakeTimers();
+      const aborted = vi.fn();
+      const runner =
+        suite === "protocol"
+          ? runProtocolConformanceMock
+          : runAppsConformanceMock;
+      runner.mockImplementation(
+        ({ signal }: { signal: AbortSignal }) =>
+          new Promise((_, reject) => {
+            signal.addEventListener(
+              "abort",
+              () => {
+                aborted();
+                reject(signal.reason);
+              },
+              { once: true }
+            );
+          })
+      );
 
-    const pending = postProtocol({});
-    await vi.advanceTimersByTimeAsync(85_000);
-    const res = await pending;
+      const pending = postSuite(suite, {});
+      await vi.advanceTimersByTimeAsync(85_000);
+      const res = await pending;
 
-    expect(res.status).toBe(504);
-    const body = (await res.json()) as { code: string; message: string };
-    expect(body.code).toBe("TIMEOUT");
-    expect(body.message).toMatch(
-      /^The Protocol checks took longer than the 85-second limit/,
-    );
-  });
+      expect(res.status).toBe(504);
+      const body = await res.json();
+      expect(body.code).toBe("TIMEOUT");
+      expect(body.message).toContain("85-second limit");
+      expect(aborted).toHaveBeenCalledTimes(1);
+      expect(runner.mock.calls[0][0].signal.aborted).toBe(true);
+    }
+  );
 });

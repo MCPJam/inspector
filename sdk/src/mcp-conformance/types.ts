@@ -294,6 +294,8 @@ export const MCP_LOG_LEVELS = [
 export type MCPLogLevel = (typeof MCP_LOG_LEVELS)[number];
 
 export interface MCPConformanceConfig {
+  /** Cancel this run and its active requests. */
+  signal?: AbortSignal;
   serverUrl: string;
   accessToken?: string;
   customHeaders?: Record<string, string>;
@@ -398,6 +400,7 @@ export interface MCPConformanceFixtures {
 }
 
 export interface NormalizedMCPConformanceConfig {
+  signal?: AbortSignal;
   serverUrl: string;
   accessToken?: string;
   customHeaders?: Record<string, string>;

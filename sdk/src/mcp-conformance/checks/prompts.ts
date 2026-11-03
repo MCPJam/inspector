@@ -10,7 +10,10 @@ export const PROMPT_CHECKS: MCPClientCheckDefinition[] = [
     async run(ctx) {
       const startedAt = Date.now();
       try {
-        const result = await ctx.manager.listPrompts(ctx.serverId, undefined, { cacheMode: "bypass" });
+        const result = await ctx.manager.listPrompts(ctx.serverId, undefined, {
+          cacheMode: "bypass",
+          signal: ctx.config.signal,
+        });
         const invalidPrompts = (result.prompts ?? [])
           .map((prompt, index) => ({ prompt, index }))
           .filter(({ prompt }) => !prompt.name)
