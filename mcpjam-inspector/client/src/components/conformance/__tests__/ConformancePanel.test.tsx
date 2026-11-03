@@ -1704,8 +1704,8 @@ describe("ConformanceTab", () => {
       ).toBeInTheDocument();
 
       fireEvent.click(header);
-      // The three checks, and the advice that calls the log tool too.
-      expect(screen.getAllByText("Needs input")).toHaveLength(4);
+      // Three protocol checks, the log advice, and eleven Tasks checks.
+      expect(screen.getAllByText("Needs input")).toHaveLength(15);
       await waitFor(() =>
         expect(
           screen.getByRole("combobox", { name: "Tool that emits logs" }),
@@ -1719,7 +1719,7 @@ describe("ConformanceTab", () => {
       );
 
       expect(screen.getAllByText("Input set")).toHaveLength(2);
-      expect(screen.getAllByText("Needs input")).toHaveLength(2);
+      expect(screen.getAllByText("Needs input")).toHaveLength(13);
       expect(
         within(header).getByText("2 checks need input"),
       ).toBeInTheDocument();
@@ -1753,11 +1753,62 @@ describe("ConformanceTab", () => {
       });
       expect(within(header).queryByText(/need(s)? input/)).toBeNull();
       fireEvent.click(header);
-      expect(screen.queryByText("Needs input")).toBeNull();
+      // Tasks still needs its tool on Auto; protocol tools do not apply.
+      expect(screen.getAllByText("Needs input")).toHaveLength(11);
       expect(
         screen.queryByRole("combobox", { name: "Tool that emits logs" }),
       ).toBeNull();
     });
+
+    it.each(["auto", "2025-11-25", "2026-07-28"])(
+      "flags missing Tasks inputs on %s even when the suite is closed",
+      async (pin) => {
+        const user = userEvent.setup();
+        await toStep2(pin);
+        const header = screen.getByRole("button", {
+          name: /^Tasks.*checks selected$/,
+        });
+        expect(header).toHaveAttribute("aria-expanded", "false");
+        expect(
+          within(header).getByText("11 checks need input"),
+        ).toBeInTheDocument();
+
+        const suite = screen.getByRole("checkbox", { name: "Run Tasks" });
+        fireEvent.click(suite);
+        expect(within(header).queryByText(/needs? input/)).toBeNull();
+        fireEvent.click(suite);
+        expect(
+          within(header).getByText("11 checks need input"),
+        ).toBeInTheDocument();
+
+        fireEvent.click(header);
+        const tool = await screen.findByRole("combobox", {
+          name: "Tool that creates a task",
+        });
+        await waitFor(() => expect(tool).toBeEnabled());
+        fireEvent.click(
+          screen.getByRole("checkbox", { name: "Run Result Type Discipline" }),
+        );
+        expect(
+          within(header).getByText("10 checks need input"),
+        ).toBeInTheDocument();
+        await user.click(
+          screen.getByRole("combobox", { name: "Tool that creates a task" }),
+        );
+        await user.click(screen.getByRole("option", { name: "echo · read-only" }));
+        expect(within(header).queryByText(/needs? input/)).toBeNull();
+
+        await user.click(
+          screen.getByRole("combobox", { name: "Tool that creates a task" }),
+        );
+        await user.click(screen.getByRole("option", { name: "Not set" }));
+        fireEvent.click(header);
+        expect(header).toHaveAttribute("aria-expanded", "false");
+        expect(
+          within(header).getByText("10 checks need input"),
+        ).toBeInTheDocument();
+      },
+    );
 
     it("asks once for the Tasks tool on any pin, and for answers under the update check", async () => {
       const user = userEvent.setup();

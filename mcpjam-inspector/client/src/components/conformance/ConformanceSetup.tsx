@@ -401,12 +401,8 @@ export function ConformanceSetup({
                       ? undefined
                       : probeInputStatus(checkId, probes);
                   }
-                  // The Tasks tool is optional where the server marks which
-                  // tool creates a task, so an unset one is not flagged.
                   if (suite === "tasks" && tasksProbe) {
-                    return probeInputStatus(checkId, probes) === "set"
-                      ? "set"
-                      : undefined;
+                    return probeInputStatus(checkId, probes);
                   }
                   return undefined;
                 }}
