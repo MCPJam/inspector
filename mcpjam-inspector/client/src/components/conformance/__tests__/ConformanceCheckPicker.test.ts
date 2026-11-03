@@ -7,7 +7,12 @@ import {
   withOAuthSuite,
   withPicked,
 } from "../ConformanceCheckPicker";
-import { OAUTH_CATALOG } from "../conformance-catalogs";
+import {
+  OAUTH_ADVICE_CATALOG,
+  OAUTH_CATALOG,
+  TASKS_ADVICE_CATALOG,
+  protocolAdviceCatalog,
+} from "../conformance-catalogs";
 
 const modernOnly = MCP_CHECK_IDS.filter(
   (id) => !(CHECK_ERAS[id] as readonly string[]).includes("legacy"),
@@ -30,6 +35,99 @@ describe("withPicked", () => {
     expect(
       withPicked(without, "protocol", pinned, ["ping"], true).protocol,
     ).toBeUndefined();
+  });
+});
+
+describe("protocol advice picks", () => {
+  it("lists only the advice a pinned version can give", () => {
+    const legacy = protocolAdviceCatalog("2025-11-25").map((entry) => entry.id);
+    expect(legacy).not.toContain("readiness-log-level-filtering");
+    expect(
+      protocolAdviceCatalog("2026-07-28").map((entry) => entry.id),
+    ).toContain("readiness-log-level-filtering");
+    // Auto lists all of it and tags the era-only ones.
+    expect(
+      protocolAdviceCatalog("auto").find(
+        (entry) => entry.id === "readiness-log-level-filtering",
+      )?.note,
+    ).toBe("modern only");
+  });
+
+  it("keeps the advice a pin hides, and goes back to all of it", () => {
+    const pinned = protocolAdviceCatalog("2025-11-25");
+    const without = withPicked(
+      {},
+      "protocolAdvice",
+      pinned,
+      ["readiness-parse-error-handling"],
+      false,
+    );
+    expect(without.protocolAdvice).not.toContain(
+      "readiness-parse-error-handling",
+    );
+    expect(without.protocolAdvice).toContain("readiness-log-level-filtering");
+    expect(
+      withPicked(
+        without,
+        "protocolAdvice",
+        pinned,
+        ["readiness-parse-error-handling"],
+        true,
+      ).protocolAdvice,
+    ).toBeUndefined();
+  });
+
+  it("keeps an empty list, which runs no advice", () => {
+    const all = protocolAdviceCatalog("auto");
+    const none = withPicked(
+      {},
+      "protocolAdvice",
+      all,
+      all.map((entry) => entry.id),
+      false,
+    );
+    expect(none.protocolAdvice).toEqual([]);
+    expect(runnableSelection(none, "2026-07-28")?.protocolAdvice).toEqual([]);
+  });
+});
+
+describe("Tasks and OAuth advice picks", () => {
+  it("picks each suite's advice in its own list", () => {
+    const tasks = withPicked(
+      {},
+      "tasksAdvice",
+      TASKS_ADVICE_CATALOG,
+      ["tasks-readiness-failed-status-message"],
+      false,
+    );
+    expect(tasks.tasksAdvice).toEqual([
+      "tasks-readiness-unknown-task-id-mutations",
+    ]);
+    expect(tasks.protocolAdvice).toBeUndefined();
+
+    const oauth = withPicked(
+      {},
+      "oauthAdvice",
+      OAUTH_ADVICE_CATALOG,
+      ["readiness-oauth-iss-advertised"],
+      false,
+    );
+    expect(oauth.oauthAdvice).toEqual([]);
+    expect(
+      withPicked(
+        oauth,
+        "oauthAdvice",
+        OAUTH_ADVICE_CATALOG,
+        ["readiness-oauth-iss-advertised"],
+        true,
+      ).oauthAdvice,
+    ).toBeUndefined();
+  });
+
+  it("no longer lists the iss advice under Protocol", () => {
+    expect(
+      protocolAdviceCatalog("auto").map((entry) => entry.id),
+    ).not.toContain("readiness-oauth-iss-advertised");
   });
 });
 

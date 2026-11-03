@@ -96,14 +96,10 @@ export interface ConformanceProfile {
  * checks (hints MUST appear on the six named operations, `ttlMs` MUST be
  * `>= 0`, `cacheScope` MUST match across pages), the missing `Mcp-Method` and
  * header-case checks, and the empty-`contents` MUST NOT for a missing
- * resource. Two stay pending:
- *
- *   - `modern-tool-output-schema-conformant` states a MUST but cannot run
- *     without operator tool-call fixtures, so scoring it would mark nearly
- *     every run incomplete until the inspector can collect them.
- *   - `modern-log-level-filtering` asserts more than the spec does: a server
- *     MAY send logs at or above the requested level, and nothing forbids
- *     sending none.
+ * resource. One stays pending: `modern-tool-output-schema-conformant` states
+ * a MUST but cannot run without operator tool-call fixtures, so scoring it
+ * would mark nearly every run incomplete until the inspector can collect
+ * them.
  */
 const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
   id: "mcp-protocol",

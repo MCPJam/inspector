@@ -13,6 +13,7 @@ export type {
   MCPConformanceResult,
   MCPConformanceSuiteConfig,
   MCPConformanceSuiteResult,
+  MCPLogLevel,
   MCPReadinessId,
   MCPReadinessSpecStrength,
   MCPReadinessWarning,
@@ -23,9 +24,11 @@ export {
   CHECK_ERAS,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_LOG_LEVELS,
   MCP_PROTOCOL_VERSION_ERA_IDS,
   MCP_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
+  READINESS_ERAS,
 } from "./types.js";
 
 // §15.5: the ONE raw capture / SSE-parsing primitive, now owned by production

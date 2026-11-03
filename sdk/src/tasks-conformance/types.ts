@@ -116,6 +116,11 @@ export interface MCPTasksCheckResult {
 export type MCPTasksConformanceConfig = MCPServerConfig & {
   checkIds?: MCPTasksCheckId[];
   /**
+   * Report only this advice. Absent ⇒ all of it; empty ⇒ none. The advice
+   * comes from checks that already run, so leaving it out sends nothing less.
+   */
+  readinessIds?: MCPTasksReadinessId[];
+  /**
    * Tool used to provoke a task. Without it the runner picks the first tool
    * whose `execution.taskSupport` is `required`, then the first with
    * `optional` — 2025-11-25 metadata that the 2026-07-28 `ToolSchema` strips,
@@ -148,6 +153,8 @@ export interface NormalizedMCPTasksConformanceConfig {
   timeout: number;
   pollTimeoutMs: number;
   checkIds?: MCPTasksCheckId[];
+  /** @see {@link MCPTasksConformanceConfig.readinessIds} */
+  readinessIds?: MCPTasksReadinessId[];
   toolName?: string;
   toolArguments?: Record<string, unknown>;
   /** @see {@link MCPTasksConformanceConfig.inputResponses} */

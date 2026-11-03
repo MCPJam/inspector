@@ -360,8 +360,8 @@ describe("suite adapters", () => {
       protocolResult({
         readiness: [
           {
-            id: "readiness-oauth-iss-advertised",
-            title: "iss",
+            id: "readiness-tool-order-deterministic",
+            title: "Deterministic Tool Order",
             severity: "warning",
             specStrength: "RECOMMENDED",
             message: "…",
@@ -371,7 +371,7 @@ describe("suite adapters", () => {
     );
 
     expect(score.advisories).toEqual([
-      { id: "readiness-oauth-iss-advertised", tier: "should" },
+      { id: "readiness-tool-order-deterministic", tier: "should" },
     ]);
     expect(score.score).toBe(98);
     expect(score.protocolVersion).toBe("2025-11-25");
@@ -583,6 +583,50 @@ describe("suite adapters", () => {
     expect(score.pending).toBe(1);
     expect(score.score).toBe(100);
     expect(score.outcome).toBe("passed");
+  });
+
+  it("deducts OAuth advice like protocol advice", () => {
+    const score = scoreFromOAuthResult(
+      oauthResult({
+        readiness: [
+          {
+            id: "readiness-oauth-iss-advertised",
+            title: "Authorization Response iss",
+            severity: "warning",
+            specStrength: "RECOMMENDED",
+            message: "…",
+          },
+        ],
+      }),
+      { unscoredCheckIds: ["oauth_token_format"] },
+    );
+
+    expect(score.advisories).toEqual([
+      { id: "readiness-oauth-iss-advertised", tier: "should" },
+    ]);
+    expect(score.score).toBe(98);
+  });
+
+  it("counts the same advice once across an OAuth suite's flows", () => {
+    // Every flow hits the same authorization server, so each reports it.
+    const flow = scoreFromOAuthResult(
+      oauthResult({
+        readiness: [
+          {
+            id: "readiness-oauth-iss-advertised",
+            title: "Authorization Response iss",
+            severity: "warning",
+            specStrength: "RECOMMENDED",
+            message: "…",
+          },
+        ],
+      }),
+      { unscoredCheckIds: ["oauth_token_format"] },
+    );
+    const pooled = pooledConformanceScore([flow, flow, flow]);
+
+    expect(pooled.advisories).toHaveLength(1);
+    expect(pooled.advicePointsLost).toBe(2);
   });
 
   it("marks unscored OAuth steps pending in the report, with the same score", () => {

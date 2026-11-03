@@ -1290,6 +1290,8 @@ export {
 export type {
   ConformanceResult as OAuthConformanceResult,
   ConformanceStepId as OAuthConformanceStepId,
+  MCPOAuthReadinessId,
+  MCPOAuthReadinessWarning,
   OAuthConformanceCheckId,
   OAuthConformanceProfile,
   RemoteBrowserAuthorizationCode,
@@ -1316,6 +1318,7 @@ export type {
   MCPConformanceResult,
   MCPConformanceSuiteConfig,
   MCPConformanceSuiteResult,
+  MCPLogLevel,
   MCPReadinessId,
   MCPReadinessSpecStrength,
   MCPReadinessWarning,
@@ -1325,9 +1328,11 @@ export {
   CHECK_ERAS,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_LOG_LEVELS,
   MCP_PROTOCOL_VERSION_ERA_IDS,
   MCP_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
+  READINESS_ERAS,
   canRunConformance,
   isHttpServerConfig,
 } from "./mcp-conformance/index.js";
@@ -1462,7 +1467,10 @@ export type {
   StepResult,
   VerificationResult,
 } from "./oauth-conformance/index.js";
-export { CONFORMANCE_CHECK_METADATA } from "./oauth-conformance/index.js";
+export {
+  CONFORMANCE_CHECK_METADATA,
+  MCP_OAUTH_READINESS_IDS,
+} from "./oauth-conformance/index.js";
 
 // MCP Operations (pure functions for common MCP workflows)
 export {

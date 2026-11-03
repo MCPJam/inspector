@@ -121,6 +121,16 @@ describe("tasks-invalid-task-id-rejected", () => {
       informational: true,
     });
     expect(advice?.message).toContain("tasks/update");
+    expect(advice?.title).toBe("Unknown Task Id On Update And Cancel");
+  });
+
+  it("leaves out advice the caller did not pick", async () => {
+    const fixture = await serve(quickPhases(), {
+      unknownTaskCodeForMutations: -32603,
+    });
+    const result = await run(fixture, [ID], { readinessIds: [] });
+    expect(check(result, ID).status).toBe("passed");
+    expect(result.readiness).toBeUndefined();
   });
 
   it("runs even when no task could be created", async () => {

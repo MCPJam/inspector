@@ -3,7 +3,11 @@ import type {
   MCPAppsCheckId,
   MCPAppsConformanceResult,
   MCPCheckId,
+  MCPLogLevel,
+  MCPOAuthReadinessId,
+  MCPReadinessId,
   MCPTasksCheckId,
+  MCPTasksReadinessId,
   MCPTasksConformanceResult,
   McpProtocolVersion,
   ConformanceResult as OAuthConformanceResult,
@@ -41,6 +45,8 @@ export interface OAuthStartInput {
     customHeaders?: Array<{ key: string; value: string }>;
   };
   callbackOrigin?: string;
+  /** The advice to report; absent reports all of it, empty none. */
+  readinessIds?: MCPOAuthReadinessId[];
 }
 
 // ── Public API ──────────────────────────────────────────────────────────
@@ -49,11 +55,17 @@ export interface OAuthStartInput {
 export interface ConformanceProbe {
   toolName: string;
   arguments?: Record<string, unknown>;
+  /**
+   * `logProbe` only: the log level the log level filtering advice asks for.
+   * Absent means the SDK's default, `warning`.
+   */
+  level?: MCPLogLevel;
 }
 
 /**
- * The tools the checks that must call one may use: `logProbe` for the two
- * logging checks, `inputRequiredProbe` for the undeclared-capability check.
+ * The tools the checks that must call one may use: `logProbe` for the logging
+ * check and the log level filtering advice, `inputRequiredProbe` for the
+ * undeclared-capability check.
  */
 export interface ConformanceProbes {
   logProbe?: ConformanceProbe;
@@ -65,6 +77,8 @@ export async function runProtocolConformance(
   options?: {
     protocolVersion?: McpProtocolVersion;
     checkIds?: MCPCheckId[];
+    /** The advice to run; absent runs all of it, empty runs none. */
+    readinessIds?: MCPReadinessId[];
     probes?: ConformanceProbes;
   },
 ): Promise<{ success: boolean; result: MCPConformanceResult }> {
@@ -73,6 +87,7 @@ export async function runProtocolConformance(
       ? { protocolVersion: options.protocolVersion }
       : {}),
     ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
+    ...(options?.readinessIds ? { readinessIds: options.readinessIds } : {}),
     ...(options?.probes?.logProbe ? { logProbe: options.probes.logProbe } : {}),
     ...(options?.probes?.inputRequiredProbe
       ? { inputRequiredProbe: options.probes.inputRequiredProbe }
@@ -126,10 +141,13 @@ export async function runTasksConformance(
     toolName?: string;
     toolArguments?: Record<string, unknown>;
     checkIds?: MCPTasksCheckId[];
+    /** The advice to report; absent reports all of it, empty none. */
+    readinessIds?: MCPTasksReadinessId[];
   },
 ): Promise<{ success: boolean; result: MCPTasksConformanceResult }> {
   const optionFields = {
     ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
+    ...(options?.readinessIds ? { readinessIds: options.readinessIds } : {}),
     ...(options?.toolName ? { toolName: options.toolName } : {}),
     ...(options?.toolArguments ? { toolArguments: options.toolArguments } : {}),
   };
@@ -158,6 +176,7 @@ export async function startOAuthConformance(
         serverId: input.serverNameOrId,
         oauthProfile: input.oauthProfile,
         callbackOrigin: input.callbackOrigin,
+        ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
       }),
     hosted: () => {
       const request = buildServerRequest(input.serverNameOrId);
@@ -165,6 +184,7 @@ export async function startOAuthConformance(
         ...request,
         oauthProfile: input.oauthProfile,
         callbackOrigin: input.callbackOrigin,
+        ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
       });
     },
   });

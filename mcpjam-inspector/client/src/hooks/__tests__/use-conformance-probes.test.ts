@@ -32,14 +32,26 @@ describe("probesForRun", () => {
     expect(
       probesForRun(
         { logProbe, inputRequiredProbe },
-        ["modern-log-level-filtering"],
+        ["modern-logs-require-log-level"],
         "2026-07-28",
       ),
     ).toEqual({ logProbe });
   });
 
+  it("keeps the log tool for the log level advice alone", () => {
+    // The logging check is left out, but the advice still calls the tool.
+    expect(
+      probesForRun({ logProbe }, ["ping"], "2026-07-28", [
+        "readiness-log-level-filtering",
+      ]),
+    ).toEqual({ logProbe });
+    // With the advice left out too, it is not sent.
+    expect(probesForRun({ logProbe }, ["ping"], "2026-07-28", [])).toEqual({});
+  });
+
   it("maps each check to the tool it calls", () => {
     expect(probeKeyFor("modern-logs-require-log-level")).toBe("logProbe");
+    expect(probeKeyFor("readiness-log-level-filtering")).toBe("logProbe");
     expect(probeKeyFor("modern-undeclared-capability-error")).toBe(
       "inputRequiredProbe",
     );
@@ -101,6 +113,26 @@ describe("useConformanceProbeStore", () => {
     act(() => result.current.setProbes("constructor", { logProbe }));
     expect(result.current.probesFor("constructor")).toEqual({ logProbe });
     expect(result.current.probesFor("__proto__")).toEqual({});
+  });
+
+  it("keeps the log probe's level and drops one it cannot send", () => {
+    window.localStorage.setItem(
+      "mcpjam.conformance.probes.v1:alpha",
+      JSON.stringify({
+        logProbe: { ...logProbe, level: "info" },
+        inputRequiredProbe: { ...inputRequiredProbe, level: "info" },
+      }),
+    );
+    expect(readStoredProbes("alpha")).toEqual({
+      logProbe: { ...logProbe, level: "info" },
+      inputRequiredProbe,
+    });
+
+    window.localStorage.setItem(
+      "mcpjam.conformance.probes.v1:alpha",
+      JSON.stringify({ logProbe: { ...logProbe, level: "loud" } }),
+    );
+    expect(readStoredProbes("alpha")).toEqual({ logProbe });
   });
 
   it("ignores a stored entry that is not a probe", () => {

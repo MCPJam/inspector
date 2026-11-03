@@ -864,15 +864,35 @@ export {
   CHECK_ERAS,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_LOG_LEVELS,
+  MCP_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
+  READINESS_ERAS,
 } from "./mcp-conformance/types.js";
-export type { MCPCheckEra, MCPCheckId } from "./mcp-conformance/types.js";
+export type {
+  MCPCheckEra,
+  MCPCheckId,
+  MCPLogLevel,
+  MCPReadinessId,
+} from "./mcp-conformance/types.js";
 export { MCP_APPS_CHECK_IDS } from "./apps-conformance/types.js";
 export type { MCPAppsCheckId } from "./apps-conformance/types.js";
-export { MCP_TASKS_CHECK_IDS } from "./tasks-conformance/types.js";
-export type { MCPTasksCheckId } from "./tasks-conformance/types.js";
-export { CONFORMANCE_CHECK_METADATA } from "./oauth-conformance/types.js";
-export type { OAuthConformanceCheckId } from "./oauth-conformance/types.js";
+export {
+  MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
+} from "./tasks-conformance/types.js";
+export type {
+  MCPTasksCheckId,
+  MCPTasksReadinessId,
+} from "./tasks-conformance/types.js";
+export {
+  CONFORMANCE_CHECK_METADATA,
+  MCP_OAUTH_READINESS_IDS,
+} from "./oauth-conformance/types.js";
+export type {
+  MCPOAuthReadinessId,
+  OAuthConformanceCheckId,
+} from "./oauth-conformance/types.js";
 
 // The shared verdict vocabulary and the score built on it. Both are pure data
 // reasoning (no MCP client, no transport, no Node built-ins) — the score's
@@ -945,7 +965,10 @@ export {
 export {
   APPS_CHECK_CATALOG,
   PROTOCOL_CHECK_CATALOG,
+  OAUTH_READINESS_CATALOG,
+  READINESS_CATALOG,
   TASKS_CHECK_CATALOG,
+  TASKS_READINESS_CATALOG,
 } from "./conformance-catalog.js";
 export type { ConformanceCheckInfo } from "./conformance-catalog.js";
 

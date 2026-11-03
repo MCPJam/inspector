@@ -46,7 +46,6 @@ describe("conformance profile manifest", () => {
     // reported a real verdict this profile version chose not to grade yet;
     // promoting one is a version bump, and this list is where that shows up.
     expect([...unscoredCheckIds(PROFILE)].sort()).toEqual([
-      "modern-log-level-filtering",
       "modern-tool-output-schema-conformant",
     ]);
   });
@@ -128,15 +127,10 @@ describe("profile stamp", () => {
   it("lists the reported checks the profile does not score, sorted", () => {
     const stamp = buildConformanceProfileStamp({
       profile: PROFILE,
-      checks: [
-        passed("ping"),
-        passed("modern-tool-output-schema-conformant"),
-        passed("modern-log-level-filtering"),
-      ],
+      checks: [passed("ping"), passed("modern-tool-output-schema-conformant")],
       protocolVersion: "2026-07-28",
     });
     expect(stamp.pendingCheckIds).toEqual([
-      "modern-log-level-filtering",
       "modern-tool-output-schema-conformant",
     ]);
     expect(stamp.profileId).toBe("mcp-protocol");
@@ -202,7 +196,7 @@ describe("pending checks and the score", () => {
     const checks = [
       passed("ping"),
       passed("tools-list"),
-      failed("modern-log-level-filtering"),
+      failed("modern-tool-output-schema-conformant"),
     ];
     const stamp = buildConformanceProfileStamp({ profile: PROFILE, checks });
 

@@ -750,6 +750,7 @@ export function ConformanceContent({
                       </div>
                     ) : oauth.result ? (
                       <div>
+                        <ReadinessAdvice readiness={oauth.result.readiness} />
                         {oauth.result.steps.map((step) => (
                           <OAuthStepRow
                             key={`${runVersion}-${step.step}`}

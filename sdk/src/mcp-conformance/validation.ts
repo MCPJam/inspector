@@ -1,11 +1,14 @@
 import {
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_LOG_LEVELS,
+  MCP_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
   type MCPCheckCategory,
   type MCPCheckEra,
   type MCPCheckId,
   type MCPConformanceConfig,
+  type MCPReadinessId,
   type NormalizedMCPConformanceConfig,
 } from "./types.js";
 import {
@@ -41,6 +44,24 @@ function normalizeCheckIds(
   for (const checkId of normalized) {
     if (!MCP_CHECK_IDS.includes(checkId)) {
       throw new Error(`Unknown MCP conformance check id: ${checkId}`);
+    }
+  }
+
+  return normalized;
+}
+
+/** Unlike check ids, an empty list stays empty: it means no advice at all. */
+function normalizeReadinessIds(
+  readinessIds: MCPConformanceConfig["readinessIds"],
+): MCPReadinessId[] | undefined {
+  if (readinessIds === undefined) {
+    return undefined;
+  }
+
+  const normalized = Array.from(new Set(readinessIds));
+  for (const readinessId of normalized) {
+    if (!MCP_READINESS_IDS.includes(readinessId)) {
+      throw new Error(`Unknown MCP conformance readiness id: ${readinessId}`);
     }
   }
 
@@ -92,6 +113,21 @@ function normalizeToolProbe(
   }
 
   return { toolName, arguments: probe.arguments };
+}
+
+function normalizeLogProbe(
+  probe: MCPConformanceConfig["logProbe"],
+): NormalizedMCPConformanceConfig["logProbe"] {
+  const normalized = normalizeToolProbe(probe, "logProbe");
+  if (!normalized || probe?.level === undefined) {
+    return normalized;
+  }
+  if (!(MCP_LOG_LEVELS as readonly string[]).includes(probe.level)) {
+    throw new Error(
+      `MCP conformance logProbe.level must be one of ${MCP_LOG_LEVELS.join(", ")}, got ${JSON.stringify(probe.level)}`,
+    );
+  }
+  return { ...normalized, level: probe.level };
 }
 
 /**
@@ -218,6 +254,7 @@ export function normalizeMCPConformanceConfig(
 
   const categories = normalizeCategories(config.categories);
   const checkIds = normalizeCheckIds(config.checkIds);
+  const readinessIds = normalizeReadinessIds(config.readinessIds);
   const { protocolVersion, era } = normalizeProtocolVersion(
     config.protocolVersion,
   );
@@ -229,6 +266,7 @@ export function normalizeMCPConformanceConfig(
     checkTimeout: config.checkTimeout ?? 30_000,
     categories,
     checkIds,
+    ...(readinessIds ? { readinessIds } : {}),
     fetchFn: config.fetchFn ?? fetch,
     clientName: config.clientName?.trim() || "mcpjam-sdk-conformance",
     protocolVersion,
@@ -237,7 +275,7 @@ export function normalizeMCPConformanceConfig(
       config.inputRequiredProbe,
       "inputRequiredProbe",
     ),
-    logProbe: normalizeToolProbe(config.logProbe, "logProbe"),
+    logProbe: normalizeLogProbe(config.logProbe),
     fixtures: normalizeFixtures(config.fixtures),
   };
 }
