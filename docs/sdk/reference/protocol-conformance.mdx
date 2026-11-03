@@ -238,7 +238,7 @@ Each `MCPReadinessWarning` has:
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `id` | `string` | Stable identifier (e.g. `readiness-parse-error-handling`). |
+| `id` | `string` | Stable identifier (e.g. `readiness-session-termination`). |
 | `title` | `string` | Short human-readable label. |
 | `specStrength` | `"MAY" \| "SHOULD" \| "RECOMMENDED"` | The spec strength of the underlying guidance. |
 | `message` | `string` | Description of what was observed and why it matters. |
@@ -248,7 +248,6 @@ The CLI prints readiness items as an `Advice` section on stderr after each `prot
 
 Current readiness checks:
 
-- `readiness-parse-error-handling` — fires when the server accepts an unparseable JSON body as success without returning a JSON-RPC `-32700` parse error. No MCP revision mandates a specific response to malformed input, so this is `MAY` advice rather than a check.
 - `readiness-session-termination` — on 2025-era runs, fires when a session-termination `DELETE` returns anything other than a 2xx or HTTP 405. On 2026-era runs, fires when `GET` or `DELETE` traffic from an older client is not answered with HTTP 405 (the 2026 backward-compat `SHOULD`).
 - `readiness-log-level-filtering` — 2026-07-28 runs with a `logProbe` only. Calls the tool asking for logs at `logProbe.level` (default `warning`). Fires when no logs come back, or when any log comes back below that level or with an unknown level. The spec says a server `MAY` send logs at or above the requested level, so this costs no points.
 

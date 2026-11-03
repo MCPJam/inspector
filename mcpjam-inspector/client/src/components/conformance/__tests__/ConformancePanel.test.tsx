@@ -319,8 +319,8 @@ describe("ConformanceTab", () => {
         protocolVersion: "2025-11-25",
         readiness: [
           {
-            id: "readiness-cache-ttl-useful",
-            title: "Useful Cache TTLs",
+            id: "readiness-deprecated-feature-use",
+            title: "Deprecated Feature Use",
             severity: "warning",
             specStrength: "SHOULD",
             message: "Cacheable results advertise ttlMs: 0",
@@ -388,8 +388,10 @@ describe("ConformanceTab", () => {
     expect(advice).toHaveAttribute("aria-expanded", "false");
     expect(within(advice).getByText("1")).toBeInTheDocument();
     fireEvent.click(advice);
-    const row = screen.getByText("Useful Cache TTLs").closest("li")!;
-    expect(row).toHaveTextContent("Suggested (SHOULD) Protocol Useful Cache TTLs");
+    const row = screen.getByText("Deprecated Feature Use").closest("li")!;
+    expect(row).toHaveTextContent(
+      "Suggested (SHOULD) Protocol Deprecated Feature Use",
+    );
   });
 
   it("shows no number when nothing was applicable", async () => {
@@ -1915,7 +1917,9 @@ describe("ConformanceTab", () => {
       ).toHaveTextContent("echo");
       // Another advice left out is not asked for.
       fireEvent.click(
-        screen.getByRole("checkbox", { name: "Run Parse Error Handling" }),
+        screen.getByRole("checkbox", {
+          name: "Run Explicit Session Termination",
+        }),
       );
 
       fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
@@ -1924,7 +1928,7 @@ describe("ConformanceTab", () => {
       expect(sent.probes).toEqual({ logProbe: { toolName: "echo" } });
       expect(sent.checkIds).not.toContain("modern-logs-require-log-level");
       expect(sent.readinessIds).toContain("readiness-log-level-filtering");
-      expect(sent.readinessIds).not.toContain("readiness-parse-error-handling");
+      expect(sent.readinessIds).not.toContain("readiness-session-termination");
     });
 
     it("turns the advice off with the suite's box, and offers none with no check picked", async () => {

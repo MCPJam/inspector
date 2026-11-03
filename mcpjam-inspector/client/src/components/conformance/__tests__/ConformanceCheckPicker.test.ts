@@ -59,11 +59,11 @@ describe("protocol advice picks", () => {
       {},
       "protocolAdvice",
       pinned,
-      ["readiness-parse-error-handling"],
+      ["readiness-session-termination"],
       false,
     );
     expect(without.protocolAdvice).not.toContain(
-      "readiness-parse-error-handling",
+      "readiness-session-termination",
     );
     expect(without.protocolAdvice).toContain("readiness-log-level-filtering");
     expect(
@@ -71,7 +71,7 @@ describe("protocol advice picks", () => {
         without,
         "protocolAdvice",
         pinned,
-        ["readiness-parse-error-handling"],
+        ["readiness-session-termination"],
         true,
       ).protocolAdvice,
     ).toBeUndefined();

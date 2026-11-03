@@ -50,7 +50,7 @@ describe("computeConformanceScore", () => {
     expect(clean.outcome).toBe("passed");
 
     const withAdvice = computeConformanceScore(passing(26), [
-      { id: "readiness-cache-ttl-useful", tier: "should" },
+      { id: "readiness-deprecated-feature-use", tier: "should" },
     ]);
     expect(withAdvice.score).toBe(98);
     expect(withAdvice.outcome).toBe("passed");
@@ -337,15 +337,15 @@ describe("suite adapters", () => {
       categorySummary: {} as MCPConformanceResult["categorySummary"],
       readiness: [
         {
-          id: "readiness-cache-ttl-useful",
-          title: "Useful Cache TTLs",
+          id: "readiness-deprecated-feature-use",
+          title: "Deprecated Feature Use",
           severity: "warning",
           specStrength: "SHOULD",
           message: "…",
         },
         {
-          id: "readiness-parse-error-handling",
-          title: "Parse Error Handling",
+          id: "readiness-session-termination",
+          title: "Explicit Session Termination",
           severity: "warning",
           specStrength: "MAY",
           message: "…",

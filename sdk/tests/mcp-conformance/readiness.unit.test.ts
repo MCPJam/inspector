@@ -253,33 +253,6 @@ describe("client readiness advice", () => {
 });
 
 describe("raw readiness advice", () => {
-  it("warns that a zero cache TTL is useless, and never fails", async () => {
-    const fetchFn = (async (input: RequestInfo | URL) => {
-      if (String(input).includes(".well-known")) {
-        return new Response("{}", { status: 404 });
-      }
-      return new Response(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: 8100,
-          result: { tools: [], resultType: "complete", ttlMs: 0 },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } }
-      );
-    }) as unknown as typeof fetch;
-
-    const warnings = await collectRawReadiness(
-      rawContext(fetchFn, "2026-07-28")
-    );
-    const ttl = warnings.find(
-      (item) => item.id === "readiness-cache-ttl-useful"
-    );
-
-    expect(ttl?.severity).toBe("warning");
-    expect(ttl?.specStrength).toBe("SHOULD");
-    expect(ttl?.details).toMatchObject({ method: "tools/list", ttlMs: 0 });
-  });
-
   it("leaves iss advice to the OAuth suite and fetches no OAuth metadata", async () => {
     const urls: string[] = [];
     const fetchFn = (async (input: RequestInfo | URL) => {
@@ -292,28 +265,6 @@ describe("raw readiness advice", () => {
       "readiness-oauth-iss-advertised"
     );
     expect(urls.filter((url) => url.includes("/.well-known/"))).toEqual([]);
-  });
-
-  it("advises when unparseable JSON is accepted as success, and stays silent on any rejection", async () => {
-    const accepting = (async () =>
-      new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      })) as unknown as typeof fetch;
-
-    const warnings = await collectRawReadiness(rawContext(accepting));
-    const parse = warnings.find(
-      (item) => item.id === "readiness-parse-error-handling"
-    );
-    expect(parse?.specStrength).toBe("MAY");
-    expect(parse?.message).toMatch(/-32700/);
-
-    const rejecting = (async () =>
-      new Response("Bad Request", { status: 400 })) as unknown as typeof fetch;
-    const silent = await collectRawReadiness(rawContext(rejecting));
-    expect(
-      silent.find((item) => item.id === "readiness-parse-error-handling")
-    ).toBeUndefined();
   });
 
   // The spec names two answers to the legacy session-termination DELETE:
@@ -627,10 +578,12 @@ describe("picking advice with readinessIds", () => {
   it("sends only the picked advice's probe", async () => {
     const server = countingFetch();
     const warnings = await collectRawReadiness(
-      pickedContext(server.fetchFn, ["readiness-parse-error-handling"])
+      pickedContext(server.fetchFn, [
+        "readiness-protocol-version-header-required",
+      ])
     );
     expect(warnings.map((item) => item.id)).toEqual([
-      "readiness-parse-error-handling",
+      "readiness-protocol-version-header-required",
     ]);
     expect(server.seen.requests).toBe(1);
   });
