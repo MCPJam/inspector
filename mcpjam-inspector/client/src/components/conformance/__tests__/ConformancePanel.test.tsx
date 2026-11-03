@@ -1786,6 +1786,10 @@ describe("ConformanceTab", () => {
           name: "Tool that creates a task",
         });
         await waitFor(() => expect(tool).toBeEnabled());
+        const taskRow = screen.getByRole("button", {
+          name: /^Undeclared Task Creation Refused/,
+        });
+        expect(taskRow).toHaveTextContent("Needs input");
         fireEvent.click(
           screen.getByRole("checkbox", { name: "Run Result Type Discipline" }),
         );
@@ -1797,11 +1801,13 @@ describe("ConformanceTab", () => {
         );
         await user.click(screen.getByRole("option", { name: "echo · read-only" }));
         expect(within(header).queryByText(/needs? input/)).toBeNull();
+        expect(taskRow).toHaveTextContent("Input set");
 
         await user.click(
           screen.getByRole("combobox", { name: "Tool that creates a task" }),
         );
         await user.click(screen.getByRole("option", { name: "Not set" }));
+        expect(taskRow).toHaveTextContent("Needs input");
         fireEvent.click(header);
         expect(header).toHaveAttribute("aria-expanded", "false");
         expect(
@@ -1809,6 +1815,76 @@ describe("ConformanceTab", () => {
         ).toBeInTheDocument();
       },
     );
+
+    it.each([
+      ["auto", "required"],
+      ["auto", "optional"],
+      ["2025-11-25", "required"],
+      ["2025-11-25", "optional"],
+    ])(
+      "does not require a Tasks input on %s when a tool advertises %s task support",
+      async (pin, taskSupport) => {
+        mockListTools.mockResolvedValue({
+          tools: [
+            {
+              name: "create_task",
+              execution: { taskSupport },
+              inputSchema: { type: "object", properties: {} },
+              annotations: { readOnlyHint: true },
+            },
+          ],
+        });
+        const user = userEvent.setup();
+        await toStep2(pin);
+        const header = screen.getByRole("button", {
+          name: /^Tasks.*checks selected$/,
+        });
+        await waitFor(() =>
+          expect(within(header).queryByText(/needs? input/)).toBeNull(),
+        );
+        fireEvent.click(header);
+        const taskRow = screen.getByRole("button", {
+          name: /^Result Type Discipline/,
+        });
+        expect(within(taskRow).queryByText("Needs input")).toBeNull();
+        const tool = screen.getByRole("combobox", {
+          name: "Tool that creates a task",
+        });
+        await waitFor(() => expect(tool).toBeEnabled());
+        expect(tool).toHaveTextContent("Not set");
+
+        await user.click(tool);
+        await user.click(
+          screen.getByRole("option", { name: "create_task · read-only" }),
+        );
+        expect(taskRow).toHaveTextContent("Input set");
+        await user.click(tool);
+        await user.click(screen.getByRole("option", { name: "Not set" }));
+        expect(within(taskRow).queryByText("Needs input")).toBeNull();
+        expect(within(header).queryByText(/needs? input/)).toBeNull();
+      },
+    );
+
+    it("still requires a Tasks input when a tool forbids task execution", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [{ name: "echo", execution: { taskSupport: "forbidden" } }],
+      });
+      await toStep2("2025-11-25");
+      const header = screen.getByRole("button", {
+        name: /^Tasks.*checks selected$/,
+      });
+      fireEvent.click(header);
+      await waitFor(() =>
+        expect(
+          screen.getByRole("combobox", {
+            name: "Tool that creates a task",
+          }),
+        ).toBeEnabled(),
+      );
+      expect(
+        within(header).getByText("11 checks need input"),
+      ).toBeInTheDocument();
+    });
 
     it("asks once for the Tasks tool on any pin, and for answers under the update check", async () => {
       const user = userEvent.setup();

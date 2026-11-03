@@ -402,6 +402,12 @@ export function ConformanceSetup({
                       : probeInputStatus(checkId, probes);
                   }
                   if (suite === "tasks" && tasksProbe) {
+                    // Legacy servers can advertise a task tool the runner
+                    // picks automatically, so no manual input is missing.
+                    const canPickTaskTool =
+                      !probes.tasksProbe &&
+                      probeTools.tools.some((tool) => tool.taskSupport);
+                    if (canPickTaskTool) return undefined;
                     return probeInputStatus(checkId, probes);
                   }
                   return undefined;

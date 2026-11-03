@@ -77,6 +77,8 @@ interface ToolOption {
   argProperties?: Record<string, unknown>;
   /** Declares an output schema: the only tools the output check can grade. */
   hasOutputSchema: boolean;
+  /** Legacy task tools the runner can pick without a manual selection. */
+  taskSupport?: "required" | "optional";
 }
 
 /** Read-only tools first: they are the likeliest safe choice. */
@@ -106,15 +108,28 @@ export function useProbeTools(server: ServerWithName | null): ProbeTools {
   const tools = useMemo(
     () =>
       sortForSafety(
-        (data?.tools ?? []).map((tool) => ({
-          name: tool.name,
-          readOnly: tool.annotations?.readOnlyHint === true,
-          destructive:
-            tool.annotations?.readOnlyHint !== true &&
-            tool.annotations?.destructiveHint !== false,
-          argProperties: tool.inputSchema?.properties,
-          hasOutputSchema: tool.outputSchema !== undefined,
-        })),
+        (data?.tools ?? []).map((tool) => {
+          const execution = "execution" in tool ? tool.execution : undefined;
+          const taskSupport =
+            execution &&
+            typeof execution === "object" &&
+            "taskSupport" in execution
+              ? execution.taskSupport
+              : undefined;
+          return {
+            name: tool.name,
+            readOnly: tool.annotations?.readOnlyHint === true,
+            destructive:
+              tool.annotations?.readOnlyHint !== true &&
+              tool.annotations?.destructiveHint !== false,
+            argProperties: tool.inputSchema?.properties,
+            hasOutputSchema: tool.outputSchema !== undefined,
+            taskSupport:
+              taskSupport === "required" || taskSupport === "optional"
+                ? taskSupport
+                : undefined,
+          };
+        }),
       ),
     [data],
   );
