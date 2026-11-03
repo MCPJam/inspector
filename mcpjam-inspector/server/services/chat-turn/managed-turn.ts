@@ -426,6 +426,7 @@ export async function handleManagedChatTurn(
                 ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
                 requireNativeToolDiscovery: resolvedExecution.requireNativeToolDiscovery,
                 harnessHostCapabilities,
+                harnessStartupRequestId: hostedBody.harnessStartupRequestId,
               }
             : {}),
           ...(tasksSeam ? { tasks: tasksSeam } : {}),

@@ -391,6 +391,7 @@ export const promptsGetSchema = projectServerSchema.extend({
 
 export const hostedChatSchema = z
   .object({
+    harnessStartupRequestId: z.string().uuid().optional(),
     projectId: z.string().min(1),
     selectedServerIds: z.array(z.string().min(1)),
     selectedServerNames: z.array(z.string().min(1)).optional(),

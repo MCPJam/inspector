@@ -918,6 +918,7 @@ function applyToolRefresh(
 }
 
 export interface MCPJamHandlerOptions {
+  harnessStartupRequestId?: string;
   /** Effective saved App declaration, qualified by the caller's installed handlers. */
   harnessHostCapabilities?: import("@/shared/harness-host-capabilities").HarnessHostCapabilityQualification;
   /** Durable callers must finish this write before the next external effect. */
