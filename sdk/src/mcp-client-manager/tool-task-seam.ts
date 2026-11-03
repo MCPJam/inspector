@@ -67,6 +67,7 @@ export const TASK_SEAM_META_KEY = "com.mcpjam/task" as const;
 export interface ToolTaskSeamMeta {
   taskId: string;
   serverId: string;
+  connectionId?: string;
   wire: "extension";
   status?: string;
   createdAt?: string;
@@ -126,6 +127,10 @@ export interface ToolTaskSeamOptions {
   surface: TaskCreationSurface;
   /** Auth/org context (hosted `projectId`), carried into the task identity. */
   scope?: string;
+  /** Snapshot the actual connection before a task-eligible send. */
+  resolveIdentity?: (
+    serverKey: string
+  ) => Pick<TaskLifecycleIdentity, "serverId" | "connectionId">;
   /**
    * The fan-out. Fired before the result is synthesized and, in `await` mode,
    * before the drive starts.
@@ -222,6 +227,11 @@ export async function runToolTaskSeam(
     return assertCallToolResult(plain, `Tool "${context.toolName}" result`);
   }
 
+  const target = {
+    ...(options.resolveIdentity?.(context.serverId) ?? {
+      serverId: context.serverId,
+    }),
+  };
   const raw = await context.callEligible();
 
   // The server decides. A plain result from a task-eligible call is entirely
@@ -240,7 +250,7 @@ export async function runToolTaskSeam(
 
   const identity: TaskLifecycleIdentity = {
     ...(options.scope !== undefined ? { scope: options.scope } : {}),
-    serverId: context.serverId,
+    ...target,
     wire: "extension",
     taskId: created.taskId,
   };
@@ -248,7 +258,7 @@ export async function runToolTaskSeam(
   const serverText = readServerLegacyText(raw);
   const baseMeta: ToolTaskSeamMeta = {
     taskId: created.taskId,
-    serverId: context.serverId,
+    ...target,
     wire: "extension",
     status: created.status,
     createdAt: created.createdAt,

@@ -22,6 +22,7 @@ vi.mock("../target-discovery", () => ({
 }));
 import { prepareTargetGrounding } from "../target-grounding";
 import { SwarmSetupError } from "../swarm-setup-turn";
+import { logger } from "../../../utils/logger";
 import type { SetupRecord } from "../../../../shared/swarm-grounding";
 const empty: SetupRecord = {
   status: "completed",
@@ -153,6 +154,29 @@ describe("target preparation", () => {
       reason: "invalid_model_report",
     });
     await expect(prepareTargetGrounding(args())).rejects.toThrow();
+  });
+  it("runs a target whose model report was off and logs no model text", async () => {
+    const info = vi.spyOn(logger, "info");
+    mocks.setup.mockResolvedValueOnce({
+      ...empty,
+      reason: "model_reported_missing",
+      missing: [{ kind: "Quarterly deliverable.pdf", why: "not found" }],
+    });
+    await prepareTargetGrounding(args());
+    expect(mocks.probe).toHaveBeenCalledTimes(1);
+    const logged = info.mock.calls.find(
+      ([message]) => message === "[swarm.runner] setup report disregarded",
+    );
+    expect(logged?.[1]).toEqual({
+      projectId: "p",
+      runId: "run",
+      targetId: "env-a",
+      hostId: "h",
+      setupReason: "model_reported_missing",
+      missingCount: 1,
+      unsupportedClaims: 0,
+    });
+    expect(JSON.stringify(logged)).not.toContain("Quarterly");
   });
   it("disposes discovery managers and degrades on probe/report failures", async () => {
     const a = args();

@@ -74,6 +74,26 @@ describe("POST /api/mcp/conformance/protocol", () => {
     expect(body.code).toBe("unsupportedTransport");
   });
 
+  it("rejects a check id the suite does not have", async () => {
+    const app = createTestApp(createMockManager());
+    const protocol = await postJson(app, "/api/mcp/conformance/protocol", {
+      serverId: "test-server",
+      checkIds: ["no-such-check"],
+    });
+    expect(protocol.status).toBe(400);
+    const apps = await postJson(app, "/api/mcp/conformance/apps", {
+      serverId: "test-server",
+      checkIds: ["no-such-check"],
+    });
+    expect(apps.status).toBe(400);
+    const tasks = await postJson(app, "/api/mcp/conformance/tasks", {
+      serverId: "test-server",
+      checkIds: [],
+    });
+    // An empty list is not a run: the client leaves the suite out instead.
+    expect(tasks.status).toBe(400);
+  });
+
   it("rejects an unknown protocolVersion pin", async () => {
     const manager = createMockManager({
       getServerConfig: vi

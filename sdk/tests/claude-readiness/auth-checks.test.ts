@@ -22,6 +22,7 @@ import {
   runClaudeAuthChecks,
   type ClaudeAuthEvidence,
 } from "../../src/claude-readiness/checks/auth.js";
+import { parseChallengeHeader } from "../../src/mcp-client-manager/auth-challenge.js";
 
 const STAMP = { evaluatedAt: "2026-08-19T00:00:00.000Z" };
 const URL_UNDER_TEST = "https://mcp.example.com/mcp";
@@ -306,6 +307,126 @@ describe("insufficient_scope challenges", () => {
         "claude.auth.insufficient-scope-challenge-shape",
       ).status,
     ).toBe("violated");
+  });
+
+  it("is not evaluated — not inapplicable — when nothing elicited one", () => {
+    // No ordinary request produces an insufficient_scope challenge, so having
+    // seen none says nothing about the shape the server would send.
+    const finding = byId(
+      runClaudeAuthChecks(HEALTHY, STAMP),
+      "claude.auth.insufficient-scope-challenge-shape",
+    );
+    expect(finding.status).toBe("not-evaluated");
+    expect(finding.details).toMatchObject({ missingInput: "intrusive" });
+  });
+
+  it("is inapplicable only for an authless server", () => {
+    const finding = byId(
+      runClaudeAuthChecks(
+        {
+          enteredUrl: URL_UNDER_TEST,
+          unauthenticated: {
+            status: 200,
+            representsProtectedOperation: true,
+            servedWithoutCredentials: true,
+          },
+          prm: { discoveredVia: "not-found" },
+        },
+        STAMP,
+      ),
+      "claude.auth.insufficient-scope-challenge-shape",
+    );
+    expect(finding.status).toBe("not-applicable");
+  });
+});
+
+describe("a server that answers anonymously and publishes PRM", () => {
+  const LAZY: ClaudeAuthEvidence = {
+    ...HEALTHY,
+    unauthenticated: {
+      status: 200,
+      representsProtectedOperation: true,
+      servedWithoutCredentials: true,
+    },
+  };
+
+  it("grades its PRM and authorization server instead of calling them inapplicable", () => {
+    const output = runClaudeAuthChecks(LAZY, STAMP);
+    for (const id of [
+      "claude.auth.prm-discoverable",
+      "claude.auth.first-authorization-server-usable",
+      "claude.auth.pkce-s256-advertised",
+    ]) {
+      expect(byId(output, id).status, id).toBe("satisfied");
+    }
+    expect(badge(output, "claude.auth.mode").detail).toBeDefined();
+  });
+
+  it.each(["tool-error", "rpc-error"] as const)("does not grade invalid probe arguments as an auth defect (%s)", (outcome) => {
+    const output = runClaudeAuthChecks({ ...LAZY, lazyAuthProbe: {
+      attempted: true, protocolVersion: "2025-06-18", eraNote: "test",
+      protectedCall: { toolName: "read_order", selectedBy: "named", schemes: { schemes: [], source: "unresolved" }, outcome, invalidArguments: true },
+    } }, STAMP);
+    expect(byId(output, "claude.auth.unauthenticated-challenge").status).toBe("not-evaluated");
+  });
+
+  it("leaves its 401 contract unevaluated until a protected call is driven", () => {
+    const output = runClaudeAuthChecks(LAZY, STAMP);
+    const challenge = byId(output, "claude.auth.unauthenticated-challenge");
+    expect(challenge.status).toBe("not-evaluated");
+    expect(challenge.details).toMatchObject({ missingInput: "lazyAuthProbe" });
+  });
+});
+
+describe("a server whose protected call asks for sign-in but publishes no metadata", () => {
+  // `initialize` is served anonymously, the protected tool answers a 401
+  // Bearer challenge, and its metadata pointer leads nowhere. Claude cannot
+  // sign in, so this is not an authless server.
+  const STRANDED: ClaudeAuthEvidence = {
+    enteredUrl: URL_UNDER_TEST,
+    unauthenticated: {
+      status: 200,
+      representsProtectedOperation: true,
+      servedWithoutCredentials: true,
+    },
+    prm: {
+      discoveredVia: "not-found",
+      fetchError:
+        "the challenge's resource_metadata pointer was refused (it must be an http(s) URL on the target's own origin)",
+      rejectedPointer: "https://elsewhere.example/prm",
+    },
+    lazyAuthProbe: {
+      attempted: true,
+      protocolVersion: "2025-06-18",
+      eraNote: "test",
+      protectedCall: {
+        toolName: "read_order",
+        selectedBy: "named",
+        schemes: { schemes: [], source: "unresolved" },
+        outcome: "unauthorized",
+        status: 401,
+        challenge: parseChallengeHeader(
+          'Bearer resource_metadata="https://elsewhere.example/prm"',
+        ),
+      },
+    },
+  };
+
+  it("reports the missing metadata instead of calling the server authless", () => {
+    const output = runClaudeAuthChecks(STRANDED, STAMP);
+    const prm = byId(output, "claude.auth.prm-discoverable");
+    expect(prm.status).toBe("violated");
+    expect(prm.details).toMatchObject({
+      rejectedPointer: "https://elsewhere.example/prm",
+    });
+    for (const id of [
+      "claude.auth.first-authorization-server-usable",
+      "claude.auth.pkce-s256-advertised",
+      "claude.auth.insufficient-scope-challenge-shape",
+    ]) {
+      expect(byId(output, id).status, id).not.toBe("not-applicable");
+    }
+    expect(badge(output, "claude.auth.mode").detail).not.toMatch(/authless/);
   });
 });
 

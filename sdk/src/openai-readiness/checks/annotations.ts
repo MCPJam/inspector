@@ -369,19 +369,112 @@ export function runOpenAIAnnotationChecks(
   );
 
   // ------------------------------------------------- per-tool security schemes
-  const declared = tools.filter((tool) => tool.securitySchemes !== undefined);
-  findings.push(
-    declared.length > 0
-      ? satisfied(PER_TOOL_SECURITY, stamp, {
-          tools: declared.map((tool) => tool.name),
-        })
-      : informational(
-          PER_TOOL_SECURITY,
-          stamp,
-          { tools: tools.length },
-          "No tool declares its own security scheme. That is correct when every tool needs the same access, and worth revisiting when they do not."
-        )
-  );
+  findings.push(gradeSecuritySchemes(tools, stamp));
 
   return findings;
+}
+
+/**
+ * What is wrong with one tool's `securitySchemes`, or `undefined` when the
+ * declaration has the documented shape.
+ *
+ * THE SHAPE, not mere presence: an array of objects, each with a string
+ * `type`, and every `oauth2` entry carrying `scopes` as an array of strings.
+ * A declaration that is present but malformed is worse than an absent one —
+ * the host cannot read it, and the submitter believes they declared something.
+ */
+export function securitySchemesShapeProblem(value: unknown): string | undefined {
+  if (!Array.isArray(value)) return "is not an array";
+  if (value.length === 0) return "is an empty array";
+  for (const [index, entry] of value.entries()) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      return `entry ${index} is not an object`;
+    }
+    const record = entry as Record<string, unknown>;
+    if (typeof record.type !== "string" || record.type.trim() === "") {
+      return `entry ${index} has no string \`type\``;
+    }
+    if (record.type === "oauth2") {
+      if (
+        !Array.isArray(record.scopes) ||
+        record.scopes.some((scope) => typeof scope !== "string")
+      ) {
+        return `entry ${index} is oauth2 without \`scopes\` as an array of strings`;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Grade the per-tool declarations.
+ *
+ * A TOOL WITH NO DECLARATION INHERITS THE SERVER DEFAULT. OpenAI's own rule is
+ * that "if you omit the array entirely, the tool inherits whatever default the
+ * server advertises", and where that default lives is not something this run
+ * can read. So an undeclared tool is reported as "inherits the server default
+ * (unresolved)" — never as "no OAuth", which would be a claim about a
+ * declaration nobody saw.
+ */
+/**
+ * A tool's own declaration: the top-level field, then `_meta.securitySchemes`.
+ * The same order `resolveToolSecuritySchemes` reads, so a listing a caller
+ * handed over grades the same as one the dial read.
+ */
+function declaredSecuritySchemes(tool: OpenAIToolEvidence): unknown {
+  return tool.securitySchemes ?? tool._meta?.securitySchemes;
+}
+
+function gradeSecuritySchemes(
+  tools: readonly OpenAIToolEvidence[],
+  stamp: OpenAICheckStamp
+): OpenAIReadinessFinding {
+  const declared = tools
+    .filter((tool) => declaredSecuritySchemes(tool) !== undefined)
+    .map((tool) => ({ name: tool.name, value: declaredSecuritySchemes(tool) }));
+  const inheriting = tools
+    .filter((tool) => declaredSecuritySchemes(tool) === undefined)
+    .map((tool) => tool.name);
+
+  if (declared.length === 0) {
+    return informational(
+      PER_TOOL_SECURITY,
+      stamp,
+      { tools: tools.length, inheritsServerDefault: inheriting },
+      "No tool declares securitySchemes, so every tool inherits the server default (unresolved: this run cannot see it). That is fine when every tool needs the same access; declare them per tool when some tools are public and others need sign-in."
+    );
+  }
+
+  const malformed = declared
+    .map((tool) => ({
+      name: tool.name,
+      problem: securitySchemesShapeProblem(tool.value),
+    }))
+    .filter(
+      (entry): entry is { name: string; problem: string } =>
+        entry.problem !== undefined
+    );
+
+  if (malformed.length > 0) {
+    return violated(
+      PER_TOOL_SECURITY,
+      stamp,
+      `Declare securitySchemes as an array of { type } objects, with scopes (an array of strings) on every oauth2 entry; these declarations cannot be read: ${malformed
+        .map((entry) => `${entry.name} (${entry.problem})`)
+        .join("; ")}.`,
+      { malformed, inheritsServerDefault: inheriting }
+    );
+  }
+
+  return satisfied(PER_TOOL_SECURITY, stamp, {
+    tools: declared.map((tool) => ({
+      name: tool.name,
+      schemes: (tool.value as Array<{ type: string }>).map(
+        (scheme) => scheme.type
+      ),
+    })),
+    // Named rather than dropped: a reader should see which tools fall back to
+    // a default nobody here could read.
+    inheritsServerDefault: inheriting,
+  });
 }

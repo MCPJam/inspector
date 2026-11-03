@@ -1,3 +1,6 @@
+import { recordHostedTask } from '../../services/hosted-task-registry.js';
+import { getConvexBearerForDelegation } from '../../utils/v1-convex-token.js';
+import { forwardingExecutionContext } from '../../utils/harness/forwarding/execution-context.js';
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { randomUUID, createHash } from "node:crypto";
@@ -8,6 +11,7 @@ import { createConvexClient } from "../v1/convex-client.js";
 import { unsealHarnessProxyToken } from "../../utils/harness/harness-proxy-policy-seal.js";
 import {
   createExecutionControl,
+  ExecutionControlError,
   forwardingOwnerSchema,
 } from "../../utils/harness/forwarding/execution-control.js";
 import { executeForwardedOperation } from "../../utils/harness/forwarding/execution-gate.js";
@@ -30,6 +34,8 @@ import {
   verifyToolApprovalId,
 } from "../../utils/tool-approval-token.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { forwardingInputHost } from "../../utils/harness/forwarding/owned-input.js";
+import { createForwardingMrtrGate } from "../../utils/harness/forwarding/mrtr-gate.js";
 import {
   enhancedMcpResponse,
   enhancedToolPolicy,
@@ -41,6 +47,7 @@ const contextSchema = z
     turnId: z.string().min(1).max(512),
     policyDigest: z.string().regex(/^[a-f0-9]{64}$/),
     delivery: z.enum(["native", "bridge"]).optional(),
+    correlationKey: z.string().min(1).max(512).optional(),
   })
   .strict();
 const userSchema = z.object({ _id: z.string() });
@@ -85,6 +92,21 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
       raw === undefined
         ? undefined
         : parseNativeMessage(raw, c.req.raw.headers);
+    let waitingForInput = () => {};
+    const input =
+      context.delivery === "bridge"
+        ? await forwardingInputHost({
+            ...caller,
+            serverId,
+            capabilities: sealed.profile?.clientCapabilities,
+            signal: c.req.raw.signal,
+            credential: {
+              externalId: caller.externalId,
+              organizationId: caller.organizationId,
+            },
+            onInput: () => waitingForInput(),
+          })
+        : undefined;
     const authorized = await createAuthorizedManager(
       {
         authMethod: "workos_api_key",
@@ -101,6 +123,7 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
         : undefined,
       {
         lazyConnect: true,
+        ...(input ? { elicitationCallback: input.host.callback } : {}),
         ...(context.delivery === "bridge" && sealed.profile
           ? { initializePins: sealed.profile }
           : {}),
@@ -123,6 +146,7 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
       signal: c.req.raw.signal,
       onError: reportNativeFailure,
       run: async (waiting, signal) => {
+        waitingForInput = waiting;
         try {
           const config = authorized.authorizedServerConfigs?.[serverId];
           if (
@@ -136,6 +160,26 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
           if (context.delivery === "bridge") {
             if (!sealed.profile)
               throw new Error("Enhanced profile is unavailable.");
+            if (input)
+              authorized.manager.setMrtrInputCollector(
+                serverId,
+                input.host.collectMrtrForServer(serverId),
+                {
+                  aroundLeg: createForwardingMrtrGate({
+                    control,
+                    approval: forwardingApproval(
+                      control,
+                      context.owner,
+                      caller.projectId,
+                    ),
+                    policy: sealed.policy,
+                    turnId: caller.turnId,
+                    policyDigest: context.policyDigest,
+                    expiresAt: caller.expiresAt,
+                    signal,
+                  }),
+                },
+              );
             await authorized.manager.connectToServer(serverId, config, {
               signal,
             });
@@ -192,6 +236,18 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
                   respectVisibility:
                     sealed.profile?.respectToolVisibility !== false,
                   settle,
+                  ...(sealed.profile?.taskMode === "expose" ? { tasks: {
+                    mode: "expose" as const, surface: "chat" as const, scope: caller.projectId,
+                    resolveIdentity: () => ({serverId, connectionId: context.owner.connectionId}),
+                    onTaskCreated: async (event) => {
+                      const sourceExecutionId = forwardingExecutionContext.getStore()?.executionId;
+                      if (!sourceExecutionId) throw new Error("Task execution evidence is unavailable");
+                      await recordHostedTask({...event, sourceExecutionId}, {
+                        bearer: await getConvexBearerForDelegation(caller.externalId, caller.organizationId),
+                        projectId: caller.projectId,
+                      });
+                    },
+                  }} : {}),
                   modelOutput: {
                     modelVisibleMcpToolResults:
                       sealed.profile?.modelVisibleMcpToolResults,
@@ -237,7 +293,7 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
             operation: {
               invocationKey: randomUUID(),
               ...(message.method === "tools/call"
-                ? { nativeToolCallId: nativeToolCallId(message.params) }
+                ? { nativeToolCallId: nativeToolCallId(message.params, context.correlationKey) }
                 : {}),
               turnId: caller.turnId,
               policyDigest: context.policyDigest,
@@ -259,6 +315,7 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
             dispatch: (settle) => send(settle),
           });
         } finally {
+          await input?.dispose();
           await authorized.manager.disconnectAllServers();
         }
       },
@@ -277,6 +334,7 @@ function reportNativeFailure(error: unknown) {
     reportRouteFailure(
       "Native MCP forwarding failed",
       new Error(
+        error instanceof ExecutionControlError ? error.code :
         error instanceof Error ? error.name : "Unknown forwarding failure",
       ),
       { source: "web.harness-forwarding", hop: "user_server_hop" },

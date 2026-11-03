@@ -52,6 +52,7 @@ export interface ThreadAppHandle {
   toolTitle: string;
   toolMetadata?: Record<string, unknown>;
   appToolsEnabled: boolean;
+  resourcesEnabled?: boolean;
   contextEnabled?: boolean;
   messageEnabled?: boolean;
   contextSnapshot?: import("@/shared/plugin-model-context").PluginContextSnapshot;
@@ -108,6 +109,10 @@ async function post(
     // An unknown wire outcome is recoverable only through the original receipt.
     response = await authFetch(`/api/web/apps/plugin-instances/${path}`, init);
   }
+  return parseAppResponse(response, signal);
+}
+
+export async function parseAppResponse(response: Response, signal: AbortSignal): Promise<{ response: Response; value: Record<string, unknown> }> {
   signal.throwIfAborted();
   const text = await response.text();
   if (new TextEncoder().encode(text).byteLength > PLUGIN_APP_REPLY_MAX_BYTES)
@@ -204,6 +209,19 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
     };
   }
   return {
+    resource: async (
+      handle: ThreadAppHandle,
+      operation: { method: "resources/read"; uri: string; _meta?: Record<string, unknown> } | { method: "resources/list" | "resources/templates/list"; cursor?: string },
+      signal: AbortSignal,
+    ) => {
+      const response = await authFetch(`/api/web/apps/plugin-instances/${routePrefix}resources`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...owner, instanceToken: handle.instanceToken, operation }), signal,
+      });
+      const { value } = await parseAppResponse(response, signal);
+      accepted(response, value);
+      return value;
+    },
     onboarding: async (
       target: PluginOnboardingTarget,
       content: boolean,

@@ -74,6 +74,8 @@ Environment opt-outs:
 
 `--no-telemetry` overrides environment and persisted state for the current invocation. Disable environment variables override persisted state.
 
+An IT settings file that locks the MCPJam server, or one that is invalid, turns telemetry off whatever these settings say; `mcpjam telemetry status` then reports `managed-settings` as the reason. See [Self-hosted MCPJam](/cli/self-hosted).
+
 ## Debug mode
 
 Set `MCPJAM_TELEMETRY_DEBUG=1` to print the exact sanitized payload to stderr instead of sending it:

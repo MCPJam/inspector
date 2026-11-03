@@ -21,14 +21,18 @@ import {
   type MCPAppsConformanceResult,
   type MCPConformanceConfig,
   type MCPConformanceResult,
+  type MCPCheckId,
+  type MCPReadinessId,
   type MCPServerConfig,
   type McpProtocolVersion,
   type MCPTasksConformanceConfig,
   type MCPTasksConformanceResult,
   type OAuthConformanceConfig,
+  type MCPOAuthReadinessId,
   type OAuthConformanceProfile,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
+import type { ConformanceProbes } from "./conformance-probes.js";
 import {
   createSession,
   getSession,
@@ -135,11 +139,18 @@ export type CompleteOAuthConformanceResult =
 // ── Protocol ────────────────────────────────────────────────────────────
 
 export interface ResolvedHttpConfig {
+  signal?: AbortSignal;
   serverUrl: string;
   accessToken?: string;
   customHeaders?: Record<string, string>;
   /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
   protocolVersion?: McpProtocolVersion;
+  /** Run only these checks; absent ⇒ every check the revision has. */
+  checkIds?: MCPCheckId[];
+  /** Run only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds?: MCPReadinessId[];
+  /** Per-check limit in ms; absent ⇒ the SDK default. */
+  checkTimeout?: number;
 }
 
 export class UnsupportedTransportError extends Error {
@@ -158,13 +169,24 @@ export function assertHttpSupported(
 }
 
 export async function runProtocolConformance(
-  input: ResolvedHttpConfig,
+  input: ResolvedHttpConfig & ConformanceProbes,
 ): Promise<{ result: MCPConformanceResult }> {
   const config: MCPConformanceConfig = {
     serverUrl: input.serverUrl,
+    signal: input.signal,
     accessToken: input.accessToken,
     customHeaders: input.customHeaders,
     protocolVersion: input.protocolVersion,
+    ...(input.checkTimeout ? { checkTimeout: input.checkTimeout } : {}),
+    ...(input.checkIds ? { checkIds: input.checkIds } : {}),
+    ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
+    ...(input.logProbe ? { logProbe: input.logProbe } : {}),
+    ...(input.inputRequiredProbe
+      ? { inputRequiredProbe: input.inputRequiredProbe }
+      : {}),
+    ...(input.toolCallProbe
+      ? { fixtures: { toolCalls: [input.toolCallProbe] } }
+      : {}),
     // Checking the URL the caller named is not the same as checking the
     // addresses we end up dialing: a target can answer `302 Location:
     // http://169.254.169.254/`. This re-checks each hop. A no-op outside hosted
@@ -230,7 +252,7 @@ export async function runLocalDirectoryReadiness(input: {
     publisher: input.publisher,
     target: input.target,
     submissionMode: input.submissionMode,
-    headers: Object.keys(headers).length > 0 ? headers : undefined,
+    mcpHeaders: Object.keys(headers).length > 0 ? headers : undefined,
     fetchFn: createConformanceFetch("MCP server"),
   });
   return { result };
@@ -259,6 +281,8 @@ export interface StartOAuthConformanceInput {
   /** Public callback URL that the authorization server will redirect to. */
   redirectUrl: string;
   oauthProfile?: OAuthConformanceProfile;
+  /** Report only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds?: MCPOAuthReadinessId[];
   /**
    * Hosted only: the caller starting the run (`principalKey`). Only that
    * caller can then deliver its code or read its result. Local runs omit it.
@@ -307,6 +331,7 @@ export async function startOAuthConformance(
     // verifying the server *rejects* bad input is half of OAuth conformance.
     // The runner only reaches them once the happy path passes end to end.
     oauthConformanceChecks: true,
+    ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
     // The OAuth suite dials URLs it DISCOVERS — authorization, token,
     // registration and metadata endpoints all come out of the target's own
     // documents — so the profile URL it was handed is the one address here that

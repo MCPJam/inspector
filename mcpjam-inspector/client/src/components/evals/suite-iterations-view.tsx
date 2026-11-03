@@ -481,6 +481,7 @@ export function SuiteIterationsView({
   availableModels,
   requireOrgKeys = false,
   onManageOrgProviders,
+  onAddProvider,
   route,
   userMap,
   projectId = null,
@@ -580,6 +581,11 @@ export function SuiteIterationsView({
    * while the organization requires its own keys (see `useAvailableModels`).
    */
   onManageOrgProviders?: () => void;
+  /**
+   * The same from a model search with no match, under any key policy, or
+   * `null` when the organization offers this viewer none.
+   */
+  onAddProvider: (() => void) | null;
   route: EvalRoute;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
   projectId?: string | null;
@@ -2213,6 +2219,7 @@ export function SuiteIterationsView({
                   availableModels={availableModels}
                   requireOrgKeys={requireOrgKeys}
                   onManageOrgProviders={onManageOrgProviders}
+                  onAddProvider={onAddProvider}
                   suiteIterations={caseIterations}
                   suiteRuns={runs}
                   // The same opt-in and project gate the decision card beside
@@ -3229,6 +3236,7 @@ export function SuiteIterationsView({
                   availableModels={availableModels}
                   requireOrgKeys={requireOrgKeys}
                   onManageOrgProviders={onManageOrgProviders}
+                  onAddProvider={onAddProvider}
                   rubricEditor={
                     <JudgeInstructionsEditor
                       value={draft.current.judgeRubric}

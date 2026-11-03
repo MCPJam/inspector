@@ -8,6 +8,8 @@ export type {
   ConformanceResult,
   ConformanceStepId,
   OAuthConformanceAuthConfig,
+  MCPOAuthReadinessId,
+  MCPOAuthReadinessWarning,
   OAuthConformanceCheckId,
   OAuthConformanceClientConfig,
   OAuthConformanceConfig,
@@ -19,7 +21,10 @@ export type {
   StepResult,
   VerificationResult,
 } from "./types.js";
-export { CONFORMANCE_CHECK_METADATA } from "./types.js";
+export {
+  CONFORMANCE_CHECK_METADATA,
+  MCP_OAUTH_READINESS_IDS,
+} from "./types.js";
 export { createRemoteBrowserAuthorizationController } from "./auth-strategies/remote-browser.js";
 export type {
   RemoteBrowserAuthorizationCode,

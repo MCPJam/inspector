@@ -96,7 +96,6 @@ export const MCP_CHECK_IDS = [
   // are safe to call. Skips with an explanation when no fixture is supplied.
   "modern-tool-output-schema-conformant",
   "modern-logs-require-log-level",
-  "modern-log-level-filtering",
   "modern-subscription-ack-precedes-notifications",
   "modern-subscription-filter-and-tagging",
   "modern-subscription-graceful-close",
@@ -258,7 +257,6 @@ export const CHECK_ERAS: Record<MCPCheckId, MCPCheckEras> = {
   "modern-resource-read-no-empty-contents": ["modern"],
   "modern-tool-output-schema-conformant": ["modern"],
   "modern-logs-require-log-level": ["modern"],
-  "modern-log-level-filtering": ["modern"],
   "modern-subscription-ack-precedes-notifications": ["modern"],
   "modern-subscription-filter-and-tagging": ["modern"],
   "modern-subscription-graceful-close": ["modern"],
@@ -281,13 +279,41 @@ export interface MCPCheckResult {
   details?: Record<string, unknown>;
 }
 
+/** The spec's `LoggingLevel` values, from least to most severe (syslog order). */
+export const MCP_LOG_LEVELS = [
+  "debug",
+  "info",
+  "notice",
+  "warning",
+  "error",
+  "critical",
+  "alert",
+  "emergency",
+] as const;
+
+export type MCPLogLevel = (typeof MCP_LOG_LEVELS)[number];
+
 export interface MCPConformanceConfig {
+  /** Cancel this run and its active requests. */
+  signal?: AbortSignal;
   serverUrl: string;
   accessToken?: string;
   customHeaders?: Record<string, string>;
   checkTimeout?: number;
   categories?: MCPCheckCategory[];
-  checkIds?: MCPCheckId[];
+  /**
+   * Run only these checks. A retired id ({@link RETIRED_MCP_CHECK_IDS}) runs
+   * the advice that replaced it.
+   */
+  checkIds?: (MCPCheckId | RetiredMCPCheckId)[];
+  /**
+   * Run only these advice probes (the readiness channel). Absent ⇒ every
+   * advice. Unlike `checkIds`, an empty list means NO advice: advice never
+   * decides the verdict, so turning all of it off is a real choice. An advice
+   * left out never sends its probe, so the log level filtering advice, for
+   * one, does not call the `logProbe` tool.
+   */
+  readinessIds?: MCPReadinessId[];
   fetchFn?: typeof fetch;
   clientName?: string;
   /**
@@ -312,22 +338,28 @@ export interface MCPConformanceConfig {
     arguments?: Record<string, unknown>;
   };
   /**
-   * Tool the modern logging checks may call to make the server emit log
-   * records. Supplying it asserts that it produces logs when requested,
-   * including warning-or-higher logs for `modern-log-level-filtering`.
-   * It must be safe to call repeatedly: the checks call it without a level,
-   * with debug, and with warning when both checks are selected.
+   * Tool the modern logging probes may call to make the server emit log
+   * records. Supplying it asserts that it produces logs when requested.
+   * It must be safe to call repeatedly: `modern-logs-require-log-level` calls
+   * it without a level and with debug, and the
+   * `readiness-log-level-filtering` advice calls it once more with `level`.
    * Opt-in for the same reason as
    * {@link MCPConformanceConfig.inputRequiredProbe}: no metadata says which
    * tool logs, and the check must not fire arbitrary side-effecting tools.
    *
-   * Absent ⇒ the checks report could-not-run, except that unrequested logs
-   * observed on an ordinary request still fail the opt-in check. A successful
-   * supplied tool call that produces no requested logs fails rather than skips.
+   * Absent ⇒ the check reports could-not-run, except that unrequested logs
+   * observed on an ordinary request still fail it, and the advice is not
+   * produced. A successful supplied tool call that produces no requested logs
+   * fails the check rather than skipping it.
    */
   logProbe?: {
     toolName: string;
     arguments?: Record<string, unknown>;
+    /**
+     * The level the filtering advice requests: the tool should log at this
+     * level or above. Only the advice reads it. Absent ⇒ `"warning"`.
+     */
+    level?: MCPLogLevel;
   };
   /**
    * Operator-supplied primitives that are SAFE TO EXECUTE, generalizing the
@@ -368,12 +400,15 @@ export interface MCPConformanceFixtures {
 }
 
 export interface NormalizedMCPConformanceConfig {
+  signal?: AbortSignal;
   serverUrl: string;
   accessToken?: string;
   customHeaders?: Record<string, string>;
   checkTimeout: number;
   categories: MCPCheckCategory[];
   checkIds?: MCPCheckId[];
+  /** See {@link MCPConformanceConfig.readinessIds}. Absent ⇒ every advice. */
+  readinessIds?: MCPReadinessId[];
   fetchFn: typeof fetch;
   clientName: string;
   /** Validated protocol pin (see {@link MCPConformanceConfig.protocolVersion}). */
@@ -389,6 +424,7 @@ export interface NormalizedMCPConformanceConfig {
   logProbe?: {
     toolName: string;
     arguments?: Record<string, unknown>;
+    level?: MCPLogLevel;
   };
   /**
    * See {@link MCPConformanceConfig.fixtures}. Always present after
@@ -415,15 +451,7 @@ export interface MCPServerSurfaceSnapshot {
 /** Readiness advice ids (Phase 7 §15.4). Never part of the pass/fail verdict. */
 export const MCP_READINESS_IDS = [
   "readiness-tool-order-deterministic",
-  "readiness-metadata-quality",
   "readiness-deprecated-feature-use",
-  "readiness-cache-ttl-useful",
-  "readiness-oauth-iss-advertised",
-  // No revision maps an unparseable POST body to any HTTP status or JSON-RPC
-  // error — the transports docs are silent — so answering garbage with a
-  // success status is ADVICE (JSON-RPC 2.0 names -32700 for it), never a
-  // violation.
-  "readiness-parse-error-handling",
   // Explicit session termination is SHOULD (client-side) / MAY (server-side)
   // on the 2025 revisions, and 405-on-GET/DELETE is the 2026 revision's
   // backward-compat SHOULD; neither can fail a run.
@@ -434,13 +462,45 @@ export const MCP_READINESS_IDS = [
   // the header as protocol version 2025-03-26". Tolerating the omission is
   // therefore spec-legal, so it can only be advice.
   "readiness-protocol-version-header-required",
-  // SEP-2164 shows `error.data.uri` echoing the requested resource in its
-  // example, but never states it as a MUST or a SHOULD. An example-only
-  // convention is MAY strength, and advice is the only honest home for it.
-  "readiness-resource-error-echoes-uri",
+  // The core "Tool Names" rules (1–128 characters, a fixed character set,
+  // unique within a server) are SHOULDs from 2025-11-25 on. Informational
+  // until advice has a grading rubric.
+  "readiness-tool-name-conventions",
+  // The 2026-07-28 logging page says a server "MAY send" log notifications at
+  // or above the requested level. Sending none is allowed, and lower-level logs
+  // are only outside that MAY, so this is informational advice for the
+  // operator who supplied a logging tool, never a violation.
+  "readiness-log-level-filtering",
 ] as const;
 
 export type MCPReadinessId = (typeof MCP_READINESS_IDS)[number];
+
+/**
+ * Check ids an older SDK accepted that are no longer checks, each with the
+ * advice that runs the same test now. Kept so configs and `--check-id` values
+ * written for that SDK still run instead of failing as unknown.
+ */
+export const RETIRED_MCP_CHECK_IDS = {
+  "modern-log-level-filtering": "readiness-log-level-filtering",
+} as const satisfies Record<string, MCPReadinessId>;
+
+export type RetiredMCPCheckId = keyof typeof RETIRED_MCP_CHECK_IDS;
+
+/**
+ * The eras each advice can show up in, so a UI lists only the advice a pinned
+ * run can produce. Mirrors the era guards in `readiness.ts`: an advice listed
+ * for an era may still find nothing to say there (its probe decides).
+ */
+export const READINESS_ERAS: Record<MCPReadinessId, MCPCheckEras> = {
+  "readiness-tool-order-deterministic": ["legacy", "modern"],
+  // Modern: removed capabilities. Legacy: a revision older than 2025-11-25.
+  "readiness-deprecated-feature-use": ["legacy", "modern"],
+  "readiness-session-termination": ["legacy", "modern"],
+  "readiness-protocol-version-header-required": ["modern"],
+  // Legacy: only when the server negotiates 2025-11-25.
+  "readiness-tool-name-conventions": ["legacy", "modern"],
+  "readiness-log-level-filtering": ["modern"],
+};
 
 /**
  * How strongly the spec states the advice. Everything on the readiness channel
@@ -458,16 +518,15 @@ export interface MCPReadinessWarning {
   message: string;
   details?: Record<string, unknown>;
   /**
-   * Report this observation without deducting from the score.
+   * Report this observation without listing it as score advice.
    *
-   * The readiness channel normally costs points, because a SHOULD a server
-   * ignores is a real (if non-fatal) shortfall. Some observations are not that:
-   * the behavior they describe is either EXPLICITLY PERMITTED by the spec (a
-   * MAY the server is entitled to take) or rests on a non-normative example.
-   * Deducting for those invents a requirement — the same over-strictness this
-   * program exists to remove, moved from the verdict onto the number.
+   * Readiness warnings are normally listed as advisories beside the score,
+   * because a SHOULD a server ignores is a real (if non-fatal) shortfall. Some
+   * observations are not that: the behavior they describe is either EXPLICITLY
+   * PERMITTED by the spec (a MAY the server is entitled to take) or rests on a
+   * non-normative example. Advice is worth 0 points either way.
    *
-   * Absent ⇒ scored, so every existing warning keeps its deduction.
+   * Absent ⇒ listed, so every existing warning stays an advisory.
    */
   informational?: boolean;
 }
