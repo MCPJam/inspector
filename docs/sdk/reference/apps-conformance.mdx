@@ -158,6 +158,7 @@ Available checks:
 | `durationMs` | `number` | Total duration |
 | `categorySummary` | `Record<"tools" \| "resources", ...>` | Per-category `total`, `passed`, `failed`, `skipped`, and `couldNotRun` counts |
 | `discovery` | object | Counts for tools and UI resources discovered during the run |
+| `readiness` | `MCPAppsReadinessWarning[] \| undefined` | Advice beside the verdict, absent when there is none. Each item has an `id` from `MCP_APPS_READINESS_IDS`, the `checkId` that produced it, a `title`, a `specStrength` and a `message`. It never changes `outcome` or `passed`. |
 
 Each `MCPAppsCheckResult` includes:
 
@@ -220,7 +221,7 @@ The current runner checks:
 ## Notes
 
 - The runner always advertises the MCP Apps UI extension capability so servers do not hide their MCP Apps surface when custom `clientCapabilities` are supplied.
-- Deprecated `_meta["ui/resourceUri"]` is accepted but surfaced as a warning.
+- Deprecated `_meta["ui/resourceUri"]` is accepted. Tools that still use it are reported in `readiness` as one `apps-readiness-deprecated-resource-uri` item with `specStrength: "Deprecation Notice"` (the spec marks the field deprecated and due for removal before GA, with no SHOULD or MAY). It is informational and costs no points.
 - Tool name conventions (length, character set, uniqueness) are core MCP rules, so this suite does not check them. The protocol suite reports them on every tool as the advice item `readiness-tool-name-conventions`, on protocol 2025-11-25 and later.
 - HTML validation is intentionally lightweight. It verifies the expected MIME type and document-style HTML payload, not the full browser lifecycle.
 - For a runnable project that writes JUnit XML from Vitest, see [`examples/conformance/basic/`](https://github.com/MCPJam/inspector/tree/main/examples/conformance/basic).
