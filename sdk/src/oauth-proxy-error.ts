@@ -94,8 +94,14 @@ const UNREACHABLE_TARGET_CODES: ReadonlySet<string> = new Set([
   "ETIMEDOUT",
 ]);
 
-/** Keeps the advice inside the debugger's 300-character reason. */
 const MAX_LISTED_ATTEMPTS = 3;
+
+/**
+ * The debugger keeps the first 300 characters of a proxy's reason
+ * (`MAX_PROXY_ERROR_CHARS` in the inspector's debug-state-machine-adapter), so
+ * Node's detail gets only what the sentence, the advice and the hint leave.
+ */
+const MAX_REASON_CHARS = 300;
 
 /**
  * A connection to the server under test that failed before any response, as
@@ -126,9 +132,12 @@ export function unreachableTargetFailure(
       .slice(0, MAX_LISTED_ATTEMPTS)
       .map((attempt) => attempt.message)
       .join("; ");
+  const head = `${UNREACHABLE_TARGET_FAILURE}: `;
+  const tail = `. ${UNREACHABLE_TARGET_ADVICE}${hint ? ` ${hint}` : ""}`;
+  const room = Math.max(MAX_REASON_CHARS - head.length - tail.length, 1);
   return new OAuthProxyError(
     timedOut ? 504 : 502,
-    `${UNREACHABLE_TARGET_FAILURE}: ${detail}. ${UNREACHABLE_TARGET_ADVICE}${hint ? ` ${hint}` : ""}`,
+    `${head}${detail.length > room ? `${detail.slice(0, room - 1)}…` : detail}${tail}`,
     { cause: error }
   );
 }

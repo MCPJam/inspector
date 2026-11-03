@@ -135,6 +135,28 @@ describe("unreachableTargetFailure", () => {
       expect(message).not.toContain("192.0.2.4:443");
       expect(message?.endsWith(ADVICE)).toBe(true);
     });
+
+    // The debugger keeps the first 300 characters of the proxy's reason
+    // (`MAX_PROXY_ERROR_CHARS` in debug-state-machine-adapter.ts).
+    it("shortens long addresses so the advice and the hint fit in 300 characters", () => {
+      const hint =
+        "From Docker, use host.docker.internal instead of localhost or 127.0.0.1.";
+      const attempts = [4, 5, 6].map((n) =>
+        nodeError(
+          "ECONNREFUSED",
+          `connect ECONNREFUSED 2001:0db8:85a3:0000:0000:8a2e:0370:733${n}:44377`
+        )
+      );
+      const message = unreachableTargetFailure(
+        attemptsError(attempts),
+        hint
+      )?.message;
+
+      expect(message?.length).toBeLessThanOrEqual(300);
+      expect(message).toContain("connect ECONNREFUSED 2001:0db8:85a3");
+      expect(message).toContain("…");
+      expect(message?.endsWith(`${ADVICE} ${hint}`)).toBe(true);
+    });
   });
 
   it.each([
