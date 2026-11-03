@@ -148,9 +148,7 @@ export function tasksProbeRuns(checkIds?: readonly string[]): boolean {
  * only then.
  */
 export function probesApply(pin: ProtocolVersionPin): boolean {
-  return PROBE_KEYS.some(
-    (key) => isProtocolProbe(key) && probeRuns(key, pin),
-  );
+  return PROBE_KEYS.some((key) => isProtocolProbe(key) && probeRuns(key, pin));
 }
 
 /**
@@ -209,9 +207,10 @@ export function protocolRunOptions(
 }
 
 /**
- * What a Tasks run sends for the picked checks and advice: those lists, and
- * the tool that creates the task (its arguments and input answers) only when
- * a picked check calls it.
+ * What a Tasks run sends for the picked checks and advice: those lists, the
+ * tool that creates the task (and its arguments) only when a picked check
+ * calls it, and the input answers only when the update acknowledgement check
+ * runs: the SDK submits them through `tasks/update` for any task that asks.
  */
 export function tasksRunOptions(
   probes: ConformanceProbes,
@@ -220,6 +219,8 @@ export function tasksRunOptions(
   const checkIds = picked?.tasks;
   const readinessIds = picked?.tasksAdvice;
   const probe = tasksProbeRuns(checkIds) ? probes.tasksProbe : undefined;
+  const sendsAnswers =
+    checkIds === undefined || checkIds.includes(TASK_ANSWERS_CHECK);
   return {
     ...(checkIds ? { checkIds } : {}),
     ...(readinessIds ? { readinessIds } : {}),
@@ -227,7 +228,7 @@ export function tasksRunOptions(
       ? {
           toolName: probe.toolName,
           ...(probe.arguments ? { toolArguments: probe.arguments } : {}),
-          ...(probe.inputResponses
+          ...(probe.inputResponses && sendsAnswers
             ? { inputResponses: probe.inputResponses }
             : {}),
         }

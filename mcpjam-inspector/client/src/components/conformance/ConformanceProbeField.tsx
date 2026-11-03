@@ -7,7 +7,14 @@
  * modify data) and never picks for the operator, for the same reason the SDK
  * does not: nothing a server advertises says a tool is safe to call.
  */
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import {
@@ -52,7 +59,7 @@ const PROBE_COPY: Record<
   },
   tasksProbe: {
     label: "Tool that creates a task",
-    hint: "Called a few times, to create the task these checks inspect.",
+    hint: "Called up to 2 times, to create the task these checks inspect.",
     unsetHint:
       "Without a tool, these checks could not run on a server that uses the Tasks extension.",
   },
@@ -219,7 +226,9 @@ function TaskAnswersField({
         id={id}
         value={text}
         onChange={(event) => change(event.target.value)}
-        placeholder={'{ "confirm": { "action": "accept", "content": { "ok": true } } }'}
+        placeholder={
+          '{ "confirm": { "action": "accept", "content": { "ok": true } } }'
+        }
         className="min-h-20 font-mono text-xs"
         aria-invalid={error !== null}
       />

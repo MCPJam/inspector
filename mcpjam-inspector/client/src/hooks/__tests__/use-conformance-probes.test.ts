@@ -1,5 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
+import { MCP_TASKS_CHECK_IDS } from "@mcpjam/sdk/browser";
 import {
   probeKeyFor,
   probesAfterRun,
@@ -91,7 +92,12 @@ describe("probesAfterRun", () => {
     const other = { toolName: "other-job" };
     // Tasks left out: the saved tool stays, the draft's is not saved.
     expect(
-      probesAfterRun({ tasksProbe }, { tasksProbe: other }, { tasks: [] }, "auto"),
+      probesAfterRun(
+        { tasksProbe },
+        { tasksProbe: other },
+        { tasks: [] },
+        "auto",
+      ),
     ).toEqual({ tasksProbe });
     // Tasks ran: the draft's tool is saved.
     expect(
@@ -172,6 +178,48 @@ describe("Tasks probe", () => {
     expect(probeKeyFor("tasks-wire-resolvable")).toBeUndefined();
     expect(tasksProbeRuns(undefined)).toBe(true);
     expect(tasksProbeRuns(["tasks-wire-resolvable"])).toBe(false);
+  });
+
+  it("classifies every Tasks check as calling the tool or not", () => {
+    // Mirrors the SDK runner. A new check fails here until it is placed.
+    const callsTool = [
+      "tasks-result-type-discipline",
+      "tasks-undeclared-creation-refused",
+      "tasks-undeclared-capability-rejected",
+      "tasks-ttl-shape",
+      "tasks-inline-result",
+      "tasks-mcp-name-routing",
+      "tasks-status-payload-shape",
+      "tasks-cancel-ack-shape",
+      "tasks-update-ack-shape",
+      "tasks-ttl-integer-shape",
+      "tasks-undeclared-capability-names-requirements",
+    ];
+    // Read the negotiated wire and declarations, or probe an unknown task id.
+    const noTool = [
+      "tasks-wire-resolvable",
+      "tasks-declaration-hygiene",
+      "tasks-invalid-task-id-rejected",
+    ];
+    expect([...callsTool, ...noTool].sort()).toEqual(
+      [...MCP_TASKS_CHECK_IDS].sort(),
+    );
+    for (const id of callsTool) expect(probeKeyFor(id)).toBe("tasksProbe");
+    for (const id of noTool) expect(probeKeyFor(id)).toBeUndefined();
+  });
+
+  it("sends the answers only when the update acknowledgement check runs", () => {
+    expect(
+      tasksRunOptions({ tasksProbe }, { tasks: ["tasks-cancel-ack-shape"] }),
+    ).toEqual({
+      checkIds: ["tasks-cancel-ack-shape"],
+      toolName: "long-job",
+      toolArguments: { seconds: 2 },
+    });
+    expect(
+      tasksRunOptions({ tasksProbe }, { tasks: ["tasks-update-ack-shape"] })
+        .inputResponses,
+    ).toEqual({ confirm: { action: "accept" } });
   });
 
   it("stays out of the protocol run", () => {
