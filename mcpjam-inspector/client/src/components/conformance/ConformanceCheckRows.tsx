@@ -58,12 +58,10 @@ function formatDetailValue(value: unknown) {
 }
 
 /**
- * A check's message, once, as a box under its title. The page used to print
- * it twice — bold red text on the row, and the same text again in a box when
- * expanded — and boxed every message in red, so "not applicable to this era"
- * read as an error. Red now means a failure that counts; anything else (a
- * skip reason, an unscored check's finding) is the neutral box. Clamped while
- * the row is shut, in full once it is open.
+ * The shut-row preview gives failures context without opening the row. The
+ * full message stays mounted inside Collapse so it slides with the explanation
+ * and details; only one message is visible at a time. Red means a failure that
+ * counts; skip reasons and unscored findings use the neutral box.
  *
  * A shut row shows the box only when it says something to act on: a failure,
  * or why a check that applies could not run. A not-applicable reason waits
@@ -222,13 +220,13 @@ export function CheckRow({
             {check.title}
           </span>
           {check.error &&
-          (expanded || showsMessageShut(check.status, check.skipReason)) ? (
+          !expanded && showsMessageShut(check.status, check.skipReason) ? (
             <ResultMessage
               message={check.error.message}
               tone={
                 check.status === "failed" && !pending ? "error" : "neutral"
               }
-              expanded={expanded}
+              expanded={false}
             />
           ) : null}
         </span>
@@ -245,6 +243,15 @@ export function CheckRow({
           <div className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
             {check.description}
           </div>
+          {check.error && (
+            <ResultMessage
+              message={check.error.message}
+              tone={
+                check.status === "failed" && !pending ? "error" : "neutral"
+              }
+              expanded
+            />
+          )}
 
           {detailEntries.length > 0 && (
             <div className="rounded-sm bg-muted/20 px-2 py-1.5 space-y-1">
@@ -310,12 +317,12 @@ export function OAuthStepRow({
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="text-sm">{step.title}</span>
           {step.error &&
-          (expanded || showsMessageShut(step.status, step.skipReason)) ? (
+          !expanded && showsMessageShut(step.status, step.skipReason) ? (
             <ResultMessage
               message={step.error.message}
               // An unscored failure is reported, not counted: grey, as in CheckRow.
               tone={step.status === "failed" && !pending ? "error" : "neutral"}
-              expanded={expanded}
+              expanded={false}
             />
           ) : null}
         </span>
@@ -331,6 +338,13 @@ export function OAuthStepRow({
           <div className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
             {step.summary}
           </div>
+          {step.error && (
+            <ResultMessage
+              message={step.error.message}
+              tone={step.status === "failed" && !pending ? "error" : "neutral"}
+              expanded
+            />
+          )}
 
           {typeof step.error?.details === "string" && (
             <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-sm text-muted-foreground">
