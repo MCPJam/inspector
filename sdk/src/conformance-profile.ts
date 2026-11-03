@@ -181,7 +181,8 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
  * v2026-11-01.2 → v2026-11-02.1 keeps the same checks but tightens two, each
  * of which used to pass with a warning:
  *   - `tasks-undeclared-creation-refused` fails a refusal with any code other
- *     than `-32021`, which tasks.md:63 states as a MUST.
+ *     than `-32021`, or a `-32021` that does not name the tasks extension;
+ *     tasks.md:63 states both as a MUST.
  *   - `tasks-undeclared-capability-names-requirements` fails a `-32021` whose
  *     `requiredCapabilities` does not name the tasks extension; the core spec
  *     requires it to list the missing capabilities (basic/index.mdx, a MUST).

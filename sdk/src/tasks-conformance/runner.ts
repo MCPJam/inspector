@@ -188,6 +188,19 @@ function readRequiredCapabilities(error: unknown): unknown {
 }
 
 /**
+ * Whether a `-32021`'s `requiredCapabilities` names the tasks extension. The
+ * core spec requires it to list the missing capabilities (a MUST), and for a
+ * non-declaring tasks request the missing one is this extension.
+ */
+function namesTasksExtension(requiredCapabilities: unknown): boolean {
+  return (
+    isRecord(requiredCapabilities) &&
+    isRecord(requiredCapabilities.extensions) &&
+    MCP_TASKS_EXTENSION_ID in requiredCapabilities.extensions
+  );
+}
+
+/**
  * True for the client's local refusal of a response the server DID send — a
  * frame that fails the JSON-RPC schema, or an extension result that is not an
  * object. Matched by name as well, since the transport's zod may be a separate
@@ -1625,6 +1638,25 @@ export class MCPTasksConformanceTest {
                     }
                   )
                 );
+              } else if (
+                creation.outcome === "refused" &&
+                !namesTasksExtension(creation.requiredCapabilities)
+              ) {
+                // tasks.md:63 — the `-32021` is returned "indicating the
+                // required extension in the error response".
+                checks.push(
+                  failed(
+                    "tasks-undeclared-creation-refused",
+                    stepDurationMs,
+                    `the undeclared tools/call was rejected with -32021, but its error.data.requiredCapabilities does not name ${MCP_TASKS_EXTENSION_ID} under \`extensions\`; the refusal must indicate the required extension (tasks.md:63)`,
+                    {
+                      tool: probeTool.name,
+                      outcome: creation.outcome,
+                      undeclaredCreationCode: creation.code,
+                      requiredCapabilities: creation.requiredCapabilities,
+                    }
+                  )
+                );
               } else {
                 checks.push(
                   passed("tasks-undeclared-creation-refused", stepDurationMs, {
@@ -2333,28 +2365,26 @@ export class MCPTasksConformanceTest {
               // lists the missing capabilities" (basic/index.mdx, a MUST). The
               // missing capability here IS the tasks extension, so an object
               // that does not name it under `extensions` breaks that MUST too.
-              const unspecific = rejections.filter((probe) => {
-                const capabilities = probe.requiredCapabilities;
-                if (!isRecord(capabilities)) return false;
-                const extensions = capabilities.extensions;
-                return (
-                  !isRecord(extensions) ||
-                  !(MCP_TASKS_EXTENSION_ID in extensions)
-                );
-              });
+              const unspecific = rejections.filter(
+                (probe) =>
+                  isRecord(probe.requiredCapabilities) &&
+                  !namesTasksExtension(probe.requiredCapabilities)
+              );
+              const unnamedMethods = unnamed
+                .map((probe) => probe.method)
+                .join(", ");
+              const unspecificMethods = unspecific
+                .map((probe) => probe.method)
+                .join(", ");
               const problems = [
                 ...(unnamed.length > 0
                   ? [
-                      `${unnamed.length} -32021 rejection(s) carried no error.data.requiredCapabilities OBJECT: ${unnamed
-                        .map((probe) => probe.method)
-                        .join(", ")}. The core schema types it as ClientCapabilities and requires it; a client told it is missing a capability, but not which one, cannot act on the error`,
+                      `${unnamed.length} -32021 rejection(s) carried no error.data.requiredCapabilities OBJECT: ${unnamedMethods}. The core schema types it as ClientCapabilities and requires it; a client told it is missing a capability, but not which one, cannot act on the error`,
                     ]
                   : []),
                 ...(unspecific.length > 0
                   ? [
-                      `${unspecific.length} -32021 rejection(s) carry a requiredCapabilities object that does not name ${MCP_TASKS_EXTENSION_ID} under \`extensions\`: ${unspecific
-                        .map((probe) => probe.method)
-                        .join(", ")}. The core spec requires it to list the missing capabilities, and the missing one is the tasks extension`,
+                      `${unspecific.length} -32021 rejection(s) carry a requiredCapabilities object that does not name ${MCP_TASKS_EXTENSION_ID} under \`extensions\`: ${unspecificMethods}. The core spec requires it to list the missing capabilities, and the missing one is the tasks extension`,
                     ]
                   : []),
               ];
@@ -2600,8 +2630,9 @@ export class MCPTasksConformanceTest {
    *
    *   - `created`  — a `CreateTaskResult` came back: the violation.
    *   - `answered` — a normal tool result: conformant.
-   *   - `refused`  — a JSON-RPC error response. Conformant only with `-32021`,
-   *     the refusal tasks.md:63 requires; any other code fails the check.
+   *   - `refused`  — a JSON-RPC error response. Conformant only with `-32021`
+   *     whose `requiredCapabilities` names the tasks extension, the refusal
+   *     tasks.md:63 requires; anything else fails the check.
    *   - `errored`  — no JSON-RPC response exists at all. Same v2 discriminator
    *     as {@link runUndeclaredProbe}: `ProtocolError` carries a NUMERIC code
    *     and is minted only from a server error response, while local and
@@ -2623,7 +2654,12 @@ export class MCPTasksConformanceTest {
   ): Promise<
     | { outcome: "created"; taskId: string; discriminated: boolean }
     | { outcome: "answered" }
-    | { outcome: "refused"; code: number; message: string }
+    | {
+        outcome: "refused";
+        code: number;
+        message: string;
+        requiredCapabilities: unknown;
+      }
     | { outcome: "errored"; message: string }
   > {
     const receivedBefore = received.length;
@@ -2658,7 +2694,12 @@ export class MCPTasksConformanceTest {
       const message = errorMessage(error);
       return code === undefined
         ? { outcome: "errored", message }
-        : { outcome: "refused", code, message };
+        : {
+            outcome: "refused",
+            code,
+            message,
+            requiredCapabilities: readRequiredCapabilities(error),
+          };
     }
   }
 

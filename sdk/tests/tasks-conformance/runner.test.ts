@@ -854,6 +854,59 @@ describe("MCPTasksConformanceTest", () => {
     expect(check?.error?.message).toContain("corrected to -32021");
   });
 
+  it("fails a -32021 creation refusal that does not name the extension", async () => {
+    const manager = extensionManager({
+      executeTool: async (
+        _serverId: string,
+        _toolName: string,
+        _args: unknown,
+        options?: { allowTaskResult?: boolean }
+      ) => {
+        if (options?.allowTaskResult)
+          return { resultType: "task", taskId: "task-1" };
+        throw Object.assign(new Error("nope"), {
+          code: -32021,
+          data: { requiredCapabilities: { elicitation: {} } },
+        });
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    const check = result.checks.find(
+      (c) => c.id === "tasks-undeclared-creation-refused"
+    );
+    // tasks.md:63 — the -32021 must indicate the required extension.
+    expect(check?.status).toBe("failed");
+    expect(check?.error?.message).toContain("does not name");
+  });
+
+  it("passes a -32021 creation refusal that names the extension", async () => {
+    const manager = extensionManager({
+      executeTool: async (
+        _serverId: string,
+        _toolName: string,
+        _args: unknown,
+        options?: { allowTaskResult?: boolean }
+      ) => {
+        if (options?.allowTaskResult)
+          return { resultType: "task", taskId: "task-1" };
+        throw missingCapabilityError();
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    const check = result.checks.find(
+      (c) => c.id === "tasks-undeclared-creation-refused"
+    );
+    expect([check?.status, check?.warnings]).toEqual(["passed", undefined]);
+  });
+
   it("flags a server advertising the extension on 2025-11-25 without failing", async () => {
     const manager = extensionManager({
       getNegotiatedProtocolVersion: () => "2025-11-25",
