@@ -484,8 +484,7 @@ export interface ShapeVerdict {
  * Validates a `CreateTaskResult`-shaped payload (flat, `resultType: "task"`).
  *
  * Extra fields the spec does not define (e.g. a redundant nested `task`
- * object) are WARNINGS, not violations — the spec does not forbid additional
- * fields, so an otherwise-valid result must not fail conformance for them.
+ * object) are not judged: the spec does not forbid additional fields.
  *
  * `resultType` is REQUIRED here, present or absent (tasks.md:102): "Servers
  * MUST set `resultType` to `"task"` when returning a `CreateTaskResult` so
@@ -524,18 +523,13 @@ export function validateCreateTaskShape(result: unknown): ShapeVerdict {
       "task creation result must carry a server-generated taskId"
     );
   }
-  if (isRecord(result.task)) {
-    warnings.push(
-      "extension task creation result carries a redundant nested `task` object; the spec defines the flat top-level fields only (extra fields are allowed, so this is not a failure)"
-    );
-  }
   return { violations, warnings };
 }
 
 /**
  * Validates the era-native TTL / poll-interval shapes on a task payload.
- * Wrong types on the era-native fields are violations; the mere PRESENCE of
- * the other era's field is a warning (extra fields are not forbidden).
+ * Wrong types on the era-native fields are violations. The other era's field
+ * is not judged: extra fields are allowed and no spec rule covers it.
  */
 export function validateTaskTtlShape(
   wire: TasksWire,
@@ -562,11 +556,6 @@ export function validateTaskTtlShape(
     ) {
       violations.push("extension task pollIntervalMs must be a number");
     }
-    if (task.ttl !== undefined) {
-      warnings.push(
-        "extension task also carries a legacy `ttl` field; clients read `ttlMs` (extra fields are allowed, so this is not a failure)"
-      );
-    }
   } else {
     if (task.ttl !== undefined && typeof task.ttl !== "number") {
       violations.push("legacy task ttl must be a number when present");
@@ -576,11 +565,6 @@ export function validateTaskTtlShape(
       typeof task.pollInterval !== "number"
     ) {
       violations.push("legacy task pollInterval must be a number");
-    }
-    if (task.ttlMs !== undefined) {
-      warnings.push(
-        "legacy task also carries an extension `ttlMs` field; clients read `ttl` (extra fields are allowed, so this is not a failure)"
-      );
     }
   }
 
@@ -800,9 +784,7 @@ export function failedTaskLacksStatusMessage(task: unknown): boolean {
  * the era-native FIELD, and widening it would re-grade servers already judged
  * by it.
  *
- * A NEGATIVE `ttlMs` warns rather than fails: the spec never states a lower
- * bound, and `null` (not a negative number) is how it spells "unlimited", so a
- * negative value is nonsensical without being forbidden.
+ * A negative value is not judged: the spec states no lower bound.
  */
 export function validateTaskTtlIntegerShape(
   wire: TasksWire,
@@ -827,12 +809,8 @@ export function validateTaskTtlIntegerShape(
 
   for (const [name, value] of fields) {
     if (value === undefined || value === null) continue;
-    if (typeof value !== "number") {
-      // The era-native TYPE is the other check's subject; here a non-number is
-      // reported for completeness rather than double-counted as a new defect.
-      warnings.push(`${name} is not a number, so its integer shape was not judged`);
-      continue;
-    }
+    // The era-native TYPE is `tasks-ttl-shape`'s subject, not this check's.
+    if (typeof value !== "number") continue;
     if (!Number.isInteger(value)) {
       violations.push(`${name} is ${value}, which is not an integer`);
       continue;
@@ -844,11 +822,6 @@ export function validateTaskTtlIntegerShape(
         `${name} is ${value}, which is outside the schema's integer range`
       );
       continue;
-    }
-    if (value < 0) {
-      warnings.push(
-        `${name} is ${value}; the extension states no lower bound, but it spells "unlimited" as null rather than as a negative number`
-      );
     }
   }
 
@@ -1387,33 +1360,18 @@ export class MCPTasksConformanceTest {
           const wire = support.wire;
           const protocolVersion =
             manager.getNegotiatedProtocolVersion(serverId);
-          const capabilities = manager.getServerCapabilities(serverId);
 
           if (selected.has("tasks-wire-resolvable")) {
             const stepStartedAt = Date.now();
-            const warnings: string[] = [];
-            const extensions = (capabilities as { extensions?: unknown })
-              ?.extensions;
-            const advertisesExtension =
-              isRecord(extensions) && MCP_TASKS_EXTENSION_ID in extensions;
-
-            if (advertisesExtension && protocolVersion === "2025-11-25") {
-              // A reminder, not a violation: nothing forbids listing the
-              // extension on 2025-11-25. SEP-2663 forbids USING it there, so
-              // the only tasks wire is the in-core 2025-11-25 one.
-              warnings.push(
-                `Listing ${MCP_TASKS_EXTENSION_ID} on 2025-11-25 is allowed, but tasks on this connection must use the 2025-11-25 tasks capability, not the extension (SEP-2663).`
-              );
-            }
-
+            // Listing the extension on 2025-11-25 is not judged: nothing
+            // forbids it, and SEP-2663 only forbids USING it there.
             checks.push(
               protocolVersion
-                ? passed(
-                    "tasks-wire-resolvable",
-                    Date.now() - stepStartedAt,
-                    { protocolVersion, wire, support },
-                    warnings
-                  )
+                ? passed("tasks-wire-resolvable", Date.now() - stepStartedAt, {
+                    protocolVersion,
+                    wire,
+                    support,
+                  })
                 : failed(
                     "tasks-wire-resolvable",
                     Date.now() - stepStartedAt,
@@ -2953,13 +2911,11 @@ export class MCPTasksConformanceTest {
       }
       // A server that has already finished and forgotten the task answers the
       // unknown-id error, which is a legitimate outcome for a probe that runs
-      // after the task reached a terminal status. Reported, not failed.
+      // after the task reached a terminal status. Not judged.
       if (code === INVALID_PARAMS) {
         return {
           problems: [],
-          warnings: [
-            `tasks/cancel for the already-terminal task ${taskId} was answered with -32602; the server no longer knows the task, which the extension permits`,
-          ],
+          warnings: [],
           detail: { taskId, cancelCode: code },
         };
       }
