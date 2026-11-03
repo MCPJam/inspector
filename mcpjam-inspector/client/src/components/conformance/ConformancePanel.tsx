@@ -3,7 +3,8 @@ import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { DirectoryReadinessSection } from "@/components/conformance/directory-readiness/DirectoryReadinessSection";
 import { OAuthPopupBlockedDialog } from "@/components/conformance/OAuthPopupBlockedDialog";
-import { Loader2, AlertTriangle, Info, Settings, Share2 } from "lucide-react";
+import { Loader2, AlertTriangle, Settings, Share2 } from "lucide-react";
+import { UncheckedAdvice } from "@/components/conformance/UncheckedAdvice";
 import type { ServerWithName } from "@/hooks/use-app-state";
 // Import from the browser-safe SDK entry — the top-level `@mcpjam/sdk` pulls
 // Node-only transitive deps (MCP client SDK uses `node:stream`, etc.) which
@@ -96,31 +97,6 @@ function ReadinessAdvice({
               </span>
             </span>
             <span className="text-muted-foreground">{warning.message}</span>
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/**
- * Picked advice the run could not judge, and why. Grey, not amber: nothing
- * was found wrong, the run just saw nothing the advice applies to.
- */
-function UncheckedAdvice({
-  unchecked,
-}: {
-  unchecked?: Array<{ id: string; title: string; reason: string }>;
-}) {
-  if (!unchecked || unchecked.length === 0) return null;
-  return (
-    <div className="my-2 space-y-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2.5">
-      {unchecked.map((entry) => (
-        <div key={entry.id} className="flex items-start gap-2 text-sm">
-          <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-muted-foreground" />
-          <span className="flex min-w-0 flex-col gap-0.5">
-            <span className="font-medium">{entry.title}</span>
-            <span className="text-muted-foreground">{entry.reason}</span>
           </span>
         </div>
       ))}
