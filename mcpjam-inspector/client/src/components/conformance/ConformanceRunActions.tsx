@@ -53,7 +53,7 @@ export function ConformanceRunShareButton({
         open={shareOpen}
         onOpenChange={setShareOpen}
         title="Share conformance run"
-        description="A frozen redacted snapshot. Guests who redeem the link are auditable browser sessions, not verified individuals."
+        description="A redacted snapshot of this run."
       >
         <ResourceSharePanel
           resourceType="conformanceRun"
@@ -61,8 +61,8 @@ export function ConformanceRunShareButton({
           disabledReason={finished ? null : "Only a finished run can be shared"}
           footerSlot={
             <p className="text-xs text-muted-foreground">
-              Viewers see a frozen snapshot. Revoking access is immediate even
-              though the artifact itself does not change.
+              Viewers see a frozen snapshot. Revoking access takes effect
+              immediately.
             </p>
           }
           linkLabel="Share link"

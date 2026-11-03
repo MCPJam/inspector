@@ -210,7 +210,7 @@ export function ConformanceTab({
     if (selectionIsOffered && server?.name) rememberServer(server.name);
   }, [selectionIsOffered, server?.name]);
 
-  const startRun = (
+  const beginRun = (
     serverName: string,
     versionPin: ProtocolVersionPin,
     selection: ConformanceSelection,
@@ -222,6 +222,13 @@ export function ConformanceTab({
       versionPin,
       selection,
     }));
+  };
+  const startRun = (
+    serverName: string,
+    versionPin: ProtocolVersionPin,
+    selection: ConformanceSelection,
+  ) => {
+    beginRun(serverName, versionPin, selection);
     changeView("overview");
   };
   // A saved run's Run again lands here with `?run=<server>`: start that
@@ -235,15 +242,19 @@ export function ConformanceTab({
   useEffect(() => {
     startRequestedRun.current = () => {
       if (!runRequest) return;
+      // One navigation, to the Overview the run shows on, without the key.
+      // `changeView` would rebuild the URL from this render's search and
+      // write the key back, starting the run a second time.
       const params = new URLSearchParams(location.search);
       params.delete(CONFORMANCE_RUN_PARAM);
+      params.delete("view");
       const query = params.toString();
       navigate(
         `${location.pathname}${query ? `?${query}` : ""}${location.hash}`,
         { replace: true },
       );
       if (servers?.some((offered) => offered.name === runRequest)) {
-        startRun(runRequest, "auto", defaultsFor(runRequest) ?? {});
+        beginRun(runRequest, "auto", defaultsFor(runRequest) ?? {});
       } else {
         toast.info(`${runRequest} is not one of this project's servers.`);
       }
