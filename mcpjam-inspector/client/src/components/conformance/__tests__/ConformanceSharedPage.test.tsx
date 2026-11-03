@@ -82,6 +82,25 @@ describe("ConformanceSharedPage", () => {
       screen.getByText("No CSP on the widget resource"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/"reports"/)).toBeNull();
+    // A public page makes no verification claim, either way.
+    expect(screen.queryByText("MCPJam-verified")).toBeNull();
+    expect(screen.queryByText("Client-reported")).toBeNull();
+  });
+
+  it("claims nothing about verification when the artifact has no field", () => {
+    const withoutVerification: Partial<ReturnType<typeof sharedRun>> =
+      sharedRun();
+    delete withoutVerification.verification;
+    useSharedArtifactMock.mockReturnValue({
+      loading: false,
+      error: null,
+      artifact: withoutVerification,
+      redeem: null,
+    });
+    render(<ConformanceSharedPage token="tok" />);
+
+    expect(screen.getByText(/OVERALL SCORE/)).toBeInTheDocument();
+    expect(screen.queryByText("MCPJam-verified")).toBeNull();
   });
 
   it("reads a suite with no outcome from its passed flag, as the SDK does", () => {

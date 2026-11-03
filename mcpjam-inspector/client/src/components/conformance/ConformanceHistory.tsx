@@ -10,7 +10,6 @@ import { useEffect, useState } from "react";
 import { useQuery } from "convex/react";
 import { Loader2, Share2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { Badge } from "@mcpjam/design-system/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FlaskConical } from "lucide-react";
 import { buildConformanceRunPath, useAppNavigate } from "@/lib/app-navigation";
@@ -674,7 +673,6 @@ type SharedConformanceArtifact = {
   notApplicable?: number;
   protocolVersion?: string | null;
   requestedSuites?: string[];
-  verification?: string;
   createdAt?: number;
   reports?: Record<string, SharedSuiteReport>;
 };
@@ -732,16 +730,11 @@ export function ConformanceSharedPage({ token }: { token: string }) {
       loading={loading}
       error={error}
     >
-      <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-        {run.verification === "client_reported" ? (
-          <Badge variant="secondary">Client-reported</Badge>
-        ) : (
-          <Badge variant="outline">MCPJam-verified</Badge>
-        )}
-        {typeof run.createdAt === "number" ? (
-          <span>{detailDateFormat.format(run.createdAt)}</span>
-        ) : null}
-      </div>
+      {typeof run.createdAt === "number" ? (
+        <p className="text-sm text-muted-foreground">
+          {detailDateFormat.format(run.createdAt)}
+        </p>
+      ) : null}
       <OverallScoreCard
         score={
           run.outcome
