@@ -43,6 +43,17 @@ export const MCP_TASKS_CHECK_IDS = [
 export type MCPTasksCheckId = (typeof MCP_TASKS_CHECK_IDS)[number];
 
 /**
+ * Tasks check ids an older SDK accepted under another name, each with its
+ * current name. Kept so configs and `--check-id` values written for that SDK
+ * still run instead of failing as unknown.
+ */
+export const RENAMED_MCP_TASKS_CHECK_IDS = {
+  "tasks-input-required-update-completes": "tasks-update-ack-shape",
+} as const satisfies Record<string, MCPTasksCheckId>;
+
+export type RenamedMCPTasksCheckId = keyof typeof RENAMED_MCP_TASKS_CHECK_IDS;
+
+/**
  * The Tasks suite's advice channel: the extension's SHOULDs, typed with their
  * spec strength like the protocol suite's readiness warnings. Informational
  * until advice has a grading rubric.
@@ -64,6 +75,17 @@ export interface MCPTasksReadinessWarning extends Omit<
    * not score yet costs no points, like a pending check's warnings.
    */
   checkId: MCPTasksCheckId;
+}
+
+/**
+ * Picked advice the run could not judge, and why. Kept apart from `readiness`
+ * so it never reads as a shortfall: a SHOULD about failed
+ * tasks says nothing when the task did not fail.
+ */
+export interface MCPTasksUncheckedAdvice {
+  id: MCPTasksReadinessId;
+  title: string;
+  reason: string;
 }
 
 export type MCPTasksCheckStatus = "passed" | "failed" | "skipped";
@@ -114,7 +136,16 @@ export interface MCPTasksCheckResult {
 }
 
 export type MCPTasksConformanceConfig = MCPServerConfig & {
-  checkIds?: MCPTasksCheckId[];
+  /**
+   * Run only these checks. A renamed id
+   * ({@link RENAMED_MCP_TASKS_CHECK_IDS}) runs the check under its new name.
+   */
+  checkIds?: (MCPTasksCheckId | RenamedMCPTasksCheckId)[];
+  /**
+   * Report only this advice. Absent ⇒ all of it; empty ⇒ none. The advice
+   * comes from checks that already run, so leaving it out sends nothing less.
+   */
+  readinessIds?: MCPTasksReadinessId[];
   /**
    * Tool used to provoke a task. Without it the runner picks the first tool
    * whose `execution.taskSupport` is `required`, then the first with
@@ -148,6 +179,8 @@ export interface NormalizedMCPTasksConformanceConfig {
   timeout: number;
   pollTimeoutMs: number;
   checkIds?: MCPTasksCheckId[];
+  /** @see {@link MCPTasksConformanceConfig.readinessIds} */
+  readinessIds?: MCPTasksReadinessId[];
   toolName?: string;
   toolArguments?: Record<string, unknown>;
   /** @see {@link MCPTasksConformanceConfig.inputResponses} */
@@ -171,6 +204,8 @@ export interface MCPTasksConformanceResult {
   checks: MCPTasksCheckResult[];
   /** SHOULD/MAY advice, beside the verdict. Absent when there is none. */
   readiness?: MCPTasksReadinessWarning[];
+  /** Picked advice this run could not judge. Absent when there is none. */
+  uncheckedAdvice?: MCPTasksUncheckedAdvice[];
   summary: string;
   durationMs: number;
   categorySummary: Record<

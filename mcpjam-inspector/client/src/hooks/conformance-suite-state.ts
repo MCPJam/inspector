@@ -18,11 +18,18 @@ import {
   CHECK_ERAS,
   MCP_APPS_CHECK_IDS,
   MCP_CHECK_IDS,
+  MCP_OAUTH_READINESS_IDS,
+  MCP_READINESS_IDS,
   MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
+  READINESS_ERAS,
   type MCPAppsCheckId,
   type MCPCheckId,
+  type MCPOAuthReadinessId,
+  type MCPReadinessId,
   type MCPTasksCheckId,
+  type MCPTasksReadinessId,
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -177,9 +184,19 @@ export function oauthStateFromResult(
  */
 export interface ConformanceSelection {
   protocol?: MCPCheckId[];
+  /**
+   * The protocol suite's advice, which costs no points. Missing runs all of
+   * it; empty runs none. It runs only with the protocol suite, so only when
+   * at least one protocol check is picked.
+   */
+  protocolAdvice?: MCPReadinessId[];
   apps?: MCPAppsCheckId[];
   tasks?: MCPTasksCheckId[];
+  /** The Tasks suite's advice, read like `protocolAdvice`. */
+  tasksAdvice?: MCPTasksReadinessId[];
   oauth?: boolean;
+  /** The OAuth suite's advice, read like `protocolAdvice`. */
+  oauthAdvice?: MCPOAuthReadinessId[];
   /** OAuth steps that run with the flow but are left out of the score. */
   oauthUnscored?: string[];
 }
@@ -192,14 +209,6 @@ export const NOT_SELECTED = {
 
 export const isSelected = (checkIds: readonly string[] | undefined) =>
   checkIds === undefined || checkIds.length > 0;
-
-/**
- * The Tasks checks the app runs. `tasks-update-ack-shape` needs
- * `inputResponses`, which the app has no way to supply, so it is left out of
- * the picker, the rows and every run rather than shown as never applicable.
- */
-export const APP_TASKS_CHECK_IDS: readonly MCPTasksCheckId[] =
-  MCP_TASKS_CHECK_IDS.filter((id) => id !== "tasks-update-ack-shape");
 
 function knownIds<T extends string>(
   picked: readonly string[] | undefined,
@@ -228,10 +237,33 @@ export function runnableSelection(
       pinnedEra === undefined ||
       (CHECK_ERAS[id] as readonly string[]).includes(pinnedEra),
   );
+  const adviceIds = MCP_READINESS_IDS.filter(
+    (id) =>
+      pinnedEra === undefined ||
+      (READINESS_ERAS[id] as readonly string[]).includes(pinnedEra),
+  );
   return {
     ...selection,
     protocol: knownIds(selection.protocol, protocolIds),
+    protocolAdvice: knownIds(selection.protocolAdvice, adviceIds),
     apps: knownIds(selection.apps, MCP_APPS_CHECK_IDS),
-    tasks: knownIds(selection.tasks, APP_TASKS_CHECK_IDS),
+    tasks: knownIds(selection.tasks, MCP_TASKS_CHECK_IDS),
+    tasksAdvice: knownIds(selection.tasksAdvice, MCP_TASKS_READINESS_IDS),
+    oauthAdvice: knownIds(selection.oauthAdvice, MCP_OAUTH_READINESS_IDS),
   };
+}
+
+/**
+ * A suite's request error, in words. A proxy that cut the request off (a 524,
+ * or a 504 with no message of ours) names the time limit instead of a status
+ * code; anything else keeps its own message.
+ */
+export function suiteErrorMessage(err: unknown): string {
+  const status = (err as { status?: unknown } | null)?.status;
+  const message = err instanceof Error ? err.message : String(err);
+  const cutOff =
+    status === 524 || (status === 504 && /^Request failed/.test(message));
+  return cutOff
+    ? "These checks took too long to finish, so no results came back. Run them again, or pick fewer checks for this suite."
+    : message;
 }

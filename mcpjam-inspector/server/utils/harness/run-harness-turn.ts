@@ -1,3 +1,4 @@
+import { harnessStartupPart } from "@/shared/harness-startup";
 import { withRetainedResourceSource } from "@/shared/retained-app-resources";
 import { retainedResourceExecutor, type RetainedResourcePresentation } from "./forwarding/retained-resources";
 import { nativeForwardingSelection, prepareNativeForwarding, hasForwardingOrganization,
@@ -1395,10 +1396,18 @@ export async function runHarnessTurn(
       // wake / broker start / session connect / model stream / finalize) so
       // "takes forever" can be attributed instead of guessed.
       const tStart = Date.now();
+      const startupBinding = chatSessionId && options.harnessStartupRequestId
+        ? { chatSessionId, requestId: options.harnessStartupRequestId }
+        : undefined;
+      const reportStartup = (phase: Parameters<typeof harnessStartupPart>[0]) => {
+        if (startupBinding) writer.write(harnessStartupPart(phase, startupBinding));
+      };
+      reportStartup("preparing");
       let tClaim = tStart;
       let tSandbox = tStart;
       let tBroker = tStart;
       let tConnect = tStart;
+      let tDispatch = tStart;
       let resumedSession = false;
 
       // 0. Capability prechecks — BEFORE any credential/sandbox work (defense in
@@ -2370,6 +2379,7 @@ export async function runHarnessTurn(
         };
         sandboxId = harnessSandboxBinding.sandboxId;
       } else {
+        reportStartup("computer");
         const resolved = await resolveHarnessSandbox({
           bearer: authHeader,
           projectId,
@@ -2541,11 +2551,13 @@ export async function runHarnessTurn(
       // construct here. The cloud provider is built only when there is a box,
       // through the factory: E2B unless `HARNESS_SANDBOX_PROVIDER=docker`
       // (dev/CI only, refused in production).
+      let connectionPreparedByBroker = false;
       const sandbox =
         localPrepared !== null
           ? localPrepared.sandbox
           : createHarnessSandboxProvider({
               sandboxId: sandboxId!,
+              connectionPreparedByBroker: () => connectionPreparedByBroker,
               defaultWorkingDirectory,
               proxyUrl: () => auth.ANTHROPIC_BASE_URL ?? auth.OPENAI_BASE_URL,
               // The materialized secrets, as a session-wide env bag on every `run`
@@ -2608,6 +2620,7 @@ export async function runHarnessTurn(
         // stays true and the turn's own teardown releases it.
         auth = externalAccountAuth;
       } else {
+        reportStartup("authorization");
         brokerRunId = turnRunId;
         const broker = await org.start({
           ...(useNativeForwarding ? { nativeForwarding: nativeForwardingSelection({ manager: mcpClientManager, laneId: continuity?.laneId, hostId, serverIds: selectedServers ?? [], connections: accountGroups }) } : {}),
@@ -2672,6 +2685,7 @@ export async function runHarnessTurn(
           ({ mcpJson, keyToServerId } = nativeForwarding);
           harnessKeyToServerId = keyToServerId;
         }
+        connectionPreparedByBroker = true;
         auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
         modelEndpoint = org.brokeredEndpoint;
       }
@@ -3300,6 +3314,7 @@ export async function runHarnessTurn(
       for (const continuation of approvalContinuations) {
         logger.info("[harness] approval answered", { harness: harnessAdapter.id, turnId, approvalId: continuation.approvalId, approvalDecision: "user" });
       }
+      reportStartup("agent");
       let session: Awaited<ReturnType<typeof agent.createSession>>;
       if (resumeFromApproval && resumable) {
         // No fresh fallback here: if the paused continuation is stale (computer
@@ -3349,6 +3364,7 @@ export async function runHarnessTurn(
         } as unknown as UIMessageChunk);
       }
       tConnect = Date.now();
+      reportStartup("ready");
       // Session is up: the finalizer + heartbeat now own the continuity lane, so
       // the pre-session cleanup in onFinishEngine no longer needs to free it.
       sessionEstablished = true;
@@ -3452,6 +3468,8 @@ export async function runHarnessTurn(
         // `messages` to the last user message, so stream() would re-prompt).
         // Everything above this line is ours; everything at or below it is the
         // model's turn. See `modelInvoked`.
+        tDispatch = Date.now();
+        logger.info(`[harness][dispatch] setup=${tDispatch - tStart}ms session=${tDispatch - tConnect}ms`, { harnessId: harnessAdapter.id, turnId });
         modelInvoked = true;
         const res = resumeFromApproval
           ? await agent.continueStream({
@@ -4519,7 +4537,7 @@ export async function runHarnessTurn(
             tSandbox - tClaim
           }ms brokerStart=${tBroker - tSandbox}ms sessionConnect=${
             tConnect - tBroker
-          }ms modelStream=${tStream - tConnect}ms total=${
+          }ms dispatchSetup=${tDispatch - tStart}ms modelStream=${tStream - tConnect}ms total=${
             tStream - tStart
           }ms resumed=${resumedSession}${bootstrapLog.text}`,
           // `harnessId` rides both outcome lines so the feature-health monitor

@@ -644,12 +644,12 @@ describe("ToolsTab", () => {
             requiredScope: "admin",
             resourceMetadataUrl: "https://rs.example/.well-known",
           }),
-          {
+          expect.objectContaining({
             operation: {
               method: "tools/call",
               operation: "scoped-tool",
             },
-          }
+          })
         );
       });
     });

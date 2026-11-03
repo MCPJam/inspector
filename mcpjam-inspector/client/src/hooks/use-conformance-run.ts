@@ -24,8 +24,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // transitive deps that break the Vite browser bundle.
 import {
   type MCPAppsCheckId,
-  type MCPCheckId,
-  type MCPTasksCheckId,
+  type MCPOAuthReadinessId,
   pooledConformanceScore,
   scoreFromAppsResult,
   scorableOAuthIds,
@@ -45,7 +44,8 @@ import {
 } from "@/lib/apis/mcp-conformance-api";
 import { deriveOAuthProfileFromServer } from "@/components/oauth/utils";
 import {
-  probesForRun,
+  protocolRunOptions,
+  tasksRunOptions,
   type ConformanceProbes,
 } from "@/hooks/use-conformance-probes";
 import { resolveServerOAuthProtocolSelection } from "@/state/oauth-orchestrator";
@@ -54,12 +54,12 @@ import {
   createOAuthState,
   createProtocolState,
   createTasksState,
-  APP_TASKS_CHECK_IDS,
   isHttpServer,
   isSelected,
   NOT_SELECTED,
   oauthStateFromResult,
   runnableSelection,
+  suiteErrorMessage,
   verdictOf,
   type AppsSuiteState,
   type ConformanceSelection,
@@ -320,30 +320,23 @@ export function useConformanceRun({
   );
 
   const runProtocol = useCallback(
-    async (runToken: number, serverName: string, checkIds?: MCPCheckId[]) => {
+    async (
+      runToken: number,
+      serverName: string,
+      picked?: ConformanceSelection
+    ) => {
       if (!httpServer) return;
       setProtocol({ status: "running" });
       try {
-        // Only the tools a check in this run calls: a tool named for a
-        // check left out is never executed.
-        const probes = probesForRun(
-          probesRef.current ?? {},
-          checkIds,
-          versionPin,
+        const { result } = await runProtocolConformance(
+          serverName,
+          protocolRunOptions(probesRef.current ?? {}, picked, versionPin)
         );
-        const { result } = await runProtocolConformance(serverName, {
-          protocolVersion: versionPin === "auto" ? undefined : versionPin,
-          ...(checkIds ? { checkIds } : {}),
-          ...(probes.logProbe || probes.inputRequiredProbe ? { probes } : {}),
-        });
         if (!isRunActive(runToken, serverName)) return;
         setProtocol({ status: "done", result, verdict: verdictOf(result) });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;
-        setProtocol({
-          status: "error",
-          error: err instanceof Error ? err.message : String(err),
-        });
+        setProtocol({ status: "error", error: suiteErrorMessage(err) });
       }
     },
     [httpServer, isRunActive, versionPin]
@@ -365,10 +358,7 @@ export function useConformanceRun({
         setApps({ status: "done", result, verdict: verdictOf(result) });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;
-        setApps({
-          status: "error",
-          error: err instanceof Error ? err.message : String(err),
-        });
+        setApps({ status: "error", error: suiteErrorMessage(err) });
       }
     },
     [isRunActive]
@@ -378,13 +368,13 @@ export function useConformanceRun({
     async (
       runToken: number,
       serverName: string,
-      checkIds?: MCPTasksCheckId[]
+      picked?: ConformanceSelection
     ) => {
       setTasks({ status: "running" });
       try {
         const { result } = await runTasksConformance(
           serverName,
-          ...(checkIds ? [{ checkIds }] : []),
+          tasksRunOptions(probesRef.current ?? {}, picked)
         );
         if (!isRunActive(runToken, serverName)) return;
         // The tasks suite reports a real third outcome: checks that apply but
@@ -392,10 +382,7 @@ export function useConformanceRun({
         setTasks({ status: "done", result, verdict: verdictOf(result) });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;
-        setTasks({
-          status: "error",
-          error: err instanceof Error ? err.message : String(err),
-        });
+        setTasks({ status: "error", error: suiteErrorMessage(err) });
       }
     },
     [isRunActive]
@@ -541,7 +528,11 @@ export function useConformanceRun({
   );
 
   const runOAuth = useCallback(
-    async (runToken: number, currentServer: ServerWithName) => {
+    async (
+      runToken: number,
+      currentServer: ServerWithName,
+      readinessIds?: MCPOAuthReadinessId[]
+    ) => {
       if (!isHttpServer(currentServer)) return;
 
       const serverName = currentServer.name;
@@ -587,6 +578,7 @@ export function useConformanceRun({
           serverNameOrId: serverName,
           oauthProfile: { ...baseProfile, protocolVersion },
           callbackOrigin,
+          readinessIds,
         });
 
         if (!isRunActive(runToken, serverName)) return;
@@ -689,9 +681,7 @@ export function useConformanceRun({
     const promises: Promise<void>[] = [];
     if (httpServerNow) {
       if (isSelected(picked?.protocol)) {
-        promises.push(
-          runProtocol(runToken, currentServer.name, picked?.protocol)
-        );
+        promises.push(runProtocol(runToken, currentServer.name, picked));
       } else {
         setProtocol(NOT_SELECTED);
       }
@@ -702,21 +692,13 @@ export function useConformanceRun({
       setApps(NOT_SELECTED);
     }
     if (isSelected(picked?.tasks)) {
-      // Never "all": the suite's full list includes a check the app cannot
-      // feed, so an unset selection still sends the app's list explicitly.
-      promises.push(
-        runTasks(
-          runToken,
-          currentServer.name,
-          picked?.tasks ?? [...APP_TASKS_CHECK_IDS]
-        )
-      );
+      promises.push(runTasks(runToken, currentServer.name, picked));
     } else {
       setTasks(NOT_SELECTED);
     }
     if (httpServerNow) {
       if (picked?.oauth !== false) {
-        promises.push(runOAuth(runToken, currentServer));
+        promises.push(runOAuth(runToken, currentServer, picked?.oauthAdvice));
       } else {
         setOAuth(NOT_SELECTED);
       }

@@ -382,7 +382,7 @@ function shouldAttemptFallback(
   if (!response) return true;
   if (pathname === "/") return false;
   return (
-    (response.status >= 400 && response.status < 500) || response.status === 502
+    response.status >= 400 && response.status < 500 && response.status !== 429
   );
 }
 
@@ -970,8 +970,7 @@ export async function discoverAuthorizationServerMetadata(
     if (!response.ok) {
       await response.text().catch(() => {});
       if (
-        (response.status >= 400 && response.status < 500) ||
-        response.status === 502
+        response.status >= 400 && response.status < 500 && response.status !== 429
       ) {
         continue;
       }
@@ -986,6 +985,12 @@ export async function discoverAuthorizationServerMetadata(
   }
 
   return undefined;
+}
+
+function isTransientMetadataFailure(error: unknown): boolean {
+  const status =
+    error instanceof Error ? /^HTTP (\d{3}) /.exec(error.message)?.[1] : undefined;
+  return status !== undefined && (status === "429" || status.startsWith("5"));
 }
 
 export async function discoverOAuthServerInfo(
@@ -1008,9 +1013,13 @@ export async function discoverOAuthServerInfo(
       authorizationServerUrl = resourceMetadata.authorization_servers[0];
     }
   } catch (error) {
-    if (error instanceof TypeError) {
+    // A rate limit or server error is not "no metadata": falling back to the
+    // origin would cache an issuer the server never named. Anything else that
+    // yields no usable document (a 401, 403 or 405 from auth middleware in
+    // front of the well-known path, a 404, no response) falls back to the
+    // origin, as servers without Protected Resource Metadata rely on.
+    if (error instanceof TypeError || isTransientMetadataFailure(error))
       throw error;
-    }
   }
 
   if (!authorizationServerUrl) {

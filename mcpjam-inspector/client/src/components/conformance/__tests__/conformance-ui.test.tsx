@@ -14,16 +14,16 @@ function passedScore(score: number): ScoreSummary {
 }
 
 describe("OverallScoreCard", () => {
-  it("reads a passed run under 100 as advised even without its advisories", () => {
-    // A saved run's summary carries no advisories list.
+  it("reads a passed run with advice as advised even without its advisories", () => {
+    // A saved run's summary carries an advice count, not an advisories list.
     render(
       <OverallScoreCard
-        score={passedScore(97)}
+        score={{ ...passedScore(100), advisoryCount: 1 }}
         serverName="srv"
         version="Auto"
       />,
     );
-    expect(screen.getByText("Conformant, with advice.")).toBeInTheDocument();
+    expect(screen.getByText("Conformant, with guidance.")).toBeInTheDocument();
   });
 
   it("reads a passed run at 100 as fully conformant", () => {
@@ -122,6 +122,27 @@ describe("OverallScoreCard", () => {
     expect(
       screen.getByText(
         "Incomplete. 1 check could not run because sign-in failed. 1 more could not run. Reconnect the server and run again.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("names the timeout when checks could not run because the server was slow", () => {
+    render(
+      <OverallScoreCard
+        score={{
+          ...signInBlocked,
+          couldNotRun: 3,
+          failed: 0,
+          outcome: "incomplete",
+        }}
+        serverName="Slow"
+        version="Auto"
+        timedOut={2}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Incomplete. 2 checks could not run because the server did not answer in time. 1 more could not run.",
       ),
     ).toBeInTheDocument();
   });

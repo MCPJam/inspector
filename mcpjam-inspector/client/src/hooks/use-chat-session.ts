@@ -1,3 +1,4 @@
+import { isCurrentHarnessStartup, isHarnessStartupPart, type HarnessStartupPhase } from "@/shared/harness-startup";
 import { nextResumedVersion } from "./use-resumed-thread-persistence";
 import { isForwardingApprovalId, withoutForwardingGateParts, stripForwardingRequestBody } from "@/shared/forwarding-approval";
 import { dispatchAppToolCall } from "@mcpjam/widget-react";
@@ -687,6 +688,7 @@ export interface SetSelectedModelOptions {
 }
 
 export interface UseChatSessionReturn {
+  harnessStartupPhase: HarnessStartupPhase | null;
   /**
    * Elicitation requests whose tool call is blocked on this user right now.
    * Turn-scoped: they arrive as transient stream parts and are dropped when the
@@ -2533,9 +2535,18 @@ export function useChatSession(
     [],
   );
 
+  const harnessStartupRequestRef = useRef<string | null>(null);
+  const [harnessStartupPhase, setHarnessStartupPhase] = useState<HarnessStartupPhase | null>(null);
   const paidFallbackNotices = useRef(new Set<string>());
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
+      if (isHarnessStartupPart(part)) {
+        if (isCurrentHarnessStartup(part, {
+          chatSessionId: chatSessionIdRef.current,
+          requestId: harnessStartupRequestRef.current,
+        })) setHarnessStartupPhase(part.data.phase === "ready" ? null : part.data.phase);
+        return;
+      }
       if (noteTurnNoticePart(part, chatSessionIdRef.current)) return;
       if (part && typeof part === "object" && "type" in part && part.type === "data-platform-paid-fallback") {
         const session = chatSessionIdRef.current ?? "new";
@@ -2568,8 +2579,10 @@ export function useChatSession(
       if (!isTraceEventDataPart(part)) {
         if (isScopeStepUpFinishedDataPart(part)) {
           const event = part.data;
-          const pending = readPendingChatScopeStepUp();
-          if (pending?.event.continuationId === event.continuationId) {
+          const pending = readPendingChatScopeStepUp({
+            continuationId: event.continuationId,
+          });
+          if (pending) {
             if (
               event.outcome === "completed" ||
               event.outcome === "cancelled"
@@ -3563,6 +3576,8 @@ export function useChatSession(
 
   const handleChatError = useCallback(
     (chatError: Error) => {
+      harnessStartupRequestRef.current = null;
+      setHarnessStartupPhase(null);
       // Every chat failure used to end here and go no further: this handler
       // passed the error only to `notifyMCPJamLimitError`, a rate-limit filter
       // that no-ops everything else. A hosted 502 produced zero client
@@ -3883,6 +3898,8 @@ export function useChatSession(
         // to request approval for, or defers one nothing will ever ask about
         // — and that second one stalls the turn.
         turnRequireToolApprovalRef.current = requireToolApprovalRef.current;
+        harnessStartupRequestRef.current = crypto.randomUUID();
+        setHarnessStartupPhase(null);
         const taskOwnerScope = getOwnedTaskScope();
         const ownerRequestId = taskOwnerRequests.current.capture(
           generateId(),
@@ -3895,6 +3912,7 @@ export function useChatSession(
             ? rewindRef.current.lineage
             : undefined;
         return {
+          harnessStartupRequestId: harnessStartupRequestRef.current,
           ...(ownerRequestId
             ? {
                 hostedTaskOwnerVersion: HOSTED_TASK_OWNER_VERSION,
@@ -4434,7 +4452,11 @@ export function useChatSession(
   useEffect(() => {
     const sessionId = chatSessionIdRef.current;
     if (!sessionId) return;
-    const pending = readPendingChatScopeStepUp();
+    // This chat's own call: another chat's newer entry must not hide it.
+    const pending = readPendingChatScopeStepUp({
+      chatSessionId: sessionId,
+      phases: ["ready", "cancelled"],
+    });
     if (
       !pending ||
       (pending.phase !== "ready" && pending.phase !== "cancelled") ||
@@ -4456,8 +4478,11 @@ export function useChatSession(
     }
     const claimed =
       pending.phase === "ready"
-        ? claimPendingChatScopeStepUp(sessionId)
-        : claimCancelledChatScopeStepUp(sessionId);
+        ? claimPendingChatScopeStepUp(sessionId, pending.event.continuationId)
+        : claimCancelledChatScopeStepUp(
+            sessionId,
+            pending.event.continuationId,
+          );
     if (!claimed) return;
     const wasCancelled = pending.phase === "cancelled";
 
@@ -6249,6 +6274,8 @@ export function useChatSession(
    * a suspended operation's stream always ends while its round is pending.)
    */
   const stopChat = useCallback(() => {
+    harnessStartupRequestRef.current = null;
+    setHarnessStartupPhase(null);
     savedClientSendGuard.cancel();
     sendPreparationGuard.cancel();
     const store = useHostedMrtrStore.getState();
@@ -6275,7 +6302,19 @@ export function useChatSession(
       ? describeAutoResumeStop(heldBack.reason)
       : null;
 
+  useEffect(() => {
+    if (status !== "submitted" && status !== "streaming") {
+      setHarnessStartupPhase(null);
+      harnessStartupRequestRef.current = null;
+    }
+  }, [status]);
+  useEffect(() => {
+    setHarnessStartupPhase(null);
+    harnessStartupRequestRef.current = null;
+  }, [chatSessionId]);
+
   return {
+    harnessStartupPhase: status === "submitted" || status === "streaming" ? harnessStartupPhase : null,
     // Chat state
     messages,
     setMessages,

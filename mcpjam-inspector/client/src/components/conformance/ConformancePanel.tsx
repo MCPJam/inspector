@@ -3,13 +3,16 @@ import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { DirectoryReadinessSection } from "@/components/conformance/directory-readiness/DirectoryReadinessSection";
 import { OAuthPopupBlockedDialog } from "@/components/conformance/OAuthPopupBlockedDialog";
+import { ConformanceAdvice, suiteAdviceGroups } from "./ConformanceAdvice";
 import { Loader2, AlertTriangle, Settings, Share2 } from "lucide-react";
+import { UncheckedAdvice } from "@/components/conformance/UncheckedAdvice";
 import type { ServerWithName } from "@/hooks/use-app-state";
 // Import from the browser-safe SDK entry — the top-level `@mcpjam/sdk` pulls
 // Node-only transitive deps (MCP client SDK uses `node:stream`, etc.) which
 // break the Vite browser bundle.
 import {
   isAuthorizationRequiredCheck,
+  isTimedOutCheck,
   type ConformanceScore,
 } from "@mcpjam/sdk/browser";
 import {
@@ -69,45 +72,17 @@ export type ConformanceConnectServer = (
   options?: { signIn?: boolean },
 ) => Promise<ConformanceConnectOutcome>;
 
-/** A suite's SHOULD/MAY advice, shown above its checks. */
-function ReadinessAdvice({
-  readiness,
+function SuiteBadge({
+  state,
+  notApplicable = false,
 }: {
-  readiness?: Array<{
-    id: string;
-    title: string;
-    specStrength: string;
-    message: string;
-  }>;
+  state: SuiteState;
+  notApplicable?: boolean;
 }) {
-  if (!readiness || readiness.length === 0) return null;
-  return (
-    <div className="my-2 space-y-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2.5">
-      {readiness.map((warning) => (
-        // Title on its own line, the advice under it: easier to scan than one
-        // run-on line.
-        <div key={warning.id} className="flex items-start gap-2 text-sm">
-          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
-          <span className="flex min-w-0 flex-col gap-0.5">
-            <span>
-              <span className="font-medium">{warning.title}</span>{" "}
-              <span className="text-muted-foreground">
-                ({warning.specStrength})
-              </span>
-            </span>
-            <span className="text-muted-foreground">{warning.message}</span>
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function SuiteBadge({ state }: { state: SuiteState }) {
   if (state.status === "running") {
     return <VerdictBadge label="RUNNING" tone="neutral" spinning />;
   }
-  if (state.status === "unavailable") {
+  if (state.status === "unavailable" || notApplicable) {
     return (
       <VerdictBadge
         label={state.notSelected ? "NOT SELECTED" : "NOT APPLICABLE"}
@@ -178,7 +153,17 @@ function SuiteSection({
           ? state.unavailableReason
           : description
       }
-      badge={<SuiteBadge state={state} />}
+      badge={
+        <SuiteBadge
+          state={state}
+          notApplicable={
+            state.status === "done" &&
+            state.verdict === "passed" &&
+            score?.applicable === 0 &&
+            score.notApplicable > 0
+          }
+        />
+      }
       score={
         score && score.score !== null
           ? {
@@ -329,21 +314,26 @@ export function ConformanceContent({
       (suite.result?.checks.filter(isAuthorizationRequiredCheck).length ?? 0),
     0,
   );
-  // The verdict compares this to the score's `couldNotRun`, which leaves out
-  // unscored checks, so it counts only the scored refusals. Otherwise the
-  // headline could blame sign-in for checks that stopped for another reason.
-  const scoredRefusals = (
-    checks: Array<{ id: string; details?: unknown }> | undefined,
-    pendingIds: Set<string>,
-  ) =>
-    checks?.filter(
-      (check) =>
-        isAuthorizationRequiredCheck(check) && !pendingIds.has(check.id),
-    ).length ?? 0;
-  const blockedBySignIn =
-    scoredRefusals(protocol.result?.checks, protocolPendingIds) +
-    scoredRefusals(apps.result?.checks, new Set()) +
-    scoredRefusals(tasks.result?.checks, tasksPendingIds);
+  // The verdict compares these to the score's `couldNotRun`, which leaves out
+  // unscored checks, so they count only scored checks. Otherwise the headline
+  // could blame sign-in or time for checks that stopped for another reason.
+  const scoredSuites: Array<
+    [Array<{ id: string; details?: unknown }> | undefined, Set<string>]
+  > = [
+    [protocol.result?.checks, protocolPendingIds],
+    [apps.result?.checks, new Set()],
+    [tasks.result?.checks, tasksPendingIds],
+  ];
+  const countScored = (matches: (check: { details?: unknown }) => boolean) =>
+    scoredSuites.reduce(
+      (count, [checks, pendingIds]) =>
+        count +
+        (checks?.filter((check) => matches(check) && !pendingIds.has(check.id))
+          .length ?? 0),
+      0,
+    );
+  const blockedBySignIn = countScored(isAuthorizationRequiredCheck);
+  const timedOut = countScored(isTimedOutCheck);
 
   // The page opens on the "run your first check" state and only swaps to the
   // suites once a run has begun. Keyed by server, so a server switch resets it.
@@ -546,7 +536,6 @@ export function ConformanceContent({
                   <ConformanceRunShareButton
                     runId={savedRunId}
                     finished={!isRunning}
-                    sharingEnabled={false}
                   />
                 ) : (
                   // Not saved yet: Share waits for the run to finish.
@@ -619,6 +608,7 @@ export function ConformanceContent({
                   serverIconUrl={serverIconUrl}
                   oauthNotScored={oauthNotScored}
                   blockedBySignIn={blockedBySignIn}
+                  timedOut={timedOut}
                 />
 
                 {waitingOnAuthorization > 0 && (
@@ -629,6 +619,20 @@ export function ConformanceContent({
                     update its access token, then run again.
                   </div>
                 )}
+
+                {timedOut > 0 && (
+                  <div className="mt-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm leading-relaxed">
+                    The server did not answer some checks in time. A timeout
+                    does not count as a failure, but those checks are untested,
+                    so the score is incomplete. Run the checks again once the
+                    server is responding.
+                  </div>
+                )}
+
+                <ConformanceAdvice
+                  key={`${runVersion}-advice`}
+                  groups={suiteAdviceGroups({ protocol, apps, tasks, oauth })}
+                />
 
                 <div className="mt-3 overflow-hidden rounded-lg border border-border bg-popover">
                   <SuiteSection
@@ -647,9 +651,6 @@ export function ConformanceContent({
                   >
                     {protocol.result ? (
                       <div>
-                        <ReadinessAdvice
-                          readiness={protocol.result.readiness}
-                        />
                         {protocol.result.checks.map((check) => (
                           <CheckRow
                             key={`${runVersion}-${check.id}`}
@@ -693,7 +694,9 @@ export function ConformanceContent({
                   >
                     {tasks.result ? (
                       <div>
-                        <ReadinessAdvice readiness={tasks.result.readiness} />
+                        <UncheckedAdvice
+                          unchecked={tasks.result.uncheckedAdvice}
+                        />
                         {tasks.result.checks.map((check) => (
                           <CheckRow
                             key={`${runVersion}-${check.id}`}

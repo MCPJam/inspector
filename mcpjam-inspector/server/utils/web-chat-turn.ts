@@ -17,31 +17,6 @@ import {
 } from "../../shared/plugin-model-context.js";
 import { modelWorkloadFor } from "./model-workload.js";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
-/**
- * Shared web-chat streaming turn.
- *
- * Encapsulates the streaming/persistence/provider-branching body that both
- * `web/chat-v2` and `web/mcpjam-agent` share. Extracted verbatim from
- * `web/chat-v2.ts` (commit history) so behavior is identical for the original
- * caller — see `feedback_mechanical_commit_framing` for why this lives in its
- * own commit.
- *
- * The caller is responsible for:
- *   - Parsing the inbound body.
- *   - Constructing the MCPClientManager (`createAuthorizedManager` for
- *     project-server chats, ad-hoc for self-hosted agent surfaces).
- *   - Pre-building the `hostConfig` payload (only direct-chat callers do;
- *     other callers omit it).
- *
- * This helper owns:
- *   - `prepareChatV2` (with the Anthropic-tool-name 400 catch).
- *   - The `isMCPJam` / org-BYOK / local-runtime branch.
- *   - Constructing `onConversationComplete` → `persistChatSessionToConvex`
- *     with optional tool-snapshot capture, gated on `manager.hasServer`.
- *   - `cleanupStream` → `manager.disconnectAllServers()`.
- *   - Throwing/propagating errors; the caller is expected to catch and run
- *     its own OAuth-error enrichment if applicable.
- */
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import { withoutLegacyWebmcpVerbs } from "./built-in-tools/browser.js";
@@ -70,6 +45,7 @@ import type { UIMessage } from "@ai-sdk/react";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { directChatEffort } from "./chat-reasoning-effort.js";
 import type {
+  AuthChallengePolicy,
   Harness,
   MCPClientManager,
   RequestedModelSelection,
@@ -138,6 +114,10 @@ import { wrapToolsWithScopeStepUp } from "./insufficient-scope-step-up.js";
 import { isRenderedUiContextText } from "@/shared/ui-context";
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
 import {
+  bridgeHarnessRpcLogsToCollector,
+  startCrossInstanceRpcLogPoll,
+} from "./../routes/web/hosted-rpc-logs.js";
+import {
   emitInsufficientScopeChunk,
   type ElicitationChunkWriter,
   type HostedElicitationBridge,
@@ -150,15 +130,12 @@ import {
   buildHostedScopeStepUpResume,
   createHostedScopeStepUpContinuation,
 } from "./hosted-scope-step-up-continuation.js";
-import type {
-  ScopeStepUpCancelRequest,
-  ScopeStepUpResumeRequest,
+import { endsWithNewUserMessage } from "./direct-chat-scope-step-up.js";
+import {
+  type ScopeStepUpCancelRequest,
+  type ScopeStepUpResumeRequest,
 } from "@/shared/scope-step-up";
 import type { ChatRewind } from "@/shared/chat-v2";
-import {
-  bridgeHarnessRpcLogsToCollector,
-  startCrossInstanceRpcLogPoll,
-} from "./../routes/web/hosted-rpc-logs.js";
 import { buildServerNamesById } from "./../routes/web/auth.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getSpendClientIp } from "./client-ip.js";
@@ -170,6 +147,35 @@ import {
   resolveWebAuthorizedHarnessStrategy,
   type HarnessMcpProxyStrategy,
 } from "./harness/harness-proxy-strategy.js";
+import { buildWebChatAuthChallenge } from "./web-chat-auth-challenge.js";
+
+
+/**
+ * Shared web-chat streaming turn.
+ *
+ * Encapsulates the streaming/persistence/provider-branching body that both
+ * `web/chat-v2` and `web/mcpjam-agent` share. Extracted verbatim from
+ * `web/chat-v2.ts` (commit history) so behavior is identical for the original
+ * caller — see `feedback_mechanical_commit_framing` for why this lives in its
+ * own commit.
+ *
+ * The caller is responsible for:
+ *   - Parsing the inbound body.
+ *   - Constructing the MCPClientManager (`createAuthorizedManager` for
+ *     project-server chats, ad-hoc for self-hosted agent surfaces).
+ *   - Pre-building the `hostConfig` payload (only direct-chat callers do;
+ *     other callers omit it).
+ *
+ * This helper owns:
+ *   - `prepareChatV2` (with the Anthropic-tool-name 400 catch).
+ *   - The `isMCPJam` / org-BYOK / local-runtime branch.
+ *   - Constructing `onConversationComplete` → `persistChatSessionToConvex`
+ *     with optional tool-snapshot capture, gated on `manager.hasServer`.
+ *   - `cleanupStream` → `manager.disconnectAllServers()`.
+ *   - Throwing/propagating errors; the caller is expected to catch and run
+ *     its own OAuth-error enrichment if applicable.
+ */
+
 
 type RpcCollector = ReturnType<typeof createHostedRpcLogCollector>;
 
@@ -421,6 +427,7 @@ export interface WebChatTurnPersistContext {
  * here so the helper signature is self-contained.
  */
 export interface WebChatTurnPrepareInputs {
+  harnessStartupRequestId?: string;
   harnessHostCapabilities?: MCPJamHandlerOptions["harnessHostCapabilities"];
   requireNativeToolDiscovery?: boolean;
   /** A local ingress has selected its direct-provider path. */
@@ -616,6 +623,16 @@ export interface WebChatTurnRuntime {
     resumeRequest?: ScopeStepUpResumeRequest;
     cancelRequest?: ScopeStepUpCancelRequest;
   };
+  /**
+   * Mid-session sign-in (lazy authentication). Present only on the
+   * interactive chat route, which reads `policy` per turn from the
+   * server-resolved host config (absent = spec defaults). Every other caller
+   * leaves it out, so its tool errors and results pass through exactly as
+   * before and nothing it runs can offer a sign-in. Suspending a call also
+   * needs `scopeStepUp` and a chat session; without them a Connect card is
+   * display-only.
+   */
+  authChallenge?: { policy?: AuthChallengePolicy };
   /**
    * One-time notices about this conversation's ephemeral sandbox, PEEKED from
    * the control plane by the caller (chat-v2 provisions before the stream
@@ -975,12 +992,26 @@ export async function streamChatTurn(
       persist.selectedServerIds,
       persist.selectedServerNames,
     ) ?? {};
-  let suspendedScopeStepUpToolCallId: string | undefined;
+  // Every call suspended this turn: a lazy-auth server refuses each protected
+  // tool, so parallel calls in one step can all suspend.
+  const suspendedScopeStepUpToolCallIds = new Set<string>();
+  // The client splices its cancel into the user's next message when the user
+  // moves on without clicking Connect. That cancel is settled with the
+  // history (see `settleSuspendedHistoryToolCall`) instead of driven as a
+  // resume leg, so the new message runs; a bare cancel keeps the step-up
+  // re-drive path unchanged.
+  const splicedScopeStepUpCancel =
+    runtime.authChallenge &&
+    !persist.harness &&
+    endsWithNewUserMessage(modelMessages)
+      ? (runtime.localScopeStepUp?.cancelRequest ??
+        (persist.chatSessionId ? runtime.scopeStepUp?.cancelRequest : undefined))
+      : undefined;
   const scopeStepUpResume = runtime.localScopeStepUp?.resumeRequest
     ? buildLocalScopeStepUpResume({ request: runtime.localScopeStepUp.resumeRequest,
         bindingKey: runtime.localScopeStepUp.bindingKey, tools: preparedTools,
         modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults })
-    : runtime.localScopeStepUp?.cancelRequest
+    : runtime.localScopeStepUp?.cancelRequest && !splicedScopeStepUpCancel
     ? buildLocalScopeStepUpCancellation({ request: runtime.localScopeStepUp.cancelRequest,
         bindingKey: runtime.localScopeStepUp.bindingKey })
     : runtime.scopeStepUp?.resumeRequest && persist.chatSessionId
@@ -996,12 +1027,13 @@ export async function streamChatTurn(
           modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
           abortSignal: runtime.abortSignal,
         })
-      : runtime.scopeStepUp?.cancelRequest
+      : runtime.scopeStepUp?.cancelRequest && !splicedScopeStepUpCancel
       ? buildHostedScopeStepUpCancellation({
           request: runtime.scopeStepUp.cancelRequest,
           bearer: runtime.scopeStepUp.bearer,
           messages: modelMessages,
           tools: preparedTools,
+          serverNameFor: (serverId) => scopeStepUpServerNamesById[serverId],
         })
       : undefined;
   const createScopeStepUpContinuation = runtime.localScopeStepUp
@@ -1017,7 +1049,7 @@ export async function streamChatTurn(
           toolCallId: info.toolCallId,
           toolName, toolInput, challenge: info, serverName: info.serverId,
         });
-        suspendedScopeStepUpToolCallId = event.toolCallId;
+        suspendedScopeStepUpToolCallIds.add(event.toolCallId);
         return event;
       }
     : runtime.scopeStepUp && persist.chatSessionId
@@ -1049,10 +1081,17 @@ export async function streamChatTurn(
             toolInput,
             abortSignal: runtime.abortSignal,
           });
-          suspendedScopeStepUpToolCallId = event.toolCallId;
+          suspendedScopeStepUpToolCallIds.add(event.toolCallId);
           return event;
         }
       : undefined;
+
+  const { authChallengeObserver, settleSuspendedHistoryToolCall } = buildWebChatAuthChallenge({
+    manager, persist, runtime, preparedTools, scopeStepUpServerNamesById,
+    splicedScopeStepUpCancel,
+    getWriter: () => scopeChallengeWriter,
+    onSuspend: (toolCallId) => { suspendedScopeStepUpToolCallIds.add(toolCallId); },
+  });
 
   /**
    * Observe in-process tool-call failures from every ToolSet-driven engine to
@@ -1119,6 +1158,9 @@ export async function streamChatTurn(
                 toolInput,
               }),
           }
+        : {}),
+      ...(authChallengeObserver
+        ? { authChallenge: authChallengeObserver }
         : {}),
     },
   );
@@ -1546,6 +1588,9 @@ export async function streamChatTurn(
         : "remote",
     );
     const onComplete = buildOnConversationComplete(String(prepare.modelDefinition.id), "byok");
+    // One array for the stream and the transcript: settling a call a sign-in
+    // suspended inserts its answer here, and the saved history must carry it.
+    const directHistory = scrubMessages(modelMessages);
     return streamDirectChatWithLiveTrace({
       llmModel: provider.model,
       provider: prepare.modelDefinition.provider,
@@ -1556,7 +1601,7 @@ export async function streamChatTurn(
         transport: "http_stream",
       }),
       modelId: String(prepare.modelDefinition.id),
-      messageHistory: scrubMessages(modelMessages),
+      messageHistory: directHistory,
       systemPrompt: effectiveEnhancedSystemPrompt,
       temperature: resolvedTemperature,
       providerOptions: provider.providerOptions,
@@ -1578,8 +1623,11 @@ export async function streamChatTurn(
       abortSignal: runtime.abortSignal,
       chatSessionId: persist.chatSessionId,
       scopeStepUpResume,
-      shouldPauseAfterStep: () => suspendedScopeStepUpToolCallId !== undefined,
-      suspendedToolCallId: () => suspendedScopeStepUpToolCallId,
+      ...(settleSuspendedHistoryToolCall
+        ? { settleSuspendedHistoryToolCall }
+        : {}),
+      shouldPauseAfterStep: () => suspendedScopeStepUpToolCallIds.size > 0,
+      suspendedToolCallIds: () => suspendedScopeStepUpToolCallIds,
       onStreamComplete: cleanupStream,
       onStreamWriterReady: (writer) => {
         scopeChallengeWriter = writer;
@@ -1589,7 +1637,7 @@ export async function streamChatTurn(
         runtime.taskCreatedBridge?.attachStreamWriter(writer);
       },
       onPersist: onComplete ? async (event) => {
-        const history = [...modelMessages];
+        const history = [...directHistory];
         appendDedupedModelMessages(history, event.responseMessages);
         return onComplete(history, event.turnTrace);
       } : undefined,
@@ -1734,9 +1782,12 @@ export async function streamChatTurn(
           runtime.taskCreatedBridge?.attachStreamWriter(writer);
         },
         ...(scopeStepUpResume ? { scopeStepUpResume } : {}),
+        ...(settleSuspendedHistoryToolCall
+          ? { settleSuspendedHistoryToolCall }
+          : {}),
         shouldPauseAfterStep: () =>
-          suspendedScopeStepUpToolCallId !== undefined,
-        suspendedToolCallId: () => suspendedScopeStepUpToolCallId,
+          suspendedScopeStepUpToolCallIds.size > 0,
+        suspendedToolCallIds: () => suspendedScopeStepUpToolCallIds,
         abortSignal: runtime.abortSignal,
       });
     }
@@ -1796,6 +1847,9 @@ export async function streamChatTurn(
         runtime.taskCreatedBridge?.attachStreamWriter(writer);
       },
       ...(scopeStepUpResume ? { scopeStepUpResume } : {}),
+      ...(settleSuspendedHistoryToolCall
+        ? { settleSuspendedHistoryToolCall }
+        : {}),
       abortSignal: runtime.abortSignal,
     });
   }
@@ -1888,6 +1942,7 @@ export async function streamChatTurn(
     requireToolApproval: persist.requireToolApproval,
     requireNativeToolDiscovery: persist.requireNativeToolDiscovery,
     harnessHostCapabilities: prepare.harnessHostCapabilities,
+    harnessStartupRequestId: prepare.harnessStartupRequestId,
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     // The browser sent this history (MJ-008): its unresolved calls run only
     // under a verified approval.
@@ -1963,6 +2018,9 @@ export async function streamChatTurn(
     // driven result, and resumes the loop to a final assistant message.
     ...(runtime.mrtrResume ? { mrtrResume: runtime.mrtrResume } : {}),
     ...(scopeStepUpResume ? { scopeStepUpResume } : {}),
+    ...(settleSuspendedHistoryToolCall
+      ? { settleSuspendedHistoryToolCall }
+      : {}),
     ...(persist.harness && createScopeStepUpContinuation
       ? {
           createHarnessScopeStepUpContinuation: createScopeStepUpContinuation,

@@ -7,12 +7,19 @@ import {
   CONFORMANCE_CHECK_METADATA,
   MCP_APPS_CHECK_IDS,
   MCP_CHECK_IDS,
+  MCP_TASKS_CHECK_IDS,
+  MCP_OAUTH_READINESS_IDS,
+  MCP_READINESS_IDS,
+  MCP_TASKS_READINESS_IDS,
+  OAUTH_READINESS_CATALOG,
   PROTOCOL_CHECK_CATALOG,
   PROTOCOL_VERSION_ERAS,
+  READINESS_CATALOG,
+  READINESS_ERAS,
   TASKS_CHECK_CATALOG,
+  TASKS_READINESS_CATALOG,
   type OAuthConformanceCheckId,
 } from "@mcpjam/sdk/browser";
-import { APP_TASKS_CHECK_IDS } from "@/hooks/conformance-suite-state";
 import type { ProtocolVersionPin } from "@/hooks/use-conformance-run";
 import type { CatalogEntry } from "./ConformanceCheckRows";
 
@@ -40,12 +47,39 @@ export function protocolCatalog(pin: ProtocolVersionPin): CatalogEntry[] {
   });
 }
 
+/** The protocol suite's advice, narrowed by a pin like its checks. */
+export function protocolAdviceCatalog(pin: ProtocolVersionPin): CatalogEntry[] {
+  const pinnedEra = pin === "auto" ? undefined : PROTOCOL_VERSION_ERAS[pin];
+  return MCP_READINESS_IDS.filter((id) => {
+    const eras = READINESS_ERAS[id] as readonly string[];
+    return pinnedEra === undefined || eras.includes(pinnedEra);
+  }).map((id) => {
+    const eras = READINESS_ERAS[id] as readonly string[];
+    return {
+      id,
+      ...READINESS_CATALOG[id],
+      note:
+        pinnedEra === undefined && eras.length === 1
+          ? `${eras[0]} only`
+          : undefined,
+    };
+  });
+}
+
+export const TASKS_ADVICE_CATALOG: CatalogEntry[] = MCP_TASKS_READINESS_IDS.map(
+  (id) => ({ id, ...TASKS_READINESS_CATALOG[id] }),
+);
+
+export const OAUTH_ADVICE_CATALOG: CatalogEntry[] = MCP_OAUTH_READINESS_IDS.map(
+  (id) => ({ id, ...OAUTH_READINESS_CATALOG[id] }),
+);
+
 export const APPS_CATALOG: CatalogEntry[] = MCP_APPS_CHECK_IDS.map((id) => ({
   id,
   ...APPS_CHECK_CATALOG[id],
 }));
 
-export const TASKS_CATALOG: CatalogEntry[] = APP_TASKS_CHECK_IDS.map((id) => ({
+export const TASKS_CATALOG: CatalogEntry[] = MCP_TASKS_CHECK_IDS.map((id) => ({
   id,
   ...TASKS_CHECK_CATALOG[id],
 }));

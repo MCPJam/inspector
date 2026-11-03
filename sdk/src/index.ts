@@ -480,6 +480,7 @@ export type {
   LocalEvalRunReport,
   McpjamInferenceConnection,
   RunSuiteFileOptions,
+  SuiteFileAuthRequired,
   SuiteFileCaseRun,
   SuiteFileImportApproval,
   SuiteFileInferenceMode,
@@ -704,6 +705,7 @@ export {
   dialInitialize,
   dialMcpServer,
   dialResourceListing,
+  dialToolCall,
   dialToolListing,
 } from "./directory-readiness/mcp-dial.js";
 export type {
@@ -714,8 +716,31 @@ export type {
   DirectoryInitializeEvidence,
   DirectoryListingEvidence,
   DirectoryResourceEvidence,
+  DirectoryToolCallEvidence,
   DirectoryToolEvidence,
 } from "./directory-readiness/mcp-dial.js";
+// Lazy authentication: the gate, the claims and the evidence shape are pure;
+// the probe dials, so it is Node-only like the dial above.
+export {
+  DIRECTORY_FEATURE_CLAIMS,
+  LAZY_AUTH_PROBE_LIMITS,
+  isDirectoryFeatureClaim,
+  lazyAuthRediscoveryTrigger,
+  normalizeFeatureClaims,
+  resolveLazyAuthProbeMode,
+  selectLazyAuthProbeTools,
+} from "./directory-readiness/lazy-auth.js";
+export type {
+  DirectoryFeatureClaim,
+  DirectoryLazyAuthCallOutcome,
+  DirectoryLazyAuthProbeConfig,
+  DirectoryLazyAuthProbeEvidence,
+  DirectoryLazyAuthProbeMode,
+  DirectoryLazyAuthRediscovery,
+  DirectoryLazyAuthToolCall,
+} from "./directory-readiness/lazy-auth.js";
+export { probeLazyAuthentication } from "./directory-readiness/lazy-auth-probe.js";
+export type { ProbeLazyAuthenticationOptions } from "./directory-readiness/lazy-auth-probe.js";
 
 // Claude directory readiness. Pure data and data reasoning only — the runner
 // and the dialing checks are deliberately not re-exported here, so importing
@@ -726,6 +751,7 @@ export * from "./claude-readiness/index.js";
 // that importing the result model can never pull a transport in with it.
 export {
   discoverClaudeAuthEvidence,
+  discoverClaudeAuthMetadata,
   traceConnectorRedirects,
 } from "./claude-readiness/discovery.js";
 export type { ClaudeDiscoveryOptions } from "./claude-readiness/discovery.js";
@@ -739,6 +765,11 @@ export type { GatherClaudeReadinessEvidenceOptions } from "./claude-readiness/ga
 export {
   probeDynamicRegistration,
   probeRefreshRotation,
+  probeStepUpChallenge,
+} from "./claude-readiness/intrusive-probes.js";
+export type {
+  ClaudeIntrusiveProbeOptions,
+  ClaudeStepUpProbeOptions,
 } from "./claude-readiness/intrusive-probes.js";
 
 // OpenAI plugin-directory readiness. Same rule as the Claude barrel above:
@@ -773,6 +804,7 @@ export type { GatherMuseReadinessEvidenceOptions } from "./muse-readiness/gather
 // that importing the result model can never pull a transport in with it.
 export {
   discoverOpenAIAuthEvidence,
+  discoverOpenAIAuthMetadata,
   discoverOpenAIImportedSkills,
   fetchOpenAIDomainVerification,
   traceOpenAIEndpoint,
@@ -791,6 +823,7 @@ export {
   isUnrunCheck,
 } from "./conformance-outcome.js";
 export { isAuthorizationRequiredCheck } from "./conformance-authorization.js";
+export { isTimedOutCheck } from "./conformance-timeout.js";
 export type {
   ConformanceRunOutcome,
   ConformanceSkipReason,
@@ -1258,6 +1291,8 @@ export {
 export type {
   ConformanceResult as OAuthConformanceResult,
   ConformanceStepId as OAuthConformanceStepId,
+  MCPOAuthReadinessId,
+  MCPOAuthReadinessWarning,
   OAuthConformanceCheckId,
   OAuthConformanceProfile,
   RemoteBrowserAuthorizationCode,
@@ -1284,6 +1319,7 @@ export type {
   MCPConformanceResult,
   MCPConformanceSuiteConfig,
   MCPConformanceSuiteResult,
+  MCPLogLevel,
   MCPReadinessId,
   MCPReadinessSpecStrength,
   MCPReadinessWarning,
@@ -1293,9 +1329,12 @@ export {
   CHECK_ERAS,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_LOG_LEVELS,
   MCP_PROTOCOL_VERSION_ERA_IDS,
   MCP_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
+  READINESS_ERAS,
+  RETIRED_MCP_CHECK_IDS,
   canRunConformance,
   isHttpServerConfig,
 } from "./mcp-conformance/index.js";
@@ -1339,11 +1378,14 @@ export type {
   MCPAppsConformanceSuiteDefaults,
   MCPAppsConformanceSuiteResult,
   MCPAppsConformanceSuiteRun,
+  MCPAppsReadinessId,
+  MCPAppsReadinessWarning,
   MCPAppsResourceReadOutcome,
 } from "./apps-conformance/index.js";
 export {
   MCP_APPS_CHECK_CATEGORIES,
   MCP_APPS_CHECK_IDS,
+  MCP_APPS_READINESS_IDS,
 } from "./apps-conformance/index.js";
 
 // MCP Tasks conformance
@@ -1359,12 +1401,14 @@ export type {
   MCPTasksReadinessWarning,
   MCPTasksRunOutcome,
   MCPTasksSkipReason,
+  MCPTasksUncheckedAdvice,
 } from "./tasks-conformance/index.js";
 export {
   decideOutcome,
   MCP_TASKS_CHECK_CATEGORIES,
   MCP_TASKS_CHECK_IDS,
   MCP_TASKS_READINESS_IDS,
+  RENAMED_MCP_TASKS_CHECK_IDS,
   resolveProbeTool,
 } from "./tasks-conformance/index.js";
 
@@ -1430,7 +1474,10 @@ export type {
   StepResult,
   VerificationResult,
 } from "./oauth-conformance/index.js";
-export { CONFORMANCE_CHECK_METADATA } from "./oauth-conformance/index.js";
+export {
+  CONFORMANCE_CHECK_METADATA,
+  MCP_OAUTH_READINESS_IDS,
+} from "./oauth-conformance/index.js";
 
 // MCP Operations (pure functions for common MCP workflows)
 export {

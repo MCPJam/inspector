@@ -1,3 +1,4 @@
+import { authorizationFlowDigest } from "@/lib/oauth/flow-digest";
 import {
   serverCheckQueue,
   isServerCheckQueueError,
@@ -10,7 +11,7 @@ import {
   readOAuthCallbackAttempt,
   readOAuthCallbackParams,
 } from "@/lib/oauth-callback-inbox";
-import { readPendingChatScopeStepUp } from "@/lib/scope-step-up-pending";
+import { listPendingChatScopeStepUps } from "@/lib/scope-step-up-pending";
 import type { ConnectionIntent } from "@/shared/oauth-connections";
 import {
   notifyOAuthConnectionsChanged,
@@ -1136,7 +1137,14 @@ export function useServerState({
         return false;
       }
 
-      const stepUp = readPendingChatScopeStepUp();
+      // The newest call waiting on this server, not on any server.
+      const stepUp = listPendingChatScopeStepUps()
+        .filter(
+          (entry) =>
+            entry.event.serverId === params.serverId ||
+            entry.event.serverName === params.serverName,
+        )
+        .pop();
       const connectionIntent =
         params.connectionIntent ??
         (stepUp?.event.connectionId &&
@@ -3246,7 +3254,10 @@ export function useServerState({
               });
               logger.info("OAuth connection successful", { serverName });
               markPendingChatScopeStepUpReady(serverName);
-              markPendingDirectScopeStepUpReplayReady(serverName);
+              markPendingDirectScopeStepUpReplayReady(
+                serverName,
+                await authorizationFlowDigest(state),
+              );
               if (!suppressSuccessToast) {
                 toast.success(
                   `OAuth connection successful! Connected to ${serverName}.`,

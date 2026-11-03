@@ -183,6 +183,30 @@ afterEach(() => {
 });
 
 describe("runHarnessTurn — ephemeral sandbox binding (phase 6)", () => {
+  it("streams request-bound startup phases as transient data outside model history", async () => {
+    const requestId = "b19b8e67-f9a8-4d1f-9fce-7b6da581c041";
+    const result = await runHarnessTurn(
+      baseOptions({
+        harnessSandboxBinding: BINDING,
+        chatSessionId: "startup-chat",
+        harnessStartupRequestId: requestId,
+      }) as never,
+      "ui",
+    );
+    expect(result.response).toBeDefined();
+    const wire = await result.response!.text();
+    const events = wire.split("\n")
+      .filter(line => line.startsWith("data: {") && line.includes('"data-harness-startup"'))
+      .map(line => JSON.parse(line.slice(6)));
+    expect(events).toContainEqual({
+      type: "data-harness-startup", transient: true,
+      data: { phase: "preparing", chatSessionId: "startup-chat", requestId },
+    });
+    expect(events.every(event => event.transient === true &&
+      event.data.requestId === requestId && event.data.chatSessionId === "startup-chat")).toBe(true);
+    expect(JSON.stringify(result.messageHistory)).not.toContain("data-harness-startup");
+  });
+
   it("runs on the given box and NEVER reaches the personal-computer reserve", async () => {
     await runHarnessTurn(
       baseOptions({ harnessSandboxBinding: BINDING }) as never,

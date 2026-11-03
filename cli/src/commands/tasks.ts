@@ -5,6 +5,7 @@ import {
   MCP_TASKS_CHECK_CATEGORIES,
   MCP_TASKS_CHECK_IDS,
   MCPTasksConformanceTest,
+  RENAMED_MCP_TASKS_CHECK_IDS,
   isMCPTasksWireError,
   isUnknownTaskError,
   type MCPClientManager,
@@ -123,7 +124,18 @@ export function buildTasksConformanceConfig(
     );
   }
 
-  const checkIds = options.checkId?.filter(Boolean);
+  // A renamed id runs under its current name; say what changed.
+  const checkIds = options.checkId?.filter(Boolean).map((id) => {
+    if (!Object.hasOwn(RENAMED_MCP_TASKS_CHECK_IDS, id)) return id;
+    const current =
+      RENAMED_MCP_TASKS_CHECK_IDS[
+        id as keyof typeof RENAMED_MCP_TASKS_CHECK_IDS
+      ];
+    process.stderr.write(
+      `Note: check ${id} is now ${current}. Running that instead.\n`
+    );
+    return current;
+  });
   const invalidCheckIds = collectInvalidEntries(checkIds, MCP_TASKS_CHECK_IDS);
   if (invalidCheckIds.length > 0) {
     throw usageError(
