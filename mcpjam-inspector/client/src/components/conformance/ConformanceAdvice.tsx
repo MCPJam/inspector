@@ -22,6 +22,13 @@ export interface AdviceGroup {
   readiness?: readonly AdviceItem[];
 }
 
+/** Each suite's advice as `[suite title, result.readiness]` pairs. */
+export function adviceGroups(
+  entries: ReadonlyArray<[suite: string, readiness?: readonly AdviceItem[]]>,
+): AdviceGroup[] {
+  return entries.map(([suite, readiness]) => ({ suite, readiness }));
+}
+
 /** The spec's requirement words are defined by BCP 14 (RFC 2119 + RFC 8174). */
 const BCP_14_URL = "https://datatracker.ietf.org/doc/html/bcp14";
 
