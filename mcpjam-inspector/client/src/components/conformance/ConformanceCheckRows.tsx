@@ -220,6 +220,11 @@ export function CheckRow({
           >
             {check.title}
           </span>
+          {expanded && (
+            <span className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
+              {check.description}
+            </span>
+          )}
           {check.error &&
           (expanded || showsMessageShut(check.status, check.skipReason)) ? (
             <ResultMessage
@@ -241,10 +246,6 @@ export function CheckRow({
       </button>
       <Collapse open={expanded}>
         <div className="space-y-2 pb-2 pl-14 pr-1">
-          <div className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
-            {check.description}
-          </div>
-
           {detailEntries.length > 0 && (
             <div className="rounded-sm bg-muted/20 px-2 py-1.5 space-y-1">
               {detailEntries.map(([key, value]) => (
@@ -308,6 +309,11 @@ export function OAuthStepRow({
         {pending ? <UnscoredTag /> : null}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="text-sm">{step.title}</span>
+          {expanded && (
+            <span className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
+              {step.summary}
+            </span>
+          )}
           {step.error &&
           (expanded || showsMessageShut(step.status, step.skipReason)) ? (
             <ResultMessage
@@ -327,10 +333,6 @@ export function OAuthStepRow({
       </button>
       <Collapse open={expanded}>
         <div className="space-y-2 pb-2 pl-14 pr-1">
-          <div className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
-            {step.summary}
-          </div>
-
           {typeof step.error?.details === "string" && (
             <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-sm text-muted-foreground">
               <div className="mb-1 font-medium text-foreground/70">Details</div>
