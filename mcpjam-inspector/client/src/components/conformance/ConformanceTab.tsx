@@ -12,7 +12,11 @@ import type {
   ProtocolVersionPin,
 } from "@/hooks/use-conformance-run";
 import { runnableSelection } from "@/hooks/conformance-suite-state";
-import { useAppNavigate, useCurrentLocationParts } from "@/lib/app-navigation";
+import {
+  CONFORMANCE_RUN_PARAM,
+  useAppNavigate,
+  useCurrentLocationParts,
+} from "@/lib/app-navigation";
 import { toast } from "@/lib/toast";
 import type { ConformancePersistConfig } from "@/components/conformance/PersistConformanceRun";
 import {
@@ -220,6 +224,45 @@ export function ConformanceTab({
     }));
     changeView("overview");
   };
+  // A saved run's Run again lands here with `?run=<server>`: start that
+  // server with its default checks, the way the server list's Run does. The
+  // key is dropped first, so a refresh or Back does not run it again.
+  const runRequest = new URLSearchParams(location.search).get(
+    CONFORMANCE_RUN_PARAM,
+  );
+  const handledRunRequest = useRef<string | null>(null);
+  const startRequestedRun = useRef(() => {});
+  useEffect(() => {
+    startRequestedRun.current = () => {
+      if (!runRequest) return;
+      const params = new URLSearchParams(location.search);
+      params.delete(CONFORMANCE_RUN_PARAM);
+      const query = params.toString();
+      navigate(
+        `${location.pathname}${query ? `?${query}` : ""}${location.hash}`,
+        { replace: true },
+      );
+      if (servers?.some((offered) => offered.name === runRequest)) {
+        startRun(runRequest, "auto", defaultsFor(runRequest) ?? {});
+      } else {
+        toast.info(`${runRequest} is not one of this project's servers.`);
+      }
+    };
+  });
+  useEffect(() => {
+    // Wait for what the run reads: the servers and their default checks.
+    if (!runRequest || !servers || projectServersLoading) return;
+    if (!serverDefaultsLoaded) return;
+    if (handledRunRequest.current === location.search) return;
+    handledRunRequest.current = location.search;
+    startRequestedRun.current();
+  }, [
+    runRequest,
+    servers,
+    projectServersLoading,
+    serverDefaultsLoaded,
+    location.search,
+  ]);
   // Once servers have runs, the home lists them, each with a Run that goes
   // straight to a run with that server's default checks.
   const recentServers = (servers ?? []).flatMap((offered) => {

@@ -191,6 +191,68 @@ describe("ConformanceRunDetailPage", () => {
     expect(screen.getAllByText("Weather").length).toBeGreaterThanOrEqual(1);
   });
 
+  it("runs the same server again from Run again", () => {
+    navigateMock.mockReset();
+    useArtifactQueryMock.mockReturnValue(run([report()]));
+    render(
+      <ConformanceRunDetailPage
+        runId="run_1"
+        serverNames={new Map([["srv_1", "Weather"]])}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+    expect(navigateMock).toHaveBeenCalledWith("/conformance?run=Weather");
+  });
+
+  it("sends Run again to Conformance, with no Settings, for a server the project no longer has", () => {
+    navigateMock.mockReset();
+    useArtifactQueryMock.mockReturnValue(run([report()]));
+    render(
+      <ConformanceRunDetailPage
+        runId="run_1"
+        serverSettings={{ loaded: true, save: vi.fn() }}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Settings" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+    expect(navigateMock).toHaveBeenCalledWith("/conformance");
+  });
+
+  it("opens the server's Settings from the run, and Back returns to it", async () => {
+    useArtifactQueryMock.mockReturnValue(run([report()]));
+    const save = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = render(
+      <ConformanceRunDetailPage
+        runId="run_1"
+        serverNames={new Map([["srv_1", "Weather"]])}
+        serverSettings={{ loaded: false, save }}
+      />,
+    );
+    // Not before the defaults load: a change would save over them.
+    expect(screen.getByRole("button", { name: "Settings" })).toBeDisabled();
+
+    rerender(
+      <ConformanceRunDetailPage
+        runId="run_1"
+        serverNames={new Map([["srv_1", "Weather"]])}
+        serverSettings={{
+          defaults: { Weather: { tasks: [], oauth: false } },
+          loaded: true,
+          save,
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(
+      screen.getByRole("heading", { name: "Weather Conformance Settings" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByRole("button", { name: "Run again" })).toBeDefined();
+  });
+
   it("marks a suite a finished run never heard back from as NO RESULT", () => {
     useArtifactQueryMock.mockReturnValue(
       run(
