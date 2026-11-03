@@ -91,6 +91,7 @@ describe("POST /api/web/conformance/protocol probe tools", () => {
     const res = await postProtocol({
       logProbe: { toolName: "emit-logs", arguments: { count: 2 } },
       inputRequiredProbe: { toolName: "ask-user" },
+      toolCallProbe: { toolName: "weather" },
     });
 
     expect(res.status).toBe(200);
@@ -98,6 +99,7 @@ describe("POST /api/web/conformance/protocol probe tools", () => {
       expect.objectContaining({
         logProbe: { toolName: "emit-logs", arguments: { count: 2 } },
         inputRequiredProbe: { toolName: "ask-user" },
+        toolCallProbe: { toolName: "weather" },
       }),
     );
   });

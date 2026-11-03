@@ -274,6 +274,7 @@ conformanceWeb.post("/protocol", async (c) =>
         readinessIds: parsed.readinessIds,
         logProbe: parsed.logProbe,
         inputRequiredProbe: parsed.inputRequiredProbe,
+        toolCallProbe: parsed.toolCallProbe,
       });
       return { success: true, result };
     } catch (error) {

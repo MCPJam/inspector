@@ -846,8 +846,15 @@ async function collectCacheableOperations(
     probes.push({ method: operation.method, result });
 
     if (operation.method === "resources/list") {
-      const listed = jsonRpcResult(result)?.resources;
-      listedNoResources = Array.isArray(listed) && listed.length === 0;
+      const listResult = jsonRpcResult(result);
+      const listed = listResult?.resources;
+      // Empty only when the walk is OVER: an empty page that still carries a
+      // `nextCursor` (even "") says nothing about the pages after it.
+      listedNoResources =
+        Array.isArray(listed) &&
+        listed.length === 0 &&
+        (listResult?.nextCursor === undefined ||
+          listResult?.nextCursor === null);
       const first = Array.isArray(listed) ? listed[0] : undefined;
       const uri = (first as { uri?: unknown } | undefined)?.uri;
       if (typeof uri === "string" && uri.length > 0) {
@@ -1568,8 +1575,10 @@ function alternatingCase(name: string): string {
  * only produces by EXECUTING the tool, and nothing in a tool's advertised
  * metadata says whether executing it is safe — a run that guessed would
  * eventually charge a card or delete a row on somebody's production server. So
- * the operator names the calls that are safe, and without them the check
- * reports a skip that says exactly what it needs.
+ * the operator names the calls that are safe. Without one, the check is NOT
+ * APPLICABLE only when no tool declares an `outputSchema` (the MUST binds
+ * nothing); when one does, the MUST went unverified, so it could not run, like
+ * every other check whose probe tool was not named.
  *
  * The declared schema is validated with the same dialect-aware validator the
  * MCP client uses for tool inputs, so a tool declaring draft-07 (which
@@ -1584,13 +1593,6 @@ async function runToolOutputSchemaCheck(
   const startedAt = Date.now();
   const fixtures = ctx.config.fixtures.toolCalls;
 
-  if (fixtures.length === 0) {
-    return couldNotRunResult(
-      meta,
-      "No tools/call fixtures configured: set fixtures.toolCalls to tools that are safe to execute so the declared outputSchema can be checked against a real result"
-    );
-  }
-
   const capabilities = advertisedCapabilities(await discoverOnce(ctx, state));
   if (capabilities.tools === undefined) {
     return notApplicableResult(
@@ -1600,6 +1602,18 @@ async function runToolOutputSchemaCheck(
   }
 
   const declared = await toolOutputSchemas(ctx, state);
+  if (fixtures.length === 0) {
+    return declared.size === 0
+      ? notApplicableResult(
+          meta,
+          "No tool declares an outputSchema, so there is no structured result to check"
+        )
+      : couldNotRunResult(
+          meta,
+          `${declared.size} tool(s) declare an outputSchema, but no tools/call fixture was configured: set fixtures.toolCalls to a tool that is safe to execute so its result can be checked against the schema`,
+          { declaredOutputSchemas: [...declared.keys()] }
+        );
+  }
   const validator = new DialectAwareJsonSchemaValidator({
     // The default handler console.warns per unknown dialect. A conformance run
     // reports, it does not print.

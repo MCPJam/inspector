@@ -15,6 +15,7 @@ import {
 } from "@/hooks/use-conformance-run";
 import {
   probeInputStatus,
+  probeKeyFor,
   probesApply,
   tasksProbeRuns,
   type ConformanceProbeKey,
@@ -389,7 +390,15 @@ export function ConformanceSetup({
                 }
                 checkInputStatus={(suite, checkId) => {
                   if (suite === "protocol" && protocolProbes) {
-                    return probeInputStatus(checkId, probes);
+                    // The output check needs a tool only when one declares
+                    // an output schema; otherwise it does not apply.
+                    const noOutputSchemas =
+                      probeTools.status === "ready" &&
+                      !probeTools.tools.some((tool) => tool.hasOutputSchema);
+                    return probeKeyFor(checkId) === "toolCallProbe" &&
+                      noOutputSchemas
+                      ? undefined
+                      : probeInputStatus(checkId, probes);
                   }
                   // The Tasks tool is optional where the server marks which
                   // tool creates a task, so an unset one is not flagged.

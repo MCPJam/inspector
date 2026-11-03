@@ -57,6 +57,10 @@ const PROBE_COPY: Record<
     label: "Tool that asks for input",
     hint: "Called once. Pick one that asks the user for input before it finishes.",
   },
+  toolCallProbe: {
+    label: "Tool to check output",
+    hint: "Called once. Its result is checked against the output schema it declares.",
+  },
   tasksProbe: {
     label: "Tool that creates a task",
     hint: "Called up to 2 times, to create the task these checks inspect.",
@@ -71,6 +75,8 @@ interface ToolOption {
   destructive: boolean;
   /** The tool's input schema properties: the argument names to offer. */
   argProperties?: Record<string, unknown>;
+  /** Declares an output schema: the only tools the output check can grade. */
+  hasOutputSchema: boolean;
 }
 
 /** Read-only tools first: they are the likeliest safe choice. */
@@ -107,6 +113,7 @@ export function useProbeTools(server: ServerWithName | null): ProbeTools {
             tool.annotations?.readOnlyHint !== true &&
             tool.annotations?.destructiveHint !== false,
           argProperties: tool.inputSchema?.properties,
+          hasOutputSchema: tool.outputSchema !== undefined,
         })),
       ),
     [data],
@@ -258,7 +265,7 @@ function TaskAnswersField({
 
 export function ConformanceProbeField({
   probeKey,
-  tools: { tools: options, status, truncated },
+  tools: { tools: allTools, status, truncated },
   probe,
   onChange,
   onValidChange,
@@ -280,6 +287,17 @@ export function ConformanceProbeField({
   showAnswers?: boolean;
 }) {
   const id = useId();
+  // A tool with no output schema gives the output check nothing to grade.
+  const options =
+    probeKey === "toolCallProbe"
+      ? allTools.filter((tool) => tool.hasOutputSchema)
+      : allTools;
+  // With no output schema declared, the output check does not apply at all.
+  const unsetHint =
+    probeKey === "toolCallProbe" && status === "ready" && options.length === 0
+      ? "No tool on this server declares an output schema, so this check does not apply."
+      : (PROBE_COPY[probeKey].unsetHint ??
+        "Without a tool, this check reports that it could not run.");
   // The editor reports validity from an effect keyed on this callback, so it
   // must keep one identity while the parent re-renders.
   const onValidChangeRef = useRef(onValidChange);
@@ -351,10 +369,7 @@ export function ConformanceProbeField({
         </SelectContent>
       </Select>
       <p className="text-xs text-muted-foreground">
-        {toolName === NONE
-          ? (copy.unsetHint ??
-            "Without a tool, this check reports that it could not run.")
-          : copy.hint}
+        {toolName === NONE ? unsetHint : copy.hint}
       </p>
       {status === "failed" ? (
         <p className="text-xs text-destructive">

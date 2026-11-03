@@ -71,12 +71,13 @@ export interface ConformanceProbe {
 /**
  * The tools the checks that must call one may use: `logProbe` for the logging
  * check and the log level filtering advice, `inputRequiredProbe` for the
- * undeclared-capability check, `tasksProbe` for the Tasks checks that need a
- * created task.
+ * undeclared-capability check, `toolCallProbe` for the output-schema check,
+ * `tasksProbe` for the Tasks checks that need a created task.
  */
 export interface ConformanceProbes {
   logProbe?: ConformanceProbe;
   inputRequiredProbe?: ConformanceProbe;
+  toolCallProbe?: ConformanceProbe;
   tasksProbe?: ConformanceProbe;
 }
 
@@ -99,6 +100,9 @@ export async function runProtocolConformance(
     ...(options?.probes?.logProbe ? { logProbe: options.probes.logProbe } : {}),
     ...(options?.probes?.inputRequiredProbe
       ? { inputRequiredProbe: options.probes.inputRequiredProbe }
+      : {}),
+    ...(options?.probes?.toolCallProbe
+      ? { toolCallProbe: options.probes.toolCallProbe }
       : {}),
   };
   return runByMode({
