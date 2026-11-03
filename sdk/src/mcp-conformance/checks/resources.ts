@@ -1,9 +1,5 @@
 import type { MCPClientCheckDefinition } from "../types.js";
-import {
-  errorMessage,
-  failedResult,
-  passedResult,
-} from "./helpers.js";
+import { caughtErrorResult, failedResult, passedResult } from "./helpers.js";
 
 export const RESOURCE_CHECKS: MCPClientCheckDefinition[] = [
   {
@@ -36,12 +32,11 @@ export const RESOURCE_CHECKS: MCPClientCheckDefinition[] = [
           resourceUris: (result.resources ?? []).map((resource) => resource.uri),
         });
       } catch (error) {
-        return failedResult(
+        return caughtErrorResult(
           this,
-          Date.now() - startedAt,
-          errorMessage(error),
-          undefined,
+          startedAt,
           error,
+          ctx.config.checkTimeout
         );
       }
     },

@@ -38,7 +38,14 @@ import {
   failedResult,
   couldNotRunResult,
   notApplicableResult,
+  timedOutResult,
 } from "./checks/helpers.js";
+import {
+  checkTimedOutDetails,
+  isRequestTimeoutError,
+  isTimedOutCheck,
+  withDeadline,
+} from "../conformance-timeout.js";
 import type {
   MCPCheckCategory,
   MCPCheckEra,
@@ -287,6 +294,9 @@ async function safeListResources(
   }
 }
 
+/** Timeouts in a row after which the remaining client checks are skipped. */
+const MAX_TIMEOUTS_IN_A_ROW = 2;
+
 async function runClientChecks(
   config: NormalizedMCPConformanceConfig,
   selectedCheckIds: Set<MCPCheckId>,
@@ -398,6 +408,10 @@ async function runClientChecks(
 
         const results: MCPCheckResult[] = [];
         let connectionLost = false;
+        // Checks in a row that ran out of time. A timeout leaves the session
+        // usable, but at this many the server has stopped answering, and each
+        // check after would wait out the full limit for the same silence.
+        let timeoutStreak = 0;
 
         for (const check of selectedClientChecks) {
           // Era gate first: an era-inapplicable check is a deterministic skip
@@ -423,9 +437,33 @@ async function runClientChecks(
             continue;
           }
 
+          if (timeoutStreak >= MAX_TIMEOUTS_IN_A_ROW) {
+            results.push(
+              couldNotRunResult(
+                check,
+                `Skipped because the server stopped answering: the ${MAX_TIMEOUTS_IN_A_ROW} checks before this one timed out.`,
+                checkTimedOutDetails(config.checkTimeout)
+              )
+            );
+            continue;
+          }
+
           try {
-            results.push(await check.run(ctx));
+            const result = await withDeadline(
+              check.run(ctx),
+              config.checkTimeout,
+              () => timedOutResult(check, config.checkTimeout)
+            );
+            // Only an answer ends the streak; a skip asked the server nothing.
+            if (isTimedOutCheck(result)) timeoutStreak += 1;
+            else if (result.status !== "skipped") timeoutStreak = 0;
+            results.push(result);
           } catch (error) {
+            if (isRequestTimeoutError(error)) {
+              timeoutStreak += 1;
+              results.push(timedOutResult(check, config.checkTimeout));
+              continue;
+            }
             results.push(
               failedResult(
                 check,

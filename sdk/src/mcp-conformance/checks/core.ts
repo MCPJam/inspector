@@ -1,9 +1,8 @@
-import type { MCPClientCheckContext, MCPClientCheckDefinition } from "../types.js";
-import {
-  errorMessage,
-  failedResult,
-  passedResult,
-} from "./helpers.js";
+import type {
+  MCPClientCheckContext,
+  MCPClientCheckDefinition,
+} from "../types.js";
+import { caughtErrorResult, failedResult, passedResult } from "./helpers.js";
 
 function selectCompletionReference(ctx: Parameters<
   MCPClientCheckDefinition["run"]
@@ -108,12 +107,11 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
           result: result as Record<string, unknown>,
         });
       } catch (error) {
-        return failedResult(
+        return caughtErrorResult(
           this,
-          Date.now() - startedAt,
-          errorMessage(error),
-          undefined,
+          startedAt,
           error,
+          ctx.config.checkTimeout
         );
       }
     },
@@ -148,12 +146,11 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
           level: "info",
         });
       } catch (error) {
-        return failedResult(
+        return caughtErrorResult(
           this,
-          Date.now() - startedAt,
-          errorMessage(error),
-          undefined,
+          startedAt,
           error,
+          ctx.config.checkTimeout
         );
       }
     },
@@ -211,12 +208,11 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
           completion: result.completion as Record<string, unknown>,
         });
       } catch (error) {
-        return failedResult(
+        return caughtErrorResult(
           this,
-          Date.now() - startedAt,
-          errorMessage(error),
-          undefined,
+          startedAt,
           error,
+          ctx.config.checkTimeout
         );
       }
     },

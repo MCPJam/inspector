@@ -1,9 +1,5 @@
 import type { MCPClientCheckDefinition } from "../types.js";
-import {
-  errorMessage,
-  failedResult,
-  passedResult,
-} from "./helpers.js";
+import { caughtErrorResult, failedResult, passedResult } from "./helpers.js";
 
 export const PROMPT_CHECKS: MCPClientCheckDefinition[] = [
   {
@@ -36,12 +32,11 @@ export const PROMPT_CHECKS: MCPClientCheckDefinition[] = [
           promptNames: (result.prompts ?? []).map((prompt) => prompt.name),
         });
       } catch (error) {
-        return failedResult(
+        return caughtErrorResult(
           this,
-          Date.now() - startedAt,
-          errorMessage(error),
-          undefined,
+          startedAt,
           error,
+          ctx.config.checkTimeout
         );
       }
     },

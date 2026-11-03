@@ -126,6 +126,27 @@ describe("OverallScoreCard", () => {
     ).toBeInTheDocument();
   });
 
+  it("names the timeout when checks could not run because the server was slow", () => {
+    render(
+      <OverallScoreCard
+        score={{
+          ...signInBlocked,
+          couldNotRun: 3,
+          failed: 0,
+          outcome: "incomplete",
+        }}
+        serverName="Slow"
+        version="Auto"
+        timedOut={2}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Incomplete. 2 checks could not run because the server did not answer in time. 1 more could not run.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("lists every count on its own and marks a score with unrun checks partial", () => {
     render(
       <OverallScoreCard

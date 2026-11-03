@@ -82,6 +82,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   const guard = await import("../../../utils/hosted-egress-guard.js");
   guard.setEgressHostResolverForTests(null);
 });
@@ -131,5 +132,31 @@ describe("POST /api/web/conformance/protocol advice picks", () => {
     const res = await postProtocol({ readinessIds: ["readiness-made-up"] });
     expect(res.status).toBe(400);
     expect(runProtocolConformanceMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/web/conformance/protocol time limits", () => {
+  it("gives each check the CLI's 15 second limit", async () => {
+    await postProtocol({});
+    expect(runProtocolConformanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ checkTimeout: 15_000 }),
+    );
+  });
+
+  it("answers 504 with its own message when the run outlives the hosted limit", async () => {
+    vi.useFakeTimers();
+    // A run that never settles: only the route-level deadline can end it.
+    runProtocolConformanceMock.mockReturnValue(new Promise(() => {}));
+
+    const pending = postProtocol({});
+    await vi.advanceTimersByTimeAsync(85_000);
+    const res = await pending;
+
+    expect(res.status).toBe(504);
+    const body = (await res.json()) as { code: string; message: string };
+    expect(body.code).toBe("TIMEOUT");
+    expect(body.message).toMatch(
+      /^The Protocol checks took longer than the 85-second limit/,
+    );
   });
 });

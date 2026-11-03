@@ -1,9 +1,5 @@
 import type { MCPClientCheckDefinition } from "../types.js";
-import {
-  errorMessage,
-  failedResult,
-  passedResult,
-} from "./helpers.js";
+import { caughtErrorResult, failedResult, passedResult } from "./helpers.js";
 
 export const TOOL_CHECKS: MCPClientCheckDefinition[] = [
   {
@@ -36,12 +32,11 @@ export const TOOL_CHECKS: MCPClientCheckDefinition[] = [
           toolNames: (result.tools ?? []).map((tool) => tool.name),
         });
       } catch (error) {
-        return failedResult(
+        return caughtErrorResult(
           this,
-          Date.now() - startedAt,
-          errorMessage(error),
-          undefined,
+          startedAt,
           error,
+          ctx.config.checkTimeout
         );
       }
     },
@@ -119,12 +114,11 @@ export const TOOL_CHECKS: MCPClientCheckDefinition[] = [
           toolCount: tools.length,
         });
       } catch (error) {
-        return failedResult(
+        return caughtErrorResult(
           this,
-          Date.now() - startedAt,
-          errorMessage(error),
-          undefined,
+          startedAt,
           error,
+          ctx.config.checkTimeout
         );
       }
     },

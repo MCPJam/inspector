@@ -244,6 +244,24 @@ function toWebError(error: unknown): WebRouteError {
 
 // ── POST /protocol ──────────────────────────────────────────────────────
 
+/**
+ * Each check gets the CLI's default limit, so a slow request costs one check
+ * instead of the whole suite, and the suite gives up on a server that stops
+ * answering after two checks.
+ */
+const HOSTED_CHECK_TIMEOUT_MS = 15_000;
+/**
+ * Wall-clock ceiling for a protocol or apps run, under the proxy's 100 s
+ * limit so the route answers with its own message instead of a bare 524.
+ */
+const HOSTED_SUITE_DEADLINE_MS = 85_000;
+
+function suiteDeadlineMessage(suite: string): string {
+  return `The ${suite} checks took longer than the ${
+    HOSTED_SUITE_DEADLINE_MS / 1000
+  }-second limit for a hosted run, so no results came back. Run them again, or pick fewer checks for this suite.`;
+}
+
 const protocolSchema = z
   .object({
     /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
@@ -267,14 +285,19 @@ conformanceWeb.post("/protocol", async (c) =>
     const parsed = parseWithSchema(protocolSchema, body);
 
     try {
-      const { result } = await runProtocolConformance({
-        ...resolved,
-        protocolVersion: parsed.protocolVersion,
-        checkIds: parsed.checkIds,
-        readinessIds: parsed.readinessIds,
-        logProbe: parsed.logProbe,
-        inputRequiredProbe: parsed.inputRequiredProbe,
-      });
+      const { result } = await withHostedDeadline(
+        runProtocolConformance({
+          ...resolved,
+          protocolVersion: parsed.protocolVersion,
+          checkIds: parsed.checkIds,
+          readinessIds: parsed.readinessIds,
+          logProbe: parsed.logProbe,
+          inputRequiredProbe: parsed.inputRequiredProbe,
+          checkTimeout: HOSTED_CHECK_TIMEOUT_MS,
+        }),
+        HOSTED_SUITE_DEADLINE_MS,
+        suiteDeadlineMessage("Protocol"),
+      );
       return { success: true, result };
     } catch (error) {
       throw toWebError(error);
@@ -299,10 +322,14 @@ conformanceWeb.post("/apps", async (c) =>
     const parsed = parseWithSchema(appsSchema, body);
 
     try {
-      const { result } = await runAppsConformance({
-        ...config,
-        ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
-      });
+      const { result } = await withHostedDeadline(
+        runAppsConformance({
+          ...config,
+          ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
+        }),
+        HOSTED_SUITE_DEADLINE_MS,
+        suiteDeadlineMessage("Apps"),
+      );
       return { success: true, result };
     } catch (error) {
       throw toWebError(error);
