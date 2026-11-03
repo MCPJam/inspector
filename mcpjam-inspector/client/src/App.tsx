@@ -4838,11 +4838,14 @@ export default function App() {
   ];
   const telemetryProjectIds = [convexProjectId];
   const telemetryActor = isWorkOsLoading ? undefined : (actorKey ?? null);
+  // A guest reading someone else's shared page keeps replay off, whatever
+  // the viewer's own policy says.
+  const isSharedLinkRoute = isScenarioChatRoute || isConformanceSharedRoute;
   const telemetryPrivacy = useTelemetryPrivacyContext({
     // Content and identity still need answers on surfaces with replay off.
     enabled: true,
     actor: telemetryActor,
-    sharedLink: isScenarioChatRoute,
+    sharedLink: isSharedLinkRoute,
     membershipKey: telemetryMembershipKey(loadedOrganizations),
     projectIds: telemetryProjectIds,
     organizationIds: telemetryOrganizationIds,
@@ -4853,7 +4856,7 @@ export default function App() {
       {
         projectIds: telemetryProjectIds,
         organizationIds: telemetryOrganizationIds,
-        sharedLink: isScenarioChatRoute,
+        sharedLink: isSharedLinkRoute,
       },
       telemetryPrivacy.actor,
       telemetryPrivacy.answered ? telemetryPrivacy.policy?.content : undefined,
@@ -4886,7 +4889,7 @@ export default function App() {
   useSessionPrivacy(
     resolveSessionPrivacy({
       surface: recordingSurface(),
-      sharedLink: isScenarioChatRoute,
+      sharedLink: isSharedLinkRoute,
       recording: telemetryRecording,
     }),
     {

@@ -17,6 +17,7 @@ import userEvent from "@testing-library/user-event";
 import { toast as sonnerToast } from "sonner";
 import { RouterProvider } from "react-router";
 import App from "../App";
+import { resolveSessionPrivacy } from "@/lib/session-privacy";
 import { useApiContext } from "../hooks/hosted/use-hosted-api-context";
 import {
   beginOrganizationDeletion,
@@ -319,6 +320,15 @@ vi.mock("posthog-js/react", () => ({
   // These tests don't exercise that wall, so control (undefined) is fine.
   useFeatureFlagVariantKey: () => undefined,
 }));
+
+// Pass-through, so a test can see which context the shell resolved replay for.
+vi.mock("@/lib/session-privacy", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/session-privacy")>();
+  return {
+    ...actual,
+    resolveSessionPrivacy: vi.fn(actual.resolveSessionPrivacy),
+  };
+});
 
 vi.mock("@/lib/analytics", () => ({
   track: mockTrack,
@@ -6061,6 +6071,10 @@ describe("App hosted OAuth callback handling", () => {
       await screen.findByRole("heading", { name: "Conformance report" }),
     ).toBeInTheDocument();
     expect(window.location.pathname).toMatch(/^\/conformance\/shared/);
+    // A guest's replay follows the shared-link rule, not their own policy.
+    expect(vi.mocked(resolveSessionPrivacy)).toHaveBeenCalledWith(
+      expect.objectContaining({ sharedLink: true }),
+    );
   });
 
   it("leaves the conformance server choice to the page, so the last-selected server is restored", async () => {

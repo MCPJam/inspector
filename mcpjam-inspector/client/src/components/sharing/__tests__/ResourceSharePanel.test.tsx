@@ -97,7 +97,8 @@ describe("ResourceSharePanel", () => {
     );
 
     expect(screen.queryByText("Invite with email")).toBeNull();
-    expect(screen.queryByText("Has access")).toBeNull();
+    // Earlier grants stay visible, so they can still be removed.
+    expect(screen.getByText("Has access")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Team members/i }));
     expect(
       screen.getByRole("menuitemradio", { name: /Anyone with the link/i }),

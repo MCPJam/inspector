@@ -55,6 +55,7 @@ export function ResourceSharePanel({
   /**
    * Offer email invites and the "Invited users only" mode. Off where an invite
    * sends no email, so it would grant access the invitee never hears about.
+   * People already invited stay listed, so their access can still be removed.
    */
   invites?: boolean;
 }) {
@@ -136,7 +137,6 @@ export function ResourceSharePanel({
       presets={presets}
       disabledReason={disabledReason}
       showInvite={invites}
-      showMembers={invites}
       footerSlot={footerSlot}
       copy={{
         linkLabel,
