@@ -419,7 +419,12 @@ export function buildConfig(
     }
   }
 
-  const readinessIds = options.adviceId?.filter(Boolean);
+  // A blank id is a mistake, not an omitted flag: dropping it would run every
+  // advice instead of the one asked for.
+  if (options.adviceId?.some((id) => !id.trim())) {
+    throw usageError("--advice-id needs an advice id.");
+  }
+  const readinessIds = options.adviceId;
   const invalidReadinessIds = collectInvalidEntries(
     readinessIds,
     MCP_READINESS_IDS,

@@ -98,12 +98,15 @@ test("buildConfig runs all advice when no advice id is given", () => {
 });
 
 test("buildConfig rejects unknown advice ids, and another suite's", () => {
-  for (const adviceId of [["bogus"], ["tasks-readiness-failed-status-message"]]) {
+  for (const adviceId of [
+    ["bogus"],
+    ["tasks-readiness-failed-status-message"],
+    [""],
+  ]) {
     assert.throws(
       () => buildConfig({ url: "https://example.com/mcp", adviceId }),
       (error) =>
-        error instanceof CliError &&
-        error.message.includes("Unknown advice id"),
+        error instanceof CliError && error.message.includes("advice id"),
     );
   }
 });

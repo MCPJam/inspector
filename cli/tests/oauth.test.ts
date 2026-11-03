@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Command } from "commander";
 import {
   buildOAuthConformanceConfig,
+  registerOAuthCommands,
   buildOAuthLoginDebugOutcome,
   buildOAuthLoginConfig,
   buildOAuthLoginSnapshotConfig,
@@ -146,7 +148,7 @@ test("buildOAuthConformanceConfig passes advice ids through as readinessIds", ()
 });
 
 test("buildOAuthConformanceConfig rejects unknown advice ids, and another suite's", () => {
-  for (const adviceId of [["bogus"], ["readiness-log-level-filtering"]]) {
+  for (const adviceId of [["bogus"], ["readiness-log-level-filtering"], [""]]) {
     assert.throws(
       () =>
         buildOAuthConformanceConfig({
@@ -156,10 +158,42 @@ test("buildOAuthConformanceConfig rejects unknown advice ids, and another suite'
           adviceId,
         }),
       (error) =>
-        error instanceof CliError &&
-        error.message.includes("Unknown advice id"),
+        error instanceof CliError && error.message.includes("advice id"),
     );
   }
+});
+
+test("oauth conformance threads --advice-id into readinessIds", async () => {
+  const program = new Command();
+  program.exitOverride();
+  registerOAuthCommands(program);
+  const conformance = program.commands
+    .find((c) => c.name() === "oauth")
+    ?.commands.find((c) => c.name() === "conformance");
+  assert.ok(conformance, "oauth conformance should be registered");
+  let captured: ReturnType<typeof buildOAuthConformanceConfig> | undefined;
+  // Replace the network-running action so only option parsing is exercised.
+  conformance.action((options) => {
+    captured = buildOAuthConformanceConfig(options);
+  });
+
+  await program.parseAsync(
+    [
+      "oauth",
+      "conformance",
+      "--url",
+      "https://example.com/mcp",
+      "--protocol-version",
+      "2025-11-25",
+      "--registration",
+      "dcr",
+      "--advice-id",
+      "readiness-oauth-iss-advertised",
+    ],
+    { from: "user" },
+  );
+
+  assert.deepEqual(captured?.readinessIds, ["readiness-oauth-iss-advertised"]);
 });
 
 test("buildOAuthConformanceConfig defaults conformance checks to false", () => {
