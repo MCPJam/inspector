@@ -598,7 +598,7 @@ describe("suite adapters", () => {
           },
         ],
       }),
-      { unscoredCheckIds: ["oauth_token_format"] },
+      { unscoredCheckIds: ["oauth_token_format"] }
     );
 
     expect(score.advisories).toEqual([

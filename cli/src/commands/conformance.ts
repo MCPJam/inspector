@@ -270,6 +270,11 @@ function resolveLogProbe(
   options: ProtocolConformanceOptions,
 ): MCPConformanceConfig["logProbe"] | undefined {
   const toolName = options.logProbeTool?.trim();
+  // A blank name is a mistake, not an omitted flag: without this the probe
+  // would be dropped and the logging check could not run.
+  if (options.logProbeTool !== undefined && !toolName) {
+    throw usageError("--log-probe-tool needs a tool name.");
+  }
   if (!toolName) {
     if (
       options.logProbeArgs !== undefined ||

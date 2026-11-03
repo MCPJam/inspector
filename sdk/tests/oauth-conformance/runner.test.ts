@@ -238,7 +238,7 @@ describe("OAuthConformanceTest", () => {
         completeHeadlessAuthorization: jest.fn(async () => ({
           code: "auth-code",
         })),
-      },
+      }
     ).run();
     expect(quiet.passed).toBe(true);
     expect(quiet.readiness).toBeUndefined();

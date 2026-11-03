@@ -165,6 +165,9 @@ function LogLevelField({
  * means none, and then the update acknowledgement check is not applicable.
  * Kept on the Tasks probe, so it needs a tool first.
  */
+/** The Tasks routes refuse answers that serialize past this (a 400). */
+const MAX_ANSWERS_CHARS = 10_000;
+
 function TaskAnswersField({
   probe,
   onChange,
@@ -175,6 +178,7 @@ function TaskAnswersField({
   onInvalidChange: (invalid: boolean) => void;
 }) {
   const id = useId();
+  const messageId = `${id}-message`;
   const [text, setText] = useState(() =>
     probe.inputResponses ? JSON.stringify(probe.inputResponses, null, 2) : "",
   );
@@ -212,6 +216,11 @@ function TaskAnswersField({
       onInvalidChange(true);
       return;
     }
+    if (JSON.stringify(parsed).length > MAX_ANSWERS_CHARS) {
+      setError("Keep the answers under 10,000 characters.");
+      onInvalidChange(true);
+      return;
+    }
     setError(null);
     onInvalidChange(false);
     onChange(withAnswers(parsed as Record<string, unknown>));
@@ -231,11 +240,14 @@ function TaskAnswersField({
         }
         className="min-h-20 font-mono text-xs"
         aria-invalid={error !== null}
+        aria-describedby={messageId}
       />
       {error ? (
-        <p className="text-xs text-destructive">{error}</p>
+        <p id={messageId} className="text-xs text-destructive">
+          {error}
+        </p>
       ) : (
-        <p className="text-xs text-muted-foreground">
+        <p id={messageId} className="text-xs text-muted-foreground">
           Sent when the task asks for input. Without answers, this check does
           not apply.
         </p>

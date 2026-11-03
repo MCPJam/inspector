@@ -413,6 +413,7 @@ test("log probe: bad flags are usage errors", () => {
   for (const [options, pattern] of [
     [{ logProbeLevel: "error" }, /need --log-probe-tool/],
     [{ logProbeArgs: "{}" }, /need --log-probe-tool/],
+    [{ logProbeTool: "   " }, /needs a tool name/],
     [{ logProbeTool: "emit-log", logProbeLevel: "loud" }, /Unknown log level/],
     [{ logProbeTool: "emit-log", logProbeArgs: "[]" }, /JSON object/],
   ] as const) {

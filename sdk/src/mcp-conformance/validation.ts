@@ -52,7 +52,7 @@ function normalizeCheckIds(
 
 /** Unlike check ids, an empty list stays empty: it means no advice at all. */
 function normalizeReadinessIds(
-  readinessIds: MCPConformanceConfig["readinessIds"],
+  readinessIds: MCPConformanceConfig["readinessIds"]
 ): MCPReadinessId[] | undefined {
   if (readinessIds === undefined) {
     return undefined;
@@ -116,7 +116,7 @@ function normalizeToolProbe(
 }
 
 function normalizeLogProbe(
-  probe: MCPConformanceConfig["logProbe"],
+  probe: MCPConformanceConfig["logProbe"]
 ): NormalizedMCPConformanceConfig["logProbe"] {
   const normalized = normalizeToolProbe(probe, "logProbe");
   if (!normalized || probe?.level === undefined) {
@@ -124,7 +124,7 @@ function normalizeLogProbe(
   }
   if (!(MCP_LOG_LEVELS as readonly string[]).includes(probe.level)) {
     throw new Error(
-      `MCP conformance logProbe.level must be one of ${MCP_LOG_LEVELS.join(", ")}, got ${JSON.stringify(probe.level)}`,
+      `MCP conformance logProbe.level must be one of ${MCP_LOG_LEVELS.join(", ")}, got ${JSON.stringify(probe.level)}`
     );
   }
   return { ...normalized, level: probe.level };

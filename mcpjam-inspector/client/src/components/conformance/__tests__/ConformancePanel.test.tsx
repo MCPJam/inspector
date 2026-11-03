@@ -1719,6 +1719,14 @@ describe("ConformanceTab", () => {
       });
       fireEvent.change(answers, { target: { value: "[1]" } });
       expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
+      // The message is tied to the box, so a screen reader reads it too.
+      expect(answers).toHaveAccessibleDescription(/Enter a JSON object/);
+      // Past the routes' cap the run would only get a 400.
+      fireEvent.change(answers, {
+        target: { value: JSON.stringify({ confirm: "x".repeat(10_001) }) },
+      });
+      expect(answers).toHaveAccessibleDescription(/under 10,000 characters/);
+      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
       fireEvent.change(answers, {
         target: { value: '{"confirm": {"action": "accept"}}' },
       });
