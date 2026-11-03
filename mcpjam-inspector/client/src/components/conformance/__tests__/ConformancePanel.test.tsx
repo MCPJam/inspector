@@ -376,13 +376,20 @@ describe("ConformanceTab", () => {
     // from protocol readiness = 98. The number shows on the headline and on
     // the Protocol row, which carries the same advisory.
     expect(screen.getAllByText("98").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Conformant, with advice.")).toBeInTheDocument();
+    expect(screen.getByText("Conformant, with guidance.")).toBeInTheDocument();
     // The denominator travels with the number.
     expect(screen.getByText("4/4")).toBeInTheDocument();
 
-    // The advisory that deducted is visible, tier and all.
-    expect(screen.getByText("Useful Cache TTLs")).toBeInTheDocument();
-    expect(screen.getByText("(SHOULD)")).toBeInTheDocument();
+    // The advisory that deducted sits in the one container above the
+    // suites, closed with a count until opened.
+    const advice = screen.getByRole("button", {
+      name: /^Additional enhancements/,
+    });
+    expect(advice).toHaveAttribute("aria-expanded", "false");
+    expect(within(advice).getByText("1")).toBeInTheDocument();
+    fireEvent.click(advice);
+    const row = screen.getByText("Useful Cache TTLs").closest("li")!;
+    expect(row).toHaveTextContent("Suggested Protocol Useful Cache TTLs");
   });
 
   it("shows no number when nothing was applicable", async () => {
