@@ -111,7 +111,7 @@ function write(value: PendingDirectScopeStepUpReplay): void {
   const raw = JSON.stringify(value);
   sessionStorage.setItem(PENDING_DIRECT_REPLAY_KEY, raw);
   if (sessionStorage.getItem(PENDING_DIRECT_REPLAY_KEY) !== raw)
-    throw new Error("MCPJam couldn’t save this call for sign-in. Please try again.");
+    throw new Error("Could not save the call for sign-in. Try again.");
 }
 
 // Calls whose sign-in this page is driving. A call saved by an earlier page
@@ -130,9 +130,30 @@ function currentProjectSegment(): string {
   return readProjectPathSegment(window.location.pathname) ?? "local";
 }
 
+/**
+ * A saved call runs only in its own project, the page's. A record written
+ * before calls carried a project names it only in the page it returns to.
+ */
+function belongsToCurrentProject(
+  pending: PendingDirectScopeStepUpReplay,
+): boolean {
+  const project = currentProjectSegment();
+  const saved =
+    pending.projectId ?? readProjectPathSegment(pending.returnPath) ?? "local";
+  return (
+    saved === project &&
+    (!pending.descriptor.authAttempt ||
+      pending.descriptor.authAttempt.projectId === project)
+  );
+}
+
 export class PendingDirectReplayConflictError extends Error {
-  constructor() {
-    super("Another call is waiting for sign-in. Finish that sign-in or wait for it to expire, then try again.");
+  constructor(waiting: "signed_in_on_this_server" | "signing_in") {
+    super(
+      waiting === "signed_in_on_this_server"
+        ? "A call on this server is waiting to run again after sign-in. Open the page you started it from to run it, then try again."
+        : "Another call is waiting for sign-in. Finish that sign-in or wait for it to expire, then try again.",
+    );
     this.name = "PendingDirectReplayConflictError";
   }
 }
@@ -146,17 +167,24 @@ export function savePendingDirectScopeStepUpReplay(input: {
   const now = Date.now();
   const previous = input.previous;
   const waiting = readStored();
-  if (
-    !previous &&
-    waiting &&
-    waiting.expiresAt > now &&
-    // A signed-in call waiting to replay keeps its slot. A call this page is
-    // signing in or replaying does too; one an earlier page left waiting or
-    // replaying was abandoned.
-    (waiting.phase === "ready" ||
-      (waiting.callId !== undefined && drivenByThisPage.has(waiting.callId)))
-  ) {
-    throw new PendingDirectReplayConflictError();
+  if (!previous && waiting && waiting.expiresAt > now) {
+    // A signed-in call keeps its slot against calls on its own server in its
+    // own project, where it replays. A call anywhere else takes the slot: the
+    // user moved on, and the store holds one call.
+    if (
+      waiting.phase === "ready" &&
+      waiting.descriptor.serverName === input.descriptor.serverName &&
+      belongsToCurrentProject(waiting)
+    )
+      throw new PendingDirectReplayConflictError("signed_in_on_this_server");
+    // A call this page is signing in or replaying keeps its slot too; one an
+    // earlier page left waiting or replaying was abandoned.
+    if (
+      waiting.phase !== "ready" &&
+      waiting.callId !== undefined &&
+      drivenByThisPage.has(waiting.callId)
+    )
+      throw new PendingDirectReplayConflictError("signing_in");
   }
   if (previous) {
     const current = readStored();
@@ -314,11 +342,7 @@ export function claimPendingDirectScopeStepUpReplay(input: {
   if (
     !pending ||
     pending.phase !== "ready" ||
-    (pending.projectId !== undefined && pending.projectId !==
-      currentProjectSegment()) ||
-    (pending.descriptor.authAttempt &&
-      pending.descriptor.authAttempt.projectId !==
-        currentProjectSegment()) ||
+    !belongsToCurrentProject(pending) ||
     pending.descriptor.serverName !== input.serverName ||
     pending.descriptor.surface !== input.surface
   ) {

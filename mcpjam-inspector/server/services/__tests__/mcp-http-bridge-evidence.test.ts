@@ -117,7 +117,7 @@ describe("ordering", () => {
     );
 
     expect(order[0]).toBe("start:other:search");
-    expect(executeTool).toHaveBeenCalledWith("other", "search", {}, { signal: undefined });
+    expect(executeTool).toHaveBeenCalledWith("other", "search", {}, { request: { signal: undefined } });
   });
 });
 

@@ -7,7 +7,7 @@ import {
   claimPendingDirectScopeStepUpReplay,
   clearPendingDirectScopeStepUpReplay,
 } from "../scope-step-up-replay";
-const save = (callId: string) => {
+const save = (callId: string, serverName = "same", projectId = "p1") => {
   savePendingDirectScopeStepUpReplay({
     operation: {
       resourceUrl: "https://example.test/mcp",
@@ -17,18 +17,18 @@ const save = (callId: string) => {
     descriptor: {
       kind: "tool",
       surface: "tools",
-      serverName: "same",
+      serverName,
       toolName: "read",
       parameters: {},
       authAttempt: {
-        projectId: "p1",
-        serverId: "same",
+        projectId,
+        serverId: serverName,
         surface: "tools",
         callId,
       },
     },
   });
-  setPendingDirectScopeStepUpReplayFlowDigest("same", "flow-" + callId);
+  setPendingDirectScopeStepUpReplayFlowDigest(serverName, "flow-" + callId);
 };
 describe("direct replay identity", () => {
   beforeEach(() => {
@@ -226,13 +226,75 @@ describe("direct replay identity", () => {
     ).toBeDefined();
     expect(() => save("b")).toThrow("Another call is waiting");
   });
-  it("keeps a signed-in call that is waiting to be replayed", () => {
+  it("keeps a signed-in call against a call on its own server", () => {
     save("a");
     markPendingDirectScopeStepUpReplayReady("same", "flow-a");
     window.dispatchEvent(
       Object.assign(new Event("pageshow"), { persisted: true }),
     );
-    expect(() => save("b")).toThrow("Another call is waiting");
+    expect(() => save("b")).toThrow(
+      "A call on this server is waiting to run again after sign-in.",
+    );
+  });
+  it("keeps a call saved without a project in the project it returns to", () => {
+    // The shape the store wrote before calls carried a project.
+    sessionStorage.setItem(
+      "mcp-scope-step-up-replay-v1",
+      JSON.stringify({
+        version: 1,
+        phase: "ready",
+        operation: {
+          resourceUrl: "https://example.test/mcp",
+          method: "tools/call",
+          operation: "read",
+        },
+        descriptor: {
+          kind: "tool",
+          surface: "tools",
+          serverName: "same",
+          toolName: "read",
+          parameters: {},
+        },
+        returnPath: "/p/p1/tools?tab=tools",
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      }),
+    );
+    window.history.replaceState({}, "", "/p/p2/tools");
+    expect(
+      claimPendingDirectScopeStepUpReplay({
+        serverName: "same",
+        surface: "tools",
+      }),
+    ).toBeUndefined();
+    window.history.replaceState({}, "", "/p/p1/tools");
+    expect(
+      claimPendingDirectScopeStepUpReplay({
+        serverName: "same",
+        surface: "tools",
+      }),
+    ).toBeDefined();
+  });
+  it("lets a same-named server in another project replace a signed-in call", () => {
+    save("a");
+    markPendingDirectScopeStepUpReplayReady("same", "flow-a");
+    window.dispatchEvent(
+      Object.assign(new Event("pageshow"), { persisted: true }),
+    );
+    window.history.replaceState({}, "", "/p/p2/tools");
+    expect(() => save("b", "same", "p2")).not.toThrow();
+    expect(peekPendingDirectScopeStepUpReplay()?.projectId).toBe("p2");
+  });
+  it("lets a call on another server replace a signed-in call", () => {
+    save("a");
+    markPendingDirectScopeStepUpReplayReady("same", "flow-a");
+    window.dispatchEvent(
+      Object.assign(new Event("pageshow"), { persisted: true }),
+    );
+    expect(() => save("b", "other")).not.toThrow();
+    expect(peekPendingDirectScopeStepUpReplay()?.descriptor.serverName).toBe(
+      "other",
+    );
   });
   it("an old request finishing cannot clean up a newer pending call", () => {
     save("a");

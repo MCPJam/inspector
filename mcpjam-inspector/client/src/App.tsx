@@ -716,6 +716,9 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
     case "learning":
       return <LearningRoute />;
     case "conformance":
+      if (pathname.startsWith(`${routePaths.conformanceShared}/`)) {
+        return <ConformanceSharedRoute />;
+      }
       return <ConformanceRoute />;
     case "compatibility":
       return <CompatibilityRoute />;
@@ -1714,6 +1717,13 @@ export function ConformanceRoute() {
   // The page picks its server from its own select, not the header tabs, and
   // offers every server: Run connects one that is not connected.
   const servers = Object.values<ServerWithName>(appState.servers);
+  // Each server's logo, as it announced it when it connected (the Servers
+  // tab's cards use the same one). Servers without one show initials.
+  const serverIcons: Record<string, string> = {};
+  for (const server of servers) {
+    const src = server.initializationInfo?.serverVersion?.icons?.[0]?.src;
+    if (src) serverIcons[server.name] = src;
+  }
   const editingServer = editing
     ? (appState.servers[editing.name] ?? editing.snapshot)
     : undefined;
@@ -1772,6 +1782,7 @@ export function ConformanceRoute() {
           (server: { name: string }) => server.name,
         )}
         projectServersLoading={projectServersLoading}
+        serverIcons={serverIcons}
         onViewRun={
           convexProjectId
             ? (runId) =>
@@ -3089,6 +3100,12 @@ export default function App() {
     window.location.pathname.length > 1
       ? window.location.pathname.replace(/\/+$/, "")
       : window.location.pathname;
+  // A conformance share link is public, so its reader need not have the
+  // Conformance beta. The bare `/conformance/shared` is the same page once the
+  // token is stripped from the address bar.
+  const isConformanceSharedRoute =
+    barePathname === routePaths.conformanceShared ||
+    barePathname.startsWith(`${routePaths.conformanceShared}/`);
   const isBareCaniuseRoute =
     barePathname === routePaths.embedHostCompare ||
     barePathname === routePaths.embedScore ||
@@ -3099,7 +3116,7 @@ export default function App() {
     barePathname.startsWith(`${routePaths.embedBench}/`) ||
     barePathname.startsWith(`${routePaths.benchResults}/`) ||
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
-    barePathname.startsWith(`${routePaths.conformanceShared}/`) ||
+    isConformanceSharedRoute ||
     barePathname.startsWith(`${routePaths.evalsShared}/`) ||
     barePathname.startsWith(`${routePaths.capabilities}/`);
   // The WorkOS Initiate Login URL, where an IdP-initiated login (the Okta app
@@ -4821,11 +4838,14 @@ export default function App() {
   ];
   const telemetryProjectIds = [convexProjectId];
   const telemetryActor = isWorkOsLoading ? undefined : (actorKey ?? null);
+  // A guest reading someone else's shared page keeps replay off, whatever
+  // the viewer's own policy says.
+  const isSharedLinkRoute = isScenarioChatRoute || isConformanceSharedRoute;
   const telemetryPrivacy = useTelemetryPrivacyContext({
     // Content and identity still need answers on surfaces with replay off.
     enabled: true,
     actor: telemetryActor,
-    sharedLink: isScenarioChatRoute,
+    sharedLink: isSharedLinkRoute,
     membershipKey: telemetryMembershipKey(loadedOrganizations),
     projectIds: telemetryProjectIds,
     organizationIds: telemetryOrganizationIds,
@@ -4836,7 +4856,7 @@ export default function App() {
       {
         projectIds: telemetryProjectIds,
         organizationIds: telemetryOrganizationIds,
-        sharedLink: isScenarioChatRoute,
+        sharedLink: isSharedLinkRoute,
       },
       telemetryPrivacy.actor,
       telemetryPrivacy.answered ? telemetryPrivacy.policy?.content : undefined,
@@ -4869,7 +4889,7 @@ export default function App() {
   useSessionPrivacy(
     resolveSessionPrivacy({
       surface: recordingSurface(),
-      sharedLink: isScenarioChatRoute,
+      sharedLink: isSharedLinkRoute,
       recording: telemetryRecording,
     }),
     {
@@ -5733,7 +5753,11 @@ export default function App() {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "client-config") {
       navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (activeTab === "conformance" && conformanceEnabled !== true) {
+    } else if (
+      activeTab === "conformance" &&
+      !isConformanceSharedRoute &&
+      conformanceEnabled !== true
+    ) {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (
       activeTab === "compatibility" &&
@@ -5753,6 +5777,7 @@ export default function App() {
     }
   }, [
     conformanceEnabled,
+    isConformanceSharedRoute,
     compatibilityEnabled,
     defaultHubRoute,
     registryEnabled,

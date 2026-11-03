@@ -13,6 +13,7 @@ import {
 import { Sandbox, SandboxNotFoundError } from "e2b";
 import {
   attachRunningSandbox,
+  attachBrokerPreparedSandbox,
   runningSandboxConnection,
 } from "../attach-sandbox.js";
 
@@ -67,6 +68,53 @@ afterEach(() => {
 });
 
 describe("controlled sandbox attachment", () => {
+  it("reuses acknowledged broker preparation while retaining the final policy barrier", async () => {
+    const box = await attachBrokerPreparedSandbox("box-1", opts);
+    expect(box.sandboxId).toBe("box-1");
+    expect(control.prepare).not.toHaveBeenCalled();
+    expect(control.status).toHaveBeenCalledTimes(1);
+    expect(requests).toEqual([{ method: "GET" }]);
+  });
+
+  it.each([
+    { ...data, state: "paused" },
+    { ...data, lifecycle: { autoResume: true } },
+    { ...data, lifecycle: undefined },
+    { ...data, sandboxID: "other-box" },
+    { ...data, envdAccessToken: "" },
+  ])("refuses stale broker-prepared metadata without waking or falling back", async body => {
+    responseBody = body;
+    await expect(attachBrokerPreparedSandbox("box-1", opts)).rejects.toThrow();
+    expect(control.prepare).not.toHaveBeenCalled();
+    expect(requests).toHaveLength(1);
+  });
+
+  it("refuses quarantine discovered after a broker-prepared metadata read", async () => {
+    control.status.mockResolvedValue({ ok: true, value: { ok: false, reason: "unavailable" } });
+    await expect(attachBrokerPreparedSandbox("box-1", opts)).rejects.toMatchObject({ code: "sandbox_policy_unavailable" });
+    expect(control.prepare).not.toHaveBeenCalled();
+  });
+
+  it("waits for a concurrent policy write on a broker-prepared connection", async () => {
+    control.status.mockResolvedValueOnce({ ok: true, value: { ok: false, reason: "egress_busy", deadline: Date.now() + 2000 } });
+    await attachBrokerPreparedSandbox("box-1", opts);
+    expect(control.status).toHaveBeenCalledTimes(2);
+    expect(control.prepare).not.toHaveBeenCalled();
+  });
+
+  it("does not reconnect a broker-prepared box that has been deleted", async () => {
+    responseStatus = 404;
+    await expect(attachBrokerPreparedSandbox("box-1", opts)).rejects.toBeInstanceOf(SandboxNotFoundError);
+    expect(control.prepare).not.toHaveBeenCalled();
+  });
+
+  it("cancels broker-prepared attachment before any vendor request", async () => {
+    const abort = new AbortController();
+    abort.abort(new Error("cancelled"));
+    await expect(attachBrokerPreparedSandbox("box-1", { ...opts, signal: abort.signal })).rejects.toThrow("cancelled");
+    expect(requests).toHaveLength(0);
+  });
+
   it("renews through the backend and uses only GET at the vendor", async () => {
     const directConnect = vi.spyOn(Sandbox, "connect");
     const box = await attachRunningSandbox("box-1", opts);

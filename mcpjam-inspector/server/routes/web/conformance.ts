@@ -4,7 +4,10 @@ import {
   MCP_APPS_CHECK_IDS,
   MCP_CHECK_IDS,
   MCP_PROTOCOL_VERSIONS,
+  MCP_READINESS_IDS,
+  MCP_OAUTH_READINESS_IDS,
   MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
   oauthConformanceProfileSchema,
   type MCPServerConfig,
 } from "@mcpjam/sdk";
@@ -28,6 +31,10 @@ import {
   startOAuthConformance,
   submitOAuthConformanceCode,
 } from "../shared/conformance";
+import {
+  conformanceInputResponsesSchema,
+  conformanceProbeFields,
+} from "../shared/conformance-probes";
 import { authorizeServer, toHttpConfig } from "./auth.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
@@ -189,20 +196,21 @@ async function resolveHostedServerConfig(
 /**
  * Bound a whole conformance run by wall-clock, not just its individual legs.
  * Losing the race rejects with a 504 so the route always answers inside the
- * hosted budget; the run itself keeps unwinding in the background (its legs
- * are individually timed out) and closes its own client.
+ * hosted budget. Cancellable runs abort their active work at the same deadline.
  */
 async function withHostedDeadline<T>(
   run: Promise<T>,
   deadlineMs: number,
-  message: string
+  message: string,
+  controller?: AbortController
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new WebRouteError(504, ErrorCode.TIMEOUT, message)),
-      deadlineMs
-    );
+    timer = setTimeout(() => {
+      const error = new WebRouteError(504, ErrorCode.TIMEOUT, message);
+      reject(error);
+      controller?.abort(error);
+    }, deadlineMs);
   });
   // Never leave the losing run as an unhandled rejection.
   run.catch(() => {});
@@ -237,12 +245,34 @@ function toWebError(error: unknown): WebRouteError {
 
 // ── POST /protocol ──────────────────────────────────────────────────────
 
+/**
+ * Each check gets the CLI's default limit, so a slow request costs one check
+ * instead of the whole suite, and the suite gives up on a server that stops
+ * answering after two checks.
+ */
+const HOSTED_CHECK_TIMEOUT_MS = 15_000;
+/**
+ * Wall-clock ceiling for a protocol or apps run, under the proxy's 100 s
+ * limit so the route answers with its own message instead of a bare 524.
+ */
+const HOSTED_SUITE_DEADLINE_MS = 85_000;
+
+function suiteDeadlineMessage(suite: string): string {
+  return `The ${suite} checks took longer than the ${
+    HOSTED_SUITE_DEADLINE_MS / 1000
+  }-second limit for a hosted run, so no results came back. Run them again, or pick fewer checks for this suite.`;
+}
+
 const protocolSchema = z
   .object({
     /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
     protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
     /** Run only these checks, as picked before Run; absent ⇒ all of them. */
     checkIds: z.array(z.enum(MCP_CHECK_IDS)).min(1).optional(),
+    /** Run only this advice; absent ⇒ all of it, empty ⇒ none. */
+    readinessIds: z.array(z.enum(MCP_READINESS_IDS)).optional(),
+    /** Tools named as safe for the checks that must call one. */
+    ...conformanceProbeFields,
   })
   .passthrough(); // project/guest fields pass through to resolveHostedHttpConfig
 
@@ -255,12 +285,24 @@ conformanceWeb.post("/protocol", async (c) =>
     });
     const parsed = parseWithSchema(protocolSchema, body);
 
+    const controller = new AbortController();
     try {
-      const { result } = await runProtocolConformance({
-        ...resolved,
-        protocolVersion: parsed.protocolVersion,
-        checkIds: parsed.checkIds,
-      });
+      const { result } = await withHostedDeadline(
+        runProtocolConformance({
+          ...resolved,
+          signal: controller.signal,
+          protocolVersion: parsed.protocolVersion,
+          checkIds: parsed.checkIds,
+          readinessIds: parsed.readinessIds,
+          logProbe: parsed.logProbe,
+          inputRequiredProbe: parsed.inputRequiredProbe,
+          toolCallProbe: parsed.toolCallProbe,
+          checkTimeout: HOSTED_CHECK_TIMEOUT_MS,
+        }),
+        HOSTED_SUITE_DEADLINE_MS,
+        suiteDeadlineMessage("Protocol"),
+        controller
+      );
       return { success: true, result };
     } catch (error) {
       throw toWebError(error);
@@ -284,11 +326,18 @@ conformanceWeb.post("/apps", async (c) =>
     const config = await resolveHostedServerConfig(c, bearerToken, body);
     const parsed = parseWithSchema(appsSchema, body);
 
+    const controller = new AbortController();
     try {
-      const { result } = await runAppsConformance({
-        ...config,
-        ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
-      });
+      const { result } = await withHostedDeadline(
+        runAppsConformance({
+          ...config,
+          signal: controller.signal,
+          ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
+        }),
+        HOSTED_SUITE_DEADLINE_MS,
+        suiteDeadlineMessage("Apps"),
+        controller
+      );
       return { success: true, result };
     } catch (error) {
       throw toWebError(error);
@@ -331,9 +380,12 @@ const tasksSchema = z
      *  tools carry no task metadata to pick from. */
     toolName: z.string().min(1).optional(),
     toolArguments: z.record(z.string(), z.unknown()).optional(),
+    inputResponses: conformanceInputResponsesSchema,
     pollTimeoutMs: z.number().int().positive().max(120_000).optional(),
     /** Run only these checks, as picked before Run; absent ⇒ all of them. */
     checkIds: z.array(z.enum(MCP_TASKS_CHECK_IDS)).min(1).optional(),
+    /** Report only this advice; absent ⇒ all of it, empty ⇒ none. */
+    readinessIds: z.array(z.enum(MCP_TASKS_READINESS_IDS)).optional(),
   })
   .passthrough(); // project/guest fields pass through to resolveHostedServerConfig
 
@@ -350,9 +402,13 @@ conformanceWeb.post("/tasks", async (c) =>
           ...config,
           timeout: HOSTED_TASKS_CALL_TIMEOUT_MS,
           ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
+          ...(parsed.readinessIds ? { readinessIds: parsed.readinessIds } : {}),
           ...(parsed.toolName ? { toolName: parsed.toolName } : {}),
           ...(parsed.toolArguments
             ? { toolArguments: parsed.toolArguments }
+            : {}),
+          ...(parsed.inputResponses
+            ? { inputResponses: parsed.inputResponses }
             : {}),
           pollTimeoutMs: Math.min(
             parsed.pollTimeoutMs ?? HOSTED_TASKS_POLL_TIMEOUT_MS,
@@ -375,6 +431,8 @@ const oauthStartSchema = z
   .object({
     oauthProfile: oauthConformanceProfileSchema.optional(),
     callbackOrigin: z.string().optional(),
+    /** Report only this advice; absent ⇒ all of it, empty ⇒ none. */
+    readinessIds: z.array(z.enum(MCP_OAUTH_READINESS_IDS)).optional(),
   })
   .passthrough(); // project/guest fields pass through to resolveHostedHttpConfig
 
@@ -418,6 +476,7 @@ conformanceWeb.post("/oauth/start", async (c) =>
           ""
         )}/oauth/callback/debug`,
         oauthProfile: parsed.oauthProfile,
+        readinessIds: parsed.readinessIds,
         owner: principalKey(c),
       });
       return started.phase === "complete"

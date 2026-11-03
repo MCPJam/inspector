@@ -1,3 +1,4 @@
+import { withAbortSignalFetch } from "../abort-signal.js";
 /**
  * Raw observation of a long-lived `subscriptions/listen` stream (Phase 7
  * §15.3, subscription MUSTs).
@@ -215,19 +216,22 @@ export async function observeListenStream(
   }
 
   const controller = new AbortController();
-  const response = await ctx.fetchFn(ctx.serverUrl, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(
-      modernRequestBody({
-        id: options.id,
-        method: LISTEN_METHOD,
-        params: { notifications: options.filter },
-        protocolVersion: options.protocolVersion,
-      })
-    ),
-    signal: controller.signal,
-  });
+  const response = await withAbortSignalFetch(ctx.fetchFn, ctx.config.signal)(
+    ctx.serverUrl,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify(
+        modernRequestBody({
+          id: options.id,
+          method: LISTEN_METHOD,
+          params: { notifications: options.filter },
+          protocolVersion: options.protocolVersion,
+        })
+      ),
+      signal: controller.signal,
+    }
+  );
 
   const base = {
     status: response.status,
