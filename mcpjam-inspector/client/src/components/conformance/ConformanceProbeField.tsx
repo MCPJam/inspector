@@ -293,8 +293,12 @@ export function ConformanceProbeField({
       ? allTools.filter((tool) => tool.hasOutputSchema)
       : allTools;
   // With no output schema declared, the output check does not apply at all.
+  // A cut-off list cannot show that: a later tool may declare one.
   const unsetHint =
-    probeKey === "toolCallProbe" && status === "ready" && options.length === 0
+    probeKey === "toolCallProbe" &&
+    status === "ready" &&
+    !truncated &&
+    options.length === 0
       ? "No tool on this server declares an output schema, so this check does not apply."
       : (PROBE_COPY[probeKey].unsetHint ??
         "Without a tool, this check reports that it could not run.");

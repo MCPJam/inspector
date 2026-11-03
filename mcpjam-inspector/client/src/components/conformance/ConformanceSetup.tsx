@@ -394,6 +394,7 @@ export function ConformanceSetup({
                     // an output schema; otherwise it does not apply.
                     const noOutputSchemas =
                       probeTools.status === "ready" &&
+                      !probeTools.truncated &&
                       !probeTools.tools.some((tool) => tool.hasOutputSchema);
                     return probeKeyFor(checkId) === "toolCallProbe" &&
                       noOutputSchemas

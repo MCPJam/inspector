@@ -39,6 +39,8 @@ interface FixtureServerOptions {
   calls?: string[];
   /** List only `plain`, so no tool declares an `outputSchema`. */
   noOutputSchemas?: boolean;
+  /** Hand back the same `nextCursor` on every `tools/list` page. */
+  repeatToolsCursor?: boolean;
 }
 
 async function serveFixtureServer(options: FixtureServerOptions) {
@@ -92,6 +94,7 @@ async function serveFixtureServer(options: FixtureServerOptions) {
                   ]),
               { name: "plain", inputSchema: { type: "object", properties: {} } },
             ],
+            ...(options.repeatToolsCursor ? { nextCursor: "again" } : {}),
           });
         case "prompts/list":
           return ok({ prompts: [{ name: "welcome" }] });
@@ -201,6 +204,25 @@ describe("nothing is executed without a fixture", () => {
       "not-applicable",
     ]);
     expect(calls.filter((call) => call.startsWith("tools/call"))).toEqual([]);
+  });
+
+  it("could not run when the tools/list walk did not finish", async () => {
+    // A cut-off listing cannot show that no tool declares a schema.
+    const check = byId(
+      (
+        await run(
+          { noOutputSchemas: true, repeatToolsCursor: true },
+          undefined,
+          [ID],
+        )
+      ).checks,
+      ID,
+    );
+    expect([check.status, check.skipReason]).toEqual([
+      "skipped",
+      "could-not-run",
+    ]);
+    expect(check.error?.message).toContain("did not finish");
   });
 });
 

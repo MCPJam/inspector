@@ -1601,16 +1601,20 @@ async function runToolOutputSchemaCheck(
     );
   }
 
-  const declared = await toolOutputSchemas(ctx, state);
+  const { schemas: declared, complete } = await toolOutputSchemas(ctx, state);
   if (fixtures.length === 0) {
-    return declared.size === 0
+    // "No tool declares one" holds only over the whole listing: a walk cut
+    // short may have stopped before the tool that does.
+    return declared.size === 0 && complete
       ? notApplicableResult(
           meta,
           "No tool declares an outputSchema, so there is no structured result to check"
         )
       : couldNotRunResult(
           meta,
-          `${declared.size} tool(s) declare an outputSchema, but no tools/call fixture was configured: set fixtures.toolCalls to a tool that is safe to execute so its result can be checked against the schema`,
+          declared.size === 0
+            ? "The tools/list walk did not finish, so it could not show that no tool declares an outputSchema, and no tools/call fixture was configured"
+            : `${declared.size} tool(s) declare an outputSchema, but no tools/call fixture was configured: set fixtures.toolCalls to a tool that is safe to execute so its result can be checked against the schema`,
           { declaredOutputSchemas: [...declared.keys()] }
         );
   }
@@ -1778,14 +1782,14 @@ async function runToolOutputSchemaCheck(
 async function toolOutputSchemas(
   ctx: RawHttpCheckContext,
   state: ModernRunState
-): Promise<Map<string, unknown>> {
+): Promise<{ schemas: Map<string, unknown>; complete: boolean }> {
   const schemas = new Map<string, unknown>();
   for (const tool of ctx.surface?.tools ?? []) {
     const outputSchema = (tool as { outputSchema?: unknown }).outputSchema;
     if (outputSchema !== undefined) schemas.set(tool.name, outputSchema);
   }
   if (schemas.size > 0 || (ctx.surface?.tools.length ?? 0) > 0) {
-    return schemas;
+    return { schemas, complete: true };
   }
 
   const walk = await walkToolsList({
@@ -1805,7 +1809,10 @@ async function toolOutputSchemas(
       schemas.set(entry.name, entry.outputSchema);
     }
   }
-  return schemas;
+  return {
+    schemas,
+    complete: walk.termination === "complete" && !walk.malformedPage,
+  };
 }
 
 /**
