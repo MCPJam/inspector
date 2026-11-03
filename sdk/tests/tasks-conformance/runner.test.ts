@@ -501,9 +501,10 @@ describe("shape validators", () => {
     const mixed = validateTaskTtlShape("extension", { ttl: 5 });
     expect(mixed.violations).toHaveLength(1);
     expect(mixed.warnings).toEqual([]);
-    expect(
-      validateTaskTtlShape("extension", { ttlMs: null, ttl: 5 })
-    ).toEqual({ violations: [], warnings: [] });
+    expect(validateTaskTtlShape("extension", { ttlMs: null, ttl: 5 })).toEqual({
+      violations: [],
+      warnings: [],
+    });
     expect(validateTaskTtlShape("legacy", { ttl: 5 })).toEqual({
       violations: [],
       warnings: [],
