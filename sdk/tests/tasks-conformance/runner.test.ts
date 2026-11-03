@@ -854,7 +854,7 @@ describe("MCPTasksConformanceTest", () => {
     expect(check?.warnings?.[0]).toContain("pre-final draft");
   });
 
-  it("flags a server advertising the extension on 2025-11-25 without failing", async () => {
+  it("passes a server advertising the extension on 2025-11-25, with no warning", async () => {
     const manager = extensionManager({
       getNegotiatedProtocolVersion: () => "2025-11-25",
       getServerCapabilities: () => ({
@@ -889,9 +889,7 @@ describe("MCPTasksConformanceTest", () => {
       (c) => c.id === "tasks-wire-resolvable"
     );
     expect(wireCheck?.status).toBe("passed");
-    expect(wireCheck?.warnings?.[0]).toContain(
-      "must use the 2025-11-25 tasks capability"
-    );
+    expect(wireCheck?.warnings).toBeUndefined();
     expect(statusMap(result)["tasks-inline-result"]).toBe("passed");
     // Extension-only checks do not apply to the legacy wire.
     expect(statusMap(result)["tasks-undeclared-capability-rejected"]).toBe(

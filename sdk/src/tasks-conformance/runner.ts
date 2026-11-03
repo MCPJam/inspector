@@ -1358,32 +1358,17 @@ export class MCPTasksConformanceTest {
           const wire = support.wire;
           const protocolVersion =
             manager.getNegotiatedProtocolVersion(serverId);
-          const capabilities = manager.getServerCapabilities(serverId);
 
           if (selected.has("tasks-wire-resolvable")) {
             const stepStartedAt = Date.now();
-            const warnings: string[] = [];
-            const extensions = (capabilities as { extensions?: unknown })
-              ?.extensions;
-            const advertisesExtension =
-              isRecord(extensions) && MCP_TASKS_EXTENSION_ID in extensions;
-
-            if (advertisesExtension && protocolVersion === "2025-11-25") {
-              // A reminder, not a violation: nothing forbids listing the
-              // extension on 2025-11-25. SEP-2663 forbids USING it there, so
-              // the only tasks wire is the in-core 2025-11-25 one.
-              warnings.push(
-                `Listing ${MCP_TASKS_EXTENSION_ID} on 2025-11-25 is allowed, but tasks on this connection must use the 2025-11-25 tasks capability, not the extension (SEP-2663).`
-              );
-            }
-
+            // Listing the extension on 2025-11-25 is not judged: nothing
+            // forbids it, and SEP-2663 only forbids USING it there.
             checks.push(
               protocolVersion
                 ? passed(
                     "tasks-wire-resolvable",
                     Date.now() - stepStartedAt,
-                    { protocolVersion, wire, support },
-                    warnings
+                    { protocolVersion, wire, support }
                   )
                 : failed(
                     "tasks-wire-resolvable",
@@ -2906,13 +2891,11 @@ export class MCPTasksConformanceTest {
       }
       // A server that has already finished and forgotten the task answers the
       // unknown-id error, which is a legitimate outcome for a probe that runs
-      // after the task reached a terminal status. Reported, not failed.
+      // after the task reached a terminal status. Not judged.
       if (code === INVALID_PARAMS) {
         return {
           problems: [],
-          warnings: [
-            `tasks/cancel for the already-terminal task ${taskId} was answered with -32602; the server no longer knows the task, which the extension permits`,
-          ],
+          warnings: [],
           detail: { taskId, cancelCode: code },
         };
       }
