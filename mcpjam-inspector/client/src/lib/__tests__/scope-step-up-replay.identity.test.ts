@@ -7,7 +7,7 @@ import {
   claimPendingDirectScopeStepUpReplay,
   clearPendingDirectScopeStepUpReplay,
 } from "../scope-step-up-replay";
-const save = (callId: string, serverName = "same") => {
+const save = (callId: string, serverName = "same", projectId = "p1") => {
   savePendingDirectScopeStepUpReplay({
     operation: {
       resourceUrl: "https://example.test/mcp",
@@ -21,7 +21,7 @@ const save = (callId: string, serverName = "same") => {
       toolName: "read",
       parameters: {},
       authAttempt: {
-        projectId: "p1",
+        projectId,
         serverId: serverName,
         surface: "tools",
         callId,
@@ -235,6 +235,16 @@ describe("direct replay identity", () => {
     expect(() => save("b")).toThrow(
       "A call on this server is waiting to run again after sign-in.",
     );
+  });
+  it("lets a same-named server in another project replace a signed-in call", () => {
+    save("a");
+    markPendingDirectScopeStepUpReplayReady("same", "flow-a");
+    window.dispatchEvent(
+      Object.assign(new Event("pageshow"), { persisted: true }),
+    );
+    window.history.replaceState({}, "", "/p/p2/tools");
+    expect(() => save("b", "same", "p2")).not.toThrow();
+    expect(peekPendingDirectScopeStepUpReplay()?.projectId).toBe("p2");
   });
   it("lets a call on another server replace a signed-in call", () => {
     save("a");

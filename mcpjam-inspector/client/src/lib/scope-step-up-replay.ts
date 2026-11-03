@@ -130,6 +130,18 @@ function currentProjectSegment(): string {
   return readProjectPathSegment(window.location.pathname) ?? "local";
 }
 
+/** A saved call runs only in its own project, the page's. */
+function belongsToCurrentProject(
+  pending: PendingDirectScopeStepUpReplay,
+): boolean {
+  const project = currentProjectSegment();
+  return (
+    (pending.projectId === undefined || pending.projectId === project) &&
+    (!pending.descriptor.authAttempt ||
+      pending.descriptor.authAttempt.projectId === project)
+  );
+}
+
 export class PendingDirectReplayConflictError extends Error {
   constructor(waiting: "signed_in_on_this_server" | "signing_in") {
     super(
@@ -151,12 +163,13 @@ export function savePendingDirectScopeStepUpReplay(input: {
   const previous = input.previous;
   const waiting = readStored();
   if (!previous && waiting && waiting.expiresAt > now) {
-    // A signed-in call keeps its slot against calls on its own server, where
-    // it replays. A call on another server takes the slot: the user moved
-    // on, and the store holds one call.
+    // A signed-in call keeps its slot against calls on its own server in its
+    // own project, where it replays. A call anywhere else takes the slot: the
+    // user moved on, and the store holds one call.
     if (
       waiting.phase === "ready" &&
-      waiting.descriptor.serverName === input.descriptor.serverName
+      waiting.descriptor.serverName === input.descriptor.serverName &&
+      belongsToCurrentProject(waiting)
     )
       throw new PendingDirectReplayConflictError("signed_in_on_this_server");
     // A call this page is signing in or replaying keeps its slot too; one an
@@ -319,11 +332,7 @@ export function claimPendingDirectScopeStepUpReplay(input: {
   if (
     !pending ||
     pending.phase !== "ready" ||
-    (pending.projectId !== undefined && pending.projectId !==
-      currentProjectSegment()) ||
-    (pending.descriptor.authAttempt &&
-      pending.descriptor.authAttempt.projectId !==
-        currentProjectSegment()) ||
+    !belongsToCurrentProject(pending) ||
     pending.descriptor.serverName !== input.serverName ||
     pending.descriptor.surface !== input.surface
   ) {
