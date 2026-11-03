@@ -109,5 +109,11 @@ export async function probeStepUpChallenge(
       ? { wwwAuthenticate: call.wwwAuthenticate }
       : {}),
     ...(call.error ? { error: call.error } : {}),
+    ...(call.rpcError
+      ? { refusal: "rpc-error" as const }
+      : call.result?.isError
+        ? { refusal: "tool-error" as const }
+        : {}),
+    ...(call.invalidArguments ? { invalidArguments: true as const } : {}),
   };
 }
