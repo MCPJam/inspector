@@ -294,7 +294,7 @@ describe("ConformanceTab", () => {
     window.history.replaceState(null, "", "/");
   });
 
-  it("shows a pooled score headline with denominator, and readiness advice that costs points", async () => {
+  it("shows a pooled score headline with denominator, and readiness advice worth 0 points", async () => {
     setupSuccessfulRunMocks({
       protocol: createProtocolResult({
         checks: [
@@ -372,15 +372,14 @@ describe("ConformanceTab", () => {
     render(<ConformanceTab server={createHttpServer()} />);
     await runToCompletion();
 
-    // Pooled: 4/4 applicable across the suites, one SHOULD advisory (-2)
-    // from protocol readiness = 98. The number shows on the headline and on
-    // the Protocol row, which carries the same advisory.
-    expect(screen.getAllByText("98").length).toBeGreaterThanOrEqual(1);
+    // Pooled: 4/4 applicable across the suites = 100. The SHOULD advisory
+    // from protocol readiness is listed but worth 0 points.
+    expect(screen.getAllByText("100").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Conformant, with guidance.")).toBeInTheDocument();
     // The denominator travels with the number.
     expect(screen.getByText("4/4")).toBeInTheDocument();
 
-    // The advisory that deducted sits in the one container above the
+    // The advisory sits in the one container above the
     // suites, closed with a count until opened.
     const advice = screen.getByRole("button", {
       name: /^Additional enhancements/,

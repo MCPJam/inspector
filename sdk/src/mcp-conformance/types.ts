@@ -516,16 +516,15 @@ export interface MCPReadinessWarning {
   message: string;
   details?: Record<string, unknown>;
   /**
-   * Report this observation without deducting from the score.
+   * Report this observation without listing it as score advice.
    *
-   * The readiness channel normally costs points, because a SHOULD a server
-   * ignores is a real (if non-fatal) shortfall. Some observations are not that:
-   * the behavior they describe is either EXPLICITLY PERMITTED by the spec (a
-   * MAY the server is entitled to take) or rests on a non-normative example.
-   * Deducting for those invents a requirement — the same over-strictness this
-   * program exists to remove, moved from the verdict onto the number.
+   * Readiness warnings are normally listed as advisories beside the score,
+   * because a SHOULD a server ignores is a real (if non-fatal) shortfall. Some
+   * observations are not that: the behavior they describe is either EXPLICITLY
+   * PERMITTED by the spec (a MAY the server is entitled to take) or rests on a
+   * non-normative example. Advice is worth 0 points either way.
    *
-   * Absent ⇒ scored, so every existing warning keeps its deduction.
+   * Absent ⇒ listed, so every existing warning stays an advisory.
    */
   informational?: boolean;
 }

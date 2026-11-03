@@ -261,7 +261,10 @@ export type ScoreSummary = Pick<
   ConformanceScore,
   "score" | "outcome" | "applicable" | "passed" | "failed" | "couldNotRun"
 > &
-  Partial<Pick<ConformanceScore, "notApplicable" | "advisories" | "pending">>;
+  Partial<Pick<ConformanceScore, "notApplicable" | "advisories" | "pending">> & {
+    /** A saved run's advice count, where there is no advisories list. */
+    advisoryCount?: number;
+  };
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
@@ -343,9 +346,11 @@ export function OverallScoreCard({
     if (scored.outcome === "incomplete") {
       return `Incomplete. ${plural(scored.couldNotRun, "check")} could not run.`;
     }
-    // A saved run carries no advisories list, but a passed run only scores
-    // under 100 when it has advisories.
-    return scored.score! < 100
+    // Advice is worth 0 points, so the score cannot tell a passed run with
+    // advice from one without; read the advice itself.
+    const advised =
+      (scored.advisories?.length ?? scored.advisoryCount ?? 0) > 0;
+    return advised
       ? "Conformant, with guidance."
       : "Fully conformant.";
   })();
@@ -375,7 +380,7 @@ export function OverallScoreCard({
             <>
               <div className="flex items-end gap-px">
                 <span className="text-7xl leading-16 font-medium tracking-[-0.04em] tabular-nums">
-                  {Math.round(scored.score!)}
+                  {scored.score!}
                 </span>
                 <span className="pb-1 text-[28px] leading-8 font-medium">
                   %

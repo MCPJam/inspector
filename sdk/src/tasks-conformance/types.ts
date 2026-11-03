@@ -79,7 +79,7 @@ export interface MCPTasksReadinessWarning extends Omit<
 
 /**
  * Picked advice the run could not judge, and why. Kept apart from `readiness`
- * so it never reads as a shortfall or costs points: a SHOULD about failed
+ * so it never reads as a shortfall: a SHOULD about failed
  * tasks says nothing when the task did not fail.
  */
 export interface MCPTasksUncheckedAdvice {
