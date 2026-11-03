@@ -99,6 +99,33 @@ test("buildTasksConformanceConfig lets explicit check ids override categories", 
   assert.deepEqual(config.checkIds, ["tasks-inline-result"]);
 });
 
+test("buildTasksConformanceConfig passes advice ids through as readinessIds", () => {
+  const all = buildTasksConformanceConfig({ url: "https://example.com/mcp" });
+  assert.equal("readinessIds" in all, false);
+
+  const config = buildTasksConformanceConfig({
+    url: "https://example.com/mcp",
+    adviceId: ["tasks-readiness-failed-status-message"],
+  });
+  assert.deepEqual(config.readinessIds, [
+    "tasks-readiness-failed-status-message",
+  ]);
+});
+
+test("buildTasksConformanceConfig rejects unknown advice ids, and another suite's", () => {
+  for (const adviceId of [["bogus"], ["readiness-log-level-filtering"]]) {
+    assert.throws(
+      () =>
+        buildTasksConformanceConfig({
+          url: "https://example.com/mcp",
+          adviceId,
+        }),
+      (error) =>
+        error instanceof CliError && error.message.includes("Unknown advice id")
+    );
+  }
+});
+
 test("tasksConformanceExitCode separates a violation from a run that established nothing", () => {
   assert.equal(tasksConformanceExitCode({ passed: true, outcome: "passed" }), 0);
   assert.equal(tasksConformanceExitCode({ passed: false, outcome: "failed" }), 1);

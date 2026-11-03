@@ -128,6 +128,40 @@ test("buildOAuthConformanceConfig enables conformance checks when flag is set", 
   assert.equal(config.oauthConformanceChecks, true);
 });
 
+test("buildOAuthConformanceConfig passes advice ids through as readinessIds", () => {
+  const base = {
+    url: "https://example.com/mcp",
+    protocolVersion: "2025-11-25",
+    registration: "dcr",
+  } as const;
+
+  assert.equal("readinessIds" in buildOAuthConformanceConfig(base), false);
+  assert.deepEqual(
+    buildOAuthConformanceConfig({
+      ...base,
+      adviceId: ["readiness-oauth-iss-advertised"],
+    }).readinessIds,
+    ["readiness-oauth-iss-advertised"],
+  );
+});
+
+test("buildOAuthConformanceConfig rejects unknown advice ids, and another suite's", () => {
+  for (const adviceId of [["bogus"], ["readiness-log-level-filtering"]]) {
+    assert.throws(
+      () =>
+        buildOAuthConformanceConfig({
+          url: "https://example.com/mcp",
+          protocolVersion: "2025-11-25",
+          registration: "dcr",
+          adviceId,
+        }),
+      (error) =>
+        error instanceof CliError &&
+        error.message.includes("Unknown advice id"),
+    );
+  }
+});
+
 test("buildOAuthConformanceConfig defaults conformance checks to false", () => {
   const config = buildOAuthConformanceConfig({
     url: "https://example.com/mcp",

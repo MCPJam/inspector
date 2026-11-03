@@ -4,6 +4,7 @@ import {
   reportScore,
 } from "../lib/conformance-exit-code.js";
 import {
+  MCP_OAUTH_READINESS_IDS,
   type OAuthConformanceConfig,
   type OAuthConformanceSuiteResult,
   type OAuthLoginConfig,
@@ -143,6 +144,7 @@ export interface OAuthCommandOptions {
   verifyTools?: boolean;
   verifyCallTool?: string;
   conformanceChecks?: boolean;
+  adviceId?: string[];
   printUrl?: boolean;
   credentialsOut?: string;
 }
@@ -373,6 +375,12 @@ export function registerOAuthCommands(program: Command): void {
     .option(
       "--conformance-checks",
       "Run additional OAuth negative checks (invalid client, invalid redirect, token format) after the main flow",
+    )
+    .option(
+      "--advice-id <id>",
+      "Specific advice ID to run. Repeat for multiple. Default: all.",
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
     )
     .option(
       "--credentials-out <path>",
@@ -681,6 +689,16 @@ export function buildOAuthConformanceConfig(
     assertValidUrl(redirectUrl, "redirect URL");
   }
 
+  const readinessIds = options.adviceId?.filter(Boolean);
+  const invalidReadinessIds = (readinessIds ?? []).filter(
+    (id) => !(MCP_OAUTH_READINESS_IDS as readonly string[]).includes(id),
+  );
+  if (invalidReadinessIds.length > 0) {
+    throw usageError(
+      `Unknown advice id${invalidReadinessIds.length === 1 ? "" : "s"}: ${invalidReadinessIds.join(", ")}`,
+    );
+  }
+
   const customHeaders = parseHeadersOption(options.header);
   const client: NonNullable<OAuthConformanceConfig["client"]> = {};
 
@@ -729,6 +747,12 @@ export function buildOAuthConformanceConfig(
     stepTimeout: options.stepTimeout ?? 30_000,
     verification,
     oauthConformanceChecks: options.conformanceChecks ?? false,
+    ...(readinessIds && readinessIds.length > 0
+      ? {
+          readinessIds:
+            readinessIds as OAuthConformanceConfig["readinessIds"],
+        }
+      : {}),
   };
 }
 

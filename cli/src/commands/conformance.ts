@@ -13,6 +13,7 @@ import {
   MCP_CHECK_IDS,
   MCP_LOG_LEVELS,
   MCP_PROTOCOL_VERSIONS,
+  MCP_READINESS_IDS,
   RETIRED_MCP_CHECK_IDS,
   type MCPConformanceConfig,
   type MCPLogLevel,
@@ -54,6 +55,7 @@ export interface ProtocolConformanceOptions {
   checkTimeout?: number;
   category?: string[];
   checkId?: string[];
+  adviceId?: string[];
   protocolVersion?: string;
   fixturesFile?: string;
   fixtureTool?: string[];
@@ -98,6 +100,12 @@ export function registerProtocolCommands(program: Command): void {
     .option(
       "--check-id <id>",
       "Specific check ID to run. Repeat for multiple. Default: all.",
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option(
+      "--advice-id <id>",
+      "Specific advice ID to run. Repeat for multiple. Default: all.",
       (value: string, previous: string[] = []) => [...previous, value],
       [],
     )
@@ -411,6 +419,17 @@ export function buildConfig(
     }
   }
 
+  const readinessIds = options.adviceId?.filter(Boolean);
+  const invalidReadinessIds = collectInvalidEntries(
+    readinessIds,
+    MCP_READINESS_IDS,
+  );
+  if (invalidReadinessIds.length > 0) {
+    throw usageError(
+      `Unknown advice id${invalidReadinessIds.length === 1 ? "" : "s"}: ${invalidReadinessIds.join(", ")}`,
+    );
+  }
+
   const fixtures = resolveFixtures(options);
   const logProbe = resolveLogProbe(options);
 
@@ -434,6 +453,12 @@ export function buildConfig(
       : {}),
     ...(checkIds && checkIds.length > 0
       ? { checkIds: checkIds as MCPConformanceConfig["checkIds"] }
+      : {}),
+    ...(readinessIds && readinessIds.length > 0
+      ? {
+          readinessIds:
+            readinessIds as MCPConformanceConfig["readinessIds"],
+        }
       : {}),
     ...(protocolVersion
       ? { protocolVersion: protocolVersion as MCPConformanceConfig["protocolVersion"] }

@@ -4,6 +4,7 @@ import { reportReadiness, reportScore } from "../lib/conformance-exit-code.js";
 import {
   MCP_TASKS_CHECK_CATEGORIES,
   MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
   MCPTasksConformanceTest,
   RENAMED_MCP_TASKS_CHECK_IDS,
   isMCPTasksWireError,
@@ -93,6 +94,7 @@ export const tasksConformanceExitCode = conformanceExitCode;
 export interface TasksConformanceOptions extends SharedServerTargetOptions {
   category?: string[];
   checkId?: string[];
+  adviceId?: string[];
   toolName?: string;
   toolArgs?: string;
   pollTimeout?: number;
@@ -145,6 +147,19 @@ export function buildTasksConformanceConfig(
     );
   }
 
+  const readinessIds = options.adviceId?.filter(Boolean);
+  const invalidReadinessIds = collectInvalidEntries(
+    readinessIds,
+    MCP_TASKS_READINESS_IDS
+  );
+  if (invalidReadinessIds.length > 0) {
+    throw usageError(
+      `Unknown advice id${
+        invalidReadinessIds.length === 1 ? "" : "s"
+      }: ${invalidReadinessIds.join(", ")}`
+    );
+  }
+
   const resolvedCheckIds =
     checkIds && checkIds.length > 0
       ? checkIds
@@ -163,6 +178,12 @@ export function buildTasksConformanceConfig(
     ...serverConfig,
     ...(resolvedCheckIds && resolvedCheckIds.length > 0
       ? { checkIds: resolvedCheckIds as MCPTasksConformanceConfig["checkIds"] }
+      : {}),
+    ...(readinessIds && readinessIds.length > 0
+      ? {
+          readinessIds:
+            readinessIds as MCPTasksConformanceConfig["readinessIds"],
+        }
       : {}),
     ...(options.toolName ? { toolName: options.toolName } : {}),
     ...(options.toolArgs
@@ -733,6 +754,12 @@ export function registerTasksCommands(program: Command): void {
       .option(
         "--check-id <id>",
         "Specific check ID to run. Repeat for multiple. Default: all.",
+        (value: string, previous: string[] = []) => [...previous, value],
+        []
+      )
+      .option(
+        "--advice-id <id>",
+        "Specific advice ID to run. Repeat for multiple. Default: all.",
         (value: string, previous: string[] = []) => [...previous, value],
         []
       )
