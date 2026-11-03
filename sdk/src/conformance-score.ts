@@ -243,7 +243,7 @@ export function describeConformanceScore(score: ConformanceScore): string {
   }
   if (score.advisories.length > 0) {
     parts.push(
-      `${score.advisories.length} advisor${score.advisories.length === 1 ? "y" : "ies"}`,
+      `${score.advisories.length} advisor${score.advisories.length === 1 ? "y" : "ies"}`
     );
   }
   // Named, never silent: a reader has to be able to tell "this run asked 36

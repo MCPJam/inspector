@@ -112,7 +112,7 @@ describe("computeConformanceScore", () => {
       computeConformanceScore([
         ...passing(passed),
         ...Array.from({ length: failed }, (_, index) =>
-          check(`failed-${index}`, "failed"),
+          check(`failed-${index}`, "failed")
         ),
       ]).score;
 
@@ -258,7 +258,7 @@ describe("describeConformanceScore", () => {
     );
 
     expect(line).toBe(
-      "92.3/100 — 24/26 applicable checks passed, 2 failed, 1 advisory [2025-11-25]",
+      "92.3/100 — 24/26 applicable checks passed, 2 failed, 1 advisory [2025-11-25]"
     );
   });
 
