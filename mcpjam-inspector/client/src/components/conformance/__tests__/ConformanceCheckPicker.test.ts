@@ -161,15 +161,17 @@ describe("runnableSelection", () => {
     expect(runnableSelection(undefined, "auto")).toBeUndefined();
   });
 
-  it("never runs the tasks update acknowledgement check, which the app cannot feed", () => {
-    // It needs `inputResponses`, and the app has no way to supply them, so a
-    // saved pick of it is dropped like an unknown id.
+  it("offers and runs the tasks update acknowledgement check", () => {
+    // The app sends the answers set under it, so it runs like any other.
     const selection = runnableSelection(
       { tasks: ["tasks-update-ack-shape", "tasks-wire-resolvable"] },
       "auto",
     );
-    expect(selection?.tasks).toEqual(["tasks-wire-resolvable"]);
-    expect(checkCatalogs("auto").tasks.map((entry) => entry.id)).not.toContain(
+    expect(selection?.tasks).toEqual([
+      "tasks-wire-resolvable",
+      "tasks-update-ack-shape",
+    ]);
+    expect(checkCatalogs("auto").tasks.map((entry) => entry.id)).toContain(
       "tasks-update-ack-shape",
     );
   });

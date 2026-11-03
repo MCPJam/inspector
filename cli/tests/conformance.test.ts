@@ -73,6 +73,14 @@ test("buildConfig rejects unknown categories and check ids", () => {
   );
 });
 
+test("buildConfig accepts a retired check id, which the SDK runs as advice", () => {
+  const config = buildConfig({
+    url: "https://example.com/mcp",
+    checkId: ["modern-log-level-filtering"],
+  });
+  assert.deepEqual(config.checkIds, ["modern-log-level-filtering"]);
+});
+
 test("buildConfig preserves validated conformance filters", () => {
   const config = buildConfig({
     url: "https://example.com/mcp",
@@ -413,6 +421,7 @@ test("log probe: bad flags are usage errors", () => {
   for (const [options, pattern] of [
     [{ logProbeLevel: "error" }, /need --log-probe-tool/],
     [{ logProbeArgs: "{}" }, /need --log-probe-tool/],
+    [{ logProbeTool: "   " }, /needs a tool name/],
     [{ logProbeTool: "emit-log", logProbeLevel: "loud" }, /Unknown log level/],
     [{ logProbeTool: "emit-log", logProbeArgs: "[]" }, /JSON object/],
   ] as const) {

@@ -252,6 +252,33 @@ describe("tasks-status-payload-shape", () => {
         informational: true,
       }),
     ]);
+    expect(result.uncheckedAdvice).toBeUndefined();
+  });
+
+  it("says the failed-task advice was not checked when the task did not fail", async () => {
+    const result = await run(await serve(quickPhases()), [ID]);
+    expect(result.readiness).toBeUndefined();
+    expect(result.uncheckedAdvice).toEqual([
+      {
+        id: "tasks-readiness-failed-status-message",
+        title: "Failed Task Status Message",
+        reason:
+          "Not checked: the task didn't fail, so there was no failure reason to look at.",
+      },
+    ]);
+  });
+
+  it("reports neither when a failed task carries a statusMessage", async () => {
+    const result = await run(await serve(failedTaskPhases()), [ID]);
+    expect(result.readiness).toBeUndefined();
+    expect(result.uncheckedAdvice).toBeUndefined();
+  });
+
+  it("leaves out the not-checked line when the advice was not picked", async () => {
+    const result = await run(await serve(quickPhases()), [ID], {
+      readinessIds: ["tasks-readiness-unknown-task-id-mutations"],
+    });
+    expect(result.uncheckedAdvice).toBeUndefined();
   });
 });
 

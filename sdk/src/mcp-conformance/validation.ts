@@ -4,6 +4,7 @@ import {
   MCP_LOG_LEVELS,
   MCP_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
+  RETIRED_MCP_CHECK_IDS,
   type MCPCheckCategory,
   type MCPCheckEra,
   type MCPCheckId,
@@ -34,7 +35,7 @@ function normalizeCategories(
 }
 
 function normalizeCheckIds(
-  checkIds: MCPConformanceConfig["checkIds"],
+  checkIds: MCPCheckId[] | undefined,
 ): MCPCheckId[] | undefined {
   if (!checkIds || checkIds.length === 0) {
     return undefined;
@@ -50,9 +51,42 @@ function normalizeCheckIds(
   return normalized;
 }
 
+/**
+ * Picks with each retired check id swapped for the advice that replaced it.
+ * Advice runs whatever checks are picked, so the advice is added only when
+ * the caller narrowed it. A retired id picked on its own keeps the run to the
+ * logging check, which calls the same log tool: an emptied list would run
+ * every check instead.
+ */
+function resolveRetiredCheckIds(
+  checkIds: MCPConformanceConfig["checkIds"],
+  readinessIds: MCPConformanceConfig["readinessIds"],
+): { checkIds?: MCPCheckId[]; readinessIds?: MCPReadinessId[] } {
+  const retired = (checkIds ?? []).filter((id) =>
+    Object.hasOwn(RETIRED_MCP_CHECK_IDS, id),
+  ) as (keyof typeof RETIRED_MCP_CHECK_IDS)[];
+  if (retired.length === 0) {
+    return { checkIds: checkIds as MCPCheckId[] | undefined, readinessIds };
+  }
+  const current = checkIds!.filter(
+    (id) => !Object.hasOwn(RETIRED_MCP_CHECK_IDS, id),
+  ) as MCPCheckId[];
+  return {
+    checkIds:
+      current.length > 0 ? current : ["modern-logs-require-log-level"],
+    readinessIds:
+      readinessIds === undefined
+        ? undefined
+        : [
+            ...readinessIds,
+            ...retired.map((id) => RETIRED_MCP_CHECK_IDS[id]),
+          ],
+  };
+}
+
 /** Unlike check ids, an empty list stays empty: it means no advice at all. */
 function normalizeReadinessIds(
-  readinessIds: MCPConformanceConfig["readinessIds"],
+  readinessIds: MCPConformanceConfig["readinessIds"]
 ): MCPReadinessId[] | undefined {
   if (readinessIds === undefined) {
     return undefined;
@@ -116,7 +150,7 @@ function normalizeToolProbe(
 }
 
 function normalizeLogProbe(
-  probe: MCPConformanceConfig["logProbe"],
+  probe: MCPConformanceConfig["logProbe"]
 ): NormalizedMCPConformanceConfig["logProbe"] {
   const normalized = normalizeToolProbe(probe, "logProbe");
   if (!normalized || probe?.level === undefined) {
@@ -124,7 +158,7 @@ function normalizeLogProbe(
   }
   if (!(MCP_LOG_LEVELS as readonly string[]).includes(probe.level)) {
     throw new Error(
-      `MCP conformance logProbe.level must be one of ${MCP_LOG_LEVELS.join(", ")}, got ${JSON.stringify(probe.level)}`,
+      `MCP conformance logProbe.level must be one of ${MCP_LOG_LEVELS.join(", ")}, got ${JSON.stringify(probe.level)}`
     );
   }
   return { ...normalized, level: probe.level };
@@ -253,8 +287,9 @@ export function normalizeMCPConformanceConfig(
   }
 
   const categories = normalizeCategories(config.categories);
-  const checkIds = normalizeCheckIds(config.checkIds);
-  const readinessIds = normalizeReadinessIds(config.readinessIds);
+  const picks = resolveRetiredCheckIds(config.checkIds, config.readinessIds);
+  const checkIds = normalizeCheckIds(picks.checkIds);
+  const readinessIds = normalizeReadinessIds(picks.readinessIds);
   const { protocolVersion, era } = normalizeProtocolVersion(
     config.protocolVersion,
   );

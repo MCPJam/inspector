@@ -29,6 +29,14 @@ test("buildTasksConformanceConfig rejects unknown categories and check ids", () 
   );
 });
 
+test("buildTasksConformanceConfig runs a renamed check id under its current name", () => {
+  const config = buildTasksConformanceConfig({
+    url: "https://example.com/mcp",
+    checkId: ["tasks-input-required-update-completes"],
+  });
+  assert.deepEqual(config.checkIds, ["tasks-update-ack-shape"]);
+});
+
 test("buildTasksConformanceConfig expands categories into check ids", () => {
   const config = buildTasksConformanceConfig({
     url: "https://example.com/mcp",
