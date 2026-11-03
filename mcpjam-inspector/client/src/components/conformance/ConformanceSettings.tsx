@@ -19,12 +19,14 @@ export function ConformanceSettings({
   defaults,
   onSave,
   onBack,
+  backDisabled = false,
 }: {
   serverName: string;
   /** The saved defaults; absent means every check. */
   defaults?: ConformanceSelection;
   onSave: (selection: ConformanceSelection) => Promise<void>;
   onBack: () => void;
+  backDisabled?: boolean;
 }) {
   // Shown at once while the save goes out; the saved row catches up after.
   const [selection, setSelection] = useState<ConformanceSelection>(
@@ -67,6 +69,7 @@ export function ConformanceSettings({
             variant="link"
             size="sm"
             onClick={onBack}
+            disabled={backDisabled}
             className="h-auto gap-1 px-0 text-sm has-[>svg]:px-0"
           >
             <ChevronLeft className="size-3.5" />

@@ -260,6 +260,7 @@ export function ConformanceRunDetailPage({
   runId,
   serverNames,
   serverSettings,
+  serversLoading = false,
 }: {
   runId: string;
   projectId?: string | null;
@@ -267,6 +268,7 @@ export function ConformanceRunDetailPage({
   serverNames?: ReadonlyMap<string, string>;
   /** The servers' default checks, for Settings. Omit to hide Settings. */
   serverSettings?: SavedRunServerSettings;
+  serversLoading?: boolean;
 }) {
   const navigate = useAppNavigate();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -343,6 +345,7 @@ export function ConformanceRunDetailPage({
             finished={finished}
             serverName={savedServerName}
             settings={serverSettings}
+            serversLoading={serversLoading}
             onOpenSettings={() => setSettingsOpen(true)}
           />
         </div>

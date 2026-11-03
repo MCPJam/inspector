@@ -1818,10 +1818,11 @@ export function ConformanceRoute() {
 
 export function ConformanceRunDetailRoute() {
   const { convexProjectId, isAuthenticated } = useAppRouteContext();
-  const { serversById, serversByName } = useProjectServers({
-    isAuthenticated,
-    projectId: convexProjectId,
-  });
+  const { serversById, serversByName, isLoading, isBootstrapping } =
+    useProjectServers({
+      isAuthenticated,
+      projectId: convexProjectId,
+    });
   // The run's server Settings, the same defaults the Conformance page reads.
   const { defaultsByServer, defaultsLoaded, saveDefaults } =
     useConformanceServerData({
@@ -1838,6 +1839,7 @@ export function ConformanceRunDetailRoute() {
       runId={decodeParam(raw) ?? raw}
       projectId={convexProjectId}
       serverNames={serversById}
+      serversLoading={isLoading || isBootstrapping}
       serverSettings={
         saveDefaults
           ? {

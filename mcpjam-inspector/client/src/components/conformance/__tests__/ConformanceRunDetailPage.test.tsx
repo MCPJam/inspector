@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
+  act,
   render,
   screen,
   fireEvent,
@@ -251,6 +252,63 @@ describe("ConformanceRunDetailPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByRole("button", { name: "Run again" })).toBeDefined();
+  });
+
+  it("waits for server lookup before Run again, including a deleted server", () => {
+    navigateMock.mockReset();
+    useArtifactQueryMock.mockReturnValue(run([report()]));
+    const { rerender } = render(
+      <ConformanceRunDetailPage runId="run_1" serversLoading />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+    expect(navigateMock).not.toHaveBeenCalled();
+    rerender(
+      <ConformanceRunDetailPage
+        runId="run_1"
+        serverNames={new Map([["srv_1", "Weather"]])}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+    expect(navigateMock).toHaveBeenLastCalledWith("/conformance?run=Weather");
+    rerender(<ConformanceRunDetailPage runId="run_1" serverNames={new Map()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+    expect(navigateMock).toHaveBeenLastCalledWith("/conformance");
+  });
+
+  it.each([false, true])("waits for all Settings saves before Back (failure: %s)", async (fail) => {
+    useArtifactQueryMock.mockReturnValue(run([report()]));
+    let finishFirst!: () => void;
+    let finishSecond!: () => void;
+    const save = vi
+      .fn()
+      .mockImplementationOnce(
+        () => new Promise<void>((resolve) => { finishFirst = resolve; }),
+      )
+      .mockImplementationOnce(
+        () => new Promise<void>((resolve, reject) => {
+          finishSecond = () => fail ? reject(new Error("Save failed")) : resolve();
+        }),
+      );
+    render(
+      <ConformanceRunDetailPage
+        runId="run_1"
+        serverNames={new Map([["srv_1", "Weather"]])}
+        serverSettings={{ defaults: { Weather: {} }, loaded: true, save }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Run OAuth" }));
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
+    await act(async () => finishFirst());
+    expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+    await act(async () => finishSecond());
+    expect(screen.getByRole("button", { name: "Back" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled();
   });
 
   it("marks a suite a finished run never heard back from as NO RESULT", () => {

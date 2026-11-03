@@ -88,12 +88,14 @@ export function SavedRunActions({
   serverName,
   settings,
   onOpenSettings,
+  serversLoading = false,
 }: {
   runId: string;
   finished: boolean;
   serverName?: string;
   settings?: SavedRunServerSettings;
   onOpenSettings: () => void;
+  serversLoading?: boolean;
 }) {
   const navigate = useAppNavigate();
   return (
@@ -105,7 +107,7 @@ export function SavedRunActions({
           onClick={onOpenSettings}
           // Opened before they load, Settings would start from every check
           // and a change would save over the real defaults.
-          disabled={!settings.loaded}
+          disabled={serversLoading || !settings.loaded}
         >
           <Settings className="size-3.5" aria-hidden /> Settings
         </Button>
@@ -113,6 +115,7 @@ export function SavedRunActions({
       <ConformanceRunShareButton runId={runId} finished={finished} />
       <Button
         size="sm"
+        disabled={serversLoading}
         onClick={() =>
           navigate(
             serverName
@@ -137,11 +140,20 @@ export function SavedRunSettings({
   settings: SavedRunServerSettings;
   onBack: () => void;
 }) {
+  const [pendingSaves, setPendingSaves] = useState(0);
   return (
     <ConformanceSettings
       serverName={serverName}
       defaults={settings.defaults?.[serverName]}
-      onSave={(selection) => settings.save(serverName, selection)}
+      onSave={async (selection) => {
+        setPendingSaves((count) => count + 1);
+        try {
+          await settings.save(serverName, selection);
+        } finally {
+          setPendingSaves((count) => count - 1);
+        }
+      }}
+      backDisabled={pendingSaves > 0}
       onBack={onBack}
     />
   );
