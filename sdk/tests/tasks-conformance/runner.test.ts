@@ -799,7 +799,7 @@ describe("MCPTasksConformanceTest", () => {
     expect(result.passed).toBe(false);
   });
 
-  it("passes an undeclared creation the server refused, warning when the code is not -32021", async () => {
+  it("fails an undeclared creation refused with a code other than -32021", async () => {
     const manager = extensionManager({
       executeTool: async (
         _serverId: string,
@@ -820,14 +820,14 @@ describe("MCPTasksConformanceTest", () => {
     const check = result.checks.find(
       (c) => c.id === "tasks-undeclared-creation-refused"
     );
-    // No task was handed to a non-declaring client, which is what tasks.md:61
-    // requires — but the refusal is not the one the extension names.
-    expect(check?.status).toBe("passed");
-    expect(check?.warnings?.[0]).toContain("-32602");
+    // No task reached a non-declaring client (tasks.md:61), but a refusal
+    // must use -32021 (tasks.md:63).
+    expect(check?.status).toBe("failed");
+    expect(check?.error?.message).toContain("-32602");
     expect(check?.details).toMatchObject({ undeclaredCreationCode: -32602 });
   });
 
-  it("warns that a -32003 refusal is the pre-final draft code", async () => {
+  it("fails a -32003 refusal and names it the pre-final draft code", async () => {
     const manager = extensionManager({
       executeTool: async (
         _serverId: string,
@@ -848,11 +848,85 @@ describe("MCPTasksConformanceTest", () => {
     const check = result.checks.find(
       (c) => c.id === "tasks-undeclared-creation-refused"
     );
-    // Still a pass — no task reached a non-declaring client — but the warning
-    // has to say the code is stale rather than merely unexpected.
-    expect(check?.status).toBe("passed");
-    expect(check?.warnings?.[0]).toContain("corrected to -32021");
-    expect(check?.warnings?.[0]).toContain("pre-final draft");
+    // The message has to say the code is stale rather than merely unexpected.
+    expect(check?.status).toBe("failed");
+    expect(check?.error?.message).toContain("corrected to -32021");
+  });
+
+  it("cannot run when the declared call fails with the same code", async () => {
+    // A tool that rejects its arguments either way says nothing about the
+    // missing capability, so the -32021 rule is not put to the server.
+    const manager = extensionManager({
+      executeTool: async () => {
+        throw Object.assign(new Error("bad args"), { code: -32602 });
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    const check = result.checks.find(
+      (c) => c.id === "tasks-undeclared-creation-refused"
+    );
+    expect([check?.status, check?.skipReason]).toEqual([
+      "skipped",
+      "could-not-run",
+    ]);
+    expect(check?.error?.message).toContain("even with the tasks extension");
+  });
+
+  it("fails a -32021 creation refusal that does not name the extension", async () => {
+    const manager = extensionManager({
+      executeTool: async (
+        _serverId: string,
+        _toolName: string,
+        _args: unknown,
+        options?: { allowTaskResult?: boolean }
+      ) => {
+        if (options?.allowTaskResult)
+          return { resultType: "task", taskId: "task-1" };
+        throw Object.assign(new Error("nope"), {
+          code: -32021,
+          data: { requiredCapabilities: { elicitation: {} } },
+        });
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    const check = result.checks.find(
+      (c) => c.id === "tasks-undeclared-creation-refused"
+    );
+    // tasks.md:63 — the -32021 must indicate the required extension.
+    expect(check?.status).toBe("failed");
+    expect(check?.error?.message).toContain("does not name");
+  });
+
+  it("passes a -32021 creation refusal that names the extension", async () => {
+    const manager = extensionManager({
+      executeTool: async (
+        _serverId: string,
+        _toolName: string,
+        _args: unknown,
+        options?: { allowTaskResult?: boolean }
+      ) => {
+        if (options?.allowTaskResult)
+          return { resultType: "task", taskId: "task-1" };
+        throw missingCapabilityError();
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    const check = result.checks.find(
+      (c) => c.id === "tasks-undeclared-creation-refused"
+    );
+    expect([check?.status, check?.warnings]).toEqual(["passed", undefined]);
   });
 
   it("passes a server advertising the extension on 2025-11-25, with no warning", async () => {
@@ -1099,6 +1173,26 @@ describe("undeclared task requests (-32021)", () => {
       { method: "subscriptions/listen", ...rejected },
       { method: "tasks/cancel", ...rejected },
     ]);
+  });
+
+  it("fails a -32021 whose requiredCapabilities does not name the extension", async () => {
+    // The core spec: the error's `data.requiredCapabilities` "lists the
+    // missing capabilities" (a MUST). The missing one is the tasks extension.
+    const result = await runProbe({
+      "tasks/get": () => {
+        throw Object.assign(new Error("missing capability"), {
+          code: -32021,
+          data: { requiredCapabilities: { elicitation: {} } },
+        });
+      },
+    });
+
+    const check = result.checks.find(
+      (c) => c.id === "tasks-undeclared-capability-names-requirements"
+    );
+    expect(check?.status).toBe("failed");
+    expect(check?.error?.message).toContain("does not name");
+    expect(check?.details).toMatchObject({ unspecific: ["tasks/get"] });
   });
 
   for (const method of [

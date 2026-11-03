@@ -159,7 +159,7 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
 };
 
 /**
- * `mcp-tasks` v2026-11-01.2 — every check the Tasks suite ships: the eight it
+ * `mcp-tasks` v2026-11-02.1 — every check the Tasks suite ships: the eight it
  * shipped before the gap program's scenario depth, plus the six that depth
  * added.
  *
@@ -185,6 +185,15 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
  * that need a task need one the scored lifecycle checks already need, so a run
  * that creates none was already incomplete.
  *
+ * v2026-11-01.2 → v2026-11-02.1 keeps the same checks but tightens two, each
+ * of which used to pass with a warning:
+ *   - `tasks-undeclared-creation-refused` fails a refusal with any code other
+ *     than `-32021`, or a `-32021` that does not name the tasks extension;
+ *     tasks.md:63 states both as a MUST.
+ *   - `tasks-undeclared-capability-names-requirements` fails a `-32021` whose
+ *     `requiredCapabilities` does not name the tasks extension; the core spec
+ *     requires it to list the missing capabilities (basic/index.mdx, a MUST).
+ *
  * A SEPARATE profile rather than a section of `mcp-protocol`, which was the
  * open design question. Two reasons settled it:
  *
@@ -199,7 +208,7 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
  */
 const MCP_TASKS_PROFILE: ConformanceProfile = {
   id: "mcp-tasks",
-  version: "2026-11-01.2",
+  version: "2026-11-02.1",
   scored: [
     "tasks-wire-resolvable",
     "tasks-declaration-hygiene",

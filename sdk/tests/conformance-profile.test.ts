@@ -116,8 +116,13 @@ describe("the mcp-tasks profile", () => {
     // Each of the last four states a MUST: -32602 for an unknown id on
     // tasks/get, the per-status payload, the empty cancel ack, and
     // data.requiredCapabilities on -32021.
-    expect(TASKS.version).toBe("2026-11-01.2");
     expect([...TASKS.scored].sort()).toEqual([...MCP_TASKS_CHECK_IDS].sort());
+  });
+
+  it("bumps to v2026-11-02.1 for the two stricter -32021 checks", () => {
+    // Same checks; a refusal that is not -32021 now fails, and so does a
+    // -32021 that does not name the tasks extension.
+    expect(TASKS.version).toBe("2026-11-02.1");
   });
 });
 
