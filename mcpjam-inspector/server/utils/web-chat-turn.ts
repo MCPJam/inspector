@@ -1588,6 +1588,9 @@ export async function streamChatTurn(
         : "remote",
     );
     const onComplete = buildOnConversationComplete(String(prepare.modelDefinition.id), "byok");
+    // One array for the stream and the transcript: settling a call a sign-in
+    // suspended inserts its answer here, and the saved history must carry it.
+    const directHistory = scrubMessages(modelMessages);
     return streamDirectChatWithLiveTrace({
       llmModel: provider.model,
       provider: prepare.modelDefinition.provider,
@@ -1598,7 +1601,7 @@ export async function streamChatTurn(
         transport: "http_stream",
       }),
       modelId: String(prepare.modelDefinition.id),
-      messageHistory: scrubMessages(modelMessages),
+      messageHistory: directHistory,
       systemPrompt: effectiveEnhancedSystemPrompt,
       temperature: resolvedTemperature,
       providerOptions: provider.providerOptions,
@@ -1620,6 +1623,9 @@ export async function streamChatTurn(
       abortSignal: runtime.abortSignal,
       chatSessionId: persist.chatSessionId,
       scopeStepUpResume,
+      ...(settleSuspendedHistoryToolCall
+        ? { settleSuspendedHistoryToolCall }
+        : {}),
       shouldPauseAfterStep: () => suspendedScopeStepUpToolCallIds.size > 0,
       suspendedToolCallIds: () => suspendedScopeStepUpToolCallIds,
       onStreamComplete: cleanupStream,
@@ -1631,7 +1637,7 @@ export async function streamChatTurn(
         runtime.taskCreatedBridge?.attachStreamWriter(writer);
       },
       onPersist: onComplete ? async (event) => {
-        const history = [...modelMessages];
+        const history = [...directHistory];
         appendDedupedModelMessages(history, event.responseMessages);
         return onComplete(history, event.turnTrace);
       } : undefined,

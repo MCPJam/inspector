@@ -1,3 +1,5 @@
+import { readUiResources } from "./resource-reads.js";
+import { withAbortSignalFetch } from "../abort-signal.js";
 import {
   AUTHORIZATION_REQUIRED_MESSAGE,
   authorizationRequiredDetails,
@@ -14,7 +16,6 @@ import {
   type ListToolsResult,
   type MCPReadResourceResult,
   type MCPResource,
-  type MCPServerConfig,
 } from "../mcp-client-manager/index.js";
 import { deepJsonSafe } from "../json-safe.js";
 import { withEphemeralClient } from "../operations.js";
@@ -359,44 +360,6 @@ function validateUiMeta(
   return violations;
 }
 
-async function readUiResources(
-  manager: {
-    readResource: (
-      serverId: string,
-      params: { uri: string },
-    ) => Promise<MCPReadResourceResult>;
-  },
-  serverId: string,
-  resourceUris: string[],
-  uiTools: UIToolReference[],
-  listedUiResourceUris: Set<string>,
-): Promise<MCPAppsResourceReadOutcome[]> {
-  return Promise.all(
-    resourceUris.map(async (uri) => {
-      try {
-        const result = await manager.readResource(serverId, { uri });
-        return {
-          uri,
-          referencedByTools: uiTools
-            .filter((tool) => tool.resourceUri === uri)
-            .map((tool) => tool.name),
-          listed: listedUiResourceUris.has(uri),
-          result,
-        };
-      } catch (error) {
-        return {
-          uri,
-          referencedByTools: uiTools
-            .filter((tool) => tool.resourceUri === uri)
-            .map((tool) => tool.name),
-          listed: listedUiResourceUris.has(uri),
-          error,
-        };
-      }
-    }),
-  );
-}
-
 function buildConnectionFailureResult(
   config: NormalizedMCPAppsConformanceConfig,
   error: unknown,
@@ -476,13 +439,27 @@ export class MCPAppsConformanceTest {
   }
 
   async run(): Promise<MCPAppsConformanceResult> {
+    const signal = this.config.signal;
+    signal?.throwIfAborted();
+    const serverConfig = this.config.serverConfig;
+    const runConfig =
+      signal && "url" in serverConfig
+        ? {
+            ...serverConfig,
+            baseFetch: withAbortSignalFetch(
+              serverConfig.baseFetch ?? fetch,
+              signal
+            ),
+          }
+        : serverConfig;
     const startedAt = Date.now();
     const selectedCheckIds = buildCheckSelection(this.config);
 
     try {
       return await withEphemeralClient(
-        this.config.serverConfig as MCPServerConfig,
+        runConfig,
         async (manager, serverId) => {
+          signal?.throwIfAborted();
           const checks: MCPAppsCheckResult[] = [];
           // Advice reported beside the verdict rather than as check warnings.
           const readiness: MCPAppsReadinessWarning[] = [];
@@ -492,19 +469,27 @@ export class MCPAppsConformanceTest {
           let resourcesError: unknown;
 
           try {
-            const result = await manager.listTools(serverId);
+            const result = await manager.listTools(serverId, undefined, {
+              signal,
+            });
             tools = result.tools ?? [];
           } catch (error) {
+            signal?.throwIfAborted();
             toolsError = error;
           }
 
+          signal?.throwIfAborted();
           try {
-            const result = await manager.listResources(serverId);
+            const result = await manager.listResources(serverId, undefined, {
+              signal,
+            });
             resources = result.resources ?? [];
           } catch (error) {
+            signal?.throwIfAborted();
             resourcesError = error;
           }
 
+          signal?.throwIfAborted();
           const uiTools = tools
             .map((tool) => extractUiToolReference(tool))
             .filter((tool): tool is UIToolReference => tool !== undefined);
@@ -534,9 +519,11 @@ export class MCPAppsConformanceTest {
               resourceUrisToRead,
               uiTools,
               listedUiResourceUris,
+              signal
             );
           }
 
+          signal?.throwIfAborted();
           if (selectedCheckIds.has("ui-tools-present")) {
             const stepStartedAt = Date.now();
             if (toolsError) {
@@ -1079,10 +1066,12 @@ export class MCPAppsConformanceTest {
           serverId: "__apps_conformance__",
           clientName: "mcpjam-sdk-apps-conformance",
           timeout: this.config.timeout,
+          signal,
           rpcLogger: this.config.serverConfig.rpcLogger,
         },
       );
     } catch (error) {
+      signal?.throwIfAborted();
       return buildConnectionFailureResult(this.config, error, startedAt);
     }
   }

@@ -248,6 +248,7 @@ export async function collectClientReadiness(
     try {
       const secondListing = await listTools(ctx.manager, {
         serverId: ctx.serverId,
+        signal: ctx.config.signal,
       });
       const orderWarning = toolOrderWarning(
         surface.toolNames,

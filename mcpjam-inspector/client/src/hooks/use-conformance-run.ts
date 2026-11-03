@@ -59,6 +59,7 @@ import {
   NOT_SELECTED,
   oauthStateFromResult,
   runnableSelection,
+  suiteErrorMessage,
   verdictOf,
   type AppsSuiteState,
   type ConformanceSelection,
@@ -335,10 +336,7 @@ export function useConformanceRun({
         setProtocol({ status: "done", result, verdict: verdictOf(result) });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;
-        setProtocol({
-          status: "error",
-          error: err instanceof Error ? err.message : String(err),
-        });
+        setProtocol({ status: "error", error: suiteErrorMessage(err) });
       }
     },
     [httpServer, isRunActive, versionPin]
@@ -360,10 +358,7 @@ export function useConformanceRun({
         setApps({ status: "done", result, verdict: verdictOf(result) });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;
-        setApps({
-          status: "error",
-          error: err instanceof Error ? err.message : String(err),
-        });
+        setApps({ status: "error", error: suiteErrorMessage(err) });
       }
     },
     [isRunActive]
@@ -387,10 +382,7 @@ export function useConformanceRun({
         setTasks({ status: "done", result, verdict: verdictOf(result) });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;
-        setTasks({
-          status: "error",
-          error: err instanceof Error ? err.message : String(err),
-        });
+        setTasks({ status: "error", error: suiteErrorMessage(err) });
       }
     },
     [isRunActive]

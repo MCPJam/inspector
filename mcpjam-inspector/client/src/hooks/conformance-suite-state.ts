@@ -252,3 +252,18 @@ export function runnableSelection(
     oauthAdvice: knownIds(selection.oauthAdvice, MCP_OAUTH_READINESS_IDS),
   };
 }
+
+/**
+ * A suite's request error, in words. A proxy that cut the request off (a 524,
+ * or a 504 with no message of ours) names the time limit instead of a status
+ * code; anything else keeps its own message.
+ */
+export function suiteErrorMessage(err: unknown): string {
+  const status = (err as { status?: unknown } | null)?.status;
+  const message = err instanceof Error ? err.message : String(err);
+  const cutOff =
+    status === 524 || (status === 504 && /^Request failed/.test(message));
+  return cutOff
+    ? "These checks took too long to finish, so no results came back. Run them again, or pick fewer checks for this suite."
+    : message;
+}
