@@ -47,6 +47,7 @@ export type ConformanceRunListItem = {
   couldNotRun: number;
   /** Absent on rows read from a build that predates the field. */
   notApplicable?: number;
+  advisoryCount?: number;
   requestedSuites: string[];
   protocolVersion: string | null;
   actorLabel: string | null;
@@ -395,6 +396,7 @@ export function ConformanceRunDetailPage({
                   failed: detail.failed,
                   couldNotRun: detail.couldNotRun,
                   notApplicable: detail.notApplicable,
+                  advisoryCount: detail.advisoryCount,
                 }
               : undefined
           }
@@ -686,6 +688,7 @@ type SharedConformanceArtifact = {
   failed?: number;
   couldNotRun?: number;
   notApplicable?: number;
+  advisoryCount?: number;
   protocolVersion?: string | null;
   requestedSuites?: string[];
   createdAt?: number;
@@ -761,6 +764,7 @@ export function ConformanceSharedPage({ token }: { token: string }) {
                 failed: run.failed ?? 0,
                 couldNotRun: run.couldNotRun ?? 0,
                 notApplicable: run.notApplicable ?? 0,
+                advisoryCount: run.advisoryCount,
               }
             : undefined
         }

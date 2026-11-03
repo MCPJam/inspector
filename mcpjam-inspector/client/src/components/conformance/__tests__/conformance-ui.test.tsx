@@ -14,11 +14,11 @@ function passedScore(score: number): ScoreSummary {
 }
 
 describe("OverallScoreCard", () => {
-  it("reads a passed run under 100 as advised even without its advisories", () => {
-    // A saved run's summary carries no advisories list.
+  it("reads a passed run with advice as advised even without its advisories", () => {
+    // A saved run's summary carries an advice count, not an advisories list.
     render(
       <OverallScoreCard
-        score={passedScore(97)}
+        score={{ ...passedScore(100), advisoryCount: 1 }}
         serverName="srv"
         version="Auto"
       />,
