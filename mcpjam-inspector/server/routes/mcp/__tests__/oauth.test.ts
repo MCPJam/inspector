@@ -105,6 +105,8 @@ const REFUSED = nodeError("ECONNREFUSED", "connect ECONNREFUSED 127.0.0.1:9");
 describe("local OAuth debug proxy: unreachable server", () => {
   beforeEach(() => {
     executeDebugOAuthProxyMock.mockReset();
+    // The Docker image sets it; the expectations below assume it is unset.
+    vi.stubEnv("DOCKER_CONTAINER", "");
   });
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -166,16 +168,19 @@ describe("local OAuth debug proxy: unreachable server", () => {
     expect(body.error).toBe(REFUSED.message);
   });
 
-  it("adds the Docker hint for a loopback target inside the Docker image", async () => {
-    vi.stubEnv("DOCKER_CONTAINER", "true");
-    executeDebugOAuthProxyMock.mockRejectedValue(REFUSED);
+  it.each(["http://localhost:3000/mcp", "http://127.0.0.1:3000/mcp"])(
+    "adds the Docker hint for %s inside the Docker image",
+    async (url) => {
+      vi.stubEnv("DOCKER_CONTAINER", "true");
+      executeDebugOAuthProxyMock.mockRejectedValue(REFUSED);
 
-    const { body } = await postDebugProxy("http://localhost:3000/mcp");
+      const { body } = await postDebugProxy(url);
 
-    expect(body.error).toBe(
-      `${UNREACHABLE_TARGET_FAILURE}: ${REFUSED.message}. ${ADVICE} ${DOCKER_HINT}`,
-    );
-  });
+      expect(body.error).toBe(
+        `${UNREACHABLE_TARGET_FAILURE}: ${REFUSED.message}. ${ADVICE} ${DOCKER_HINT}`,
+      );
+    },
+  );
 
   it.each([
     ["a LAN target inside Docker", "true", "http://192.168.1.20:3000/mcp"],
@@ -231,6 +236,10 @@ describe("local OAuth proxy and metadata routes: unreachable server", () => {
   beforeEach(() => {
     executeOAuthProxyMock.mockReset();
     fetchOAuthMetadataMock.mockReset();
+    vi.stubEnv("DOCKER_CONTAINER", "");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("answers 502 on /proxy", async () => {

@@ -36,7 +36,10 @@ describe("unreachableTargetFailure", () => {
       502,
     ],
     ["EHOSTUNREACH", "connect EHOSTUNREACH 10.0.0.9:443", 502],
+    // macOS, for a LAN host that does not answer ARP.
+    ["EHOSTDOWN", "connect EHOSTDOWN 192.168.1.20:3000", 502],
     ["ENETUNREACH", "connect ENETUNREACH 2001:db8::1:443", 502],
+    ["ENETDOWN", "connect ENETDOWN 10.0.0.9:443", 502],
     ["ETIMEDOUT", "connect ETIMEDOUT 10.255.255.1:81", 504],
   ])("names %s (%s) and answers %i", (code, message, status) => {
     const original = nodeError(code, message);
@@ -216,5 +219,16 @@ describe("describeError on an unreachable-target failure", () => {
     expect(
       describeError(unreachableTargetFailure(nodeError(code, message))).slug
     ).toBe(slug);
+  });
+
+  it("names the refusal, not the first address's timeout", () => {
+    const failure = unreachableTargetFailure(
+      attemptsError([
+        nodeError("ETIMEDOUT", "connect ETIMEDOUT 2001:db8::1:3000"),
+        nodeError("ECONNREFUSED", "connect ECONNREFUSED 127.0.0.1:3000"),
+      ])
+    );
+
+    expect(describeError(failure).slug).toBe("transport/econnrefused");
   });
 });

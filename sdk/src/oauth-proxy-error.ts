@@ -89,7 +89,9 @@ const UNREACHABLE_TARGET_ADVICE =
 const UNREACHABLE_TARGET_CODES: ReadonlySet<string> = new Set([
   "ECONNREFUSED",
   "ECONNRESET",
+  "EHOSTDOWN",
   "EHOSTUNREACH",
+  "ENETDOWN",
   "ENETUNREACH",
   "ETIMEDOUT",
 ]);
@@ -126,6 +128,15 @@ export function unreachableTargetFailure(
   if (!failed) return undefined;
   const attempts = attemptsOf(failed);
   const timedOut = attempts.every((attempt) => codeOf(attempt) === "ETIMEDOUT");
+  // The describer reads the cause's `code`, and an `AggregateError` carries
+  // the first attempt's: point it at the attempt that decided the status.
+  const decided = timedOut
+    ? failed
+    : (attempts.find(
+        (attempt) =>
+          codeOf(attempt) !== "ETIMEDOUT" &&
+          UNREACHABLE_TARGET_CODES.has(codeOf(attempt) ?? "")
+      ) ?? failed);
   const detail =
     failed.message ||
     attempts
@@ -138,7 +149,7 @@ export function unreachableTargetFailure(
   return new OAuthProxyError(
     timedOut ? 504 : 502,
     `${head}${detail.length > room ? `${detail.slice(0, room - 1)}…` : detail}${tail}`,
-    { cause: error }
+    { cause: decided }
   );
 }
 
