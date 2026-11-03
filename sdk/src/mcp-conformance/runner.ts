@@ -41,7 +41,6 @@ import {
   timedOutResult,
 } from "./checks/helpers.js";
 import {
-  checkTimedOutDetails,
   isRequestTimeoutError,
   isTimedOutCheck,
   withDeadline,
@@ -297,6 +296,13 @@ async function safeListResources(
 /** Timeouts in a row after which the remaining client checks are skipped. */
 const MAX_TIMEOUTS_IN_A_ROW = 2;
 
+/** These checks read connection data without asking the server for an answer. */
+const CONNECTION_DATA_CHECK_IDS = new Set<MCPCheckId>([
+  "server-initialize",
+  "modern-client-handshake",
+  "capabilities-consistent",
+]);
+
 async function runClientChecks(
   config: NormalizedMCPConformanceConfig,
   selectedCheckIds: Set<MCPCheckId>,
@@ -441,8 +447,7 @@ async function runClientChecks(
             results.push(
               couldNotRunResult(
                 check,
-                `Skipped because the server stopped answering: the ${MAX_TIMEOUTS_IN_A_ROW} checks before this one timed out.`,
-                checkTimedOutDetails(config.checkTimeout)
+                "Skipped because the server stopped responding."
               )
             );
             continue;
@@ -456,7 +461,12 @@ async function runClientChecks(
             );
             // Only an answer ends the streak; a skip asked the server nothing.
             if (isTimedOutCheck(result)) timeoutStreak += 1;
-            else if (result.status !== "skipped") timeoutStreak = 0;
+            else if (
+              result.status !== "skipped" &&
+              !CONNECTION_DATA_CHECK_IDS.has(check.id)
+            ) {
+              timeoutStreak = 0;
+            }
             results.push(result);
           } catch (error) {
             if (isRequestTimeoutError(error)) {

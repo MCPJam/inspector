@@ -6,6 +6,7 @@
 
 import { isTimedOutCheck } from "../../src/conformance-timeout.js";
 import { MCPConformanceTest } from "../../src/mcp-conformance/index.js";
+import type { MCPCheckId } from "../../src/mcp-conformance/types.js";
 import * as operations from "../../src/operations.js";
 
 vi.mock("../../src/operations.js", () => ({
@@ -45,11 +46,7 @@ function serveManager(manager: Record<string, unknown>) {
   mockedOperations.listResources.mockResolvedValue({ resources: [] });
 }
 
-function run(
-  checkIds: (
-    "ping" | "logging-set-level" | "tools-list" | "tools-input-schemas-valid"
-  )[]
-) {
+function run(checkIds: MCPCheckId[]) {
   return new MCPConformanceTest({
     serverUrl: "https://example.com/mcp",
     checkTimeout: 50,
@@ -97,9 +94,10 @@ describe("protocol checks that run out of time", () => {
   });
 
   it("skips the rest once two checks in a row time out", async () => {
+    const listTools = vi.fn().mockRejectedValue(requestTimeout);
     serveManager({
       pingServer: vi.fn().mockImplementation(never),
-      listTools: vi.fn().mockRejectedValue(requestTimeout),
+      listTools,
     });
 
     const result = await run([
@@ -111,10 +109,78 @@ describe("protocol checks that run out of time", () => {
     expect(result.checks.filter((check) => check.status === "failed")).toEqual(
       []
     );
-    expect(result.checks.every(isTimedOutCheck)).toBe(true);
-    expect(result.checks[2]?.error?.message).toMatch(
-      /server stopped answering/
-    );
+    expect(result.checks.map(isTimedOutCheck)).toEqual([true, true, false]);
+    expect(result.checks[2]).toMatchObject({
+      status: "skipped",
+      skipReason: "could-not-run",
+      error: { message: "Skipped because the server stopped responding." },
+    });
+    expect(listTools).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["passed", "failed"] as const)(
+    "keeps counting across a %s check that only reads connection data",
+    async (status) => {
+      const listTools = vi.fn().mockRejectedValue(requestTimeout);
+      serveManager({
+        getInitializationInfo: vi.fn().mockReturnValue({
+          protocolVersion: "2025-11-25",
+          serverCapabilities: status === "passed" ? {} : undefined,
+        }),
+        pingServer: vi.fn().mockRejectedValue(requestTimeout),
+        listTools,
+      });
+
+      const result = await run([
+        "ping",
+        "capabilities-consistent",
+        "tools-list",
+        "tools-input-schemas-valid",
+      ]);
+
+      expect(result.checks[1]).toMatchObject({
+        id: "capabilities-consistent",
+        status,
+      });
+      expect(result.checks.map(isTimedOutCheck)).toEqual([
+        true,
+        false,
+        true,
+        false,
+      ]);
+      expect(result.checks[3]?.error?.message).toBe(
+        "Skipped because the server stopped responding."
+      );
+      expect(listTools).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it("resets the timeout count when a later request receives an answer", async () => {
+    const listTools = vi.fn()
+      .mockResolvedValueOnce({ tools: [] })
+      .mockRejectedValueOnce(requestTimeout);
+    const listPrompts = vi.fn().mockResolvedValue({ prompts: [] });
+    serveManager({
+      pingServer: vi.fn().mockRejectedValue(requestTimeout),
+      listTools,
+      listPrompts,
+    });
+
+    const result = await run([
+      "ping",
+      "tools-list",
+      "tools-input-schemas-valid",
+      "prompts-list",
+    ]);
+
+    expect(result.checks.map((check) => check.status)).toEqual([
+      "skipped",
+      "passed",
+      "skipped",
+      "passed",
+    ]);
+    expect(listTools).toHaveBeenCalledTimes(2);
+    expect(listPrompts).toHaveBeenCalledTimes(1);
   });
 
   it("keeps counting across a check that skipped without asking the server", async () => {
@@ -139,7 +205,7 @@ describe("protocol checks that run out of time", () => {
       "could-not-run",
     ]);
     expect(result.checks[3]?.error?.message).toMatch(
-      /server stopped answering/
+      /server stopped responding/
     );
   });
 
