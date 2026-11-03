@@ -800,7 +800,7 @@ describe("MCPTasksConformanceTest", () => {
     expect(result.passed).toBe(false);
   });
 
-  it("passes an undeclared creation the server refused, warning when the code is not -32021", async () => {
+  it("fails an undeclared creation refused with a code other than -32021", async () => {
     const manager = extensionManager({
       executeTool: async (
         _serverId: string,
@@ -821,14 +821,14 @@ describe("MCPTasksConformanceTest", () => {
     const check = result.checks.find(
       (c) => c.id === "tasks-undeclared-creation-refused"
     );
-    // No task was handed to a non-declaring client, which is what tasks.md:61
-    // requires — but the refusal is not the one the extension names.
-    expect(check?.status).toBe("passed");
-    expect(check?.warnings?.[0]).toContain("-32602");
+    // No task reached a non-declaring client (tasks.md:61), but a refusal
+    // must use -32021 (tasks.md:63).
+    expect(check?.status).toBe("failed");
+    expect(check?.error?.message).toContain("-32602");
     expect(check?.details).toMatchObject({ undeclaredCreationCode: -32602 });
   });
 
-  it("warns that a -32003 refusal is the pre-final draft code", async () => {
+  it("fails a -32003 refusal and names it the pre-final draft code", async () => {
     const manager = extensionManager({
       executeTool: async (
         _serverId: string,
@@ -849,11 +849,9 @@ describe("MCPTasksConformanceTest", () => {
     const check = result.checks.find(
       (c) => c.id === "tasks-undeclared-creation-refused"
     );
-    // Still a pass — no task reached a non-declaring client — but the warning
-    // has to say the code is stale rather than merely unexpected.
-    expect(check?.status).toBe("passed");
-    expect(check?.warnings?.[0]).toContain("corrected to -32021");
-    expect(check?.warnings?.[0]).toContain("pre-final draft");
+    // The message has to say the code is stale rather than merely unexpected.
+    expect(check?.status).toBe("failed");
+    expect(check?.error?.message).toContain("corrected to -32021");
   });
 
   it("flags a server advertising the extension on 2025-11-25 without failing", async () => {

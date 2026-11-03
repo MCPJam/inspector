@@ -152,7 +152,7 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
 };
 
 /**
- * `mcp-tasks` v2026-11-01.2 — every check the Tasks suite ships: the eight it
+ * `mcp-tasks` v2026-11-02.1 — every check the Tasks suite ships: the eight it
  * shipped before the gap program's scenario depth, plus the six that depth
  * added.
  *
@@ -178,6 +178,11 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
  * that need a task need one the scored lifecycle checks already need, so a run
  * that creates none was already incomplete.
  *
+ * v2026-11-01.2 → v2026-11-02.1 keeps the same checks but tightens one:
+ * `tasks-undeclared-creation-refused` now fails a refusal with any code other
+ * than `-32021`, which tasks.md:63 states as a MUST. It used to pass with a
+ * warning, so a server refusing with another code scores lower.
+ *
  * A SEPARATE profile rather than a section of `mcp-protocol`, which was the
  * open design question. Two reasons settled it:
  *
@@ -192,7 +197,7 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
  */
 const MCP_TASKS_PROFILE: ConformanceProfile = {
   id: "mcp-tasks",
-  version: "2026-11-01.2",
+  version: "2026-11-02.1",
   scored: [
     "tasks-wire-resolvable",
     "tasks-declaration-hygiene",

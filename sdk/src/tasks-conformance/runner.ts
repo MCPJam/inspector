@@ -1603,28 +1603,37 @@ export class MCPTasksConformanceTest {
                     { tool: probeTool.name, outcome: creation.outcome }
                   )
                 );
-              } else {
+              } else if (
+                creation.outcome === "refused" &&
+                creation.code !== MISSING_REQUIRED_CLIENT_CAPABILITY
+              ) {
+                // tasks.md:63 — a server that cannot serve the request without
+                // a `CreateTaskResult` "MUST return an error with the code
+                // `-32021`". A refusal with any other code breaks that MUST.
                 checks.push(
-                  passed(
+                  failed(
                     "tasks-undeclared-creation-refused",
                     stepDurationMs,
+                    creation.code ===
+                      OBSOLETE_MISSING_REQUIRED_CLIENT_CAPABILITY
+                      ? "the undeclared tools/call was rejected with -32003, the code the tasks extension carried before it was corrected to -32021; a refusal must use -32021 (tasks.md:63)"
+                      : `the undeclared tools/call was rejected with ${creation.code}; a refusal must use -32021 (Missing Required Client Capability) (tasks.md:63)`,
                     {
                       tool: probeTool.name,
                       outcome: creation.outcome,
-                      ...(creation.outcome === "refused"
-                        ? { undeclaredCreationCode: creation.code }
-                        : {}),
-                    },
-                    creation.outcome === "refused" &&
-                      creation.code !== MISSING_REQUIRED_CLIENT_CAPABILITY
-                      ? [
-                          creation.code ===
-                          OBSOLETE_MISSING_REQUIRED_CLIENT_CAPABILITY
-                            ? `the undeclared tools/call was rejected with -32003, the code the tasks extension carried before it was corrected to -32021; no task was created (which is what tasks.md:61 requires) but the server is running against a pre-final draft`
-                            : `the undeclared tools/call was rejected with ${creation.code} rather than -32021; no task was created (which is what tasks.md:61 requires) but the refusal is not the one the extension names`,
-                        ]
-                      : undefined
+                      undeclaredCreationCode: creation.code,
+                    }
                   )
+                );
+              } else {
+                checks.push(
+                  passed("tasks-undeclared-creation-refused", stepDurationMs, {
+                    tool: probeTool.name,
+                    outcome: creation.outcome,
+                    ...(creation.outcome === "refused"
+                      ? { undeclaredCreationCode: creation.code }
+                      : {}),
+                  })
                 );
               }
             }
@@ -2583,9 +2592,8 @@ export class MCPTasksConformanceTest {
    *
    *   - `created`  — a `CreateTaskResult` came back: the violation.
    *   - `answered` — a normal tool result: conformant.
-   *   - `refused`  — a JSON-RPC error response: also conformant (no task was
-   *     handed to a non-declaring client), with `-32021` being the refusal the
-   *     spec names and any other code carried through as a warning.
+   *   - `refused`  — a JSON-RPC error response. Conformant only with `-32021`,
+   *     the refusal tasks.md:63 requires; any other code fails the check.
    *   - `errored`  — no JSON-RPC response exists at all. Same v2 discriminator
    *     as {@link runUndeclaredProbe}: `ProtocolError` carries a NUMERIC code
    *     and is minted only from a server error response, while local and
