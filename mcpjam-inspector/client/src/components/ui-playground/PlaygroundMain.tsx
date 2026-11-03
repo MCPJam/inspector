@@ -1350,6 +1350,7 @@ export function PlaygroundMain({
     dismissUrlElicitationRequired,
     hiddenEnvironmentActive,
     outOfCreditsReason,
+    harnessStartupPhase,
   } = useChatSession({
     pluginWorkspace: extensionWorkspaceForSession,
     pluginContextReferences: currentExtensionContext,
@@ -6297,6 +6298,7 @@ export function PlaygroundMain({
               <div className="relative flex-1 min-h-0">
                 <StickToBottom.Content className="flex flex-col min-h-0">
                   <Thread
+                    harnessStartupPhase={harnessStartupPhase}
                     chatSessionId={chatSessionId}
                     messages={messages}
                     sendFollowUpMessage={handleSendFollowUp}

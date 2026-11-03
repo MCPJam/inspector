@@ -703,12 +703,15 @@ describe("web routes — chat-v2 hosted mode", () => {
     });
     const response = await postJson(app, "/api/web/chat-v2", {
       projectId: "project-1", hostId: "host-1", chatSessionId: "host-capabilities-chat",
+      harnessStartupRequestId: "b19b8e67-f9a8-4d1f-9fce-7b6da581c041",
       selectedServerIds: ["server-1"], hostCapabilitiesOverride: {},
       messages: [{ role: "user", content: "hello" }],
       model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
     }, token);
     expect(response.status).toBe(200);
     expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(expect.objectContaining({
+      harnessStartupRequestId: "b19b8e67-f9a8-4d1f-9fce-7b6da581c041",
+      chatSessionId: "host-capabilities-chat",
       harnessHostCapabilities: {
         capabilities: { message: { audio: {} } },
         gaps: ["host-capability:message.audio"],

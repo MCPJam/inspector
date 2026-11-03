@@ -72,6 +72,24 @@ export type {
   EvidenceReuseRefusal,
 } from "./directory-readiness/evidence-reuse.js";
 
+/**
+ * Lazy authentication's vocabulary and bounds, so a client can offer the
+ * claims and the probe's tool names and validate them as every other surface
+ * does. The gate and the probe itself stay where the run is gathered.
+ */
+export {
+  DIRECTORY_FEATURE_CLAIMS,
+  LAZY_AUTH_PROBE_LIMITS,
+} from "./directory-readiness/lazy-auth.js";
+export type {
+  DirectoryFeatureClaim,
+  DirectoryLazyAuthCallOutcome,
+  DirectoryLazyAuthProbeConfig,
+  DirectoryLazyAuthProbeEvidence,
+  DirectoryLazyAuthRediscovery,
+  DirectoryLazyAuthToolCall,
+} from "./directory-readiness/lazy-auth.js";
+
 export {
   CLAUDE_OBSERVATION_IDS,
   CLAUDE_OBSERVATION_KINDS,

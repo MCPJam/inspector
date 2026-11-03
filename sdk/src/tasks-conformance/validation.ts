@@ -27,12 +27,8 @@ function normalizeCheckIds(
 
 /** Unlike check ids, an empty list stays empty: it means no advice at all. */
 function normalizeReadinessIds(
-  readinessIds: MCPTasksConformanceConfig["readinessIds"]
-): MCPTasksReadinessId[] | undefined {
-  if (readinessIds === undefined) {
-    return undefined;
-  }
-
+  readinessIds: MCPTasksReadinessId[]
+): MCPTasksReadinessId[] {
   const normalized = Array.from(new Set(readinessIds));
   for (const readinessId of normalized) {
     if (!MCP_TASKS_READINESS_IDS.includes(readinessId)) {
