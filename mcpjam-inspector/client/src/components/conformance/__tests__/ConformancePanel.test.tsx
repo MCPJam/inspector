@@ -1012,6 +1012,74 @@ describe("ConformanceTab", () => {
     expect(screen.getAllByText("PASSED").length).toBeGreaterThan(0);
   });
 
+  it("starts the server a saved run's Run again names, with its defaults, once", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    window.history.replaceState(null, "", "/conformance?run=alpha");
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        serverDefaults={{ alpha: { tasks: [], oauth: false } }}
+      />,
+    );
+
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalledTimes(1));
+    expect(mockRunTasks).not.toHaveBeenCalled();
+    expect(mockStartOAuth).not.toHaveBeenCalled();
+    // Dropped, so a refresh does not run it again.
+    expect(window.location.search).toBe("");
+  });
+
+  it("starts a requested run once, on the Overview, even from the History tab", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const onSelectServer = vi.fn();
+    window.history.replaceState(
+      null,
+      "",
+      "/conformance?view=history&run=alpha",
+    );
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={onSelectServer}
+        history={<p>History table</p>}
+      />,
+    );
+
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalledTimes(1));
+    // Started once: a second start would replace the first, which a slower
+    // render lets begin, and leave behind as a cancelled run.
+    expect(onSelectServer).toHaveBeenCalledTimes(1);
+    expect(window.location.search).toBe("");
+    expect(screen.queryByText("History table")).toBeNull();
+  });
+
+  it("says so, and runs nothing, when Run again names a server it does not offer", async () => {
+    setupSuccessfulRunMocks();
+    const info = vi.spyOn(toast, "info");
+    const alpha = createHttpServer({ name: "alpha" });
+    window.history.replaceState(null, "", "/conformance?run=gone");
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(info).toHaveBeenCalledWith(
+        "gone is not one of this project's servers.",
+      ),
+    );
+    expect(window.location.search).toBe("");
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+  });
+
   it("lists servers with runs, and Run goes straight to a run with their defaults", async () => {
     setupSuccessfulRunMocks();
     const alpha = createHttpServer({ name: "alpha" });
