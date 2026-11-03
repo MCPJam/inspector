@@ -23,6 +23,8 @@ import {
   markPendingDirectScopeStepUpReplayReady,
   peekPendingDirectScopeStepUpReplay,
   savePendingDirectScopeStepUpReplay,
+  setPendingDirectScopeStepUpReplayCredentialBinding,
+  setPendingDirectScopeStepUpReplayFlowDigest,
 } from "../scope-step-up-replay";
 import { McpRequestError } from "@/lib/apis/insufficient-scope";
 import type { AppState, ServerWithName } from "@/state/app-types";
@@ -90,12 +92,16 @@ describe("scope step-up lifecycle", () => {
     expect(applyToolCallStepUp).not.toHaveBeenCalled();
   });
 
-  it("ignores an unactionable challenge", () => {
-    // Nothing to widen: driving here would burn the one-attempt budget.
+  it("ignores a response with no challenge", () => {
+    driveScopeStepUpFromChallenge(server, undefined);
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+  });
+
+  it("drives a bare challenge (discovery chooses the scopes)", () => {
     driveScopeStepUpFromChallenge(server, {
       errorDescription: "nope",
     });
-    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+    expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
   });
 
   it("drives once while an attempt is in flight, across surfaces", async () => {
@@ -150,13 +156,13 @@ describe("scope step-up lifecycle", () => {
   });
 
   describe("the call saved for replay", () => {
+    const OPERATION = { method: "tools/call" as const, operation: "write_file" };
     function saveReplay() {
       sessionStorage.clear();
-      savePendingDirectScopeStepUpReplay({
+      return savePendingDirectScopeStepUpReplay({
         operation: {
           resourceUrl: "https://srv-1.example/mcp",
-          method: "tools/call",
-          operation: "write_file",
+          ...OPERATION,
         },
         descriptor: {
           kind: "tool",
@@ -167,19 +173,44 @@ describe("scope step-up lifecycle", () => {
         },
       });
     }
-
-    it("is kept while the step-up redirects", async () => {
-      saveReplay();
-      applyToolCallStepUp.mockResolvedValue({
-        action: "reauthorize",
-        reauthorization: { kind: "redirect" },
-      });
-      driveScopeStepUpFromError(server, insufficientScopeError());
+    function drive(
+      options?: Parameters<typeof driveScopeStepUpFromChallenge>[3],
+    ) {
+      driveScopeStepUpFromChallenge(
+        server,
+        { requiredScope: "files:write" },
+        OPERATION,
+        options,
+      );
+    }
+    async function settled() {
       await vi.waitFor(() =>
         expect(applyToolCallStepUp).toHaveBeenCalledTimes(1),
       );
       await Promise.resolve();
       await Promise.resolve();
+    }
+    function redirectThroughFlow(digest: string) {
+      applyToolCallStepUp.mockImplementation(
+        async (
+          _server: unknown,
+          _stepUp: unknown,
+          options: { onAuthorizationFlow?: (flow: { digest: string }) => void },
+        ) => {
+          options.onAuthorizationFlow?.({ digest });
+          return { action: "reauthorize", reauthorization: { kind: "redirect" } };
+        },
+      );
+    }
+
+    it("is kept while the step-up redirects", async () => {
+      const directReplay = saveReplay();
+      applyToolCallStepUp.mockResolvedValue({
+        action: "reauthorize",
+        reauthorization: { kind: "redirect" },
+      });
+      drive({ directReplay });
+      await settled();
       expect(peekPendingDirectScopeStepUpReplay()).toBeDefined();
     });
 
@@ -195,50 +226,122 @@ describe("scope step-up lifecycle", () => {
     ])(
       "is dropped when %s, since no callback will settle it",
       async (_, outcome) => {
-        saveReplay();
+        const directReplay = saveReplay();
         applyToolCallStepUp.mockResolvedValue(outcome);
-        driveScopeStepUpFromError(server, insufficientScopeError());
+        drive({ directReplay });
         await vi.waitFor(() =>
           expect(peekPendingDirectScopeStepUpReplay()).toBeUndefined(),
         );
       },
     );
 
+    it("is dropped when the step-up throws", async () => {
+      const directReplay = saveReplay();
+      applyToolCallStepUp.mockRejectedValue(new Error("authorize failed"));
+      drive({ directReplay });
+      await vi.waitFor(() =>
+        expect(peekPendingDirectScopeStepUpReplay()).toBeUndefined(),
+      );
+    });
+
+    it("is bound to the sign-in its own step-up starts", async () => {
+      const directReplay = saveReplay();
+      redirectThroughFlow("flow-new");
+      drive({ directReplay });
+      await vi.waitFor(() =>
+        expect(peekPendingDirectScopeStepUpReplay()?.flowDigest).toBe(
+          "flow-new",
+        ),
+      );
+    });
+
+    it("treats a credential no bridge vouched for as not this user's", async () => {
+      const directReplay = saveReplay();
+      redirectThroughFlow("flow-new");
+      drive({ directReplay, connectionId: "credential-1" });
+      await vi.waitFor(() =>
+        expect(peekPendingDirectScopeStepUpReplay()?.credentialBinding).toEqual(
+          { kind: "shared", credentialId: "credential-1" },
+        ),
+      );
+    });
+
+    it("is not bound by a step-up that saved no call", async () => {
+      saveReplay();
+      // A chat or agent step-up for the same server and operation.
+      redirectThroughFlow("flow-chat");
+      drive();
+      await settled();
+      expect(peekPendingDirectScopeStepUpReplay()?.flowDigest).toBeUndefined();
+    });
+
+    it("is not dropped by a step-up that saved no call", async () => {
+      saveReplay();
+      applyToolCallStepUp.mockRejectedValue(new Error("authorize failed"));
+      drive();
+      await settled();
+      expect(peekPendingDirectScopeStepUpReplay()).toBeDefined();
+    });
+
+    it("is not rebound by an unrelated sign-in once a flow claimed it", async () => {
+      saveReplay();
+      setPendingDirectScopeStepUpReplayFlowDigest("srv-1", "flow-own");
+      setPendingDirectScopeStepUpReplayCredentialBinding("srv-1", {
+        kind: "owned",
+        credentialId: "credential-own",
+      });
+      redirectThroughFlow("flow-other");
+      drive();
+      await settled();
+      expect(peekPendingDirectScopeStepUpReplay()).toMatchObject({
+        flowDigest: "flow-own",
+        credentialBinding: { kind: "owned", credentialId: "credential-own" },
+      });
+    });
+
+    it("is bound when a wrapped operation saves it before the step-up", async () => {
+      sessionStorage.clear();
+      redirectThroughFlow("flow-resource");
+      await expect(
+        runWithScopeStepUp(
+          server,
+          { method: "resources/read", operation: "file:///a" },
+          async () => {
+            throw insufficientScopeError();
+          },
+          {
+            beforeStepUp: () =>
+              savePendingDirectScopeStepUpReplay({
+                operation: {
+                  resourceUrl: "https://srv-1.example/mcp",
+                  method: "resources/read",
+                  operation: "file:///a",
+                },
+                descriptor: {
+                  kind: "resource",
+                  surface: "resources",
+                  serverName: "srv-1",
+                  uri: "file:///a",
+                  target: "resource",
+                },
+              }),
+          },
+        ),
+      ).rejects.toThrow();
+      await vi.waitFor(() =>
+        expect(peekPendingDirectScopeStepUpReplay()?.flowDigest).toBe(
+          "flow-resource",
+        ),
+      );
+    });
+
     it("leaves a signed-in call that is waiting to replay", async () => {
       saveReplay();
       markPendingDirectScopeStepUpReplayReady("srv-1");
       applyToolCallStepUp.mockRejectedValue(new Error("authorize failed"));
-      driveScopeStepUpFromError(server, insufficientScopeError());
-      await vi.waitFor(() =>
-        expect(applyToolCallStepUp).toHaveBeenCalledTimes(1),
-      );
-      await Promise.resolve();
-      await Promise.resolve();
+      drive();
+      await settled();
       expect(peekPendingDirectScopeStepUpReplay()?.phase).toBe("ready");
-    });
-
-    it("leaves a call saved for another operation", async () => {
-      saveReplay();
-      applyToolCallStepUp.mockRejectedValue(new Error("authorize failed"));
-      driveScopeStepUpFromError(server, insufficientScopeError(), {
-        method: "tools/call",
-        operation: "read_file",
-      });
-      await vi.waitFor(() =>
-        expect(applyToolCallStepUp).toHaveBeenCalledTimes(1),
-      );
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(peekPendingDirectScopeStepUpReplay()).toBeDefined();
-    });
-
-    it("is dropped when the step-up throws", async () => {
-      saveReplay();
-      applyToolCallStepUp.mockRejectedValue(new Error("authorize failed"));
-      driveScopeStepUpFromError(server, insufficientScopeError());
-      await vi.waitFor(() =>
-        expect(peekPendingDirectScopeStepUpReplay()).toBeUndefined(),
-      );
     });
   });
 
@@ -312,10 +415,16 @@ describe("chat turn step-up deferral", () => {
 
     endChatTurnScopeStepUpHold(hold);
     expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
-    expect(applyToolCallStepUp).toHaveBeenCalledWith(server, {
-      requiredScope: "files:write",
-      resourceMetadataUrl: undefined,
-    });
+    expect(applyToolCallStepUp).toHaveBeenCalledWith(
+      server,
+      {
+        requiredScope: "files:write",
+        resourceMetadataUrl: undefined,
+      },
+      // The hosted redirect marker is written through this hook right
+      // before navigating.
+      expect.objectContaining({ beforeRedirect: expect.any(Function) }),
+    );
   });
 
   it("waits for persistence before redirecting", async () => {
@@ -376,12 +485,12 @@ describe("chat turn step-up deferral", () => {
     expect(applyToolCallStepUp).toHaveBeenCalledTimes(2);
   });
 
-  it("never queues an unactionable challenge or an unresolved server", () => {
+  it("never queues a missing challenge or an unresolved server", () => {
     const hold = beginChatTurnScopeStepUpHold();
     // A share-link scenario turn resolves to no server; it must stay inert
     // rather than authorize on the host's behalf after the turn.
     driveChatScopeStepUp(undefined, challenge);
-    driveChatScopeStepUp(server, { errorDescription: "nope" });
+    driveChatScopeStepUp(server, undefined);
     endChatTurnScopeStepUpHold(hold);
     expect(applyToolCallStepUp).not.toHaveBeenCalled();
   });
