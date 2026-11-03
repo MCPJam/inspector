@@ -546,6 +546,22 @@ export class MCPAppsConformanceTest {
                   toolsError,
                 ),
               );
+            } else if (
+              uiTools.length === 0 &&
+              listedUiResources.length === 0 &&
+              !resourcesError &&
+              !tools.some((tool) => {
+                const meta = isPlainObject(tool._meta) ? tool._meta : {};
+                return "ui" in meta || "ui/resourceUri" in meta;
+              })
+            ) {
+              checks.push(
+                skippedResult(
+                  "ui-tools-present",
+                  "not-applicable",
+                  "Not applicable"
+                )
+              );
             } else if (uiTools.length === 0) {
               checks.push(
                 failedResult(

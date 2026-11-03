@@ -103,11 +103,17 @@ function ReadinessAdvice({
   );
 }
 
-function SuiteBadge({ state }: { state: SuiteState }) {
+function SuiteBadge({
+  state,
+  notApplicable = false,
+}: {
+  state: SuiteState;
+  notApplicable?: boolean;
+}) {
   if (state.status === "running") {
     return <VerdictBadge label="RUNNING" tone="neutral" spinning />;
   }
-  if (state.status === "unavailable") {
+  if (state.status === "unavailable" || notApplicable) {
     return (
       <VerdictBadge
         label={state.notSelected ? "NOT SELECTED" : "NOT APPLICABLE"}
@@ -178,7 +184,17 @@ function SuiteSection({
           ? state.unavailableReason
           : description
       }
-      badge={<SuiteBadge state={state} />}
+      badge={
+        <SuiteBadge
+          state={state}
+          notApplicable={
+            state.status === "done" &&
+            state.verdict === "passed" &&
+            score?.applicable === 0 &&
+            score.notApplicable > 0
+          }
+        />
+      }
       score={
         score && score.score !== null
           ? {
