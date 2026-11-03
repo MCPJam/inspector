@@ -700,7 +700,7 @@ export function buildOAuthConformanceConfig(
   );
   if (invalidReadinessIds.length > 0) {
     throw usageError(
-      `Unknown advice id${invalidReadinessIds.length === 1 ? "" : "s"}: ${invalidReadinessIds.join(", ")}`,
+      `Unknown advice id${invalidReadinessIds.length === 1 ? "" : "s"}: ${invalidReadinessIds.join(", ")}. Valid advice ids: ${MCP_OAUTH_READINESS_IDS.join(", ")}`,
     );
   }
 

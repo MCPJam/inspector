@@ -161,7 +161,7 @@ export function buildTasksConformanceConfig(
     throw usageError(
       `Unknown advice id${
         invalidReadinessIds.length === 1 ? "" : "s"
-      }: ${invalidReadinessIds.join(", ")}`
+      }: ${invalidReadinessIds.join(", ")}. Valid advice ids: ${MCP_TASKS_READINESS_IDS.join(", ")}`
     );
   }
 

@@ -335,7 +335,7 @@ For a cloud authorization server, expose the inspector origin through a tunnel a
 | `--verify-tools` | No | | After OAuth, list tools |
 | `--verify-call-tool <name>` | No | | Also call the named tool |
 | `--conformance-checks` | No | | Run additional negative OAuth checks, including DCR redirect URI policy and redirect-mismatch probes |
-| `--advice-id <id>` | No | all | Restrict advice to one or more advice IDs |
+| `--advice-id <id>` | No | all | Restrict advice to one or more advice IDs. An unknown ID is an error that lists the valid ones |
 | `--credentials-out <path>` | No | | Write OAuth credentials to file (mode 0600); stdout has secrets redacted |
 | `--print-url` | No | | Print consent URL to stderr (interactive only) |
 | `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
@@ -388,7 +388,7 @@ mode will dial a link-local or cloud-metadata address.
 | `--check-timeout <ms>` | No | `15000` | Per-check timeout in milliseconds |
 | `--category <category>` | No | all | Restrict checks to one or more categories |
 | `--check-id <id>` | No | all | Restrict checks to one or more check IDs |
-| `--advice-id <id>` | No | all | Restrict advice to one or more advice IDs |
+| `--advice-id <id>` | No | all | Restrict advice to one or more advice IDs. An unknown ID is an error that lists the valid ones |
 | `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
 Use `--format json|human` for raw output and `--reporter json-summary|junit-xml` for CI reports.

@@ -109,6 +109,13 @@ test("buildConfig rejects unknown advice ids, and another suite's", () => {
         error instanceof CliError && error.message.includes("advice id"),
     );
   }
+  // The error names the valid ids, so a typo needs no trip to the docs.
+  assert.throws(
+    () => buildConfig({ url: "https://example.com/mcp", adviceId: ["bogus"] }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Valid advice ids: readiness-"),
+  );
 });
 
 test("protocol conformance threads repeated --advice-id into readinessIds", async () => {
