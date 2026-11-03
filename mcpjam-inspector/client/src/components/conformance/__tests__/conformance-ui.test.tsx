@@ -23,7 +23,7 @@ describe("OverallScoreCard", () => {
         version="Auto"
       />,
     );
-    expect(screen.getByText("Conformant, with advice.")).toBeInTheDocument();
+    expect(screen.getByText("Conformant, with guidance.")).toBeInTheDocument();
   });
 
   it("reads a passed run at 100 as fully conformant", () => {

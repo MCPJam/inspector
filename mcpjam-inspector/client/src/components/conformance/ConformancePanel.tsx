@@ -3,6 +3,7 @@ import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { DirectoryReadinessSection } from "@/components/conformance/directory-readiness/DirectoryReadinessSection";
 import { OAuthPopupBlockedDialog } from "@/components/conformance/OAuthPopupBlockedDialog";
+import { ConformanceAdvice } from "./ConformanceAdvice";
 import { Loader2, AlertTriangle, Settings, Share2 } from "lucide-react";
 import { UncheckedAdvice } from "@/components/conformance/UncheckedAdvice";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -69,40 +70,6 @@ export type ConformanceConnectServer = (
   name: string,
   options?: { signIn?: boolean },
 ) => Promise<ConformanceConnectOutcome>;
-
-/** A suite's SHOULD/MAY advice, shown above its checks. */
-function ReadinessAdvice({
-  readiness,
-}: {
-  readiness?: Array<{
-    id: string;
-    title: string;
-    specStrength: string;
-    message: string;
-  }>;
-}) {
-  if (!readiness || readiness.length === 0) return null;
-  return (
-    <div className="my-2 space-y-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2.5">
-      {readiness.map((warning) => (
-        // Title on its own line, the advice under it: easier to scan than one
-        // run-on line.
-        <div key={warning.id} className="flex items-start gap-2 text-sm">
-          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
-          <span className="flex min-w-0 flex-col gap-0.5">
-            <span>
-              <span className="font-medium">{warning.title}</span>{" "}
-              <span className="text-muted-foreground">
-                ({warning.specStrength})
-              </span>
-            </span>
-            <span className="text-muted-foreground">{warning.message}</span>
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 function SuiteBadge({
   state,
@@ -646,6 +613,24 @@ export function ConformanceContent({
                   </div>
                 )}
 
+                <ConformanceAdvice
+                  key={`${runVersion}-advice`}
+                  groups={[
+                    {
+                      suite: SUITE_COPY.protocol.title,
+                      readiness: protocol.result?.readiness,
+                    },
+                    {
+                      suite: SUITE_COPY.tasks.title,
+                      readiness: tasks.result?.readiness,
+                    },
+                    {
+                      suite: SUITE_COPY.oauth.title,
+                      readiness: oauth.result?.readiness,
+                    },
+                  ]}
+                />
+
                 <div className="mt-3 overflow-hidden rounded-lg border border-border bg-popover">
                   <SuiteSection
                     key={`${runVersion}-protocol`}
@@ -663,9 +648,6 @@ export function ConformanceContent({
                   >
                     {protocol.result ? (
                       <div>
-                        <ReadinessAdvice
-                          readiness={protocol.result.readiness}
-                        />
                         {protocol.result.checks.map((check) => (
                           <CheckRow
                             key={`${runVersion}-${check.id}`}
@@ -709,7 +691,6 @@ export function ConformanceContent({
                   >
                     {tasks.result ? (
                       <div>
-                        <ReadinessAdvice readiness={tasks.result.readiness} />
                         <UncheckedAdvice
                           unchecked={tasks.result.uncheckedAdvice}
                         />
@@ -769,7 +750,6 @@ export function ConformanceContent({
                       </div>
                     ) : oauth.result ? (
                       <div>
-                        <ReadinessAdvice readiness={oauth.result.readiness} />
                         {oauth.result.steps.map((step) => (
                           <OAuthStepRow
                             key={`${runVersion}-${step.step}`}

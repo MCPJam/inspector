@@ -346,7 +346,7 @@ export function OverallScoreCard({
     // A saved run carries no advisories list, but a passed run only scores
     // under 100 when it has advisories.
     return scored.score! < 100
-      ? "Conformant, with advice."
+      ? "Conformant, with guidance."
       : "Fully conformant.";
   })();
 
