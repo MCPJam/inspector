@@ -302,6 +302,27 @@ describe("boot invariant", () => {
     );
   });
 
+  it("also prints the fault on stderr in production without VERBOSE_LOGS", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("VERBOSE_LOGS", "");
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    try {
+      const { logged, health } = await bootWith({
+        sandboxHosts: "sandbox.mcpjam.com",
+        hostedOrigin: "https://inspector.customer.test",
+        sandboxOrigin: "https://sandbox.customer.test",
+      });
+
+      expect(health).toBe("unpartitioned");
+      expect(stderr).toHaveBeenCalledWith(`${logged[0]}\n`);
+    } finally {
+      stderr.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("stays silent on a deploy whose sandbox host is its own hostname", async () => {
     const { logged, health } = await bootWith({
       sandboxHosts: "sandbox.mcpjam.test",

@@ -27,7 +27,7 @@ import {
   SANDBOX_HOSTS,
   type SandboxIsolationStatus,
 } from "../config.js";
-import { logger as appLogger } from "../utils/logger.js";
+import { logger as appLogger, printForOperator } from "../utils/logger.js";
 import { sandboxOriginOf } from "../../shared/sandbox-origin.js";
 
 /**
@@ -170,5 +170,6 @@ export function assertSandboxIsolation(): void {
   const fault = sandboxIsolationFault(resolveSandboxIsolation());
   if (fault) {
     appLogger.error(`[Security] ${fault}`);
+    printForOperator(`[Security] ${fault}`);
   }
 }

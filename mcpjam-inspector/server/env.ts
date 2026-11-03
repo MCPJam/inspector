@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 import { existsSync, readFileSync } from "fs";
 import { join, resolve } from "path";
 import { tryGetGuestAuthority } from "./utils/guest-authority.js";
-import { logger as appLogger } from "./utils/logger.js";
+import { logger as appLogger, printForOperator } from "./utils/logger.js";
 import { telemetryOptedOut } from "../shared/sentry-identity.js";
 import { sandboxOriginOf } from "../shared/sandbox-origin.js";
 
@@ -164,9 +164,10 @@ function getRuntimeSandboxOrigin(): string | undefined {
   const origin = sandboxOriginOf(raw);
   if (!origin && reportedSandboxOrigin !== raw) {
     reportedSandboxOrigin = raw;
-    appLogger.warn(
-      "[sandbox] MCPJAM_SANDBOX_ORIGIN is not an http(s) origin, so the browser uses its build-time sandbox origin instead. Set it to one like https://sandbox.example.com.",
-    );
+    const warning =
+      "[sandbox] MCPJAM_SANDBOX_ORIGIN is not an http(s) origin, so the browser uses its build-time sandbox origin instead. Set it to one like https://sandbox.example.com.";
+    appLogger.warn(warning);
+    printForOperator(warning);
   }
   return origin ?? undefined;
 }
