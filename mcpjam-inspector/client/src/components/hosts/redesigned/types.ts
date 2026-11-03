@@ -248,9 +248,9 @@ export interface HostMatrixNodeData extends Record<string, unknown> {
   appsCaps: AppsCapLeafNodeData[];
   /**
    * Sandbox config rows (CSP mode, restrictTo, permissions). Always 3
-   * rows when `appsExtensionAdvertised` is true — gated on the same flag
+   * rows when `appsViewsRendered` is true — gated on the same flag
    * as `appsCaps` because sandbox is part of SEP-1865 and only meaningful
-   * when the client opts in to the UI extension.
+   * when the host renders App views.
    */
   sandbox: SandboxConfigNodeData[];
   /**
@@ -263,13 +263,14 @@ export interface HostMatrixNodeData extends Record<string, unknown> {
    */
   hostInfo: { name: string; version: string } | null;
   /**
-   * Whether the client advertises `io.modelcontextprotocol/ui` in its
-   * `clientCapabilities.extensions`. When false, the host-side Apps caps
-   * (openLinks / serverTools / message / etc.) are inert — the client
-   * can't render iframes regardless of what the host claims — so the
-   * matrix hides the entire Apps section to avoid implying support.
+   * Whether the host renders App views: its `clientCapabilities` declare
+   * `io.modelcontextprotocol/ui`, or `mcpProfile.appsViewRendering` is
+   * `"always"`. When false, the host-side Apps caps (openLinks /
+   * serverTools / message / etc.) are inert — the client can't render
+   * iframes regardless of what the host claims — so the matrix hides the
+   * entire Apps section to avoid implying support.
    */
-  appsExtensionAdvertised: boolean;
+  appsViewsRendered: boolean;
   /**
    * Resolved vendor compat-runtime shim state for the host. Rendered
    * as chips inside the Apps section so the user can see at a glance

@@ -159,7 +159,9 @@ function describeCapabilities(host: HostConfigDtoV2 | undefined): string {
     .filter(([, value]) => value !== undefined && value !== false)
     .map(([key]) => key)
     .sort((a, b) => a.localeCompare(b));
-  return names.length > 0 ? names.join(", ") : "Defaults";
+  // Empty only when the host declares nothing: an absent host resolves to the
+  // SDK defaults, which carry the MCP UI extension.
+  return names.length > 0 ? names.join(", ") : "None declared";
 }
 
 function describeClientInfo(host: HostConfigDtoV2 | undefined): string {

@@ -168,10 +168,10 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
     );
   });
 
-  it("renders the master advertise switch in the header", () => {
+  it("renders the master support switch in the header", () => {
     renderMatrix();
     expect(
-      screen.getByRole("switch", { name: "Advertise MCP App support" })
+      screen.getByRole("switch", { name: "MCP App support" })
     ).toBeChecked();
   });
 
@@ -304,7 +304,7 @@ describe("AppsExtensionTab — master-toggle round-trip", () => {
     expect(draftRef.current.mcpProfile).toBeUndefined();
   });
 
-  it("toggling Advertise MCP App support off then on returns clientCapabilities.extensions to its original shape", async () => {
+  it("toggling MCP App support off then on returns clientCapabilities.extensions to its original shape", async () => {
     // Regression: withoutMcpUiExtension used to write `extensions: {}`
     // unconditionally; if the saved baseline matched the preset's
     // extensions exactly, toggling off then on must restore the same
@@ -315,32 +315,70 @@ describe("AppsExtensionTab — master-toggle round-trip", () => {
       JSON.stringify(draftRef.current.clientCapabilities ?? {})
     );
     const toggle = screen.getByRole("switch", {
-      name: "Advertise MCP App support",
+      name: "MCP App support",
     });
     await user.click(toggle); // off
     await user.click(toggle); // back on
     expect(draftRef.current.clientCapabilities).toEqual(original);
   });
 
-  it("toggling Mistral MCP App support off then on restores the normalized MCP UI extension", async () => {
+  it("shows a host that renders without declaring as supported, undeclared", async () => {
     const user = userEvent.setup();
-    const mistralTemplate = getCatalogTemplate(
-      bundledHostCompatCatalog(),
-      "mistral"
+    const gemini = getCatalogTemplate(bundledHostCompatCatalog(), "gemini");
+    if (!gemini) throw new Error("Missing Gemini catalog template");
+    renderMatrix(gemini);
+
+    expect(screen.getByRole("switch", { name: "MCP App support" })).toBeChecked();
+    await expandMcpAppsDimensions(user);
+    expect(
+      screen.getByRole("switch", { name: "Declares io.modelcontextprotocol/ui" })
+    ).not.toBeChecked();
+  });
+
+  it("turning the declaration off keeps Apps rendering and the overrides", async () => {
+    const user = userEvent.setup();
+    const { draftRef } = renderMatrix();
+    await expandMcpAppsDimensions(user);
+    await user.click(
+      within(screen.getByTestId("mcp-apps-dimension-toolInputPartial")).getByRole(
+        "switch"
+      )
     );
-    if (!mistralTemplate) throw new Error("Missing Mistral catalog template");
-    const { draftRef } = renderMatrix(mistralTemplate);
-    const original = JSON.parse(
-      JSON.stringify(draftRef.current.clientCapabilities ?? {})
-    );
-    const toggle = screen.getByRole("switch", {
-      name: "Advertise MCP App support",
+    const overrides = draftRef.current.mcpProfile?.apps?.mcpAppsOverrides;
+    const declaration = screen.getByRole("switch", {
+      name: "Declares io.modelcontextprotocol/ui",
     });
 
-    await user.click(toggle); // off
-    expect(draftRef.current.clientCapabilities).toEqual({ extensions: {} });
+    await user.click(declaration); // off: render without declaring
+    expect(draftRef.current.clientCapabilities).not.toHaveProperty("extensions");
+    expect(draftRef.current.mcpProfile?.appsViewRendering).toBe("always");
+    expect(draftRef.current.mcpProfile?.apps?.mcpAppsOverrides).toEqual(
+      overrides
+    );
+    expect(screen.getByRole("switch", { name: "MCP App support" })).toBeChecked();
 
-    await user.click(toggle); // back on
-    expect(draftRef.current.clientCapabilities).toEqual(original);
+    await user.click(declaration); // back on: the knob is redundant again
+    expect(draftRef.current.mcpProfile?.appsViewRendering).toBeUndefined();
+    expect(
+      (
+        draftRef.current.clientCapabilities?.extensions as
+          | Record<string, unknown>
+          | undefined
+      )?.["io.modelcontextprotocol/ui"]
+    ).toBeDefined();
+  });
+
+  it("turning MCP App support off clears rendering without declaring", async () => {
+    const user = userEvent.setup();
+    const mistral = getCatalogTemplate(bundledHostCompatCatalog(), "mistral");
+    if (!mistral) throw new Error("Missing Mistral catalog template");
+    const { draftRef } = renderMatrix(mistral);
+
+    await user.click(screen.getByRole("switch", { name: "MCP App support" }));
+    expect(draftRef.current.clientCapabilities).toEqual({});
+    expect(draftRef.current.mcpProfile?.appsViewRendering).toBeUndefined();
+    expect(
+      screen.getByRole("switch", { name: "MCP App support" })
+    ).not.toBeChecked();
   });
 });

@@ -19,6 +19,7 @@
 import { describe, expect, test } from "vitest";
 import {
   isMcpProfileEmpty,
+  setAppsViewRenderingOnDraft,
   type HostConfigDtoV2,
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
@@ -427,6 +428,7 @@ describe("isMcpProfileEmpty (shared by every profile write path)", () => {
         paginationTraversal: "firstPageOnly" as const,
       },
       { profileVersion: 1 as const, mrtrSupport: "none" as const },
+      { profileVersion: 1 as const, appsViewRendering: "always" as const },
       { profileVersion: 1 as const, toolParamHeaderMirroring: "omit" as const },
       {
         profileVersion: 1 as const,
@@ -515,5 +517,34 @@ describe("isMcpProfileEmpty (shared by every profile write path)", () => {
 
   it("treats a bare profileVersion as empty", () => {
     expect(isMcpProfileEmpty({ profileVersion: 1 })).toBe(true);
+  });
+});
+
+describe("setAppsViewRenderingOnDraft", () => {
+  test("sets the setting, then clears it back to no profile at all", () => {
+    const base = emptyHostConfigInputV2({ hostStyle: "gemini" });
+    const set = setAppsViewRenderingOnDraft(base, "always");
+    expect(set.mcpProfile).toEqual({
+      profileVersion: 1,
+      appsViewRendering: "always",
+    });
+    expect(setAppsViewRenderingOnDraft(set, undefined).mcpProfile).toBe(
+      base.mcpProfile
+    );
+  });
+
+  test("clears the setting without touching the rest of the profile", () => {
+    const draft = {
+      ...emptyHostConfigInputV2({ hostStyle: "mistral" }),
+      mcpProfile: {
+        profileVersion: 1 as const,
+        appsViewRendering: "always" as const,
+        paginationTraversal: "full" as const,
+      },
+    };
+    expect(setAppsViewRenderingOnDraft(draft, undefined).mcpProfile).toEqual({
+      profileVersion: 1,
+      paginationTraversal: "full",
+    });
   });
 });

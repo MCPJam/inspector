@@ -3116,15 +3116,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
-    "clientCapabilities": {
-      "extensions": {
-        "io.modelcontextprotocol/ui": {
-          "mimeTypes": [
-            "text/html;profile=mcp-app",
-          ],
-        },
-      },
-    },
+    "clientCapabilities": {},
     "computer": undefined,
     "connectionDefaults": {
       "headers": {},
@@ -3211,6 +3203,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
       },
+      "appsViewRendering": "always",
       "initialize": {
         "clientInfo": {
           "name": "google-adk",
@@ -3236,15 +3229,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
-    "clientCapabilities": {
-      "extensions": {
-        "io.modelcontextprotocol/ui": {
-          "mimeTypes": [
-            "text/html;profile=mcp-app",
-          ],
-        },
-      },
-    },
+    "clientCapabilities": {},
     "computer": undefined,
     "connectionDefaults": {
       "headers": {},
@@ -3331,6 +3316,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
       },
+      "appsViewRendering": "always",
       "initialize": {
         "clientInfo": {
           "name": "google-adk",
@@ -4238,15 +4224,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
-    "clientCapabilities": {
-      "extensions": {
-        "io.modelcontextprotocol/ui": {
-          "mimeTypes": [
-            "text/html;profile=mcp-app",
-          ],
-        },
-      },
-    },
+    "clientCapabilities": {},
     "computer": undefined,
     "connectionDefaults": {
       "headers": {},
@@ -4389,6 +4367,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
       },
+      "appsViewRendering": "always",
       "initialize": {
         "clientInfo": {
           "name": "mcp",
@@ -4417,15 +4396,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "browserProfileId": undefined,
     "builtInToolIds": [],
     "chatUiOverride": undefined,
-    "clientCapabilities": {
-      "extensions": {
-        "io.modelcontextprotocol/ui": {
-          "mimeTypes": [
-            "text/html;profile=mcp-app",
-          ],
-        },
-      },
-    },
+    "clientCapabilities": {},
     "computer": undefined,
     "connectionDefaults": {
       "headers": {},
@@ -4568,6 +4539,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
       },
+      "appsViewRendering": "always",
       "initialize": {
         "clientInfo": {
           "name": "mcp",

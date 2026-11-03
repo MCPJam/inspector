@@ -1,6 +1,7 @@
 import {
   MCP_UI_EXTENSION_ID,
   MCP_UI_RESOURCE_MIME_TYPE,
+  type AppsViewRendering,
 } from "@mcpjam/sdk/browser";
 
 /**
@@ -28,6 +29,12 @@ import {
  * extension and have the render gate honor that. Inferring from
  * `hostStyle` would silently override their edit.
  *
+ * **Hosts that render without declaring:** `appsViewRendering: "always"`
+ * (from `mcpProfile`) renders whatever the declaration says, the way Gemini
+ * and Le Chat do. Their `clientCapabilities` stay what the real host sends,
+ * so a server that checks the declaration before linking UI still falls
+ * back to text, as it would on that host.
+ *
  * **Transitional gap:** the OpenAI Apps SDK (`window.openai`) is a
  * separate rendering protocol not yet represented by a capability flag.
  * In practice every Apps-SDK host we ship today (ChatGPT, Copilot)
@@ -45,9 +52,13 @@ import {
  */
 export function hostSupportsWidgetRendering(
   clientCapabilities: Record<string, unknown> | undefined,
-  _opts?: { hostStyle?: string | null | undefined },
+  opts?: {
+    hostStyle?: string | null | undefined;
+    appsViewRendering?: AppsViewRendering | undefined;
+  },
 ): boolean {
   if (clientCapabilities === undefined) return true;
+  if (opts?.appsViewRendering === "always") return true;
   return clientAdvertisesMcpApps(clientCapabilities);
 }
 

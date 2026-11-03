@@ -67,6 +67,7 @@ import type {
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config";
 import {
   selectionConfigKey,
+  type AppsViewRendering,
   type LegacyModelSelection,
   type ModelSelection,
 } from "@mcpjam/sdk/browser";
@@ -729,6 +730,7 @@ export function isMcpProfileEmpty(profile: HostConfigMcpProfileV1): boolean {
     profile.toolParamHeaderMirroring === undefined &&
     profile.paginationTraversal === undefined &&
     profile.mrtrSupport === undefined &&
+    profile.appsViewRendering === undefined &&
     // Mid-session sign-in knobs. Each is a single enum, so presence is
     // content: a profile carrying only one of them must survive the save.
     profile.unauthorizedChallenge === undefined &&
@@ -785,6 +787,27 @@ export function setMcpAppsOverridesOnDraft(
     apps: appsEmpty ? undefined : nextApps,
   };
 
+  return {
+    ...prev,
+    mcpProfile: isMcpProfileEmpty(nextProfile) ? undefined : nextProfile,
+  };
+}
+
+/**
+ * Set `mcpProfile.appsViewRendering`, or clear it with `undefined` (the
+ * spec-conforming default). An emptied profile collapses like every other
+ * profile write.
+ */
+export function setAppsViewRenderingOnDraft(
+  prev: HostConfigInputV2,
+  next: AppsViewRendering | undefined,
+): HostConfigInputV2 {
+  if (prev.mcpProfile?.appsViewRendering === next) return prev;
+  const nextProfile: HostConfigMcpProfileV1 = {
+    ...(prev.mcpProfile ?? { profileVersion: 1 }),
+  };
+  if (next === undefined) delete nextProfile.appsViewRendering;
+  else nextProfile.appsViewRendering = next;
   return {
     ...prev,
     mcpProfile: isMcpProfileEmpty(nextProfile) ? undefined : nextProfile,

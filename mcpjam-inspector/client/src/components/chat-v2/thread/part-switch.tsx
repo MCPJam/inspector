@@ -61,9 +61,7 @@ import {
 import { useSharedAppState } from "@/state/app-state-context";
 import { localServerNameForId } from "@/lib/apis/web/context";
 import { UI_CONTEXT_PART_TYPE } from "@/shared/ui-context";
-import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
-import { useScenarioHostStyle } from "@/contexts/scenario-client-style-context";
-import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
+import { useActiveHostWidgetGate } from "@/contexts/active-host-client-capabilities-context";
 import {
   ToolRenderOverride,
   widgetSlotShouldRender,
@@ -279,8 +277,7 @@ function LivePartSwitch({
     readMcpWidgetContext(
       (part as { callProviderMetadata?: unknown }).callProviderMetadata,
     );
-  const resolveHostCaps = useActiveHostCapsResolver();
-  const hostStyle = useScenarioHostStyle();
+  const hostSupportsWidget = useActiveHostWidgetGate();
 
   const toolInfoFromPart =
     isToolPart(part) || isDynamicTool(part)
@@ -605,9 +602,10 @@ function LivePartSwitch({
       }
     };
 
-    // Gate widget render on the active host's advertised capabilities for
-    // this tool's server. Hosts that don't advertise the MCP UI extension
-    // (Codex — elicitation-only client) fall through to the plain
+    // Gate widget render on the active host for this tool's server: its
+    // declared capabilities, or `appsViewRendering: "always"` for a host that
+    // renders without declaring. Hosts that do neither (Codex —
+    // elicitation-only client) fall through to the plain
     // ToolPart result row, even when the tool itself declares
     // `_meta.ui.resourceUri` / `openai/outputTemplate`. This mirrors what
     // real CLI clients do: tool runs, JSON result is shown, no iframe.
@@ -634,9 +632,7 @@ function LivePartSwitch({
       !isFailedWidgetResult(rawToolOutput) &&
       !isFailedWidgetResult(resolvedToolOutput) &&
       !isWidgetTornDown &&
-      hostSupportsWidgetRendering(resolveHostCaps(serverId ?? undefined), {
-        hostStyle,
-      }) &&
+      hostSupportsWidget(serverId ?? undefined) &&
       (attributedModelApp !== undefined ||
         uiType === UIType.OPENAI_SDK ||
         uiType === UIType.MCP_APPS ||
@@ -845,9 +841,7 @@ function LivePartSwitch({
               // PartSwitch owns the inspector host-capabilities context; inject
               // the gate so WidgetReplay re-checks per-server support without
               // importing `@/contexts` / `@/lib/host-capabilities` itself.
-              resolveHostSupportsWidget={(sid) =>
-                hostSupportsWidgetRendering(resolveHostCaps(sid), { hostStyle })
-              }
+              resolveHostSupportsWidget={hostSupportsWidget}
               onSendFollowUp={interactive ? onSendFollowUp : undefined}
               onCallTool={
                 interactive

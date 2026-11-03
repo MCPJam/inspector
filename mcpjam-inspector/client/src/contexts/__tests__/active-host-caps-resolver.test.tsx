@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
 import {
@@ -7,6 +8,7 @@ import {
 import {
   ActiveHostCapsResolverScope,
   useActiveHostCapsResolver,
+  useActiveHostWidgetGate,
 } from "../active-host-client-capabilities-context";
 import { AppStateProvider } from "@/state/app-state-context";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
@@ -26,11 +28,17 @@ function ProbeOutput({ serverId }: { serverId?: string }) {
   );
 }
 
+function GateOutput({ serverId }: { serverId?: string }) {
+  const hostSupportsWidget = useActiveHostWidgetGate();
+  return <span data-testid="gate">{String(hostSupportsWidget(serverId))}</span>;
+}
+
 function mountWithState(args: {
   activeHost?: HostConfigDtoV2 | null;
   hostStyle: string;
   servers: Record<string, { name: string; config: Record<string, unknown> }>;
   serverId?: string;
+  probe?: ReactNode;
 }) {
   const minimalAppState = {
     servers: args.servers as never,
@@ -44,7 +52,7 @@ function mountWithState(args: {
         activeHost={args.activeHost ?? null}
         hostStyle={args.hostStyle}
       >
-        <ProbeOutput serverId={args.serverId} />
+        {args.probe ?? <ProbeOutput serverId={args.serverId} />}
       </ActiveHostCapsResolverScope>
     </AppStateProvider>
   );
@@ -171,5 +179,50 @@ describe("ActiveHostCapsResolverScope (resolver)", () => {
       MCP_UI_RESOURCE_MIME_TYPE,
       "text/html+skybridge",
     ]);
+  });
+});
+
+describe("useActiveHostWidgetGate", () => {
+  const servers = { srv: { name: "srv", config: {} } };
+
+  it("renders for a host that renders without declaring the extension", () => {
+    const { getByTestId } = mountWithState({
+      activeHost: {
+        clientCapabilities: {},
+        mcpProfile: { profileVersion: 1, appsViewRendering: "always" },
+      } as HostConfigDtoV2,
+      hostStyle: "gemini",
+      servers,
+      probe: <GateOutput serverId="srv" />,
+    });
+    expect(getByTestId("gate").textContent).toBe("true");
+  });
+
+  it("does not render when nothing is declared and the host requires it", () => {
+    const { getByTestId } = mountWithState({
+      activeHost: { clientCapabilities: {} } as HostConfigDtoV2,
+      hostStyle: "gemini",
+      servers,
+      probe: <GateOutput serverId="srv" />,
+    });
+    expect(getByTestId("gate").textContent).toBe("false");
+  });
+
+  it("takes the declaration and the setting from the same template when no host is in scope", () => {
+    // Gemini's template sends no extension, so a server that checks it
+    // sees nothing to link UI for, yet its views still render here.
+    const { getByTestId } = mountWithState({
+      activeHost: null,
+      hostStyle: "gemini",
+      servers,
+      probe: (
+        <>
+          <ProbeOutput serverId="srv" />
+          <GateOutput serverId="srv" />
+        </>
+      ),
+    });
+    expect(JSON.parse(getByTestId("caps").textContent ?? "null")).toEqual({});
+    expect(getByTestId("gate").textContent).toBe("true");
   });
 });

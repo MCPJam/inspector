@@ -1,10 +1,18 @@
-import { createContext, useContext, useMemo, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  type ReactNode,
+} from "react";
+import type { AppsViewRendering } from "@mcpjam/sdk/browser";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import {
   bundledHostCompatCatalog,
   getCatalogTemplate,
 } from "@mcpjam/sdk/host-compat";
 import { resolveEffectiveClientCapabilities } from "@/lib/effective-client";
+import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
 
@@ -65,6 +73,30 @@ export function useActiveHostCapsResolver(): ActiveHostCapsResolver {
 }
 
 /**
+ * The active host's `mcpProfile.appsViewRendering`, taken from the same host
+ * (or template) as the capabilities above, so the two always describe one
+ * client.
+ */
+const ActiveHostAppsViewRenderingContext = createContext<
+  AppsViewRendering | undefined
+>(undefined);
+
+/**
+ * The render gate for the active host, scoped to a tool's server: may an App
+ * view render? Every surface that mounts Apps asks through this, so the
+ * declaration and `appsViewRendering` are read the same way everywhere.
+ */
+export function useActiveHostWidgetGate(): (serverId?: string) => boolean {
+  const resolveCaps = useActiveHostCapsResolver();
+  const appsViewRendering = useContext(ActiveHostAppsViewRenderingContext);
+  return useCallback(
+    (serverId?: string) =>
+      hostSupportsWidgetRendering(resolveCaps(serverId), { appsViewRendering }),
+    [resolveCaps, appsViewRendering],
+  );
+}
+
+/**
  * Convenience wrapper that builds the resolver and provides it.
  *
  * Resolution:
@@ -108,17 +140,33 @@ export function ActiveHostCapsResolverScope({
   // the current `hostStyle`. This keeps Codex etc. gating correctly even
   // without a Convex host record.
   const effectiveHost = useMemo<
-    Pick<HostConfigDtoV2, "clientCapabilities">
+    Pick<HostConfigDtoV2, "clientCapabilities"> & {
+      appsViewRendering?: AppsViewRendering;
+    }
   >(() => {
     if (activeHost?.clientCapabilities) {
-      return { clientCapabilities: activeHost.clientCapabilities };
+      return {
+        clientCapabilities: activeHost.clientCapabilities,
+        appsViewRendering: activeHost.mcpProfile?.appsViewRendering,
+      };
     }
     const catalog = catalogState.catalog ?? bundledHostCompatCatalog();
+    const template = getCatalogTemplate(catalog, hostStyle);
+    // Seeded templates type `mcpProfile` loosely, so narrow the literal here.
+    const templateRendering = template?.mcpProfile?.appsViewRendering;
     return {
-      clientCapabilities: getCatalogTemplate(catalog, hostStyle)
-        ?.clientCapabilities ?? {},
+      clientCapabilities: template?.clientCapabilities ?? {},
+      appsViewRendering:
+        templateRendering === "always" || templateRendering === "whenDeclared"
+          ? templateRendering
+          : undefined,
     };
-  }, [activeHost?.clientCapabilities, catalogState.catalog, hostStyle]);
+  }, [
+    activeHost?.clientCapabilities,
+    activeHost?.mcpProfile?.appsViewRendering,
+    catalogState.catalog,
+    hostStyle,
+  ]);
 
   const resolver = useMemo<ActiveHostCapsResolver>(() => {
     // Per-render memo: repeated `resolveCaps(serverId)` calls for the
@@ -144,7 +192,11 @@ export function ActiveHostCapsResolverScope({
 
   return (
     <ActiveHostCapsResolverProvider value={resolver}>
-      {children}
+      <ActiveHostAppsViewRenderingContext.Provider
+        value={effectiveHost.appsViewRendering}
+      >
+        {children}
+      </ActiveHostAppsViewRenderingContext.Provider>
     </ActiveHostCapsResolverProvider>
   );
 }

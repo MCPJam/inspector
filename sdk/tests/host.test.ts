@@ -58,10 +58,12 @@ describe("Host — public surface", () => {
     const host = new Host({ style: "mcpjam", model: "test-model" });
     host.mcp.paginationTraversal = "firstPageOnly";
     host.mcp.mrtrSupport = "none";
+    host.mcp.appsViewRendering = "always";
 
     const json = host.toJSON();
     expect(json.mcp?.paginationTraversal).toBe("firstPageOnly");
     expect(json.mcp?.mrtrSupport).toBe("none");
+    expect(json.mcp?.appsViewRendering).toBe("always");
 
     // And a rebuilt host reproduces the same JSON (true round-trip).
     expect(new Host(json).toJSON()).toEqual(json);

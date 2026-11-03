@@ -29,6 +29,7 @@ export const CLIENT_SETTING_IDS = [
   "mcp.tool_param_header_mirroring",
   "mcp.pagination_traversal",
   "mcp.mrtr_support",
+  "mcp.apps_view_rendering",
   "mcp.tool_call_cancellation.legacy",
   "mcp.tool_call_cancellation.modern",
   "mcp.tool_list_changed.listens",
@@ -93,6 +94,11 @@ const mcpProfileChanges: SettingDetector = (saved, draft) => {
       after?.paginationTraversal,
     ],
     ["mcp.mrtr_support", before?.mrtrSupport, after?.mrtrSupport],
+    [
+      "mcp.apps_view_rendering",
+      before?.appsViewRendering,
+      after?.appsViewRendering,
+    ],
     [
       "mcp.tool_call_cancellation.legacy",
       before?.toolCallCancellation?.legacy,

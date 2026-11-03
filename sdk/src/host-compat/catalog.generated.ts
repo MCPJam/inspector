@@ -1724,13 +1724,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         headers: {},
         requestTimeout: 10000,
       },
-      clientCapabilities: {
-        extensions: {
-          "io.modelcontextprotocol/ui": {
-            mimeTypes: ["text/html;profile=mcp-app"],
-          },
-        },
-      },
+      clientCapabilities: {},
       hostContext: {
         theme: "dark",
         displayMode: "fullscreen",
@@ -1774,6 +1768,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       },
       mcpProfile: {
         profileVersion: 1,
+        appsViewRendering: "always",
         paginationTraversal: "full",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
@@ -4311,13 +4306,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         headers: {},
         requestTimeout: 10000,
       },
-      clientCapabilities: {
-        extensions: {
-          "io.modelcontextprotocol/ui": {
-            mimeTypes: ["text/html;profile=mcp-app"],
-          },
-        },
-      },
+      clientCapabilities: {},
       hostContext: {
         theme: "dark",
         displayMode: "inline",
@@ -4328,6 +4317,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       },
       mcpProfile: {
         profileVersion: 1,
+        appsViewRendering: "always",
         initialize: {
           supportedProtocolVersions: ["2025-11-25"],
           clientInfo: {

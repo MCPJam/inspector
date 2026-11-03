@@ -53,6 +53,7 @@ export type {
   ToolParamHeaderMirroring,
   PaginationTraversalMode,
   MrtrSupport,
+  AppsViewRendering,
 } from "./public-types.js";
 
 // Tasks PRODUCT policy (`com.mcpjam/tasks`). Kept apart from the wire

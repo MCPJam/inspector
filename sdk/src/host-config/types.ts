@@ -255,6 +255,28 @@ export const MRTR_SUPPORT_MODES = [
   "none",
 ] as const satisfies readonly MrtrSupport[];
 
+/**
+ * Whether the simulated host renders an MCP App view only when its
+ * `clientCapabilities` declare `io.modelcontextprotocol/ui`.
+ *
+ * - `"whenDeclared"` — render only when the extension is declared, which is
+ *   the negotiation SEP-1865 requires (and what an ABSENT field means).
+ * - `"always"` — render a tool's App whether or not the extension is
+ *   declared. Some hosts render MCP Apps while their `initialize` declares
+ *   no extension (the Gemini and Mistral templates). Keep such a host's real
+ *   `clientCapabilities`, so a server that checks the declaration before
+ *   linking UI falls back to text here exactly as it does there.
+ *
+ * Rendering only: what the client declares stays in `clientCapabilities`.
+ */
+export type AppsViewRendering = "whenDeclared" | "always";
+
+/** The permitted {@link AppsViewRendering} literals, for validation. */
+export const APPS_VIEW_RENDERING_MODES = [
+  "whenDeclared",
+  "always",
+] as const satisfies readonly AppsViewRendering[];
+
 // ── Mid-session sign-in ("lazy authentication") knobs ─────────────────
 //
 // Four sibling fields on the profile below say how the simulated client
@@ -314,6 +336,7 @@ export function cancellationLeafForVersion(
 export const CONFORMANCE_PROFILE_KEYS = [
   "paginationTraversal",
   "mrtrSupport",
+  "appsViewRendering",
   "toolCallCancellation",
   "toolListChanged",
   "unauthorizedChallenge",
@@ -389,6 +412,9 @@ export type HostConfigMcpProfileV1 = {
   // Whether the client drives MRTR retry rounds at all. WHICH elicitation
   // modes it fulfills stays in `clientCapabilities.elicitation`.
   mrtrSupport?: MrtrSupport;
+  // Whether an App view needs `io.modelcontextprotocol/ui` declared before it
+  // renders. Decides rendering only; the declaration is `clientCapabilities`.
+  appsViewRendering?: AppsViewRendering;
   // Whether cancelling an in-flight tool call reaches the server, or only ends
   // the turn locally while the server runs it to completion.
   //

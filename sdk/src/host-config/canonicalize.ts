@@ -26,6 +26,7 @@ import {
   UNAUTHORIZED_CHALLENGE_TRIGGERS,
 } from "../mcp-client-manager/auth-challenge.js";
 import {
+  APPS_VIEW_RENDERING_MODES,
   HARNESS_IDS,
   HOST_CONFIG_SCHEMA_VERSION_V2,
   isHarness,
@@ -931,6 +932,7 @@ function canonicalizeMcpProfile(
   const conformanceKnobs = [
     ["paginationTraversal", PAGINATION_TRAVERSAL_MODES],
     ["mrtrSupport", MRTR_SUPPORT_MODES],
+    ["appsViewRendering", APPS_VIEW_RENDERING_MODES],
     ["unauthorizedChallenge", AUTH_CHALLENGE_ACTIONS],
     ["unauthorizedChallengeTrigger", UNAUTHORIZED_CHALLENGE_TRIGGERS],
     ["toolResultAuthChallenge", AUTH_CHALLENGE_ACTIONS],

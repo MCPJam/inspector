@@ -32,6 +32,7 @@ import type {
   ToolParamHeaderMirroring,
   PaginationTraversalMode,
   MrtrSupport,
+  AppsViewRendering,
 } from "./types.js";
 
 export type {
@@ -50,6 +51,7 @@ export type {
   ToolParamHeaderMirroring,
   PaginationTraversalMode,
   MrtrSupport,
+  AppsViewRendering,
 };
 
 /**

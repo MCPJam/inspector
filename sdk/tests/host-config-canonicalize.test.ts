@@ -860,6 +860,7 @@ describe("canonicalizeHostConfigV2 — client-conformance knobs", () => {
   const KNOBS = [
     ["paginationTraversal", ["full", "firstPageOnly"]],
     ["mrtrSupport", ["full", "none"]],
+    ["appsViewRendering", ["whenDeclared", "always"]],
   ] as const;
 
   it("round-trips every literal of every knob", () => {

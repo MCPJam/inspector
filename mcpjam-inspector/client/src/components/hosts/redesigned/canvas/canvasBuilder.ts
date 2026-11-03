@@ -740,12 +740,15 @@ export function buildRedesignedHostCanvas(
     return { name, version };
   })();
 
-  // Whether this host can render MCP Apps iframes. The normalized templates
-  // advertise the MCP UI extension when the host demonstrated Apps support,
-  // so use the runtime helper to keep the canvas and renderer in lockstep.
-  const appsExtensionAdvertised = hostSupportsWidgetRendering(
+  // Whether this host renders MCP Apps iframes: it declares the MCP UI
+  // extension, or renders without declaring (`appsViewRendering`). Same
+  // helper as the runtime, so the canvas and renderer stay in lockstep.
+  const appsViewsRendered = hostSupportsWidgetRendering(
     draft.clientCapabilities,
-    { hostStyle: draft.hostStyle },
+    {
+      hostStyle: draft.hostStyle,
+      appsViewRendering: draft.mcpProfile?.appsViewRendering,
+    },
   );
 
   // Resolved vendor compat-runtime shim state. Drives the injected-globals
@@ -829,7 +832,7 @@ export function buildRedesignedHostCanvas(
       appsCaps,
       sandbox,
       hostInfo,
-      appsExtensionAdvertised,
+      appsViewsRendered,
       compatRuntime,
       mcpAppsBridge,
     },
@@ -976,9 +979,7 @@ export function buildRedesignedHostCanvas(
   // matrix and the hub when the section is hidden.
   const matrixH =
     MATRIX_H_BASE +
-    (appsExtensionAdvertised
-      ? MATRIX_H_APPS_SECTION + MATRIX_H_SANDBOX_SECTION
-      : 0);
+    (appsViewsRendered ? MATRIX_H_APPS_SECTION + MATRIX_H_SANDBOX_SECTION : 0);
   const serversHubY = matrixH + SERVERS_HUB_GAP;
   const totalServers = context.projectServers.length;
   const serversHubW = Math.max(

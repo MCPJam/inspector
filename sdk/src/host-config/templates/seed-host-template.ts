@@ -1414,20 +1414,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
 
-      // Le Chat's captured base MCP `initialize` reported:
-      //   clientInfo: { name: "mcp", version: "0.1.0" }
-      //   clientCapabilities: {}
-      // But the same capture rendered MCP Apps and completed ui/initialize.
-      // For the normalized MCPJam template, advertise the standard MCP Apps
-      // extension explicitly so the canvas/runtime reflect the capability
-      // Le Chat demonstrated instead of preserving a contradictory raw quirk.
-      base.clientCapabilities = {
-        extensions: {
-          [MCP_UI_EXTENSION_ID]: {
-            mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE],
-          },
-        },
-      };
+      // Le Chat's captured `initialize` declared nothing, so no
+      // `io.modelcontextprotocol/ui`, yet the same capture rendered MCP Apps
+      // and completed `ui/initialize`. `appsViewRendering: "always"` below
+      // reproduces that.
+      base.clientCapabilities = {};
       base.hostCapabilitiesOverride = {
         openLinks: {},
         serverTools: {},
@@ -1453,6 +1444,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       };
       base.mcpProfile = {
         profileVersion: 1,
+        appsViewRendering: "always",
         // Probed 2026-08-25: Le Chat followed `nextCursor` and fetched page
         // two of tools/list.
         paginationTraversal: "full",
@@ -2722,7 +2714,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     id: "gemini",
     label: "Gemini",
     description:
-      "Gemini. Renders MCP Apps views, but advertises no sandbox capability.",
+      "Gemini. Renders MCP Apps without declaring the UI extension, and advertises no sandbox capability.",
     seed: () => {
       const base = emptyHostConfigInputV2({
         hostStyle: "gemini",
@@ -2730,24 +2722,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         temperature: 0.7,
         requireToolApproval: false,
       });
-      // NOT what the capture shows, and deliberately so. On the wire Gemini
-      // sends `clientCapabilities: {}` — no `io.modelcontextprotocol/ui`
-      // extension — yet it demonstrably renders MCP Apps: the same run
-      // returned a real `ui/initialize`, a populated `hostContext`, and a CSP
-      // the host enforced against the widget's declaration. It renders
-      // without advertising.
-      //
-      // The emulator keys View rendering off this extension, so mirroring the
-      // empty object would seed a template that renders nothing while the
-      // real product renders fine. Declared here to reproduce observed
-      // behavior.
-      base.clientCapabilities = {
-        extensions: {
-          [MCP_UI_EXTENSION_ID]: {
-            mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE],
-          },
-        },
-      };
+      // Exactly what the capture's `initialize` declared: nothing, so no
+      // `io.modelcontextprotocol/ui`. The same run still rendered the App,
+      // with a real `ui/initialize`, a populated `hostContext` and an enforced
+      // CSP; `appsViewRendering: "always"` below reproduces that.
+      base.clientCapabilities = {};
       base.hostContext = {
         theme: "dark",
         displayMode: "inline",
@@ -2759,6 +2738,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       };
       base.mcpProfile = {
         profileVersion: 1,
+        appsViewRendering: "always",
         initialize: {
           // ONE observed negotiation, not a ladder probe.
           supportedProtocolVersions: ["2025-11-25"],

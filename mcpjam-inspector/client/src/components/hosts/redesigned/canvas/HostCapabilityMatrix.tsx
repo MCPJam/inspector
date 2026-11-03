@@ -115,7 +115,7 @@ export interface HostMatrixCardProps {
    * no actual view is mounted.
    */
   hostInfo: { name: string; version: string } | null;
-  appsExtensionAdvertised: boolean;
+  appsViewsRendered: boolean;
   /**
    * Resolved vendor compat-runtime shim state. `openaiApps: true` →
    * inspector injects `window.openai` into widget HTML; `false` → no
@@ -152,7 +152,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
   appsCaps,
   sandbox,
   hostInfo,
-  appsExtensionAdvertised,
+  appsViewsRendered,
   compatRuntime,
   mcpAppsBridge,
   themeMode = "light",
@@ -316,7 +316,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
             hostCapabilities per SEP-1865; the view consumes them but the
             host produces them, so they live at the host level (mirroring
             the Client capabilities chip row above). */}
-        {appsExtensionAdvertised ? (
+        {appsViewsRendered ? (
           <div className="hp-section">
             <button
               type="button"
@@ -364,7 +364,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
             Delegated to `SandboxProxyIframeCard` so the chat-thread
             Sandbox debug panel renders an identical card from the
             runtime resolver payload. */}
-        {appsExtensionAdvertised ? (
+        {appsViewsRendered ? (
           <SandboxProxyIframeCard
             rows={sandbox}
             hostInfo={hostInfo}

@@ -25,6 +25,19 @@ describe("hostSupportsWidgetRendering", () => {
     expect(hostSupportsWidgetRendering({ elicitation: {} })).toBe(false);
   });
 
+  it("renders without the declaration when appsViewRendering is 'always' (Gemini, Le Chat)", () => {
+    expect(
+      hostSupportsWidgetRendering({}, { appsViewRendering: "always" })
+    ).toBe(true);
+  });
+
+  it("still requires the declaration when appsViewRendering is 'whenDeclared' or absent", () => {
+    expect(
+      hostSupportsWidgetRendering({}, { appsViewRendering: "whenDeclared" })
+    ).toBe(false);
+    expect(hostSupportsWidgetRendering({})).toBe(false);
+  });
+
   it("returns false when the UI extension is explicitly stripped (Codex)", () => {
     // Mirrors the Codex catalog host definition, which REPLACES
     // clientCapabilities (no spread) so the SDK-default UI

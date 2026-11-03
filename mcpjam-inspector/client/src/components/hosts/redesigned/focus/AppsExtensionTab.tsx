@@ -6,6 +6,7 @@ import {
   isMcpProfileEmpty,
   resolveEffectiveHostCapabilities,
   resolveEffectiveMcpAppsCapabilities,
+  setAppsViewRenderingOnDraft,
   setMcpAppsOverridesOnDraft,
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
@@ -35,8 +36,13 @@ import {
   type DisplayMode,
   type McpAppsDimensionKey,
 } from "@/lib/apps-capability-dimensions";
-import { hostSupportsWidgetRendering, isRecord } from "@/lib/host-capabilities";
+import {
+  clientAdvertisesMcpApps,
+  hostSupportsWidgetRendering,
+  isRecord,
+} from "@/lib/host-capabilities";
 import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
+import { AppsExtensionDeclarationRow } from "./AppsExtensionDeclarationRow";
 import { HostStyleTokens } from "./HostStyleTokens";
 import { SameOriginAppIframeCard } from "./SameOriginAppIframeCard";
 import {
@@ -1385,9 +1391,11 @@ function McpAppsCapabilityMatrix({
   ) => void;
 }) {
   const [dimensionsOpen, setDimensionsOpen] = useState(false);
-  const advertised = hostSupportsWidgetRendering(draft.clientCapabilities, {
+  const rendered = hostSupportsWidgetRendering(draft.clientCapabilities, {
     hostStyle: draft.hostStyle,
+    appsViewRendering: draft.mcpProfile?.appsViewRendering,
   });
+  const declared = clientAdvertisesMcpApps(draft.clientCapabilities);
   const rawOverridesRecord = draft.mcpProfile?.apps?.mcpAppsOverrides;
   const legacyOverride = draft.hostCapabilitiesOverride;
   // Legacy `hostCapabilitiesOverride` is the pre-matrix way of
@@ -1469,8 +1477,9 @@ function McpAppsCapabilityMatrix({
     };
   };
 
-  // Add the MCP UI client extension so the host advertises MCP App
-  // support. Shared by the master Switch and the build-from-off path.
+  // Declare the MCP UI client extension, the spec's way to support MCP Apps,
+  // which makes rendering without declaring redundant. Shared by both
+  // Switches and the build-from-off path.
   const withMcpUiExtension = (prev: HostConfigInputV2): HostConfigInputV2 => {
     const nextCaps: Record<string, unknown> = {
       ...(prev.clientCapabilities ?? {}),
@@ -1490,15 +1499,15 @@ function McpAppsCapabilityMatrix({
       ? { ...defaultUi }
       : { mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE] };
     nextCaps.extensions = exts;
-    return { ...prev, clientCapabilities: nextCaps };
+    return setAppsViewRenderingOnDraft(
+      { ...prev, clientCapabilities: nextCaps },
+      undefined
+    );
   };
 
-  // Drop the MCP UI extension and clear the (now-inert) overrides + legacy
-  // narrowing. Host-side caps are inert without the client extension, so
-  // turning off support clears overrides the same way the window.openai
-  // master toggle clears per-method overrides. Shared by the master Switch
-  // and the "last capability off" auto-disable.
-  const withoutMcpUiExtension = (
+  // Drop the MCP UI extension from the declared capabilities, and nothing
+  // else.
+  const withoutMcpUiDeclaration = (
     prev: HostConfigInputV2
   ): HostConfigInputV2 => {
     const nextCaps: Record<string, unknown> = {
@@ -1516,19 +1525,21 @@ function McpAppsCapabilityMatrix({
     } else {
       delete nextCaps.extensions;
     }
-    // Mistral's normalized template starts from `clientCapabilities: {}`
-    // evidence but advertises the standard MCP UI extension because Le Chat
-    // demonstrated Apps rendering. When the user explicitly turns support
-    // off, keep a tiny inert marker so the switch can represent "off" without
-    // adding unrelated capabilities. Toggling back on flows through
-    // withMcpUiExtension above and restores the standard MCP UI extension.
-    if (prev.hostStyle === "mistral" && Object.keys(nextCaps).length === 0) {
-      nextCaps.extensions = {};
-    }
-    let nextDraft: HostConfigInputV2 = {
-      ...prev,
-      clientCapabilities: nextCaps,
-    };
+    return { ...prev, clientCapabilities: nextCaps };
+  };
+
+  // Turn MCP App support off: nothing declared, nothing rendered, and the
+  // (now-inert) overrides + legacy narrowing cleared. Host-side caps are
+  // inert when no view renders, so turning off support clears overrides the
+  // same way the window.openai master toggle clears per-method overrides.
+  // Shared by the master Switch and the "last capability off" auto-disable.
+  const withoutMcpUiExtension = (
+    prev: HostConfigInputV2
+  ): HostConfigInputV2 => {
+    let nextDraft = setAppsViewRenderingOnDraft(
+      withoutMcpUiDeclaration(prev),
+      undefined
+    );
     nextDraft = setMcpAppsOverridesOnDraft(nextDraft, undefined);
     if (nextDraft.hostCapabilitiesOverride !== undefined) {
       nextDraft = { ...nextDraft, hostCapabilitiesOverride: undefined };
@@ -1536,9 +1547,19 @@ function McpAppsCapabilityMatrix({
     return nextDraft;
   };
 
-  const setAdvertised = (next: boolean) => {
+  const setRendered = (next: boolean) => {
     onDraftChange((prev) =>
       next ? withMcpUiExtension(prev) : withoutMcpUiExtension(prev)
+    );
+  };
+
+  // Keep rendering either way: declare the extension, or render without
+  // declaring it the way some real hosts do.
+  const setDeclared = (next: boolean) => {
+    onDraftChange((prev) =>
+      next
+        ? withMcpUiExtension(prev)
+        : setAppsViewRenderingOnDraft(withoutMcpUiDeclaration(prev), "always")
     );
   };
 
@@ -1668,7 +1689,7 @@ function McpAppsCapabilityMatrix({
     });
   };
 
-  // When support isn't advertised the matrix presents an empty surface
+  // When no Apps render the matrix presents an empty surface
   // (every boolean off, the mandatory display-mode list at its `inline`
   // minimum, widget policy at the most-restrictive `decline`). Switching
   // on any control here advertises support and applies that single choice
@@ -1735,15 +1756,20 @@ function McpAppsCapabilityMatrix({
         <div className="flex items-center border-l border-border pl-3 pr-3.5">
           <Switch
             id="apps-extension-mcp-apps-toggle"
-            checked={advertised}
-            onCheckedChange={setAdvertised}
-            aria-label="Advertise MCP App support"
+            checked={rendered}
+            onCheckedChange={setRendered}
+            aria-label="MCP App support"
           />
         </div>
       </div>
 
       {dimensionsOpen ? (
         <div id="apps-extension-mcp-apps-dimensions">
+          <AppsExtensionDeclarationRow
+            rendered={rendered}
+            declared={declared}
+            onDeclaredChange={setDeclared}
+          />
           {/* availableDisplayModes — multi-checkbox cluster. */}
           <div
             data-testid="mcp-apps-dimension-availableDisplayModes"
@@ -1758,7 +1784,7 @@ function McpAppsCapabilityMatrix({
               {ALL_DISPLAY_MODES.map((mode) => {
                 // Off → empty surface: only the mandatory `inline` minimum
                 // shows selected so the user builds the set up from there.
-                const enabled = advertised
+                const enabled = rendered
                   ? effectiveCapabilities.availableDisplayModes.includes(mode)
                   : mode === "inline";
                 return (
@@ -1773,7 +1799,7 @@ function McpAppsCapabilityMatrix({
                         : `${SEGMENT_BUTTON_CLASSES} px-2.5 py-0.5 text-muted-foreground hover:bg-muted`
                     }
                     onClick={() =>
-                      advertised
+                      rendered
                         ? toggleDisplayMode(mode)
                         : enableSingleDimensionFromOff((t) => {
                             const base = t.availableDisplayModes ?? [];
@@ -1814,12 +1840,12 @@ function McpAppsCapabilityMatrix({
             </div>
             <WidgetDisplayModeRequestsControl
               value={
-                advertised
+                rendered
                   ? effectiveCapabilities.widgetDisplayModeRequests
                   : "decline"
               }
               onChange={(next) =>
-                advertised
+                rendered
                   ? setWidgetDisplayModeRequestsOverride(next)
                   : next !== "decline"
                   ? enableSingleDimensionFromOff((t) => {
@@ -1837,10 +1863,10 @@ function McpAppsCapabilityMatrix({
                 dimensionKey={key}
                 description={description}
                 effective={
-                  advertised ? Boolean(effectiveCapabilities[key]) : false
+                  rendered ? Boolean(effectiveCapabilities[key]) : false
                 }
                 onToggle={(next) =>
-                  advertised
+                  rendered
                     ? setBooleanOverride(key, next)
                     : next
                     ? enableSingleDimensionFromOff((t) => {

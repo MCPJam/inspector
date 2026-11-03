@@ -23,9 +23,7 @@ import { JsonEditor } from "@/components/ui/json-editor";
 import { ErrorCard } from "@/components/ui/error-card";
 import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
-import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
-import { useScenarioHostStyle } from "@/contexts/scenario-client-style-context";
-import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
+import { useActiveHostWidgetGate } from "@/contexts/active-host-client-capabilities-context";
 import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
 import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-tool-result-image-preview-grid";
 import {
@@ -86,19 +84,14 @@ export function ResultsPanel({
   const hasMCPAppsComponent = uiType === UIType.MCP_APPS;
   // Same gate as the chat thread (PartSwitch/WidgetReplay): suppress the
   // "Use the Chat" affordance when the active host (resolved
-  // against this server's per-server cap overrides) doesn't advertise
-  // the MCP UI extension. Codex etc. won't render the widget in the chat
-  // surface either, so pointing the user there is misleading.
+  // against this server's per-server cap overrides) won't render Apps.
+  // Codex etc. won't render the widget in the chat surface either, so
+  // pointing the user there is misleading.
   //
   // `serverName` is the key into `appState.servers` and matches the
   // serverId the resolver looks up. The tools tab is single-server per
   // panel, so one lookup per render is all we need.
-  const resolveHostCaps = useActiveHostCapsResolver();
-  const hostStyle = useScenarioHostStyle();
-  const hostSupportsWidgets = hostSupportsWidgetRendering(
-    resolveHostCaps(serverName),
-    { hostStyle }
-  );
+  const hostSupportsWidgets = useActiveHostWidgetGate()(serverName);
   const hasUIComponent =
     hostSupportsWidgets && (hasOpenAIComponent || hasMCPAppsComponent);
   const canRenderImages =

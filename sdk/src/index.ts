@@ -1808,6 +1808,7 @@ export type {
   ToolParamHeaderMirroring,
   PaginationTraversalMode,
   MrtrSupport,
+  AppsViewRendering,
 } from "./host-config/index.js";
 
 // Saved model selection (also at `@mcpjam/sdk/host-config`). Pure and
