@@ -1,9 +1,32 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const prepareEvalRun = vi.fn();
+
+vi.mock("../../utils/v1-convex-token.js", () => ({
+  getConvexBearerForDelegation: vi.fn().mockResolvedValue("bearer"),
+}));
+vi.mock("../../routes/v1/evals.js", () => ({
+  fetchSuiteRunServerSelection: vi
+    .fn()
+    .mockResolvedValue({ serverIds: [], serverNames: [] }),
+}));
+vi.mock("../../routes/web/auth.js", () => ({
+  createAuthorizedManager: vi.fn().mockResolvedValue({
+    manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+  }),
+}));
+vi.mock("../../routes/shared/evals.js", () => ({
+  prepareEvalRun: (...args: unknown[]) => prepareEvalRun(...args),
+  shouldSkipExecution: vi.fn(),
+}));
+
 import {
   classifyFailure,
+  executeClaimedRun,
   startScheduledEvalsWorker,
 } from "../scheduled-evals-worker";
 import { platformFeeRefusalError } from "../evals/platform-fee-refusal";
+import { logger } from "../../utils/logger";
 
 const CLAIM = {
   triggerId: "trig-1",
@@ -24,6 +47,81 @@ function flushLoop(times = 6) {
     }
   })();
 }
+
+describe("executeClaimedRun setup failure", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
+    fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    prepareEvalRun.mockReset();
+  });
+
+  function completion() {
+    const [url, init] = fetchMock.mock.calls.at(-1)!;
+    expect(url).toBe(
+      "https://convex.test/internal/v1/scheduled-eval-runs/complete",
+    );
+    return JSON.parse(init.body);
+  }
+
+  it("logs a spend-budget refusal at warn and pauses the schedule", async () => {
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    prepareEvalRun.mockRejectedValueOnce(
+      platformFeeRefusalError({
+        data: { code: "ORGANIZATION_SPEND_BUDGET_REACHED" },
+      }),
+    );
+
+    await executeClaimedRun(CLAIM);
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[scheduled-evals] run setup refused",
+      expect.objectContaining({
+        triggerId: "trig-1",
+        reason: "ORGANIZATION_SPEND_BUDGET_REACHED",
+      }),
+    );
+    expect(completion()).toMatchObject({
+      triggerId: "trig-1",
+      ok: false,
+      failureReason: "quota_exhausted",
+    });
+  });
+
+  it("logs any other setup failure at error", async () => {
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const failure = new Error("run start exploded");
+    prepareEvalRun.mockRejectedValueOnce(failure);
+
+    await executeClaimedRun(CLAIM);
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[scheduled-evals] run setup failed",
+      failure,
+      expect.objectContaining({ triggerId: "trig-1" }),
+    );
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      "[scheduled-evals] run setup refused",
+      expect.anything(),
+    );
+    expect(completion()).toMatchObject({
+      ok: false,
+      failureReason: "run_create_failed: run start exploded",
+    });
+  });
+});
 
 describe("startScheduledEvalsWorker loop", () => {
   beforeEach(() => {
