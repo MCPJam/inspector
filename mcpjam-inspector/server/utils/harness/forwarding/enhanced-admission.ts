@@ -1,5 +1,7 @@
 import type { MCPClientManager } from "@mcpjam/sdk";
+import { getManagerResourceSnapshot } from "../../mcp-connections.js";
 import { nativeForwardingGaps } from "./native-admission.js";
+import { enhancedServerCapabilityGaps } from "./server-capabilities.js";
 import {
   isEnhancedModelPolicy,
   isEnhancedMcpProfile,
@@ -11,6 +13,7 @@ type Candidate = Omit<Parameters<typeof nativeForwardingGaps>[0], "manager"> & {
   ownedTasksAvailable?: boolean;
 };
 const BRIDGED_GAPS = new Set([
+  "app-host-capabilities",
   "tool-visibility",
   "model-result-policy",
   "client-capabilities",
@@ -34,7 +37,19 @@ export function forwardingAdmission(candidate: Candidate): {
     !candidate.hasClientTools &&
     (!candidate.hasTasks || candidate.ownedTasksAvailable === true) &&
     isEnhancedModelPolicy(candidate.modelVisibleMcpToolResults) &&
-    gaps.every((gap) => BRIDGED_GAPS.has(gap)) &&
+    gaps.every((gap) =>
+      BRIDGED_GAPS.has(gap) ||
+      (gap === "request-options" && candidate.serverIds.every((id) => {
+        // The bridge reloads stored headers for the same authorized account;
+        // it cannot reproduce arbitrary fetch options from another manager.
+        const config = candidate.manager.getServerConfig(id);
+        return !!config && "url" in config &&
+          getManagerResourceSnapshot(candidate.manager, id)?.headersReconstructible === true &&
+          Object.entries(config.requestInit ?? {}).every(
+            ([key, value]) => key === "headers" || value === undefined,
+          );
+      })),
+    ) &&
     candidate.serverIds.every((id) =>
       isEnhancedMcpProfile(
         candidate.manager,
@@ -43,5 +58,10 @@ export function forwardingAdmission(candidate: Candidate): {
         candidate.ownedTasksAvailable === true,
       ),
     );
-  return { delivery: bridged ? "bridge" : undefined, gaps };
+  if (!bridged) return { gaps };
+  const serverGaps = enhancedServerCapabilityGaps(candidate);
+  return {
+    delivery: serverGaps.length ? undefined : "bridge",
+    gaps: [...gaps, ...serverGaps],
+  };
 }

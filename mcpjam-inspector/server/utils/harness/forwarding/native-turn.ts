@@ -1,4 +1,4 @@
-import { getManagerOrganization } from "../../mcp-connections.js";
+import { getManagerOrganization, getManagerResourceSnapshot } from "../../mcp-connections.js";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import {
   isCreateTaskExtResult,
@@ -66,6 +66,7 @@ export type NativeForwardingSelection = {
 };
 
 export function nativeForwardingSelection(args: {
+  manager: MCPClientManager;
   laneId?: string;
   hostId?: string;
   serverIds: string[];
@@ -84,12 +85,11 @@ export function nativeForwardingSelection(args: {
         throw new Error(
           "Native forwarding currently requires one account per server.",
         );
-      return {
-        serverId,
-        ...(connections[0]
-          ? { connectionId: connections[0].connectionId }
-          : {}),
-      };
+      // A single default OAuth account has no multi-account UI group. Keep
+      // the credential captured by authorization instead of resolving a default later.
+      const connectionId = connections[0]?.connectionId ??
+        getManagerResourceSnapshot(args.manager, serverId)?.credentialId;
+      return { serverId, ...(connectionId ? { connectionId } : {}) };
     }),
   };
 }
@@ -107,6 +107,7 @@ export async function prepareNativeForwarding(args: {
   writer: ChunkWriter;
   delivery?: "native" | "bridge";
   profiles?: Record<string, HarnessConnectionProfile>;
+  correlationKey?: string;
   tasks?: ToolTaskSeamOptions;
 }) {
   if (args.strategy.plane !== "web-authorized" || !args.owners.length)
@@ -132,8 +133,12 @@ export async function prepareNativeForwarding(args: {
   const keyToServerId = harnessServerKeyToName(inputs);
   const policyDigest = nativePolicyDigest(
     args.policies,
-    args.profiles
-      ? { delivery: args.delivery, profiles: args.profiles }
+    args.profiles || args.correlationKey
+      ? {
+          delivery: args.delivery,
+          profiles: args.profiles,
+          correlationKey: args.correlationKey,
+        }
       : undefined,
   );
   for (const [key, serverId] of Object.entries(keyToServerId)) {
@@ -159,6 +164,7 @@ export async function prepareNativeForwarding(args: {
           turnId: args.turnId,
           policyDigest,
           ...(args.delivery ? { delivery: args.delivery } : {}),
+          ...(args.correlationKey ? { correlationKey: args.correlationKey } : {}),
         }),
         serverId,
         policy: forwardingToolPolicy(args.policies?.[serverId]),

@@ -143,9 +143,7 @@ function readStoredClientInfo(serverName: string): {
   }
 }
 
-function normalizeHeaders(
-  headers: unknown,
-): Record<string, string> | undefined {
+function normalizeHeaders(headers: unknown): Record<string, string> | undefined {
   if (!headers) return undefined;
 
   if (typeof Headers !== "undefined" && headers instanceof Headers) {
@@ -785,7 +783,9 @@ export function readServerUrlForStepUp(
   const fromConfig = (server.config as any)?.url?.toString?.();
   if (fromConfig) return fromConfig;
   try {
-    return localStorage.getItem(`mcp-serverUrl-${server.name}`) ?? undefined;
+    return (
+      localStorage.getItem(`mcp-serverUrl-${server.name}`) ?? undefined
+    );
   } catch {
     return undefined;
   }
@@ -1036,10 +1036,7 @@ export function resetToolCallStepUp(
   operation?: ToolCallStepUpOperation,
 ): void {
   const serverUrl = readServerUrlForStepUp(server);
-  const issuer = resolveStoredIssuer(
-    server.name,
-    readServerUrlForStepUp(server),
-  );
+  const issuer = resolveStoredIssuer(server.name, readServerUrlForStepUp(server));
   resetInsufficientScopeStepUp(
     server.name,
     issuer,

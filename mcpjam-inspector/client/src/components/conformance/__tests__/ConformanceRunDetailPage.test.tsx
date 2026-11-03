@@ -8,22 +8,18 @@ import {
 } from "@testing-library/react";
 import type { ConformanceRunListItem } from "../ConformanceHistory";
 
-const {
-  navigateMock,
-  useArtifactQueryMock,
-  fetchArtifactMock,
-  setSharingMock,
-} = vi.hoisted(() => ({
-  navigateMock: vi.fn(),
-  useArtifactQueryMock: vi.fn(),
-  setSharingMock: vi.fn(),
-  fetchArtifactMock: vi.fn(),
-}));
+const { navigateMock, useArtifactQueryMock, fetchArtifactMock } = vi.hoisted(
+  () => ({
+    navigateMock: vi.fn(),
+    useArtifactQueryMock: vi.fn(),
+    fetchArtifactMock: vi.fn(),
+  }),
+);
 
 vi.mock("convex/react", () => ({
   useQuery: vi.fn(),
   useMutation: () => vi.fn(),
-  useAction: () => setSharingMock,
+  useAction: () => vi.fn(),
 }));
 
 vi.mock("@/lib/artifact-urls", () => ({
@@ -36,8 +32,14 @@ vi.mock("@/lib/app-navigation", async (importOriginal) => {
   return { ...actual, useAppNavigate: () => navigateMock };
 });
 
-vi.mock("posthog-js/react", () => ({
-  useFeatureFlagEnabled: () => false,
+// The panel reads share settings from Convex; these specs only need to know
+// which resource the dialog opened for.
+vi.mock("@/components/sharing/ResourceSharePanel", () => ({
+  ResourceSharePanel: (props: { resourceType: string; resourceId: string }) => (
+    <div data-testid="stub-share-panel">
+      {props.resourceType}:{props.resourceId}
+    </div>
+  ),
 }));
 
 import { ConformanceRunDetailPage } from "../ConformanceHistory";
@@ -120,7 +122,6 @@ describe("ConformanceRunDetailPage", () => {
   beforeEach(() => {
     useArtifactQueryMock.mockReset();
     fetchArtifactMock.mockReset();
-    setSharingMock.mockReset();
   });
 
   it("says it is loading until the run arrives", () => {
@@ -146,28 +147,37 @@ describe("ConformanceRunDetailPage", () => {
     expect(screen.getByRole("button", { name: "Run again" })).toBeDefined();
   });
 
-  it("offers Share on a private run, which turns sharing on", async () => {
-    setSharingMock.mockResolvedValue({ enabled: false });
+  it("opens the share dialog for this run from Share", () => {
     useArtifactQueryMock.mockReturnValue(run([report()]));
     render(<ConformanceRunDetailPage runId="run_1" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
-    await waitFor(() =>
-      expect(setSharingMock).toHaveBeenCalledWith({
-        runId: "run_1",
-        enabled: true,
-      }),
+    expect(screen.getByTestId("stub-share-panel")).toHaveTextContent(
+      "conformanceRun:run_1",
     );
   });
 
-  it("keeps a way to stop sharing a run that is already shared", () => {
+  it("keeps Share disabled while the run is still going", () => {
+    useArtifactQueryMock.mockReturnValue(
+      run([report({ status: "running", outcome: null })], {
+        status: "running",
+        outcome: null,
+      }),
+    );
+    render(<ConformanceRunDetailPage runId="run_1" />);
+
+    expect(screen.getByRole("button", { name: "Share" })).toBeDisabled();
+  });
+
+  it("opens the same dialog for a run shared with the old toggle", () => {
     useArtifactQueryMock.mockReturnValue(
       run([report()], { sharingEnabled: true }),
     );
     render(<ConformanceRunDetailPage runId="run_1" />);
-    expect(
-      screen.getByRole("button", { name: /Shareable/ }),
-    ).toBeInTheDocument();
+
+    expect(screen.queryByRole("button", { name: /Shareable/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    expect(screen.getByTestId("stub-share-panel")).toBeInTheDocument();
   });
 
   it("names the server from the project's saved servers", () => {
@@ -222,6 +232,20 @@ describe("ConformanceRunDetailPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows absent Apps without an explanation or percentage", () => {
+    useArtifactQueryMock.mockReturnValue(run([
+      report({ suiteKind: "apps", score: null, applicable: 0, passed: 0 }),
+    ]));
+    render(<ConformanceRunDetailPage runId="run_1" />);
+    const header = screen.getByText("Apps").closest("button")!;
+    expect(within(header).getByText("NOT APPLICABLE")).toBeInTheDocument();
+    expect(within(header).queryByText("%")).toBeNull();
+    expect(screen.queryByText("Nothing here applied to this server, so it was not scored.")).toBeNull();
+    fireEvent.click(header);
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/^7 checks in this suite\.$/)).toBeInTheDocument();
+  });
+
   it("shows a suite with nothing applicable as NOT APPLICABLE, without a score", () => {
     useArtifactQueryMock.mockReturnValue(
       run([
@@ -252,23 +276,23 @@ describe("ConformanceRunDetailPage", () => {
     expect(fetchArtifactMock).not.toHaveBeenCalled();
   });
 
-  it("says a skipped suite was not run, not that nothing applies", () => {
+  it.each(["oauth", "apps"])("keeps the skipped %s reason and not-run note", (suiteKind) => {
     useArtifactQueryMock.mockReturnValue(
       run([
         report(),
         report({
-          suiteKind: "oauth",
+          suiteKind,
           status: "skipped",
           score: null,
           applicable: 0,
           passed: 0,
-          incompleteReason: "OAuth was skipped.",
+          incompleteReason: `${suiteKind} was skipped.`,
         }),
       ]),
     );
     render(<ConformanceRunDetailPage runId="run_1" />);
 
-    const oauth = screen.getByText("OAuth was skipped.").closest("button")!;
+    const oauth = screen.getByText(`${suiteKind} was skipped.`).closest("button")!;
     fireEvent.click(oauth);
     expect(screen.getByText(/checks in this suite\. Not run\./)).toBeInTheDocument();
     expect(screen.queryByText(/None apply to this server/)).toBeNull();
@@ -299,6 +323,37 @@ describe("ConformanceRunDetailPage", () => {
     expect(fetchArtifactMock).toHaveBeenCalledWith(
       "https://artifacts.test/protocol.json",
     );
+  });
+
+  it("keeps an unscored check's saved failure grey, like the live row", async () => {
+    fetchArtifactMock.mockResolvedValue(
+      reportBody([
+        { id: "ping", title: "Ping", status: "failed", error: "pong missing" },
+        {
+          id: "oauth_token_format",
+          title: "Token format",
+          status: "failed",
+          error: "not a JWT",
+          pending: true,
+        },
+      ]),
+    );
+    useArtifactQueryMock.mockReturnValue(
+      run([
+        report({
+          outcome: "failed",
+          score: 0,
+          passed: 0,
+          failed: 1,
+          status: "failed",
+        }),
+      ]),
+    );
+    render(<ConformanceRunDetailPage runId="run_1" />);
+
+    await screen.findByText("Token format");
+    expect(screen.getByText("pong missing").className).toMatch(/text-red-600/);
+    expect(screen.getByText("not a JWT").className).not.toMatch(/text-red/);
   });
 
   it("fetches a passing suite's report only when it is opened", async () => {

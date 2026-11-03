@@ -45,8 +45,8 @@ import {
 } from "./helpers.js";
 import {
   jsonRpcError,
-  jsonRpcNotifications,
   jsonRpcResult,
+  logRecords,
   MAX_TOOLS_LIST_PAGES,
   modernHeaders,
   modernRequestBody,
@@ -297,13 +297,6 @@ const MODERN_CHECK_METADATA = {
     title: "Logs Require A Log Level",
     description:
       "No log notifications are emitted for a request that carried no modern log level.",
-  },
-  "modern-log-level-filtering": {
-    id: "modern-log-level-filtering",
-    category: "core",
-    title: "Log Level Filtering",
-    description:
-      "A supplied logging tool emits warning-or-higher logs when requested, without emitting lower-level logs.",
   },
   "modern-no-session-id": {
     id: "modern-no-session-id",
@@ -792,6 +785,9 @@ async function collectCacheableOperations(
   // client session, and a check that could only run as part of a full suite
   // would be untestable in isolation.
   let resourceUri = ctx.surface?.resourceUris[0];
+  // A `resources/list` that ANSWERED with an empty array, as distinct from one
+  // that never produced a result. Only the second leaves a requirement untested.
+  let listedNoResources = false;
 
   let id = 7150;
   for (const operation of CACHEABLE_OPERATIONS) {
@@ -816,10 +812,16 @@ async function collectCacheableOperations(
       // Listed after `resources/list` in CACHEABLE_OPERATIONS precisely so the
       // uri discovered there is available here.
       if (!resourceUri) {
-        unprobed.push({
+        // NOT a gap when the list answered empty, for the same reason an
+        // unadvertised capability is not: a server whose resources come only
+        // from templates, or are created at runtime, has nothing to read, so
+        // nothing about the caching MUST went unverified. Counting it as
+        // unprobed held a fully-hinted server at could-not-run forever.
+        (listedNoResources ? notApplicable : unprobed).push({
           method: operation.method,
-          reason:
-            "server lists no resource to read, and probing a missing uri would grade an error response",
+          reason: listedNoResources
+            ? "server lists no resources, so there is no resources/read to carry hints"
+            : "server lists no resource to read, and probing a missing uri would grade an error response",
         });
         continue;
       }
@@ -844,7 +846,15 @@ async function collectCacheableOperations(
     probes.push({ method: operation.method, result });
 
     if (operation.method === "resources/list") {
-      const listed = jsonRpcResult(result)?.resources;
+      const listResult = jsonRpcResult(result);
+      const listed = listResult?.resources;
+      // Empty only when the walk is OVER: an empty page that still carries a
+      // `nextCursor` (even "") says nothing about the pages after it.
+      listedNoResources =
+        Array.isArray(listed) &&
+        listed.length === 0 &&
+        (listResult?.nextCursor === undefined ||
+          listResult?.nextCursor === null);
       const first = Array.isArray(listed) ? listed[0] : undefined;
       const uri = (first as { uri?: unknown } | undefined)?.uri;
       if (typeof uri === "string" && uri.length > 0) {
@@ -1565,8 +1575,10 @@ function alternatingCase(name: string): string {
  * only produces by EXECUTING the tool, and nothing in a tool's advertised
  * metadata says whether executing it is safe — a run that guessed would
  * eventually charge a card or delete a row on somebody's production server. So
- * the operator names the calls that are safe, and without them the check
- * reports a skip that says exactly what it needs.
+ * the operator names the calls that are safe. Without one, the check is NOT
+ * APPLICABLE only when no tool declares an `outputSchema` (the MUST binds
+ * nothing); when one does, the MUST went unverified, so it could not run, like
+ * every other check whose probe tool was not named.
  *
  * The declared schema is validated with the same dialect-aware validator the
  * MCP client uses for tool inputs, so a tool declaring draft-07 (which
@@ -1581,14 +1593,17 @@ async function runToolOutputSchemaCheck(
   const startedAt = Date.now();
   const fixtures = ctx.config.fixtures.toolCalls;
 
-  if (fixtures.length === 0) {
+  // An unreadable discover answer says nothing about the server's tools, so it
+  // cannot make the check not applicable.
+  const discover = await discoverOnce(ctx, state);
+  if (jsonRpcResult(discover) === undefined) {
     return couldNotRunResult(
       meta,
-      "No tools/call fixtures configured: set fixtures.toolCalls to tools that are safe to execute so the declared outputSchema can be checked against a real result"
+      `server/discover did not return a usable result (HTTP ${discover.status}), so whether any tool declares an outputSchema is unknown`,
+      { httpStatus: discover.status }
     );
   }
-
-  const capabilities = advertisedCapabilities(await discoverOnce(ctx, state));
+  const capabilities = advertisedCapabilities(discover);
   if (capabilities.tools === undefined) {
     return notApplicableResult(
       meta,
@@ -1596,7 +1611,23 @@ async function runToolOutputSchemaCheck(
     );
   }
 
-  const declared = await toolOutputSchemas(ctx, state);
+  const { schemas: declared, complete } = await toolOutputSchemas(ctx, state);
+  if (fixtures.length === 0) {
+    // "No tool declares one" holds only over the whole listing: a walk cut
+    // short may have stopped before the tool that does.
+    return declared.size === 0 && complete
+      ? notApplicableResult(
+          meta,
+          "No tool declares an outputSchema, so there is no structured result to check"
+        )
+      : couldNotRunResult(
+          meta,
+          declared.size === 0
+            ? "The tools/list walk did not finish, so it could not show that no tool declares an outputSchema, and no tools/call fixture was configured"
+            : `${declared.size} tool(s) declare an outputSchema, but no tools/call fixture was configured: set fixtures.toolCalls to a tool that is safe to execute so its result can be checked against the schema`,
+          { declaredOutputSchemas: [...declared.keys()] }
+        );
+  }
   const validator = new DialectAwareJsonSchemaValidator({
     // The default handler console.warns per unknown dialect. A conformance run
     // reports, it does not print.
@@ -1761,14 +1792,17 @@ async function runToolOutputSchemaCheck(
 async function toolOutputSchemas(
   ctx: RawHttpCheckContext,
   state: ModernRunState
-): Promise<Map<string, unknown>> {
+): Promise<{ schemas: Map<string, unknown>; complete: boolean }> {
   const schemas = new Map<string, unknown>();
   for (const tool of ctx.surface?.tools ?? []) {
     const outputSchema = (tool as { outputSchema?: unknown }).outputSchema;
     if (outputSchema !== undefined) schemas.set(tool.name, outputSchema);
   }
-  if (schemas.size > 0 || (ctx.surface?.tools.length ?? 0) > 0) {
-    return schemas;
+  // The client snapshot is one aggregate `listTools` call with no record of
+  // whether it read every page, so only a schema it holds is trusted. To show
+  // that NO tool declares one, walk the raw listing, which reports completion.
+  if (schemas.size > 0) {
+    return { schemas, complete: true };
   }
 
   const walk = await walkToolsList({
@@ -1788,7 +1822,10 @@ async function toolOutputSchemas(
       schemas.set(entry.name, entry.outputSchema);
     }
   }
-  return schemas;
+  return {
+    schemas,
+    complete: walk.termination === "complete" && !walk.malformedPage,
+  };
 }
 
 /**
@@ -2135,88 +2172,6 @@ async function runLogLevelCheck(
   return details.logNotificationCountWithLevel === 0
     ? failedResult(meta, Date.now() - startedAt, SUPPLIED_TOOL_NO_LOGS, details)
     : passedResult(meta, Date.now() - startedAt, details);
-}
-
-/** Syslog severity order, from least to most severe. */
-const LOG_LEVELS = [
-  "debug",
-  "info",
-  "notice",
-  "warning",
-  "error",
-  "critical",
-  "alert",
-  "emergency",
-] as const;
-
-async function runLogLevelFilteringCheck(
-  ctx: RawHttpCheckContext,
-  state: ModernRunState
-): Promise<MCPCheckResult> {
-  const meta = MODERN_CHECK_METADATA["modern-log-level-filtering"];
-  const startedAt = Date.now();
-  const probe = ctx.config.logProbe;
-  if (!probe) {
-    return couldNotRunResult(
-      meta,
-      "No logProbe configured. Configure a safe tool that produces warning-or-higher logs when requested."
-    );
-  }
-
-  const requested = await captureLogProbe(ctx, state, meta, {
-    id: 7902,
-    method: "tools/call",
-    params: { name: probe.toolName, arguments: probe.arguments ?? {} },
-    name: probe.toolName,
-    logLevel: "warning",
-  });
-  if ("unavailable" in requested) return requested.unavailable;
-  const unavailable = unavailableLogProbe(
-    meta,
-    requested.response,
-    probe.toolName
-  );
-  if (unavailable) return unavailable;
-
-  const records = logRecords(requested.response);
-  const details = {
-    probedTool: probe.toolName,
-    requestedLogLevel: "warning",
-    logNotificationCountWithLevel: records.length,
-  };
-  if (records.length === 0) {
-    return failedResult(
-      meta,
-      Date.now() - startedAt,
-      SUPPLIED_TOOL_NO_LOGS,
-      details
-    );
-  }
-
-  const levels = records.map(
-    (record) => (record.params as Record<string, unknown> | undefined)?.level
-  );
-  const invalidOrLowerLevels = levels.filter(
-    (level) =>
-      typeof level !== "string" ||
-      LOG_LEVELS.indexOf(level as (typeof LOG_LEVELS)[number]) <
-        LOG_LEVELS.indexOf("warning")
-  );
-  return invalidOrLowerLevels.length > 0
-    ? failedResult(
-        meta,
-        Date.now() - startedAt,
-        "Server emitted invalid or lower-than-warning log levels for a request that asked for warning logs",
-        { ...details, invalidOrLowerLevels }
-      )
-    : passedResult(meta, Date.now() - startedAt, { ...details, levels });
-}
-
-/** `notifications/message` records carried on a response. */
-function logRecords(result: RawHttpResult): Array<Record<string, unknown>> {
-  return jsonRpcNotifications(result).filter(
-    (notification) => notification.method === "notifications/message"
-  );
 }
 
 async function runNoSessionIdCheck(
@@ -2688,8 +2643,6 @@ async function runModernCheck(
       return await runToolOutputSchemaCheck(ctx, state);
     case "modern-logs-require-log-level":
       return await runLogLevelCheck(ctx, state);
-    case "modern-log-level-filtering":
-      return await runLogLevelFilteringCheck(ctx, state);
     case "modern-no-session-id":
       return await runNoSessionIdCheck(ctx, state);
     case "modern-subscription-ack-precedes-notifications":
@@ -2829,6 +2782,7 @@ export async function runModernChecks(
   ctx: RawHttpCheckContext,
   selectedCheckIds: Set<MCPCheckId>
 ): Promise<MCPCheckResult[]> {
+  ctx.config.signal?.throwIfAborted();
   const requested = [...selectedCheckIds].filter(isModernCheckId);
   if (requested.length === 0) {
     return [];
@@ -2878,6 +2832,7 @@ export async function runModernChecks(
   ];
 
   for (const id of ordered) {
+    ctx.config.signal?.throwIfAborted();
     const startedAt = Date.now();
     try {
       results.push(
@@ -2890,6 +2845,7 @@ export async function runModernChecks(
         )
       );
     } catch (error) {
+      ctx.config.signal?.throwIfAborted();
       results.push(
         failedResult(
           MODERN_CHECK_METADATA[id],

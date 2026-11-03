@@ -4,11 +4,13 @@ import type {
   ToolSecuritySchemeResolution,
 } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/state/app-types";
+import { CHAT_AUTH_RECOVERY_MESSAGE } from "@/lib/chat-auth-recovery";
 import {
   AUTH_CHALLENGE_DISMISSED_MESSAGE,
   connectAuthChallenge,
   clearAuthChallengeCards,
   dismissAuthChallenge,
+  noteSignInCallbackFailed,
   presentAuthChallenge,
   presentWidgetAuthChallenge,
   registerAuthChallengeHostProfile,
@@ -471,10 +473,15 @@ describe("auth challenge lifecycle", () => {
         return original.call(this, key, value);
       });
       try {
-        await expect(settleSignInCallback("orders", { state: "flow-1" }))
-          .resolves.toContain("MCPJam couldn’t continue this call");
-        expect(peekPendingDirectScopeStepUpReplay()?.phase).toBe("awaiting_oauth");
-      } finally { save.mockRestore(); }
+        await expect(
+          settleSignInCallback("orders", { state: "flow-1" }),
+        ).resolves.toBe(CHAT_AUTH_RECOVERY_MESSAGE);
+        expect(peekPendingDirectScopeStepUpReplay()?.phase).toBe(
+          "awaiting_oauth",
+        );
+      } finally {
+        save.mockRestore();
+      }
     });
 
     it("replays after its own callback", async () => {
@@ -541,6 +548,15 @@ describe("auth challenge lifecycle", () => {
       }
     });
 
+    it("treats a credential no bridge can confirm as shared", async () => {
+      const card = await presentCard({ connectionId: "unconfirmed-cred" });
+      await connectAuthChallenge(card, server, { isTrusted: true });
+      expect(peekPendingDirectScopeStepUpReplay()?.credentialBinding).toEqual({
+        kind: "shared",
+        credentialId: "unconfirmed-cred",
+      });
+    });
+
     it("drops the saved call when sign-in fails before redirecting", async () => {
       initiateOAuthMock.mockResolvedValueOnce({
         success: false,
@@ -604,6 +620,60 @@ describe("auth challenge lifecycle", () => {
         replay: card.replay,
       });
       expect(repeat).toMatchObject({ kind: "notice", reason: "permanent" });
+    });
+  });
+
+  describe("telemetry", () => {
+    const signInEvents = () =>
+      trackMock.mock.calls.filter(([name]) =>
+        String(name).startsWith("auth_challenge_"),
+      );
+
+    it("sends only closed-vocabulary fields, never scopes, URLs or server text", async () => {
+      const card = await presentCard();
+      await connectAuthChallenge(card, server, { isTrusted: true });
+      await settleSignInCallback("orders", { state: "flow-1" });
+      // A second call: dismissed, then a failed start.
+      const dismissed = await presentCard({
+        operation: { ...OPERATION, operation: "write" },
+      });
+      dismissAuthChallenge(dismissed);
+      localStorage.clear();
+      sessionStorage.clear();
+      initiateOAuthMock.mockRejectedValueOnce(
+        new Error("https://as.example/boom"),
+      );
+      const failing = await presentCard();
+      await connectAuthChallenge(failing, server, { isTrusted: true });
+
+      const prompt = {
+        location: "tools",
+        source: "http_401",
+        action: "prompt",
+      };
+      expect(signInEvents()).toEqual([
+        ["auth_challenge_card_shown", prompt],
+        ["auth_challenge_connect_clicked", prompt],
+        ["auth_challenge_completed", { location: "oauth_callback" }],
+        ["auth_challenge_card_shown", prompt],
+        ["auth_challenge_dismissed", prompt],
+        ["auth_challenge_card_shown", prompt],
+        ["auth_challenge_connect_clicked", prompt],
+        [
+          "auth_challenge_failed",
+          { location: "tools", source: "http_401", stage: "start" },
+        ],
+      ]);
+    });
+
+    it("reports a failed callback with only its location and stage", async () => {
+      const card = await presentCard();
+      await connectAuthChallenge(card, server, { isTrusted: true });
+      noteSignInCallbackFailed("orders");
+      expect(signInEvents().at(-1)).toEqual([
+        "auth_challenge_failed",
+        { location: "oauth_callback", stage: "callback" },
+      ]);
     });
   });
 

@@ -6,6 +6,7 @@ import {
 import type { NativeMessage } from "./native-wire.js";
 import type { Settlement } from "./execution-control.js";
 import { isRecord } from "../../byok/list-request.js";
+import { bridgeRequestMetadata } from "../../../services/bridge-request-metadata.js";
 
 /** Reuse the SDK eligibility, validation and projection contract inside the execution gate. */
 export async function enhancedTaskCall(args: {
@@ -21,14 +22,17 @@ export async function enhancedTaskCall(args: {
     throw new Error("Invalid task tool request");
   const toolName = params.name;
   const input = isRecord(params.arguments) ? params.arguments : {};
+  const metadata = bridgeRequestMetadata(params._meta);
   const call = async (eligible: boolean) => {
     const result = eligible
       ? await args.manager.executeTool(args.serverId, toolName, input, {
           allowTaskResult: true,
           request: { signal: args.signal },
+          ...(metadata === undefined ? {} : { metadata }),
         })
       : await args.manager.executeTool(args.serverId, toolName, input, {
-          signal: args.signal,
+          request: { signal: args.signal },
+          ...(metadata === undefined ? {} : { metadata }),
         });
     await args.settle?.({
       outcome:

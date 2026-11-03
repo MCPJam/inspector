@@ -494,6 +494,7 @@ export function ChatTabV2({
     urlElicitationRequired,
     dismissUrlElicitationRequired,
     autoResumeNotice,
+    harnessStartupPhase,
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
     // A scenario / share-link turn runs the host's own config; the visitor's
@@ -2945,6 +2946,7 @@ export function ChatTabV2({
                     <div className="relative flex-1 min-h-0">
                       <StickToBottom.Content className="flex flex-col min-h-0">
                         <Thread
+                          harnessStartupPhase={harnessStartupPhase}
                           chatSessionId={chatSessionId}
                           messages={messages}
                           sendFollowUpMessage={(text: string) => {
