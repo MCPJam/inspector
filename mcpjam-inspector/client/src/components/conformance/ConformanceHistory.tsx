@@ -299,6 +299,7 @@ export function ConformanceRunShareButton({
             `${window.location.origin}${buildConformanceSharePath(token)}`
           }
           testIdPrefix="conformance-share"
+          invites={false}
         />
       </ShareDialog>
     </>

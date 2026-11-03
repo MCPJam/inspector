@@ -43,6 +43,7 @@ export function ResourceSharePanel({
   linkLabel,
   buildShareUrl,
   testIdPrefix,
+  invites = true,
 }: {
   resourceType: ShareResourceType;
   resourceId: string;
@@ -51,6 +52,11 @@ export function ResourceSharePanel({
   linkLabel: string;
   buildShareUrl: (token: string) => string;
   testIdPrefix: string;
+  /**
+   * Offer email invites and the "Invited users only" mode. Off where an invite
+   * sends no email, so it would grant access the invitee never hears about.
+   */
+  invites?: boolean;
 }) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
@@ -86,8 +92,14 @@ export function ResourceSharePanel({
   const currentPreset: ShareMode = envelope?.mode ?? "project_members";
   const members = useMemo(() => envelope?.members ?? [], [envelope?.members]);
   const presets = useMemo(
-    () => applyShareCeilingToOptions(RUN_PRESETS, envelope?.maxShareMode),
-    [envelope?.maxShareMode],
+    () =>
+      applyShareCeilingToOptions(
+        invites
+          ? RUN_PRESETS
+          : RUN_PRESETS.filter((option) => option.value !== "invited_only"),
+        envelope?.maxShareMode,
+      ),
+    [envelope?.maxShareMode, invites],
   );
 
   if (!envelope) {
@@ -123,6 +135,8 @@ export function ResourceSharePanel({
       currentPreset={currentPreset}
       presets={presets}
       disabledReason={disabledReason}
+      showInvite={invites}
+      showMembers={invites}
       footerSlot={footerSlot}
       copy={{
         linkLabel,
