@@ -514,21 +514,4 @@ describe("modern-cacheable-result-hints", () => {
       "passed"
     );
   });
-
-  it("reports a useful-TTL readiness warning without failing conformance", async () => {
-    const serverUrl = await serve(createCacheFixtureHandler());
-    const withTtl = await new MCPConformanceTest({
-      serverUrl,
-      protocolVersion: MODERN,
-      checkIds: ["modern-cacheable-result-hints"],
-      checkTimeout: 10_000,
-    }).run();
-
-    // A real TTL earns no advice; the zero-TTL dual-era fixture does (see
-    // `era.integration.test.ts`). Either way the verdict is untouched.
-    expect(
-      withTtl.readiness.some((item) => item.id === "readiness-cache-ttl-useful")
-    ).toBe(false);
-    expect(withTtl.passed).toBe(true);
-  });
 });

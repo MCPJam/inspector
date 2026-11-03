@@ -119,6 +119,7 @@ conformance.post("/protocol", async (c) => {
       readinessIds: parsed.data.readinessIds,
       logProbe: parsed.data.logProbe,
       inputRequiredProbe: parsed.data.inputRequiredProbe,
+      toolCallProbe: parsed.data.toolCallProbe,
     });
     return c.json({ success: true, result });
   } catch (error) {

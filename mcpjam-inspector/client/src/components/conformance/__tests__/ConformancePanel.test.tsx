@@ -319,8 +319,8 @@ describe("ConformanceTab", () => {
         protocolVersion: "2025-11-25",
         readiness: [
           {
-            id: "readiness-cache-ttl-useful",
-            title: "Useful Cache TTLs",
+            id: "readiness-deprecated-feature-use",
+            title: "Deprecated Feature Use",
             severity: "warning",
             specStrength: "SHOULD",
             message: "Cacheable results advertise ttlMs: 0",
@@ -388,8 +388,10 @@ describe("ConformanceTab", () => {
     expect(advice).toHaveAttribute("aria-expanded", "false");
     expect(within(advice).getByText("1")).toBeInTheDocument();
     fireEvent.click(advice);
-    const row = screen.getByText("Useful Cache TTLs").closest("li")!;
-    expect(row).toHaveTextContent("Suggested (SHOULD) Protocol Useful Cache TTLs");
+    const row = screen.getByText("Deprecated Feature Use").closest("li")!;
+    expect(row).toHaveTextContent(
+      "Suggested (SHOULD) Protocol Deprecated Feature Use",
+    );
   });
 
   it("shows no number when nothing was applicable", async () => {
@@ -1520,6 +1522,14 @@ describe("ConformanceTab", () => {
               properties: { message: { type: "string" } },
             },
           },
+          {
+            name: "weather",
+            annotations: { readOnlyHint: true },
+            outputSchema: {
+              type: "object",
+              properties: { temperature: { type: "number" } },
+            },
+          },
         ],
       });
     });
@@ -1558,6 +1568,33 @@ describe("ConformanceTab", () => {
       );
     }
 
+    it("sends the output check's tool on its own", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await openProtocolChecks();
+
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool to check output" }),
+      );
+      // Only tools that declare an output schema can be graded.
+      expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(
+        ["Not set", "weather · read-only"],
+      );
+      await user.click(
+        screen.getByRole("option", { name: "weather · read-only" }),
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() =>
+        expect(mockRunProtocol).toHaveBeenCalledWith(
+          "alpha",
+          expect.objectContaining({
+            probes: { toolCallProbe: { toolName: "weather" } },
+          }),
+        ),
+      );
+    });
+
     it("asks under the check which tool to call, and runs with it", async () => {
       const user = userEvent.setup();
       setupSuccessfulRunMocks();
@@ -1580,6 +1617,7 @@ describe("ConformanceTab", () => {
       expect(options).toEqual([
         "Not set",
         "echo · read-only",
+        "weather · read-only",
         "delete_row · may modify data",
       ]);
       await user.click(
@@ -1663,12 +1701,12 @@ describe("ConformanceTab", () => {
       });
       expect(header).toHaveAttribute("aria-expanded", "false");
       expect(
-        within(header).getByText("2 checks need input"),
+        within(header).getByText("3 checks need input"),
       ).toBeInTheDocument();
 
       fireEvent.click(header);
-      // The two checks, and the advice that calls the log tool too.
-      expect(screen.getAllByText("Needs input")).toHaveLength(3);
+      // The three checks, and the advice that calls the log tool too.
+      expect(screen.getAllByText("Needs input")).toHaveLength(4);
       await waitFor(() =>
         expect(
           screen.getByRole("combobox", { name: "Tool that emits logs" }),
@@ -1682,9 +1720,30 @@ describe("ConformanceTab", () => {
       );
 
       expect(screen.getAllByText("Input set")).toHaveLength(2);
-      expect(screen.getAllByText("Needs input")).toHaveLength(1);
+      expect(screen.getAllByText("Needs input")).toHaveLength(2);
       expect(
-        within(header).getByText("1 check needs input"),
+        within(header).getByText("2 checks need input"),
+      ).toBeInTheDocument();
+    });
+
+    it("does not ask for the output tool when no tool declares an output schema", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [{ name: "echo", annotations: { readOnlyHint: true } }],
+      });
+      await toStep2();
+      const header = screen.getByRole("button", {
+        name: /^Protocol.*checks selected$/,
+      });
+      fireEvent.click(header);
+
+      // Nothing to grade, so the check does not apply: no tag, no count.
+      expect(
+        await screen.findByText(
+          "No tool on this server declares an output schema, so this check does not apply.",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        within(header).getByText("2 checks need input"),
       ).toBeInTheDocument();
     });
 
@@ -1858,7 +1917,9 @@ describe("ConformanceTab", () => {
       ).toHaveTextContent("echo");
       // Another advice left out is not asked for.
       fireEvent.click(
-        screen.getByRole("checkbox", { name: "Run Parse Error Handling" }),
+        screen.getByRole("checkbox", {
+          name: "Run Explicit Session Termination",
+        }),
       );
 
       fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
@@ -1867,7 +1928,7 @@ describe("ConformanceTab", () => {
       expect(sent.probes).toEqual({ logProbe: { toolName: "echo" } });
       expect(sent.checkIds).not.toContain("modern-logs-require-log-level");
       expect(sent.readinessIds).toContain("readiness-log-level-filtering");
-      expect(sent.readinessIds).not.toContain("readiness-parse-error-handling");
+      expect(sent.readinessIds).not.toContain("readiness-session-termination");
     });
 
     it("turns the advice off with the suite's box, and offers none with no check picked", async () => {

@@ -183,7 +183,6 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     ).toEqual([
       "modern-logs-require-log-level",
       "modern-subscription-graceful-close",
-      "modern-tool-output-schema-conformant",
       "modern-undeclared-capability-error",
     ]);
 
@@ -254,8 +253,7 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     expect(gracefulClose.status).toBe("skipped");
     expect(gracefulClose.error?.message).toMatch(/still open/);
 
-    // §15.4: readiness advice is reported but never changes the verdict.
-    expect(result.readiness.length).toBeGreaterThan(0);
+    // §15.4: any readiness advice is reported but never changes the verdict.
     for (const item of result.readiness) {
       expect(item.severity).toBe("warning");
       expect(["SHOULD", "RECOMMENDED", "MAY"]).toContain(item.specStrength);
@@ -321,7 +319,6 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     ).toEqual([
       "modern-logs-require-log-level",
       "modern-subscription-graceful-close",
-      "modern-tool-output-schema-conformant",
       "modern-undeclared-capability-error",
     ]);
     for (const id of LEGACY_ONLY) {

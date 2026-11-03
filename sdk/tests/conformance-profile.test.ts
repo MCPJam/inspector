@@ -32,22 +32,20 @@ describe("conformance profile manifest", () => {
     expect(unknown).toEqual([]);
   });
 
-  it("scores exactly the 43 checks of v2026-11-01.1", () => {
-    // The pre-gap-program pool of 36 plus the seven gap-program checks the
+  it("scores exactly the 44 checks of v2026-11-02.1", () => {
+    // The pre-gap-program pool of 36 plus the eight gap-program checks the
     // revision states as requirements. Adding a check without a profile bump
     // keeps this green (the check lands pending, which is the intent);
     // silently PROMOTING one moves the count and fails.
-    expect(PROFILE.version).toBe("2026-11-01.1");
-    expect(PROFILE.scored).toHaveLength(43);
+    expect(PROFILE.version).toBe("2026-11-02.1");
+    expect(PROFILE.scored).toHaveLength(44);
   });
 
   it("states exactly which shipped checks it leaves unscored", () => {
     // The reviewable record. Every id here ran against real servers and
     // reported a real verdict this profile version chose not to grade yet;
     // promoting one is a version bump, and this list is where that shows up.
-    expect([...unscoredCheckIds(PROFILE)].sort()).toEqual([
-      "modern-tool-output-schema-conformant",
-    ]);
+    expect([...unscoredCheckIds(PROFILE)].sort()).toEqual([]);
   });
 
   it("has no duplicate entries", () => {
@@ -118,8 +116,13 @@ describe("the mcp-tasks profile", () => {
     // Each of the last four states a MUST: -32602 for an unknown id on
     // tasks/get, the per-status payload, the empty cancel ack, and
     // data.requiredCapabilities on -32021.
-    expect(TASKS.version).toBe("2026-11-01.2");
     expect([...TASKS.scored].sort()).toEqual([...MCP_TASKS_CHECK_IDS].sort());
+  });
+
+  it("bumps to v2026-11-02.1 for the two stricter -32021 checks", () => {
+    // Same checks; a refusal that is not -32021 now fails, and so does a
+    // -32021 that does not name the tasks extension.
+    expect(TASKS.version).toBe("2026-11-02.1");
   });
 });
 
@@ -127,12 +130,10 @@ describe("profile stamp", () => {
   it("lists the reported checks the profile does not score, sorted", () => {
     const stamp = buildConformanceProfileStamp({
       profile: PROFILE,
-      checks: [passed("ping"), passed("modern-tool-output-schema-conformant")],
+      checks: [passed("ping"), passed("brand-new-check")],
       protocolVersion: "2026-07-28",
     });
-    expect(stamp.pendingCheckIds).toEqual([
-      "modern-tool-output-schema-conformant",
-    ]);
+    expect(stamp.pendingCheckIds).toEqual(["brand-new-check"]);
     expect(stamp.profileId).toBe("mcp-protocol");
     expect(stamp.profileVersion).toBe(PROFILE.version);
     expect(stamp.manifestDigest).toBe(conformanceProfileDigest(PROFILE));
@@ -196,7 +197,7 @@ describe("pending checks and the score", () => {
     const checks = [
       passed("ping"),
       passed("tools-list"),
-      failed("modern-tool-output-schema-conformant"),
+      failed("brand-new-check"),
     ];
     const stamp = buildConformanceProfileStamp({ profile: PROFILE, checks });
 

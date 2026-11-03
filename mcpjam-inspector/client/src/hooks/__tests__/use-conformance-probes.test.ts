@@ -19,6 +19,7 @@ const tasksProbe = {
   arguments: { seconds: 2 },
   inputResponses: { confirm: { action: "accept" } },
 };
+const toolCallProbe = { toolName: "weather", arguments: { city: "Lima" } };
 
 describe("probesForRun", () => {
   it("sends every probe when every check runs", () => {
@@ -63,7 +64,30 @@ describe("probesForRun", () => {
     expect(probeKeyFor("modern-undeclared-capability-error")).toBe(
       "inputRequiredProbe",
     );
+    expect(probeKeyFor("tasks-update-ack-shape")).toBe("tasksProbe");
+    expect(probeKeyFor("modern-tool-output-schema-conformant")).toBe(
+      "toolCallProbe",
+    );
     expect(probeKeyFor("ping")).toBeUndefined();
+  });
+
+  it("sends the output-check tool only when that check runs", () => {
+    expect(
+      probesForRun(
+        { logProbe, toolCallProbe },
+        ["modern-tool-output-schema-conformant"],
+        "2026-07-28",
+        [],
+      ),
+    ).toEqual({ toolCallProbe });
+    expect(
+      probesForRun(
+        { toolCallProbe },
+        ["modern-logs-require-log-level"],
+        "2026-07-28",
+        [],
+      ),
+    ).toEqual({});
   });
 });
 
@@ -116,6 +140,12 @@ describe("useConformanceProbeStore", () => {
     expect(result.current.probesFor("alpha")).toEqual({ logProbe });
     expect(result.current.probesFor("beta")).toEqual({});
     expect(readStoredProbes("alpha")).toEqual({ logProbe });
+  });
+
+  it("keeps the output-check tool across a reload, alone", () => {
+    const { result } = renderHook(() => useConformanceProbeStore());
+    act(() => result.current.setProbes("alpha", { toolCallProbe }));
+    expect(readStoredProbes("alpha")).toEqual({ toolCallProbe });
   });
 
   it("reads storage once per server", () => {

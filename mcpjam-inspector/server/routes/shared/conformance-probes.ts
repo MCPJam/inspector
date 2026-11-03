@@ -2,12 +2,13 @@ import { MCP_LOG_LEVELS, type MCPConformanceConfig } from "@mcpjam/sdk";
 import { z } from "zod";
 
 /**
- * A tool an operator names as safe for the protocol suite to call. Two
+ * A tool an operator names as safe for the protocol suite to call. Three
  * 2026-07-28 checks can only observe something on a tool call: one that
  * emits logs (`logProbe`, for the logging check and the log level filtering
- * advice) and one that asks for input (`inputRequiredProbe`). The SDK never
- * picks a tool on its own, so without these those checks report
- * could-not-run. Both routes accept the same shape.
+ * advice), one that asks for input (`inputRequiredProbe`), and one whose
+ * result the output-schema check grades (`toolCallProbe`, sent to the SDK as
+ * `fixtures.toolCalls`). The SDK never picks a tool on its own. Both routes
+ * accept the same shape.
  */
 const conformanceProbeSchema = z
   .object({
@@ -31,6 +32,7 @@ const conformanceLogProbeSchema = conformanceProbeSchema
 export const conformanceProbeFields = {
   logProbe: conformanceLogProbeSchema.optional(),
   inputRequiredProbe: conformanceProbeSchema.optional(),
+  toolCallProbe: conformanceProbeSchema.optional(),
 };
 
 /**
@@ -50,4 +52,6 @@ export const conformanceInputResponsesSchema = z
 export type ConformanceProbes = Pick<
   MCPConformanceConfig,
   "logProbe" | "inputRequiredProbe"
->;
+> & {
+  toolCallProbe?: MCPConformanceConfig["inputRequiredProbe"];
+};

@@ -370,16 +370,6 @@ export const READINESS_CATALOG = {
     description:
       "The server does not rely on features or revisions that newer ones replaced.",
   },
-  "readiness-cache-ttl-useful": {
-    title: "Useful Cache TTLs",
-    description:
-      "Cacheable results advertise a ttlMs above 0, so clients can reuse them.",
-  },
-  "readiness-parse-error-handling": {
-    title: "Parse Error Handling",
-    description:
-      "An unparseable JSON body is rejected, or answered with a JSON-RPC -32700 Parse error.",
-  },
   "readiness-session-termination": {
     title: "Explicit Session Termination",
     description:

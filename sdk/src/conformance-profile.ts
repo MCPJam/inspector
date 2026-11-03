@@ -76,8 +76,8 @@ export interface ConformanceProfile {
 }
 
 /**
- * `mcp-protocol` v2026-11-01.1 — the 36 checks shipping before the
- * conformance-gap program's new checks landed, plus seven of those checks.
+ * `mcp-protocol` v2026-11-02.1 — the 36 checks shipping before the
+ * conformance-gap program's new checks landed, plus eight of those checks.
  *
  * FROZEN AT EXACTLY TODAY'S POOL, deliberately. Every check the gap program
  * adds (wire-schema validation, the SEP-2243 header cases, the split caching
@@ -100,10 +100,16 @@ export interface ConformanceProfile {
  * a MUST but cannot run without operator tool-call fixtures, so scoring it
  * would mark nearly every run incomplete until the inspector can collect
  * them.
+ *
+ * v2026-11-01.1 → v2026-11-02.1 promotes `modern-tool-output-schema-conformant`
+ * ("Servers MUST provide structured results that conform to this schema").
+ * The inspector now collects the tool to call in step 2. A run that names none
+ * is not applicable when no tool declares an `outputSchema`, and could not run
+ * when one does: the MUST went unverified, as with any unnamed probe tool.
  */
 const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
   id: "mcp-protocol",
-  version: "2026-11-01.1",
+  version: "2026-11-02.1",
   scored: [
     "server-initialize",
     "ping",
@@ -148,11 +154,12 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
     "modern-missing-method-header-rejected",
     "modern-header-names-case-insensitive",
     "modern-resource-read-no-empty-contents",
+    "modern-tool-output-schema-conformant",
   ] satisfies MCPCheckId[],
 };
 
 /**
- * `mcp-tasks` v2026-11-01.2 — every check the Tasks suite ships: the eight it
+ * `mcp-tasks` v2026-11-02.1 — every check the Tasks suite ships: the eight it
  * shipped before the gap program's scenario depth, plus the six that depth
  * added.
  *
@@ -178,6 +185,15 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
  * that need a task need one the scored lifecycle checks already need, so a run
  * that creates none was already incomplete.
  *
+ * v2026-11-01.2 → v2026-11-02.1 keeps the same checks but tightens two, each
+ * of which used to pass with a warning:
+ *   - `tasks-undeclared-creation-refused` fails a refusal with any code other
+ *     than `-32021`, or a `-32021` that does not name the tasks extension;
+ *     tasks.md:63 states both as a MUST.
+ *   - `tasks-undeclared-capability-names-requirements` fails a `-32021` whose
+ *     `requiredCapabilities` does not name the tasks extension; the core spec
+ *     requires it to list the missing capabilities (basic/index.mdx, a MUST).
+ *
  * A SEPARATE profile rather than a section of `mcp-protocol`, which was the
  * open design question. Two reasons settled it:
  *
@@ -192,7 +208,7 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
  */
 const MCP_TASKS_PROFILE: ConformanceProfile = {
   id: "mcp-tasks",
-  version: "2026-11-01.2",
+  version: "2026-11-02.1",
   scored: [
     "tasks-wire-resolvable",
     "tasks-declaration-hygiene",

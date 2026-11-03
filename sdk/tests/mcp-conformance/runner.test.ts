@@ -57,16 +57,14 @@ describe("MCPConformanceTest", () => {
         profileVersion: profile.version,
         checkerVersion: CONFORMANCE_CHECKER_VERSION,
         // Every gap-program check ran (or era-skipped) and reported a real
-        // verdict. v2026-11-01.1 scores the seven the revision states as
-        // requirements; this one stays reported but out of the number.
-        pendingCheckIds: ["modern-tool-output-schema-conformant"],
+        // verdict. v2026-11-02.1 scores every one of them.
+        pendingCheckIds: [],
       });
       // The digest is stamped only because the schema pass actually ran.
       expect(result.profile?.schemaDigest).toMatch(/^[0-9a-f]{64}$/);
       const score = scoreFromProtocolResult(result);
-      expect(score.pending).toBe(1);
-      // The pending check is modern-only, so it era-skipped out of this
-      // legacy denominator already: every legacy-applicable check is scored,
+      expect(score.pending).toBe(0);
+      // Nothing is pending, so every legacy-applicable check is scored,
       // `wire-schema-valid` included.
       const legacyApplicable = result.checks.filter(
         (check) => CHECK_ERAS[check.id].includes("legacy"),
