@@ -344,6 +344,10 @@ describe("engine failure telemetry", () => {
     expect(calls[0].errorCode).toBe("guest_input_too_large");
     expect(calls[0].normalized?.slug).toBe("account/guest_input_too_large");
     expect(originOf(calls[0].normalized)).toBe("user_config");
+    // The hop and policy the capture test in error-origin-capture.test.ts
+    // decides on: the slug's origin alone has to keep this off Sentry.
+    expect(calls[0].hop).toBe("mcpjam_internal");
+    expect(calls[0].capture).toBeUndefined();
   });
 
   it("fails the turn on a mid-stream error chunk instead of succeeding", async () => {
