@@ -183,7 +183,6 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     ).toEqual([
       "modern-logs-require-log-level",
       "modern-subscription-graceful-close",
-      "modern-tool-output-schema-conformant",
       "modern-undeclared-capability-error",
     ]);
 
@@ -321,7 +320,6 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     ).toEqual([
       "modern-logs-require-log-level",
       "modern-subscription-graceful-close",
-      "modern-tool-output-schema-conformant",
       "modern-undeclared-capability-error",
     ]);
     for (const id of LEGACY_ONLY) {

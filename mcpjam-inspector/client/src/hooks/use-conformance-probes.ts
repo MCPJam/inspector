@@ -2,10 +2,12 @@
  * The tools an operator names as safe for the protocol suite to call, kept
  * per server.
  *
- * Two 2026-07-28 checks can only observe something on a tool call: the logging
- * check needs a tool that emits logs (the log level filtering advice calls the
- * same tool, at the operator's log level, and has its own row), and the
- * undeclared-capability check needs one that asks for input. The SDK never picks a tool on its own,
+ * Three 2026-07-28 checks can only observe something on a tool call: the
+ * logging check needs a tool that emits logs (the log level filtering advice
+ * calls the same tool, at the operator's log level, and has its own row), the
+ * undeclared-capability check needs one that asks for input, and the
+ * output-schema check needs one whose result it can grade. The SDK never picks
+ * a tool on its own,
  * because nothing a server advertises says whether calling a tool charges a
  * card or deletes a row. Without one, those checks report could-not-run.
  *
@@ -43,6 +45,7 @@ export type ConformanceProbeKey = keyof ConformanceProbes;
 export const PROBE_KEYS = [
   "logProbe",
   "inputRequiredProbe",
+  "toolCallProbe",
   "tasksProbe",
 ] as const;
 
@@ -54,6 +57,7 @@ const PROTOCOL_PROBE_CHECKS: Record<
 > = {
   logProbe: ["modern-logs-require-log-level", "readiness-log-level-filtering"],
   inputRequiredProbe: ["modern-undeclared-capability-error"],
+  toolCallProbe: ["modern-tool-output-schema-conformant"],
 };
 
 /**
@@ -202,7 +206,7 @@ export function protocolRunOptions(
     protocolVersion: pin === "auto" ? undefined : pin,
     ...(checkIds ? { checkIds } : {}),
     ...(readinessIds ? { readinessIds } : {}),
-    ...(sent.logProbe || sent.inputRequiredProbe ? { probes: sent } : {}),
+    ...(Object.keys(sent).length > 0 ? { probes: sent } : {}),
   };
 }
 

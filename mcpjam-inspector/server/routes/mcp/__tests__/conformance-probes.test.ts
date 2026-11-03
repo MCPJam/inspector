@@ -59,6 +59,7 @@ describe("POST /api/mcp/conformance/protocol probe tools", () => {
         level: "info",
       },
       inputRequiredProbe: { toolName: "ask-user" },
+      toolCallProbe: { toolName: "weather" },
     });
 
     expect(res.status).toBe(200);
@@ -71,6 +72,7 @@ describe("POST /api/mcp/conformance/protocol probe tools", () => {
           level: "info",
         },
         inputRequiredProbe: { toolName: "ask-user" },
+        toolCallProbe: { toolName: "weather" },
       }),
     );
   });
@@ -80,6 +82,7 @@ describe("POST /api/mcp/conformance/protocol probe tools", () => {
     const input = runProtocolConformanceMock.mock.calls[0]![0];
     expect(input.logProbe).toBeUndefined();
     expect(input.inputRequiredProbe).toBeUndefined();
+    expect(input.toolCallProbe).toBeUndefined();
   });
 
   it.each([
