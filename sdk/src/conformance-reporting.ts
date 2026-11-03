@@ -165,9 +165,10 @@ export interface ConformanceReport {
   durationMs: number;
   groups: ConformanceReportGroup[];
   /**
-   * Ungraded statements. Absent for the conformance suites, which have none;
-   * present for readiness, whose experience-insights lane is entirely
-   * advisory. Adding an OPTIONAL field keeps `schemaVersion` at 1 — an older
+   * Ungraded statements. For the conformance suites, their SHOULD/MAY advice
+   * (`readiness` warnings), absent when a run raised none; for readiness, its
+   * experience-insights lane, which is entirely advisory. Saved with the report
+   * so a run reopened from history can still list its advice. Adding an OPTIONAL field keeps `schemaVersion` at 1 — an older
    * consumer reading a readiness report ignores it and still gets a valid
    * report, which is the property a version bump would otherwise be asserting.
    */
@@ -415,6 +416,44 @@ function suiteOutcomeFields(
   return { outcome: "passed" };
 }
 
+/** A suite's SHOULD/MAY advice: what every suite's `readiness` entry carries. */
+interface ReadinessWarningLike {
+  id: string;
+  title: string;
+  specStrength: string;
+  message: string;
+  details?: unknown;
+}
+
+/**
+ * A suite's advice as report advisories, one list for every run in it. A
+ * matrix repeats the same advice once per run; the first one is kept, under
+ * that run's group.
+ */
+function readinessAdvisoryFields(
+  entries: ReadonlyArray<{
+    readiness?: readonly ReadinessWarningLike[];
+    group: string;
+  }>,
+): { advisories?: ConformanceReportAdvisory[] } {
+  const byId = new Map<string, ConformanceReportAdvisory>();
+  for (const { readiness, group } of entries) {
+    for (const warning of readiness ?? []) {
+      if (byId.has(warning.id)) continue;
+      byId.set(warning.id, {
+        id: warning.id,
+        title: warning.title,
+        group,
+        kind: "readiness",
+        status: warning.specStrength,
+        message: warning.message,
+        ...(warning.details !== undefined ? { details: warning.details } : {}),
+      });
+    }
+  }
+  return byId.size > 0 ? { advisories: [...byId.values()] } : {};
+}
+
 function mcpGroupFromResult(
   result: MCPConformanceResult,
   title: string,
@@ -590,6 +629,12 @@ function createProtocolReport(
       groups: result.results.map((entry, index) =>
         mcpGroupFromResult(entry, entry.label, index),
       ),
+      ...readinessAdvisoryFields(
+        result.results.map((entry, index) => ({
+          readiness: entry.readiness,
+          group: `mcp-${index + 1}`,
+        })),
+      ),
     };
   }
 
@@ -603,6 +648,9 @@ function createProtocolReport(
     ...(result.profile ? { profile: result.profile } : {}),
     durationMs: result.durationMs,
     groups: [mcpGroupFromResult(result, "MCP Protocol Conformance", 0)],
+    ...readinessAdvisoryFields([
+      { readiness: result.readiness, group: "mcp-1" },
+    ]),
   };
 }
 
@@ -621,6 +669,12 @@ function createAppsReport(
       groups: result.results.map((entry, index) =>
         appsGroupFromResult(entry, entry.label, index),
       ),
+      ...readinessAdvisoryFields(
+        result.results.map((entry, index) => ({
+          readiness: entry.readiness,
+          group: `apps-${index + 1}`,
+        })),
+      ),
     };
   }
 
@@ -633,6 +687,9 @@ function createAppsReport(
     score: scoreFromAppsResult(result),
     durationMs: result.durationMs,
     groups: [appsGroupFromResult(result, "MCP Apps Conformance", 0)],
+    ...readinessAdvisoryFields([
+      { readiness: result.readiness, group: "apps-1" },
+    ]),
   };
 }
 
@@ -709,6 +766,12 @@ function createOAuthReport(
           verdicts[index]!.passed
         )
       ),
+      ...readinessAdvisoryFields(
+        result.results.map((entry, index) => ({
+          readiness: entry.readiness,
+          group: `oauth-${index + 1}`,
+        })),
+      ),
     };
   }
 
@@ -731,6 +794,9 @@ function createOAuthReport(
         verdict.passed
       ),
     ],
+    ...readinessAdvisoryFields([
+      { readiness: result.readiness, group: "oauth-1" },
+    ]),
   };
 }
 
@@ -1153,6 +1219,9 @@ export function toConformanceReport(
       groups: [
         appsGroupFromResult(result, "MCP Tasks Conformance", 0, "tasks"),
       ],
+      ...readinessAdvisoryFields([
+        { readiness: result.readiness, group: "tasks-1" },
+      ]),
     };
   }
 

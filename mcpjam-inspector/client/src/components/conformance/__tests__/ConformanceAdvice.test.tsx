@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { ConformanceAdvice } from "../ConformanceAdvice";
+import { ConformanceAdvice, reportAdviceGroups } from "../ConformanceAdvice";
 
 const advice = (id: string, specStrength: string) => ({
   id,
@@ -62,6 +62,43 @@ describe("ConformanceAdvice", () => {
       "Suggested (SHOULD) Tasks statusstatus message",
       "Suggested (SHOULD) OAuth ississ message",
       "Optional (MAY) Protocol parseparse message",
+    ]);
+  });
+});
+
+describe("reportAdviceGroups", () => {
+  it("reads a saved report's readiness advisories as advice rows", () => {
+    expect(
+      reportAdviceGroups([
+        {
+          suiteKind: "oauth",
+          advisories: [
+            {
+              id: "readiness-oauth-iss-advertised",
+              title: "Advertise iss",
+              kind: "readiness",
+              status: "SHOULD",
+              message: "Set authorization_response_iss_parameter_supported.",
+            },
+            // Not a suite's advice: a directory-readiness finding.
+            { id: "x", title: "x", kind: "insight", status: "warn" },
+          ],
+        },
+        { suiteKind: "protocol" },
+      ]),
+    ).toEqual([
+      {
+        suite: "OAuth",
+        readiness: [
+          {
+            id: "readiness-oauth-iss-advertised",
+            title: "Advertise iss",
+            specStrength: "SHOULD",
+            message: "Set authorization_response_iss_parameter_supported.",
+          },
+        ],
+      },
+      { suite: "Protocol", readiness: [] },
     ]);
   });
 });

@@ -122,6 +122,7 @@ describe("ConformanceRunDetailPage", () => {
   beforeEach(() => {
     useArtifactQueryMock.mockReset();
     fetchArtifactMock.mockReset();
+    fetchArtifactMock.mockResolvedValue(reportBody([]));
   });
 
   it("says it is loading until the run arrives", () => {
@@ -260,6 +261,7 @@ describe("ConformanceRunDetailPage", () => {
       ]),
     );
     render(<ConformanceRunDetailPage runId="run_1" />);
+    const fetchesOnLoad = fetchArtifactMock.mock.calls.length;
 
     const oauth = screen
       .getByText("This server does not require authorization.")
@@ -273,7 +275,7 @@ describe("ConformanceRunDetailPage", () => {
     expect(
       screen.getByText(/checks in this suite\. None apply to this server\./),
     ).toBeInTheDocument();
-    expect(fetchArtifactMock).not.toHaveBeenCalled();
+    expect(fetchArtifactMock).toHaveBeenCalledTimes(fetchesOnLoad);
   });
 
   it.each(["oauth", "apps"])("keeps the skipped %s reason and not-run note", (suiteKind) => {
@@ -356,19 +358,85 @@ describe("ConformanceRunDetailPage", () => {
     expect(screen.getByText("not a JWT").className).not.toMatch(/text-red/);
   });
 
-  it("fetches a passing suite's report only when it is opened", async () => {
+  it("fetches each report once, on load, and reuses it when a suite opens", async () => {
     fetchArtifactMock.mockResolvedValue(
       reportBody([{ id: "ping", title: "Ping", status: "passed" }]),
     );
     useArtifactQueryMock.mockReturnValue(run([report()]));
     render(<ConformanceRunDetailPage runId="run_1" />);
 
-    expect(fetchArtifactMock).not.toHaveBeenCalled();
+    // On load, for the advice section; a passing suite stays closed.
+    expect(fetchArtifactMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Ping")).toBeNull();
 
     fireEvent.click(suiteHeader("protocol"));
 
     await screen.findByText("Ping");
     expect(fetchArtifactMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists the advice each saved report holds, like the live page", async () => {
+    fetchArtifactMock.mockImplementation(async (url: string) => ({
+      ok: true,
+      json: async () =>
+        url.includes("tasks")
+          ? {
+              groups: [],
+              advisories: [
+                {
+                  id: "tasks-readiness-failed-status-message",
+                  title: "Failed tasks explain why",
+                  group: "tasks-1",
+                  kind: "readiness",
+                  status: "SHOULD",
+                  message: "Add a statusMessage to failed tasks.",
+                },
+              ],
+            }
+          : {
+              groups: [],
+              advisories: [
+                {
+                  id: "readiness-tool-order-deterministic",
+                  title: "Tool order is stable",
+                  group: "mcp-1",
+                  kind: "readiness",
+                  status: "MAY",
+                  message: "Return tools in the same order.",
+                },
+              ],
+            },
+    }));
+    useArtifactQueryMock.mockReturnValue(
+      run([
+        report(),
+        report({
+          suiteKind: "tasks",
+          reportUrl: "https://artifacts.test/tasks.json",
+        }),
+      ]),
+    );
+    render(<ConformanceRunDetailPage runId="run_1" />);
+
+    const header = await screen.findByRole("button", {
+      name: /^Additional enhancements/,
+    });
+    expect(header).toHaveTextContent("Additional enhancements2");
+    fireEvent.click(header);
+    expect(screen.getByText("Failed tasks explain why")).toBeInTheDocument();
+    expect(
+      screen.getByText("Return tools in the same order."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no advice section for a report saved without advice", async () => {
+    useArtifactQueryMock.mockReturnValue(run([report()]));
+    render(<ConformanceRunDetailPage runId="run_1" />);
+
+    await waitFor(() => expect(fetchArtifactMock).toHaveBeenCalled());
+    expect(
+      screen.queryByRole("button", { name: /^Additional enhancements/ }),
+    ).toBeNull();
   });
 
   it("says what to do when a report cannot be loaded", async () => {

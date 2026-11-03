@@ -6,7 +6,7 @@
  * redacted artifact at `/conformance/shared/:token`.
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "convex/react";
 import { Loader2, Share2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -27,6 +27,11 @@ import {
   VerdictBadge,
 } from "./conformance-ui";
 import { CatalogList, UnscoredTag } from "./ConformanceCheckRows";
+import {
+  ConformanceAdvice,
+  reportAdviceGroups,
+  type SavedReportAdvisory,
+} from "./ConformanceAdvice";
 import { suiteCatalog } from "./conformance-catalogs";
 
 export type ConformanceRunListItem = {
@@ -336,6 +341,10 @@ export function ConformanceRunDetailPage({
       })
     | null
   >("conformanceRuns:getRun", runId ? { runId } : "skip");
+  const { advice, loadReport } = useSavedRunReports(
+    runId,
+    detail?.reports ?? [],
+  );
   if (detail === undefined) {
     return (
       <p className="p-6 text-sm text-muted-foreground" role="status">
@@ -414,11 +423,14 @@ export function ConformanceRunDetailPage({
           </p>
         ) : null}
 
+        <ConformanceAdvice groups={advice} />
+
         <div className="mt-3 overflow-hidden rounded-lg border border-border bg-popover">
           {detail.reports.map((report) => (
             <SavedSuiteRow
               key={report.suiteKind}
               report={report}
+              loadReport={loadReport}
               runSettled={
                 detail.status === "completed" ||
                 detail.status === "timed_out" ||
@@ -440,6 +452,86 @@ export const detailDateFormat = new Intl.DateTimeFormat("en-US", {
   minute: "2-digit",
 });
 
+/** A saved suite report, as far as the run page reads it. */
+type SavedReportJson = {
+  groups?: Array<{ cases?: SavedReportCase[] }>;
+  advisories?: unknown;
+};
+
+/** Read one suite's report from its link, once per suite. */
+type LoadReport = (suiteKind: string, url: string) => Promise<SavedReportJson>;
+
+/**
+ * Each saved suite's report, fetched once and shared by the advice section
+ * and the suite's checks. Read on page load, not when a suite opens: the
+ * advice count is one of the first things the page shows.
+ */
+function useSavedRunReports(
+  runId: string,
+  reports: ReadonlyArray<{ suiteKind: string; reportUrl?: string | null }>,
+) {
+  // Keyed by run too: the page can move to another run without remounting.
+  const cache = useRef(new Map<string, Promise<SavedReportJson>>());
+  const loadReport = useCallback<LoadReport>(
+    (suiteKind, url) => {
+      const key = `${runId}:${suiteKind}`;
+      let pending = cache.current.get(key);
+      if (!pending) {
+        pending = fetchArtifact(url).then((response) => {
+          // An expired link answers with an error body; never show that as the
+          // report. `fetchArtifact` renews the link and retries once.
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json() as Promise<SavedReportJson>;
+        });
+        cache.current.set(key, pending);
+      }
+      return pending;
+    },
+    [runId],
+  );
+
+  const [advisories, setAdvisories] = useState<
+    Record<string, SavedReportAdvisory[]>
+  >({});
+  // The signed links renew over time, so the effect keys on which suites
+  // have a report and reads the current links from here.
+  const urls = useRef(new Map<string, string>());
+  urls.current = new Map(
+    reports.flatMap((report) =>
+      report.reportUrl ? [[report.suiteKind, report.reportUrl] as const] : [],
+    ),
+  );
+  const withReport = [...urls.current.keys()].join(",");
+  useEffect(() => {
+    let cancelled = false;
+    for (const [suiteKind, url] of urls.current) {
+      loadReport(suiteKind, url)
+        .then((json) => {
+          if (cancelled || !Array.isArray(json.advisories)) return;
+          const list = json.advisories as SavedReportAdvisory[];
+          setAdvisories((current) => ({
+            ...current,
+            [`${runId}:${suiteKind}`]: list,
+          }));
+        })
+        .catch(() => {
+          // No advice for this suite; its row says the report is missing.
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, withReport, loadReport]);
+
+  const advice = reportAdviceGroups(
+    reports.map((report) => ({
+      suiteKind: report.suiteKind,
+      advisories: advisories[`${runId}:${report.suiteKind}`],
+    })),
+  );
+  return { advice, loadReport };
+}
+
 type SavedSuiteReport = {
   suiteKind: string;
   status: string;
@@ -458,12 +550,15 @@ function SavedSuiteRow({
   report,
   runSettled,
   cases,
+  loadReport,
 }: {
   report: SavedSuiteReport;
   /** The run as a whole is over, so an unsettled suite will never finish. */
   runSettled: boolean;
   /** Checks already in hand, as in a shared artifact; skips the fetch. */
   cases?: SavedReportCase[];
+  /** Shares the page's fetch of this report. */
+  loadReport?: LoadReport;
 }) {
   const copy = SUITE_COPY[report.suiteKind as keyof typeof SUITE_COPY] ?? {
     title: report.suiteKind,
@@ -543,7 +638,9 @@ function SavedSuiteRow({
         />
       ) : (
         <SuiteReportCases
+          suiteKind={report.suiteKind}
           reportUrl={report.reportUrl}
+          loadReport={loadReport}
           inlineCases={cases}
           incompleteReason={report.incompleteReason}
           load={expanded || override !== null}
@@ -568,12 +665,16 @@ type SavedReportCase = {
  * first time the row opens, not on page load.
  */
 function SuiteReportCases({
+  suiteKind,
   reportUrl,
+  loadReport,
   inlineCases,
   incompleteReason,
   load,
 }: {
+  suiteKind: string;
   reportUrl?: string | null;
+  loadReport?: LoadReport;
   inlineCases?: SavedReportCase[];
   incompleteReason: string | null;
   load: boolean;
@@ -584,15 +685,10 @@ function SuiteReportCases({
   const cases = inlineCases ?? fetched;
   useEffect(() => {
     if (inlineCases || !load || !reportUrl || fetched !== null) return;
+    if (!loadReport) return;
     let cancelled = false;
-    fetchArtifact(reportUrl)
-      .then((response) => {
-        // An expired link answers with an error body; never show that as the
-        // report. `fetchArtifact` renews the link and retries once.
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.json();
-      })
-      .then((json: { groups?: Array<{ cases?: SavedReportCase[] }> }) => {
+    loadReport(suiteKind, reportUrl)
+      .then((json) => {
         if (cancelled) return;
         setCases((json.groups ?? []).flatMap((group) => group.cases ?? []));
       })
@@ -602,7 +698,7 @@ function SuiteReportCases({
     return () => {
       cancelled = true;
     };
-  }, [inlineCases, load, reportUrl, fetched]);
+  }, [inlineCases, load, reportUrl, fetched, loadReport, suiteKind]);
 
   return (
     <div>
@@ -678,6 +774,7 @@ type SharedSuiteReport = {
     couldNotRun?: number;
   };
   groups?: Array<{ cases?: SavedReportCase[] }>;
+  advisories?: SavedReportAdvisory[];
 };
 
 type SharedConformanceArtifact = {
@@ -770,6 +867,14 @@ export function ConformanceSharedPage({ token }: { token: string }) {
         }
         serverName="Shared run"
         version={run.protocolVersion ?? "Auto"}
+      />
+      <ConformanceAdvice
+        groups={reportAdviceGroups(
+          suiteKinds.map((kind) => ({
+            suiteKind: kind,
+            advisories: reports[kind]!.advisories,
+          })),
+        )}
       />
       {suiteKinds.length > 0 ? (
         <div className="overflow-hidden rounded-lg border border-border bg-popover">
