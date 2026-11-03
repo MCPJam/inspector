@@ -2551,11 +2551,13 @@ export async function runHarnessTurn(
       // construct here. The cloud provider is built only when there is a box,
       // through the factory: E2B unless `HARNESS_SANDBOX_PROVIDER=docker`
       // (dev/CI only, refused in production).
+      let connectionPreparedByBroker = false;
       const sandbox =
         localPrepared !== null
           ? localPrepared.sandbox
           : createHarnessSandboxProvider({
               sandboxId: sandboxId!,
+              connectionPreparedByBroker: () => connectionPreparedByBroker,
               defaultWorkingDirectory,
               proxyUrl: () => auth.ANTHROPIC_BASE_URL ?? auth.OPENAI_BASE_URL,
               // The materialized secrets, as a session-wide env bag on every `run`
@@ -2683,6 +2685,7 @@ export async function runHarnessTurn(
           ({ mcpJson, keyToServerId } = nativeForwarding);
           harnessKeyToServerId = keyToServerId;
         }
+        connectionPreparedByBroker = true;
         auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
         modelEndpoint = org.brokeredEndpoint;
       }
