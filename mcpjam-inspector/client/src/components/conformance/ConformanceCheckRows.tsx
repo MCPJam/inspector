@@ -16,7 +16,11 @@ import type {
   MCPTasksCheckResult,
   OAuthConformanceStepResult,
 } from "@mcpjam/sdk";
-import { isTimedOutCheck } from "@mcpjam/sdk/browser";
+import {
+  isTimedOutCheck,
+  isMissingInputCheck,
+  missingInputMessage,
+} from "@mcpjam/sdk/browser";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { cn } from "@/lib/utils";
 import { Collapse, StatusIcon } from "./conformance-ui";
@@ -180,6 +184,17 @@ export function NeedsInputTag({
   );
 }
 
+export function NotRunTag() {
+  return (
+    <span
+      title="Not scored. This check needs an input before it can run."
+      className="shrink-0 rounded-sm border border-border/60 px-1 py-px text-xs leading-none text-muted-foreground"
+    >
+      Not run
+    </span>
+  );
+}
+
 export function CheckRow({
   check,
   pending = false,
@@ -188,7 +203,10 @@ export function CheckRow({
   pending?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const detailEntries = Object.entries(check.details ?? {});
+  const missingInput = isMissingInputCheck(check);
+  const detailEntries = Object.entries(check.details ?? {}).filter(
+    ([key]) => key !== "missingInput",
+  );
   const warnings = "warnings" in check ? check.warnings : undefined;
 
   return (
@@ -202,18 +220,18 @@ export function CheckRow({
         <span className="mt-0.5">
           <StatusIcon
             status={check.status}
-            skipReason={check.skipReason}
+            skipReason={missingInput ? undefined : check.skipReason}
             muted={pending}
           />
         </span>
-        {pending ? <UnscoredTag /> : null}
+        {missingInput ? <NotRunTag /> : pending ? <UnscoredTag /> : null}
         {isTimedOutCheck(check) ? <TimedOutTag /> : null}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span
             className={cn(
               "text-sm",
               check.status === "skipped" &&
-                check.skipReason !== "could-not-run" &&
+                (missingInput || check.skipReason !== "could-not-run") &&
                 "text-muted-foreground",
             )}
           >
@@ -222,7 +240,7 @@ export function CheckRow({
           {check.error &&
           !expanded && showsMessageShut(check.status, check.skipReason) ? (
             <ResultMessage
-              message={check.error.message}
+              message={missingInputMessage(check) ?? check.error.message}
               tone={
                 check.status === "failed" && !pending ? "error" : "neutral"
               }
@@ -245,7 +263,7 @@ export function CheckRow({
           </div>
           {check.error && (
             <ResultMessage
-              message={check.error.message}
+              message={missingInputMessage(check) ?? check.error.message}
               tone={
                 check.status === "failed" && !pending ? "error" : "neutral"
               }

@@ -73,7 +73,52 @@ describe("computeConformanceScore", () => {
     expect(score.score).toBe(100);
   });
 
-  it("keeps could-not-run in the denominator, so an incomplete run cannot reach 100", () => {
+  it.each(["tasksProbe", "logProbe", "inputRequiredProbe", "toolCallProbe"])(
+    "leaves missing %s input unscored while keeping the run incomplete",
+    (missingInput) => {
+      const score = computeConformanceScore([
+        ...passing(25),
+        {
+          ...check("missing", "skipped", "could-not-run"),
+          details: { missingInput },
+        },
+      ]);
+      expect(score).toMatchObject({
+        score: 100,
+        applicable: 25,
+        couldNotRun: 1,
+        failed: 0,
+        outcome: "incomplete",
+      });
+      const pooled = pooledConformanceScore([
+        score,
+        computeConformanceScore(passing(5)),
+      ]);
+      expect(pooled).toMatchObject({
+        score: 100,
+        applicable: 30,
+        couldNotRun: 1,
+        outcome: "incomplete",
+      });
+    }
+  );
+
+  it("has no score when every selected check needs input", () => {
+    const score = computeConformanceScore([
+      {
+        ...check("missing", "skipped", "could-not-run"),
+        details: { missingInput: "tasksProbe" },
+      },
+    ]);
+    expect(score).toMatchObject({
+      score: null,
+      applicable: 0,
+      couldNotRun: 1,
+      outcome: "incomplete",
+    });
+  });
+
+  it("keeps execution failures in the denominator", () => {
     const score = computeConformanceScore([
       ...passing(25),
       check("unrun", "skipped", "could-not-run"),

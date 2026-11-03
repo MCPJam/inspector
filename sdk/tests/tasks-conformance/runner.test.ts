@@ -15,6 +15,8 @@ import {
 } from "../../src/tasks-conformance/index.js";
 import type { MCPTasksCheckResult } from "../../src/tasks-conformance/index.js";
 import * as operations from "../../src/operations.js";
+import { isMissingInputCheck } from "../../src/conformance-input.js";
+import { scoreFromTasksResult } from "../../src/conformance-score.js";
 
 const EXT_ID = "io.modelcontextprotocol/tasks";
 const CAPS_META_KEY = "io.modelcontextprotocol/clientCapabilities";
@@ -1049,6 +1051,8 @@ describe("MCPTasksConformanceTest", () => {
     ).toHaveLength(11);
     expect(result.incompleteReason).toContain("--tool-name");
     expect(result.incompleteReason).toContain("long_job");
+    expect(result.checks.filter(isMissingInputCheck)).toHaveLength(11);
+    expect(scoreFromTasksResult(result)).toMatchObject({ score: 100, outcome: "incomplete", failed: 0 });
   });
 
   it("reports INCOMPLETE when the requested probe tool is not listed", async () => {

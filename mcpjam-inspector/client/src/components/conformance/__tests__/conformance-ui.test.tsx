@@ -14,6 +14,26 @@ function passedScore(score: number): ScoreSummary {
 }
 
 describe("OverallScoreCard", () => {
+  it("keeps a score of 100 visibly incomplete when some checks need input", () => {
+    render(
+      <OverallScoreCard
+        score={{ ...passedScore(100), outcome: "incomplete", couldNotRun: 2 }}
+        serverName="srv"
+        version="2025-11-25"
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Incomplete. 2 checks need input. Select tools in setup and run again.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("10 passed · 2 not run (missing input)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("10/10 · partial")).toBeInTheDocument();
+    expect(screen.queryByText("Fully conformant.")).toBeNull();
+  });
+
   it("reads a passed run with advice as advised even without its advisories", () => {
     // A saved run's summary carries an advice count, not an advisories list.
     render(
