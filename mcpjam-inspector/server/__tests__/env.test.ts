@@ -249,6 +249,29 @@ describe("env loader", () => {
     );
   });
 
+  it("prints an invalid MCPJAM_SANDBOX_ORIGIN warning on stderr once in production without VERBOSE_LOGS", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("VERBOSE_LOGS", "");
+    const { logger } = await import("../utils/logger.js");
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    try {
+      process.env.MCPJAM_SANDBOX_ORIGIN = "sandbox.customer.example";
+
+      expect(getInspectorClientRuntimeConfig().sandboxOrigin).toBeUndefined();
+      expect(getInspectorClientRuntimeConfig().sandboxOrigin).toBeUndefined();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(stderr).toHaveBeenCalledTimes(1);
+      expect(stderr).toHaveBeenCalledWith(`${warn.mock.calls[0][0]}\n`);
+    } finally {
+      stderr.mockRestore();
+      warn.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it.each(["javascript:alert(1)", "ftp://sandbox.customer.example", "sandbox"])(
     "serves no sandbox origin for %s, and says so once",
     async (value) => {

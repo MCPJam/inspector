@@ -145,9 +145,12 @@ function sandboxIsolationFault(status: SandboxIsolationStatus): string | null {
       const listed =
         resolveSandboxIsolation(SANDBOX_HOSTS, MCPJAM_HOSTED_ORIGIN, null) ===
         "same-origin";
+      // The parsed origin, never the raw value, as for "unpartitioned" below.
+      // This verdict is only reached once the value has parsed.
+      const appOrigin = new URL(MCPJAM_HOSTED_ORIGIN).origin;
       return listed
-        ? `SANDBOX_HOSTS contains the app's own host from MCPJAM_HOSTED_ORIGIN (${MCPJAM_HOSTED_ORIGIN}): MCP Apps widgets share cookies and storage with the host app, and that hostname now answers nothing but the sandbox proxy.`
-        : `MCPJAM_SANDBOX_ORIGIN is the app's own origin from MCPJAM_HOSTED_ORIGIN (${MCPJAM_HOSTED_ORIGIN}): MCP Apps widgets share cookies and storage with the host app. Point it at a separate hostname and list that hostname in SANDBOX_HOSTS.`;
+        ? `SANDBOX_HOSTS contains the app's own host from MCPJAM_HOSTED_ORIGIN (${appOrigin}): MCP Apps widgets share cookies and storage with the host app, and that hostname now answers nothing but the sandbox proxy.`
+        : `MCPJAM_SANDBOX_ORIGIN is the app's own origin from MCPJAM_HOSTED_ORIGIN (${appOrigin}): MCP Apps widgets share cookies and storage with the host app. Point it at a separate hostname and list that hostname in SANDBOX_HOSTS.`;
     }
     case "unpartitioned": {
       // The parsed origin, never the raw value, which could carry credentials
