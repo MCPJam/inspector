@@ -1,7 +1,9 @@
 import {
+  SAVE_CALL_FOR_SIGN_IN_FAILED_MESSAGE,
   markPendingDirectScopeStepUpReplayReady,
   savePendingDirectScopeStepUpReplay,
 } from "@/lib/scope-step-up-replay";
+import { CHAT_AUTH_RECOVERY_MESSAGE } from "@/lib/chat-auth-recovery";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ToolsTab } from "../ToolsTab";
@@ -524,7 +526,7 @@ describe("ToolsTab mid-session sign-in", () => {
             },
       );
       const expectedText = refuses
-        ? "MCPJam couldn’t continue this call after sign-in"
+        ? CHAT_AUTH_RECOVERY_MESSAGE
         : "write completed once";
       const restored = render(
         <ToolsTab
@@ -660,7 +662,7 @@ describe("ToolsTab mid-session sign-in", () => {
         );
         await waitFor(() =>
           expect(document.body.textContent).toContain(
-            "MCPJam couldn’t save this call for sign-in",
+            SAVE_CALL_FOR_SIGN_IN_FAILED_MESSAGE,
           ),
         );
         expect(initiateOAuthMock).not.toHaveBeenCalled();
