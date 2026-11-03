@@ -1289,10 +1289,10 @@ describe("ConformanceTab", () => {
 
     // The failed step reads as unscored, and does not fail the run.
     fireEvent.click(suiteHeader("oauth"));
-    const row = screen.getByText(left.title).closest("div")!.parentElement!;
+    const row = screen.getByText(left.title).closest("button")!;
     expect(within(row).getByText("unscored")).toBeInTheDocument();
     // Its failure is reported, not counted: grey, not red.
-    const message = screen.getByText("profile shape is wrong");
+    const message = within(row).getByText("profile shape is wrong");
     expect(message).toHaveClass("text-muted-foreground");
     expect(message).not.toHaveClass("text-red-600");
     expect(screen.queryByText(/^Not conformant\./)).toBeNull();
@@ -2512,11 +2512,12 @@ describe("ConformanceTab", () => {
     await runToCompletion();
     fireEvent.click(suiteHeader("protocol"));
 
-    // Shut, an era skip says nothing to act on, so it carries no box.
-    expect(screen.queryByText(/Not applicable to the legacy era/)).toBeNull();
+    // Shut, an era skip stays in the inert content without a row preview.
+    const reason = screen.getByText(/Not applicable to the legacy era/);
+    expect(isCollapsed(reason)).toBe(true);
 
     clickRow("No Session Id Minted");
-    const reason = screen.getByText(/Not applicable to the legacy era/);
+    expect(isCollapsed(reason)).toBe(false);
     expect(reason).toHaveClass("text-muted-foreground");
     expect(reason).not.toHaveClass("text-red-600");
   });
@@ -3487,13 +3488,15 @@ describe("ConformanceTab", () => {
         .closest("button"),
     ).toBe(pendingRow);
     // An unscored finding reads as information, not as a failure that counts.
-    expect(screen.getByText("schema mismatch")).toHaveClass(
+    expect(within(pendingRow!).getByText("schema mismatch")).toHaveClass(
       "text-muted-foreground",
     );
 
     const scoredRow = screen.getByText("Ping").closest("button");
     expect(scoredRow).not.toHaveTextContent("unscored");
-    expect(screen.getByText("pong missing")).toHaveClass("text-red-600");
+    expect(within(scoredRow!).getByText("pong missing")).toHaveClass(
+      "text-red-600",
+    );
   });
 
   it("badges an incomplete tasks run distinctly from a passing one", async () => {

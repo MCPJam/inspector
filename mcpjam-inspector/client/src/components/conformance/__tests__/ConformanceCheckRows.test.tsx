@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { MCPCheckResult, OAuthConformanceStepResult } from "@mcpjam/sdk";
 import { CheckRow, OAuthStepRow } from "../ConformanceCheckRows";
 
@@ -48,7 +48,9 @@ describe("CheckRow", () => {
     );
     expect(screen.getByText("Timed out")).toBeInTheDocument();
     expect(
-      screen.getByText("The server did not answer within 15 seconds."),
+      within(screen.getByRole("button")).getByText(
+        "The server did not answer within 15 seconds.",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -108,5 +110,54 @@ describe("OAuthStepRow", () => {
     fireEvent.click(screen.getByRole("button"));
     expect(screen.getByText("Details")).toBeInTheDocument();
     expect(screen.getByText(/Provider code: invalid_client/)).toBeInTheDocument();
+  });
+});
+
+describe.each(["check", "OAuth step"] as const)("%s expansion", (kind) => {
+  it("keeps the explanation and error together outside the expanded button", () => {
+    const explanation = "Explain the requirement before the failure.";
+    const message = "The server did not meet the requirement.";
+    render(
+      kind === "check" ? (
+        <CheckRow
+          check={check({
+            description: explanation,
+            status: "failed",
+            error: { message },
+          })}
+        />
+      ) : (
+        <OAuthStepRow
+          step={step({
+            summary: explanation,
+            status: "failed",
+            error: { message },
+          })}
+        />
+      ),
+    );
+    const button = screen.getByRole("button");
+    const description = screen.getByText(explanation);
+    expect(description.closest("[inert]")).not.toBeNull();
+    expect(within(button).getByText(message)).toBeInTheDocument();
+
+    fireEvent.click(button);
+
+    expect(description.closest("[inert]")).toBeNull();
+    expect(button).not.toHaveAccessibleName(/Explain the requirement/);
+    expect(button).not.toHaveAccessibleName(/The server did not meet/);
+    const error = screen.getByText(message);
+    expect(error.closest("button")).toBeNull();
+    expect(
+      description.compareDocumentPosition(error) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    fireEvent.click(button);
+
+    expect(screen.getByText(explanation)).toBe(description);
+    expect(description.closest("[inert]")).not.toBeNull();
+    expect(error.closest("[inert]")).not.toBeNull();
+    expect(within(button).getByText(message)).toBeInTheDocument();
   });
 });
