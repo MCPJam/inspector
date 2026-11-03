@@ -1,4 +1,6 @@
 import { resolveHostedChatSetup } from "./resolve-hosted-chat-setup.js";
+import { buildHostConnectionPins } from "../host-connection-pins.js";
+import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import {
   localHarnessIdOf,
   shouldUseLocalHarness,
@@ -103,8 +105,10 @@ export async function resolveManagedTurnSetup(args: {
 }) {
   const { c, rawBody, bearerToken, localIngress, rpcCollector } = args;
   const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
-  const { initializePins, mcpProtocolVersionsByServerId } =
-    extractMcpInitializeOptions(rawBody);
+  const {
+    initializePins,
+    mcpProtocolVersionsByServerId: requestedProtocolPins,
+  } = extractMcpInitializeOptions(rawBody);
   const body = rawBody as unknown as ChatV2Request & {
     projectId: string;
     selectedServerIds: string[];
@@ -262,36 +266,25 @@ export async function resolveManagedTurnSetup(args: {
     : scenarioEnvironment
       ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
       : undefined;
+  const hostPins =
+    authoritativeConnectionPolicy && hostRuntimeConfig
+      ? buildHostConnectionPins(hostRuntimeConfig, WEB_STREAM_TIMEOUT_MS)
+      : undefined;
+  const mcpProtocolVersionsByServerId = hostPins
+    ? hostPins.mcpProtocolVersionsByServerId
+    : requestedProtocolPins;
   const xaaPolicy =
     authoritativeConnectionPolicy && hostRuntimeConfig
-      ? xaaPolicyFromMcpProfile(
-          (
-            hostRuntimeConfig as {
-              mcpProfile?: unknown;
-            }
-          ).mcpProfile,
-        )
+      ? xaaPolicyFromMcpProfile(hostRuntimeConfig.mcpProfile)
       : parseXaaPolicyValue(rawBody.xaaPolicy);
   const effectiveInitializePins =
     authoritativeConnectionPolicy && hostRuntimeConfig
       ? applyHostConformanceKnobs(
-          applyHostParamMirroring(
-            initializePins,
-            mirrorToolParamHeadersFromMcpProfile(
-              (
-                hostRuntimeConfig as {
-                  mcpProfile?: unknown;
-                }
-              ).mcpProfile,
-            ),
+          applyHostParamMirroring<NonNullable<typeof initializePins>>(
+            hostPins?.initializePins,
+            mirrorToolParamHeadersFromMcpProfile(hostRuntimeConfig.mcpProfile),
           ),
-          conformanceKnobsFromMcpProfile(
-            (
-              hostRuntimeConfig as {
-                mcpProfile?: unknown;
-              }
-            ).mcpProfile,
-          ),
+          conformanceKnobsFromMcpProfile(hostRuntimeConfig.mcpProfile),
         )
       : initializePins;
   const resolvedExecution = resolveExecutionContext({

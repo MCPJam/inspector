@@ -57,6 +57,7 @@ import {
 import { ErrorCode, WebRouteError } from "../errors.js";
 import { parseChallengeHeader } from "@mcpjam/sdk";
 import { __resetPrivateAuthorizationServerMaterialCacheForTests } from "../../../utils/hosted-oauth-refresh.js";
+import { buildHostConnectionPins } from "../../../services/host-connection-pins.js";
 
 // This device has approved every stdio command: the per-device approval gate
 // has its own suite, local-server-resolver.stdio-approval.test.ts.
@@ -112,6 +113,120 @@ describe("web auth manager batching", () => {
     } else {
       process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
     }
+  });
+
+  it.each([true, false])(
+    "keeps a persisted modern OAuth server on its wire era with a saved client (browser map=%s)",
+    async (browserMap) => {
+      global.fetch = vi.fn(async () =>
+        Response.json({
+          results: {
+            "server-1": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              oauthAccessToken: "stored-test-token",
+              serverConfig: {
+                transportType: "http",
+                url: "https://fixture.example/mcp",
+                useOAuth: true,
+                oauthProtocolMode: "2026-07-28",
+                oauthProtocolVersion: "2026-07-28",
+                oauthRegistrationStrategy: "dcr",
+              },
+            },
+          },
+        }),
+      );
+      const hostPins = buildHostConnectionPins(
+        {
+          mcpProfile: {
+            mcpProtocolVersion: "auto",
+            initialize: {
+              clientInfo: { name: "saved-client", version: "1.0" },
+              supportedProtocolVersions: ["2025-11-25"],
+            },
+          },
+        },
+        10_000,
+      );
+      const result = await createAuthorizedManager(
+        {},
+        "bearer",
+        "project",
+        ["server-1"],
+        hostPins.timeoutMs,
+        undefined,
+        undefined,
+        {
+          lazyConnect: true,
+          initializePins: hostPins.initializePins,
+          ...(browserMap
+            ? {
+                mcpProtocolVersionsByServerId: {
+                  "server-1": "2026-07-28" as const,
+                },
+              }
+            : {}),
+        },
+      );
+      expect(result.authorizedServerConfigs?.["server-1"]).toMatchObject({
+        mcpProtocolVersion: "2026-07-28",
+      });
+    },
+  );
+
+  it.each([
+    { label: "Auto does not reuse its last OAuth profile", mode: "auto", useOAuth: true, override: undefined, expected: "2025-11-25" },
+    { label: "legacy rows retain their concrete OAuth profile", mode: undefined, useOAuth: true, override: undefined, expected: "2026-07-28" },
+    { label: "an explicit legacy mode does not reuse a modern profile", mode: "2025-11-25", useOAuth: true, override: undefined, expected: "2025-11-25" },
+    { label: "non-OAuth servers do not reuse OAuth metadata", mode: "2026-07-28", useOAuth: false, override: undefined, expected: "2025-11-25" },
+    { label: "the saved per-server override wins over OAuth and host defaults", mode: "2026-07-28", useOAuth: true, override: "2025-06-18", expected: "2025-06-18" },
+  ] as const)("$label", async ({ mode, useOAuth, override, expected }) => {
+    global.fetch = vi.fn(async () => Response.json({
+      results: {
+        "server-1": {
+          ok: true,
+          role: "member",
+          accessLevel: "project_member",
+          permissions: { chatOnly: false },
+          ...(useOAuth ? { oauthAccessToken: "stored-test-token" } : {}),
+          serverConfig: {
+            transportType: "http",
+            url: "https://fixture.example/mcp",
+            useOAuth,
+            ...(mode !== undefined ? { oauthProtocolMode: mode } : {}),
+            oauthProtocolVersion: "2026-07-28",
+          },
+        },
+      },
+    }));
+    const pins = buildHostConnectionPins({
+      mcpProfile: {
+        mcpProtocolVersion: "2025-11-25",
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+        },
+      },
+      ...(override ? {
+        serverConnectionOverrides: {
+          "server-1": { mcpProtocolVersionOverride: override },
+        },
+      } : {}),
+    }, 10_000);
+    const result = await createAuthorizedManager(
+      {}, "bearer", "project", ["server-1"], pins.timeoutMs,
+      undefined, undefined,
+      {
+        lazyConnect: true,
+        initializePins: pins.initializePins,
+        mcpProtocolVersionsByServerId: pins.mcpProtocolVersionsByServerId,
+      },
+    );
+    expect(result.authorizedServerConfigs?.["server-1"]).toMatchObject({
+      mcpProtocolVersion: expected,
+    });
   });
 
   it.each(["saved-account", "other-account", undefined])("accepts a single selected credential only when its returned identity matches (%s)", async returnedId => {
