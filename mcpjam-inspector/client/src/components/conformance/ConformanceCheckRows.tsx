@@ -87,10 +87,11 @@ function ResultMessage({
         tone === "error"
           ? "border-red-500/20 bg-red-500/5 text-red-600 dark:text-red-400"
           : "border-border/60 bg-muted/30 text-muted-foreground",
-        !expanded && "line-clamp-2",
       )}
     >
-      {message}
+      {/* Clamped inside the padded box: clamped on the box itself, a third
+          line shows through the bottom padding. */}
+      <span className={cn(!expanded && "line-clamp-2")}>{message}</span>
     </span>
   );
 }
