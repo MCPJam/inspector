@@ -212,13 +212,26 @@ export function useChatAuthRecoveryFailures(): ChatAuthRecoveryFailure[] {
   return useMemo(() => read().failures, [raw]);
 }
 
+const CANCEL_KEY = "mcp-chat-auth-cancel-v1";
+// Same bound as `reported`. A claim outlives the call it cancels by far: a
+// waiting call expires within minutes, long before 200 newer ones are claimed.
+const MAX_CANCEL_CLAIMS = 200;
+function readCancelClaims(): string[] {
+  const value: unknown = JSON.parse(sessionStorage.getItem(CANCEL_KEY) ?? "[]");
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
 /** Persist before dispatch; unavailable storage must never allow a repeated cancellation. */
 export function claimMissingCallCancellation(continuationId: string): boolean {
-  const key = "mcp-chat-auth-cancel-v1:" + continuationId;
   try {
-    if (sessionStorage.getItem(key)) return false;
-    sessionStorage.setItem(key, "attempted");
-    return sessionStorage.getItem(key) === "attempted";
+    const claims = readCancelClaims();
+    if (claims.includes(continuationId)) return false;
+    sessionStorage.setItem(
+      CANCEL_KEY,
+      JSON.stringify([...claims, continuationId].slice(-MAX_CANCEL_CLAIMS)),
+    );
+    return readCancelClaims().includes(continuationId);
   } catch {
     return false;
   }

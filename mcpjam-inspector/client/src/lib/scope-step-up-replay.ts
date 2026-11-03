@@ -131,8 +131,12 @@ function currentProjectSegment(): string {
 }
 
 export class PendingDirectReplayConflictError extends Error {
-  constructor() {
-    super("Another call is waiting for sign-in. Finish that sign-in or wait for it to expire, then try again.");
+  constructor(waiting: "signed_in_on_this_server" | "signing_in") {
+    super(
+      waiting === "signed_in_on_this_server"
+        ? "A call on this server is waiting to run again after sign-in. Open the page you started it from to run it, then try again."
+        : "Another call is waiting for sign-in. Finish that sign-in or wait for it to expire, then try again.",
+    );
     this.name = "PendingDirectReplayConflictError";
   }
 }
@@ -146,17 +150,23 @@ export function savePendingDirectScopeStepUpReplay(input: {
   const now = Date.now();
   const previous = input.previous;
   const waiting = readStored();
-  if (
-    !previous &&
-    waiting &&
-    waiting.expiresAt > now &&
-    // A signed-in call waiting to replay keeps its slot. A call this page is
-    // signing in or replaying does too; one an earlier page left waiting or
-    // replaying was abandoned.
-    (waiting.phase === "ready" ||
-      (waiting.callId !== undefined && drivenByThisPage.has(waiting.callId)))
-  ) {
-    throw new PendingDirectReplayConflictError();
+  if (!previous && waiting && waiting.expiresAt > now) {
+    // A signed-in call keeps its slot against calls on its own server, where
+    // it replays. A call on another server takes the slot: the user moved
+    // on, and the store holds one call.
+    if (
+      waiting.phase === "ready" &&
+      waiting.descriptor.serverName === input.descriptor.serverName
+    )
+      throw new PendingDirectReplayConflictError("signed_in_on_this_server");
+    // A call this page is signing in or replaying keeps its slot too; one an
+    // earlier page left waiting or replaying was abandoned.
+    if (
+      waiting.phase !== "ready" &&
+      waiting.callId !== undefined &&
+      drivenByThisPage.has(waiting.callId)
+    )
+      throw new PendingDirectReplayConflictError("signing_in");
   }
   if (previous) {
     const current = readStored();

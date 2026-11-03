@@ -7,7 +7,7 @@ import {
   claimPendingDirectScopeStepUpReplay,
   clearPendingDirectScopeStepUpReplay,
 } from "../scope-step-up-replay";
-const save = (callId: string) => {
+const save = (callId: string, serverName = "same") => {
   savePendingDirectScopeStepUpReplay({
     operation: {
       resourceUrl: "https://example.test/mcp",
@@ -17,18 +17,18 @@ const save = (callId: string) => {
     descriptor: {
       kind: "tool",
       surface: "tools",
-      serverName: "same",
+      serverName,
       toolName: "read",
       parameters: {},
       authAttempt: {
         projectId: "p1",
-        serverId: "same",
+        serverId: serverName,
         surface: "tools",
         callId,
       },
     },
   });
-  setPendingDirectScopeStepUpReplayFlowDigest("same", "flow-" + callId);
+  setPendingDirectScopeStepUpReplayFlowDigest(serverName, "flow-" + callId);
 };
 describe("direct replay identity", () => {
   beforeEach(() => {
@@ -226,13 +226,26 @@ describe("direct replay identity", () => {
     ).toBeDefined();
     expect(() => save("b")).toThrow("Another call is waiting");
   });
-  it("keeps a signed-in call that is waiting to be replayed", () => {
+  it("keeps a signed-in call against a call on its own server", () => {
     save("a");
     markPendingDirectScopeStepUpReplayReady("same", "flow-a");
     window.dispatchEvent(
       Object.assign(new Event("pageshow"), { persisted: true }),
     );
-    expect(() => save("b")).toThrow("Another call is waiting");
+    expect(() => save("b")).toThrow(
+      "A call on this server is waiting to run again after sign-in.",
+    );
+  });
+  it("lets a call on another server replace a signed-in call", () => {
+    save("a");
+    markPendingDirectScopeStepUpReplayReady("same", "flow-a");
+    window.dispatchEvent(
+      Object.assign(new Event("pageshow"), { persisted: true }),
+    );
+    expect(() => save("b", "other")).not.toThrow();
+    expect(peekPendingDirectScopeStepUpReplay()?.descriptor.serverName).toBe(
+      "other",
+    );
   });
   it("an old request finishing cannot clean up a newer pending call", () => {
     save("a");
