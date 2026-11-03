@@ -3,7 +3,7 @@ import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { DirectoryReadinessSection } from "@/components/conformance/directory-readiness/DirectoryReadinessSection";
 import { OAuthPopupBlockedDialog } from "@/components/conformance/OAuthPopupBlockedDialog";
-import { ConformanceAdvice } from "./ConformanceAdvice";
+import { ConformanceAdvice, suiteAdviceGroups } from "./ConformanceAdvice";
 import { Loader2, AlertTriangle, Settings, Share2 } from "lucide-react";
 import { UncheckedAdvice } from "@/components/conformance/UncheckedAdvice";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -629,20 +629,7 @@ export function ConformanceContent({
 
                 <ConformanceAdvice
                   key={`${runVersion}-advice`}
-                  groups={[
-                    {
-                      suite: SUITE_COPY.protocol.title,
-                      readiness: protocol.result?.readiness,
-                    },
-                    {
-                      suite: SUITE_COPY.tasks.title,
-                      readiness: tasks.result?.readiness,
-                    },
-                    {
-                      suite: SUITE_COPY.oauth.title,
-                      readiness: oauth.result?.readiness,
-                    },
-                  ]}
+                  groups={suiteAdviceGroups({ protocol, apps, tasks, oauth })}
                 />
 
                 <div className="mt-3 overflow-hidden rounded-lg border border-border bg-popover">

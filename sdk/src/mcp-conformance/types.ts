@@ -504,10 +504,11 @@ export const READINESS_ERAS: Record<MCPReadinessId, MCPCheckEras> = {
 
 /**
  * How strongly the spec states the advice. Everything on the readiness channel
- * is SHOULD/RECOMMENDED/MAY strength by construction — a MUST belongs in
- * {@link MCP_CHECK_IDS}, where it can fail the run.
+ * is SHOULD/MAY strength by construction — a MUST belongs in
+ * {@link MCP_CHECK_IDS}, where it can fail the run. "Deprecation Notice" is
+ * for a field the spec marks deprecated without a SHOULD or MAY.
  */
-export type MCPReadinessSpecStrength = "SHOULD" | "RECOMMENDED" | "MAY";
+export type MCPReadinessSpecStrength = "SHOULD" | "MAY" | "Deprecation Notice";
 
 export interface MCPReadinessWarning {
   id: MCPReadinessId;

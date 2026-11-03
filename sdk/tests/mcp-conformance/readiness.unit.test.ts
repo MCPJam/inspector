@@ -2,7 +2,7 @@
  * Phase 7 §15.4 — the readiness / interoperability channel.
  *
  * The contract under test is a separation, not a verdict: non-MUST advice
- * (SHOULD / RECOMMENDED / MAY) is reported as a warning and NEVER becomes a
+ * (SHOULD / MAY) is reported as a warning and NEVER becomes a
  * check result, so it cannot move `passed`, a check status, or the category
  * summary. These tests drive the collectors directly so each advice item can
  * be provoked without needing a server that misbehaves in that exact way.

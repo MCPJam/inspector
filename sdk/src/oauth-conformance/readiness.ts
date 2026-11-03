@@ -31,7 +31,7 @@ export function oauthReadiness(
         id,
         title: OAUTH_READINESS_CATALOG[id].title,
         severity: "warning",
-        specStrength: "RECOMMENDED",
+        specStrength: "SHOULD",
         message: `Authorization server ${issuer} does not advertise authorization_response_iss_parameter_supported; emitting iss lets clients detect authorization-server mix-up attacks`,
         details: { issuer },
       },

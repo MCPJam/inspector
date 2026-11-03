@@ -27,8 +27,12 @@ describe("ConformanceAdvice", () => {
             suite: "Protocol",
             readiness: [advice("parse", "MAY"), advice("ttl", "SHOULD")],
           },
+          {
+            suite: "Apps",
+            readiness: [advice("legacy", "Deprecation Notice")],
+          },
           { suite: "Tasks", readiness: [advice("status", "SHOULD")] },
-          { suite: "OAuth", readiness: [advice("iss", "RECOMMENDED")] },
+          { suite: "OAuth", readiness: [advice("iss", "SHOULD")] },
         ]}
       />,
     );
@@ -38,10 +42,10 @@ describe("ConformanceAdvice", () => {
     });
     // Closed, with the count, so the score is what a run shows first.
     expect(header).toHaveAttribute("aria-expanded", "false");
-    expect(header).toHaveTextContent("Additional enhancements4");
+    expect(header).toHaveTextContent("Additional enhancements5");
 
     // The spec words link to their definitions, outside the toggle.
-    for (const word of ["SHOULD", "RECOMMENDED", "MAY"]) {
+    for (const word of ["SHOULD", "MAY"]) {
       expect(screen.getByRole("link", { name: word })).toHaveAttribute(
         "href",
         "https://datatracker.ietf.org/doc/html/bcp14",
@@ -54,8 +58,9 @@ describe("ConformanceAdvice", () => {
       screen.getAllByRole("listitem").map((row) => row.textContent),
     ).toEqual([
       "Suggested (SHOULD) Protocol ttlttl message",
+      "Deprecation notice Apps legacylegacy message",
       "Suggested (SHOULD) Tasks statusstatus message",
-      "Suggested (RECOMMENDED) OAuth ississ message",
+      "Suggested (SHOULD) OAuth ississ message",
       "Optional (MAY) Protocol parseparse message",
     ]);
   });
