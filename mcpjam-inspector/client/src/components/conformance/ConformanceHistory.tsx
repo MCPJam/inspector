@@ -6,16 +6,13 @@
  * redacted artifact at `/conformance/shared/:token`.
  */
 
-import { useCallback, useEffect, useState } from "react";
-import { useAction, useQuery } from "convex/react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
+import { useEffect, useState } from "react";
+import { useQuery } from "convex/react";
 import { Loader2, Share2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { Badge } from "@mcpjam/design-system/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FlaskConical } from "lucide-react";
 import { buildConformanceRunPath, useAppNavigate } from "@/lib/app-navigation";
-import { toast } from "@/lib/toast";
 import { ShareDialog } from "@/components/sharing/ShareDialog";
 import { ResourceSharePanel } from "@/components/sharing/ResourceSharePanel";
 import { SharedArtifactPage } from "@/components/sharing/SharedArtifactPage";
@@ -257,115 +254,53 @@ export function ConformanceHistory({
 }
 
 /**
- * Share for one saved run. With unified sharing it opens the share dialog;
- * without, it copies a link (or turns an existing one off). Only a finished
- * run can be shared.
+ * Share for one saved run: opens the share dialog. Only a finished run can be
+ * shared.
  */
 export function ConformanceRunShareButton({
   runId,
   finished,
-  sharingEnabled,
 }: {
   runId: string;
   finished: boolean;
-  sharingEnabled: boolean;
 }) {
-  const setSharing = useAction("conformanceRuns:setSharing" as any);
-  const unifiedShare =
-    useFeatureFlagEnabled("unified-share-conformance") === true;
-  const [shareBusy, setShareBusy] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
-
-  const copyShare = useCallback(
-    async (enabled: boolean) => {
-      setShareBusy(true);
-      try {
-        const result = (await setSharing({
-          runId,
-          enabled,
-        })) as { enabled: boolean; token?: string | null; shareUrl?: string };
-        if (result.enabled && (result.shareUrl || result.token)) {
-          const url =
-            result.shareUrl ??
-            `${window.location.origin}/conformance/shared/${result.token}`;
-          await navigator.clipboard.writeText(url);
-          toast.success("Share link copied");
-        } else {
-          toast.success("Sharing turned off");
-        }
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : "Could not update sharing",
-        );
-      } finally {
-        setShareBusy(false);
-      }
-    },
-    [runId, setSharing],
-  );
 
   return (
     <>
-      {unifiedShare ? (
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={!finished}
-          onClick={() => setShareOpen(true)}
-          data-testid="conformance-share-open"
-        >
-          <Share2 className="size-3.5" aria-hidden /> Share
-        </Button>
-      ) : sharingEnabled ? (
-        // A run already shared keeps this one, so its link can still be
-        // turned off.
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={shareBusy || !finished}
-          onClick={() => void copyShare(false)}
-        >
-          <Share2 className="size-3.5" aria-hidden /> Shareable
-        </Button>
-      ) : (
-        // No "Private" label: a private run is the default. This is the
-        // only way to create a link while unified sharing is off.
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={shareBusy || !finished}
-          onClick={() => void copyShare(true)}
-        >
-          <Share2 className="size-3.5" aria-hidden /> Share
-        </Button>
-      )}
-      {unifiedShare ? (
-        <ShareDialog
-          open={shareOpen}
-          onOpenChange={setShareOpen}
-          title="Share conformance run"
-          description="A frozen redacted snapshot. Guests who redeem the link are auditable browser sessions, not verified individuals."
-        >
-          <ResourceSharePanel
-            resourceType="conformanceRun"
-            resourceId={runId}
-            disabledReason={
-              finished ? null : "Only a finished run can be shared"
-            }
-            footerSlot={
-              <p className="text-xs text-muted-foreground">
-                Viewers see a frozen snapshot. Revoking access is immediate even
-                though the artifact itself does not change.
-              </p>
-            }
-            linkLabel="Share link"
-            buildShareUrl={(token) =>
-              `${window.location.origin}${buildConformanceSharePath(token)}`
-            }
-            testIdPrefix="conformance-share"
-          />
-        </ShareDialog>
-      ) : null}
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={!finished}
+        onClick={() => setShareOpen(true)}
+        data-testid="conformance-share-open"
+      >
+        <Share2 className="size-3.5" aria-hidden /> Share
+      </Button>
+      <ShareDialog
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        title="Share conformance run"
+        description="A frozen redacted snapshot. Guests who redeem the link are auditable browser sessions, not verified individuals."
+      >
+        <ResourceSharePanel
+          resourceType="conformanceRun"
+          resourceId={runId}
+          disabledReason={finished ? null : "Only a finished run can be shared"}
+          footerSlot={
+            <p className="text-xs text-muted-foreground">
+              Viewers see a frozen snapshot. Revoking access is immediate even
+              though the artifact itself does not change.
+            </p>
+          }
+          linkLabel="Share link"
+          buildShareUrl={(token) =>
+            `${window.location.origin}${buildConformanceSharePath(token)}`
+          }
+          testIdPrefix="conformance-share"
+          invites={false}
+        />
+      </ShareDialog>
     </>
   );
 }
@@ -436,11 +371,7 @@ export function ConformanceRunDetailPage({
           <span className="text-muted-foreground/70">/</span>
           <span className="truncate font-semibold">{serverName}</span>
           <div className="ml-auto flex items-center gap-2">
-            <ConformanceRunShareButton
-              runId={detail._id}
-              finished={finished}
-              sharingEnabled={detail.sharingEnabled}
-            />
+            <ConformanceRunShareButton runId={detail._id} finished={finished} />
             <Button size="sm" onClick={() => navigate("/conformance")}>
               Run again
             </Button>
@@ -524,10 +455,13 @@ type SavedSuiteReport = {
 function SavedSuiteRow({
   report,
   runSettled,
+  cases,
 }: {
   report: SavedSuiteReport;
   /** The run as a whole is over, so an unsettled suite will never finish. */
   runSettled: boolean;
+  /** Checks already in hand, as in a shared artifact; skips the fetch. */
+  cases?: SavedReportCase[];
 }) {
   const copy = SUITE_COPY[report.suiteKind as keyof typeof SUITE_COPY] ?? {
     title: report.suiteKind,
@@ -540,6 +474,12 @@ function SavedSuiteRow({
   const notApplicable =
     report.status === "skipped" ||
     (settled && report.score == null && report.applicable === 0);
+  const absentApps =
+    report.suiteKind === "apps" &&
+    report.status === "completed" &&
+    report.outcome === "passed" &&
+    report.score == null &&
+    report.applicable === 0;
   const [override, setOverride] = useState<boolean | null>(null);
   // A suite that did not apply stays shut but still opens on click, to its
   // list of checks.
@@ -569,7 +509,7 @@ function SavedSuiteRow({
       subtitle={
         noResult
           ? "This suite did not report a result for this run."
-          : notApplicable
+          : notApplicable && !absentApps
             ? (report.incompleteReason ??
               "Nothing here applied to this server, so it was not scored.")
             : copy.description
@@ -594,12 +534,15 @@ function SavedSuiteRow({
           note={
             report.status === "skipped"
               ? ". Not run."
-              : ". None apply to this server."
+              : absentApps
+                ? "."
+                : ". None apply to this server."
           }
         />
       ) : (
         <SuiteReportCases
           reportUrl={report.reportUrl}
+          inlineCases={cases}
           incompleteReason={report.incompleteReason}
           load={expanded || override !== null}
         />
@@ -624,16 +567,21 @@ type SavedReportCase = {
  */
 function SuiteReportCases({
   reportUrl,
+  inlineCases,
   incompleteReason,
   load,
 }: {
   reportUrl?: string | null;
+  inlineCases?: SavedReportCase[];
   incompleteReason: string | null;
   load: boolean;
 }) {
-  const [cases, setCases] = useState<SavedReportCase[] | null | "error">(null);
+  const [fetched, setCases] = useState<SavedReportCase[] | null | "error">(
+    null,
+  );
+  const cases = inlineCases ?? fetched;
   useEffect(() => {
-    if (!load || !reportUrl || cases !== null) return;
+    if (inlineCases || !load || !reportUrl || fetched !== null) return;
     let cancelled = false;
     fetchArtifact(reportUrl)
       .then((response) => {
@@ -652,7 +600,7 @@ function SuiteReportCases({
     return () => {
       cancelled = true;
     };
-  }, [load, reportUrl, cases]);
+  }, [inlineCases, load, reportUrl, fetched]);
 
   return (
     <div>
@@ -661,7 +609,7 @@ function SuiteReportCases({
           {incompleteReason}
         </p>
       ) : null}
-      {!reportUrl || cases === "error" ? (
+      {(!reportUrl && !inlineCases) || cases === "error" ? (
         <p className="py-3 pl-7 text-[13px] text-muted-foreground">
           The detailed report for this suite is not available. Run the checks
           again to generate a new one.
@@ -714,15 +662,82 @@ function SuiteReportCases({
   );
 }
 
+/** One suite as a shared artifact stores it: the redacted SDK report. */
+type SharedSuiteReport = {
+  outcome?: string;
+  passed?: boolean;
+  incompleteReason?: string;
+  score?: {
+    score?: number;
+    outcome?: string;
+    applicable?: number;
+    passed?: number;
+    failed?: number;
+    couldNotRun?: number;
+  };
+  groups?: Array<{ cases?: SavedReportCase[] }>;
+};
+
+type SharedConformanceArtifact = {
+  score?: number | null;
+  outcome?: ConformanceRunListItem["outcome"];
+  applicable?: number;
+  passed?: number;
+  failed?: number;
+  couldNotRun?: number;
+  notApplicable?: number;
+  protocolVersion?: string | null;
+  requestedSuites?: string[];
+  createdAt?: number;
+  reports?: Record<string, SharedSuiteReport>;
+};
+
+/** A shared suite in the shape the run page's rows read, from its own score. */
+function sharedSuiteRow(
+  suiteKind: string,
+  report: SharedSuiteReport,
+): { report: SavedSuiteReport; cases: SavedReportCase[] } {
+  const score = report.score ?? {};
+  return {
+    report: {
+      suiteKind,
+      status: "completed",
+      // The SDK reads a missing outcome as `passed ? "passed" : "failed"`.
+      outcome:
+        score.outcome ??
+        report.outcome ??
+        (report.passed === undefined
+          ? null
+          : report.passed
+            ? "passed"
+            : "failed"),
+      incompleteReason: report.incompleteReason ?? null,
+      score: typeof score.score === "number" ? score.score : null,
+      applicable: score.applicable ?? 0,
+      passed: score.passed ?? 0,
+      failed: score.failed ?? 0,
+      couldNotRun: score.couldNotRun ?? 0,
+    },
+    cases: (report.groups ?? []).flatMap((group) => group.cases ?? []),
+  };
+}
+
 export function ConformanceSharedPage({ token }: { token: string }) {
   const { loading, error, artifact } = useSharedArtifact({
     resourceType: "conformanceRun",
     token,
   });
-  const body =
+  const run =
     artifact && typeof artifact === "object"
-      ? (artifact as Record<string, unknown>)
+      ? (artifact as SharedConformanceArtifact)
       : {};
+  const reports = run.reports ?? {};
+  const suiteKinds = [
+    ...(run.requestedSuites ?? []).filter((kind) => kind in reports),
+    ...Object.keys(reports).filter(
+      (kind) => !(run.requestedSuites ?? []).includes(kind),
+    ),
+  ];
 
   return (
     <SharedArtifactPage
@@ -730,25 +745,48 @@ export function ConformanceSharedPage({ token }: { token: string }) {
       loading={loading}
       error={error}
     >
-      <p className="text-sm text-muted-foreground">
+      {typeof run.createdAt === "number" ? (
+        <p className="text-sm text-muted-foreground">
+          {detailDateFormat.format(run.createdAt)}
+        </p>
+      ) : null}
+      <OverallScoreCard
+        score={
+          run.outcome
+            ? {
+                score: run.score ?? null,
+                outcome: run.outcome,
+                applicable: run.applicable ?? 0,
+                passed: run.passed ?? 0,
+                failed: run.failed ?? 0,
+                couldNotRun: run.couldNotRun ?? 0,
+                notApplicable: run.notApplicable ?? 0,
+              }
+            : undefined
+        }
+        serverName="Shared run"
+        version={run.protocolVersion ?? "Auto"}
+      />
+      {suiteKinds.length > 0 ? (
+        <div className="overflow-hidden rounded-lg border border-border bg-popover">
+          {suiteKinds.map((kind) => {
+            const row = sharedSuiteRow(kind, reports[kind]!);
+            return (
+              <SavedSuiteRow
+                key={kind}
+                report={row.report}
+                cases={row.cases}
+                runSettled
+              />
+            );
+          })}
+        </div>
+      ) : null}
+      <p className="text-xs text-muted-foreground">
         Read-only shared result. Credentials, raw HTTP evidence, and rerun
         controls are not included. Guests who opened this link are auditable
         browser sessions, not verified individuals.
       </p>
-      {body.verification === "client_reported" ? (
-        <Badge variant="secondary">Client-reported</Badge>
-      ) : (
-        <Badge variant="outline">MCPJam-verified</Badge>
-      )}
-      <p className="text-sm">
-        Outcome {String(body.outcome ?? "unknown")}
-        {typeof body.score === "number"
-          ? ` · score ${Math.round(body.score)}`
-          : ""}
-      </p>
-      <pre className="max-h-[70vh] overflow-auto rounded bg-muted/40 p-3 text-xs">
-        {JSON.stringify(body, null, 2)}
-      </pre>
     </SharedArtifactPage>
   );
 }
