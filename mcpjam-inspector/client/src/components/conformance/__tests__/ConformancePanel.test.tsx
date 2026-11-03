@@ -294,7 +294,7 @@ describe("ConformanceTab", () => {
     window.history.replaceState(null, "", "/");
   });
 
-  it("shows a pooled score headline with denominator, and readiness advice that costs points", async () => {
+  it("shows a pooled score headline with denominator, and readiness advice worth 0 points", async () => {
     setupSuccessfulRunMocks({
       protocol: createProtocolResult({
         checks: [
@@ -319,8 +319,8 @@ describe("ConformanceTab", () => {
         protocolVersion: "2025-11-25",
         readiness: [
           {
-            id: "readiness-cache-ttl-useful",
-            title: "Useful Cache TTLs",
+            id: "readiness-deprecated-feature-use",
+            title: "Deprecated Feature Use",
             severity: "warning",
             specStrength: "SHOULD",
             message: "Cacheable results advertise ttlMs: 0",
@@ -372,17 +372,25 @@ describe("ConformanceTab", () => {
     render(<ConformanceTab server={createHttpServer()} />);
     await runToCompletion();
 
-    // Pooled: 4/4 applicable across the suites, one SHOULD advisory (-2)
-    // from protocol readiness = 98. The number shows on the headline and on
-    // the Protocol row, which carries the same advisory.
-    expect(screen.getAllByText("98").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Conformant, with advice.")).toBeInTheDocument();
+    // Pooled: 4/4 applicable across the suites = 100. The SHOULD advisory
+    // from protocol readiness is listed but worth 0 points.
+    expect(screen.getAllByText("100").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Conformant, with guidance.")).toBeInTheDocument();
     // The denominator travels with the number.
     expect(screen.getByText("4/4")).toBeInTheDocument();
 
-    // The advisory that deducted is visible, tier and all.
-    expect(screen.getByText("Useful Cache TTLs")).toBeInTheDocument();
-    expect(screen.getByText("(SHOULD)")).toBeInTheDocument();
+    // The advisory sits in the one container above the
+    // suites, closed with a count until opened.
+    const advice = screen.getByRole("button", {
+      name: /^Additional enhancements/,
+    });
+    expect(advice).toHaveAttribute("aria-expanded", "false");
+    expect(within(advice).getByText("1")).toBeInTheDocument();
+    fireEvent.click(advice);
+    const row = screen.getByText("Deprecated Feature Use").closest("li")!;
+    expect(row).toHaveTextContent(
+      "Suggested (SHOULD) Protocol Deprecated Feature Use",
+    );
   });
 
   it("shows no number when nothing was applicable", async () => {
@@ -422,6 +430,14 @@ describe("ConformanceTab", () => {
       screen.getByText("Nothing applicable to score on this server."),
     ).toBeInTheDocument();
     expect(screen.queryByText("%")).toBeNull();
+    const protocolHeader = screen.getByText(SUITE_COPY.protocol.title).closest("button")!;
+    expect(within(protocolHeader).getByText("NOT APPLICABLE")).toBeInTheDocument();
+    const appsHeader = screen.getByText(SUITE_COPY.apps.title).closest("button")!;
+    expect(within(appsHeader).getByText("NOT APPLICABLE")).toBeInTheDocument();
+    expect(within(appsHeader).getByText(SUITE_COPY.apps.description)).toBeInTheDocument();
+    expect(appsHeader).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(appsHeader);
+    expect(appsHeader).toHaveAttribute("aria-expanded", "true");
   });
 
   it("reads suites that ran no checks as incomplete, not as nothing applicable", async () => {
@@ -819,9 +835,13 @@ describe("ConformanceTab", () => {
     const oauthBox = within(oauthRow).getByRole("checkbox", {
       name: "Run OAuth",
     });
+    // The OAuth advice has its own box, covered by the suite's.
+    const issAdvice = within(oauthRow).getByRole("checkbox", {
+      name: "Run Authorization Response iss",
+    });
     const oauthChecks = within(oauthRow)
       .getAllByRole("checkbox")
-      .filter((box) => box !== oauthBox);
+      .filter((box) => box !== oauthBox && box !== issAdvice);
     expect(oauthChecks).toHaveLength(Number(count));
     for (const box of oauthChecks) {
       expect(box).toBeEnabled();
@@ -838,6 +858,8 @@ describe("ConformanceTab", () => {
     for (const box of oauthChecks) {
       expect(box).toHaveAttribute("data-state", "unchecked");
     }
+    expect(issAdvice).toHaveAttribute("data-state", "unchecked");
+    expect(issAdvice).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(
@@ -1499,6 +1521,14 @@ describe("ConformanceTab", () => {
               properties: { message: { type: "string" } },
             },
           },
+          {
+            name: "weather",
+            annotations: { readOnlyHint: true },
+            outputSchema: {
+              type: "object",
+              properties: { temperature: { type: "number" } },
+            },
+          },
         ],
       });
     });
@@ -1537,18 +1567,46 @@ describe("ConformanceTab", () => {
       );
     }
 
+    it("sends the output check's tool on its own", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await openProtocolChecks();
+
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool to check output" }),
+      );
+      // Only tools that declare an output schema can be graded.
+      expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(
+        ["Not set", "weather · read-only"],
+      );
+      await user.click(
+        screen.getByRole("option", { name: "weather · read-only" }),
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() =>
+        expect(mockRunProtocol).toHaveBeenCalledWith(
+          "alpha",
+          expect.objectContaining({
+            probes: { toolCallProbe: { toolName: "weather" } },
+          }),
+        ),
+      );
+    });
+
     it("asks under the check which tool to call, and runs with it", async () => {
       const user = userEvent.setup();
       setupSuccessfulRunMocks();
       await openProtocolChecks();
 
-      // One field per tool, under the first check that calls it.
+      // One field per tool, under the check that calls it.
       expect(
         screen.getByRole("combobox", { name: "Tool that asks for input" }),
       ).toBeInTheDocument();
+      // The log level shows only once a tool is picked.
       expect(
-        screen.getByText("Calls the tool set under Logs Require A Log Level."),
-      ).toBeInTheDocument();
+        screen.queryByRole("combobox", { name: "Log level to request" }),
+      ).toBeNull();
 
       await user.click(
         screen.getByRole("combobox", { name: "Tool that emits logs" }),
@@ -1558,6 +1616,7 @@ describe("ConformanceTab", () => {
       expect(options).toEqual([
         "Not set",
         "echo · read-only",
+        "weather · read-only",
         "delete_row · may modify data",
       ]);
       await user.click(
@@ -1573,10 +1632,23 @@ describe("ConformanceTab", () => {
       fireEvent.change(args, { target: { value: '{"message": "hi"}' } });
       expect(screen.getByRole("button", { name: RUN_LABEL })).toBeEnabled();
 
+      // The level the log level advice asks for: the SDK's default until
+      // picked.
+      const level = screen.getByRole("combobox", {
+        name: "Log level to request",
+      });
+      expect(level).toHaveTextContent("warning");
+      await user.click(level);
+      await user.click(screen.getByRole("option", { name: "info" }));
+
       fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
       const sent = {
         probes: {
-          logProbe: { toolName: "echo", arguments: { message: "hi" } },
+          logProbe: {
+            toolName: "echo",
+            arguments: { message: "hi" },
+            level: "info",
+          },
         },
       };
       await waitFor(() =>
@@ -1632,7 +1704,8 @@ describe("ConformanceTab", () => {
       ).toBeInTheDocument();
 
       fireEvent.click(header);
-      expect(screen.getAllByText("Needs input")).toHaveLength(3);
+      // The three checks, and the advice that calls the log tool too.
+      expect(screen.getAllByText("Needs input")).toHaveLength(4);
       await waitFor(() =>
         expect(
           screen.getByRole("combobox", { name: "Tool that emits logs" }),
@@ -1645,15 +1718,35 @@ describe("ConformanceTab", () => {
         screen.getByRole("option", { name: "echo · read-only" }),
       );
 
-      // One tool serves both logging checks.
       expect(screen.getAllByText("Input set")).toHaveLength(2);
-      expect(screen.getAllByText("Needs input")).toHaveLength(1);
+      expect(screen.getAllByText("Needs input")).toHaveLength(2);
       expect(
-        within(header).getByText("1 check needs input"),
+        within(header).getByText("2 checks need input"),
       ).toBeInTheDocument();
     });
 
-    it("asks for no tool on Auto, where these checks do not run", async () => {
+    it("does not ask for the output tool when no tool declares an output schema", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [{ name: "echo", annotations: { readOnlyHint: true } }],
+      });
+      await toStep2();
+      const header = screen.getByRole("button", {
+        name: /^Protocol.*checks selected$/,
+      });
+      fireEvent.click(header);
+
+      // Nothing to grade, so the check does not apply: no tag, no count.
+      expect(
+        await screen.findByText(
+          "No tool on this server declares an output schema, so this check does not apply.",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        within(header).getByText("2 checks need input"),
+      ).toBeInTheDocument();
+    });
+
+    it("asks for no protocol tool on Auto, where these checks do not run", async () => {
       await toStep2("auto");
       const header = screen.getByRole("button", {
         name: /^Protocol.*checks selected$/,
@@ -1664,7 +1757,61 @@ describe("ConformanceTab", () => {
       expect(
         screen.queryByRole("combobox", { name: "Tool that emits logs" }),
       ).toBeNull();
-      expect(mockListTools).not.toHaveBeenCalled();
+    });
+
+    it("asks once for the Tasks tool on any pin, and for answers under the update check", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await toStep2("auto");
+      fireEvent.click(
+        screen.getByRole("button", { name: /^Tasks.*checks selected$/ }),
+      );
+      const tool = await screen.findByRole("combobox", {
+        name: "Tool that creates a task",
+      });
+      await waitFor(() => expect(tool).toBeEnabled());
+      // One field: the other checks that call it point to it.
+      expect(
+        screen.getAllByRole("combobox", { name: "Tool that creates a task" }),
+      ).toHaveLength(1);
+      expect(
+        screen.getAllByText(/^Calls the tool set under/).length,
+      ).toBeGreaterThan(0);
+      // The answers need a tool first.
+      expect(
+        screen.queryByRole("textbox", {
+          name: "Answers to the task's questions (optional)",
+        }),
+      ).toBeNull();
+
+      await user.click(tool);
+      await user.click(screen.getByRole("option", { name: "echo · read-only" }));
+
+      const answers = screen.getByRole("textbox", {
+        name: "Answers to the task's questions (optional)",
+      });
+      fireEvent.change(answers, { target: { value: "[1]" } });
+      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
+      // The message is tied to the box, so a screen reader reads it too.
+      expect(answers).toHaveAccessibleDescription(/Enter a JSON object/);
+      // Past the routes' cap the run would only get a 400.
+      fireEvent.change(answers, {
+        target: { value: JSON.stringify({ confirm: "x".repeat(10_001) }) },
+      });
+      expect(answers).toHaveAccessibleDescription(/under 10,000 characters/);
+      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
+      fireEvent.change(answers, {
+        target: { value: '{"confirm": {"action": "accept"}}' },
+      });
+      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeEnabled();
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() =>
+        expect(mockRunTasks).toHaveBeenCalledWith("alpha", {
+          toolName: "echo",
+          inputResponses: { confirm: { action: "accept" } },
+        }),
+      );
     });
 
     it("lists the tools once for every field, across pages", async () => {
@@ -1719,10 +1866,13 @@ describe("ConformanceTab", () => {
         screen.getByRole("option", { name: "echo · read-only" }),
       );
 
-      // Both checks that would call it are left out.
-      for (const title of ["Logs Require A Log Level", "Log Level Filtering"]) {
-        fireEvent.click(screen.getByRole("checkbox", { name: `Run ${title}` }));
-      }
+      // The check and the advice that would call it are left out.
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Run Logs Require A Log Level" }),
+      );
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Run Log Level Filtering" }),
+      );
       expect(
         screen.queryByRole("combobox", { name: "Tool that emits logs" }),
       ).toBeNull();
@@ -1730,6 +1880,71 @@ describe("ConformanceTab", () => {
       fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
       await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
       expect(mockRunProtocol.mock.calls[0]![1]).not.toHaveProperty("probes");
+      expect(mockRunProtocol.mock.calls[0]![1].readinessIds).not.toContain(
+        "readiness-log-level-filtering",
+      );
+    });
+
+    it("lists the advice under the checks, and moves the log tool to it when only it calls the tool", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await openProtocolChecks();
+      // Protocol, Tasks and OAuth each list theirs; Apps has none.
+      expect(
+        screen.getAllByText(/^Advice: \d+ tips?, run with the checks above\.$/),
+      ).toHaveLength(3);
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      await user.click(
+        screen.getByRole("option", { name: "echo · read-only" }),
+      );
+      // Under the advice row: a pointer to the check's tool, and the level.
+      expect(
+        screen.getByText("Calls the tool set under Logs Require A Log Level."),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("combobox", { name: "Log level to request" }),
+      ).toBeInTheDocument();
+
+      // Only the advice calls it now, so the tool field moves to its row.
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Run Logs Require A Log Level" }),
+      );
+      expect(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      ).toHaveTextContent("echo");
+      // Another advice left out is not asked for.
+      fireEvent.click(
+        screen.getByRole("checkbox", {
+          name: "Run Explicit Session Termination",
+        }),
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+      const sent = mockRunProtocol.mock.calls[0]![1];
+      expect(sent.probes).toEqual({ logProbe: { toolName: "echo" } });
+      expect(sent.checkIds).not.toContain("modern-logs-require-log-level");
+      expect(sent.readinessIds).toContain("readiness-log-level-filtering");
+      expect(sent.readinessIds).not.toContain("readiness-session-termination");
+    });
+
+    it("turns the advice off with the suite's box, and offers none with no check picked", async () => {
+      await openProtocolChecks();
+      const suite = screen.getByRole("checkbox", { name: "Run Protocol" });
+      fireEvent.click(suite);
+      expect(suite).toHaveAttribute("data-state", "unchecked");
+      const advice = screen.getByRole("checkbox", {
+        name: "Run Log Level Filtering",
+      });
+      expect(advice).toHaveAttribute("data-state", "unchecked");
+      expect(advice).toBeDisabled();
+
+      fireEvent.click(suite);
+      expect(suite).toHaveAttribute("data-state", "checked");
+      expect(advice).toHaveAttribute("data-state", "checked");
+      expect(advice).toBeEnabled();
     });
   });
 
@@ -2377,12 +2592,8 @@ describe("ConformanceTab", () => {
     render(<ConformanceTab server={createHttpServer()} />);
     await runToCompletion();
 
-    // The app's list, never the suite default: the full suite includes
-    // `tasks-update-ack-shape`, which needs answers the app cannot send.
-    const [serverName, options] = mockRunTasks.mock.calls[0]!;
-    expect(serverName).toBe("http-server");
-    expect(options.checkIds).not.toContain("tasks-update-ack-shape");
-    expect(options.checkIds).toContain("tasks-wire-resolvable");
+    // The whole suite, and no tool, since none was set.
+    expect(mockRunTasks).toHaveBeenCalledWith("http-server", {});
     expect(within(suiteHeader("tasks")).getByText("PASSED")).toBeDefined();
   });
 
@@ -3296,6 +3507,30 @@ describe("ConformanceTab", () => {
     await runToCompletion();
 
     expect(within(suiteHeader("tasks")).getByText("INCOMPLETE")).toBeDefined();
+  });
+
+  it("shows Tasks advice the run could not judge as a grey line", async () => {
+    setupSuccessfulRunMocks();
+    const reason =
+      "Not checked: the task didn't fail, so there was no failure reason to look at.";
+    mockRunTasks.mockResolvedValue({
+      success: true,
+      result: createTasksResult({
+        uncheckedAdvice: [
+          {
+            id: "tasks-readiness-failed-status-message",
+            title: "Failed Task Status Message",
+            reason,
+          },
+        ],
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+
+    expect(screen.getByText("Failed Task Status Message")).toBeDefined();
+    expect(screen.getByText(reason)).toHaveClass("text-muted-foreground");
   });
 
   it("shows which URLs were probed on a failed OAuth step", async () => {

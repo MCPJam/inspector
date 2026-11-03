@@ -1,3 +1,4 @@
+import { PLUGIN_MODEL_APP_META, pluginModelAppSchema } from "@/shared/plugin-model-app";
 import { retainedResourceProofFor } from "@/shared/retained-app-resources";
 import { isForwardingApprovalId } from "@/shared/forwarding-approval";
 import { ContextAttachmentChip } from "../chat-input/attachments/context-attachment-chip";
@@ -447,6 +448,14 @@ function LivePartSwitch({
       readMcpToolOriginServerId((toolPart as any).callProviderMetadata) ??
       readMcpToolOriginServerId((toolPart as any).providerMetadata) ??
       readMcpToolOriginServerId((toolPart as any).providerOptions);
+    // Owned Apps obtain their resource URI from the admitted instance when opened.
+    // The tool catalog need not still contain the declaration from this turn.
+    const marker = originalResult !== undefined && streamedToolMeta?.[PLUGIN_MODEL_APP_META];
+    const parsedApp = marker ? pluginModelAppSchema.safeParse(marker) : undefined;
+    const attributedModelApp =
+      parsedApp?.success && parsedApp.data.serverId === providerMetadataServerId
+        ? parsedApp.data
+        : undefined;
     // Which credential produced this result, when the server had more than one
     // live. Rerun resolves a server, not a connection, so a call made on a
     // specific account cannot be replayed faithfully yet.
@@ -628,7 +637,8 @@ function LivePartSwitch({
       hostSupportsWidgetRendering(resolveHostCaps(serverId ?? undefined), {
         hostStyle,
       }) &&
-      (uiType === UIType.OPENAI_SDK ||
+      (attributedModelApp !== undefined ||
+        uiType === UIType.OPENAI_SDK ||
         uiType === UIType.MCP_APPS ||
         uiType === UIType.OPENAI_SDK_AND_MCP_APPS);
 
@@ -637,7 +647,8 @@ function LivePartSwitch({
     // frozen screenshots: the Browser tab owns recorded renders for Sessions.
     if (
       widgetPolicy === "placeholder" &&
-      (uiType === UIType.OPENAI_SDK ||
+      (attributedModelApp !== undefined ||
+        uiType === UIType.OPENAI_SDK ||
         uiType === UIType.MCP_APPS ||
         uiType === UIType.OPENAI_SDK_AND_MCP_APPS ||
         renderOverride?.resourceUri ||
@@ -743,6 +754,7 @@ function LivePartSwitch({
             />
           ) : (
             <WidgetReplay
+              attributedModelApp={attributedModelApp}
               serverId={serverId}
               chatSessionId={chatSessionId}
               toolName={toolInfo.toolName}

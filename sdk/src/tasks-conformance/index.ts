@@ -35,6 +35,7 @@ export type {
   MCPTasksReadinessWarning,
   MCPTasksRunOutcome,
   MCPTasksSkipReason,
+  MCPTasksUncheckedAdvice,
   NormalizedMCPTasksConformanceConfig,
 } from "./types.js";
 
@@ -42,4 +43,5 @@ export {
   MCP_TASKS_CHECK_CATEGORIES,
   MCP_TASKS_CHECK_IDS,
   MCP_TASKS_READINESS_IDS,
+  RENAMED_MCP_TASKS_CHECK_IDS,
 } from "./types.js";

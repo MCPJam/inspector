@@ -270,12 +270,13 @@ export function ConformanceTab({
         onCancel={() => setSetupOpen(false)}
         onRun={(serverName, versionPin, selection, probes) => {
           setSetupOpen(false);
+          const runnable = runnableSelection(selection, versionPin);
           setProbes(
             serverName,
             probesAfterRun(
               probesFor(serverName),
               probes,
-              runnableSelection(selection, versionPin)?.protocol,
+              runnable,
               versionPin,
             ),
           );

@@ -308,8 +308,8 @@ describe("report score", () => {
         ],
         readiness: [
           {
-            id: "readiness-cache-ttl-useful",
-            title: "Useful Cache TTLs",
+            id: "readiness-deprecated-feature-use",
+            title: "Deprecated Feature Use",
             severity: "warning",
             specStrength: "SHOULD",
             message: "…",
@@ -318,8 +318,8 @@ describe("report score", () => {
       } as Partial<MCPConformanceResult>),
     );
 
-    // 1/1 applicable passed, one SHOULD advisory: 95 + (5 − 2) = 98.
-    expect(single.score?.score).toBe(98);
+    // 1/1 applicable passed; the SHOULD advisory is worth 0.
+    expect(single.score?.score).toBe(100);
     expect(single.score?.applicable).toBe(1);
 
     const suite = toConformanceReport(createProtocolSuiteResult());

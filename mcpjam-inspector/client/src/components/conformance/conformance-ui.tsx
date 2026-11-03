@@ -261,7 +261,10 @@ export type ScoreSummary = Pick<
   ConformanceScore,
   "score" | "outcome" | "applicable" | "passed" | "failed" | "couldNotRun"
 > &
-  Partial<Pick<ConformanceScore, "notApplicable" | "advisories" | "pending">>;
+  Partial<Pick<ConformanceScore, "notApplicable" | "advisories" | "pending">> & {
+    /** A saved run's advice count, where there is no advisories list. */
+    advisoryCount?: number;
+  };
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
@@ -279,6 +282,7 @@ export function OverallScoreCard({
   progress,
   oauthNotScored = false,
   blockedBySignIn = 0,
+  timedOut = 0,
   action,
 }: {
   score: ScoreSummary | undefined;
@@ -298,6 +302,11 @@ export function OverallScoreCard({
    * `couldNotRun`.
    */
   blockedBySignIn?: number;
+  /**
+   * How many scored checks timed out. They could not run, so the verdict
+   * names the timeout; clamped to `couldNotRun` like `blockedBySignIn`.
+   */
+  timedOut?: number;
   /** Shown at the end of the verdict line, e.g. a link to the saved run. */
   action?: ReactNode;
 }) {
@@ -341,12 +350,24 @@ export function OverallScoreCard({
       return `Not conformant. ${plural(scored.failed, "check")} failed.`;
     }
     if (scored.outcome === "incomplete") {
-      return `Incomplete. ${plural(scored.couldNotRun, "check")} could not run.`;
+      const late = Math.min(timedOut, scored.couldNotRun);
+      if (late === 0) {
+        return `Incomplete. ${plural(scored.couldNotRun, "check")} could not run.`;
+      }
+      const otherUnrun = scored.couldNotRun - late;
+      return [
+        `Incomplete. ${plural(late, "check")} could not run because the server did not answer in time.`,
+        otherUnrun > 0 ? `${otherUnrun} more could not run.` : null,
+      ]
+        .filter(Boolean)
+        .join(" ");
     }
-    // A saved run carries no advisories list, but a passed run only scores
-    // under 100 when it has advisories.
-    return scored.score! < 100
-      ? "Conformant, with advice."
+    // Advice is worth 0 points, so the score cannot tell a passed run with
+    // advice from one without; read the advice itself.
+    const advised =
+      (scored.advisories?.length ?? scored.advisoryCount ?? 0) > 0;
+    return advised
+      ? "Conformant, with guidance."
       : "Fully conformant.";
   })();
 
@@ -375,7 +396,7 @@ export function OverallScoreCard({
             <>
               <div className="flex items-end gap-px">
                 <span className="text-7xl leading-16 font-medium tracking-[-0.04em] tabular-nums">
-                  {Math.round(scored.score!)}
+                  {scored.score!}
                 </span>
                 <span className="pb-1 text-[28px] leading-8 font-medium">
                   %
