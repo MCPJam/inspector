@@ -9,6 +9,10 @@ import {
 import { createConvexQueryEventProcessor } from "./convex-query-diagnostics";
 import { createSentryDropPolicy } from "./sentry-drop-policy";
 import { subscribeTelemetryPolicy } from "./telemetry-context";
+import {
+  hasAnalyticsConsent,
+  subscribeAnalyticsConsent,
+} from "./analytics-consent";
 import { telemetryOptedOut } from "../../../shared/sentry-identity";
 import { matchAppRoute } from "./app-routes";
 import { parseProjectPath } from "./project-route";
@@ -167,8 +171,9 @@ export function initSentry() {
       options.recordDroppedEvent,
     ),
     // No replay integration here, on any surface. `syncSentryReplay` adds it
-    // at the first moment the privacy level allows recording — never while
-    // `pending`, never on `/results/<token>`. Starting it at init and stopping
+    // at the first moment the privacy level and the visitor's analytics
+    // consent allow recording — never while `pending`, never before consent,
+    // never on `/results/<token>`. Starting it at init and stopping
     // it later would not do: `replay.stop()` FLUSHES the buffered segment,
     // which is exactly the content that had to stay out.
     integrations: [
@@ -190,6 +195,7 @@ export function initSentry() {
   Sentry.getClient()?.on?.("spanStart", stampSentrySpanStart);
   Sentry.getClient()?.on?.("beforeAddBreadcrumb", stampSentryBreadcrumb);
   subscribeTelemetryPolicy(() => syncSentryReplay(window.location));
+  subscribeAnalyticsConsent(() => syncSentryReplay(window.location));
 
 }
 
@@ -203,6 +209,9 @@ export function initSentry() {
  * Sentry replay. It records only at `full`, with `SENTRY_REPLAY_OPTIONS`, and is held off:
  *
  *  - while `pending` and at `off`;
+ *  - without the analytics consent PostHog replay needs
+ *    (`hasAnalyticsConsent`). Error reporting does not wait for it; replay
+ *    does, and a withdrawal stops a running replay;
  *  - on a credential location (`isCredentialBearingPath`: path, query or
  *    fragment), at any level. `installRecorderNavigationGuard` stops it
  *    BEFORE a navigation onto one; this keeps it stopped and resumes it on
@@ -233,6 +242,7 @@ export function syncSentryReplay(location: string | LocationLike): void {
     const privacy = currentSessionPrivacy();
     const blocked =
       privacy !== "full" ||
+      !hasAnalyticsConsent() ||
       strictSentryRequired() ||
       recordingSurface() !== "hosted" ||
       isCredentialBearingPath(location);

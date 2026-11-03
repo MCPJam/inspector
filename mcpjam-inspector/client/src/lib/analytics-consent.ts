@@ -93,11 +93,16 @@ export function reapplyAnalyticsConsent(client: AnalyticsConsentClient): void {
   }
 }
 
-function subscribe(listener: () => void): () => void {
+/** Calls `listener` after every choice `setAnalyticsConsent` applies. */
+export function subscribeAnalyticsConsent(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
 
 export function useAnalyticsConsent(): AnalyticsConsent | null {
-  return useSyncExternalStore(subscribe, getAnalyticsConsent, () => null);
+  return useSyncExternalStore(
+    subscribeAnalyticsConsent,
+    getAnalyticsConsent,
+    () => null,
+  );
 }
