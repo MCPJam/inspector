@@ -4,11 +4,13 @@ import type {
   ToolSecuritySchemeResolution,
 } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/state/app-types";
+import { CHAT_AUTH_RECOVERY_MESSAGE } from "@/lib/chat-auth-recovery";
 import {
   AUTH_CHALLENGE_DISMISSED_MESSAGE,
   connectAuthChallenge,
   clearAuthChallengeCards,
   dismissAuthChallenge,
+  noteSignInCallbackFailed,
   presentAuthChallenge,
   presentWidgetAuthChallenge,
   registerAuthChallengeHostProfile,
@@ -471,10 +473,15 @@ describe("auth challenge lifecycle", () => {
         return original.call(this, key, value);
       });
       try {
-        await expect(settleSignInCallback("orders", { state: "flow-1" }))
-          .resolves.toContain("MCPJam couldn’t continue this call");
-        expect(peekPendingDirectScopeStepUpReplay()?.phase).toBe("awaiting_oauth");
-      } finally { save.mockRestore(); }
+        await expect(
+          settleSignInCallback("orders", { state: "flow-1" }),
+        ).resolves.toBe(CHAT_AUTH_RECOVERY_MESSAGE);
+        expect(peekPendingDirectScopeStepUpReplay()?.phase).toBe(
+          "awaiting_oauth",
+        );
+      } finally {
+        save.mockRestore();
+      }
     });
 
     it("replays after its own callback", async () => {
@@ -656,6 +663,16 @@ describe("auth challenge lifecycle", () => {
           "auth_challenge_failed",
           { location: "tools", source: "http_401", stage: "start" },
         ],
+      ]);
+    });
+
+    it("reports a failed callback with only its location and stage", async () => {
+      const card = await presentCard();
+      await connectAuthChallenge(card, server, { isTrusted: true });
+      noteSignInCallbackFailed("orders");
+      expect(signInEvents().at(-1)).toEqual([
+        "auth_challenge_failed",
+        { location: "oauth_callback", stage: "callback" },
       ]);
     });
   });
