@@ -41,7 +41,7 @@ describe("ConformanceAdvice", () => {
     expect(header).toHaveTextContent("Additional enhancements4");
 
     // The spec words link to their definitions, outside the toggle.
-    for (const word of ["SHOULD", "MAY"]) {
+    for (const word of ["SHOULD", "RECOMMENDED", "MAY"]) {
       expect(screen.getByRole("link", { name: word })).toHaveAttribute(
         "href",
         "https://datatracker.ietf.org/doc/html/bcp14",
@@ -53,10 +53,10 @@ describe("ConformanceAdvice", () => {
     expect(
       screen.getAllByRole("listitem").map((row) => row.textContent),
     ).toEqual([
-      "Suggested Protocol ttlttl message",
-      "Suggested Tasks statusstatus message",
-      "Suggested OAuth ississ message",
-      "Optional Protocol parseparse message",
+      "Suggested (SHOULD) Protocol ttlttl message",
+      "Suggested (SHOULD) Tasks statusstatus message",
+      "Suggested (RECOMMENDED) OAuth ississ message",
+      "Optional (MAY) Protocol parseparse message",
     ]);
   });
 });

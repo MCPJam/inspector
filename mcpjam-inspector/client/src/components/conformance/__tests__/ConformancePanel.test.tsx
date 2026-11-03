@@ -389,7 +389,7 @@ describe("ConformanceTab", () => {
     expect(within(advice).getByText("1")).toBeInTheDocument();
     fireEvent.click(advice);
     const row = screen.getByText("Useful Cache TTLs").closest("li")!;
-    expect(row).toHaveTextContent("Suggested Protocol Useful Cache TTLs");
+    expect(row).toHaveTextContent("Suggested (SHOULD) Protocol Useful Cache TTLs");
   });
 
   it("shows no number when nothing was applicable", async () => {
