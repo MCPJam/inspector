@@ -35,6 +35,10 @@ import {
   type ToolCallStepUpOperation,
 } from "@/state/oauth-orchestrator";
 import {
+  clearPendingDirectScopeStepUpReplay,
+  peekPendingDirectScopeStepUpReplay,
+} from "@/lib/scope-step-up-replay";
+import {
   findProjectByAnyId,
   type AppState,
   type ServerWithName,
@@ -330,13 +334,34 @@ export function driveScopeStepUp(
     requiredScope: challenge.requiredScope,
     resourceMetadataUrl: challenge.resourceMetadataUrl,
   };
+  // No redirect means no callback will ever settle a call the surface saved
+  // for this step-up; left in place it would block the next one for the
+  // saved call's lifetime. Only that call: a chat step-up, or one for another
+  // operation, leaves a direct call that is waiting or ready alone.
+  const dropSavedCall = () => {
+    const saved = peekPendingDirectScopeStepUpReplay();
+    if (
+      saved?.phase === "awaiting_oauth" &&
+      saved.descriptor.serverName === server.name &&
+      (!operation ||
+        (saved.operation.method === operation.method &&
+          saved.operation.operation === operation.operation))
+    )
+      clearPendingDirectScopeStepUpReplay(saved);
+  };
   void (operation
     ? applyToolCallStepUp(server, stepUp, { operation })
     : applyToolCallStepUp(server, stepUp))
-    .catch(() => {
-      // The operation's own error is already surfaced by the caller, so a
-      // failed step-up has nothing further to report to the user.
-    })
+    .then(
+      (outcome) => {
+        if (outcome?.reauthorization?.kind !== "redirect") dropSavedCall();
+      },
+      () => {
+        dropSavedCall();
+        // The operation's own error is already surfaced by the caller, so a
+        // failed step-up has nothing further to report to the user.
+      },
+    )
     .finally(() => {
       inFlight.delete(key);
     });

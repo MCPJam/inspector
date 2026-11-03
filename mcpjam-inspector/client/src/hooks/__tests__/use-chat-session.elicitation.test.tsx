@@ -8,6 +8,7 @@ import type { AppState, ServerWithName } from "@/state/app-types";
 const mockState = vi.hoisted(() => ({
   chatOnData: null as ((part: unknown) => void) | null,
   chatStatus: "ready" as string,
+  messages: [] as unknown[],
   convexMutation: vi.fn(async () => ({ ok: true })),
   setMessages: vi.fn(),
   sendMessage: vi.fn(),
@@ -153,7 +154,7 @@ vi.mock("@ai-sdk/react", () => ({
   useChat: vi.fn((options: { onData?: (part: unknown) => void }) => {
     mockState.chatOnData = options.onData ?? null;
     return {
-      messages: [],
+      messages: mockState.messages,
       sendMessage: mockState.sendMessage,
       stop: mockState.stop,
       status: mockState.chatStatus,
@@ -212,6 +213,7 @@ describe("useChatSession elicitation", () => {
     vi.clearAllMocks();
     mockState.chatOnData = null;
     mockState.chatStatus = "ready";
+    mockState.messages = [];
     mockState.idCounter = 0;
     mockState.convexMutation.mockResolvedValue({ ok: true } as never);
     // Default: step-up settles immediately so the per-server in-flight guard
@@ -313,6 +315,79 @@ describe("useChatSession elicitation", () => {
 
     expect(result.current.pendingElicitations).toHaveLength(0);
     expect(result.current.urlElicitationRequired).toHaveLength(0);
+  });
+
+  it("resumes this chat's signed-in call when another chat saved a newer one", async () => {
+    mockState.sendMessage.mockResolvedValue(undefined);
+    const server = {
+      name: "GitHub",
+      connectionStatus: "connected",
+    } as unknown as ServerWithName;
+    const view = await renderChatSessionWithServers({ GitHub: server });
+    const sessionId = view.result.current.chatSessionId;
+    const entry = (
+      continuationId: string,
+      toolCallId: string,
+      chatSessionId: string,
+      phase: string,
+    ) => ({
+      version: 1,
+      phase,
+      serverName: "GitHub",
+      chatSessionId,
+      returnPath: "/",
+      createdAt: Date.now(),
+      event: {
+        version: 1,
+        kind: "scope_step_up_required",
+        continuationId,
+        serverId: "srv-1",
+        serverName: "GitHub",
+        toolCallId,
+        operation: { method: "tools/call", operation: "repo_write" },
+        requiredScope: "repo",
+        expiresAt: Date.now() + 60_000,
+      },
+    });
+    sessionStorage.setItem(
+      "mcp-scope-step-up-chat-v2",
+      JSON.stringify({
+        version: 2,
+        entries: [
+          entry("cont-mine", "call-mine", sessionId, "ready"),
+          entry("cont-other", "call-other", "another-chat", "awaiting_oauth"),
+        ],
+      }),
+    );
+    mockState.messages = [
+      {
+        id: "m1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName: "repo_write",
+            toolCallId: "call-mine",
+            state: "input-available",
+            input: {},
+          },
+        ],
+      },
+    ];
+    view.rerender();
+
+    await waitFor(() =>
+      expect(mockState.sendMessage).toHaveBeenCalledWith(
+        undefined,
+        expect.objectContaining({
+          body: expect.objectContaining({
+            scopeStepUpResume: expect.objectContaining({
+              continuationId: "cont-mine",
+            }),
+          }),
+        }),
+      ),
+    );
   });
 
   it("drives step-up on a SEP-2350 insufficient_scope part when the server resolves", async () => {
