@@ -139,6 +139,7 @@ export type CompleteOAuthConformanceResult =
 // ── Protocol ────────────────────────────────────────────────────────────
 
 export interface ResolvedHttpConfig {
+  signal?: AbortSignal;
   serverUrl: string;
   accessToken?: string;
   customHeaders?: Record<string, string>;
@@ -148,6 +149,8 @@ export interface ResolvedHttpConfig {
   checkIds?: MCPCheckId[];
   /** Run only this advice; absent ⇒ all of it, empty ⇒ none. */
   readinessIds?: MCPReadinessId[];
+  /** Per-check limit in ms; absent ⇒ the SDK default. */
+  checkTimeout?: number;
 }
 
 export class UnsupportedTransportError extends Error {
@@ -170,9 +173,11 @@ export async function runProtocolConformance(
 ): Promise<{ result: MCPConformanceResult }> {
   const config: MCPConformanceConfig = {
     serverUrl: input.serverUrl,
+    signal: input.signal,
     accessToken: input.accessToken,
     customHeaders: input.customHeaders,
     protocolVersion: input.protocolVersion,
+    ...(input.checkTimeout ? { checkTimeout: input.checkTimeout } : {}),
     ...(input.checkIds ? { checkIds: input.checkIds } : {}),
     ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
     ...(input.logProbe ? { logProbe: input.logProbe } : {}),

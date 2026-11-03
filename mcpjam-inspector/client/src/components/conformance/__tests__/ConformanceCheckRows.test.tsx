@@ -33,6 +33,29 @@ describe("CheckRow", () => {
     );
     expect(screen.queryByText("0ms")).not.toBeInTheDocument();
   });
+
+  it("tags a timed-out check and shows why it could not run", () => {
+    render(
+      <CheckRow
+        check={check({
+          status: "skipped",
+          skipReason: "could-not-run",
+          durationMs: 0,
+          error: { message: "The server did not answer within 15 seconds." },
+          details: { timedOut: true, timeoutMs: 15_000 },
+        })}
+      />,
+    );
+    expect(screen.getByText("Timed out")).toBeInTheDocument();
+    expect(
+      screen.getByText("The server did not answer within 15 seconds."),
+    ).toBeInTheDocument();
+  });
+
+  it("leaves the timeout tag off a check that ran", () => {
+    render(<CheckRow check={check({})} />);
+    expect(screen.queryByText("Timed out")).not.toBeInTheDocument();
+  });
 });
 
 function step(

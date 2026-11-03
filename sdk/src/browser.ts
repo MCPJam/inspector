@@ -904,6 +904,7 @@ export {
   isUnrunCheck,
 } from "./conformance-outcome.js";
 export { isAuthorizationRequiredCheck } from "./conformance-authorization.js";
+export { isTimedOutCheck } from "./conformance-timeout.js";
 export type {
   ConformanceRunOutcome,
   ConformanceSkipReason,

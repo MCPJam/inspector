@@ -1,3 +1,4 @@
+import { withAbortSignalFetch } from "../abort-signal.js";
 import {
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
@@ -296,13 +297,14 @@ export function normalizeMCPConformanceConfig(
 
   return {
     serverUrl,
+    signal: config.signal,
     accessToken: config.accessToken,
     customHeaders: config.customHeaders,
     checkTimeout: config.checkTimeout ?? 30_000,
     categories,
     checkIds,
     ...(readinessIds ? { readinessIds } : {}),
-    fetchFn: config.fetchFn ?? fetch,
+    fetchFn: withAbortSignalFetch(config.fetchFn ?? fetch, config.signal),
     clientName: config.clientName?.trim() || "mcpjam-sdk-conformance",
     protocolVersion,
     era,

@@ -12,6 +12,7 @@ import type { ServerWithName } from "@/hooks/use-app-state";
 // break the Vite browser bundle.
 import {
   isAuthorizationRequiredCheck,
+  isTimedOutCheck,
   type ConformanceScore,
 } from "@mcpjam/sdk/browser";
 import {
@@ -313,21 +314,26 @@ export function ConformanceContent({
       (suite.result?.checks.filter(isAuthorizationRequiredCheck).length ?? 0),
     0,
   );
-  // The verdict compares this to the score's `couldNotRun`, which leaves out
-  // unscored checks, so it counts only the scored refusals. Otherwise the
-  // headline could blame sign-in for checks that stopped for another reason.
-  const scoredRefusals = (
-    checks: Array<{ id: string; details?: unknown }> | undefined,
-    pendingIds: Set<string>,
-  ) =>
-    checks?.filter(
-      (check) =>
-        isAuthorizationRequiredCheck(check) && !pendingIds.has(check.id),
-    ).length ?? 0;
-  const blockedBySignIn =
-    scoredRefusals(protocol.result?.checks, protocolPendingIds) +
-    scoredRefusals(apps.result?.checks, new Set()) +
-    scoredRefusals(tasks.result?.checks, tasksPendingIds);
+  // The verdict compares these to the score's `couldNotRun`, which leaves out
+  // unscored checks, so they count only scored checks. Otherwise the headline
+  // could blame sign-in or time for checks that stopped for another reason.
+  const scoredSuites: Array<
+    [Array<{ id: string; details?: unknown }> | undefined, Set<string>]
+  > = [
+    [protocol.result?.checks, protocolPendingIds],
+    [apps.result?.checks, new Set()],
+    [tasks.result?.checks, tasksPendingIds],
+  ];
+  const countScored = (matches: (check: { details?: unknown }) => boolean) =>
+    scoredSuites.reduce(
+      (count, [checks, pendingIds]) =>
+        count +
+        (checks?.filter((check) => matches(check) && !pendingIds.has(check.id))
+          .length ?? 0),
+      0,
+    );
+  const blockedBySignIn = countScored(isAuthorizationRequiredCheck);
+  const timedOut = countScored(isTimedOutCheck);
 
   // The page opens on the "run your first check" state and only swaps to the
   // suites once a run has begun. Keyed by server, so a server switch resets it.
@@ -602,6 +608,7 @@ export function ConformanceContent({
                   serverIconUrl={serverIconUrl}
                   oauthNotScored={oauthNotScored}
                   blockedBySignIn={blockedBySignIn}
+                  timedOut={timedOut}
                 />
 
                 {waitingOnAuthorization > 0 && (
@@ -610,6 +617,15 @@ export function ConformanceContent({
                     session, so the checks that need it could not run.
                     Reconnect the server with OAuth from the server menu, or
                     update its access token, then run again.
+                  </div>
+                )}
+
+                {timedOut > 0 && (
+                  <div className="mt-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm leading-relaxed">
+                    The server did not answer some checks in time. A timeout
+                    does not count as a failure, but those checks are untested,
+                    so the score is incomplete. Run the checks again once the
+                    server is responding.
                   </div>
                 )}
 

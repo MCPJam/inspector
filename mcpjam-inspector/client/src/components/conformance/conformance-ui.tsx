@@ -282,6 +282,7 @@ export function OverallScoreCard({
   progress,
   oauthNotScored = false,
   blockedBySignIn = 0,
+  timedOut = 0,
   action,
 }: {
   score: ScoreSummary | undefined;
@@ -301,6 +302,11 @@ export function OverallScoreCard({
    * `couldNotRun`.
    */
   blockedBySignIn?: number;
+  /**
+   * How many scored checks timed out. They could not run, so the verdict
+   * names the timeout; clamped to `couldNotRun` like `blockedBySignIn`.
+   */
+  timedOut?: number;
   /** Shown at the end of the verdict line, e.g. a link to the saved run. */
   action?: ReactNode;
 }) {
@@ -344,7 +350,17 @@ export function OverallScoreCard({
       return `Not conformant. ${plural(scored.failed, "check")} failed.`;
     }
     if (scored.outcome === "incomplete") {
-      return `Incomplete. ${plural(scored.couldNotRun, "check")} could not run.`;
+      const late = Math.min(timedOut, scored.couldNotRun);
+      if (late === 0) {
+        return `Incomplete. ${plural(scored.couldNotRun, "check")} could not run.`;
+      }
+      const otherUnrun = scored.couldNotRun - late;
+      return [
+        `Incomplete. ${plural(late, "check")} could not run because the server did not answer in time.`,
+        otherUnrun > 0 ? `${otherUnrun} more could not run.` : null,
+      ]
+        .filter(Boolean)
+        .join(" ");
     }
     // Advice is worth 0 points, so the score cannot tell a passed run with
     // advice from one without; read the advice itself.

@@ -2782,6 +2782,7 @@ export async function runModernChecks(
   ctx: RawHttpCheckContext,
   selectedCheckIds: Set<MCPCheckId>
 ): Promise<MCPCheckResult[]> {
+  ctx.config.signal?.throwIfAborted();
   const requested = [...selectedCheckIds].filter(isModernCheckId);
   if (requested.length === 0) {
     return [];
@@ -2831,6 +2832,7 @@ export async function runModernChecks(
   ];
 
   for (const id of ordered) {
+    ctx.config.signal?.throwIfAborted();
     const startedAt = Date.now();
     try {
       results.push(
@@ -2843,6 +2845,7 @@ export async function runModernChecks(
         )
       );
     } catch (error) {
+      ctx.config.signal?.throwIfAborted();
       results.push(
         failedResult(
           MODERN_CHECK_METADATA[id],

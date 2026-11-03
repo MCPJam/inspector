@@ -16,6 +16,7 @@ import type {
   MCPTasksCheckResult,
   OAuthConformanceStepResult,
 } from "@mcpjam/sdk";
+import { isTimedOutCheck } from "@mcpjam/sdk/browser";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { cn } from "@/lib/utils";
 import { Collapse, StatusIcon } from "./conformance-ui";
@@ -130,6 +131,18 @@ export function UnscoredTag() {
   );
 }
 
+/** On a check the server did not answer in time: untested, not failed. */
+export function TimedOutTag() {
+  return (
+    <span
+      title="The server did not answer in time, so this check is untested. It does not count as a failure."
+      className="shrink-0 rounded-sm border border-warning/50 bg-warning/10 px-1 py-px text-xs leading-none text-warning-foreground"
+    >
+      Timed out
+    </span>
+  );
+}
+
 /**
  * On a check that needs an input before it can run (a tool to call). Amber
  * while a picked check has none, so it shows before anything is opened.
@@ -195,6 +208,7 @@ export function CheckRow({
           />
         </span>
         {pending ? <UnscoredTag /> : null}
+        {isTimedOutCheck(check) ? <TimedOutTag /> : null}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span
             className={cn(
