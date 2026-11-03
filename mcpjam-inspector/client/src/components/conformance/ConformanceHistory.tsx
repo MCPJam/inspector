@@ -47,6 +47,7 @@ export type ConformanceRunListItem = {
   couldNotRun: number;
   /** Absent on rows read from a build that predates the field. */
   notApplicable?: number;
+  advisoryCount?: number;
   requestedSuites: string[];
   protocolVersion: string | null;
   actorLabel: string | null;
@@ -224,11 +225,11 @@ export function ConformanceHistory({
                 </span>
                 <RunResultBadge run={run} />
                 <span
-                  className={`w-12 shrink-0 text-right text-sm font-semibold tabular-nums ${
+                  className={`w-14 shrink-0 text-right text-sm font-semibold tabular-nums ${
                     run.score == null ? "text-muted-foreground" : ""
                   }`}
                 >
-                  {run.score == null ? "—" : `${Math.round(run.score)}%`}
+                  {run.score == null ? "—" : `${run.score}%`}
                 </span>
               </button>
             </li>
@@ -395,6 +396,7 @@ export function ConformanceRunDetailPage({
                   failed: detail.failed,
                   couldNotRun: detail.couldNotRun,
                   notApplicable: detail.notApplicable,
+                  advisoryCount: detail.advisoryCount,
                 }
               : undefined
           }
@@ -519,7 +521,7 @@ function SavedSuiteRow({
         report.score == null
           ? null
           : {
-              score: Math.round(report.score),
+              score: report.score,
               passed: report.passed,
               applicable: report.applicable,
             }
@@ -686,6 +688,7 @@ type SharedConformanceArtifact = {
   failed?: number;
   couldNotRun?: number;
   notApplicable?: number;
+  advisoryCount?: number;
   protocolVersion?: string | null;
   requestedSuites?: string[];
   createdAt?: number;
@@ -761,6 +764,7 @@ export function ConformanceSharedPage({ token }: { token: string }) {
                 failed: run.failed ?? 0,
                 couldNotRun: run.couldNotRun ?? 0,
                 notApplicable: run.notApplicable ?? 0,
+                advisoryCount: run.advisoryCount,
               }
             : undefined
         }
