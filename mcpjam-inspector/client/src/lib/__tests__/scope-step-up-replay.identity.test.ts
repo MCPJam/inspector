@@ -236,6 +236,45 @@ describe("direct replay identity", () => {
       "A call on this server is waiting to run again after sign-in.",
     );
   });
+  it("keeps a call saved without a project in the project it returns to", () => {
+    // The shape the store wrote before calls carried a project.
+    sessionStorage.setItem(
+      "mcp-scope-step-up-replay-v1",
+      JSON.stringify({
+        version: 1,
+        phase: "ready",
+        operation: {
+          resourceUrl: "https://example.test/mcp",
+          method: "tools/call",
+          operation: "read",
+        },
+        descriptor: {
+          kind: "tool",
+          surface: "tools",
+          serverName: "same",
+          toolName: "read",
+          parameters: {},
+        },
+        returnPath: "/p/p1/tools?tab=tools",
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      }),
+    );
+    window.history.replaceState({}, "", "/p/p2/tools");
+    expect(
+      claimPendingDirectScopeStepUpReplay({
+        serverName: "same",
+        surface: "tools",
+      }),
+    ).toBeUndefined();
+    window.history.replaceState({}, "", "/p/p1/tools");
+    expect(
+      claimPendingDirectScopeStepUpReplay({
+        serverName: "same",
+        surface: "tools",
+      }),
+    ).toBeDefined();
+  });
   it("lets a same-named server in another project replace a signed-in call", () => {
     save("a");
     markPendingDirectScopeStepUpReplayReady("same", "flow-a");

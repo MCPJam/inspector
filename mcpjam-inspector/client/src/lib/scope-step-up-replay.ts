@@ -130,13 +130,18 @@ function currentProjectSegment(): string {
   return readProjectPathSegment(window.location.pathname) ?? "local";
 }
 
-/** A saved call runs only in its own project, the page's. */
+/**
+ * A saved call runs only in its own project, the page's. A record written
+ * before calls carried a project names it only in the page it returns to.
+ */
 function belongsToCurrentProject(
   pending: PendingDirectScopeStepUpReplay,
 ): boolean {
   const project = currentProjectSegment();
+  const saved =
+    pending.projectId ?? readProjectPathSegment(pending.returnPath) ?? "local";
   return (
-    (pending.projectId === undefined || pending.projectId === project) &&
+    saved === project &&
     (!pending.descriptor.authAttempt ||
       pending.descriptor.authAttempt.projectId === project)
   );
