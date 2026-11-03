@@ -1396,6 +1396,7 @@ export type {
   MCPTasksReadinessWarning,
   MCPTasksRunOutcome,
   MCPTasksSkipReason,
+  MCPTasksUncheckedAdvice,
 } from "./tasks-conformance/index.js";
 export {
   decideOutcome,

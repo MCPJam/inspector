@@ -35,6 +35,7 @@ export type {
   MCPTasksReadinessWarning,
   MCPTasksRunOutcome,
   MCPTasksSkipReason,
+  MCPTasksUncheckedAdvice,
   NormalizedMCPTasksConformanceConfig,
 } from "./types.js";
 

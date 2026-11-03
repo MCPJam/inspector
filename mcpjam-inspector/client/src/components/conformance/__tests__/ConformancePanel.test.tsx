@@ -3434,6 +3434,30 @@ describe("ConformanceTab", () => {
     expect(within(suiteHeader("tasks")).getByText("INCOMPLETE")).toBeDefined();
   });
 
+  it("shows Tasks advice the run could not judge as a grey line", async () => {
+    setupSuccessfulRunMocks();
+    const reason =
+      "Not checked: the task didn't fail, so there was no failure reason to look at.";
+    mockRunTasks.mockResolvedValue({
+      success: true,
+      result: createTasksResult({
+        uncheckedAdvice: [
+          {
+            id: "tasks-readiness-failed-status-message",
+            title: "Failed Task Status Message",
+            reason,
+          },
+        ],
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+
+    expect(screen.getByText("Failed Task Status Message")).toBeDefined();
+    expect(screen.getByText(reason)).toHaveClass("text-muted-foreground");
+  });
+
   it("shows which URLs were probed on a failed OAuth step", async () => {
     setupSuccessfulRunMocks({
       oauth: createOAuthResult({

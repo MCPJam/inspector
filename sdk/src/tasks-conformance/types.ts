@@ -66,6 +66,17 @@ export interface MCPTasksReadinessWarning extends Omit<
   checkId: MCPTasksCheckId;
 }
 
+/**
+ * Picked advice the run could not judge, and why. Kept apart from `readiness`
+ * so it never reads as a shortfall or costs points: a SHOULD about failed
+ * tasks says nothing when the task did not fail.
+ */
+export interface MCPTasksUncheckedAdvice {
+  id: MCPTasksReadinessId;
+  title: string;
+  reason: string;
+}
+
 export type MCPTasksCheckStatus = "passed" | "failed" | "skipped";
 
 /**
@@ -178,6 +189,8 @@ export interface MCPTasksConformanceResult {
   checks: MCPTasksCheckResult[];
   /** SHOULD/MAY advice, beside the verdict. Absent when there is none. */
   readiness?: MCPTasksReadinessWarning[];
+  /** Picked advice this run could not judge. Absent when there is none. */
+  uncheckedAdvice?: MCPTasksUncheckedAdvice[];
   summary: string;
   durationMs: number;
   categorySummary: Record<
