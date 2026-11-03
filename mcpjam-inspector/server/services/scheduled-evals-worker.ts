@@ -31,6 +31,7 @@ import {
 } from "../routes/shared/evals.js";
 import { fetchSuiteRunServerSelection } from "../routes/v1/evals.js";
 import { createConvexClient } from "./evals/route-helpers.js";
+import { isPlatformFeeRefusal } from "./evals/platform-fee-refusal.js";
 import {
   environmentServerIds,
   environmentServerNames,
@@ -285,7 +286,16 @@ export async function executeClaimedRun(
         idempotencyKey: claimed.triggerId,
       });
     } catch (error) {
-      logger.error("[scheduled-evals] run setup failed", error, logContext);
+      // Out of credits or over budget: the organization's limits working as
+      // designed, so no Sentry page on every window.
+      if (isPlatformFeeRefusal(error)) {
+        logger.warn("[scheduled-evals] run setup refused", {
+          ...logContext,
+          reason: error.details?.reason,
+        });
+      } else {
+        logger.error("[scheduled-evals] run setup failed", error, logContext);
+      }
       await reportComplete({
         triggerId: claimed.triggerId,
         ok: false,

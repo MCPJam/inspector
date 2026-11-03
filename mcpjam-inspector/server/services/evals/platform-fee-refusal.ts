@@ -41,3 +41,10 @@ export function platformFeeRefusalError(error: unknown): WebRouteError | null {
     { reason: code },
   );
 }
+
+/** Whether `error` is a refusal `platformFeeRefusalError` produced. */
+export function isPlatformFeeRefusal(error: unknown): error is WebRouteError {
+  if (!(error instanceof WebRouteError)) return false;
+  const reason = error.details?.reason;
+  return typeof reason === "string" && PLATFORM_FEE_REFUSALS.has(reason);
+}
