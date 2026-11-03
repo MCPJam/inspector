@@ -9,6 +9,7 @@ import {
   stepFailureFindingKey,
   isResourceMetadataNotImplemented,
   isTlsTrustFailure,
+  isUnreachableTargetFailure,
   isUnexpectedProbeStatus,
   isLoopbackOAuthUrl,
   type OAuthFlowState,
@@ -195,9 +196,15 @@ export function createDebugRequestExecutor(
         requestMethod: request.method,
         proxyStatus: proxyResponse.status,
       });
-      // The proxy reached the server and its certificate failed. The reason
-      // already says so; "Backend debug proxy error: 502" would blame MCPJam.
-      if (reason && isTlsTrustFailure(reason)) throw new Error(reason);
+      // The server's certificate failed, or the connection to it did. The
+      // reason already says so; "Backend debug proxy error: 502" would blame
+      // MCPJam.
+      if (
+        reason &&
+        (isTlsTrustFailure(reason) || isUnreachableTargetFailure(reason))
+      ) {
+        throw new Error(reason);
+      }
       throw new Error(
         `Backend debug proxy error: ${proxyResponse.status} ${
           proxyResponse.statusText
@@ -331,6 +338,10 @@ function createHostedClientSecretResolver({
  * followed by Node's own fix. A certificate failure on MCPJam's own hosts
  * never gets that sentence, so it still reports.
  *
+ * So is a server the local proxy could not connect to: refused, reset or timed
+ * out (PLB-428, `isUnreachableTargetFailure`), answered 502 or 504 with the
+ * same kind of sentence and the same exception for MCPJam's own hosts.
+ *
  * The SDK owns all of these messages and exports them, so matching here cannot
  * drift out of sync with what the machines actually throw.
  */
@@ -346,7 +357,8 @@ function isUnreportedStepFailure(error: string): boolean {
     isAuthenticatedRequestFailure(error) ||
     isResourceMetadataNotImplemented(error) ||
     isUnexpectedProbeStatus(error) ||
-    isTlsTrustFailure(error)
+    isTlsTrustFailure(error) ||
+    isUnreachableTargetFailure(error)
   );
 }
 

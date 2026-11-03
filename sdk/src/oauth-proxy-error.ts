@@ -64,7 +64,9 @@ const TLS_TRUST_CODES: ReadonlySet<string> = new Set([
  * describer keys off the sentence and never off the code.
  */
 export function tlsTrustFailure(error: unknown): OAuthProxyError | undefined {
-  const certificateError = findCertificateError(error);
+  const certificateError = findInCauseChain(error, (candidate) =>
+    TLS_TRUST_CODES.has(codeOf(candidate) ?? "")
+  );
   if (!certificateError) return undefined;
   return new OAuthProxyError(
     502,
@@ -74,15 +76,90 @@ export function tlsTrustFailure(error: unknown): OAuthProxyError | undefined {
 }
 
 /**
- * The error in the `cause` chain that carries the certificate code, so its
- * message (Node's, with the hint) survives the wrappers above it. Bounded at
- * the same depth as `extractNodeErrno`, against cyclic chains.
+ * What a proxy route says when the connection to the server under test was
+ * refused, reset, timed out or had no route. Recognized by this sentence, like
+ * {@link TLS_TRUST_FAILURE}.
  */
-function findCertificateError(error: unknown, depth = 0): Error | undefined {
-  if (!(error instanceof Error) || depth > 3) return undefined;
+export const UNREACHABLE_TARGET_FAILURE = "The connection to the server failed";
+
+const UNREACHABLE_TARGET_ADVICE =
+  "Check that the server is running and reachable from this machine.";
+
+/** Node's errnos for a connection that never produced a response. */
+const UNREACHABLE_TARGET_CODES: ReadonlySet<string> = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ETIMEDOUT",
+]);
+
+/** Keeps the advice inside the debugger's 300-character reason. */
+const MAX_LISTED_ATTEMPTS = 3;
+
+/**
+ * A connection to the server under test that failed before any response, as
+ * a 502, or a 504 when every attempt timed out. Node's text follows the
+ * sentence because it names the address actually dialled; `hint` is the
+ * caller's advice for where it runs. Only for a caller that knows the request
+ * went to the server under test, for the same reason as {@link tlsTrustFailure}.
+ *
+ * A name with several addresses fails as an `AggregateError` with an empty
+ * message and the FIRST attempt's code, so the attempts are read one by one: a
+ * dead IPv6 address in front of a refused IPv4 one is a refusal, not a timeout.
+ */
+export function unreachableTargetFailure(
+  error: unknown,
+  hint?: string
+): OAuthProxyError | undefined {
+  const failed = findInCauseChain(error, (candidate) =>
+    attemptsOf(candidate).some((attempt) =>
+      UNREACHABLE_TARGET_CODES.has(codeOf(attempt) ?? "")
+    )
+  );
+  if (!failed) return undefined;
+  const attempts = attemptsOf(failed);
+  const timedOut = attempts.every((attempt) => codeOf(attempt) === "ETIMEDOUT");
+  const detail =
+    failed.message ||
+    attempts
+      .slice(0, MAX_LISTED_ATTEMPTS)
+      .map((attempt) => attempt.message)
+      .join("; ");
+  return new OAuthProxyError(
+    timedOut ? 504 : 502,
+    `${UNREACHABLE_TARGET_FAILURE}: ${detail}. ${UNREACHABLE_TARGET_ADVICE}${hint ? ` ${hint}` : ""}`,
+    { cause: error }
+  );
+}
+
+/** One error per address Node tried, or the error itself. */
+function attemptsOf(error: Error): Error[] {
+  return error instanceof AggregateError
+    ? error.errors.filter(
+        (attempt): attempt is Error => attempt instanceof Error
+      )
+    : [error];
+}
+
+function codeOf(error: Error): string | undefined {
   const code = (error as { code?: unknown }).code;
-  if (typeof code === "string" && TLS_TRUST_CODES.has(code)) return error;
-  return findCertificateError(error.cause, depth + 1);
+  return typeof code === "string" ? code : undefined;
+}
+
+/**
+ * The error in the `cause` chain that `matches`, so its message (Node's)
+ * survives the wrappers above it. Bounded at the same depth as
+ * `extractNodeErrno`, against cyclic chains.
+ */
+function findInCauseChain(
+  error: unknown,
+  matches: (candidate: Error) => boolean,
+  depth = 0
+): Error | undefined {
+  if (!(error instanceof Error) || depth > 3) return undefined;
+  if (matches(error)) return error;
+  return findInCauseChain(error.cause, matches, depth + 1);
 }
 
 /**
@@ -92,4 +169,9 @@ function findCertificateError(error: unknown, depth = 0): Error | undefined {
  */
 export function isTlsTrustFailure(message: string): boolean {
   return message.includes(TLS_TRUST_FAILURE);
+}
+
+/** {@link isTlsTrustFailure} for {@link unreachableTargetFailure}'s sentence. */
+export function isUnreachableTargetFailure(message: string): boolean {
+  return message.includes(UNREACHABLE_TARGET_FAILURE);
 }

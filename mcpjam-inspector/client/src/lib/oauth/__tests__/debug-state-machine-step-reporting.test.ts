@@ -330,6 +330,48 @@ describe("OAuth debugger step-failure reporting", () => {
     expect(updateState).toHaveBeenCalledWith(update);
   });
 
+  // PLB-428: 130 events from 60 users in 90 days, every one a server under
+  // test that refused, reset or never answered the connection.
+  it.each([
+    [
+      502,
+      "Bad Gateway",
+      "The connection to the server failed: connect ECONNREFUSED 127.0.0.1:3000. Check that the server is running and reachable from this machine.",
+    ],
+    [
+      504,
+      "Gateway Timeout",
+      "The connection to the server failed: connect ETIMEDOUT 10.255.255.1:81. Check that the server is running and reachable from this machine.",
+    ],
+  ])(
+    "ignores an unreachable server under test (%i)",
+    async (status, statusText, reason) => {
+      const { wrapped, updateState, execute } = wrappedUpdateState(
+        vi.fn(),
+        "request_without_token",
+      );
+      vi.mocked(authFetch).mockResolvedValue(
+        new Response(JSON.stringify({ error: reason }), {
+          status,
+          statusText,
+        }),
+      );
+      const failure = await execute({
+        url: "http://127.0.0.1:3000/mcp",
+        method: "POST",
+        headers: {},
+      }).catch((error: Error) => error);
+      const update = {
+        error: `Failed to request MCP server: ${(failure as Error).message}`,
+      };
+
+      wrapped(update);
+
+      expect(reportCaught).not.toHaveBeenCalled();
+      expect(updateState).toHaveBeenCalledWith(update);
+    },
+  );
+
   it("still reports the debug proxy failing on the probe", () => {
     const { wrapped } = wrappedUpdateState(vi.fn(), "request_without_token");
 
