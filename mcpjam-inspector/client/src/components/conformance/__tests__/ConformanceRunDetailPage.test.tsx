@@ -157,6 +157,18 @@ describe("ConformanceRunDetailPage", () => {
     );
   });
 
+  it("keeps Share disabled while the run is still going", () => {
+    useArtifactQueryMock.mockReturnValue(
+      run([report({ status: "running", outcome: null })], {
+        status: "running",
+        outcome: null,
+      }),
+    );
+    render(<ConformanceRunDetailPage runId="run_1" />);
+
+    expect(screen.getByRole("button", { name: "Share" })).toBeDisabled();
+  });
+
   it("opens the same dialog for a run shared with the old toggle", () => {
     useArtifactQueryMock.mockReturnValue(
       run([report()], { sharingEnabled: true }),

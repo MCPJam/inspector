@@ -6057,8 +6057,9 @@ describe("App hosted OAuth callback handling", () => {
 
     render(<App />);
 
-    // Give the gate the same chance it gets on `/conformance` above.
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(
+      await screen.findByRole("heading", { name: "Conformance report" }),
+    ).toBeInTheDocument();
     expect(window.location.pathname).toMatch(/^\/conformance\/shared/);
   });
 

@@ -199,7 +199,8 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   rebind_study: "sandboxes",
   // Minting a new share link, for several resource types: available when any
   // of them is. The backend checks the resource type (study shares follow
-  // `sandboxes`, eval and conformance runs their own share beta).
+  // `sandboxes`, eval runs their own share beta, conformance runs
+  // `conformance`).
   rotate_share_link: SHARE_FAMILY,
   // Kept available whatever the feature reports: what the backend leaves
   // open on purpose so an organization that lost a feature can still stop,

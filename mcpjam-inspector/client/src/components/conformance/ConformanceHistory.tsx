@@ -650,6 +650,7 @@ function SuiteReportCases({
 /** One suite as a shared artifact stores it: the redacted SDK report. */
 type SharedSuiteReport = {
   outcome?: string;
+  passed?: boolean;
   incompleteReason?: string;
   score?: {
     score?: number;
@@ -687,7 +688,15 @@ function sharedSuiteRow(
     report: {
       suiteKind,
       status: "completed",
-      outcome: score.outcome ?? report.outcome ?? null,
+      // The SDK reads a missing outcome as `passed ? "passed" : "failed"`.
+      outcome:
+        score.outcome ??
+        report.outcome ??
+        (report.passed === undefined
+          ? null
+          : report.passed
+            ? "passed"
+            : "failed"),
       incompleteReason: report.incompleteReason ?? null,
       score: typeof score.score === "number" ? score.score : null,
       applicable: score.applicable ?? 0,

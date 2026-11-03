@@ -84,6 +84,25 @@ describe("ConformanceSharedPage", () => {
     expect(screen.queryByText(/"reports"/)).toBeNull();
   });
 
+  it("reads a suite with no outcome from its passed flag, as the SDK does", () => {
+    const shared = sharedRun();
+    shared.reports.protocol = {
+      passed: false,
+      score: { score: 50, applicable: 2, passed: 1 },
+      groups: [{ cases: [{ id: "ping", title: "Ping", status: "failed" }] }],
+    } as unknown as typeof shared.reports.protocol;
+    useSharedArtifactMock.mockReturnValue({
+      loading: false,
+      error: null,
+      artifact: shared,
+      redeem: null,
+    });
+    render(<ConformanceSharedPage token="tok" />);
+
+    expect(screen.getAllByText("FAILED").length).toBe(2);
+    expect(screen.queryByText("PASSED")).toBeNull();
+  });
+
   it("says the link is not available when the redeem is denied", () => {
     useSharedArtifactMock.mockReturnValue({
       loading: false,

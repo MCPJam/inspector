@@ -716,6 +716,9 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
     case "learning":
       return <LearningRoute />;
     case "conformance":
+      if (pathname.startsWith(`${routePaths.conformanceShared}/`)) {
+        return <ConformanceSharedRoute />;
+      }
       return <ConformanceRoute />;
     case "compatibility":
       return <CompatibilityRoute />;
