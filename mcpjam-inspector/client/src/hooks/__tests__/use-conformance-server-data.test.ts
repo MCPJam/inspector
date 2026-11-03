@@ -3,9 +3,10 @@ import { getFunctionName, type FunctionReference } from "convex/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockUseQueries = vi.fn();
+const mockSaveSettings = vi.fn();
 vi.mock("convex/react", () => ({
   useQueries: (queries: unknown) => mockUseQueries(queries),
-  useMutation: () => vi.fn(),
+  useMutation: () => mockSaveSettings,
 }));
 
 import { useConformanceServerData } from "../use-conformance-server-data";
@@ -101,6 +102,31 @@ describe("useConformanceServerData", () => {
     );
 
     expect(result.current.defaultsLoaded).toBe(false);
+  });
+
+  it("saves the check lists without the advice picks", async () => {
+    mockUseQueries.mockImplementation(() => ({ result: [] }));
+    const { result } = renderHook(() =>
+      useConformanceServerData({
+        projectId: "proj_1",
+        serversById,
+        serversByName,
+      }),
+    );
+
+    await result.current.saveDefaults!("alpha", {
+      protocol: ["ping"],
+      protocolAdvice: [],
+      tasksAdvice: [],
+      oauthAdvice: [],
+      oauth: false,
+    });
+    // The backend stores check lists only and would refuse the whole save.
+    expect(mockSaveSettings).toHaveBeenCalledWith({
+      projectId: "proj_1",
+      serverId: "srv_1",
+      defaultChecks: { protocol: ["ping"], oauth: false },
+    });
   });
 
   it("fails the save for a server it cannot save to", async () => {

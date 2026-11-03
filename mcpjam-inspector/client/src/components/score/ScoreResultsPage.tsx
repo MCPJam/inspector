@@ -24,9 +24,8 @@ const SUITE_TITLES: Record<string, string> = {
  * from the stored counts plus the pending count derived from each suite
  * report's `profile.pendingCheckIds` (same intersection as `partitionByStamp`).
  *
- * Advice wording is a count only: the stored row carries `advisoryCount`,
- * not `advicePointsLost`, so the SDK's `(−N)` deduction cannot be
- * reconstructed honestly and is left off. Pending is derived from the
+ * Advice wording is a count only, like the SDK's: advice is worth 0 points.
+ * Pending is derived from the
  * report blob (already stored) rather than a flat summary field — adding
  * `pending` to `ScoreSummary`/`summarySchema` is a backend follow-up for
  * surfaces that list summaries without reports.

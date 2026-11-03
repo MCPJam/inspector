@@ -54,6 +54,7 @@ async function startAuthFixture(options: {
   configStatus?: number;
   meStatus?: number;
   meBody?: unknown;
+  meRedirect?: string;
 }): Promise<{
   origin: string;
   requests: FixtureRequest[];
@@ -102,6 +103,13 @@ async function startAuthFixture(options: {
       res.setHeader("content-type", "application/json");
       const { __status: _ignored, ...body } = next;
       res.end(JSON.stringify(body));
+      return;
+    }
+
+    if (url.pathname === "/api/v1/me" && options.meRedirect) {
+      res.statusCode = 307;
+      res.setHeader("location", options.meRedirect);
+      res.end();
       return;
     }
 
@@ -365,6 +373,36 @@ test("runPlatformLogin still succeeds when account lookup fails", async () => {
     assert.equal(readStoredAuth(authFilePath)?.email, undefined);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0]!, /account details/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("runPlatformLogin refuses a redirect from /me with exit 2 instead of warning", async () => {
+  const fixture = await startAuthFixture({
+    meRedirect: "https://elsewhere.example.test/me",
+  });
+  try {
+    const authFilePath = await tempAuthFile();
+    const warnings: string[] = [];
+
+    await assert.rejects(
+      runPlatformLogin(
+        { origin: fixture.origin, apiUrl: `${fixture.origin}/api/v1` },
+        {
+          openUrl: browserSimulator(),
+          authFilePath,
+          timeoutMs: 10_000,
+          now: () => NOW,
+          warn: (message) => warnings.push(message),
+        }
+      ),
+      (error: unknown) =>
+        error instanceof CliError &&
+        error.code === "BACKEND_REDIRECT_REFUSED" &&
+        error.exitCode === 2
+    );
+    assert.deepEqual(warnings, []);
   } finally {
     await fixture.close();
   }

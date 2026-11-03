@@ -240,7 +240,7 @@ describe("applyToolCallAuthChallenge", () => {
           attempt: ATTEMPT,
           confirmed: true,
         }),
-      ).rejects.toThrow("couldn’t save this sign-in");
+      ).rejects.toThrow("Could not save the sign-in. Try again.");
       expect(initiateOAuthMock).not.toHaveBeenCalled();
     } finally {
       setItem.mockRestore();

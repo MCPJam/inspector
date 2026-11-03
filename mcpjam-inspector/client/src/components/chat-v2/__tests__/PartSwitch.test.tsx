@@ -242,6 +242,33 @@ describe("PartSwitch", () => {
     expect(callTool).not.toHaveBeenCalled();
   });
 
+  it("opens an attributed App result without a current catalog entry", () => {
+    mockDetectUIType.mockReturnValue(null);
+    const marker = {
+      instanceToken: "a".repeat(43), projectId: "project", workspaceId: "workspace",
+      serverId: "server-1", hostId: "chatgpt",
+    };
+    const originalResult = {
+      content: [{ type: "text", text: "Diagram displayed" }],
+      structuredContent: { checkpointId: "drawing" },
+      _meta: { "mcpjam/model-app": marker },
+    };
+    const part = {
+      type: "dynamic-tool" as const, toolName: "create_view", toolCallId: "draw",
+      input: {}, state: "output-available" as const,
+      output: { output: { content: originalResult.content } },
+      callProviderMetadata: { mcpjam: { serverId: "other-server" } },
+      resultProviderMetadata: { mcpjam: { resultPresentation: true, originalResult } },
+    };
+    const view = render(<PartSwitch {...defaultProps} part={part} />);
+    expect(view.queryByTestId("widget-replay")).toBeNull();
+    view.rerender(<PartSwitch {...defaultProps} part={{
+      ...part, callProviderMetadata: { mcpjam: { serverId: marker.serverId } },
+    }} />);
+    expect(screen.getByTestId("widget-replay")).toBeInTheDocument();
+    expect(mockWidgetReplay.mock.calls.at(-1)?.[0].rawOutput).toEqual(originalResult);
+  });
+
   it("renders titled App text as one labeled item and mention references using the same chip", () => {
     const view = render(
       <PartSwitch

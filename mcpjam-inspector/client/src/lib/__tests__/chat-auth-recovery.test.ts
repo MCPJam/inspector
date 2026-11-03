@@ -308,6 +308,17 @@ it("persists missing-call cancellation before dispatch and refuses when storage 
   spy.mockRestore();
 });
 
+it("keeps every cancellation claim in one bounded record", () => {
+  sessionStorage.clear();
+  for (let i = 0; i < 205; i++)
+    expect(claimMissingCallCancellation(`call-${i}`)).toBe(true);
+  expect(sessionStorage.length).toBe(1);
+  const claims = JSON.parse(sessionStorage.getItem("mcp-chat-auth-cancel-v1")!);
+  expect(claims).toHaveLength(200);
+  expect(claims[0]).toBe("call-5");
+  expect(claimMissingCallCancellation("call-204")).toBe(false);
+});
+
 it("preserves the new flow when the old callback fails, then resumes the new flow once", () => {
   const value = start();
   preparePendingChatAuthRequired(value);

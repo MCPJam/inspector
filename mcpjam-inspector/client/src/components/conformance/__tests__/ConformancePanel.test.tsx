@@ -41,6 +41,12 @@ vi.mock("@/lib/apis/mcp-conformance-api", () => ({
   completeOAuthConformance: (...args: unknown[]) => mockCompleteOAuth(...args),
 }));
 
+// Step 2 lists a server's tools for the checks that must call one.
+const mockListTools = vi.fn(async () => ({ tools: [] as unknown[] }));
+vi.mock("@/lib/apis/mcp-tools-api", () => ({
+  listTools: (...args: unknown[]) => mockListTools(...args),
+}));
+
 vi.mock("@/components/oauth/utils", () => ({
   deriveOAuthProfileFromServer: () => ({
     serverUrl: "https://test.com",
@@ -54,6 +60,7 @@ vi.mock("@/components/oauth/utils", () => ({
 }));
 
 import { toast } from "@/lib/toast";
+import { OAUTH_CATALOG } from "../conformance-catalogs";
 import { ConformanceTab } from "../ConformanceTab";
 import {
   ConformanceServerPicker,
@@ -287,7 +294,7 @@ describe("ConformanceTab", () => {
     window.history.replaceState(null, "", "/");
   });
 
-  it("shows a pooled score headline with denominator, and readiness advice that costs points", async () => {
+  it("shows a pooled score headline with denominator, and readiness advice worth 0 points", async () => {
     setupSuccessfulRunMocks({
       protocol: createProtocolResult({
         checks: [
@@ -312,11 +319,11 @@ describe("ConformanceTab", () => {
         protocolVersion: "2025-11-25",
         readiness: [
           {
-            id: "readiness-metadata-quality",
-            title: "Metadata Quality",
+            id: "readiness-deprecated-feature-use",
+            title: "Deprecated Feature Use",
             severity: "warning",
             specStrength: "SHOULD",
-            message: "2 tool(s) have no description",
+            message: "Cacheable results advertise ttlMs: 0",
           },
         ],
       } as Partial<MCPConformanceResult>),
@@ -365,17 +372,25 @@ describe("ConformanceTab", () => {
     render(<ConformanceTab server={createHttpServer()} />);
     await runToCompletion();
 
-    // Pooled: 4/4 applicable across the suites, one SHOULD advisory (-2)
-    // from protocol readiness = 98. The number shows on the headline and on
-    // the Protocol row, which carries the same advisory.
-    expect(screen.getAllByText("98").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Conformant, with advice.")).toBeInTheDocument();
+    // Pooled: 4/4 applicable across the suites = 100. The SHOULD advisory
+    // from protocol readiness is listed but worth 0 points.
+    expect(screen.getAllByText("100").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Conformant, with guidance.")).toBeInTheDocument();
     // The denominator travels with the number.
     expect(screen.getByText("4/4")).toBeInTheDocument();
 
-    // The advisory that deducted is visible, tier and all.
-    expect(screen.getByText("Metadata Quality")).toBeInTheDocument();
-    expect(screen.getByText("(SHOULD)")).toBeInTheDocument();
+    // The advisory sits in the one container above the
+    // suites, closed with a count until opened.
+    const advice = screen.getByRole("button", {
+      name: /^Additional enhancements/,
+    });
+    expect(advice).toHaveAttribute("aria-expanded", "false");
+    expect(within(advice).getByText("1")).toBeInTheDocument();
+    fireEvent.click(advice);
+    const row = screen.getByText("Deprecated Feature Use").closest("li")!;
+    expect(row).toHaveTextContent(
+      "Suggested (SHOULD) Protocol Deprecated Feature Use",
+    );
   });
 
   it("shows no number when nothing was applicable", async () => {
@@ -415,6 +430,14 @@ describe("ConformanceTab", () => {
       screen.getByText("Nothing applicable to score on this server."),
     ).toBeInTheDocument();
     expect(screen.queryByText("%")).toBeNull();
+    const protocolHeader = screen.getByText(SUITE_COPY.protocol.title).closest("button")!;
+    expect(within(protocolHeader).getByText("NOT APPLICABLE")).toBeInTheDocument();
+    const appsHeader = screen.getByText(SUITE_COPY.apps.title).closest("button")!;
+    expect(within(appsHeader).getByText("NOT APPLICABLE")).toBeInTheDocument();
+    expect(within(appsHeader).getByText(SUITE_COPY.apps.description)).toBeInTheDocument();
+    expect(appsHeader).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(appsHeader);
+    expect(appsHeader).toHaveAttribute("aria-expanded", "true");
   });
 
   it("reads suites that ran no checks as incomplete, not as nothing applicable", async () => {
@@ -800,29 +823,43 @@ describe("ConformanceTab", () => {
     fireEvent.click(oauth);
     expect(oauth).toHaveAttribute("aria-expanded", "true");
     // The open suite lists its checks under the same count. OAuth runs as
-    // one flow, so its checks' boxes are locked to the suite's box.
+    // one flow, so a check's box says whether it COUNTS: unchecked, it still
+    // runs, unscored.
     const count = oauth.textContent?.match(/(\d+) checks selected/)?.[1];
     const oauthRow = oauth.parentElement!.parentElement!;
     expect(
       within(oauthRow).getByText(
-        `${count} checks in this suite. They run together as one sign-in flow.`,
+        `${count} checks in this suite. They run together as one sign-in flow, so an unchecked check still runs but does not count toward the score.`,
       ),
     ).toBeInTheDocument();
     const oauthBox = within(oauthRow).getByRole("checkbox", {
       name: "Run OAuth",
     });
+    // The OAuth advice has its own box, covered by the suite's.
+    const issAdvice = within(oauthRow).getByRole("checkbox", {
+      name: "Run Authorization Response iss",
+    });
     const oauthChecks = within(oauthRow)
       .getAllByRole("checkbox")
-      .filter((box) => box !== oauthBox);
+      .filter((box) => box !== oauthBox && box !== issAdvice);
     expect(oauthChecks).toHaveLength(Number(count));
     for (const box of oauthChecks) {
-      expect(box).toBeDisabled();
+      expect(box).toBeEnabled();
       expect(box).toHaveAttribute("data-state", "checked");
     }
+    fireEvent.click(oauthChecks[0]!);
+    expect(oauthChecks[0]).toHaveAttribute("data-state", "unchecked");
+    expect(oauthBox).toHaveAttribute("data-state", "indeterminate");
+    expect(oauth).toHaveTextContent(`${Number(count) - 1} checks selected`);
+    // The suite's box puts every check back, then leaves the flow out.
+    fireEvent.click(oauthBox);
+    expect(oauthChecks[0]).toHaveAttribute("data-state", "checked");
     fireEvent.click(oauthBox);
     for (const box of oauthChecks) {
       expect(box).toHaveAttribute("data-state", "unchecked");
     }
+    expect(issAdvice).toHaveAttribute("data-state", "unchecked");
+    expect(issAdvice).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(
@@ -1018,7 +1055,7 @@ describe("ConformanceTab", () => {
 
     const card = screen.getByRole("list", { name: "Servers" });
     expect(card).toHaveTextContent("alpha");
-    expect(card).toHaveTextContent("Last run Oct 28, 2026");
+    expect(card).toHaveTextContent("Last run Oct 28, 2026 · Protocol Auto");
     expect(card).toHaveTextContent("PASSED");
     expect(card).toHaveTextContent("100%");
     expect(card).toHaveTextContent("22/22");
@@ -1033,6 +1070,237 @@ describe("ConformanceTab", () => {
     await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
     expect(mockRunTasks).not.toHaveBeenCalled();
     expect(mockStartOAuth).not.toHaveBeenCalled();
+  });
+
+  it("shows a server's logo on its card, and initials without one", () => {
+    const alpha = createHttpServer({ name: "alpha" });
+    const beta = createHttpServer({ name: "beta" });
+    const run = (id: string) => ({
+      _id: id,
+      projectId: "proj_1",
+      targetKind: "server",
+      targetKey: `server:${id}`,
+      serverId: id,
+      source: "ui",
+      verification: "mcpjam_verified" as const,
+      status: "completed",
+      outcome: "passed" as const,
+      incompleteReason: null,
+      score: 100,
+      applicable: 3,
+      passed: 3,
+      failed: 0,
+      couldNotRun: 0,
+      requestedSuites: ["protocol"],
+      protocolVersion: "2025-11-25",
+      actorLabel: null,
+      ciMetadata: null,
+      createdAt: Date.UTC(2026, 9, 28, 12),
+      completedAt: null,
+      durationMs: null,
+      sharingEnabled: false,
+    });
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha, beta]}
+        onSelectServer={vi.fn()}
+        lastRuns={{ alpha: run("srv_a"), beta: run("srv_b") }}
+        onViewRun={vi.fn()}
+        serverIcons={{ alpha: "https://example.test/alpha.png" }}
+      />,
+    );
+
+    const [alphaCard, betaCard] = within(
+      screen.getByRole("list", { name: "Servers" }),
+    ).getAllByRole("listitem");
+    expect(alphaCard!.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://example.test/alpha.png",
+    );
+    expect(alphaCard).toHaveTextContent("Protocol 2025-11-25");
+    expect(betaCard!.querySelector("img")).toBeNull();
+    expect(betaCard).toHaveTextContent("Be");
+  });
+
+  it("shows progress, not a score, until the run finishes", async () => {
+    setupSuccessfulRunMocks();
+    // Protocol never answers: the run stays going.
+    mockRunProtocol.mockReturnValue(new Promise(() => {}));
+    const alpha = createHttpServer({ name: "alpha" });
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+      />,
+    );
+    clickRun();
+
+    expect(
+      await screen.findByText(
+        /^Running conformance checks\. \d of 4 suites done\.$/,
+      ),
+    ).toBeInTheDocument();
+    // Apps and Tasks finished, yet no headline number claims a result.
+    await waitFor(() => expect(mockRunTasks).toHaveBeenCalled());
+    expect(screen.queryByText(/^\d+\/\d+ · partial$/)).toBeNull();
+    expect(screen.queryByText("Fully conformant.")).toBeNull();
+  });
+
+  it("counts only the suites the run covers in its progress", async () => {
+    setupSuccessfulRunMocks();
+    mockRunProtocol.mockReturnValue(new Promise(() => {}));
+    const alpha = createHttpServer({ name: "alpha" });
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        serverDefaults={{ alpha: { tasks: [], oauth: false } }}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+
+    // Tasks and OAuth are left out: two suites, Apps done, Protocol going.
+    expect(
+      await screen.findByText(
+        "Running conformance checks. 1 of 2 suites done.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("goes back to the server list from History's Overview after a run", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const lastRun = {
+      _id: "run_9",
+      projectId: "proj_1",
+      targetKind: "server",
+      targetKey: "server:srv_1",
+      serverId: "srv_1",
+      source: "ui",
+      verification: "mcpjam_verified" as const,
+      status: "completed",
+      outcome: "passed" as const,
+      incompleteReason: null,
+      score: 100,
+      applicable: 22,
+      passed: 22,
+      failed: 0,
+      couldNotRun: 0,
+      requestedSuites: ["protocol"],
+      protocolVersion: null,
+      actorLabel: null,
+      ciMetadata: null,
+      createdAt: Date.UTC(2026, 9, 28, 12),
+      completedAt: null,
+      durationMs: null,
+      sharingEnabled: false,
+    };
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        history={<p>History table</p>}
+        lastRuns={{ alpha: lastRun }}
+        onViewRun={vi.fn()}
+      />,
+    );
+    fireEvent.click(
+      within(screen.getByRole("list", { name: "Servers" })).getByRole(
+        "button",
+        { name: "Run alpha" },
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Conformance History" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+
+    // The page's home, not the run it just left.
+    expect(screen.getByRole("list", { name: "Servers" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
+  });
+
+  it("runs an unchecked OAuth check but leaves it out of the score", async () => {
+    const left = OAUTH_CATALOG[0]!;
+    setupSuccessfulRunMocks({
+      oauth: createOAuthResult({
+        passed: false,
+        outcome: "failed",
+        steps: [
+          {
+            step: left.id as OAuthConformanceResult["steps"][number]["step"],
+            title: left.title,
+            summary: "…",
+            status: "failed",
+            durationMs: 1,
+            logs: [],
+            httpAttempts: [],
+            error: { message: "profile shape is wrong" },
+          },
+          {
+            step: "oauth_token_format",
+            title: "Token Format",
+            summary: "…",
+            status: "passed",
+            durationMs: 1,
+            logs: [],
+            httpAttempts: [],
+          },
+        ],
+      }),
+    });
+    const alpha = createHttpServer({ name: "alpha" });
+    const onSaveServerDefaults = vi.fn(async () => {});
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onSaveServerDefaults={onSaveServerDefaults}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /^OAuth.*checks selected$/ }),
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: `Run ${left.title}` }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+
+    // Saved with the server's defaults, and the flow still ran.
+    expect(onSaveServerDefaults).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ oauthUnscored: [left.id] }),
+    );
+    await waitFor(() => expect(mockStartOAuth).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+    );
+
+    // The failed step reads as unscored, and does not fail the run.
+    fireEvent.click(suiteHeader("oauth"));
+    const row = screen.getByText(left.title).closest("div")!.parentElement!;
+    expect(within(row).getByText("unscored")).toBeInTheDocument();
+    // Its failure is reported, not counted: grey, not red.
+    const message = screen.getByText("profile shape is wrong");
+    expect(message).toHaveClass("text-muted-foreground");
+    expect(message).not.toHaveClass("text-red-600");
+    expect(screen.queryByText(/^Not conformant\./)).toBeNull();
+    // The suite's badge follows the score, not the unscored failure.
+    expect(
+      within(suiteHeader("oauth")).getByText("PASSED"),
+    ).toBeInTheDocument();
+    expect(within(suiteHeader("oauth")).queryByText("FAILED")).toBeNull();
   });
 
   it("starts step 2 from the server's default checks", () => {
@@ -1165,7 +1433,7 @@ describe("ConformanceTab", () => {
     error.mockRestore();
   });
 
-  it("keeps the finished run when the setup steps are cancelled", async () => {
+  it("goes back to History when the setup steps are cancelled", async () => {
     setupSuccessfulRunMocks();
     const alpha = createHttpServer({ name: "alpha" });
     render(
@@ -1181,9 +1449,11 @@ describe("ConformanceTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Conformance History" }));
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByText("History table")).toBeInTheDocument();
 
+    // Overview, after a finished run, is the page's home again.
     fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
-    expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
   });
 
   it("waits for the saved defaults before step 2", () => {
@@ -1236,6 +1506,446 @@ describe("ConformanceTab", () => {
       "data-state",
       "unchecked",
     );
+  });
+
+  describe("tools the checks may call", () => {
+    beforeEach(() => {
+      mockListTools.mockResolvedValue({
+        tools: [
+          { name: "delete_row", annotations: { destructiveHint: true } },
+          {
+            name: "echo",
+            annotations: { readOnlyHint: true },
+            inputSchema: {
+              type: "object",
+              properties: { message: { type: "string" } },
+            },
+          },
+          {
+            name: "weather",
+            annotations: { readOnlyHint: true },
+            outputSchema: {
+              type: "object",
+              properties: { temperature: { type: "number" } },
+            },
+          },
+        ],
+      });
+    });
+
+    /** Setup on 2026-07-28, where the checks that call a tool run. */
+    async function toStep2(pin = "2026-07-28") {
+      const user = userEvent.setup();
+      const alpha = createHttpServer({ name: "alpha" });
+      render(
+        <ConformanceTab
+          server={alpha}
+          servers={[alpha]}
+          onSelectServer={vi.fn()}
+        />,
+      );
+      fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+      if (pin !== "auto") {
+        await user.click(
+          screen.getByRole("combobox", { name: "Select protocol version" }),
+        );
+        await user.click(screen.getByRole("option", { name: pin }));
+      }
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    }
+
+    /** Setup to step 2 with the Protocol suite open. */
+    async function openProtocolChecks() {
+      await toStep2();
+      fireEvent.click(
+        screen.getByRole("button", { name: /^Protocol.*checks selected$/ }),
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("combobox", { name: "Tool that emits logs" }),
+        ).toBeEnabled(),
+      );
+    }
+
+    it("sends the output check's tool on its own", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await openProtocolChecks();
+
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool to check output" }),
+      );
+      // Only tools that declare an output schema can be graded.
+      expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(
+        ["Not set", "weather · read-only"],
+      );
+      await user.click(
+        screen.getByRole("option", { name: "weather · read-only" }),
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() =>
+        expect(mockRunProtocol).toHaveBeenCalledWith(
+          "alpha",
+          expect.objectContaining({
+            probes: { toolCallProbe: { toolName: "weather" } },
+          }),
+        ),
+      );
+    });
+
+    it("asks under the check which tool to call, and runs with it", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await openProtocolChecks();
+
+      // One field per tool, under the check that calls it.
+      expect(
+        screen.getByRole("combobox", { name: "Tool that asks for input" }),
+      ).toBeInTheDocument();
+      // The log level shows only once a tool is picked.
+      expect(
+        screen.queryByRole("combobox", { name: "Log level to request" }),
+      ).toBeNull();
+
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      // Read-only tools first, and a warning on one that may modify data.
+      const options = screen.getAllByRole("option").map((o) => o.textContent);
+      expect(options).toEqual([
+        "Not set",
+        "echo · read-only",
+        "weather · read-only",
+        "delete_row · may modify data",
+      ]);
+      await user.click(
+        screen.getByRole("option", { name: "echo · read-only" }),
+      );
+
+      // The arguments editor Evals uses, here with its Raw JSON switch on.
+      fireEvent.click(screen.getByRole("switch"));
+      const args = screen.getByRole("textbox", { name: "Arguments" });
+      fireEvent.change(args, { target: { value: "[1]" } });
+      expect(screen.getByText("Expected a JSON object")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
+      fireEvent.change(args, { target: { value: '{"message": "hi"}' } });
+      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeEnabled();
+
+      // The level the log level advice asks for: the SDK's default until
+      // picked.
+      const level = screen.getByRole("combobox", {
+        name: "Log level to request",
+      });
+      expect(level).toHaveTextContent("warning");
+      await user.click(level);
+      await user.click(screen.getByRole("option", { name: "info" }));
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      const sent = {
+        probes: {
+          logProbe: {
+            toolName: "echo",
+            arguments: { message: "hi" },
+            level: "info",
+          },
+        },
+      };
+      await waitFor(() =>
+        expect(mockRunProtocol).toHaveBeenCalledWith(
+          "alpha",
+          expect.objectContaining(sent),
+        ),
+      );
+
+      // Kept for the server: Run again calls the same tool.
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+      );
+      mockRunProtocol.mockClear();
+      fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+      await waitFor(() =>
+        expect(mockRunProtocol).toHaveBeenCalledWith(
+          "alpha",
+          expect.objectContaining(sent),
+        ),
+      );
+    });
+
+    it("offers the tool's own argument names", async () => {
+      const user = userEvent.setup();
+      await openProtocolChecks();
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      await user.click(
+        screen.getByRole("option", { name: "echo · read-only" }),
+      );
+
+      await user.click(screen.getByRole("button", { name: "Add argument" }));
+      await user.click(screen.getByText("Select arg…"));
+
+      expect(
+        await screen.findByRole("option", { name: /message/ }),
+      ).toBeInTheDocument();
+    });
+
+    it("flags the checks that need an input before the suite is opened", async () => {
+      const user = userEvent.setup();
+      await toStep2();
+
+      // Closed: the header says how many picked checks still need one.
+      const header = screen.getByRole("button", {
+        name: /^Protocol.*checks selected$/,
+      });
+      expect(header).toHaveAttribute("aria-expanded", "false");
+      expect(
+        within(header).getByText("3 checks need input"),
+      ).toBeInTheDocument();
+
+      fireEvent.click(header);
+      // The three checks, and the advice that calls the log tool too.
+      expect(screen.getAllByText("Needs input")).toHaveLength(4);
+      await waitFor(() =>
+        expect(
+          screen.getByRole("combobox", { name: "Tool that emits logs" }),
+        ).toBeEnabled(),
+      );
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      await user.click(
+        screen.getByRole("option", { name: "echo · read-only" }),
+      );
+
+      expect(screen.getAllByText("Input set")).toHaveLength(2);
+      expect(screen.getAllByText("Needs input")).toHaveLength(2);
+      expect(
+        within(header).getByText("2 checks need input"),
+      ).toBeInTheDocument();
+    });
+
+    it("does not ask for the output tool when no tool declares an output schema", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [{ name: "echo", annotations: { readOnlyHint: true } }],
+      });
+      await toStep2();
+      const header = screen.getByRole("button", {
+        name: /^Protocol.*checks selected$/,
+      });
+      fireEvent.click(header);
+
+      // Nothing to grade, so the check does not apply: no tag, no count.
+      expect(
+        await screen.findByText(
+          "No tool on this server declares an output schema, so this check does not apply.",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        within(header).getByText("2 checks need input"),
+      ).toBeInTheDocument();
+    });
+
+    it("asks for no protocol tool on Auto, where these checks do not run", async () => {
+      await toStep2("auto");
+      const header = screen.getByRole("button", {
+        name: /^Protocol.*checks selected$/,
+      });
+      expect(within(header).queryByText(/need(s)? input/)).toBeNull();
+      fireEvent.click(header);
+      expect(screen.queryByText("Needs input")).toBeNull();
+      expect(
+        screen.queryByRole("combobox", { name: "Tool that emits logs" }),
+      ).toBeNull();
+    });
+
+    it("asks once for the Tasks tool on any pin, and for answers under the update check", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await toStep2("auto");
+      fireEvent.click(
+        screen.getByRole("button", { name: /^Tasks.*checks selected$/ }),
+      );
+      const tool = await screen.findByRole("combobox", {
+        name: "Tool that creates a task",
+      });
+      await waitFor(() => expect(tool).toBeEnabled());
+      // One field: the other checks that call it point to it.
+      expect(
+        screen.getAllByRole("combobox", { name: "Tool that creates a task" }),
+      ).toHaveLength(1);
+      expect(
+        screen.getAllByText(/^Calls the tool set under/).length,
+      ).toBeGreaterThan(0);
+      // The answers need a tool first.
+      expect(
+        screen.queryByRole("textbox", {
+          name: "Answers to the task's questions (optional)",
+        }),
+      ).toBeNull();
+
+      await user.click(tool);
+      await user.click(screen.getByRole("option", { name: "echo · read-only" }));
+
+      const answers = screen.getByRole("textbox", {
+        name: "Answers to the task's questions (optional)",
+      });
+      fireEvent.change(answers, { target: { value: "[1]" } });
+      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
+      // The message is tied to the box, so a screen reader reads it too.
+      expect(answers).toHaveAccessibleDescription(/Enter a JSON object/);
+      // Past the routes' cap the run would only get a 400.
+      fireEvent.change(answers, {
+        target: { value: JSON.stringify({ confirm: "x".repeat(10_001) }) },
+      });
+      expect(answers).toHaveAccessibleDescription(/under 10,000 characters/);
+      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
+      fireEvent.change(answers, {
+        target: { value: '{"confirm": {"action": "accept"}}' },
+      });
+      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeEnabled();
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() =>
+        expect(mockRunTasks).toHaveBeenCalledWith("alpha", {
+          toolName: "echo",
+          inputResponses: { confirm: { action: "accept" } },
+        }),
+      );
+    });
+
+    it("lists the tools once for every field, across pages", async () => {
+      mockListTools.mockReset();
+      mockListTools
+        .mockResolvedValueOnce({
+          tools: [{ name: "echo", annotations: { readOnlyHint: true } }],
+          nextCursor: "page-2",
+        })
+        .mockResolvedValueOnce({
+          tools: [{ name: "ask_user", annotations: { readOnlyHint: true } }],
+        });
+      const user = userEvent.setup();
+      await openProtocolChecks();
+
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that asks for input" }),
+      );
+      expect(
+        screen.getByRole("option", { name: "ask_user · read-only" }),
+      ).toBeInTheDocument();
+      // Two fields, two pages: one call per page, not one per field.
+      expect(mockListTools).toHaveBeenCalledTimes(2);
+      expect(mockListTools).toHaveBeenLastCalledWith(
+        expect.objectContaining({ cursor: "page-2" }),
+      );
+    });
+
+    it("says when the server pages past what can be listed", async () => {
+      // Never stops paging: the list stops at its cap and says so.
+      mockListTools.mockReset();
+      mockListTools.mockResolvedValue({
+        tools: [{ name: "echo", annotations: { readOnlyHint: true } }],
+        nextCursor: "more",
+      });
+      await openProtocolChecks();
+
+      expect(mockListTools).toHaveBeenCalledTimes(50);
+      expect(
+        screen.getAllByText(/lists more tools than can be shown here/)[0],
+      ).toBeInTheDocument();
+    });
+
+    it("never sends a tool for a check left out of the run", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await openProtocolChecks();
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      await user.click(
+        screen.getByRole("option", { name: "echo · read-only" }),
+      );
+
+      // The check and the advice that would call it are left out.
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Run Logs Require A Log Level" }),
+      );
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Run Log Level Filtering" }),
+      );
+      expect(
+        screen.queryByRole("combobox", { name: "Tool that emits logs" }),
+      ).toBeNull();
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+      expect(mockRunProtocol.mock.calls[0]![1]).not.toHaveProperty("probes");
+      expect(mockRunProtocol.mock.calls[0]![1].readinessIds).not.toContain(
+        "readiness-log-level-filtering",
+      );
+    });
+
+    it("lists the advice under the checks, and moves the log tool to it when only it calls the tool", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await openProtocolChecks();
+      // Protocol, Tasks and OAuth each list theirs; Apps has none.
+      expect(
+        screen.getAllByText(/^Advice: \d+ tips?, run with the checks above\.$/),
+      ).toHaveLength(3);
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      await user.click(
+        screen.getByRole("option", { name: "echo · read-only" }),
+      );
+      // Under the advice row: a pointer to the check's tool, and the level.
+      expect(
+        screen.getByText("Calls the tool set under Logs Require A Log Level."),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("combobox", { name: "Log level to request" }),
+      ).toBeInTheDocument();
+
+      // Only the advice calls it now, so the tool field moves to its row.
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Run Logs Require A Log Level" }),
+      );
+      expect(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      ).toHaveTextContent("echo");
+      // Another advice left out is not asked for.
+      fireEvent.click(
+        screen.getByRole("checkbox", {
+          name: "Run Explicit Session Termination",
+        }),
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+      const sent = mockRunProtocol.mock.calls[0]![1];
+      expect(sent.probes).toEqual({ logProbe: { toolName: "echo" } });
+      expect(sent.checkIds).not.toContain("modern-logs-require-log-level");
+      expect(sent.readinessIds).toContain("readiness-log-level-filtering");
+      expect(sent.readinessIds).not.toContain("readiness-session-termination");
+    });
+
+    it("turns the advice off with the suite's box, and offers none with no check picked", async () => {
+      await openProtocolChecks();
+      const suite = screen.getByRole("checkbox", { name: "Run Protocol" });
+      fireEvent.click(suite);
+      expect(suite).toHaveAttribute("data-state", "unchecked");
+      const advice = screen.getByRole("checkbox", {
+        name: "Run Log Level Filtering",
+      });
+      expect(advice).toHaveAttribute("data-state", "unchecked");
+      expect(advice).toBeDisabled();
+
+      fireEvent.click(suite);
+      expect(suite).toHaveAttribute("data-state", "checked");
+      expect(advice).toHaveAttribute("data-state", "checked");
+      expect(advice).toBeEnabled();
+    });
   });
 
   it("keeps at least one check in Settings", async () => {
@@ -1372,8 +2082,7 @@ describe("ConformanceTab", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("waits in step 1 until the server is connected from the picker", async () => {
-    const user = userEvent.setup();
+  it("connects the page's server when step 1 opens, and waits for it", async () => {
     setupSuccessfulRunMocks();
     const disconnected = createHttpServer({
       name: "alpha",
@@ -1389,21 +2098,13 @@ describe("ConformanceTab", () => {
       />,
     );
 
+    // No Connect to click: it starts connecting in the background.
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await waitFor(() =>
+      expect(onConnectServer).toHaveBeenCalledWith("alpha", { signIn: false }),
+    );
+    expect(onConnectServer).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
-
-    // Picking it says what is missing, in a toast rather than under the field.
-    const error = vi.spyOn(toast, "error");
-    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
-    await user.click(serverRow("alpha"));
-    expect(error).toHaveBeenCalledWith("Connect alpha to continue.");
-    expect(screen.queryByText("Connect alpha to continue.")).toBeNull();
-    error.mockRestore();
-
-    // The picker connects it in place, as in User Testing.
-    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
-    await user.click(screen.getByRole("button", { name: "Connect alpha" }));
-    expect(onConnectServer).toHaveBeenCalledWith("alpha", { signIn: false });
     expect(mockRunProtocol).not.toHaveBeenCalled();
 
     // The connect lands: the page re-renders with the connected server.
@@ -1419,6 +2120,46 @@ describe("ConformanceTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
     await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+  });
+
+  it("connects a server as soon as it is picked in step 1", async () => {
+    const user = userEvent.setup();
+    const alpha = createHttpServer({ name: "alpha" });
+    const beta = createHttpServer({
+      name: "beta",
+      connectionStatus: "disconnected",
+    });
+    const onConnectServer = vi.fn(async () => "ready" as const);
+    const error = vi.spyOn(toast, "error");
+    const loading = vi.spyOn(toast, "loading");
+    const success = vi.spyOn(toast, "success");
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha, beta]}
+        onSelectServer={vi.fn()}
+        onConnectServer={onConnectServer}
+      />,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    // alpha is connected already: nothing to do on open.
+    expect(onConnectServer).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
+    await user.click(serverRow("beta"));
+    expect(onConnectServer).toHaveBeenCalledWith("beta", { signIn: false });
+    // One toast says it is connecting, then settles into the result.
+    expect(loading).toHaveBeenCalledWith("Connecting beta...");
+    await waitFor(() =>
+      expect(success).toHaveBeenCalledWith("beta connected", {
+        id: loading.mock.results[0]!.value,
+      }),
+    );
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
+    loading.mockRestore();
+    success.mockRestore();
   });
 
   it("lists the project's servers not loaded yet, and connects one from step 1", async () => {
@@ -1437,8 +2178,8 @@ describe("ConformanceTab", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
-    // Listed as not connected, with Connect, like User Testing's picker.
-    await user.click(screen.getByRole("button", { name: "Connect notion" }));
+    // Listed as not connected; picking it connects it.
+    await user.click(serverRow("notion"));
     expect(onConnectServer).toHaveBeenCalledWith("notion", { signIn: false });
     expect(screen.getByRole("button", { name: SERVER_FIELD })).toHaveTextContent(
       "notion",
@@ -1451,6 +2192,84 @@ describe("ConformanceTab", () => {
       <ConformanceTab server={alpha} servers={[alpha, notion]} {...props} />,
     );
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+  });
+
+  it("connects the page's server when it arrives after step 1 opened", async () => {
+    const onConnectServer = vi.fn(async () => "ready" as const);
+    const props = { onSelectServer: vi.fn(), onConnectServer };
+    // The server list is still loading when Run opens the steps.
+    const { rerender } = render(
+      <ConformanceTab server={null} servers={[]} {...props} />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    expect(onConnectServer).not.toHaveBeenCalled();
+
+    const alpha = createHttpServer({
+      name: "alpha",
+      connectionStatus: "disconnected",
+    });
+    rerender(<ConformanceTab server={alpha} servers={[alpha]} {...props} />);
+    await waitFor(() =>
+      expect(onConnectServer).toHaveBeenCalledWith("alpha", { signIn: false }),
+    );
+    expect(onConnectServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads no failure for a server named like an object built-in", () => {
+    // `in` would find the inherited `constructor` and loop on clearing it.
+    const server = createHttpServer({ name: "constructor" });
+    render(
+      <ConformanceTab
+        server={server}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+        onConnectServer={vi.fn(async () => "ready" as const)}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+  });
+
+  it("keeps each server's connect failure when they settle out of order", async () => {
+    const user = userEvent.setup();
+    const alpha = createHttpServer({ name: "alpha" });
+    const beta = createHttpServer({
+      name: "beta",
+      connectionStatus: "disconnected",
+    });
+    const gamma = createHttpServer({
+      name: "gamma",
+      connectionStatus: "disconnected",
+    });
+    const settle: Record<string, (outcome: "failed") => void> = {};
+    const onConnectServer = vi.fn(
+      (name: string) =>
+        new Promise<"failed">((resolve) => (settle[name] = resolve)),
+    );
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha, beta, gamma]}
+        onSelectServer={vi.fn()}
+        onConnectServer={onConnectServer}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+
+    // beta, then gamma: gamma's connect fails first, beta's after it.
+    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
+    await user.click(serverRow("beta"));
+    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
+    await user.click(serverRow("gamma"));
+    await act(async () => settle.gamma!("failed"));
+    await act(async () => settle.beta!("failed"));
+
+    // gamma is the one picked, and its failure is still the one shown.
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      `Couldn't connect to "gamma"`,
+    );
   });
 
   it("connects a server that dropped before Run again, then runs", async () => {
@@ -1496,7 +2315,6 @@ describe("ConformanceTab", () => {
   });
 
   it("names the server and offers Retry or Edit when the connect fails", async () => {
-    const user = userEvent.setup();
     const server = createHttpServer({
       name: "alpha",
       connectionStatus: "failed",
@@ -1504,6 +2322,7 @@ describe("ConformanceTab", () => {
     });
     const onConnectServer = vi.fn(async () => "failed" as const);
     const onEditServer = vi.fn();
+    const error = vi.spyOn(toast, "error");
     render(
       <ConformanceTab
         server={server}
@@ -1514,12 +2333,15 @@ describe("ConformanceTab", () => {
       />,
     );
 
+    // Opening step 1 connects the page's server in the background.
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
-    await user.click(screen.getByRole("button", { name: "Connect alpha" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(`Couldn't connect to "alpha"`);
     expect(alert).toHaveTextContent("connect ECONNREFUSED 127.0.0.1:3000");
+    expect(error).toHaveBeenCalledWith(
+      "Couldn't connect to alpha. Retry below, or edit its connection.",
+      expect.objectContaining({ id: expect.anything() }),
+    );
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
 
     fireEvent.click(
@@ -1534,7 +2356,6 @@ describe("ConformanceTab", () => {
   });
 
   it("clears the connect alert once the server connects some other way", async () => {
-    const user = userEvent.setup();
     const server = createHttpServer({
       name: "alpha",
       connectionStatus: "failed",
@@ -1548,9 +2369,8 @@ describe("ConformanceTab", () => {
       <ConformanceTab server={server} servers={[server]} {...props} />,
     );
 
+    // Opening step 1 connects the page's server in the background.
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
-    await user.click(screen.getByRole("button", { name: "Connect alpha" }));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
 
     // Fixed from Edit connection, which reconnects without the picker.
@@ -1570,7 +2390,6 @@ describe("ConformanceTab", () => {
   });
 
   it("asks to sign in again when the connect needs reauthorization", async () => {
-    const user = userEvent.setup();
     const server = createHttpServer({
       name: "alpha",
       connectionStatus: "disconnected",
@@ -1585,9 +2404,8 @@ describe("ConformanceTab", () => {
       />,
     );
 
+    // Opening step 1 connects the page's server in the background.
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
-    await user.click(screen.getByRole("button", { name: "Connect alpha" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("It needs you to sign in again.");
 
@@ -1623,7 +2441,7 @@ describe("ConformanceTab", () => {
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 
-  it("lists servers with their status, and Connect only where it can connect", async () => {
+  it("lists servers with their status, and no Connect", async () => {
     const user = userEvent.setup();
     const alpha = createHttpServer({
       name: "alpha",
@@ -1631,13 +2449,11 @@ describe("ConformanceTab", () => {
     });
     const beta = createHttpServer({ name: "beta" });
     const onSelect = vi.fn();
-    const onConnect = vi.fn();
     render(
       <ConformanceServerPicker
         servers={[alpha, beta]}
         selectedName="alpha"
         onSelect={onSelect}
-        onConnect={onConnect}
       />,
     );
 
@@ -1650,13 +2466,8 @@ describe("ConformanceTab", () => {
     expect(screen.getByRole("button", { name: "Add server" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Disconnected" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Connected" })).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Connect beta" }),
-    ).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Connect alpha" }));
-    expect(onConnect).toHaveBeenCalledWith("alpha");
-    expect(onSelect).not.toHaveBeenCalled();
+    // Picking a server connects it, so no row offers Connect.
+    expect(screen.queryByRole("button", { name: /^Connect / })).toBeNull();
 
     await user.click(serverRow("beta"));
     expect(onSelect).toHaveBeenCalledWith("beta");
@@ -1781,7 +2592,8 @@ describe("ConformanceTab", () => {
     render(<ConformanceTab server={createHttpServer()} />);
     await runToCompletion();
 
-    expect(mockRunTasks).toHaveBeenCalledWith("http-server");
+    // The whole suite, and no tool, since none was set.
+    expect(mockRunTasks).toHaveBeenCalledWith("http-server", {});
     expect(within(suiteHeader("tasks")).getByText("PASSED")).toBeDefined();
   });
 
@@ -2695,6 +3507,30 @@ describe("ConformanceTab", () => {
     await runToCompletion();
 
     expect(within(suiteHeader("tasks")).getByText("INCOMPLETE")).toBeDefined();
+  });
+
+  it("shows Tasks advice the run could not judge as a grey line", async () => {
+    setupSuccessfulRunMocks();
+    const reason =
+      "Not checked: the task didn't fail, so there was no failure reason to look at.";
+    mockRunTasks.mockResolvedValue({
+      success: true,
+      result: createTasksResult({
+        uncheckedAdvice: [
+          {
+            id: "tasks-readiness-failed-status-message",
+            title: "Failed Task Status Message",
+            reason,
+          },
+        ],
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+
+    expect(screen.getByText("Failed Task Status Message")).toBeDefined();
+    expect(screen.getByText(reason)).toHaveClass("text-muted-foreground");
   });
 
   it("shows which URLs were probed on a failed OAuth step", async () => {
