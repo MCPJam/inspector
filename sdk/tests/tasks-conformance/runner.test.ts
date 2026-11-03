@@ -462,7 +462,7 @@ describe("completion acknowledgements", () => {
 });
 
 describe("shape validators", () => {
-  it("requires a flat CreateTaskResult; extra fields warn instead of failing", () => {
+  it("requires a flat CreateTaskResult; extra fields are not judged", () => {
     expect(
       validateCreateTaskShape({ resultType: "task", taskId: "t" })
     ).toEqual({ violations: [], warnings: [] });
@@ -481,39 +481,37 @@ describe("shape validators", () => {
       validateCreateTaskShape({ resultType: "task" }).violations[0]
     ).toContain("taskId");
     // A redundant nested `task` object is an extra field the spec does not
-    // forbid: an otherwise-valid flat result passes with a warning.
-    const nested = validateCreateTaskShape({
-      resultType: "task",
-      taskId: "t",
-      task: { taskId: "t" },
-    });
-    expect(nested.violations).toEqual([]);
-    expect(nested.warnings[0]).toContain("nested");
+    // forbid: an otherwise-valid flat result passes clean.
+    expect(
+      validateCreateTaskShape({
+        resultType: "task",
+        taskId: "t",
+        task: { taskId: "t" },
+      })
+    ).toEqual({ violations: [], warnings: [] });
   });
 
-  it("enforces era-native ttl fields; the other era's field warns", () => {
+  it("enforces era-native ttl fields; the other era's field is not judged", () => {
     expect(validateTaskTtlShape("extension", { ttlMs: null })).toEqual({
       violations: [],
       warnings: [],
     });
-    // `ttl` beside a missing/invalid `ttlMs`: one violation (ttlMs shape) and
-    // one warning (extra legacy field) — presence alone must not fail.
+    // `ttl` beside a missing `ttlMs`: the missing era-native field is the
+    // only violation — the extra legacy field alone must not fail.
     const mixed = validateTaskTtlShape("extension", { ttl: 5 });
     expect(mixed.violations).toHaveLength(1);
-    expect(mixed.warnings).toHaveLength(1);
-    const extraOnValid = validateTaskTtlShape("extension", {
-      ttlMs: null,
-      ttl: 5,
-    });
-    expect(extraOnValid.violations).toEqual([]);
-    expect(extraOnValid.warnings[0]).toContain("ttl");
+    expect(mixed.warnings).toEqual([]);
+    expect(
+      validateTaskTtlShape("extension", { ttlMs: null, ttl: 5 })
+    ).toEqual({ violations: [], warnings: [] });
     expect(validateTaskTtlShape("legacy", { ttl: 5 })).toEqual({
       violations: [],
       warnings: [],
     });
-    expect(validateTaskTtlShape("legacy", { ttlMs: 5 }).warnings[0]).toContain(
-      "ttlMs"
-    );
+    expect(validateTaskTtlShape("legacy", { ttlMs: 5 })).toEqual({
+      violations: [],
+      warnings: [],
+    });
   });
 });
 

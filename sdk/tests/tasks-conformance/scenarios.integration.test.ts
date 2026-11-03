@@ -384,12 +384,11 @@ describe("tasks-ttl-integer-shape", () => {
     );
   });
 
-  it("only warns on a negative ttlMs, which the extension never forbids", async () => {
+  it("passes a negative ttlMs, which the extension never forbids", async () => {
     const phases = quickPhases();
     phases[1] = { ...phases[1]!, ttlMs: -1 };
     const entry = check(await run(await serve(phases), [ID]), ID);
-    expect(entry.status).toBe("passed");
-    expect(entry.warnings?.join(" ")).toContain("unlimited");
+    expect([entry.status, entry.warnings]).toEqual(["passed", undefined]);
   });
 
   it("leaves an unlimited (null) TTL alone", async () => {
