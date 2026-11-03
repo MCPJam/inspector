@@ -375,7 +375,7 @@ export function OverallScoreCard({
             <>
               <div className="flex items-end gap-px">
                 <span className="text-7xl leading-16 font-medium tracking-[-0.04em] tabular-nums">
-                  {Math.round(scored.score!)}
+                  {scored.score!}
                 </span>
                 <span className="pb-1 text-[28px] leading-8 font-medium">
                   %

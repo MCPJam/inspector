@@ -2,26 +2,18 @@
  * The conformance score: one number, 0–100, computable for any suite and for
  * all of them pooled.
  *
- * The shape is grounded in the spec's own doctrine rather than invented:
+ * Every applicable check is worth one point, and the score is the share that
+ * passed, to one decimal: 150/150 is 100, 149/150 is 99.3.
  *
  *   - The spec (every version's `basic/index.mdx`) defines requirement levels
  *     via BCP 14 / RFC 2119 and has no conformance clause beyond them —
- *     conformance IS the MUSTs. So MUSTs own 95 of the 100 points.
+ *     conformance IS the checks.
  *   - SEP-2484 (Final): "Checks for SHOULD-level requirements report as
  *     warnings rather than failures. MAY requirements do not need rows."
- *     Advice therefore factors into the number — the last 5 points — but can
- *     never masquerade as a failure: a MUST-clean server scores ≥95 no matter
- *     how much advice fired.
- *   - SEP-1730 sets tier lines at 100% and 80%; the 95/5 split keeps advice
- *     from ever demoting a MUST-clean server across either line. The 95–100
- *     band is reserved for runs that are MUST-clean and complete, so a
- *     violating server can never outrank a clean-but-advised one and reading
- *     ≥95 always means the same thing.
- *   - A failed or incomplete run scores the plain share of applicable checks
- *     that passed (capped at 94), so the number never disagrees with the
- *     passed/applicable fraction shown beside it.
- *   - RFC 2119 makes RECOMMENDED the SHOULD tier ("SHOULD — this word, or the
- *     adjective RECOMMENDED") and MAY the weakest, hence −2 / −1.
+ *     SHOULD/MAY advice is therefore reported but worth 0 points: it never
+ *     moves the number.
+ *   - The share is rounded DOWN, so a run with any failure can never display
+ *     100 (199/200 is 99.5, 1999/2000 is 99.9).
  *
  * The denominator rules come from `conformance-outcome.ts` and are what make
  * the score honest:
@@ -37,7 +29,7 @@
  *     was green before it existed; promoting it is a profile version bump.
  *
  * 100 therefore means exactly one thing: every applicable check ran and
- * passed, and nothing was left to advise.
+ * passed.
  *
  * Pure data reasoning — no MCP client, no transport, no Node built-ins — so
  * it is exported from the browser entry alongside the catalog.
@@ -66,15 +58,13 @@ import {
   type ConformanceResult as OAuthConformanceResult,
 } from "./oauth-conformance/types.js";
 
-/** MUSTs own this many of the 100 points; advice owns the remainder. */
-const MUST_POINTS = 95;
-const ADVICE_POINTS = 100 - MUST_POINTS;
 /** Per RFC 2119, RECOMMENDED is the SHOULD tier; MAY is the weakest. */
-const DEDUCTION_BY_TIER = { should: 2, may: 1 } as const;
+export type ConformanceAdvisoryTier = "should" | "may";
 
-export type ConformanceAdvisoryTier = keyof typeof DEDUCTION_BY_TIER;
-
-/** One piece of advice that costs points: a readiness warning, a check warning. */
+/**
+ * One piece of advice: a readiness warning, a check warning. Reported
+ * alongside the score but worth 0 points.
+ */
 export interface ScoredAdvisory {
   id: string;
   tier: ConformanceAdvisoryTier;
@@ -103,18 +93,13 @@ export interface ConformanceScore {
    */
   pending: number;
   advisories: ScoredAdvisory[];
-  /** Points the advisories cost, after the cap. */
+  /**
+   * Always 0: advice no longer costs points. Kept so stored reports and the
+   * backend's summary shape still line up.
+   */
   advicePointsLost: number;
   /** The revision the score was judged against. Always display it. */
   protocolVersion?: string;
-}
-
-function adviceDeduction(advisories: ScoredAdvisory[]): number {
-  const raw = advisories.reduce(
-    (sum, advisory) => sum + DEDUCTION_BY_TIER[advisory.tier],
-    0,
-  );
-  return Math.min(raw, ADVICE_POINTS);
 }
 
 function scoreFromCounts(
@@ -128,31 +113,13 @@ function scoreFromCounts(
   protocolVersion?: string,
 ): ConformanceScore {
   const applicable = counts.passed + counts.failed + counts.couldNotRun;
-  const advicePointsLost = adviceDeduction(advisories);
 
-  let score: number | null = null;
-  if (applicable > 0) {
-    // The bands must mean something, so the two outcomes score differently:
-    //
-    //   - A failed or incomplete run scores the share of applicable checks
-    //     that passed, so the number always matches the fraction beside it.
-    //     The advice budget is only earned by a MUST-clean run: granting it
-    //     here printed 3% next to 0/36. It caps at 94, so reading ≥95 always
-    //     means every applicable MUST passed and was exercised (one failure
-    //     in 62 would otherwise round to 98).
-    //   - A passed run is MUST-clean, so its 95 points are whole and only
-    //     advice moves it within 95–100. 100 is reserved for the run with
-    //     nothing left to say.
-    if (outcome !== "passed") {
-      score = Math.min(
-        Math.round((100 * counts.passed) / applicable),
-        MUST_POINTS - 1,
-      );
-    } else {
-      score = MUST_POINTS + ADVICE_POINTS - advicePointsLost;
-      if (advisories.length > 0) score = Math.min(score, 99);
-    }
-  }
+  // One decimal, rounded down: rounding to nearest would print 100 for
+  // 1999/2000. Multiplying before dividing keeps 150/150 an exact 100.
+  const score =
+    applicable > 0
+      ? Math.floor((1000 * counts.passed) / applicable) / 10
+      : null;
 
   return {
     score,
@@ -163,7 +130,7 @@ function scoreFromCounts(
     // without a `?? 0`, and a suite with no profile reports an honest zero.
     pending: counts.pending ?? 0,
     advisories,
-    advicePointsLost,
+    advicePointsLost: 0,
     ...(protocolVersion !== undefined ? { protocolVersion } : {}),
   };
 }
@@ -276,7 +243,7 @@ export function describeConformanceScore(score: ConformanceScore): string {
   }
   if (score.advisories.length > 0) {
     parts.push(
-      `${score.advisories.length} advisor${score.advisories.length === 1 ? "y" : "ies"} (−${score.advicePointsLost})`,
+      `${score.advisories.length} advisor${score.advisories.length === 1 ? "y" : "ies"}`,
     );
   }
   // Named, never silent: a reader has to be able to tell "this run asked 36
@@ -296,14 +263,12 @@ export function scoreFromProtocolResult(
   result: MCPConformanceResult,
 ): ConformanceScore {
   // `?? []`: a serialized result from an SDK that predates the readiness
-  // channel scores fine — it just has no advice to deduct.
+  // channel scores fine — it just has no advice to list.
   return computeConformanceScore(
     result.checks,
-    // `informational` advice is REPORTED but never costs points: it describes
+    // `informational` advice stays out of the advisory list: it describes
     // behavior the spec explicitly permits, or rests on a non-normative
-    // example. Deducting for it would contradict the readiness module's own
-    // statement that such an observation is "reported and never scored", and
-    // would dock a server for exercising a MAY it is entitled to.
+    // example, and the readiness module calls it "reported and never scored".
     (result.readiness ?? [])
       .filter((warning) => warning.informational !== true)
       .map((warning) => ({
@@ -320,8 +285,8 @@ export function scoreFromProtocolResult(
 
 /**
  * Apps and Tasks share a check shape. Their advice channel is the per-check
- * free-string `warnings` — untyped, so each entry counts at the WEAKEST tier:
- * a string with no declared spec strength must not cost what a SHOULD does.
+ * free-string `warnings` — untyped, so each entry is listed at the WEAKEST
+ * tier: a string with no declared spec strength is not a SHOULD.
  */
 function scoreFromWarningChecks(
   checks: Array<OutcomeCheckLike & { warnings?: string[] }>,
@@ -329,10 +294,9 @@ function scoreFromWarningChecks(
   profileStamp?: Pick<ConformanceProfileStamp, "pendingCheckIds">,
   typedAdvisories: Array<ScoredAdvisory & { checkId: string }> = []
 ): ConformanceScore {
-  // Warnings on a PENDING check must not cost points either: the check is not
-  // being scored, and letting its advice deduct would move the number a
-  // profile bump is supposed to gate. Typed advice follows the check it came
-  // from for the same reason.
+  // Warnings on a PENDING check are not listed: the check is not being
+  // scored, so its advice is not either. Typed advice follows the check it
+  // came from for the same reason.
   const { scored } = partitionByStamp(checks, profileStamp);
   const scoredIds = new Set(scored.map((check) => check.id));
   return computeConformanceScore(
@@ -370,7 +334,7 @@ export function scoreFromTasksResult(
     // when it was produced.
     result.profile,
     // The typed advice channel, read like the protocol suite's readiness:
-    // `informational` advice is reported but never costs points.
+    // `informational` advice stays out of the advisory list.
     (result.readiness ?? [])
       .filter((warning) => warning.informational !== true)
       .map((warning) => ({
@@ -404,7 +368,7 @@ export function scorableOAuthIds(ids: readonly string[] | undefined): string[] {
  * directly: the score reads the evidence, not the verdict — even now that the
  * runner derives its verdict from the same shared vocabulary, the score's
  * arithmetic stays anchored to the steps themselves. `teachableMoments` are
- * explanations of failures already costed at MUST weight, never advisories.
+ * explanations of failures already counted as failed checks, never advisories.
  */
 export function scoreFromOAuthResult(
   result: OAuthConformanceResult,

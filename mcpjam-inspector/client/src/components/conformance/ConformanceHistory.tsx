@@ -224,11 +224,11 @@ export function ConformanceHistory({
                 </span>
                 <RunResultBadge run={run} />
                 <span
-                  className={`w-12 shrink-0 text-right text-sm font-semibold tabular-nums ${
+                  className={`w-14 shrink-0 text-right text-sm font-semibold tabular-nums ${
                     run.score == null ? "text-muted-foreground" : ""
                   }`}
                 >
-                  {run.score == null ? "—" : `${Math.round(run.score)}%`}
+                  {run.score == null ? "—" : `${run.score}%`}
                 </span>
               </button>
             </li>
@@ -519,7 +519,7 @@ function SavedSuiteRow({
         report.score == null
           ? null
           : {
-              score: Math.round(report.score),
+              score: report.score,
               passed: report.passed,
               applicable: report.applicable,
             }

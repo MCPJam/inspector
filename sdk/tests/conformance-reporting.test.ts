@@ -318,8 +318,8 @@ describe("report score", () => {
       } as Partial<MCPConformanceResult>),
     );
 
-    // 1/1 applicable passed, one SHOULD advisory: 95 + (5 − 2) = 98.
-    expect(single.score?.score).toBe(98);
+    // 1/1 applicable passed; the SHOULD advisory is worth 0.
+    expect(single.score?.score).toBe(100);
     expect(single.score?.applicable).toBe(1);
 
     const suite = toConformanceReport(createProtocolSuiteResult());
