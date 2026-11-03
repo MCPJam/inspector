@@ -2,7 +2,7 @@
  * Phase 7 §15.4 — the readiness / interoperability channel.
  *
  * The contract under test is a separation, not a verdict: non-MUST advice
- * (SHOULD / RECOMMENDED / MAY) is reported as a warning and NEVER becomes a
+ * (SHOULD / MAY) is reported as a warning and NEVER becomes a
  * check result, so it cannot move `passed`, a check status, or the category
  * summary. These tests drive the collectors directly so each advice item can
  * be provoked without needing a server that misbehaves in that exact way.
@@ -126,7 +126,7 @@ describe("client readiness advice", () => {
     });
   });
 
-  it("stays silent when the order is stable and metadata is complete", async () => {
+  it("stays silent when the order is stable", async () => {
     mockedOperations.listTools.mockResolvedValue({
       tools: [tool("alpha"), tool("beta")],
       nextCursor: undefined,
@@ -134,29 +134,6 @@ describe("client readiness advice", () => {
 
     const warnings = await collectClientReadiness(clientContext(), surface());
     expect(warnings).toEqual([]);
-  });
-
-  it("warns about incomplete primitive metadata", async () => {
-    mockedOperations.listTools.mockResolvedValue({
-      tools: [tool("alpha")],
-      nextCursor: undefined,
-    } as never);
-
-    const warnings = await collectClientReadiness(
-      clientContext(),
-      surface({
-        tools: [tool("alpha", { description: "", title: undefined })],
-      })
-    );
-    const metadata = warnings.find(
-      (item) => item.id === "readiness-metadata-quality"
-    );
-
-    expect(metadata?.specStrength).toBe("SHOULD");
-    expect(metadata?.details).toMatchObject({
-      missingDescription: ["alpha"],
-      missingTitle: ["alpha"],
-    });
   });
 
   it("warns when a modern server still advertises superseded functionality", async () => {
@@ -182,107 +159,112 @@ describe("client readiness advice", () => {
     expect(deprecated?.message).toMatch(/logging\/setLevel/);
     expect(deprecated?.message).toMatch(/subscriptions\/listen/);
   });
+
+  it("advises on tool names that break the naming conventions, without costing points", async () => {
+    const longName = "a".repeat(129);
+    const tools = [tool(longName), tool("has space"), tool("dup"), tool("dup")];
+    mockedOperations.listTools.mockResolvedValue({
+      tools,
+      nextCursor: undefined,
+    } as never);
+
+    const warnings = await collectClientReadiness(
+      clientContext(),
+      surface({ tools })
+    );
+    const names = warnings.find(
+      (item) => item.id === "readiness-tool-name-conventions"
+    );
+
+    expect(names?.specStrength).toBe("SHOULD");
+    expect(names?.informational).toBe(true);
+    expect(names?.details).toEqual({
+      badLength: [longName],
+      badCharacters: ["has space"],
+      duplicates: ["dup"],
+    });
+  });
+
+  it("gives no tool-name advice before 2025-11-25, where the rules do not exist", async () => {
+    const tools = [tool("has space")];
+    mockedOperations.listTools.mockResolvedValue({
+      tools,
+      nextCursor: undefined,
+    } as never);
+
+    const warnings = await collectClientReadiness(
+      clientContext({ protocolVersion: "2025-06-18" }),
+      surface({ tools })
+    );
+
+    expect(
+      warnings.find((item) => item.id === "readiness-tool-name-conventions")
+    ).toBeUndefined();
+  });
+
+  it("counts each bad name once, names it in the message, and skips names that are not strings", async () => {
+    const tools = [
+      tool("has space"),
+      tool("has space"),
+      tool(""),
+      tool(null as unknown as string),
+    ];
+    mockedOperations.listTools.mockResolvedValue({
+      tools,
+      nextCursor: undefined,
+    } as never);
+
+    const warnings = await collectClientReadiness(
+      clientContext(),
+      surface({ tools })
+    );
+    const names = warnings.find(
+      (item) => item.id === "readiness-tool-name-conventions"
+    );
+
+    expect(names?.details).toEqual({
+      badLength: [""],
+      badCharacters: ["has space"],
+      duplicates: ["has space"],
+    });
+    expect(names?.message).toContain('"has space"');
+  });
+
+  it("advises on a modern run, with or without a negotiated revision", async () => {
+    const tools = [tool("has space")];
+    mockedOperations.listTools.mockResolvedValue({
+      tools,
+      nextCursor: undefined,
+    } as never);
+    const find = (
+      warnings: Awaited<ReturnType<typeof collectClientReadiness>>
+    ) => warnings.find((item) => item.id === "readiness-tool-name-conventions");
+
+    const modern = clientContext({ protocolVersion: "2026-07-28" });
+    expect(
+      find(await collectClientReadiness(modern, surface({ tools })))
+    ).toBeDefined();
+
+    const noNegotiation = { ...modern, initializationInfo: undefined };
+    expect(
+      find(await collectClientReadiness(noNegotiation, surface({ tools })))
+    ).toBeDefined();
+  });
 });
 
 describe("raw readiness advice", () => {
-  it("warns that a zero cache TTL is useless, and never fails", async () => {
+  it("leaves iss advice to the OAuth suite and fetches no OAuth metadata", async () => {
+    const urls: string[] = [];
     const fetchFn = (async (input: RequestInfo | URL) => {
-      if (String(input).includes(".well-known")) {
-        return new Response("{}", { status: 404 });
-      }
-      return new Response(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: 8100,
-          result: { tools: [], resultType: "complete", ttlMs: 0 },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } }
-      );
-    }) as unknown as typeof fetch;
-
-    const warnings = await collectRawReadiness(
-      rawContext(fetchFn, "2026-07-28")
-    );
-    const ttl = warnings.find(
-      (item) => item.id === "readiness-cache-ttl-useful"
-    );
-
-    expect(ttl?.severity).toBe("warning");
-    expect(ttl?.specStrength).toBe("SHOULD");
-    expect(ttl?.details).toMatchObject({ method: "tools/list", ttlMs: 0 });
-  });
-
-  it("recommends emitting iss when the authorization server does not advertise it", async () => {
-    const fetchFn = (async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.endsWith("/.well-known/oauth-protected-resource")) {
-        return new Response(
-          JSON.stringify({ authorization_servers: ["https://as.example.com"] }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-      if (url.endsWith("/.well-known/oauth-authorization-server")) {
-        return new Response(
-          JSON.stringify({ issuer: "https://as.example.com" }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
+      urls.push(String(input));
       return new Response("{}", { status: 404 });
     }) as unknown as typeof fetch;
 
     const warnings = await collectRawReadiness(rawContext(fetchFn));
-    const iss = warnings.find(
-      (item) => item.id === "readiness-oauth-iss-advertised"
+    expect(warnings.map((item) => item.id)).not.toContain(
+      "readiness-oauth-iss-advertised"
     );
-
-    expect(iss?.specStrength).toBe("RECOMMENDED");
-    expect(iss?.details).toMatchObject({ issuer: "https://as.example.com" });
-  });
-
-  it("stays silent when iss is advertised", async () => {
-    const fetchFn = (async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.endsWith("/.well-known/oauth-protected-resource")) {
-        return new Response(
-          JSON.stringify({ authorization_servers: ["https://as.example.com"] }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-      if (url.endsWith("/.well-known/oauth-authorization-server")) {
-        return new Response(
-          JSON.stringify({
-            issuer: "https://as.example.com",
-            authorization_response_iss_parameter_supported: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-      return new Response("{}", { status: 404 });
-    }) as unknown as typeof fetch;
-
-    expect(await collectRawReadiness(rawContext(fetchFn))).toEqual([]);
-  });
-
-  it("advises when unparseable JSON is accepted as success, and stays silent on any rejection", async () => {
-    const accepting = (async () =>
-      new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      })) as unknown as typeof fetch;
-
-    const warnings = await collectRawReadiness(rawContext(accepting));
-    const parse = warnings.find(
-      (item) => item.id === "readiness-parse-error-handling"
-    );
-    expect(parse?.specStrength).toBe("MAY");
-    expect(parse?.message).toMatch(/-32700/);
-
-    const rejecting = (async () =>
-      new Response("Bad Request", { status: 400 })) as unknown as typeof fetch;
-    const silent = await collectRawReadiness(rawContext(rejecting));
-    expect(
-      silent.find((item) => item.id === "readiness-parse-error-handling")
-    ).toBeUndefined();
+    expect(urls.filter((url) => url.includes("/.well-known/"))).toEqual([]);
   });
 
   // The spec names two answers to the legacy session-termination DELETE:
@@ -294,13 +276,16 @@ describe("raw readiness advice", () => {
       }
       const body = String(init?.body ?? "");
       if (body.includes("initialize")) {
-        return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), {
-          status: 200,
-          headers: {
-            "content-type": "application/json",
-            "mcp-session-id": "session-1",
-          },
-        });
+        return new Response(
+          JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+              "mcp-session-id": "session-1",
+            },
+          }
+        );
       }
       return new Response("Bad Request", { status: 400 });
     }) as unknown as typeof fetch;
@@ -346,7 +331,11 @@ describe("raw readiness advice", () => {
         return new Response(null, { status: 200 });
       }
       return new Response(
-        JSON.stringify({ jsonrpc: "2.0", id: 8100, result: { tools: [], resultType: "complete" } }),
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 8100,
+          result: { tools: [], resultType: "complete" },
+        }),
         { status: 200, headers: { "content-type": "application/json" } }
       );
     }) as unknown as typeof fetch;
@@ -409,5 +398,237 @@ describe("raw readiness advice", () => {
     expect(
       await collectRawReadiness(rawContext(fetchFn, "2026-07-28"))
     ).toEqual([]);
+  });
+});
+
+describe("log level filtering advice", () => {
+  function logContext(
+    fetchFn: typeof fetch,
+    logProbe?: NormalizedMCPConformanceConfig["logProbe"],
+    era: "legacy" | "modern" = "modern"
+  ): RawHttpCheckContext {
+    const config = normalizeMCPConformanceConfig({
+      serverUrl: SERVER_URL,
+      fetchFn,
+      protocolVersion: era === "modern" ? "2026-07-28" : undefined,
+      checkTimeout: 500,
+      logProbe,
+    });
+    return { config, serverUrl: SERVER_URL, fetchFn: config.fetchFn };
+  }
+
+  /** Answers every request; a `tools/call` streams `levels` first. */
+  function logServer(
+    levels: unknown[],
+    result: Record<string, unknown> = { resultType: "complete", content: [] }
+  ) {
+    const toolCalls: Array<Record<string, unknown>> = [];
+    const fetchFn = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (body.method !== "tools/call") {
+        return new Response("{}", { status: 404 });
+      }
+      toolCalls.push(body);
+      const messages = [
+        ...levels.map((level) => ({
+          jsonrpc: "2.0",
+          method: "notifications/message",
+          params: { level, data: "log" },
+        })),
+        { jsonrpc: "2.0", id: body.id, result },
+      ];
+      return new Response(
+        messages
+          .map(
+            (message) => `event: message\ndata: ${JSON.stringify(message)}\n\n`
+          )
+          .join(""),
+        { headers: { "Content-Type": "text/event-stream" } }
+      );
+    }) as unknown as typeof fetch;
+    return { fetchFn, toolCalls };
+  }
+
+  async function advice(context: RawHttpCheckContext) {
+    const warnings = await collectRawReadiness(context);
+    return warnings.find((item) => item.id === "readiness-log-level-filtering");
+  }
+
+  it("calls no tool and gives no advice without a logProbe", async () => {
+    const server = logServer(["debug"]);
+    expect(await advice(logContext(server.fetchFn))).toBeUndefined();
+    expect(server.toolCalls).toEqual([]);
+  });
+
+  it("gives no advice on a legacy run", async () => {
+    const server = logServer([]);
+    expect(
+      await advice(
+        logContext(server.fetchFn, { toolName: "emit-log" }, "legacy")
+      )
+    ).toBeUndefined();
+    expect(server.toolCalls).toEqual([]);
+  });
+
+  it("asks for warning by default and flags an unknown level", async () => {
+    const server = logServer(["warning", "bogus"]);
+    const found = await advice(
+      logContext(server.fetchFn, {
+        toolName: "emit-log",
+        arguments: { count: 2 },
+      })
+    );
+    expect(found).toMatchObject({
+      specStrength: "MAY",
+      informational: true,
+      details: {
+        probedTool: "emit-log",
+        requestedLogLevel: "warning",
+        invalidOrLowerLevels: ["bogus"],
+      },
+    });
+    expect(server.toolCalls[0]?.params).toMatchObject({
+      name: "emit-log",
+      arguments: { count: 2 },
+      _meta: { "io.modelcontextprotocol/logLevel": "warning" },
+    });
+  });
+
+  it("flags no logs at the picked level", async () => {
+    const server = logServer([]);
+    const found = await advice(
+      logContext(server.fetchFn, { toolName: "emit-log", level: "error" })
+    );
+    expect(found?.message).toMatch(/^No logs came back/);
+    expect(found?.details).toMatchObject({
+      requestedLogLevel: "error",
+      logNotificationCount: 0,
+    });
+  });
+
+  it("gives no advice when every log is at or above the level", async () => {
+    const server = logServer(["error", "critical"]);
+    expect(
+      await advice(
+        logContext(server.fetchFn, { toolName: "emit-log", level: "error" })
+      )
+    ).toBeUndefined();
+  });
+
+  for (const [label, result] of [
+    ["a tool error", { resultType: "complete", content: [], isError: true }],
+    ["an unfinished call", { resultType: "input_required", inputRequests: [] }],
+  ] as const) {
+    it(`gives no advice for ${label}`, async () => {
+      const server = logServer([], result);
+      expect(
+        await advice(logContext(server.fetchFn, { toolName: "emit-log" }))
+      ).toBeUndefined();
+    });
+  }
+
+  it("rejects an unknown logProbe level", () => {
+    expect(() =>
+      normalizeMCPConformanceConfig({
+        serverUrl: SERVER_URL,
+        logProbe: {
+          toolName: "emit-log",
+          level: "loud" as NonNullable<
+            NormalizedMCPConformanceConfig["logProbe"]
+          >["level"],
+        },
+      })
+    ).toThrow(/logProbe.level must be one of debug, info/);
+  });
+});
+
+describe("picking advice with readinessIds", () => {
+  function countingFetch() {
+    const seen = { requests: 0 };
+    const fetchFn = (async () => {
+      seen.requests += 1;
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof fetch;
+    return { fetchFn, seen };
+  }
+
+  function pickedContext(
+    fetchFn: typeof fetch,
+    readinessIds: NormalizedMCPConformanceConfig["readinessIds"]
+  ): RawHttpCheckContext {
+    const config = normalizeMCPConformanceConfig({
+      serverUrl: SERVER_URL,
+      fetchFn,
+      protocolVersion: "2026-07-28",
+      checkTimeout: 500,
+      logProbe: { toolName: "emit-log" },
+      readinessIds,
+    });
+    return { config, serverUrl: SERVER_URL, fetchFn: config.fetchFn };
+  }
+
+  it("sends no probe at all when the list is empty", async () => {
+    const server = countingFetch();
+    expect(
+      await collectRawReadiness(pickedContext(server.fetchFn, []))
+    ).toEqual([]);
+    expect(server.seen.requests).toBe(0);
+  });
+
+  it("sends only the picked advice's probe", async () => {
+    const server = countingFetch();
+    const warnings = await collectRawReadiness(
+      pickedContext(server.fetchFn, [
+        "readiness-protocol-version-header-required",
+      ])
+    );
+    expect(warnings.map((item) => item.id)).toEqual([
+      "readiness-protocol-version-header-required",
+    ]);
+    expect(server.seen.requests).toBe(1);
+  });
+
+  it("skips client advice left out, including the repeat tools/list", async () => {
+    const context = clientContext({
+      protocolVersion: "2026-07-28",
+      serverCapabilities: { logging: {} },
+    });
+    const warnings = await collectClientReadiness(
+      {
+        ...context,
+        config: {
+          ...context.config,
+          readinessIds: ["readiness-deprecated-feature-use"],
+        },
+      },
+      surface({
+        tools: [tool("bad name")],
+        serverCapabilities: { logging: {} },
+      })
+    );
+    expect(warnings.map((item) => item.id)).toEqual([
+      "readiness-deprecated-feature-use",
+    ]);
+    expect(mockedOperations.listTools).not.toHaveBeenCalled();
+  });
+
+  it("keeps an empty list and rejects an unknown id", () => {
+    expect(
+      normalizeMCPConformanceConfig({ serverUrl: SERVER_URL, readinessIds: [] })
+        .readinessIds
+    ).toEqual([]);
+    expect(
+      normalizeMCPConformanceConfig({ serverUrl: SERVER_URL }).readinessIds
+    ).toBeUndefined();
+    expect(() =>
+      normalizeMCPConformanceConfig({
+        serverUrl: SERVER_URL,
+        readinessIds: [
+          "readiness-made-up" as NonNullable<
+            NormalizedMCPConformanceConfig["readinessIds"]
+          >[number],
+        ],
+      })
+    ).toThrow(/Unknown MCP conformance readiness id: readiness-made-up/);
   });
 });

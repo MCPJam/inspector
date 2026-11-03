@@ -1,3 +1,5 @@
+import { bindLocalTaskOwnerScope } from "./task-owner-binding.js";
+import { taskOwnerScope } from "../../shared/task-owner.js";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
   localServerCheckQueue,
@@ -105,6 +107,7 @@ import {
   requireServiceCredential,
   WORKOS_API_KEY_FEATURE,
 } from "../services/service-credential.js";
+import { recordConnectionEffectiveAuth } from "./connection-effective-auth.js";
 
 type LocalAuthorizeServerConfig =
   | {
@@ -167,6 +170,8 @@ type LocalAuthorizeServerConfig =
 
 type LocalAuthorizeBatchSuccess = {
   ok: true;
+  /** Server-only owner binding from backend authorization. */
+  authorizedTaskOwnerScope?: string;
   role: string;
   accessLevel: string;
   permissions: { chatOnly: boolean };
@@ -370,7 +375,13 @@ export async function authorizeBatchLocal(
   for (const [serverId, result] of Object.entries(raw.results)) {
     if (result.ok) {
       const { internalLogContext: _omit, ...clean } = result;
-      stripped[serverId] = clean;
+      stripped[serverId] = {
+        ...clean,
+        authorizedTaskOwnerScope: taskOwnerScope(
+          projectId,
+          result.internalLogContext?.userId,
+        ),
+      };
     } else {
       stripped[serverId] = result;
     }
@@ -1993,6 +2004,13 @@ async function executeLocalServerConnectAttempt(
   try {
     signal.throwIfAborted();
     owned.add(serverDisplayName);
+    // Recorded BEFORE connecting, so a challenge raised by the very first
+    // request on this connection is stamped too.
+    recordConnectionEffectiveAuth(
+      mcpClientManager,
+      serverDisplayName,
+      resolved.effectiveAuth,
+    );
     await mcpClientManager.connectToServer(serverDisplayName, connectConfig, {
       signal,
     });
@@ -2172,6 +2190,12 @@ async function executeLocalServerConnectAttempt(
     ...otherGroups,
     ...(connected.length ? { [serverDisplayName]: connected } : {}),
   });
+
+  bindLocalTaskOwnerScope(
+    mcpClientManager,
+    [serverDisplayName, ...connected.map((entry) => entry.key)],
+    resolved.authorizeResult.authorizedTaskOwnerScope,
+  );
 
   // Capture the inspection snapshot synchronously so a fast follow-up
   // disconnect/reconnect on the same server can't tear down the manager

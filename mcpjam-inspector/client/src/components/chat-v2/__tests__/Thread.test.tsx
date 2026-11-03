@@ -538,6 +538,7 @@ describe("Thread", () => {
           {...defaultProps}
           messages={messages}
           enableFullscreenChatOverlay={true}
+          harnessStartupPhase="authorization"
         />,
         "claude",
       );
@@ -548,6 +549,9 @@ describe("Thread", () => {
       });
 
       expect(screen.getByTestId("fullscreen-chat-overlay")).toBeInTheDocument();
+      expect(mockFullscreenChatOverlay).toHaveBeenLastCalledWith(
+        expect.objectContaining({ startupPhase: "authorization" }),
+      );
       // The overlay no longer takes a loadingIndicatorVariant prop — it
       // resolves the brand indicator from ScenarioHostStyleProvider context.
       expect(mockFullscreenChatOverlay).toHaveBeenLastCalledWith(

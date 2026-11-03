@@ -72,6 +72,24 @@ export type {
   EvidenceReuseRefusal,
 } from "./directory-readiness/evidence-reuse.js";
 
+/**
+ * Lazy authentication's vocabulary and bounds, so a client can offer the
+ * claims and the probe's tool names and validate them as every other surface
+ * does. The gate and the probe itself stay where the run is gathered.
+ */
+export {
+  DIRECTORY_FEATURE_CLAIMS,
+  LAZY_AUTH_PROBE_LIMITS,
+} from "./directory-readiness/lazy-auth.js";
+export type {
+  DirectoryFeatureClaim,
+  DirectoryLazyAuthCallOutcome,
+  DirectoryLazyAuthProbeConfig,
+  DirectoryLazyAuthProbeEvidence,
+  DirectoryLazyAuthRediscovery,
+  DirectoryLazyAuthToolCall,
+} from "./directory-readiness/lazy-auth.js";
+
 export {
   CLAUDE_OBSERVATION_IDS,
   CLAUDE_OBSERVATION_KINDS,
@@ -627,6 +645,38 @@ export {
   type StepUpAuthMode,
   type StepUpAction,
 } from "./oauth/state-machines/shared/challenges.js";
+// Mid-session sign-in ("lazy authentication") challenges: recognition, the
+// per-host policy, and the shared copy. Browser-safe.
+export {
+  AUTH_CHALLENGE_ACTIONS,
+  AUTH_CHALLENGE_LIMITS,
+  AUTH_CHALLENGE_POLICY_DEFAULTS,
+  TOOL_RESULT_AUTH_CHALLENGE_META_KEY,
+  TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
+  UNAUTHORIZED_CHALLENGE_TRIGGERS,
+  authChallengeNotifyText,
+  authChallengePolicyFrom,
+  decideAuthChallengeAction,
+  describeAuthChallengeDecision,
+  hasOAuth2Scheme,
+  parseAuthChallengeSignal,
+  parseChallengeHeader,
+  parseToolResultAuthChallenge,
+  resolveToolSecuritySchemes,
+  type AuthChallengeAction,
+  type AuthChallengeDecision,
+  type AuthChallengeDecisionReason,
+  type AuthChallengeEffectiveAuth,
+  type AuthChallengeFacets,
+  type AuthChallengePolicy,
+  type AuthChallengeSignal,
+  type AuthChallengeSource,
+  type ToolResultAuthChallengeTrigger,
+  type ToolSecurityScheme,
+  type ToolSecuritySchemeResolution,
+  type ToolSecuritySchemeSource,
+  type UnauthorizedChallengeTrigger,
+} from "./mcp-client-manager/auth-challenge.js";
 // The unauthenticated probe's acceptance gate. Exported so the debugger UI
 // decides "is this exchange an expected challenge?" from the same rule the flow
 // advances on, rather than re-testing `status === 401` and painting an accepted
@@ -815,15 +865,35 @@ export {
   CHECK_ERAS,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_LOG_LEVELS,
+  MCP_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
+  READINESS_ERAS,
 } from "./mcp-conformance/types.js";
-export type { MCPCheckEra, MCPCheckId } from "./mcp-conformance/types.js";
+export type {
+  MCPCheckEra,
+  MCPCheckId,
+  MCPLogLevel,
+  MCPReadinessId,
+} from "./mcp-conformance/types.js";
 export { MCP_APPS_CHECK_IDS } from "./apps-conformance/types.js";
 export type { MCPAppsCheckId } from "./apps-conformance/types.js";
-export { MCP_TASKS_CHECK_IDS } from "./tasks-conformance/types.js";
-export type { MCPTasksCheckId } from "./tasks-conformance/types.js";
-export { CONFORMANCE_CHECK_METADATA } from "./oauth-conformance/types.js";
-export type { OAuthConformanceCheckId } from "./oauth-conformance/types.js";
+export {
+  MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
+} from "./tasks-conformance/types.js";
+export type {
+  MCPTasksCheckId,
+  MCPTasksReadinessId,
+} from "./tasks-conformance/types.js";
+export {
+  CONFORMANCE_CHECK_METADATA,
+  MCP_OAUTH_READINESS_IDS,
+} from "./oauth-conformance/types.js";
+export type {
+  MCPOAuthReadinessId,
+  OAuthConformanceCheckId,
+} from "./oauth-conformance/types.js";
 
 // The shared verdict vocabulary and the score built on it. Both are pure data
 // reasoning (no MCP client, no transport, no Node built-ins) — the score's
@@ -835,6 +905,7 @@ export {
   isUnrunCheck,
 } from "./conformance-outcome.js";
 export { isAuthorizationRequiredCheck } from "./conformance-authorization.js";
+export { isTimedOutCheck } from "./conformance-timeout.js";
 export type {
   ConformanceRunOutcome,
   ConformanceSkipReason,
@@ -844,6 +915,7 @@ export {
   computeConformanceScore,
   describeConformanceScore,
   pooledConformanceScore,
+  scorableOAuthIds,
   scoreFromAppsResult,
   scoreFromOAuthResult,
   scoreFromProtocolResult,
@@ -895,7 +967,10 @@ export {
 export {
   APPS_CHECK_CATALOG,
   PROTOCOL_CHECK_CATALOG,
+  OAUTH_READINESS_CATALOG,
+  READINESS_CATALOG,
   TASKS_CHECK_CATALOG,
+  TASKS_READINESS_CATALOG,
 } from "./conformance-catalog.js";
 export type { ConformanceCheckInfo } from "./conformance-catalog.js";
 
@@ -1213,3 +1288,6 @@ export type {
 export { modelRejectsTemperature } from "./model-sampling-support.js";
 
 export { aiRequestHeaders } from "./ai-request-headers.js";
+
+/** Use the same validation before rendering embedded Task or MRTR input. */
+export { validateEmbeddedClientRequest } from "./mcp-client-manager/task-input-driver.js";

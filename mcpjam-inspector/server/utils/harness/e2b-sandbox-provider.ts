@@ -1,4 +1,7 @@
-import { attachRunningSandbox } from "../computers/attach-sandbox.js";
+import {
+  attachRunningSandbox,
+  attachBrokerPreparedSandbox,
+} from "../computers/attach-sandbox.js";
 /**
  * E2B-backed `HarnessV1SandboxProvider` for running the AI SDK **Claude Code
  * harness** inside a host's existing MCPJam computer (an E2B sandbox).
@@ -41,6 +44,8 @@ import { closeModelProxyConnections } from "./model-proxy-connections.js";
 import { HarnessInfraSetupError } from "./harness-provider-error.js";
 
 export interface E2BHarnessSandboxProviderOptions {
+  /** Internal acknowledgement for this turn's box, never taken from request data. */
+  connectionPreparedByBroker?: () => boolean;
   /**
    * Fired the first time `sessionEnv` is actually merged into a command's
    * environment — i.e. when the box really receives the values, not when the
@@ -309,7 +314,10 @@ export function createE2BHarnessSandboxProvider(
     // Reuse the host's existing computer. It must already be awake — the
     // caller wakes it via the control plane (`ensureComputerReady`) before
     // resolving the sandboxId. We never create or kill a box here.
-    const sandbox = await attachRunningSandbox(opts.sandboxId, {
+    const attach = opts.connectionPreparedByBroker?.()
+      ? attachBrokerPreparedSandbox
+      : attachRunningSandbox;
+    const sandbox = await attach(opts.sandboxId, {
       apiKey: opts.apiKey,
       requestTimeoutMs: opts.connectTimeoutMs,
       ...(connectSignal ? { signal: connectSignal } : {}),

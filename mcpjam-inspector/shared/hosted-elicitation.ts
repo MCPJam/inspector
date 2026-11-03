@@ -29,6 +29,8 @@
  * incompatible change to the parts below.
  */
 export const HOSTED_ELICITATION_VERSION = 1;
+/** The browser can receive harness input through the actor-owned chat query. */
+export const HOSTED_HARNESS_INPUT_VERSION = 1;
 
 /** Elicitation mode per MCP 2025-11-25. Absent on the wire ⇒ `"form"`. */
 export type HostedElicitationMode = "form" | "url";

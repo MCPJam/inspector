@@ -169,4 +169,54 @@ describe("MCPAppsConformanceTest", () => {
       withEphemeralClientSpy.mockRestore();
     }
   });
+
+  it("reports the deprecated flat ui/resourceUri as a deprecation notice, not a warning", async () => {
+    // apps.mdx: the flat field "is deprecated" and "will be removed before
+    // GA", with no SHOULD or MAY behind it.
+    const withEphemeralClientSpy = jest
+      .spyOn(operations, "withEphemeralClient")
+      .mockImplementation(async (_config, fn) => {
+        const mockManager = {
+          listTools: jest.fn().mockResolvedValue({
+            tools: [
+              {
+                name: "legacy_tool",
+                inputSchema: { type: "object" },
+                _meta: { "ui/resourceUri": CONFORMANCE_UI_RESOURCE_URI },
+              },
+            ],
+          }),
+          listResources: jest.fn().mockResolvedValue({ resources: [] }),
+        } as any;
+
+        return fn(mockManager, "__apps_conformance__");
+      });
+
+    try {
+      const result = await new MCPAppsConformanceTest({
+        url: "https://example.com/mcp",
+        timeout: 10_000,
+        checkIds: ["ui-tool-metadata-valid"],
+      }).run();
+
+      expect(result.checks[0]).toEqual(
+        expect.objectContaining({
+          id: "ui-tool-metadata-valid",
+          status: "passed",
+        })
+      );
+      expect(result.checks[0]?.warnings).toBeUndefined();
+      expect(result.readiness).toEqual([
+        expect.objectContaining({
+          id: "apps-readiness-deprecated-resource-uri",
+          checkId: "ui-tool-metadata-valid",
+          specStrength: "Deprecation Notice",
+          informational: true,
+          details: { tools: ["legacy_tool"] },
+        }),
+      ]);
+    } finally {
+      withEphemeralClientSpy.mockRestore();
+    }
+  });
 });

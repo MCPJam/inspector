@@ -1,3 +1,6 @@
+import { taskInputPrompt } from "@/lib/task-input-prompt";
+import { TaskInputDialog } from "./tasks/TaskInputDialog";
+import { taskPanelApi, type TaskPanelTarget } from "@/lib/task-panel-api";
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { isHostedMode } from "@/lib/apis/mode-client";
 import {
@@ -30,27 +33,10 @@ import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-r
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import {
   Task,
-  listTasks,
-  getTask,
-  getTaskResult,
-  updateTask,
-  cancelTask,
-  getLatestProgress,
-  getTasksBatch,
-  getTaskCapabilities,
   TaskUnknownOrExpiredError,
   type ProgressEvent,
   type TasksSupport,
 } from "@/lib/apis/mcp-tasks-api";
-import {
-  getTrackedTasksForServer,
-  getTrackedTaskById,
-  markTaskExpired,
-  clearTrackedTasksForServer,
-  getDismissedTaskIds,
-  dismissTasksForServer,
-  dismissRegistryTasks,
-} from "@/lib/task-tracker";
 import { Switch } from "@mcpjam/design-system/switch";
 import { Input } from "@mcpjam/design-system/input";
 import {
@@ -92,7 +78,8 @@ const DEFAULT_POLL_INTERVAL = 3000;
  */
 const TASK_INTEREST_DEBOUNCE_MS = 300;
 
-interface TasksTabProps {
+export interface TasksTabProps {
+  taskTarget?: TaskPanelTarget;
   serverConfig?: MCPServerConfig;
   serverName?: string;
   isActive?: boolean;
@@ -130,7 +117,21 @@ function formatDate(isoString: string): string {
   }
 }
 
-export function TasksTab({
+export function TasksTab(props: TasksTabProps) {
+  const target = props.taskTarget;
+  const key = target
+    ? JSON.stringify([
+        target.serverId,
+        target.connectionId,
+        target.scope,
+        target.wire,
+      ])
+    : "legacy";
+  return <TaskPanel key={key} {...props} />;
+}
+
+function TaskPanel({
+  taskTarget,
   serverConfig,
   serverName,
   isActive = true,
@@ -220,8 +221,25 @@ export function TasksTab({
   // Collapsible sidebar state
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
 
-  const wire = taskCapabilities?.wire ?? "none";
+  const wire = taskTarget?.wire ?? taskCapabilities?.wire ?? "none";
   const isExtensionWire = wire === "extension";
+  const {
+    listTasks,
+    getTask,
+    getTaskResult,
+    updateTask,
+    cancelTask,
+    getLatestProgress,
+    getTasksBatch,
+    getTaskCapabilities,
+    getTrackedTasksForServer,
+    getTrackedTaskById,
+    markTaskExpired,
+    clearTrackedTasksForServer,
+    getDismissedTaskIds,
+    dismissTasksForServer,
+    dismissRegistryTasks,
+  } = useMemo(() => taskPanelApi(taskTarget, wire), [taskTarget, wire]);
   // Hosted reads go through ephemeral per-request connections: batch them and
   // never poll faster than the floor, because each tick is a full connect.
   const hosted = isHostedMode();
@@ -240,14 +258,16 @@ export function TasksTab({
     userPreferredMinimum,
     // Each hosted tick is a full authorize → connect → request → disconnect
     // round trip, so the hosted surface carries its own connection-cost floor.
-    hosted ? hostedPollIntervalMs(userPreferredMinimum) : 0
+    hosted ? hostedPollIntervalMs(userPreferredMinimum) : 0,
   );
 
   // Per-task due-time scheduling. The shared tick fires at `tickFloorMs`; the
   // scheduler decides which handles that tick is actually allowed to read, so
   // a 30s task is not read every time a 1s task is.
   const scheduler = useTaskScheduler({
-    serverId: serverName,
+    serverId: taskTarget?.serverId ?? serverName,
+    connectionId: taskTarget?.connectionId,
+    scope: taskTarget?.scope,
     wire,
     userMinimumIntervalMs: userPreferredMinimum,
     surfaceFloorMs: hosted ? HOSTED_TASK_POLL_FLOOR_MS : 0,
@@ -265,7 +285,7 @@ export function TasksTab({
   // while its result has never actually been fetched.
   const recoveryReads = useMemo(
     () => scheduler.recoveryReadState(tasks.map((t) => t.taskId)),
-    [tasks, scheduler]
+    [tasks, scheduler],
   );
 
   // Check if any task is in a non-terminal state (working, input_required, pending)
@@ -326,7 +346,7 @@ export function TasksTab({
     elicitation: taskElicitation,
     isResponding: elicitationResponding,
     respond: respondToElicitation,
-  } = useTaskElicitation(isActive);
+  } = useTaskElicitation(isActive && !taskTarget);
 
   // Convert hook elicitation to DialogElicitation format for the dialog
   const legacyDialogElicitation: DialogElicitation | null = taskElicitation
@@ -338,55 +358,20 @@ export function TasksTab({
       }
     : null;
 
-  // Extension wire: `inputRequests` is a keyed snapshot re-sent on every poll.
-  // Only elicitation entries are answerable here (sampling/roots are rejected,
-  // matching the MRTR collector's Decision-8 rule).
-  const extensionInputRequest = useMemo(() => {
-    if (!isExtensionWire || selectedTask?.status !== "input_required") {
-      return null;
-    }
-    // Union of this session's answers and the keys persisted from earlier
-    // sessions — a reload must not re-prompt for something the server already
-    // acknowledged.
-    const answered = new Set([
-      ...(answeredInputKeys.get(selectedTask.taskId) ?? []),
-      ...scheduler.respondedInputKeys(selectedTask.taskId),
-    ]);
-    const entries = Object.entries(selectedTask.inputRequests ?? {});
-    for (const [key, value] of entries) {
-      if (answered.has(key)) continue;
-      const request = value as {
-        method?: string;
-        params?: { message?: string; requestedSchema?: unknown };
-      };
-      if (request?.method === "elicitation/create") {
-        return { key, request };
-      }
-    }
-    return null;
+  const {
+    next: extensionInputRequest,
+    unanswerableCount: unanswerableInputCount,
+  } = useMemo(() => {
+    if (!isExtensionWire || selectedTask?.status !== "input_required")
+      return { next: null, unanswerableCount: 0 };
+    return taskInputPrompt(
+      selectedTask.inputRequests ?? {},
+      new Set([
+        ...(answeredInputKeys.get(selectedTask.taskId) ?? []),
+        ...scheduler.respondedInputKeys(selectedTask.taskId),
+      ]),
+    );
   }, [isExtensionWire, selectedTask, answeredInputKeys, scheduler]);
-
-  /** Keys in the current snapshot this UI cannot answer (sampling/roots). */
-  const unanswerableInputCount = useMemo(() => {
-    if (!isExtensionWire || selectedTask?.status !== "input_required") return 0;
-    return Object.values(selectedTask.inputRequests ?? {}).filter(
-      (value) => (value as { method?: string })?.method !== "elicitation/create"
-    ).length;
-  }, [isExtensionWire, selectedTask]);
-
-  const extensionDialogElicitation: DialogElicitation | null =
-    extensionInputRequest
-      ? {
-          requestId: extensionInputRequest.key,
-          message: extensionInputRequest.request.params?.message ?? "",
-          schema: extensionInputRequest.request.params?.requestedSchema as
-            | Record<string, unknown>
-            | undefined,
-          timestamp: selectedTask?.lastUpdatedAt ?? "",
-          origin: "mrtr",
-          serverId: serverName,
-        }
-      : null;
 
   const handlePollIntervalChange = useCallback(
     (value: string) => {
@@ -401,7 +386,7 @@ export function TasksTab({
         localStorage.setItem(POLL_INTERVAL_STORAGE_KEY, String(parsed));
       }
     },
-    [serverSuggestedPollInterval]
+    [serverSuggestedPollInterval],
   );
 
   // Clear override when server suggestion goes away (tasks complete)
@@ -478,7 +463,7 @@ export function TasksTab({
                 ? { terminalReadDone: true }
                 : {}),
             },
-          ])
+          ]),
         );
       };
 
@@ -532,10 +517,10 @@ export function TasksTab({
         // case falls back to the tab's own tick.
         const knownListed = listedTasksRef.current;
         const activeListed = knownListed.filter(
-          (task) => !isTerminalStatus(task.status)
+          (task) => !isTerminalStatus(task.status),
         );
         const dueListed = scheduler.dueTaskIds(
-          activeListed.map((task) => task.taskId)
+          activeListed.map((task) => task.taskId),
         );
         const listDue =
           activeListed.length === 0 || dueListed.length === activeListed.length;
@@ -577,12 +562,12 @@ export function TasksTab({
                 // Anything else is transient; the handle backs off below.
                 return null;
               }
-            })
+            }),
           );
           const byRefreshedId = new Map(
             refreshed
               .filter((task): task is NormalizedTask => task !== null)
-              .map((task) => [task.taskId, task])
+              .map((task) => [task.taskId, task]),
           );
           scheduler.recordObservations(
             [...byRefreshedId.values()].map((task) => ({
@@ -591,14 +576,14 @@ export function TasksTab({
               pollIntervalMs: task.pollInterval,
               ttlMs: task.ttl ?? null,
               lastUpdatedAt: task.lastUpdatedAt,
-            }))
+            })),
           );
           // Reads that produced nothing back off; both calls release the claim.
           scheduler.recordErrors(
-            dueListed.filter((taskId) => !byRefreshedId.has(taskId))
+            dueListed.filter((taskId) => !byRefreshedId.has(taskId)),
           );
           listedCarriedForward = knownListed.map(
-            (task) => byRefreshedId.get(task.taskId) ?? task
+            (task) => byRefreshedId.get(task.taskId) ?? task,
           );
         }
       }
@@ -634,7 +619,7 @@ export function TasksTab({
           entry.wire === wire &&
           !dismissedIds.has(entry.taskId) &&
           !serverTaskIds.has(entry.taskId) &&
-          !trackedIds.has(entry.taskId)
+          !trackedIds.has(entry.taskId),
       );
       // A terminal registry row renders as a placeholder and is not part of
       // the recurring poll set — with ONE exception. On the EXTENSION wire a
@@ -647,39 +632,39 @@ export function TasksTab({
       // placeholder-only behavior: its results come from `tasks/result`
       // semantics, which this one-shot must not be conflated with.
       const recoveredTerminal = recoveredEntries.filter((entry) =>
-        isTerminalRegistryStatus(entry.lastKnownStatus)
+        isTerminalRegistryStatus(entry.lastKnownStatus),
       );
       const terminalNeedingRead = isExtensionWire
         ? recoveredTerminal.filter(
             (entry) =>
               (entry.lastKnownStatus === "completed" ||
                 entry.lastKnownStatus === "failed") &&
-              !entry.terminalReadDone
+              !entry.terminalReadDone,
           )
         : [];
       const terminalReadIdSet = new Set(
-        terminalNeedingRead.map((entry) => entry.taskId)
+        terminalNeedingRead.map((entry) => entry.taskId),
       );
       // Spent at ISSUE time, success or not: the read is bounded to one
       // attempt, and a failure below falls back to the placeholder rather
       // than retrying forever against a server that may have purged the task.
       for (const entry of terminalNeedingRead) entry.terminalReadDone = true;
       const recoveredActive = recoveredEntries.filter(
-        (entry) => !isTerminalRegistryStatus(entry.lastKnownStatus)
+        (entry) => !isTerminalRegistryStatus(entry.lastKnownStatus),
       );
       const recoveredById = new Map(
-        recoveredActive.map((entry) => [entry.taskId, entry])
+        recoveredActive.map((entry) => [entry.taskId, entry]),
       );
       // Non-terminal recovered ids join the same due-gated poll set as
       // tracked handles. The scheduler has never seen them and the tracker
       // holds no persisted schedule, so they are due immediately — once; the
       // observations recorded from that first read seed their real floors.
       const dueRecovered = scheduler.dueTaskIds(
-        recoveredActive.map((entry) => entry.taskId)
+        recoveredActive.map((entry) => entry.taskId),
       );
       const dueRecoveredSet = new Set(dueRecovered);
       const notDueRecovered = recoveredActive.filter(
-        (entry) => !dueRecoveredSet.has(entry.taskId)
+        (entry) => !dueRecoveredSet.has(entry.taskId),
       );
       // An expired handle is never re-polled: the server has forgotten it, so
       // it renders from tracker data until the user dismisses it.
@@ -690,11 +675,11 @@ export function TasksTab({
       // pending handle would poll a 30s task at the tab's 1s pace.
       const dueIds = new Set(
         scheduler.dueTaskIds(
-          pending.filter((t) => !t.expired).map((t) => t.taskId)
-        )
+          pending.filter((t) => !t.expired).map((t) => t.taskId),
+        ),
       );
       const livePending = pending.filter(
-        (t) => !t.expired && dueIds.has(t.taskId)
+        (t) => !t.expired && dueIds.has(t.taskId),
       );
       // Handles that exist but are not due keep their last-known state on
       // screen rather than blinking out until their next read.
@@ -727,7 +712,7 @@ export function TasksTab({
               } catch {
                 return [];
               }
-            })
+            }),
           )
         ).flat();
         trackedTaskStatuses = entries.map((entry) => {
@@ -755,7 +740,7 @@ export function TasksTab({
               // wire there is no `tasks/list` to recover them from.
               return null;
             }
-          })
+          }),
         );
       }
       // Feed the scheduler what we actually observed, so each handle is
@@ -770,7 +755,7 @@ export function TasksTab({
       // never read as terminal, stay permanently due, and pin
       // `msUntilNextDue()` at zero for the rest of the session.
       const observed = trackedTaskStatuses.filter(
-        (task): task is NormalizedTask => task !== null && !task.expired
+        (task): task is NormalizedTask => task !== null && !task.expired,
       );
       scheduler.recordObservations(
         observed.map((task) => ({
@@ -779,12 +764,12 @@ export function TasksTab({
           pollIntervalMs: task.pollInterval,
           ttlMs: task.ttl ?? null,
           lastUpdatedAt: task.lastUpdatedAt,
-        }))
+        })),
       );
       const settledIds = new Set(
         trackedTaskStatuses
           .filter((task): task is NormalizedTask => task !== null)
-          .map((task) => task.taskId)
+          .map((task) => task.taskId),
       );
       // Only ids that produced NOTHING are failed reads. A confirmed-expired
       // handle answered — it is retired, not unreachable — and backing it off
@@ -796,7 +781,7 @@ export function TasksTab({
           // A failed one-shot terminal read is spent, not backed off: it must
           // neither enter the scheduler's error bookkeeping nor keep the
           // auto-refresh loop armed. The placeholder fallback below covers it.
-          !terminalReadIdSet.has(id)
+          !terminalReadIdSet.has(id),
       );
       scheduler.recordErrors(failedIds);
 
@@ -810,11 +795,11 @@ export function TasksTab({
       // never polled when its floor finally elapses. The task would stay
       // invisible until a manual refresh, and could expire server-side first.
       const previousById = new Map(
-        tasksRef.current.map((task) => [task.taskId, task])
+        tasksRef.current.map((task) => [task.taskId, task]),
       );
       const carriedForward = notDue.map(
         (tracked) =>
-          previousById.get(tracked.taskId) ?? restoredPlaceholderTask(tracked)
+          previousById.get(tracked.taskId) ?? restoredPlaceholderTask(tracked),
       );
 
       // A due read that FAILED keeps its row for exactly the same reason. The
@@ -840,7 +825,8 @@ export function TasksTab({
       // rows (render-only, never polled), keep a row on screen: last live
       // state when we have one, otherwise the registry's own last-known view.
       const recoveredCarriedForward = notDueRecovered.map(
-        (entry) => previousById.get(entry.taskId) ?? registryPlaceholderTask(entry)
+        (entry) =>
+          previousById.get(entry.taskId) ?? registryPlaceholderTask(entry),
       );
 
       // Terminal registry rows: a handle whose one-shot read answered this
@@ -850,11 +836,12 @@ export function TasksTab({
       const recoveredTerminalRows = recoveredTerminal
         .filter(
           (entry) =>
-            !settledIds.has(entry.taskId) && !confirmedGoneIds.has(entry.taskId)
+            !settledIds.has(entry.taskId) &&
+            !confirmedGoneIds.has(entry.taskId),
         )
         .map(
           (entry) =>
-            previousById.get(entry.taskId) ?? registryPlaceholderTask(entry)
+            previousById.get(entry.taskId) ?? registryPlaceholderTask(entry),
         );
 
       trackedTaskStatuses = [
@@ -874,7 +861,10 @@ export function TasksTab({
           : serverResult.tasks
               .filter((t) => !dismissedIds.has(t.taskId))
               .map((t) =>
-                normalizeTask("legacy", t as unknown as Record<string, unknown>)
+                normalizeTask(
+                  "legacy",
+                  t as unknown as Record<string, unknown>,
+                ),
               );
       listedTasksRef.current = listed;
       // Learn each listed task's own floor, so the NEXT decision about whether
@@ -889,7 +879,7 @@ export function TasksTab({
               pollIntervalMs: task.pollInterval,
               ttlMs: task.ttl ?? null,
               lastUpdatedAt: task.lastUpdatedAt,
-            }))
+            })),
         );
       }
 
@@ -947,10 +937,11 @@ export function TasksTab({
 
   /** The active notification interest set, sorted for a stable signature. */
   const notificationTaskIds = useMemo(() => {
-    if (!serverName || hosted || !isExtensionWire) return [] as string[];
+    if (!serverName || hosted || taskTarget || !isExtensionWire)
+      return [] as string[];
     const dismissed = getDismissedTaskIds(serverName);
     const tracked = new Set(
-      getTrackedTasksForServer(serverName).map((t) => t.taskId)
+      getTrackedTasksForServer(serverName).map((t) => t.taskId),
     );
     return tasks
       .filter(
@@ -958,7 +949,7 @@ export function TasksTab({
           tracked.has(t.taskId) &&
           !dismissed.has(t.taskId) &&
           !t.expired &&
-          !isTerminalStatus(t.status)
+          !isTerminalStatus(t.status),
       )
       .map((t) => t.taskId)
       .sort();
@@ -966,7 +957,7 @@ export function TasksTab({
 
   // Debounced fetch-merge-post of the interest set on active-set change.
   useEffect(() => {
-    if (!serverName || hosted || !isExtensionWire) return;
+    if (!serverName || hosted || taskTarget || !isExtensionWire) return;
     const signature = JSON.stringify(notificationTaskIds);
     if (postedTaskInterestsRef.current === signature) return;
     if (
@@ -1013,7 +1004,7 @@ export function TasksTab({
       // Untracked or dismissed ids are ignored: the interest filter should
       // exclude them already, but the server chooses what it sends.
       const tracked = getTrackedTasksForServer(serverName).some(
-        (t) => t.taskId === taskId
+        (t) => t.taskId === taskId,
       );
       if (!tracked) return;
       if (getDismissedTaskIds(serverName).has(taskId)) return;
@@ -1037,7 +1028,7 @@ export function TasksTab({
         setTasks((prev) =>
           prev.some((t) => t.taskId === taskId)
             ? prev.map((t) => (t.taskId === taskId ? refreshed : t))
-            : [refreshed, ...prev]
+            : [refreshed, ...prev],
         );
       } catch (err) {
         if (err instanceof TaskUnknownOrExpiredError) {
@@ -1050,14 +1041,15 @@ export function TasksTab({
         inFlight.delete(taskId);
       }
     },
-    [serverName, scheduler]
+    [serverName, scheduler],
   );
 
   // Observe the bridge's SSE broadcast for `tasks` notifications. Local mode
   // only: hosted connections are reconnect-per-op and never hold the
   // persistent stream a listen rides on.
   useEffect(() => {
-    if (!serverName || hosted || !isExtensionWire || !isActive) return;
+    if (!serverName || hosted || taskTarget || !isExtensionWire || !isActive)
+      return;
     // Environments without SSE (jsdom without a stub, SSR) simply keep
     // polling; the notification channel is an optional latency win.
     if (typeof EventSource === "undefined") return;
@@ -1082,7 +1074,7 @@ export function TasksTab({
   const handleElicitationResponse = useCallback(
     async (
       action: "accept" | "decline" | "cancel",
-      parameters?: Record<string, unknown>
+      parameters?: Record<string, unknown>,
     ) => {
       try {
         await respondToElicitation(action, parameters);
@@ -1092,11 +1084,11 @@ export function TasksTab({
         setError(
           err instanceof Error
             ? err.message
-            : "Failed to respond to elicitation"
+            : "Failed to respond to elicitation",
         );
       }
     },
-    [respondToElicitation, fetchTasks]
+    [respondToElicitation, fetchTasks],
   );
 
   const fetchTaskResult = useCallback(
@@ -1111,13 +1103,13 @@ export function TasksTab({
         setTaskResult(result);
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Failed to fetch task result"
+          err instanceof Error ? err.message : "Failed to fetch task result",
         );
       } finally {
         setLoading(false);
       }
     },
-    [serverName]
+    [serverName],
   );
 
   const handleCancelTask = useCallback(async () => {
@@ -1158,22 +1150,22 @@ export function TasksTab({
         return true;
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Failed to submit task input"
+          err instanceof Error ? err.message : "Failed to submit task input",
         );
         return false;
       } finally {
         setSubmittingInput(false);
       }
     },
-    [serverName, selectedTaskId, fetchTasks]
+    [serverName, selectedTaskId, fetchTasks],
   );
 
   const handleExtensionInputResponse = useCallback(
     async (
       action: "accept" | "decline" | "cancel",
-      parameters?: Record<string, unknown>
+      parameters?: Record<string, unknown>,
     ) => {
-      if (!extensionInputRequest) return;
+      if (!extensionInputRequest) return false;
       // Partial responses are allowed: answer the key the user just handled.
       // SEP-2663 `InputResponse` is the BARE result object — never wrapped in a
       // `{method, result}` envelope, which a conforming server would ignore
@@ -1189,7 +1181,7 @@ export function TasksTab({
       // silently discard the user's answer whenever the update failed: the
       // re-sent snapshot would still carry the key, we would skip it as
       // "answered", and the task would sit in `input_required` forever.
-      if (!acknowledged) return;
+      if (!acknowledged) return false;
       setAnsweredInputKeys((prev) => {
         const next = new Map(prev);
         const keys = new Set(next.get(selectedTaskId) ?? []);
@@ -1200,13 +1192,14 @@ export function TasksTab({
       // Durable, so a reload does not re-prompt. Keys only — never the prompt
       // or the response.
       scheduler.markInputResponded(selectedTaskId, [key]);
+      return true;
     },
     [
       extensionInputRequest,
       handleSubmitInputResponses,
       selectedTaskId,
       scheduler,
-    ]
+    ],
   );
 
   // The "cancellation requested" banner is transient: once the task reaches a
@@ -1814,7 +1807,7 @@ export function TasksTab({
                 <p className="mt-1 text-[11px] text-muted-foreground">
                   {unanswerableInputCount} pending request
                   {unanswerableInputCount === 1 ? "" : "s"} this UI cannot
-                  answer (sampling/roots) — visible in the raw request JSON
+                  answer — visible in the raw request JSON
                   below.
                 </p>
               )}
@@ -1941,7 +1934,9 @@ export function TasksTab({
       <ThreePanelLayout
         id="tasks"
         mobileNavigation={{
-          selectionKey: selectedTaskId ? `${selectedTaskId}:${taskSelection}` : "",
+          selectionKey: selectedTaskId
+            ? `${selectedTaskId}:${taskSelection}`
+            : "",
           selectionPanel: "content",
           onBack: () => setSelectedTaskId(""),
         }}
@@ -1955,17 +1950,23 @@ export function TasksTab({
       {/* Elicitation Dialog for tasks in input_required status */}
       {/* Per MCP Tasks spec (2025-11-25): when a task needs input, server sends */}
       {/* elicitation requests with relatedTaskId in the metadata */}
-      <ElicitationDialog
-        elicitationRequest={
-          extensionDialogElicitation ?? legacyDialogElicitation
-        }
-        onResponse={
-          extensionDialogElicitation
-            ? handleExtensionInputResponse
-            : handleElicitationResponse
-        }
-        loading={elicitationResponding || submittingInput}
-      />
+      {extensionInputRequest ? (
+        <TaskInputDialog
+          key={JSON.stringify([selectedTaskId, extensionInputRequest.key])}
+          prompt={extensionInputRequest}
+          serverId={taskTarget?.serverId ?? serverName ?? ""}
+          serverName={serverName}
+          timestamp={selectedTask?.lastUpdatedAt ?? ""}
+          onResponse={handleExtensionInputResponse}
+          loading={submittingInput}
+        />
+      ) : (
+        <ElicitationDialog
+          elicitationRequest={legacyDialogElicitation}
+          onResponse={handleElicitationResponse}
+          loading={elicitationResponding}
+        />
+      )}
     </>
   );
 }

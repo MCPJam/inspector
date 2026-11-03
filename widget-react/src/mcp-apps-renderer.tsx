@@ -2645,7 +2645,9 @@ export function MCPAppsRendererSurface({
         baseHostContext.platform === "mobile"
           ? baseHostContext.platform
           : hostStyleDefinition.mcp.platform,
-      userAgent: navigator.userAgent,
+      userAgent: typeof baseHostContext.userAgent === "string" && baseHostContext.userAgent.length > 0
+        ? baseHostContext.userAgent
+        : navigator.userAgent,
       deviceCapabilities,
       safeAreaInsets,
       styles: mergedStyles,

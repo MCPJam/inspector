@@ -1,0 +1,439 @@
+/**
+ * What Run opens: the steps before a conformance run. Step 1 picks the server
+ * and the protocol revision; step 2 picks the suites and checks to run, and
+ * its Run starts the run with them.
+ */
+
+import { useEffect, useId, useRef, useState } from "react";
+import { ChevronLeft } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
+import type { ServerWithName } from "@/hooks/use-app-state";
+import {
+  isHttpServer,
+  type ConformanceSelection,
+  type ProtocolVersionPin,
+} from "@/hooks/use-conformance-run";
+import {
+  probeInputStatus,
+  probeKeyFor,
+  probesApply,
+  tasksProbeRuns,
+  type ConformanceProbeKey,
+  type ConformanceProbes,
+} from "@/hooks/use-conformance-probes";
+import { ProbeCheckExtra, useProbeTools } from "./ConformanceProbeField";
+import { ProgressStepper } from "@/components/shared/progress-stepper";
+import { toast } from "@/lib/toast";
+import { startConnectToast } from "@/lib/connect-toast";
+import type {
+  ConformanceConnectOutcome,
+  ConformanceConnectServer,
+} from "./ConformancePanel";
+import {
+  ConformanceConnectError,
+  ConformanceServerPicker,
+  NO_SERVERS_MESSAGE,
+  ProtocolVersionSelect,
+  RUN_LABEL,
+} from "./ConformancePageChrome";
+import {
+  ConformanceCheckPicker,
+  checkCatalogs,
+  nothingPicked,
+} from "./ConformanceCheckPicker";
+
+const STEPS = [
+  { id: "target", label: "Choose server and protocol" },
+  { id: "suites", label: "Select what to test" },
+] as const;
+
+export function ConformanceSetup({
+  servers,
+  projectServerNames,
+  projectServersLoading = false,
+  initialServerName,
+  initialVersionPin,
+  initialSelection,
+  defaultsFor,
+  defaultsLoaded = true,
+  onConnectServer,
+  onEditServer,
+  probesFor,
+  onCancel,
+  onRun,
+}: {
+  servers: ServerWithName[];
+  /**
+   * Every server saved in the project, loaded in this session or not. The
+   * picker lists them all, as User Testing's does, so one can be connected
+   * from there.
+   */
+  projectServerNames?: readonly string[];
+  /** The project's server list has not arrived yet. */
+  projectServersLoading?: boolean;
+  /** Preselected: the server the page already picked. */
+  initialServerName: string | null;
+  initialVersionPin: ProtocolVersionPin;
+  /** The last run's picks on `initialServerName`; absent means everything. */
+  initialSelection?: ConformanceSelection;
+  /** A server's saved default checks, from its Conformance Settings. */
+  defaultsFor?: (serverName: string) => ConformanceSelection | undefined;
+  /** False while the saved defaults are still loading: step 2 waits. */
+  defaultsLoaded?: boolean;
+  /** Connects a server from the picker; the steps go on once it is. */
+  onConnectServer?: ConformanceConnectServer;
+  /** Opens a server's connection settings, offered when a connect fails. */
+  onEditServer?: (serverName: string) => void;
+  /** The tools a server's checks may call, as last set for it. */
+  probesFor?: (serverName: string) => ConformanceProbes;
+  onCancel: () => void;
+  onRun: (
+    serverName: string,
+    versionPin: ProtocolVersionPin,
+    selection: ConformanceSelection,
+    probes: ConformanceProbes,
+  ) => void;
+}) {
+  // The tools the checks that must call one may use, set in step 2's list,
+  // and whether each one's arguments box (and the Tasks answers) parses.
+  const [probes, setProbes] = useState<ConformanceProbes>({});
+  const [probeValid, setProbeValid] = useState<
+    Partial<Record<ConformanceProbeKey | "answers", boolean>>
+  >({});
+  // A draft until Run, so Cancel leaves the page's selection as it was.
+  const [serverName, setServerName] = useState(initialServerName);
+  const [versionPin, setVersionPin] = useState(initialVersionPin);
+  const [step, setStep] = useState(0);
+  // Step 2 starts from the picked server's checks: the last run's on the same
+  // server, otherwise its saved defaults, otherwise everything.
+  const startingSelection = (name: string | null): ConformanceSelection =>
+    (name === initialServerName ? initialSelection : undefined) ??
+    (name ? defaultsFor?.(name) : undefined) ??
+    {};
+  // Built on the first Continue, not here: the saved defaults may still be
+  // loading when the steps open.
+  const [selection, setSelection] = useState<ConformanceSelection>({});
+  const [selectionFor, setSelectionFor] = useState<string | null>(null);
+  const serverLabelId = useId();
+  const versionLabelId = useId();
+  const picked = servers.find((server) => server.name === serverName);
+  // Only HTTP servers run the protocol suite, and the checks that call a
+  // tool run only on a pinned 2026-07-28 run, so only then is a protocol tool
+  // asked for. The Tasks suite runs on any server and pin, so its tool is
+  // asked for whenever a Tasks check that calls it is picked. One tools list
+  // serves every field.
+  const protocolProbes = Boolean(
+    picked && isHttpServer(picked) && probesApply(versionPin),
+  );
+  const tasksProbe = tasksProbeRuns(selection.tasks);
+  const probeServer = picked && (protocolProbes || tasksProbe) ? picked : null;
+  const probeTools = useProbeTools(probeServer);
+  // Picked from the project's list before this session loaded it: it has no
+  // runtime entry until it connects.
+  const pickedName =
+    serverName && (picked || projectServerNames?.includes(serverName))
+      ? serverName
+      : null;
+  // Connects started here and not settled. The runtime status does not say
+  // `connecting` until the provider does, and a server not loaded yet has no
+  // status at all.
+  const [connecting, setConnecting] = useState<readonly string[]>([]);
+  // The run needs the server live, so the steps wait until it is: the picker
+  // connects it in place.
+  const canContinue = picked?.connectionStatus === "connected";
+  // Picking a server readies it: one that is not connected starts
+  // connecting in the background, with no separate Connect to remember.
+  const needsConnect = (name: string) => {
+    const status = servers.find(
+      (server) => server.name === name,
+    )?.connectionStatus;
+    return !(
+      connecting.includes(name) ||
+      status === "connected" ||
+      status === "connecting" ||
+      status === "oauth-flow"
+    );
+  };
+  const selectServer = (name: string) => {
+    setServerName(name);
+    if (!needsConnect(name)) return;
+    if (onConnectServer) void connect(name);
+    else toast.error(`Connect ${name} to continue.`);
+  };
+  // The page's own pick, when it is not connected: on open, or when it
+  // arrives after the steps opened (the server list was still loading). Once
+  // per server, through the latest `connect`, so the effect keys on the pick.
+  const connectPagePick = useRef(() => {});
+  useEffect(() => {
+    connectPagePick.current = () => {
+      // Not when the user already chose another server.
+      if (!initialServerName || (picked && picked.name !== initialServerName)) {
+        return;
+      }
+      if (needsConnect(initialServerName)) void connect(initialServerName);
+    };
+  });
+  const pagePickTried = useRef<string | null>(null);
+  useEffect(() => {
+    if (!onConnectServer || !initialServerName) return;
+    if (pagePickTried.current === initialServerName) return;
+    pagePickTried.current = initialServerName;
+    connectPagePick.current();
+  }, [onConnectServer, initialServerName]);
+  // Opened while the server list was still loading: take the page's pick
+  // once it arrives, unless the user already chose one.
+  const [pageServerName, setPageServerName] = useState(initialServerName);
+  if (initialServerName !== pageServerName) {
+    setPageServerName(initialServerName);
+    if (!picked && initialServerName) setServerName(initialServerName);
+  }
+  // Each server's last connect that did not end connected. Per server: two
+  // connects can settle out of order, and one must not erase the other's.
+  const [connectFailures, setConnectFailures] = useState<
+    Readonly<Record<string, { needsSignIn: boolean }>>
+  >({});
+  const clearFailure = (name: string) =>
+    setConnectFailures((prev) => {
+      if (!Object.hasOwn(prev, name)) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+  const connect = async (name: string, signIn = false) => {
+    if (!onConnectServer) return;
+    setServerName(name);
+    clearFailure(name);
+    setConnecting((names) => (names.includes(name) ? names : [...names, name]));
+    // Picking connects on its own, so the toast is what says it is happening.
+    const progress = startConnectToast(name);
+    let outcome: ConformanceConnectOutcome;
+    try {
+      outcome = await onConnectServer(name, { signIn });
+    } catch {
+      outcome = "failed";
+    }
+    setConnecting((names) => names.filter((other) => other !== name));
+    if (outcome === "ready") {
+      progress.connected();
+      return;
+    }
+    progress.failed(
+      outcome === "reauth"
+        ? `${name} needs you to sign in again. Sign in below to continue.`
+        : `Couldn't connect to ${name}. Retry below, or edit its connection.`,
+    );
+    setConnectFailures((prev) => ({
+      ...prev,
+      [name]: { needsSignIn: outcome === "reauth" },
+    }));
+  };
+  // Connected some other way (Edit connection, the server menu): the failure
+  // is over, so a later drop does not bring the old alert back.
+  // Own keys only: `in` also finds what every object inherits, so a server
+  // named `constructor` would read as failed and clear on every render.
+  if (canContinue && pickedName && Object.hasOwn(connectFailures, pickedName)) {
+    clearFailure(pickedName);
+  }
+  const failure =
+    pickedName && !canContinue && Object.hasOwn(connectFailures, pickedName)
+      ? connectFailures[pickedName]!
+      : null;
+  const noServers =
+    !projectServersLoading &&
+    servers.length === 0 &&
+    (projectServerNames?.length ?? 0) === 0;
+
+  const continueToChecks = () => {
+    if (serverName !== selectionFor) {
+      setSelection(startingSelection(serverName));
+      setSelectionFor(serverName);
+      setProbes(serverName ? (probesFor?.(serverName) ?? {}) : {});
+      setProbeValid({});
+    }
+    setStep(1);
+  };
+
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-y-auto">
+      <div className="mx-auto w-full max-w-2xl px-8 py-6">
+        <Button
+          variant="link"
+          size="sm"
+          onClick={onCancel}
+          className="h-auto gap-1 px-0 text-sm has-[>svg]:px-0"
+        >
+          <ChevronLeft className="size-3.5" />
+          Conformance
+        </Button>
+
+        <ProgressStepper
+          steps={STEPS}
+          activeIndex={step}
+          onStepSelect={setStep}
+          ariaLabel="Conformance setup"
+          className="mt-6"
+        />
+
+        {step === 0 ? (
+          <>
+            <h2 className="mt-3 text-2xl font-semibold tracking-[-0.02em]">
+              Check for conformance
+            </h2>
+            <p className="mt-1.5 text-sm leading-relaxed font-medium">
+              Make sure your server is conformant to ensure reliability,
+              interoperability, and security.
+            </p>
+
+            <div className="mt-6">
+              <div className="mb-5">
+                <div
+                  id={serverLabelId}
+                  className="mb-2 text-sm leading-none font-medium"
+                >
+                  Choose the server you want to test for protocol conformance
+                </div>
+                <ConformanceServerPicker
+                  servers={servers}
+                  moreServerNames={projectServerNames}
+                  loading={projectServersLoading}
+                  selectedName={serverName}
+                  onSelect={selectServer}
+                  labelledBy={serverLabelId}
+                />
+                {noServers ? (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {NO_SERVERS_MESSAGE}
+                  </p>
+                ) : null}
+                {failure && pickedName ? (
+                  <div className="mt-3">
+                    <ConformanceConnectError
+                      server={picked ?? { name: pickedName }}
+                      needsSignIn={failure.needsSignIn}
+                      onRetry={() =>
+                        void connect(pickedName, failure.needsSignIn)
+                      }
+                      // Edit needs the server's loaded settings.
+                      onEdit={
+                        onEditServer && picked
+                          ? () => onEditServer(picked.name)
+                          : undefined
+                      }
+                    />
+                  </div>
+                ) : null}
+              </div>
+              <div className="mb-5">
+                <div
+                  id={versionLabelId}
+                  className="mb-2 text-sm leading-none font-medium"
+                >
+                  Select protocol version
+                </div>
+                <ProtocolVersionSelect
+                  value={versionPin}
+                  onChange={setVersionPin}
+                  labelledBy={versionLabelId}
+                />
+              </div>
+            </div>
+
+            <div className="mt-7 flex items-center justify-end gap-2">
+              <Button variant="ghost" onClick={onCancel}>
+                Cancel
+              </Button>
+              <Button
+                disabled={!canContinue || !defaultsLoaded}
+                onClick={continueToChecks}
+              >
+                Continue
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h2 className="mt-3 text-2xl font-semibold tracking-[-0.02em]">
+              Set what you'd like to test
+            </h2>
+            <p className="mt-1.5 text-sm leading-relaxed font-medium">
+              Pick the suites and checks this run covers.
+            </p>
+
+            {/* The protocol list follows the revision picked in step 1. */}
+            <div className="mt-3">
+              <ConformanceCheckPicker
+                versionPin={versionPin}
+                selection={selection}
+                onChange={setSelection}
+                showAdvice
+                renderCheckExtra={
+                  probeServer
+                    ? (suite, checkId, isPicked, checkTitle) =>
+                        (suite === "protocol" && protocolProbes) ||
+                        (suite === "tasks" && tasksProbe) ? (
+                          <ProbeCheckExtra
+                            checkId={checkId}
+                            checkTitle={checkTitle}
+                            isPicked={isPicked}
+                            tools={probeTools}
+                            probes={probes}
+                            onProbesChange={setProbes}
+                            onValidChange={(part, valid) =>
+                              setProbeValid((prev) => ({
+                                ...prev,
+                                [part]: valid,
+                              }))
+                            }
+                          />
+                        ) : null
+                    : undefined
+                }
+                checkInputStatus={(suite, checkId) => {
+                  if (suite === "protocol" && protocolProbes) {
+                    // The output check needs a tool only when one declares
+                    // an output schema; otherwise it does not apply.
+                    const noOutputSchemas =
+                      probeTools.status === "ready" &&
+                      !probeTools.truncated &&
+                      !probeTools.tools.some((tool) => tool.hasOutputSchema);
+                    return probeKeyFor(checkId) === "toolCallProbe" &&
+                      noOutputSchemas
+                      ? undefined
+                      : probeInputStatus(checkId, probes);
+                  }
+                  // The Tasks tool is optional where the server marks which
+                  // tool creates a task, so an unset one is not flagged.
+                  if (suite === "tasks" && tasksProbe) {
+                    return probeInputStatus(checkId, probes) === "set"
+                      ? "set"
+                      : undefined;
+                  }
+                  return undefined;
+                }}
+              />
+            </div>
+
+            <div className="mt-7 flex items-center justify-end gap-2">
+              <Button variant="ghost" onClick={() => setStep(0)}>
+                Back
+              </Button>
+              <Button
+                disabled={
+                  !canContinue ||
+                  nothingPicked(selection, checkCatalogs(versionPin)) ||
+                  Object.values(probeValid).includes(false)
+                }
+                onClick={() => {
+                  if (serverName)
+                    onRun(serverName, versionPin, selection, probes);
+                }}
+              >
+                {RUN_LABEL}
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

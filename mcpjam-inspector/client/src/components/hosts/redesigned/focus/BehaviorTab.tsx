@@ -215,6 +215,7 @@ export function BehaviorTab({
     modelSelectionsSupported,
     requireOrgKeys,
     onManageOrgProviders,
+    onAddProvider,
   } = useAvailableModels();
   // A harness client lists only what its runtime can run — the same filter as
   // the Playground picker, so a Codex client cannot be saved on a Claude model.
@@ -388,6 +389,7 @@ export function BehaviorTab({
                 availableModels={availableModels}
                 requireOrgKeys={requireOrgKeys}
                 onManageOrgProviders={onManageOrgProviders}
+                onAddProvider={onAddProvider}
                 onModelChange={(model) => {
                   // Always written with the id: a selection left over from
                   // the previous model would disagree with it. Only where the

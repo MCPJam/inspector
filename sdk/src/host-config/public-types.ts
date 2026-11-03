@@ -129,6 +129,7 @@ export interface HostJson {
   systemPromptDefault?: SystemPromptDefault;
   temperature: number;
   requireToolApproval: boolean;
+  requireNativeToolDiscovery?: boolean;
   progressiveToolDiscovery?: boolean;
   respectToolVisibility?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
@@ -191,6 +192,7 @@ export interface HostInit {
   /** Sampling temperature. Default: 0.7. */
   temperature?: number;
   requireToolApproval?: boolean;
+  requireNativeToolDiscovery?: boolean;
   /** Opt into progressive MCP tool discovery (search/load meta-tools). */
   progressiveToolDiscovery?: boolean;
   /** SEP-1865 `_meta.ui.visibility` filtering. Undefined → spec default. */

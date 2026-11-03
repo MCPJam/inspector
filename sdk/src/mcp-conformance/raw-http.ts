@@ -1,3 +1,4 @@
+import { withAbortSignalFetch } from "../abort-signal.js";
 /**
  * The single raw-HTTP harness the conformance raw checks drive (Phase 7 §15.5).
  *
@@ -387,7 +388,9 @@ export async function rawRequest(
     options.timeoutMs ?? ctx.config.checkTimeout
   );
 
-  const capture = createCapturingFetch(ctx.fetchFn);
+  const capture = createCapturingFetch(
+    withAbortSignalFetch(ctx.fetchFn, ctx.config.signal)
+  );
   try {
     await capture.fetch(options.url ?? ctx.serverUrl, {
       method: options.method ?? "POST",
@@ -399,6 +402,7 @@ export async function rawRequest(
     clearTimeout(timeoutId);
   }
 
+  ctx.config.signal?.throwIfAborted();
   const exchange = capture.exchanges[0];
   if (!exchange) {
     throw new Error("Raw HTTP capture recorded no exchange");
@@ -456,11 +460,14 @@ export async function rawHeadersProbe(
     options.timeoutMs ?? ctx.config.checkTimeout
   );
   try {
-    const response = await ctx.fetchFn(options.url ?? ctx.serverUrl, {
-      method: options.method ?? "GET",
-      headers,
-      signal: controller.signal,
-    });
+    const response = await withAbortSignalFetch(ctx.fetchFn, ctx.config.signal)(
+      options.url ?? ctx.serverUrl,
+      {
+        method: options.method ?? "GET",
+        headers,
+        signal: controller.signal,
+      }
+    );
     const captured: Record<string, string> = {};
     response.headers.forEach((value, key) => {
       captured[key.toLowerCase()] = value;
@@ -549,4 +556,13 @@ export function jsonRpcNotifications(
         typeof message.method === "string" &&
         message.id === undefined
     );
+}
+
+/** `notifications/message` records carried on a response. */
+export function logRecords(
+  result: RawHttpResult
+): Array<Record<string, unknown>> {
+  return jsonRpcNotifications(result).filter(
+    (notification) => notification.method === "notifications/message"
+  );
 }

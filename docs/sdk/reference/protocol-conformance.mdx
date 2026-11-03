@@ -62,30 +62,26 @@ const report = await runConformance({
   suites: ["protocol"],
   protocolVersion: "2026-07-28", // Omit to detect the server's version.
   protocol: {
-    checkIds: [
-      "modern-logs-require-log-level",
-      "modern-log-level-filtering",
-    ],
-    logProbe: { toolName: "emit-logs", arguments: {} },
+    checkIds: ["modern-logs-require-log-level"],
+    logProbe: { toolName: "emit-logs", arguments: {}, level: "warning" },
   },
 });
 ```
 
 Supply only a tool that is safe to call repeatedly and produces logs when
-requested. With both checks selected, the tool is called without a log level,
-with `debug`, and with `warning`. The filtering check requires the supplied tool
-to produce `warning` or higher logs. You can also pass `logProbe` directly to
+requested. The check calls it without a log level and with `debug`. The
+`readiness-log-level-filtering` advice calls it once more with `level`
+(default `warning`). You can also pass `logProbe` directly to
 `MCPConformanceTest`.
 
 Logs on the request without a level fail `modern-logs-require-log-level`.
-Lower-level logs on the `warning` request fail `modern-log-level-filtering`.
 A successful supplied tool call that returns no requested logs fails with
 "the supplied tool produced no logs." A missing `logProbe` or an unsuccessful
 probe call reports `could-not-run` instead. The runner never picks tools to call
 on your behalf.
 
-`modern-log-level-filtering` runs and reports its result, but remains pending
-under the current scoring profile and does not change the score or CI verdict.
+From the CLI, pass `--log-probe-tool <name>`, plus `--log-probe-args <json>` and
+`--log-probe-level <level>` when needed.
 
 ## Suite
 
@@ -172,7 +168,6 @@ Check ids:
 - `ping`
 - `logging-set-level` (legacy revisions only)
 - `modern-logs-require-log-level` (2026-07-28 only)
-- `modern-log-level-filtering` (2026-07-28 only; pending)
 - `completion-complete`
 - `capabilities-consistent`
 - `tools-list`
@@ -243,9 +238,9 @@ Each `MCPReadinessWarning` has:
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `id` | `string` | Stable identifier (e.g. `readiness-parse-error-handling`). |
+| `id` | `string` | Stable identifier (e.g. `readiness-session-termination`). |
 | `title` | `string` | Short human-readable label. |
-| `specStrength` | `"MAY" \| "SHOULD" \| "RECOMMENDED"` | The spec strength of the underlying guidance. |
+| `specStrength` | `"SHOULD" \| "MAY" \| "Deprecation Notice"` | The spec strength of the underlying guidance. `"Deprecation Notice"` marks a field the spec deprecates without a SHOULD or MAY. |
 | `message` | `string` | Description of what was observed and why it matters. |
 | `details` | `Record<string, unknown>` | Structured details (status codes, headers, etc.). |
 
@@ -253,8 +248,8 @@ The CLI prints readiness items as an `Advice` section on stderr after each `prot
 
 Current readiness checks:
 
-- `readiness-parse-error-handling` — fires when the server accepts an unparseable JSON body as success without returning a JSON-RPC `-32700` parse error. No MCP revision mandates a specific response to malformed input, so this is `MAY` advice rather than a check.
 - `readiness-session-termination` — on 2025-era runs, fires when a session-termination `DELETE` returns anything other than a 2xx or HTTP 405. On 2026-era runs, fires when `GET` or `DELETE` traffic from an older client is not answered with HTTP 405 (the 2026 backward-compat `SHOULD`).
+- `readiness-log-level-filtering` — 2026-07-28 runs with a `logProbe` only. Calls the tool asking for logs at `logProbe.level` (default `warning`). Fires when no logs come back, or when any log comes back below that level or with an unknown level. The spec says a server `MAY` send logs at or above the requested level, so this costs no points.
 
 ## CI reporting
 
