@@ -854,6 +854,29 @@ describe("MCPTasksConformanceTest", () => {
     expect(check?.error?.message).toContain("corrected to -32021");
   });
 
+  it("cannot run when the declared call fails with the same code", async () => {
+    // A tool that rejects its arguments either way says nothing about the
+    // missing capability, so the -32021 rule is not put to the server.
+    const manager = extensionManager({
+      executeTool: async () => {
+        throw Object.assign(new Error("bad args"), { code: -32602 });
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    const check = result.checks.find(
+      (c) => c.id === "tasks-undeclared-creation-refused"
+    );
+    expect([check?.status, check?.skipReason]).toEqual([
+      "skipped",
+      "could-not-run",
+    ]);
+    expect(check?.error?.message).toContain("even with the tasks extension");
+  });
+
   it("fails a -32021 creation refusal that does not name the extension", async () => {
     const manager = extensionManager({
       executeTool: async (

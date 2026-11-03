@@ -1618,6 +1618,27 @@ export class MCPTasksConformanceTest {
                 );
               } else if (
                 creation.outcome === "refused" &&
+                creation.code !== MISSING_REQUIRED_CLIENT_CAPABILITY &&
+                creationResult instanceof Error &&
+                errorCode(creationResult) === creation.code
+              ) {
+                // The DECLARED call failed with the same code, so the refusal
+                // is about the tool name or arguments, not the missing
+                // capability. Blaming -32021 here would point the developer
+                // at a problem they do not have.
+                checks.push(
+                  couldNotRun(
+                    "tasks-undeclared-creation-refused",
+                    `the tools/call fails with ${creation.code} even with the tasks extension declared, so the undeclared refusal cannot be tied to the missing capability; check --tool-name and --tool-args`,
+                    {
+                      tool: probeTool.name,
+                      outcome: creation.outcome,
+                      undeclaredCreationCode: creation.code,
+                    }
+                  )
+                );
+              } else if (
+                creation.outcome === "refused" &&
                 creation.code !== MISSING_REQUIRED_CLIENT_CAPABILITY
               ) {
                 // tasks.md:63 — a server that cannot serve the request without
