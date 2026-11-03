@@ -959,15 +959,16 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
   "account/guest_input_too_large": entry(
     "account/guest_input_too_large",
     "Request too large for a guest",
-    "This request is larger than MCPJam allows for guests. Sign in, disconnect servers or shorten the conversation.",
+    "This request is larger than MCPJam allows for guests. Sign in to remove the limit, or send less.",
     [
       "Connected servers add their tool definitions to every request, and those count toward the guest limit.",
+      "A tool returned a large result, and it is sent back to the model with the next request.",
       "The conversation has grown past the guest limit.",
     ],
     [
       "Sign in to remove the guest limit.",
-      "Disconnect servers this request doesn't need.",
-      "Start a new chat, or shorten the conversation.",
+      "Have the tool return less, or disconnect servers this request doesn't need.",
+      "In chat, start a new chat or shorten the conversation.",
     ],
     "request-too-large-for-a-guest",
     "warning",

@@ -784,12 +784,13 @@ This request is larger than MCPJam allows for guests, so it was not sent to the 
 
 **Likely causes**
 - Connected servers add their tool definitions to every request, and those count toward the guest limit.
+- A tool returned a large result, and it is sent back to the model with the next request.
 - The conversation has grown past the guest limit.
 
 **Next steps**
 - Sign in to remove the guest limit.
-- Disconnect servers this request doesn't need.
-- Start a new chat, or shorten the conversation.
+- Have the tool return less, or disconnect servers this request doesn't need.
+- In chat, start a new chat or shorten the conversation.
 
 ### Server rate limited
 
