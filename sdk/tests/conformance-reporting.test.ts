@@ -308,8 +308,8 @@ describe("report score", () => {
         ],
         readiness: [
           {
-            id: "readiness-cache-ttl-useful",
-            title: "Useful Cache TTLs",
+            id: "readiness-deprecated-feature-use",
+            title: "Deprecated Feature Use",
             severity: "warning",
             specStrength: "SHOULD",
             message: "…",

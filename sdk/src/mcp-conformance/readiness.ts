@@ -282,74 +282,6 @@ export async function collectClientReadiness(
   return warnings;
 }
 
-async function cacheTtlWarning(
-  ctx: RawHttpCheckContext
-): Promise<MCPReadinessWarning | undefined> {
-  if (ctx.config.era !== "modern") {
-    return undefined;
-  }
-
-  const version = ctx.config.protocolVersion ?? "2026-07-28";
-  const result = await rawRequest(ctx, {
-    headers: modernHeaders({ protocolVersion: version, method: "tools/list" }),
-    body: modernRequestBody({
-      id: 8100,
-      method: "tools/list",
-      protocolVersion: version,
-    }),
-  });
-
-  const ttlMs = jsonRpcResult(result)?.ttlMs;
-  if (typeof ttlMs !== "number" || ttlMs > 0) {
-    return undefined;
-  }
-
-  return warning(
-    "readiness-cache-ttl-useful",
-    "SHOULD",
-    "Cacheable results advertise ttlMs: 0, so no client can reuse them; a non-zero TTL on stable listings removes a round trip per call",
-    { method: "tools/list", ttlMs }
-  );
-}
-
-/**
- * No revision of the transports spec maps an unparseable POST body to ANY
- * HTTP status or JSON-RPC error — the docs are silent in every version — so
- * this can never be a check. JSON-RPC 2.0 itself names `-32700 Parse error`
- * for exactly this, and a server that answers garbage with a SUCCESS status
- * confuses every client on the far side of a proxy bug or truncated body.
- * Advice therefore fires only when the server ACCEPTS the unparseable body
- * without an in-band parse error.
- */
-async function parseErrorHandlingWarning(
-  ctx: RawHttpCheckContext
-): Promise<MCPReadinessWarning | undefined> {
-  const result = await rawRequest(ctx, {
-    rawBody: '{"jsonrpc": "2.0",',
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-    },
-    // A server that hangs on garbage instead of answering is not worth the
-    // full check timeout — this is advice, not a verdict.
-    timeoutMs: Math.min(ctx.config.checkTimeout, 3_000),
-  });
-  if (result.status >= 300) {
-    // Any rejection is unobjectionable: the spec never says which one.
-    return undefined;
-  }
-  if (jsonRpcError(result)?.code === -32700) {
-    return undefined;
-  }
-
-  return warning(
-    "readiness-parse-error-handling",
-    "MAY",
-    `The server answered an unparseable JSON body with HTTP ${result.status} and no JSON-RPC -32700 Parse error. No MCP revision mandates a particular response here, but accepting garbage as success hides transport corruption from clients`,
-    { status: result.status }
-  );
-}
-
 /**
  * Explicit session termination is advice on both sides of the era line: the
  * 2025 revisions say clients SHOULD send a DELETE when abandoning a session
@@ -604,8 +536,6 @@ export async function collectRawReadiness(
   const probes: Array<
     [MCPReadinessId, () => Promise<MCPReadinessWarning | undefined>]
   > = [
-    ["readiness-cache-ttl-useful", () => cacheTtlWarning(ctx)],
-    ["readiness-parse-error-handling", () => parseErrorHandlingWarning(ctx)],
     ["readiness-session-termination", () => sessionTerminationWarning(ctx)],
     [
       "readiness-protocol-version-header-required",
