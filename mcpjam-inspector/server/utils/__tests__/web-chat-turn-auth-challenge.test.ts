@@ -434,7 +434,9 @@ describe("direct-provider chat: calls a sign-in suspended", () => {
     Object.assign(turn.prepare, { directProvider: {} });
 
     await streamWebChatTurn(turn as never);
-    const options = handlers.direct.mock.calls.at(-1)?.[0] as any;
+    const options = handlers.direct.mock.calls.at(-1)?.[0] as Parameters<
+      typeof import("../../services/chat-turn/direct-stream.js").streamDirectChatWithLiveTrace
+    >[0];
     expect(typeof options.settleSuspendedHistoryToolCall).toBe("function");
 
     // What the stream does before the model runs: answer the suspended call
@@ -450,10 +452,10 @@ describe("direct-provider chat: calls a sign-in suspended", () => {
         },
       ],
     });
-    await options.onPersist({
+    await options.onPersist?.({
       responseMessages: [],
       turnTrace: { turnId: "turn-1", spans: [] },
-    });
+    } as never);
     expect(handlers.persist).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(handlers.persist.mock.calls[0]?.[0])).toContain(
       "call-settled",
