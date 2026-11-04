@@ -161,6 +161,63 @@ describe("ScoreResultsPage pending profile stamp", () => {
     },
   );
 
+  it.each([
+    [
+      "tasksProbe",
+      "Select a tool that creates a task in setup, then run again.",
+    ],
+    ["logProbe", "Select a tool that emits logs in setup, then run again."],
+    [
+      "inputRequiredProbe",
+      "Select a tool that asks for input in setup, then run again.",
+    ],
+    [
+      "toolCallProbe",
+      "Select a tool to check output in setup, then run again.",
+    ],
+    [undefined, "Select a tool that creates a task in setup, then run again."],
+  ])(
+    "shows neutral setup guidance for shared missing-input rows (%s)",
+    async (missingInput, expected) => {
+      const raw =
+        "no probe tool could be selected automatically: choose a task tool";
+      mockFetchScoreRun.mockResolvedValue({
+        ...pendingBearingRun(),
+        report: {
+          tasks: {
+            checks: [
+              {
+                id: "tasks-result-type-discipline",
+                title: "Result Type Discipline",
+                status: "skipped",
+                skipReason: "could-not-run",
+                error: { message: raw },
+                ...(missingInput ? { details: { missingInput } } : {}),
+              },
+            ],
+          },
+        },
+      });
+      renderPage();
+      const message = await screen.findByText(expected);
+      const row = message.closest("li");
+      expect(row).toHaveTextContent("Not run");
+      expect(message).toHaveClass("text-muted-foreground");
+      expect(row?.querySelector("svg")).toHaveClass("text-muted-foreground");
+      expect(screen.queryByText(raw)).not.toBeInTheDocument();
+      expect(screen.queryByText("could-not-run")).not.toBeInTheDocument();
+    },
+  );
+
+  it("keeps an actual server failure red on shared score rows", async () => {
+    mockFetchScoreRun.mockResolvedValue(stampLessLegacyRun());
+    renderPage();
+    expect(await screen.findByText("schema mismatch")).toHaveClass(
+      "text-red-400",
+    );
+    expect(screen.queryByText("Not run")).not.toBeInTheDocument();
+  });
+
   it("names pending in the headline and marks the pending failed row unscored", async () => {
     mockFetchScoreRun.mockResolvedValue(pendingBearingRun());
     renderPage();
