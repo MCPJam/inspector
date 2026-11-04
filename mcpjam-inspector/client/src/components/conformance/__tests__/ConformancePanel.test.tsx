@@ -1162,6 +1162,7 @@ describe("ConformanceTab", () => {
     await waitFor(() =>
       expect(mockRunTasks).toHaveBeenCalledWith("alpha", {
         checkIds: ["tasks-update-ack-shape"],
+        protocolVersion: "2025-11-25",
         toolName: "job",
         toolArguments: { count: 2 },
         inputResponses: { confirm: true },
@@ -1210,7 +1211,7 @@ describe("ConformanceTab", () => {
       };
       const { rerender } = render(<ConformanceTab server={alpha} {...props} />);
       fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      await continueSetup();
       expect(load).toHaveBeenCalledWith("alpha");
       await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
       await user.click(serverRow("beta"));
@@ -1222,11 +1223,11 @@ describe("ConformanceTab", () => {
             inputs: { tasksProbe: { toolName: "alpha-job" } },
           });
       });
-      expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+      await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
       expect(screen.queryByRole("alert")).toBeNull();
       expect(mockRunProtocol).not.toHaveBeenCalled();
       expect(mockRunTasks).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      await continueSetup();
       await waitFor(() => expect(load).toHaveBeenLastCalledWith("beta"));
       fireEvent.click(await screen.findByRole("button", { name: RUN_LABEL }));
       expect(onSelectServer).toHaveBeenCalledWith("beta");
@@ -1234,6 +1235,7 @@ describe("ConformanceTab", () => {
       await waitFor(() =>
         expect(mockRunTasks).toHaveBeenCalledWith("beta", {
           checkIds: ["tasks-update-ack-shape"],
+          protocolVersion: "2025-11-25",
           toolName: "beta-job",
           toolArguments: { count: 2 },
           inputResponses: { confirm: true },
@@ -1258,7 +1260,7 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
     for (const suite of ["Apps", "Tasks", "OAuth"]) {
       fireEvent.click(
         await screen.findByRole("checkbox", { name: `Run ${suite}` }),
@@ -1292,7 +1294,7 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
     fireEvent.click(await screen.findByRole("checkbox", { name: "Run Tasks" }));
     fireEvent.click(
       screen.getByRole("button", { name: "Conformance", exact: true }),
@@ -1488,7 +1490,7 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
     const retry = await screen.findByRole("button", { name: "Retry" });
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Could not load your saved inputs. Try again.",
