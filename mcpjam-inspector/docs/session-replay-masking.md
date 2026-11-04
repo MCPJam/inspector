@@ -493,8 +493,7 @@ Annotate once, get all three. **Do not** introduce a second attribute for this.
 truth.
 
 Truncation is not masking: a truncated token prefix is still credential
-material. That is why `OAuthFlowProgress`'s token rows carry `sensitive: true`
-even though they display `truncateValue(...)`.
+material.
 
 ## Existing annotated surfaces
 
@@ -506,8 +505,6 @@ even though they display `truncateValue(...)`.
   `JSON.stringify(oauthTokens)` block. This is the one that matters: it is the
   component `AuthTab` actually renders, and it prints the **untruncated** token
   set.
-- `client/src/components/oauth/OAuthFlowProgress.tsx`: truncated access and
-  refresh token rows (`sensitive: true` on the detail shape).
 
 ## Two recorders, one boundary
 
