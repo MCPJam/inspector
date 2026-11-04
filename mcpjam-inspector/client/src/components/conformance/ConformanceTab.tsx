@@ -211,7 +211,7 @@ export function ConformanceTab({
   const saveTimeout = async (name: string, seconds: number | null) => {
     if (onSaveServerTimeout) await onSaveServerTimeout(name, seconds);
     else if (!persist) saveLocalTimeout(name, seconds);
-    else throw new Error("Server timeout settings are unavailable.");
+    else throw new Error("Server timeout settings are unavailable. Reload the page and try again.");
     setChangedTimeouts((previous) => ({ ...previous, [name]: seconds }));
   };
   const defaultsFor = (serverName: string) =>
