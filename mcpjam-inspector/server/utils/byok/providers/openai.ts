@@ -22,27 +22,31 @@ const ENDPOINT = "GET /v1/models";
 const VERBATIM =
   "SUPPORTED_MODELS row sent verbatim to api.openai.com by createLlmModel; listed under this id by GET /v1/models";
 const HOSTED = `${VERBATIM}; canonical spelling from hosted-model-ids.generated.ts`;
+// No key with GPT-6 access has listed these yet, so the id is the one on
+// OpenAI's model page rather than one seen in `GET /v1/models`.
+const MODEL_PAGE =
+  "SUPPORTED_MODELS row sent verbatim to api.openai.com by createLlmModel; id from OpenAI's model page (developers.openai.com/api/docs/models), read 2026-10-16, not yet seen in GET /v1/models; canonical spelling from hosted-model-ids.generated.ts";
 
 export const OPENAI_NATIVE_IDS: readonly NativeIdMapping[] = [
   {
     canonicalId: "openai/gpt-6.1-sol",
     nativeId: "gpt-6.1-sol",
-    evidence: HOSTED,
+    evidence: MODEL_PAGE,
   },
   {
     canonicalId: "openai/gpt-6-luna",
     nativeId: "gpt-6-luna",
-    evidence: HOSTED,
+    evidence: MODEL_PAGE,
   },
   {
     canonicalId: "openai/gpt-6-sol",
     nativeId: "gpt-6-sol",
-    evidence: HOSTED,
+    evidence: MODEL_PAGE,
   },
   {
     canonicalId: "openai/gpt-6-astra",
     nativeId: "gpt-6-astra",
-    evidence: HOSTED,
+    evidence: MODEL_PAGE,
   },
   {
     canonicalId: "openai/gpt-5.6-luna",

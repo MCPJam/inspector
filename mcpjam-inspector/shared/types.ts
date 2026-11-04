@@ -253,7 +253,7 @@ export const isMCPJamGuestAllowedModel = (
  * Which Anthropic ids reject the sampling parameters lives in `@mcpjam/sdk`
  * ({@link modelRejectsTemperature}) rather than here, because the SDK's
  * `HostRunner` builds its own provider request and needs the same answer. The
- * GPT-5/6 carve-out stays inspector-side: it is not a Claude family, so the SDK
+ * GPT-5 carve-out stays inspector-side: it is not a Claude family, so the SDK
  * predicate has nothing to say about it.
  *
  * Hosted (MCPJam-provided) ids answer the same way as own-provider ones. They
@@ -265,7 +265,7 @@ export const isMCPJamGuestAllowedModel = (
  */
 export const modelSupportsTemperature = (modelId: string | Model): boolean => {
   const id = String(modelId);
-  if (id.includes("gpt-5") || id.includes("gpt-6")) {
+  if (id.includes("gpt-5")) {
     return false;
   }
   return !modelRejectsTemperature(id);
@@ -280,8 +280,8 @@ export const modelSupportsTemperature = (modelId: string | Model): boolean => {
  * predicate encodes Anthropic families that answer a 400, and a catalog row
  * claiming `temperature` for one of those is stale, not news. What the metadata
  * adds is the models no id pattern covers: the reasoning families that reject
- * sampling for reasons unrelated to being Claude, which today only `gpt-5` and
- * `gpt-6` catch by name.
+ * sampling for reasons unrelated to being Claude, which today only `gpt-5`
+ * catches by name.
  *
  * Only a COMPLETE parameter list may withdraw it
  * (`supportedParametersComplete`, set when the backend read the Gateway's full
@@ -851,7 +851,7 @@ const HOSTED_MODEL_IDS_SET: ReadonlySet<string> = new Set(HOSTED_MODEL_IDS);
 
 export const isModelSupported = (id: string): boolean => {
   const canonical = getCanonicalModelId(id);
-  // BYOK statics (bare `Model.*`/azure ids) — the exhaustive local list.
+  // BYOK statics (bare provider ids and azure ids) — the exhaustive local list.
   if (SUPPORTED_MODELS.some((model) => model.id === id)) return true;
   // Known hosted model from the snapshot seed.
   if (HOSTED_MODEL_IDS_SET.has(canonical)) return true;
