@@ -46,6 +46,9 @@ jobs:
       - name: Verify Docker workspace dependency manifests
         run: node --test .github/scripts/docker-workspaces.test.mjs
 
+      - name: Verify the inspector image delivers SIGTERM to the server
+        run: node --test .github/scripts/docker-signals.test.mjs
+
       - name: Verify MCP deploy workflow path filters
         run: node --test .github/scripts/mcp-workflow-paths.test.mjs
 
