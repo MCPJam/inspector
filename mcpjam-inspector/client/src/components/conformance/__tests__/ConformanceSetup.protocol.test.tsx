@@ -13,6 +13,7 @@ import {
 import { ConformanceSetup } from "../ConformanceSetup";
 import { RUN_LABEL } from "../ConformancePageChrome";
 import type { ConformanceConnectionResult } from "@/shared/conformance-connection";
+import { toast } from "@/lib/toast";
 
 const { check } = vi.hoisted(() => ({ check: vi.fn() }));
 vi.mock("@/lib/apis/conformance-connection-api", () => ({
@@ -117,7 +118,8 @@ describe("setup protocol connection gate", () => {
     );
   });
 
-  it("shows a confirmed refusal and focuses the version picker from step 2", async () => {
+  it("shows a confirmed refusal as a toast and keeps Run blocked", async () => {
+    const toastError = vi.spyOn(toast, "error");
     check.mockResolvedValueOnce({
       status: "ready",
       protocolVersion: "2026-07-28",
@@ -140,13 +142,16 @@ describe("setup protocol connection gate", () => {
         ]}
       />,
     );
-    await screen.findByText("bart doesn’t support 2026-07-28.");
-    expect(screen.getByText("Server offers: 2025-06-18.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "bart doesn’t support 2026-07-28.",
+        expect.objectContaining({ description: "Server offers: 2025-06-18." }),
+      ),
+    );
+    // The toast replaces the inline box and its Change version button.
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Change version" })).toBeNull();
     expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Change version" }));
-    expect(
-      screen.getByRole("combobox", { name: "Select protocol version" }),
-    ).toHaveFocus();
     expect(onRun).not.toHaveBeenCalled();
     expect(onConnectServer).not.toHaveBeenCalled();
   });

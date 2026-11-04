@@ -239,6 +239,12 @@ function serverRow(name: string) {
     .find((button) => !button.getAttribute("aria-label")?.startsWith("Connect"))!;
 }
 
+/** A suite's input badge: "optional" is set in its own element. */
+function inputBadge(text: string) {
+  return (_: string, element: Element | null) =>
+    element?.tagName === "SPAN" && element.textContent === text;
+}
+
 /** A suite's header row, found by its description (unique, unlike titles). */
 function suiteHeader(suite: keyof typeof SUITE_COPY) {
   const button = screen
@@ -2080,14 +2086,14 @@ describe("ConformanceTab", () => {
         suite: "Protocol",
         field: "Tool that emits logs",
         row: "Logs Require A Log Level",
-        missing: "2 checks need input",
-        ready: "1 check needs input",
+        missing: "2 optional checks need input",
+        ready: "1 optional check needs input",
       },
       {
         suite: "Tasks",
         field: "Tool that creates a task",
         row: "Result Type Discipline",
-        missing: "11 checks need input",
+        missing: "11 optional checks need input",
         ready: undefined,
       },
     ])(
@@ -2122,7 +2128,9 @@ describe("ConformanceTab", () => {
           name: new RegExp(`^${row}`),
         });
         expect(checkRow).toHaveTextContent("Needs input");
-        expect(within(header).getByText(missing)).toBeInTheDocument();
+        expect(
+          within(header).getByText(inputBadge(missing)),
+        ).toBeInTheDocument();
 
         fireEvent.click(screen.getByRole("switch"));
         const args = screen.getByRole("textbox", { name: "Arguments" });
@@ -2132,14 +2140,19 @@ describe("ConformanceTab", () => {
           target: { value: '{"projectId":"project-1"}' },
         });
         expect(checkRow).toHaveTextContent("Input set");
-        if (ready) expect(within(header).getByText(ready)).toBeInTheDocument();
+        if (ready)
+          expect(
+            within(header).getByText(inputBadge(ready)),
+          ).toBeInTheDocument();
         else expect(within(header).queryByText(/needs? input/)).toBeNull();
 
         fireEvent.change(args, { target: { value: "{}" } });
         expect(checkRow).toHaveTextContent("Needs input");
         fireEvent.click(header);
         expect(header).toHaveAttribute("aria-expanded", "false");
-        expect(within(header).getByText(missing)).toBeInTheDocument();
+        expect(
+          within(header).getByText(inputBadge(missing)),
+        ).toBeInTheDocument();
       },
     );
 
@@ -2199,7 +2212,9 @@ describe("ConformanceTab", () => {
           expect(within(header).queryByText(/needs? input/)).toBeNull();
         else
           expect(
-            within(header).getByText("1 check needs input"),
+            within(header).getByText(
+              inputBadge("1 optional check needs input"),
+            ),
           ).toBeInTheDocument();
       },
     );
@@ -2337,8 +2352,10 @@ describe("ConformanceTab", () => {
       });
       expect(header).toHaveAttribute("aria-expanded", "false");
       expect(
-        within(header).getByText("3 checks need input"),
+        within(header).getByText(inputBadge("3 optional checks need input")),
       ).toBeInTheDocument();
+      // The protocol suite runs without these tools, so the badge says so.
+      expect(within(header).getByText("optional").tagName).toBe("EM");
 
       fireEvent.click(header);
       // Three protocol checks, the log advice, and eleven Tasks checks.
@@ -2358,7 +2375,7 @@ describe("ConformanceTab", () => {
       expect(screen.getAllByText("Input set")).toHaveLength(2);
       expect(screen.getAllByText("Needs input")).toHaveLength(13);
       expect(
-        within(header).getByText("2 checks need input"),
+        within(header).getByText(inputBadge("2 optional checks need input")),
       ).toBeInTheDocument();
     });
 
@@ -2379,7 +2396,7 @@ describe("ConformanceTab", () => {
         ),
       ).toBeInTheDocument();
       expect(
-        within(header).getByText("2 checks need input"),
+        within(header).getByText(inputBadge("2 optional checks need input")),
       ).toBeInTheDocument();
     });
 
@@ -2424,15 +2441,16 @@ describe("ConformanceTab", () => {
         });
         expect(header).toHaveAttribute("aria-expanded", "false");
         expect(
-          within(header).getByText("11 checks need input"),
+          within(header).getByText(inputBadge("11 optional checks need input")),
         ).toBeInTheDocument();
+        expect(within(header).getByText("optional").tagName).toBe("EM");
 
         const suite = screen.getByRole("checkbox", { name: "Run Tasks" });
         fireEvent.click(suite);
         expect(within(header).queryByText(/needs? input/)).toBeNull();
         fireEvent.click(suite);
         expect(
-          within(header).getByText("11 checks need input"),
+          within(header).getByText(inputBadge("11 optional checks need input")),
         ).toBeInTheDocument();
 
         fireEvent.click(header);
@@ -2448,7 +2466,7 @@ describe("ConformanceTab", () => {
           screen.getByRole("checkbox", { name: "Run Result Type Discipline" }),
         );
         expect(
-          within(header).getByText("10 checks need input"),
+          within(header).getByText(inputBadge("10 optional checks need input")),
         ).toBeInTheDocument();
         await user.click(
           screen.getByRole("combobox", { name: "Tool that creates a task" }),
@@ -2467,7 +2485,7 @@ describe("ConformanceTab", () => {
         fireEvent.click(header);
         expect(header).toHaveAttribute("aria-expanded", "false");
         expect(
-          within(header).getByText("10 checks need input"),
+          within(header).getByText(inputBadge("10 optional checks need input")),
         ).toBeInTheDocument();
       },
     );
@@ -2560,7 +2578,7 @@ describe("ConformanceTab", () => {
           ).toBeEnabled(),
         );
         expect(
-          within(header).getByText("11 checks need input"),
+          within(header).getByText(inputBadge("11 optional checks need input")),
         ).toBeInTheDocument();
         expect(
           screen.getByRole("button", {
@@ -2587,7 +2605,7 @@ describe("ConformanceTab", () => {
         ).toBeEnabled(),
       );
       expect(
-        within(header).getByText("11 checks need input"),
+        within(header).getByText(inputBadge("11 optional checks need input")),
       ).toBeInTheDocument();
     });
 
