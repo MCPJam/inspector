@@ -9,4 +9,4 @@ Name missing inputs in score summaries and keep timeout explanations when other 
 
 Show the same neutral Not run status and setup instructions on shared score rows.
 
-Keep shared missing-input tooltips accurate for older saved scores.
+Keep missing-input tooltips accurate for older saved scores on every results page.

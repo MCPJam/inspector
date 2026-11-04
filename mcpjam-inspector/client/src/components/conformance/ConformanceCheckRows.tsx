@@ -184,14 +184,10 @@ export function NeedsInputTag({
   );
 }
 
-export function NotRunTag({
-  title = "Not scored. This check needs an input before it can run.",
-}: {
-  title?: string;
-}) {
+export function NotRunTag() {
   return (
     <span
-      title={title}
+      title="This check needs an input before it can run."
       className="shrink-0 rounded-sm border border-border/60 px-1 py-px text-xs leading-none text-muted-foreground"
     >
       Not run

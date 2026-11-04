@@ -117,7 +117,10 @@ describe("ConformanceSharedPage", () => {
       },
     });
     render(<ConformanceSharedPage token="tok" />);
-    expect(screen.getByText("Not run")).toBeInTheDocument();
+    expect(screen.getByText("Not run")).toHaveAttribute(
+      "title",
+      "This check needs an input before it can run.",
+    );
     expect(
       screen.getByText(
         "Select a tool that creates a task in setup, then run again.",
