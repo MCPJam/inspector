@@ -51,10 +51,8 @@ import {
   type ProtocolVersionPin,
   type SuiteState,
 } from "@/hooks/use-conformance-run";
-import {
-  ConformanceRunShareButton,
-  detailDateFormat,
-} from "./ConformanceHistory";
+import { detailDateFormat } from "./ConformanceHistory";
+import { ConformanceRunShareButton } from "./ConformanceRunActions";
 import {
   PersistConformanceRun,
   type ConformancePersistConfig,

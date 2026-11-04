@@ -8,16 +8,13 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "convex/react";
-import { Loader2, Share2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FlaskConical } from "lucide-react";
 import { buildConformanceRunPath, useAppNavigate } from "@/lib/app-navigation";
-import { ShareDialog } from "@/components/sharing/ShareDialog";
-import { ResourceSharePanel } from "@/components/sharing/ResourceSharePanel";
 import { SharedArtifactPage } from "@/components/sharing/SharedArtifactPage";
 import { useSharedArtifact } from "@/hooks/useSharedArtifact";
-import { buildConformanceSharePath } from "@/lib/app-navigation";
 import { useArtifactQuery } from "@/lib/artifact-urls";
 import {
   OverallScoreCard,
@@ -35,6 +32,11 @@ import {
   type SavedReportCase,
 } from "./use-saved-run-reports";
 import { suiteCatalog } from "./conformance-catalogs";
+import {
+  SavedRunActions,
+  SavedRunSettings,
+  type SavedRunServerSettings,
+} from "./ConformanceRunActions";
 
 export type ConformanceRunListItem = {
   _id: string;
@@ -261,68 +263,22 @@ export function ConformanceHistory({
   );
 }
 
-/**
- * Share for one saved run: opens the share dialog. Only a finished run can be
- * shared.
- */
-export function ConformanceRunShareButton({
-  runId,
-  finished,
-}: {
-  runId: string;
-  finished: boolean;
-}) {
-  const [shareOpen, setShareOpen] = useState(false);
-
-  return (
-    <>
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={!finished}
-        onClick={() => setShareOpen(true)}
-        data-testid="conformance-share-open"
-      >
-        <Share2 className="size-3.5" aria-hidden /> Share
-      </Button>
-      <ShareDialog
-        open={shareOpen}
-        onOpenChange={setShareOpen}
-        title="Share conformance run"
-        description="A frozen redacted snapshot. Guests who redeem the link are auditable browser sessions, not verified individuals."
-      >
-        <ResourceSharePanel
-          resourceType="conformanceRun"
-          resourceId={runId}
-          disabledReason={finished ? null : "Only a finished run can be shared"}
-          footerSlot={
-            <p className="text-xs text-muted-foreground">
-              Viewers see a frozen snapshot. Revoking access is immediate even
-              though the artifact itself does not change.
-            </p>
-          }
-          linkLabel="Share link"
-          buildShareUrl={(token) =>
-            `${window.location.origin}${buildConformanceSharePath(token)}`
-          }
-          testIdPrefix="conformance-share"
-          invites={false}
-        />
-      </ShareDialog>
-    </>
-  );
-}
-
 export function ConformanceRunDetailPage({
   runId,
   serverNames,
+  serverSettings,
+  serversLoading = false,
 }: {
   runId: string;
   projectId?: string | null;
   /** Saved server id → display name, for the breadcrumb and score card. */
   serverNames?: ReadonlyMap<string, string>;
+  /** The servers' default checks, for Settings. Omit to hide Settings. */
+  serverSettings?: SavedRunServerSettings;
+  serversLoading?: boolean;
 }) {
   const navigate = useAppNavigate();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // Each report carries a short-lived artifact link.
   const detail = useArtifactQuery<
     | (ConformanceRunListItem & {
@@ -364,10 +320,23 @@ export function ConformanceRunDetailPage({
     );
   }
 
+  // A saved server the project still has: Run again and Settings act on it.
+  const savedServerName = detail.serverId
+    ? serverNames?.get(detail.serverId)
+    : undefined;
   const serverName =
-    (detail.serverId ? serverNames?.get(detail.serverId) : undefined) ??
-    detail.targetKey.replace(/^server:/, "");
+    savedServerName ?? detail.targetKey.replace(/^server:/, "");
   const finished = detail.status === "completed";
+
+  if (settingsOpen && savedServerName && serverSettings) {
+    return (
+      <SavedRunSettings
+        serverName={savedServerName}
+        settings={serverSettings}
+        onBack={() => setSettingsOpen(false)}
+      />
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -382,12 +351,14 @@ export function ConformanceRunDetailPage({
           </button>
           <span className="text-muted-foreground/70">/</span>
           <span className="truncate font-semibold">{serverName}</span>
-          <div className="ml-auto flex items-center gap-2">
-            <ConformanceRunShareButton runId={detail._id} finished={finished} />
-            <Button size="sm" onClick={() => navigate("/conformance")}>
-              Run again
-            </Button>
-          </div>
+          <SavedRunActions
+            runId={detail._id}
+            finished={finished}
+            serverName={savedServerName}
+            settings={serverSettings}
+            serversLoading={serversLoading}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
         </div>
         <p className="text-sm text-muted-foreground">
           {detailDateFormat.format(detail.createdAt)} ·{" "}
