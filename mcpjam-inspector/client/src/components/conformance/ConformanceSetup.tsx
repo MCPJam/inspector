@@ -94,6 +94,8 @@ export function ConformanceSetup({
   const [inputsValid, setInputsValid] = useState(true);
   // A draft until Run, so Cancel leaves the page's selection as it was.
   const [serverName, setServerName] = useState(initialServerName);
+  const currentServerName = useRef(serverName);
+  currentServerName.current = serverName;
   const [versionPin, setVersionPin] = useState(initialVersionPin);
   const [step, setStep] = useState(0);
   // Step 2 starts from the picked server's checks: the last run's on the same
@@ -227,24 +229,28 @@ export function ConformanceSetup({
   const [loadingDefaults, setLoadingDefaults] = useState(false);
   const [defaultsError, setDefaultsError] = useState(false);
   const continueToChecks = async () => {
+    const targetServerName = serverName;
     setLoadingDefaults(true);
     setDefaultsError(false);
     try {
       const loaded =
-        serverName && onLoadDefaults
-          ? await onLoadDefaults(serverName)
+        targetServerName && onLoadDefaults
+          ? await onLoadDefaults(targetServerName)
           : undefined;
-      if (serverName !== selectionFor) {
-        setSelection(loaded?.selection ?? startingSelection(serverName));
-        setSelectionFor(serverName);
+      if (currentServerName.current !== targetServerName) return;
+      if (targetServerName !== selectionFor) {
+        setSelection(loaded?.selection ?? startingSelection(targetServerName));
+        setSelectionFor(targetServerName);
         setProbes(
-          loaded?.inputs ?? (serverName ? (probesFor?.(serverName) ?? {}) : {}),
+          loaded?.inputs ??
+            (targetServerName ? (probesFor?.(targetServerName) ?? {}) : {}),
         );
         setInputsValid(true);
       }
       setStep(1);
     } catch {
-      setDefaultsError(true);
+      if (currentServerName.current === targetServerName)
+        setDefaultsError(true);
     } finally {
       setLoadingDefaults(false);
     }

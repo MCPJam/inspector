@@ -1113,6 +1113,78 @@ describe("ConformanceTab", () => {
     expect(window.location.search).toBe("");
   });
 
+  it.each(["success", "failure"])(
+    "ignores a stale defaults %s after switching setup servers",
+    async (outcome) => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      const alpha = createHttpServer({ name: "alpha" });
+      const beta = createHttpServer({ name: "beta" });
+      const defaults =
+        createDeferred<
+          import("@/hooks/use-conformance-server-data").ConformanceDefaults
+        >();
+      const load = vi.fn((name: string) =>
+        name === "alpha"
+          ? defaults.promise
+          : Promise.resolve({
+              selection: {
+                protocol: [],
+                apps: [],
+                tasks: ["tasks-update-ack-shape"],
+                oauth: false,
+              },
+              inputs: {
+                tasksProbe: {
+                  toolName: "beta-job",
+                  arguments: { count: 2 },
+                  inputResponses: { confirm: true },
+                },
+              },
+            }),
+      );
+      const onSelectServer = vi.fn();
+      const props = {
+        servers: [alpha, beta],
+        onSelectServer,
+        onLoadServerDefaults: load,
+      };
+      const { rerender } = render(<ConformanceTab server={alpha} {...props} />);
+      fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      expect(load).toHaveBeenCalledWith("alpha");
+      await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
+      await user.click(serverRow("beta"));
+      await act(async () => {
+        if (outcome === "failure") defaults.reject(new Error("offline"));
+        else
+          defaults.resolve({
+            selection: { tasks: [], oauth: false },
+            inputs: { tasksProbe: { toolName: "alpha-job" } },
+          });
+      });
+      expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(mockRunProtocol).not.toHaveBeenCalled();
+      expect(mockRunTasks).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      await waitFor(() => expect(load).toHaveBeenLastCalledWith("beta"));
+      fireEvent.click(await screen.findByRole("button", { name: RUN_LABEL }));
+      expect(onSelectServer).toHaveBeenCalledWith("beta");
+      rerender(<ConformanceTab server={beta} {...props} />);
+      await waitFor(() =>
+        expect(mockRunTasks).toHaveBeenCalledWith("beta", {
+          checkIds: ["tasks-update-ack-shape"],
+          toolName: "beta-job",
+          toolArguments: { count: 2 },
+          inputResponses: { confirm: true },
+        }),
+      );
+      expect(mockRunProtocol).not.toHaveBeenCalled();
+      expect(mockRunTasks).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("keeps setup edits as a draft until Run and discards them on Cancel", async () => {
     const alpha = createHttpServer({ name: "alpha" });
     const save = vi.fn();
