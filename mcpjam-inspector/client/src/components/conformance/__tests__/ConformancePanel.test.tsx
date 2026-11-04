@@ -1884,6 +1884,55 @@ describe("ConformanceTab", () => {
       },
     );
 
+    it.each(["auto", "2025-11-25"])(
+      "keeps Tasks warnings on %s when the runner's automatic tool needs arguments",
+      async (pin) => {
+        mockListTools.mockResolvedValue({
+          tools: [
+            {
+              name: "z_create",
+              execution: { taskSupport: "required" },
+              inputSchema: {
+                type: "object",
+                properties: { message: { type: "string" } },
+                required: ["message"],
+              },
+            },
+            {
+              name: "a_create",
+              execution: { taskSupport: "required" },
+              inputSchema: { type: "object", properties: {} },
+            },
+            {
+              name: "optional_create",
+              execution: { taskSupport: "optional" },
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        });
+        await toStep2(pin);
+        const header = screen.getByRole("button", {
+          name: /^Tasks.*checks selected$/,
+        });
+        fireEvent.click(header);
+        await waitFor(() =>
+          expect(
+            screen.getByRole("combobox", {
+              name: "Tool that creates a task",
+            }),
+          ).toBeEnabled(),
+        );
+        expect(
+          within(header).getByText("11 checks need input"),
+        ).toBeInTheDocument();
+        expect(
+          screen.getByRole("button", {
+            name: /^Result Type Discipline/,
+          }),
+        ).toHaveTextContent("Needs input");
+      },
+    );
+
     it("still requires a Tasks input when a tool forbids task execution", async () => {
       mockListTools.mockResolvedValue({
         tools: [{ name: "echo", execution: { taskSupport: "forbidden" } }],

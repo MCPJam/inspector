@@ -407,7 +407,7 @@ export function ConformanceSetup({
                     const canPickTaskTool =
                       versionPin !== "2026-07-28" &&
                       !probes.tasksProbe &&
-                      probeTools.tools.some((tool) => tool.taskSupport);
+                      probeTools.canAutoPickTaskTool;
                     if (canPickTaskTool) return undefined;
                     return probeInputStatus(checkId, probes);
                   }
