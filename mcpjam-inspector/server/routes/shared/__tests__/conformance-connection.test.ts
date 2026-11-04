@@ -45,7 +45,7 @@ describe("temporary conformance connection", () => {
       protocolVersion: "2026-07-28",
     });
     expect(connect).toHaveBeenCalledWith(
-      "__ephemeral__",
+      "bart.test",
       expect.objectContaining({
         accessToken: "saved-token",
         mcpProtocolVersion: "2026-07-28",
@@ -76,7 +76,7 @@ describe("temporary conformance connection", () => {
       protocolVersion: "2025-06-18",
     });
     expect(connect).toHaveBeenCalledWith(
-      "__ephemeral__",
+      "bart.test",
       expect.objectContaining({
         mcpProtocolVersion: undefined,
         supportedProtocolVersions: undefined,
