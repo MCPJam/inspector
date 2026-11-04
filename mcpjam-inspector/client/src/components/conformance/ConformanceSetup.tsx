@@ -7,6 +7,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import type { McpProtocolVersion } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import {
   type ConformanceSelection,
@@ -88,6 +89,7 @@ export function ConformanceSetup({
     versionPin: ProtocolVersionPin,
     selection: ConformanceSelection,
     probes: ConformanceProbes,
+    resolvedProtocolVersion?: McpProtocolVersion,
   ) => void;
 }) {
   // The tools the checks that must call one may use, set in step 2's list,
@@ -115,6 +117,15 @@ export function ConformanceSetup({
   const serverLabelId = useId();
   const versionLabelId = useId();
   const picked = servers.find((server) => server.name === serverName);
+  const protocolConnection = useConformanceProtocolConnection(
+    picked,
+    versionPin,
+  );
+  const resolvedVersion =
+    protocolConnection.result?.status === "ready"
+      ? protocolConnection.result.protocolVersion
+      : undefined;
+  const effectiveVersion = resolvedVersion ?? versionPin;
   // Picked from the project's list before this session loaded it: it has no
   // runtime entry until it connects.
   const pickedName =
@@ -127,7 +138,6 @@ export function ConformanceSetup({
   const [connecting, setConnecting] = useState<readonly string[]>([]);
   // The run needs the server live, so the steps wait until it is: the picker
   // connects it in place.
-  const protocolConnection = useConformanceProtocolConnection(picked, versionPin);
   const canContinue = protocolConnection.ready;
   const [focusVersion, setFocusVersion] = useState(false);
   useEffect(() => {
@@ -416,7 +426,7 @@ export function ConformanceSetup({
             <div className="mt-3">
               <ConformanceChecksEditor
                 server={picked}
-                versionPin={versionPin}
+                versionPin={effectiveVersion}
                 selection={selection}
                 onChange={setSelection}
                 probes={probes}
@@ -432,12 +442,18 @@ export function ConformanceSetup({
               <Button
                 disabled={
                   !canContinue ||
-                  nothingPicked(selection, checkCatalogs(versionPin)) ||
+                  nothingPicked(selection, checkCatalogs(effectiveVersion)) ||
                   !inputsValid
                 }
                 onClick={() => {
                   if (serverName)
-                    onRun(serverName, versionPin, selection, probes);
+                    onRun(
+                      serverName,
+                      versionPin,
+                      selection,
+                      probes,
+                      resolvedVersion,
+                    );
                 }}
               >
                 {RUN_LABEL}

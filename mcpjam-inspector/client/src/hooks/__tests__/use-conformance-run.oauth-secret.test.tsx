@@ -23,6 +23,13 @@ const profile = vi.hoisted(() => ({
   clientSecret: "",
 }));
 
+vi.mock("@/lib/apis/conformance-connection-api", () => ({
+  checkConformanceConnection: vi.fn(async (_name: string, version: string) => ({
+    status: "ready",
+    protocolVersion: version === "auto" ? "2026-07-28" : version,
+  })),
+}));
+
 vi.mock("@/lib/apis/mcp-conformance-api", () => api);
 vi.mock("@/lib/apis/hosted-oauth-client-secret-api", () => ({
   fetchOAuthClientSecret: secrets.fetchOAuthClientSecret,

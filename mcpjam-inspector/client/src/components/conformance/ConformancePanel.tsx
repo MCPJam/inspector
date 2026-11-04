@@ -16,6 +16,7 @@ import {
   isAuthorizationRequiredCheck,
   isTimedOutCheck,
   type ConformanceScore,
+  type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import {
   OverallScoreCard,
@@ -235,6 +236,7 @@ export function ConformanceContent({
   autoStart = false,
   onAutoStart,
   initialVersionPin,
+  initialResolvedProtocolVersion,
   selection,
   probes,
 }: {
@@ -270,6 +272,7 @@ export function ConformanceContent({
   autoStart?: boolean;
   onAutoStart?: () => void;
   initialVersionPin?: ProtocolVersionPin;
+  initialResolvedProtocolVersion?: McpProtocolVersion;
   /** What to run, as picked in the setup steps. */
   selection?: ConformanceSelection;
   /** The tools the checks that must call one may use. */
@@ -281,6 +284,7 @@ export function ConformanceContent({
   const snapshot = useConformanceRun({
     server,
     initialVersionPin,
+    initialResolvedProtocolVersion,
     selection,
     probes,
   });
@@ -305,11 +309,15 @@ export function ConformanceContent({
   } = snapshot;
 
   const protocolChecks = useMemo(
-    () => protocolCatalog(versionPin),
-    [versionPin],
+    () => protocolCatalog(snapshot.resolvedProtocolVersion ?? versionPin),
+    [snapshot.resolvedProtocolVersion, versionPin],
   );
   const protocolPendingIds = pendingIdSet(protocol.result);
-  const versionRefusal = liveConformanceVersionRefusal(protocol, oauth, versionPin);
+  const versionRefusal = liveConformanceVersionRefusal(
+    protocol,
+    oauth,
+    versionPin,
+  );
   const tasksPendingIds = pendingIdSet(tasks.result);
   // Checks the server refused for credentials. They could not run, so each
   // suite reads INCOMPLETE; one notice above the suites names the next step
@@ -613,6 +621,7 @@ export function ConformanceContent({
                   serverName={server.name}
                   version={
                     pooledScore?.protocolVersion ??
+                    snapshot.resolvedProtocolVersion ??
                     (versionPin === "auto" ? "Auto" : versionPin)
                   }
                   isRunning={isRunning}

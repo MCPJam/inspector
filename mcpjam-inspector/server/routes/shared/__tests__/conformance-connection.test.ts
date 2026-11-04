@@ -31,6 +31,10 @@ describe("temporary conformance connection", () => {
           clientInfo: { name: "connection-check-test", version: "1.0.0" },
         }),
       );
+    vi.spyOn(
+      MCPClientManager.prototype,
+      "getNegotiatedProtocolVersion",
+    ).mockReturnValue("2026-07-28");
     const disconnect = vi.spyOn(
       MCPClientManager.prototype,
       "disconnectAllServers",
@@ -38,6 +42,7 @@ describe("temporary conformance connection", () => {
     const listTools = vi.spyOn(MCPClientManager.prototype, "listTools");
     expect(await checkConformanceConnection(config, "2026-07-28")).toEqual({
       status: "ready",
+      protocolVersion: "2026-07-28",
     });
     expect(connect).toHaveBeenCalledWith(
       "__ephemeral__",
@@ -51,6 +56,49 @@ describe("temporary conformance connection", () => {
     expect(disconnect).toHaveBeenCalledTimes(1);
     expect(listTools).not.toHaveBeenCalled();
     expect(config).not.toHaveProperty("mcpProtocolVersion");
+  });
+
+  it("returns Auto's negotiated version without a pin or accept-list", async () => {
+    const connect = vi
+      .spyOn(MCPClientManager.prototype, "connectToServer")
+      .mockResolvedValue(
+        createManagedMcpClient({
+          clientOptions: { capabilities: {} },
+          clientInfo: { name: "test", version: "1" },
+        }),
+      );
+    vi.spyOn(
+      MCPClientManager.prototype,
+      "getNegotiatedProtocolVersion",
+    ).mockReturnValue("2025-06-18");
+    expect(await checkConformanceConnection(config, "auto")).toEqual({
+      status: "ready",
+      protocolVersion: "2025-06-18",
+    });
+    expect(connect).toHaveBeenCalledWith(
+      "__ephemeral__",
+      expect.objectContaining({
+        mcpProtocolVersion: undefined,
+        supportedProtocolVersions: undefined,
+        baseFetch: guardedFetch,
+      }),
+    );
+  });
+
+  it("does not invent a version when negotiation supplies none", async () => {
+    vi.spyOn(MCPClientManager.prototype, "connectToServer").mockResolvedValue(
+      createManagedMcpClient({
+        clientOptions: { capabilities: {} },
+        clientInfo: { name: "test", version: "1" },
+      }),
+    );
+    vi.spyOn(
+      MCPClientManager.prototype,
+      "getNegotiatedProtocolVersion",
+    ).mockReturnValue(undefined);
+    expect(await checkConformanceConnection(config, "auto")).toMatchObject({
+      status: "failed",
+    });
   });
 
   it("closes the temporary client after a version refusal", async () => {

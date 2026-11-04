@@ -90,6 +90,27 @@ describe("POST /api/web/conformance/apps — picked checks", () => {
     expect(runAppsConformanceMock.mock.calls[0][0].checkIds).toEqual(picked);
   });
 
+  it("passes the run version and rejects unknown versions", async () => {
+    const response = await post({
+      projectId: "p1",
+      serverId: "s1",
+      protocolVersion: "2025-06-18",
+    });
+    expect(response.status).toBe(200);
+    expect(runAppsConformanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ protocolVersion: "2025-06-18" }),
+    );
+    expect(
+      (
+        await post({
+          projectId: "p1",
+          serverId: "s1",
+          protocolVersion: "unknown",
+        })
+      ).status,
+    ).toBe(400);
+  });
+
   it("rejects a check id the apps suite does not have", async () => {
     const res = await post({
       projectId: "p1",

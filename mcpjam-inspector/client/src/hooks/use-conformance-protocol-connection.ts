@@ -14,7 +14,7 @@ export function useConformanceProtocolConnection(
   const tokens = server?.oauthTokens;
   const connectedAt = server?.lastConnectionTime;
   const connected = server?.connectionStatus === "connected";
-  const required = version !== "auto" && !!config && "url" in config;
+  const required = !!config && "url" in config;
   const request = useMemo(
     () => ({ name, version, config, tokens, connectedAt, connected, attempt }),
     [name, version, config, tokens, connectedAt, connected, attempt],
@@ -25,13 +25,7 @@ export function useConformanceProtocolConnection(
   }>();
 
   useEffect(() => {
-    if (
-      !required ||
-      !request.connected ||
-      !request.name ||
-      request.version === "auto"
-    )
-      return;
+    if (!required || !request.connected || !request.name) return;
     let cancelled = false;
     const finish = (result: ConformanceConnectionResult) => {
       if (!cancelled) setChecked({ request, result });

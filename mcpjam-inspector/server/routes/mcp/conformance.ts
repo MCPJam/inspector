@@ -81,7 +81,7 @@ function handleUnsupportedTransport(
 
 const connectionCheckSchema = z.object({
   serverId: z.string().min(1),
-  protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS),
+  protocolVersion: z.enum(["auto", ...MCP_PROTOCOL_VERSIONS]),
 });
 
 conformance.post("/connection-check", async (c) => {
@@ -186,6 +186,7 @@ conformance.post("/protocol", async (c) => {
 // ── POST /apps ──────────────────────────────────────────────────────────
 
 const appsSchema = z.object({
+  protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
   serverId: z.string().min(1),
   /** Run only these checks, as picked before Run; absent ⇒ all of them. */
   checkIds: z.array(z.enum(MCP_APPS_CHECK_IDS)).min(1).optional(),
@@ -218,6 +219,7 @@ conformance.post("/apps", async (c) => {
 
     const { result } = await runAppsConformance({
       ...serverConfig,
+      protocolVersion: parsed.data.protocolVersion,
       ...(parsed.data.checkIds ? { checkIds: parsed.data.checkIds } : {}),
     });
     return c.json({ success: true, result });
@@ -241,6 +243,7 @@ conformance.post("/apps", async (c) => {
 // ── POST /tasks ─────────────────────────────────────────────────────────
 
 const tasksSchema = z.object({
+  protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
   serverId: z.string().min(1),
   /** Tool used to provoke a task; required on the extension wire, where tools
    *  carry no task metadata to pick from. */

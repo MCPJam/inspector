@@ -26,15 +26,15 @@ const server = createConnectedServer({
   name: "bart",
   config: createHttpServerConfig("https://bart.test/mcp"),
 });
-function setup() {
+function setup(initialVersionPin: "auto" | "2026-07-28" = "2026-07-28") {
   const onRun = vi.fn();
   const onConnectServer = vi.fn(async () => "ready" as const);
   const props = {
     servers: [server],
     initialServerName: "bart",
-    initialVersionPin: "2026-07-28" as const,
+    initialVersionPin,
     initialSelection: {
-      protocol: ["modern-server-discover" as const],
+      protocol: ["tools-list" as const],
       apps: [],
       tasks: [],
       oauth: false,
@@ -55,6 +55,26 @@ beforeEach(() => {
 });
 
 describe("setup protocol connection gate", () => {
+  it("keeps Auto as the choice while passing the negotiated version to the run", async () => {
+    check.mockResolvedValue({ status: "ready", protocolVersion: "2025-06-18" });
+    const { onRun } = setup("auto");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(
+      screen.queryByText("Modern server discovery"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+    expect(onRun).toHaveBeenCalledWith(
+      "bart",
+      "auto",
+      expect.anything(),
+      expect.anything(),
+      "2025-06-18",
+    );
+  });
+
   it("blocks both steps until the chosen version connects, then runs normally", async () => {
     let resolve: (value: ConformanceConnectionResult) => void = () => {
       throw new Error("Promise not initialized");
@@ -69,7 +89,9 @@ describe("setup protocol connection gate", () => {
     expect(screen.getByText("Connecting with 2026-07-28…")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
     expect(onRun).not.toHaveBeenCalled();
-    await act(async () => resolve({ status: "ready" }));
+    await act(async () =>
+      resolve({ status: "ready", protocolVersion: "2026-07-28" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     rerender(
       <ConformanceSetup
@@ -81,7 +103,9 @@ describe("setup protocol connection gate", () => {
     );
     expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
     expect(onRun).not.toHaveBeenCalled();
-    await act(async () => resolve({ status: "ready" }));
+    await act(async () =>
+      resolve({ status: "ready", protocolVersion: "2026-07-28" }),
+    );
     expect(screen.getByRole("button", { name: RUN_LABEL })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
     expect(onRun).toHaveBeenCalledWith(
@@ -89,11 +113,15 @@ describe("setup protocol connection gate", () => {
       "2026-07-28",
       expect.anything(),
       expect.anything(),
+      "2026-07-28",
     );
   });
 
   it("shows a confirmed refusal and focuses the version picker from step 2", async () => {
-    check.mockResolvedValueOnce({ status: "ready" });
+    check.mockResolvedValueOnce({
+      status: "ready",
+      protocolVersion: "2026-07-28",
+    });
     const { onRun, onConnectServer, rerender, props } = setup();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled(),
@@ -129,7 +157,10 @@ describe("setup protocol connection gate", () => {
         status: "auth-required",
         message: "Unauthorized",
       })
-      .mockResolvedValueOnce({ status: "ready" });
+      .mockResolvedValueOnce({
+        status: "ready",
+        protocolVersion: "2026-07-28",
+      });
     const { onConnectServer } = setup();
     await screen.findByRole("button", { name: "Sign in" });
     expect(onConnectServer).not.toHaveBeenCalled();
@@ -143,7 +174,7 @@ describe("setup protocol connection gate", () => {
   });
 
   it("blocks Run if the main server disconnects after validation", async () => {
-    check.mockResolvedValue({ status: "ready" });
+    check.mockResolvedValue({ status: "ready", protocolVersion: "2026-07-28" });
     const { rerender, props } = setup();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled(),

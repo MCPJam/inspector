@@ -1,10 +1,14 @@
+import type { McpProtocolVersion } from "@mcpjam/sdk/browser";
+
+export type ConformanceProtocolSelection = McpProtocolVersion | "auto";
+
 export interface ProtocolVersionRefusal {
   protocolVersion: string;
   supportedVersions: string[];
 }
 
 export type ConformanceConnectionResult =
-  | { status: "ready" }
+  | { status: "ready"; protocolVersion: McpProtocolVersion }
   | ({ status: "unsupported" } & ProtocolVersionRefusal)
   | { status: "auth-required" | "failed"; message: string };
 
