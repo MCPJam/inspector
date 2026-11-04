@@ -15,6 +15,7 @@ import {
 } from "@mcpjam/sdk/contract";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { mcpToolOptionsFor } from "../../utils/mcp-tool-options.js";
+import { browserMcpProfileSchema } from "../../utils/browser-host-capabilities.js";
 import { z } from "zod";
 import { generateTestCases } from "../../services/eval-agent";
 import {
@@ -936,7 +937,10 @@ export const RunTestCaseRequestSchema = z.object({
       clientCapabilities: z.record(z.string(), z.unknown()).optional(),
       hostCapabilitiesOverride: z.record(z.string(), z.unknown()).optional(),
       chatUiOverride: z.record(z.string(), z.unknown()).optional(),
-      mcpProfile: z.record(z.string(), z.unknown()).optional(),
+      // Same shape the browser capability resolver parses, so a malformed
+      // per-case profile is a 400 here. The suite's saved config is checked
+      // only when the run resolves capabilities.
+      mcpProfile: browserMcpProfileSchema.optional(),
       connectionDefaults: z
         .object({
           headers: z.record(z.string(), z.string()).optional(),

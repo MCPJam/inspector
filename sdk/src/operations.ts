@@ -7,6 +7,7 @@
  */
 
 import { MCPClientManager } from "./mcp-client-manager/index.js";
+import { awaitWithSignal } from "./abort-signal.js";
 import type {
   CacheMode,
   ListToolsResult,
@@ -26,13 +27,16 @@ import type { SkillEntry } from "./mcp-client-manager/index.js";
  * (snapshot/doctor/conformance) pass `"bypass"` so their reads never resolve
  * from a cached body. See {@link CacheMode}.
  */
-type WithCacheMode = { cacheMode?: CacheMode };
+type WithCacheMode = { cacheMode?: CacheMode; signal?: AbortSignal };
 
 /** Build the read options object, omitting it entirely when no cacheMode is set. */
 function cacheOptions(
-  cacheMode?: CacheMode
-): { cacheMode: CacheMode } | undefined {
-  return cacheMode ? { cacheMode } : undefined;
+  cacheMode?: CacheMode,
+  signal?: AbortSignal
+): { cacheMode?: CacheMode; signal?: AbortSignal } | undefined {
+  return cacheMode || signal
+    ? { ...(cacheMode ? { cacheMode } : {}), ...(signal ? { signal } : {}) }
+    : undefined;
 }
 
 // ── Param types ─────────────────────────────────────────────────────
@@ -116,6 +120,14 @@ export interface ListAllServerSkillsResult {
   ttlMs?: number;
   cacheScope?: string;
   /**
+   * The cache attributes some page of the listing omitted. The stable spec
+   * requires both on every `skills/list` result, and `ttlMs` / `cacheScope`
+   * above are taken from whichever page carried them, so a listing that is
+   * only partly conformant still looks cacheable there. The doctor reports
+   * from this field.
+   */
+  omittedCacheAttributes: Array<"ttlMs" | "cacheScope">;
+  /**
    * Skill URIs the server listed MORE THAN ONCE across the drained pages.
    *
    * A self-contradictory listing is a server bug the debugger surfaces, not
@@ -126,9 +138,17 @@ export interface ListAllServerSkillsResult {
   duplicateUris: string[];
 }
 
+/** A drained listing's cache attributes, and the ones some page omitted. */
+export type SkillListingCacheAttributes = Pick<
+  ListAllServerSkillsResult,
+  "ttlMs" | "cacheScope" | "omittedCacheAttributes"
+>;
+
 const MAX_PAGINATION_PAGES = 1000;
 
 export interface WithEphemeralClientOptions {
+  /** Cancel connection setup and active work, then close the owned client. */
+  signal?: AbortSignal;
   /** Override the serverId (default: "__ephemeral__") */
   serverId?: string;
   /** Client name reported to the MCP server (default: "mcpjam-sdk") */
@@ -163,7 +183,7 @@ export async function listResources(
     params.serverId,
     // Presence, not truthiness: `""` is a valid continuation cursor.
     params.cursor !== undefined ? { cursor: params.cursor } : undefined,
-    cacheOptions(params.cacheMode)
+    cacheOptions(params.cacheMode, params.signal)
   );
   return {
     resources: result.resources ?? [],
@@ -178,7 +198,7 @@ export async function readResource(
   const content = await manager.readResource(
     params.serverId,
     { uri: params.uri },
-    cacheOptions(params.cacheMode)
+    cacheOptions(params.cacheMode, params.signal)
   );
   return { content };
 }
@@ -193,7 +213,7 @@ export async function listPrompts(
     params.serverId,
     // Presence, not truthiness: `""` is a valid continuation cursor.
     params.cursor !== undefined ? { cursor: params.cursor } : undefined,
-    cacheOptions(params.cacheMode)
+    cacheOptions(params.cacheMode, params.signal)
   );
   return {
     prompts: result.prompts ?? [],
@@ -259,7 +279,7 @@ export async function listTools(
     params.serverId,
     // Presence, not truthiness: `""` is a valid continuation cursor.
     params.cursor !== undefined ? { cursor: params.cursor } : undefined,
-    cacheOptions(params.cacheMode)
+    cacheOptions(params.cacheMode, params.signal)
   );
   return {
     tools: result.tools ?? [],
@@ -302,6 +322,7 @@ export async function listAllTools(
         serverId: params.serverId,
         cursor,
         cacheMode: params.cacheMode,
+        signal: params.signal,
       }),
     "tools/list",
     (page) => page.tools ?? []
@@ -331,6 +352,7 @@ export async function listAllResources(
         serverId: params.serverId,
         cursor,
         cacheMode: params.cacheMode,
+        signal: params.signal,
       }),
     "resources/list",
     (page) => page.resources ?? []
@@ -352,6 +374,7 @@ export async function listAllPrompts(
         serverId: params.serverId,
         cursor,
         cacheMode: params.cacheMode,
+        signal: params.signal,
       }),
     "prompts/list",
     (page) => page.prompts ?? []
@@ -379,7 +402,7 @@ export async function listAllResourceTemplates(
           params.serverId,
           // Presence, not truthiness: `""` is a valid continuation cursor.
           cursor !== undefined ? { cursor } : undefined,
-          cacheOptions(params.cacheMode)
+          cacheOptions(params.cacheMode, params.signal)
         );
       } catch (error) {
         if (
@@ -429,6 +452,7 @@ export async function listAllServerSkills(
 ): Promise<ListAllServerSkillsResult> {
   let ttlMs: number | undefined;
   let cacheScope: string | undefined;
+  const omitted = new Set<"ttlMs" | "cacheScope">();
 
   const skills = await drainPaginatedList<
     SkillEntry,
@@ -439,10 +463,12 @@ export async function listAllServerSkills(
         params.serverId,
         // Presence, not truthiness: `""` is a valid continuation cursor.
         cursor !== undefined ? { cursor } : undefined,
-        cacheOptions(params.cacheMode)
+        cacheOptions(params.cacheMode, params.signal)
       );
       if (page.ttlMs !== undefined) ttlMs = page.ttlMs;
+      else omitted.add("ttlMs");
       if (page.cacheScope !== undefined) cacheScope = page.cacheScope;
+      else omitted.add("cacheScope");
       return page.nextCursor !== undefined
         ? { skills: page.skills, nextCursor: page.nextCursor }
         : { skills: page.skills };
@@ -461,6 +487,7 @@ export async function listAllServerSkills(
   return {
     skills,
     duplicateUris: [...duplicates],
+    omittedCacheAttributes: [...omitted],
     ...(ttlMs !== undefined ? { ttlMs } : {}),
     ...(cacheScope !== undefined ? { cacheScope } : {}),
   };
@@ -485,12 +512,20 @@ export async function withEphemeralClient<T>(
     }
   );
 
-  try {
+  const signal = options?.signal;
+  const run = async () => {
+    signal?.throwIfAborted();
     if (options?.beforeConnect) {
       await options.beforeConnect(manager, serverId);
     }
-    await manager.connectToServer(serverId, config);
-    return await fn(manager, serverId);
+    signal?.throwIfAborted();
+    if (signal) await manager.connectToServer(serverId, config, { signal });
+    else await manager.connectToServer(serverId, config);
+    signal?.throwIfAborted();
+    return fn(manager, serverId);
+  };
+  try {
+    return await awaitWithSignal(run(), signal);
   } finally {
     try {
       await manager.disconnectAllServers();

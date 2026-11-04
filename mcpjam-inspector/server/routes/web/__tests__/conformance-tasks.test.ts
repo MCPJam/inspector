@@ -91,6 +91,27 @@ describe("POST /api/web/conformance/tasks — hosted budget", () => {
     expect(config.timeout).toBe(10_000);
   });
 
+  it("forwards the tool, its arguments and the input answers", async () => {
+    runTasksConformanceMock.mockResolvedValue({
+      result: { outcome: "passed", checks: [] },
+    });
+    const inputResponses = { confirm: { action: "accept" } };
+
+    const res = await post({
+      projectId: "p1",
+      serverId: "s1",
+      toolName: "long-job",
+      toolArguments: { seconds: 2 },
+      inputResponses,
+    });
+
+    expect(res.status).toBe(200);
+    const config = runTasksConformanceMock.mock.calls[0][0];
+    expect(config.toolName).toBe("long-job");
+    expect(config.toolArguments).toEqual({ seconds: 2 });
+    expect(config.inputResponses).toEqual(inputResponses);
+  });
+
   it("answers 504 when the whole run outlives the request budget", async () => {
     vi.useFakeTimers();
     // A run that never settles: only the route-level deadline can end it.

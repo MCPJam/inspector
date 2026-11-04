@@ -47,6 +47,16 @@ describe("OAuthFlowLogger — Continue pending state", () => {
     expect(screen.queryByRole("button", { name: "Next Step" })).toBeNull();
   });
 
+  it("keeps 'Continuing...' while a step runs and Continue has no handler", () => {
+    // The tab withdraws onContinue while a step is in flight, such as the
+    // token request the callback sends on its own.
+    renderLogger({ continueLabel: "Continue", continuePending: true });
+
+    const button = screen.getByRole("button", { name: "Continuing..." });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("aria-busy", "true");
+  });
+
   it("stays disabled when the flow itself disables Continue", () => {
     renderLogger({
       onContinue: vi.fn(),

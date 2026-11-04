@@ -11,6 +11,7 @@ vi.mock("../../../utils/assistant-turn.js", () => ({
 
 import { driveHostedEvalTurn } from "../drive-hosted-eval-turn";
 import type { DriveHostedEvalTurnParams } from "../drive-hosted-eval-turn";
+import { logger } from "../../../utils/logger";
 
 function baseParams(
   overrides: Partial<DriveHostedEvalTurnParams> = {},
@@ -485,13 +486,66 @@ describe("infra evidence reaches the turn outcome untouched", () => {
   });
 });
 
-it("uses current run-owned App state for the next turn without persisting it", async () => {
+it("does not read App state from a view dismissed before the next turn", async () => {
   const params = baseParams();
   let closed = false;
   params.browser.getModelContext = vi.fn(() => closed ? undefined : ({ role: "user" as const, content: [{ type: "text" as const, text: "Selected bolt", providerOptions: { mcpjam: { ephemeralPluginContext: true } } }] }));
   vi.mocked(params.browser.dismissCarriedWidget).mockImplementation(async () => { closed = true; });
   runAssistantTurnMock.mockImplementationOnce(async () => ({ messages: [], usage: {}, turnTrace: { spans: [] } }) as never);
   await driveHostedEvalTurn(params);
-  expect(JSON.stringify(runAssistantTurnMock.mock.calls[0])).toContain("Selected bolt");
+  expect(JSON.stringify(runAssistantTurnMock.mock.calls[0])).not.toContain("Selected bolt");
   expect(JSON.stringify(params.acc.messageHistory)).not.toContain("Selected bolt");
+});
+
+describe("a failed turn's log line is not a second Sentry capture of an empty step", () => {
+  beforeEach(() => {
+    runAssistantTurnMock.mockReset();
+  });
+
+  const failWith = (code: string) =>
+    runAssistantTurnMock.mockImplementationOnce((async (opts: any) => {
+      opts.onEngineError?.({
+        message: "Backend step returned no content (stream error or empty response)",
+        rawText: "Backend step returned no content (stream error or empty response)",
+        code,
+        promptIndex: 0,
+        stepIndex: 0,
+        phase: "stream",
+      });
+      return {
+        messages: [{ role: "user", content: "hello" }],
+        turnTrace: { spans: [] },
+      } as never;
+    }) as never);
+
+  it("logs an empty step as a warning: the engine already reported it", async () => {
+    const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    failWith("provider_empty_response");
+
+    const outcome = await driveHostedEvalTurn(baseParams());
+
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      errorCode: "provider_empty_response",
+    });
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("engineError=provider_empty_response"),
+    );
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  it("keeps every other failed turn on logger.error", async () => {
+    const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+    failWith("provider_error");
+
+    await driveHostedEvalTurn(baseParams());
+
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("engineError=provider_error"),
+    );
+    error.mockRestore();
+  });
 });

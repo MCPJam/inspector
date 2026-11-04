@@ -17,6 +17,7 @@ import userEvent from "@testing-library/user-event";
 import { toast as sonnerToast } from "sonner";
 import { RouterProvider } from "react-router";
 import App from "../App";
+import { resolveSessionPrivacy } from "@/lib/session-privacy";
 import { useApiContext } from "../hooks/hosted/use-hosted-api-context";
 import {
   beginOrganizationDeletion,
@@ -319,6 +320,15 @@ vi.mock("posthog-js/react", () => ({
   // These tests don't exercise that wall, so control (undefined) is fine.
   useFeatureFlagVariantKey: () => undefined,
 }));
+
+// Pass-through, so a test can see which context the shell resolved replay for.
+vi.mock("@/lib/session-privacy", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/session-privacy")>();
+  return {
+    ...actual,
+    resolveSessionPrivacy: vi.fn(actual.resolveSessionPrivacy),
+  };
+});
 
 vi.mock("@/lib/analytics", () => ({
   track: mockTrack,
@@ -6045,6 +6055,57 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(window.location.pathname).toBe("/home");
     });
+  });
+
+  it("keeps a conformance share link open for a reader without the conformance flag", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/conformance/shared/share-token");
+    mockHandleOAuthCallback.mockReset();
+
+    mockUseFeatureFlagEnabled.mockImplementation(() => false);
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Conformance report" }),
+    ).toBeInTheDocument();
+    expect(window.location.pathname).toMatch(/^\/conformance\/shared/);
+    // A guest's replay follows the shared-link rule, not their own policy.
+    expect(vi.mocked(resolveSessionPrivacy)).toHaveBeenCalledWith(
+      expect.objectContaining({ sharedLink: true }),
+    );
+  });
+
+  it("leaves the conformance server choice to the page, so the last-selected server is restored", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/conformance");
+    localStorage.setItem("mcpjam.conformance.lastServer.v1", "beta");
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "mcpjam-conformance",
+    );
+    const connected = (name: string) => ({
+      name,
+      config: { transportType: "http", url: `https://${name}.example/mcp` },
+      connectionStatus: "connected",
+      enabled: true,
+      retryCount: 0,
+    });
+    const appState = createAppStateMock();
+    appState.appState.servers = {
+      alpha: connected("alpha"),
+      beta: connected("beta"),
+    };
+    appState.projectServers = appState.appState.servers;
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(appState.setSelectedServer).toHaveBeenCalledWith("beta");
+    });
+    expect(appState.setSelectedServer).not.toHaveBeenCalledWith("alpha");
   });
 
   it("keeps host template deep links in place while auth is loading", async () => {

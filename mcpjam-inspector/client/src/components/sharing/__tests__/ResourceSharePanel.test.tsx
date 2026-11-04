@@ -78,4 +78,33 @@ describe("ResourceSharePanel", () => {
       screen.getByRole("menuitemradio", { name: /Team members/i }),
     ).not.toHaveAttribute("data-disabled");
   });
+
+  it("offers only the link when invites are off", async () => {
+    settingsState.settings = envelope({
+      resourceType: "conformanceRun",
+      mode: "project_members",
+    });
+    const user = userEvent.setup();
+    render(
+      <ResourceSharePanel
+        resourceType="conformanceRun"
+        resourceId="run-1"
+        linkLabel="Share link"
+        buildShareUrl={(token) => `https://example.com/s/${token}`}
+        testIdPrefix="conformance-share"
+        invites={false}
+      />,
+    );
+
+    expect(screen.queryByText("Invite with email")).toBeNull();
+    // Earlier grants stay visible, so they can still be removed.
+    expect(screen.getByText("Has access")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Team members/i }));
+    expect(
+      screen.getByRole("menuitemradio", { name: /Anyone with the link/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitemradio", { name: /Invited users only/i }),
+    ).toBeNull();
+  });
 });

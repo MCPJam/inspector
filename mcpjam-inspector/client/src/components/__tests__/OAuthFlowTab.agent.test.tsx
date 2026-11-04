@@ -74,6 +74,7 @@ const machineCtl = vi.hoisted(() => ({
       ) => void | Promise<void>)
     | null,
   updateState: null as ((u: Partial<OAuthFlowState>) => void) | null,
+  machinesCreated: 0,
 }));
 
 vi.mock("@/lib/oauth/debug-state-machine-adapter", () => ({
@@ -82,6 +83,7 @@ vi.mock("@/lib/oauth/debug-state-machine-adapter", () => ({
     getState: () => OAuthFlowState;
   }) => {
     machineCtl.updateState = opts.updateState;
+    machineCtl.machinesCreated += 1;
     return {
       proceedToNextStep: async () => {
         await machineCtl.onAdvance?.(opts.updateState, opts.getState);
@@ -539,8 +541,10 @@ describe("OAuthFlowTab, when the authorization callback delivers the code", () =
     };
   }
 
-  async function signInAndReturn() {
-    renderTab();
+  async function signInAndReturn(
+    serverConfigs?: Record<string, ServerWithName>,
+  ) {
+    const view = renderTab(serverConfigs && { serverConfigs });
     await act(async () => {
       machineCtl.updateState?.({
         currentStep: "authorization_request",
@@ -560,6 +564,7 @@ describe("OAuthFlowTab, when the authorization callback delivers the code", () =
         }),
       );
     });
+    return view;
   }
 
   it("redeems the code without waiting for Continue, with Continue held off meanwhile", async () => {
@@ -584,6 +589,45 @@ describe("OAuthFlowTab, when the authorization callback delivers the code", () =
     await waitFor(() =>
       expect(latestLoggerActions().continuePending).toBe(false),
     );
+  });
+
+  it("doesn't spend the code once the tab unmounts before the timer fires", async () => {
+    const exchange = scriptRedemption({ currentStep: "received_access_token" });
+    const view = await signInAndReturn();
+    view.unmount();
+
+    await act(() => new Promise((resolve) => setTimeout(resolve, 700)));
+
+    expect(exchange.startedFrom).toEqual([]);
+  });
+
+  it("still redeems the code when the machine is rebuilt before the timer fires", async () => {
+    // A server-list refresh hands the tab fresh server objects. With a custom
+    // header that rebuilds the machine and re-runs the callback effect.
+    const withHeader = () => {
+      const server = httpServer("linear");
+      server.oauthFlowProfile!.customHeaders = [
+        { key: "X-Api-Key", value: "k" },
+      ];
+      return { linear: server };
+    };
+    const exchange = scriptRedemption({ currentStep: "received_access_token" });
+    const view = await signInAndReturn(withHeader());
+    const machinesBefore = machineCtl.machinesCreated;
+    view.rerender(
+      <OAuthFlowTab
+        serverConfigs={withHeader()}
+        selectedServerName="linear"
+        hasHeaderServers
+        areServersHydrated
+        onSelectServer={vi.fn()}
+      />,
+    );
+    expect(machineCtl.machinesCreated).toBeGreaterThan(machinesBefore);
+
+    await waitFor(() => expect(exchange.tokenRequestSent()).toBe(true), {
+      timeout: 2_000,
+    });
   });
 
   it("stops at a rejected code instead of sending it again", async () => {

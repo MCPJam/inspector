@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/evaluators",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Pure evaluator contracts, assertions and trajectory matching",
   "type": "module",
   "main": "./dist/index.js",

@@ -4,7 +4,7 @@
  * — negotiation, capability declaration, `skills/list` drain, `skills/get`,
  * and `resources/read`-backed verification.
  *
- * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
+ * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  */
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,6 +14,7 @@ import type {
   McpProtocolVersion,
 } from "../src/mcp-client-manager/index.js";
 import { listAllServerSkills } from "../src/operations.js";
+import { getVerifiedServerSkill } from "../src/server-skills.js";
 import {
   MCP_SKILLS_EXTENSION_ID,
   withSkillsExtensionCapability,
@@ -273,6 +274,21 @@ describe("skills/get", () => {
     expect(entry.frontmatter).toMatchObject({ name: "hidden" });
   });
 
+  it("preserves SEP-2549 ttlMs/cacheScope on the get result", async () => {
+    const fixture = await serve();
+    const manager = await connect(fixture.url);
+    const uri = fixture.uriFor(DEFAULT_FIXTURE_SKILLS[0]!.root);
+    const result = await manager.getServerSkillResult(SERVER_ID, uri);
+    expect(result.skill.uri).toBe(uri);
+    expect(result).toMatchObject({ ttlMs: 60_000, cacheScope: "private" });
+    // The verified load path carries them too, for the direct-by-URI case.
+    const verified = await getVerifiedServerSkill(manager, {
+      serverId: SERVER_ID,
+      uri,
+    });
+    expect(verified).toMatchObject({ ttlMs: 60_000, cacheScope: "private" });
+  });
+
   it("answers -32602 for a URI it does not serve", async () => {
     const fixture = await serve();
     const manager = await connect(fixture.url);
@@ -512,5 +528,14 @@ describe("resources/directory/read", () => {
       uri: "skill://fixture/reporting",
     });
     expect(result.resources.map((e) => e.name)).toContain("scripts/build.py");
+  });
+
+  it("preserves SEP-2549 ttlMs/cacheScope on the directory read", async () => {
+    const fixture = await serve({ directoryRead: true });
+    const manager = await connect(fixture.url);
+    const result = await manager.readServerResourceDirectory(SERVER_ID, {
+      uri: "skill://fixture/reporting",
+    });
+    expect(result).toMatchObject({ ttlMs: 60_000, cacheScope: "private" });
   });
 });

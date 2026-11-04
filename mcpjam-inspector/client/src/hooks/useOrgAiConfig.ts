@@ -23,8 +23,9 @@ export const TEST_ORG_AI_MODEL_ACTION =
 /**
  * The organization's own AI models for background work, one per kind:
  * `default` for text work nobody picks a model for (analysis, generation,
- * typed decisions, the simulated user), `search` for the built-in web
- * search, and later `embedding` and `transcription`. An admin chooses each
+ * the simulated user), `search` for the built-in web search, `decision` for
+ * typed decisions (the default model answers when it is unset), and later
+ * `embedding` and `transcription`. An admin chooses each
  * one; MCPJam only suggests. Model pickers never use them, and the judge is
  * always an explicit pick.
  *
@@ -35,6 +36,7 @@ export const TEST_ORG_AI_MODEL_ACTION =
 export const ORG_AI_MODEL_KINDS = [
   "default",
   "search",
+  "decision",
   "embedding",
   "transcription",
 ] as const;
@@ -122,6 +124,8 @@ export type OrgAiModelCheck = {
   ok: boolean;
   /** Why it failed: a refusal code, `http_<status>`, `timeout`, or absent. */
   code?: string;
+  /** What to do about it, in the backend's words, for provider failures. */
+  reason?: string;
   checkedAt: number;
 };
 

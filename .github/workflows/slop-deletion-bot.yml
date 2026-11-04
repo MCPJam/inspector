@@ -27,7 +27,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: "24.14.0"
+  NODE_VERSION: "24.22.1"
   ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
   # Unreviewed bot PRs are a backlog, not progress. Stop opening at this many.
   MAX_OPEN: "3"
@@ -145,7 +145,7 @@ jobs:
             - If you made a change, write `${{ runner.temp }}/pr.md`. Line 1 is the PR title: imperative, under 70 characters, naming what went (for example "Delete unused PricingEstimator component"). Line 2 is blank. Then the body, following `.github/pull_request_template.md`:
               - User story: as a maintainer of the package, I want this unused code (or history narration) removed, so that the next reader has less to read and nothing stale to trust.
               - Acceptance criteria: ticked checkboxes for what you actually verified, each naming the command you ran (the greps that came back empty, the typecheck that passed).
-              - Deleted: each path with its line count. Reused: "Nothing applicable". Architecture: "None: no new component or flow". Screenshots and recordings: "None: no UI change". Production signal: "None: not user-facing".
+              - Deleted: each path with its line count. Reused: "Nothing applicable". Architecture: "None: no new component or flow". Screenshots and recordings: "None: no UI change". Production signal: "None: not user-facing". Automated decisions: "None: no automated decision about users".
               - Plain prose, no em dashes.
             - If you verified nothing, leave the tree clean and do not write `pr.md`.
 

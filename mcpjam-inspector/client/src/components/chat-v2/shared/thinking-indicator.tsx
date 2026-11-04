@@ -1,3 +1,4 @@
+import type { HarnessStartupPhase } from "@/shared/harness-startup";
 import { MessageCircle } from "lucide-react";
 
 import { ModelDefinition } from "@/shared/types";
@@ -12,8 +13,10 @@ import { CopilotMessageHeader } from "@/components/chat-v2/thread/copilot-messag
 
 export function ThinkingIndicator({
   model,
+  startupPhase,
 }: {
   model: ModelDefinition;
+  startupPhase?: HarnessStartupPhase | null;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const scenarioHostStyle = useScenarioHostStyle();
@@ -40,7 +43,7 @@ export function ThinkingIndicator({
           <CopilotMessageHeader />
         </div>
         <div className="inline-flex items-center gap-2 text-muted-foreground/80">
-          <LoadingIndicatorContent modelProvider={model?.provider ?? null} />
+          <LoadingIndicatorContent modelProvider={model?.provider ?? null} startupPhase={startupPhase} />
         </div>
       </article>
     );
@@ -75,7 +78,7 @@ export function ThinkingIndicator({
       ) : null}
 
       <div className="inline-flex items-center gap-2 text-muted-foreground/80">
-        <LoadingIndicatorContent modelProvider={model?.provider ?? null} />
+        <LoadingIndicatorContent modelProvider={model?.provider ?? null} startupPhase={startupPhase} />
       </div>
     </article>
   );

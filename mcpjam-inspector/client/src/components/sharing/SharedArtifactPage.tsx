@@ -20,7 +20,8 @@ export function SharedArtifactPage({
   children?: ReactNode;
 }) {
   return (
-    <div className="min-h-screen bg-background px-6 py-10">
+    // Owns its scroll: a bare route clips anything taller than the screen.
+    <div className="h-full min-h-0 overflow-y-auto bg-background px-6 py-10">
       <meta name="robots" content="noindex, nofollow" />
       <div className="mx-auto w-full max-w-3xl space-y-4">
         <h1 className="text-xl font-semibold">{title}</h1>

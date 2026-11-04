@@ -1,0 +1,40 @@
+import { parseBrowserdErrorCode } from "../protocol.js";
+
+/**
+ * What a person should read when the local Browser's Chromium did not start.
+ *
+ * Every launch failure gets a code the routes can map, so none of them reaches
+ * the pane as "Invalid project for the local browser". The sandbox one has its
+ * own: the host denies the unprivileged user namespace Chromium's sandbox
+ * needs, through AppArmor (on by default since Ubuntu 24.04; introduced, off,
+ * in 23.10) or a container's seccomp profile, and the local launch never
+ * retries with `--no-sandbox` (see `launchBrowserdContext`), so only the host
+ * can fix it. Playwright's banner and Chromium's own line are both in either
+ * shape Playwright gives the error; matching both keeps this working if one of
+ * them is reworded.
+ */
+const SANDBOX_FAILURE = /Chromium sandboxing failed!|No usable sandbox!/;
+
+export function describeLaunchFailure(error: unknown): {
+  code: "chromium_sandbox_unavailable" | "profile_in_use" | "launch_failed";
+  message: string;
+} {
+  const text = error instanceof Error ? error.message : String(error);
+  if (SANDBOX_FAILURE.test(text)) {
+    return {
+      code: "chromium_sandbox_unavailable",
+      message:
+        "Chromium can't start its sandbox on this machine. Allow user namespaces for Playwright's Chromium, then try again. On Ubuntu 23.10 or later that is an AppArmor setting (https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md); in a container, its seccomp profile (https://playwright.dev/docs/docker).",
+    };
+  }
+  const firstLine = text.split("\n", 1)[0].trim().replace(/\.$/, "");
+  // The launcher's own singleton check: the condition the pre-launch probe
+  // reports, so it keeps the probe's code.
+  if (parseBrowserdErrorCode(firstLine) === "profile_in_use") {
+    return { code: "profile_in_use", message: firstLine };
+  }
+  return {
+    code: "launch_failed",
+    message: `Chromium could not start on this machine (${firstLine}). Start the Inspector with --verbose to see the full error, then try again.`,
+  };
+}

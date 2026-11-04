@@ -5,6 +5,8 @@ import type { TestStepKind } from "./steps";
 export type EvalStreamToolCall = {
   toolName: string;
   arguments: Record<string, unknown>;
+  /** Joins the call to a failure in the trace, so a live view can tell a retry. */
+  toolCallId?: string;
 };
 
 /**

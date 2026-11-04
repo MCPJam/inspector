@@ -1,3 +1,6 @@
+import { useCompareChatEnvironment } from "@/hooks/use-compare-chat-environment";
+import { showPluginNotice } from "@/lib/plugins/plugin-notice-display";
+import { SavedClientProvider } from "@/contexts/saved-client-context";
 import { CompareLaneWorkspace } from "@/components/host-workspace/CompareLaneWorkspace";
 import {
   useThreadAppWorkspace,
@@ -273,6 +276,9 @@ interface MultiModelPlaygroundCardProps {
    * (no per-card shadow).
    */
   hostCapsResolver?: HostConfigDtoV2 | null;
+  onSendReadinessChange?: (laneId: string, ready: boolean, error?: string) => void;
+  pluginHarnessId?: string | null;
+  pluginHostResolved?: boolean;
   showSenderAvatars?: boolean;
   resolveSenderAvatar?: (senderUserId?: string) => ProjectThreadOwnerAvatar;
   outgoingSenderMetadata?: Record<string, unknown>;
@@ -296,7 +302,7 @@ export function MultiModelPlaygroundCard({
   broadcastRequest,
   deterministicExecutionRequest,
   stopRequestId,
-  reasoningDisplayMode = "inline",
+  reasoningDisplayMode,
   executionConfig,
   hostedContext,
   hostedOrgModelConfig,
@@ -327,6 +333,9 @@ export function MultiModelPlaygroundCard({
   onTranscriptSync,
   hostSnapshot,
   hostCapsResolver,
+  onSendReadinessChange,
+  pluginHarnessId,
+  pluginHostResolved = true,
   showSenderAvatars = false,
   resolveSenderAvatar,
   outgoingSenderMetadata,
@@ -430,6 +439,11 @@ export function MultiModelPlaygroundCard({
         : [],
     [],
   );
+  const { hiddenEnvironment, columnHostedContext } = useCompareChatEnvironment({
+    hostedContext,
+    harnessId: pluginHarnessId ?? hostCapsResolver?.agentLoop ?? hostCapsResolver?.harness,
+    hostResolved: pluginHostResolved,
+  });
   const {
     messages,
     setMessages,
@@ -445,21 +459,24 @@ export function MultiModelPlaygroundCard({
     hasLiveTimelineContent,
     traceViewsSupported,
     isStreaming,
+    status,
     isSessionBootstrapComplete,
+    hiddenEnvironmentActive,
     addToolApprovalResponse,
     startChatWithMessages,
+    harnessStartupPhase,
   } = useChatSession({
     pickedModelSelection: selection,
+    savedClientConfig: compareKind === "host" ? hostCapsResolver ?? undefined : undefined,
     selectionIntent: compareKind === "host" ? "inherit" : "picked",
-    // The lane's own extension owner: its turns carry its workspace and
-    // its Apps' context, never another lane's or the single chat's.
+    // Bind extension ownership to this lane.
     pluginWorkspace: laneWorkspaceForSession,
     pluginContextReferences: currentLaneContext,
     // A comparison column never shares the member's one personal computer.
     comparePane: true,
     selectedServers,
     usePageTools,
-    hostedContext,
+    hostedContext: columnHostedContext,
     hostedOrgModelConfig,
     ...(personalComputerEngine ? { personalComputerEngine } : {}),
     ...(personalBrowserEngine ? { personalBrowserEngine } : {}),
@@ -474,13 +491,7 @@ export function MultiModelPlaygroundCard({
     reasoningEffortEnabled: true,
     reasoningEffortHarness,
     fixedReasoningEffort: reasoningEffort ?? null,
-    // Source the host-level toggle from the active host's resolved DTO
-    // so flipping it in the host's Agent → Behavior tab takes effect on
-    // the next send without remounting. `hostCapsResolver` carries the
-    // full HostConfigDtoV2 for this column (per-host multi-host mode)
-    // or null when the column inherits from the tab-root scope; we let
-    // `undefined` pass through to fall back to the orchestrator's auto
-    // policy in that case.
+    // Undefined preserves the orchestrator's automatic policy.
     progressiveToolDiscovery: hostCapsResolver?.progressiveToolDiscovery,
     respectToolVisibility: hostCapsResolver?.respectToolVisibility,
     modelVisibleMcpToolResults: resolvedModelVisibleMcpToolResults,
@@ -490,6 +501,46 @@ export function MultiModelPlaygroundCard({
       setInjectedToolRenderOverrides({});
     },
   });
+
+  const readyToSend =
+    isSessionBootstrapComplete &&
+    (!hiddenEnvironmentActive ||
+      (!hiddenEnvironment.blockingError &&
+        (!hiddenEnvironment.wanted || !!hiddenEnvironment.environmentId)));
+  useEffect(() => {
+    onSendReadinessChange?.(
+      `${compareKind}:${compareId}`,
+      readyToSend,
+      hiddenEnvironmentActive ? hiddenEnvironment.blockingError : undefined,
+    );
+    return () => onSendReadinessChange?.(`${compareKind}:${compareId}`, false);
+  }, [
+    onSendReadinessChange,
+    compareKind,
+    compareId,
+    readyToSend,
+    hiddenEnvironment.blockingError,
+    hiddenEnvironmentActive,
+  ]);
+
+  const noticeStatus = useRef(status);
+  useEffect(() => {
+    const previous = noticeStatus.current;
+    noticeStatus.current = status;
+    if (
+      status === "submitted" &&
+      previous !== "submitted" &&
+      hiddenEnvironment.failed &&
+      !hiddenEnvironment.blockingError
+    ) {
+      showPluginNotice(chatSessionId, { kind: "unavailable" });
+    }
+  }, [
+    status,
+    chatSessionId,
+    hiddenEnvironment.failed,
+    hiddenEnvironment.blockingError,
+  ]);
 
   const laneScope = useMemo(() => {
     const pluginWorkspace = laneWorkspaceForSession(chatSessionId);
@@ -502,19 +553,17 @@ export function MultiModelPlaygroundCard({
         }
       : null;
   }, [laneWorkspaceForSession, chatSessionId, laneIdentity]);
-  const laneServers = useMemo(
-    () => extensionBinding?.servers ?? [],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      JSON.stringify(
-        (extensionBinding?.servers ?? []).map((server) => [
-          server.serverId,
-          server.name,
-          server.connection ?? null,
-        ]),
-      ),
-    ],
-  );
+  const { pluginServers } = hiddenEnvironment;
+  const laneServers = useMemo(() => {
+    const servers = extensionBinding?.servers ?? [];
+    const existing = new Set(servers.map((server) => server.serverId));
+    return [
+      ...servers,
+      ...(hiddenEnvironmentActive ? (pluginServers ?? []) : [])
+        .filter((server) => !existing.has(server.serverId))
+        .map(({ serverId, name }) => ({ serverId, name })),
+    ];
+  }, [extensionBinding?.servers, hiddenEnvironmentActive, pluginServers]);
   const laneApps = useThreadAppWorkspace(laneScope, laneServers, {
     capabilities: extensionBinding?.capabilities,
     launchProfile: extensionBinding?.profile,
@@ -555,10 +604,17 @@ export function MultiModelPlaygroundCard({
     });
 
   useEffect(() => {
+    if (compareKind === "host" && !messages.length && compareEnterMessages.length) return;
     onTranscriptSync?.(compareId, messages);
-  }, [messages, compareId, onTranscriptSync]);
+  }, [messages, compareId, compareKind, compareEnterMessages, onTranscriptSync]);
 
   useEffect(() => {
+    if (compareKind === "host") {
+      if (lastCompareEnterVersionRef.current > 0) return;
+      lastCompareEnterVersionRef.current = 1;
+      if (compareEnterMessages.length) void startChatWithMessages(cloneUiMessages(compareEnterMessages));
+      return;
+    }
     if (
       addColumnSeed &&
       addColumnSeed.version > lastAddColumnVersionRef.current
@@ -580,6 +636,7 @@ export function MultiModelPlaygroundCard({
       void startChatWithMessages(cloneUiMessages(compareEnterMessages));
     }
   }, [
+    compareKind,
     addColumnSeed,
     compareEnterMessages,
     compareEnterVersion,
@@ -1084,6 +1141,7 @@ export function MultiModelPlaygroundCard({
                 <div className="relative flex-1 min-h-0">
                   <StickToBottom.Content className="flex flex-col min-h-0">
                     <Thread
+                      harnessStartupPhase={harnessStartupPhase}
                       chatSessionId={chatSessionId}
                       messages={messages}
                       sendFollowUpMessage={handleSendFollowUp}
@@ -1125,10 +1183,7 @@ export function MultiModelPlaygroundCard({
     </div>
   );
 
-  // Always-on value providers — wrap the whole card body. The values
-  // are the resolved `effective*` (prop with fall-back to tab-root
-  // context), so model-mode is byte-equivalent to today (tab-root flows
-  // through), host-mode shadows.
+  // Each card shadows only the configuration it owns.
   let wrapped: ReactNode = (
     <ScenarioHostStyleProvider value={hostStyle}>
       <ScenarioHostCapabilitiesOverrideProvider
@@ -1143,13 +1198,10 @@ export function MultiModelPlaygroundCard({
     </ScenarioHostStyleProvider>
   );
 
-  // Optional shadow providers — only wrap when the caller explicitly
-  // passed the corresponding prop. Without the prop, the tab-root
-  // scope's value flows through, preserving today's behavior.
   if (hostSnapshot) {
     wrapped = (
       <ActiveMcpProfileProvider value={effectiveMcpProfile}>
-        {wrapped}
+        <SavedClientProvider value={compareKind === "host" ? hostSnapshot : null}>{wrapped}</SavedClientProvider>
       </ActiveMcpProfileProvider>
     );
   }

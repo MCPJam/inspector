@@ -83,6 +83,7 @@ import {
 } from "./lib/theme-utils";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 import { DbUserReadyProvider } from "./contexts/db-user-ready-context";
+import { LegalAcceptanceGate } from "./components/legal/LegalAcceptanceGate";
 import {
   clearLegacyWorkosRefreshTokenStorage,
   resolveWorkosClientOptions,
@@ -132,6 +133,7 @@ function AuthBootstrap({ children }: { children: ReactNode }) {
       <GuestTabRecoveryBoundary ready={isUserReady}>
         <AuthRecoveryBoundary ready={isUserReady}>
           {children}
+          <LegalAcceptanceGate />
         </AuthRecoveryBoundary>
       </GuestTabRecoveryBoundary>
     </DbUserReadyProvider>

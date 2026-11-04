@@ -9,7 +9,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import type { Tool } from "@modelcontextprotocol/client";
-import { useAppToolsRegistry } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
+import { useAppToolRun } from "@/components/playground/use-app-tool-run";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { SearchInput } from "../ui/search-input";
 import { SavedRequestItem } from "../tools/SavedRequestItem";
@@ -70,6 +70,7 @@ interface PlaygroundLeftProps {
    * panel says "No server connected yet" about a host driving a real Chromium.
    */
   browserTools?: BrowserToolsState;
+  previewedHarnessId?: string | null;
   /** Whether any MCP server is connected — drives the tool list's empty state. */
   hasConnectedServer?: boolean;
   /** Connect a server from the empty state without leaving the surface. */
@@ -99,6 +100,7 @@ export function PlaygroundLeft({
   builtinTools = [],
   builtinToolsRunLocally = false,
   browserTools,
+  previewedHarnessId,
   hasConnectedServer = true,
   onAddServerRequested,
 }: PlaygroundLeftProps) {
@@ -109,6 +111,7 @@ export function PlaygroundLeft({
   // Harness built-in tools flow through the SAME select → detail → Run UX as
   // server tools, but "Run" asks the agent (see useBuiltinToolRun). Only one of
   // {server tool, built-in} is selected at a time.
+  const app = useAppToolRun();
   const builtin = useBuiltinToolRun(builtinTools);
   const browser = useBrowserToolRun(
     browserTools?.tools ?? [],
@@ -116,7 +119,10 @@ export function PlaygroundLeft({
     browserTools?.invokePage,
   );
   const hasSelection =
-    !!selectedToolName || !!builtin.selected || !!browser.selected;
+    !!selectedToolName ||
+    !!builtin.selected ||
+    !!browser.selected ||
+    !!app.selected;
   const builtinNames = useMemo(
     () => builtinTools.map((t) => t.name),
     [builtinTools],
@@ -153,12 +159,21 @@ export function PlaygroundLeft({
   // manual expand (back) doesn't change the selection, so it persists.
   useEffect(() => {
     setIsListExpanded(
-      !selectedToolName && !builtin.selectedKey && !browser.selectedKey,
+      !selectedToolName &&
+        !builtin.selectedKey &&
+        !browser.selectedKey &&
+        !app.selectedKey,
     );
-  }, [selectedToolName, builtin.selectedKey, browser.selectedKey]);
+  }, [
+    selectedToolName,
+    builtin.selectedKey,
+    browser.selectedKey,
+    app.selectedKey,
+  ]);
 
   const handleTabChange = (tab: "tools" | "saved") => {
     setActiveTab(tab);
+    app.clear();
     if (tab === "tools" && hasSelection) {
       onSelectTool(null);
       builtin.clear();
@@ -171,6 +186,7 @@ export function PlaygroundLeft({
   };
 
   const handleToolListSelect = (name: string) => {
+    app.clear();
     builtin.clear();
     browser.clear();
     onSelectTool(name);
@@ -178,6 +194,7 @@ export function PlaygroundLeft({
   };
 
   const handleSelectBuiltin = (key: string) => {
+    app.clear();
     onSelectTool(null);
     browser.clear();
     builtin.select(key);
@@ -185,16 +202,26 @@ export function PlaygroundLeft({
   };
 
   const handleSelectBrowser = (key: string) => {
+    app.clear();
     onSelectTool(null);
     builtin.clear();
     browser.select(key);
     setIsListExpanded(false);
   };
 
+  const handleSelectApp = (key: string) => {
+    onSelectTool(null);
+    builtin.clear();
+    browser.clear();
+    app.select(key);
+    setIsListExpanded(false);
+  };
+
   // Top "Run": execute the selected server tool, invoke a page tool directly,
   // or ask the agent to run a built-in / browser verb.
   const handleRun = () => {
-    if (browser.selected) void browser.run();
+    if (app.selected) void app.run();
+    else if (browser.selected) void browser.run();
     else if (builtin.selected) builtin.askAgentToRun();
     else onExecute();
   };
@@ -206,7 +233,14 @@ export function PlaygroundLeft({
     const tag = target.tagName;
     // Avoid firing while typing in multiline fields
     if (tag === "TEXTAREA") return;
-    if (!hasSelection || isExecuting || browser.invoking) return;
+    if (
+      !hasSelection ||
+      isExecuting ||
+      browser.invoking ||
+      app.invoking ||
+      (app.selected && !app.canRun)
+    )
+      return;
     e.preventDefault();
     handleRun();
   };
@@ -227,6 +261,10 @@ export function PlaygroundLeft({
         />
       ) : isListExpanded || !hasSelection ? (
         <ToolList
+          appGroups={app.groups}
+          selectedAppKey={app.selectedKey}
+          onSelectApp={handleSelectApp}
+          previewedHarnessId={previewedHarnessId}
           tools={tools}
           toolNames={toolNames}
           filteredToolNames={filteredToolNames}
@@ -245,6 +283,11 @@ export function PlaygroundLeft({
           onSelectBrowser={handleSelectBrowser}
           hasConnectedServer={hasConnectedServer}
           onAddServerRequested={onAddServerRequested}
+        />
+      ) : app.detailProps ? (
+        <BuiltinToolDetailView
+          {...app.detailProps}
+          onExpand={() => setIsListExpanded(true)}
         />
       ) : browser.selected ? (
         <BuiltinToolDetailView
@@ -321,8 +364,14 @@ export function PlaygroundLeft({
         onTabChange={handleTabChange}
         toolCount={toolNames.length}
         savedCount={savedRequests.length}
-        isExecuting={isExecuting || browser.invoking}
-        canExecute={browser.selected ? browser.canRun : hasSelection}
+        isExecuting={isExecuting || browser.invoking || app.invoking}
+        canExecute={
+          app.selected
+            ? app.canRun
+            : browser.selected
+              ? browser.canRun
+              : hasSelection
+        }
         canSave={!!selectedToolName}
         fetchingTools={fetchingTools}
         onExecute={handleRun}
@@ -440,25 +489,6 @@ function ToolParametersView({
   onFieldChange,
   onToggleField,
 }: ToolParametersViewProps) {
-  // Fall back to the app-tools registry when the selection is an
-  // `app_<hash>` alias — the server-tool dict won't have it. Same shape:
-  // we only read `description`, `inputSchema`, `outputSchema` and
-  // `annotations` below, and `AppToolDescriptor` carries all four. `_meta` is
-  // the exception: it is only guaranteed on a server `Tool`, so the Metadata
-  // section is fed from `selectedTool` alone. Routing through the registry's
-  // `resolve()` inherits its `activeBridgeByParent` gate so a superseded
-  // sibling instance won't render here.
-  const appToolDescriptor = useAppToolsRegistry((s) => {
-    if (selectedTool) return undefined;
-    const resolved = s.resolve(selectedToolName);
-    if (!resolved) return undefined;
-    return resolved.instance.tools.find((t) => t.name === resolved.rawName);
-  });
-  const effectiveTool = selectedTool ?? appToolDescriptor;
-  // For app-tool aliases (`app_<hash>`), show the raw advertised tool name in
-  // the header instead of the opaque alias. Server tools fall back to the
-  // selection key, which is already the raw name.
-  const headerToolName = appToolDescriptor?.name ?? selectedToolName;
   const hasParameters = formFields && formFields.length > 0;
   const [openSections, setOpenSections] = useState<string[]>(["description"]);
 
@@ -469,7 +499,7 @@ function ToolParametersView({
   return (
     <div className="h-full flex flex-col">
       <SelectedToolHeader
-        toolName={headerToolName}
+        toolName={selectedToolName}
         onExpand={onExpand}
         toolSwitchList={{
           items: toolNames.map((name) => ({ id: name, label: name })),
@@ -479,10 +509,10 @@ function ToolParametersView({
       />
       <ScrollArea className="flex-1 min-h-0">
         <ToolDetailsAccordion
-          description={effectiveTool?.description}
-          inputSchema={effectiveTool?.inputSchema}
-          outputSchema={effectiveTool?.outputSchema}
-          annotations={effectiveTool?.annotations}
+          description={selectedTool?.description}
+          inputSchema={selectedTool?.inputSchema}
+          outputSchema={selectedTool?.outputSchema}
+          annotations={selectedTool?.annotations}
           metadata={selectedTool?._meta}
           openSections={openSections}
           onOpenSectionsChange={setOpenSections}

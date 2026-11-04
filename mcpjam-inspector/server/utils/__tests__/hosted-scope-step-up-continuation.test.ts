@@ -22,6 +22,7 @@ import {
   buildHostedScopeStepUpCancellation,
   buildHostedScopeStepUpResume,
   createHostedScopeStepUpContinuation,
+  checkResumeCredentialBinding,
 } from "../hosted-scope-step-up-continuation.js";
 
 function manager() {
@@ -286,5 +287,30 @@ describe("hosted scope step-up continuation", () => {
     });
     expect(execute).not.toHaveBeenCalled();
     expect(store.markWire).not.toHaveBeenCalled();
+  });
+});
+
+describe("checkResumeCredentialBinding", () => {
+  it("allows the first binding when the call used no credential", () => {
+    expect(checkResumeCredentialBinding(undefined, "new-personal")).toEqual({
+      ok: true,
+      firstBinding: true,
+    });
+    expect(checkResumeCredentialBinding(undefined, undefined)).toEqual({
+      ok: true,
+      firstBinding: true,
+    });
+  });
+
+  it("resumes only on the very credential the call used", () => {
+    expect(checkResumeCredentialBinding("c1", "c1")).toEqual({
+      ok: true,
+      firstBinding: false,
+    });
+  });
+
+  it("refuses an account switch, a replaced credential, or none at all", () => {
+    expect(checkResumeCredentialBinding("c1", "c2")).toEqual({ ok: false });
+    expect(checkResumeCredentialBinding("c1", undefined)).toEqual({ ok: false });
   });
 });

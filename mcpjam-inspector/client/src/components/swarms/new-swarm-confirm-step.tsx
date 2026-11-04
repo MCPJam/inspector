@@ -34,8 +34,7 @@ import { SWARM_QUERIES } from "@/lib/swarm-api";
 import { useSwarmFundingPreview } from "@/hooks/use-swarm-funding-preview";
 import { useSwarmSponsorshipAllowance } from "@/hooks/use-swarm-sponsorship-allowance";
 import { useOutOfCreditsReason } from "@/hooks/useCreditBalance";
-import { DisabledReasonTooltip } from "@mcpjam/design-system/tooltip";
-import { SwarmFundingSummary } from "@/components/swarms/swarm-funding-summary";
+import { NewSwarmConfirmFooter } from "@/components/swarms/new-swarm-confirm-footer";
 import { NewSwarmJudgeRow } from "@/components/swarms/new-swarm-judge-row";
 import {
   fundingPreviewRuns,
@@ -1635,105 +1634,37 @@ export function NewSwarmConfirmStep({
           onChange={onJudgeConfigChange}
         />
 
-        <div
-          className="flex items-baseline justify-between gap-4 rounded-xl border border-border bg-muted/20 px-4 py-3"
-          data-testid="new-swarm-conversation-total"
-        >
-          <div>
-            <p
-              className="text-sm text-muted-foreground"
-              data-testid="new-swarm-conversation-equation"
-            >
-              Across{" "}
-              <strong className="font-semibold tabular-nums text-foreground">
-                {personaTotal}
-              </strong>{" "}
-              {personaTotal === 1 ? "persona" : "personas"}
-              {fanoutEnvironmentCount > 1 ? (
-                <>
-                  {" "}
-                  and{" "}
-                  <strong className="font-semibold tabular-nums text-foreground">
-                    {fanoutEnvironmentCount}
-                  </strong>{" "}
-                  environments
-                </>
-              ) : null}
-            </p>
-            {reusedCount > 0 ? (
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                Reused goals are counted at the iterations already saved on
-                them.
-              </p>
-            ) : null}
-          </div>
-          <p className="shrink-0 font-mono text-xl font-semibold tabular-nums">
-            {launchSessionEstimate.toLocaleString()}
-            <span className="ml-1 font-sans text-xs font-normal text-muted-foreground">
-              conversations
-            </span>
-          </p>
-        </div>
-
-        <SwarmFundingSummary
-          state={fundingState}
+        <NewSwarmConfirmFooter
+          personaTotal={personaTotal}
+          environmentCount={fanoutEnvironmentCount}
+          reusedCount={reusedCount}
+          conversationCount={launchSessionEstimate}
+          fundingState={fundingState}
           requestedRuns={previewRuns?.length ?? 0}
           pendingGoals={pendingGoals}
-          notice={fundingNotice}
+          fundingNotice={fundingNotice}
+          errorMessage={errorMessage}
+          launching={launching}
+          launchBlockedReason={launchBlockedReason}
+          launchDisabled={!canLaunch || previewSettling}
+          onBack={onBack}
+          onContinue={() =>
+            onLaunch({
+              rubric: [],
+              // Only when picked: an absent judge leaves a reused goal's
+              // own judge alone and lets a new goal take the defaults.
+              ...(judgeConfig ? { judgeConfig } : {}),
+              reusedTargets: activeReusedTargets,
+              reusedGrading: [],
+              funding: {
+                shownSponsored: shownSplit?.sponsored ?? null,
+                shownJourneyIds: shownSplit
+                  ? previewTargets.map((target) => target.journeyId)
+                  : [],
+              },
+            })
+          }
         />
-
-        {errorMessage ? (
-          <p role="alert" className="text-sm leading-relaxed text-destructive">
-            {errorMessage}
-          </p>
-        ) : null}
-
-        <div className="flex items-center justify-end gap-5 pt-2">
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={launching}
-            onClick={onBack}
-          >
-            Back
-          </Button>
-          <DisabledReasonTooltip reason={launchBlockedReason} variant="muted">
-            <Button
-              type="button"
-              disabled={
-                !canLaunch ||
-                previewSettling ||
-                launchBlockedReason !== null
-              }
-              data-testid="new-swarm-launch"
-              onClick={() =>
-                onLaunch({
-                  rubric: [],
-                  // Only when picked: an absent judge leaves a reused goal's
-                  // own judge alone and lets a new goal take the defaults.
-                  ...(judgeConfig ? { judgeConfig } : {}),
-                  reusedTargets: activeReusedTargets,
-                  reusedGrading: [],
-                  funding: {
-                    shownSponsored: shownSplit?.sponsored ?? null,
-                    shownJourneyIds: shownSplit
-                      ? previewTargets.map((target) => target.journeyId)
-                      : [],
-                  },
-                })
-              }
-            >
-              {launching ? (
-                <>
-                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                  Launching…
-                </>
-              ) : (
-                "Continue"
-              )}
-            </Button>
-          </DisabledReasonTooltip>
-        </div>
       </div>
     </div>
   );
