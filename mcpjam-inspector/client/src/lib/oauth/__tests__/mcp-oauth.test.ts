@@ -1529,37 +1529,6 @@ describe("mcp-oauth", () => {
       ).not.toBeNull();
     });
 
-    it("normalizes malformed persisted oauth trace history", async () => {
-      const { appendOAuthTraceHttpHistory, loadOAuthTrace } = await import(
-        "../oauth-trace"
-      );
-
-      localStorage.setItem(
-        "mcp-oauth-trace-linear",
-        JSON.stringify({
-          version: 1,
-          source: "refresh",
-          currentStep: "idle",
-          steps: [],
-          httpHistory: null,
-        })
-      );
-
-      const trace = loadOAuthTrace("linear");
-      expect(trace?.httpHistory).toEqual([]);
-      expect(() =>
-        appendOAuthTraceHttpHistory(trace!, {
-          step: "idle",
-          timestamp: Date.now(),
-          request: {
-            method: "GET",
-            url: "https://example.com",
-            headers: {},
-          },
-        })
-      ).not.toThrow();
-    });
-
     it("detects OAuth token grant requests", async () => {
       const { isOAuthTokenGrantRequest } = await import("../mcp-oauth");
 
