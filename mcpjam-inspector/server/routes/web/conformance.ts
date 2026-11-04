@@ -44,6 +44,7 @@ import {
 } from "../../utils/hosted-egress-guard.js";
 import { principalKey } from "../../utils/request-principal.js";
 import { toBrowserOAuthResult } from "../../utils/oauth-conformance-browser-result.js";
+import { checkConformanceConnection } from "../shared/conformance-connection.js";
 
 const conformanceWeb = new Hono();
 
@@ -243,6 +244,31 @@ function toWebError(error: unknown): WebRouteError {
   );
 }
 
+const connectionCheckSchema = z
+  .object({
+    protocolVersion: z.enum(["auto", ...MCP_PROTOCOL_VERSIONS]),
+  })
+  .passthrough();
+
+conformanceWeb.post("/connection-check", async (c) =>
+  handleRoute(c, async () => {
+    const bearerToken = assertBearerToken(c);
+    const body = await readJsonBody<Record<string, unknown>>(c);
+    const parsed = parseWithSchema(connectionCheckSchema, body);
+    const resolved = await resolveHostedHttpConfig(c, bearerToken, body, {
+      withLogin: true,
+    });
+    return checkConformanceConnection(
+      {
+        url: resolved.serverUrl,
+        accessToken: resolved.accessToken,
+        requestInit: { headers: resolved.customHeaders },
+      },
+      parsed.protocolVersion,
+    );
+  }),
+);
+
 // ── POST /protocol ──────────────────────────────────────────────────────
 
 /**
@@ -314,6 +340,7 @@ conformanceWeb.post("/protocol", async (c) =>
 
 const appsSchema = z
   .object({
+    protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
     /** Run only these checks, as picked before Run; absent ⇒ all of them. */
     checkIds: z.array(z.enum(MCP_APPS_CHECK_IDS)).min(1).optional(),
   })
@@ -331,12 +358,13 @@ conformanceWeb.post("/apps", async (c) =>
       const { result } = await withHostedDeadline(
         runAppsConformance({
           ...config,
+          protocolVersion: parsed.protocolVersion,
           signal: controller.signal,
           ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
         }),
         HOSTED_SUITE_DEADLINE_MS,
         suiteDeadlineMessage("Apps"),
-        controller
+        controller,
       );
       return { success: true, result };
     } catch (error) {
@@ -376,6 +404,7 @@ const HOSTED_TASKS_DEADLINE_MS = WEB_CALL_TIMEOUT_MS - 2_000;
 
 const tasksSchema = z
   .object({
+    protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
     /** Tool used to provoke a task; required on the extension wire, where
      *  tools carry no task metadata to pick from. */
     toolName: z.string().min(1).optional(),
@@ -400,6 +429,7 @@ conformanceWeb.post("/tasks", async (c) =>
       const result = await withHostedDeadline(
         runTasksConformance({
           ...config,
+          protocolVersion: parsed.protocolVersion,
           timeout: HOSTED_TASKS_CALL_TIMEOUT_MS,
           ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
           ...(parsed.readinessIds ? { readinessIds: parsed.readinessIds } : {}),
@@ -412,11 +442,11 @@ conformanceWeb.post("/tasks", async (c) =>
             : {}),
           pollTimeoutMs: Math.min(
             parsed.pollTimeoutMs ?? HOSTED_TASKS_POLL_TIMEOUT_MS,
-            HOSTED_TASKS_POLL_TIMEOUT_MS
+            HOSTED_TASKS_POLL_TIMEOUT_MS,
           ),
         }),
         HOSTED_TASKS_DEADLINE_MS,
-        `Tasks conformance exceeded the hosted request budget (${HOSTED_TASKS_DEADLINE_MS}ms); run it from the local inspector for a longer poll window`
+        `Tasks conformance exceeded the hosted request budget (${HOSTED_TASKS_DEADLINE_MS}ms); run it from the local inspector for a longer poll window`,
       ).then((r) => r.result);
       return { success: true, result };
     } catch (error) {

@@ -17,6 +17,12 @@ import {
   missingInputMessage,
 } from "@mcpjam/sdk/browser";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
+import { Button } from "@mcpjam/design-system/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@mcpjam/design-system/collapsible";
 import { cn } from "@/lib/utils";
 import { Collapse, StatusIcon } from "./conformance-ui";
 
@@ -31,6 +37,8 @@ export interface CatalogEntry {
 }
 
 function formatDetailLabel(label: string) {
+  if (label === "probes") return "Requests tested";
+  if (label === "taskId") return "Task ID";
   return label
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/[_-]+/g, " ")
@@ -211,6 +219,7 @@ export function CheckRow({
   pending?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const missingInput = isMissingInputCheck(check);
   const detailEntries = Object.entries(check.details ?? {}).filter(
     ([key]) => key !== "missingInput",
@@ -280,18 +289,41 @@ export function CheckRow({
           )}
 
           {detailEntries.length > 0 && (
-            <div className="rounded-sm bg-muted/20 px-2 py-1.5 space-y-1">
-              {detailEntries.map(([key, value]) => (
-                <div key={key} className="text-sm">
-                  <span className="font-medium text-foreground/80">
-                    {formatDetailLabel(key)}:
-                  </span>{" "}
-                  <span className="text-muted-foreground whitespace-pre-wrap break-words">
-                    {formatDetailValue(value)}
-                  </span>
-                </div>
-              ))}
-            </div>
+            <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
+              <CollapsibleTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="-ml-2 h-auto gap-1 px-2 py-1 text-sm text-muted-foreground"
+                >
+                  <ChevronRight
+                    aria-hidden="true"
+                    className={cn(
+                      "size-3.5 transition-transform motion-reduce:transition-none",
+                      detailsOpen && "rotate-90",
+                    )}
+                  />
+                  More details
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent forceMount>
+                <Collapse open={detailsOpen}>
+                  <div className="mt-1 rounded-sm bg-muted/20 px-2 py-1.5 space-y-1">
+                    {detailEntries.map(([key, value]) => (
+                      <div key={key} className="text-sm">
+                        <span className="font-medium text-foreground/80">
+                          {formatDetailLabel(key)}:
+                        </span>{" "}
+                        <span className="text-muted-foreground whitespace-pre-wrap break-words">
+                          {formatDetailValue(value)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </Collapse>
+              </CollapsibleContent>
+            </Collapsible>
           )}
 
           {warnings && warnings.length > 0 && (

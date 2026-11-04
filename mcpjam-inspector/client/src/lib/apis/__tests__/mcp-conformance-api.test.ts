@@ -35,6 +35,7 @@ global.fetch = fetchMock;
 import {
   runProtocolConformance,
   runAppsConformance,
+  runTasksConformance,
   startOAuthConformance,
   submitOAuthConformanceCode,
   completeOAuthConformance,
@@ -205,3 +206,25 @@ describe("completeOAuthConformance (local)", () => {
     );
   });
 });
+
+for (const [suite, run] of [
+  ["apps", runAppsConformance],
+  ["tasks", runTasksConformance],
+] as const) {
+  it(`sends ${suite}'s resolved protocol to the local route`, async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, result: {} }),
+    });
+    await run("target", { protocolVersion: "2025-06-18" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/mcp/conformance/${suite}`,
+      expect.objectContaining({
+        body: JSON.stringify({
+          serverId: "target",
+          protocolVersion: "2025-06-18",
+        }),
+      }),
+    );
+  });
+}

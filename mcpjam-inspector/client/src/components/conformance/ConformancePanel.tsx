@@ -4,6 +4,8 @@ import { Button } from "@mcpjam/design-system/button";
 import { DirectoryReadinessSection } from "@/components/conformance/directory-readiness/DirectoryReadinessSection";
 import { OAuthPopupBlockedDialog } from "@/components/conformance/OAuthPopupBlockedDialog";
 import { ConformanceAdvice, suiteAdviceGroups } from "./ConformanceAdvice";
+import { ConformanceVersionNotice } from "./ConformanceVersionNotice";
+import { liveConformanceVersionRefusal } from "./conformance-version-refusal";
 import { Loader2, AlertTriangle, Settings, Share2 } from "lucide-react";
 import { UncheckedAdvice } from "@/components/conformance/UncheckedAdvice";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -14,6 +16,7 @@ import {
   isAuthorizationRequiredCheck,
   isTimedOutCheck,
   type ConformanceScore,
+  type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import {
   OverallScoreCard,
@@ -58,17 +61,11 @@ import {
   type ConformancePersistConfig,
 } from "@/components/conformance/PersistConformanceRun";
 
-/** What a background connect from Run came back with. */
-export type ConformanceConnectOutcome = "ready" | "reauth" | "failed";
-
-/**
- * Connects a server in the background. `signIn` lets the connect open the
- * server's sign-in, for a server whose last connect needed one.
- */
-export type ConformanceConnectServer = (
-  name: string,
-  options?: { signIn?: boolean },
-) => Promise<ConformanceConnectOutcome>;
+import type { ConformanceConnectServer } from "./connect-conformance-server";
+export type {
+  ConformanceConnectOutcome,
+  ConformanceConnectServer,
+} from "./connect-conformance-server";
 
 function SuiteBadge({
   state,
@@ -233,6 +230,7 @@ export function ConformanceContent({
   autoStart = false,
   onAutoStart,
   initialVersionPin,
+  initialResolvedProtocolVersion,
   selection,
   probes,
 }: {
@@ -268,6 +266,7 @@ export function ConformanceContent({
   autoStart?: boolean;
   onAutoStart?: () => void;
   initialVersionPin?: ProtocolVersionPin;
+  initialResolvedProtocolVersion?: McpProtocolVersion;
   /** What to run, as picked in the setup steps. */
   selection?: ConformanceSelection;
   /** The tools the checks that must call one may use. */
@@ -279,6 +278,7 @@ export function ConformanceContent({
   const snapshot = useConformanceRun({
     server,
     initialVersionPin,
+    initialResolvedProtocolVersion,
     selection,
     probes,
   });
@@ -303,10 +303,15 @@ export function ConformanceContent({
   } = snapshot;
 
   const protocolChecks = useMemo(
-    () => protocolCatalog(versionPin),
-    [versionPin],
+    () => protocolCatalog(snapshot.resolvedProtocolVersion ?? versionPin),
+    [snapshot.resolvedProtocolVersion, versionPin],
   );
   const protocolPendingIds = pendingIdSet(protocol.result);
+  const versionRefusal = liveConformanceVersionRefusal(
+    protocol,
+    oauth,
+    versionPin,
+  );
   const tasksPendingIds = pendingIdSet(tasks.result);
   // Checks the server refused for credentials. They could not run, so each
   // suite reads INCOMPLETE; one notice above the suites names the next step
@@ -355,7 +360,7 @@ export function ConformanceContent({
   const connectAndRun = async (signIn = false) => {
     if (!onConnectServer) return;
     setConnect({ status: "connecting" });
-    let outcome: ConformanceConnectOutcome;
+    let outcome: Awaited<ReturnType<ConformanceConnectServer>>;
     try {
       outcome = await onConnectServer(server.name, { signIn });
     } catch {
@@ -601,11 +606,16 @@ export function ConformanceContent({
               (home ?? <ConformancePreRun runButton={runButton} />)
             ) : (
               <div>
+                <ConformanceVersionNotice
+                  refusal={versionRefusal}
+                  serverName={server.name}
+                />
                 <OverallScoreCard
                   score={pooledScore}
                   serverName={server.name}
                   version={
                     pooledScore?.protocolVersion ??
+                    snapshot.resolvedProtocolVersion ??
                     (versionPin === "auto" ? "Auto" : versionPin)
                   }
                   isRunning={isRunning}
