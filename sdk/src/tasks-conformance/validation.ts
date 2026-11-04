@@ -59,6 +59,7 @@ export function normalizeMCPTasksConformanceConfig(
   config: MCPTasksConformanceConfig
 ): NormalizedMCPTasksConformanceConfig {
   const {
+    signal,
     checkIds,
     readinessIds,
     toolName,
@@ -75,6 +76,7 @@ export function normalizeMCPTasksConformanceConfig(
   }
 
   return {
+    signal,
     serverConfig,
     target,
     timeout: serverConfig.timeout ?? 30_000,

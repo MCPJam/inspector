@@ -267,6 +267,7 @@ export function PersistConformanceRun({
       projectId: persist.projectId,
       target,
       source: "ui",
+      ...(snapshot.runTimeoutSeconds === undefined ? {} : { runTimeoutSeconds: snapshot.runTimeoutSeconds }),
       requestedSuites: suites,
       actorLabel: "Inspector UI",
     })

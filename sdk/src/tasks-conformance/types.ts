@@ -136,6 +136,8 @@ export interface MCPTasksCheckResult {
 }
 
 export type MCPTasksConformanceConfig = MCPServerConfig & {
+  /** Cancels the whole run, including pending requests. */
+  signal?: AbortSignal;
   /**
    * Run only these checks. A renamed id
    * ({@link RENAMED_MCP_TASKS_CHECK_IDS}) runs the check under its new name.
@@ -174,6 +176,8 @@ export type MCPTasksConformanceConfig = MCPServerConfig & {
 };
 
 export interface NormalizedMCPTasksConformanceConfig {
+  /** Cancels the whole run, including pending requests. */
+  signal?: AbortSignal;
   serverConfig: MCPServerConfig;
   target: string;
   timeout: number;

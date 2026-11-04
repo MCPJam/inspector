@@ -2568,6 +2568,7 @@ export class MCPTasksConformanceTest {
         },
         {
           serverId: "__tasks_conformance__",
+          signal: this.config.signal,
           clientName: "mcpjam-sdk-tasks-conformance",
           timeout: this.config.timeout,
           rpcLogger: captureRpc,

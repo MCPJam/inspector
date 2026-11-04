@@ -525,6 +525,7 @@ export class OAuthConformanceTest {
         warnings?: StepResult["warnings"];
       }>,
     ) => {
+      this.config.signal?.throwIfAborted();
       const beforeHistory = state.httpHistory?.length ?? 0;
       activeCollector = { attempts: [] };
 
@@ -602,7 +603,7 @@ export class OAuthConformanceTest {
             headers: request.headers,
             body: serializeRequestBody(request.body, request.headers),
             redirect: options.redirect,
-            signal: controller.signal,
+            signal: this.config.signal ? AbortSignal.any([controller.signal, this.config.signal]) : controller.signal,
           });
 
           const body = await parseResponseBody(response);
@@ -716,6 +717,7 @@ export class OAuthConformanceTest {
         state.currentStep !== "complete" &&
         guard < 40
       ) {
+        this.config.signal?.throwIfAborted();
         guard += 1;
 
         if (
@@ -923,6 +925,7 @@ export class OAuthConformanceTest {
 
         const startStep = state.currentStep;
         const beforeLogs = state.infoLogs?.length ?? 0;
+        this.config.signal?.throwIfAborted();
         const beforeHistory = state.httpHistory?.length ?? 0;
         activeCollector = { attempts: [] };
         const stepStartedAt = Date.now();
@@ -1470,7 +1473,7 @@ export class OAuthConformanceTest {
               }
             }
           },
-          { serverId: "__conformance_verify__", timeout: this.config.verification.timeout ?? 30_000 },
+          { signal: this.config.signal, serverId: "__conformance_verify__", timeout: this.config.verification.timeout ?? 30_000 },
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
