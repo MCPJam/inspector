@@ -75,25 +75,46 @@ describe("comparison OAuth restoration", () => {
     markComparisonColumnSettled("p1", { kind: "model", compareId: "high" });
     expect(readComparisonAuthRecovery("p1")).toBeNull();
     expect(window.location.search).toBe("");
-    expect(sessionStorage.getItem("mcp-comparison-auth-v1:restored")).toBeNull();
+    expect(
+      sessionStorage.getItem("mcp-comparison-auth-v1:restored"),
+    ).toBeNull();
     lanes.forEach((unregister) => unregister());
     layout();
   });
   it("keeps an early click retryable until every column is registered", () => {
     const layout = registerComparisonLayout("loading", {
-      projectId: "p1", multiModelEnabled: true, hostIds: [], modelSelections: [], selectedServers: [],
+      projectId: "p1",
+      multiModelEnabled: true,
+      hostIds: [],
+      modelSelections: [],
+      selectedServers: [],
     });
     const a = registerComparisonColumn("loading", {
-      compareId: "a", kind: "model", order: 0, chatSessionId: "a-chat", hasMessages: true,
+      compareId: "a",
+      kind: "model",
+      order: 0,
+      chatSessionId: "a-chat",
+      hasMessages: true,
     });
-    expect(prepareComparisonAuthRecovery("loading", "a", "call", 2)).toEqual({ ok: false, reason: "loading" });
+    expect(prepareComparisonAuthRecovery("loading", "a", "call", 2)).toEqual({
+      ok: false,
+      reason: "loading",
+    });
     expect(window.location.search).toBe("");
     const b = registerComparisonColumn("loading", {
-      compareId: "b", kind: "model", order: 1, chatSessionId: "b-chat", hasMessages: true,
+      compareId: "b",
+      kind: "model",
+      order: 1,
+      chatSessionId: "b-chat",
+      hasMessages: true,
     });
-    expect(prepareComparisonAuthRecovery("loading", "a", "call", 2)).toEqual({ ok: true });
+    expect(prepareComparisonAuthRecovery("loading", "a", "call", 2)).toEqual({
+      ok: true,
+    });
     expect(readComparisonAuthRecovery("p1")?.columns).toHaveLength(2);
-    a(); b(); layout();
+    a();
+    b();
+    layout();
   });
   it("refuses navigation if the comparison cannot be saved", () => {
     const l = registerComparisonLayout("group", {

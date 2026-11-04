@@ -864,7 +864,8 @@ export function PlaygroundMain({
   const [comparisonRecovery, setComparisonRecovery] = useState(() =>
     readComparisonAuthRecovery(convexProjectId ?? "local"),
   );
-  const [comparisonServersRestored, setComparisonServersRestored] = useState(false);
+  const [comparisonServersRestored, setComparisonServersRestored] =
+    useState(false);
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   // Multi-server: `playgroundServerSelectorProps.selectedMultipleServers` is
   // the source of truth for which servers the chat session sees in the
@@ -883,14 +884,21 @@ export function PlaygroundMain({
   const selectedServers = useMemo(() => {
     // Reconnecting other saved servers must not rename the recovered tools
     // or change the context of the suspended calls.
-    if (comparisonRecovery && !comparisonServersRestored) return comparisonRecovery.selectedServers;
+    if (comparisonRecovery && !comparisonServersRestored)
+      return comparisonRecovery.selectedServers;
     if (multiSelectedServerNames.length > 0) {
       return multiSelectedServerNames;
     }
     return serverName && servers[serverName]?.connectionStatus === "connected"
       ? [serverName]
       : [];
-  }, [comparisonRecovery, comparisonServersRestored, multiSelectedServerNames, serverName, servers]);
+  }, [
+    comparisonRecovery,
+    comparisonServersRestored,
+    multiSelectedServerNames,
+    serverName,
+    servers,
+  ]);
 
   const serverConnected = Boolean(
     serverName && servers[serverName]?.connectionStatus === "connected",

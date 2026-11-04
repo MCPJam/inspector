@@ -855,10 +855,16 @@ describe("comparison redirect restoration", () => {
     });
     const workspace = { id: "group", order: 0, clientCount: 1 };
     const view = render(
-      <Harness browserWorkspace={workspace} broadcastRequest={turn(1, "old")} />,
+      <Harness
+        browserWorkspace={workspace}
+        broadcastRequest={turn(1, "old")}
+      />,
     );
     view.rerender(
-      <Harness browserWorkspace={workspace} broadcastRequest={turn(2, "new")} />,
+      <Harness
+        browserWorkspace={workspace}
+        broadcastRequest={turn(2, "new")}
+      />,
     );
     expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
     await act(async () =>
