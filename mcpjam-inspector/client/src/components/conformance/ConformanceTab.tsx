@@ -18,7 +18,12 @@ import {
   useAppNavigate,
   useCurrentLocationParts,
 } from "@/lib/app-navigation";
-import { readLocalTimeout, saveLocalTimeout } from "./conformance-local-timeout";
+import {
+  readLocalTimeout,
+  saveLocalTimeout,
+  readSessionTimeout,
+  saveSessionTimeout,
+} from "./conformance-local-timeout";
 import { toast } from "@/lib/toast";
 import type { ConformancePersistConfig } from "@/components/conformance/PersistConformanceRun";
 import {
@@ -186,37 +191,59 @@ export function ConformanceTab({
     serverTimeouts && Object.hasOwn(serverTimeouts, name)
       ? serverTimeouts[name]
       : undefined;
-  const [changedTimeouts, setChangedTimeouts] = useState<
-    Record<string, number | null>
-  >({});
+  const timeoutKeyFor = (name: string) =>
+    JSON.stringify([persist?.projectId ?? null, name]);
+  const [changedTimeouts, setChangedTimeouts] = useState<Record<string, {
+    projectId: string | null;
+    serverName: string;
+    seconds: number | null;
+  }>>({});
   useEffect(() => {
     setChangedTimeouts((previous) => {
       const pending = Object.fromEntries(
-        Object.entries(previous).filter(([name, seconds]) => {
-          const saved = serverTimeouts && Object.hasOwn(serverTimeouts, name)
-            ? serverTimeouts[name]
+        Object.entries(previous).filter(([, entry]) => {
+          if (entry.projectId !== (persist?.projectId ?? null)) return false;
+          const saved = serverTimeouts && Object.hasOwn(serverTimeouts, entry.serverName)
+            ? serverTimeouts[entry.serverName]
             : null;
-          return seconds !== saved;
+          return entry.seconds !== saved;
         }),
       );
       return Object.keys(pending).length === Object.keys(previous).length
         ? previous
         : pending;
     });
-  }, [serverTimeouts]);
-  const timeoutFor = (name: string) =>
-    Object.hasOwn(changedTimeouts, name)
-      ? changedTimeouts[name] ?? undefined
-      : savedTimeoutFor(name) ?? (!persist ? readLocalTimeout(name) : undefined);
-  const saveTimeout = async (name: string, seconds: number | null) => {
-    const sessionOnly = persist && isSavedServer &&
-      !isSavedServer(name) && !projectServersLoading;
-    if (!sessionOnly) {
-      if (onSaveServerTimeout) await onSaveServerTimeout(name, seconds);
-      else if (!persist) saveLocalTimeout(name, seconds);
-      else throw new Error("Server timeout settings are unavailable. Reload the page and try again.");
+  }, [serverTimeouts, persist?.projectId]);
+  const [, refreshSessionTimeout] = useState(0);
+  const isSessionTimeout = (name: string) =>
+    Boolean(
+      persist && isSavedServer && !isSavedServer(name) && !projectServersLoading,
+    );
+  const timeoutFor = (name: string) => {
+    if (persist && isSessionTimeout(name)) {
+      return readSessionTimeout(persist.projectId, name);
     }
-    setChangedTimeouts((previous) => ({ ...previous, [name]: seconds }));
+    const changed = changedTimeouts[timeoutKeyFor(name)];
+    if (changed) return changed.seconds ?? undefined;
+    return savedTimeoutFor(name) ?? (!persist ? readLocalTimeout(name) : undefined);
+  };
+  const saveTimeout = async (name: string, seconds: number | null) => {
+    if (persist && isSessionTimeout(name)) {
+      saveSessionTimeout(persist.projectId, name, seconds);
+      refreshSessionTimeout((version) => version + 1);
+      return;
+    }
+    if (onSaveServerTimeout) await onSaveServerTimeout(name, seconds);
+    else if (!persist) saveLocalTimeout(name, seconds);
+    else throw new Error("Server timeout settings are unavailable. Reload the page and try again.");
+    setChangedTimeouts((previous) => ({
+      ...previous,
+      [timeoutKeyFor(name)]: {
+        projectId: persist?.projectId ?? null,
+        serverName: name,
+        seconds,
+      },
+    }));
   };
   const defaultsFor = (serverName: string) =>
     Object.hasOwn(changedDefaults, serverName)
