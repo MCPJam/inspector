@@ -378,7 +378,7 @@ describe("suite adapters", () => {
           id: "readiness-deprecated-feature-use",
           title: "Deprecated Feature Use",
           severity: "warning",
-          specStrength: "SHOULD",
+          specStrength: "Deprecation Notice",
           message: "…",
         },
         {
@@ -417,7 +417,7 @@ describe("suite adapters", () => {
 
   it("lists protocol readiness advice without letting it move the score", () => {
     const score = scoreFromProtocolResult(protocolResult());
-    // 1/1 applicable passed; the SHOULD and MAY advice are worth 0.
+    // 1/1 applicable passed; the deprecation and MAY advice are worth 0.
     expect(score.advisories).toHaveLength(2);
     expect(score.score).toBe(100);
     expect(score.notApplicable).toBe(1);

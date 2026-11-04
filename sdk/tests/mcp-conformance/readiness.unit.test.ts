@@ -155,9 +155,23 @@ describe("client readiness advice", () => {
       (item) => item.id === "readiness-deprecated-feature-use"
     );
 
-    expect(deprecated?.specStrength).toBe("SHOULD");
+    expect(deprecated?.specStrength).toBe("Deprecation Notice");
     expect(deprecated?.message).toMatch(/logging\/setLevel/);
     expect(deprecated?.message).toMatch(/subscriptions\/listen/);
+  });
+
+  it("labels a superseded legacy revision as a deprecation notice", async () => {
+    const warnings = await collectClientReadiness(
+      clientContext({ protocolVersion: "2025-06-18" }),
+      surface()
+    );
+    expect(warnings).toContainEqual(
+      expect.objectContaining({
+        id: "readiness-deprecated-feature-use",
+        specStrength: "Deprecation Notice",
+        message: expect.stringContaining("2025-06-18 is superseded"),
+      })
+    );
   });
 
   it("advises on tool names that break the naming conventions, without costing points", async () => {
