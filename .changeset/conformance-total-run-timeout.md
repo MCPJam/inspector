@@ -3,4 +3,4 @@
 "@mcpjam/sdk": patch
 ---
 
-Add a saved, optional total timeout of up to 300 seconds for conformance runs, with a Step 2 clock control and setup breadcrumbs.
+Add a 300-second default total timeout for conformance runs with saved overrides from 1 to 300 seconds, a Step 2 clock control, and setup breadcrumbs. Clearing an override restores the default.

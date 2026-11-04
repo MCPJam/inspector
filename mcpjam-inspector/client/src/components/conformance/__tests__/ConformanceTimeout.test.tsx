@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@mcpjam/design-system/tooltip";
@@ -20,6 +21,55 @@ function setup(
 }
 
 describe("ConformanceTimeout", () => {
+  it("shows and prefills the 300-second default", () => {
+    const { input } = setup();
+    expect(input).toHaveValue(300);
+    expect(screen.getByText("300s")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Maximum time for the whole run. Defaults to 300 seconds (5 minutes).",
+      ),
+    ).toBeInTheDocument();
+  });
+  it("prefills a saved override", () => {
+    const { input } = setup(45);
+    expect(input).toHaveValue(45);
+    expect(screen.getByText("45s")).toBeInTheDocument();
+  });
+  it("reopens with 300 after clearing a saved override", async () => {
+    const onSave = vi.fn(async (_value: number | null) => {});
+    function SavedTimeout() {
+      const [seconds, setSeconds] = useState<number | undefined>(45);
+      return (
+        <ConformanceTimeout
+          seconds={seconds}
+          onSave={async (value) => {
+            await onSave(value);
+            setSeconds(value ?? undefined);
+          }}
+        />
+      );
+    }
+    render(
+      <TooltipProvider>
+        <SavedTimeout />
+      </TooltipProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Run timeout" }));
+    fireEvent.change(screen.getByLabelText("Total run timeout (seconds)"), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(null));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("300s")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Run timeout" }));
+    expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(
+      300,
+    );
+  });
   it.each([1, 300])("saves %s seconds", async (seconds) => {
     const { input, onSave } = setup();
     fireEvent.change(input, { target: { value: String(seconds) } });

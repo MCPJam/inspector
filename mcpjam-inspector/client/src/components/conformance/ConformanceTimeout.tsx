@@ -1,5 +1,9 @@
 import { useId, useState } from "react";
 import { Clock } from "lucide-react";
+import {
+  DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS,
+  MAX_CONFORMANCE_RUN_TIMEOUT_SECONDS,
+} from "@/shared/conformance-timeout";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
@@ -22,6 +26,7 @@ export function ConformanceTimeout({
   onSave: (seconds: number | null) => Promise<void>;
 }) {
   const id = useId();
+  const effectiveSeconds = seconds ?? DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS;
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string>();
@@ -31,7 +36,9 @@ export function ConformanceTimeout({
     const value = draft.trim() === "" ? null : Number(draft);
     if (
       value !== null &&
-      (!Number.isInteger(value) || value < 1 || value > 300)
+      (!Number.isInteger(value) ||
+        value < 1 ||
+        value > MAX_CONFORMANCE_RUN_TIMEOUT_SECONDS)
     ) {
       setError("Enter a whole number from 1 to 300 seconds.");
       return;
@@ -53,7 +60,7 @@ export function ConformanceTimeout({
       onOpenChange={(next) => {
         if (saving) return;
         if (next) {
-          setDraft(seconds?.toString() ?? "");
+          setDraft(effectiveSeconds.toString());
           setError(undefined);
         }
         setOpen(next);
@@ -64,7 +71,7 @@ export function ConformanceTimeout({
           <PopoverTrigger asChild>
             <Button variant="ghost" size="sm" aria-label="Run timeout">
               <Clock className="size-4" />
-              {seconds !== undefined && <span>{seconds}s</span>}
+              <span>{effectiveSeconds}s</span>
             </Button>
           </PopoverTrigger>
         </TooltipTrigger>
@@ -84,7 +91,7 @@ export function ConformanceTimeout({
             id={id}
             type="number"
             min={1}
-            max={300}
+            max={MAX_CONFORMANCE_RUN_TIMEOUT_SECONDS}
             step={1}
             value={draft}
             disabled={saving}
@@ -93,8 +100,7 @@ export function ConformanceTimeout({
             aria-describedby={`${id}-help${error ? ` ${id}-error` : ""}`}
           />
           <p id={`${id}-help`} className="text-sm text-muted-foreground">
-            Up to 300 seconds. Leave blank for no total limit. Individual check
-            limits still apply.
+            Maximum time for the whole run. Defaults to 300 seconds (5 minutes).
           </p>
           {error && (
             <p

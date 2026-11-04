@@ -987,6 +987,9 @@ describe("ConformanceTab", () => {
     // The whole protocol suite was picked, so it runs without a list.
     await waitFor(() =>
       expect(mockRunProtocol).toHaveBeenCalledWith("alpha", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
         protocolVersion: "2025-11-25",
       }),
     );
@@ -1058,6 +1061,9 @@ describe("ConformanceTab", () => {
     );
     await waitFor(() =>
       expect(mockRunProtocol).toHaveBeenCalledWith("beta", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
         protocolVersion: "2026-07-28",
       }),
     );
@@ -1174,6 +1180,9 @@ describe("ConformanceTab", () => {
     );
     await waitFor(() =>
       expect(mockRunTasks).toHaveBeenCalledWith("alpha", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
         checkIds: ["tasks-update-ack-shape"],
         protocolVersion: "2025-11-25",
         toolName: "job",
@@ -1247,6 +1256,9 @@ describe("ConformanceTab", () => {
       rerender(<ConformanceTab server={beta} {...props} />);
       await waitFor(() =>
         expect(mockRunTasks).toHaveBeenCalledWith("beta", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
           checkIds: ["tasks-update-ack-shape"],
           protocolVersion: "2025-11-25",
           toolName: "beta-job",
@@ -2665,6 +2677,9 @@ describe("ConformanceTab", () => {
       fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
       await waitFor(() =>
         expect(mockRunTasks).toHaveBeenCalledWith("alpha", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
           toolName: "echo",
           protocolVersion: "2025-11-25",
           inputResponses: { confirm: { action: "accept" } },
@@ -3108,7 +3123,7 @@ describe("ConformanceTab", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(screen.getByRole("button", { name: "Run timeout" }));
-    expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(null);
+    expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
   });
 
   it("keeps each server's connect failure when they settle out of order", async () => {
@@ -3476,6 +3491,9 @@ describe("ConformanceTab", () => {
 
     // The whole suite, and no tool, since none was set.
     expect(mockRunTasks).toHaveBeenCalledWith("http-server", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
       protocolVersion: "2025-11-25",
     });
     expect(within(suiteHeader("tasks")).getByText("PASSED")).toBeDefined();
@@ -3504,6 +3522,9 @@ describe("ConformanceTab", () => {
 
     await waitFor(() => {
       expect(mockRunProtocol).toHaveBeenCalledWith("http-server", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
         protocolVersion: "2025-11-25",
       });
     });
@@ -3541,6 +3562,9 @@ describe("ConformanceTab", () => {
 
     await waitFor(() => {
       expect(mockRunProtocol).toHaveBeenLastCalledWith("http-server", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
         protocolVersion: "2026-07-28",
       });
     });
@@ -3682,7 +3706,7 @@ describe("ConformanceTab", () => {
     );
 
     await waitFor(() => {
-      expect(mockCompleteOAuth).toHaveBeenCalledWith("session-1");
+      expect(mockCompleteOAuth).toHaveBeenCalledWith("session-1", { signal: expect.any(AbortSignal) });
     });
     expect(within(suiteHeader("oauth")).getByText("RUNNING")).toBeDefined();
     expect(screen.queryByText(/checks in this suite\. Not run yet/)).toBeNull();
@@ -4709,13 +4733,13 @@ it("restores unsaved timeouts after remount, isolates projects, and keeps a clea
     return view;
   };
   const first = await open("project-a");
-  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(null);
+  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
   fireEvent.change(screen.getByLabelText("Total run timeout (seconds)"), { target: { value: "90" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(screen.queryByLabelText("Total run timeout (seconds)")).not.toBeInTheDocument());
   first.unmount();
   const otherProject = await open("project-b");
-  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(null);
+  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
   otherProject.unmount();
   const returned = await open("project-a");
   expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(90);
@@ -4724,7 +4748,7 @@ it("restores unsaved timeouts after remount, isolates projects, and keeps a clea
   await waitFor(() => expect(screen.queryByLabelText("Total run timeout (seconds)")).not.toBeInTheDocument());
   returned.unmount();
   const cleared = await open("project-a");
-  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(null);
+  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
   cleared.unmount();
   const savedServer = await open("project-a", true);
   expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
@@ -4748,7 +4772,7 @@ it("does not carry an unsaved timeout into another project without unmounting", 
   await waitFor(() => expect(screen.queryByLabelText("Total run timeout (seconds)")).not.toBeInTheDocument());
   view.rerender(<ConformanceTab {...props} persist={{ projectId: "project-b" }} />);
   fireEvent.click(screen.getByRole("button", { name: "Run timeout" }));
-  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(null);
+  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(screen.queryByLabelText("Total run timeout (seconds)")).not.toBeInTheDocument());
   view.rerender(<ConformanceTab {...props} persist={{ projectId: "project-a" }} />);
