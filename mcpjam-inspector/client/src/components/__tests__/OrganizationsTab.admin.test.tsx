@@ -398,6 +398,10 @@ describe("OrganizationsTab member management", () => {
       screen.getByRole("textbox", { name: "Invite with email" }),
     ).toBeInTheDocument();
 
+    expect(
+      screen.queryByRole("button", { name: /Permission groups/ }),
+    ).not.toBeInTheDocument();
+
     fireEvent.click(screen.getByText("change-role-member@example.com"));
 
     await waitFor(() => {
