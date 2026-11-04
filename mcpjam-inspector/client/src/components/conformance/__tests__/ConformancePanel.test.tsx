@@ -72,6 +72,7 @@ vi.mock("@/components/oauth/utils", () => ({
   }),
 }));
 
+import { cancelOAuthConformance } from "@/lib/apis/mcp-conformance-api";
 import { useConformanceRun } from "@/hooks/use-conformance-run";
 import { checkConformanceConnection } from "@/lib/apis/conformance-connection-api";
 import { toast } from "@/lib/toast";
@@ -4653,8 +4654,8 @@ it("keeps completed suites and ignores late results after a shared timeout, incl
     await act(async () => { vi.advanceTimersByTime(1_000); });
     expect(result.current.protocol.status).toBe("done");
     expect(result.current.apps.status).toBe("error");
-    expect(result.current.oauth.status).toBe("error");
-    expect(result.current.oauth.error).toBe("Run timed out after 1 seconds");
+    expect(result.current.oauth.status).toBe("unavailable");
+    expect(result.current.oauth.skipped).toBe(true);
     await act(async () => { finishApps({ success: true, result: createAppsResult() }); });
     expect(result.current.apps.status).toBe("error");
     expect(result.current.apps.error).toBe("Run timed out after 1 seconds");
@@ -4800,6 +4801,75 @@ it("rejects a late suite response before a delayed deadline timer fires", async 
     expect(result.current.apps.verdict).toBe("incomplete");
     expect(result.current.pooledScore?.outcome).toBe("incomplete");
     expect(result.current.protocol.status).toBe("done");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+
+it("leaves unstarted public-score OAuth unscored at the default deadline", async () => {
+  vi.useFakeTimers();
+  try {
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "deferred-score",
+      authorizationUrl: "https://auth.example/authorize",
+    });
+    const server = createHttpServer();
+    const { result } = renderHook(() =>
+      useConformanceRun({ server, deferOAuthAuthorization: true }),
+    );
+    await act(async () => {
+      await result.current.runAll();
+    });
+    const completedScore = result.current.pooledScore;
+    expect(result.current.oauth.status).toBe("needs-authorization");
+    await act(async () => {
+      vi.advanceTimersByTime(300_000);
+    });
+    expect(result.current.pooledScore).toEqual(completedScore);
+    expect(cancelOAuthConformance).toHaveBeenCalledWith("deferred-score");
+    expect(result.current.oauth).toMatchObject({
+      status: "unavailable",
+      skipped: true,
+    });
+    expect(result.current.oauth.authorizationUrl).toBeUndefined();
+    expect(result.current.oauth.unavailableReason).toContain(
+      "Run again to authorize",
+    );
+    await act(async () => {
+      result.current.authorizeOAuth();
+    });
+    expect(mockStartOAuth).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("still marks actively waiting OAuth incomplete when the run expires", async () => {
+  vi.useFakeTimers();
+  try {
+    setupSuccessfulRunMocks();
+    vi.spyOn(window, "open").mockReturnValue({} as Window);
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "active-auth",
+      authorizationUrl: "https://auth.example/authorize",
+    });
+    const server = createHttpServer();
+    const { result } = renderHook(() =>
+      useConformanceRun({ server, runTimeoutSeconds: 1 }),
+    );
+    await act(async () => {
+      await result.current.runAll();
+    });
+    expect(result.current.oauth.status).toBe("running");
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(result.current.oauth.verdict).toBe("incomplete");
+    expect(result.current.oauth.error).toBe("Run timed out after 1 seconds");
   } finally {
     vi.useRealTimers();
   }

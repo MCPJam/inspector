@@ -39,6 +39,7 @@ import {
   createOAuthState,
   createProtocolState,
   createTasksState,
+  expiredDeferredOAuth,
   isHttpServer,
   isSelected,
   NOT_SELECTED,
@@ -83,6 +84,7 @@ export {
   createOAuthState,
   createProtocolState,
   createTasksState,
+  expiredDeferredOAuth,
   isHttpServer,
   oauthStateFromResult,
   runnableSelection,
@@ -214,7 +216,7 @@ export function useConformanceRun({
       state.status === "running" || state.status === "needs-authorization"
         ? { ...state, status: "error", error: message, verdict: "incomplete", waitingForAuth: false }
         : state;
-    setProtocol(expire); setApps(expire); setTasks(expire); setOAuth(expire);
+    setProtocol(expire); setApps(expire); setTasks(expire); setOAuth((state) => expiredDeferredOAuth(state) ?? expire(state));
   });
   const { clear: clearDeadline, budget: runBudget, isExpired } = deadline;
 

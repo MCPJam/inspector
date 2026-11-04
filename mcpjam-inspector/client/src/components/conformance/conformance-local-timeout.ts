@@ -10,7 +10,7 @@ function readTimeout(read: () => string | null): number | undefined {
       ? value
       : undefined;
   } catch {
-    // A blocked storage read falls back to the existing unlimited behavior.
+    // A blocked storage read falls back to the default run timeout.
     return undefined;
   }
 }

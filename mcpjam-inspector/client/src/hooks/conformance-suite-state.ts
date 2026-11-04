@@ -94,8 +94,8 @@ export interface OAuthSuiteState extends SuiteState {
    */
   popupBlocked?: boolean;
   /**
-   * The user chose Skip OAuth. The suite reads "unavailable" like a server
-   * that needs no auth, but its checks were never run, not ruled out.
+   * OAuth was skipped or its deferred authorization expired. The suite is
+   * unavailable and unscored because authorization-dependent checks never ran.
    */
   skipped?: boolean;
 }
@@ -266,4 +266,15 @@ export function suiteErrorMessage(err: unknown): string {
   return cutOff
     ? "These checks took too long to finish, so no results came back. Run them again, or pick fewer checks for this suite."
     : message;
+}
+
+
+/** An authorization the visitor never started is not a conformance verdict. */
+export function expiredDeferredOAuth(state: OAuthSuiteState): OAuthSuiteState | undefined {
+  if (state.status !== "needs-authorization") return undefined;
+  return {
+    status: "unavailable",
+    skipped: true,
+    unavailableReason: "OAuth was not authorized before the run ended, so it is not scored. Run again to authorize.",
+  };
 }
