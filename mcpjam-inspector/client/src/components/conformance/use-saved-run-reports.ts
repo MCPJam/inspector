@@ -54,7 +54,11 @@ export function useSavedRunReports(
       const pending = fetchArtifact(url).then((response) => {
         // An expired link answers with an error body; never show that as the
         // report. `fetchArtifact` renews the link and retries once.
-        if (!response.ok) throw new Error("Saved report did not load");
+        if (!response.ok) {
+          throw new Error(
+            "Saved report did not load. Try again or pick another run.",
+          );
+        }
         return response.json() as Promise<SavedReportJson>;
       });
       cache.current.set(key, pending);
