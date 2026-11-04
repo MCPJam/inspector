@@ -29,6 +29,8 @@ import {
   type LoadReport,
   type SavedReportCase,
 } from "./use-saved-run-reports";
+import { ConformanceVersionNotice } from "./ConformanceVersionNotice";
+import { conformanceVersionRefusal } from "./conformance-version-refusal";
 import { suiteCatalog } from "./conformance-catalogs";
 import {
   SavedRunActions,
@@ -297,7 +299,7 @@ export function ConformanceRunDetailPage({
       })
     | null
   >("conformanceRuns:getRun", runId ? { runId } : "skip");
-  const { advice, loadReport } = useSavedRunReports(
+  const { advice, loadReport, cases: versionCases } = useSavedRunReports(
     runId,
     detail?.reports ?? [],
   );
@@ -366,6 +368,7 @@ export function ConformanceRunDetailPage({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-8 pt-6 pb-8">
+        <ConformanceVersionNotice refusal={conformanceVersionRefusal(versionCases, detail.protocolVersion)} serverName={serverName} />
         <OverallScoreCard
           score={
             detail.outcome

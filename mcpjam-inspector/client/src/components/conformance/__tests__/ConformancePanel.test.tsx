@@ -32,6 +32,10 @@ const mockStartOAuth = vi.fn();
 const mockSubmitCode = vi.fn();
 const mockCompleteOAuth = vi.fn();
 
+vi.mock("@/lib/apis/conformance-connection-api", () => ({
+  checkConformanceConnection: vi.fn(async () => ({ status: "ready" })),
+}));
+
 vi.mock("@/lib/apis/mcp-conformance-api", () => ({
   runProtocolConformance: (...args: unknown[]) => mockRunProtocol(...args),
   runAppsConformance: (...args: unknown[]) => mockRunApps(...args),
@@ -315,6 +319,21 @@ beforeEach(() => {
 });
 
 describe("ConformanceTab", () => {
+  it("explains an unsupported version above the live score without changing results", async () => {
+    setupSuccessfulRunMocks({ protocol: createProtocolResult({
+      passed: false,
+      protocolVersion: "2026-07-28",
+      checks: [{ id: "completion-complete", category: "protocol", title: "Completion", description: "Completion", status: "failed", durationMs: 1,
+        error: { message: 'MCP server "http-server" doesn\'t support MCP protocol version 2026-07-28, which this client is pinned to. It offers 2025-06-18.' } }],
+    }) });
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("http-server doesn’t support 2026-07-28. Checks requiring that version could not run.");
+    expect(alert).toHaveTextContent("Server offers: 2025-06-18.");
+    expect(screen.getAllByText("Completion").length).toBeGreaterThan(0);
+  });
+
   // The page writes the active tab to `?view=`; start each test without it.
   afterEach(() => {
     window.history.replaceState(null, "", "/");

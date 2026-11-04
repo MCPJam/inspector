@@ -33,6 +33,7 @@ import {
   conformanceProbeFields,
 } from "../shared/conformance-probes";
 import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
+import { checkConformanceConnection } from "../shared/conformance-connection.js";
 
 const conformance = new Hono();
 
@@ -77,6 +78,47 @@ function handleUnsupportedTransport(
   }
   return undefined;
 }
+
+const connectionCheckSchema = z.object({
+  serverId: z.string().min(1),
+  protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS),
+});
+
+conformance.post("/connection-check", async (c) => {
+  try {
+    const parsed = connectionCheckSchema.safeParse(await readRequestJson(c));
+    if (!parsed.success)
+      return c.json(
+        { error: parsed.error.issues[0]?.message ?? "Invalid request" },
+        400,
+      );
+    const resolved = resolveServerConfig(
+      c.mcpClientManager,
+      parsed.data.serverId,
+    );
+    if ("error" in resolved) return c.json(resolved, 400);
+    assertHttpSupported("protocol", resolved.config);
+    const http = toHttpResolved(resolved.config as HttpServerConfig);
+    return c.json(
+      await checkConformanceConnection(
+        {
+          url: http.serverUrl,
+          accessToken: http.accessToken,
+          requestInit: { headers: http.customHeaders },
+        },
+        parsed.data.protocolVersion,
+      ),
+    );
+  } catch (error) {
+    const unsupported = handleUnsupportedTransport(c, error);
+    if (unsupported) return unsupported;
+    reportRouteFailure("[Conformance Connection Check]", error, {
+      source: "mcp.conformance.connection_check",
+      hop: "user_server_hop",
+    });
+    return c.json({ error: "Could not check the server connection." }, 500);
+  }
+});
 
 // ── POST /protocol ──────────────────────────────────────────────────────
 

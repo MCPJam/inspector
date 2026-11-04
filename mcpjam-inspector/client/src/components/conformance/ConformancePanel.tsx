@@ -4,6 +4,8 @@ import { Button } from "@mcpjam/design-system/button";
 import { DirectoryReadinessSection } from "@/components/conformance/directory-readiness/DirectoryReadinessSection";
 import { OAuthPopupBlockedDialog } from "@/components/conformance/OAuthPopupBlockedDialog";
 import { ConformanceAdvice, suiteAdviceGroups } from "./ConformanceAdvice";
+import { ConformanceVersionNotice } from "./ConformanceVersionNotice";
+import { liveConformanceVersionRefusal } from "./conformance-version-refusal";
 import { Loader2, AlertTriangle, Settings, Share2 } from "lucide-react";
 import { UncheckedAdvice } from "@/components/conformance/UncheckedAdvice";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -307,6 +309,7 @@ export function ConformanceContent({
     [versionPin],
   );
   const protocolPendingIds = pendingIdSet(protocol.result);
+  const versionRefusal = liveConformanceVersionRefusal(protocol, oauth, versionPin);
   const tasksPendingIds = pendingIdSet(tasks.result);
   // Checks the server refused for credentials. They could not run, so each
   // suite reads INCOMPLETE; one notice above the suites names the next step
@@ -601,6 +604,10 @@ export function ConformanceContent({
               (home ?? <ConformancePreRun runButton={runButton} />)
             ) : (
               <div>
+                <ConformanceVersionNotice
+                  refusal={versionRefusal}
+                  serverName={server.name}
+                />
                 <OverallScoreCard
                   score={pooledScore}
                   serverName={server.name}
