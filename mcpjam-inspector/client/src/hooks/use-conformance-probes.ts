@@ -15,15 +15,11 @@
  * server that uses the Tasks extension no tool says it creates a task, so
  * without one those checks could not run either.
  *
- * Kept in browser storage, keyed by server name, so a choice survives a reload
- * and Run again reuses it. Storage can be missing or throw (private windows,
- * blocked site data); the page then behaves as if nothing was chosen, which
- * is the default.
+ * Saved-server defaults live in Convex. Unsaved servers keep session drafts.
  */
 import { useCallback, useRef, useState } from "react";
 import {
   CHECK_ERAS,
-  MCP_LOG_LEVELS,
   PROTOCOL_VERSION_ERAS,
   READINESS_ERAS,
   type MCPCheckId,
@@ -263,111 +259,13 @@ export function probesAfterRun(
   ) as ConformanceProbes;
 }
 
-const STORAGE_PREFIX = "mcpjam.conformance.probes.v1:";
-
-function isProbe(value: unknown): value is ConformanceProbe {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const probe = value as { toolName?: unknown; arguments?: unknown };
-  return (
-    typeof probe.toolName === "string" &&
-    probe.toolName.trim() !== "" &&
-    (probe.arguments === undefined ||
-      (typeof probe.arguments === "object" &&
-        probe.arguments !== null &&
-        !Array.isArray(probe.arguments)))
-  );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/**
- * A saved probe keeping only the extras its key can send: a valid `level` on
- * the log probe, an object `inputResponses` on the Tasks probe.
- */
-function withOwnExtras(
-  probe: ConformanceProbe,
-  key: ConformanceProbeKey,
-): ConformanceProbe {
-  const { level, inputResponses, ...rest } = probe;
-  return {
-    ...rest,
-    ...(key === "logProbe" &&
-    (MCP_LOG_LEVELS as readonly unknown[]).includes(level)
-      ? { level }
-      : {}),
-    ...(key === "tasksProbe" && isRecord(inputResponses)
-      ? { inputResponses }
-      : {}),
-  };
-}
-
-/** What was saved for `serverName`, dropping anything malformed. */
-export function readStoredProbes(serverName: string): ConformanceProbes {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_PREFIX + serverName);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return Object.fromEntries(
-      PROBE_KEYS.flatMap((key) => {
-        const probe = parsed[key];
-        return isProbe(probe) ? [[key, withOwnExtras(probe, key)]] : [];
-      }),
-    ) as ConformanceProbes;
-  } catch {
-    // Unreadable storage or a corrupt entry: as if nothing was chosen.
-    return {};
-  }
-}
-
-function writeStoredProbes(serverName: string, probes: ConformanceProbes) {
-  try {
-    const key = STORAGE_PREFIX + serverName;
-    if (PROBE_KEYS.every((name) => !probes[name])) {
-      window.localStorage.removeItem(key);
-    } else {
-      window.localStorage.setItem(key, JSON.stringify(probes));
-    }
-  } catch {
-    // Unwritable storage: the choice still applies to this session's runs.
-  }
-}
-
-/**
- * Every server's probes, for one page: the setup steps, Settings and the run
- * view read and write the same choice, so Run again uses what was just set.
- */
-export function useConformanceProbeStore(): {
-  probesFor: (serverName: string) => ConformanceProbes;
-  setProbes: (serverName: string, probes: ConformanceProbes) => void;
-} {
-  // Maps, not objects: a server may be named `constructor` or `__proto__`.
-  const [changed, setChanged] = useState<
-    ReadonlyMap<string, ConformanceProbes>
-  >(() => new Map());
-  // Read from storage once per server: the tab asks on every render, and a
-  // fresh object each time would also look like a change to its readers.
-  const loaded = useRef(new Map<string, ConformanceProbes>());
-  const probesFor = useCallback(
-    (serverName: string) => {
-      const set = changed.get(serverName);
-      if (set) return set;
-      let stored = loaded.current.get(serverName);
-      if (!stored) {
-        stored = readStoredProbes(serverName);
-        loaded.current.set(serverName, stored);
-      }
-      return stored;
-    },
-    [changed],
-  );
-  const setProbes = useCallback(
-    (serverName: string, probes: ConformanceProbes) => {
-      setChanged((prev) => new Map(prev).set(serverName, probes));
-      writeStoredProbes(serverName, probes);
-    },
-    [],
-  );
+/** Session drafts for servers without a saved project/server ID. */
+export function useConformanceProbeStore() {
+  const [changed, setChanged] = useState<ReadonlyMap<string, ConformanceProbes>>(() => new Map());
+  const empty = useRef<ConformanceProbes>({});
+  const probesFor = useCallback((name: string) => changed.get(name) ?? empty.current, [changed]);
+  const setProbes = useCallback((name: string, probes: ConformanceProbes) => {
+    setChanged((prev) => new Map(prev).set(name, probes));
+  }, []);
   return { probesFor, setProbes };
 }

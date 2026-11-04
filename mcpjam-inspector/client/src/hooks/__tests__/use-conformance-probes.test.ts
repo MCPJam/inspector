@@ -6,7 +6,6 @@ import {
   probesAfterRun,
   probesApply,
   probesForRun,
-  readStoredProbes,
   tasksProbeRuns,
   tasksRunOptions,
   useConformanceProbeStore,
@@ -132,70 +131,30 @@ describe("probesAfterRun", () => {
 
 describe("useConformanceProbeStore", () => {
   beforeEach(() => window.localStorage.clear());
-
-  it("keeps each server's tools across a reload", () => {
-    const { result } = renderHook(() => useConformanceProbeStore());
-    act(() => result.current.setProbes("alpha", { logProbe }));
-
-    expect(result.current.probesFor("alpha")).toEqual({ logProbe });
-    expect(result.current.probesFor("beta")).toEqual({});
-    expect(readStoredProbes("alpha")).toEqual({ logProbe });
-  });
-
-  it("keeps the output-check tool across a reload, alone", () => {
-    const { result } = renderHook(() => useConformanceProbeStore());
-    act(() => result.current.setProbes("alpha", { toolCallProbe }));
-    expect(readStoredProbes("alpha")).toEqual({ toolCallProbe });
-  });
-
-  it("reads storage once per server", () => {
+  it("keeps only session drafts and ignores old browser inputs", () => {
     window.localStorage.setItem(
       "mcpjam.conformance.probes.v1:alpha",
       JSON.stringify({ logProbe }),
     );
-    const { result } = renderHook(() => useConformanceProbeStore());
-    const first = result.current.probesFor("alpha");
-    // Same object on every read, until a write.
-    expect(result.current.probesFor("alpha")).toBe(first);
-    expect(first).toEqual({ logProbe });
+    const { result, unmount } = renderHook(() => useConformanceProbeStore());
+    expect(result.current.probesFor("alpha")).toEqual({});
+    act(() => result.current.setProbes("alpha", { tasksProbe }));
+    expect(result.current.probesFor("alpha")).toEqual({ tasksProbe });
+    expect(result.current.probesFor("beta")).toEqual({});
+    expect(
+      JSON.parse(
+        window.localStorage.getItem("mcpjam.conformance.probes.v1:alpha")!,
+      ),
+    ).toEqual({ logProbe });
+    unmount();
+    const next = renderHook(() => useConformanceProbeStore());
+    expect(next.result.current.probesFor("alpha")).toEqual({});
   });
-
-  it("keeps a server named like an object property apart", () => {
+  it("isolates names inherited from Object", () => {
     const { result } = renderHook(() => useConformanceProbeStore());
-    for (const name of ["constructor", "toString", "__proto__"]) {
-      expect(result.current.probesFor(name)).toEqual({});
-    }
     act(() => result.current.setProbes("constructor", { logProbe }));
     expect(result.current.probesFor("constructor")).toEqual({ logProbe });
     expect(result.current.probesFor("__proto__")).toEqual({});
-  });
-
-  it("keeps the log probe's level and drops one it cannot send", () => {
-    window.localStorage.setItem(
-      "mcpjam.conformance.probes.v1:alpha",
-      JSON.stringify({
-        logProbe: { ...logProbe, level: "info" },
-        inputRequiredProbe: { ...inputRequiredProbe, level: "info" },
-      }),
-    );
-    expect(readStoredProbes("alpha")).toEqual({
-      logProbe: { ...logProbe, level: "info" },
-      inputRequiredProbe,
-    });
-
-    window.localStorage.setItem(
-      "mcpjam.conformance.probes.v1:alpha",
-      JSON.stringify({ logProbe: { ...logProbe, level: "loud" } }),
-    );
-    expect(readStoredProbes("alpha")).toEqual({ logProbe });
-  });
-
-  it("ignores a stored entry that is not a probe", () => {
-    window.localStorage.setItem(
-      "mcpjam.conformance.probes.v1:alpha",
-      JSON.stringify({ logProbe: { toolName: "" }, inputRequiredProbe }),
-    );
-    expect(readStoredProbes("alpha")).toEqual({ inputRequiredProbe });
   });
 });
 
@@ -270,24 +229,4 @@ describe("Tasks probe", () => {
     ).toEqual({ checkIds: ["tasks-wire-resolvable"] });
   });
 
-  it("keeps its answers across a reload, and only on the Tasks probe", () => {
-    window.localStorage.setItem(
-      "mcpjam.conformance.probes.v1:alpha",
-      JSON.stringify({
-        tasksProbe,
-        logProbe: { ...logProbe, inputResponses: { confirm: true } },
-      }),
-    );
-    expect(readStoredProbes("alpha")).toEqual({ tasksProbe, logProbe });
-  });
-
-  it("drops answers that are not an object", () => {
-    window.localStorage.setItem(
-      "mcpjam.conformance.probes.v1:alpha",
-      JSON.stringify({ tasksProbe: { ...tasksProbe, inputResponses: [1] } }),
-    );
-    expect(readStoredProbes("alpha")).toEqual({
-      tasksProbe: { toolName: "long-job", arguments: { seconds: 2 } },
-    });
-  });
 });

@@ -78,7 +78,7 @@ import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconci
 import { TracingTab } from "./components/TracingTab";
 import { WebmcpInspectorTab } from "./components/webmcp-inspector/WebmcpInspectorTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
-import type { ConformanceConnectServer } from "./components/conformance/ConformancePanel";
+import { createConformanceConnector } from "./components/conformance/connect-conformance-server";
 import { ConformanceTab } from "./components/conformance/ConformanceTab";
 import { ServerDetailModal } from "./components/connection/ServerDetailModal";
 import {
@@ -342,7 +342,6 @@ import {
 import {
   buildElectronMcpCallbackUrl,
   resolveEffectiveWireProtocolVersion,
-  type EnsureServersReadyResult,
 } from "./hooks/use-server-state";
 import { disconnectAllRuntimeServers } from "./state/mcp-api";
 import {
@@ -1687,23 +1686,31 @@ export function ConformanceRoute() {
     handleUpdate,
     handleDisconnect,
     handleReconnect,
+    reconnectServerWithResult,
   } = useAppRouteContext();
   const {
     servers: projectServers,
     serversByName,
     serversById,
     isLoading: projectServersLoading,
+    isBootstrapping: projectServersBootstrapping,
   } = useProjectServers({
     isAuthenticated,
     projectId: convexProjectId,
   });
   const navigate = useAppNavigate();
-  const { defaultsByServer, defaultsLoaded, lastRunByServer, saveDefaults } =
-    useConformanceServerData({
-      projectId: convexProjectId,
-      serversById,
-      serversByName,
-    });
+  const {
+    defaultsByServer,
+    inputsByServer,
+    loadDefaults,
+    lastRunByServer,
+    saveDefaults,
+  } = useConformanceServerData({
+    projectId: convexProjectId,
+    serversById,
+    serversByName,
+    serversLoading: projectServersLoading || projectServersBootstrapping,
+  });
   // The name the edit form is open on, plus the server as it was then: a
   // rename drops the old name from `appState.servers` before the new one
   // lands, and without the snapshot the form would close mid-save.
@@ -1744,17 +1751,14 @@ export function ConformanceRoute() {
       serversByName.get(editing.snapshot.name) ??
       null)
     : null;
-  const connectServer: ConformanceConnectServer = async (name, options) => {
-    const result: EnsureServersReadyResult = await ensureServersReady(
-      [name],
-      options?.signIn ? { allowInteractiveOAuthFlow: true } : undefined,
-    );
-    if (result.readyServerNames.includes(name)) return "ready";
-    return result.reauthServerNames.includes(name) ? "reauth" : "failed";
-  };
+  const connectServer = createConformanceConnector({
+    ensureServersReady,
+    reconnectServerWithResult,
+  });
   return (
     <>
       <ConformanceTab
+        key={convexProjectId ?? "local"}
         server={selectedServerEntry ?? null}
         servers={servers}
         onSelectServer={setSelectedServer}
@@ -1775,13 +1779,17 @@ export function ConformanceRoute() {
           ) : undefined
         }
         serverDefaults={defaultsByServer}
-        serverDefaultsLoaded={defaultsLoaded}
+        serverInputs={inputsByServer}
+        onLoadServerDefaults={loadDefaults}
+        isSavedServer={(name) => serversByName.has(name)}
         onSaveServerDefaults={saveDefaults}
         lastRuns={lastRunByServer}
         projectServerNames={projectServers?.map(
           (server: { name: string }) => server.name,
         )}
-        projectServersLoading={projectServersLoading}
+        projectServersLoading={
+          projectServersLoading || projectServersBootstrapping
+        }
         serverIcons={serverIcons}
         onViewRun={
           convexProjectId
@@ -1817,18 +1825,20 @@ export function ConformanceRoute() {
 }
 
 export function ConformanceRunDetailRoute() {
-  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated, appState, ensureServersReady } =
+    useAppRouteContext();
   const { serversById, serversByName, isLoading, isBootstrapping } =
     useProjectServers({
       isAuthenticated,
       projectId: convexProjectId,
     });
   // The run's server Settings, the same defaults the Conformance page reads.
-  const { defaultsByServer, defaultsLoaded, saveDefaults } =
+  const { defaultsByServer, inputsByServer, loadDefaults, saveDefaults } =
     useConformanceServerData({
       projectId: convexProjectId,
       serversById,
       serversByName,
+      serversLoading: isLoading || isBootstrapping,
     });
   const params = useParams<{ runId?: string }>();
   const pathname = getRouteFallbackPathname();
@@ -1844,7 +1854,23 @@ export function ConformanceRunDetailRoute() {
         saveDefaults
           ? {
               defaults: defaultsByServer,
-              loaded: defaultsLoaded,
+              loaded: true,
+              inputs: inputsByServer,
+              load: loadDefaults,
+              servers: appState.servers,
+              connect: async (name, options) => {
+                const result = await ensureServersReady(
+                  [name],
+                  options?.signIn
+                    ? { allowInteractiveOAuthFlow: true }
+                    : undefined,
+                );
+                return result.readyServerNames.includes(name)
+                  ? "ready"
+                  : result.reauthServerNames.includes(name)
+                    ? "reauth"
+                    : "failed";
+              },
               save: saveDefaults,
             }
           : undefined
@@ -6200,7 +6226,8 @@ export default function App() {
     ]);
 
   const playgroundServerSelectorProps = useMemo(():
-    PlaygroundServerSelectorProps | undefined => {
+    | PlaygroundServerSelectorProps
+    | undefined => {
     if (activeTab !== "playground") return undefined;
     return {
       serverConfigs: displayServerConfigs,
@@ -6519,6 +6546,7 @@ export default function App() {
     handleOrganizationDeleted,
     handleProjectShared,
     handleReconnect,
+    reconnectServerWithResult,
     handleRuntimeDisconnect,
     handleRefreshTokensFromOAuthFlow,
     handleRemoveServer,

@@ -44,6 +44,7 @@ import {
 } from "../../utils/hosted-egress-guard.js";
 import { principalKey } from "../../utils/request-principal.js";
 import { toBrowserOAuthResult } from "../../utils/oauth-conformance-browser-result.js";
+import { checkConformanceConnection } from "../shared/conformance-connection.js";
 
 const conformanceWeb = new Hono();
 
@@ -242,6 +243,31 @@ function toWebError(error: unknown): WebRouteError {
     error instanceof Error ? error.message : "Unknown error"
   );
 }
+
+const connectionCheckSchema = z
+  .object({
+    protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS),
+  })
+  .passthrough();
+
+conformanceWeb.post("/connection-check", async (c) =>
+  handleRoute(c, async () => {
+    const bearerToken = assertBearerToken(c);
+    const body = await readJsonBody<Record<string, unknown>>(c);
+    const parsed = parseWithSchema(connectionCheckSchema, body);
+    const resolved = await resolveHostedHttpConfig(c, bearerToken, body, {
+      withLogin: true,
+    });
+    return checkConformanceConnection(
+      {
+        url: resolved.serverUrl,
+        accessToken: resolved.accessToken,
+        requestInit: { headers: resolved.customHeaders },
+      },
+      parsed.protocolVersion,
+    );
+  }),
+);
 
 // ── POST /protocol ──────────────────────────────────────────────────────
 

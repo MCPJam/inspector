@@ -4,6 +4,8 @@ import { Button } from "@mcpjam/design-system/button";
 import { DirectoryReadinessSection } from "@/components/conformance/directory-readiness/DirectoryReadinessSection";
 import { OAuthPopupBlockedDialog } from "@/components/conformance/OAuthPopupBlockedDialog";
 import { ConformanceAdvice, suiteAdviceGroups } from "./ConformanceAdvice";
+import { ConformanceVersionNotice } from "./ConformanceVersionNotice";
+import { liveConformanceVersionRefusal } from "./conformance-version-refusal";
 import { Loader2, AlertTriangle, Settings, Share2 } from "lucide-react";
 import { UncheckedAdvice } from "@/components/conformance/UncheckedAdvice";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -221,9 +223,11 @@ export function ConformanceContent({
   history,
   home,
   canRun,
+  runDisabled = false,
   onConnectServer,
   onEditServer,
   onRequestRun,
+  onRunAgain,
   onOpenSettings,
   settingsLoading = false,
   onShowHome,
@@ -244,10 +248,13 @@ export function ConformanceContent({
   home?: ReactNode;
   /** False when the selection is not one of the page's servers. */
   canRun: boolean;
+  /** Defaults must load successfully before a new run can start. */
+  runDisabled?: boolean;
   onConnectServer?: ConformanceConnectServer;
   onEditServer?: (name: string) => void;
   /** Set when Run opens the setup steps instead of running here. */
   onRequestRun?: () => void;
+  onRunAgain?: (pin: ProtocolVersionPin) => void;
   /** Opens this server's Conformance Settings. */
   onOpenSettings?: () => void;
   /** The server's logo, when the project or the server provides one. */
@@ -302,6 +309,7 @@ export function ConformanceContent({
     [versionPin],
   );
   const protocolPendingIds = pendingIdSet(protocol.result);
+  const versionRefusal = liveConformanceVersionRefusal(protocol, oauth, versionPin);
   const tasksPendingIds = pendingIdSet(tasks.result);
   // Checks the server refused for credentials. They could not run, so each
   // suite reads INCOMPLETE; one notice above the suites names the next step
@@ -464,7 +472,7 @@ export function ConformanceContent({
     <Button
       size="sm"
       onClick={onRequestRun ?? handleRun}
-      disabled={isRunning || isConnecting}
+      disabled={isRunning || isConnecting || runDisabled}
     >
       {isRunning || isConnecting ? (
         <>
@@ -544,8 +552,10 @@ export function ConformanceContent({
               ) : null}
               <Button
                 size="sm"
-                onClick={handleRun}
-                disabled={isRunning || isConnecting}
+                onClick={onRunAgain ? () => onRunAgain(versionPin) : handleRun}
+                disabled={
+                  isRunning || isConnecting || settingsLoading || runDisabled
+                }
               >
                 {isRunning || isConnecting ? (
                   <>
@@ -594,6 +604,10 @@ export function ConformanceContent({
               (home ?? <ConformancePreRun runButton={runButton} />)
             ) : (
               <div>
+                <ConformanceVersionNotice
+                  refusal={versionRefusal}
+                  serverName={server.name}
+                />
                 <OverallScoreCard
                   score={pooledScore}
                   serverName={server.name}
@@ -612,9 +626,9 @@ export function ConformanceContent({
                 {waitingOnAuthorization > 0 && (
                   <div className="mt-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm leading-relaxed">
                     This server requires sign-in, and this run had no valid
-                    session, so the checks that need it could not run.
-                    Reconnect the server with OAuth from the server menu, or
-                    update its access token, then run again.
+                    session, so the checks that need it could not run. Reconnect
+                    the server with OAuth from the server menu, or update its
+                    access token, then run again.
                   </div>
                 )}
 

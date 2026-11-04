@@ -47,6 +47,7 @@ export function useSavedRunReports(
 ) {
   // Keyed by run too: the page can move to another run without remounting.
   const cache = useRef(new Map<string, Promise<SavedReportJson>>());
+  const [cases, setCases] = useState<Record<string, SavedReportCase[]>>({});
   const [advisories, setAdvisories] = useState<Record<string, unknown>>({});
   const loadReport = useCallback<LoadReport>(
     (suiteKind, url) => {
@@ -66,8 +67,13 @@ export function useSavedRunReports(
       cache.current.set(key, pending);
       pending.then(
         // Whichever caller loads it, page or suite row, the advice shows.
-        (json) =>
-          setAdvisories((current) => ({ ...current, [key]: json.advisories })),
+        (json) => {
+          setAdvisories((current) => ({ ...current, [key]: json.advisories }));
+          setCases((current) => ({
+            ...current,
+            [key]: (json.groups ?? []).flatMap((group) => group.cases ?? []),
+          }));
+        },
         // A failure is not kept: opening the suite later tries again.
         () => {
           if (cache.current.get(key) === pending) cache.current.delete(key);
@@ -105,5 +111,14 @@ export function useSavedRunReports(
       advisories: advisories[`${runId}:${report.suiteKind}`],
     })),
   );
-  return { advice, loadReport };
+  return {
+    advice,
+    loadReport,
+    cases: reports
+      .filter(
+        (report) =>
+          report.suiteKind === "protocol" || report.suiteKind === "oauth",
+      )
+      .flatMap((report) => cases[`${runId}:${report.suiteKind}`] ?? []),
+  };
 }

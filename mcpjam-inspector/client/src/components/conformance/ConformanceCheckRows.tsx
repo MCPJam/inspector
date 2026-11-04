@@ -166,7 +166,7 @@ export function NeedsInputTag({
       title={
         advice
           ? missing
-            ? "Select a tool and fill its required arguments before this advice can run."
+            ? "Select a tool and fill in its required arguments before running this check."
             : "This advice calls the tool set for it."
           : missing
             ? "Select a tool and fill its required arguments before this check can run."
