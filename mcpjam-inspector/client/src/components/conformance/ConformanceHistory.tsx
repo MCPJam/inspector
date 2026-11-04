@@ -22,7 +22,13 @@ import {
   VerdictBadge,
 } from "./conformance-ui";
 import { CatalogList } from "./ConformanceCheckRows";
-import { SuiteReportCases, type SavedReportCase } from "./ConformanceSavedChecks";
+import { SuiteReportCases } from "./ConformanceSavedChecks";
+import { ConformanceAdvice, reportAdviceGroups } from "./ConformanceAdvice";
+import {
+  useSavedRunReports,
+  type LoadReport,
+  type SavedReportCase,
+} from "./use-saved-run-reports";
 import { suiteCatalog } from "./conformance-catalogs";
 import {
   SavedRunActions,
@@ -291,6 +297,10 @@ export function ConformanceRunDetailPage({
       })
     | null
   >("conformanceRuns:getRun", runId ? { runId } : "skip");
+  const { advice, loadReport } = useSavedRunReports(
+    runId,
+    detail?.reports ?? [],
+  );
   if (detail === undefined) {
     return (
       <p className="p-6 text-sm text-muted-foreground" role="status">
@@ -384,11 +394,14 @@ export function ConformanceRunDetailPage({
           </p>
         ) : null}
 
+        <ConformanceAdvice groups={advice} />
+
         <div className="mt-3 overflow-hidden rounded-lg border border-border bg-popover">
           {detail.reports.map((report) => (
             <SavedSuiteRow
               key={report.suiteKind}
               report={report}
+              loadReport={loadReport}
               runSettled={
                 detail.status === "completed" ||
                 detail.status === "timed_out" ||
@@ -428,12 +441,15 @@ function SavedSuiteRow({
   report,
   runSettled,
   cases,
+  loadReport,
 }: {
   report: SavedSuiteReport;
   /** The run as a whole is over, so an unsettled suite will never finish. */
   runSettled: boolean;
   /** Checks already in hand, as in a shared artifact; skips the fetch. */
   cases?: SavedReportCase[];
+  /** Shares the page's fetch of this report. */
+  loadReport?: LoadReport;
 }) {
   const copy = SUITE_COPY[report.suiteKind as keyof typeof SUITE_COPY] ?? {
     title: report.suiteKind,
@@ -513,7 +529,9 @@ function SavedSuiteRow({
         />
       ) : (
         <SuiteReportCases
+          suiteKind={report.suiteKind}
           reportUrl={report.reportUrl}
+          loadReport={loadReport}
           inlineCases={cases}
           incompleteReason={report.incompleteReason}
           load={expanded || override !== null}
@@ -537,6 +555,7 @@ type SharedSuiteReport = {
     couldNotRun?: number;
   };
   groups?: Array<{ cases?: SavedReportCase[] }>;
+  advisories?: unknown;
 };
 
 type SharedConformanceArtifact = {
@@ -629,6 +648,14 @@ export function ConformanceSharedPage({ token }: { token: string }) {
         }
         serverName="Shared run"
         version={run.protocolVersion ?? "Auto"}
+      />
+      <ConformanceAdvice
+        groups={reportAdviceGroups(
+          suiteKinds.map((kind) => ({
+            suiteKind: kind,
+            advisories: reports[kind]!.advisories,
+          })),
+        )}
       />
       {suiteKinds.length > 0 ? (
         <div className="overflow-hidden rounded-lg border border-border bg-popover">

@@ -1,32 +1,25 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { isMissingInputCheck, missingInputMessage } from "@mcpjam/sdk/browser";
-import { fetchArtifact } from "@/lib/artifact-urls";
 import { StatusIcon } from "./conformance-ui";
 import { UnscoredTag, NotRunTag } from "./ConformanceCheckRows";
-
-export type SavedReportCase = {
-  id: string;
-  title: string;
-  status: string;
-  skipReason?: string;
-  error?: string;
-  details?: unknown;
-  /** Left out of the score: a profile's pending check or an unscored OAuth step. */
-  pending?: boolean;
-};
+import type { LoadReport, SavedReportCase } from "./use-saved-run-reports";
 
 /**
- * The checks of a saved suite, read from its report artifact. Fetched the
- * first time the row opens, not on page load.
+ * The checks of a saved suite, read from the page's cached report when its
+ * row first opens. Shared reports supply their checks inline.
  */
 export function SuiteReportCases({
+  suiteKind,
   reportUrl,
+  loadReport,
   inlineCases,
   incompleteReason,
   load,
 }: {
+  suiteKind: string;
   reportUrl?: string | null;
+  loadReport?: LoadReport;
   inlineCases?: SavedReportCase[];
   incompleteReason: string | null;
   load: boolean;
@@ -44,15 +37,10 @@ export function SuiteReportCases({
   const onlyMissingInput = unrun.length > 0 && unrun.every(isMissingInputCheck);
   useEffect(() => {
     if (inlineCases || !load || !reportUrl || fetched !== null) return;
+    if (!loadReport) return;
     let cancelled = false;
-    fetchArtifact(reportUrl)
-      .then((response) => {
-        // An expired link answers with an error body; never show that as the
-        // report. `fetchArtifact` renews the link and retries once.
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.json();
-      })
-      .then((json: { groups?: Array<{ cases?: SavedReportCase[] }> }) => {
+    loadReport(suiteKind, reportUrl)
+      .then((json) => {
         if (cancelled) return;
         setCases((json.groups ?? []).flatMap((group) => group.cases ?? []));
       })
@@ -62,7 +50,7 @@ export function SuiteReportCases({
     return () => {
       cancelled = true;
     };
-  }, [inlineCases, load, reportUrl, fetched]);
+  }, [inlineCases, load, reportUrl, fetched, loadReport, suiteKind]);
 
   return (
     <div>

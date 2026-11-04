@@ -1118,6 +1118,41 @@ describe("MCPTasksConformanceTest", () => {
     ).toBe(true);
   });
 
+  it("does not send the unknown-id mutations when their advice was not picked", async () => {
+    const mutatedIds: string[] = [];
+    const manager = extensionManager({
+      updateTask: async (_serverId: string, taskId: string) => {
+        mutatedIds.push(taskId);
+        throw rpcErrorValue(-32602, "unknown task");
+      },
+      cancelTaskExt: async (_serverId: string, taskId: string) => {
+        mutatedIds.push(taskId);
+        throw rpcErrorValue(-32602, "unknown task");
+      },
+    });
+    const config = {
+      toolName: "long_job",
+      pollTimeoutMs: 1000,
+      checkIds: ["tasks-invalid-task-id-rejected"],
+    };
+
+    const unpicked = await runAgainst(manager, {
+      config: { ...config, readinessIds: [] },
+    });
+    expect(statusMap(unpicked)["tasks-invalid-task-id-rejected"]).toBe(
+      "passed"
+    );
+    expect(mutatedIds).toEqual([]);
+
+    await runAgainst(manager, {
+      config: {
+        ...config,
+        readinessIds: ["tasks-readiness-unknown-task-id-mutations"],
+      },
+    });
+    expect(mutatedIds).toHaveLength(2);
+  });
+
   it("reports a connection failure as a failed run", async () => {
     vi.spyOn(operations, "withEphemeralClient").mockRejectedValue(
       new Error("connect refused") as never

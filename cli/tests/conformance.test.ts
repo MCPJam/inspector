@@ -92,6 +92,58 @@ test("buildConfig preserves validated conformance filters", () => {
   assert.deepEqual(config.checkIds, ["ping"]);
 });
 
+test("buildConfig runs all advice when no advice id is given", () => {
+  const config = buildConfig({ url: "https://example.com/mcp" });
+  assert.equal("readinessIds" in config, false);
+});
+
+test("buildConfig rejects unknown advice ids, and another suite's", () => {
+  for (const adviceId of [
+    ["bogus"],
+    ["tasks-readiness-failed-status-message"],
+    [""],
+  ]) {
+    assert.throws(
+      () => buildConfig({ url: "https://example.com/mcp", adviceId }),
+      (error) =>
+        error instanceof CliError && error.message.includes("advice id"),
+    );
+  }
+  // The error names the valid ids, so a typo needs no trip to the docs.
+  assert.throws(
+    () => buildConfig({ url: "https://example.com/mcp", adviceId: ["bogus"] }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Valid advice ids: readiness-"),
+  );
+});
+
+test("protocol conformance threads repeated --advice-id into readinessIds", async () => {
+  let captured: ReturnType<typeof buildConfig> | undefined;
+  const program = buildConformanceCommand((options) => {
+    captured = buildConfig(options as Parameters<typeof buildConfig>[0]);
+  });
+
+  await program.parseAsync(
+    [
+      "protocol",
+      "conformance",
+      "--url",
+      "https://example.com/mcp",
+      "--advice-id",
+      "readiness-tool-order-deterministic",
+      "--advice-id",
+      "readiness-log-level-filtering",
+    ],
+    { from: "user" },
+  );
+
+  assert.deepEqual(captured?.readinessIds, [
+    "readiness-tool-order-deterministic",
+    "readiness-log-level-filtering",
+  ]);
+});
+
 test("buildConfig loads access-token auth from a credentials file", async () => {
   const credentialsFile = await writeCredentialsJson({
     version: 1,

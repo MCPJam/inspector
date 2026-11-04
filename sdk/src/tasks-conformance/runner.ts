@@ -2112,7 +2112,17 @@ export class MCPTasksConformanceTest {
                 )
               );
             } else {
-              const probe = await this.probeUnknownTaskId(manager, serverId);
+              // The mutating calls only feed advice, so a run that left that
+              // advice out must not send them.
+              const pickedAdvice = this.config.readinessIds;
+              const probe = await this.probeUnknownTaskId(
+                manager,
+                serverId,
+                !pickedAdvice ||
+                  pickedAdvice.includes(
+                    "tasks-readiness-unknown-task-id-mutations"
+                  )
+              );
               // tasks.md:795 — `-32602` is a MUST for `tasks/get` and only a
               // SHOULD for the two mutating methods, so the same wrong answer
               // is a failure on one and advice on the others.
@@ -2882,7 +2892,9 @@ export class MCPTasksConformanceTest {
    */
   private async probeUnknownTaskId(
     manager: MCPClientManager,
-    serverId: string
+    serverId: string,
+    /** Also send `tasks/update` and `tasks/cancel` for the unknown id. */
+    probeMutations: boolean
   ): Promise<{
     taskId: string;
     get: {
@@ -2926,6 +2938,9 @@ export class MCPTasksConformanceTest {
     };
 
     const get = await observe(() => manager.getTaskExt(serverId, taskId));
+    if (!probeMutations) {
+      return { taskId, get, mutations: [], detail: { get } };
+    }
     const update = await observe(() =>
       manager.updateTask(serverId, taskId, {} as never)
     );
