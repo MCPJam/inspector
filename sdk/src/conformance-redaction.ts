@@ -198,7 +198,7 @@ export function redactUrlSecrets(value: string): string {
     const fragment = parsed.hash.slice(1);
     // Only treat it as parameters when it actually looks like them; a plain
     // `#section-2` anchor must survive untouched.
-    if (/^[^=&]+=[^&]*(?:&[^=&]+=[^&]*)*$/.test(fragment)) {
+    if (fragment.includes("=")) {
       const redacted = redactParams(fragment);
       if (redacted !== null) {
         parsed.hash = `#${redacted}`;

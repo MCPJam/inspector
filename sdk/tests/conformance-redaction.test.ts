@@ -446,3 +446,22 @@ it("preserves safe fragment encodings when redacting a credential", () => {
     "https://example.com/#codeVerifier=%5BREDACTED%5D&label=hello%20world&plus=a+b&encoded=%2f"
   );
 });
+
+it.each([
+  "x-api-key=live-key&flag",
+  "flag&x-api-key=live-key",
+  "x-api-key=live-key&",
+])(
+  "redacts fragment credentials alongside valueless fields: %s",
+  (fragment) => {
+    const result = redactSharedServerUrl(`https://example.com/#${fragment}`);
+    expect(result).not.toContain("live-key");
+    expect(result).toContain("REDACTED");
+    if (fragment.includes("flag")) expect(result).toContain("flag");
+  }
+);
+it("keeps plain anchors unchanged", () => {
+  expect(redactSharedServerUrl("https://example.com/#section-2")).toBe(
+    "https://example.com/#section-2"
+  );
+});
