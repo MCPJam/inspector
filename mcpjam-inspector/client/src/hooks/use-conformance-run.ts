@@ -216,7 +216,7 @@ export function useConformanceRun({
         : state;
     setProtocol(expire); setApps(expire); setTasks(expire); setOAuth(expire);
   });
-  const { clear: clearDeadline, budget: runBudget } = deadline;
+  const { clear: clearDeadline, budget: runBudget, isExpired } = deadline;
 
   const beginRun = useCallback(() => {
     clearDeadline();
@@ -230,8 +230,8 @@ export function useConformanceRun({
   const isRunActive = useCallback(
     (runToken: number, serverName: string) =>
       latestRunTokenRef.current === runToken &&
-      activeServerNameRef.current === serverName,
-    [],
+      activeServerNameRef.current === serverName && !isExpired(),
+    [isExpired],
   );
 
   const skippedOAuthRunTokenRef = useRef<number | null>(null);
@@ -755,8 +755,11 @@ export function useConformanceRun({
     const parts = [protocolScore, appsScore, tasksScore, oauthScore].filter(
       (part): part is ConformanceScore => part !== undefined,
     );
-    return parts.length > 0 ? pooledConformanceScore(parts) : undefined;
-  }, [protocolScore, appsScore, tasksScore, oauthScore]);
+    const incomplete = [protocol, apps, tasks, oauth].some((suite) => suite.verdict === "incomplete" && !suite.result);
+    if (!parts.length && !incomplete) return undefined;
+    const pooled = pooledConformanceScore(parts);
+    return incomplete && pooled.outcome !== "failed" ? { ...pooled, outcome: "incomplete" as const } : pooled;
+  }, [protocolScore, appsScore, tasksScore, oauthScore, protocol, apps, tasks, oauth]);
 
   const isRunning =
     protocol.status === "running" ||

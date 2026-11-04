@@ -4755,3 +4755,28 @@ it("does not carry an unsaved timeout into another project without unmounting", 
   fireEvent.click(screen.getByRole("button", { name: "Run timeout" }));
   expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(90);
 });
+
+
+it("rejects a late suite response before a delayed deadline timer fires", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(0);
+    setupSuccessfulRunMocks();
+    let finishApps: (value: unknown) => void = () => {};
+    mockRunApps.mockImplementation(() => new Promise((resolve) => { finishApps = resolve; }));
+    const server = createHttpServer();
+    const { result } = renderHook(() => useConformanceRun({ server, runTimeoutSeconds: 1 }));
+    await act(async () => { void result.current.runAll(); });
+    expect(result.current.protocol.status).toBe("done");
+    await act(async () => {
+      vi.setSystemTime(1_001);
+      finishApps({ success: true, result: createAppsResult() });
+    });
+    expect(result.current.apps.status).toBe("error");
+    expect(result.current.apps.verdict).toBe("incomplete");
+    expect(result.current.pooledScore?.outcome).toBe("incomplete");
+    expect(result.current.protocol.status).toBe("done");
+  } finally {
+    vi.useRealTimers();
+  }
+});

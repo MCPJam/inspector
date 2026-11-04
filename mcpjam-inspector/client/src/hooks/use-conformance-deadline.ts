@@ -49,23 +49,27 @@ export function useConformanceDeadline(onExpire: (message: string) => void) {
     },
     [clear],
   );
+  const isExpired = useCallback(() => {
+    const run = current.current;
+    if (!run || Date.now() < run.endsAt) return false;
+    clearTimeout(run.timer);
+    current.current = null;
+    const message = `Run timed out after ${run.seconds} seconds`;
+    expireRef.current(message);
+    run.controller.abort(new Error(message));
+    return true;
+  }, []);
   const budget = useCallback((): ConformanceRunBudget => {
     const run = current.current;
     if (!run) return {};
-    if (Date.now() >= run.endsAt && !run.controller.signal.aborted) {
-      clearTimeout(run.timer);
-      current.current = null;
-      const message = `Run timed out after ${run.seconds} seconds`;
-      expireRef.current(message);
-      run.controller.abort(new Error(message));
-    }
+    isExpired();
     run.controller.signal.throwIfAborted();
     return {
       runTimeoutSeconds: run.seconds,
       remainingRunTimeoutMs: Math.max(1, run.endsAt - Date.now()),
       signal: run.controller.signal,
     };
-  }, []);
+  }, [isExpired]);
   useEffect(() => clear, [clear]);
-  return { start, clear, budget, runTimeoutSeconds };
+  return { start, clear, budget, isExpired, runTimeoutSeconds };
 }
