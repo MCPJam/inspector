@@ -11,11 +11,11 @@
  *    `--bridge-state-dir`): the new bridge supersedes it. If that one was
  *    paused on an approval, the user sent a new message instead of deciding,
  *    so the approval is void;
- *  - every other bridge that is between turns — its `bridge-meta.json` says
+ *  - other bridges that are between turns without a valid warm lease — their `bridge-meta.json` says
  *    `waiting` (or `starting`/`init`/`done`), or names a different pid, which
  *    means a newer bridge of that session replaced it. A between-turns session
- *    loses nothing: its next turn resumes from disk on a fresh bridge
- *    (`diskResumeState`).
+ *    loses nothing: its next turn resumes from disk on a fresh bridge.
+ *    A matching process identity with an unexpired warm lease is retained.
  *
  * It never stops a bridge whose meta says `running`. The backend reserves a
  * computer for one harness run at a time, so while a bridge is being spawned
@@ -40,6 +40,7 @@
  */
 
 import { posix } from "node:path";
+import { processBirthIdentity, WARM_BRIDGE_WINDOW_MS } from "./warm-bridge.js";
 
 /** How long a SIGTERM'd bridge gets to exit before SIGKILL. */
 export const BRIDGE_REAP_GRACE_MS = 3_000;
@@ -51,6 +52,7 @@ const own = process.argv[1];
 const sessionsRoot = process.argv[2];
 const graceMs = Number(process.argv[3]);
 const IDLE = new Set(["starting", "init", "waiting", "done"]);
+const birth = ${processBirthIdentity.toString()};
 let pids = [];
 try { pids = fs.readdirSync("/proc").filter((p) => /^[0-9]+$/.test(p) && Number(p) !== process.pid); } catch {}
 const reap = [];
@@ -65,6 +67,14 @@ for (const pid of pids) {
   let meta;
   try { meta = JSON.parse(fs.readFileSync(dir + "/bridge-meta.json", "utf8")); } catch { continue; }
   const superseded = typeof meta.pid === "number" && meta.pid !== Number(pid);
+  if (!superseded && IDLE.has(meta.state)) {
+    try {
+      const warm = JSON.parse(fs.readFileSync(dir + "/mcpjam-warm.json", "utf8"));
+      const born = birth(fs.readFileSync("/proc/" + pid + "/stat", "utf8"));
+      if (warm.pid === Number(pid) && warm.birthIdentity === born &&
+          warm.expiresAt > Date.now() && warm.expiresAt <= Date.now() + ${WARM_BRIDGE_WINDOW_MS}) continue;
+    } catch { /* Without a valid warm identity, an idle bridge resumes from disk. */ }
+  }
   if (superseded || IDLE.has(meta.state)) reap.push(Number(pid));
 }
 const alive = (pid) => {

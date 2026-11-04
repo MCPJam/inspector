@@ -117,6 +117,7 @@ import {
   type HarnessBrokerBox,
 } from "./harness-model-broker.js";
 import { OrgLeaseTurn } from "./org-lease-turn.js";
+import { withWarmBridgeRuntime } from "./warm-bridge-runtime.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
 import {
   emitError,
@@ -2723,10 +2724,11 @@ export async function runHarnessTurn(
             })
           : [],
       );
-      let harnessRuntime =
+      const createRuntime = (startupTimeoutMs?: number) =>
         harnessAdapter.mcpDelivery === "harness" &&
         harnessAdapter.mcpNativeDelivery === "session-config"
           ? harnessAdapter.createHarness({
+              startupTimeoutMs,
               modelId,
               auth,
               mcpJson,
@@ -2740,6 +2742,7 @@ export async function runHarnessTurn(
               ...org.runtimeField(),
             })
           : harnessAdapter.createHarness({
+              startupTimeoutMs,
               modelId,
               auth,
               permissionMode,
@@ -2753,6 +2756,11 @@ export async function runHarnessTurn(
                 ? { sandboxPolicy: commandSandboxPolicy }
                 : {}),
             });
+      let harnessRuntime = !localPrepared && harnessAdapter.supportsWarmBridge
+        ? withWarmBridgeRuntime(createRuntime, JSON.stringify({
+            runtimeFingerprint, auth,
+          }))
+        : createRuntime();
       if (elicitationServerIds.size > 0 && onHarnessElicitation) {
         harnessRuntime = withHarnessElicitation(harnessRuntime, {
           keyToServerId: harnessKeyToServerId,
@@ -3329,11 +3337,11 @@ export async function runHarnessTurn(
         try {
           session = await agent.createSession({
             sessionId: resumable.harnessSessionId,
-            // Hosted too, not only local: see `diskResumeState`. An approval
-            // continuation (above) still reattaches to its paused bridge.
-            resumeFrom: diskResumeState(
-              sessionResumeStateFrom(resumable.resumeState),
-            ),
+            // Hosted warm adapters validate identity and bound attach themselves.
+            // Local and unsupported adapters retain disk-only recovery.
+            resumeFrom: localPrepared || !harnessAdapter.supportsWarmBridge
+              ? diskResumeState(sessionResumeStateFrom(resumable.resumeState))
+              : sessionResumeStateFrom(resumable.resumeState),
           } as unknown as Parameters<typeof agent.createSession>[0]);
           resumedSession = true;
         } catch (resumeErr) {
