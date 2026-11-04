@@ -213,6 +213,17 @@ describe("credentials that survived the first pass", () => {
     expect(out).toContain("access_token=");
   });
 
+  it.each(["x-api-key", "X-API-KEY", "api-key"])(
+    "redacts a %s query parameter",
+    (name) => {
+      const out = redactUrlSecrets(
+        `https://mcp.example.com/mcp?${name}=live-key-value`
+      );
+      expect(out).not.toContain("live-key-value");
+      expect(out).toContain(`${name}=`);
+    }
+  );
+
   it("leaves a plain anchor alone", () => {
     const url = "https://docs.example.com/guide#section-2";
     expect(redactUrlSecrets(url)).toBe(url);

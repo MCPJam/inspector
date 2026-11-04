@@ -137,10 +137,11 @@ function isSecretKeyName(raw: string): boolean {
 }
 
 function looksSensitiveParam(name: string): boolean {
-  const normalized = name.toLowerCase();
-  if (SECRET_QUERY_PARAMS.has(normalized)) return true;
-  return /(token|secret|password|apikey|api_key|auth|signature)/.test(
-    normalized
+  if (SECRET_QUERY_PARAMS.has(name.toLowerCase())) return true;
+  // Compared without separators, like `isSecretKeyName`: `x-api-key` and
+  // `X-API-KEY` are the same credential as `api_key`.
+  return /(token|secret|password|apikey|auth|signature)/.test(
+    normalizeKey(name)
   );
 }
 
