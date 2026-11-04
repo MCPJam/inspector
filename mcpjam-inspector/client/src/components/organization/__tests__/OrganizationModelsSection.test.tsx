@@ -294,7 +294,7 @@ describe("OrganizationModelsSection", () => {
       mocks.pathname = "/organizations/org_1/models";
     });
 
-    it("mounts the AI keys card between the header and the provider list", () => {
+    it("keeps provider setup before the AI keys card", () => {
       render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
 
       const header = screen.getByRole("heading", { name: "AI providers" });
@@ -306,8 +306,8 @@ describe("OrganizationModelsSection", () => {
         Boolean(
           a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING,
         );
-      expect(follows(header, policy)).toBe(true);
-      expect(follows(policy, providers)).toBe(true);
+      expect(follows(header, providers)).toBe(true);
+      expect(follows(firstProvider, policy)).toBe(true);
       expect(follows(providers, firstProvider)).toBe(true);
       expect(
         screen.getByRole("switch", {
@@ -341,7 +341,7 @@ describe("OrganizationModelsSection", () => {
           a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING,
         );
       expect(follows(policy, defaultModel)).toBe(true);
-      expect(follows(defaultModel, providers)).toBe(true);
+      expect(follows(providers, policy)).toBe(true);
       expect(
         within(defaultModel).getByTestId("org-ai-model-default"),
       ).toBeInTheDocument();

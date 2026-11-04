@@ -146,7 +146,7 @@ function harnessGuidance(
     case "unconfigured":
     case "unsupported": {
       const fix = canManage
-        ? "Add a direct Anthropic provider for Claude Code or an OpenAI provider for Codex below."
+        ? "Add a direct Anthropic provider for Claude Code or an OpenAI provider for Codex in Providers."
         : "Ask an organization admin to add a direct Anthropic provider for Claude Code or an OpenAI provider for Codex.";
       return `${fix} ${HARNESS_NOT_SUPPORTED_GUIDANCE}`;
     }
@@ -254,7 +254,7 @@ export function featureGuidance(
       }
       const fix = noEligibleProvider
         ? canManage
-          ? "Add a direct cloud provider below."
+          ? "Add a direct cloud provider in Providers."
           : "Ask an organization admin to add a direct cloud provider."
         : canManage
           ? "None of the organization's providers can serve this feature. Add a direct cloud provider that can."
@@ -268,7 +268,7 @@ export function featureGuidance(
     }
     case "invalid_credentials":
       return canManage
-        ? "The provider rejected its stored credentials. Update the key below."
+        ? "The provider rejected its stored credentials. Update the key in Providers."
         : "The provider rejected its stored credentials. Ask an organization admin to update the key.";
     case "temporarily_unavailable":
       return "The provider is rate-limited or failing. Try again shortly.";

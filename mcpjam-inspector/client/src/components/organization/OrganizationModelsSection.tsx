@@ -357,12 +357,6 @@ function OrganizationProviderSettings({
           </SettingsPageDescription>
         </CardHeader>
 
-        <OrganizationAiCards
-          organizationId={organizationId}
-          isAdmin={isAdmin}
-          providers={providers}
-        />
-
         <CardContent className="space-y-1 p-0">
           <h2 className="pb-2 text-sm font-medium text-muted-foreground">
             Providers
@@ -430,6 +424,11 @@ function OrganizationProviderSettings({
             </>
           )}
         </CardContent>
+        <OrganizationAiCards
+          organizationId={organizationId}
+          isAdmin={isAdmin}
+          providers={providers}
+        />
       </Card>
 
       {/* Config dialog for known providers */}
