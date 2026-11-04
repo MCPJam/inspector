@@ -61,6 +61,7 @@ import {
 import {
   isHostedBrowserExposable,
   isHostedBrowserRefused,
+  isHostedBrowserVerdictStale,
 } from "../computers/runtime-config.js";
 import { type ExecutionScope } from "../execution-scope.js";
 import {
@@ -699,17 +700,28 @@ export function resolveHostTools(
       // gate the inspector route reads treats it the same way, and two callers
       // disagreeing about the same silence is how a browser gets exposed that
       // the other half believes is closed.
-      if (!isLocalBrowser && isHostedBrowserRefused()) {
+      //
+      // A stale verdict is not checked for a run that already holds its own
+      // desktop box: the runner asked before booking it, and refusing now
+      // leaves that box paid for and idle until the run ends.
+      const boxBooked =
+        ctx.sandboxBinding?.runtimeKind === "desktop-browser" &&
+        Boolean(ctx.sandboxBinding.sandboxRowId);
+      if (!isLocalBrowser && isHostedBrowserRefused({ boxBooked })) {
         // Said separately, because they are different facts and only one of
         // them is the backend's answer. A `null` verdict means we never got an
-        // answer — an older backend, or bootstrap not yet run — and reporting
-        // that as "the backend reports it is not exposable" sends whoever
-        // reads this log looking at a setting nobody has set.
+        // answer — an older backend, or bootstrap not yet run — and a stale
+        // one means the backend stopped answering. Reporting either as "the
+        // backend reports it is not exposable" sends whoever reads this log
+        // looking at a setting nobody has set.
         const answered = isHostedBrowserExposable() === false;
+        const stale = !answered && isHostedBrowserVerdictStale();
         logger.warn(
           answered
             ? "[built-in-tools] browser suppressed: the backend reports it is not exposable"
-            : "[built-in-tools] browser suppressed: no exposure verdict from the backend yet",
+            : stale
+              ? "[built-in-tools] browser suppressed: the backend's exposure verdict is out of date"
+              : "[built-in-tools] browser suppressed: no exposure verdict from the backend yet",
           { projectId: ctx.projectId },
         );
         ctx.onToolSuppressed?.({
@@ -717,8 +729,11 @@ export function resolveHostTools(
           reason: answered
             ? "browser is not available on this deployment yet: the backend reports " +
               "the hosted browser runtime is not fully configured."
-            : "browser is not available on this deployment yet: this server has no " +
-              "exposure verdict from the backend.",
+            : stale
+              ? "browser is not available on this deployment right now: this " +
+                "server's exposure verdict from the backend is out of date."
+              : "browser is not available on this deployment yet: this server has no " +
+                "exposure verdict from the backend.",
         });
         continue;
       }
