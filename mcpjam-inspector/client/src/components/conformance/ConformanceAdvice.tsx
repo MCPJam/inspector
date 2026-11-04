@@ -72,7 +72,12 @@ export function reportAdviceGroups(
               {
                 id: advisory.id,
                 title: advisory.title,
-                specStrength: advisory.status,
+                specStrength:
+                  suiteKind === "protocol" &&
+                  advisory.id === "readiness-deprecated-feature-use" &&
+                  advisory.status === "SHOULD"
+                    ? "Deprecation Notice"
+                    : advisory.status,
                 message:
                   typeof advisory.message === "string" ? advisory.message : "",
               },
@@ -143,8 +148,7 @@ export function ConformanceAdvice({ groups }: { groups: AdviceGroup[] }) {
       <p className="px-4 pb-4 pl-11 text-sm text-muted-foreground">
         None of these fail a check. Suggested (<SpecWord word="SHOULD" />) means
         the spec asks for it. Optional (<SpecWord word="MAY" />) means it helps
-        but the spec doesn't require it. A deprecation notice means the spec
-        will remove something the server still uses.
+        but the spec doesn't require it.
       </p>
       <Collapse open={open}>
         <ul className="border-t border-border/60 px-4">
