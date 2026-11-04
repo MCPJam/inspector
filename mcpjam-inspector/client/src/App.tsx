@@ -78,7 +78,7 @@ import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconci
 import { TracingTab } from "./components/TracingTab";
 import { WebmcpInspectorTab } from "./components/webmcp-inspector/WebmcpInspectorTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
-import type { ConformanceConnectServer } from "./components/conformance/ConformancePanel";
+import { createConformanceConnector } from "./components/conformance/connect-conformance-server";
 import { ConformanceTab } from "./components/conformance/ConformanceTab";
 import { ServerDetailModal } from "./components/connection/ServerDetailModal";
 import {
@@ -343,7 +343,6 @@ import {
 import {
   buildElectronMcpCallbackUrl,
   resolveEffectiveWireProtocolVersion,
-  type EnsureServersReadyResult,
 } from "./hooks/use-server-state";
 import { disconnectAllRuntimeServers } from "./state/mcp-api";
 import {
@@ -717,6 +716,9 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
     case "learning":
       return <LearningRoute />;
     case "conformance":
+      if (pathname.startsWith(`${routePaths.conformanceShared}/`)) {
+        return <ConformanceSharedRoute />;
+      }
       return <ConformanceRoute />;
     case "compatibility":
       return <CompatibilityRoute />;
@@ -1676,7 +1678,7 @@ function EvaluateRouteContent() {
 
 export function ConformanceRoute() {
   const {
-    appState,
+    displayServerConfigs: serverConfigs,
     selectedServerEntry,
     setSelectedServer,
     convexProjectId,
@@ -1685,25 +1687,33 @@ export function ConformanceRoute() {
     handleUpdate,
     handleDisconnect,
     handleReconnect,
+    reconnectServerWithResult,
   } = useAppRouteContext();
   const {
     servers: projectServers,
     serversByName,
     serversById,
     isLoading: projectServersLoading,
+    isBootstrapping: projectServersBootstrapping,
   } = useProjectServers({
     isAuthenticated,
     projectId: convexProjectId,
   });
   const navigate = useAppNavigate();
-  const { defaultsByServer, defaultsLoaded, lastRunByServer, saveDefaults } =
-    useConformanceServerData({
-      projectId: convexProjectId,
-      serversById,
-      serversByName,
-    });
+  const {
+    defaultsByServer,
+    inputsByServer,
+    loadDefaults,
+    lastRunByServer,
+    saveDefaults,
+  } = useConformanceServerData({
+    projectId: convexProjectId,
+    serversById,
+    serversByName,
+    serversLoading: projectServersLoading || projectServersBootstrapping,
+  });
   // The name the edit form is open on, plus the server as it was then: a
-  // rename drops the old name from `appState.servers` before the new one
+  // rename drops the old name from the project's servers before the new one
   // lands, and without the snapshot the form would close mid-save.
   const [editing, setEditing] = useState<{
     name: string;
@@ -1712,14 +1722,21 @@ export function ConformanceRoute() {
   const savedServerId = selectedServerEntry?.name
     ? (serversByName.get(selectedServerEntry.name) ?? null)
     : null;
-  // The page picks its server from its own select, not the header tabs, and
-  // offers every server: Run connects one that is not connected.
-  const servers = Object.values<ServerWithName>(appState.servers);
+  // The display catalog keeps saved servers across refreshes and includes
+  // runtime-only connections when local mode has no active project.
+  const servers = Object.values<ServerWithName>(serverConfigs);
+  // Each server's logo, as it announced it when it connected (the Servers
+  // tab's cards use the same one). Servers without one show initials.
+  const serverIcons: Record<string, string> = {};
+  for (const server of servers) {
+    const src = server.initializationInfo?.serverVersion?.icons?.[0]?.src;
+    if (src) serverIcons[server.name] = src;
+  }
   const editingServer = editing
-    ? (appState.servers[editing.name] ?? editing.snapshot)
+    ? (serverConfigs[editing.name] ?? editing.snapshot)
     : undefined;
   const editServer = (name: string) => {
-    const server = appState.servers[name];
+    const server = serverConfigs[name];
     if (server) setEditing({ name, snapshot: server });
   };
   // Follows a rename the way the Servers tab's form does: the new name while
@@ -1735,17 +1752,14 @@ export function ConformanceRoute() {
       serversByName.get(editing.snapshot.name) ??
       null)
     : null;
-  const connectServer: ConformanceConnectServer = async (name, options) => {
-    const result: EnsureServersReadyResult = await ensureServersReady(
-      [name],
-      options?.signIn ? { allowInteractiveOAuthFlow: true } : undefined,
-    );
-    if (result.readyServerNames.includes(name)) return "ready";
-    return result.reauthServerNames.includes(name) ? "reauth" : "failed";
-  };
+  const connectServer = createConformanceConnector({
+    ensureServersReady,
+    reconnectServerWithResult,
+  });
   return (
     <>
       <ConformanceTab
+        key={convexProjectId ?? "local"}
         server={selectedServerEntry ?? null}
         servers={servers}
         onSelectServer={setSelectedServer}
@@ -1766,13 +1780,18 @@ export function ConformanceRoute() {
           ) : undefined
         }
         serverDefaults={defaultsByServer}
-        serverDefaultsLoaded={defaultsLoaded}
+        serverInputs={inputsByServer}
+        onLoadServerDefaults={loadDefaults}
+        isSavedServer={(name) => serversByName.has(name)}
         onSaveServerDefaults={saveDefaults}
         lastRuns={lastRunByServer}
         projectServerNames={projectServers?.map(
           (server: { name: string }) => server.name,
         )}
-        projectServersLoading={projectServersLoading}
+        projectServersLoading={
+          projectServersLoading || projectServersBootstrapping
+        }
+        serverIcons={serverIcons}
         onViewRun={
           convexProjectId
             ? (runId) =>
@@ -1795,7 +1814,7 @@ export function ConformanceRoute() {
           }}
           onDisconnect={handleDisconnect}
           onReconnect={handleReconnect}
-          existingServerNames={Object.keys(appState.servers)}
+          existingServerNames={Object.keys(serverConfigs)}
           projectId={convexProjectId ?? null}
           // Saving an auth change on a server with hidden headers reveals
           // them by row id.
@@ -1807,11 +1826,21 @@ export function ConformanceRoute() {
 }
 
 export function ConformanceRunDetailRoute() {
-  const { convexProjectId, isAuthenticated } = useAppRouteContext();
-  const { serversById } = useProjectServers({
-    isAuthenticated,
-    projectId: convexProjectId,
-  });
+  const { convexProjectId, isAuthenticated, appState, ensureServersReady } =
+    useAppRouteContext();
+  const { serversById, serversByName, isLoading, isBootstrapping } =
+    useProjectServers({
+      isAuthenticated,
+      projectId: convexProjectId,
+    });
+  // The run's server Settings, the same defaults the Conformance page reads.
+  const { defaultsByServer, inputsByServer, loadDefaults, saveDefaults } =
+    useConformanceServerData({
+      projectId: convexProjectId,
+      serversById,
+      serversByName,
+      serversLoading: isLoading || isBootstrapping,
+    });
   const params = useParams<{ runId?: string }>();
   const pathname = getRouteFallbackPathname();
   const raw =
@@ -1821,6 +1850,32 @@ export function ConformanceRunDetailRoute() {
       runId={decodeParam(raw) ?? raw}
       projectId={convexProjectId}
       serverNames={serversById}
+      serversLoading={isLoading || isBootstrapping}
+      serverSettings={
+        saveDefaults
+          ? {
+              defaults: defaultsByServer,
+              loaded: true,
+              inputs: inputsByServer,
+              load: loadDefaults,
+              servers: appState.servers,
+              connect: async (name, options) => {
+                const result = await ensureServersReady(
+                  [name],
+                  options?.signIn
+                    ? { allowInteractiveOAuthFlow: true }
+                    : undefined,
+                );
+                return result.readyServerNames.includes(name)
+                  ? "ready"
+                  : result.reauthServerNames.includes(name)
+                    ? "reauth"
+                    : "failed";
+              },
+              save: saveDefaults,
+            }
+          : undefined
+      }
     />
   );
 }
@@ -3090,6 +3145,12 @@ export default function App() {
     window.location.pathname.length > 1
       ? window.location.pathname.replace(/\/+$/, "")
       : window.location.pathname;
+  // A conformance share link is public, so its reader need not have the
+  // Conformance beta. The bare `/conformance/shared` is the same page once the
+  // token is stripped from the address bar.
+  const isConformanceSharedRoute =
+    barePathname === routePaths.conformanceShared ||
+    barePathname.startsWith(`${routePaths.conformanceShared}/`);
   const isBareCaniuseRoute =
     barePathname === routePaths.embedHostCompare ||
     barePathname === routePaths.embedScore ||
@@ -3100,7 +3161,7 @@ export default function App() {
     barePathname.startsWith(`${routePaths.embedBench}/`) ||
     barePathname.startsWith(`${routePaths.benchResults}/`) ||
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
-    barePathname.startsWith(`${routePaths.conformanceShared}/`) ||
+    isConformanceSharedRoute ||
     barePathname.startsWith(`${routePaths.evalsShared}/`) ||
     barePathname.startsWith(`${routePaths.capabilities}/`);
   // The WorkOS Initiate Login URL, where an IdP-initiated login (the Okta app
@@ -4833,11 +4894,14 @@ export default function App() {
   ];
   const telemetryProjectIds = [convexProjectId];
   const telemetryActor = isWorkOsLoading ? undefined : (actorKey ?? null);
+  // A guest reading someone else's shared page keeps replay off, whatever
+  // the viewer's own policy says.
+  const isSharedLinkRoute = isScenarioChatRoute || isConformanceSharedRoute;
   const telemetryPrivacy = useTelemetryPrivacyContext({
     // Content and identity still need answers on surfaces with replay off.
     enabled: true,
     actor: telemetryActor,
-    sharedLink: isScenarioChatRoute,
+    sharedLink: isSharedLinkRoute,
     membershipKey: telemetryMembershipKey(loadedOrganizations),
     projectIds: telemetryProjectIds,
     organizationIds: telemetryOrganizationIds,
@@ -4848,7 +4912,7 @@ export default function App() {
       {
         projectIds: telemetryProjectIds,
         organizationIds: telemetryOrganizationIds,
-        sharedLink: isScenarioChatRoute,
+        sharedLink: isSharedLinkRoute,
       },
       telemetryPrivacy.actor,
       telemetryPrivacy.answered ? telemetryPrivacy.policy?.content : undefined,
@@ -4881,7 +4945,7 @@ export default function App() {
   useSessionPrivacy(
     resolveSessionPrivacy({
       surface: recordingSurface(),
-      sharedLink: isScenarioChatRoute,
+      sharedLink: isSharedLinkRoute,
       recording: telemetryRecording,
     }),
     {
@@ -5745,7 +5809,11 @@ export default function App() {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "client-config") {
       navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (activeTab === "conformance" && conformanceEnabled !== true) {
+    } else if (
+      activeTab === "conformance" &&
+      !isConformanceSharedRoute &&
+      conformanceEnabled === false
+    ) {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (
       activeTab === "compatibility" &&
@@ -5765,6 +5833,7 @@ export default function App() {
     }
   }, [
     conformanceEnabled,
+    isConformanceSharedRoute,
     compatibilityEnabled,
     defaultHubRoute,
     registryEnabled,
@@ -6169,7 +6238,8 @@ export default function App() {
     ]);
 
   const playgroundServerSelectorProps = useMemo(():
-    PlaygroundServerSelectorProps | undefined => {
+    | PlaygroundServerSelectorProps
+    | undefined => {
     if (activeTab !== "playground") return undefined;
     return {
       serverConfigs: displayServerConfigs,
@@ -6260,6 +6330,14 @@ export default function App() {
   }
 
   if (isLoading && !isHostedChatRoute && !isFirstRunOAuthReturnActive) {
+    return <LoadingScreen />;
+  }
+
+  if (
+    activeTab === "conformance" &&
+    !isConformanceSharedRoute &&
+    conformanceEnabled === undefined
+  ) {
     return <LoadingScreen />;
   }
 
@@ -6488,6 +6566,7 @@ export default function App() {
     handleOrganizationDeleted,
     handleProjectShared,
     handleReconnect,
+    reconnectServerWithResult,
     handleRuntimeDisconnect,
     handleRefreshTokensFromOAuthFlow,
     handleRemoveServer,

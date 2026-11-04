@@ -1,4 +1,5 @@
 import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
+import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 import { AdmissionWaitBudget } from "../services/sessionSimulation/admission-retry.js";
@@ -711,6 +712,12 @@ const MODEL_RETIRED_CODE = "model_retired";
  */
 const ORG_MODEL_NOT_ALLOWED_CODE = "model_not_allowed";
 
+/**
+ * Backend refusal code (convex `stream/routes.ts`, `lib/llmCallShell.ts`): a
+ * guest's request is over the guest input-token cap. Arrives as HTTP 413.
+ */
+const GUEST_INPUT_TOO_LARGE_CODE = "guest_input_too_large";
+
 export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
@@ -770,6 +777,10 @@ export function describeBackendStreamFailure(
     return describeAsSlug("provider/model_retired", detail);
   if (code === ORG_MODEL_NOT_ALLOWED_CODE)
     return describeAsSlug("org/model_not_allowed", detail);
+  // Same trap at 413: `USER_OWNED_DENIAL_CODES` lists this code, but that set
+  // only exempts a 200, so the 413 reached `internal/unknown` and paged.
+  if (code === GUEST_INPUT_TOO_LARGE_CODE)
+    return describeAsSlug("account/guest_input_too_large", detail);
 
   if (status !== undefined && status >= 500) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
@@ -917,6 +928,9 @@ function applyToolRefresh(
 }
 
 export interface MCPJamHandlerOptions {
+  harnessStartupRequestId?: string;
+  /** Effective saved App declaration, qualified by the caller's installed handlers. */
+  harnessHostCapabilities?: import("@/shared/harness-host-capabilities").HarnessHostCapabilityQualification;
   /** Durable callers must finish this write before the next external effect. */
   durableCheckpoint?: (state: {
     phase: "model" | "tools" | "ready" | "complete";
@@ -1224,6 +1238,7 @@ export interface MCPJamHandlerOptions {
    * host's intent directly.
    */
   requireToolApproval?: boolean;
+  requireNativeToolDiscovery?: boolean;
   /**
    * Host/client policy for eligible MCP tool-result content/resources.
    * Controls only model-facing tool output; raw results remain available to
@@ -5249,6 +5264,7 @@ export async function runChatEngineLoop(
   options: MCPJamHandlerOptions,
   streamSink: "ui" | "none",
 ): Promise<ChatEngineLoopResult> {
+  assertNativeDiscovery({ required: options.requireNativeToolDiscovery });
   const {
     messages,
     modelId,
@@ -6214,6 +6230,7 @@ export async function handleMCPJamFreeChatModel(
   options = { ...options, harness: dispatch.harnessId };
   assertAgentLoopResume(options.agentLoop, Boolean(options.scopeStepUpResume));
   const useHarness = Boolean((options.agentLoop ?? options.harness) && !options.scopeStepUpResume);
+  if (!useHarness) assertNativeDiscovery({ required: options.requireNativeToolDiscovery });
   const result = await (useHarness
     ? runHarnessTurn(options, "ui")
     : runChatEngineLoop(options, "ui"));

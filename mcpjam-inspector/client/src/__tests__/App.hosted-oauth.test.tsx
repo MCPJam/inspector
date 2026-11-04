@@ -17,6 +17,7 @@ import userEvent from "@testing-library/user-event";
 import { toast as sonnerToast } from "sonner";
 import { RouterProvider } from "react-router";
 import App from "../App";
+import { resolveSessionPrivacy } from "@/lib/session-privacy";
 import { useApiContext } from "../hooks/hosted/use-hosted-api-context";
 import {
   beginOrganizationDeletion,
@@ -319,6 +320,15 @@ vi.mock("posthog-js/react", () => ({
   // These tests don't exercise that wall, so control (undefined) is fine.
   useFeatureFlagVariantKey: () => undefined,
 }));
+
+// Pass-through, so a test can see which context the shell resolved replay for.
+vi.mock("@/lib/session-privacy", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/session-privacy")>();
+  return {
+    ...actual,
+    resolveSessionPrivacy: vi.fn(actual.resolveSessionPrivacy),
+  };
+});
 
 vi.mock("@/lib/analytics", () => ({
   track: mockTrack,
@@ -6032,6 +6042,49 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
   });
 
+  it.each([
+    { path: "/conformance", enabled: true },
+    { path: "/conformance/runs/saved-run", enabled: true },
+    { path: "/conformance", enabled: false },
+    { path: "/conformance/runs/saved-run", enabled: false },
+  ])(
+    "waits for the conformance flag on $path before resolving to $enabled",
+    async ({ path, enabled }) => {
+      clearHostedOAuthPendingState();
+      clearScenarioSession();
+      window.history.replaceState({}, "", `${path}?view=history#saved`);
+      mockPosthogState.featureFlags.hasLoadedFlags = false;
+      let conformanceFlag: boolean | undefined;
+      mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+        flag === "mcpjam-conformance" ? conformanceFlag : false,
+      );
+
+      const { rerender } = render(<App />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(window.location.pathname).toBe(path);
+      expect(window.location.search).toBe("?view=history");
+      expect(window.location.hash).toBe("#saved");
+      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+      expect(screen.queryByRole("tab", { name: "Overview" })).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: "Run conformance checks" }),
+      ).toBeNull();
+
+      conformanceFlag = enabled;
+      mockPosthogState.featureFlags.hasLoadedFlags = true;
+      rerender(<App />);
+      await waitFor(() => {
+        expect(window.location.pathname).toBe(enabled ? path : "/home");
+      });
+      if (enabled) {
+        expect(window.location.search).toBe("?view=history");
+        expect(window.location.hash).toBe("#saved");
+      }
+    },
+  );
+
   it("redirects conformance to home when the feature flag is disabled", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
@@ -6045,6 +6098,28 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(window.location.pathname).toBe("/home");
     });
+  });
+
+  it.each([false, undefined])("keeps a conformance share link open when its flag is %s", async (conformanceFlag) => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/conformance/shared/share-token");
+    mockHandleOAuthCallback.mockReset();
+
+    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+      flag === "mcpjam-conformance" ? conformanceFlag : false,
+    );
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Conformance report" }),
+    ).toBeInTheDocument();
+    expect(window.location.pathname).toMatch(/^\/conformance\/shared/);
+    // A guest's replay follows the shared-link rule, not their own policy.
+    expect(vi.mocked(resolveSessionPrivacy)).toHaveBeenCalledWith(
+      expect.objectContaining({ sharedLink: true }),
+    );
   });
 
   it("leaves the conformance server choice to the page, so the last-selected server is restored", async () => {
@@ -6068,6 +6143,7 @@ describe("App hosted OAuth callback handling", () => {
       beta: connected("beta"),
     };
     appState.projectServers = appState.appState.servers;
+    appState.displayServerConfigs = appState.projectServers;
     mockUseAppState.mockReturnValue(appState);
 
     render(<App />);

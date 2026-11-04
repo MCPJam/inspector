@@ -1,3 +1,4 @@
+import { MCPJAM_CLOUD_API_URL } from "../deployment/address.js";
 import type {
   JudgeBacktestRequest,
   JudgeBacktestReport,
@@ -179,7 +180,7 @@ import type {
   PlatformRegistryInstall,
 } from "./types.js";
 
-export const DEFAULT_PLATFORM_API_BASE_URL = "https://app.mcpjam.com/api/v1";
+export const DEFAULT_PLATFORM_API_BASE_URL = MCPJAM_CLOUD_API_URL;
 
 /**
  * Parse a request URL, tolerating a relative `baseUrl`.

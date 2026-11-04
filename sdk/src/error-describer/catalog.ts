@@ -130,6 +130,9 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   "provider/mcpjam_limit": "user_config",
   "provider/mcpjam_platform_budget": "user_config",
   "account/suspended": "user_config",
+  // The guest input cap refused the request before any provider work. Signing
+  // in, or sending less, is the fix.
+  "account/guest_input_too_large": "user_config",
   "provider/mcpjam_limit_daily": "user_config",
   "provider/mcpjam_limit_monthly": "user_config",
   "provider/mcpjam_limit_insufficient": "user_config",
@@ -449,11 +452,13 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "Wrong host/port in the server URL.",
       "Firewall is silently dropping packets.",
+      "Your network allows outbound traffic only through a proxy.",
       "Server is overloaded and never accepted the connection.",
     ],
     [
       "Verify the URL is reachable from your machine (e.g. `curl`).",
       "Check firewall / VPN rules.",
+      "From the MCPJam CLI behind a corporate proxy, set `HTTPS_PROXY` to it, and list hosts that must connect directly in `NO_PROXY`.",
     ],
     "etimedout",
   ),
@@ -948,6 +953,25 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     "account/suspended", "Account suspended",
     "This account has been suspended by MCPJam.", ["Support has suspended this account."],
     ["Contact founders@mcpjam.com for support."], "account-suspended", "warning",
+  ),
+  // The backend's `guest_input_too_large` code (HTTP 413). Retrying sends the
+  // same request, so each next step makes it smaller or lifts the cap.
+  "account/guest_input_too_large": entry(
+    "account/guest_input_too_large",
+    "Request too large for a guest",
+    "This request is larger than MCPJam allows for guests. Sign in to remove the limit, or send less.",
+    [
+      "Connected servers add their tool definitions to every request, and those count toward the guest limit.",
+      "A tool returned a large result, and it is sent back to the model with the next request.",
+      "The conversation has grown past the guest limit.",
+    ],
+    [
+      "Sign in to remove the guest limit.",
+      "Have the tool return less, or disconnect servers this request doesn't need.",
+      "In chat, start a new chat or shorten the conversation.",
+    ],
+    "request-too-large-for-a-guest",
+    "warning",
   ),
   "provider/mcpjam_limit": entry(
     "provider/mcpjam_limit",

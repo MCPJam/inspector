@@ -22,16 +22,20 @@ import {
   type MCPConformanceConfig,
   type MCPConformanceResult,
   type MCPCheckId,
+  type MCPReadinessId,
   type MCPServerConfig,
   type McpProtocolVersion,
   type MCPTasksConformanceConfig,
   type MCPTasksConformanceResult,
   type OAuthConformanceConfig,
+  type MCPOAuthReadinessId,
   type OAuthConformanceProfile,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
+import type { ConformanceProbes } from "./conformance-probes.js";
 import {
   createSession,
+  deleteSession,
   getSession,
   touchSession,
   setSessionError,
@@ -136,6 +140,7 @@ export type CompleteOAuthConformanceResult =
 // ── Protocol ────────────────────────────────────────────────────────────
 
 export interface ResolvedHttpConfig {
+  signal?: AbortSignal;
   serverUrl: string;
   accessToken?: string;
   customHeaders?: Record<string, string>;
@@ -143,6 +148,10 @@ export interface ResolvedHttpConfig {
   protocolVersion?: McpProtocolVersion;
   /** Run only these checks; absent ⇒ every check the revision has. */
   checkIds?: MCPCheckId[];
+  /** Run only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds?: MCPReadinessId[];
+  /** Per-check limit in ms; absent ⇒ the SDK default. */
+  checkTimeout?: number;
 }
 
 export class UnsupportedTransportError extends Error {
@@ -161,14 +170,24 @@ export function assertHttpSupported(
 }
 
 export async function runProtocolConformance(
-  input: ResolvedHttpConfig,
+  input: ResolvedHttpConfig & ConformanceProbes,
 ): Promise<{ result: MCPConformanceResult }> {
   const config: MCPConformanceConfig = {
     serverUrl: input.serverUrl,
+    signal: input.signal,
     accessToken: input.accessToken,
     customHeaders: input.customHeaders,
     protocolVersion: input.protocolVersion,
+    ...(input.checkTimeout ? { checkTimeout: input.checkTimeout } : {}),
     ...(input.checkIds ? { checkIds: input.checkIds } : {}),
+    ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
+    ...(input.logProbe ? { logProbe: input.logProbe } : {}),
+    ...(input.inputRequiredProbe
+      ? { inputRequiredProbe: input.inputRequiredProbe }
+      : {}),
+    ...(input.toolCallProbe
+      ? { fixtures: { toolCalls: [input.toolCallProbe] } }
+      : {}),
     // Checking the URL the caller named is not the same as checking the
     // addresses we end up dialing: a target can answer `302 Location:
     // http://169.254.169.254/`. This re-checks each hop. A no-op outside hosted
@@ -188,16 +207,33 @@ export async function runProtocolConformance(
   return { result };
 }
 
+/** A run pin overrides saved accept-lists without changing the main connection. */
+function pinSuiteVersion<T extends MCPServerConfig>(
+  config: T,
+  protocolVersion?: McpProtocolVersion,
+): T {
+  return protocolVersion && "url" in config && config.url != null
+    ? {
+        ...config,
+        mcpProtocolVersion: protocolVersion,
+        supportedProtocolVersions: [protocolVersion],
+      }
+    : config;
+}
+
 // ── Apps ────────────────────────────────────────────────────────────────
 
-export async function runAppsConformance(
-  serverConfig: MCPAppsConformanceConfig,
-): Promise<{ result: MCPAppsConformanceResult }> {
+export async function runAppsConformance({
+  protocolVersion,
+  ...serverConfig
+}: MCPAppsConformanceConfig & {
+  protocolVersion?: McpProtocolVersion;
+}): Promise<{ result: MCPAppsConformanceResult }> {
   // The apps suite is entirely client-driven — it has no raw probes — so
   // before `baseFetch` existed there was no seam at all to guard it through,
   // and a hosted apps run dialled the target with nothing in front of it.
   const test = new MCPAppsConformanceTest({
-    ...serverConfig,
+    ...pinSuiteVersion(serverConfig, protocolVersion),
     baseFetch: serverConfig.baseFetch ?? createConformanceFetch("MCP server"),
   });
   const result = await test.run();
@@ -242,11 +278,14 @@ export async function runLocalDirectoryReadiness(input: {
 
 // ── Tasks ───────────────────────────────────────────────────────────────
 
-export async function runTasksConformance(
-  serverConfig: MCPTasksConformanceConfig,
-): Promise<{ result: MCPTasksConformanceResult }> {
+export async function runTasksConformance({
+  protocolVersion,
+  ...serverConfig
+}: MCPTasksConformanceConfig & {
+  protocolVersion?: McpProtocolVersion;
+}): Promise<{ result: MCPTasksConformanceResult }> {
   const test = new MCPTasksConformanceTest({
-    ...serverConfig,
+    ...pinSuiteVersion(serverConfig, protocolVersion),
     baseFetch: serverConfig.baseFetch ?? createConformanceFetch("MCP server"),
   });
   const result = await test.run();
@@ -263,11 +302,19 @@ export interface StartOAuthConformanceInput {
   /** Public callback URL that the authorization server will redirect to. */
   redirectUrl: string;
   oauthProfile?: OAuthConformanceProfile;
+  /** Report only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds?: MCPOAuthReadinessId[];
   /**
    * Hosted only: the caller starting the run (`principalKey`). Only that
    * caller can then deliver its code or read its result. Local runs omit it.
    */
   owner?: string;
+  /**
+   * Hosted only: runs once the session waits for the user, before the URL is
+   * returned, so later calls can reach this run from any replica. If it
+   * throws, the session is dropped and the error surfaces from this call.
+   */
+  onAuthorizationNeeded?: (session: OAuthConformanceSession) => Promise<void>;
 }
 
 export async function startOAuthConformance(
@@ -311,6 +358,7 @@ export async function startOAuthConformance(
     // verifying the server *rejects* bad input is half of OAuth conformance.
     // The runner only reaches them once the happy path passes end to end.
     oauthConformanceChecks: true,
+    ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
     // The OAuth suite dials URLs it DISCOVERS — authorization, token,
     // registration and metadata endpoints all come out of the target's own
     // documents — so the profile URL it was handed is the one address here that
@@ -350,6 +398,14 @@ export async function startOAuthConformance(
   ]);
 
   if (outcome === "authorization_needed" && session.authorizationUrl) {
+    if (input.onAuthorizationNeeded) {
+      try {
+        await input.onAuthorizationNeeded(session);
+      } catch (error) {
+        deleteSession(session.id);
+        throw error;
+      }
+    }
     return {
       phase: "authorization_needed",
       sessionId: session.id,

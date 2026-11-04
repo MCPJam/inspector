@@ -6,6 +6,7 @@ import {
 import { authorizationFlowDigest } from "@/lib/oauth/flow-digest";
 import {
   getScopeStepUpHostBridge,
+  resolveCredentialBinding,
   whenChatTurnsSettle,
 } from "@/lib/scope-step-up";
 import {
@@ -13,6 +14,7 @@ import {
   type StepUpCredentialBinding,
 } from "@/lib/scope-step-up-credential";
 import {
+  releasePendingChatAuthRequiredClick,
   setPendingChatScopeStepUpCredentialBinding,
   setPendingChatScopeStepUpFlowDigest,
   settlePendingChatScopeStepUpAfterCallback,
@@ -90,22 +92,21 @@ export async function connectAuthChallenge(
       };
   }
 
+  // Every exit below that leaves the page in place hands the chat call back
+  // to its card; only a redirect has a callback coming to settle it.
+  const releaseChatClick = () => {
+    if (card.continuationId)
+      releasePendingChatAuthRequiredClick(card.continuationId);
+  };
+
   // The binding is resolved before anything is saved: a hosted credential
   // that is not this user's is never replaced, and its call is not replayed.
+  // Ownership the bridge cannot confirm, with no bridge or no resolver,
+  // binds as shared, the rule every step-up follows.
   const bridge = getScopeStepUpHostBridge();
-  let binding: StepUpCredentialBinding = card.connectionId
-    ? { kind: "owned", credentialId: card.connectionId }
+  const binding: StepUpCredentialBinding = card.connectionId
+    ? await resolveCredentialBinding(server, card.connectionId)
     : { kind: "none" };
-  if (card.connectionId && bridge?.resolveCredentialBinding) {
-    try {
-      binding = await bridge.resolveCredentialBinding(
-        server,
-        card.connectionId,
-      );
-    } catch {
-      binding = { kind: "shared", credentialId: card.connectionId };
-    }
-  }
 
   // Saved before the redirect, so the callback has something to settle.
   const savedReplay = Boolean(
@@ -136,6 +137,7 @@ export async function connectAuthChallenge(
         pendingReplay,
       );
     } catch (error) {
+      releaseChatClick();
       if (error instanceof PendingDirectReplayConflictError)
         return { kind: "failed", message: error.message };
       dropSavedReplay();
@@ -160,8 +162,11 @@ export async function connectAuthChallenge(
       binding,
       card.continuationId,
     );
-  if (card.continuationId && !bound)
+  if (card.continuationId && !bound) {
+    dropSavedReplay();
+    releaseChatClick();
     return { kind: "failed", message: CHAT_AUTH_RECOVERY_MESSAGE };
+  }
   // A chat redirect waits for the streaming turn to end and persist: leaving
   // mid-stream would lose the transcript holding the suspended tool call.
   if (card.surface === "chat") await whenChatTurnsSettle();
@@ -209,6 +214,7 @@ export async function connectAuthChallenge(
       outcome.reauthorization.kind !== "redirect"
     ) {
       dropSavedReplay();
+      releaseChatClick();
     }
     if (outcome.kind === "blocked") {
       return { kind: "blocked", hint: outcome.hint };
@@ -229,6 +235,7 @@ export async function connectAuthChallenge(
     return expired ? { kind: "expired" } : { kind: "started" };
   } catch (error) {
     dropSavedReplay();
+    releaseChatClick();
     track("auth_challenge_failed", {
       location: card.surface,
       source: card.signal.source,

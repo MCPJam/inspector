@@ -213,6 +213,35 @@ describe("OAuthConformanceTest", () => {
       "authenticated_mcp_request",
       "complete",
     ]);
+
+    // The metadata does not advertise RFC 9207 `iss`: advice, read off what
+    // discovery already fetched.
+    expect(result.readiness).toEqual([
+      expect.objectContaining({
+        id: "readiness-oauth-iss-advertised",
+        title: "Authorization Response iss",
+        specStrength: "SHOULD",
+        details: { issuer: expect.stringContaining("auth.example.com") },
+      }),
+    ]);
+    // Left out, it is not reported.
+    const quiet = await new OAuthConformanceTest(
+      {
+        serverUrl,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "cimd",
+        auth: { mode: "headless" },
+        fetchFn,
+        readinessIds: [],
+      },
+      {
+        completeHeadlessAuthorization: jest.fn(async () => ({
+          code: "auth-code",
+        })),
+      }
+    ).run();
+    expect(quiet.passed).toBe(true);
+    expect(quiet.readiness).toBeUndefined();
   });
 
   it("fails early when CIMD is requested but AS does not advertise client_id_metadata_document_supported", async () => {

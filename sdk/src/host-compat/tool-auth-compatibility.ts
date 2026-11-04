@@ -1,9 +1,12 @@
+import type { HostCompatCatalog } from "./catalog.js";
+import type { HostCompatTool } from "./server-requirements.js";
+import { weakestProvenance } from "./evaluator.js";
 import type {
-  HostCompatTool,
   CompatFinding,
+  CompatLane,
+  CompatLaneVerdict,
   CompatProvenance,
-  HostCompatCatalog,
-} from "../host-compat/index.js";
+} from "./types.js";
 import {
   AUTH_CHALLENGE_POLICY_DEFAULTS,
   authChallengePolicyFrom,
@@ -38,7 +41,7 @@ export function toolResultAuthChallengeFindings(
     hostLabel: string;
     provenance: CompatProvenance;
     mcpProfile?: unknown;
-  },
+  }
 ): CompatFinding[] {
   const declared = authChallengePolicyFrom(host.mcpProfile);
   const action =
@@ -54,8 +57,8 @@ export function toolResultAuthChallengeFindings(
             securitySchemes: tool.securitySchemes,
             _meta: tool._meta,
           },
-        }),
-      ),
+        })
+      )
     )
     .map((tool) => tool.name)
     .sort();
@@ -68,7 +71,7 @@ export function toolResultAuthChallengeFindings(
       code: "tool_result_auth_challenge_ignored",
       title: "Sign-in challenges in tool results are shown as errors",
       detail: `${host.hostLabel} shows a tool result carrying _meta["mcp/www_authenticate"] as an ordinary error and does not start sign-in from it. These tools declare an oauth2 security scheme, the pattern that asks for sign-in that way: ${relying.join(
-        ", ",
+        ", "
       )}.`,
       remediation:
         'To ask for sign-in in the way the MCP spec defines, refuse the unauthenticated call with HTTP 401 and a `WWW-Authenticate: Bearer resource_metadata="…"` header; hosts that read the _meta challenge can be served it alongside.',
@@ -88,11 +91,12 @@ export function withToolResultAuthChallengeFindings<
     hostLabel: string;
     provenance: CompatProvenance;
     findings: CompatFinding[];
+    lanes?: Record<CompatLane, CompatLaneVerdict>;
   },
 >(
   reports: readonly Report[],
   tools: readonly HostCompatTool[],
-  catalog: HostCompatCatalog,
+  catalog: HostCompatCatalog
 ): Report[] {
   return reports.map((report) => {
     const host = Object.hasOwn(catalog.hostsById, report.hostId)
@@ -103,8 +107,26 @@ export function withToolResultAuthChallengeFindings<
       provenance: report.provenance,
       mcpProfile: host?.mcpProfile,
     });
-    return extra.length > 0
-      ? { ...report, findings: [...report.findings, ...extra] }
-      : report;
+    if (extra.length === 0) return report;
+    // The verdict stays; the server lane's provenance is the weakest among
+    // its findings, so an `assumed` finding lowers it.
+    return {
+      ...report,
+      findings: [...report.findings, ...extra],
+      ...(report.lanes
+        ? {
+            lanes: {
+              ...report.lanes,
+              server: {
+                ...report.lanes.server,
+                provenance: weakestProvenance(
+                  extra,
+                  report.lanes.server.provenance
+                ),
+              },
+            },
+          }
+        : {}),
+    };
   });
 }

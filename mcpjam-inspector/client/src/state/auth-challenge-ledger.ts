@@ -136,7 +136,7 @@ function writeAuthChallengeLedger(entry: AuthChallengeLedgerEntry): boolean {
 
 /** Without its ledger entry a repeat challenge after sign-in would prompt again. */
 const AUTH_CHALLENGE_SAVE_FAILED_MESSAGE =
-  "MCPJam couldn’t save this sign-in. Please try again.";
+  "Could not save the sign-in. Try again.";
 
 function clearAuthChallengeLedger(operation: AuthChallengeOperation): void {
   try {

@@ -43,6 +43,7 @@ export interface OutcomeCheckLike {
   status: "passed" | "failed" | "skipped";
   skipReason?: ConformanceSkipReason;
   error?: { message: string };
+  details?: unknown;
 }
 
 /** Selected, applicable, and never exercised. */

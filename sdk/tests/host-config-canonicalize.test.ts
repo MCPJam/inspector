@@ -1037,7 +1037,7 @@ describe("canonicalizeHostConfigV2 — mid-session sign-in knobs", () => {
           new RegExp(
             `mcpProfile\\.${key} must be one of ${modes
               .join(", ")
-              .replace(/\+/g, "\\+")}`
+              .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`
           )
         );
       }
