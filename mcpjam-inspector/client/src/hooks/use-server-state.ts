@@ -3552,6 +3552,7 @@ export function useServerState({
       updateServerOAuthTrace,
       useLocalFallback,
       withProjectConnectionDefaults,
+      effectiveServers,
     ],
   );
 
@@ -3747,11 +3748,7 @@ export function useServerState({
               digest,
             )
           ) {
-            consumeOAuthCallbackParams(callbackAttempt);
-            navigateApp(
-              resolveHostedOAuthReturnPath(hostedOAuthCallbackContext!),
-              { replace: true },
-            );
+            leaveFailedCallback();
             return;
           }
           if (hostedOAuthCallbackContext?.suppressErrorToast !== true) {
