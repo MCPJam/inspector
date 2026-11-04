@@ -1,9 +1,34 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { isMissingInputCheck, missingInputMessage } from "@mcpjam/sdk/browser";
-import { StatusIcon } from "./conformance-ui";
-import { UnscoredTag, NotRunTag } from "./ConformanceCheckRows";
+import { isMissingInputCheck } from "@mcpjam/sdk/browser";
+import { isRecord } from "@/lib/host-capabilities";
+import { CheckRow, type CheckRowResult } from "./ConformanceCheckRows";
 import type { LoadReport, SavedReportCase } from "./use-saved-run-reports";
+
+function savedCheckRowResult(check: SavedReportCase): CheckRowResult {
+  let details = check.details;
+  let warnings: string[] | undefined;
+  if (isRecord(details)) {
+    const { details: nested, warnings: savedWarnings, ...metadata } = details;
+    // Reports wrap live fields; keep their markers where CheckRow reads them.
+    details = isRecord(nested)
+      ? { ...nested, ...metadata }
+      : nested === undefined
+        ? metadata
+        : { details: nested, ...metadata };
+    warnings = Array.isArray(savedWarnings)
+      ? savedWarnings.filter(
+          (warning): warning is string => typeof warning === "string",
+        )
+      : undefined;
+  }
+  return {
+    ...check,
+    error: check.error ? { message: check.error } : undefined,
+    details,
+    warnings,
+  };
+}
 
 /**
  * The checks of a saved suite, read from the page's cached report when its
@@ -78,49 +103,11 @@ export function SuiteReportCases({
         </p>
       ) : (
         cases.map((check) => (
-          <div
+          <CheckRow
             key={check.id}
-            className="flex items-start gap-2.5 border-b border-border/60 py-1.75 pl-7 pr-1 last:border-0"
-          >
-            <span className="mt-0.5">
-              <StatusIcon
-                status={check.status}
-                skipReason={
-                  isMissingInputCheck(check) ? undefined : check.skipReason
-                }
-                muted={check.pending === true}
-              />
-            </span>
-            {isMissingInputCheck(check) ? (
-              <NotRunTag />
-            ) : check.pending ? (
-              <UnscoredTag />
-            ) : null}
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span
-                className={
-                  check.status === "skipped" &&
-                  (isMissingInputCheck(check) ||
-                    check.skipReason !== "could-not-run")
-                    ? "text-[13px] text-muted-foreground"
-                    : "text-[13px]"
-                }
-              >
-                {check.title}
-              </span>
-              {check.error ? (
-                <span
-                  className={
-                    check.status === "failed" && !check.pending
-                      ? "text-[13px] font-medium text-red-600 dark:text-red-400"
-                      : "text-[13px] text-muted-foreground"
-                  }
-                >
-                  {missingInputMessage(check) ?? check.error}
-                </span>
-              ) : null}
-            </span>
-          </div>
+            check={savedCheckRowResult(check)}
+            pending={check.pending}
+          />
         ))
       )}
     </div>

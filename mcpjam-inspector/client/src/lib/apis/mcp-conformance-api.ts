@@ -123,9 +123,17 @@ export async function runProtocolConformance(
 
 export async function runAppsConformance(
   serverNameOrId: string,
-  options?: { checkIds?: MCPAppsCheckId[] },
+  options?: {
+    checkIds?: MCPAppsCheckId[];
+    protocolVersion?: McpProtocolVersion;
+  },
 ): Promise<{ success: boolean; result: MCPAppsConformanceResult }> {
-  const checkFields = options?.checkIds ? { checkIds: options.checkIds } : {};
+  const checkFields = {
+    ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
+    ...(options?.protocolVersion
+      ? { protocolVersion: options.protocolVersion }
+      : {}),
+  };
   return runByMode({
     local: () =>
       localPost("/api/mcp/conformance/apps", {
@@ -150,6 +158,7 @@ export async function runAppsConformance(
 export async function runTasksConformance(
   serverNameOrId: string,
   options?: {
+    protocolVersion?: McpProtocolVersion;
     toolName?: string;
     toolArguments?: Record<string, unknown>;
     inputResponses?: Record<string, unknown>;
@@ -159,6 +168,9 @@ export async function runTasksConformance(
   },
 ): Promise<{ success: boolean; result: MCPTasksConformanceResult }> {
   const optionFields = {
+    ...(options?.protocolVersion
+      ? { protocolVersion: options.protocolVersion }
+      : {}),
     ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
     ...(options?.readinessIds ? { readinessIds: options.readinessIds } : {}),
     ...(options?.toolName ? { toolName: options.toolName } : {}),

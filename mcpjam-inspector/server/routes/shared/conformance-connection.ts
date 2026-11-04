@@ -1,13 +1,14 @@
 import {
   describeError,
   isMCPAuthError,
+  isKnownProtocolVersion,
   withEphemeralClient,
   type HttpServerConfig,
-  type McpProtocolVersion,
 } from "@mcpjam/sdk";
 import {
   readProtocolVersionRefusal,
   type ConformanceConnectionResult,
+  type ConformanceProtocolSelection,
 } from "../../../shared/conformance-connection.js";
 import { HOSTED_MODE, WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
 import { describeHostedConnectFailure } from "../../utils/hosted-connect-failure.js";
@@ -17,24 +18,49 @@ import { isProtocolVersionPinFailure } from "../../../shared/protocol-version-pi
 /** A separate client keeps a draft run's pin out of the main connection. */
 export async function checkConformanceConnection(
   config: HttpServerConfig,
-  protocolVersion: McpProtocolVersion,
+  protocolVersion: ConformanceProtocolSelection,
 ): Promise<ConformanceConnectionResult> {
   try {
     return await withEphemeralClient(
       {
         ...config,
-        mcpProtocolVersion: protocolVersion,
-        supportedProtocolVersions: [protocolVersion],
+        mcpProtocolVersion:
+          protocolVersion === "auto" ? undefined : protocolVersion,
+        supportedProtocolVersions:
+          protocolVersion === "auto" ? undefined : [protocolVersion],
         timeout: WEB_CONNECT_TIMEOUT_MS,
         baseFetch: createConformanceFetch("MCP server"),
       },
-      async (): Promise<ConformanceConnectionResult> => ({ status: "ready" }),
+      async (manager, serverId): Promise<ConformanceConnectionResult> => {
+        const negotiated = manager.getNegotiatedProtocolVersion(serverId);
+        if (!negotiated || !isKnownProtocolVersion(negotiated)) {
+          return {
+            status: "failed",
+            message:
+              "The connection did not resolve a supported protocol version. Choose a version and try again.",
+          };
+        }
+        if (protocolVersion !== "auto" && negotiated !== protocolVersion) {
+          return {
+            status: "unsupported",
+            protocolVersion,
+            supportedVersions: [negotiated],
+          };
+        }
+        return { status: "ready", protocolVersion: negotiated };
+      },
       { timeout: WEB_CONNECT_TIMEOUT_MS },
     );
   } catch (error) {
     const normalized = describeError(error);
-    const refusal = readProtocolVersionRefusal(error, protocolVersion);
-    if (refusal || isProtocolVersionPinFailure(normalized)) {
+    const refusal = readProtocolVersionRefusal(
+      error,
+      protocolVersion === "auto" ? undefined : protocolVersion,
+    );
+    if (
+      protocolVersion !== "auto" &&
+      (refusal || isProtocolVersionPinFailure(normalized))
+    ) {
       return {
         status: "unsupported",
         protocolVersion,

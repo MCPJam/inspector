@@ -35,6 +35,7 @@ import {
 import type { ConformanceProbes } from "./conformance-probes.js";
 import {
   createSession,
+  deleteSession,
   getSession,
   touchSession,
   setSessionError,
@@ -206,16 +207,33 @@ export async function runProtocolConformance(
   return { result };
 }
 
+/** A run pin overrides saved accept-lists without changing the main connection. */
+function pinSuiteVersion<T extends MCPServerConfig>(
+  config: T,
+  protocolVersion?: McpProtocolVersion,
+): T {
+  return protocolVersion && "url" in config && config.url != null
+    ? {
+        ...config,
+        mcpProtocolVersion: protocolVersion,
+        supportedProtocolVersions: [protocolVersion],
+      }
+    : config;
+}
+
 // ── Apps ────────────────────────────────────────────────────────────────
 
-export async function runAppsConformance(
-  serverConfig: MCPAppsConformanceConfig,
-): Promise<{ result: MCPAppsConformanceResult }> {
+export async function runAppsConformance({
+  protocolVersion,
+  ...serverConfig
+}: MCPAppsConformanceConfig & {
+  protocolVersion?: McpProtocolVersion;
+}): Promise<{ result: MCPAppsConformanceResult }> {
   // The apps suite is entirely client-driven — it has no raw probes — so
   // before `baseFetch` existed there was no seam at all to guard it through,
   // and a hosted apps run dialled the target with nothing in front of it.
   const test = new MCPAppsConformanceTest({
-    ...serverConfig,
+    ...pinSuiteVersion(serverConfig, protocolVersion),
     baseFetch: serverConfig.baseFetch ?? createConformanceFetch("MCP server"),
   });
   const result = await test.run();
@@ -260,11 +278,14 @@ export async function runLocalDirectoryReadiness(input: {
 
 // ── Tasks ───────────────────────────────────────────────────────────────
 
-export async function runTasksConformance(
-  serverConfig: MCPTasksConformanceConfig,
-): Promise<{ result: MCPTasksConformanceResult }> {
+export async function runTasksConformance({
+  protocolVersion,
+  ...serverConfig
+}: MCPTasksConformanceConfig & {
+  protocolVersion?: McpProtocolVersion;
+}): Promise<{ result: MCPTasksConformanceResult }> {
   const test = new MCPTasksConformanceTest({
-    ...serverConfig,
+    ...pinSuiteVersion(serverConfig, protocolVersion),
     baseFetch: serverConfig.baseFetch ?? createConformanceFetch("MCP server"),
   });
   const result = await test.run();
@@ -288,6 +309,12 @@ export interface StartOAuthConformanceInput {
    * caller can then deliver its code or read its result. Local runs omit it.
    */
   owner?: string;
+  /**
+   * Hosted only: runs once the session waits for the user, before the URL is
+   * returned, so later calls can reach this run from any replica. If it
+   * throws, the session is dropped and the error surfaces from this call.
+   */
+  onAuthorizationNeeded?: (session: OAuthConformanceSession) => Promise<void>;
 }
 
 export async function startOAuthConformance(
@@ -371,6 +398,14 @@ export async function startOAuthConformance(
   ]);
 
   if (outcome === "authorization_needed" && session.authorizationUrl) {
+    if (input.onAuthorizationNeeded) {
+      try {
+        await input.onAuthorizationNeeded(session);
+      } catch (error) {
+        deleteSession(session.id);
+        throw error;
+      }
+    }
     return {
       phase: "authorization_needed",
       sessionId: session.id,

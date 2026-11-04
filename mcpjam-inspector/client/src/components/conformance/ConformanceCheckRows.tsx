@@ -10,18 +10,19 @@ import {
   ChevronRight,
   MinusCircle,
 } from "lucide-react";
-import type {
-  MCPAppsCheckResult,
-  MCPCheckResult,
-  MCPTasksCheckResult,
-  OAuthConformanceStepResult,
-} from "@mcpjam/sdk";
+import type { OAuthConformanceStepResult } from "@mcpjam/sdk";
 import {
   isTimedOutCheck,
   isMissingInputCheck,
   missingInputMessage,
 } from "@mcpjam/sdk/browser";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
+import { Button } from "@mcpjam/design-system/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@mcpjam/design-system/collapsible";
 import { cn } from "@/lib/utils";
 import { Collapse, StatusIcon } from "./conformance-ui";
 
@@ -36,6 +37,8 @@ export interface CatalogEntry {
 }
 
 function formatDetailLabel(label: string) {
+  if (label === "probes") return "Requests tested";
+  if (label === "taskId") return "Task ID";
   return label
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/[_-]+/g, " ")
@@ -195,19 +198,33 @@ export function NotRunTag() {
   );
 }
 
+/** Display fields shared by live checks and saved report cases. */
+export interface CheckRowResult {
+  id: string;
+  title: string;
+  status: string;
+  skipReason?: string;
+  description?: string;
+  durationMs?: number;
+  error?: { message: string };
+  details?: unknown;
+  warnings?: string[];
+}
+
 export function CheckRow({
   check,
   pending = false,
 }: {
-  check: MCPCheckResult | MCPAppsCheckResult | MCPTasksCheckResult;
+  check: CheckRowResult;
   pending?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const missingInput = isMissingInputCheck(check);
   const detailEntries = Object.entries(check.details ?? {}).filter(
     ([key]) => key !== "missingInput",
   );
-  const warnings = "warnings" in check ? check.warnings : undefined;
+  const warnings = check.warnings;
 
   return (
     <div className="border-b border-border/60 last:border-0">
@@ -249,7 +266,7 @@ export function CheckRow({
           ) : null}
         </span>
         {/* A skipped check never ran: its 0ms says nothing. */}
-        {check.status !== "skipped" && (
+        {check.status !== "skipped" && check.durationMs !== undefined && (
           <span className="flex-shrink-0 pt-0.5 text-xs text-muted-foreground">
             {check.durationMs}ms
           </span>
@@ -272,18 +289,41 @@ export function CheckRow({
           )}
 
           {detailEntries.length > 0 && (
-            <div className="rounded-sm bg-muted/20 px-2 py-1.5 space-y-1">
-              {detailEntries.map(([key, value]) => (
-                <div key={key} className="text-sm">
-                  <span className="font-medium text-foreground/80">
-                    {formatDetailLabel(key)}:
-                  </span>{" "}
-                  <span className="text-muted-foreground whitespace-pre-wrap break-words">
-                    {formatDetailValue(value)}
-                  </span>
-                </div>
-              ))}
-            </div>
+            <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
+              <CollapsibleTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="-ml-2 h-auto gap-1 px-2 py-1 text-sm text-muted-foreground"
+                >
+                  <ChevronRight
+                    aria-hidden="true"
+                    className={cn(
+                      "size-3.5 transition-transform motion-reduce:transition-none",
+                      detailsOpen && "rotate-90",
+                    )}
+                  />
+                  More details
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent forceMount>
+                <Collapse open={detailsOpen}>
+                  <div className="mt-1 rounded-sm bg-muted/20 px-2 py-1.5 space-y-1">
+                    {detailEntries.map(([key, value]) => (
+                      <div key={key} className="text-sm">
+                        <span className="font-medium text-foreground/80">
+                          {formatDetailLabel(key)}:
+                        </span>{" "}
+                        <span className="text-muted-foreground whitespace-pre-wrap break-words">
+                          {formatDetailValue(value)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </Collapse>
+              </CollapsibleContent>
+            </Collapsible>
           )}
 
           {warnings && warnings.length > 0 && (

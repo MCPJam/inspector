@@ -205,6 +205,7 @@ import { resolveTrustedClientIpHeader } from "./utils/client-ip.js";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
+import { stopLiveConformanceOAuthRuns } from "./services/conformance-oauth-rendezvous.js";
 import {
   isScheduledEvalsWorkerEnabled,
   startScheduledEvalsWorker,
@@ -1083,6 +1084,10 @@ async function shutdown() {
 
   appLogger.info("Shutting down gracefully...");
   try {
+    // First, and bounded internally: a hosted OAuth conformance run on this
+    // replica dies with it, and its user should hear so now rather than when
+    // the run's window expires.
+    await stopLiveConformanceOAuthRuns();
     // Inside the guarded path so a rejecting worker still reaches the rest of
     // shutdown rather than skipping straight to the force-exit deadline.
     await localServerCheckQueue.shutdown();
