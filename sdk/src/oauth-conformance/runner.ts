@@ -864,6 +864,7 @@ export class OAuthConformanceTest {
                     expectedState: state.state,
                     timeoutMs: this.config.stepTimeout,
                     openUrl: this.config.auth.openUrl,
+                    signal: this.config.signal,
                   })
                 : await (
                     this.deps.completeHeadlessAuthorization ??
@@ -894,6 +895,7 @@ export class OAuthConformanceTest {
               ),
             );
           } catch (error) {
+            this.config.signal?.throwIfAborted();
             updateState({
               currentStep: "received_authorization_code",
               error: error instanceof Error ? error.message : String(error),
