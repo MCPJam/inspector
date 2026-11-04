@@ -9,19 +9,12 @@ import { ChevronLeft } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import {
-  isHttpServer,
   type ConformanceSelection,
   type ProtocolVersionPin,
 } from "@/hooks/use-conformance-run";
-import {
-  probeInputStatus,
-  probeKeyFor,
-  probesApply,
-  tasksProbeRuns,
-  type ConformanceProbeKey,
-  type ConformanceProbes,
-} from "@/hooks/use-conformance-probes";
-import { ProbeCheckExtra, useProbeTools } from "./ConformanceProbeField";
+import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
+import type { ConformanceDefaults } from "@/hooks/use-conformance-server-data";
+import { ConformanceChecksEditor } from "./ConformanceChecksEditor";
 import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { toast } from "@/lib/toast";
 import { startConnectToast } from "@/lib/connect-toast";
@@ -37,7 +30,6 @@ import {
   RUN_LABEL,
 } from "./ConformancePageChrome";
 import {
-  ConformanceCheckPicker,
   checkCatalogs,
   nothingPicked,
 } from "./ConformanceCheckPicker";
@@ -59,6 +51,7 @@ export function ConformanceSetup({
   onConnectServer,
   onEditServer,
   probesFor,
+  onLoadDefaults,
   onCancel,
   onRun,
 }: {
@@ -86,6 +79,7 @@ export function ConformanceSetup({
   onEditServer?: (serverName: string) => void;
   /** The tools a server's checks may call, as last set for it. */
   probesFor?: (serverName: string) => ConformanceProbes;
+  onLoadDefaults?: (serverName: string) => Promise<ConformanceDefaults>;
   onCancel: () => void;
   onRun: (
     serverName: string,
@@ -97,9 +91,7 @@ export function ConformanceSetup({
   // The tools the checks that must call one may use, set in step 2's list,
   // and whether each one's arguments box (and the Tasks answers) parses.
   const [probes, setProbes] = useState<ConformanceProbes>({});
-  const [probeValid, setProbeValid] = useState<
-    Partial<Record<ConformanceProbeKey | "answers", boolean>>
-  >({});
+  const [inputsValid, setInputsValid] = useState(true);
   // A draft until Run, so Cancel leaves the page's selection as it was.
   const [serverName, setServerName] = useState(initialServerName);
   const [versionPin, setVersionPin] = useState(initialVersionPin);
@@ -117,17 +109,6 @@ export function ConformanceSetup({
   const serverLabelId = useId();
   const versionLabelId = useId();
   const picked = servers.find((server) => server.name === serverName);
-  // Only HTTP servers run the protocol suite, and the checks that call a
-  // tool run only on a pinned 2026-07-28 run, so only then is a protocol tool
-  // asked for. The Tasks suite runs on any server and pin, so its tool is
-  // asked for whenever a Tasks check that calls it is picked. One tools list
-  // serves every field.
-  const protocolProbes = Boolean(
-    picked && isHttpServer(picked) && probesApply(versionPin),
-  );
-  const tasksProbe = tasksProbeRuns(selection.tasks);
-  const probeServer = picked && (protocolProbes || tasksProbe) ? picked : null;
-  const probeTools = useProbeTools(probeServer);
   // Picked from the project's list before this session loaded it: it has no
   // runtime entry until it connects.
   const pickedName =
@@ -243,14 +224,30 @@ export function ConformanceSetup({
     servers.length === 0 &&
     (projectServerNames?.length ?? 0) === 0;
 
-  const continueToChecks = () => {
-    if (serverName !== selectionFor) {
-      setSelection(startingSelection(serverName));
-      setSelectionFor(serverName);
-      setProbes(serverName ? (probesFor?.(serverName) ?? {}) : {});
-      setProbeValid({});
+  const [loadingDefaults, setLoadingDefaults] = useState(false);
+  const [defaultsError, setDefaultsError] = useState(false);
+  const continueToChecks = async () => {
+    setLoadingDefaults(true);
+    setDefaultsError(false);
+    try {
+      const loaded =
+        serverName && onLoadDefaults
+          ? await onLoadDefaults(serverName)
+          : undefined;
+      if (serverName !== selectionFor) {
+        setSelection(loaded?.selection ?? startingSelection(serverName));
+        setSelectionFor(serverName);
+        setProbes(
+          loaded?.inputs ?? (serverName ? (probesFor?.(serverName) ?? {}) : {}),
+        );
+        setInputsValid(true);
+      }
+      setStep(1);
+    } catch {
+      setDefaultsError(true);
+    } finally {
+      setLoadingDefaults(false);
     }
-    setStep(1);
   };
 
   return (
@@ -338,15 +335,24 @@ export function ConformanceSetup({
               </div>
             </div>
 
+            {defaultsError ? (
+              <p role="alert" className="mt-3 text-sm text-destructive">
+                Could not load the default checks and inputs. Try again.
+              </p>
+            ) : null}
             <div className="mt-7 flex items-center justify-end gap-2">
               <Button variant="ghost" onClick={onCancel}>
                 Cancel
               </Button>
               <Button
-                disabled={!canContinue || !defaultsLoaded}
-                onClick={continueToChecks}
+                disabled={!canContinue || !defaultsLoaded || loadingDefaults}
+                onClick={() => void continueToChecks()}
               >
-                Continue
+                {defaultsError
+                  ? "Retry"
+                  : loadingDefaults
+                    ? "Loading defaults..."
+                    : "Continue"}
               </Button>
             </div>
           </>
@@ -361,55 +367,14 @@ export function ConformanceSetup({
 
             {/* The protocol list follows the revision picked in step 1. */}
             <div className="mt-3">
-              <ConformanceCheckPicker
+              <ConformanceChecksEditor
+                server={picked}
                 versionPin={versionPin}
                 selection={selection}
                 onChange={setSelection}
-                showAdvice
-                renderCheckExtra={
-                  probeServer
-                    ? (suite, checkId, isPicked, checkTitle) =>
-                        (suite === "protocol" && protocolProbes) ||
-                        (suite === "tasks" && tasksProbe) ? (
-                          <ProbeCheckExtra
-                            checkId={checkId}
-                            checkTitle={checkTitle}
-                            isPicked={isPicked}
-                            tools={probeTools}
-                            probes={probes}
-                            onProbesChange={setProbes}
-                            onValidChange={(part, valid) =>
-                              setProbeValid((prev) => ({
-                                ...prev,
-                                [part]: valid,
-                              }))
-                            }
-                          />
-                        ) : null
-                    : undefined
-                }
-                checkInputStatus={(suite, checkId) => {
-                  if (suite === "protocol" && protocolProbes) {
-                    // The output check needs a tool only when one declares
-                    // an output schema; otherwise it does not apply.
-                    const noOutputSchemas =
-                      probeTools.status === "ready" &&
-                      !probeTools.truncated &&
-                      !probeTools.tools.some((tool) => tool.hasOutputSchema);
-                    return probeKeyFor(checkId) === "toolCallProbe" &&
-                      noOutputSchemas
-                      ? undefined
-                      : probeInputStatus(checkId, probes);
-                  }
-                  // The Tasks tool is optional where the server marks which
-                  // tool creates a task, so an unset one is not flagged.
-                  if (suite === "tasks" && tasksProbe) {
-                    return probeInputStatus(checkId, probes) === "set"
-                      ? "set"
-                      : undefined;
-                  }
-                  return undefined;
-                }}
+                probes={probes}
+                onProbesChange={setProbes}
+                onValidChange={setInputsValid}
               />
             </div>
 
@@ -421,7 +386,7 @@ export function ConformanceSetup({
                 disabled={
                   !canContinue ||
                   nothingPicked(selection, checkCatalogs(versionPin)) ||
-                  Object.values(probeValid).includes(false)
+                  !inputsValid
                 }
                 onClick={() => {
                   if (serverName)
