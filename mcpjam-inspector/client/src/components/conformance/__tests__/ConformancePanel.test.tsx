@@ -26,6 +26,8 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (key: string) => enabledFlags.has(key),
 }));
 
+vi.mock("../PersistConformanceRun", () => ({ PersistConformanceRun: () => null }));
+
 const mockRunProtocol = vi.fn();
 const mockRunApps = vi.fn();
 const mockRunTasks = vi.fn();
@@ -4661,4 +4663,30 @@ it("does not dispatch later suites when the deadline expires after preflight", a
   } finally {
     vi.useRealTimers();
   }
+});
+
+
+it("keeps an unsaved project server's timeout for the session without saving a missing server", async () => {
+  const server = createHttpServer({ name: "unsaved-server" });
+  const saveTimeout = vi.fn(async () => { throw new Error("No saved server exists"); });
+  render(<ConformanceTab
+    server={server}
+    servers={[server]}
+    persist={{ projectId: "project-1" }}
+    isSavedServer={() => false}
+    onSelectServer={vi.fn()}
+    onSaveServerTimeout={saveTimeout}
+  />);
+  fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+  fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run timeout" }));
+  fireEvent.change(screen.getByLabelText("Total run timeout (seconds)"), { target: { value: "90" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.queryByLabelText("Total run timeout (seconds)")).not.toBeInTheDocument());
+  expect(saveTimeout).not.toHaveBeenCalled();
+  expect(screen.getByText("90s")).toBeInTheDocument();
+  fireEvent.click(within(screen.getByRole("navigation", { name: "breadcrumb" })).getByRole("button", { name: "Choose server and protocol" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run timeout" }));
+  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(90);
 });
