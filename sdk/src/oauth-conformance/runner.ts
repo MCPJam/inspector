@@ -1373,7 +1373,8 @@ export class OAuthConformanceTest {
                         (freshManager, freshKey) =>
                           captureOpenAIProfile(freshManager, freshKey, {
                             timeoutMs: this.config.verification.timeout,
-                          })
+                          }),
+                        { signal: this.config.signal },
                       );
                       const same = refreshedProfile.profile?.id === profileId;
                       steps.push({

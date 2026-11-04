@@ -2575,6 +2575,7 @@ export class MCPTasksConformanceTest {
         }
       );
     } catch (error) {
+      this.config.signal?.throwIfAborted();
       // Refused for credentials: nothing was reached, so every selected check
       // could not run — `incomplete`, not `failed`. Each one is reported, so
       // the run names what it was asked rather than one stand-in check.

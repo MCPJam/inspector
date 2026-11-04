@@ -54,6 +54,10 @@ describe("temporary conformance connection", () => {
       }),
       { signal: expect.any(AbortSignal) },
     );
+    const baseFetch = connect.mock.calls[0][1].baseFetch;
+    guardedFetch.mockResolvedValueOnce(new Response("ok"));
+    await baseFetch?.("https://bart.test/mcp");
+    expect(guardedFetch).toHaveBeenCalledWith("https://bart.test/mcp", expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(disconnect).toHaveBeenCalledTimes(1);
     expect(listTools).not.toHaveBeenCalled();
     expect(config).not.toHaveProperty("mcpProtocolVersion");

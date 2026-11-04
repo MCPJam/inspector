@@ -417,9 +417,7 @@ conformanceWeb.post("/apps", async (c) =>
  *   the caller asks for.
  * - `HOSTED_TASKS_DEADLINE_MS` bounds the *whole* run, so however the legs
  *   compose, the route answers with a 504 instead of hanging past the budget.
- *   The abandoned run still unwinds on its own — every leg inside it is
- *   bounded by the per-call timeout — so its ephemeral client is closed by
- *   `withEphemeralClient`'s own teardown shortly after.
+ *   Expiry aborts the runner and closes its ephemeral client.
  */
 const HOSTED_TASKS_POLL_TIMEOUT_MS = 20_000;
 /** Per-MCP-call ceiling inside a hosted tasks run (connect, list, call). */
@@ -451,12 +449,13 @@ conformanceWeb.post("/tasks", async (c) =>
     const body = await readJsonBody<Record<string, unknown>>(c);
     const config = await resolveHostedServerConfig(c, bearerToken, body);
     const parsed = parseWithSchema(tasksSchema, body);
+    const controller = new AbortController();
 
     try {
       const result = await withHostedDeadline(
         runTasksConformance({
-      requestStartedAt,
-      signal: c.req.raw.signal,
+          requestStartedAt,
+          signal: AbortSignal.any([controller.signal, c.req.raw.signal]),
           runTimeoutSeconds: parsed.runTimeoutSeconds,
           remainingRunTimeoutMs: parsed.remainingRunTimeoutMs,
           ...config,
@@ -478,6 +477,7 @@ conformanceWeb.post("/tasks", async (c) =>
         }),
         HOSTED_TASKS_DEADLINE_MS,
         `Tasks conformance exceeded the hosted request budget (${HOSTED_TASKS_DEADLINE_MS}ms); run it from the local inspector for a longer poll window`,
+        controller,
       ).then((r) => r.result);
       return { success: true, result };
     } catch (error) {
@@ -645,10 +645,13 @@ conformanceWeb.post("/oauth/cancel", async (c) =>
     assertBearerToken(c);
     const body = await readJsonBody<Record<string, unknown>>(c);
     const parsed = parseWithSchema(z.object({ sessionId: z.string().min(1) }), body);
-    if (isConformanceOAuthRendezvousEnabled()) {
-      await cancelRendezvous(await getConvexBearerForRequest(c), parsed.sessionId);
+    try {
+      if (isConformanceOAuthRendezvousEnabled()) {
+        await cancelRendezvous(await getConvexBearerForRequest(c), parsed.sessionId);
+      }
+    } finally {
+      cancelOAuthConformance({ sessionId: parsed.sessionId, owner: principalKey(c) });
     }
-    cancelOAuthConformance({ sessionId: parsed.sessionId, owner: principalKey(c) });
     return { success: true };
   })
 );

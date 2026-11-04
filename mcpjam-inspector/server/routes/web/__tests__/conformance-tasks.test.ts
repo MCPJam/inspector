@@ -122,6 +122,7 @@ describe("POST /api/web/conformance/tasks — hosted budget", () => {
     const res = await pending;
 
     expect(res.status).toBe(504);
+    expect(runTasksConformanceMock.mock.calls[0][0].signal.aborted).toBe(true);
     const body = (await res.json()) as { code: string; message: string };
     expect(body.code).toBe("TIMEOUT");
     expect(body.message).toMatch(/hosted request budget/);

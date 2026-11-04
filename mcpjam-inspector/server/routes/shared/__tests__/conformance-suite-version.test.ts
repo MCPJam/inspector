@@ -29,9 +29,13 @@ describe.each([
           mcpProtocolVersion: protocolVersion,
           supportedProtocolVersions: [protocolVersion],
           accessToken: "saved-login",
-          baseFetch,
+          baseFetch: expect.any(Function),
         }),
+        { signal: expect.any(AbortSignal) },
       );
+      baseFetch.mockResolvedValueOnce(new Response("ok"));
+      await connect.mock.calls[0][1].baseFetch?.("https://fixture.test/mcp");
+      expect(baseFetch).toHaveBeenCalled();
       expect(config.mcpProtocolVersion).toBe("2025-11-25");
     },
   );
@@ -47,6 +51,7 @@ describe.each([
     expect(connect).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ mcpProtocolVersion: "2025-06-18" }),
+      { signal: expect.any(AbortSignal) },
     );
   });
 });
