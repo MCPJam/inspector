@@ -1677,7 +1677,7 @@ function EvaluateRouteContent() {
 
 export function ConformanceRoute() {
   const {
-    appState,
+    projectServers: projectServerConfigs,
     selectedServerEntry,
     setSelectedServer,
     convexProjectId,
@@ -1712,7 +1712,7 @@ export function ConformanceRoute() {
     serversLoading: projectServersLoading || projectServersBootstrapping,
   });
   // The name the edit form is open on, plus the server as it was then: a
-  // rename drops the old name from `appState.servers` before the new one
+  // rename drops the old name from the project's servers before the new one
   // lands, and without the snapshot the form would close mid-save.
   const [editing, setEditing] = useState<{
     name: string;
@@ -1721,9 +1721,9 @@ export function ConformanceRoute() {
   const savedServerId = selectedServerEntry?.name
     ? (serversByName.get(selectedServerEntry.name) ?? null)
     : null;
-  // The page picks its server from its own select, not the header tabs, and
-  // offers every server: Run connects one that is not connected.
-  const servers = Object.values<ServerWithName>(appState.servers);
+  // Saved project servers include disconnected entries and their current
+  // runtime state, so the list survives a refresh or OAuth return.
+  const servers = Object.values<ServerWithName>(projectServerConfigs);
   // Each server's logo, as it announced it when it connected (the Servers
   // tab's cards use the same one). Servers without one show initials.
   const serverIcons: Record<string, string> = {};
@@ -1732,10 +1732,10 @@ export function ConformanceRoute() {
     if (src) serverIcons[server.name] = src;
   }
   const editingServer = editing
-    ? (appState.servers[editing.name] ?? editing.snapshot)
+    ? (projectServerConfigs[editing.name] ?? editing.snapshot)
     : undefined;
   const editServer = (name: string) => {
-    const server = appState.servers[name];
+    const server = projectServerConfigs[name];
     if (server) setEditing({ name, snapshot: server });
   };
   // Follows a rename the way the Servers tab's form does: the new name while
@@ -1813,7 +1813,7 @@ export function ConformanceRoute() {
           }}
           onDisconnect={handleDisconnect}
           onReconnect={handleReconnect}
-          existingServerNames={Object.keys(appState.servers)}
+          existingServerNames={Object.keys(projectServerConfigs)}
           projectId={convexProjectId ?? null}
           // Saving an auth change on a server with hidden headers reveals
           // them by row id.
