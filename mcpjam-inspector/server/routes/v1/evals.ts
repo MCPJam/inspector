@@ -233,6 +233,7 @@ import {
 } from "./convex-errors.js";
 import {
   classifyConvexReadError,
+  convexReadFetch,
   translateConvexReadError,
 } from "./convex-read-errors.js";
 import {
@@ -1150,7 +1151,7 @@ function createConvexReadClient(convexAuthToken: string): ConvexHttpClient {
       "Server missing CONVEX_URL configuration",
     );
   }
-  const client = new ConvexHttpClient(convexUrl);
+  const client = new ConvexHttpClient(convexUrl, { fetch: convexReadFetch });
   client.setAuth(convexAuthToken);
   return client;
 }
