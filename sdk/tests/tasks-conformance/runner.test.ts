@@ -15,8 +15,11 @@ import {
 } from "../../src/tasks-conformance/index.js";
 import type { MCPTasksCheckResult } from "../../src/tasks-conformance/index.js";
 import * as operations from "../../src/operations.js";
+import type { MCPServerConfig } from "../../src/mcp-client-manager/index.js";
 import { isMissingInputCheck } from "../../src/conformance-input.js";
 import { scoreFromTasksResult } from "../../src/conformance-score.js";
+
+let activeFetch: typeof fetch | undefined;
 
 const EXT_ID = "io.modelcontextprotocol/tasks";
 const CAPS_META_KEY = "io.modelcontextprotocol/clientCapabilities";
@@ -55,12 +58,13 @@ function runAgainst(
   } = {}
 ) {
   vi.spyOn(operations, "withEphemeralClient").mockImplementation((async (
-    _config: unknown,
+    _config: MCPServerConfig,
     fn: unknown,
     opts: unknown
   ) => {
     const { rpcLogger } = (opts ?? {}) as { rpcLogger?: (e: unknown) => void };
     activeRpcLogger = rpcLogger;
+    activeFetch = _config.baseFetch;
     for (const message of options.sentMessages ?? []) {
       rpcLogger?.({ direction: "send", message, serverId: "srv" });
     }
@@ -119,7 +123,7 @@ function extensionManager(overrides: Record<string, unknown> = {}) {
     // The Mcp-Name check reads the headers the transport actually sent, so the
     // fake performs the routed HTTP round trip its real counterpart would.
     getTaskExt: async (_serverId: string, taskId: string) => {
-      await fetch("https://example.test/mcp", {
+      await (activeFetch ?? fetch)("https://example.test/mcp", {
         method: "POST",
         headers: { "mcp-name": taskId, "mcp-method": "tasks/get" },
         body: "{}",
@@ -209,9 +213,10 @@ function undeclaredCheck(
   );
 }
 
-// The Mcp-Name check instruments `globalThis.fetch`; no test talks to a real
-// network, so the fake transport's round trip resolves locally.
+// The fake transport uses each run's configured fetch; its network leaf
+// resolves locally.
 beforeEach(() => {
+  activeFetch = undefined;
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => new Response("{}", { status: 200 }))
@@ -1394,7 +1399,7 @@ describe("undeclared task requests (-32021)", () => {
     expect(result.passed).toBe(false);
   });
 
-  it("probes the mutating methods only after every check that reads the task", async () => {
+  it("keeps the undeclared probe sequence together in its own group", async () => {
     const order: string[] = [];
     const base = extensionManager();
     const declaredGet = base.getTaskExt as (
@@ -1422,7 +1427,7 @@ describe("undeclared task requests (-32021)", () => {
 
     // Every declared read (polling + the Mcp-Name routing probe) happens
     // first; the undeclared probes trail, cancel last of all.
-    expect(order.slice(-4)).toEqual([
+    expect(order.filter((entry) => entry.startsWith("undeclared:"))).toEqual([
       "undeclared:tasks/get",
       "undeclared:tasks/update",
       "undeclared:subscriptions/listen",
@@ -1433,7 +1438,7 @@ describe("undeclared task requests (-32021)", () => {
     );
     expect(declaredReads.length).toBeGreaterThan(0);
     expect(order.indexOf("undeclared:tasks/update")).toBeGreaterThan(
-      order.lastIndexOf("declared:tasks/get")
+      order.indexOf("declared:tasks/get")
     );
     expect(statusMap(result)["tasks-inline-result"]).toBe("passed");
     expect(statusMap(result)["tasks-mcp-name-routing"]).toBe("passed");

@@ -128,7 +128,11 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
       toolCount: 1,
       probedTool: TASK_TOOL_NAME,
     });
-    expect(result.discovery.createdTaskId).toBeTruthy();
+    expect(result.discovery.createdTaskId).toBeUndefined();
+    expect(
+      result.checks.find((check) => check.id === "tasks-inline-result")?.details
+        ?.taskId
+    ).toBeTruthy();
     expect(result.checks).toHaveLength(MCP_TASKS_CHECK_IDS.length);
     // One skip is expected and correct: this fixture's task completes without
     // ever asking for input, so the `tasks/update` acknowledgement is not
@@ -181,7 +185,7 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
 
     // The undeclared tools/call reached it too, and produced no task.
     expect(undeclaredRequests(fixture, "tools/call").length).toBeGreaterThan(0);
-    expect(fixture.tasks()).toHaveLength(1);
+    expect(fixture.tasks()).toHaveLength(3);
   });
 
   it("passes the rest of the suite against a conformant fixture", async () => {
