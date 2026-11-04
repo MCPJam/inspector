@@ -199,7 +199,7 @@ export function redactUrlSecrets(value: string): string {
     // Only treat it as parameters when it actually looks like them; a plain
     // `#section-2` anchor must survive untouched.
     const isRoute = /^!?\//.test(fragment);
-    const queryStart = isRoute ? fragment.indexOf("?") : -1;
+    const queryStart = isRoute ? fragment.search(/[?&]/) : -1;
     const prefix =
       isRoute && queryStart >= 0 ? fragment.slice(0, queryStart + 1) : "";
     const parameters = isRoute

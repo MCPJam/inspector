@@ -474,7 +474,7 @@ it.each([
   const url = `https://example.com/#${fragment}`;
   expect(redactSharedServerUrl(url)).toBe(url);
 });
-it.each(["/authors?", "!/authors?"])(
+it.each(["/authors?", "!/authors?", "/authors&", "!/authors&"])(
   "redacts route query credentials while preserving %s",
   (prefix) => {
     expect(
@@ -490,4 +490,9 @@ it("does not interpret a question mark in a token as a hash route", () => {
   expect(
     redactSharedServerUrl("https://example.com/#token=secret?value&flag")
   ).toBe("https://example.com/#token=%5BREDACTED%5D&flag");
+});
+
+it("preserves safe route fields introduced by an ampersand", () => {
+  const url = "https://example.com/#/authors&sort=name&compact";
+  expect(redactSharedServerUrl(url)).toBe(url);
 });
