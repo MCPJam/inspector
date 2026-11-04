@@ -2,7 +2,10 @@ import { beforeEach, describe, it, expect, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ToolPart } from "../tool-part";
-import { CHAT_AUTH_RECOVERY_MESSAGE, recordChatAuthRecoveryFailure } from "@/lib/chat-auth-recovery";
+import {
+  CHAT_AUTH_RECOVERY_MESSAGE,
+  recordChatAuthRecoveryFailure,
+} from "@/lib/chat-auth-recovery";
 vi.mock("@/lib/sentry", () => ({ captureSentryMessage: vi.fn() }));
 import { useForwardedWidgetCalls } from "../../use-forwarded-widget-calls";
 import { authFetch } from "@/lib/session-token";
@@ -110,10 +113,21 @@ describe("ToolPart approval expansion", () => {
   });
 
   it("shows a local error for a failed recovery instead of a loading tool", async () => {
-    recordChatAuthRecoveryFailure("resume_failed", { toolCallId: basePart.toolCallId, continuationId: "cont-ui" });
-    render(<ToolPart part={{ ...basePart, state: "input-available", output: undefined } as any} uiType="mcp-apps" />);
+    recordChatAuthRecoveryFailure("resume_failed", {
+      toolCallId: basePart.toolCallId,
+      continuationId: "cont-ui",
+    });
+    render(
+      <ToolPart
+        part={
+          { ...basePart, state: "input-available", output: undefined } as any
+        }
+        uiType="mcp-apps"
+      />,
+    );
     const header = getHeaderButton();
-    if (header?.getAttribute("aria-expanded") === "false") await userEvent.click(header);
+    if (header?.getAttribute("aria-expanded") === "false")
+      await userEvent.click(header);
     expect(screen.getByText(CHAT_AUTH_RECOVERY_MESSAGE)).toBeInTheDocument();
   });
 

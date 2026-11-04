@@ -216,7 +216,10 @@ export function ToolsTab({
   const logger = useLogger("ToolsTab");
   const [tools, setTools] = useState<ToolMap>({});
   const formSelectionRef = useRef("");
-  const restoringInputsRef = useRef<{ toolName: string; parameters: Record<string, unknown> } | null>(null);
+  const restoringInputsRef = useRef<{
+    toolName: string;
+    parameters: Record<string, unknown>;
+  } | null>(null);
   const [selectedTool, setSelectedTool] = useState<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
   const [result, setResult] = useState<CallToolResult | null>(null);
@@ -537,13 +540,15 @@ export function ToolsTab({
     if (selectedTool && tools[selectedTool]) {
       const sameTool = formSelectionRef.current === selectedTool;
       const restoring = restoringInputsRef.current;
-      const restoredParameters = restoring?.toolName === selectedTool ? restoring.parameters : undefined;
+      const restoredParameters =
+        restoring?.toolName === selectedTool ? restoring.parameters : undefined;
       restoringInputsRef.current = null;
       formSelectionRef.current = selectedTool;
       setFormFields((current) =>
         applyParamsToFields(
           generateFormFieldsFromSchema(tools[selectedTool].inputSchema),
-          restoredParameters ?? (sameTool ? buildParametersFromFields(current) : {}),
+          restoredParameters ??
+            (sameTool ? buildParametersFromFields(current) : {}),
         ),
       );
     }
@@ -860,8 +865,11 @@ export function ToolsTab({
             descriptor: replayDescriptor,
           });
           traceChatAuthRecovery("direct_saved", {
-            toolCallId: savedReplay.callId, projectId: savedReplay.projectId,
-            serverName, phase: savedReplay.phase, storageOutcome: "verified",
+            toolCallId: savedReplay.callId,
+            projectId: savedReplay.projectId,
+            serverName,
+            phase: savedReplay.phase,
+            storageOutcome: "verified",
           });
         } catch (error) {
           if (error instanceof PendingDirectReplayConflictError) {
@@ -872,27 +880,40 @@ export function ToolsTab({
           setError(SAVE_CALL_FOR_SIGN_IN_FAILED_MESSAGE);
           setNormalizedError(null);
           recordChatAuthRecoveryFailure("save_failed", {
-            toolCallId: options?.pendingReplay?.callId ?? replayDescriptor.authAttempt?.callId,
-            serverName, storageOutcome: "failed",
+            toolCallId:
+              options?.pendingReplay?.callId ??
+              replayDescriptor.authAttempt?.callId,
+            serverName,
+            storageOutcome: "failed",
           });
           return;
         }
       }
       const viewIdentity = selectionIdentity;
-      driveScopeStepUpFromChallenge(server, challenge, {
-        method: "tools/call", operation: toolName,
-      }, {
-        directReplay: savedReplay,
-        onFailure: (reason) => {
-          if (reason === "failed") recordChatAuthRecoveryFailure("resume_failed", {
-            toolCallId: savedReplay?.callId, projectId: savedReplay?.projectId,
-            serverName, phase: savedReplay?.phase, recoveryResult: "redirect_failed",
-          });
-          if (selectionIdentityRef.current !== viewIdentity) return;
-          setError(CHAT_AUTH_RECOVERY_MESSAGE);
-          setNormalizedError(null);
+      driveScopeStepUpFromChallenge(
+        server,
+        challenge,
+        {
+          method: "tools/call",
+          operation: toolName,
         },
-      });
+        {
+          directReplay: savedReplay,
+          onFailure: (reason) => {
+            if (reason === "failed")
+              recordChatAuthRecoveryFailure("resume_failed", {
+                toolCallId: savedReplay?.callId,
+                projectId: savedReplay?.projectId,
+                serverName,
+                phase: savedReplay?.phase,
+                recoveryResult: "redirect_failed",
+              });
+            if (selectionIdentityRef.current !== viewIdentity) return;
+            setError(CHAT_AUTH_RECOVERY_MESSAGE);
+            setNormalizedError(null);
+          },
+        },
+      );
 
       // A 401 sign-in challenge (a 403 above is a step-up instead).
       presentToolAuthChallenge(response, toolName, replayDescriptor);
@@ -917,8 +938,10 @@ export function ToolsTab({
     if (pending.descriptor.kind !== "tool") return;
     const descriptor = pending.descriptor;
     traceChatAuthRecovery("direct_resume", {
-      toolCallId: pending.callId, projectId: pending.projectId,
-      serverName: descriptor.serverName, phase: "replaying",
+      toolCallId: pending.callId,
+      projectId: pending.projectId,
+      serverName: descriptor.serverName,
+      phase: "replaying",
     });
     const replayIdentity = selectionIdentity;
     restoreReplaySelection(descriptor);
@@ -955,8 +978,10 @@ export function ToolsTab({
           setLoadingExecuteTool(false);
         clearPendingDirectScopeStepUpReplay(pending);
         traceChatAuthRecovery("direct_cleanup", {
-          toolCallId: pending.callId, projectId: pending.projectId,
-          serverName: descriptor.serverName, recoveryResult: "generation_finished",
+          toolCallId: pending.callId,
+          projectId: pending.projectId,
+          serverName: descriptor.serverName,
+          recoveryResult: "generation_finished",
         });
       });
   };

@@ -11,9 +11,7 @@ import { CliError } from "../src/lib/output.js";
 import { PlatformApiError } from "@mcpjam/sdk/platform";
 import {
   buildPlatformClient,
-  inspectApiUrl,
-  resolvePlatformBaseUrl,
-  resolvePlatformOrigin,
+  resolveCliDeployment,
   toCliError,
 } from "../src/lib/platform-client.js";
 
@@ -59,69 +57,61 @@ function captureFetch(requested: string[]): typeof fetch {
 const isUsageError = (error: unknown) =>
   error instanceof CliError && error.code === "USAGE_ERROR";
 
-test("resolvePlatformBaseUrl prefers the flag over env over the default", () => {
+test("resolveCliDeployment prefers the flag over env over the default", () => {
+  const apiUrlOf = (apiUrl: string | undefined, env: NodeJS.ProcessEnv) =>
+    resolveCliDeployment({ apiUrl, credential: "api-key" }, { env }).apiUrl;
   assert.equal(
-    resolvePlatformBaseUrl(
-      { apiUrl: "https://flag.example.com/api/v1" },
-      { MCPJAM_API_URL: "https://env.example.com/api/v1" },
-    ),
+    apiUrlOf("https://flag.example.com/api/v1", {
+      MCPJAM_API_URL: "https://env.example.com/api/v1",
+    }),
     "https://flag.example.com/api/v1",
   );
   assert.equal(
-    resolvePlatformBaseUrl(
-      {},
-      { MCPJAM_API_URL: "https://env.example.com/api/v1" },
-    ),
+    apiUrlOf(undefined, { MCPJAM_API_URL: "https://env.example.com/api/v1" }),
     "https://env.example.com/api/v1",
   );
-  assert.equal(
-    resolvePlatformBaseUrl({}, {}),
-    "https://app.mcpjam.com/api/v1",
-  );
-});
-
-test("inspectApiUrl classifies invalid values without throwing", () => {
-  const malformed = inspectApiUrl("not-a-url", "--api-url");
-  assert.equal(malformed.ok, false);
-  if (!malformed.ok) {
-    assert.match(malformed.error, /Invalid --api-url/);
-  }
-  const ftp = inspectApiUrl("ftp://example.com/api", "MCPJAM_API_URL");
-  assert.equal(ftp.ok, false);
-  const ok = inspectApiUrl("https://app.mcpjam.com/api/v1", "--api-url");
-  assert.equal(ok.ok, true);
-  if (ok.ok) {
-    assert.equal(ok.apiUrl, "https://app.mcpjam.com/api/v1");
-  }
+  assert.equal(apiUrlOf(undefined, {}), "https://app.mcpjam.com/api/v1");
 });
 
 test("an invalid --api-url hard-errors instead of falling back to prod", () => {
-  assert.throws(
-    () => resolvePlatformBaseUrl({ apiUrl: "staging.mcpjam.com" }, {}),
-    isUsageError,
-  );
-  assert.throws(
-    () => resolvePlatformOrigin({ apiUrl: "not a url" }, {}),
-    isUsageError,
-  );
-  // Non-http(s) schemes are also explicit mistakes, not prod logins.
-  assert.throws(
-    () => resolvePlatformBaseUrl({ apiUrl: "ftp://example.com/api" }, {}),
-    isUsageError,
-  );
+  for (const apiUrl of ["staging.mcpjam.com", "not a url", "ftp://example.com/api"]) {
+    assert.throws(
+      () => resolveCliDeployment({ apiUrl, credential: "api-key" }, { env: {} }),
+      (error: unknown) =>
+        isUsageError(error) &&
+        error instanceof CliError &&
+        error.message.startsWith("Invalid --api-url value"),
+    );
+  }
 });
 
 test("an invalid MCPJAM_API_URL hard-errors too", () => {
   assert.throws(
-    () => resolvePlatformBaseUrl({}, { MCPJAM_API_URL: "nope" }),
+    () =>
+      resolveCliDeployment(
+        { credential: "api-key" },
+        { env: { MCPJAM_API_URL: "nope" } },
+      ),
     isUsageError,
   );
 });
 
-test("resolvePlatformOrigin strips the API path from the base URL", () => {
-  assert.equal(
-    resolvePlatformOrigin({ apiUrl: "https://staging.mcpjam.com/api/v1" }, {}),
-    "https://staging.mcpjam.com",
+test("MCPJAM_API_URL and MCPJAM_BASE_URL naming two servers exit 2", () => {
+  assert.throws(
+    () =>
+      resolveCliDeployment(
+        { credential: "api-key" },
+        {
+          env: {
+            MCPJAM_API_URL: "https://a.example.com/api/v1",
+            MCPJAM_BASE_URL: "https://b.example.com",
+          },
+        },
+      ),
+    (error: unknown) =>
+      error instanceof CliError &&
+      error.code === "DEPLOYMENT_CONFLICT" &&
+      error.exitCode === 2,
   );
 });
 
@@ -147,7 +137,7 @@ test("buildPlatformClient defaults to the API URL stored with the login", async 
   );
 });
 
-test("an explicit --api-url overrides the stored login URL", async () => {
+test("a saved login is never sent to another --api-url", async () => {
   const authFilePath = await tempAuthFile();
   await writeStoredAuth(
     storedAuth({ apiUrl: "https://staging.mcpjam.com/api/v1" }),
@@ -155,13 +145,47 @@ test("an explicit --api-url overrides the stored login URL", async () => {
   );
   const requested: string[] = [];
 
-  const { client } = buildPlatformClient(
-    { apiUrl: "https://other.example.com/api/v1" },
-    { env: {}, authFilePath, fetchFn: captureFetch(requested), now: () => NOW },
+  assert.throws(
+    () =>
+      buildPlatformClient(
+        { apiUrl: "https://other.example.com/api/v1" },
+        {
+          env: {},
+          authFilePath,
+          fetchFn: captureFetch(requested),
+          now: () => NOW,
+        },
+      ),
+    (error: unknown) =>
+      error instanceof CliError &&
+      error.code === "LOGIN_DEPLOYMENT_MISMATCH" &&
+      error.exitCode === 3 &&
+      error.message ===
+        "Your saved login is for https://staging.mcpjam.com/api/v1; this command targets https://other.example.com/api/v1. Run `mcpjam cloud login --api-url https://other.example.com/api/v1` to sign in there, or use an API key for that server.",
   );
-  await client.getMe();
+  assert.deepEqual(requested, []);
+});
 
-  assert.ok(requested[0].startsWith("https://other.example.com/api/v1/"));
+test("a redirect from the API is refused and exits 2", async () => {
+  const authFilePath = await tempAuthFile();
+  const requested: string[] = [];
+  const redirecting = (async (input: string | URL | Request) => {
+    requested.push(String(input));
+    return new Response(null, {
+      status: 307,
+      headers: { location: "https://elsewhere.example.com/collect" },
+    });
+  }) as typeof fetch;
+  const { client } = buildPlatformClient(
+    { apiKey: "sk_test", apiUrl: "https://a.example.com/api/v1" },
+    { env: {}, authFilePath, fetchFn: redirecting, now: () => NOW },
+  );
+
+  const error = toCliError(await client.getMe().catch((caught) => caught));
+  assert.equal(error.code, "BACKEND_REDIRECT_REFUSED");
+  assert.equal(error.exitCode, 2);
+  assert.match(error.message, /redirect to https:\/\/elsewhere\.example\.com/);
+  assert.equal(requested.length, 1);
 });
 
 test("an sk_ API key does not inherit the stored login's URL", async () => {

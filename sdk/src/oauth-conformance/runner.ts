@@ -39,6 +39,7 @@ import {
   runInvalidRedirectCheck,
 } from "./checks/oauth-negative.js";
 import { runTokenFormatCheck } from "./checks/oauth-token-format.js";
+import { oauthReadiness } from "./readiness.js";
 import {
   buildUnauthenticatedMcpRequest,
   runUnauthenticatedChallengeCheck,
@@ -1068,14 +1069,24 @@ export class OAuthConformanceTest {
         this.config.oauthConformanceChecks
       ) {
         const oauthCheckRedirectUrl = redirectUrl;
-        await recordOAuthCheck("oauth_dcr_http_redirect_uri", () =>
-          runDcrHttpRedirectUriCheck({
-            config: this.config,
-            state,
-            trackedRequest,
-            redirectUrl: oauthCheckRedirectUrl,
-          }),
-        );
+        if (this.config.registrationStrategy === "preregistered") {
+          steps.push(
+            buildSkippedStepResult(
+              "oauth_dcr_http_redirect_uri",
+              "not-applicable",
+              "Dynamic client registration checks do not apply to pre-registered clients"
+            )
+          );
+        } else {
+          await recordOAuthCheck("oauth_dcr_http_redirect_uri", () =>
+            runDcrHttpRedirectUriCheck({
+              config: this.config,
+              state,
+              trackedRequest,
+              redirectUrl: oauthCheckRedirectUrl,
+            })
+          );
+        }
         await recordOAuthCheck("oauth_invalid_client", () =>
           runInvalidClientCheck({
             config: this.config,
@@ -1491,6 +1502,7 @@ export class OAuthConformanceTest {
       credentials: buildCredentials(state),
       verification,
       ...(profileId ? { profileId } : {}),
+      ...oauthReadiness(this.config, state),
     };
   }
 }

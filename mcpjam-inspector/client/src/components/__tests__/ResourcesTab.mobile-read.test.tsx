@@ -7,6 +7,7 @@ import {
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
+import type { ServerWithName } from "@/state/app-types";
 import { ResourcesTab } from "../ResourcesTab";
 
 const mocks = vi.hoisted(() => ({
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   claimReplay: vi.fn(),
   clearReplay: vi.fn(),
   resetStepUp: vi.fn(),
+  resetAuthChallenge: vi.fn(),
 }));
 vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => true }));
 vi.mock("@/lib/apis/mcp-resources-api", () => ({
@@ -35,6 +37,10 @@ vi.mock("@/lib/scope-step-up", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/scope-step-up")>()),
   resetScopeStepUp: (...args: unknown[]) => mocks.resetStepUp(...args),
 }));
+vi.mock("@/state/oauth-orchestrator", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/state/oauth-orchestrator")>()),
+  resetAuthChallenge: (...args: unknown[]) => mocks.resetAuthChallenge(...args),
+}));
 vi.mock("../logger-view", () => ({ LoggerView: () => <div /> }));
 vi.mock("../ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children: React.ReactNode }) => (
@@ -50,6 +56,17 @@ const config: MCPServerConfig = {
   transportType: "stdio",
   command: "node",
   args: [],
+};
+const server = { name: "srv", config } as ServerWithName;
+const authAttempt = {
+  projectId: "local",
+  serverId: "srv",
+  surface: "resources",
+  callId: "call_1",
+};
+const readOperation = {
+  method: "resources/read",
+  operation: "file:///alpha.txt",
 };
 const content = (text: string) => ({
   content: { contents: [{ type: "text", text }] },
@@ -71,10 +88,13 @@ async function mount(replay: boolean) {
         target: "resource",
         serverName: "srv",
         uri: "file:///alpha.txt",
+        authAttempt,
       },
     });
   }
-  render(<ResourcesTab serverConfig={config} serverName="srv" />);
+  render(
+    <ResourcesTab serverConfig={config} serverName="srv" server={server} />,
+  );
   await screen.findByText("Alpha");
   if (!replay) fireEvent.click(screen.getByText("Alpha"));
   await waitFor(() => expect(mocks.read).toHaveBeenCalledTimes(1));
@@ -106,14 +126,14 @@ describe("Resources mobile read cancellation", () => {
           if (replay) {
             expect(mocks.clearReplay).toHaveBeenCalledOnce();
             if (outcome === "success") {
-              expect(mocks.resetStepUp).toHaveBeenCalledWith(
-                undefined,
-                {
-                  method: "resources/read",
-                  operation: "file:///alpha.txt",
-                },
-                undefined,
+              // The stale replay still finishes its own sign-in attempt, but
+              // the shared step-up budget is left to the current read.
+              expect(mocks.resetAuthChallenge).toHaveBeenCalledWith(
+                server,
+                readOperation,
+                authAttempt,
               );
+              expect(mocks.resetStepUp).not.toHaveBeenCalled();
             }
           }
           fireEvent.click(screen.getByRole("tab", { name: "Results" }));
@@ -134,7 +154,15 @@ describe("Resources mobile read cancellation", () => {
       await act(async () => read.resolve(content("CURRENT RESOURCE")));
       fireEvent.click(screen.getByRole("tab", { name: "Results" }));
       expect(screen.getByText("CURRENT RESOURCE")).toBeVisible();
-      if (replay) expect(mocks.clearReplay).toHaveBeenCalledOnce();
+      if (replay) {
+        expect(mocks.clearReplay).toHaveBeenCalledOnce();
+        expect(mocks.resetAuthChallenge).toHaveBeenCalledWith(
+          server,
+          readOperation,
+          authAttempt,
+        );
+        expect(mocks.resetStepUp).toHaveBeenCalledWith(server, readOperation);
+      }
     });
   }
   it("preserves a loaded result when tapping the active Resources pill", async () => {

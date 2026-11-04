@@ -20,6 +20,7 @@ const {
   readStoredOAuthConfigMock,
   toastSuccess,
   mockUseDbUserReady,
+  isStaleChatAuthCallbackMock,
 } = vi.hoisted(() => ({
   mockHandleOAuthCallback: vi.fn(),
   mockListServers: vi.fn(),
@@ -38,6 +39,7 @@ const {
   readStoredOAuthConfigMock: vi.fn(),
   toastSuccess: vi.fn(),
   mockUseDbUserReady: vi.fn(() => true),
+  isStaleChatAuthCallbackMock: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
@@ -86,6 +88,20 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
   readStoredOAuthConfig: readStoredOAuthConfigMock,
   resolveOAuthCustomHeaders: vi.fn(async () => undefined),
 }));
+
+vi.mock("@/lib/scope-step-up-pending", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/scope-step-up-pending")>();
+  isStaleChatAuthCallbackMock.mockImplementation(
+    actual.isStaleChatAuthCallback,
+  );
+  return {
+    ...actual,
+    isStaleChatAuthCallback: (
+      ...args: Parameters<typeof actual.isStaleChatAuthCallback>
+    ) => isStaleChatAuthCallbackMock(...args),
+  };
+});
 
 vi.mock("@/lib/apis/web/context", () => ({
   injectHostedServerMapping: vi.fn(),
@@ -591,6 +607,130 @@ describe("useServerState hosted OAuth callback guards", () => {
         expect.objectContaining({ type: "CONNECT_REQUEST", name: "asana" }),
       );
     });
+  });
+
+  // The callback's server list must be the current one, not the empty list
+  // from before the projects loaded.
+  it("marks the hosted marker's server connecting once the projects load", async () => {
+    writeHostedOAuthPendingMarker({
+      surface: "project",
+      initiatingUserId: "user_1",
+      projectId: "ws_1",
+      serverId: "srv_asana",
+      serverName: "asana",
+      serverUrl: "https://mcp.asana.com/sse",
+      accessScope: "project_member",
+      returnPath: "#servers",
+    });
+    localStorage.setItem("mcp-serverUrl-asana", "https://mcp.asana.com/sse");
+    mockHandleOAuthCallback.mockReturnValue(new Promise(() => {}));
+    const dispatch = vi.fn();
+    const stable = {
+      appState: { servers: {}, selectedMultipleServers: [] } as any,
+      oauthProjectIds: new Set(["ws_1"]),
+      activeProjectServersFlat: [],
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    };
+    const loadedProjects = {
+      ws_1: {
+        id: "ws_1",
+        name: "Project",
+        sharedProjectId: "ws_1",
+        servers: {
+          asana: {
+            name: "asana",
+            config: { url: "https://mcp.asana.com/sse" },
+            connectionStatus: "disconnected",
+          },
+        },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    } as any;
+
+    const { rerender } = renderHook(
+      ({ loading, projects }: { loading: boolean; projects: any }) =>
+        useServerState({
+          ...stable,
+          dispatch,
+          isLoading: false,
+          isAuthenticated: true,
+          hasSignedInUser: true,
+          currentUserId: "user_1",
+          isAuthLoading: false,
+          isLoadingProjects: loading,
+          useLocalFallback: false,
+          effectiveProjects: projects,
+          effectiveActiveProjectId: "ws_1",
+        }),
+      { initialProps: { loading: true, projects: {} } },
+    );
+    rerender({ loading: false, projects: loadedProjects });
+
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "CONNECT_REQUEST", name: "asana" }),
+      );
+    });
+  });
+
+  it("restores the marker's organization when it leaves a stale denied callback", async () => {
+    writeHostedOAuthPendingMarker({
+      surface: "project",
+      initiatingUserId: "user_1",
+      organizationId: "org_pinned",
+      projectId: "ws_1",
+      serverId: "srv_asana",
+      serverName: "asana",
+      serverUrl: "https://mcp.asana.com/sse",
+      accessScope: "project_member",
+      returnPath: "#servers",
+      chatAuthContinuationId: "continuation_1",
+    });
+    window.history.replaceState(
+      {},
+      "",
+      "/oauth/callback?error=access_denied&state=older-flow",
+    );
+    // A newer sign-in now owns the chat call this callback was for.
+    isStaleChatAuthCallbackMock.mockReturnValueOnce(true);
+    const dispatch = vi.fn();
+    const restoreActiveOrganizationId = vi.fn();
+
+    renderHook(() =>
+      useServerState({
+        appState: { servers: {}, selectedMultipleServers: [] } as any,
+        dispatch,
+        isLoading: false,
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        currentUserId: "user_1",
+        oauthProjectIds: new Set(["ws_1"]),
+        isAuthLoading: false,
+        isLoadingProjects: false,
+        useLocalFallback: false,
+        effectiveProjects: {} as any,
+        effectiveActiveProjectId: "ws_1",
+        activeProjectServersFlat: [],
+        restoreActiveOrganizationId,
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+          error: vi.fn(),
+          debug: vi.fn(),
+        },
+      }),
+    );
+
+    await waitFor(() => expect(window.location.search).toBe(""));
+    expect(isStaleChatAuthCallbackMock).toHaveBeenCalledWith(
+      "continuation_1",
+      expect.anything(),
+    );
+    expect(restoreActiveOrganizationId).toHaveBeenCalledWith("org_pinned");
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "CONNECT_FAILURE" }),
+    );
   });
 
   it("stores a plugin server's credential without adding a project server", async () => {

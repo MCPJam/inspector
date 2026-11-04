@@ -1,3 +1,4 @@
+import { isCurrentHarnessStartup, isHarnessStartupPart, type HarnessStartupPhase } from "@/shared/harness-startup";
 import { nextResumedVersion } from "./use-resumed-thread-persistence";
 import { isForwardingApprovalId, withoutForwardingGateParts, stripForwardingRequestBody } from "@/shared/forwarding-approval";
 import { dispatchAppToolCall } from "@mcpjam/widget-react";
@@ -719,6 +720,7 @@ export interface SetSelectedModelOptions {
 }
 
 export interface UseChatSessionReturn {
+  harnessStartupPhase: HarnessStartupPhase | null;
   /**
    * Elicitation requests whose tool call is blocked on this user right now.
    * Turn-scoped: they arrive as transient stream parts and are dropped when the
@@ -2588,6 +2590,9 @@ export function useChatSession(
     [],
   );
 
+  const harnessStartupRequestRef = useRef<string | null>(null);
+  const [harnessStartupPhase, setHarnessStartupPhase] = useState<HarnessStartupPhase | null>(null);
+
   // Mid-session sign-in: show the Connect card for a `data-auth-required`
   // part, saving a resumable call's marker as `awaiting_click` first.
   const presentedSignInCardsRef = useRef(new Set<string>());
@@ -2715,6 +2720,13 @@ export function useChatSession(
   const paidFallbackNotices = useRef(new Set<string>());
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
+      if (isHarnessStartupPart(part)) {
+        if (isCurrentHarnessStartup(part, {
+          chatSessionId: chatSessionIdRef.current,
+          requestId: harnessStartupRequestRef.current,
+        })) setHarnessStartupPhase(part.data.phase === "ready" ? null : part.data.phase);
+        return;
+      }
       if (noteTurnNoticePart(part, chatSessionIdRef.current)) return;
       if (
         part &&
@@ -3783,6 +3795,8 @@ export function useChatSession(
 
   const handleChatError = useCallback(
     (chatError: Error) => {
+      harnessStartupRequestRef.current = null;
+      setHarnessStartupPhase(null);
       // Every chat failure used to end here and go no further: this handler
       // passed the error only to `notifyMCPJamLimitError`, a rate-limit filter
       // that no-ops everything else. A hosted 502 produced zero client
@@ -4103,6 +4117,8 @@ export function useChatSession(
         // to request approval for, or defers one nothing will ever ask about
         // — and that second one stalls the turn.
         turnRequireToolApprovalRef.current = requireToolApprovalRef.current;
+        harnessStartupRequestRef.current = crypto.randomUUID();
+        setHarnessStartupPhase(null);
         const taskOwnerScope = getOwnedTaskScope();
         const ownerRequestId = taskOwnerRequests.current.capture(
           generateId(),
@@ -4115,6 +4131,7 @@ export function useChatSession(
             ? rewindRef.current.lineage
             : undefined;
         return {
+          harnessStartupRequestId: harnessStartupRequestRef.current,
           ...(ownerRequestId
             ? {
                 hostedTaskOwnerVersion: HOSTED_TASK_OWNER_VERSION,
@@ -4748,7 +4765,8 @@ export function useChatSession(
       !HOSTED_MODE &&
       appState &&
       appState.servers[pending.serverName]?.connectionStatus !== "connected"
-    ) return;
+    )
+      return;
     // Set before the storage notification can schedule another render.
     scopeStepUpResumeInFlightRef.current = true;
     const claimed =
@@ -6777,6 +6795,8 @@ export function useChatSession(
    * a suspended operation's stream always ends while its round is pending.)
    */
   const stopChat = useCallback(() => {
+    harnessStartupRequestRef.current = null;
+    setHarnessStartupPhase(null);
     savedClientSendGuard.cancel();
     sendPreparationGuard.cancel();
     const store = useHostedMrtrStore.getState();
@@ -6803,7 +6823,19 @@ export function useChatSession(
       ? describeAutoResumeStop(heldBack.reason)
       : null;
 
+  useEffect(() => {
+    if (status !== "submitted" && status !== "streaming") {
+      setHarnessStartupPhase(null);
+      harnessStartupRequestRef.current = null;
+    }
+  }, [status]);
+  useEffect(() => {
+    setHarnessStartupPhase(null);
+    harnessStartupRequestRef.current = null;
+  }, [chatSessionId]);
+
   return {
+    harnessStartupPhase: status === "submitted" || status === "streaming" ? harnessStartupPhase : null,
     // Chat state
     messages,
     setMessages,

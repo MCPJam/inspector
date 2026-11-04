@@ -235,12 +235,14 @@ export function ProtocolVersionSelect({
   onChange,
   disabled,
   labelledBy,
+  id,
 }: {
   value: ProtocolVersionPin;
   onChange?: (value: ProtocolVersionPin) => void;
   disabled?: boolean;
   /** The visible label's id; without one the select names itself. */
   labelledBy?: string;
+  id?: string;
 }) {
   return (
     <Select
@@ -249,6 +251,7 @@ export function ProtocolVersionSelect({
       disabled={disabled}
     >
       <SelectTrigger
+        id={id}
         aria-label={labelledBy ? undefined : "Protocol version"}
         aria-labelledby={labelledBy}
         className="h-9.5 w-full justify-between gap-2 px-3 text-sm"
@@ -270,45 +273,39 @@ export function ProtocolVersionSelect({
 
 /** How a server that is not connected reads in the picker; Run connects it. */
 /**
- * A server's row in the picker: the status dot the server cards use, and a
- * Connect while it is neither connected nor on its way there.
+ * A server's row in the picker: the status dot the server cards use. No
+ * Connect: picking a server connects it.
  */
 function serverRow(
   name: string,
   // A project server this session has not loaded is plainly not connected.
   status: string,
-  onConnect: ((serverName: string) => void) | undefined,
-  connecting: boolean,
 ): ServerPickerServerRow {
   // `isConnectionStatus`, not a cast: a value outside the union is a state
-  // the page cannot read, so it gets no dot and no Connect.
+  // the page cannot read, so it gets no dot.
   const meta = isConnectionStatus(status)
     ? getConnectionStatusMeta(status)
     : null;
-  const inFlight =
-    connecting ||
-    status === "connected" ||
-    status === "connecting" ||
-    status === "oauth-flow";
   return {
     id: name,
     name,
     status: meta
       ? { label: meta.label, indicatorClassName: meta.indicatorClassName }
       : UNKNOWN_CONNECTION_STATUS,
-    onConnect:
-      onConnect && meta && !inFlight ? () => onConnect(name) : undefined,
   };
 }
 
+/**
+ * The setup's server picker: User Testing's server list without its groups
+ * tab, since a conformance run tests one server. Picking a server connects it,
+ * so the rows carry no Connect.
+ */
 export function ConformanceServerPicker({
   servers,
   moreServerNames = [],
   loading = false,
-  connectingNames = [],
   selectedName,
   onSelect,
-  onConnect,
   labelledBy,
 }: {
   servers: ServerWithName[];
@@ -316,12 +313,8 @@ export function ConformanceServerPicker({
   moreServerNames?: readonly string[];
   /** The project's servers are still loading. */
   loading?: boolean;
-  /** Connects started here and not settled yet: no second Connect. */
-  connectingNames?: readonly string[];
   selectedName: string | null;
   onSelect: (name: string) => void;
-  /** Connects a server from its row. Omit to offer no Connect. */
-  onConnect?: (serverName: string) => void;
   /** The visible label's id; without one the trigger names itself. */
   labelledBy?: string;
 }) {
@@ -329,24 +322,10 @@ export function ConformanceServerPicker({
   const valueId = useId();
   const loaded = new Set(servers.map((server) => server.name));
   const rows = [
-    ...servers.map((server) =>
-      serverRow(
-        server.name,
-        server.connectionStatus,
-        onConnect,
-        connectingNames.includes(server.name),
-      ),
-    ),
+    ...servers.map((server) => serverRow(server.name, server.connectionStatus)),
     ...moreServerNames
       .filter((name) => !loaded.has(name))
-      .map((name) =>
-        serverRow(
-          name,
-          "disconnected",
-          onConnect,
-          connectingNames.includes(name),
-        ),
-      ),
+      .map((name) => serverRow(name, "disconnected")),
   ];
   const selected = rows.some((row) => row.name === selectedName)
     ? selectedName
@@ -367,7 +346,7 @@ export function ConformanceServerPicker({
           )}
         >
           <Server className="size-3.5 shrink-0 text-muted-foreground" />
-          <span id={valueId} className="min-w-0 truncate text-xs font-medium">
+          <span id={valueId} className="min-w-0 truncate text-sm font-medium">
             {selected ?? "Select server"}
           </span>
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />

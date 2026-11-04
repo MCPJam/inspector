@@ -4,6 +4,10 @@
  * @packageDocumentation
  */
 
+// The Node resolver for every MCPJam request this entry can make, the IT
+// settings file and its lock included.
+import "./deployment/node-entry.js";
+
 // MCPClientManager from new modular implementation
 export { MCPClientManager } from "./mcp-client-manager/index.js";
 
@@ -819,6 +823,8 @@ export {
   isUnrunCheck,
 } from "./conformance-outcome.js";
 export { isAuthorizationRequiredCheck } from "./conformance-authorization.js";
+export { isTimedOutCheck } from "./conformance-timeout.js";
+export { isMissingInputCheck, missingInputMessage } from "./conformance-input.js";
 export type {
   ConformanceRunOutcome,
   ConformanceSkipReason,
@@ -828,6 +834,7 @@ export {
   computeConformanceScore,
   describeConformanceScore,
   pooledConformanceScore,
+  scorableOAuthIds,
   scoreFromAppsResult,
   scoreFromOAuthResult,
   scoreFromProtocolResult,
@@ -1285,6 +1292,8 @@ export {
 export type {
   ConformanceResult as OAuthConformanceResult,
   ConformanceStepId as OAuthConformanceStepId,
+  MCPOAuthReadinessId,
+  MCPOAuthReadinessWarning,
   OAuthConformanceCheckId,
   OAuthConformanceProfile,
   RemoteBrowserAuthorizationCode,
@@ -1311,6 +1320,7 @@ export type {
   MCPConformanceResult,
   MCPConformanceSuiteConfig,
   MCPConformanceSuiteResult,
+  MCPLogLevel,
   MCPReadinessId,
   MCPReadinessSpecStrength,
   MCPReadinessWarning,
@@ -1320,9 +1330,12 @@ export {
   CHECK_ERAS,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_LOG_LEVELS,
   MCP_PROTOCOL_VERSION_ERA_IDS,
   MCP_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
+  READINESS_ERAS,
+  RETIRED_MCP_CHECK_IDS,
   canRunConformance,
   isHttpServerConfig,
 } from "./mcp-conformance/index.js";
@@ -1366,11 +1379,14 @@ export type {
   MCPAppsConformanceSuiteDefaults,
   MCPAppsConformanceSuiteResult,
   MCPAppsConformanceSuiteRun,
+  MCPAppsReadinessId,
+  MCPAppsReadinessWarning,
   MCPAppsResourceReadOutcome,
 } from "./apps-conformance/index.js";
 export {
   MCP_APPS_CHECK_CATEGORIES,
   MCP_APPS_CHECK_IDS,
+  MCP_APPS_READINESS_IDS,
 } from "./apps-conformance/index.js";
 
 // MCP Tasks conformance
@@ -1382,13 +1398,18 @@ export type {
   MCPTasksCheckStatus,
   MCPTasksConformanceConfig,
   MCPTasksConformanceResult,
+  MCPTasksReadinessId,
+  MCPTasksReadinessWarning,
   MCPTasksRunOutcome,
   MCPTasksSkipReason,
+  MCPTasksUncheckedAdvice,
 } from "./tasks-conformance/index.js";
 export {
   decideOutcome,
   MCP_TASKS_CHECK_CATEGORIES,
   MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
+  RENAMED_MCP_TASKS_CHECK_IDS,
   resolveProbeTool,
 } from "./tasks-conformance/index.js";
 
@@ -1454,7 +1475,10 @@ export type {
   StepResult,
   VerificationResult,
 } from "./oauth-conformance/index.js";
-export { CONFORMANCE_CHECK_METADATA } from "./oauth-conformance/index.js";
+export {
+  CONFORMANCE_CHECK_METADATA,
+  MCP_OAUTH_READINESS_IDS,
+} from "./oauth-conformance/index.js";
 
 // MCP Operations (pure functions for common MCP workflows)
 export {
@@ -2093,3 +2117,18 @@ export {
   DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS,
   resolveModelVisibleMcpToolResults,
 } from "./host-config/host-policy.js";
+export {
+  MCP_TASKS_TOOL_CHECK_IDS,
+  isTasksToolCheck,
+  planTasksConformance,
+  validateTaskOverrides,
+  mergeTasksConformanceResults,
+  taskGroupFailure,
+} from "./tasks-conformance/index.js";
+export type {
+  MCPTasksToolCheckId,
+  MCPTasksToolSetup,
+  MCPTasksCheckOverrides,
+  MCPTasksRunOptions,
+  MCPTasksRunGroup,
+} from "./tasks-conformance/index.js";

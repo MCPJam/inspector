@@ -1,6 +1,12 @@
 import { authorizationFlowDigest } from "@/lib/oauth/flow-digest";
-import { cancelPendingChatScopeStepUpForCallback, isStaleChatAuthCallback } from "@/lib/scope-step-up-pending";
-import { serverCheckQueue, isServerCheckQueueError } from "@/lib/server-check-queue";
+import {
+  cancelPendingChatScopeStepUpForCallback,
+  isStaleChatAuthCallback,
+} from "@/lib/scope-step-up-pending";
+import {
+  serverCheckQueue,
+  isServerCheckQueueError,
+} from "@/lib/server-check-queue";
 import { startDesktopOperation } from "@/lib/desktop-diagnostics";
 import { checkProjectOAuthAccess } from "@/lib/oauth/project-oauth-access";
 import { buildElectronMcpCallbackUrl } from "@/lib/electron-mcp-callback";
@@ -1136,7 +1142,11 @@ export function useServerState({
         return false;
       }
 
-      const stepUp = params.chatAuthContinuationId ? readPendingChatScopeStepUp({ continuationId: params.chatAuthContinuationId }) : undefined;
+      const stepUp = params.chatAuthContinuationId
+        ? readPendingChatScopeStepUp({
+            continuationId: params.chatAuthContinuationId,
+          })
+        : undefined;
       const stepUpForThisServer =
         stepUp &&
         (stepUp.event.serverId === params.serverId ||
@@ -1163,7 +1173,9 @@ export function useServerState({
       clearHostedOAuthPendingState();
       writeHostedOAuthPendingMarker({
         surface: "project",
-        ...(params.chatAuthContinuationId ? { chatAuthContinuationId: params.chatAuthContinuationId } : {}),
+        ...(params.chatAuthContinuationId
+          ? { chatAuthContinuationId: params.chatAuthContinuationId }
+          : {}),
         initiatingUserId: currentUserId,
         ...(connectionIntent ? { connectionIntent } : {}),
         organizationId,
@@ -1197,10 +1209,11 @@ export function useServerState({
         resolveCredentialBinding: async (server, connectionId) => {
           if (!connectionId) return { kind: "none" };
           // Local credentials live on this machine and belong to its user.
-          if (!HOSTED_MODE) return { kind: "owned", credentialId: connectionId };
+          if (!HOSTED_MODE)
+            return { kind: "owned", credentialId: connectionId };
           const projectId = effectiveActiveProjectIdRef.current;
           const serverId = activeProjectServersFlatRef.current?.find(
-            (remote) => remote.name === server.name
+            (remote) => remote.name === server.name,
           )?._id;
           if (!projectId || !serverId) {
             return { kind: "shared", credentialId: connectionId };
@@ -1210,7 +1223,7 @@ export function useServerState({
           const rows = await listOAuthConnections(projectId, serverId);
           return !rows.shared &&
             rows.connections.some(
-              (connection) => connection.connectionId === connectionId
+              (connection) => connection.connectionId === connectionId,
             )
             ? { kind: "owned", credentialId: connectionId }
             : { kind: "shared", credentialId: connectionId };
@@ -1220,7 +1233,7 @@ export function useServerState({
           if (!HOSTED_MODE) return false;
           const projectId = effectiveActiveProjectIdRef.current;
           const serverId = activeProjectServersFlatRef.current?.find(
-            (remote) => remote.name === server.name
+            (remote) => remote.name === server.name,
           )?._id;
           if (!projectId || !serverId) return false;
           const rows = await listOAuthConnections(projectId, serverId);
@@ -1228,15 +1241,24 @@ export function useServerState({
         },
         prepareRedirect: (server, connectionIntent, continuationId) => {
           if (!HOSTED_MODE) return;
-          const pending = continuationId ? readPendingChatScopeStepUp({ continuationId }) : undefined;
-          if (continuationId && (!pending || (pending.projectId && pending.projectId !== effectiveActiveProjectIdRef.current))) {
-            throw new Error("The chat project changed before sign-in. Please return to the chat and try again.");
+          const pending = continuationId
+            ? readPendingChatScopeStepUp({ continuationId })
+            : undefined;
+          if (
+            continuationId &&
+            (!pending ||
+              (pending.projectId &&
+                pending.projectId !== effectiveActiveProjectIdRef.current))
+          ) {
+            throw new Error(
+              "The chat project changed before sign-in. Please return to the chat and try again.",
+            );
           }
           const serverUrl = (server.config as { url?: unknown })?.url;
           const prepared = prepareHostedProjectOAuthRedirect({
             chatAuthContinuationId: continuationId,
             serverId: activeProjectServersFlatRef.current?.find(
-              (remote) => remote.name === server.name
+              (remote) => remote.name === server.name,
             )?._id,
             serverName: server.name,
             serverUrl:
@@ -1247,10 +1269,13 @@ export function useServerState({
                   : undefined,
             ...(connectionIntent ? { connectionIntent } : {}),
           });
-          if (continuationId && !prepared) throw new Error("The chat sign-in could not be saved. Please try again.");
+          if (continuationId && !prepared)
+            throw new Error(
+              "The chat sign-in could not be saved. Please try again.",
+            );
         },
       }),
-    [prepareHostedProjectOAuthRedirect]
+    [prepareHostedProjectOAuthRedirect],
   );
 
   // Mid-session sign-in decides per call, from the host the user is
@@ -1259,7 +1284,7 @@ export function useServerState({
   activeMcpProfileRef.current = activeMcpProfile;
   useEffect(
     () => registerAuthChallengeHostProfile(() => activeMcpProfileRef.current),
-    []
+    [],
   );
 
   const activeProject = useMemo(() => {
@@ -3116,7 +3141,13 @@ export function useServerState({
         }
       };
       try {
-        if (hostedCallbackContext?.chatAuthContinuationId && isStaleChatAuthCallback(hostedCallbackContext.chatAuthContinuationId, await authorizationFlowDigest(state))) {
+        if (
+          hostedCallbackContext?.chatAuthContinuationId &&
+          isStaleChatAuthCallback(
+            hostedCallbackContext.chatAuthContinuationId,
+            await authorizationFlowDigest(state),
+          )
+        ) {
           finishDiagnostic(true);
           logger.info("Ignored stale chat OAuth callback");
           if (
@@ -3394,9 +3425,13 @@ export function useServerState({
                   }),
               );
             } else {
-              cancelPendingChatScopeStepUpForCallback(serverName,
-                connectionResult.error || "The server could not reconnect after authorization.",
-                await authorizationFlowDigest(state), hostedCallbackContext?.chatAuthContinuationId);
+              cancelPendingChatScopeStepUpForCallback(
+                serverName,
+                connectionResult.error ||
+                  "The server could not reconnect after authorization.",
+                await authorizationFlowDigest(state),
+                hostedCallbackContext?.chatAuthContinuationId,
+              );
               cancelPendingDirectScopeStepUpReplayForCallback(
                 serverName,
                 await authorizationFlowDigest(state),
@@ -3424,9 +3459,12 @@ export function useServerState({
             }
           } catch (connectionError) {
             if (isCancelled()) return;
-            cancelPendingChatScopeStepUpForCallback(serverName,
+            cancelPendingChatScopeStepUpForCallback(
+              serverName,
               "The server could not reconnect after authorization.",
-              await authorizationFlowDigest(state), hostedCallbackContext?.chatAuthContinuationId);
+              await authorizationFlowDigest(state),
+              hostedCallbackContext?.chatAuthContinuationId,
+            );
             cancelPendingDirectScopeStepUpReplayForCallback(
               serverName,
               await authorizationFlowDigest(state),
@@ -3482,7 +3520,12 @@ export function useServerState({
           failPendingOAuthConnection(errorMessage, oauthTrace) ??
           pendingServerName;
         if (failedServerName) {
-          cancelPendingChatScopeStepUpForCallback(failedServerName, errorMessage, await authorizationFlowDigest(state), hostedCallbackContext?.chatAuthContinuationId);
+          cancelPendingChatScopeStepUpForCallback(
+            failedServerName,
+            errorMessage,
+            await authorizationFlowDigest(state),
+            hostedCallbackContext?.chatAuthContinuationId,
+          );
           cancelPendingDirectScopeStepUpReplayForCallback(
             failedServerName,
             await authorizationFlowDigest(state),
@@ -3509,6 +3552,7 @@ export function useServerState({
       updateServerOAuthTrace,
       useLocalFallback,
       withProjectConnectionDefaults,
+      effectiveServers,
     ],
   );
 
@@ -3704,11 +3748,7 @@ export function useServerState({
               digest,
             )
           ) {
-            consumeOAuthCallbackParams(callbackAttempt);
-            navigateApp(
-              resolveHostedOAuthReturnPath(hostedOAuthCallbackContext!),
-              { replace: true },
-            );
+            leaveFailedCallback();
             return;
           }
           if (hostedOAuthCallbackContext?.suppressErrorToast !== true) {

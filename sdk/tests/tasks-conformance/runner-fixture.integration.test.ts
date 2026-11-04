@@ -128,17 +128,21 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
       toolCount: 1,
       probedTool: TASK_TOOL_NAME,
     });
-    expect(result.discovery.createdTaskId).toBeTruthy();
+    expect(result.discovery.createdTaskId).toBeUndefined();
+    expect(
+      result.checks.find((check) => check.id === "tasks-inline-result")?.details
+        ?.taskId
+    ).toBeTruthy();
     expect(result.checks).toHaveLength(MCP_TASKS_CHECK_IDS.length);
     // One skip is expected and correct: this fixture's task completes without
-    // ever asking for input, so the `input_required` round trip is not
+    // ever asking for input, so the `tasks/update` acknowledgement is not
     // applicable to it (a task that never asks is the normal case, not a
     // defect). Everything else ran.
     expect(
       result.checks
         .filter((entry) => entry.status === "skipped")
         .map((entry) => [entry.id, entry.skipReason])
-    ).toEqual([["tasks-input-required-update-completes", "not-applicable"]]);
+    ).toEqual([["tasks-update-ack-shape", "not-applicable"]]);
   });
 
   it("passes the undeclared-capability checks against a conformant fixture, having actually sent the probes", async () => {
@@ -181,7 +185,7 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
 
     // The undeclared tools/call reached it too, and produced no task.
     expect(undeclaredRequests(fixture, "tools/call").length).toBeGreaterThan(0);
-    expect(fixture.tasks()).toHaveLength(1);
+    expect(fixture.tasks()).toHaveLength(3);
   });
 
   it("passes the rest of the suite against a conformant fixture", async () => {
@@ -200,29 +204,23 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
       "tasks-ttl-shape": "passed",
       "tasks-inline-result": "passed",
       "tasks-mcp-name-routing": "passed",
-      // The scenario depth added by the conformance-gap program. All of them
-      // are outside the `mcp-tasks` profile's scored set, so they report these
-      // verdicts without moving the number.
+      // Promoted to scored in `mcp-tasks@2026-10-31.1`.
+      "tasks-ttl-integer-shape": "passed",
+      "tasks-update-ack-shape": "skipped",
+      // The rest of the scenario depth added by the conformance-gap program.
+      // These are outside the `mcp-tasks` profile's scored set, so they report
+      // these verdicts without moving the number.
       "tasks-invalid-task-id-rejected": "passed",
       "tasks-status-payload-shape": "passed",
       "tasks-cancel-ack-shape": "passed",
-      "tasks-ttl-integer-shape": "passed",
       "tasks-undeclared-capability-names-requirements": "passed",
-      "tasks-input-required-update-completes": "skipped",
     });
     // Green DESPITE the skip, because the skipped check is `not-applicable`
     // (this task never asks for input) rather than `could-not-run`.
     expect(result.passed).toBe(true);
     expect(result.profile).toMatchObject({
       profileId: "mcp-tasks",
-      pendingCheckIds: [
-        "tasks-cancel-ack-shape",
-        "tasks-input-required-update-completes",
-        "tasks-invalid-task-id-rejected",
-        "tasks-status-payload-shape",
-        "tasks-ttl-integer-shape",
-        "tasks-undeclared-capability-names-requirements",
-      ],
+      pendingCheckIds: [],
     });
   });
 
@@ -343,10 +341,10 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     expect(result.incompleteReason).toContain("execution.taskSupport");
     expect(result.incompleteReason).toContain("2026-07-28");
     expect(result.incompleteReason).toContain(TASK_TOOL_NAME);
-    // The SUMMARY counts only the scored checks, so it still reads 6: the five
-    // new task-dependent gaps are pending under `mcp-tasks@2026-08-22.1`.
-    expect(result.summary).toContain("6 could not run");
-    expect(result.summary).toContain("pending");
+    // Every tasks check is scored since `mcp-tasks@2026-11-01.2`, so the
+    // SUMMARY counts all 11 unrun checks and names nothing pending.
+    expect(result.summary).toContain("11 could not run");
+    expect(result.summary).not.toContain("pending");
     expect(result.categorySummary.creation.couldNotRun).toBe(2);
     expect(result.discovery.createdTaskId).toBeUndefined();
   });

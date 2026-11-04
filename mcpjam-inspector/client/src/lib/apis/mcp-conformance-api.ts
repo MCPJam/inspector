@@ -3,7 +3,13 @@ import type {
   MCPAppsCheckId,
   MCPAppsConformanceResult,
   MCPCheckId,
+  MCPLogLevel,
+  MCPOAuthReadinessId,
+  MCPReadinessId,
   MCPTasksCheckId,
+  MCPTasksToolCheckId,
+  MCPTasksCheckOverrides,
+  MCPTasksReadinessId,
   MCPTasksConformanceResult,
   McpProtocolVersion,
   ConformanceResult as OAuthConformanceResult,
@@ -41,19 +47,66 @@ export interface OAuthStartInput {
     customHeaders?: Array<{ key: string; value: string }>;
   };
   callbackOrigin?: string;
+  /** The advice to report; absent reports all of it, empty none. */
+  readinessIds?: MCPOAuthReadinessId[];
 }
 
 // ── Public API ──────────────────────────────────────────────────────────
 
+/** A tool named as safe for a protocol check to call, with its arguments. */
+export interface ConformanceProbe {
+  toolName: string;
+  arguments?: Record<string, unknown>;
+  /**
+   * `logProbe` only: the log level the log level filtering advice asks for.
+   * Absent means the SDK's default, `warning`.
+   */
+  level?: MCPLogLevel;
+  /**
+   * `tasksProbe` only: the answers `tasks/update` sends when the task asks
+   * for input, keyed by `inputRequests` key. Absent means the update
+   * acknowledgement check is not applicable.
+   */
+  inputResponses?: Record<string, unknown>;
+}
+
+/**
+ * The tools the checks that must call one may use: `logProbe` for the logging
+ * check and the log level filtering advice, `inputRequiredProbe` for the
+ * undeclared-capability check, `toolCallProbe` for the output-schema check,
+ * `tasksProbe` for the Tasks checks that need a created task.
+ */
+export interface ConformanceProbes {
+  logProbe?: ConformanceProbe;
+  inputRequiredProbe?: ConformanceProbe;
+  toolCallProbe?: ConformanceProbe;
+  tasksProbe?: ConformanceProbe;
+  tasksOverrides?: Partial<Record<MCPTasksToolCheckId, ConformanceProbe>>;
+}
+
 export async function runProtocolConformance(
   serverNameOrId: string,
-  options?: { protocolVersion?: McpProtocolVersion; checkIds?: MCPCheckId[] },
+  options?: {
+    protocolVersion?: McpProtocolVersion;
+    checkIds?: MCPCheckId[];
+    /** The advice to run; absent runs all of it, empty runs none. */
+    readinessIds?: MCPReadinessId[];
+    probes?: ConformanceProbes;
+  },
 ): Promise<{ success: boolean; result: MCPConformanceResult }> {
   const versionFields = {
     ...(options?.protocolVersion
       ? { protocolVersion: options.protocolVersion }
       : {}),
     ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
+    ...(options?.readinessIds ? { readinessIds: options.readinessIds } : {}),
+    ...(options?.probes?.logProbe ? { logProbe: options.probes.logProbe } : {}),
+    ...(options?.probes?.inputRequiredProbe
+      ? { inputRequiredProbe: options.probes.inputRequiredProbe }
+      : {}),
+    ...(options?.probes?.toolCallProbe
+      ? { toolCallProbe: options.probes.toolCallProbe }
+      : {}),
   };
   return runByMode({
     local: () =>
@@ -73,9 +126,17 @@ export async function runProtocolConformance(
 
 export async function runAppsConformance(
   serverNameOrId: string,
-  options?: { checkIds?: MCPAppsCheckId[] },
+  options?: {
+    checkIds?: MCPAppsCheckId[];
+    protocolVersion?: McpProtocolVersion;
+  },
 ): Promise<{ success: boolean; result: MCPAppsConformanceResult }> {
-  const checkFields = options?.checkIds ? { checkIds: options.checkIds } : {};
+  const checkFields = {
+    ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
+    ...(options?.protocolVersion
+      ? { protocolVersion: options.protocolVersion }
+      : {}),
+  };
   return runByMode({
     local: () =>
       localPost("/api/mcp/conformance/apps", {
@@ -100,15 +161,30 @@ export async function runAppsConformance(
 export async function runTasksConformance(
   serverNameOrId: string,
   options?: {
+    protocolVersion?: McpProtocolVersion;
+    checkOverrides?: MCPTasksCheckOverrides;
     toolName?: string;
     toolArguments?: Record<string, unknown>;
+    inputResponses?: Record<string, unknown>;
     checkIds?: MCPTasksCheckId[];
+    /** The advice to report; absent reports all of it, empty none. */
+    readinessIds?: MCPTasksReadinessId[];
   },
 ): Promise<{ success: boolean; result: MCPTasksConformanceResult }> {
   const optionFields = {
+    ...(options?.protocolVersion
+      ? { protocolVersion: options.protocolVersion }
+      : {}),
     ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
+    ...(options?.readinessIds ? { readinessIds: options.readinessIds } : {}),
+    ...(options?.checkOverrides
+      ? { checkOverrides: options.checkOverrides }
+      : {}),
     ...(options?.toolName ? { toolName: options.toolName } : {}),
     ...(options?.toolArguments ? { toolArguments: options.toolArguments } : {}),
+    ...(options?.inputResponses
+      ? { inputResponses: options.inputResponses }
+      : {}),
   };
   return runByMode({
     local: () =>
@@ -135,6 +211,7 @@ export async function startOAuthConformance(
         serverId: input.serverNameOrId,
         oauthProfile: input.oauthProfile,
         callbackOrigin: input.callbackOrigin,
+        ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
       }),
     hosted: () => {
       const request = buildServerRequest(input.serverNameOrId);
@@ -142,6 +219,7 @@ export async function startOAuthConformance(
         ...request,
         oauthProfile: input.oauthProfile,
         callbackOrigin: input.callbackOrigin,
+        ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
       });
     },
   });

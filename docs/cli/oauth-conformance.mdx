@@ -336,6 +336,7 @@ oauth-conformance:
 | `--verify-tools` | No | | After OAuth, connect and list tools |
 | `--verify-call-tool <name>` | No | | Also call the named tool (implies `--verify-tools`) |
 | `--conformance-checks` | No | | Run additional negative OAuth checks after the main flow |
+| `--advice-id <id>` | No | all | Restrict advice to one or more advice IDs. An unknown ID is an error that lists the valid ones |
 | `--credentials-out <path>` | No | | Write OAuth credentials to file (mode 0600); stdout has secrets redacted |
 | `--print-url` | No | | Print consent URL to stderr instead of launching a browser |
 | `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |

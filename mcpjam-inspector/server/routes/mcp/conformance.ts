@@ -4,7 +4,10 @@ import {
   MCP_APPS_CHECK_IDS,
   MCP_CHECK_IDS,
   MCP_PROTOCOL_VERSIONS,
+  MCP_READINESS_IDS,
+  MCP_OAUTH_READINESS_IDS,
   MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
   canRunConformance,
   oauthConformanceProfileSchema,
   type HttpServerConfig,
@@ -25,7 +28,13 @@ import {
   startOAuthConformance,
   submitOAuthConformanceCode,
 } from "../shared/conformance";
+import {
+  conformanceInputResponsesSchema,
+  conformanceTaskOverridesSchema,
+  conformanceProbeFields,
+} from "../shared/conformance-probes";
 import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
+import { checkConformanceConnection } from "../shared/conformance-connection.js";
 
 const conformance = new Hono();
 
@@ -71,6 +80,47 @@ function handleUnsupportedTransport(
   return undefined;
 }
 
+const connectionCheckSchema = z.object({
+  serverId: z.string().min(1),
+  protocolVersion: z.enum(["auto", ...MCP_PROTOCOL_VERSIONS]),
+});
+
+conformance.post("/connection-check", async (c) => {
+  try {
+    const parsed = connectionCheckSchema.safeParse(await readRequestJson(c));
+    if (!parsed.success)
+      return c.json(
+        { error: parsed.error.issues[0]?.message ?? "Invalid request" },
+        400,
+      );
+    const resolved = resolveServerConfig(
+      c.mcpClientManager,
+      parsed.data.serverId,
+    );
+    if ("error" in resolved) return c.json(resolved, 400);
+    assertHttpSupported("protocol", resolved.config);
+    const http = toHttpResolved(resolved.config as HttpServerConfig);
+    return c.json(
+      await checkConformanceConnection(
+        {
+          url: http.serverUrl,
+          accessToken: http.accessToken,
+          requestInit: { headers: http.customHeaders },
+        },
+        parsed.data.protocolVersion,
+      ),
+    );
+  } catch (error) {
+    const unsupported = handleUnsupportedTransport(c, error);
+    if (unsupported) return unsupported;
+    reportRouteFailure("[Conformance Connection Check]", error, {
+      source: "mcp.conformance.connection_check",
+      hop: "user_server_hop",
+    });
+    return c.json({ error: "Could not check the server connection." }, 500);
+  }
+});
+
 // ── POST /protocol ──────────────────────────────────────────────────────
 
 const protocolSchema = z.object({
@@ -79,6 +129,10 @@ const protocolSchema = z.object({
   protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
   /** Run only these checks, as picked before Run; absent ⇒ all of them. */
   checkIds: z.array(z.enum(MCP_CHECK_IDS)).min(1).optional(),
+  /** Run only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds: z.array(z.enum(MCP_READINESS_IDS)).optional(),
+  /** Tools named as safe for the checks that must call one. */
+  ...conformanceProbeFields,
 });
 
 conformance.post("/protocol", async (c) => {
@@ -105,6 +159,10 @@ conformance.post("/protocol", async (c) => {
       ...toHttpResolved(resolved.config as HttpServerConfig),
       protocolVersion: parsed.data.protocolVersion,
       checkIds: parsed.data.checkIds,
+      readinessIds: parsed.data.readinessIds,
+      logProbe: parsed.data.logProbe,
+      inputRequiredProbe: parsed.data.inputRequiredProbe,
+      toolCallProbe: parsed.data.toolCallProbe,
     });
     return c.json({ success: true, result });
   } catch (error) {
@@ -129,6 +187,7 @@ conformance.post("/protocol", async (c) => {
 // ── POST /apps ──────────────────────────────────────────────────────────
 
 const appsSchema = z.object({
+  protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
   serverId: z.string().min(1),
   /** Run only these checks, as picked before Run; absent ⇒ all of them. */
   checkIds: z.array(z.enum(MCP_APPS_CHECK_IDS)).min(1).optional(),
@@ -161,6 +220,7 @@ conformance.post("/apps", async (c) => {
 
     const { result } = await runAppsConformance({
       ...serverConfig,
+      protocolVersion: parsed.data.protocolVersion,
       ...(parsed.data.checkIds ? { checkIds: parsed.data.checkIds } : {}),
     });
     return c.json({ success: true, result });
@@ -184,14 +244,19 @@ conformance.post("/apps", async (c) => {
 // ── POST /tasks ─────────────────────────────────────────────────────────
 
 const tasksSchema = z.object({
+  protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
   serverId: z.string().min(1),
   /** Tool used to provoke a task; required on the extension wire, where tools
    *  carry no task metadata to pick from. */
   toolName: z.string().min(1).optional(),
   toolArguments: z.record(z.string(), z.unknown()).optional(),
+  inputResponses: conformanceInputResponsesSchema,
+  checkOverrides: conformanceTaskOverridesSchema,
   pollTimeoutMs: z.number().int().positive().max(120_000).optional(),
   /** Run only these checks, as picked before Run; absent ⇒ all of them. */
   checkIds: z.array(z.enum(MCP_TASKS_CHECK_IDS)).min(1).optional(),
+  /** Report only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds: z.array(z.enum(MCP_TASKS_READINESS_IDS)).optional(),
 });
 
 conformance.post("/tasks", async (c) => {
@@ -248,6 +313,8 @@ const oauthStartSchema = z.object({
   serverId: z.string().min(1),
   oauthProfile: oauthConformanceProfileSchema.optional(),
   callbackOrigin: z.string().optional(),
+  /** Report only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds: z.array(z.enum(MCP_OAUTH_READINESS_IDS)).optional(),
 });
 
 conformance.post("/oauth/start", async (c) => {
@@ -264,7 +331,8 @@ conformance.post("/oauth/start", async (c) => {
       );
     }
 
-    const { serverId, oauthProfile, callbackOrigin } = parsed.data;
+    const { serverId, oauthProfile, callbackOrigin, readinessIds } =
+      parsed.data;
     const resolved = resolveServerConfig(c.mcpClientManager, serverId);
     if ("error" in resolved) {
       return c.json({ success: false, ...resolved }, 400);
@@ -290,6 +358,7 @@ conformance.post("/oauth/start", async (c) => {
       defaultCustomHeaders: http.customHeaders,
       redirectUrl: `${callbackOrigin.replace(/\/$/, "")}/oauth/callback/debug`,
       oauthProfile,
+      readinessIds,
     });
     return c.json(result);
   } catch (error) {

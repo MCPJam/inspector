@@ -44,10 +44,6 @@ export {
 } from "./step-up-probe.js";
 
 
-import {
-  parseBearerAuthenticateParameters,
-  parseInsufficientScopeChallenge,
-} from "../oauth/state-machines/shared/challenges.js";
 import { claudePolicySource } from "./manifest.js";
 import type { ClaudeReadinessFinding } from "./types.js";
 import {
@@ -57,6 +53,11 @@ import {
   type ClaudeCheckDefinition,
   type ClaudeCheckStamp,
 } from "./checks/helpers.js";
+import {
+  STEP_UP,
+  gradeStepUp,
+  type ClaudeStepUpObservation,
+} from "./step-up-grade.js";
 
 
 /**
@@ -249,17 +250,6 @@ const REFRESH_ROTATION: ClaudeCheckDefinition = {
   requiresCapabilities: ["intrusive-probes"],
 };
 
-const STEP_UP: ClaudeCheckDefinition = {
-  id: "claude.intrusive.step-up-challenge",
-  title: "A protected tool challenges for the scopes it needs",
-  lane: "runtime-compatibility",
-  class: "required",
-  source: claudePolicySource("authentication", "§Step-up authorization"),
-  provenance: "wire",
-  intrusiveness: "side-effecting",
-  requiresCapabilities: ["intrusive-probes"],
-};
-
 const INTRUSIVE_DEFINITIONS = [DCR_REGISTER, REFRESH_ROTATION, STEP_UP];
 
 // ── Observations ────────────────────────────────────────────────────────
@@ -302,48 +292,11 @@ export interface ClaudeIntrusiveObservations {
     replayBody?: Record<string, unknown>;
     error?: string;
   };
-  stepUp?: {
-    attempted: boolean;
-    toolName: string;
-    status: number;
-    wwwAuthenticate?: string;
-    error?: string;
-  };
+  stepUp?: ClaudeStepUpObservation;
 }
 
 /** Why the probes below did not run, when the run never got as far as them. */
 const PROBE_NOT_RUN = "this probe did not run in this run";
-
-/**
- * The scopes a step-up challenge asked for, beside the ones the run expected.
- *
- * Reported, never graded. A challenge that names no `scope` is conforming, and
- * a server is free to ask for scopes the operator did not list — so the useful
- * output is the comparison itself, which tells whoever reads the report
- * whether their declared expectation matched reality.
- */
-function summarizeStepUpScopes(
-  wwwAuthenticate: string | undefined,
-  expectedScopes: string[] | undefined,
-): Record<string, unknown> {
-  const expected = expectedScopes ?? [];
-  const challengedScopes = wwwAuthenticate
-    ? (parseBearerAuthenticateParameters(wwwAuthenticate).scope ?? "")
-        .split(/\s+/)
-        .filter(Boolean)
-    : [];
-  return {
-    expectedScopes: expected,
-    challengedScopes,
-    // `undefined` rather than a boolean when the challenge named nothing:
-    // there is no overlap to report, and `false` would read as a mismatch the
-    // server never committed.
-    scopesOverlapExpectation:
-      challengedScopes.length === 0
-        ? undefined
-        : challengedScopes.some((scope) => expected.includes(scope)),
-  };
-}
 
 /**
  * Whether the refresh request itself was answered successfully.
@@ -497,71 +450,7 @@ export function gradeClaudeIntrusiveObservations(
     );
   }
 
-  // ── Step-up ──────────────────────────────────────────────────────────
-  const stepUp = observations.stepUp;
-  if (!mode.protectedToolName) {
-    findings.push(
-      notEvaluated(
-        STEP_UP,
-        stamp,
-        "no `protectedToolName` was declared; calling an arbitrary tool to see what happens is not something this runner does",
-        { missingInput: "intrusive.protectedToolName" },
-      ),
-    );
-  } else if (!stepUp?.attempted) {
-    findings.push(
-      notEvaluated(STEP_UP, stamp, stepUp?.error ?? "the step-up probe did not run"),
-    );
-  } else if (stepUp.status >= 200 && stepUp.status < 300) {
-    // THE TOKEN ALREADY HELD THE SCOPE, or the tool needs none. Either way the
-    // server was never asked the question this check grades, and failing it
-    // would accuse a submitter of a probe misconfiguration.
-    findings.push(
-      notEvaluated(
-        STEP_UP,
-        stamp,
-        `\`${stepUp.toolName}\` succeeded with the supplied token, so no step-up was needed; supply a token that lacks the tool's scope`,
-        {
-          status: stepUp.status,
-          ...summarizeStepUpScopes(undefined, mode.expectedScopes),
-        },
-      ),
-    );
-  } else {
-    const challenged =
-      stepUp.status === 403 &&
-      parseInsufficientScopeChallenge(stepUp.wwwAuthenticate)
-        .isInsufficientScope;
-    // WHAT THE CONFIG PROMISED, MEASURED. `expectedScopes` is required
-    // alongside `protectedToolName` so the run states what it is asserting,
-    // but nothing compared it, so the requirement bought a config error and no
-    // evidence. Recorded rather than graded: the `scope` parameter is OPTIONAL
-    // on an `insufficient_scope` challenge — Claude selects scopes from
-    // discovery when it is absent — so a server that omits it, or names its
-    // own, is not thereby wrong.
-    const scopeEvidence = summarizeStepUpScopes(
-      stepUp.wwwAuthenticate,
-      mode.expectedScopes,
-    );
-    findings.push(
-      challenged
-        ? satisfied(STEP_UP, stamp, {
-            toolName: stepUp.toolName,
-            wwwAuthenticate: stepUp.wwwAuthenticate,
-            ...scopeEvidence,
-          })
-        : violated(
-            STEP_UP,
-            stamp,
-            `Calling \`${stepUp.toolName}\` without its scopes answered ${stepUp.status}. Claude needs a 403 with \`error="insufficient_scope"\` to know it should re-authorize rather than give up.`,
-            {
-              status: stepUp.status,
-              wwwAuthenticate: stepUp.wwwAuthenticate,
-              ...scopeEvidence,
-            },
-          ),
-    );
-  }
+  findings.push(gradeStepUp(mode, observations.stepUp, stamp));
 
   return findings;
 }

@@ -56,6 +56,7 @@ import {
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { clampText } from "@/lib/webmcp/groups/shared";
 import { resetScopeStepUp, runWithScopeStepUp } from "@/lib/scope-step-up";
+import { resetAuthChallenge } from "@/state/oauth-orchestrator";
 import {
   claimPendingDirectScopeStepUpReplay,
   clearPendingDirectScopeStepUpReplay,
@@ -678,15 +679,19 @@ export function ResourcesTab({
     }
     void readResourceApi(descriptor.serverName, descriptor.uri)
       .then((data) => {
-        resetScopeStepUp(
-          server,
-          {
-            method: "resources/read",
-            operation: descriptor.uri,
-          },
-          descriptor.authAttempt,
-        );
+        const operation = {
+          method: "resources/read" as const,
+          operation: descriptor.uri,
+        };
+        // This attempt's sign-in is finished even when a newer read owns the
+        // panel, so its ledger entry goes now.
+        if (server && descriptor.authAttempt) {
+          resetAuthChallenge(server, operation, descriptor.authAttempt);
+        }
         if (!isCurrentReplay()) return;
+        // The step-up budget is shared by every read of this resource; only
+        // the current read may reset it.
+        resetScopeStepUp(server, operation);
         if (descriptor.target === "template") {
           setTemplateContent(data?.content ?? null);
         } else {

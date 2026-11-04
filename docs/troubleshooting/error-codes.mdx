@@ -797,6 +797,22 @@ MCPJam has suspended this account, so billed requests are refused.
 **Next steps**
 - Contact [founders@mcpjam.com](mailto:founders@mcpjam.com) for support.
 
+### Request too large for a guest
+
+`account/guest_input_too_large`
+
+This request is larger than MCPJam allows for guests, so it was not sent to the model. Retrying sends the same request and won't help.
+
+**Likely causes**
+- Connected servers add their tool definitions to every request, and those count toward the guest limit.
+- A tool returned a large result, and it is sent back to the model with the next request.
+- The conversation has grown past the guest limit.
+
+**Next steps**
+- Sign in to remove the guest limit.
+- Have the tool return less, or disconnect servers this request doesn't need.
+- In chat, start a new chat or shorten the conversation.
+
 ### Server rate limited
 
 `server/rate_limited`
