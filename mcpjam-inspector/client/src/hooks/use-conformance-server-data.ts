@@ -46,7 +46,7 @@ function decodeInputs(stored: StoredProbes = {}): ConformanceProbes | Error {
   const inputs: ConformanceProbes = {};
   const parseObject = (text: string): Record<string, unknown> => {
     const value: unknown = JSON.parse(text);
-    if (!isRecord(value)) throw new Error("Expected a JSON object");
+    if (!isRecord(value)) throw new Error();
     return value;
   };
   try {
