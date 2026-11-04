@@ -478,6 +478,56 @@ describe("ConformanceRunDetailPage", () => {
     expect(screen.getByText("not a JWT").className).not.toMatch(/text-red/);
   });
 
+  it.each([0, 100])(
+    "keeps cached missing-input rows score-neutral (stored score: %i)",
+    async (score) => {
+      const raw =
+        score === 100
+          ? "A required tool is missing"
+          : "no probe tool could be selected automatically: choose a task tool";
+      fetchArtifactMock.mockResolvedValue(
+        reportBody([
+          {
+            id: "tasks-result-type-discipline",
+            title: "Result Type Discipline",
+            status: "skipped",
+            skipReason: "could-not-run",
+            error: raw,
+            ...(score === 100
+              ? { details: { missingInput: "tasksProbe" } }
+              : {}),
+          },
+        ]),
+      );
+      useArtifactQueryMock.mockReturnValue(
+        run([
+          report({
+            suiteKind: "tasks",
+            score,
+            passed: score === 0 ? 0 : 1,
+            outcome: "incomplete",
+            couldNotRun: 1,
+            incompleteReason: raw,
+          }),
+        ]),
+      );
+      render(<ConformanceRunDetailPage runId="run_1" />);
+
+      expect(
+        await screen.findByText(
+          "Select a tool that creates a task in setup, then run again.",
+        ),
+      ).toBeInTheDocument();
+      expect(screen.getByText("Not run")).toHaveAttribute(
+        "title",
+        "This check needs an input before it can run.",
+      );
+      expect(screen.queryByTitle(/Not scored/)).not.toBeInTheDocument();
+      expect(screen.queryByText(raw)).not.toBeInTheDocument();
+      expect(fetchArtifactMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("fetches each report once, on load, and reuses it when a suite opens", async () => {
     fetchArtifactMock.mockResolvedValue(
       reportBody([{ id: "ping", title: "Ping", status: "passed" }]),

@@ -72,6 +72,64 @@ describe("ConformanceSharedPage", () => {
     useSharedArtifactMock.mockReset();
   });
 
+  it("shows saved missing-input checks as gray Not run rows with setup copy", () => {
+    const message =
+      "no probe tool could be selected automatically: tools are chosen by `execution.taskSupport`";
+    useSharedArtifactMock.mockReturnValue({
+      loading: false,
+      error: null,
+      redeem: null,
+      artifact: {
+        score: 100,
+        outcome: "incomplete",
+        applicable: 1,
+        passed: 1,
+        failed: 0,
+        couldNotRun: 1,
+        requestedSuites: ["tasks"],
+        reports: {
+          tasks: {
+            outcome: "incomplete",
+            incompleteReason: message,
+            score: {
+              score: 100,
+              outcome: "incomplete",
+              applicable: 1,
+              passed: 1,
+              failed: 0,
+              couldNotRun: 1,
+            },
+            groups: [
+              {
+                cases: [
+                  {
+                    id: "tasks-result-type-discipline",
+                    title: "Result Type Discipline",
+                    status: "skipped",
+                    skipReason: "could-not-run",
+                    error: message,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    });
+    render(<ConformanceSharedPage token="tok" />);
+    expect(screen.getByText("Not run")).toHaveAttribute(
+      "title",
+      "This check needs an input before it can run.",
+    );
+    expect(
+      screen.getByText(
+        "Select a tool that creates a task in setup, then run again.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(message)).toBeNull();
+    expect(screen.getByText("Result Type Discipline")).toBeInTheDocument();
+  });
+
   it("shows the run as score card and suite rows, not raw JSON", () => {
     useSharedArtifactMock.mockReturnValue({
       loading: false,

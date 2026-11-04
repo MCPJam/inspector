@@ -8,7 +8,6 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "convex/react";
-import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FlaskConical } from "lucide-react";
@@ -18,12 +17,12 @@ import { useSharedArtifact } from "@/hooks/useSharedArtifact";
 import { useArtifactQuery } from "@/lib/artifact-urls";
 import {
   OverallScoreCard,
-  StatusIcon,
   SUITE_COPY,
   SuiteRow,
   VerdictBadge,
 } from "./conformance-ui";
-import { CatalogList, UnscoredTag } from "./ConformanceCheckRows";
+import { CatalogList } from "./ConformanceCheckRows";
+import { SuiteReportCases } from "./ConformanceSavedChecks";
 import { ConformanceAdvice, reportAdviceGroups } from "./ConformanceAdvice";
 import {
   useSavedRunReports,
@@ -539,106 +538,6 @@ function SavedSuiteRow({
         />
       )}
     </SuiteRow>
-  );
-}
-
-/**
- * The checks of a saved suite, read from its report artifact. Fetched the
- * first time the row opens, not on page load.
- */
-function SuiteReportCases({
-  suiteKind,
-  reportUrl,
-  loadReport,
-  inlineCases,
-  incompleteReason,
-  load,
-}: {
-  suiteKind: string;
-  reportUrl?: string | null;
-  loadReport?: LoadReport;
-  inlineCases?: SavedReportCase[];
-  incompleteReason: string | null;
-  load: boolean;
-}) {
-  const [fetched, setCases] = useState<SavedReportCase[] | null | "error">(
-    null,
-  );
-  const cases = inlineCases ?? fetched;
-  useEffect(() => {
-    if (inlineCases || !load || !reportUrl || fetched !== null) return;
-    if (!loadReport) return;
-    let cancelled = false;
-    loadReport(suiteKind, reportUrl)
-      .then((json) => {
-        if (cancelled) return;
-        setCases((json.groups ?? []).flatMap((group) => group.cases ?? []));
-      })
-      .catch(() => {
-        if (!cancelled) setCases("error");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [inlineCases, load, reportUrl, fetched, loadReport, suiteKind]);
-
-  return (
-    <div>
-      {incompleteReason ? (
-        <p className="py-2 pl-7 text-[13px] text-amber-700 dark:text-amber-400">
-          {incompleteReason}
-        </p>
-      ) : null}
-      {(!reportUrl && !inlineCases) || cases === "error" ? (
-        <p className="py-3 pl-7 text-[13px] text-muted-foreground">
-          The detailed report for this suite is not available. Run the checks
-          again to generate a new one.
-        </p>
-      ) : cases === null ? (
-        <p className="flex items-center gap-2 py-3 pl-7 text-[13px] text-muted-foreground">
-          <Loader2 className="size-3.5 animate-spin" /> Loading checks…
-        </p>
-      ) : (
-        cases.map((check) => (
-          <div
-            key={check.id}
-            className="flex items-start gap-2.5 border-b border-border/60 py-1.75 pl-7 pr-1 last:border-0"
-          >
-            <span className="mt-0.5">
-              <StatusIcon
-                status={check.status}
-                skipReason={check.skipReason}
-                muted={check.pending === true}
-              />
-            </span>
-            {check.pending ? <UnscoredTag /> : null}
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span
-                className={
-                  check.status === "skipped" &&
-                  check.skipReason !== "could-not-run"
-                    ? "text-[13px] text-muted-foreground"
-                    : "text-[13px]"
-                }
-              >
-                {check.title}
-              </span>
-              {check.error ? (
-                <span
-                  className={
-                    check.status === "failed" && !check.pending
-                      ? "text-[13px] font-medium text-red-600 dark:text-red-400"
-                      : "text-[13px] text-muted-foreground"
-                  }
-                >
-                  {check.error}
-                </span>
-              ) : null}
-            </span>
-          </div>
-        ))
-      )}
-    </div>
   );
 }
 

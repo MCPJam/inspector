@@ -19,6 +19,7 @@ export type SavedReportCase = {
   status: string;
   skipReason?: string;
   error?: string;
+  details?: unknown;
   /** Left out of the score: a profile's pending check or an unscored OAuth step. */
   pending?: boolean;
 };

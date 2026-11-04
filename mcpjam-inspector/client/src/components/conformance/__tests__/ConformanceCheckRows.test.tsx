@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import type { MCPCheckResult, OAuthConformanceStepResult } from "@mcpjam/sdk";
+import type { MCPCheckResult, MCPTasksCheckResult, OAuthConformanceStepResult } from "@mcpjam/sdk";
 import { CheckRow, OAuthStepRow } from "../ConformanceCheckRows";
 
 function check(overrides: Partial<MCPCheckResult>): MCPCheckResult {
@@ -16,6 +16,41 @@ function check(overrides: Partial<MCPCheckResult>): MCPCheckResult {
 }
 
 describe("CheckRow", () => {
+  it.each([true, false])(
+    "shows a gray Not run row for missing input (marked: %s)",
+    (marked) => {
+      const message =
+        "no probe tool could be selected automatically: tools are chosen by `execution.taskSupport`";
+      const taskCheck: MCPTasksCheckResult = {
+        id: "tasks-result-type-discipline",
+        category: "creation",
+        title: "Result Type Discipline",
+        description: "Checks the task creation result.",
+        status: "skipped",
+        skipReason: "could-not-run",
+        durationMs: 0,
+        error: { message },
+        details: marked ? { missingInput: "tasksProbe" } : undefined,
+      };
+      render(<CheckRow check={taskCheck} />);
+      expect(screen.getByText("Not run")).toHaveAttribute(
+        "title",
+        "This check needs an input before it can run.",
+      );
+      expect(screen.queryByText(message)).toBeNull();
+      expect(
+        screen.getAllByText(
+          "Select a tool that creates a task in setup, then run again.",
+        ).length,
+      ).toBeGreaterThan(0);
+      const icon = screen.getByRole("button").querySelector("span > span");
+      expect(icon).toHaveClass("bg-muted", "text-muted-foreground");
+      expect(icon).not.toHaveTextContent("!");
+      fireEvent.click(screen.getByRole("button"));
+      expect(screen.queryByText(message)).toBeNull();
+    },
+  );
+
   it("shows how long a check that ran took", () => {
     render(<CheckRow check={check({})} />);
     expect(screen.getByText("420ms")).toBeInTheDocument();
