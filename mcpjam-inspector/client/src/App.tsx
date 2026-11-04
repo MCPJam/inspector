@@ -5800,7 +5800,7 @@ export default function App() {
     } else if (
       activeTab === "conformance" &&
       !isConformanceSharedRoute &&
-      conformanceEnabled !== true
+      conformanceEnabled === false
     ) {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (
