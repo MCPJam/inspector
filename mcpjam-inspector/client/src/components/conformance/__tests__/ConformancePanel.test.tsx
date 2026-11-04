@@ -1829,6 +1829,74 @@ describe("ConformanceTab", () => {
       );
     }
 
+    it.each([
+      {
+        suite: "Protocol",
+        field: "Tool that emits logs",
+        row: "Logs Require A Log Level",
+        missing: "2 checks need input",
+        ready: "1 check needs input",
+      },
+      {
+        suite: "Tasks",
+        field: "Tool that creates a task",
+        row: "Result Type Discipline",
+        missing: "11 checks need input",
+        ready: undefined,
+      },
+    ])(
+      "keeps required-argument badges in $suite until arguments are valid",
+      async ({ suite, field, row, missing, ready }) => {
+        mockListTools.mockResolvedValue({
+          tools: [
+            {
+              name: "echo",
+              annotations: { readOnlyHint: true },
+              inputSchema: {
+                type: "object",
+                properties: { projectId: { type: "string" } },
+                required: ["projectId"],
+              },
+            },
+          ],
+        });
+        const user = userEvent.setup();
+        await toStep2();
+        const header = screen.getByRole("button", {
+          name: new RegExp(`^${suite}.*checks selected$`),
+        });
+        fireEvent.click(header);
+        const tool = screen.getByRole("combobox", { name: field });
+        await waitFor(() => expect(tool).toBeEnabled());
+        await user.click(tool);
+        await user.click(
+          screen.getByRole("option", { name: "echo · read-only" }),
+        );
+        const checkRow = screen.getByRole("button", {
+          name: new RegExp(`^${row}`),
+        });
+        expect(checkRow).toHaveTextContent("Needs input");
+        expect(within(header).getByText(missing)).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole("switch"));
+        const args = screen.getByRole("textbox", { name: "Arguments" });
+        fireEvent.change(args, { target: { value: '{"projectId":123}' } });
+        expect(checkRow).toHaveTextContent("Needs input");
+        fireEvent.change(args, {
+          target: { value: '{"projectId":"project-1"}' },
+        });
+        expect(checkRow).toHaveTextContent("Input set");
+        if (ready) expect(within(header).getByText(ready)).toBeInTheDocument();
+        else expect(within(header).queryByText(/needs? input/)).toBeNull();
+
+        fireEvent.change(args, { target: { value: "{}" } });
+        expect(checkRow).toHaveTextContent("Needs input");
+        fireEvent.click(header);
+        expect(header).toHaveAttribute("aria-expanded", "false");
+        expect(within(header).getByText(missing)).toBeInTheDocument();
+      },
+    );
+
     it("sends the output check's tool on its own", async () => {
       const user = userEvent.setup();
       setupSuccessfulRunMocks();
@@ -1966,8 +2034,8 @@ describe("ConformanceTab", () => {
       ).toBeInTheDocument();
 
       fireEvent.click(header);
-      // The three checks, and the advice that calls the log tool too.
-      expect(screen.getAllByText("Needs input")).toHaveLength(4);
+      // Three protocol checks, the log advice, and eleven Tasks checks.
+      expect(screen.getAllByText("Needs input")).toHaveLength(15);
       await waitFor(() =>
         expect(
           screen.getByRole("combobox", { name: "Tool that emits logs" }),
@@ -1981,7 +2049,7 @@ describe("ConformanceTab", () => {
       );
 
       expect(screen.getAllByText("Input set")).toHaveLength(2);
-      expect(screen.getAllByText("Needs input")).toHaveLength(2);
+      expect(screen.getAllByText("Needs input")).toHaveLength(13);
       expect(
         within(header).getByText("2 checks need input"),
       ).toBeInTheDocument();
@@ -2015,10 +2083,205 @@ describe("ConformanceTab", () => {
       });
       expect(within(header).queryByText(/need(s)? input/)).toBeNull();
       fireEvent.click(header);
-      expect(screen.queryByText("Needs input")).toBeNull();
+      // Tasks still needs its tool on Auto; protocol tools do not apply.
+      expect(screen.getAllByText("Needs input")).toHaveLength(11);
       expect(
         screen.queryByRole("combobox", { name: "Tool that emits logs" }),
       ).toBeNull();
+    });
+
+    it.each([
+      ["auto", undefined],
+      ["2025-11-25", undefined],
+      ["2026-07-28", undefined],
+      ["2026-07-28", "required"],
+      ["2026-07-28", "optional"],
+    ])(
+      "flags missing Tasks inputs on %s with task support %s even when the suite is closed",
+      async (pin, taskSupport) => {
+        if (taskSupport) {
+          mockListTools.mockResolvedValue({
+            tools: [
+              {
+                name: "echo",
+                annotations: { readOnlyHint: true },
+                execution: { taskSupport },
+              },
+            ],
+          });
+        }
+        const user = userEvent.setup();
+        await toStep2(pin);
+        const header = screen.getByRole("button", {
+          name: /^Tasks.*checks selected$/,
+        });
+        expect(header).toHaveAttribute("aria-expanded", "false");
+        expect(
+          within(header).getByText("11 checks need input"),
+        ).toBeInTheDocument();
+
+        const suite = screen.getByRole("checkbox", { name: "Run Tasks" });
+        fireEvent.click(suite);
+        expect(within(header).queryByText(/needs? input/)).toBeNull();
+        fireEvent.click(suite);
+        expect(
+          within(header).getByText("11 checks need input"),
+        ).toBeInTheDocument();
+
+        fireEvent.click(header);
+        const tool = await screen.findByRole("combobox", {
+          name: "Tool that creates a task",
+        });
+        await waitFor(() => expect(tool).toBeEnabled());
+        const taskRow = screen.getByRole("button", {
+          name: /^Undeclared Task Creation Refused/,
+        });
+        expect(taskRow).toHaveTextContent("Needs input");
+        fireEvent.click(
+          screen.getByRole("checkbox", { name: "Run Result Type Discipline" }),
+        );
+        expect(
+          within(header).getByText("10 checks need input"),
+        ).toBeInTheDocument();
+        await user.click(
+          screen.getByRole("combobox", { name: "Tool that creates a task" }),
+        );
+        await user.click(
+          screen.getByRole("option", { name: "echo · read-only" }),
+        );
+        expect(within(header).queryByText(/needs? input/)).toBeNull();
+        expect(taskRow).toHaveTextContent("Input set");
+
+        await user.click(
+          screen.getByRole("combobox", { name: "Tool that creates a task" }),
+        );
+        await user.click(screen.getByRole("option", { name: "Not set" }));
+        expect(taskRow).toHaveTextContent("Needs input");
+        fireEvent.click(header);
+        expect(header).toHaveAttribute("aria-expanded", "false");
+        expect(
+          within(header).getByText("10 checks need input"),
+        ).toBeInTheDocument();
+      },
+    );
+
+    it.each([
+      ["auto", "required"],
+      ["auto", "optional"],
+      ["2025-11-25", "required"],
+      ["2025-11-25", "optional"],
+    ])(
+      "does not require a Tasks input on %s when a tool advertises %s task support",
+      async (pin, taskSupport) => {
+        mockListTools.mockResolvedValue({
+          tools: [
+            {
+              name: "create_task",
+              execution: { taskSupport },
+              inputSchema: { type: "object", properties: {} },
+              annotations: { readOnlyHint: true },
+            },
+          ],
+        });
+        const user = userEvent.setup();
+        await toStep2(pin);
+        const header = screen.getByRole("button", {
+          name: /^Tasks.*checks selected$/,
+        });
+        await waitFor(() =>
+          expect(within(header).queryByText(/needs? input/)).toBeNull(),
+        );
+        fireEvent.click(header);
+        const taskRow = screen.getByRole("button", {
+          name: /^Result Type Discipline/,
+        });
+        expect(within(taskRow).queryByText("Needs input")).toBeNull();
+        const tool = screen.getByRole("combobox", {
+          name: "Tool that creates a task",
+        });
+        await waitFor(() => expect(tool).toBeEnabled());
+        expect(tool).toHaveTextContent("Not set");
+
+        await user.click(tool);
+        await user.click(
+          screen.getByRole("option", { name: "create_task · read-only" }),
+        );
+        expect(taskRow).toHaveTextContent("Input set");
+        await user.click(tool);
+        await user.click(screen.getByRole("option", { name: "Not set" }));
+        expect(within(taskRow).queryByText("Needs input")).toBeNull();
+        expect(within(header).queryByText(/needs? input/)).toBeNull();
+      },
+    );
+
+    it.each(["auto", "2025-11-25"])(
+      "keeps Tasks warnings on %s when the runner's automatic tool needs arguments",
+      async (pin) => {
+        mockListTools.mockResolvedValue({
+          tools: [
+            {
+              name: "z_create",
+              execution: { taskSupport: "required" },
+              inputSchema: {
+                type: "object",
+                properties: { message: { type: "string" } },
+                required: ["message"],
+              },
+            },
+            {
+              name: "a_create",
+              execution: { taskSupport: "required" },
+              inputSchema: { type: "object", properties: {} },
+            },
+            {
+              name: "optional_create",
+              execution: { taskSupport: "optional" },
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        });
+        await toStep2(pin);
+        const header = screen.getByRole("button", {
+          name: /^Tasks.*checks selected$/,
+        });
+        fireEvent.click(header);
+        await waitFor(() =>
+          expect(
+            screen.getByRole("combobox", {
+              name: "Tool that creates a task",
+            }),
+          ).toBeEnabled(),
+        );
+        expect(
+          within(header).getByText("11 checks need input"),
+        ).toBeInTheDocument();
+        expect(
+          screen.getByRole("button", {
+            name: /^Result Type Discipline/,
+          }),
+        ).toHaveTextContent("Needs input");
+      },
+    );
+
+    it("still requires a Tasks input when a tool forbids task execution", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [{ name: "echo", execution: { taskSupport: "forbidden" } }],
+      });
+      await toStep2("2025-11-25");
+      const header = screen.getByRole("button", {
+        name: /^Tasks.*checks selected$/,
+      });
+      fireEvent.click(header);
+      await waitFor(() =>
+        expect(
+          screen.getByRole("combobox", {
+            name: "Tool that creates a task",
+          }),
+        ).toBeEnabled(),
+      );
+      expect(
+        within(header).getByText("11 checks need input"),
+      ).toBeInTheDocument();
     });
 
     it("asks once for the Tasks tool on any pin, and for answers under the update check", async () => {

@@ -4,7 +4,7 @@
  * its Run starts the run with them.
  */
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -95,7 +95,9 @@ export function ConformanceSetup({
   // A draft until Run, so Cancel leaves the page's selection as it was.
   const [serverName, setServerName] = useState(initialServerName);
   const currentServerName = useRef(serverName);
-  currentServerName.current = serverName;
+  useLayoutEffect(() => {
+    currentServerName.current = serverName;
+  }, [serverName]);
   const [versionPin, setVersionPin] = useState(initialVersionPin);
   const [step, setStep] = useState(0);
   // Step 2 starts from the picked server's checks: the last run's on the same
@@ -138,6 +140,7 @@ export function ConformanceSetup({
     );
   };
   const selectServer = (name: string) => {
+    currentServerName.current = name;
     setServerName(name);
     if (!needsConnect(name)) return;
     if (onConnectServer) void connect(name);
@@ -184,6 +187,7 @@ export function ConformanceSetup({
     });
   const connect = async (name: string, signIn = false) => {
     if (!onConnectServer) return;
+    currentServerName.current = name;
     setServerName(name);
     clearFailure(name);
     setConnecting((names) => (names.includes(name) ? names : [...names, name]));

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import {
   isHttpServer,
@@ -7,6 +7,7 @@ import {
 } from "@/hooks/use-conformance-run";
 import {
   probeInputStatus,
+  PROBE_KEYS,
   probeKeyFor,
   probesApply,
   tasksProbeRuns,
@@ -15,6 +16,7 @@ import {
 } from "@/hooks/use-conformance-probes";
 import { ConformanceCheckPicker } from "./ConformanceCheckPicker";
 import { ProbeCheckExtra, useProbeTools } from "./ConformanceProbeField";
+import { acceptsToolArguments } from "./conformance-tool-input";
 
 /** One editor for setup drafts and server defaults. */
 export function ConformanceChecksEditor({
@@ -45,6 +47,29 @@ export function ConformanceChecksEditor({
   const tasksProbe = tasksProbeRuns(selection.tasks);
   const probeServer = server && (protocolProbes || tasksProbe) ? server : null;
   const probeTools = useProbeTools(probeServer);
+  const invalidProbeArguments = useMemo(
+    () =>
+      new Set(
+        PROBE_KEYS.filter((key) => {
+          const probe = probes[key];
+          if (!probe) return false;
+          const tool = probeTools.tools.find(
+            (item) => item.name === probe.toolName,
+          );
+          return (
+            tool?.inputSchema !== undefined &&
+            !acceptsToolArguments(tool.inputSchema, probe.arguments ?? {})
+          );
+        }),
+      ),
+    [probes, probeTools.tools],
+  );
+  const inputStatusFor = (checkId: string) => {
+    const key = probeKeyFor(checkId);
+    return key && (invalidProbeArguments.has(key) || probeValid[key] === false)
+      ? "missing"
+      : probeInputStatus(checkId, probes);
+  };
   const valid = !Object.values(probeValid).includes(false);
   useEffect(() => {
     onValidChange(valid);
@@ -88,14 +113,17 @@ export function ConformanceChecksEditor({
             !probeTools.tools.some((tool) => tool.hasOutputSchema);
           return probeKeyFor(checkId) === "toolCallProbe" && noOutputSchemas
             ? undefined
-            : probeInputStatus(checkId, probes);
+            : inputStatusFor(checkId);
         }
-        // The Tasks tool is optional where the server marks which
-        // tool creates a task, so an unset one is not flagged.
         if (suite === "tasks" && tasksProbe) {
-          return probeInputStatus(checkId, probes) === "set"
-            ? "set"
-            : undefined;
+          // Metadata belongs to the existing connection, so a 2026 pin still
+          // requires an explicit tool even when a legacy task tool is listed.
+          const canPickTaskTool =
+            versionPin !== "2026-07-28" &&
+            !probes.tasksProbe &&
+            probeTools.canAutoPickTaskTool;
+          if (canPickTaskTool) return undefined;
+          return inputStatusFor(checkId);
         }
         return undefined;
       }}
