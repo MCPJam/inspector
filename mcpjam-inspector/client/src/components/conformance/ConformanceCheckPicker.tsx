@@ -346,7 +346,6 @@ export function ConformanceCheckPicker({
                   picked.has(entry.id) && inputStatus?.(entry.id) === "missing",
               ).length
             }
-            inputsOptional={suite === "protocol"}
           />
         );
       })}
@@ -392,7 +391,6 @@ function SuiteChecks({
   renderExtra,
   renderTag,
   needsInputCount = 0,
-  inputsOptional = false,
   advice,
 }: {
   title: string;
@@ -407,10 +405,11 @@ function SuiteChecks({
   listNote?: string;
   renderExtra?: (entry: CatalogEntry) => ReactNode;
   renderTag?: (entry: CatalogEntry) => ReactNode;
-  /** Picked checks still missing an input, flagged on the closed header. */
+  /**
+   * Picked checks still missing an input, flagged on the closed header as
+   * optional: the run goes ahead without them and they cost no points.
+   */
   needsInputCount?: number;
-  /** The suite runs without those inputs, so the header says the checks are optional. */
-  inputsOptional?: boolean;
   /** The suite's advice, listed under its checks; the suite's box covers it. */
   advice?: {
     catalog: CatalogEntry[];
@@ -446,7 +445,7 @@ function SuiteChecks({
               <span className="text-sm font-semibold">{title}</span>
               {needsInputCount > 0 ? (
                 <span className="rounded-sm border border-warning/50 bg-warning/10 px-1.5 py-px text-xs text-warning-foreground">
-                  {needsInputCount} {inputsOptional ? <em>optional </em> : null}
+                  {needsInputCount} <em>optional</em>{" "}
                   {needsInputCount === 1
                     ? "check needs input"
                     : "checks need input"}
