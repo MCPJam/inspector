@@ -1,4 +1,10 @@
-import { createConformanceDeadline, deadlineFetch, runWithinConformanceDeadline, type ConformanceDeadlineInput } from "./conformance-deadline.js";
+import {
+  createConformanceDeadline,
+  runWithConformanceSignal,
+  deadlineFetch,
+  runWithinConformanceDeadline,
+  type ConformanceDeadlineInput,
+} from "./conformance-deadline.js";
 /**
  * Transport-agnostic conformance handlers.
  *
@@ -333,7 +339,7 @@ export async function startOAuthConformance(
     redirectUrl: input.redirectUrl,
     owner: input.owner,
   });
-  session.cancelRunner = input.runTimeoutSeconds === undefined ? undefined : deadline.cancel;
+  session.cancelRunner = deadline.cancel;
   const { controller } = session;
   const onAbort = () => controller.fail(deadline.signal.reason);
   deadline.signal.addEventListener("abort", onAbort, { once: true });
@@ -381,7 +387,7 @@ export async function startOAuthConformance(
     createInteractiveAuthorizationSession: () => controller.createSession(),
   });
 
-  const runnerPromise = runWithinConformanceDeadline({ signal: deadline.signal }, () => test.run()).then(
+  const runnerPromise = runWithConformanceSignal(deadline.signal, () => test.run()).then(
     (result) => {
       setSessionResult(session.id, result);
       return result;

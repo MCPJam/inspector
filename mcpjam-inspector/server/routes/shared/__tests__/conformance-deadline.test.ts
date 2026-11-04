@@ -3,6 +3,8 @@ import { z } from "zod";
 import {
   conformanceDeadlineFields,
   deadlineFetch,
+  createConformanceDeadline,
+  runWithConformanceSignal,
   runWithinConformanceDeadline,
 } from "../conformance-deadline";
 
@@ -70,4 +72,37 @@ describe("conformance deadline", () => {
     expect(() => guarded("https://example.com")).toThrow();
     expect(fetchFn).not.toHaveBeenCalled();
   });
+});
+
+
+it("defaults omitted limits to 300 seconds and keeps OAuth on the original deadline", async () => {
+  vi.useFakeTimers();
+  const deadline = createConformanceDeadline({});
+  await vi.advanceTimersByTimeAsync(299_000);
+  const work = runWithConformanceSignal(
+    deadline.signal,
+    () => new Promise(() => {}),
+  );
+  const rejected = expect(work).rejects.toThrow(
+    "Run timed out after 300 seconds",
+  );
+  await vi.advanceTimersByTimeAsync(1_000);
+  await rejected;
+  expect(deadline.signal.aborted).toBe(true);
+  deadline.dispose();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("honors remaining budget even when the selected timeout is omitted", async () => {
+  vi.useFakeTimers();
+  const work = runWithinConformanceDeadline(
+    { remainingRunTimeoutMs: 500 },
+    () => new Promise(() => {}),
+  );
+  const rejected = expect(work).rejects.toThrow(
+    "Run timed out after 300 seconds",
+  );
+  await vi.advanceTimersByTimeAsync(500);
+  await rejected;
+  expect(vi.getTimerCount()).toBe(0);
 });

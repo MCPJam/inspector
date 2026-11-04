@@ -155,7 +155,6 @@ describe("PersistConformanceRun", () => {
         server={httpServer()}
         snapshot={snapshot({
           runVersion: 2,
-          runTimeoutSeconds: 300,
           isRunning: true,
           protocol: { status: "running" },
         })}

@@ -1,3 +1,4 @@
+import { DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS } from "@/shared/conformance-timeout";
 import type {
   MCPConformanceResult,
   MCPAppsCheckId,
@@ -26,8 +27,14 @@ export interface ConformanceRunBudget {
 }
 
 export function conformanceBudgetFields(budget?: ConformanceRunBudget) {
-  return budget?.runTimeoutSeconds === undefined ? {} : {
-    runTimeoutSeconds: budget.runTimeoutSeconds,
+  if (
+    budget?.runTimeoutSeconds === undefined &&
+    budget?.remainingRunTimeoutMs === undefined
+  )
+    return {};
+  return {
+    runTimeoutSeconds:
+      budget?.runTimeoutSeconds ?? DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS,
     remainingRunTimeoutMs: budget.remainingRunTimeoutMs,
   };
 }

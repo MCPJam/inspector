@@ -1,3 +1,7 @@
+import {
+  DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS,
+  MAX_CONFORMANCE_RUN_TIMEOUT_SECONDS,
+} from "@/shared/conformance-timeout";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ConformanceRunBudget } from "@/lib/apis/mcp-conformance-api";
 
@@ -21,18 +25,18 @@ export function useConformanceDeadline(onExpire: (message: string) => void) {
     }
   }, []);
   const start = useCallback(
-    (seconds?: number) => {
+    (seconds = DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS) => {
       clear();
       if (
-        seconds !== undefined &&
-        (!Number.isInteger(seconds) || seconds < 1 || seconds > 300)
+        !Number.isInteger(seconds) ||
+        seconds < 1 ||
+        seconds > MAX_CONFORMANCE_RUN_TIMEOUT_SECONDS
       ) {
         throw new Error(
           "Run timeout must be a whole number from 1 to 300 seconds.",
         );
       }
       setRunTimeoutSeconds(seconds);
-      if (seconds === undefined) return;
       const controller = new AbortController();
       const timer = setTimeout(() => {
         const message = `Run timed out after ${seconds} seconds`;

@@ -1,8 +1,12 @@
+import {
+  DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS,
+  MAX_CONFORMANCE_RUN_TIMEOUT_SECONDS,
+} from "../../../shared/conformance-timeout.js";
 import { z } from "zod";
 
 export const conformanceDeadlineFields = {
-  runTimeoutSeconds: z.number().int().min(1).max(300).optional(),
-  remainingRunTimeoutMs: z.number().int().positive().max(300_000).optional(),
+  runTimeoutSeconds: z.number().int().min(1).max(MAX_CONFORMANCE_RUN_TIMEOUT_SECONDS).optional(),
+  remainingRunTimeoutMs: z.number().int().positive().max(MAX_CONFORMANCE_RUN_TIMEOUT_SECONDS * 1_000).optional(),
 };
 
 export interface ConformanceDeadlineInput {
@@ -15,23 +19,18 @@ export interface ConformanceDeadlineInput {
 /** Each suite receives the remaining budget of the same browser-owned run. */
 export function createConformanceDeadline(input: ConformanceDeadlineInput) {
   const controller = new AbortController();
-  const timeoutMs =
-    input.runTimeoutSeconds === undefined
-      ? undefined
-      : Math.min(
-          input.runTimeoutSeconds * 1_000,
-          input.remainingRunTimeoutMs ?? input.runTimeoutSeconds * 1_000,
-        );
-  const error = new Error(
-    `Run timed out after ${input.runTimeoutSeconds} seconds`,
+  const seconds =
+    input.runTimeoutSeconds ?? DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS;
+  const timeoutMs = Math.min(
+    seconds * 1_000,
+    input.remainingRunTimeoutMs ?? seconds * 1_000,
   );
+  const error = new Error(`Run timed out after ${seconds} seconds`);
   const remaining =
-    timeoutMs === undefined
-      ? undefined
-      : timeoutMs - (Date.now() - (input.requestStartedAt ?? Date.now()));
-  if (remaining !== undefined && remaining <= 0) controller.abort(error);
+    timeoutMs - (Date.now() - (input.requestStartedAt ?? Date.now()));
+  if (remaining <= 0) controller.abort(error);
   const timer =
-    remaining === undefined || remaining <= 0
+    remaining <= 0
       ? undefined
       : setTimeout(() => controller.abort(error), remaining);
   const signal = input.signal
@@ -66,16 +65,27 @@ export async function runWithinConformanceDeadline<T>(
   work: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const deadline = createConformanceDeadline(input);
+  try {
+    return await runWithConformanceSignal(deadline.signal, work);
+  } finally {
+    deadline.dispose();
+  }
+}
+
+/** Reuse an OAuth session's original deadline when continuing its work. */
+export async function runWithConformanceSignal<T>(
+  signal: AbortSignal,
+  work: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
   let onAbort = () => {};
   const aborted = new Promise<never>((_, reject) => {
-    onAbort = () => reject(deadline.signal.reason);
-    deadline.signal.addEventListener("abort", onAbort, { once: true });
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
   try {
-    deadline.signal.throwIfAborted();
-    return await Promise.race([aborted, work(deadline.signal)]);
+    signal.throwIfAborted();
+    return await Promise.race([aborted, work(signal)]);
   } finally {
-    deadline.signal.removeEventListener("abort", onAbort);
-    deadline.dispose();
+    signal.removeEventListener("abort", onAbort);
   }
 }

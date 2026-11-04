@@ -66,9 +66,9 @@ for (const [suite, run] of [
   });
 }
 
-it("forwards the shared budget and cancellation in hosted mode", async () => {
+it("defaults the selected limit while preserving remaining budget and cancellation in hosted mode", async () => {
   const controller = new AbortController();
-  await runTasksConformance("tasks-server", { runTimeoutSeconds: 300, remainingRunTimeoutMs: 1200, signal: controller.signal });
+  await runTasksConformance("tasks-server", { remainingRunTimeoutMs: 1200, signal: controller.signal });
   expect(webPost).toHaveBeenCalledWith("/api/web/conformance/tasks", {
     projectId: "ws-1", serverId: "srv-1", runTimeoutSeconds: 300, remainingRunTimeoutMs: 1200,
   }, { signal: controller.signal });

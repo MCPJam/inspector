@@ -38,7 +38,7 @@ describe("shared conformance deadline", () => {
     expect(signal?.aborted).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
   });
-  it("replaces a prior run and leaves an unset limit unchanged", () => {
+  it("replaces a prior run and defaults an unset limit to 300 seconds", () => {
     vi.useFakeTimers();
     const expire = vi.fn();
     const { result } = renderHook(() => useConformanceDeadline(expire));
@@ -46,10 +46,10 @@ describe("shared conformance deadline", () => {
     const old = result.current.budget().signal;
     act(() => result.current.start(undefined));
     expect(old?.aborted).toBe(true);
-    expect(result.current.budget()).toEqual({});
-    expect(result.current.runTimeoutSeconds).toBeUndefined();
+    expect(result.current.budget()).toMatchObject({ runTimeoutSeconds: 300, remainingRunTimeoutMs: 300_000 });
+    expect(result.current.runTimeoutSeconds).toBe(300);
     act(() => vi.advanceTimersByTime(300_000));
-    expect(expire).not.toHaveBeenCalled();
+    expect(expire).toHaveBeenCalledExactlyOnceWith("Run timed out after 300 seconds");
   });
   it.each([0, 301, 1.5, NaN])("rejects invalid timeout %s", (seconds) => {
     const { result } = renderHook(() => useConformanceDeadline(vi.fn()));
