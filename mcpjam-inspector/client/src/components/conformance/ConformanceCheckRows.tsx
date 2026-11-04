@@ -10,12 +10,7 @@ import {
   ChevronRight,
   MinusCircle,
 } from "lucide-react";
-import type {
-  MCPAppsCheckResult,
-  MCPCheckResult,
-  MCPTasksCheckResult,
-  OAuthConformanceStepResult,
-} from "@mcpjam/sdk";
+import type { OAuthConformanceStepResult } from "@mcpjam/sdk";
 import {
   isTimedOutCheck,
   isMissingInputCheck,
@@ -203,11 +198,24 @@ export function NotRunTag() {
   );
 }
 
+/** Display fields shared by live checks and saved report cases. */
+export interface CheckRowResult {
+  id: string;
+  title: string;
+  status: string;
+  skipReason?: string;
+  description?: string;
+  durationMs?: number;
+  error?: { message: string };
+  details?: unknown;
+  warnings?: string[];
+}
+
 export function CheckRow({
   check,
   pending = false,
 }: {
-  check: MCPCheckResult | MCPAppsCheckResult | MCPTasksCheckResult;
+  check: CheckRowResult;
   pending?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -216,7 +224,7 @@ export function CheckRow({
   const detailEntries = Object.entries(check.details ?? {}).filter(
     ([key]) => key !== "missingInput",
   );
-  const warnings = "warnings" in check ? check.warnings : undefined;
+  const warnings = check.warnings;
 
   return (
     <div className="border-b border-border/60 last:border-0">
@@ -258,7 +266,7 @@ export function CheckRow({
           ) : null}
         </span>
         {/* A skipped check never ran: its 0ms says nothing. */}
-        {check.status !== "skipped" && (
+        {check.status !== "skipped" && check.durationMs !== undefined && (
           <span className="flex-shrink-0 pt-0.5 text-xs text-muted-foreground">
             {check.durationMs}ms
           </span>
