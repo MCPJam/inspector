@@ -148,36 +148,41 @@ describe("Settings inputs", () => {
       );
     },
   );
-  it("blocks malformed arguments, saves valid ones, and keeps other inputs", async () => {
-    const onSave = vi.fn(async () => {});
-    render(<Harness saved={false} onSave={onSave} />);
-    const field = screen
-      .getByRole("combobox", { name: "Tool that emits logs" })
-      .parentElement!.closest("div.space-y-2")!;
-    fireEvent.click(within(field).getByRole("switch"));
-    const args = within(field).getByRole("textbox", { name: "Arguments" });
-    fireEvent.change(args, { target: { value: "[1]" } });
-    expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
-    expect(onSave).not.toHaveBeenCalled();
-    fireEvent.change(args, { target: { value: '{"text":"hello"}' } });
-    await waitFor(() =>
-      expect(onSave).toHaveBeenLastCalledWith(
-        {},
-        expect.objectContaining({
-          ...initial.inputs,
-          logProbe: {
-            toolName: "echo",
-            level: "info",
-            arguments: { text: "hello" },
-          },
-        }),
-      ),
-    );
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Back" })).toBeEnabled(),
-    );
-    expect(screen.getByRole("textbox", { name: "Arguments" })).toBe(args);
-  });
+  it.each([false, true])(
+    "blocks malformed arguments and saves special JSON keys (saved: %s)",
+    async (saved) => {
+      const onSave = vi.fn(async () => {});
+      render(<Harness saved={saved} onSave={onSave} />);
+      const field = screen
+        .getByRole("combobox", { name: "Tool that emits logs" })
+        .parentElement!.closest("div.space-y-2")!;
+      fireEvent.click(within(field).getByRole("switch"));
+      const args = within(field).getByRole("textbox", { name: "Arguments" });
+      fireEvent.change(args, { target: { value: "[1]" } });
+      expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+      expect(onSave).not.toHaveBeenCalled();
+      fireEvent.change(args, {
+        target: { value: '{"filter":{"$gt":5},"año":2026}' },
+      });
+      await waitFor(() =>
+        expect(onSave).toHaveBeenLastCalledWith(
+          {},
+          expect.objectContaining({
+            ...initial.inputs,
+            logProbe: {
+              toolName: "echo",
+              level: "info",
+              arguments: { filter: { $gt: 5 }, año: 2026 },
+            },
+          }),
+        ),
+      );
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Back" })).toBeEnabled(),
+      );
+      expect(screen.getByRole("textbox", { name: "Arguments" })).toBe(args);
+    },
+  );
   it("updates untouched inputs from shared defaults", () => {
     const props = {
       serverName: "alpha",

@@ -1,5 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { getFunctionName } from "convex/server";
+import { convexToJson } from "convex/values";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const { client, save, queries } = vi.hoisted(() => ({
   client: { query: vi.fn() },
@@ -17,10 +18,11 @@ const props = {
   serversById: new Map([["srv_1", "alpha"]]),
   serversByName: new Map([["alpha", "srv_1"]]),
 };
+const inputs = { tasksProbe: { toolName: "task", arguments: { id: 3 } } };
 const row = {
   serverId: "srv_1",
   defaultChecks: { oauth: false },
-  defaultInputs: { tasksProbe: { toolName: "task", arguments: { id: 3 } } },
+  defaultInputs: { tasksProbe: { toolName: "task", arguments: '{"id":3}' } },
   defaultAdvice: { tasksAdvice: [] },
 };
 describe("useConformanceServerData", () => {
@@ -36,7 +38,7 @@ describe("useConformanceServerData", () => {
     await act(async () => {
       expect(await result.current.loadDefaults("alpha")).toEqual({
         selection: { oauth: false, tasksAdvice: [] },
-        inputs: row.defaultInputs,
+        inputs,
       });
     });
     expect(getFunctionName(client.query.mock.calls[0][0])).toBe(
@@ -46,7 +48,7 @@ describe("useConformanceServerData", () => {
       projectId: "proj_1",
       serverId: "srv_1",
     });
-    expect(result.current.inputsByServer.alpha).toEqual(row.defaultInputs);
+    expect(result.current.inputsByServer.alpha).toEqual(inputs);
     expect(result.current.defaultsByServer.alpha).toEqual({
       oauth: false,
       tasksAdvice: [],
@@ -96,6 +98,65 @@ describe("useConformanceServerData", () => {
       defaultInputs: {},
     });
   });
+  it("round-trips special JSON keys for every probe through the Convex boundary", async () => {
+    const json = { filter: { $gt: 5 }, año: 2026, nested: { 確認: true } };
+    const probes = {
+      logProbe: { toolName: "log", level: "info" as const, arguments: json },
+      inputRequiredProbe: { toolName: "ask", arguments: json },
+      toolCallProbe: { toolName: "output", arguments: {} },
+      tasksProbe: { toolName: "task", arguments: json, inputResponses: json },
+    };
+    const stored = {
+      logProbe: { ...probes.logProbe, arguments: JSON.stringify(json) },
+      inputRequiredProbe: {
+        ...probes.inputRequiredProbe,
+        arguments: JSON.stringify(json),
+      },
+      toolCallProbe: { ...probes.toolCallProbe, arguments: "{}" },
+      tasksProbe: {
+        ...probes.tasksProbe,
+        arguments: JSON.stringify(json),
+        inputResponses: JSON.stringify(json),
+      },
+    };
+    save.mockImplementationOnce(async (args) => {
+      expect(() => convexToJson(args)).not.toThrow();
+      expect(args.defaultInputs).toEqual(stored);
+    });
+    const firstBrowser = renderHook(() => useConformanceServerData(props));
+    await act(async () => {
+      await firstBrowser.result.current.saveDefaults!("alpha", {}, probes);
+    });
+    firstBrowser.unmount();
+    client.query.mockResolvedValue({ ...row, defaultInputs: stored });
+    const secondBrowser = renderHook(() => useConformanceServerData(props));
+    await act(async () => {
+      expect(
+        (await secondBrowser.result.current.loadDefaults("alpha")).inputs,
+      ).toEqual(probes);
+    });
+    expect(secondBrowser.result.current.inputsByServer.alpha).toEqual(probes);
+    queries.mockReturnValue({
+      "proj_1:srv_1": {
+        ...row,
+        defaultInputs: {
+          tasksProbe: {
+            toolName: "task",
+            arguments: "{}",
+            inputResponses: "{}",
+          },
+        },
+      },
+    });
+    secondBrowser.rerender();
+    expect(secondBrowser.result.current.inputsByServer.alpha).toEqual({
+      tasksProbe: {
+        toolName: "task",
+        arguments: {},
+        inputResponses: {},
+      },
+    });
+  });
   it("distinguishes a missing row from a failed read", async () => {
     const { result } = renderHook(() => useConformanceServerData(props));
     client.query.mockResolvedValueOnce(null);
@@ -141,8 +202,6 @@ describe("useConformanceServerData", () => {
     expect(Object.hasOwn(result.current.inputsByServer, "constructor")).toBe(
       true,
     );
-    expect(result.current.inputsByServer.constructor).toEqual(
-      row.defaultInputs,
-    );
+    expect(result.current.inputsByServer.constructor).toEqual(inputs);
   });
 });

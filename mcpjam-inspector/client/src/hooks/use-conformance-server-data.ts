@@ -6,7 +6,11 @@ import {
   runnableSelection,
   type ConformanceSelection,
 } from "@/hooks/use-conformance-run";
-import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
+import {
+  PROBE_KEYS,
+  type ConformanceProbe,
+  type ConformanceProbes,
+} from "@/hooks/use-conformance-probes";
 import { useSoftQuery } from "@/hooks/use-soft-query";
 import type { ConformanceRunListItem } from "@/components/conformance/ConformanceHistory";
 
@@ -14,6 +18,46 @@ export type ConformanceDefaults = {
   selection: ConformanceSelection;
   inputs: ConformanceProbes;
 };
+type StoredProbe = Omit<ConformanceProbe, "arguments" | "inputResponses"> & {
+  arguments?: string;
+  inputResponses?: string;
+};
+type StoredProbes = Partial<Record<keyof ConformanceProbes, StoredProbe>>;
+
+// JSON strings preserve tool-defined keys that Convex object fields cannot hold.
+function encodeInputs(inputs: ConformanceProbes): StoredProbes {
+  const stored: StoredProbes = {};
+  for (const key of PROBE_KEYS) {
+    const probe = inputs[key];
+    if (!probe) continue;
+    const { arguments: args, inputResponses, ...fields } = probe;
+    stored[key] = {
+      ...fields,
+      ...(args !== undefined ? { arguments: JSON.stringify(args) } : {}),
+      ...(inputResponses !== undefined
+        ? { inputResponses: JSON.stringify(inputResponses) }
+        : {}),
+    };
+  }
+  return stored;
+}
+function decodeInputs(stored: StoredProbes = {}): ConformanceProbes {
+  const inputs: ConformanceProbes = {};
+  for (const key of PROBE_KEYS) {
+    const probe = stored[key];
+    if (!probe) continue;
+    const { arguments: args, inputResponses, ...fields } = probe;
+    // The backend validates these strings as JSON objects before saving them.
+    inputs[key] = {
+      ...fields,
+      ...(args !== undefined ? { arguments: JSON.parse(args) } : {}),
+      ...(inputResponses !== undefined
+        ? { inputResponses: JSON.parse(inputResponses) }
+        : {}),
+    };
+  }
+  return inputs;
+}
 type ServerSettingsRow = {
   serverId: string;
   defaultChecks: ConformanceSelection;
@@ -21,7 +65,7 @@ type ServerSettingsRow = {
     ConformanceSelection,
     "protocolAdvice" | "tasksAdvice" | "oauthAdvice"
   >;
-  defaultInputs?: ConformanceProbes;
+  defaultInputs?: StoredProbes;
 };
 const settingsQuery = makeFunctionReference<
   "query",
@@ -92,7 +136,7 @@ export function useConformanceServerData({
         "auto",
       ) ?? {},
     );
-    inputs.set(name, row?.defaultInputs ?? {});
+    inputs.set(name, decodeInputs(row?.defaultInputs));
   }
   const loadDefaults = useCallback(
     async (serverName: string): Promise<ConformanceDefaults> => {
@@ -111,7 +155,7 @@ export function useConformanceServerData({
             { ...row?.defaultChecks, ...row?.defaultAdvice },
             "auto",
           ) ?? {},
-        inputs: row?.defaultInputs ?? {},
+        inputs: decodeInputs(row?.defaultInputs),
       };
     },
     [client, projectId, serversByName, serversLoading],
@@ -130,7 +174,9 @@ export function useConformanceServerData({
         serverId,
         defaultChecks: definedOnly(selection, false),
         defaultAdvice: definedOnly(selection, true),
-        ...(inputs !== undefined ? { defaultInputs: inputs } : {}),
+        ...(inputs !== undefined
+          ? { defaultInputs: encodeInputs(inputs) }
+          : {}),
       });
     },
     [projectId, serversByName, saveSettings],
