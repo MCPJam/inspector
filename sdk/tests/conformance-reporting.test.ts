@@ -311,14 +311,14 @@ describe("report score", () => {
             id: "readiness-deprecated-feature-use",
             title: "Deprecated Feature Use",
             severity: "warning",
-            specStrength: "SHOULD",
+            specStrength: "Deprecation Notice",
             message: "…",
           },
         ],
       } as Partial<MCPConformanceResult>),
     );
 
-    // 1/1 applicable passed; the SHOULD advisory is worth 0.
+    // 1/1 applicable passed; the deprecation advisory is worth 0.
     expect(single.score?.score).toBe(100);
     expect(single.score?.applicable).toBe(1);
 
