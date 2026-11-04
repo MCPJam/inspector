@@ -258,7 +258,7 @@ export function ConformanceContent({
    * Overview's tab after a finished run: back to the page's home (the server
    * list) instead of the run, which History still holds.
    */
-  onShowHome?: () => void;
+  onShowHome: () => void;
   /** The saved defaults Settings edits have not loaded yet. */
   settingsLoading?: boolean;
   /** Run once on mount: the setup steps just chose this server. */
@@ -511,7 +511,7 @@ export function ConformanceContent({
         <ConformanceRunHeader
           serverName={server.name}
           startedAt={startedAt}
-          onBack={onShowHome ?? (() => onViewChange("overview"))}
+          onBack={onShowHome}
           busy={isRunning || isConnecting}
           isConnecting={isConnecting}
           showHistory={showHistory}
@@ -527,11 +527,7 @@ export function ConformanceContent({
         <ConformanceHeader
           view={view}
           onViewChange={(next) =>
-            next === "overview" &&
-            hasStarted &&
-            !isRunning &&
-            !isConnecting &&
-            onShowHome
+            next === "overview" && hasStarted && !isRunning && !isConnecting
               ? onShowHome()
               : onViewChange(next)
           }

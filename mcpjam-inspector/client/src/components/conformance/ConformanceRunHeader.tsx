@@ -50,7 +50,9 @@ export function ConformanceRunHeader({
     <DetailPageHeader
       backLabel="Conformance"
       onBack={onBack}
-      backDisabled={busy}
+      // Going back resets the page. Without History (no project) a finished
+      // run could not be found again, so it stays until the next run.
+      backDisabled={busy || !showHistory}
       backTestId="conformance-run-back"
       title={
         <h1

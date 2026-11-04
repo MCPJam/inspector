@@ -56,10 +56,10 @@ describe("ConformanceRunHeader", () => {
     expect(screen.getByRole("button", { name: /Running/ })).toBeDisabled();
   });
 
-  it("drops the tabs when there is no History to show", () => {
+  it("keeps a finished run on screen when there is no History to find it in", () => {
     renderHeader({ showHistory: false });
 
     expect(screen.queryByRole("button", { name: "History" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Conformance" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Conformance" })).toBeDisabled();
   });
 });
