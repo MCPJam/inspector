@@ -364,11 +364,9 @@ export function ConformanceTab({
         serverIcons={serverIcons}
         onViewRun={onViewRun}
         disabled={
-          !serverDefaultsLoaded ||
-          loadingDefaults ||
-          Boolean(failedRequest) ||
-          selectionIsReconnecting
+          !serverDefaultsLoaded || loadingDefaults || selectionIsReconnecting
         }
+        disabledServerName={failedRequest?.name}
         onRun={(serverName) =>
           onLoadServerDefaults
             ? void requestDefaults(serverName, "auto")
@@ -494,7 +492,7 @@ export function ConformanceTab({
       history={history}
       home={home}
       canRun={canRun && !loadingDefaults}
-      runDisabled={loadingDefaults || Boolean(failedRequest)}
+      runDisabled={loadingDefaults || failedRequest?.name === server.name}
       onConnectServer={onConnectServer}
       onEditServer={onEditServer}
       onRequestRun={openSetup}

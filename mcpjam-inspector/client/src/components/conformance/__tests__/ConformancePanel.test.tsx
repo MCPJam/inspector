@@ -265,6 +265,32 @@ function createHttpServer(
   };
 }
 
+const createRunListItem = (id: string) => ({
+  _id: id,
+  projectId: "proj_1",
+  targetKind: "server",
+  targetKey: `server:${id}`,
+  serverId: id,
+  source: "ui",
+  verification: "mcpjam_verified" as const,
+  status: "completed",
+  outcome: "passed" as const,
+  incompleteReason: null,
+  score: 100,
+  applicable: 3,
+  passed: 3,
+  failed: 0,
+  couldNotRun: 0,
+  requestedSuites: ["protocol"],
+  protocolVersion: "2025-11-25",
+  actorLabel: null,
+  ciMetadata: null,
+  createdAt: Date.UTC(2026, 9, 28, 12),
+  completedAt: null,
+  durationMs: null,
+  sharingEnabled: false,
+});
+
 function createStdioServer(
   overrides: Partial<ServerWithName> = {},
 ): ServerWithName {
@@ -1308,6 +1334,112 @@ describe("ConformanceTab", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("keeps other servers runnable after a defaults read fails", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const beta = createHttpServer({ name: "beta" });
+    const betaDefaults =
+      createDeferred<
+        import("@/hooks/use-conformance-server-data").ConformanceDefaults
+      >();
+    const load = vi.fn(async (name: string) => {
+      if (name === "alpha") throw new Error("offline");
+      return betaDefaults.promise;
+    });
+    const props = {
+      servers: [alpha, beta],
+      onSelectServer: vi.fn(),
+      onLoadServerDefaults: load,
+      lastRuns: {
+        alpha: createRunListItem("srv_a"),
+        beta: createRunListItem("srv_b"),
+      },
+      onViewRun: vi.fn(),
+    };
+    const { rerender } = render(<ConformanceTab server={alpha} {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Run alpha" }));
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getByRole("button", { name: "Run alpha" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run beta" })).toBeEnabled();
+    for (const button of screen.getAllByRole("button", { name: RUN_LABEL }))
+      expect(button).toBeDisabled();
+    fireEvent.click(retry);
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+    await screen.findByRole("button", { name: "Retry" });
+    expect(load.mock.calls.map(([name]) => name)).toEqual(["alpha", "alpha"]);
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+
+    rerender(<ConformanceTab server={beta} {...props} />);
+    for (const button of screen.getAllByRole("button", { name: RUN_LABEL }))
+      expect(button).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Run alpha" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run beta" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Run beta" }));
+    expect(load).toHaveBeenLastCalledWith("beta");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Run alpha" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run beta" })).toBeDisabled();
+    await act(async () =>
+      betaDefaults.resolve({
+        selection: { protocol: ["ping"], apps: [], tasks: [], oauth: false },
+        inputs: {},
+      }),
+    );
+    await waitFor(() =>
+      expect(mockRunProtocol).toHaveBeenCalledWith(
+        "beta",
+        expect.objectContaining({ checkIds: ["ping"] }),
+      ),
+    );
+    expect(mockRunProtocol).toHaveBeenCalledTimes(1);
+    expect(mockRunApps).not.toHaveBeenCalled();
+    expect(mockRunTasks).not.toHaveBeenCalled();
+    expect(props.onSelectServer).toHaveBeenLastCalledWith("beta");
+  });
+
+  it("keeps Run again available when another server's defaults fail", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const beta = createHttpServer({ name: "beta" });
+    const load = vi.fn(async (name: string) => {
+      if (name === "alpha") throw new Error("offline");
+      return { selection: { apps: [], tasks: [], oauth: false }, inputs: {} };
+    });
+    const props = {
+      servers: [alpha, beta],
+      onSelectServer: vi.fn(),
+      onLoadServerDefaults: load,
+    };
+    window.history.replaceState(null, "", "/conformance?run=beta");
+    render(<ConformanceTab server={beta} {...props} />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+    );
+    expect(mockRunProtocol).toHaveBeenCalledTimes(1);
+    act(() => {
+      window.history.replaceState(null, "", "/conformance?run=alpha");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled();
+    fireEvent.click(retry);
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(3));
+    await screen.findByRole("button", { name: "Retry" });
+    expect(load.mock.calls.map(([name]) => name)).toEqual([
+      "beta",
+      "alpha",
+      "alpha",
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalledTimes(2));
+    expect(load).toHaveBeenLastCalledWith("beta");
+    expect(mockRunProtocol.mock.calls.map(([name]) => name)).toEqual([
+      "beta",
+      "beta",
+    ]);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("keeps setup on the same screen with Retry after an input read fails", async () => {
     const alpha = createHttpServer({ name: "alpha" });
     const load = vi
@@ -1422,37 +1554,15 @@ describe("ConformanceTab", () => {
   it("shows a server's logo on its card, and initials without one", () => {
     const alpha = createHttpServer({ name: "alpha" });
     const beta = createHttpServer({ name: "beta" });
-    const run = (id: string) => ({
-      _id: id,
-      projectId: "proj_1",
-      targetKind: "server",
-      targetKey: `server:${id}`,
-      serverId: id,
-      source: "ui",
-      verification: "mcpjam_verified" as const,
-      status: "completed",
-      outcome: "passed" as const,
-      incompleteReason: null,
-      score: 100,
-      applicable: 3,
-      passed: 3,
-      failed: 0,
-      couldNotRun: 0,
-      requestedSuites: ["protocol"],
-      protocolVersion: "2025-11-25",
-      actorLabel: null,
-      ciMetadata: null,
-      createdAt: Date.UTC(2026, 9, 28, 12),
-      completedAt: null,
-      durationMs: null,
-      sharingEnabled: false,
-    });
     render(
       <ConformanceTab
         server={alpha}
         servers={[alpha, beta]}
         onSelectServer={vi.fn()}
-        lastRuns={{ alpha: run("srv_a"), beta: run("srv_b") }}
+        lastRuns={{
+          alpha: createRunListItem("srv_a"),
+          beta: createRunListItem("srv_b"),
+        }}
         onViewRun={vi.fn()}
         serverIcons={{ alpha: "https://example.test/alpha.png" }}
       />,
