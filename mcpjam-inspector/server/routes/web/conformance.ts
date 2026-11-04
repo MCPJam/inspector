@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { withTasksDeadline } from "./tasks-deadline.js";
 import { z } from "zod";
 import {
   MCP_APPS_CHECK_IDS,
@@ -402,9 +403,8 @@ conformanceWeb.post("/apps", async (c) =>
  *   the caller asks for.
  * - `HOSTED_TASKS_DEADLINE_MS` bounds the *whole* run, so however the legs
  *   compose, the route answers with a 504 instead of hanging past the budget.
- *   The abandoned run still unwinds on its own — every leg inside it is
- *   bounded by the per-call timeout — so its ephemeral client is closed by
- *   `withEphemeralClient`'s own teardown shortly after.
+ *   Cancellation aborts active requests and polling, and the SDK closes its
+ *   ephemeral client before the route returns and the next group can start.
  */
 const HOSTED_TASKS_POLL_TIMEOUT_MS = 20_000;
 /** Per-MCP-call ceiling inside a hosted tasks run (connect, list, call). */
@@ -437,28 +437,32 @@ conformanceWeb.post("/tasks", async (c) =>
     const parsed = parseWithSchema(tasksSchema, body);
 
     try {
-      const result = await withHostedDeadline(
-        runTasksConformance({
-          ...config,
-          protocolVersion: parsed.protocolVersion,
-          timeout: HOSTED_TASKS_CALL_TIMEOUT_MS,
-          ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
-          ...(parsed.readinessIds ? { readinessIds: parsed.readinessIds } : {}),
-          ...(parsed.checkOverrides
-            ? { checkOverrides: parsed.checkOverrides }
-            : {}),
-          ...(parsed.toolName ? { toolName: parsed.toolName } : {}),
-          ...(parsed.toolArguments
-            ? { toolArguments: parsed.toolArguments }
-            : {}),
-          ...(parsed.inputResponses
-            ? { inputResponses: parsed.inputResponses }
-            : {}),
-          pollTimeoutMs: Math.min(
-            parsed.pollTimeoutMs ?? HOSTED_TASKS_POLL_TIMEOUT_MS,
-            HOSTED_TASKS_POLL_TIMEOUT_MS,
-          ),
-        }),
+      const result = await withTasksDeadline(
+        (signal) =>
+          runTasksConformance({
+            signal,
+            ...config,
+            protocolVersion: parsed.protocolVersion,
+            timeout: HOSTED_TASKS_CALL_TIMEOUT_MS,
+            ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
+            ...(parsed.readinessIds
+              ? { readinessIds: parsed.readinessIds }
+              : {}),
+            ...(parsed.checkOverrides
+              ? { checkOverrides: parsed.checkOverrides }
+              : {}),
+            ...(parsed.toolName ? { toolName: parsed.toolName } : {}),
+            ...(parsed.toolArguments
+              ? { toolArguments: parsed.toolArguments }
+              : {}),
+            ...(parsed.inputResponses
+              ? { inputResponses: parsed.inputResponses }
+              : {}),
+            pollTimeoutMs: Math.min(
+              parsed.pollTimeoutMs ?? HOSTED_TASKS_POLL_TIMEOUT_MS,
+              HOSTED_TASKS_POLL_TIMEOUT_MS,
+            ),
+          }),
         HOSTED_TASKS_DEADLINE_MS,
         `Tasks conformance exceeded the hosted request budget (${HOSTED_TASKS_DEADLINE_MS}ms); run it from the local inspector for a longer poll window`,
       ).then((r) => r.result);

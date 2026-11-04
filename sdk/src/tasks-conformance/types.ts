@@ -44,10 +44,16 @@ export type MCPTasksCheckId = (typeof MCP_TASKS_CHECK_IDS)[number];
 
 /** Checks whose setup includes a tool call or a task created by one. */
 export const MCP_TASKS_TOOL_CHECK_IDS = [
-  "tasks-result-type-discipline", "tasks-undeclared-creation-refused",
-  "tasks-undeclared-capability-rejected", "tasks-ttl-shape", "tasks-inline-result",
-  "tasks-mcp-name-routing", "tasks-status-payload-shape", "tasks-cancel-ack-shape",
-  "tasks-update-ack-shape", "tasks-ttl-integer-shape",
+  "tasks-result-type-discipline",
+  "tasks-undeclared-creation-refused",
+  "tasks-undeclared-capability-rejected",
+  "tasks-ttl-shape",
+  "tasks-inline-result",
+  "tasks-mcp-name-routing",
+  "tasks-status-payload-shape",
+  "tasks-cancel-ack-shape",
+  "tasks-update-ack-shape",
+  "tasks-ttl-integer-shape",
   "tasks-undeclared-capability-names-requirements",
 ] as const satisfies readonly MCPTasksCheckId[];
 export type MCPTasksToolCheckId = (typeof MCP_TASKS_TOOL_CHECK_IDS)[number];
@@ -58,7 +64,9 @@ export interface MCPTasksToolSetup {
   toolName: string;
   toolArguments?: Record<string, unknown>;
 }
-export type MCPTasksCheckOverrides = Partial<Record<MCPTasksToolCheckId, MCPTasksToolSetup>>;
+export type MCPTasksCheckOverrides = Partial<
+  Record<MCPTasksToolCheckId, MCPTasksToolSetup>
+>;
 export interface MCPTasksRunOptions {
   protocolVersion?: import("../mcp-client-manager/mcp-protocol-version.js").McpProtocolVersion;
   checkIds?: MCPTasksCheckId[];
@@ -163,6 +171,8 @@ export interface MCPTasksCheckResult {
 }
 
 export type MCPTasksConformanceConfig = MCPServerConfig & {
+  /** Cancel active requests and polling, then close the owned connection. */
+  signal?: AbortSignal;
   /**
    * Run only these checks. A renamed id
    * ({@link RENAMED_MCP_TASKS_CHECK_IDS}) runs the check under its new name.
@@ -202,6 +212,7 @@ export type MCPTasksConformanceConfig = MCPServerConfig & {
 };
 
 export interface NormalizedMCPTasksConformanceConfig {
+  signal?: AbortSignal;
   serverConfig: MCPServerConfig;
   target: string;
   timeout: number;

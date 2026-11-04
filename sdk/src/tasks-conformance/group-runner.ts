@@ -5,7 +5,7 @@ import type { RpcLogEvent } from "../mcp-client-manager/index.js";
 
 import { MCP_TASKS_EXTENSION_ID } from "../mcp-client-manager/tasks-dispatch.js";
 
-import { withEphemeralClient } from "../operations.js";
+import { withTasksClient } from "./client-lifecycle.js";
 import {
   AUTHORIZATION_REQUIRED_MESSAGE,
   authorizationRequiredDetails,
@@ -83,9 +83,10 @@ export class TaskGroupRunner extends TaskOperations {
     const profile = conformanceProfile("mcp-tasks");
 
     try {
-      return await withEphemeralClient(
+      return await withTasksClient(
         this.config.serverConfig,
         async (manager, serverId) => {
+          this.config.signal?.throwIfAborted();
           const support = manager.getTasksSupport(serverId);
           const wire = support.wire;
           const protocolVersion =
@@ -114,6 +115,7 @@ export class TaskGroupRunner extends TaskOperations {
           const tools = needsTool
             ? ((await manager.listTools(serverId)).tools ?? [])
             : [];
+          this.config.signal?.throwIfAborted();
           const taskCapableTools = tools.filter(
             (tool) => toolTaskSupport(tool) !== undefined
           );
@@ -166,6 +168,7 @@ export class TaskGroupRunner extends TaskOperations {
             rawCreation = findRawTaskResponse(received.slice(receivedBefore));
           }
 
+          this.config.signal?.throwIfAborted();
           if (selected.has("tasks-result-type-discipline")) {
             const stepStartedAt = Date.now();
             if (!probeTool) {
@@ -403,6 +406,7 @@ export class TaskGroupRunner extends TaskOperations {
           // already in hand. `pollToTerminal` requires the gate to be OBSERVED
           // as parked before it stops — see the note there on why one frame is
           // not enough.
+          this.config.signal?.throwIfAborted();
           const needsPolling = [...selected].some((id) =>
             [
               "tasks-ttl-shape",
@@ -493,8 +497,11 @@ export class TaskGroupRunner extends TaskOperations {
             readiness,
             uncheckedAdvice,
           };
+          this.config.signal?.throwIfAborted();
           await runReadChecks(context);
+          this.config.signal?.throwIfAborted();
           await runMutationChecks(context);
+          this.config.signal?.throwIfAborted();
           if (selected.has("tasks-declaration-hygiene")) {
             const stepStartedAt = Date.now();
             const violations = findDeclarationViolations(wire, sent);
@@ -593,9 +600,11 @@ export class TaskGroupRunner extends TaskOperations {
           clientName: "mcpjam-sdk-tasks-conformance",
           timeout: this.config.timeout,
           rpcLogger: captureRpc,
+          signal: this.config.signal,
         }
       );
     } catch (error) {
+      this.config.signal?.throwIfAborted();
       // Refused for credentials: nothing was reached, so every selected check
       // could not run — `incomplete`, not `failed`. Each one is reported, so
       // the run names what it was asked rather than one stand-in check.

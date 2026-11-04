@@ -142,12 +142,35 @@ describe("POST /api/web/conformance/tasks — hosted budget", () => {
 
   it("answers 504 when the whole run outlives the request budget", async () => {
     vi.useFakeTimers();
-    // A run that never settles: only the route-level deadline can end it.
-    runTasksConformanceMock.mockReturnValue(new Promise(() => {}));
+    let cleanedUp = false;
+    runTasksConformanceMock.mockImplementation(
+      ({ signal }: { signal: AbortSignal }) =>
+        new Promise((_, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              setTimeout(() => {
+                cleanedUp = true;
+                reject(signal.reason);
+              }, 100);
+            },
+            { once: true },
+          );
+        }),
+    );
 
     const pending = post({ projectId: "p1", serverId: "s1" });
-    await vi.advanceTimersByTimeAsync(30_000);
+    let answered = false;
+    void pending.then(() => {
+      answered = true;
+    });
+    await vi.advanceTimersByTimeAsync(28_000);
+    expect(runTasksConformanceMock.mock.calls[0][0].signal.aborted).toBe(true);
+    expect(answered).toBe(false);
+    expect(cleanedUp).toBe(false);
+    await vi.advanceTimersByTimeAsync(100);
     const res = await pending;
+    expect(cleanedUp).toBe(true);
 
     expect(res.status).toBe(504);
     const body = (await res.json()) as { code: string; message: string };

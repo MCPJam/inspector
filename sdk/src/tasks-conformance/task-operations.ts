@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "node:timers/promises";
 import { readRequiredCapabilities } from "./metadata.js";
 import type { MCPClientManager } from "../mcp-client-manager/MCPClientManager.js";
 
@@ -83,6 +84,7 @@ export class TaskOperations {
       }
     | { outcome: "errored"; message: string }
   > {
+    this.config.signal?.throwIfAborted();
     const receivedBefore = received.length;
     const rawTask = () => findRawTaskResponse(received.slice(receivedBefore));
     try {
@@ -158,18 +160,21 @@ export class TaskOperations {
     // uses for the DECLARING calls, minus the declaration — which is precisely
     // the probe. Nothing in the wrapper chain adds the tasks capability: the
     // only `_meta` a wrapper injects is `LogLevelMetaClient`'s log level.
+    this.config.signal?.throwIfAborted();
     const client = manager.getManagedClient(serverId);
     if (typeof client?.requestWithSchema !== "function") return undefined;
     // See the ERA GATE note above: the declaring path installs this on its own
     // first send, the probes must ask.
     ensureTasksExtensionEraGateShadow(client);
 
-    const request: RawRequest = (payload, options) =>
-      client.requestWithSchema(
+    const request: RawRequest = (payload, options) => {
+      this.config.signal?.throwIfAborted();
+      return client.requestWithSchema(
         payload as never,
         RAW_PROBE_RESULT_SCHEMA,
         options as never
       );
+    };
 
     const probes: UndeclaredProbe[] = [];
     probes.push(
@@ -220,6 +225,7 @@ export class TaskOperations {
     }
 
     const answered = Object.keys(responses);
+    this.config.signal?.throwIfAborted();
     const receivedBefore = received.length;
     let ackVerdict: ShapeVerdict;
     try {
@@ -323,13 +329,16 @@ export class TaskOperations {
       }
     };
 
+    this.config.signal?.throwIfAborted();
     const get = await observe(() => manager.getTaskExt(serverId, taskId));
+    this.config.signal?.throwIfAborted();
     if (!probeMutations) {
       return { taskId, get, mutations: [], detail: { get } };
     }
     const update = await observe(() =>
       manager.updateTask(serverId, taskId, {} as never)
     );
+    this.config.signal?.throwIfAborted();
     const cancel = await observe(() => manager.cancelTaskExt(serverId, taskId));
 
     return {
@@ -371,6 +380,7 @@ export class TaskOperations {
     const problems: string[] = [];
     const warnings: string[] = [];
 
+    this.config.signal?.throwIfAborted();
     const receivedBefore = received.length;
     let ack: unknown;
     try {
@@ -445,6 +455,7 @@ export class TaskOperations {
     let consecutiveInputRequired = 0;
 
     while (Date.now() < deadline) {
+      this.config.signal?.throwIfAborted();
       try {
         const task =
           wire === "extension"
@@ -494,7 +505,7 @@ export class TaskOperations {
         : NaN;
       const waitMs =
         Number.isFinite(suggested) && suggested > 0 ? suggested : 250;
-      await new Promise((resolve) => setTimeout(resolve, waitMs));
+      await delay(waitMs, undefined, { signal: this.config.signal });
     }
 
     return { task: last };

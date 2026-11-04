@@ -19,6 +19,7 @@ export class MCPTasksConformanceTest {
     const started = Date.now();
     const results: MCPTasksConformanceResult[] = [];
     for (const group of planTasksConformance(this.config)) {
+      this.config.signal?.throwIfAborted();
       results.push(
         await new TaskGroupRunner({
           ...this.config,
@@ -30,6 +31,7 @@ export class MCPTasksConformanceTest {
         }).run()
       );
     }
+    this.config.signal?.throwIfAborted();
     return mergeTasksConformanceResults(
       results,
       this.config.checkIds,

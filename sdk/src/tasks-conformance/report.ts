@@ -116,7 +116,11 @@ export function mergeTasksConformanceResults(
   const taskIds = new Set(
     results.map((r) => r.discovery.createdTaskId).filter(Boolean)
   );
-  const { probedTool, createdTaskId, ...common } = discovery;
+  const {
+    probedTool: _probedTool,
+    createdTaskId: _createdTaskId,
+    ...common
+  } = discovery;
   return {
     ...verdict,
     passed: verdict.outcome === "passed",

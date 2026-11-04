@@ -1293,6 +1293,7 @@ export { aiRequestHeaders } from "./ai-request-headers.js";
 /** Use the same validation before rendering embedded Task or MRTR input. */
 export { validateEmbeddedClientRequest } from "./mcp-client-manager/task-input-driver.js";
 export {
+  RENAMED_MCP_TASKS_CHECK_IDS,
   MCP_TASKS_TOOL_CHECK_IDS,
   isTasksToolCheck,
 } from "./tasks-conformance/types.js";

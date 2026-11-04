@@ -34,7 +34,9 @@ describe("Tasks execution plans", () => {
       checkIds: ["tasks-inline-result", "tasks-cancel-ack-shape"],
     });
     expect(groups).toHaveLength(2);
-    expect(groups.every((group) => group.protocolVersion === "2026-07-28")).toBe(true);
+    expect(
+      groups.every((group) => group.protocolVersion === "2026-07-28")
+    ).toBe(true);
   });
   it("shares equivalent arguments but replaces, rather than merges, an override", () => {
     const groups = planTasksConformance({
