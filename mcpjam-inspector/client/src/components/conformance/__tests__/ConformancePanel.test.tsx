@@ -3092,6 +3092,7 @@ describe("ConformanceTab", () => {
     render(
       <ConformanceTab
         server={server}
+        serverTimeouts={{}}
         servers={[server]}
         onSelectServer={vi.fn()}
         onConnectServer={vi.fn(async () => "ready" as const)}
@@ -3101,6 +3102,9 @@ describe("ConformanceTab", () => {
 
     expect(screen.queryByRole("alert")).toBeNull();
     await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run timeout" }));
+    expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(null);
   });
 
   it("keeps each server's connect failure when they settle out of order", async () => {

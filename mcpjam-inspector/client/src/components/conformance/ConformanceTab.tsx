@@ -182,17 +182,32 @@ export function ConformanceTab({
   const [changedDefaults, setChangedDefaults] = useState<
     Record<string, ConformanceSelection>
   >({});
-  const [changedTimeouts, setChangedTimeouts] = useState<Record<string, number | null>>({});
+  const savedTimeoutFor = (name: string) =>
+    serverTimeouts && Object.hasOwn(serverTimeouts, name)
+      ? serverTimeouts[name]
+      : undefined;
+  const [changedTimeouts, setChangedTimeouts] = useState<
+    Record<string, number | null>
+  >({});
   useEffect(() => {
     setChangedTimeouts((previous) => {
-      const pending = Object.fromEntries(Object.entries(previous).filter(
-        ([name, seconds]) => seconds !== (serverTimeouts?.[name] ?? null),
-      ));
-      return Object.keys(pending).length === Object.keys(previous).length ? previous : pending;
+      const pending = Object.fromEntries(
+        Object.entries(previous).filter(([name, seconds]) => {
+          const saved = serverTimeouts && Object.hasOwn(serverTimeouts, name)
+            ? serverTimeouts[name]
+            : null;
+          return seconds !== saved;
+        }),
+      );
+      return Object.keys(pending).length === Object.keys(previous).length
+        ? previous
+        : pending;
     });
   }, [serverTimeouts]);
   const timeoutFor = (name: string) =>
-    Object.hasOwn(changedTimeouts, name) ? changedTimeouts[name] ?? undefined : serverTimeouts?.[name] ?? (!persist ? readLocalTimeout(name) : undefined);
+    Object.hasOwn(changedTimeouts, name)
+      ? changedTimeouts[name] ?? undefined
+      : savedTimeoutFor(name) ?? (!persist ? readLocalTimeout(name) : undefined);
   const saveTimeout = async (name: string, seconds: number | null) => {
     if (onSaveServerTimeout) await onSaveServerTimeout(name, seconds);
     else if (!persist) saveLocalTimeout(name, seconds);
