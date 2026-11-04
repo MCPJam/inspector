@@ -6,6 +6,18 @@ const user = (parts: unknown) => ({ id: "u", role: "user", parts });
 const assistant = (parts: unknown) => ({ id: "a", role: "assistant", parts });
 const text = { type: "text", text: "hi" };
 const png = "data:image/png;base64,iVBORw0KGgo=";
+const mention = {
+  type: "data-plugin-mention",
+  data: {
+    serverId: "owned",
+    toolName: "mentions",
+    item: { type: "resource_link", uri: "fixture://bolt", name: "Bolt" },
+  },
+};
+const pluginText = {
+  type: "data-plugin-message-text",
+  data: { title: "Draft", text: "hi" },
+};
 
 describe("findMalformedHistory", () => {
   it.each([
@@ -61,6 +73,37 @@ describe("findMalformedHistory", () => {
     },
   );
 
+  it.each([
+    {
+      name: "a plugin mention without data",
+      messages: [user([text, { type: "data-plugin-mention" }])],
+      expected: {
+        messageIndex: 0,
+        partIndex: 1,
+        problem: "plugin_data_invalid",
+      },
+    },
+    {
+      name: "a plugin message text without a title",
+      messages: [
+        user([{ type: "data-plugin-message-text", data: { text: "hi" } }]),
+      ],
+      expected: {
+        messageIndex: 0,
+        partIndex: 0,
+        problem: "plugin_data_invalid",
+      },
+    },
+  ])(
+    "names $name, which conversion refuses to drop",
+    async ({ messages, expected }) => {
+      expect(findMalformedHistory(messages)).toEqual(expected);
+      await expect(
+        convertToMcpjamModelMessages(messages as never),
+      ).rejects.toThrow();
+    },
+  );
+
   it("accepts a history conversion can read", async () => {
     const messages = [
       user([text, { type: "file", mediaType: "image/png", url: png }]),
@@ -75,9 +118,12 @@ describe("findMalformedHistory", () => {
           output: { content: [] },
         },
         { type: "data-unknown", data: { anything: true } },
+        { type: "constructor" },
       ]),
       user([
         text,
+        mention,
+        pluginText,
         {
           type: "file",
           mediaType: "application/pdf",

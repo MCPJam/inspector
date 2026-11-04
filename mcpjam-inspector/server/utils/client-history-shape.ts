@@ -8,14 +8,28 @@
  * before UI parts, a null part, a file part with a relative or missing url)
  * threw a TypeError there and failed the turn as an internal error. Only that
  * shape is checked here; content and provenance are `verifyClientHistory`'s.
+ *
+ * MCPJam's own plugin data parts are parsed with zod during conversion, so a
+ * part with missing or invalid `data` threw there too. Those parts carry what
+ * the user wrote, so they are refused rather than dropped from the turn.
  */
+
+import {
+  PLUGIN_MENTION_PART,
+  pluginMentionSelectionSchema,
+} from "@/shared/plugin-mentions";
+import {
+  PLUGIN_MESSAGE_TEXT_PART,
+  pluginMessageTextSchema,
+} from "@/shared/plugin-message";
 
 export type MalformedHistoryProblem =
   | "message_not_object"
   | "parts_missing"
   | "part_not_object"
   | "part_type_missing"
-  | "file_url_invalid";
+  | "file_url_invalid"
+  | "plugin_data_invalid";
 
 export interface MalformedHistory {
   messageIndex: number;
@@ -33,6 +47,15 @@ function hasParseableFileUrl(part: Record<string, unknown>): boolean {
   if (part.type === "file" && part.providerReference != null) return true;
   return typeof part.url === "string" && URL.canParse(part.url);
 }
+
+// A Map, so a part type such as "constructor" finds no schema.
+const pluginDataSchemas = new Map<
+  string,
+  { safeParse(value: unknown): { success: boolean } }
+>([
+  [PLUGIN_MESSAGE_TEXT_PART, pluginMessageTextSchema],
+  [PLUGIN_MENTION_PART, pluginMentionSelectionSchema],
+]);
 
 /** The first part of `messages` conversion cannot read, or null. */
 export function findMalformedHistory(
@@ -57,6 +80,10 @@ export function findMalformedHistory(
         !hasParseableFileUrl(part)
       ) {
         return { messageIndex, partIndex, problem: "file_url_invalid" };
+      }
+      const pluginDataSchema = pluginDataSchemas.get(part.type);
+      if (pluginDataSchema && !pluginDataSchema.safeParse(part.data).success) {
+        return { messageIndex, partIndex, problem: "plugin_data_invalid" };
       }
     }
   }
