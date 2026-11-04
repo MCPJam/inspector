@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
+import { missingInputMessage } from "@mcpjam/sdk/browser";
+import { NotRunTag } from "../conformance/ConformanceCheckRows";
 import { Button } from "@mcpjam/design-system/button";
 import { Loader2, CheckCircle2, XCircle, MinusCircle } from "lucide-react";
 import { routePaths } from "@/lib/app-navigation";
@@ -31,20 +33,31 @@ const SUITE_TITLES: Record<string, string> = {
  * surfaces that list summaries without reports.
  */
 function describeStoredScore(summary: ScoreSummary, pending = 0): string {
+  const missingInputs = Math.max(
+    0,
+    summary.passed + summary.failed + summary.couldNotRun - summary.applicable,
+  );
+  const otherUnrun = summary.couldNotRun - missingInputs;
+  const unrun = [
+    missingInputs > 0
+      ? `${missingInputs} check${missingInputs === 1 ? " needs" : "s need"} input`
+      : null,
+    otherUnrun > 0 ? `${otherUnrun} could not run` : null,
+  ].filter((part): part is string => part !== null);
   if (summary.score === null) {
+    if (unrun.length > 0) return `not scored. ${unrun.join(", ")}`;
     return `not scored — 0 applicable checks (${summary.notApplicable} not applicable)`;
   }
   const parts = [
     `${summary.passed}/${summary.applicable} applicable checks passed`,
   ];
   if (summary.failed > 0) parts.push(`${summary.failed} failed`);
-  if (summary.couldNotRun > 0)
-    parts.push(`${summary.couldNotRun} could not run`);
+  parts.push(...unrun);
   if (summary.advisoryCount > 0) {
     parts.push(
       `${summary.advisoryCount} advisor${
         summary.advisoryCount === 1 ? "y" : "ies"
-      }`
+      }`,
     );
   }
   if (pending > 0) {
@@ -72,6 +85,7 @@ interface ReportCheck {
   status?: string;
   error?: { message?: string };
   skipReason?: string;
+  details?: unknown;
   pending?: boolean;
 }
 
@@ -87,8 +101,8 @@ function collectChecks(suite: unknown): ReportCheck[] {
   const items = Array.isArray(record?.checks)
     ? record.checks
     : Array.isArray(record?.steps)
-    ? record.steps
-    : [];
+      ? record.steps
+      : [];
   return items as ReportCheck[];
 }
 
@@ -99,8 +113,7 @@ function collectChecks(suite: unknown): ReportCheck[] {
  */
 function pendingIdsFromSuite(suite: unknown): Set<string> {
   const record = suite as
-    | { profile?: { pendingCheckIds?: unknown } }
-    | undefined;
+    { profile?: { pendingCheckIds?: unknown } } | undefined;
   const ids = record?.profile?.pendingCheckIds;
   if (!Array.isArray(ids)) return new Set();
   return new Set(ids.filter((id): id is string => typeof id === "string"));
@@ -160,7 +173,10 @@ export function ScoreResultsPage() {
       .filter((entry) => entry.summary || entry.checks.length > 0);
   }, [run]);
 
-  const pendingTotal = suites.reduce((total, suite) => total + suite.pending, 0);
+  const pendingTotal = suites.reduce(
+    (total, suite) => total + suite.pending,
+    0,
+  );
 
   if (notFound) {
     return (
@@ -187,8 +203,8 @@ export function ScoreResultsPage() {
     run.outcome === "failed"
       ? "text-red-400"
       : run.outcome === "incomplete"
-      ? "text-amber-500"
-      : "text-green-500";
+        ? "text-amber-500"
+        : "text-green-500";
 
   return (
     <div className="mx-auto flex h-full w-full max-w-3xl flex-col gap-6 overflow-y-auto px-6 py-10">
@@ -215,10 +231,10 @@ export function ScoreResultsPage() {
               {run.outcome === "failed"
                 ? "Not conformant"
                 : run.outcome === "incomplete"
-                ? "Incomplete run"
-                : run.advisoryCount > 0
-                ? "Conformant, with advice"
-                : "Fully conformant"}
+                  ? "Incomplete run"
+                  : run.advisoryCount > 0
+                    ? "Conformant, with advice"
+                    : "Fully conformant"}
             </div>
             <div className="text-xs text-muted-foreground">
               {describeStoredScore(run, pendingTotal)}
@@ -258,37 +274,54 @@ export function ScoreResultsPage() {
             </div>
             {checks.length > 0 ? (
               <ul>
-                {checks.map((check, index) => (
-                  <li
-                    key={check.id ?? index}
-                    className="flex items-start gap-2 border-b border-border/30 px-4 py-2 last:border-b-0"
-                  >
-                    <CheckIcon status={check.status ?? "skipped"} />
-                    {check.pending ? (
-                      <span
-                        title="unscored by this run's profile"
-                        className="mt-0.5 shrink-0 rounded-sm border border-border/60 px-1 py-px text-[10px] leading-none text-muted-foreground"
-                      >
-                        unscored
-                      </span>
-                    ) : null}
-                    <div className="min-w-0">
-                      <div className="text-xs">
-                        {check.title ?? check.id ?? "check"}
+                {checks.map((check, index) => {
+                  const inputMessage = missingInputMessage({
+                    ...check,
+                    status: check.status ?? "",
+                  });
+                  return (
+                    <li
+                      key={check.id ?? index}
+                      className="flex items-start gap-2 border-b border-border/30 px-4 py-2 last:border-b-0"
+                    >
+                      <CheckIcon status={check.status ?? "skipped"} />
+                      {inputMessage ? (
+                        <NotRunTag />
+                      ) : check.pending ? (
+                        <span
+                          title="unscored by this run's profile"
+                          className="mt-0.5 shrink-0 rounded-sm border border-border/60 px-1 py-px text-[10px] leading-none text-muted-foreground"
+                        >
+                          unscored
+                        </span>
+                      ) : null}
+                      <div className="min-w-0">
+                        <div
+                          className={
+                            inputMessage
+                              ? "text-xs text-muted-foreground"
+                              : "text-xs"
+                          }
+                        >
+                          {check.title ?? check.id ?? "check"}
+                        </div>
+                        {inputMessage ? (
+                          <div className="text-[11px] text-muted-foreground">
+                            {inputMessage}
+                          </div>
+                        ) : check.error?.message ? (
+                          <div className="text-[11px] text-red-400">
+                            {check.error.message}
+                          </div>
+                        ) : check.skipReason ? (
+                          <div className="text-[11px] text-muted-foreground">
+                            {check.skipReason}
+                          </div>
+                        ) : null}
                       </div>
-                      {check.error?.message && (
-                        <div className="text-[11px] text-red-400">
-                          {check.error.message}
-                        </div>
-                      )}
-                      {!check.error?.message && check.skipReason && (
-                        <div className="text-[11px] text-muted-foreground">
-                          {check.skipReason}
-                        </div>
-                      )}
-                    </div>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             ) : (
               <div className="px-4 py-3 text-[11px] text-muted-foreground">

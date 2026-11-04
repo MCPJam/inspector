@@ -405,7 +405,10 @@ function SuiteChecks({
   listNote?: string;
   renderExtra?: (entry: CatalogEntry) => ReactNode;
   renderTag?: (entry: CatalogEntry) => ReactNode;
-  /** Picked checks still missing an input, flagged on the closed header. */
+  /**
+   * Picked checks still missing an input, flagged on the closed header as
+   * optional: the run goes ahead without them and they cost no points.
+   */
   needsInputCount?: number;
   /** The suite's advice, listed under its checks; the suite's box covers it. */
   advice?: {
@@ -442,9 +445,10 @@ function SuiteChecks({
               <span className="text-sm font-semibold">{title}</span>
               {needsInputCount > 0 ? (
                 <span className="rounded-sm border border-warning/50 bg-warning/10 px-1.5 py-px text-xs text-warning-foreground">
+                  {needsInputCount} <em>optional</em>{" "}
                   {needsInputCount === 1
-                    ? "1 check needs input"
-                    : `${needsInputCount} checks need input`}
+                    ? "check needs input"
+                    : "checks need input"}
                 </span>
               ) : null}
             </span>

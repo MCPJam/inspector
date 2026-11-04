@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { ChevronRight, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Collapse } from "./conformance-ui";
+import { Collapse, SUITE_COPY } from "./conformance-ui";
 
 export interface AdviceItem {
   id: string;
@@ -20,6 +20,72 @@ export interface AdviceItem {
 export interface AdviceGroup {
   suite: string;
   readiness?: readonly AdviceItem[];
+}
+
+const ADVICE_SUITES = ["protocol", "apps", "tasks", "oauth"] as const;
+
+/** A suite's run state, read only for the advice its result carries. */
+interface AdviceSource {
+  result?: { readiness?: readonly AdviceItem[] } | null;
+}
+
+/** One group per suite, in the order the panel lists the suites. */
+export function suiteAdviceGroups(
+  runs: Record<(typeof ADVICE_SUITES)[number], AdviceSource>,
+): AdviceGroup[] {
+  return ADVICE_SUITES.map((suite) => ({
+    suite: SUITE_COPY[suite].title,
+    readiness: runs[suite].result?.readiness,
+  }));
+}
+
+/** One advisory as a saved suite report stores it. */
+interface SavedReportAdvisory {
+  id?: unknown;
+  title?: unknown;
+  kind?: unknown;
+  status?: unknown;
+  message?: unknown;
+}
+
+/**
+ * One group per saved suite report, from the advice the report saved. Reports
+ * from before advice was saved have none, so their suites add nothing.
+ */
+export function reportAdviceGroups(
+  reports: ReadonlyArray<{
+    suiteKind: string;
+    /** Read as saved, so it is checked here: a shared report can be anything. */
+    advisories?: unknown;
+  }>,
+): AdviceGroup[] {
+  return reports.map(({ suiteKind, advisories }) => ({
+    suite: SUITE_COPY[suiteKind as keyof typeof SUITE_COPY]?.title ?? suiteKind,
+    readiness: (Array.isArray(advisories) ? advisories : []).flatMap(
+      (entry: unknown) => {
+        const advisory = (entry ?? {}) as SavedReportAdvisory;
+        return advisory.kind === "readiness" &&
+          typeof advisory.id === "string" &&
+          typeof advisory.title === "string" &&
+          typeof advisory.status === "string"
+          ? [
+              {
+                id: advisory.id,
+                title: advisory.title,
+                specStrength:
+                  suiteKind === "protocol" &&
+                  advisory.id === "readiness-deprecated-feature-use" &&
+                  advisory.status === "SHOULD"
+                    ? "Deprecation Notice"
+                    : advisory.status,
+                message:
+                  typeof advisory.message === "string" ? advisory.message : "",
+              },
+            ]
+          : [];
+      },
+    ),
+  }));
 }
 
 /** The spec's requirement words are defined by BCP 14 (RFC 2119 + RFC 8174). */
@@ -38,9 +104,14 @@ function SpecWord({ word }: { word: string }) {
   );
 }
 
-/** MAY is optional; SHOULD and RECOMMENDED are what the spec asks for. */
+/** MAY is optional; SHOULD is what the spec asks for. */
 function isOptional(item: AdviceItem): boolean {
   return item.specStrength === "MAY";
+}
+
+/** A field the spec deprecates without a SHOULD or MAY. */
+function isDeprecation(item: AdviceItem): boolean {
+  return item.specStrength === "Deprecation Notice";
 }
 
 export function ConformanceAdvice({ groups }: { groups: AdviceGroup[] }) {
@@ -75,16 +146,18 @@ export function ConformanceAdvice({ groups }: { groups: AdviceGroup[] }) {
       </button>
       {/* Outside the toggle: a link can't sit inside a button. */}
       <p className="px-4 pb-4 pl-11 text-sm text-muted-foreground">
-        None of these fail a check. Suggested (<SpecWord word="SHOULD" /> or{" "}
-        <SpecWord word="RECOMMENDED" />) means the spec asks for it. Optional (
-        <SpecWord word="MAY" />) means it helps but the spec doesn't require it.
+        None of these fail a check. Suggested (<SpecWord word="SHOULD" />) means
+        the spec asks for it. Optional (<SpecWord word="MAY" />) means it helps
+        but the spec doesn't require it.
       </p>
       <Collapse open={open}>
         <ul className="border-t border-border/60 px-4">
           {items.map((item) => (
             <li
               key={`${item.suite}-${item.id}`}
-              className="flex items-start gap-2.5 border-b border-border/60 py-2.5 last:border-0"
+              // Indented like a suite's check rows (`pl-7`), so the icon sits
+              // under the header's text rather than its chevron.
+              className="flex items-start gap-2.5 border-b border-border/60 py-2.5 pl-7 last:border-0"
             >
               <Info
                 aria-hidden="true"
@@ -93,8 +166,9 @@ export function ConformanceAdvice({ groups }: { groups: AdviceGroup[] }) {
               <span className="flex min-w-0 flex-col gap-0.5 text-sm">
                 <span>
                   <span className="font-medium text-info">
-                    {isOptional(item) ? "Optional" : "Suggested"} (
-                    {item.specStrength})
+                    {isDeprecation(item)
+                      ? "Deprecation notice"
+                      : `${isOptional(item) ? "Optional" : "Suggested"} (${item.specStrength})`}
                   </span>{" "}
                   <span className="text-muted-foreground">{item.suite}</span>{" "}
                   <span className="font-medium">{item.title}</span>

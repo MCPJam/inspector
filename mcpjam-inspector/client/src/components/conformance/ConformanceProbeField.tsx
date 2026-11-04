@@ -31,6 +31,7 @@ import {
   type ToolsDataStatus,
 } from "@/lib/host-compat/use-host-compat";
 import { ToolCallArgsEditor } from "@/components/evals/checks-section";
+import { acceptsEmptyToolArguments } from "./conformance-tool-input";
 import {
   LOG_LEVEL_ADVICE,
   PROBE_CHECKS,
@@ -77,6 +78,9 @@ interface ToolOption {
   argProperties?: Record<string, unknown>;
   /** Declares an output schema: the only tools the output check can grade. */
   hasOutputSchema: boolean;
+  /** Legacy task tools the runner can pick without a manual selection. */
+  taskSupport?: "required" | "optional";
+  inputSchema?: Record<string, unknown>;
 }
 
 /** Read-only tools first: they are the likeliest safe choice. */
@@ -92,6 +96,8 @@ function sortForSafety(tools: ToolOption[]): ToolOption[] {
 /** The server's tools for every probe field, listed once. */
 export interface ProbeTools {
   tools: ToolOption[];
+  /** The runner's first advertised task tool accepts its default {} arguments. */
+  canAutoPickTaskTool?: boolean;
   status: ToolsDataStatus;
   /** The server kept paging past the cap: `tools` is not the whole list. */
   truncated?: boolean;
@@ -103,22 +109,41 @@ export interface ProbeTools {
  */
 export function useProbeTools(server: ServerWithName | null): ProbeTools {
   const { data, status } = useServerToolsData(server, { allPages: true });
-  const tools = useMemo(
-    () =>
-      sortForSafety(
-        (data?.tools ?? []).map((tool) => ({
-          name: tool.name,
-          readOnly: tool.annotations?.readOnlyHint === true,
-          destructive:
-            tool.annotations?.readOnlyHint !== true &&
-            tool.annotations?.destructiveHint !== false,
-          argProperties: tool.inputSchema?.properties,
-          hasOutputSchema: tool.outputSchema !== undefined,
-        })),
-      ),
-    [data],
-  );
-  return { tools, status, truncated: Boolean(data?.nextCursor) };
+  const taskTools = useMemo(() => {
+    const listed = (data?.tools ?? []).map<ToolOption>((tool) => {
+      const execution = "execution" in tool ? tool.execution : undefined;
+      const taskSupport =
+        execution && typeof execution === "object" && "taskSupport" in execution
+          ? execution.taskSupport
+          : undefined;
+      return {
+        name: tool.name,
+        readOnly: tool.annotations?.readOnlyHint === true,
+        destructive:
+          tool.annotations?.readOnlyHint !== true &&
+          tool.annotations?.destructiveHint !== false,
+        argProperties: tool.inputSchema?.properties,
+        inputSchema: tool.inputSchema,
+        hasOutputSchema: tool.outputSchema !== undefined,
+        taskSupport:
+          taskSupport === "required" || taskSupport === "optional"
+            ? taskSupport
+            : undefined,
+      };
+    });
+    // Match the runner's required-first choice in server listing order,
+    // before sorting the dropdown for safety.
+    const automatic =
+      listed.find((tool) => tool.taskSupport === "required") ??
+      listed.find((tool) => tool.taskSupport === "optional");
+    return {
+      tools: sortForSafety(listed),
+      canAutoPickTaskTool:
+        automatic !== undefined &&
+        acceptsEmptyToolArguments(automatic.inputSchema),
+    };
+  }, [data]);
+  return { ...taskTools, status, truncated: Boolean(data?.nextCursor) };
 }
 
 const FIELD_BOX =

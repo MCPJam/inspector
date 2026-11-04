@@ -172,12 +172,12 @@ export interface OAuthConformanceClientConfig {
 }
 
 /**
- * The OAuth suite's advice: SHOULD/RECOMMENDED findings beside the verdict,
+ * The OAuth suite's advice: SHOULD findings beside the verdict,
  * read off what the flow already discovered.
  */
 export const MCP_OAUTH_READINESS_IDS = [
-  // RFC 9207 `iss` lets a client spot an authorization-server mix-up. Only
-  // RECOMMENDED, so advice, never a step failure.
+  // RFC 9207 `iss` lets a client spot an authorization-server mix-up. The MCP
+  // auth spec states it as a SHOULD, so advice, never a step failure.
   "readiness-oauth-iss-advertised",
 ] as const;
 
@@ -294,7 +294,7 @@ export interface ConformanceResult {
   durationMs: number;
   credentials?: OAuthConformanceCredentials;
   verification?: VerificationResult;
-  /** SHOULD/RECOMMENDED advice, beside the verdict. Absent when there is none. */
+  /** SHOULD advice, beside the verdict. Absent when there is none. */
   readiness?: MCPOAuthReadinessWarning[];
 }
 

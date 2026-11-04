@@ -735,6 +735,7 @@ export {
 export {
   buildDynamicClientRegistrationRequest,
   executeDynamicClientRegistration,
+  isDynamicClientRegistrationHttpError,
 } from "./oauth/state-machines/shared/dynamic-client-registration.js";
 export type {
   DynamicClientRegistrationCredentials,
@@ -908,6 +909,7 @@ export {
 } from "./conformance-outcome.js";
 export { isAuthorizationRequiredCheck } from "./conformance-authorization.js";
 export { isTimedOutCheck } from "./conformance-timeout.js";
+export { isMissingInputCheck, missingInputMessage } from "./conformance-input.js";
 export type {
   ConformanceRunOutcome,
   ConformanceSkipReason,

@@ -240,7 +240,7 @@ Each `MCPReadinessWarning` has:
 |----------|------|-------------|
 | `id` | `string` | Stable identifier (e.g. `readiness-session-termination`). |
 | `title` | `string` | Short human-readable label. |
-| `specStrength` | `"MAY" \| "SHOULD" \| "RECOMMENDED"` | The spec strength of the underlying guidance. |
+| `specStrength` | `"SHOULD" \| "MAY" \| "Deprecation Notice"` | The spec strength of the underlying guidance. `"Deprecation Notice"` marks a field the spec deprecates without a SHOULD or MAY. |
 | `message` | `string` | Description of what was observed and why it matters. |
 | `details` | `Record<string, unknown>` | Structured details (status codes, headers, etc.). |
 

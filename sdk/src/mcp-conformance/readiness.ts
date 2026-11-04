@@ -1,10 +1,10 @@
 /**
  * The readiness / interoperability channel — Phase 7 §15.4.
  *
- * Everything reported here is NON-MUST advice: SHOULD, RECOMMENDED, or MAY
- * strength. A readiness warning is attached to
- * `MCPConformanceResult.readiness` and is NEVER converted into a check result,
- * so it cannot change `passed`, any check status, or the category summary.
+ * Everything reported here is NON-MUST advice: SHOULD or MAY strength. A
+ * readiness warning is attached to `MCPConformanceResult.readiness` and is
+ * NEVER converted into a check result, so it cannot change `passed`, any
+ * check status, or the category summary.
  * That separation is the point: a server that is fully conformant but awkward
  * to interoperate with should read as "conformant, with advice", never as a
  * failure — and a conformance verdict must stay a statement about MUSTs.
@@ -227,7 +227,7 @@ function deprecatedFeatureWarning(
 
   return warning(
     "readiness-deprecated-feature-use",
-    "SHOULD",
+    "Deprecation Notice",
     `Server advertises superseded functionality: ${findings.join("; ")}`,
     { findings }
   );

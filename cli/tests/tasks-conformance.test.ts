@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { MCP_TASKS_CHECK_IDS } from "@mcpjam/sdk";
+import { Command } from "commander";
 import {
   buildTasksConformanceConfig,
+  registerTasksCommands,
   tasksConformanceExitCode,
 } from "../src/commands/tasks.js";
 import { CliError } from "../src/lib/output.js";
@@ -97,6 +99,67 @@ test("buildTasksConformanceConfig lets explicit check ids override categories", 
   });
 
   assert.deepEqual(config.checkIds, ["tasks-inline-result"]);
+});
+
+test("buildTasksConformanceConfig passes advice ids through as readinessIds", () => {
+  const all = buildTasksConformanceConfig({ url: "https://example.com/mcp" });
+  assert.equal("readinessIds" in all, false);
+
+  const config = buildTasksConformanceConfig({
+    url: "https://example.com/mcp",
+    adviceId: ["tasks-readiness-failed-status-message"],
+  });
+  assert.deepEqual(config.readinessIds, [
+    "tasks-readiness-failed-status-message",
+  ]);
+});
+
+test("tasks conformance threads repeated --advice-id into readinessIds", async () => {
+  const program = new Command();
+  program.exitOverride();
+  registerTasksCommands(program);
+  const conformance = program.commands
+    .find((c) => c.name() === "tasks")
+    ?.commands.find((c) => c.name() === "conformance");
+  assert.ok(conformance, "tasks conformance should be registered");
+  let captured: ReturnType<typeof buildTasksConformanceConfig> | undefined;
+  // Replace the network-running action so only option parsing is exercised.
+  conformance.action((options) => {
+    captured = buildTasksConformanceConfig(options);
+  });
+
+  await program.parseAsync(
+    [
+      "tasks",
+      "conformance",
+      "--url",
+      "https://example.com/mcp",
+      "--advice-id",
+      "tasks-readiness-failed-status-message",
+      "--advice-id",
+      "tasks-readiness-unknown-task-id-mutations",
+    ],
+    { from: "user" }
+  );
+
+  assert.deepEqual(captured?.readinessIds, [
+    "tasks-readiness-failed-status-message",
+    "tasks-readiness-unknown-task-id-mutations",
+  ]);
+});
+
+test("buildTasksConformanceConfig rejects unknown advice ids, and another suite's", () => {
+  for (const adviceId of [["bogus"], ["readiness-log-level-filtering"], [""]]) {
+    assert.throws(
+      () =>
+        buildTasksConformanceConfig({
+          url: "https://example.com/mcp",
+          adviceId,
+        }),
+      (error) =>
+        error instanceof CliError && error.message.includes("advice id")
+    );
+  }
 });
 
 test("tasksConformanceExitCode separates a violation from a run that established nothing", () => {

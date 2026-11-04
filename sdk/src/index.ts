@@ -824,6 +824,7 @@ export {
 } from "./conformance-outcome.js";
 export { isAuthorizationRequiredCheck } from "./conformance-authorization.js";
 export { isTimedOutCheck } from "./conformance-timeout.js";
+export { isMissingInputCheck, missingInputMessage } from "./conformance-input.js";
 export type {
   ConformanceRunOutcome,
   ConformanceSkipReason,
@@ -1381,11 +1382,14 @@ export type {
   MCPAppsConformanceSuiteDefaults,
   MCPAppsConformanceSuiteResult,
   MCPAppsConformanceSuiteRun,
+  MCPAppsReadinessId,
+  MCPAppsReadinessWarning,
   MCPAppsResourceReadOutcome,
 } from "./apps-conformance/index.js";
 export {
   MCP_APPS_CHECK_CATEGORIES,
   MCP_APPS_CHECK_IDS,
+  MCP_APPS_READINESS_IDS,
 } from "./apps-conformance/index.js";
 
 // MCP Tasks conformance
