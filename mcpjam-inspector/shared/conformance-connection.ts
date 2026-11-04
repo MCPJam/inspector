@@ -69,7 +69,7 @@ export function readProtocolVersionRefusal(
     }
     if (typeof message !== "string") continue;
     const pinned =
-      /doesn't support MCP protocol version (\d{4}-\d{2}-\d{2}), which this client is pinned to/i.exec(
+      /doesn't support MCP protocol version (\d{4}-\d{2}-\d{2})(?:, which this client is pinned to|\.)/i.exec(
         message,
       );
     if (pinned && (!requestedVersion || pinned[1] === requestedVersion)) {
@@ -77,7 +77,7 @@ export function readProtocolVersionRefusal(
         protocolVersion: pinned[1],
         supportedVersions: versions(
           message
-            .match(/It offers ([\d, -]+)/i)?.[1]
+            .match(/(?:It offers|Supported versions:) ([\d, -]+)/i)?.[1]
             .match(/\d{4}-\d{2}-\d{2}/g),
         ),
       };

@@ -2,7 +2,18 @@ import type {
   EnsureServerConnectionResult,
   EnsureServersReadyResult,
 } from "@/hooks/use-server-state";
-import type { ConformanceConnectServer } from "./ConformancePanel";
+
+/** What a background connect from Run came back with. */
+export type ConformanceConnectOutcome = "ready" | "reauth" | "failed";
+
+/**
+ * Connects a server in the background. `signIn` lets the connect open the
+ * server's sign-in, for a server whose last connect needed one.
+ */
+export type ConformanceConnectServer = (
+  name: string,
+  options?: { signIn?: boolean },
+) => Promise<ConformanceConnectOutcome>;
 
 export function createConformanceConnector({
   ensureServersReady,

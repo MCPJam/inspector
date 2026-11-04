@@ -61,17 +61,11 @@ import {
   type ConformancePersistConfig,
 } from "@/components/conformance/PersistConformanceRun";
 
-/** What a background connect from Run came back with. */
-export type ConformanceConnectOutcome = "ready" | "reauth" | "failed";
-
-/**
- * Connects a server in the background. `signIn` lets the connect open the
- * server's sign-in, for a server whose last connect needed one.
- */
-export type ConformanceConnectServer = (
-  name: string,
-  options?: { signIn?: boolean },
-) => Promise<ConformanceConnectOutcome>;
+import type { ConformanceConnectServer } from "./connect-conformance-server";
+export type {
+  ConformanceConnectOutcome,
+  ConformanceConnectServer,
+} from "./connect-conformance-server";
 
 function SuiteBadge({
   state,
@@ -366,7 +360,7 @@ export function ConformanceContent({
   const connectAndRun = async (signIn = false) => {
     if (!onConnectServer) return;
     setConnect({ status: "connecting" });
-    let outcome: ConformanceConnectOutcome;
+    let outcome: Awaited<ReturnType<ConformanceConnectServer>>;
     try {
       outcome = await onConnectServer(server.name, { signIn });
     } catch {
