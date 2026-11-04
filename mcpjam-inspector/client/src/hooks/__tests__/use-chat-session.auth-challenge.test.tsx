@@ -18,7 +18,12 @@ import {
   SCOPE_STEP_UP_FINISHED_DATA_PART_TYPE,
   SCOPE_STEP_UP_VERSION,
 } from "@/shared/scope-step-up";
-import { listPendingChatScopeStepUps, savePendingChatScopeStepUp, markPendingChatScopeStepUpReady, readPendingChatScopeStepUp } from "@/lib/scope-step-up-pending";
+import {
+  listPendingChatScopeStepUps,
+  savePendingChatScopeStepUp,
+  markPendingChatScopeStepUpReady,
+  readPendingChatScopeStepUp,
+} from "@/lib/scope-step-up-pending";
 
 /**
  * Mid-session sign-in in chat (client): the card arrives with no side
@@ -84,7 +89,10 @@ const orchestrator = vi.hoisted(() => ({
 vi.mock("@/state/oauth-orchestrator", () => orchestrator);
 
 vi.mock("@/lib/config", () => ({ HOSTED_MODE: false }));
-vi.mock("@/lib/guest-session", async (importOriginal) => ({ ...await importOriginal<typeof import("@/lib/guest-session")>(), getGuestBearerToken: vi.fn(async () => null) }));
+vi.mock("@/lib/guest-session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/guest-session")>()),
+  getGuestBearerToken: vi.fn(async () => null),
+}));
 
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   buildAvailableModels: vi.fn(() => [byokModel]),
@@ -147,7 +155,10 @@ vi.mock("@/lib/session-token", () => ({
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: () => ({ getAccessToken: mockState.getAccessToken, user: mockState.user }),
+  useAuth: () => ({
+    getAccessToken: mockState.getAccessToken,
+    user: mockState.user,
+  }),
 }));
 
 vi.mock("convex/react", () => ({
@@ -182,7 +193,6 @@ vi.mock("ai", () => ({
   lastAssistantMessageIsCompleteWithApprovalResponses: vi.fn(),
   convertToModelMessages: vi.fn(async () => []),
 }));
-
 
 const server = {
   name: "orders",
@@ -256,9 +266,18 @@ describe("useChatSession mid-session sign-in", () => {
   });
 
   it("keeps the pending chat when the same member gets a refreshed token", async () => {
-    const token = (iat: number) => `e30.${btoa(JSON.stringify({
-      iss: "https://api.workos.com", sub: "member-1", iat, exp: iat + 3600,
-    })).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_")}.signature`;
+    const token = (iat: number) =>
+      `e30.${btoa(
+        JSON.stringify({
+          iss: "https://api.workos.com",
+          sub: "member-1",
+          iat,
+          exp: iat + 3600,
+        }),
+      )
+        .replace(/=/g, "")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")}.signature`;
     mockState.user = { id: "member-1" };
     mockState.getAccessToken.mockResolvedValue(token(1000));
     const { result, rerender } = await renderChatSession();
@@ -328,16 +347,16 @@ describe("useChatSession mid-session sign-in", () => {
       });
     });
     await waitFor(() => {
-      expect(
-        Object.values(useAuthChallengeCardStore.getState().cards),
-      ).toEqual([
-        expect.objectContaining({
-          serverName: "orders",
-          toolCallId: "call-1",
-          action: "prompt",
-          surface: "chat",
-        }),
-      ]);
+      expect(Object.values(useAuthChallengeCardStore.getState().cards)).toEqual(
+        [
+          expect.objectContaining({
+            serverName: "orders",
+            toolCallId: "call-1",
+            action: "prompt",
+            surface: "chat",
+          }),
+        ],
+      );
     });
     expect(readPendingChatScopeStepUp()).toMatchObject({
       phase: "awaiting_click",
@@ -488,14 +507,17 @@ describe("useChatSession mid-session sign-in", () => {
     act(() => {
       mockState.chatOnData?.({
         type: AUTH_REQUIRED_DATA_PART_TYPE,
-        data: authRequiredEvent({ action: "notify", continuationId: undefined }),
+        data: authRequiredEvent({
+          action: "notify",
+          continuationId: undefined,
+        }),
         transient: true,
       });
     });
     await waitFor(() =>
-      expect(
-        Object.values(useAuthChallengeCardStore.getState().cards),
-      ).toEqual([expect.objectContaining({ action: "notify" })]),
+      expect(Object.values(useAuthChallengeCardStore.getState().cards)).toEqual(
+        [expect.objectContaining({ action: "notify" })],
+      ),
     );
     expect(readPendingChatScopeStepUp()).toBeUndefined();
   });
@@ -519,7 +541,9 @@ describe("useChatSession mid-session sign-in", () => {
         transient: true,
       });
     });
-    expect(useAuthChallengeNoticeStore.getState().notices["call-9"]).toMatchObject({
+    expect(
+      useAuthChallengeNoticeStore.getState().notices["call-9"],
+    ).toMatchObject({
       explanation: "This host ignores _meta challenges.",
     });
     expect(orchestrator.applyToolCallAuthChallenge).not.toHaveBeenCalled();
@@ -554,9 +578,9 @@ describe("useChatSession mid-session sign-in", () => {
     ];
     await renderChatSession();
     await waitFor(() =>
-      expect(
-        Object.values(useAuthChallengeCardStore.getState().cards),
-      ).toEqual([expect.objectContaining({ toolCallId: "call-1" })]),
+      expect(Object.values(useAuthChallengeCardStore.getState().cards)).toEqual(
+        [expect.objectContaining({ toolCallId: "call-1" })],
+      ),
     );
   });
   it("keeps another model lane's call when a fresh chat shows its first card", async () => {
@@ -564,88 +588,219 @@ describe("useChatSession mid-session sign-in", () => {
     const firstOnData = mockState.chatOnData;
     const second = await renderChatSession();
     act(() => {
-      firstOnData?.({ type: AUTH_REQUIRED_DATA_PART_TYPE, data: authRequiredEvent(), transient: true });
-      mockState.chatOnData?.({ type: AUTH_REQUIRED_DATA_PART_TYPE, data: authRequiredEvent({ continuationId: "cont-2", toolCallId: "call-2" }), transient: true });
+      firstOnData?.({
+        type: AUTH_REQUIRED_DATA_PART_TYPE,
+        data: authRequiredEvent(),
+        transient: true,
+      });
+      mockState.chatOnData?.({
+        type: AUTH_REQUIRED_DATA_PART_TYPE,
+        data: authRequiredEvent({
+          continuationId: "cont-2",
+          toolCallId: "call-2",
+        }),
+        transient: true,
+      });
     });
     expect(listPendingChatScopeStepUps()).toHaveLength(2);
-    expect(readPendingChatScopeStepUp({ continuationId: "cont-1" })?.chatSessionId).toBe(first.result.current.chatSessionId);
-    expect(readPendingChatScopeStepUp({ continuationId: "cont-2" })?.chatSessionId).toBe(second.result.current.chatSessionId);
-    await waitFor(() => expect(Object.values(useAuthChallengeCardStore.getState().cards)).toHaveLength(2));
+    expect(
+      readPendingChatScopeStepUp({ continuationId: "cont-1" })?.chatSessionId,
+    ).toBe(first.result.current.chatSessionId);
+    expect(
+      readPendingChatScopeStepUp({ continuationId: "cont-2" })?.chatSessionId,
+    ).toBe(second.result.current.chatSessionId);
+    await waitFor(() =>
+      expect(
+        Object.values(useAuthChallengeCardStore.getState().cards),
+      ).toHaveLength(2),
+    );
   });
 
   function unresolvedMessages() {
-    return [{ id: "assistant-1", role: "assistant", parts: [{ type: "tool-orders__list_orders", toolCallId: "call-1", state: "input-available", input: {} }] }];
+    return [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-orders__list_orders",
+            toolCallId: "call-1",
+            state: "input-available",
+            input: {},
+          },
+        ],
+      },
+    ];
   }
   async function readyResume() {
     mockState.messages = unresolvedMessages();
     const hook = await renderChatSession();
     act(() => {
-      savePendingChatScopeStepUp({ event: authRequiredEvent() as AuthRequiredEvent & { continuationId: string }, serverName: "orders", chatSessionId: hook.result.current.chatSessionId });
+      savePendingChatScopeStepUp({
+        event: authRequiredEvent() as AuthRequiredEvent & {
+          continuationId: string;
+        },
+        serverName: "orders",
+        chatSessionId: hook.result.current.chatSessionId,
+      });
       markPendingChatScopeStepUpReady("orders", "cont-1");
     });
     return hook;
   }
   it("resumes once and cleans up only after the tool result arrives", async () => {
     mockState.sendMessage.mockImplementation(async () => {
-      mockState.messages = [{ id: "assistant-1", role: "assistant", parts: [{ type: "tool-orders__list_orders", toolCallId: "call-1", state: "output-available", input: {}, output: { content: [] } }] }];
+      mockState.messages = [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          parts: [
+            {
+              type: "tool-orders__list_orders",
+              toolCallId: "call-1",
+              state: "output-available",
+              input: {},
+              output: { content: [] },
+            },
+          ],
+        },
+      ];
     });
     await readyResume();
-    await waitFor(() => expect(readPendingChatScopeStepUp({ continuationId: "cont-1" })).toBeUndefined());
+    await waitFor(() =>
+      expect(
+        readPendingChatScopeStepUp({ continuationId: "cont-1" }),
+      ).toBeUndefined(),
+    );
     expect(mockState.sendMessage).toHaveBeenCalledTimes(1);
-    expect(mockState.sendMessage).toHaveBeenCalledWith(undefined, { body: { scopeStepUpResume: { continuationId: "cont-1", toolCallId: "call-1" } } });
+    expect(mockState.sendMessage).toHaveBeenCalledWith(undefined, {
+      body: {
+        scopeStepUpResume: { continuationId: "cont-1", toolCallId: "call-1" },
+      },
+    });
   });
   it("shows a lasting failure when resume and cancellation both fail, without looping", async () => {
     mockState.sendMessage.mockRejectedValue(new Error("connection lost"));
     await readyResume();
     const notices = renderHook(useChatAuthRecoveryFailures);
-    await waitFor(() => expect(notices.result.current).toEqual(expect.arrayContaining([
-      expect.objectContaining({ reason: "resume_failed", toolCallId: "call-1" }),
-      expect.objectContaining({ reason: "cancel_failed", toolCallId: "call-1" }),
-    ])));
+    await waitFor(() =>
+      expect(notices.result.current).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            reason: "resume_failed",
+            toolCallId: "call-1",
+          }),
+          expect.objectContaining({
+            reason: "cancel_failed",
+            toolCallId: "call-1",
+          }),
+        ]),
+      ),
+    );
     expect(mockState.sendMessage).toHaveBeenCalledTimes(2);
-    expect(readPendingChatScopeStepUp({ continuationId: "cont-1" })).toBeUndefined();
+    expect(
+      readPendingChatScopeStepUp({ continuationId: "cont-1" }),
+    ).toBeUndefined();
   });
   it("does not mistake a finished stream with no tool result for successful recovery", async () => {
     await readyResume();
     const notices = renderHook(useChatAuthRecoveryFailures);
-    await waitFor(() => expect(notices.result.current.some(item => item.reason === "resume_incomplete")).toBe(true));
-    await waitFor(() => expect(readPendingChatScopeStepUp({ continuationId: "cont-1" })).toBeUndefined());
+    await waitFor(() =>
+      expect(
+        notices.result.current.some(
+          (item) => item.reason === "resume_incomplete",
+        ),
+      ).toBe(true),
+    );
+    await waitFor(() =>
+      expect(
+        readPendingChatScopeStepUp({ continuationId: "cont-1" }),
+      ).toBeUndefined(),
+    );
     expect(mockState.sendMessage).toHaveBeenCalledTimes(2);
   });
 
   it("does not retry a call already claimed before a reload", async () => {
-    sessionStorage.setItem("mcp-scope-step-up-chat-v1", JSON.stringify({
-      version: 1, phase: "resuming", resumeAttempted: true, event: authRequiredEvent(), serverName: "orders",
-      chatSessionId: "chat-session-1", returnPath: "/", createdAt: Date.now(),
-    }));
+    sessionStorage.setItem(
+      "mcp-scope-step-up-chat-v1",
+      JSON.stringify({
+        version: 1,
+        phase: "resuming",
+        resumeAttempted: true,
+        event: authRequiredEvent(),
+        serverName: "orders",
+        chatSessionId: "chat-session-1",
+        returnPath: "/",
+        createdAt: Date.now(),
+      }),
+    );
     mockState.messages = unresolvedMessages();
     await renderChatSession();
     await waitFor(() => expect(mockState.sendMessage).toHaveBeenCalledTimes(1));
-    expect(mockState.sendMessage).toHaveBeenCalledWith(undefined, { body: { scopeStepUpCancel: { continuationId: "cont-1", toolCallId: "call-1" } } });
+    expect(mockState.sendMessage).toHaveBeenCalledWith(undefined, {
+      body: {
+        scopeStepUpCancel: { continuationId: "cont-1", toolCallId: "call-1" },
+      },
+    });
     const notices = renderHook(useChatAuthRecoveryFailures);
-    expect(notices.result.current.some(item => item.reason === "resume_interrupted")).toBe(true);
+    expect(
+      notices.result.current.some(
+        (item) => item.reason === "resume_interrupted",
+      ),
+    ).toBe(true);
   });
 
   it("fails an ambiguous legacy attempt locally without dispatching either request", async () => {
-    sessionStorage.setItem("mcp-scope-step-up-chat-v1", JSON.stringify({
-      version: 1, phase: "resuming", event: authRequiredEvent(), serverName: "orders",
-      chatSessionId: "chat-session-1", returnPath: "/", createdAt: Date.now(),
-    }));
+    sessionStorage.setItem(
+      "mcp-scope-step-up-chat-v1",
+      JSON.stringify({
+        version: 1,
+        phase: "resuming",
+        event: authRequiredEvent(),
+        serverName: "orders",
+        chatSessionId: "chat-session-1",
+        returnPath: "/",
+        createdAt: Date.now(),
+      }),
+    );
     mockState.messages = unresolvedMessages();
     await renderChatSession();
     const notices = renderHook(useChatAuthRecoveryFailures);
-    await waitFor(() => expect(notices.result.current.some(item => item.recoveryResult === "ambiguous_legacy_attempt")).toBe(true));
+    await waitFor(() =>
+      expect(
+        notices.result.current.some(
+          (item) => item.recoveryResult === "ambiguous_legacy_attempt",
+        ),
+      ).toBe(true),
+    );
     expect(mockState.sendMessage).not.toHaveBeenCalled();
   });
 
   it("restores an abandoned OAuth card after reload", async () => {
-    sessionStorage.setItem("mcp-scope-step-up-chat-v2", JSON.stringify({ version: 2, entries: [{
-      version: 1, phase: "awaiting_oauth", event: authRequiredEvent(), serverName: "orders",
-      chatSessionId: "chat-session-1", returnPath: "/", createdAt: Date.now(), flowDigest: "old-flow",
-    }] }));
+    sessionStorage.setItem(
+      "mcp-scope-step-up-chat-v2",
+      JSON.stringify({
+        version: 2,
+        entries: [
+          {
+            version: 1,
+            phase: "awaiting_oauth",
+            event: authRequiredEvent(),
+            serverName: "orders",
+            chatSessionId: "chat-session-1",
+            returnPath: "/",
+            createdAt: Date.now(),
+            flowDigest: "old-flow",
+          },
+        ],
+      }),
+    );
     mockState.messages = unresolvedMessages();
     await renderChatSession();
-    await waitFor(() => expect(Object.values(useAuthChallengeCardStore.getState().cards)).toHaveLength(1));
+    await waitFor(() =>
+      expect(
+        Object.values(useAuthChallengeCardStore.getState().cards),
+      ).toHaveLength(1),
+    );
     expect(mockState.sendMessage).not.toHaveBeenCalled();
   });
   it("restores a pending card when its server hydrates after history", async () => {
@@ -691,25 +846,64 @@ describe("useChatSession mid-session sign-in", () => {
   });
 
   it("expires abandoned sign-in with one cancellation and a durable notice", async () => {
-    sessionStorage.setItem("mcp-scope-step-up-chat-v2", JSON.stringify({ version: 2, entries: [{
-      version: 1, phase: "awaiting_oauth", event: authRequiredEvent({ expiresAt: Date.now() - 1 }), serverName: "orders",
-      chatSessionId: "chat-session-1", returnPath: "/", createdAt: Date.now() - 600000,
-    }] }));
+    sessionStorage.setItem(
+      "mcp-scope-step-up-chat-v2",
+      JSON.stringify({
+        version: 2,
+        entries: [
+          {
+            version: 1,
+            phase: "awaiting_oauth",
+            event: authRequiredEvent({ expiresAt: Date.now() - 1 }),
+            serverName: "orders",
+            chatSessionId: "chat-session-1",
+            returnPath: "/",
+            createdAt: Date.now() - 600000,
+          },
+        ],
+      }),
+    );
     mockState.messages = unresolvedMessages();
     await renderChatSession();
     const notices = renderHook(useChatAuthRecoveryFailures);
-    await waitFor(() => expect(notices.result.current.some(item => item.reason === "expired")).toBe(true));
-    await waitFor(() => expect(readPendingChatScopeStepUp({ continuationId: "cont-1" })).toBeUndefined());
+    await waitFor(() =>
+      expect(
+        notices.result.current.some((item) => item.reason === "expired"),
+      ).toBe(true),
+    );
+    await waitFor(() =>
+      expect(
+        readPendingChatScopeStepUp({ continuationId: "cont-1" }),
+      ).toBeUndefined(),
+    );
     expect(mockState.sendMessage).toHaveBeenCalledTimes(1);
   });
   it("does not send an interrupted cancellation again after reload", async () => {
-    sessionStorage.setItem("mcp-scope-step-up-chat-v2", JSON.stringify({ version: 2, entries: [{
-      version: 1, phase: "cancelling", cancelAttempted: true, event: authRequiredEvent(), serverName: "orders",
-      chatSessionId: "chat-session-1", returnPath: "/", createdAt: Date.now(),
-    }] }));
+    sessionStorage.setItem(
+      "mcp-scope-step-up-chat-v2",
+      JSON.stringify({
+        version: 2,
+        entries: [
+          {
+            version: 1,
+            phase: "cancelling",
+            cancelAttempted: true,
+            event: authRequiredEvent(),
+            serverName: "orders",
+            chatSessionId: "chat-session-1",
+            returnPath: "/",
+            createdAt: Date.now(),
+          },
+        ],
+      }),
+    );
     mockState.messages = unresolvedMessages();
     await renderChatSession();
-    await waitFor(() => expect(readPendingChatScopeStepUp({ continuationId: "cont-1" })).toBeUndefined());
+    await waitFor(() =>
+      expect(
+        readPendingChatScopeStepUp({ continuationId: "cont-1" }),
+      ).toBeUndefined(),
+    );
     expect(mockState.sendMessage).not.toHaveBeenCalled();
   });
 
@@ -718,13 +912,25 @@ describe("useChatSession mid-session sign-in", () => {
     mockState.messages = unresolvedMessages();
     const hook = await renderChatSession();
     act(() => {
-      savePendingChatScopeStepUp({ event: authRequiredEvent() as AuthRequiredEvent & { continuationId: string }, serverName: "orders", chatSessionId: hook.result.current.chatSessionId });
+      savePendingChatScopeStepUp({
+        event: authRequiredEvent() as AuthRequiredEvent & {
+          continuationId: string;
+        },
+        serverName: "orders",
+        chatSessionId: hook.result.current.chatSessionId,
+      });
       markPendingChatScopeStepUpReady("orders", "cont-1");
     });
     expect(mockState.sendMessage).not.toHaveBeenCalled();
-    expect(readPendingChatScopeStepUp({ continuationId: "cont-1" })?.phase).toBe("ready");
+    expect(
+      readPendingChatScopeStepUp({ continuationId: "cont-1" })?.phase,
+    ).toBe("ready");
     server.connectionStatus = "connected";
-    appState = { servers: { orders: server }, projects: {}, activeProjectId: "none" } as never;
+    appState = {
+      servers: { orders: server },
+      projects: {},
+      activeProjectId: "none",
+    } as never;
     hook.rerender();
     await waitFor(() => expect(mockState.sendMessage).toHaveBeenCalled());
   });
@@ -735,30 +941,51 @@ describe("useChatSession mid-session sign-in", () => {
     const hook = await renderChatSession();
     const now = Date.now();
     act(() => {
-      savePendingChatScopeStepUp({ event: authRequiredEvent({ expiresAt: now + 1000 }) as AuthRequiredEvent & { continuationId: string }, serverName: "orders", chatSessionId: hook.result.current.chatSessionId });
+      savePendingChatScopeStepUp({
+        event: authRequiredEvent({
+          expiresAt: now + 1000,
+        }) as AuthRequiredEvent & { continuationId: string },
+        serverName: "orders",
+        chatSessionId: hook.result.current.chatSessionId,
+      });
       markPendingChatScopeStepUpReady("orders", "cont-1");
     });
     expect(mockState.sendMessage).not.toHaveBeenCalled();
     const clock = vi.spyOn(Date, "now").mockReturnValue(now + 2000);
     try {
       act(() => window.dispatchEvent(new Event("focus")));
-      await waitFor(() => expect(mockState.sendMessage).toHaveBeenCalledTimes(1));
+      await waitFor(() =>
+        expect(mockState.sendMessage).toHaveBeenCalledTimes(1),
+      );
       expect(mockState.sendMessage).toHaveBeenCalledWith(undefined, {
-        body: { scopeStepUpCancel: { continuationId: "cont-1", toolCallId: "call-1" } },
+        body: {
+          scopeStepUpCancel: { continuationId: "cont-1", toolCallId: "call-1" },
+        },
       });
-    } finally { clock.mockRestore(); }
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("resumes an already approved write without a separate OAuth prompt", async () => {
     mockState.messages = unresolvedMessages();
     const hook = await renderChatSession();
     act(() => {
-      savePendingChatScopeStepUp({ event: authRequiredEvent({ readOnly: false }) as AuthRequiredEvent & { continuationId: string }, serverName: "orders", chatSessionId: hook.result.current.chatSessionId });
+      savePendingChatScopeStepUp({
+        event: authRequiredEvent({ readOnly: false }) as AuthRequiredEvent & {
+          continuationId: string;
+        },
+        serverName: "orders",
+        chatSessionId: hook.result.current.chatSessionId,
+      });
       markPendingChatScopeStepUpReady("orders", "cont-1");
     });
-    await waitFor(() => expect(mockState.sendMessage).toHaveBeenCalledWith(undefined, {
-      body: { scopeStepUpResume: { continuationId: "cont-1", toolCallId: "call-1" } },
-    }));
+    await waitFor(() =>
+      expect(mockState.sendMessage).toHaveBeenCalledWith(undefined, {
+        body: {
+          scopeStepUpResume: { continuationId: "cont-1", toolCallId: "call-1" },
+        },
+      }),
+    );
   });
-
 });

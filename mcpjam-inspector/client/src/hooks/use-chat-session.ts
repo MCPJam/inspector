@@ -4765,7 +4765,8 @@ export function useChatSession(
       !HOSTED_MODE &&
       appState &&
       appState.servers[pending.serverName]?.connectionStatus !== "connected"
-    ) return;
+    )
+      return;
     // Set before the storage notification can schedule another render.
     scopeStepUpResumeInFlightRef.current = true;
     const claimed =
