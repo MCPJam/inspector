@@ -3870,6 +3870,11 @@ describe("ConformanceTab", () => {
     clickRow("Ping");
 
     expect(isCollapsed(body)).toBe(false);
+    expect(isCollapsed(screen.getByText(/Round Trip Ms:/))).toBe(true);
+    fireEvent.click(
+      within(body.parentElement!).getByRole("button", { name: "More details" }),
+    );
+    expect(isCollapsed(screen.getByText(/Round Trip Ms:/))).toBe(false);
     expect(screen.getByText(/Round Trip Ms:/)).toBeInTheDocument();
     expect(screen.getByText(/"tools"/)).toBeInTheDocument();
     expect(screen.getByText(/"resources"/)).toBeInTheDocument();
