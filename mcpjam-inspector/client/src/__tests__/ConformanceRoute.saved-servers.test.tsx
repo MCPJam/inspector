@@ -129,9 +129,11 @@ function project(id = "project_a", names = ["alpha", "beta"]): Project {
 function ProjectRoute({
   saved,
   session = {},
+  localMode,
 }: {
   saved: Project;
   session?: Record<string, ServerWithName>;
+  localMode?: "signed-out" | "fallback";
 }) {
   const [selected, setSelected] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -157,8 +159,12 @@ function ProjectRoute({
       value={{
         appState: { servers: session },
         projectServers: saved.servers,
-        convexProjectId: saved.id,
-        isAuthenticated: true,
+        displayServerConfigs: localMode
+          ? { ...saved.servers, ...session }
+          : saved.servers,
+        convexProjectId: localMode ? null : saved.id,
+        isAuthenticated: localMode !== "signed-out",
+        useLocalFallback: localMode === "fallback",
         selectedServerEntry: selected ? saved.servers[selected] : null,
         setSelectedServer: setSelected,
         ensureServersReady: mocks.ensureServersReady,
@@ -202,6 +208,38 @@ beforeEach(() => {
 });
 
 describe("ConformanceRoute saved project servers", () => {
+  it.each(["signed-out", "fallback"] as const)(
+    "offers runtime-only connected servers without an active project in %s mode",
+    (localMode) => {
+      const local = createServer({
+        name: "local-only",
+        connectionStatus: "connected",
+        enabled: true,
+        config: createHttpServerConfig("http://localhost:3001/mcp"),
+      });
+      render(
+        <MemoryRouter initialEntries={["/conformance"]}>
+          <ProjectRoute
+            saved={project("local", [])}
+            session={{ "local-only": local }}
+            localMode={localMode}
+          />
+        </MemoryRouter>,
+      );
+      fireEvent.click(
+        screen.getAllByRole("button", { name: "Run conformance checks" })[0],
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: /^Choose the server/ }),
+      );
+      expect(
+        within(screen.getByRole("dialog")).getByText("local-only", {
+          exact: true,
+        }),
+      ).toBeInTheDocument();
+    },
+  );
+
   it.each([false, true])(
     "shows both saved results with one session server: %s",
     (partialSession) => {

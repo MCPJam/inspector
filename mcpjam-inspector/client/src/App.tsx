@@ -1677,7 +1677,7 @@ function EvaluateRouteContent() {
 
 export function ConformanceRoute() {
   const {
-    projectServers: projectServerConfigs,
+    displayServerConfigs: serverConfigs,
     selectedServerEntry,
     setSelectedServer,
     convexProjectId,
@@ -1721,9 +1721,9 @@ export function ConformanceRoute() {
   const savedServerId = selectedServerEntry?.name
     ? (serversByName.get(selectedServerEntry.name) ?? null)
     : null;
-  // Saved project servers include disconnected entries and their current
-  // runtime state, so the list survives a refresh or OAuth return.
-  const servers = Object.values<ServerWithName>(projectServerConfigs);
+  // The display catalog keeps saved servers across refreshes and includes
+  // runtime-only connections when local mode has no active project.
+  const servers = Object.values<ServerWithName>(serverConfigs);
   // Each server's logo, as it announced it when it connected (the Servers
   // tab's cards use the same one). Servers without one show initials.
   const serverIcons: Record<string, string> = {};
@@ -1732,10 +1732,10 @@ export function ConformanceRoute() {
     if (src) serverIcons[server.name] = src;
   }
   const editingServer = editing
-    ? (projectServerConfigs[editing.name] ?? editing.snapshot)
+    ? (serverConfigs[editing.name] ?? editing.snapshot)
     : undefined;
   const editServer = (name: string) => {
-    const server = projectServerConfigs[name];
+    const server = serverConfigs[name];
     if (server) setEditing({ name, snapshot: server });
   };
   // Follows a rename the way the Servers tab's form does: the new name while
@@ -1813,7 +1813,7 @@ export function ConformanceRoute() {
           }}
           onDisconnect={handleDisconnect}
           onReconnect={handleReconnect}
-          existingServerNames={Object.keys(projectServerConfigs)}
+          existingServerNames={Object.keys(serverConfigs)}
           projectId={convexProjectId ?? null}
           // Saving an auth change on a server with hidden headers reveals
           // them by row id.

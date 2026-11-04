@@ -6143,6 +6143,7 @@ describe("App hosted OAuth callback handling", () => {
       beta: connected("beta"),
     };
     appState.projectServers = appState.appState.servers;
+    appState.displayServerConfigs = appState.projectServers;
     mockUseAppState.mockReturnValue(appState);
 
     render(<App />);
