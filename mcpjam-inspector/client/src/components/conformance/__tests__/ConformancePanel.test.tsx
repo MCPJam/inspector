@@ -1185,6 +1185,38 @@ describe("ConformanceTab", () => {
     },
   );
 
+  it("keeps the selected suites when an unsaved server runs again", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const load = vi.fn();
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        isSavedServer={() => false}
+        onLoadServerDefaults={load}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    for (const suite of ["Apps", "Tasks", "OAuth"]) {
+      fireEvent.click(
+        await screen.findByRole("checkbox", { name: `Run ${suite}` }),
+      );
+    }
+    fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalledTimes(2));
+    expect(mockRunApps).not.toHaveBeenCalled();
+    expect(mockRunTasks).not.toHaveBeenCalled();
+    expect(mockStartOAuth).not.toHaveBeenCalled();
+    expect(load).not.toHaveBeenCalled();
+  });
+
   it("keeps setup edits as a draft until Run and discards them on Cancel", async () => {
     const alpha = createHttpServer({ name: "alpha" });
     const save = vi.fn();

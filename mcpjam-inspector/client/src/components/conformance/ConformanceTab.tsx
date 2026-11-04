@@ -268,7 +268,9 @@ export function ConformanceTab({
     !(isSavedServer && !isSavedServer(name) && !projectServersLoading)
       ? onLoadServerDefaults(name)
       : Promise.resolve({
-          selection: defaultsFor(name) ?? {},
+          selection:
+            defaultsFor(name) ??
+            (start?.serverName === name ? start.selection : {}),
           inputs: probesFor(name),
         });
   const mounted = useRef(true);
