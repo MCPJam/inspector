@@ -141,7 +141,8 @@ export function ConformanceSetup({
           );
           return (
             tool?.inputSchema !== undefined &&
-            !acceptsToolArguments(tool.inputSchema, probe.arguments ?? {})
+            acceptsToolArguments(tool.inputSchema, probe.arguments ?? {}) ===
+              false
           );
         }),
       ),
