@@ -5,7 +5,7 @@ export function ConformanceDefaultsError({ onRetry }: { onRetry: () => void }) {
       role="alert"
       className="flex items-center gap-3 px-8 py-3 text-sm text-destructive"
     >
-      Could not load the default checks and inputs.
+      Could not load the default checks and inputs. Try again.
       <Button variant="outline" size="sm" onClick={onRetry}>
         Retry
       </Button>
