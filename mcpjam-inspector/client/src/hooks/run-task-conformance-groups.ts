@@ -2,6 +2,8 @@ import {
   planTasksConformance,
   mergeTasksConformanceResults,
   taskGroupFailure,
+  MCP_TASKS_TOOL_CHECK_IDS,
+  MCP_TASKS_CHECK_IDS,
   type MCPTasksRunOptions,
 } from "@mcpjam/sdk/browser";
 import { runTasksConformance } from "@/lib/apis/mcp-conformance-api";
@@ -13,8 +15,36 @@ export async function runTaskConformanceGroups(
   isActive: () => boolean,
 ) {
   const started = Date.now();
+  if (!isActive()) return undefined;
   const results = [];
-  for (const group of planTasksConformance(options)) {
+  const selected = options.checkIds ?? MCP_TASKS_CHECK_IDS;
+  const missing = MCP_TASKS_TOOL_CHECK_IDS.filter(
+    (id) =>
+      selected.includes(id) &&
+      options.checkOverrides?.[id]?.toolName.trim() === "",
+  );
+  const checkOverrides = { ...options.checkOverrides };
+  for (const id of missing) delete checkOverrides[id];
+  if (missing.length) {
+    const result = taskGroupFailure(
+      missing,
+      "Select a tool for this check or choose Use suite default, then run again.",
+      serverName,
+    );
+    result.checks = result.checks.map((check) => ({
+      ...check,
+      details: { missingInput: "tasksProbe" },
+    }));
+    results.push(result);
+  }
+  // An unfinished custom selection must not inherit and call the suite tool.
+  for (const group of planTasksConformance({
+    ...options,
+    checkIds: selected.filter(
+      (id) => !missing.some((missingId) => missingId === id),
+    ),
+    checkOverrides,
+  })) {
     if (!isActive()) return undefined;
     try {
       results.push((await runTasksConformance(serverName, group)).result);

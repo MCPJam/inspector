@@ -22,12 +22,12 @@ export function validateTaskOverrides(value: unknown): MCPTasksCheckOverrides {
     )
       throw new Error(`Unknown tool override field for ${id}`);
     const { toolName, toolArguments } = setup;
-    if (
-      typeof toolName !== "string" ||
-      !toolName.trim() ||
-      toolName.trim().length > 256
-    )
+    if (typeof toolName !== "string" || !toolName.trim())
       throw new Error(`A tool name is required for ${id}`);
+    if (toolName.trim().length > 256)
+      throw new Error(
+        `The tool name for ${id} must be 256 characters or fewer`
+      );
     if (
       toolArguments !== undefined &&
       (!toolArguments ||

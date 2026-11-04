@@ -10,6 +10,22 @@ import {
 import { MCP_TASKS_TOOL_CHECK_IDS } from "../../src/tasks-conformance/types.js";
 
 describe("Tasks execution plans", () => {
+  it("reports the tool name length limit separately from a missing name", () => {
+    const id = "tasks-inline-result";
+    expect(
+      validateTaskOverrides({ [id]: { toolName: "x".repeat(256) } })
+    ).toEqual({
+      [id]: { toolName: "x".repeat(256) },
+    });
+    expect(() =>
+      validateTaskOverrides({ [id]: { toolName: "x".repeat(257) } })
+    ).toThrow(
+      "The tool name for tasks-inline-result must be 256 characters or fewer"
+    );
+    expect(() => validateTaskOverrides({ [id]: { toolName: " " } })).toThrow(
+      "A tool name is required for tasks-inline-result"
+    );
+  });
   it.each([undefined, {}])(
     "shares the update observation without answers %j",
     (inputResponses) => {
