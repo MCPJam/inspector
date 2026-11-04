@@ -1745,6 +1745,9 @@ export function ConformanceRoute() {
       null)
     : null;
   const connectServer: ConformanceConnectServer = async (name, options) => {
+    // An explicit sign-in must refresh credentials even if the main
+    // connection still looks connected while a draft version check gets 401.
+    if (options?.signIn) await handleReconnect(name, { forceOAuthFlow: true });
     const result: EnsureServersReadyResult = await ensureServersReady(
       [name],
       options?.signIn ? { allowInteractiveOAuthFlow: true } : undefined,

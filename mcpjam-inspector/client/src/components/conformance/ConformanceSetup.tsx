@@ -27,6 +27,8 @@ import { acceptsToolArguments } from "./conformance-tool-input";
 import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { toast } from "@/lib/toast";
 import { startConnectToast } from "@/lib/connect-toast";
+import { useConformanceProtocolConnection } from "@/hooks/use-conformance-protocol-connection";
+import { ConformanceProtocolConnection } from "./ConformanceProtocolConnection";
 import type {
   ConformanceConnectOutcome,
   ConformanceConnectServer,
@@ -166,7 +168,15 @@ export function ConformanceSetup({
   const [connecting, setConnecting] = useState<readonly string[]>([]);
   // The run needs the server live, so the steps wait until it is: the picker
   // connects it in place.
-  const canContinue = picked?.connectionStatus === "connected";
+  const protocolConnection = useConformanceProtocolConnection(picked, versionPin);
+  const canContinue = protocolConnection.ready;
+  const [focusVersion, setFocusVersion] = useState(false);
+  useEffect(() => {
+    if (step === 0 && focusVersion) {
+      document.getElementById(`${versionLabelId}-select`)?.focus();
+      setFocusVersion(false);
+    }
+  }, [step, focusVersion, versionLabelId]);
   // Picking a server readies it: one that is not connected starts
   // connecting in the background, with no separate Connect to remember.
   const needsConnect = (name: string) => {
@@ -257,11 +267,17 @@ export function ConformanceSetup({
   // is over, so a later drop does not bring the old alert back.
   // Own keys only: `in` also finds what every object inherits, so a server
   // named `constructor` would read as failed and clear on every render.
-  if (canContinue && pickedName && Object.hasOwn(connectFailures, pickedName)) {
+  if (
+    picked?.connectionStatus === "connected" &&
+    pickedName &&
+    Object.hasOwn(connectFailures, pickedName)
+  ) {
     clearFailure(pickedName);
   }
   const failure =
-    pickedName && !canContinue && Object.hasOwn(connectFailures, pickedName)
+    pickedName &&
+    picked?.connectionStatus !== "connected" &&
+    Object.hasOwn(connectFailures, pickedName)
       ? connectFailures[pickedName]!
       : null;
   const noServers =
@@ -278,6 +294,24 @@ export function ConformanceSetup({
     }
     setStep(1);
   };
+
+  const protocolNotice = (
+    <ConformanceProtocolConnection
+      checking={protocolConnection.checking}
+      result={protocolConnection.result}
+      serverName={serverName ?? "Server"}
+      version={versionPin}
+      onChangeVersion={() => {
+        setStep(0);
+        setFocusVersion(true);
+      }}
+      onRetry={protocolConnection.retry}
+      onSignIn={() => {
+        if (pickedName)
+          void connect(pickedName, true).then(protocolConnection.retry);
+      }}
+    />
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
@@ -357,10 +391,12 @@ export function ConformanceSetup({
                   Select protocol version
                 </div>
                 <ProtocolVersionSelect
+                  id={`${versionLabelId}-select`}
                   value={versionPin}
                   onChange={setVersionPin}
                   labelledBy={versionLabelId}
                 />
+                {protocolNotice}
               </div>
             </div>
 
@@ -378,6 +414,7 @@ export function ConformanceSetup({
           </>
         ) : (
           <>
+            {protocolNotice}
             <h2 className="mt-3 text-2xl font-semibold tracking-[-0.02em]">
               Set what you'd like to test
             </h2>
