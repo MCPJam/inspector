@@ -24,7 +24,7 @@ const HINTS: Partial<Record<MCPTasksCheckId, string>> = {
   "tasks-ttl-integer-shape":
     "Checks the task's numeric fields across its observed states.",
   "tasks-mcp-name-routing":
-    "Checks that task methods are routed using the negotiated Tasks wire.",
+    "Checks that task requests include the task ID in the routing header.",
   "tasks-undeclared-capability-rejected":
     "Uses a separate task to try methods without their capability declarations.",
   "tasks-undeclared-capability-names-requirements":

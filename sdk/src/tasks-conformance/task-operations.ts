@@ -505,7 +505,11 @@ export class TaskOperations {
         : NaN;
       const waitMs =
         Number.isFinite(suggested) && suggested > 0 ? suggested : 250;
-      await delay(waitMs, undefined, { signal: this.config.signal });
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+      await delay(Math.min(waitMs, remainingMs), undefined, {
+        signal: this.config.signal,
+      });
     }
 
     return { task: last };
