@@ -355,6 +355,7 @@ describe("ConformanceTab persist", () => {
 
 it("saves one Tasks report after multiple groups, including a timed-out group", async () => {
   mockPassingSuites();
+  mockStartOAuth.mockClear();
   upsertReport.mockClear();
   mockRunTasks.mockClear();
   mockRunTasks
@@ -385,7 +386,7 @@ it("saves one Tasks report after multiple groups, including a timed-out group", 
         "http-server": {
           protocol: [],
           apps: [],
-          oauth: [],
+          oauth: false,
           tasks: ["tasks-inline-result", "tasks-cancel-ack-shape"],
         },
       }}
@@ -402,6 +403,7 @@ it("saves one Tasks report after multiple groups, including a timed-out group", 
     ).toHaveLength(1),
   );
   expect(mockRunTasks).toHaveBeenCalledTimes(2);
+  expect(mockStartOAuth).not.toHaveBeenCalled();
   const payload = upsertReport.mock.calls.find(
     ([payload]) => payload.suiteKind === "tasks" && payload.report,
   )?.[0];
