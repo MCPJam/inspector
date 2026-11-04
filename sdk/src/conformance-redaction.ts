@@ -149,15 +149,17 @@ function looksSensitiveParam(name: string): boolean {
   );
 }
 
-function redactParams(params: URLSearchParams): string | null {
-  const result = new URLSearchParams();
+function redactParams(raw: string): string | null {
   let touched = false;
-  for (const [name, value] of params) {
-    const secret = looksSensitiveParam(name);
-    result.append(name, secret ? REDACTED : value);
-    touched ||= secret;
-  }
-  return touched ? result.toString() : null;
+  // Preserve safe fields verbatim: fragment readers need not use form decoding.
+  const result = raw.split("&").map((field) => {
+    const name = new URLSearchParams(field).keys().next().value;
+    if (name === undefined || !looksSensitiveParam(name)) return field;
+    touched = true;
+    const equals = field.indexOf("=");
+    return `${equals < 0 ? field : field.slice(0, equals)}=${encodeURIComponent(REDACTED)}`;
+  });
+  return touched ? result.join("&") : null;
 }
 
 /**
@@ -177,7 +179,7 @@ export function redactUrlSecrets(value: string): string {
   }
 
   let touched = false;
-  const query = redactParams(parsed.searchParams);
+  const query = redactParams(parsed.search.slice(1));
   if (query !== null) {
     parsed.search = query;
     touched = true;
@@ -197,7 +199,7 @@ export function redactUrlSecrets(value: string): string {
     // Only treat it as parameters when it actually looks like them; a plain
     // `#section-2` anchor must survive untouched.
     if (/^[^=&]+=[^&]*(?:&[^=&]+=[^&]*)*$/.test(fragment)) {
-      const redacted = redactParams(new URLSearchParams(fragment));
+      const redacted = redactParams(fragment);
       if (redacted !== null) {
         parsed.hash = `#${redacted}`;
         touched = true;
@@ -261,10 +263,8 @@ function redactInlineSecrets(value: string): string {
       )
       // Form-encoded / query-ish fragments that never parsed as a full URL:
       // `client_secret=…&grant_type=…`. Judged by the same predicate.
-      .replace(
-        /\b([A-Za-z0-9_-]+)=([^\s&"';,]+)/g,
-        (match, key, _value) =>
-          isSecretKeyName(key) ? `${key}=${REDACTED}` : match
+      .replace(/\b([A-Za-z0-9_-]+)=([^\s&"';,]+)/g, (match, key, _value) =>
+        isSecretKeyName(key) ? `${key}=${REDACTED}` : match
       )
   );
 }
