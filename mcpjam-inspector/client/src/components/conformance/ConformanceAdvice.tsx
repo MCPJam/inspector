@@ -107,7 +107,9 @@ export function ConformanceAdvice({ groups }: { groups: AdviceGroup[] }) {
           {items.map((item) => (
             <li
               key={`${item.suite}-${item.id}`}
-              className="flex items-start gap-2.5 border-b border-border/60 py-2.5 last:border-0"
+              // Indented like a suite's check rows (`pl-7`), so the icon sits
+              // under the header's text rather than its chevron.
+              className="flex items-start gap-2.5 border-b border-border/60 py-2.5 pl-7 last:border-0"
             >
               <Info
                 aria-hidden="true"
