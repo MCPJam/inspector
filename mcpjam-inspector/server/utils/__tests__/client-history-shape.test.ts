@@ -75,6 +75,16 @@ describe("findMalformedHistory", () => {
 
   it.each([
     {
+      name: "a tool-role message",
+      messages: [user([text]), { id: "t", role: "tool", parts: [text] }],
+      expected: { messageIndex: 1, problem: "message_role_invalid" },
+    },
+    {
+      name: "a message without a role",
+      messages: [{ id: "u", parts: [text] }],
+      expected: { messageIndex: 0, problem: "message_role_invalid" },
+    },
+    {
       name: "a plugin mention without data",
       messages: [user([text, { type: "data-plugin-mention" }])],
       expected: {
@@ -95,7 +105,7 @@ describe("findMalformedHistory", () => {
       },
     },
   ])(
-    "names $name, which conversion refuses to drop",
+    "names $name, which conversion rejects",
     async ({ messages, expected }) => {
       expect(findMalformedHistory(messages)).toEqual(expected);
       await expect(

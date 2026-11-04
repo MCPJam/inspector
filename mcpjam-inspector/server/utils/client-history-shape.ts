@@ -25,6 +25,7 @@ import {
 
 export type MalformedHistoryProblem =
   | "message_not_object"
+  | "message_role_invalid"
   | "parts_missing"
   | "part_not_object"
   | "part_type_missing"
@@ -36,6 +37,9 @@ export interface MalformedHistory {
   partIndex?: number;
   problem: MalformedHistoryProblem;
 }
+
+// The roles `convertToModelMessages` converts; any other is a MessageConversionError.
+const convertibleRoles = new Set<unknown>(["system", "user", "assistant"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -64,6 +68,9 @@ export function findMalformedHistory(
   for (const [messageIndex, message] of messages.entries()) {
     if (!isRecord(message)) {
       return { messageIndex, problem: "message_not_object" };
+    }
+    if (!convertibleRoles.has(message.role)) {
+      return { messageIndex, problem: "message_role_invalid" };
     }
     if (!Array.isArray(message.parts)) {
       return { messageIndex, problem: "parts_missing" };
