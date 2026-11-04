@@ -136,13 +136,28 @@ function isSecretKeyName(raw: string): boolean {
   return /(token|secret|password|apikey|signature|credential)/.test(normalized);
 }
 
+const NORMALIZED_SECRET_QUERY_PARAMS = new Set(
+  [...SECRET_QUERY_PARAMS].map(normalizeKey)
+);
+
 function looksSensitiveParam(name: string): boolean {
-  if (SECRET_QUERY_PARAMS.has(name.toLowerCase())) return true;
+  if (NORMALIZED_SECRET_QUERY_PARAMS.has(normalizeKey(name))) return true;
   // Compared without separators, like `isSecretKeyName`: `x-api-key` and
   // `X-API-KEY` are the same credential as `api_key`.
   return /(token|secret|password|apikey|auth|signature)/.test(
     normalizeKey(name)
   );
+}
+
+function redactParams(params: URLSearchParams): string | null {
+  const result = new URLSearchParams();
+  let touched = false;
+  for (const [name, value] of params) {
+    const secret = looksSensitiveParam(name);
+    result.append(name, secret ? REDACTED : value);
+    touched ||= secret;
+  }
+  return touched ? result.toString() : null;
 }
 
 /**
@@ -162,9 +177,9 @@ export function redactUrlSecrets(value: string): string {
   }
 
   let touched = false;
-  for (const name of Array.from(parsed.searchParams.keys())) {
-    if (!looksSensitiveParam(name)) continue;
-    parsed.searchParams.set(name, REDACTED);
+  const query = redactParams(parsed.searchParams);
+  if (query !== null) {
+    parsed.search = query;
     touched = true;
   }
   // Userinfo is a credential in the URL itself (`https://user:pass@host/`).
@@ -182,15 +197,9 @@ export function redactUrlSecrets(value: string): string {
     // Only treat it as parameters when it actually looks like them; a plain
     // `#section-2` anchor must survive untouched.
     if (/^[^=&]+=[^&]*(?:&[^=&]+=[^&]*)*$/.test(fragment)) {
-      const params = new URLSearchParams(fragment);
-      let fragmentTouched = false;
-      for (const name of Array.from(params.keys())) {
-        if (!looksSensitiveParam(name)) continue;
-        params.set(name, REDACTED);
-        fragmentTouched = true;
-      }
-      if (fragmentTouched) {
-        parsed.hash = `#${params.toString()}`;
+      const redacted = redactParams(new URLSearchParams(fragment));
+      if (redacted !== null) {
+        parsed.hash = `#${redacted}`;
         touched = true;
       }
     }

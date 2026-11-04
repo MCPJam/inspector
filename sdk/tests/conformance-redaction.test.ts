@@ -213,7 +213,10 @@ describe("credentials that survived the first pass", () => {
     expect(out).toContain("access_token=");
   });
 
-  it.each(["x-api-key", "X-API-KEY", "api-key"])(
+  it.each([
+    "x-api-key", "X-API-KEY", "api-key", "code-verifier",
+    "client-assertion", "codeVerifier", "clientAssertion",
+  ])(
     "redacts a %s query parameter",
     (name) => {
       const out = redactUrlSecrets(
@@ -382,4 +385,23 @@ describe("one credential predicate, not two lists", () => {
     };
     expect(redactConformanceReportForSharing(clean)).toEqual(clean);
   });
+});
+
+
+describe("large URL parameter lists", () => {
+  it("redacts query and fragment values in one pass, including duplicates", () => {
+    const params = new URLSearchParams();
+    for (let n = 0; n < 8000; n++) params.append(`x-api-key-${n}`, "live-secret");
+    params.append("x-api-key-0", "duplicate-secret");
+    params.append("safe", "keep");
+    for (const separator of ["?", "#"]) {
+      const result = redactUrlSecrets(`https://example.com/${separator}${params}`);
+      expect(result).not.toContain("live-secret");
+      expect(result).not.toContain("duplicate-secret");
+      expect(result).toContain("safe=keep");
+      const parsed = new URL(result);
+      const values = separator === "?" ? parsed.searchParams : new URLSearchParams(parsed.hash.slice(1));
+      expect(values.getAll("x-api-key-0")).toEqual(["[REDACTED]", "[REDACTED]"]);
+    }
+  }, 2000);
 });
