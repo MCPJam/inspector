@@ -105,6 +105,26 @@ describe("conformance run version snapshot", () => {
     expect(result.current.resolvedProtocolVersion).toBe("2025-06-18");
   });
 
+  it.each([{ supportedVersions: [] }, { supportedVersions: ["2025-06-18"] }])(
+    "only lists supported versions when provided: %j",
+    async ({ supportedVersions }) => {
+      check.mockResolvedValueOnce({
+        status: "unsupported",
+        protocolVersion: "2026-07-28",
+        supportedVersions,
+      });
+      const { result } = renderHook(() =>
+        useConformanceRun({ server, initialVersionPin: "2026-07-28" }),
+      );
+      await act(async () => result.current.runAll());
+      expect(result.current.apps.error).toBe(
+        `The server doesn't support MCP protocol version 2026-07-28.${supportedVersions.length ? " Supported versions: 2025-06-18." : ""} Choose a supported version and try again.`,
+      );
+      for (const suite of [protocol, apps, tasks, oauth])
+        expect(suite).not.toHaveBeenCalled();
+    },
+  );
+
   it("starts no suite when Auto resolution fails", async () => {
     check.mockResolvedValueOnce({
       status: "failed",
