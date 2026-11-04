@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { taskGroupFailure, type MCPTasksCheckId } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
 const mockRunProtocol = vi.fn();
@@ -142,6 +143,7 @@ function mockPassingSuites() {
 describe("ConformanceTab persist", () => {
   beforeEach(() => {
     startRun.mockClear();
+    upsertReport.mockClear();
     finalizeRun.mockClear();
     cancelRun.mockClear();
     mockRunProtocol.mockImplementation(hang);
@@ -348,4 +350,69 @@ describe("ConformanceTab persist", () => {
     // The backend recomputes from these cases: the failure is not counted.
     expect(oauthUpload.report.score).toMatchObject({ pending: 1, failed: 0 });
   });
+});
+
+
+it("saves one Tasks report after multiple groups, including a timed-out group", async () => {
+  mockPassingSuites();
+  mockStartOAuth.mockClear();
+  upsertReport.mockClear();
+  mockRunTasks.mockClear();
+  mockRunTasks
+    .mockImplementationOnce(
+      async (_server: string, options: { checkIds: MCPTasksCheckId[] }) => {
+        const result = taskGroupFailure(
+          options.checkIds,
+          "",
+          "fixture",
+          "finish",
+        );
+        result.checks = result.checks.map((check) => ({
+          ...check,
+          status: "passed",
+          skipReason: undefined,
+          error: undefined,
+          details: { toolName: "finish", taskId: "first-task" },
+        }));
+        return { success: true, result };
+      },
+    )
+    .mockRejectedValueOnce(new Error("Hosted request timed out"));
+  render(
+    <ConformanceTab
+      server={createHttpServer()}
+      persist={{ projectId: "proj_1", serverId: "srv_1" }}
+      serverDefaults={{
+        "http-server": {
+          protocol: [],
+          apps: [],
+          oauth: false,
+          tasks: ["tasks-inline-result", "tasks-cancel-ack-shape"],
+        },
+      }}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+  await waitFor(() =>
+    expect(
+      upsertReport.mock.calls.filter(
+        ([payload]) => payload.suiteKind === "tasks" && payload.report,
+      ),
+    ).toHaveLength(1),
+  );
+  expect(mockRunTasks).toHaveBeenCalledTimes(2);
+  expect(mockStartOAuth).not.toHaveBeenCalled();
+  const payload = upsertReport.mock.calls.find(
+    ([payload]) => payload.suiteKind === "tasks" && payload.report,
+  )?.[0];
+  expect(payload.report.score).toMatchObject({ passed: 1, couldNotRun: 1 });
+  const cases = payload.report.groups.flatMap(
+    (group: { cases: { id: string }[] }) => group.cases,
+  );
+  expect(cases.map((item: { id: string }) => item.id)).toEqual([
+    "tasks-inline-result",
+    "tasks-cancel-ack-shape",
+  ]);
 });

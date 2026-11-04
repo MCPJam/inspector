@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import conformanceWeb from "../conformance.js";
 
 /**
  * The hosted tasks route has to answer inside the hosted call budget. Capping
@@ -48,7 +49,6 @@ vi.mock("../../shared/conformance", () => ({
 }));
 
 const post = async (body: Record<string, unknown>) => {
-  const { default: conformanceWeb } = await import("../conformance.js");
   return conformanceWeb.request("/tasks", {
     method: "POST",
     headers: {
@@ -69,6 +69,34 @@ describe("POST /api/web/conformance/tasks — hosted budget", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("forwards per-check overrides on the hosted path", async () => {
+    runTasksConformanceMock.mockResolvedValue({ result: { checks: [] } });
+    const checkOverrides = {
+      "tasks-inline-result": {
+        toolName: "finish",
+        toolArguments: { fast: true },
+      },
+    };
+    expect(
+      (await post({ projectId: "p1", serverId: "s1", checkOverrides })).status,
+    ).toBe(200);
+    expect(runTasksConformanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ checkOverrides }),
+    );
+  });
+  it.each([
+    { unknown: { toolName: "job" } },
+    { "tasks-inline-result": { toolName: "" } },
+  ])("rejects malformed overrides before executing", async (checkOverrides) => {
+    const response = await post({
+      projectId: "p1",
+      serverId: "s1",
+      checkOverrides,
+    });
+    expect(response.status).toBe(400);
+    expect(runTasksConformanceMock).not.toHaveBeenCalled();
   });
 
   it("clamps the poll window and pins a per-call timeout under the budget", async () => {
@@ -114,12 +142,35 @@ describe("POST /api/web/conformance/tasks — hosted budget", () => {
 
   it("answers 504 when the whole run outlives the request budget", async () => {
     vi.useFakeTimers();
-    // A run that never settles: only the route-level deadline can end it.
-    runTasksConformanceMock.mockReturnValue(new Promise(() => {}));
+    let cleanedUp = false;
+    runTasksConformanceMock.mockImplementation(
+      ({ signal }: { signal: AbortSignal }) =>
+        new Promise((_, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              setTimeout(() => {
+                cleanedUp = true;
+                reject(signal.reason);
+              }, 100);
+            },
+            { once: true },
+          );
+        }),
+    );
 
     const pending = post({ projectId: "p1", serverId: "s1" });
-    await vi.advanceTimersByTimeAsync(30_000);
+    let answered = false;
+    void pending.then(() => {
+      answered = true;
+    });
+    await vi.advanceTimersByTimeAsync(28_000);
+    expect(runTasksConformanceMock.mock.calls[0][0].signal.aborted).toBe(true);
+    expect(answered).toBe(false);
+    expect(cleanedUp).toBe(false);
+    await vi.advanceTimersByTimeAsync(100);
     const res = await pending;
+    expect(cleanedUp).toBe(true);
 
     expect(res.status).toBe(504);
     const body = (await res.json()) as { code: string; message: string };

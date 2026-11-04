@@ -193,6 +193,29 @@ describe("POST /api/mcp/conformance/tasks task tool", () => {
     runTasksConformanceMock.mockResolvedValue({ result: { checks: [] } });
   });
 
+  it("forwards complete per-check overrides", async () => {
+    const checkOverrides = {
+      "tasks-inline-result": {
+        toolName: "finish",
+        toolArguments: { fast: true },
+      },
+    };
+    expect(
+      (await postTasks({ toolName: "default", checkOverrides })).status,
+    ).toBe(200);
+    expect(runTasksConformanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ checkOverrides }),
+    );
+  });
+  it.each([
+    { unknown: { toolName: "job" } },
+    { "tasks-wire-resolvable": { toolName: "job" } },
+    { "tasks-inline-result": { toolName: "job", toolArguments: [] } },
+  ])("rejects malformed task overrides", async (checkOverrides) => {
+    expect((await postTasks({ checkOverrides })).status).toBe(400);
+    expect(runTasksConformanceMock).not.toHaveBeenCalled();
+  });
+
   it("forwards the tool, its arguments and the input answers", async () => {
     const inputResponses = {
       confirm: { action: "accept", content: { ok: true } },

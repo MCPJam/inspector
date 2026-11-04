@@ -201,6 +201,7 @@ export function ConformanceCheckPicker({
   defaultOpen = false,
   showAdvice = false,
   renderCheckExtra,
+  renderSuiteExtra,
   checkInputStatus,
 }: {
   versionPin: ProtocolVersionPin;
@@ -224,6 +225,7 @@ export function ConformanceCheckPicker({
     isPicked: (id: string) => boolean,
     checkTitle: (id: string) => string | undefined,
   ) => ReactNode;
+  renderSuiteExtra?: (suite: CheckSuite) => ReactNode;
   /** Whether a check that needs an input (a tool to call) has it. */
   checkInputStatus?: (
     suite: CheckSuite,
@@ -337,6 +339,7 @@ export function ConformanceCheckPicker({
             onCheckChange={(id, value) =>
               onChange(withPicked(selection, suite, catalog, [id], value))
             }
+            suiteExtra={renderSuiteExtra?.(suite)}
             renderExtra={renderExtra}
             renderTag={renderTag}
             advice={suiteAdvice?.prop}
@@ -388,6 +391,7 @@ function SuiteChecks({
   isPicked,
   onCheckChange,
   listNote = ".",
+  suiteExtra,
   renderExtra,
   renderTag,
   needsInputCount = 0,
@@ -403,6 +407,7 @@ function SuiteChecks({
   isPicked?: (id: string) => boolean;
   onCheckChange?: (id: string, picked: boolean) => void;
   listNote?: string;
+  suiteExtra?: ReactNode;
   renderExtra?: (entry: CatalogEntry) => ReactNode;
   renderTag?: (entry: CatalogEntry) => ReactNode;
   /**
@@ -467,6 +472,7 @@ function SuiteChecks({
       </div>
       <Collapse open={open}>
         <div className="border-t border-border/60 px-4">
+          {suiteExtra}
           <CatalogList
             catalog={catalog}
             note={listNote}

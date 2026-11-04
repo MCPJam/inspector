@@ -21,6 +21,7 @@ import {
   MCP_OAUTH_READINESS_IDS,
   MCP_READINESS_IDS,
   MCP_TASKS_CHECK_IDS,
+  RENAMED_MCP_TASKS_CHECK_IDS,
   MCP_TASKS_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
   READINESS_ERAS,
@@ -247,7 +248,16 @@ export function runnableSelection(
     protocol: knownIds(selection.protocol, protocolIds),
     protocolAdvice: knownIds(selection.protocolAdvice, adviceIds),
     apps: knownIds(selection.apps, MCP_APPS_CHECK_IDS),
-    tasks: knownIds(selection.tasks, MCP_TASKS_CHECK_IDS),
+    tasks: knownIds(
+      selection.tasks?.map((id) =>
+        Object.hasOwn(RENAMED_MCP_TASKS_CHECK_IDS, id)
+          ? RENAMED_MCP_TASKS_CHECK_IDS[
+              id as keyof typeof RENAMED_MCP_TASKS_CHECK_IDS
+            ]
+          : id,
+      ),
+      MCP_TASKS_CHECK_IDS,
+    ),
     tasksAdvice: knownIds(selection.tasksAdvice, MCP_TASKS_READINESS_IDS),
     oauthAdvice: knownIds(selection.oauthAdvice, MCP_OAUTH_READINESS_IDS),
   };

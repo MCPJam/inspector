@@ -14,7 +14,8 @@ describe.each([
       const connect = vi
         .spyOn(MCPClientManager.prototype, "connectToServer")
         .mockRejectedValue(new Error("Stop before discovery"));
-      const baseFetch = vi.fn<typeof fetch>();
+      const response = new Response("{}");
+      const baseFetch = vi.fn<typeof fetch>().mockResolvedValue(response);
       const config = {
         url: "https://fixture.test/mcp",
         accessToken: "saved-login",
@@ -23,16 +24,22 @@ describe.each([
         supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
       };
       await run({ ...config, protocolVersion });
-      expect(connect).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
+      expect(connect).toHaveBeenCalled();
+      for (const [, connection] of connect.mock.calls) {
+        expect(connection).toMatchObject({
           mcpProtocolVersion: protocolVersion,
           supportedProtocolVersions: [protocolVersion],
           accessToken: "saved-login",
-          baseFetch,
-        }),
-      );
+          baseFetch: expect.any(Function),
+        });
+        const requestInit = { headers: { "x-fixture": "preserved" } };
+        expect(await connection.baseFetch?.(config.url, requestInit)).toBe(
+          response,
+        );
+        expect(baseFetch).toHaveBeenLastCalledWith(config.url, requestInit);
+      }
       expect(config.mcpProtocolVersion).toBe("2025-11-25");
+      expect(config.baseFetch).toBe(baseFetch);
     },
   );
 
