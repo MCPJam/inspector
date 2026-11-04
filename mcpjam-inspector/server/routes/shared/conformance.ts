@@ -288,17 +288,26 @@ export async function runLocalDirectoryReadiness(input: {
 export async function runTasksConformance({
   protocolVersion,
   ...serverConfig
-}: MCPTasksConformanceConfig & ConformanceDeadlineInput & {
-  protocolVersion?: McpProtocolVersion;
-}): Promise<{ result: MCPTasksConformanceResult }> {
-  return runWithinConformanceDeadline(serverConfig, async (signal) => {
+}: MCPTasksConformanceConfig &
+  ConformanceDeadlineInput & {
+    protocolVersion?: McpProtocolVersion;
+  }): Promise<{ result: MCPTasksConformanceResult }> {
+  const deadline = createConformanceDeadline(serverConfig);
+  try {
     const test = new MCPTasksConformanceTest({
       ...pinSuiteVersion(serverConfig, protocolVersion),
-      signal,
-      baseFetch: deadlineFetch(serverConfig.baseFetch ?? createConformanceFetch("MCP server"), signal),
+      signal: deadline.signal,
+      baseFetch: deadlineFetch(
+        serverConfig.baseFetch ?? createConformanceFetch("MCP server"),
+        deadline.signal,
+      ),
     });
-    return { result: await test.run() };
-  });
+    const result = await test.run();
+    deadline.signal.throwIfAborted();
+    return { result };
+  } finally {
+    deadline.dispose();
+  }
 }
 
 // ── OAuth (interactive, remote-browser) ─────────────────────────────────

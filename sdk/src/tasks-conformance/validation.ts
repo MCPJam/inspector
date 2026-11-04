@@ -1,3 +1,4 @@
+import { validateTaskOverrides } from "./plan.js";
 import type { MCPServerConfig } from "../mcp-client-manager/index.js";
 import {
   MCP_TASKS_CHECK_IDS,
@@ -62,6 +63,7 @@ export function normalizeMCPTasksConformanceConfig(
     signal,
     checkIds,
     readinessIds,
+    checkOverrides,
     toolName,
     toolArguments,
     pollTimeoutMs,
@@ -84,6 +86,9 @@ export function normalizeMCPTasksConformanceConfig(
     checkIds: normalizeCheckIds(checkIds),
     ...(readinessIds !== undefined
       ? { readinessIds: normalizeReadinessIds(readinessIds) }
+      : {}),
+    ...(checkOverrides
+      ? { checkOverrides: validateTaskOverrides(checkOverrides) }
       : {}),
     ...(toolName ? { toolName } : {}),
     ...(toolArguments ? { toolArguments } : {}),

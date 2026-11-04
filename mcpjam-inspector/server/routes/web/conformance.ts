@@ -1,5 +1,6 @@
 import { conformanceDeadlineFields } from "../shared/conformance-deadline.js";
 import { Hono } from "hono";
+import { withTasksDeadline } from "./tasks-deadline.js";
 import { z } from "zod";
 import {
   MCP_APPS_CHECK_IDS,
@@ -35,6 +36,7 @@ import {
 } from "../shared/conformance";
 import {
   conformanceInputResponsesSchema,
+  conformanceTaskOverridesSchema,
   conformanceProbeFields,
 } from "../shared/conformance-probes";
 import { authorizeServer, toHttpConfig } from "./auth.js";
@@ -417,7 +419,8 @@ conformanceWeb.post("/apps", async (c) =>
  *   the caller asks for.
  * - `HOSTED_TASKS_DEADLINE_MS` bounds the *whole* run, so however the legs
  *   compose, the route answers with a 504 instead of hanging past the budget.
- *   Expiry aborts the runner and closes its ephemeral client.
+ *   Cancellation aborts active requests and polling, and the SDK closes its
+ *   ephemeral client before the route returns and the next group can start.
  */
 const HOSTED_TASKS_POLL_TIMEOUT_MS = 20_000;
 /** Per-MCP-call ceiling inside a hosted tasks run (connect, list, call). */
@@ -434,6 +437,7 @@ const tasksSchema = z
     toolName: z.string().min(1).optional(),
     toolArguments: z.record(z.string(), z.unknown()).optional(),
     inputResponses: conformanceInputResponsesSchema,
+    checkOverrides: conformanceTaskOverridesSchema,
     pollTimeoutMs: z.number().int().positive().max(120_000).optional(),
     /** Run only these checks, as picked before Run; absent ⇒ all of them. */
     checkIds: z.array(z.enum(MCP_TASKS_CHECK_IDS)).min(1).optional(),
@@ -449,35 +453,39 @@ conformanceWeb.post("/tasks", async (c) =>
     const body = await readJsonBody<Record<string, unknown>>(c);
     const config = await resolveHostedServerConfig(c, bearerToken, body);
     const parsed = parseWithSchema(tasksSchema, body);
-    const controller = new AbortController();
 
     try {
-      const result = await withHostedDeadline(
-        runTasksConformance({
-          requestStartedAt,
-          signal: AbortSignal.any([controller.signal, c.req.raw.signal]),
-          runTimeoutSeconds: parsed.runTimeoutSeconds,
-          remainingRunTimeoutMs: parsed.remainingRunTimeoutMs,
-          ...config,
-          protocolVersion: parsed.protocolVersion,
-          timeout: HOSTED_TASKS_CALL_TIMEOUT_MS,
-          ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
-          ...(parsed.readinessIds ? { readinessIds: parsed.readinessIds } : {}),
-          ...(parsed.toolName ? { toolName: parsed.toolName } : {}),
-          ...(parsed.toolArguments
-            ? { toolArguments: parsed.toolArguments }
-            : {}),
-          ...(parsed.inputResponses
-            ? { inputResponses: parsed.inputResponses }
-            : {}),
-          pollTimeoutMs: Math.min(
-            parsed.pollTimeoutMs ?? HOSTED_TASKS_POLL_TIMEOUT_MS,
-            HOSTED_TASKS_POLL_TIMEOUT_MS,
-          ),
-        }),
+      const result = await withTasksDeadline(
+        (signal) =>
+          runTasksConformance({
+            ...config,
+            requestStartedAt,
+            signal: AbortSignal.any([signal, c.req.raw.signal]),
+            runTimeoutSeconds: parsed.runTimeoutSeconds,
+            remainingRunTimeoutMs: parsed.remainingRunTimeoutMs,
+            protocolVersion: parsed.protocolVersion,
+            timeout: HOSTED_TASKS_CALL_TIMEOUT_MS,
+            ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
+            ...(parsed.readinessIds
+              ? { readinessIds: parsed.readinessIds }
+              : {}),
+            ...(parsed.checkOverrides
+              ? { checkOverrides: parsed.checkOverrides }
+              : {}),
+            ...(parsed.toolName ? { toolName: parsed.toolName } : {}),
+            ...(parsed.toolArguments
+              ? { toolArguments: parsed.toolArguments }
+              : {}),
+            ...(parsed.inputResponses
+              ? { inputResponses: parsed.inputResponses }
+              : {}),
+            pollTimeoutMs: Math.min(
+              parsed.pollTimeoutMs ?? HOSTED_TASKS_POLL_TIMEOUT_MS,
+              HOSTED_TASKS_POLL_TIMEOUT_MS,
+            ),
+          }),
         HOSTED_TASKS_DEADLINE_MS,
         `Tasks conformance exceeded the hosted request budget (${HOSTED_TASKS_DEADLINE_MS}ms); run it from the local inspector for a longer poll window`,
-        controller,
       ).then((r) => r.result);
       return { success: true, result };
     } catch (error) {

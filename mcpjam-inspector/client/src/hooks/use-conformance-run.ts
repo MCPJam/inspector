@@ -1,3 +1,4 @@
+import { runTaskConformanceGroups } from "./run-task-conformance-groups";
 /** Run state, scores, and OAuth authorization for the four conformance suites. */
 
 import { useConformanceOAuthSession } from "./use-conformance-oauth-session";
@@ -20,7 +21,6 @@ import {
   completeOAuthConformance,
   runAppsConformance,
   runProtocolConformance,
-  runTasksConformance,
   startOAuthConformance,
   submitOAuthConformanceCode,
 } from "@/lib/apis/mcp-conformance-api";
@@ -332,14 +332,13 @@ export function useConformanceRun({
     async (
       runToken: number,
       serverName: string,
-      options: Parameters<typeof runTasksConformance>[1],
+      options: Parameters<typeof runTaskConformanceGroups>[1],
     ) => {
       if (!isRunActive(runToken, serverName)) return;
       setTasks({ status: "running" });
       try {
-        const { result } = await runTasksConformance(serverName, { ...options, ...runBudget() });
-        if (!isRunActive(runToken, serverName)) return;
-        // Checks that could not run remain incomplete.
+        const result = await runTaskConformanceGroups(serverName, options, () => isRunActive(runToken, serverName), runBudget);
+        if (!result || !isRunActive(runToken, serverName)) return;
         setTasks({ status: "done", result, verdict: verdictOf(result) });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;
