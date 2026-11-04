@@ -1403,7 +1403,10 @@ export class MCPTasksConformanceTest {
           const missingProbeTool = (id: MCPTasksCheckId) =>
             (probe.blocking ? couldNotRun : notApplicable)(
               id,
-              probe.reason ?? "no probe tool resolved"
+              probe.reason ?? "no probe tool resolved",
+              probe.blocking && !this.config.toolName
+                ? { missingInput: "tasksProbe" }
+                : undefined,
             );
 
           let createdTaskId: string | undefined;

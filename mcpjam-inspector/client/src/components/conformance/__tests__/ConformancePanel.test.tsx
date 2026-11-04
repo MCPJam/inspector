@@ -1998,6 +1998,67 @@ describe("ConformanceTab", () => {
       },
     );
 
+    it.each([
+      {
+        suite: "Protocol",
+        field: "Tool that emits logs",
+        row: "Logs Require A Log Level",
+      },
+      {
+        suite: "Tasks",
+        field: "Tool that creates a task",
+        row: "Result Type Discipline",
+      },
+    ])(
+      "clears $suite badges after manual selection when the schema cannot be checked",
+      async ({ suite, field, row }) => {
+        mockListTools.mockResolvedValue({
+          tools: [
+            {
+              name: "echo",
+              annotations: { readOnlyHint: true },
+              inputSchema: {
+                type: "object",
+                properties: {
+                  d: { type: "string", pattern: "^\\d{4}\\-\\d{2}$" },
+                },
+              },
+            },
+          ],
+        });
+        const user = userEvent.setup();
+        await toStep2();
+        const header = screen.getByRole("button", {
+          name: new RegExp(`^${suite}.*checks selected$`),
+        });
+        fireEvent.click(header);
+        const tool = screen.getByRole("combobox", { name: field });
+        await waitFor(() => expect(tool).toBeEnabled());
+        const checkRow = screen.getByRole("button", {
+          name: new RegExp(`^${row}`),
+        });
+        expect(checkRow).toHaveTextContent("Needs input");
+        await user.click(tool);
+        await user.click(
+          screen.getByRole("option", { name: "echo · read-only" }),
+        );
+        expect(checkRow).toHaveTextContent("Input set");
+        fireEvent.click(screen.getByRole("switch"));
+        const args = screen.getByRole("textbox", { name: "Arguments" });
+        fireEvent.change(args, { target: { value: "[" } });
+        expect(checkRow).toHaveTextContent("Needs input");
+        fireEvent.change(args, { target: { value: '{"d":"2026-11"}' } });
+        expect(checkRow).toHaveTextContent("Input set");
+        fireEvent.click(header);
+        if (suite === "Tasks")
+          expect(within(header).queryByText(/needs? input/)).toBeNull();
+        else
+          expect(
+            within(header).getByText("1 check needs input"),
+          ).toBeInTheDocument();
+      },
+    );
+
     it("sends the output check's tool on its own", async () => {
       const user = userEvent.setup();
       setupSuccessfulRunMocks();

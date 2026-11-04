@@ -39,6 +39,50 @@ export function suiteAdviceGroups(
   }));
 }
 
+/** One advisory as a saved suite report stores it. */
+interface SavedReportAdvisory {
+  id?: unknown;
+  title?: unknown;
+  kind?: unknown;
+  status?: unknown;
+  message?: unknown;
+}
+
+/**
+ * One group per saved suite report, from the advice the report saved. Reports
+ * from before advice was saved have none, so their suites add nothing.
+ */
+export function reportAdviceGroups(
+  reports: ReadonlyArray<{
+    suiteKind: string;
+    /** Read as saved, so it is checked here: a shared report can be anything. */
+    advisories?: unknown;
+  }>,
+): AdviceGroup[] {
+  return reports.map(({ suiteKind, advisories }) => ({
+    suite: SUITE_COPY[suiteKind as keyof typeof SUITE_COPY]?.title ?? suiteKind,
+    readiness: (Array.isArray(advisories) ? advisories : []).flatMap(
+      (entry: unknown) => {
+        const advisory = (entry ?? {}) as SavedReportAdvisory;
+        return advisory.kind === "readiness" &&
+          typeof advisory.id === "string" &&
+          typeof advisory.title === "string" &&
+          typeof advisory.status === "string"
+          ? [
+              {
+                id: advisory.id,
+                title: advisory.title,
+                specStrength: advisory.status,
+                message:
+                  typeof advisory.message === "string" ? advisory.message : "",
+              },
+            ]
+          : [];
+      },
+    ),
+  }));
+}
+
 /** The spec's requirement words are defined by BCP 14 (RFC 2119 + RFC 8174). */
 const BCP_14_URL = "https://datatracker.ietf.org/doc/html/bcp14";
 

@@ -35,12 +35,38 @@ describe("automatic task tool arguments", () => {
   });
 
   it("keeps the warning when the schema cannot be checked", () => {
+    expect(acceptsToolArguments(undefined, {})).toBeUndefined();
+    expect(acceptsToolArguments({ type: "invalid" }, {})).toBeUndefined();
     expect(acceptsEmptyToolArguments(undefined)).toBe(false);
     expect(acceptsEmptyToolArguments({ type: "invalid" })).toBe(false);
     expect(acceptsEmptyToolArguments({ $async: true, type: "object" })).toBe(
       false,
     );
   });
+
+  it.each([
+    {
+      type: "object",
+      properties: { d: { type: "string", pattern: "^\\d{4}\\-\\d{2}$" } },
+    },
+    {
+      type: "object",
+      properties: { q: { $ref: "https://example.com/schema.json" } },
+    },
+    {
+      $schema: "http://json-schema.org/draft-06/schema#",
+      type: "object",
+      required: ["q"],
+    },
+  ])(
+    "distinguishes an uncheckable schema from invalid arguments: %j",
+    (schema) => {
+      expect(
+        acceptsToolArguments(schema, { d: "2026-11", q: "x" }),
+      ).toBeUndefined();
+      expect(acceptsEmptyToolArguments(schema)).toBe(false);
+    },
+  );
 
   it("checks refetched schemas with the same ID independently", () => {
     const schema = { $id: "urn:mcpjam:task-input", type: "object" };

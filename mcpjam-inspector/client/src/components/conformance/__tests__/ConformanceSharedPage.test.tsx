@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 const { useSharedArtifactMock } = vi.hoisted(() => ({
   useSharedArtifactMock: vi.fn(),
@@ -52,6 +52,16 @@ function sharedRun() {
         outcome: "passed",
         score: { score: 100, outcome: "passed", applicable: 14, passed: 14 },
         groups: [{ cases: [{ id: "ping", title: "Ping", status: "passed" }] }],
+        advisories: [
+          {
+            id: "readiness-tool-order-deterministic",
+            title: "Tool order is stable",
+            group: "mcp-1",
+            kind: "readiness",
+            status: "SHOULD",
+            message: "Return tools in the same order.",
+          },
+        ],
       },
     },
   };
@@ -60,6 +70,64 @@ function sharedRun() {
 describe("ConformanceSharedPage", () => {
   beforeEach(() => {
     useSharedArtifactMock.mockReset();
+  });
+
+  it("shows saved missing-input checks as gray Not run rows with setup copy", () => {
+    const message =
+      "no probe tool could be selected automatically: tools are chosen by `execution.taskSupport`";
+    useSharedArtifactMock.mockReturnValue({
+      loading: false,
+      error: null,
+      redeem: null,
+      artifact: {
+        score: 100,
+        outcome: "incomplete",
+        applicable: 1,
+        passed: 1,
+        failed: 0,
+        couldNotRun: 1,
+        requestedSuites: ["tasks"],
+        reports: {
+          tasks: {
+            outcome: "incomplete",
+            incompleteReason: message,
+            score: {
+              score: 100,
+              outcome: "incomplete",
+              applicable: 1,
+              passed: 1,
+              failed: 0,
+              couldNotRun: 1,
+            },
+            groups: [
+              {
+                cases: [
+                  {
+                    id: "tasks-result-type-discipline",
+                    title: "Result Type Discipline",
+                    status: "skipped",
+                    skipReason: "could-not-run",
+                    error: message,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    });
+    render(<ConformanceSharedPage token="tok" />);
+    expect(screen.getByText("Not run")).toHaveAttribute(
+      "title",
+      "This check needs an input before it can run.",
+    );
+    expect(
+      screen.getByText(
+        "Select a tool that creates a task in setup, then run again.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(message)).toBeNull();
+    expect(screen.getByText("Result Type Discipline")).toBeInTheDocument();
   });
 
   it("shows the run as score card and suite rows, not raw JSON", () => {
@@ -85,6 +153,26 @@ describe("ConformanceSharedPage", () => {
     // A public page makes no verification claim, either way.
     expect(screen.queryByText("MCPJam-verified")).toBeNull();
     expect(screen.queryByText("Client-reported")).toBeNull();
+  });
+
+  it("lists the advice the shared reports hold", () => {
+    useSharedArtifactMock.mockReturnValue({
+      loading: false,
+      error: null,
+      artifact: sharedRun(),
+      redeem: null,
+    });
+    render(<ConformanceSharedPage token="tok" />);
+
+    const header = screen.getByRole("button", {
+      name: /^Additional enhancements/,
+    });
+    expect(header).toHaveTextContent("Additional enhancements1");
+    fireEvent.click(header);
+    expect(screen.getByText("Tool order is stable")).toBeInTheDocument();
+    expect(
+      screen.getByText("Return tools in the same order."),
+    ).toBeInTheDocument();
   });
 
   it("claims nothing about verification when the artifact has no field", () => {

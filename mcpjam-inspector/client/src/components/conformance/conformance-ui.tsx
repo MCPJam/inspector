@@ -318,6 +318,9 @@ export function OverallScoreCard({
   // Checks that could not run stay in the denominator, so the number is only
   // a partial picture.
   const partial = Boolean(scored && scored.couldNotRun > 0);
+  const missingInputs = score
+    ? Math.max(0, score.passed + score.failed + score.couldNotRun - score.applicable)
+    : 0;
 
   const verdict = (() => {
     // A partial score is no verdict: a clean Protocol would read "Fully
@@ -339,6 +342,17 @@ export function OverallScoreCard({
         .filter(Boolean)
         .join(" ");
     }
+    const inputSentence =
+      missingInputs > 0
+        ? `${plural(missingInputs, "check")} need${missingInputs === 1 ? "s" : ""} input. Select tools in setup and run again.`
+        : null;
+    if (
+      score?.outcome === "incomplete" &&
+      missingInputs > 0 &&
+      score.couldNotRun === missingInputs
+    ) {
+      return `Incomplete. ${inputSentence}`;
+    }
     if (!scored) {
       // A run that ended before any check was scored, such as one that timed
       // out, is incomplete rather than empty.
@@ -350,14 +364,20 @@ export function OverallScoreCard({
       return `Not conformant. ${plural(scored.failed, "check")} failed.`;
     }
     if (scored.outcome === "incomplete") {
-      const late = Math.min(timedOut, scored.couldNotRun);
+      const otherUnrun = scored.couldNotRun - missingInputs;
+      const late = Math.min(timedOut, otherUnrun);
       if (late === 0) {
-        return `Incomplete. ${plural(scored.couldNotRun, "check")} could not run.`;
+        return [
+          `Incomplete. ${plural(otherUnrun, "check")} could not run.`,
+          inputSentence,
+        ]
+          .filter(Boolean)
+          .join(" ");
       }
-      const otherUnrun = scored.couldNotRun - late;
       return [
         `Incomplete. ${plural(late, "check")} could not run because the server did not answer in time.`,
-        otherUnrun > 0 ? `${otherUnrun} more could not run.` : null,
+        otherUnrun > late ? `${otherUnrun - late} more could not run.` : null,
+        inputSentence,
       ]
         .filter(Boolean)
         .join(" ");
@@ -378,7 +398,8 @@ export function OverallScoreCard({
       ? [
           scored ? `${score.passed} passed` : null,
           score.failed ? `${score.failed} failed` : null,
-          score.couldNotRun ? `${score.couldNotRun} could not run` : null,
+          score.couldNotRun > missingInputs ? `${score.couldNotRun - missingInputs} could not run` : null,
+          missingInputs ? `${missingInputs} not run (missing input)` : null,
           score.pending ? `${score.pending} unscored` : null,
           score.notApplicable ? `${score.notApplicable} not applicable` : null,
           oauthNotScored ? "OAuth not scored (no auth)" : null,
@@ -451,8 +472,9 @@ export function OverallScoreCard({
           <div className="bg-red-500" style={{ flexGrow: scored.failed }} />
           <div
             className="bg-amber-400"
-            style={{ flexGrow: scored.couldNotRun }}
+            style={{ flexGrow: scored.couldNotRun - missingInputs }}
           />
+          {missingInputs > 0 && <div className="bg-muted-foreground/30" style={{ flexGrow: missingInputs }} />}
         </div>
       )}
     </div>
