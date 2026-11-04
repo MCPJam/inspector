@@ -227,7 +227,7 @@ function deprecatedFeatureWarning(
 
   return warning(
     "readiness-deprecated-feature-use",
-    "SHOULD",
+    "Deprecation Notice",
     `Server advertises superseded functionality: ${findings.join("; ")}`,
     { findings }
   );

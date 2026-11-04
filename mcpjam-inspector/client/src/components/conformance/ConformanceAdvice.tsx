@@ -159,11 +159,9 @@ export function ConformanceAdvice({ groups }: { groups: AdviceGroup[] }) {
               <span className="flex min-w-0 flex-col gap-0.5 text-sm">
                 <span>
                   <span className="font-medium text-info">
-                    {item.id === "readiness-deprecated-feature-use"
-                      ? "Suggested (Deprecation Notice)"
-                      : isDeprecation(item)
-                        ? "Deprecation notice"
-                        : `${isOptional(item) ? "Optional" : "Suggested"} (${item.specStrength})`}
+                    {isDeprecation(item)
+                      ? "Deprecation notice"
+                      : `${isOptional(item) ? "Optional" : "Suggested"} (${item.specStrength})`}
                   </span>{" "}
                   <span className="text-muted-foreground">{item.suite}</span>{" "}
                   <span className="font-medium">{item.title}</span>

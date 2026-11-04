@@ -322,7 +322,7 @@ describe("ConformanceTab", () => {
             id: "readiness-deprecated-feature-use",
             title: "Deprecated Feature Use",
             severity: "warning",
-            specStrength: "SHOULD",
+            specStrength: "Deprecation Notice",
             message: "Cacheable results advertise ttlMs: 0",
           },
         ],
@@ -372,7 +372,7 @@ describe("ConformanceTab", () => {
     render(<ConformanceTab server={createHttpServer()} />);
     await runToCompletion();
 
-    // Pooled: 4/4 applicable across the suites = 100. The SHOULD advisory
+    // Pooled: 4/4 applicable across the suites = 100. The deprecation advisory
     // from protocol readiness is listed but worth 0 points.
     expect(screen.getAllByText("100").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Conformant, with guidance.")).toBeInTheDocument();
@@ -389,7 +389,7 @@ describe("ConformanceTab", () => {
     fireEvent.click(advice);
     const row = screen.getByText("Deprecated Feature Use").closest("li")!;
     expect(row).toHaveTextContent(
-      "Suggested (Deprecation Notice) Protocol Deprecated Feature Use",
+      "Deprecation notice Protocol Deprecated Feature Use",
     );
   });
 

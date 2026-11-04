@@ -25,7 +25,11 @@ describe("ConformanceAdvice", () => {
         groups={[
           {
             suite: "Protocol",
-            readiness: [advice("parse", "MAY"), advice("ttl", "SHOULD")],
+            readiness: [
+              advice("parse", "MAY"),
+              advice("ttl", "SHOULD"),
+              advice("deprecated", "Deprecation Notice"),
+            ],
           },
           {
             suite: "Apps",
@@ -42,7 +46,10 @@ describe("ConformanceAdvice", () => {
     });
     // Closed, with the count, so the score is what a run shows first.
     expect(header).toHaveAttribute("aria-expanded", "false");
-    expect(header).toHaveTextContent("Additional enhancements5");
+    expect(header).toHaveTextContent("Additional enhancements6");
+    expect(
+      screen.queryByText(/A deprecation notice means the spec/),
+    ).not.toBeInTheDocument();
 
     // The spec words link to their definitions, outside the toggle.
     for (const word of ["SHOULD", "MAY"]) {
@@ -58,6 +65,7 @@ describe("ConformanceAdvice", () => {
       screen.getAllByRole("listitem").map((row) => row.textContent),
     ).toEqual([
       "Suggested (SHOULD) Protocol ttlttl message",
+      "Deprecation notice Protocol deprecateddeprecated message",
       "Deprecation notice Apps legacylegacy message",
       "Suggested (SHOULD) Tasks statusstatus message",
       "Suggested (SHOULD) OAuth ississ message",
