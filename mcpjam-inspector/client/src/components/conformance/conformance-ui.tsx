@@ -342,13 +342,16 @@ export function OverallScoreCard({
         .filter(Boolean)
         .join(" ");
     }
-    if (score?.outcome === "incomplete" && missingInputs > 0) {
-      const otherUnrun = score.couldNotRun - missingInputs;
-      return [
-        `Incomplete. ${plural(missingInputs, "check")} need${missingInputs === 1 ? "s" : ""} input.`,
-        otherUnrun > 0 ? `${otherUnrun} more could not run.` : null,
-        "Select tools in setup and run again.",
-      ].filter(Boolean).join(" ");
+    const inputSentence =
+      missingInputs > 0
+        ? `${plural(missingInputs, "check")} need${missingInputs === 1 ? "s" : ""} input. Select tools in setup and run again.`
+        : null;
+    if (
+      score?.outcome === "incomplete" &&
+      missingInputs > 0 &&
+      score.couldNotRun === missingInputs
+    ) {
+      return `Incomplete. ${inputSentence}`;
     }
     if (!scored) {
       // A run that ended before any check was scored, such as one that timed
@@ -361,14 +364,20 @@ export function OverallScoreCard({
       return `Not conformant. ${plural(scored.failed, "check")} failed.`;
     }
     if (scored.outcome === "incomplete") {
-      const late = Math.min(timedOut, scored.couldNotRun);
+      const otherUnrun = scored.couldNotRun - missingInputs;
+      const late = Math.min(timedOut, otherUnrun);
       if (late === 0) {
-        return `Incomplete. ${plural(scored.couldNotRun, "check")} could not run.`;
+        return [
+          `Incomplete. ${plural(otherUnrun, "check")} could not run.`,
+          inputSentence,
+        ]
+          .filter(Boolean)
+          .join(" ");
       }
-      const otherUnrun = scored.couldNotRun - late;
       return [
         `Incomplete. ${plural(late, "check")} could not run because the server did not answer in time.`,
-        otherUnrun > 0 ? `${otherUnrun} more could not run.` : null,
+        otherUnrun > late ? `${otherUnrun - late} more could not run.` : null,
+        inputSentence,
       ]
         .filter(Boolean)
         .join(" ");

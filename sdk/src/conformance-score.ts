@@ -242,7 +242,19 @@ function sum<T>(items: T[], select: (item: T) => number): number {
 
 /** The one-line rendering every surface shares, so the wording cannot drift. */
 export function describeConformanceScore(score: ConformanceScore): string {
+  const missingInputs = Math.max(
+    0,
+    score.passed + score.failed + score.couldNotRun - score.applicable
+  );
+  const otherUnrun = score.couldNotRun - missingInputs;
+  const unrun = [
+    missingInputs > 0
+      ? `${missingInputs} check${missingInputs === 1 ? " needs" : "s need"} input`
+      : null,
+    otherUnrun > 0 ? `${otherUnrun} could not run` : null,
+  ].filter((part): part is string => part !== null);
   if (score.score === null) {
+    if (unrun.length > 0) return `not scored. ${unrun.join(", ")}`;
     return `not scored — 0 applicable checks (${score.notApplicable} not applicable)`;
   }
   const parts = [
@@ -251,9 +263,7 @@ export function describeConformanceScore(score: ConformanceScore): string {
   if (score.failed > 0) {
     parts.push(`${score.failed} failed`);
   }
-  if (score.couldNotRun > 0) {
-    parts.push(`${score.couldNotRun} could not run`);
-  }
+  parts.push(...unrun);
   if (score.advisories.length > 0) {
     parts.push(
       `${score.advisories.length} advisor${score.advisories.length === 1 ? "y" : "ies"}`

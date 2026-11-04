@@ -116,6 +116,51 @@ describe("ScoreResultsPage pending profile stamp", () => {
     mockFetchScoreRun.mockReset();
   });
 
+  it.each([
+    [null, 0, 0, 1, "not scored. 1 check needs input"],
+    [null, 0, 0, 7, "not scored. 7 checks need input"],
+    [
+      100,
+      1,
+      1,
+      7,
+      "100/100 — 1/1 applicable checks passed, 7 checks need input",
+    ],
+    [
+      25,
+      1,
+      4,
+      5,
+      "25/100 — 1/4 applicable checks passed, 2 checks need input, 3 could not run",
+    ],
+  ])(
+    "names missing inputs in saved summaries (%s, %i/%i, %i unrun)",
+    async (score, passed, applicable, couldNotRun, expected) => {
+      const headline = summary({
+        score,
+        passed,
+        applicable,
+        couldNotRun,
+        outcome: "incomplete",
+      });
+      mockFetchScoreRun.mockResolvedValue({
+        ...pendingBearingRun(),
+        ...headline,
+        suiteSummaries: [{ suiteId: "tasks", ...headline }],
+        report: {},
+      });
+      renderPage();
+      await waitFor(() => {
+        // The suite always shows a summary; a scored run also has a headline.
+        expect(
+          screen.getAllByText(
+            score === null ? expected : `${expected} [2025-11-25]`,
+          ),
+        ).toHaveLength(score === null ? 1 : 2);
+      });
+    },
+  );
+
   it("names pending in the headline and marks the pending failed row unscored", async () => {
     mockFetchScoreRun.mockResolvedValue(pendingBearingRun());
     renderPage();

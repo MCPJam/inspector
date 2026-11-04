@@ -31,15 +31,26 @@ const SUITE_TITLES: Record<string, string> = {
  * surfaces that list summaries without reports.
  */
 function describeStoredScore(summary: ScoreSummary, pending = 0): string {
+  const missingInputs = Math.max(
+    0,
+    summary.passed + summary.failed + summary.couldNotRun - summary.applicable,
+  );
+  const otherUnrun = summary.couldNotRun - missingInputs;
+  const unrun = [
+    missingInputs > 0
+      ? `${missingInputs} check${missingInputs === 1 ? " needs" : "s need"} input`
+      : null,
+    otherUnrun > 0 ? `${otherUnrun} could not run` : null,
+  ].filter((part): part is string => part !== null);
   if (summary.score === null) {
+    if (unrun.length > 0) return `not scored. ${unrun.join(", ")}`;
     return `not scored — 0 applicable checks (${summary.notApplicable} not applicable)`;
   }
   const parts = [
     `${summary.passed}/${summary.applicable} applicable checks passed`,
   ];
   if (summary.failed > 0) parts.push(`${summary.failed} failed`);
-  if (summary.couldNotRun > 0)
-    parts.push(`${summary.couldNotRun} could not run`);
+  parts.push(...unrun);
   if (summary.advisoryCount > 0) {
     parts.push(
       `${summary.advisoryCount} advisor${

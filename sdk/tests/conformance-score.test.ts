@@ -293,6 +293,33 @@ describe("pooledConformanceScore", () => {
 });
 
 describe("describeConformanceScore", () => {
+  it.each([
+    [0, 1, 0, "not scored. 1 check needs input"],
+    [0, 7, 0, "not scored. 7 checks need input"],
+    [1, 7, 0, "100/100 — 1/1 applicable checks passed, 7 checks need input"],
+    [
+      1,
+      2,
+      3,
+      "25/100 — 1/4 applicable checks passed, 2 checks need input, 3 could not run",
+    ],
+  ])(
+    "names missing inputs separately with %i passed, %i missing and %i other unrun",
+    (passed, missing, otherUnrun, expected) => {
+      const score = computeConformanceScore([
+        ...passing(passed),
+        ...Array.from({ length: missing }, (_, index) => ({
+          ...check(`missing-${index}`, "skipped", "could-not-run"),
+          details: { missingInput: "tasksProbe" },
+        })),
+        ...Array.from({ length: otherUnrun }, (_, index) =>
+          check(`timeout-${index}`, "skipped", "could-not-run")
+        ),
+      ]);
+      expect(describeConformanceScore(score)).toBe(expected);
+    }
+  );
+
   it("always shows the number, the denominator, and the version", () => {
     const line = describeConformanceScore(
       computeConformanceScore(
