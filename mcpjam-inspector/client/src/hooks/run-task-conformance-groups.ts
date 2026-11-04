@@ -6,6 +6,7 @@ import {
   MCP_TASKS_CHECK_IDS,
   type MCPTasksRunOptions,
 } from "@mcpjam/sdk/browser";
+import type { ConformanceRunBudget } from "@/lib/apis/mcp-conformance-api";
 import { runTasksConformance } from "@/lib/apis/mcp-conformance-api";
 
 /** Each group gets its own hosted request budget; stale runs stop scheduling work. */
@@ -13,6 +14,7 @@ export async function runTaskConformanceGroups(
   serverName: string,
   options: MCPTasksRunOptions,
   isActive: () => boolean,
+  remainingBudget: () => ConformanceRunBudget = () => ({}),
 ) {
   const started = Date.now();
   if (!isActive()) return undefined;
@@ -47,7 +49,14 @@ export async function runTaskConformanceGroups(
   })) {
     if (!isActive()) return undefined;
     try {
-      results.push((await runTasksConformance(serverName, group)).result);
+      results.push(
+        (
+          await runTasksConformance(serverName, {
+            ...group,
+            ...remainingBudget(),
+          })
+        ).result,
+      );
     } catch (error) {
       results.push(
         taskGroupFailure(

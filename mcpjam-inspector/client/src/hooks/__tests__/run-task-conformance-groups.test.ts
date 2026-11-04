@@ -169,3 +169,56 @@ describe("Inspector Tasks group requests", () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 });
+
+it("shares the shrinking total run budget across task groups", async () => {
+  const controller = new AbortController();
+  let remaining = 1000;
+  run.mockImplementation(async (_server, group) => {
+    remaining -= 400;
+    return passed(group.checkIds);
+  });
+  await runTaskConformanceGroups(
+    "server",
+    {
+      toolName: "first",
+      checkIds: ["tasks-inline-result", "tasks-ttl-shape"],
+      checkOverrides: { "tasks-ttl-shape": { toolName: "second" } },
+    },
+    () => true,
+    () => ({
+      runTimeoutSeconds: 1,
+      remainingRunTimeoutMs: remaining,
+      signal: controller.signal,
+    }),
+  );
+  expect(
+    run.mock.calls.map(([, group]) => group.remainingRunTimeoutMs),
+  ).toEqual([1000, 600]);
+  expect(
+    run.mock.calls.every(([, group]) => group.signal === controller.signal),
+  ).toBe(true);
+});
+
+it("does not start another group after the total deadline aborts", async () => {
+  const controller = new AbortController();
+  run.mockImplementationOnce(async () => {
+    controller.abort(new Error("Run timed out after 1 seconds"));
+    throw controller.signal.reason;
+  });
+  const result = await runTaskConformanceGroups(
+    "server",
+    {
+      toolName: "first",
+      checkIds: ["tasks-inline-result", "tasks-ttl-shape"],
+      checkOverrides: { "tasks-ttl-shape": { toolName: "second" } },
+    },
+    () => !controller.signal.aborted,
+    () => ({
+      runTimeoutSeconds: 1,
+      remainingRunTimeoutMs: 1,
+      signal: controller.signal,
+    }),
+  );
+  expect(result).toBeUndefined();
+  expect(run).toHaveBeenCalledTimes(1);
+});

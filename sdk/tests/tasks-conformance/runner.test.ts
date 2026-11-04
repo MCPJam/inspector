@@ -1444,3 +1444,14 @@ describe("undeclared task requests (-32021)", () => {
     expect(statusMap(result)["tasks-mcp-name-routing"]).toBe("passed");
   });
 });
+
+
+it("propagates caller cancellation instead of reporting a connection failure", async () => {
+  const controller = new AbortController();
+  const reason = new Error("run deadline reached");
+  controller.abort(reason);
+  vi.spyOn(operations, "withEphemeralClient").mockRejectedValueOnce(reason);
+  await expect(new MCPTasksConformanceTest({
+    url: "https://example.test/mcp", signal: controller.signal,
+  }).run()).rejects.toBe(reason);
+});

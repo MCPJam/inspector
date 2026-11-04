@@ -36,7 +36,7 @@ describe.each([
         expect(await connection.baseFetch?.(config.url, requestInit)).toBe(
           response,
         );
-        expect(baseFetch).toHaveBeenLastCalledWith(config.url, requestInit);
+        expect(baseFetch).toHaveBeenLastCalledWith(config.url, expect.objectContaining({ ...requestInit, signal: expect.any(AbortSignal) }));
       }
       expect(config.mcpProtocolVersion).toBe("2025-11-25");
       expect(config.baseFetch).toBe(baseFetch);
@@ -54,6 +54,7 @@ describe.each([
     expect(connect).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ mcpProtocolVersion: "2025-06-18" }),
+      { signal: expect.any(AbortSignal) },
     );
   });
 });
