@@ -3,6 +3,7 @@
  * saved report so a run reopened from history can still list its advice.
  */
 import type { ConformanceReportAdvisory } from "./conformance-reporting.js";
+import { deepJsonSafe } from "./json-safe.js";
 
 /** A suite's SHOULD/MAY advice: what every suite's `readiness` entry carries. */
 interface ReadinessWarningLike {
@@ -35,7 +36,11 @@ export function readinessAdvisoryFields(
         kind: "readiness",
         status: warning.specStrength,
         message: warning.message,
-        ...(warning.details !== undefined ? { details: warning.details } : {}),
+        // Sanitized at the producer, like every other report `details`:
+        // Convex rejects class instances.
+        ...(warning.details !== undefined
+          ? { details: deepJsonSafe(warning.details) }
+          : {}),
       });
     }
   }
