@@ -1,7 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { acceptsEmptyToolArguments } from "../conformance-tool-input";
+import {
+  acceptsEmptyToolArguments,
+  acceptsToolArguments,
+} from "../conformance-tool-input";
 
 describe("automatic task tool arguments", () => {
+  it("requires supplied arguments to match the tool schema", () => {
+    const schema = {
+      type: "object",
+      properties: { projectId: { type: "string" } },
+      required: ["projectId"],
+    };
+    expect(acceptsToolArguments(schema, {})).toBe(false);
+    expect(acceptsToolArguments(schema, { projectId: 123 })).toBe(false);
+    expect(acceptsToolArguments(schema, { projectId: "project-1" })).toBe(true);
+  });
   it("accepts a tool whose arguments are optional", () => {
     expect(
       acceptsEmptyToolArguments({

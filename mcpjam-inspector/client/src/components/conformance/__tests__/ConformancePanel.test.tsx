@@ -1567,6 +1567,74 @@ describe("ConformanceTab", () => {
       );
     }
 
+    it.each([
+      {
+        suite: "Protocol",
+        field: "Tool that emits logs",
+        row: "Logs Require A Log Level",
+        missing: "2 checks need input",
+        ready: "1 check needs input",
+      },
+      {
+        suite: "Tasks",
+        field: "Tool that creates a task",
+        row: "Result Type Discipline",
+        missing: "11 checks need input",
+        ready: undefined,
+      },
+    ])(
+      "keeps required-argument badges in $suite until arguments are valid",
+      async ({ suite, field, row, missing, ready }) => {
+        mockListTools.mockResolvedValue({
+          tools: [
+            {
+              name: "echo",
+              annotations: { readOnlyHint: true },
+              inputSchema: {
+                type: "object",
+                properties: { projectId: { type: "string" } },
+                required: ["projectId"],
+              },
+            },
+          ],
+        });
+        const user = userEvent.setup();
+        await toStep2();
+        const header = screen.getByRole("button", {
+          name: new RegExp(`^${suite}.*checks selected$`),
+        });
+        fireEvent.click(header);
+        const tool = screen.getByRole("combobox", { name: field });
+        await waitFor(() => expect(tool).toBeEnabled());
+        await user.click(tool);
+        await user.click(
+          screen.getByRole("option", { name: "echo · read-only" }),
+        );
+        const checkRow = screen.getByRole("button", {
+          name: new RegExp(`^${row}`),
+        });
+        expect(checkRow).toHaveTextContent("Needs input");
+        expect(within(header).getByText(missing)).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole("switch"));
+        const args = screen.getByRole("textbox", { name: "Arguments" });
+        fireEvent.change(args, { target: { value: '{"projectId":123}' } });
+        expect(checkRow).toHaveTextContent("Needs input");
+        fireEvent.change(args, {
+          target: { value: '{"projectId":"project-1"}' },
+        });
+        expect(checkRow).toHaveTextContent("Input set");
+        if (ready) expect(within(header).getByText(ready)).toBeInTheDocument();
+        else expect(within(header).queryByText(/needs? input/)).toBeNull();
+
+        fireEvent.change(args, { target: { value: "{}" } });
+        expect(checkRow).toHaveTextContent("Needs input");
+        fireEvent.click(header);
+        expect(header).toHaveAttribute("aria-expanded", "false");
+        expect(within(header).getByText(missing)).toBeInTheDocument();
+      },
+    );
+
     it("sends the output check's tool on its own", async () => {
       const user = userEvent.setup();
       setupSuccessfulRunMocks();

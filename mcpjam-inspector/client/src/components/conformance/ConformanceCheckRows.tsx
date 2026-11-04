@@ -163,10 +163,10 @@ export function NeedsInputTag({
       title={
         advice
           ? missing
-            ? "Pick a tool for this advice. Without one it does not run."
+            ? "Select a tool and fill its required arguments before this advice can run."
             : "This advice calls the tool set for it."
           : missing
-            ? "Pick a tool for this check. Without one it reports that it could not run."
+            ? "Select a tool and fill its required arguments before this check can run."
             : "This check calls the tool set for it."
       }
       className={cn(

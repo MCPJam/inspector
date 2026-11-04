@@ -4,7 +4,7 @@
  * its Run starts the run with them.
  */
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -15,6 +15,7 @@ import {
 } from "@/hooks/use-conformance-run";
 import {
   probeInputStatus,
+  PROBE_KEYS,
   probeKeyFor,
   probesApply,
   tasksProbeRuns,
@@ -22,6 +23,7 @@ import {
   type ConformanceProbes,
 } from "@/hooks/use-conformance-probes";
 import { ProbeCheckExtra, useProbeTools } from "./ConformanceProbeField";
+import { acceptsToolArguments } from "./conformance-tool-input";
 import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { toast } from "@/lib/toast";
 import { startConnectToast } from "@/lib/connect-toast";
@@ -128,6 +130,29 @@ export function ConformanceSetup({
   const tasksProbe = tasksProbeRuns(selection.tasks);
   const probeServer = picked && (protocolProbes || tasksProbe) ? picked : null;
   const probeTools = useProbeTools(probeServer);
+  const invalidProbeArguments = useMemo(
+    () =>
+      new Set(
+        PROBE_KEYS.filter((key) => {
+          const probe = probes[key];
+          if (!probe) return false;
+          const tool = probeTools.tools.find(
+            (item) => item.name === probe.toolName,
+          );
+          return (
+            tool?.inputSchema !== undefined &&
+            !acceptsToolArguments(tool.inputSchema, probe.arguments ?? {})
+          );
+        }),
+      ),
+    [probes, probeTools.tools],
+  );
+  const inputStatusFor = (checkId: string) => {
+    const key = probeKeyFor(checkId);
+    return key && (invalidProbeArguments.has(key) || probeValid[key] === false)
+      ? "missing"
+      : probeInputStatus(checkId, probes);
+  };
   // Picked from the project's list before this session loaded it: it has no
   // runtime entry until it connects.
   const pickedName =
@@ -399,7 +424,7 @@ export function ConformanceSetup({
                     return probeKeyFor(checkId) === "toolCallProbe" &&
                       noOutputSchemas
                       ? undefined
-                      : probeInputStatus(checkId, probes);
+                      : inputStatusFor(checkId);
                   }
                   if (suite === "tasks" && tasksProbe) {
                     // The list comes from the existing connection, which
@@ -409,7 +434,7 @@ export function ConformanceSetup({
                       !probes.tasksProbe &&
                       probeTools.canAutoPickTaskTool;
                     if (canPickTaskTool) return undefined;
-                    return probeInputStatus(checkId, probes);
+                    return inputStatusFor(checkId);
                   }
                   return undefined;
                 }}
