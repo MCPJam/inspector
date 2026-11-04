@@ -465,3 +465,29 @@ it("keeps plain anchors unchanged", () => {
     "https://example.com/#section-2"
   );
 });
+
+it.each([
+  "/authors?sort=name&compact",
+  "!/authors?sort=name&compact",
+  "/authors=profile",
+])("preserves safe hash routes: %s", (fragment) => {
+  const url = `https://example.com/#${fragment}`;
+  expect(redactSharedServerUrl(url)).toBe(url);
+});
+it.each(["/authors?", "!/authors?"])(
+  "redacts route query credentials while preserving %s",
+  (prefix) => {
+    expect(
+      redactSharedServerUrl(
+        `https://example.com/#${prefix}x-api-key=secret&label=hello%20world&compact`
+      )
+    ).toBe(
+      `https://example.com/#${prefix}x-api-key=%5BREDACTED%5D&label=hello%20world&compact`
+    );
+  }
+);
+it("does not interpret a question mark in a token as a hash route", () => {
+  expect(
+    redactSharedServerUrl("https://example.com/#token=secret?value&flag")
+  ).toBe("https://example.com/#token=%5BREDACTED%5D&flag");
+});
