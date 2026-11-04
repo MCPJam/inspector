@@ -8,3 +8,5 @@ Leave checks blocked by missing tool inputs out of the score while keeping the r
 Name missing inputs in score summaries and keep timeout explanations when other checks also need input.
 
 Show the same neutral Not run status and setup instructions on shared score rows.
+
+Keep shared missing-input tooltips accurate for older saved scores.

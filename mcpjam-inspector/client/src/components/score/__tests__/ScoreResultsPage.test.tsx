@@ -209,6 +209,66 @@ describe("ScoreResultsPage pending profile stamp", () => {
     },
   );
 
+  it.each([
+    [
+      0,
+      1,
+      0,
+      "0/100 — 0/1 applicable checks passed, 1 could not run [2025-11-25]",
+    ],
+    [
+      100,
+      1,
+      1,
+      "100/100 — 1/1 applicable checks passed, 1 check needs input [2025-11-25]",
+    ],
+  ])(
+    "does not claim a missing-input row was excluded from stored score %i",
+    async (score, applicable, passed, expected) => {
+      const headline = summary({
+        score,
+        applicable,
+        passed,
+        couldNotRun: 1,
+        outcome: "incomplete",
+      });
+      mockFetchScoreRun.mockResolvedValue({
+        ...pendingBearingRun(),
+        ...headline,
+        suiteSummaries: [{ suiteId: "tasks", ...headline }],
+        report: {
+          tasks: {
+            checks: [
+              {
+                id: "tasks-result-type-discipline",
+                title: "Result Type Discipline",
+                status: "skipped",
+                skipReason: "could-not-run",
+                error: {
+                  message:
+                    "no probe tool could be selected automatically: choose a task tool",
+                },
+              },
+            ],
+          },
+        },
+      });
+      renderPage();
+      const label = await screen.findByText("Not run");
+      expect(label).toHaveAttribute(
+        "title",
+        "This check needs an input before it can run.",
+      );
+      expect(screen.queryByTitle(/Not scored/)).not.toBeInTheDocument();
+      expect(screen.getAllByText(expected)).toHaveLength(2);
+      expect(
+        screen.getByText(
+          "Select a tool that creates a task in setup, then run again.",
+        ),
+      ).toBeInTheDocument();
+    },
+  );
+
   it("keeps an actual server failure red on shared score rows", async () => {
     mockFetchScoreRun.mockResolvedValue(stampLessLegacyRun());
     renderPage();

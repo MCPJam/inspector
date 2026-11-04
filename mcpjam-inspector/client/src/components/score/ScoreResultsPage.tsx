@@ -286,7 +286,7 @@ export function ScoreResultsPage() {
                     >
                       <CheckIcon status={check.status ?? "skipped"} />
                       {inputMessage ? (
-                        <NotRunTag />
+                        <NotRunTag title="This check needs an input before it can run." />
                       ) : check.pending ? (
                         <span
                           title="unscored by this run's profile"
