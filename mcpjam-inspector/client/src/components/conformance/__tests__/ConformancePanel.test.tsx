@@ -1760,9 +1760,26 @@ describe("ConformanceTab", () => {
       ).toBeNull();
     });
 
-    it.each(["auto", "2025-11-25", "2026-07-28"])(
-      "flags missing Tasks inputs on %s even when the suite is closed",
-      async (pin) => {
+    it.each([
+      ["auto", undefined],
+      ["2025-11-25", undefined],
+      ["2026-07-28", undefined],
+      ["2026-07-28", "required"],
+      ["2026-07-28", "optional"],
+    ])(
+      "flags missing Tasks inputs on %s with task support %s even when the suite is closed",
+      async (pin, taskSupport) => {
+        if (taskSupport) {
+          mockListTools.mockResolvedValue({
+            tools: [
+              {
+                name: "echo",
+                annotations: { readOnlyHint: true },
+                execution: { taskSupport },
+              },
+            ],
+          });
+        }
         const user = userEvent.setup();
         await toStep2(pin);
         const header = screen.getByRole("button", {
@@ -1799,7 +1816,9 @@ describe("ConformanceTab", () => {
         await user.click(
           screen.getByRole("combobox", { name: "Tool that creates a task" }),
         );
-        await user.click(screen.getByRole("option", { name: "echo · read-only" }));
+        await user.click(
+          screen.getByRole("option", { name: "echo · read-only" }),
+        );
         expect(within(header).queryByText(/needs? input/)).toBeNull();
         expect(taskRow).toHaveTextContent("Input set");
 
