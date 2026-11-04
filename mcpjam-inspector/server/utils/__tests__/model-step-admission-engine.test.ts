@@ -87,6 +87,23 @@ const busy = () =>
     { status: 503, headers: { "content-type": "application/json" } },
   );
 
+const answer = () =>
+  new Response(
+    [
+      { type: "text-start", id: "text-1" },
+      { type: "text-delta", id: "text-1", delta: "Hello world." },
+      { type: "text-end", id: "text-1" },
+      {
+        type: "finish",
+        finishReason: "stop",
+        totalUsage: { inputTokens: 4, outputTokens: 2, totalTokens: 6 },
+      },
+    ]
+      .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+      .join("") + "data: [DONE]\n\n",
+    { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } },
+  );
+
 describe("engine resend of a model step refused as busy", () => {
   const originalFetch = global.fetch;
 
@@ -105,7 +122,7 @@ describe("engine resend of a model step refused as busy", () => {
     delete process.env.CONVEX_HTTP_URL;
   });
 
-  it("resends the same eval step and reports only the answer after the busy ones", async () => {
+  it("resends the same eval step and reports only the failure after the busy ones", async () => {
     const fetchSpy = vi
       .fn()
       .mockResolvedValueOnce(busy())
@@ -123,6 +140,28 @@ describe("engine resend of a model step refused as busy", () => {
     });
     expect(new Set(steps).size).toBe(1);
     expect(events).toEqual([expect.objectContaining({ httpStatus: 502 })]);
+  });
+
+  it("delivers the answer a busy eval step gets on resend, with no engine error", async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce(busy())
+      .mockResolvedValueOnce(busy())
+      .mockResolvedValue(answer());
+    global.fetch = fetchSpy;
+    const onConversationComplete = vi.fn();
+
+    const events = await runTurn({
+      sourceType: "eval",
+      onConversationComplete,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(events).toEqual([]);
+    expect(onConversationComplete).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(onConversationComplete.mock.calls[0]![0])).toContain(
+      "Hello world.",
+    );
   });
 
   it("surfaces the busy refusal at once on an interactive chat step", async () => {
