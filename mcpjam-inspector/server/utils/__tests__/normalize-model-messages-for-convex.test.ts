@@ -184,6 +184,32 @@ describe("normalizeModelMessagesForConvex — tool-result output", () => {
     expect(parseFirst(toolMessage(part)).success).toBe(true);
   });
 
+  it("drops the raw result once the output is built (PLB-300)", () => {
+    const messages = toolMessage({
+      ...base,
+      output: { type: "json", value: { distance: "2.4km" } },
+      result: { distance: "2.4km" },
+    });
+    expect(
+      JSON.stringify(normalizeModelMessagesForConvex(messages)),
+    ).not.toContain('"result"');
+    expect(outputOf(messages)).toEqual({
+      type: "json",
+      value: { distance: "2.4km" },
+    });
+  });
+
+  it("still builds the output from a v4 result before dropping it", () => {
+    const messages = toolMessage({ ...base, result: { distance: "2.4km" } });
+    expect(
+      JSON.stringify(normalizeModelMessagesForConvex(messages)),
+    ).not.toContain('"result"');
+    expect(outputOf(messages)).toEqual({
+      type: "json",
+      value: { distance: "2.4km" },
+    });
+  });
+
   it("wraps a bare payload as json rather than assigning it raw", () => {
     // The bug this replaces: the old repair copied `result` onto `output`
     // untouched, which the schema rejects exactly as it rejects no output.

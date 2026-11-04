@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  hostedCatalogContextLength,
   hostedCatalogModelDefinitions,
   isHostedModelDefinition,
   __resetHostedModelCatalogForTests,
@@ -225,5 +226,26 @@ describe("hostedCatalogModelDefinitions", () => {
     const after = hostedCatalogModelDefinitions();
     expect(after).not.toBe(before);
     expect(after.some((row) => row.id === CATALOG_ONLY_MODEL)).toBe(true);
+  });
+});
+
+describe("hostedCatalogContextLength", () => {
+  it("keeps each model's context window from the catalog it fetches", async () => {
+    mockFetchOnce({
+      items: [
+        { id: SEED_MODEL, context_length: 200_000 },
+        { id: CATALOG_ONLY_MODEL },
+      ],
+    });
+    await refreshHostedModelCatalog();
+    expect(hostedCatalogContextLength(SEED_MODEL)).toBe(200_000);
+    expect(hostedCatalogContextLength("claude-haiku-4.5", "anthropic")).toBe(
+      200_000,
+    );
+    expect(hostedCatalogContextLength(CATALOG_ONLY_MODEL)).toBeUndefined();
+  });
+
+  it("is unknown before the first fetch", () => {
+    expect(hostedCatalogContextLength(SEED_MODEL)).toBeUndefined();
   });
 });

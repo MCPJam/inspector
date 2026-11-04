@@ -314,6 +314,10 @@ async function decideToolCallApproval(args: {
   }
 }
 import { logger } from "./logger";
+import {
+  contextCompactionChunk,
+  fitStepForModel,
+} from "./model-context-window";
 import { getSystemLogger } from "./request-logger";
 import {
   applyPrepareAdvertisedTools,
@@ -3996,9 +4000,20 @@ async function processOneStep(ctx: StepContext): Promise<{
     modelId,
     provider,
   );
-  const scrubbedMessages = historyPresentation
-    ? presentHistoryForModel(backendMessages, tools, historyPresentation)
-    : backendMessages;
+  // PLB-300: cap oversized tool results and clear old ones for this step only.
+  const fitted = fitStepForModel({
+    messages: historyPresentation
+      ? presentHistoryForModel(backendMessages, tools, historyPresentation)
+      : backendMessages,
+    modelId,
+    provider,
+    systemPrompt: providerSystemPrompt,
+    tools: activeToolDefs,
+  });
+  const scrubbedMessages = fitted.messages;
+  if (fitted.report) {
+    writer.write(contextCompactionChunk(traceTurn.turnId, fitted.report));
+  }
 
   const normalizeToolCallId = createToolCallIdNormalizer(
     usedToolCallIds,
