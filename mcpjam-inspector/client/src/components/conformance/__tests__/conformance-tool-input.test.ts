@@ -56,13 +56,57 @@ describe("automatic task tool arguments", () => {
     expect(acceptsEmptyToolArguments({ ...schema })).toBe(true);
   });
 
-  it("supports explicit draft-07 schemas", () => {
+  it.each([
+    "http://json-schema.org/draft-04/schema#",
+    "https://json-schema.org/draft-04/schema#",
+    "http://json-schema.org/draft-07/schema#",
+    "https://json-schema.org/draft-07/schema#",
+    "http://json-schema.org/draft/2019-09/schema",
+    "https://json-schema.org/draft/2019-09/schema",
+    "http://json-schema.org/draft/2020-12/schema",
+    "https://json-schema.org/draft/2020-12/schema",
+  ])("checks optional and required arguments for %s", ($schema) => {
+    const schema = {
+      $schema,
+      type: "object",
+      properties: { q: { type: "string" } },
+    };
+    expect(acceptsEmptyToolArguments(schema)).toBe(true);
+    expect(acceptsEmptyToolArguments({ ...schema, required: ["q"] })).toBe(
+      false,
+    );
+    expect(
+      acceptsToolArguments({ ...schema, required: ["q"] }, { q: "ready" }),
+    ).toBe(true);
+    expect(
+      acceptsToolArguments({ ...schema, required: ["q"] }, { q: 123 }),
+    ).toBe(false);
+  });
+
+  it("preserves draft-04 rules for references and boolean exclusiveMinimum", () => {
+    const schema = {
+      $schema: "https://json-schema.org/draft-04/schema#",
+      definitions: {
+        args: {
+          type: "object",
+          properties: {
+            q: { type: "number", minimum: 0, exclusiveMinimum: true },
+          },
+        },
+      },
+      $ref: "#/definitions/args",
+      required: ["q"],
+    };
+    // Draft-04 ignores siblings of $ref; newer dialects apply required here.
+    expect(acceptsEmptyToolArguments(schema)).toBe(true);
+    expect(acceptsToolArguments(schema, { q: 0 })).toBe(false);
+    expect(acceptsToolArguments(schema, { q: 1 })).toBe(true);
     expect(
       acceptsEmptyToolArguments({
-        $schema: "http://json-schema.org/draft-07/schema#",
-        type: "object",
+        ...schema,
+        definitions: { args: { ...schema.definitions.args, required: ["q"] } },
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("validates 2020-12 schemas without dropping their dialect", () => {
