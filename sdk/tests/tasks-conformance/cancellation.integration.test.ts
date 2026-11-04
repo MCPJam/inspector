@@ -5,6 +5,33 @@ import {
   taskTool,
 } from "../support/extension-tasks-fixture.js";
 
+it("observes task routing headers with cancellation enabled and the default fetch", async () => {
+  const fixture = await serveExtensionTasksFixture({
+    tools: {
+      job: taskTool([
+        { status: "completed", ttlMs: 60_000, result: { content: [] } },
+      ]),
+    },
+  });
+  try {
+    const result = await new MCPTasksConformanceTest({
+      url: fixture.url,
+      mcpProtocolVersion: "2026-07-28",
+      signal: new AbortController().signal,
+      toolName: "job",
+      checkIds: ["tasks-mcp-name-routing"],
+    }).run();
+    expect(result.checks[0]).toMatchObject({
+      id: "tasks-mcp-name-routing",
+      status: "passed",
+      details: { mcpName: fixture.tasks()[0]?.taskId, mcpMethod: "tasks/get" },
+    });
+    expect(result.checks[0]?.details?.mcpName).toBeTruthy();
+  } finally {
+    await fixture.close();
+  }
+});
+
 it.each(["server/discover", "tools/list", "tools/call"])(
   "aborts %s, drains active work, and starts no later group",
   async (blockedMethod) => {

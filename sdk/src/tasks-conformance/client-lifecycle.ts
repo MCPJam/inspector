@@ -19,7 +19,7 @@ export async function withTasksClient<T>(
   let work: Promise<T> | undefined;
   const pending = new Set<Promise<Response>>();
   const abortableFetch = withAbortSignalFetch(
-    config.baseFetch ?? fetch,
+    config.baseFetch ?? ((input, init) => globalThis.fetch(input, init)),
     signal
   );
   const trackedFetch: typeof fetch = (input, init) => {
