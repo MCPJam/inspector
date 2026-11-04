@@ -513,6 +513,38 @@ describe("ConformanceRunDetailPage", () => {
     expect(fetchArtifactMock).toHaveBeenCalledTimes(2);
   });
 
+  it("shows the advice once a suite's retried report loads", async () => {
+    fetchArtifactMock.mockResolvedValueOnce({ ok: false, status: 503 })
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          groups: [{ cases: [{ id: "ping", title: "Ping", status: "passed" }] }],
+          advisories: [
+            {
+              id: "readiness-tool-order-deterministic",
+              title: "Tool order is stable",
+              kind: "readiness",
+              status: "MAY",
+              message: "Return tools in the same order.",
+            },
+          ],
+        }),
+      });
+    useArtifactQueryMock.mockReturnValue(run([report()]));
+    render(<ConformanceRunDetailPage runId="run_1" />);
+    await waitFor(() => expect(fetchArtifactMock).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(
+      screen.queryByRole("button", { name: /^Additional enhancements/ }),
+    ).toBeNull();
+
+    fireEvent.click(suiteHeader("protocol"));
+
+    expect(
+      await screen.findByRole("button", { name: /^Additional enhancements/ }),
+    ).toHaveTextContent("Additional enhancements1");
+  });
+
   it("lists the advice each saved report holds, like the live page", async () => {
     fetchArtifactMock.mockImplementation(async (url: string) => ({
       ok: true,

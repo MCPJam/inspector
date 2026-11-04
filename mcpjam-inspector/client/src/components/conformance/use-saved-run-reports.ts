@@ -46,6 +46,7 @@ export function useSavedRunReports(
 ) {
   // Keyed by run too: the page can move to another run without remounting.
   const cache = useRef(new Map<string, Promise<SavedReportJson>>());
+  const [advisories, setAdvisories] = useState<Record<string, unknown>>({});
   const loadReport = useCallback<LoadReport>(
     (suiteKind, url) => {
       const key = `${runId}:${suiteKind}`;
@@ -62,16 +63,20 @@ export function useSavedRunReports(
         return response.json() as Promise<SavedReportJson>;
       });
       cache.current.set(key, pending);
-      // A failure is not kept: opening the suite later tries again.
-      pending.catch(() => {
-        if (cache.current.get(key) === pending) cache.current.delete(key);
-      });
+      pending.then(
+        // Whichever caller loads it, page or suite row, the advice shows.
+        (json) =>
+          setAdvisories((current) => ({ ...current, [key]: json.advisories })),
+        // A failure is not kept: opening the suite later tries again.
+        () => {
+          if (cache.current.get(key) === pending) cache.current.delete(key);
+        },
+      );
       return pending;
     },
     [runId],
   );
 
-  const [advisories, setAdvisories] = useState<Record<string, unknown>>({});
   // The signed links renew over time, so the effect keys on which suites
   // have a report and reads the current links from here.
   const urls = useRef(new Map<string, string>());
@@ -86,24 +91,12 @@ export function useSavedRunReports(
   });
   const withReport = [...reportUrls.keys()].join(",");
   useEffect(() => {
-    let cancelled = false;
     for (const [suiteKind, url] of urls.current) {
-      loadReport(suiteKind, url)
-        .then((json) => {
-          if (cancelled) return;
-          setAdvisories((current) => ({
-            ...current,
-            [`${runId}:${suiteKind}`]: json.advisories,
-          }));
-        })
-        .catch(() => {
-          // No advice for this suite; its row says the report is missing.
-        });
+      loadReport(suiteKind, url).catch(() => {
+        // No advice for this suite; its row says the report is missing.
+      });
     }
-    return () => {
-      cancelled = true;
-    };
-  }, [runId, withReport, loadReport]);
+  }, [withReport, loadReport]);
 
   const advice = reportAdviceGroups(
     reports.map((report) => ({
