@@ -5,6 +5,10 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  mergeConformanceInputs,
+  useConformanceInputs,
+} from "@/hooks/use-conformance-inputs";
 import { Button } from "@mcpjam/design-system/button";
 import type { McpProtocolVersion } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -166,10 +170,7 @@ export function ConformanceTab({
   // The tools each server's checks may call: set in step 2, and
   // used by every later run of that server, Run again included.
   const { probesFor: sessionProbesFor, setProbes } = useConformanceProbeStore();
-  const probesFor = (name: string) =>
-    serverInputs && Object.hasOwn(serverInputs, name)
-      ? serverInputs[name]!
-      : sessionProbesFor(name);
+  const probesFor = useConformanceInputs(serverInputs, sessionProbesFor);
   // Defaults changed here while their save is in flight: Run again right
   // after a change in Settings must already run the new checks. Each entry
   // goes once its save settles, so the saved rows (a teammate's changes
@@ -280,15 +281,10 @@ export function ConformanceTab({
     !(isSavedServer && !isSavedServer(name) && !projectServersLoading)
       ? onLoadServerDefaults(name).then((defaults) => ({
           ...defaults,
-          inputs: {
-            ...defaults.inputs,
-            ...(probesFor(name).tasksProbe
-              ? { tasksProbe: probesFor(name).tasksProbe }
-              : {}),
-            ...(probesFor(name).tasksOverrides
-              ? { tasksOverrides: probesFor(name).tasksOverrides }
-              : {}),
-          },
+          inputs: mergeConformanceInputs(
+            defaults.inputs,
+            sessionProbesFor(name),
+          ),
         }))
       : Promise.resolve({
           selection:

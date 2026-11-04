@@ -10,6 +10,23 @@ import {
 import { MCP_TASKS_TOOL_CHECK_IDS } from "../../src/tasks-conformance/types.js";
 
 describe("Tasks execution plans", () => {
+  it.each([undefined, {}])(
+    "shares the update observation without answers %j",
+    (inputResponses) => {
+      const groups = planTasksConformance({
+        toolName: "job",
+        inputResponses,
+        checkIds: ["tasks-inline-result", "tasks-update-ack-shape"],
+      });
+      expect(groups).toHaveLength(1);
+      expect(groups[0]?.checkIds).toEqual([
+        "tasks-inline-result",
+        "tasks-update-ack-shape",
+      ]);
+      expect(groups[0]).not.toHaveProperty("inputResponses");
+    }
+  );
+
   it("preserves the protocol pin across separate requests", () => {
     const groups = planTasksConformance({
       protocolVersion: "2026-07-28",

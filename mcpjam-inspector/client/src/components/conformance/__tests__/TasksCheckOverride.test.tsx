@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { expect, it, vi } from "vitest";
 import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
 import { TasksCheckOverride } from "../TasksCheckOverride";
 vi.mock("../ConformanceProbeField", () => ({

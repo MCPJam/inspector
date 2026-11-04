@@ -93,9 +93,15 @@ export function planTasksConformance(
         })
       : {};
     const answers =
-      id === "tasks-update-ack-shape" ? options.inputResponses : undefined;
+      id === "tasks-update-ack-shape" &&
+      options.inputResponses &&
+      Object.keys(options.inputResponses).length > 0
+        ? options.inputResponses
+        : undefined;
+    const subject =
+      id === "tasks-update-ack-shape" && !answers ? "observation" : kind(id);
     const key = canonical([
-      kind(id),
+      subject,
       setup.toolName ?? null,
       setup.toolArguments ?? {},
       answers ?? null,

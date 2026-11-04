@@ -185,7 +185,7 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
 
     // The undeclared tools/call reached it too, and produced no task.
     expect(undeclaredRequests(fixture, "tools/call").length).toBeGreaterThan(0);
-    expect(fixture.tasks()).toHaveLength(4);
+    expect(fixture.tasks()).toHaveLength(3);
   });
 
   it("passes the rest of the suite against a conformant fixture", async () => {

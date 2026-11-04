@@ -342,15 +342,10 @@ export function useConformanceRun({
     ) => {
       setTasks({ status: "running" });
       try {
-        const result = await runTaskConformanceGroups(
-          serverName,
-          options ?? {},
-          () => isRunActive(runToken, serverName),
+        const result = await runTaskConformanceGroups(serverName, options, () =>
+          isRunActive(runToken, serverName),
         );
         if (!result) return;
-        if (!isRunActive(runToken, serverName)) return;
-        // The tasks suite reports a real third outcome: checks that apply but
-        // could not be exercised leave the run incomplete, never passing.
         setTasks({ status: "done", result, verdict: verdictOf(result) });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;

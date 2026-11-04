@@ -4600,4 +4600,71 @@ describe("ConformanceTab blocked sign-in window", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
+  it("keeps local Tasks overrides when saved server inputs load and Settings saves", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const local = {
+      tasksProbe: { toolName: "default-job" },
+      tasksOverrides: {
+        "tasks-inline-result": {
+          toolName: "custom-job",
+          arguments: { fast: true },
+        },
+      },
+    };
+    window.localStorage.setItem(
+      "mcpjam.conformance.probes.v1:alpha",
+      JSON.stringify(local),
+    );
+    const selection = {
+      protocol: [],
+      apps: [],
+      tasks: ["tasks-inline-result"],
+      oauth: false,
+    } satisfies import("@/hooks/use-conformance-run").ConformanceSelection;
+    const save = vi.fn(
+      async (_name: string, _selection: unknown, _inputs?: unknown) => {},
+    );
+    window.history.replaceState(null, "", "/conformance?run=alpha");
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        serverInputs={{ alpha: { tasksProbe: { toolName: "shared-job" } } }}
+        serverDefaults={{ alpha: selection }}
+        onLoadServerDefaults={vi.fn(async () => ({
+          selection,
+          inputs: { tasksProbe: { toolName: "shared-job" } },
+        }))}
+        onSaveServerDefaults={save}
+      />,
+    );
+    await waitFor(() =>
+      expect(mockRunTasks).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({
+          toolName: "default-job",
+          checkOverrides: {
+            "tasks-inline-result": {
+              toolName: "custom-job",
+              toolArguments: { fast: true },
+            },
+          },
+        }),
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Run OAuth" }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls.at(-1)?.[2]).not.toHaveProperty("tasksOverrides");
+    expect(
+      JSON.parse(
+        window.localStorage.getItem("mcpjam.conformance.probes.v1:alpha")!,
+      ),
+    ).toEqual(local);
+  });
+
 });
