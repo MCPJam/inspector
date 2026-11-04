@@ -46,7 +46,7 @@ import { principalKey } from "../../utils/request-principal.js";
 import { toBrowserOAuthResult } from "../../utils/oauth-conformance-browser-result.js";
 import { checkConformanceConnection } from "../shared/conformance-connection.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
-import { logger } from "../../utils/logger.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 import {
   awaitRendezvousResult,
   createRendezvous,
@@ -56,10 +56,6 @@ import {
 } from "../../services/conformance-oauth-rendezvous.js";
 
 const conformanceWeb = new Hono();
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -530,9 +526,14 @@ conformanceWeb.post("/oauth/start", async (c) =>
                 try {
                   await createRendezvous(convexBearer, session.id);
                 } catch (error) {
-                  logger.warn("[conformance-oauth] rendezvous not created", {
-                    error: errorText(error),
-                  });
+                  reportRouteFailure(
+                    "conformance OAuth rendezvous not created",
+                    error,
+                    {
+                      source: "web.conformance.oauth.start.rendezvous",
+                      hop: "mcpjam_internal",
+                    }
+                  );
                   throw new WebRouteError(
                     503,
                     ErrorCode.INTERNAL_ERROR,
@@ -573,8 +574,9 @@ conformanceWeb.post("/oauth/authorize", async (c) =>
       try {
         outcome = await submitRendezvousCode(bearer, parsed);
       } catch (error) {
-        logger.warn("[conformance-oauth] code not submitted", {
-          error: errorText(error),
+        reportRouteFailure("conformance OAuth code not submitted", error, {
+          source: "web.conformance.oauth.authorize.rendezvous",
+          hop: "mcpjam_internal",
         });
         throw new WebRouteError(
           503,
