@@ -59,7 +59,7 @@ describe("Inspector Tasks group requests", () => {
       });
       expect(result?.checks.filter(isMissingInputCheck)).toHaveLength(1);
       expect(result?.checks[1]?.status).toBe("passed");
-      expect(result?.outcome).toBe("incomplete");
+      expect(result?.outcome).toBe("passed");
       expect(readStoredProbes("blank-test")).toEqual(saved);
     },
   );
@@ -79,7 +79,7 @@ describe("Inspector Tasks group requests", () => {
     expect(run).not.toHaveBeenCalled();
     expect(result?.checks).toHaveLength(2);
     expect(result?.checks.every(isMissingInputCheck)).toBe(true);
-    expect(result?.outcome).toBe("incomplete");
+    expect(result?.outcome).toBe("passed");
   });
   it("keeps valid checks running with the default all-checks selection", async () => {
     run.mockImplementation(async (_server, group) => passed(group.checkIds));

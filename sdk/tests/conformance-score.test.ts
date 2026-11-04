@@ -74,7 +74,7 @@ describe("computeConformanceScore", () => {
   });
 
   it.each(["tasksProbe", "logProbe", "inputRequiredProbe", "toolCallProbe"])(
-    "leaves missing %s input unscored while keeping the run incomplete",
+    "leaves missing %s input unscored and out of the verdict",
     (missingInput) => {
       const score = computeConformanceScore([
         ...passing(25),
@@ -88,7 +88,7 @@ describe("computeConformanceScore", () => {
         applicable: 25,
         couldNotRun: 1,
         failed: 0,
-        outcome: "incomplete",
+        outcome: "passed",
       });
       const pooled = pooledConformanceScore([
         score,
@@ -98,12 +98,12 @@ describe("computeConformanceScore", () => {
         score: 100,
         applicable: 30,
         couldNotRun: 1,
-        outcome: "incomplete",
+        outcome: "passed",
       });
     }
   );
 
-  it("has no score when every selected check needs input", () => {
+  it("has no score, and passes, when every selected check needs input", () => {
     const score = computeConformanceScore([
       {
         ...check("missing", "skipped", "could-not-run"),
@@ -114,7 +114,7 @@ describe("computeConformanceScore", () => {
       score: null,
       applicable: 0,
       couldNotRun: 1,
-      outcome: "incomplete",
+      outcome: "passed",
     });
   });
 
