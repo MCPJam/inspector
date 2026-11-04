@@ -895,6 +895,9 @@ export async function driveHostedEvalTurn(
       extraBodyFields: mergedExtraBodyFields,
       ...(params.extraHeaders ? { extraHeaders: params.extraHeaders } : {}),
       abortSignal: turnDeadline.signal,
+      // A busy-admission wait that would outlast the turn returns the refusal
+      // instead of sleeping into the turn's abort.
+      remainingTurnMs: turnDeadline.remainingMs,
       maxSteps: params.maxSteps,
       progressivePlan: prepared.progressivePlan,
       discoveryState: prepared.discoveryState,

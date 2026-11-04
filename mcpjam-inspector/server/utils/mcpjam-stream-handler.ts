@@ -3,7 +3,7 @@ import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 import { AdmissionWaitBudget } from "../services/sessionSimulation/admission-retry.js";
-import { withSwarmStepAdmissionRetry } from "./swarm-step-admission.js";
+import { withModelStepAdmissionRetry } from "./model-step-admission.js";
 import { streamSelectionFields } from "./selection-rail.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { unwrapToolOutputEnvelope } from "@/shared/tool-output-envelope";
@@ -4087,7 +4087,7 @@ async function processOneStep(ctx: StepContext): Promise<{
   // back: a provider that rejects the request outright still failed as the
   // model, while a throw in the preparation above genuinely is ours.
   onModelHandover?.();
-  res = await withSwarmStepAdmissionRetry(
+  res = await withModelStepAdmissionRetry(
     () => fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
       method: "POST",
       headers: convexHeaders,
