@@ -1,4 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
+import { TaskRequestHeaders } from "./request-headers.js";
 import { readRequiredCapabilities } from "./metadata.js";
 import type { MCPClientManager } from "../mcp-client-manager/MCPClientManager.js";
 
@@ -30,6 +31,7 @@ import {
   InputRequiredLeg,
 } from "./evidence.js";
 export class TaskOperations {
+  readonly requestHeaders = new TaskRequestHeaders();
   constructor(readonly config: NormalizedMCPTasksConformanceConfig) {}
   extractTaskId(wire: TasksWire, result: unknown): string | undefined {
     if (!isRecord(result)) return undefined;

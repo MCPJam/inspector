@@ -268,30 +268,3 @@ export function validateTaskTtlIntegerShape(
 
   return { violations, warnings };
 }
-
-export async function captureTaskRequestHeaders(
-  fn: () => Promise<unknown>
-): Promise<{ headers?: Record<string, string>; error?: unknown }> {
-  const original = globalThis.fetch;
-  let headers: Record<string, string> | undefined;
-
-  globalThis.fetch = (async (input: any, init?: any) => {
-    const seen: Record<string, string> = {};
-    new Request(input, init).headers.forEach((value, key) => {
-      seen[key.toLowerCase()] = value;
-    });
-    if (seen["mcp-name"] !== undefined || seen["mcp-method"] !== undefined) {
-      headers = seen;
-    }
-    return original(input, init);
-  }) as typeof globalThis.fetch;
-
-  try {
-    await fn();
-    return headers === undefined ? {} : { headers };
-  } catch (error) {
-    return headers === undefined ? { error } : { headers, error };
-  } finally {
-    globalThis.fetch = original;
-  }
-}

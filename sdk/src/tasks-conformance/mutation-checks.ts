@@ -11,7 +11,6 @@ import {
   notApplicable,
   couldNotRun,
 } from "./metadata.js";
-import { captureTaskRequestHeaders } from "./shapes.js";
 import {
   INVALID_PARAMS,
   UndeclaredProbe,
@@ -135,7 +134,7 @@ export async function runMutationChecks(context: TaskCheckContext) {
       // is captured off the fetch seam rather than inferred from a
       // successful read (a server that ignores the header would make a
       // read-only assertion pass vacuously).
-      const observed = await captureTaskRequestHeaders(() =>
+      const observed = await operations.requestHeaders.capture(() =>
         manager.getTaskExt(serverId, createdTaskId)
       );
       const mcpName = observed.headers?.["mcp-name"];

@@ -601,6 +601,7 @@ export class TaskGroupRunner extends TaskOperations {
           timeout: this.config.timeout,
           rpcLogger: captureRpc,
           signal: this.config.signal,
+          onRequest: this.requestHeaders.observe,
         }
       );
     } catch (error) {
