@@ -210,6 +210,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
 
   const prefersReducedMotion = useReducedMotion();
   const serverKey = useServerKey(serverConfig);
+
   const onboarding = useOnboarding({
     servers,
     onConnect: onConnect ?? (() => {}),
@@ -253,6 +254,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     setSidebarVisible,
   } = useUIPlaygroundStore();
   const hostStyle = usePreferencesStore((s) => s.hostStyle);
+
   useLayoutEffect(() => {
     onOnboardingChange?.(false);
   }, [onOnboardingChange]);
@@ -701,8 +703,10 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   useEffect(() => {
     if (selectedTool && tools[selectedTool]) {
       setFormFields(
-        applyParamsToFields(generateFormFieldsFromSchema(tools[selectedTool].inputSchema),
-          buildParametersFromFields(useUIPlaygroundStore.getState().formFields))
+        applyParamsToFields(
+          generateFormFieldsFromSchema(tools[selectedTool].inputSchema),
+          buildParametersFromFields(useUIPlaygroundStore.getState().formFields),
+        ),
       );
       return;
     }

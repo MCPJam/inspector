@@ -86,7 +86,9 @@ export function MultiServerToolsPaneInner({
   previewedHarnessId,
 }: InnerProps) {
   const state = usePlaygroundStateContext();
-  const recoveredCall = useUIPlaygroundStore((store) => store.recoveredToolCall);
+  const recoveredCall = useUIPlaygroundStore(
+    (store) => store.recoveredToolCall,
+  );
   const appState = useSharedAppState();
   const reconnectingServerNames = useMemo(
     () =>
@@ -165,8 +167,11 @@ export function MultiServerToolsPaneInner({
       useUIPlaygroundStore.setState({ recoveredToolCall: null });
       return;
     }
-    const entry = flat.find((tool) => tool.serverId === recoveredCall.serverName &&
-      tool.toolName === recoveredCall.toolName);
+    const entry = flat.find(
+      (tool) =>
+        tool.serverId === recoveredCall.serverName &&
+        tool.toolName === recoveredCall.toolName,
+    );
     if (!entry) return;
     setSelected({
       serverId: recoveredCall.serverName,
