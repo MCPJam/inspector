@@ -221,6 +221,7 @@ export function ConformanceContent({
   history,
   home,
   canRun,
+  runDisabled = false,
   onConnectServer,
   onEditServer,
   onRequestRun,
@@ -245,6 +246,8 @@ export function ConformanceContent({
   home?: ReactNode;
   /** False when the selection is not one of the page's servers. */
   canRun: boolean;
+  /** Defaults must load successfully before a new run can start. */
+  runDisabled?: boolean;
   onConnectServer?: ConformanceConnectServer;
   onEditServer?: (name: string) => void;
   /** Set when Run opens the setup steps instead of running here. */
@@ -466,7 +469,7 @@ export function ConformanceContent({
     <Button
       size="sm"
       onClick={onRequestRun ?? handleRun}
-      disabled={isRunning || isConnecting}
+      disabled={isRunning || isConnecting || runDisabled}
     >
       {isRunning || isConnecting ? (
         <>
@@ -547,7 +550,9 @@ export function ConformanceContent({
               <Button
                 size="sm"
                 onClick={onRunAgain ? () => onRunAgain(versionPin) : handleRun}
-                disabled={isRunning || isConnecting || settingsLoading}
+                disabled={
+                  isRunning || isConnecting || settingsLoading || runDisabled
+                }
               >
                 {isRunning || isConnecting ? (
                   <>

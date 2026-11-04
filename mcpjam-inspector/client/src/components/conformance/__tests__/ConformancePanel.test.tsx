@@ -1262,10 +1262,79 @@ describe("ConformanceTab", () => {
         onLoadServerDefaults={load}
       />,
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load your saved inputs. Try again.",
+    );
+    for (const button of screen.getAllByRole("button", { name: RUN_OR_AGAIN }))
+      expect(button).toBeDisabled();
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    fireEvent.click(retry);
     await waitFor(() => expect(mockRunProtocol).toHaveBeenCalledTimes(1));
     expect(mockRunTasks).not.toHaveBeenCalled();
     expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("blocks Run again after an input load error and recovers through Retry", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const defaults = { selection: { tasks: [], oauth: false }, inputs: {} };
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce(defaults)
+      .mockRejectedValueOnce(new Error("bad saved inputs"))
+      .mockResolvedValue(defaults);
+    window.history.replaceState(null, "", "/conformance?run=alpha");
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onLoadServerDefaults={load}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getByRole("button", { name: "Run again" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load your saved inputs. Try again.",
+    );
+    expect(mockRunProtocol).toHaveBeenCalledTimes(1);
+    fireEvent.click(retry);
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps setup on the same screen with Retry after an input read fails", async () => {
+    const alpha = createHttpServer({ name: "alpha" });
+    const load = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("bad saved inputs"))
+      .mockResolvedValue({ selection: {}, inputs: {} });
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onLoadServerDefaults={load}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load your saved inputs. Try again.",
+    );
+    expect(screen.queryByRole("button", { name: RUN_LABEL })).toBeNull();
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    fireEvent.click(retry);
+    expect(
+      await screen.findByRole("button", { name: RUN_LABEL }),
+    ).toBeEnabled();
+    expect(mockRunProtocol).not.toHaveBeenCalled();
   });
 
   it("says so, and runs nothing, when Run again names a server it does not offer", async () => {

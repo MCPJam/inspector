@@ -226,7 +226,14 @@ describe("Settings inputs", () => {
       />,
     );
     expect(screen.getByRole("status")).toHaveTextContent("Loading defaults");
-    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load your saved inputs. Try again.",
+    );
+    expect(
+      screen.queryByRole("combobox", { name: "Tool that emits logs" }),
+    ).toBeNull();
+    fireEvent.click(retry);
     expect(
       await screen.findByRole("combobox", { name: "Tool that emits logs" }),
     ).toBeInTheDocument();

@@ -173,6 +173,73 @@ describe("useConformanceServerData", () => {
       );
     });
   });
+  it.each(["arguments", "inputResponses"] as const)(
+    "rejects unreadable saved %s and lets Retry recover without a render crash",
+    async (field) => {
+      for (const value of ["{broken", "null", "[]", "false", "1", '\"text\"']) {
+        const invalid = {
+          ...row,
+          defaultInputs: {
+            logProbe: { toolName: "log", arguments: "{}" },
+            tasksProbe: { toolName: "task", [field]: value },
+          },
+        };
+        client.query.mockResolvedValue(invalid);
+        queries.mockReturnValue({ "proj_1:srv_1": invalid });
+        const hook = renderHook(() => useConformanceServerData(props));
+        await act(async () => {
+          await expect(
+            hook.result.current.loadDefaults("alpha"),
+          ).rejects.toThrow("Could not load your saved inputs. Try again.");
+        });
+        expect(hook.result.current.defaultsByServer).toEqual({});
+        expect(hook.result.current.inputsByServer).toEqual({});
+        queries.mockReturnValue({ "proj_1:srv_1": row });
+        client.query.mockResolvedValue(row);
+        await act(async () => {
+          expect(
+            (await hook.result.current.loadDefaults("alpha")).inputs,
+          ).toEqual(inputs);
+        });
+        expect(hook.result.current.inputsByServer.alpha).toEqual(inputs);
+        hook.unmount();
+      }
+    },
+  );
+  it("does not expose a broken subscription as empty or partial inputs", async () => {
+    const hook = renderHook(() => useConformanceServerData(props));
+    await act(async () => {
+      await hook.result.current.loadDefaults("alpha");
+    });
+    queries.mockReturnValue({
+      "proj_1:srv_1": {
+        ...row,
+        defaultInputs: {
+          tasksProbe: { toolName: "task", arguments: "{broken" },
+        },
+      },
+    });
+    hook.rerender();
+    expect(hook.result.current.inputsByServer.alpha).toEqual(inputs);
+    expect(hook.result.current.defaultsByServer.alpha).toEqual({
+      oauth: false,
+      tasksAdvice: [],
+    });
+  });
+  it.each([undefined, {}])(
+    "accepts missing saved inputs without an error (%s)",
+    async (defaultInputs) => {
+      client.query.mockResolvedValue({ ...row, defaultInputs });
+      const hook = renderHook(() => useConformanceServerData(props));
+      await act(async () => {
+        expect(await hook.result.current.loadDefaults("alpha")).toEqual({
+          selection: { oauth: false, tasksAdvice: [] },
+          inputs: {},
+        });
+      });
+      expect(hook.result.current.inputsByServer.alpha).toEqual({});
+    },
+  );
   it("does not guess defaults while the server catalog is loading", async () => {
     const { result, rerender } = renderHook(
       (args) => useConformanceServerData(args),

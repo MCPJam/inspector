@@ -347,7 +347,7 @@ export function ConformanceSetup({
 
             {defaultsError ? (
               <p role="alert" className="mt-3 text-sm text-destructive">
-                Could not load the default checks and inputs. Try again.
+                Could not load your saved inputs. Try again.
               </p>
             ) : null}
             <div className="mt-7 flex items-center justify-end gap-2">

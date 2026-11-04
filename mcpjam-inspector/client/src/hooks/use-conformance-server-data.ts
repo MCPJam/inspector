@@ -12,6 +12,7 @@ import {
   type ConformanceProbes,
 } from "@/hooks/use-conformance-probes";
 import { useSoftQuery } from "@/hooks/use-soft-query";
+import { isRecord } from "@/lib/host-capabilities";
 import type { ConformanceRunListItem } from "@/components/conformance/ConformanceHistory";
 
 export type ConformanceDefaults = {
@@ -41,22 +42,31 @@ function encodeInputs(inputs: ConformanceProbes): StoredProbes {
   }
   return stored;
 }
-function decodeInputs(stored: StoredProbes = {}): ConformanceProbes {
+function decodeInputs(stored: StoredProbes = {}): ConformanceProbes | Error {
   const inputs: ConformanceProbes = {};
-  for (const key of PROBE_KEYS) {
-    const probe = stored[key];
-    if (!probe) continue;
-    const { arguments: args, inputResponses, ...fields } = probe;
-    // The backend validates these strings as JSON objects before saving them.
-    inputs[key] = {
-      ...fields,
-      ...(args !== undefined ? { arguments: JSON.parse(args) } : {}),
-      ...(inputResponses !== undefined
-        ? { inputResponses: JSON.parse(inputResponses) }
-        : {}),
-    };
+  const parseObject = (text: string): Record<string, unknown> => {
+    const value: unknown = JSON.parse(text);
+    if (!isRecord(value)) throw new Error("Expected a JSON object");
+    return value;
+  };
+  try {
+    for (const key of PROBE_KEYS) {
+      const probe = stored[key];
+      if (!probe) continue;
+      const { arguments: args, inputResponses, ...fields } = probe;
+      inputs[key] = {
+        ...fields,
+        ...(args !== undefined ? { arguments: parseObject(args) } : {}),
+        ...(inputResponses !== undefined
+          ? { inputResponses: parseObject(inputResponses) }
+          : {}),
+      };
+    }
+    return inputs;
+  } catch {
+    // Report a failed read without exposing input contents or using partial inputs.
+    return new Error("Could not load your saved inputs. Try again.");
   }
-  return inputs;
 }
 type ServerSettingsRow = {
   serverId: string;
@@ -123,12 +133,20 @@ export function useConformanceServerData({
   for (const [key, args] of requested) {
     if (args.projectId !== projectId) continue;
     const result = results[key];
-    const row =
+    let row =
       result === undefined || result instanceof Error
         ? snapshots.get(key)
         : result;
     const name = serversById.get(args.serverId);
     if (!name || row === undefined) continue;
+    let decoded = decodeInputs(row?.defaultInputs);
+    if (decoded instanceof Error) {
+      // Keep confirmed inputs visible; a new read must succeed before Run.
+      row = snapshots.get(key);
+      if (row === undefined) continue;
+      decoded = decodeInputs(row?.defaultInputs);
+      if (decoded instanceof Error) continue;
+    }
     defaults.set(
       name,
       runnableSelection(
@@ -136,7 +154,7 @@ export function useConformanceServerData({
         "auto",
       ) ?? {},
     );
-    inputs.set(name, decodeInputs(row?.defaultInputs));
+    inputs.set(name, decoded);
   }
   const loadDefaults = useCallback(
     async (serverName: string): Promise<ConformanceDefaults> => {
@@ -148,6 +166,8 @@ export function useConformanceServerData({
       const args = { projectId, serverId };
       setRequested((prev) => new Map(prev).set(key, args));
       const row = await client.query(settingsQuery, args);
+      const inputs = decodeInputs(row?.defaultInputs);
+      if (inputs instanceof Error) throw inputs;
       setSnapshots((prev) => new Map(prev).set(key, row));
       return {
         selection:
@@ -155,7 +175,7 @@ export function useConformanceServerData({
             { ...row?.defaultChecks, ...row?.defaultAdvice },
             "auto",
           ) ?? {},
-        inputs: decodeInputs(row?.defaultInputs),
+        inputs,
       };
     },
     [client, projectId, serversByName, serversLoading],
