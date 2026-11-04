@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runConformance } from "../src/conformance-run.js";
+import { isAuthorizationRequiredCheck } from "../src/conformance-authorization.js";
 import { resolveRunProtocolVersion } from "../src/conformance-run-version.js";
 import { createFixtureHandler } from "./support/dual-era-fixture.js";
 import type { OAuthConformanceConfig } from "../src/oauth-conformance/types.js";
@@ -220,6 +221,56 @@ describe("one HTTP revision per conformance run", () => {
     }
   });
 
+  it("lets an OAuth-only Auto run acquire its own client-credentials token", async () => {
+    const baseFetch = vi.fn<typeof fetch>(
+      async () => new Response("Unauthorized", { status: 401 })
+    );
+    const report = await runConformance({
+      server: { url: "https://fixture.test/mcp", baseFetch },
+      suites: ["oauth"],
+      oauth: {
+        serverUrl: "https://fixture.test/mcp",
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "dcr",
+        auth: { mode: "client_credentials" },
+      },
+    });
+    expect(baseFetch).not.toHaveBeenCalled();
+    expect(oauth).toHaveBeenCalledWith(
+      expect.objectContaining({
+        protocolVersion: "2025-11-25",
+        auth: { mode: "client_credentials" },
+      })
+    );
+    expect(report.reports.oauth?.outcome).toBe("passed");
+  });
+
+  it("still runs OAuth after an unauthenticated shared Auto connection is refused", async () => {
+    const baseFetch = vi.fn<typeof fetch>(
+      async () => new Response("Unauthorized", { status: 401 })
+    );
+    const report = await runConformance({
+      server: { url: "https://fixture.test/mcp", baseFetch },
+      suites: ["protocol", "apps", "tasks", "oauth"],
+      oauth: {
+        serverUrl: "https://fixture.test/mcp",
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "dcr",
+      },
+    });
+    expect(baseFetch).toHaveBeenCalled();
+    expect(oauth).toHaveBeenCalledTimes(1);
+    expect(report.reports.oauth?.outcome).toBe("passed");
+    for (const kind of ["protocol", "apps", "tasks"] as const) {
+      expect(report.reports[kind]?.outcome).toBe("incomplete");
+      expect(
+        isAuthorizationRequiredCheck(
+          report.reports[kind]?.groups[0].cases[0] ?? {}
+        )
+      ).toBe(true);
+    }
+  });
+
   it("reports unresolved Auto as incomplete and starts no suites", async () => {
     const baseFetch = vi.fn<typeof fetch>(
       async () => new Response("Unauthorized", { status: 401 })
@@ -237,5 +288,7 @@ describe("one HTTP revision per conformance run", () => {
       });
     }
     expect(oauth).not.toHaveBeenCalled();
+    for (const suite of Object.values(report.reports))
+      expect(isAuthorizationRequiredCheck(suite.groups[0].cases[0])).toBe(true);
   });
 });

@@ -24,6 +24,7 @@ import type { OAuthConformanceConfig } from "./oauth-conformance/types.js";
 import { MCPTasksConformanceTest } from "./tasks-conformance/runner.js";
 import {
   resolveRunProtocolVersion,
+  requestedRunProtocolVersion,
   serverConfigFetch,
   unresolvedVersionReport,
 } from "./conformance-run-version.js";
@@ -186,20 +187,28 @@ export async function runConformance(
   const requestedSuites = normalizeConformanceSuites(config.suites);
   if (requestedSuites.includes("oauth") && !config.oauth) {
     throw new Error(
-      "OAuth is opt-in and requires an explicit supported auth strategy",
+      "OAuth is opt-in and requires an explicit supported auth strategy"
     );
   }
   const startedAt = Date.now();
   const reports: Partial<Record<ConformanceSuiteKind, ConformanceReport>> = {};
+  let independent = requestedSuites.filter((kind) => kind !== "oauth");
+  const requestedVersion = requestedRunProtocolVersion(config);
   try {
-    config = {
-      ...config,
-      protocolVersion: await resolveRunProtocolVersion(config),
-    };
+    // OAuth-only runs acquire their own credentials before contacting MCP.
+    if (independent.length > 0 || requestedVersion !== undefined) {
+      config = {
+        ...config,
+        protocolVersion: await resolveRunProtocolVersion(config),
+      };
+    }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    for (const kind of requestedSuites) {
-      const report = unresolvedVersionReport(kind, message);
+    const canRunOAuth =
+      requestedVersion === undefined && !config.protocol?.signal?.aborted;
+    for (const kind of requestedSuites.filter(
+      (kind) => kind !== "oauth" || !canRunOAuth
+    )) {
+      const report = unresolvedVersionReport(kind, error);
       reports[kind] = report;
       await config.onProgress?.({
         suiteKind: kind,
@@ -207,14 +216,8 @@ export async function runConformance(
         report,
       });
     }
-    return buildConformanceRunReport({
-      requestedSuites,
-      reports,
-      startedAt,
-      engineVersion: config.engineVersion,
-    });
+    independent = [];
   }
-  const independent = requestedSuites.filter((kind) => kind !== "oauth");
 
   await Promise.all(
     independent.map(async (kind) => {
@@ -235,10 +238,10 @@ export async function runConformance(
           error: message,
         });
       }
-    }),
+    })
   );
 
-  if (requestedSuites.includes("oauth")) {
+  if (requestedSuites.includes("oauth") && !reports.oauth) {
     await config.onProgress?.({ suiteKind: "oauth", status: "running" });
     try {
       const report = await runSuite("oauth", config);

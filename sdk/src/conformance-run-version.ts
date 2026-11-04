@@ -1,6 +1,11 @@
 import type { RunConformanceConfig } from "./conformance-run.js";
 import type { ConformanceReport } from "./conformance-reporting.js";
 import type { ConformanceSuiteKind } from "./conformance-run-types.js";
+import {
+  AUTHORIZATION_REQUIRED_MESSAGE,
+  authorizationRequiredDetails,
+  isAuthorizationRefusal,
+} from "./conformance-authorization.js";
 import { withEphemeralClient } from "./operations.js";
 import { withAbortSignalFetch } from "./abort-signal.js";
 import {
@@ -16,6 +21,17 @@ export function serverConfigFetch(
   );
 }
 
+export function requestedRunProtocolVersion(
+  config: RunConformanceConfig
+): McpProtocolVersion | undefined {
+  return (
+    config.protocolVersion ??
+    ("mcpProtocolVersion" in config.server
+      ? config.server.mcpProtocolVersion
+      : undefined)
+  );
+}
+
 /** Resolve Auto once before independent suites can negotiate different versions. */
 export async function resolveRunProtocolVersion(
   config: RunConformanceConfig
@@ -23,9 +39,7 @@ export async function resolveRunProtocolVersion(
   const server = config.server;
   if (!("url" in server) || server.url == null) return undefined;
   config.protocol?.signal?.throwIfAborted();
-  const pin =
-    config.protocolVersion ??
-    ("mcpProtocolVersion" in server ? server.mcpProtocolVersion : undefined);
+  const pin = requestedRunProtocolVersion(config);
   if (pin !== undefined) {
     if (!isKnownProtocolVersion(pin))
       throw new Error(`Unknown protocol version: ${pin}`);
@@ -55,15 +69,21 @@ export async function resolveRunProtocolVersion(
 /** A connection failure leaves the requested checks untested, never passing. */
 export function unresolvedVersionReport(
   kind: ConformanceSuiteKind,
-  error: string
+  error: unknown
 ): ConformanceReport {
+  const needsAuthorization = isAuthorizationRefusal(error);
+  const message = needsAuthorization
+    ? AUTHORIZATION_REQUIRED_MESSAGE
+    : error instanceof Error
+      ? error.message
+      : String(error);
   return {
     schemaVersion: 1,
     kind: `${kind}-conformance`,
     name: kind,
     passed: false,
     outcome: "incomplete",
-    incompleteReason: error,
+    incompleteReason: message,
     durationMs: 0,
     score: {
       score: null,
@@ -92,7 +112,10 @@ export function unresolvedVersionReport(
             status: "skipped",
             skipReason: "could-not-run",
             durationMs: 0,
-            error,
+            error: message,
+            ...(needsAuthorization
+              ? { details: authorizationRequiredDetails(error) }
+              : {}),
           },
         ],
       },
