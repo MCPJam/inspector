@@ -72,7 +72,12 @@ export function reportAdviceGroups(
               {
                 id: advisory.id,
                 title: advisory.title,
-                specStrength: advisory.status,
+                specStrength:
+                  suiteKind === "protocol" &&
+                  advisory.id === "readiness-deprecated-feature-use" &&
+                  advisory.status === "SHOULD"
+                    ? "Deprecation Notice"
+                    : advisory.status,
                 message:
                   typeof advisory.message === "string" ? advisory.message : "",
               },

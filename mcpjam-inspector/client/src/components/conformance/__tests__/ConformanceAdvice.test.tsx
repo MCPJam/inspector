@@ -75,6 +75,41 @@ describe("ConformanceAdvice", () => {
 });
 
 describe("reportAdviceGroups", () => {
+  it.each(["SHOULD", "Deprecation Notice"])(
+    "renders saved protocol deprecation with strength %s using the short label",
+    (status) => {
+      const reports = [
+        {
+          suiteKind: "protocol",
+          advisories: [
+            {
+              id: "readiness-deprecated-feature-use",
+              title: "Deprecated Feature Use",
+              kind: "readiness",
+              status,
+              message: "The negotiated revision is superseded.",
+            },
+          ],
+        },
+      ];
+      const groups = reportAdviceGroups(reports);
+      expect(groups[0].readiness?.[0].specStrength).toBe("Deprecation Notice");
+      expect(reports[0].advisories[0].status).toBe(status);
+
+      render(<ConformanceAdvice groups={groups} />);
+      fireEvent.click(
+        screen.getByRole("button", { name: /^Additional enhancements/ }),
+      );
+      expect(screen.getByRole("listitem")).toHaveTextContent(
+        "Deprecation notice Protocol Deprecated Feature Use",
+      );
+      expect(screen.getByRole("listitem")).not.toHaveTextContent("Suggested (");
+      expect(
+        screen.queryByText(/A deprecation notice means the spec/),
+      ).not.toBeInTheDocument();
+    },
+  );
+
   it("reads a saved report's readiness advisories as advice rows", () => {
     expect(
       reportAdviceGroups([
