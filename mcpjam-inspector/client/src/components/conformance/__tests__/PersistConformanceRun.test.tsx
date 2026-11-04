@@ -155,6 +155,7 @@ describe("PersistConformanceRun", () => {
         server={httpServer()}
         snapshot={snapshot({
           runVersion: 2,
+          runTimeoutSeconds: 300,
           isRunning: true,
           protocol: { status: "running" },
         })}
@@ -166,6 +167,7 @@ describe("PersistConformanceRun", () => {
       expect.objectContaining({
         projectId: "proj_1",
         source: "ui",
+        runTimeoutSeconds: 300,
         actorLabel: "Inspector UI",
       }),
     );
