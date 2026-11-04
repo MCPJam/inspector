@@ -133,6 +133,55 @@ describe("Tasks execution plans", () => {
   });
 });
 describe("group report aggregation", () => {
+  it("takes the target and discovery from an observed group regardless of failure order", () => {
+    const synthetic = taskGroupFailure(
+      ["tasks-inline-result"],
+      "Missing tool or timed-out request",
+      "alpha"
+    );
+    const observed = taskGroupFailure(
+      ["tasks-ttl-shape"],
+      "",
+      "https://example.test/mcp"
+    );
+    observed.discovery = {
+      ...observed.discovery,
+      protocolVersion: "2026-07-28",
+      wire: "extension",
+    };
+    observed.checks = observed.checks.map((check) => ({
+      ...check,
+      status: "passed",
+      skipReason: undefined,
+      error: undefined,
+    }));
+    for (const results of [
+      [synthetic, observed],
+      [observed, synthetic],
+    ]) {
+      const result = mergeTasksConformanceResults(results, [
+        "tasks-inline-result",
+        "tasks-ttl-shape",
+      ]);
+      expect(result.target).toBe("https://example.test/mcp");
+      expect(result.discovery.protocolVersion).toBe("2026-07-28");
+      expect(result.checks.map((check) => check.status)).toEqual([
+        "skipped",
+        "passed",
+      ]);
+      expect(result.outcome).toBe("incomplete");
+    }
+  });
+  it("keeps the target fallback when no group reached a server", () => {
+    const first = taskGroupFailure(
+      ["tasks-inline-result"],
+      "Missing tool",
+      "alpha"
+    );
+    const second = taskGroupFailure(["tasks-ttl-shape"], "Timed out", "beta");
+    expect(mergeTasksConformanceResults([first, second]).target).toBe("alpha");
+    expect(mergeTasksConformanceResults([]).target).toBe("");
+  });
   it("preserves completed results when another group times out and grades each check once", () => {
     const first = taskGroupFailure(
       ["tasks-ttl-shape", "tasks-declaration-hygiene"],

@@ -103,13 +103,13 @@ export function mergeTasksConformanceResults(
         !readiness.some((other) => other.id === r.id) &&
         all.findIndex((other) => other.id === r.id) === i
     );
-  const discovery = results.find((r) => r.discovery.protocolVersion)
-    ?.discovery ??
-    results[0]?.discovery ?? {
-      wire: "none" as const,
-      toolCount: 0,
-      taskCapableToolCount: 0,
-    };
+  const observed =
+    results.find((r) => r.discovery.protocolVersion) ?? results[0];
+  const discovery = observed?.discovery ?? {
+    wire: "none" as const,
+    toolCount: 0,
+    taskCapableToolCount: 0,
+  };
   const toolNames = new Set(
     results.map((r) => r.discovery.probedTool).filter(Boolean)
   );
@@ -124,7 +124,7 @@ export function mergeTasksConformanceResults(
   return {
     ...verdict,
     passed: verdict.outcome === "passed",
-    target: results[0]?.target ?? "",
+    target: observed?.target ?? "",
     checks,
     summary:
       buildOutcomeSummary(scored) +
