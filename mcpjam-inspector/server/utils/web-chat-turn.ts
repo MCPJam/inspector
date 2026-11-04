@@ -34,6 +34,7 @@ import { toolApprovalBindingFor } from "./tool-approval-token.js";
 import type { Context } from "hono";
 import { type ToolSet, type UIMessageChunk } from "ai";
 import { logger } from "./logger.js";
+import { findMalformedHistory } from "./client-history-shape.js";
 import { createRequestStreamFailureReporter } from "./stream-failure-reporter.js";
 import type { FailureCapture } from "./agent-failure-capture.js";
 import { type SandboxNoticeReason } from "@/shared/sandbox-notice";
@@ -827,6 +828,12 @@ export async function streamChatTurn(
   const historyNoticeDue =
     historyPresentation !== undefined &&
     (provenanceReport?.omittedReplyParts ?? 0) > 0;
+
+  const malformedHistory = findMalformedHistory(uiMessagesForTurn as unknown[]);
+  if (malformedHistory) {
+    logger.warn("[web-chat-turn] client-sent history has a shape conversion cannot read", { ...malformedHistory });
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "This chat's history has a message the server can't read. Start a new chat to continue.", { ...malformedHistory });
+  }
 
   // Convert UI messages to ModelMessage[] up front so prepareChatV2 can
   // replay prior `load_mcp_tools` calls into discovery state.

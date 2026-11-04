@@ -848,6 +848,33 @@ describe("hosted web chat shows the model only the history it can verify (MJ-009
     ]);
     expect(modelRequests[0]!.raw).toContain("LOCAL_REPLY_6");
   });
+
+  it("refuses a history it cannot convert with a 400, before any model call", async () => {
+    await expect(
+      runTurn([
+        user("u1", "hi"),
+        {
+          id: "u2",
+          role: "user",
+          parts: [{ type: "file", mediaType: "image/png", url: "/a.png" }],
+        },
+      ]),
+    ).rejects.toMatchObject({
+      status: 400,
+      code: "VALIDATION_ERROR",
+      details: { messageIndex: 1, partIndex: 0, problem: "file_url_invalid" },
+    });
+    expect(modelRequests).toHaveLength(0);
+  });
+
+  it("checks the history verification hands on, so a demoted system message still runs", async () => {
+    await runTurn([
+      { id: "s1", role: "system", content: "be brief" },
+      user("u1", "hi"),
+    ]);
+
+    expect(modelRequests).toHaveLength(1);
+  });
 });
 
 describe("context the user adds reaches the model as the user's own message (MJ-009)", () => {
