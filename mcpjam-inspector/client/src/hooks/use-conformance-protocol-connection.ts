@@ -44,7 +44,7 @@ export function useConformanceProtocolConnection(
           message:
             error instanceof Error
               ? error.message
-              : "Could not check the connection.",
+              : "Could not check the connection. Try again.",
         }),
     );
     return () => {
