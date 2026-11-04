@@ -143,8 +143,7 @@ export function ConformanceAdvice({ groups }: { groups: AdviceGroup[] }) {
       <p className="px-4 pb-4 pl-11 text-sm text-muted-foreground">
         None of these fail a check. Suggested (<SpecWord word="SHOULD" />) means
         the spec asks for it. Optional (<SpecWord word="MAY" />) means it helps
-        but the spec doesn't require it. A deprecation notice means the spec
-        will remove something the server still uses.
+        but the spec doesn't require it.
       </p>
       <Collapse open={open}>
         <ul className="border-t border-border/60 px-4">
@@ -160,9 +159,11 @@ export function ConformanceAdvice({ groups }: { groups: AdviceGroup[] }) {
               <span className="flex min-w-0 flex-col gap-0.5 text-sm">
                 <span>
                   <span className="font-medium text-info">
-                    {isDeprecation(item)
-                      ? "Deprecation notice"
-                      : `${isOptional(item) ? "Optional" : "Suggested"} (${item.specStrength})`}
+                    {item.id === "readiness-deprecated-feature-use"
+                      ? "Suggested (Deprecation Notice)"
+                      : isDeprecation(item)
+                        ? "Deprecation notice"
+                        : `${isOptional(item) ? "Optional" : "Suggested"} (${item.specStrength})`}
                   </span>{" "}
                   <span className="text-muted-foreground">{item.suite}</span>{" "}
                   <span className="font-medium">{item.title}</span>

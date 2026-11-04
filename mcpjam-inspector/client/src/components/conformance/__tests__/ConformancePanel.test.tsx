@@ -389,7 +389,7 @@ describe("ConformanceTab", () => {
     fireEvent.click(advice);
     const row = screen.getByText("Deprecated Feature Use").closest("li")!;
     expect(row).toHaveTextContent(
-      "Suggested (SHOULD) Protocol Deprecated Feature Use",
+      "Suggested (Deprecation Notice) Protocol Deprecated Feature Use",
     );
   });
 
