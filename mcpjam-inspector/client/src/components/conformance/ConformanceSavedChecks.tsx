@@ -1,8 +1,34 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { isMissingInputCheck } from "@mcpjam/sdk/browser";
-import { CheckRow } from "./ConformanceCheckRows";
+import { isRecord } from "@/lib/host-capabilities";
+import { CheckRow, type CheckRowResult } from "./ConformanceCheckRows";
 import type { LoadReport, SavedReportCase } from "./use-saved-run-reports";
+
+function savedCheckRowResult(check: SavedReportCase): CheckRowResult {
+  let details = check.details;
+  let warnings: string[] | undefined;
+  if (isRecord(details)) {
+    const { details: nested, warnings: savedWarnings, ...metadata } = details;
+    // Reports wrap live fields; keep their markers where CheckRow reads them.
+    details = isRecord(nested)
+      ? { ...nested, ...metadata }
+      : nested === undefined
+        ? metadata
+        : { details: nested, ...metadata };
+    warnings = Array.isArray(savedWarnings)
+      ? savedWarnings.filter(
+          (warning): warning is string => typeof warning === "string",
+        )
+      : undefined;
+  }
+  return {
+    ...check,
+    error: check.error ? { message: check.error } : undefined,
+    details,
+    warnings,
+  };
+}
 
 /**
  * The checks of a saved suite, read from the page's cached report when its
@@ -79,10 +105,7 @@ export function SuiteReportCases({
         cases.map((check) => (
           <CheckRow
             key={check.id}
-            check={{
-              ...check,
-              error: check.error ? { message: check.error } : undefined,
-            }}
+            check={savedCheckRowResult(check)}
             pending={check.pending}
           />
         ))

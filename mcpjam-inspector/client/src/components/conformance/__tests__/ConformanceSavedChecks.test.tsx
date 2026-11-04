@@ -28,8 +28,10 @@ const cases: SavedReportCase[] = [
 ];
 
 describe.each(["history", "shared"] as const)("%s check design", (page) => {
-  async function showCases() {
-    const loadReport = vi.fn().mockResolvedValue({ groups: [{ cases }] });
+  async function showCases(reportedCases: SavedReportCase[] = cases) {
+    const loadReport = vi.fn().mockResolvedValue({
+      groups: [{ cases: reportedCases }],
+    });
     render(
       <SuiteReportCases
         suiteKind="apps"
@@ -37,7 +39,7 @@ describe.each(["history", "shared"] as const)("%s check design", (page) => {
         load
         {...(page === "history"
           ? { reportUrl: "https://artifacts.test/apps.json", loadReport }
-          : { inlineCases: cases })}
+          : { inlineCases: reportedCases })}
       />,
     );
     await screen.findByRole("button", { name: /Listed UI Resources Valid/ });
@@ -81,5 +83,73 @@ describe.each(["history", "shared"] as const)("%s check design", (page) => {
     expect(
       screen.getByRole("button", { name: "Older saved check" }),
     ).not.toHaveTextContent("undefinedms");
+  });
+
+  it.each(["wrapped", "legacy"])(
+    "keeps the timeout badge and individual fields for %s details",
+    async (shape) => {
+      const details = { timedOut: true, timeoutMs: 15_000 };
+      await showCases([
+        ...cases,
+        {
+          id: "ping-timeout",
+          title: "Server Ping",
+          status: "skipped",
+          skipReason: "could-not-run",
+          durationMs: 0,
+          error: "The server did not answer within 15 seconds.",
+          details: shape === "wrapped" ? { details } : details,
+        },
+      ]);
+      const row = screen.getByRole("button", { name: /Server Ping/ });
+      expect(within(row).getByText("Timed out")).toBeInTheDocument();
+
+      fireEvent.click(row);
+
+      expect(screen.getByText("Timeout Ms:")).toBeInTheDocument();
+      expect(screen.getByText("15000")).toBeInTheDocument();
+      expect(screen.queryByText("Details:")).toBeNull();
+    },
+  );
+
+  it("hides nested input markers and keeps supplemental report evidence", async () => {
+    await showCases([
+      ...cases,
+      {
+        id: "tasks-result-type-discipline",
+        title: "Result Type Discipline",
+        status: "skipped",
+        skipReason: "could-not-run",
+        error: "A required tool is missing",
+        details: {
+          details: { missingInput: "tasksProbe", toolName: "create_task" },
+          errorDetails: "The selected tool was unavailable.",
+          observed: "No task-creating tool was discovered.",
+          warnings: ["Check the configured tools."],
+        },
+      },
+    ]);
+    const row = screen.getByRole("button", { name: /Result Type Discipline/ });
+    expect(within(row).getByText("Not run")).toBeInTheDocument();
+
+    fireEvent.click(row);
+
+    expect(screen.getByText("Tool Name:")).toBeInTheDocument();
+    expect(screen.getByText("create_task")).toBeInTheDocument();
+    expect(screen.queryByText("Details:")).toBeNull();
+    expect(
+      screen.queryByText(/missingInput|Missing Input|tasksProbe/),
+    ).toBeNull();
+    expect(screen.getByText("Error Details:")).toBeInTheDocument();
+    expect(
+      screen.getByText("The selected tool was unavailable."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Observed:")).toBeInTheDocument();
+    expect(
+      screen.getByText("No task-creating tool was discovered."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("listitem")).toHaveTextContent(
+      "Check the configured tools.",
+    );
   });
 });
