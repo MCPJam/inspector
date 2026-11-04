@@ -6046,6 +6046,7 @@ describe("App hosted OAuth callback handling", () => {
     { path: "/conformance", enabled: true },
     { path: "/conformance/runs/saved-run", enabled: true },
     { path: "/conformance", enabled: false },
+    { path: "/conformance/runs/saved-run", enabled: false },
   ])(
     "waits for the conformance flag on $path before resolving to $enabled",
     async ({ path, enabled }) => {
@@ -6065,6 +6066,11 @@ describe("App hosted OAuth callback handling", () => {
       expect(window.location.pathname).toBe(path);
       expect(window.location.search).toBe("?view=history");
       expect(window.location.hash).toBe("#saved");
+      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+      expect(screen.queryByRole("tab", { name: "Overview" })).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: "Run conformance checks" }),
+      ).toBeNull();
 
       conformanceFlag = enabled;
       mockPosthogState.featureFlags.hasLoadedFlags = true;
@@ -6094,13 +6100,15 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  it("keeps a conformance share link open for a reader without the conformance flag", async () => {
+  it.each([false, undefined])("keeps a conformance share link open when its flag is %s", async (conformanceFlag) => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/conformance/shared/share-token");
     mockHandleOAuthCallback.mockReset();
 
-    mockUseFeatureFlagEnabled.mockImplementation(() => false);
+    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+      flag === "mcpjam-conformance" ? conformanceFlag : false,
+    );
 
     render(<App />);
 

@@ -6321,6 +6321,14 @@ export default function App() {
     return <LoadingScreen />;
   }
 
+  if (
+    activeTab === "conformance" &&
+    !isConformanceSharedRoute &&
+    conformanceEnabled === undefined
+  ) {
+    return <LoadingScreen />;
+  }
+
   const shouldShowBillingHandoffOverlay =
     !isHostedChatRoute &&
     !isOAuthCallback &&
