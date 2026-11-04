@@ -220,11 +220,11 @@ it.each(["dcr", "cimd"] as const)(
       registrationStrategy,
     });
 
-    expect(
-      registrationRequests.some((body) =>
-        body.includes("http://evil.example/callback")
-      )
-    ).toBe(true);
+    expect(registrationRequests.map((body) => JSON.parse(body))).toContainEqual(
+      expect.objectContaining({
+        redirect_uris: ["http://evil.example/callback"],
+      })
+    );
     expect(
       result.steps.find((step) => step.step === "oauth_dcr_http_redirect_uri")
         ?.status

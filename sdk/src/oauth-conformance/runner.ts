@@ -1074,8 +1074,8 @@ export class OAuthConformanceTest {
             buildSkippedStepResult(
               "oauth_dcr_http_redirect_uri",
               "not-applicable",
-              "Dynamic client registration checks do not apply to pre-registered clients",
-            ),
+              "Dynamic client registration checks do not apply to pre-registered clients"
+            )
           );
         } else {
           await recordOAuthCheck("oauth_dcr_http_redirect_uri", () =>
@@ -1084,7 +1084,7 @@ export class OAuthConformanceTest {
               state,
               trackedRequest,
               redirectUrl: oauthCheckRedirectUrl,
-            }),
+            })
           );
         }
         await recordOAuthCheck("oauth_invalid_client", () =>
