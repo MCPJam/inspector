@@ -441,7 +441,11 @@ describe("ConformanceRunDetailPage", () => {
 
     expect(suiteHeader("protocol")).toHaveAttribute("aria-expanded", "true");
     await screen.findByText("Ping");
-    expect(screen.getByText("pong missing")).toBeInTheDocument();
+    const check = screen.getByRole("button", { name: /Ping/ });
+    expect(within(check).getByText("pong missing").parentElement).toHaveClass(
+      "border-red-500/20",
+      "bg-red-500/5",
+    );
     expect(fetchArtifactMock).toHaveBeenCalledWith(
       "https://artifacts.test/protocol.json",
     );
@@ -474,8 +478,14 @@ describe("ConformanceRunDetailPage", () => {
     render(<ConformanceRunDetailPage runId="run_1" />);
 
     await screen.findByText("Token format");
-    expect(screen.getByText("pong missing").className).toMatch(/text-red-600/);
-    expect(screen.getByText("not a JWT").className).not.toMatch(/text-red/);
+    const scored = screen.getByRole("button", { name: /Ping/ });
+    const unscored = screen.getByRole("button", { name: /Token format/ });
+    expect(within(scored).getByText("pong missing").parentElement).toHaveClass(
+      "text-red-600",
+    );
+    expect(within(unscored).getByText("not a JWT").parentElement).toHaveClass(
+      "text-muted-foreground",
+    );
   });
 
   it.each([0, 100])(
@@ -514,7 +524,9 @@ describe("ConformanceRunDetailPage", () => {
       render(<ConformanceRunDetailPage runId="run_1" />);
 
       expect(
-        await screen.findByText(
+        within(
+          await screen.findByRole("button", { name: /Result Type Discipline/ }),
+        ).getByText(
           "Select a tool that creates a task in setup, then run again.",
         ),
       ).toBeInTheDocument();

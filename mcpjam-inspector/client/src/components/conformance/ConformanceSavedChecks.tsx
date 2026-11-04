@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { isMissingInputCheck, missingInputMessage } from "@mcpjam/sdk/browser";
-import { StatusIcon } from "./conformance-ui";
-import { UnscoredTag, NotRunTag } from "./ConformanceCheckRows";
+import { isMissingInputCheck } from "@mcpjam/sdk/browser";
+import { CheckRow } from "./ConformanceCheckRows";
 import type { LoadReport, SavedReportCase } from "./use-saved-run-reports";
 
 /**
@@ -78,49 +77,14 @@ export function SuiteReportCases({
         </p>
       ) : (
         cases.map((check) => (
-          <div
+          <CheckRow
             key={check.id}
-            className="flex items-start gap-2.5 border-b border-border/60 py-1.75 pl-7 pr-1 last:border-0"
-          >
-            <span className="mt-0.5">
-              <StatusIcon
-                status={check.status}
-                skipReason={
-                  isMissingInputCheck(check) ? undefined : check.skipReason
-                }
-                muted={check.pending === true}
-              />
-            </span>
-            {isMissingInputCheck(check) ? (
-              <NotRunTag />
-            ) : check.pending ? (
-              <UnscoredTag />
-            ) : null}
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span
-                className={
-                  check.status === "skipped" &&
-                  (isMissingInputCheck(check) ||
-                    check.skipReason !== "could-not-run")
-                    ? "text-[13px] text-muted-foreground"
-                    : "text-[13px]"
-                }
-              >
-                {check.title}
-              </span>
-              {check.error ? (
-                <span
-                  className={
-                    check.status === "failed" && !check.pending
-                      ? "text-[13px] font-medium text-red-600 dark:text-red-400"
-                      : "text-[13px] text-muted-foreground"
-                  }
-                >
-                  {missingInputMessage(check) ?? check.error}
-                </span>
-              ) : null}
-            </span>
-          </div>
+            check={{
+              ...check,
+              error: check.error ? { message: check.error } : undefined,
+            }}
+            pending={check.pending}
+          />
         ))
       )}
     </div>

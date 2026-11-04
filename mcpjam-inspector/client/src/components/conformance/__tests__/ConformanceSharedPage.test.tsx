@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 
 const { useSharedArtifactMock } = vi.hoisted(() => ({
   useSharedArtifactMock: vi.fn(),
@@ -122,7 +122,9 @@ describe("ConformanceSharedPage", () => {
       "This check needs an input before it can run.",
     );
     expect(
-      screen.getByText(
+      within(
+        screen.getByRole("button", { name: /Result Type Discipline/ }),
+      ).getByText(
         "Select a tool that creates a task in setup, then run again.",
       ),
     ).toBeInTheDocument();
@@ -147,8 +149,10 @@ describe("ConformanceSharedPage", () => {
     // A failed suite opens to its checks, read from the artifact itself.
     expect(screen.getByText("Widget CSP declared")).toBeInTheDocument();
     expect(
-      screen.getByText("No CSP on the widget resource"),
-    ).toBeInTheDocument();
+      within(screen.getByRole("button", { name: /Widget CSP declared/ }))
+        .getByText("No CSP on the widget resource")
+        .parentElement,
+    ).toHaveClass("border-red-500/20", "bg-red-500/5");
     expect(screen.queryByText(/"reports"/)).toBeNull();
     // A public page makes no verification claim, either way.
     expect(screen.queryByText("MCPJam-verified")).toBeNull();
