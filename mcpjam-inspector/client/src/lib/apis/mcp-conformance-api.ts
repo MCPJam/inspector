@@ -7,6 +7,8 @@ import type {
   MCPOAuthReadinessId,
   MCPReadinessId,
   MCPTasksCheckId,
+  MCPTasksToolCheckId,
+  MCPTasksCheckOverrides,
   MCPTasksReadinessId,
   MCPTasksConformanceResult,
   McpProtocolVersion,
@@ -79,6 +81,7 @@ export interface ConformanceProbes {
   inputRequiredProbe?: ConformanceProbe;
   toolCallProbe?: ConformanceProbe;
   tasksProbe?: ConformanceProbe;
+  tasksOverrides?: Partial<Record<MCPTasksToolCheckId, ConformanceProbe>>;
 }
 
 export async function runProtocolConformance(
@@ -159,6 +162,7 @@ export async function runTasksConformance(
   serverNameOrId: string,
   options?: {
     protocolVersion?: McpProtocolVersion;
+    checkOverrides?: MCPTasksCheckOverrides;
     toolName?: string;
     toolArguments?: Record<string, unknown>;
     inputResponses?: Record<string, unknown>;
@@ -173,6 +177,9 @@ export async function runTasksConformance(
       : {}),
     ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
     ...(options?.readinessIds ? { readinessIds: options.readinessIds } : {}),
+    ...(options?.checkOverrides
+      ? { checkOverrides: options.checkOverrides }
+      : {}),
     ...(options?.toolName ? { toolName: options.toolName } : {}),
     ...(options?.toolArguments ? { toolArguments: options.toolArguments } : {}),
     ...(options?.inputResponses

@@ -189,6 +189,9 @@ export function ConformanceTab({
         selection: ConformanceSelection,
         inputs?: ConformanceProbes,
       ) => {
+        if (inputs) setProbes(serverName, inputs);
+        const { tasksOverrides: _localOverrides, ...sharedInputs } =
+          inputs ?? {};
         setChangedDefaults((prev) => ({ ...prev, [serverName]: selection }));
         const settle = () =>
           setChangedDefaults((prev) => {
@@ -200,7 +203,11 @@ export function ConformanceTab({
         return (
           isSavedServer && !isSavedServer(serverName)
             ? Promise.resolve()
-            : onSaveServerDefaults(serverName, selection, inputs)
+            : onSaveServerDefaults(
+                serverName,
+                selection,
+                inputs ? sharedInputs : undefined,
+              )
         ).then(settle, (error: unknown) => {
           settle();
           throw error;
@@ -271,7 +278,18 @@ export function ConformanceTab({
   const readDefaults = (name: string): Promise<ConformanceDefaults> =>
     onLoadServerDefaults &&
     !(isSavedServer && !isSavedServer(name) && !projectServersLoading)
-      ? onLoadServerDefaults(name)
+      ? onLoadServerDefaults(name).then((defaults) => ({
+          ...defaults,
+          inputs: {
+            ...defaults.inputs,
+            ...(probesFor(name).tasksProbe
+              ? { tasksProbe: probesFor(name).tasksProbe }
+              : {}),
+            ...(probesFor(name).tasksOverrides
+              ? { tasksOverrides: probesFor(name).tasksOverrides }
+              : {}),
+          },
+        }))
       : Promise.resolve({
           selection:
             defaultsFor(name) ??

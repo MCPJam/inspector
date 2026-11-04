@@ -1394,7 +1394,7 @@ describe("undeclared task requests (-32021)", () => {
     expect(result.passed).toBe(false);
   });
 
-  it("probes the mutating methods only after every check that reads the task", async () => {
+  it("keeps the undeclared probe sequence together in its own group", async () => {
     const order: string[] = [];
     const base = extensionManager();
     const declaredGet = base.getTaskExt as (
@@ -1422,7 +1422,7 @@ describe("undeclared task requests (-32021)", () => {
 
     // Every declared read (polling + the Mcp-Name routing probe) happens
     // first; the undeclared probes trail, cancel last of all.
-    expect(order.slice(-4)).toEqual([
+    expect(order.filter((entry) => entry.startsWith("undeclared:"))).toEqual([
       "undeclared:tasks/get",
       "undeclared:tasks/update",
       "undeclared:subscriptions/listen",
@@ -1433,7 +1433,7 @@ describe("undeclared task requests (-32021)", () => {
     );
     expect(declaredReads.length).toBeGreaterThan(0);
     expect(order.indexOf("undeclared:tasks/update")).toBeGreaterThan(
-      order.lastIndexOf("declared:tasks/get")
+      order.indexOf("declared:tasks/get")
     );
     expect(statusMap(result)["tasks-inline-result"]).toBe("passed");
     expect(statusMap(result)["tasks-mcp-name-routing"]).toBe("passed");

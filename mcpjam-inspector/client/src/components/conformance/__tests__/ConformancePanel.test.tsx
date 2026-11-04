@@ -50,6 +50,13 @@ vi.mock("@/lib/apis/mcp-conformance-api", () => ({
   completeOAuthConformance: (...args: unknown[]) => mockCompleteOAuth(...args),
 }));
 
+// Group scheduling and aggregation are covered by run-task-conformance-groups.test.ts.
+// These panel tests supply the completed suite report.
+vi.mock("@/hooks/run-task-conformance-groups", () => ({
+  runTaskConformanceGroups: async (server: string, options: unknown) =>
+    (await mockRunTasks(server, options)).result,
+}));
+
 // Step 2 lists a server's tools for the checks that must call one.
 const mockListTools = vi.fn(async () => ({ tools: [] as unknown[] }));
 vi.mock("@/lib/apis/mcp-tools-api", () => ({
@@ -2625,7 +2632,7 @@ describe("ConformanceTab", () => {
         screen.getAllByRole("combobox", { name: "Tool that creates a task" }),
       ).toHaveLength(1);
       expect(
-        screen.getAllByText(/^Calls the tool set under/).length,
+        screen.getAllByRole("checkbox", { name: "Use suite default" }).length,
       ).toBeGreaterThan(0);
       // The answers need a tool first.
       expect(

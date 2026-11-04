@@ -1,3 +1,4 @@
+import { runTaskConformanceGroups } from "./run-task-conformance-groups";
 /** Run state, scores, and OAuth authorization for the four conformance suites. */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -19,7 +20,6 @@ import {
   completeOAuthConformance,
   runAppsConformance,
   runProtocolConformance,
-  runTasksConformance,
   startOAuthConformance,
   submitOAuthConformanceCode,
 } from "@/lib/apis/mcp-conformance-api";
@@ -338,11 +338,16 @@ export function useConformanceRun({
     async (
       runToken: number,
       serverName: string,
-      options: Parameters<typeof runTasksConformance>[1],
+      options: Parameters<typeof runTaskConformanceGroups>[1],
     ) => {
       setTasks({ status: "running" });
       try {
-        const { result } = await runTasksConformance(serverName, options);
+        const result = await runTaskConformanceGroups(
+          serverName,
+          options ?? {},
+          () => isRunActive(runToken, serverName),
+        );
+        if (!result) return;
         if (!isRunActive(runToken, serverName)) return;
         // The tasks suite reports a real third outcome: checks that apply but
         // could not be exercised leave the run incomplete, never passing.

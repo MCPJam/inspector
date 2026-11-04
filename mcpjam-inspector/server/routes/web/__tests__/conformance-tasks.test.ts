@@ -71,6 +71,34 @@ describe("POST /api/web/conformance/tasks — hosted budget", () => {
     vi.useRealTimers();
   });
 
+  it("forwards per-check overrides on the hosted path", async () => {
+    runTasksConformanceMock.mockResolvedValue({ result: { checks: [] } });
+    const checkOverrides = {
+      "tasks-inline-result": {
+        toolName: "finish",
+        toolArguments: { fast: true },
+      },
+    };
+    expect(
+      (await post({ projectId: "p1", serverId: "s1", checkOverrides })).status,
+    ).toBe(200);
+    expect(runTasksConformanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ checkOverrides }),
+    );
+  });
+  it.each([
+    { unknown: { toolName: "job" } },
+    { "tasks-inline-result": { toolName: "" } },
+  ])("rejects malformed overrides before executing", async (checkOverrides) => {
+    const response = await post({
+      projectId: "p1",
+      serverId: "s1",
+      checkOverrides,
+    });
+    expect(response.status).toBe(400);
+    expect(runTasksConformanceMock).not.toHaveBeenCalled();
+  });
+
   it("clamps the poll window and pins a per-call timeout under the budget", async () => {
     runTasksConformanceMock.mockResolvedValue({
       result: { outcome: "passed", checks: [] },

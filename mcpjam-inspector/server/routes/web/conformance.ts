@@ -33,6 +33,7 @@ import {
 } from "../shared/conformance";
 import {
   conformanceInputResponsesSchema,
+  conformanceTaskOverridesSchema,
   conformanceProbeFields,
 } from "../shared/conformance-probes";
 import { authorizeServer, toHttpConfig } from "./auth.js";
@@ -419,6 +420,7 @@ const tasksSchema = z
     toolName: z.string().min(1).optional(),
     toolArguments: z.record(z.string(), z.unknown()).optional(),
     inputResponses: conformanceInputResponsesSchema,
+    checkOverrides: conformanceTaskOverridesSchema,
     pollTimeoutMs: z.number().int().positive().max(120_000).optional(),
     /** Run only these checks, as picked before Run; absent ⇒ all of them. */
     checkIds: z.array(z.enum(MCP_TASKS_CHECK_IDS)).min(1).optional(),
@@ -442,6 +444,9 @@ conformanceWeb.post("/tasks", async (c) =>
           timeout: HOSTED_TASKS_CALL_TIMEOUT_MS,
           ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
           ...(parsed.readinessIds ? { readinessIds: parsed.readinessIds } : {}),
+          ...(parsed.checkOverrides
+            ? { checkOverrides: parsed.checkOverrides }
+            : {}),
           ...(parsed.toolName ? { toolName: parsed.toolName } : {}),
           ...(parsed.toolArguments
             ? { toolArguments: parsed.toolArguments }

@@ -1,3 +1,4 @@
+import { validateTaskOverrides } from "@mcpjam/sdk";
 import { MCP_LOG_LEVELS, type MCPConformanceConfig } from "@mcpjam/sdk";
 import { z } from "zod";
 
@@ -55,3 +56,20 @@ export type ConformanceProbes = Pick<
 > & {
   toolCallProbe?: MCPConformanceConfig["inputRequiredProbe"];
 };
+
+export const conformanceTaskOverridesSchema = z
+  .unknown()
+  .optional()
+  .transform((value, ctx) => {
+    if (value === undefined) return undefined;
+    try {
+      return validateTaskOverrides(value);
+    } catch (error) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          error instanceof Error ? error.message : "Invalid task overrides",
+      });
+      return z.NEVER;
+    }
+  });
