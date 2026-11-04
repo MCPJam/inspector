@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 const { useSharedArtifactMock } = vi.hoisted(() => ({
   useSharedArtifactMock: vi.fn(),
@@ -52,6 +52,16 @@ function sharedRun() {
         outcome: "passed",
         score: { score: 100, outcome: "passed", applicable: 14, passed: 14 },
         groups: [{ cases: [{ id: "ping", title: "Ping", status: "passed" }] }],
+        advisories: [
+          {
+            id: "readiness-tool-order-deterministic",
+            title: "Tool order is stable",
+            group: "mcp-1",
+            kind: "readiness",
+            status: "SHOULD",
+            message: "Return tools in the same order.",
+          },
+        ],
       },
     },
   };
@@ -85,6 +95,26 @@ describe("ConformanceSharedPage", () => {
     // A public page makes no verification claim, either way.
     expect(screen.queryByText("MCPJam-verified")).toBeNull();
     expect(screen.queryByText("Client-reported")).toBeNull();
+  });
+
+  it("lists the advice the shared reports hold", () => {
+    useSharedArtifactMock.mockReturnValue({
+      loading: false,
+      error: null,
+      artifact: sharedRun(),
+      redeem: null,
+    });
+    render(<ConformanceSharedPage token="tok" />);
+
+    const header = screen.getByRole("button", {
+      name: /^Additional enhancements/,
+    });
+    expect(header).toHaveTextContent("Additional enhancements1");
+    fireEvent.click(header);
+    expect(screen.getByText("Tool order is stable")).toBeInTheDocument();
+    expect(
+      screen.getByText("Return tools in the same order."),
+    ).toBeInTheDocument();
   });
 
   it("claims nothing about verification when the artifact has no field", () => {

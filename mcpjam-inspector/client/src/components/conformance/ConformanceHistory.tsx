@@ -15,7 +15,7 @@ import { FlaskConical } from "lucide-react";
 import { buildConformanceRunPath, useAppNavigate } from "@/lib/app-navigation";
 import { SharedArtifactPage } from "@/components/sharing/SharedArtifactPage";
 import { useSharedArtifact } from "@/hooks/useSharedArtifact";
-import { fetchArtifact, useArtifactQuery } from "@/lib/artifact-urls";
+import { useArtifactQuery } from "@/lib/artifact-urls";
 import {
   OverallScoreCard,
   StatusIcon,
@@ -24,6 +24,12 @@ import {
   VerdictBadge,
 } from "./conformance-ui";
 import { CatalogList, UnscoredTag } from "./ConformanceCheckRows";
+import { ConformanceAdvice, reportAdviceGroups } from "./ConformanceAdvice";
+import {
+  useSavedRunReports,
+  type LoadReport,
+  type SavedReportCase,
+} from "./use-saved-run-reports";
 import { suiteCatalog } from "./conformance-catalogs";
 import {
   SavedRunActions,
@@ -292,6 +298,10 @@ export function ConformanceRunDetailPage({
       })
     | null
   >("conformanceRuns:getRun", runId ? { runId } : "skip");
+  const { advice, loadReport } = useSavedRunReports(
+    runId,
+    detail?.reports ?? [],
+  );
   if (detail === undefined) {
     return (
       <p className="p-6 text-sm text-muted-foreground" role="status">
@@ -385,11 +395,14 @@ export function ConformanceRunDetailPage({
           </p>
         ) : null}
 
+        <ConformanceAdvice groups={advice} />
+
         <div className="mt-3 overflow-hidden rounded-lg border border-border bg-popover">
           {detail.reports.map((report) => (
             <SavedSuiteRow
               key={report.suiteKind}
               report={report}
+              loadReport={loadReport}
               runSettled={
                 detail.status === "completed" ||
                 detail.status === "timed_out" ||
@@ -429,12 +442,15 @@ function SavedSuiteRow({
   report,
   runSettled,
   cases,
+  loadReport,
 }: {
   report: SavedSuiteReport;
   /** The run as a whole is over, so an unsettled suite will never finish. */
   runSettled: boolean;
   /** Checks already in hand, as in a shared artifact; skips the fetch. */
   cases?: SavedReportCase[];
+  /** Shares the page's fetch of this report. */
+  loadReport?: LoadReport;
 }) {
   const copy = SUITE_COPY[report.suiteKind as keyof typeof SUITE_COPY] ?? {
     title: report.suiteKind,
@@ -514,7 +530,9 @@ function SavedSuiteRow({
         />
       ) : (
         <SuiteReportCases
+          suiteKind={report.suiteKind}
           reportUrl={report.reportUrl}
+          loadReport={loadReport}
           inlineCases={cases}
           incompleteReason={report.incompleteReason}
           load={expanded || override !== null}
@@ -524,27 +542,21 @@ function SavedSuiteRow({
   );
 }
 
-type SavedReportCase = {
-  id: string;
-  title: string;
-  status: string;
-  skipReason?: string;
-  error?: string;
-  /** Left out of the score: a profile's pending check or an unscored OAuth step. */
-  pending?: boolean;
-};
-
 /**
  * The checks of a saved suite, read from its report artifact. Fetched the
  * first time the row opens, not on page load.
  */
 function SuiteReportCases({
+  suiteKind,
   reportUrl,
+  loadReport,
   inlineCases,
   incompleteReason,
   load,
 }: {
+  suiteKind: string;
   reportUrl?: string | null;
+  loadReport?: LoadReport;
   inlineCases?: SavedReportCase[];
   incompleteReason: string | null;
   load: boolean;
@@ -555,15 +567,10 @@ function SuiteReportCases({
   const cases = inlineCases ?? fetched;
   useEffect(() => {
     if (inlineCases || !load || !reportUrl || fetched !== null) return;
+    if (!loadReport) return;
     let cancelled = false;
-    fetchArtifact(reportUrl)
-      .then((response) => {
-        // An expired link answers with an error body; never show that as the
-        // report. `fetchArtifact` renews the link and retries once.
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.json();
-      })
-      .then((json: { groups?: Array<{ cases?: SavedReportCase[] }> }) => {
+    loadReport(suiteKind, reportUrl)
+      .then((json) => {
         if (cancelled) return;
         setCases((json.groups ?? []).flatMap((group) => group.cases ?? []));
       })
@@ -573,7 +580,7 @@ function SuiteReportCases({
     return () => {
       cancelled = true;
     };
-  }, [inlineCases, load, reportUrl, fetched]);
+  }, [inlineCases, load, reportUrl, fetched, loadReport, suiteKind]);
 
   return (
     <div>
@@ -649,6 +656,7 @@ type SharedSuiteReport = {
     couldNotRun?: number;
   };
   groups?: Array<{ cases?: SavedReportCase[] }>;
+  advisories?: unknown;
 };
 
 type SharedConformanceArtifact = {
@@ -741,6 +749,14 @@ export function ConformanceSharedPage({ token }: { token: string }) {
         }
         serverName="Shared run"
         version={run.protocolVersion ?? "Auto"}
+      />
+      <ConformanceAdvice
+        groups={reportAdviceGroups(
+          suiteKinds.map((kind) => ({
+            suiteKind: kind,
+            advisories: reports[kind]!.advisories,
+          })),
+        )}
       />
       {suiteKinds.length > 0 ? (
         <div className="overflow-hidden rounded-lg border border-border bg-popover">
