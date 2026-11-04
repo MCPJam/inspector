@@ -18,6 +18,7 @@ import {
   useAppNavigate,
   useCurrentLocationParts,
 } from "@/lib/app-navigation";
+import { readLocalTimeout, saveLocalTimeout } from "./conformance-local-timeout";
 import { toast } from "@/lib/toast";
 import type { ConformancePersistConfig } from "@/components/conformance/PersistConformanceRun";
 import {
@@ -74,6 +75,8 @@ export function ConformanceTab({
   serverInputs,
   onLoadServerDefaults,
   isSavedServer,
+  serverTimeouts,
+  onSaveServerTimeout,
   serverDefaultsLoaded = true,
   onSaveServerDefaults,
   lastRuns,
@@ -101,6 +104,8 @@ export function ConformanceTab({
   serverInputs?: Record<string, ConformanceProbes>;
   isSavedServer?: (name: string) => boolean;
   onLoadServerDefaults?: (serverName: string) => Promise<ConformanceDefaults>;
+  serverTimeouts?: Record<string, number>;
+  onSaveServerTimeout?: (serverName: string, seconds: number | null) => Promise<void>;
   /** False while `serverDefaults` is still loading: nothing runs on a guess. */
   serverDefaultsLoaded?: boolean;
   /** Saves a server's default checks. Omit to hide Settings. */
@@ -177,6 +182,23 @@ export function ConformanceTab({
   const [changedDefaults, setChangedDefaults] = useState<
     Record<string, ConformanceSelection>
   >({});
+  const [changedTimeouts, setChangedTimeouts] = useState<Record<string, number | null>>({});
+  useEffect(() => {
+    setChangedTimeouts((previous) => {
+      const pending = Object.fromEntries(Object.entries(previous).filter(
+        ([name, seconds]) => seconds !== (serverTimeouts?.[name] ?? null),
+      ));
+      return Object.keys(pending).length === Object.keys(previous).length ? previous : pending;
+    });
+  }, [serverTimeouts]);
+  const timeoutFor = (name: string) =>
+    Object.hasOwn(changedTimeouts, name) ? changedTimeouts[name] ?? undefined : serverTimeouts?.[name] ?? (!persist ? readLocalTimeout(name) : undefined);
+  const saveTimeout = async (name: string, seconds: number | null) => {
+    if (onSaveServerTimeout) await onSaveServerTimeout(name, seconds);
+    else if (!persist) saveLocalTimeout(name, seconds);
+    else throw new Error("Server timeout settings are unavailable.");
+    setChangedTimeouts((previous) => ({ ...previous, [name]: seconds }));
+  };
   const defaultsFor = (serverName: string) =>
     Object.hasOwn(changedDefaults, serverName)
       ? changedDefaults[serverName]
@@ -403,6 +425,8 @@ export function ConformanceTab({
             ? start.selection
             : undefined
         }
+        timeoutFor={timeoutFor}
+        onSaveTimeout={saveTimeout}
         defaultsFor={defaultsFor}
         defaultsLoaded={serverDefaultsLoaded}
         onLoadDefaults={onLoadServerDefaults ? readDefaults : undefined}
@@ -549,6 +573,7 @@ export function ConformanceTab({
           ? (start?.inputs ?? probesFor(server.name))
           : probesFor(server.name)
       }
+      runTimeoutSeconds={timeoutFor(server.name)}
     />
   );
   // Also closed while the defaults reload, e.g. after a project switch: it

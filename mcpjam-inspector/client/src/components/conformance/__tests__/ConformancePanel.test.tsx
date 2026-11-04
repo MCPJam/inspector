@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   act,
   render,
+  renderHook,
   screen,
   fireEvent,
   waitFor,
@@ -42,6 +43,7 @@ vi.mock("@/lib/apis/conformance-connection-api", () => ({
 }));
 
 vi.mock("@/lib/apis/mcp-conformance-api", () => ({
+  cancelOAuthConformance: vi.fn(async () => ({ success: true })),
   runProtocolConformance: (...args: unknown[]) => mockRunProtocol(...args),
   runAppsConformance: (...args: unknown[]) => mockRunApps(...args),
   runTasksConformance: (...args: unknown[]) => mockRunTasks(...args),
@@ -68,6 +70,7 @@ vi.mock("@/components/oauth/utils", () => ({
   }),
 }));
 
+import { useConformanceRun } from "@/hooks/use-conformance-run";
 import { toast } from "@/lib/toast";
 import { OAUTH_CATALOG } from "../conformance-catalogs";
 import { ConformanceTab } from "../ConformanceTab";
@@ -4593,4 +4596,37 @@ describe("ConformanceTab blocked sign-in window", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
+});
+
+
+it("keeps completed suites and ignores late results after a shared timeout, including parked OAuth", async () => {
+  vi.useFakeTimers();
+  try {
+    setupSuccessfulRunMocks();
+    let finishApps: (value: unknown) => void = () => {};
+    mockRunApps.mockImplementation(() => new Promise((resolve) => { finishApps = resolve; }));
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "session-timeout",
+      authorizationUrl: "https://auth.example/authorize",
+    });
+    const server = createHttpServer();
+    const { result } = renderHook(() => useConformanceRun({
+      server, runTimeoutSeconds: 1, deferOAuthAuthorization: true,
+    }));
+    await act(async () => { void result.current.runAll(); });
+    expect(result.current.protocol.status).toBe("done");
+    expect(result.current.apps.status).toBe("running");
+    expect(result.current.oauth.status).toBe("needs-authorization");
+    await act(async () => { vi.advanceTimersByTime(1_000); });
+    expect(result.current.protocol.status).toBe("done");
+    expect(result.current.apps.status).toBe("error");
+    expect(result.current.oauth.status).toBe("error");
+    expect(result.current.oauth.error).toBe("Run timed out after 1 seconds");
+    await act(async () => { finishApps({ success: true, result: createAppsResult() }); });
+    expect(result.current.apps.status).toBe("error");
+    expect(result.current.apps.error).toBe("Run timed out after 1 seconds");
+  } finally {
+    vi.useRealTimers();
+  }
 });

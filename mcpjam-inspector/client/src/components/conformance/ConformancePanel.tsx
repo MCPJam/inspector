@@ -232,6 +232,7 @@ export function ConformanceContent({
   initialVersionPin,
   initialResolvedProtocolVersion,
   selection,
+  runTimeoutSeconds,
   probes,
 }: {
   server: ServerWithName;
@@ -269,6 +270,7 @@ export function ConformanceContent({
   initialResolvedProtocolVersion?: McpProtocolVersion;
   /** What to run, as picked in the setup steps. */
   selection?: ConformanceSelection;
+  runTimeoutSeconds?: number;
   /** The tools the checks that must call one may use. */
   probes?: ConformanceProbes;
 }) {
@@ -280,6 +282,7 @@ export function ConformanceContent({
     initialVersionPin,
     initialResolvedProtocolVersion,
     selection,
+    runTimeoutSeconds,
     probes,
   });
   const {

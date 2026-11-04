@@ -71,6 +71,7 @@ function decodeInputs(stored: StoredProbes = {}): ConformanceProbes | Error {
 type ServerSettingsRow = {
   serverId: string;
   defaultChecks: ConformanceSelection;
+  runTimeoutSeconds?: number;
   defaultAdvice?: Pick<
     ConformanceSelection,
     "protocolAdvice" | "tasksAdvice" | "oauthAdvice"
@@ -130,6 +131,7 @@ export function useConformanceServerData({
   );
   const defaults = new Map<string, ConformanceSelection>();
   const inputs = new Map<string, ConformanceProbes>();
+  const timeouts = new Map<string, number>();
   for (const [key, args] of requested) {
     if (args.projectId !== projectId) continue;
     const result = results[key];
@@ -155,6 +157,7 @@ export function useConformanceServerData({
       ) ?? {},
     );
     inputs.set(name, decoded);
+    if (row?.runTimeoutSeconds !== undefined) timeouts.set(name, row.runTimeoutSeconds);
   }
   const loadDefaults = useCallback(
     async (serverName: string): Promise<ConformanceDefaults> => {
@@ -180,6 +183,11 @@ export function useConformanceServerData({
     },
     [client, projectId, serversByName, serversLoading],
   );
+  const saveTimeout = useCallback(async (serverName: string, seconds: number | null) => {
+    const serverId = serversByName.get(serverName);
+    if (!projectId || !serverId) throw new Error(`No saved server named "${serverName}" to save to.`);
+    await saveSettings({ projectId, serverId, runTimeoutSeconds: seconds });
+  }, [projectId, saveSettings, serversByName]);
   const saveDefaults = useCallback(
     async (
       serverName: string,
@@ -213,6 +221,8 @@ export function useConformanceServerData({
   );
   return {
     defaultsByServer: Object.fromEntries(defaults),
+    timeoutsByServer: Object.fromEntries(timeouts),
+    saveTimeout: projectId ? saveTimeout : undefined,
     inputsByServer: Object.fromEntries(inputs),
     loadDefaults,
     lastRunByServer,
