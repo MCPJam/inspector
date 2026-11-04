@@ -544,6 +544,7 @@ export class OAuthConformanceTest {
           ),
         );
       } catch (error) {
+        this.config.signal?.throwIfAborted();
         const attempts = resolveAttempts(activeCollector, beforeHistory, state);
         steps.push(
           buildStepResult(
@@ -624,6 +625,7 @@ export class OAuthConformanceTest {
             ok: response.ok,
           };
         } catch (error) {
+          this.config.signal?.throwIfAborted();
           const duration = Date.now() - historyEntry.timestamp;
           historyEntry.duration = duration;
           historyEntry.error = {
@@ -814,6 +816,7 @@ export class OAuthConformanceTest {
 
             steps.push(buildStepResult("received_access_token", "passed", 0, [], []));
           } catch (error) {
+            this.config.signal?.throwIfAborted();
             const durationMs = Date.now() - stepStartedAt;
             const logs = (state.infoLogs ?? []).slice(beforeLogs);
             const attempts = resolveAttempts(activeCollector, beforeHistory, state);
@@ -933,6 +936,7 @@ export class OAuthConformanceTest {
         const stepStartedAt = Date.now();
 
         await machine.proceedToNextStep();
+        this.config.signal?.throwIfAborted();
 
         const durationMs = Date.now() - stepStartedAt;
         const logs = (state.infoLogs ?? []).slice(beforeLogs);

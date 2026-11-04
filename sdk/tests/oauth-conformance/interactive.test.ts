@@ -226,12 +226,14 @@ describe("interactive authorization cancellation", () => {
     const reason = new Error("cancelled");
     const openUrl = vi.fn();
     try {
-      await expect(session.authorize({
-        authorizationUrl: "https://auth.example.com/authorize",
-        timeoutMs: 300_000,
-        signal: AbortSignal.abort(reason),
-        openUrl,
-      })).rejects.toBe(reason);
+      await expect(
+        session.authorize({
+          authorizationUrl: "https://auth.example.com/authorize",
+          timeoutMs: 300_000,
+          signal: AbortSignal.abort(reason),
+          openUrl,
+        })
+      ).rejects.toBe(reason);
       expect(openUrl).not.toHaveBeenCalled();
     } finally {
       await session.stop();
