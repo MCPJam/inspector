@@ -57,7 +57,7 @@ export function useConformanceRunVersion(
       }
       throw new Error(
         result.status === "unsupported"
-          ? `The server doesn't support MCP protocol version ${result.protocolVersion}, which this client is pinned to. It offers ${result.supportedVersions.join(", ")}.`
+          ? `The server doesn't support MCP protocol version ${result.protocolVersion}, which this client is pinned to. It offers ${result.supportedVersions.join(", ")}. Choose a supported version and try again.`
           : result.message,
       );
     },
