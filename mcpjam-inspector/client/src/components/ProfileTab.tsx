@@ -1,6 +1,7 @@
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import { SettingsPageShell } from "./settings/SettingsPageShell";
 import { useSettingsDraft } from "./settings/SettingsDraftProvider";
+import { NewsletterConsentSwitch } from "./settings/NewsletterConsentSwitch";
 import { useRef, useState } from "react";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
@@ -283,6 +284,10 @@ export function ProfileTab() {
             )}
           </div>
         </form>
+        <NewsletterConsentSwitch
+          optedIn={convexUser?.marketingOptIn === true}
+          loading={convexUser === undefined}
+        />
       </div>
     </SettingsPageShell>
   );
