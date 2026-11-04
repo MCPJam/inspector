@@ -206,16 +206,33 @@ export async function runProtocolConformance(
   return { result };
 }
 
+/** A run pin overrides saved accept-lists without changing the main connection. */
+function pinSuiteVersion<T extends MCPServerConfig>(
+  config: T,
+  protocolVersion?: McpProtocolVersion,
+): T {
+  return protocolVersion && "url" in config && config.url != null
+    ? {
+        ...config,
+        mcpProtocolVersion: protocolVersion,
+        supportedProtocolVersions: [protocolVersion],
+      }
+    : config;
+}
+
 // ── Apps ────────────────────────────────────────────────────────────────
 
-export async function runAppsConformance(
-  serverConfig: MCPAppsConformanceConfig,
-): Promise<{ result: MCPAppsConformanceResult }> {
+export async function runAppsConformance({
+  protocolVersion,
+  ...serverConfig
+}: MCPAppsConformanceConfig & {
+  protocolVersion?: McpProtocolVersion;
+}): Promise<{ result: MCPAppsConformanceResult }> {
   // The apps suite is entirely client-driven — it has no raw probes — so
   // before `baseFetch` existed there was no seam at all to guard it through,
   // and a hosted apps run dialled the target with nothing in front of it.
   const test = new MCPAppsConformanceTest({
-    ...serverConfig,
+    ...pinSuiteVersion(serverConfig, protocolVersion),
     baseFetch: serverConfig.baseFetch ?? createConformanceFetch("MCP server"),
   });
   const result = await test.run();
@@ -260,11 +277,14 @@ export async function runLocalDirectoryReadiness(input: {
 
 // ── Tasks ───────────────────────────────────────────────────────────────
 
-export async function runTasksConformance(
-  serverConfig: MCPTasksConformanceConfig,
-): Promise<{ result: MCPTasksConformanceResult }> {
+export async function runTasksConformance({
+  protocolVersion,
+  ...serverConfig
+}: MCPTasksConformanceConfig & {
+  protocolVersion?: McpProtocolVersion;
+}): Promise<{ result: MCPTasksConformanceResult }> {
   const test = new MCPTasksConformanceTest({
-    ...serverConfig,
+    ...pinSuiteVersion(serverConfig, protocolVersion),
     baseFetch: serverConfig.baseFetch ?? createConformanceFetch("MCP server"),
   });
   const result = await test.run();

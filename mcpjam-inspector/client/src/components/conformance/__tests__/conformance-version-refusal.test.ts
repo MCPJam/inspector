@@ -8,6 +8,7 @@ describe("version refusal evidence", () => {
     for (const refusal of [
       error,
       { message: error },
+      "The server doesn't support MCP protocol version 2026-07-28. Supported versions: 2025-06-18. Choose a supported version and try again.",
       {
         details: {
           errorDetails: {

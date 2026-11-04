@@ -33,7 +33,12 @@ const mockSubmitCode = vi.fn();
 const mockCompleteOAuth = vi.fn();
 
 vi.mock("@/lib/apis/conformance-connection-api", () => ({
-  checkConformanceConnection: vi.fn(async () => ({ status: "ready" })),
+  checkConformanceConnection: vi.fn(
+    async (_server: string, version: string) => ({
+      status: "ready",
+      protocolVersion: version === "auto" ? "2025-11-25" : version,
+    }),
+  ),
 }));
 
 vi.mock("@/lib/apis/mcp-conformance-api", () => ({
@@ -188,18 +193,27 @@ function clickRow(title: string) {
  * it. With a server list, Run opens the setup steps first: continue through
  * both, unless step 1 cannot continue.
  */
-function clickRun() {
+async function clickRun() {
   // After a run the run header offers "Run again" instead.
   fireEvent.click(screen.getAllByRole("button", { name: RUN_OR_AGAIN })[0]);
   const next = screen.queryByRole("button", { name: "Continue" });
-  if (!next || (next as HTMLButtonElement).disabled) return;
+  if (!next) return;
+  if (screen.queryByText(/Finding a protocol version|Connecting with/))
+    await waitFor(() => expect(next).toBeEnabled());
+  if ((next as HTMLButtonElement).disabled) return;
   fireEvent.click(next);
   fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
 }
 
+async function continueSetup() {
+  const next = screen.getByRole("button", { name: "Continue" });
+  await waitFor(() => expect(next).toBeEnabled());
+  fireEvent.click(next);
+}
+
 /** Starts a run and waits until no suite is still running. */
 async function runToCompletion() {
-  clickRun();
+  await clickRun();
   // A run from the setup steps starts a tick later, on the run's own page.
   await screen.findByRole("button", {
     name: /^(Run again|Running\.\.\.|Connecting\.\.\.)$/,
@@ -561,7 +575,7 @@ describe("ConformanceTab", () => {
     expect(screen.getByRole("tabpanel")).toHaveTextContent("History table");
 
     // On History only the header offers Run.
-    clickRun();
+    await clickRun();
 
     // The run's own header, which leads back to History.
     expect(
@@ -571,7 +585,7 @@ describe("ConformanceTab", () => {
     await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
   });
 
-  it("keeps the URL on the tab, so a refresh after Run lands on the run", () => {
+  it("keeps the URL on the tab, so a refresh after Run lands on the run", async () => {
     setupSuccessfulRunMocks();
     // Arrived from a run's page, which links back with `?view=history`.
     window.history.replaceState(null, "", "/conformance?view=history");
@@ -586,7 +600,7 @@ describe("ConformanceTab", () => {
       "true",
     );
 
-    clickRun();
+    await clickRun();
     expect(window.location.search).toBe("");
 
     // The run header's breadcrumb goes back to History.
@@ -609,7 +623,7 @@ describe("ConformanceTab", () => {
     ).toBeInTheDocument();
   });
 
-  it("stays on History when Run has no server to run", () => {
+  it("stays on History when Run has no server to run", async () => {
     const info = vi.spyOn(toast, "info");
     // A selection the page does not offer: Run asks for a server instead.
     render(
@@ -622,7 +636,7 @@ describe("ConformanceTab", () => {
     );
     fireEvent.click(screen.getByRole("tab", { name: "History" }));
 
-    clickRun();
+    await clickRun();
     expect(
       screen.getByText("Add a server to run conformance checks."),
     ).toBeInTheDocument();
@@ -637,14 +651,14 @@ describe("ConformanceTab", () => {
     info.mockRestore();
   });
 
-  it("asks for a server instead of running when none is selected", () => {
+  it("asks for a server instead of running when none is selected", async () => {
     const info = vi.spyOn(toast, "info");
     render(<ConformanceTab server={null} />);
 
     expect(
       screen.getByText("Run your first conformance check"),
     ).toBeInTheDocument();
-    clickRun();
+    await clickRun();
 
     expect(info).toHaveBeenCalledWith(
       "Add a server to run conformance checks.",
@@ -686,7 +700,7 @@ describe("ConformanceTab", () => {
     expect(onSelectServer).toHaveBeenCalledWith("beta");
   });
 
-  it("treats a selection the page no longer offers as no server", () => {
+  it("treats a selection the page no longer offers as no server", async () => {
     const info = vi.spyOn(toast, "info");
     // The selected server was removed and the project has no other.
     render(
@@ -697,7 +711,7 @@ describe("ConformanceTab", () => {
       />,
     );
 
-    clickRun();
+    await clickRun();
 
     // Run opens the setup steps, which say what is missing.
     expect(
@@ -725,7 +739,7 @@ describe("ConformanceTab", () => {
         onSelectServer={onSelectServer}
       />,
     );
-    clickRun();
+    await clickRun();
     await screen.findByText(/Running \d+ checks/);
 
     // The server is removed mid-run and the project has no other.
@@ -744,7 +758,7 @@ describe("ConformanceTab", () => {
     const info = vi.spyOn(toast, "info");
     mockRunProtocol.mockClear();
     // Run again runs this server directly, which the page no longer offers.
-    clickRun();
+    await clickRun();
     expect(info).toHaveBeenCalledWith(
       "Add a server to run conformance checks.",
     );
@@ -855,7 +869,7 @@ describe("ConformanceTab", () => {
       screen.getByRole("combobox", { name: "Select protocol version" }),
     );
     await user.click(screen.getByRole("option", { name: "2026-07-28" }));
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
 
     expect(
       screen.getByRole("heading", { name: "Set what you'd like to test" }),
@@ -924,7 +938,7 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
 
     // Every suite starts fully picked.
     const appsBox = screen.getByRole("checkbox", { name: "Run Apps" });
@@ -960,7 +974,7 @@ describe("ConformanceTab", () => {
     // The whole protocol suite was picked, so it runs without a list.
     await waitFor(() =>
       expect(mockRunProtocol).toHaveBeenCalledWith("alpha", {
-        protocolVersion: undefined,
+        protocolVersion: "2025-11-25",
       }),
     );
     expect(mockRunTasks).not.toHaveBeenCalled();
@@ -974,7 +988,7 @@ describe("ConformanceTab", () => {
     ).toHaveLength(2);
   });
 
-  it("keeps Run off in step 2 until something is picked", () => {
+  it("keeps Run off in step 2 until something is picked", async () => {
     const server = createHttpServer({ name: "alpha" });
     render(
       <ConformanceTab
@@ -984,7 +998,7 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
 
     for (const suite of ["Protocol", "Apps", "Tasks", "OAuth"]) {
       fireEvent.click(screen.getByRole("checkbox", { name: `Run ${suite}` }));
@@ -1016,7 +1030,7 @@ describe("ConformanceTab", () => {
       screen.getByRole("combobox", { name: "Select protocol version" }),
     );
     await user.click(screen.getByRole("option", { name: "2026-07-28" }));
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
     fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
 
     expect(onSelectServer).toHaveBeenCalledWith("beta");
@@ -1148,6 +1162,7 @@ describe("ConformanceTab", () => {
     await waitFor(() =>
       expect(mockRunTasks).toHaveBeenCalledWith("alpha", {
         checkIds: ["tasks-update-ack-shape"],
+        protocolVersion: "2025-11-25",
         toolName: "job",
         toolArguments: { count: 2 },
         inputResponses: { confirm: true },
@@ -1196,7 +1211,7 @@ describe("ConformanceTab", () => {
       };
       const { rerender } = render(<ConformanceTab server={alpha} {...props} />);
       fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      await continueSetup();
       expect(load).toHaveBeenCalledWith("alpha");
       await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
       await user.click(serverRow("beta"));
@@ -1208,11 +1223,11 @@ describe("ConformanceTab", () => {
             inputs: { tasksProbe: { toolName: "alpha-job" } },
           });
       });
-      expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+      await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
       expect(screen.queryByRole("alert")).toBeNull();
       expect(mockRunProtocol).not.toHaveBeenCalled();
       expect(mockRunTasks).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      await continueSetup();
       await waitFor(() => expect(load).toHaveBeenLastCalledWith("beta"));
       fireEvent.click(await screen.findByRole("button", { name: RUN_LABEL }));
       expect(onSelectServer).toHaveBeenCalledWith("beta");
@@ -1220,6 +1235,7 @@ describe("ConformanceTab", () => {
       await waitFor(() =>
         expect(mockRunTasks).toHaveBeenCalledWith("beta", {
           checkIds: ["tasks-update-ack-shape"],
+          protocolVersion: "2025-11-25",
           toolName: "beta-job",
           toolArguments: { count: 2 },
           inputResponses: { confirm: true },
@@ -1244,7 +1260,7 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
     for (const suite of ["Apps", "Tasks", "OAuth"]) {
       fireEvent.click(
         await screen.findByRole("checkbox", { name: `Run ${suite}` }),
@@ -1278,7 +1294,7 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
     fireEvent.click(await screen.findByRole("checkbox", { name: "Run Tasks" }));
     fireEvent.click(
       screen.getByRole("button", { name: "Conformance", exact: true }),
@@ -1474,7 +1490,7 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
     const retry = await screen.findByRole("button", { name: "Retry" });
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Could not load your saved inputs. Try again.",
@@ -1611,7 +1627,7 @@ describe("ConformanceTab", () => {
         onSelectServer={vi.fn()}
       />,
     );
-    clickRun();
+    await clickRun();
 
     expect(
       await screen.findByText(
@@ -1637,7 +1653,7 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
     fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
 
     // Tasks and OAuth are left out: two suites, Apps done, Protocol going.
@@ -1744,7 +1760,7 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
     fireEvent.click(
       screen.getByRole("button", { name: /^OAuth.*checks selected$/ }),
     );
@@ -1781,7 +1797,7 @@ describe("ConformanceTab", () => {
     expect(within(suiteHeader("oauth")).queryByText("FAILED")).toBeNull();
   });
 
-  it("starts step 2 from the server's default checks", () => {
+  it("starts step 2 from the server's default checks", async () => {
     const alpha = createHttpServer({ name: "alpha" });
     render(
       <ConformanceTab
@@ -1792,7 +1808,7 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
 
     expect(screen.getByRole("checkbox", { name: "Run Tasks" })).toHaveAttribute(
       "data-state",
@@ -1820,7 +1836,7 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
     fireEvent.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
     fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
 
@@ -2043,7 +2059,7 @@ describe("ConformanceTab", () => {
         );
         await user.click(screen.getByRole("option", { name: pin }));
       }
-      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      await continueSetup();
     }
 
     /** Setup to step 2 with the Protocol suite open. */
@@ -2625,6 +2641,7 @@ describe("ConformanceTab", () => {
       await waitFor(() =>
         expect(mockRunTasks).toHaveBeenCalledWith("alpha", {
           toolName: "echo",
+          protocolVersion: "2025-11-25",
           inputResponses: { confirm: { action: "accept" } },
         }),
       );
@@ -2798,13 +2815,10 @@ describe("ConformanceTab", () => {
   it("opens step 2 on the Settings defaults, not the last run's picks", async () => {
     setupSuccessfulRunMocks();
     const alpha = createHttpServer({ name: "alpha" });
+    const props = { server: alpha, servers: [alpha], onSelectServer: vi.fn(), onSaveServerDefaults: vi.fn(async () => {}), history: <p>History table</p> };
     const { rerender } = render(
       <ConformanceTab
-        server={alpha}
-        servers={[alpha]}
-        onSelectServer={vi.fn()}
-        onSaveServerDefaults={vi.fn(async () => {})}
-        history={<p>History table</p>}
+        {...props}
       />,
     );
     await runToCompletion();
@@ -2828,7 +2842,7 @@ describe("ConformanceTab", () => {
     // From History, Run opens the setup steps again.
     fireEvent.click(screen.getByRole("button", { name: "Conformance History" }));
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
 
     expect(screen.getByRole("checkbox", { name: "Run Tasks" })).toHaveAttribute(
       "data-state",
@@ -2953,7 +2967,7 @@ describe("ConformanceTab", () => {
         onConnectServer={onConnectServer}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
     fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
     await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
   });
@@ -3027,7 +3041,7 @@ describe("ConformanceTab", () => {
     rerender(
       <ConformanceTab server={alpha} servers={[alpha, notion]} {...props} />,
     );
-    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
   });
 
   it("connects the page's server when it arrives after step 1 opened", async () => {
@@ -3051,7 +3065,7 @@ describe("ConformanceTab", () => {
     expect(onConnectServer).toHaveBeenCalledTimes(1);
   });
 
-  it("reads no failure for a server named like an object built-in", () => {
+  it("reads no failure for a server named like an object built-in", async () => {
     // `in` would find the inherited `constructor` and loop on clearing it.
     const server = createHttpServer({ name: "constructor" });
     render(
@@ -3065,7 +3079,7 @@ describe("ConformanceTab", () => {
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
 
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
   });
 
   it("keeps each server's connect failure when they settle out of order", async () => {
@@ -3215,7 +3229,7 @@ describe("ConformanceTab", () => {
       <ConformanceTab server={connected} servers={[connected]} {...props} />,
     );
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
 
     // A later drop is a new state, not the old failure coming back.
     const dropped = { ...server, connectionStatus: "disconnected" as const };
@@ -3432,7 +3446,9 @@ describe("ConformanceTab", () => {
     await runToCompletion();
 
     // The whole suite, and no tool, since none was set.
-    expect(mockRunTasks).toHaveBeenCalledWith("http-server", {});
+    expect(mockRunTasks).toHaveBeenCalledWith("http-server", {
+      protocolVersion: "2025-11-25",
+    });
     expect(within(suiteHeader("tasks")).getByText("PASSED")).toBeDefined();
   });
 
@@ -3451,15 +3467,15 @@ describe("ConformanceTab", () => {
     expect(mockRunProtocol).not.toHaveBeenCalled();
   });
 
-  it("runs unpinned by default and forwards the OAuth profile's own version", async () => {
+  it("resolves Auto once and forwards that version to Protocol and OAuth", async () => {
     setupSuccessfulRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);
 
-    clickRun();
+    await clickRun();
 
     await waitFor(() => {
       expect(mockRunProtocol).toHaveBeenCalledWith("http-server", {
-        protocolVersion: undefined,
+        protocolVersion: "2025-11-25",
       });
     });
     await waitFor(() => {
@@ -3491,7 +3507,7 @@ describe("ConformanceTab", () => {
       screen.getByRole("combobox", { name: "Select protocol version" }),
     );
     await user.click(screen.getByRole("option", { name: "2026-07-28" }));
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
     fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
 
     await waitFor(() => {
@@ -3543,18 +3559,18 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
 
-    // On "auto" the era is unknown, so both eras are listed.
+    // Auto resolves before step 2, so only its negotiated era is listed.
     expect(screen.getByText("Ping")).toBeDefined();
-    expect(screen.getByText("Modern Client Handshake")).toBeDefined();
+    expect(screen.queryByText("Modern Client Handshake")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     await user.click(
       screen.getByRole("combobox", { name: "Select protocol version" }),
     );
     await user.click(screen.getByRole("option", { name: "2025-06-18" }));
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
 
     // A legacy pin drops the modern-only checks entirely.
     expect(screen.queryByText("Modern Client Handshake")).toBeNull();
@@ -3592,7 +3608,7 @@ describe("ConformanceTab", () => {
     mockRunProtocol.mockReturnValue(pending.promise);
 
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
 
     // The catalog line would read "not run yet", which is exactly wrong
     // while the run is live.
@@ -3622,7 +3638,7 @@ describe("ConformanceTab", () => {
     mockCompleteOAuth.mockReturnValue(poll.promise);
 
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
 
     await screen.findByText("Waiting for browser authorization...");
     expect(suiteHeader("oauth").getAttribute("aria-expanded")).toBe("true");
@@ -3661,7 +3677,7 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
 
     await screen.findByText(
       "Your browser blocked the sign-in window. Allow pop-ups for this site, or open the sign-in page.",
@@ -3701,7 +3717,7 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
     await screen.findByText("Waiting for browser authorization...");
 
     fireEvent.click(screen.getByRole("button", { name: "Skip OAuth" }));
@@ -3748,7 +3764,7 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
     await screen.findByText("Waiting for browser authorization...");
 
     window.dispatchEvent(
@@ -3785,7 +3801,7 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
 
     await screen.findByText(/authorization URL is not an http or https/);
     expect(openSpy).not.toHaveBeenCalled();
@@ -3803,7 +3819,7 @@ describe("ConformanceTab", () => {
     // them, and the client sends no opt-in flag.
     expect(screen.queryByText("Run negative OAuth checks")).toBeNull();
 
-    clickRun();
+    await clickRun();
 
     await waitFor(() => {
       expect(mockStartOAuth).toHaveBeenCalledTimes(1);
@@ -4097,7 +4113,7 @@ describe("ConformanceTab", () => {
 
     const { rerender } = render(<ConformanceTab server={serverA} />);
 
-    clickRun();
+    await clickRun();
     await waitFor(() => {
       expect(within(suiteHeader("apps")).getByText("PASSED")).toBeDefined();
     });
@@ -4123,7 +4139,7 @@ describe("ConformanceTab", () => {
       result: createProtocolResult({ checks: [check("Fresh check")] }),
     });
 
-    clickRun();
+    await clickRun();
     await screen.findByText("Fresh check");
 
     staleProtocolRun.resolve({
@@ -4502,7 +4518,7 @@ describe("ConformanceTab blocked sign-in window", () => {
     setupAuthorizationNeeded();
     vi.spyOn(window, "open").mockReturnValue(null);
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
 
     const dialog = await screen.findByRole("alertdialog");
     expect(within(dialog).getByText(DIALOG_TITLE)).toBeInTheDocument();
@@ -4523,7 +4539,7 @@ describe("ConformanceTab blocked sign-in window", () => {
     setupAuthorizationNeeded();
     vi.spyOn(window, "open").mockReturnValue(null);
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
     const dialog = await screen.findByRole("alertdialog");
 
     fireEvent.click(
@@ -4537,7 +4553,7 @@ describe("ConformanceTab blocked sign-in window", () => {
     setupAuthorizationNeeded();
     vi.spyOn(window, "open").mockReturnValue(null);
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
     const dialog = await screen.findByRole("alertdialog");
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Skip OAuth" }));
@@ -4552,7 +4568,7 @@ describe("ConformanceTab blocked sign-in window", () => {
     setupAuthorizationNeeded();
     vi.spyOn(window, "open").mockReturnValue({} as Window);
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
 
     expect(
       await screen.findByText("Waiting for browser authorization..."),

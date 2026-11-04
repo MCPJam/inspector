@@ -21,7 +21,9 @@ export function ConformanceProtocolConnection({
   if (checking)
     return (
       <p role="status" className="mt-3 text-sm text-muted-foreground">
-        Connecting with {version}…
+        {version === "auto"
+          ? "Finding a protocol version…"
+          : `Connecting with ${version}…`}
       </p>
     );
   if (!result || result.status === "ready") return null;

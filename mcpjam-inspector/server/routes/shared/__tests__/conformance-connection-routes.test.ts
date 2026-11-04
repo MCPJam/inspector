@@ -42,7 +42,7 @@ vi.mock("../../web/auth.js", async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  check.mockResolvedValue({ status: "ready" });
+  check.mockResolvedValue({ status: "ready", protocolVersion: "2026-07-28" });
   authorize.mockResolvedValue({
     serverConfig: {
       transportType: "http",
@@ -93,6 +93,20 @@ async function post(mode: "local" | "hosted", fields: Record<string, unknown>) {
 describe.each(["local", "hosted"] as const)(
   "%s connection check route",
   (mode) => {
+    it("accepts Auto and returns its resolved version", async () => {
+      check.mockResolvedValueOnce({
+        status: "ready",
+        protocolVersion: "2025-06-18",
+      });
+      const response = await post(mode, { protocolVersion: "auto" });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        status: "ready",
+        protocolVersion: "2025-06-18",
+      });
+      expect(check).toHaveBeenCalledWith(expect.anything(), "auto");
+    });
+
     it("uses the authorized target and saved login, ignoring body credentials", async () => {
       const response = await post(mode, {
         protocolVersion: "2026-07-28",
@@ -100,7 +114,10 @@ describe.each(["local", "hosted"] as const)(
         accessToken: "body-token",
       });
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ status: "ready" });
+      expect(await response.json()).toEqual({
+        status: "ready",
+        protocolVersion: "2026-07-28",
+      });
       const [config, version] = check.mock.calls[0];
       expect(String(config.url)).toBe("https://bart.test/mcp");
       expect(version).toBe("2026-07-28");
@@ -114,7 +131,6 @@ describe.each(["local", "hosted"] as const)(
 
     it.each([
       {},
-      { protocolVersion: "auto" },
       { protocolVersion: "not-a-version" },
     ])("rejects invalid pins: %s", async (body) => {
       expect((await post(mode, body)).status).toBe(400);

@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@mcpjam/design-system/button";
+import type { McpProtocolVersion } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type {
   ConformanceSelection,
@@ -151,6 +152,7 @@ export function ConformanceTab({
     id: number;
     serverName: string;
     versionPin: ProtocolVersionPin;
+    resolvedProtocolVersion?: McpProtocolVersion;
     selection: ConformanceSelection;
     inputs?: ConformanceProbes;
   } | null>(null);
@@ -239,12 +241,14 @@ export function ConformanceTab({
     versionPin: ProtocolVersionPin,
     selection: ConformanceSelection,
     inputs?: ConformanceProbes,
+    resolvedProtocolVersion?: McpProtocolVersion,
   ) => {
     onSelectServer?.(serverName);
     setStart((prev) => ({
       id: (prev?.id ?? 0) + 1,
       serverName,
       versionPin,
+      resolvedProtocolVersion,
       selection,
       inputs,
     }));
@@ -254,8 +258,9 @@ export function ConformanceTab({
     versionPin: ProtocolVersionPin,
     selection: ConformanceSelection,
     inputs?: ConformanceProbes,
+    resolvedProtocolVersion?: McpProtocolVersion,
   ) => {
-    beginRun(serverName, versionPin, selection, inputs);
+    beginRun(serverName, versionPin, selection, inputs, resolvedProtocolVersion);
     changeView("overview");
   };
   const [loadingDefaults, setLoadingDefaults] = useState(false);
@@ -405,17 +410,24 @@ export function ConformanceTab({
         onEditServer={onEditServer}
         probesFor={probesFor}
         onCancel={() => setSetupOpen(false)}
-        onRun={(serverName, versionPin, selection, probes) => {
+        onRun={(
+          serverName,
+          versionPin,
+          selection,
+          probes,
+          resolvedProtocolVersion,
+        ) => {
+          const effectiveVersion = resolvedProtocolVersion ?? versionPin;
           setSetupOpen(false);
-          const runnable = runnableSelection(selection, versionPin);
+          const runnable = runnableSelection(selection, effectiveVersion);
           const savedInputs = probesAfterRun(
             probesFor(serverName),
             probes,
             runnable,
-            versionPin,
+            effectiveVersion,
           );
           setProbes(serverName, savedInputs);
-          startRun(serverName, versionPin, selection, probes);
+          startRun(serverName, versionPin, selection, probes, resolvedProtocolVersion);
           // The checks picked here become the server's defaults: Settings
           // opens on them and the server list's Run reuses them. A failed
           // save leaves the old defaults; the run goes ahead either way.
@@ -521,6 +533,9 @@ export function ConformanceTab({
         if (start) startedIdRef.current = start.id;
       }}
       initialVersionPin={startsHere ? start?.versionPin : undefined}
+      initialResolvedProtocolVersion={
+        startsHere ? start?.resolvedProtocolVersion : undefined
+      }
       // Read when a run starts, so Run again runs the server's current
       // defaults, Settings changes included.
       selection={
