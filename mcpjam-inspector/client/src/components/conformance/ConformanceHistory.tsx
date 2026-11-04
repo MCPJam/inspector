@@ -392,7 +392,10 @@ export function ConformanceRunDetailPage({
             detail.status !== "cancelled"
           }
         />
-        {detail.incompleteReason ? (
+        {/* A completed run's reason is a copy of one suite's, and the score
+            card and each suite already say what could not run. A stopped or
+            timed-out run has its own reason that nothing else shows. */}
+        {!finished && detail.incompleteReason ? (
           <p className="mt-3 text-sm text-amber-700 dark:text-amber-400">
             {detail.incompleteReason}
           </p>
