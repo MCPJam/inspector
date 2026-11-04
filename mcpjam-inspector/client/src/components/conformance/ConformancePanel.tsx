@@ -221,9 +221,11 @@ export function ConformanceContent({
   history,
   home,
   canRun,
+  runDisabled = false,
   onConnectServer,
   onEditServer,
   onRequestRun,
+  onRunAgain,
   onOpenSettings,
   settingsLoading = false,
   onShowHome,
@@ -244,10 +246,13 @@ export function ConformanceContent({
   home?: ReactNode;
   /** False when the selection is not one of the page's servers. */
   canRun: boolean;
+  /** Defaults must load successfully before a new run can start. */
+  runDisabled?: boolean;
   onConnectServer?: ConformanceConnectServer;
   onEditServer?: (name: string) => void;
   /** Set when Run opens the setup steps instead of running here. */
   onRequestRun?: () => void;
+  onRunAgain?: (pin: ProtocolVersionPin) => void;
   /** Opens this server's Conformance Settings. */
   onOpenSettings?: () => void;
   /** The server's logo, when the project or the server provides one. */
@@ -464,7 +469,7 @@ export function ConformanceContent({
     <Button
       size="sm"
       onClick={onRequestRun ?? handleRun}
-      disabled={isRunning || isConnecting}
+      disabled={isRunning || isConnecting || runDisabled}
     >
       {isRunning || isConnecting ? (
         <>
@@ -544,8 +549,10 @@ export function ConformanceContent({
               ) : null}
               <Button
                 size="sm"
-                onClick={handleRun}
-                disabled={isRunning || isConnecting}
+                onClick={onRunAgain ? () => onRunAgain(versionPin) : handleRun}
+                disabled={
+                  isRunning || isConnecting || settingsLoading || runDisabled
+                }
               >
                 {isRunning || isConnecting ? (
                   <>
@@ -612,9 +619,9 @@ export function ConformanceContent({
                 {waitingOnAuthorization > 0 && (
                   <div className="mt-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm leading-relaxed">
                     This server requires sign-in, and this run had no valid
-                    session, so the checks that need it could not run.
-                    Reconnect the server with OAuth from the server menu, or
-                    update its access token, then run again.
+                    session, so the checks that need it could not run. Reconnect
+                    the server with OAuth from the server menu, or update its
+                    access token, then run again.
                   </div>
                 )}
 

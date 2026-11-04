@@ -329,6 +329,7 @@ export function ConformanceRunDetailPage({
   if (settingsOpen && savedServerName && serverSettings) {
     return (
       <SavedRunSettings
+        key={detail.serverId ?? serverName}
         serverName={savedServerName}
         settings={serverSettings}
         onBack={() => setSettingsOpen(false)}

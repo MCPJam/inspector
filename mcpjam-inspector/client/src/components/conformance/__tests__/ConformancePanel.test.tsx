@@ -265,6 +265,32 @@ function createHttpServer(
   };
 }
 
+const createRunListItem = (id: string) => ({
+  _id: id,
+  projectId: "proj_1",
+  targetKind: "server",
+  targetKey: `server:${id}`,
+  serverId: id,
+  source: "ui",
+  verification: "mcpjam_verified" as const,
+  status: "completed",
+  outcome: "passed" as const,
+  incompleteReason: null,
+  score: 100,
+  applicable: 3,
+  passed: 3,
+  failed: 0,
+  couldNotRun: 0,
+  requestedSuites: ["protocol"],
+  protocolVersion: "2025-11-25",
+  actorLabel: null,
+  ciMetadata: null,
+  createdAt: Date.UTC(2026, 9, 28, 12),
+  completedAt: null,
+  durationMs: null,
+  sharingEnabled: false,
+});
+
 function createStdioServer(
   overrides: Partial<ServerWithName> = {},
 ): ServerWithName {
@@ -1058,6 +1084,391 @@ describe("ConformanceTab", () => {
     expect(screen.queryByText("History table")).toBeNull();
   });
 
+  it("waits for shared defaults before a saved rerun and sends its inputs once", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const defaults =
+      createDeferred<
+        import("@/hooks/use-conformance-server-data").ConformanceDefaults
+      >();
+    const load = vi.fn(() => defaults.promise);
+    window.history.replaceState(
+      null,
+      "",
+      "/conformance?view=history&run=alpha",
+    );
+    render(
+      <StrictMode>
+        <ConformanceTab
+          server={alpha}
+          servers={[alpha]}
+          onSelectServer={vi.fn()}
+          onLoadServerDefaults={load}
+          history={<p>History</p>}
+        />
+      </StrictMode>,
+    );
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    await act(async () =>
+      defaults.resolve({
+        selection: {
+          protocol: ["ping"],
+          apps: [],
+          tasks: ["tasks-update-ack-shape"],
+          oauth: false,
+        },
+        inputs: {
+          tasksProbe: {
+            toolName: "job",
+            arguments: { count: 2 },
+            inputResponses: { confirm: true },
+          },
+        },
+      }),
+    );
+    await waitFor(() =>
+      expect(mockRunTasks).toHaveBeenCalledWith("alpha", {
+        checkIds: ["tasks-update-ack-shape"],
+        toolName: "job",
+        toolArguments: { count: 2 },
+        inputResponses: { confirm: true },
+      }),
+    );
+    expect(mockRunProtocol).toHaveBeenCalledTimes(1);
+    expect(mockRunTasks).toHaveBeenCalledTimes(1);
+    expect(window.location.search).toBe("");
+  });
+
+  it.each(["success", "failure"])(
+    "ignores a stale defaults %s after switching setup servers",
+    async (outcome) => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      const alpha = createHttpServer({ name: "alpha" });
+      const beta = createHttpServer({ name: "beta" });
+      const defaults =
+        createDeferred<
+          import("@/hooks/use-conformance-server-data").ConformanceDefaults
+        >();
+      const load = vi.fn((name: string) =>
+        name === "alpha"
+          ? defaults.promise
+          : Promise.resolve({
+              selection: {
+                protocol: [],
+                apps: [],
+                tasks: ["tasks-update-ack-shape"],
+                oauth: false,
+              },
+              inputs: {
+                tasksProbe: {
+                  toolName: "beta-job",
+                  arguments: { count: 2 },
+                  inputResponses: { confirm: true },
+                },
+              },
+            }),
+      );
+      const onSelectServer = vi.fn();
+      const props = {
+        servers: [alpha, beta],
+        onSelectServer,
+        onLoadServerDefaults: load,
+      };
+      const { rerender } = render(<ConformanceTab server={alpha} {...props} />);
+      fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      expect(load).toHaveBeenCalledWith("alpha");
+      await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
+      await user.click(serverRow("beta"));
+      await act(async () => {
+        if (outcome === "failure") defaults.reject(new Error("offline"));
+        else
+          defaults.resolve({
+            selection: { tasks: [], oauth: false },
+            inputs: { tasksProbe: { toolName: "alpha-job" } },
+          });
+      });
+      expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(mockRunProtocol).not.toHaveBeenCalled();
+      expect(mockRunTasks).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      await waitFor(() => expect(load).toHaveBeenLastCalledWith("beta"));
+      fireEvent.click(await screen.findByRole("button", { name: RUN_LABEL }));
+      expect(onSelectServer).toHaveBeenCalledWith("beta");
+      rerender(<ConformanceTab server={beta} {...props} />);
+      await waitFor(() =>
+        expect(mockRunTasks).toHaveBeenCalledWith("beta", {
+          checkIds: ["tasks-update-ack-shape"],
+          toolName: "beta-job",
+          toolArguments: { count: 2 },
+          inputResponses: { confirm: true },
+        }),
+      );
+      expect(mockRunProtocol).not.toHaveBeenCalled();
+      expect(mockRunTasks).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("keeps the selected suites when an unsaved server runs again", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const load = vi.fn();
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        isSavedServer={() => false}
+        onLoadServerDefaults={load}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    for (const suite of ["Apps", "Tasks", "OAuth"]) {
+      fireEvent.click(
+        await screen.findByRole("checkbox", { name: `Run ${suite}` }),
+      );
+    }
+    fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalledTimes(2));
+    expect(mockRunApps).not.toHaveBeenCalled();
+    expect(mockRunTasks).not.toHaveBeenCalled();
+    expect(mockStartOAuth).not.toHaveBeenCalled();
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("keeps setup edits as a draft until Run and discards them on Cancel", async () => {
+    const alpha = createHttpServer({ name: "alpha" });
+    const save = vi.fn();
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onLoadServerDefaults={vi.fn(async () => ({
+          selection: {},
+          inputs: {},
+        }))}
+        onSaveServerDefaults={save}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Run Tasks" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Conformance", exact: true }),
+    );
+    expect(save).not.toHaveBeenCalled();
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
+  });
+
+  it("does not run with guessed defaults after a failed read and offers Retry", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const load = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue({
+        selection: { tasks: [], oauth: false },
+        inputs: {},
+      });
+    window.history.replaceState(null, "", "/conformance?run=alpha");
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onLoadServerDefaults={load}
+      />,
+    );
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load your saved inputs. Try again.",
+    );
+    for (const button of screen.getAllByRole("button", { name: RUN_OR_AGAIN }))
+      expect(button).toBeDisabled();
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    fireEvent.click(retry);
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalledTimes(1));
+    expect(mockRunTasks).not.toHaveBeenCalled();
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("blocks Run again after an input load error and recovers through Retry", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const defaults = { selection: { tasks: [], oauth: false }, inputs: {} };
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce(defaults)
+      .mockRejectedValueOnce(new Error("bad saved inputs"))
+      .mockResolvedValue(defaults);
+    window.history.replaceState(null, "", "/conformance?run=alpha");
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onLoadServerDefaults={load}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getByRole("button", { name: "Run again" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load your saved inputs. Try again.",
+    );
+    expect(mockRunProtocol).toHaveBeenCalledTimes(1);
+    fireEvent.click(retry);
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps other servers runnable after a defaults read fails", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const beta = createHttpServer({ name: "beta" });
+    const betaDefaults =
+      createDeferred<
+        import("@/hooks/use-conformance-server-data").ConformanceDefaults
+      >();
+    const load = vi.fn(async (name: string) => {
+      if (name === "alpha") throw new Error("offline");
+      return betaDefaults.promise;
+    });
+    const props = {
+      servers: [alpha, beta],
+      onSelectServer: vi.fn(),
+      onLoadServerDefaults: load,
+      lastRuns: {
+        alpha: createRunListItem("srv_a"),
+        beta: createRunListItem("srv_b"),
+      },
+      onViewRun: vi.fn(),
+    };
+    const { rerender } = render(<ConformanceTab server={alpha} {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Run alpha" }));
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getByRole("button", { name: "Run alpha" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run beta" })).toBeEnabled();
+    for (const button of screen.getAllByRole("button", { name: RUN_LABEL }))
+      expect(button).toBeDisabled();
+    fireEvent.click(retry);
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+    await screen.findByRole("button", { name: "Retry" });
+    expect(load.mock.calls.map(([name]) => name)).toEqual(["alpha", "alpha"]);
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+
+    rerender(<ConformanceTab server={beta} {...props} />);
+    for (const button of screen.getAllByRole("button", { name: RUN_LABEL }))
+      expect(button).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Run alpha" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run beta" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Run beta" }));
+    expect(load).toHaveBeenLastCalledWith("beta");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Run alpha" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run beta" })).toBeDisabled();
+    await act(async () =>
+      betaDefaults.resolve({
+        selection: { protocol: ["ping"], apps: [], tasks: [], oauth: false },
+        inputs: {},
+      }),
+    );
+    await waitFor(() =>
+      expect(mockRunProtocol).toHaveBeenCalledWith(
+        "beta",
+        expect.objectContaining({ checkIds: ["ping"] }),
+      ),
+    );
+    expect(mockRunProtocol).toHaveBeenCalledTimes(1);
+    expect(mockRunApps).not.toHaveBeenCalled();
+    expect(mockRunTasks).not.toHaveBeenCalled();
+    expect(props.onSelectServer).toHaveBeenLastCalledWith("beta");
+  });
+
+  it("keeps Run again available when another server's defaults fail", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const beta = createHttpServer({ name: "beta" });
+    const load = vi.fn(async (name: string) => {
+      if (name === "alpha") throw new Error("offline");
+      return { selection: { apps: [], tasks: [], oauth: false }, inputs: {} };
+    });
+    const props = {
+      servers: [alpha, beta],
+      onSelectServer: vi.fn(),
+      onLoadServerDefaults: load,
+    };
+    window.history.replaceState(null, "", "/conformance?run=beta");
+    render(<ConformanceTab server={beta} {...props} />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+    );
+    expect(mockRunProtocol).toHaveBeenCalledTimes(1);
+    act(() => {
+      window.history.replaceState(null, "", "/conformance?run=alpha");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled();
+    fireEvent.click(retry);
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(3));
+    await screen.findByRole("button", { name: "Retry" });
+    expect(load.mock.calls.map(([name]) => name)).toEqual([
+      "beta",
+      "alpha",
+      "alpha",
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalledTimes(2));
+    expect(load).toHaveBeenLastCalledWith("beta");
+    expect(mockRunProtocol.mock.calls.map(([name]) => name)).toEqual([
+      "beta",
+      "beta",
+    ]);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps setup on the same screen with Retry after an input read fails", async () => {
+    const alpha = createHttpServer({ name: "alpha" });
+    const load = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("bad saved inputs"))
+      .mockResolvedValue({ selection: {}, inputs: {} });
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onLoadServerDefaults={load}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load your saved inputs. Try again.",
+    );
+    expect(screen.queryByRole("button", { name: RUN_LABEL })).toBeNull();
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    fireEvent.click(retry);
+    expect(
+      await screen.findByRole("button", { name: RUN_LABEL }),
+    ).toBeEnabled();
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+  });
+
   it("says so, and runs nothing, when Run again names a server it does not offer", async () => {
     setupSuccessfulRunMocks();
     const info = vi.spyOn(toast, "info");
@@ -1143,37 +1554,15 @@ describe("ConformanceTab", () => {
   it("shows a server's logo on its card, and initials without one", () => {
     const alpha = createHttpServer({ name: "alpha" });
     const beta = createHttpServer({ name: "beta" });
-    const run = (id: string) => ({
-      _id: id,
-      projectId: "proj_1",
-      targetKind: "server",
-      targetKey: `server:${id}`,
-      serverId: id,
-      source: "ui",
-      verification: "mcpjam_verified" as const,
-      status: "completed",
-      outcome: "passed" as const,
-      incompleteReason: null,
-      score: 100,
-      applicable: 3,
-      passed: 3,
-      failed: 0,
-      couldNotRun: 0,
-      requestedSuites: ["protocol"],
-      protocolVersion: "2025-11-25",
-      actorLabel: null,
-      ciMetadata: null,
-      createdAt: Date.UTC(2026, 9, 28, 12),
-      completedAt: null,
-      durationMs: null,
-      sharingEnabled: false,
-    });
     render(
       <ConformanceTab
         server={alpha}
         servers={[alpha, beta]}
         onSelectServer={vi.fn()}
-        lastRuns={{ alpha: run("srv_a"), beta: run("srv_b") }}
+        lastRuns={{
+          alpha: createRunListItem("srv_a"),
+          beta: createRunListItem("srv_b"),
+        }}
         onViewRun={vi.fn()}
         serverIcons={{ alpha: "https://example.test/alpha.png" }}
       />,
@@ -1349,6 +1738,7 @@ describe("ConformanceTab", () => {
     expect(onSaveServerDefaults).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({ oauthUnscored: [left.id] }),
+      {},
     );
     await waitFor(() => expect(mockStartOAuth).toHaveBeenCalled());
     await waitFor(() =>
@@ -1418,6 +1808,7 @@ describe("ConformanceTab", () => {
     expect(onSaveServerDefaults).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({ tasks: [] }),
+      {},
     );
     await screen.findByRole("button", { name: /^(Run again|Running\.\.\.)$/ });
     await waitFor(() =>
@@ -1438,7 +1829,7 @@ describe("ConformanceTab", () => {
   it("runs again with the checks changed in Settings", async () => {
     setupSuccessfulRunMocks();
     const alpha = createHttpServer({ name: "alpha" });
-    render(
+    const { rerender } = render(
       <ConformanceTab
         server={alpha}
         servers={[alpha]}
@@ -1451,6 +1842,19 @@ describe("ConformanceTab", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
+    rerender(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onSaveServerDefaults={vi.fn(async () => {})}
+        serverDefaults={{ alpha: { tasks: [], tasksAdvice: [] } }}
+        history={<p>History table</p>}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Back" })).toBeEnabled(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
     // Run again picks up the change before the save comes back.
@@ -1485,7 +1889,7 @@ describe("ConformanceTab", () => {
     // A fixed message, not the raw backend error; the box goes back.
     await waitFor(() =>
       expect(error).toHaveBeenCalledWith(
-        "Could not save the default checks. Try again.",
+        "Could not save the default checks and inputs. Try again.",
       ),
     );
     // Once the save settles, the boxes show what is saved again.
@@ -2375,7 +2779,7 @@ describe("ConformanceTab", () => {
   it("opens step 2 on the Settings defaults, not the last run's picks", async () => {
     setupSuccessfulRunMocks();
     const alpha = createHttpServer({ name: "alpha" });
-    render(
+    const { rerender } = render(
       <ConformanceTab
         server={alpha}
         servers={[alpha]}
@@ -2387,6 +2791,19 @@ describe("ConformanceTab", () => {
     await runToCompletion();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
+    rerender(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onSaveServerDefaults={vi.fn(async () => {})}
+        serverDefaults={{ alpha: { tasks: [], tasksAdvice: [] } }}
+        history={<p>History table</p>}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Back" })).toBeEnabled(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
     // From History, Run opens the setup steps again.
@@ -2421,15 +2838,22 @@ describe("ConformanceTab", () => {
     expect(screen.getByText("Default Checks")).toBeInTheDocument();
     // Counts read "picked of total" here.
     expect(
-      screen.getByRole("button", { name: /^OAuth.*\d+ of \d+$/ }),
+      screen.getByRole("button", { name: /^OAuth.*checks selected$/ }),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Run OAuth" }));
-    expect(onSaveServerDefaults).toHaveBeenCalledWith("alpha", {
-      oauth: false,
-    });
+    expect(onSaveServerDefaults).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        oauth: false,
+      }),
+      {},
+    );
 
     // Back to the run, which is still there.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Back" })).toBeEnabled(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled();
   });
