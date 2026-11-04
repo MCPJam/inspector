@@ -3,8 +3,7 @@
 import { useConformanceOAuthSession } from "./use-conformance-oauth-session";
 import { useConformanceDeadline } from "./use-conformance-deadline";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-// Browser-safe SDK entry — the top-level `@mcpjam/sdk` pulls Node-only
-// transitive deps that break the Vite browser bundle.
+// The browser entry excludes Node-only dependencies.
 import {
   type McpProtocolVersion,
   type MCPOAuthReadinessId,
@@ -235,12 +234,9 @@ export function useConformanceRun({
     [],
   );
 
-  /** The run whose OAuth suite the visitor skipped, if any. */
   const skippedOAuthRunTokenRef = useRef<number | null>(null);
 
-  // A skip ends only the OAuth suite, so it cannot bump the run token the
-  // other suites report under. A callback already past its listener checks
-  // this instead, or it would overwrite the skip with a late result.
+  // Skipping OAuth leaves other suites active but blocks late OAuth results.
   const isOAuthRunActive = useCallback(
     (runToken: number, serverName: string) =>
       isRunActive(runToken, serverName) &&
@@ -248,7 +244,6 @@ export function useConformanceRun({
     [isRunActive, runBudget],
   );
 
-  // Reset only for a changed target, not connection hydration.
   const serverRef = useRef(server);
   serverRef.current = server;
 
@@ -297,7 +292,7 @@ export function useConformanceRun({
       serverName: string,
       options: Parameters<typeof runProtocolConformance>[1],
     ) => {
-      if (!httpServer) return;
+      if (!httpServer || !isRunActive(runToken, serverName)) return;
       setProtocol({ status: "running" });
       try {
         const { result } = await runProtocolConformance(serverName, { ...options, ...runBudget() });
@@ -317,6 +312,7 @@ export function useConformanceRun({
       serverName: string,
       options: Parameters<typeof runAppsConformance>[1],
     ) => {
+      if (!isRunActive(runToken, serverName)) return;
       setApps({ status: "running" });
       try {
         const { result } = await runAppsConformance(serverName, { ...options, ...runBudget() });
@@ -336,12 +332,12 @@ export function useConformanceRun({
       serverName: string,
       options: Parameters<typeof runTasksConformance>[1],
     ) => {
+      if (!isRunActive(runToken, serverName)) return;
       setTasks({ status: "running" });
       try {
         const { result } = await runTasksConformance(serverName, { ...options, ...runBudget() });
         if (!isRunActive(runToken, serverName)) return;
-        // The tasks suite reports a real third outcome: checks that apply but
-        // could not be exercised leave the run incomplete, never passing.
+        // Checks that could not run remain incomplete.
         setTasks({ status: "done", result, verdict: verdictOf(result) });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;
@@ -494,16 +490,14 @@ export function useConformanceRun({
       protocolVersion: McpProtocolVersion,
       readinessIds?: MCPOAuthReadinessId[],
     ) => {
-      if (!isHttpServer(currentServer)) return;
+      if (!isHttpServer(currentServer) || !isRunActive(runToken, currentServer.name)) return;
 
       const serverName = currentServer.name;
       setOAuth({ status: "running" });
 
       try {
         const profile = deriveOAuthProfileFromServer(currentServer);
-        // Always send callbackOrigin — both local and hosted modes redirect
-        // back to the inspector's own `/oauth/callback/debug` page so the
-        // server can surface the code back to the SDK runner.
+        // Both modes return authorization codes to the inspector callback.
         const callbackOrigin = window.location.origin;
 
         const saved =

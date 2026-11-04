@@ -185,7 +185,7 @@ export function useConformanceServerData({
   );
   const saveTimeout = useCallback(async (serverName: string, seconds: number | null) => {
     const serverId = serversByName.get(serverName);
-    if (!projectId || !serverId) throw new Error(`No saved server named "${serverName}" to save to.`);
+    if (!projectId || !serverId) throw new Error(`No saved server named "${serverName}" exists. Add the server first, then try again.`);
     await saveSettings({ projectId, serverId, runTimeoutSeconds: seconds });
   }, [projectId, saveSettings, serversByName]);
   const saveDefaults = useCallback(
@@ -196,7 +196,7 @@ export function useConformanceServerData({
     ) => {
       const serverId = serversByName.get(serverName);
       if (!projectId || !serverId)
-        throw new Error(`No saved server named "${serverName}" to save to.`);
+        throw new Error(`No saved server named "${serverName}" exists. Add the server first, then try again.`);
       await saveSettings({
         projectId,
         serverId,

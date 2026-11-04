@@ -71,6 +71,7 @@ vi.mock("@/components/oauth/utils", () => ({
 }));
 
 import { useConformanceRun } from "@/hooks/use-conformance-run";
+import { checkConformanceConnection } from "@/lib/apis/conformance-connection-api";
 import { toast } from "@/lib/toast";
 import { OAUTH_CATALOG } from "../conformance-catalogs";
 import { ConformanceTab } from "../ConformanceTab";
@@ -4630,6 +4631,33 @@ it("keeps completed suites and ignores late results after a shared timeout, incl
     await act(async () => { finishApps({ success: true, result: createAppsResult() }); });
     expect(result.current.apps.status).toBe("error");
     expect(result.current.apps.error).toBe("Run timed out after 1 seconds");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+
+it("does not dispatch later suites when the deadline expires after preflight", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(0);
+    setupSuccessfulRunMocks();
+    vi.mocked(checkConformanceConnection).mockImplementationOnce(async () => {
+      // Move the wall clock without firing the timer: dispatch must notice expiry.
+      vi.setSystemTime(1_000);
+      return { status: "ready", protocolVersion: "2025-11-25" };
+    });
+    const server = createHttpServer();
+    const { result } = renderHook(() => useConformanceRun({ server, runTimeoutSeconds: 1 }));
+    await act(async () => { await result.current.runAll(); });
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    expect(mockRunApps).not.toHaveBeenCalled();
+    expect(mockRunTasks).not.toHaveBeenCalled();
+    expect(mockStartOAuth).not.toHaveBeenCalled();
+    for (const suite of [result.current.protocol, result.current.apps, result.current.tasks, result.current.oauth]) {
+      expect(suite.status).toBe("error");
+      expect(suite.error).toBe("Run timed out after 1 seconds");
+    }
   } finally {
     vi.useRealTimers();
   }
