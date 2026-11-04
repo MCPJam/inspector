@@ -1,5 +1,10 @@
-import { getManagerOrganization } from "../../mcp-connections.js";
+import { getManagerOrganization, getManagerResourceSnapshot } from "../../mcp-connections.js";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
+import {
+  isCreateTaskExtResult,
+  runToolTaskSeam,
+  type ToolTaskSeamOptions,
+} from "@mcpjam/sdk";
 import type { ConnectionsByServerId, MCPClientManager } from "@mcpjam/sdk";
 import type { ChunkWriter } from "../../chat-stream-chunks.js";
 import {
@@ -61,6 +66,7 @@ export type NativeForwardingSelection = {
 };
 
 export function nativeForwardingSelection(args: {
+  manager: MCPClientManager;
   laneId?: string;
   hostId?: string;
   serverIds: string[];
@@ -79,12 +85,11 @@ export function nativeForwardingSelection(args: {
         throw new Error(
           "Native forwarding currently requires one account per server.",
         );
-      return {
-        serverId,
-        ...(connections[0]
-          ? { connectionId: connections[0].connectionId }
-          : {}),
-      };
+      // A single default OAuth account has no multi-account UI group. Keep
+      // the credential captured by authorization instead of resolving a default later.
+      const connectionId = connections[0]?.connectionId ??
+        getManagerResourceSnapshot(args.manager, serverId)?.credentialId;
+      return { serverId, ...(connectionId ? { connectionId } : {}) };
     }),
   };
 }
@@ -102,6 +107,8 @@ export async function prepareNativeForwarding(args: {
   writer: ChunkWriter;
   delivery?: "native" | "bridge";
   profiles?: Record<string, HarnessConnectionProfile>;
+  correlationKey?: string;
+  tasks?: ToolTaskSeamOptions;
 }) {
   if (args.strategy.plane !== "web-authorized" || !args.owners.length)
     throw new Error("Native forwarding route is unavailable.");
@@ -126,8 +133,12 @@ export async function prepareNativeForwarding(args: {
   const keyToServerId = harnessServerKeyToName(inputs);
   const policyDigest = nativePolicyDigest(
     args.policies,
-    args.profiles
-      ? { delivery: args.delivery, profiles: args.profiles }
+    args.profiles || args.correlationKey
+      ? {
+          delivery: args.delivery,
+          profiles: args.profiles,
+          correlationKey: args.correlationKey,
+        }
       : undefined,
   );
   for (const [key, serverId] of Object.entries(keyToServerId)) {
@@ -153,6 +164,7 @@ export async function prepareNativeForwarding(args: {
           turnId: args.turnId,
           policyDigest,
           ...(args.delivery ? { delivery: args.delivery } : {}),
+          ...(args.correlationKey ? { correlationKey: args.correlationKey } : {}),
         }),
         serverId,
         policy: forwardingToolPolicy(args.policies?.[serverId]),
@@ -171,27 +183,62 @@ export async function prepareNativeForwarding(args: {
     }),
   );
   const widgetParents = new Map<string, string>();
+  const deliveredTasks = new Set<string>();
   return {
     mcpJson,
     delivery: args.delivery ?? "native",
     policyDigest,
     keyToServerId,
-    readToolResult: async (serverId: string, toolCallId: string) => {
+    readToolResult: async (serverId: string, toolCallId: string, toolName?: string) => {
       const owner = args.owners.find(
         (candidate) => candidate.serverId === serverId,
       );
       if (!owner)
         throw new Error("The MCP result does not belong to this turn.");
-      return readNativeToolResult(
+      let sourceExecutionId: string | undefined;
+      const result = await readNativeToolResult(
         createExecutionControl({ owner }),
         args.turnId,
         toolCallId,
-        (executionId) =>
+        (executionId) => {
+          sourceExecutionId = executionId;
           widgetParents.set(
             JSON.stringify([serverId, toolCallId]),
             executionId,
-          ),
+          );
+        },
       );
+      if (
+        args.tasks &&
+        sourceExecutionId &&
+        isCreateTaskExtResult(result) &&
+        !deliveredTasks.has(sourceExecutionId)
+      ) {
+        const executionId = sourceExecutionId;
+        await runToolTaskSeam(
+          {
+            serverId,
+            toolName: toolName ?? "Task",
+            wire: "extension",
+            callPlain: async () => result,
+            callEligible: async () => result,
+          },
+          {
+            ...args.tasks,
+            resolveIdentity: () => ({
+              serverId,
+              connectionId: owner.connectionId,
+            }),
+            onTaskCreated: (event) =>
+              args.tasks!.onTaskCreated({
+                ...event,
+                sourceExecutionId: executionId,
+              }),
+          },
+        );
+        deliveredTasks.add(executionId);
+      }
+      return result;
     },
     widgetContext: (serverId: string, toolCallId: string) => {
       const owner = args.owners.find(
@@ -223,7 +270,12 @@ export async function prepareNativeForwarding(args: {
 
 /** Rollout uses the organization resolved by hosted authorization, never the request body. */
 export function hasForwardingOrganization(manager: MCPClientManager): boolean {
-  const organizationId = getManagerOrganization(manager);
+  return isForwardingOrganization(getManagerOrganization(manager));
+}
+
+export function isForwardingOrganization(
+  organizationId?: string | null,
+): boolean {
   return (
     !!organizationId &&
     (process.env.HARNESS_FORWARDING_ORGANIZATION_IDS ?? "")

@@ -34,6 +34,7 @@ async function searchFor(
       currentModel={models[0]}
       availableModels={models}
       onModelChange={() => {}}
+      onAddProvider={null}
       {...props}
     />,
   );
@@ -52,11 +53,27 @@ describe("ModelSelector — a search with no match", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Only models MCPJam runs and models from your organization's providers are listed.",
+        "Only models MCPJam runs and models from your providers are listed.",
       ),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Add a provider" }));
     expect(onAddProvider).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByPlaceholderText("Search models"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers chat's Manage AI providers handoff when the picker passes null", async () => {
+    const onManageOrgProviders = vi.fn();
+    const user = await searchFor("mixtral", { onManageOrgProviders });
+
+    await user.click(
+      await screen.findByRole("button", { name: "Add a provider" }),
+    );
+    expect(onManageOrgProviders).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByPlaceholderText("Search models"),
+    ).not.toBeInTheDocument();
   });
 
   it("sends a member under the key policy to an admin", async () => {
@@ -72,7 +89,7 @@ describe("ModelSelector — a search with no match", () => {
     ).toBeInTheDocument();
   });
 
-  it("only explains when it can't tell whether the viewer can add providers", async () => {
+  it("only explains when the picker's organization offers nothing", async () => {
     await searchFor("mixtral");
 
     expect(

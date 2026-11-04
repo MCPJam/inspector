@@ -2,6 +2,7 @@ import {
   conformanceExitCode,
   conformanceSuiteExitCode,
   reportIncomplete,
+  reportReadiness,
   reportScore,
 } from "../lib/conformance-exit-code.js";
 import { Command } from "commander";
@@ -229,6 +230,7 @@ export function registerAppsCommands(program: Command): void {
     // terminal must not have to dig for the number or the reason a check
     // never ran.
     reportScore(scoreFromAppsResult(result), command);
+    reportReadiness(result, command);
     reportIncomplete(result, command);
     await maybeUploadSingleSuite({
       suiteKind: "apps",
@@ -678,6 +680,7 @@ export function registerAppsCommands(program: Command): void {
       // Each run carries its own score and reason.
       for (const run of result.results) {
         reportScore(scoreFromAppsResult(run), command, run.label);
+        reportReadiness(run, command);
         reportIncomplete(run, command);
       }
       const exitCode = conformanceSuiteExitCode(result.results);

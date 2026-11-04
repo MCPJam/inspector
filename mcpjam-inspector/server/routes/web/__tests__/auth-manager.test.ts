@@ -1,3 +1,6 @@
+import { getManagerResourceSnapshot, setManagerResourceHostConfig } from "../../../utils/mcp-connections";
+import { taskOwnerScope } from "../../../../shared/task-owner.js";
+import { taskConnectionKey } from "../../../utils/task-connection-key.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -48,9 +51,11 @@ import {
   createAuthorizedManager,
   createManualHostedConnection,
   projectServerSchema,
+  taskCapabilitiesSchema,
   callerContextFromHono,
 } from "../auth.js";
 import { ErrorCode, WebRouteError } from "../errors.js";
+import { parseChallengeHeader } from "@mcpjam/sdk";
 import { __resetPrivateAuthorizationServerMaterialCacheForTests } from "../../../utils/hosted-oauth-refresh.js";
 
 // This device has approved every stdio command: the per-device approval gate
@@ -77,6 +82,20 @@ function fetchUrl(input: Parameters<typeof fetch>[0]): string {
 }
 
 describe("web auth manager batching", () => {
+  it.each([false, true])("marks headers as reproducible only when the effective OAuth token is stored (stored=%s)", async stored => {
+    global.fetch = vi.fn(async () => Response.json({results: {"server-1": {
+      ok: true, role: "member", accessLevel: "project_member", permissions: {chatOnly: false},
+      ...(stored ? {oauthAccessToken: "stored-token", oauthCredentialId: "saved-account"} : {}),
+      serverConfig: {updatedAt: 123, transportType: "http", url: "https://fixture.example/mcp", useOAuth: true},
+    }}}));
+    const result = await createAuthorizedManager({}, "bearer", "project", ["server-1"], 10_000, {"server-1": "caller-token"}, undefined, {lazyConnect: true});
+    const config = result.authorizedServerConfigs?.["server-1"];
+    if (!config || !("url" in config)) throw Error("Missing HTTP config");
+    expect(new Headers(config.requestInit?.headers).get("authorization")).toBe(`Bearer ${stored ? "stored" : "caller"}-token`);
+    setManagerResourceHostConfig(result.manager, "host-config", "host");
+    expect(getManagerResourceSnapshot(result.manager, "server-1")?.headersReconstructible).toBe(stored);
+  });
+
   const originalFetch = global.fetch;
   const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
 
@@ -95,9 +114,39 @@ describe("web auth manager batching", () => {
     }
   });
 
-  it.each([false, true])(
-    "keeps full authorization with optional lazy connection ownership: %s",
-    async (lazyConnect) => {
+  it.each(["saved-account", "other-account", undefined])("accepts a single selected credential only when its returned identity matches (%s)", async returnedId => {
+    global.fetch = vi.fn(async () => Response.json({results: {"server-1": {
+      ok: true, role: "member", accessLevel: "project_member", permissions: {chatOnly: false},
+      oauthAccessToken: "selected-token", oauthCredentialId: returnedId, oauthCredentialAuthorizedAt: 42,
+      serverConfig: {updatedAt: 123, transportType: "http", url: "https://fixture.example/mcp", useOAuth: true},
+    }}})) as typeof fetch;
+    const run = createAuthorizedManager({}, "bearer", "project", ["server-1"], 10_000, undefined, undefined, {lazyConnect: true, onlySelectedConnections: true, connectionIds: {"server-1": "saved-account"}});
+    if (returnedId !== "saved-account") {
+      await expect(run).rejects.toThrow("The account saved with this task is unavailable");
+      expect(mcpClientManagerMock).not.toHaveBeenCalled();
+      return;
+    }
+    const result = await run;
+    const key = result.connectionsByServerId?.["server-1"][0]?.key;
+    expect(key).toBe("server-1#saved-account");
+    if (!key) throw Error("Missing selected connection");
+    const config = result.authorizedServerConfigs?.[key];
+    if (!config || !("url" in config)) throw Error("Missing selected HTTP config");
+    expect(new Headers(config.requestInit?.headers).get("authorization")).toBe("Bearer selected-token");
+    setManagerResourceHostConfig(result.manager, "config", "host");
+    expect(getManagerResourceSnapshot(result.manager, key)?.credentialAuthorizedAt).toBe(42);
+    const wireBody = vi.mocked(global.fetch).mock.calls[0][1]?.body;
+    if (typeof wireBody !== "string") throw Error("Missing authorization request body");
+    expect(JSON.parse(wireBody)).toMatchObject({includeConnections: true, connectionIds: {"server-1": "saved-account"}});
+  });
+
+  it.each([
+    { lazyConnect: false, connectionId: undefined },
+    { lazyConnect: true, connectionId: undefined },
+    { lazyConnect: true, connectionId: "saved-account" },
+  ])(
+    "keeps full authorization with optional lazy connection ownership: %j",
+    async ({ lazyConnect, connectionId }) => {
       global.fetch = vi.fn(async () =>
         Response.json({
           results: {
@@ -109,6 +158,19 @@ describe("web auth manager batching", () => {
               oauthAccessToken: "wire-token-not-identity",
               oauthCredentialId: "saved-credential",
               oauthCredentialAuthorizedAt: 42,
+              internalLogContext: { userId: "resolved-owner" },
+              oauthConnections: [
+                {
+                  connectionId: "other-account",
+                  accessToken: "other-token",
+                  isDefault: true,
+                },
+                {
+                  connectionId: "saved-account",
+                  accessToken: "saved-token",
+                  isDefault: false,
+                },
+              ],
               serverConfig: {
                 transportType: "http",
                 url: "https://fixture.example/mcp",
@@ -131,13 +193,19 @@ describe("web auth manager batching", () => {
       } as unknown as Context;
       const result = await createManualHostedConnection(
         c,
-        { projectId: "project-1", serverId: "server-1" },
-        projectServerSchema,
+        { projectId: "project-1", serverId: "server-1", connectionId },
+        connectionId ? taskCapabilitiesSchema : projectServerSchema,
         lazyConnect ? { lazyConnect: true } : undefined,
       );
       expect(global.fetch).toHaveBeenCalledOnce();
       expect(String(vi.mocked(global.fetch).mock.calls[0][0])).toContain(
         "/web/authorize-batch",
+      );
+      const authorization = JSON.parse(
+        String(vi.mocked(global.fetch).mock.calls[0][1]?.body),
+      );
+      expect(authorization.connectionIds).toEqual(
+        connectionId ? { "server-1": connectionId } : undefined,
       );
       const [configs, options] = mcpClientManagerMock.mock.calls[0];
       expect(options.lazyConnect).toBe(lazyConnect ? true : undefined);
@@ -155,8 +223,95 @@ describe("web auth manager batching", () => {
         expect(result.authorizedServerConfigs).toBeUndefined();
         expect(result.authorizedServerIdentities).toBeUndefined();
       }
-      expect(configs["server-1"].baseFetch).toBeTypeOf("function");
+      const key = connectionId
+        ? taskConnectionKey(result.manager, {
+            serverId: "server-1",
+            connectionId,
+          })
+        : "server-1";
+      expect(Object.keys(configs)).toEqual([key]);
+      expect(
+        taskConnectionKey(result.manager, {
+          serverId: "server-1",
+          connectionId,
+          ownerScope: taskOwnerScope("project-1", "resolved-owner"),
+        }),
+      ).toBe(key);
+      expect(() =>
+        taskConnectionKey(result.manager, {
+          serverId: "server-1",
+          connectionId,
+          ownerScope: "different-owner",
+        }),
+      ).toThrow(
+        expect.objectContaining({ code: ErrorCode.FORBIDDEN, status: 403 }),
+      );
+      expect(configs[key].baseFetch).toBeTypeOf("function");
+      if (connectionId) {
+        expect(configs[key].requestInit.headers.get("Authorization")).toBe(
+          "Bearer saved-token",
+        );
+      }
       await result.manager.disconnectAllServers();
+    },
+  );
+
+
+  it.each([false, true])(
+    "refuses a missing or revoked pin before constructing any transport: %s",
+    async (revoked) => {
+      global.fetch = vi.fn(async () =>
+        Response.json({
+          results: {
+            "server-1": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "http",
+                url: "https://fixture.example/mcp",
+                useOAuth: true,
+              },
+              oauthConnections: [
+                {
+                  connectionId: "default",
+                  accessToken: "default-token",
+                  isDefault: true,
+                },
+                ...(revoked
+                  ? [
+                      {
+                        connectionId: "saved-account",
+                        accessToken: "stale-token",
+                        needsReauth: true,
+                      },
+                    ]
+                  : []),
+              ],
+            },
+          },
+        }),
+      ) as typeof fetch;
+      const c = {
+        ...mockContext,
+        req: {
+          url: "http://localhost:6274/api/web/tasks/get",
+          header: () => "Bearer fixture-bearer",
+        },
+      } as unknown as Context;
+      await expect(
+        createManualHostedConnection(
+          c,
+          {
+            projectId: "project-1",
+            serverId: "server-1",
+            connectionId: "saved-account",
+          },
+          taskCapabilitiesSchema,
+        ),
+      ).rejects.toMatchObject({ status: 403 });
+      expect(mcpClientManagerMock).not.toHaveBeenCalled();
     },
   );
 
@@ -803,12 +958,14 @@ describe("web auth manager batching", () => {
             accessLevel: "project_member",
             permissions: { chatOnly: false },
             serverConfig: {
+              updatedAt: 123,
               transportType: "http",
               url: "https://example.com/mcp",
               headers: {},
               useOAuth: true,
             },
             oauthAccessToken: "token-a",
+            oauthCredentialAuthorizedAt: 11,
             oauthConnections: [
               {
                 connectionId: a,
@@ -817,6 +974,7 @@ describe("web auth manager batching", () => {
                 accessToken: "token-a",
               },
               {
+                credentialAuthorizedAt: 22,
                 connectionId: b,
                 isDefault: false,
                 label: "B",
@@ -837,6 +995,10 @@ describe("web auth manager batching", () => {
       undefined,
       { multiConnection: true },
     );
+    setManagerResourceHostConfig(result.manager, "host-config", "host");
+    const alternate = result.connectionsByServerId?.["server-1"].find(c => c.connectionId === b);
+    expect(alternate).toBeDefined();
+    expect(getManagerResourceSnapshot(result.manager, alternate!.key)?.credentialAuthorizedAt).toBe(22);
     expect(admissionMock).toHaveBeenCalledTimes(2);
     expect(admissionMock).toHaveBeenCalledWith(expect.objectContaining({ serverId: "server-1", connectionId: a }));
     expect(admissionMock).toHaveBeenCalledWith(expect.objectContaining({ serverId: "server-1", connectionId: b }));
@@ -1191,7 +1353,11 @@ describe("web auth manager batching", () => {
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
-  it("recovers a private-authorization-server credential BEFORE connecting", async () => {
+  it.each([
+    ["", undefined],
+    // A request token must not stand in for the recovery.
+    [", ignoring a request token", { "server-1": "request-token" }],
+  ])("recovers a private-authorization-server credential BEFORE connecting%s", async (_case, oauthTokens) => {
     // The batch cannot return a token — the backend structurally cannot refresh
     // an authorization server on the user's machine — so it reports why. Without
     // this pre-connect pass the fallback only ever covered a mid-session 401,
@@ -1256,7 +1422,8 @@ describe("web auth manager batching", () => {
       "bearer-token",
       "project-1",
       ["server-1"],
-      10_000
+      10_000,
+      oauthTokens
     );
 
     // The connect carries the locally-minted token, and the live-401 handler is
@@ -1432,7 +1599,9 @@ describe("web auth manager batching", () => {
     ) as typeof fetch;
   }
 
-  async function captureConnectError(): Promise<WebRouteError> {
+  async function captureConnectError(
+    oauthTokens?: Record<string, string>
+  ): Promise<WebRouteError> {
     try {
       await createAuthorizedManager(
         callerContextFromHono(mockContext),
@@ -1440,7 +1609,7 @@ describe("web auth manager batching", () => {
         "project-1",
         ["server-1"],
         10_000,
-        undefined,
+        oauthTokens,
         undefined,
         { serverNames: ["Asana"] }
       );
@@ -1569,6 +1738,87 @@ describe("web auth manager batching", () => {
     expect(error.headers).toBeUndefined();
   });
 
+  // A token in the request body is the caller's, not the saved credential the
+  // backend withheld. Were it allowed to skip the refusal, every reason above
+  // would be only as strong as a request that leaves the token out.
+  it.each([
+    ["credential_origin_mismatch", 401],
+    ["credential_export_denied", 403],
+    ["authorization_server_unreachable", 503],
+    ["refresh_in_progress", 429],
+  ])(
+    "keeps the %s refusal when the request carries its own token",
+    async (reason, status) => {
+      global.fetch = batchWithOAuthUnavailableReason(reason);
+
+      const error = await captureConnectError({ "server-1": "request-token" });
+
+      expect(error.status).toBe(status);
+      expect(mcpClientManagerMock).not.toHaveBeenCalled();
+    }
+  );
+
+  function withServerConfig(
+    batch: typeof fetch,
+    serverConfig: Record<string, unknown>
+  ): typeof fetch {
+    return vi.fn(async (...args: Parameters<typeof fetch>) => {
+      const body = await (await batch(...args)).json();
+      body.results["server-1"].serverConfig = serverConfig;
+      return Response.json(body);
+    }) as typeof fetch;
+  }
+
+  it("connects a discover server without the request's token once the backend refused its own", async () => {
+    global.fetch = withServerConfig(
+      batchWithOAuthUnavailableReason("credential_origin_mismatch"),
+      {
+        transportType: "http",
+        url: "https://server-1.example.com/mcp",
+        headers: {},
+        authMethod: "auto",
+      }
+    );
+
+    await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000,
+      { "server-1": "request-token" }
+    );
+
+    const config = mcpClientManagerMock.mock.calls[0]?.[0]?.["server-1"];
+    expect(config.requestInit?.headers?.Authorization).toBeUndefined();
+  });
+
+  it("still sends a bearer server's request token: the reason is about OAuth", async () => {
+    global.fetch = withServerConfig(
+      batchWithOAuthUnavailableReason("credential_origin_mismatch"),
+      {
+        transportType: "http",
+        url: "https://server-1.example.com/mcp",
+        headers: {},
+        authMethod: "bearer",
+      }
+    );
+
+    await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000,
+      { "server-1": "request-token" }
+    );
+
+    const config = mcpClientManagerMock.mock.calls[0]?.[0]?.["server-1"];
+    expect(config.requestInit?.headers?.Authorization).toBe(
+      "Bearer request-token"
+    );
+  });
+
   it("connects a tokenless auto (discover) server unauthenticated and tags a live 401", async () => {
     global.fetch = vi.fn(async () => {
       return new Response(
@@ -1628,6 +1878,40 @@ describe("web auth manager batching", () => {
         serverUrl: "https://server-1.example.com/mcp",
       },
     });
+
+    // A 401 on a protected operation MID-SESSION carries its parsed
+    // challenge: that is a per-call sign-in request, answered as a 403
+    // UPSTREAM_AUTH_FAILED (never 401, which authFetch would answer with a
+    // guest-session retry) carrying the challenge stamped "discover", and
+    // WITHOUT `oauthRequired`, which several surfaces escalate on by
+    // themselves.
+    const challenged = await config
+      .onUnauthorized({
+        serverId: "server-1",
+        error: Object.assign(new Error("HTTP 401"), {
+          status: 401,
+          data: {
+            authChallenge: parseChallengeHeader('Bearer scope="orders:read"'),
+          },
+        }),
+      })
+      .catch((error: unknown) => error);
+    expect(challenged).toMatchObject({
+      status: 403,
+      code: "UPSTREAM_AUTH_FAILED",
+      details: {
+        upstreamAuthRequired: true,
+        authChallenge: {
+          source: "http_401",
+          requiredScope: "orders:read",
+          effectiveAuth: "discover",
+        },
+        serverId: "server-1",
+      },
+    });
+    expect((challenged as WebRouteError).details).not.toHaveProperty(
+      "oauthRequired",
+    );
   });
 
   it("keeps the oauth path for an auto (discover) server whose batch returned a token", async () => {

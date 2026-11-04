@@ -50,6 +50,7 @@ export function SuitePassOrFailSection({
   availableModels,
   requireOrgKeys,
   onManageOrgProviders,
+  onAddProvider,
   scenarioMigrationNotice,
   rubricEditor,
   stageFacts,
@@ -73,6 +74,11 @@ export function SuitePassOrFailSection({
    * while the organization requires its own keys (see `useAvailableModels`).
    */
   onManageOrgProviders?: () => void;
+  /**
+   * The same from a model search with no match, under any key policy, or
+   * `null` when the organization offers this viewer none.
+   */
+  onAddProvider: (() => void) | null;
   /** The "migrate scenario assertions per case" warning, when the suite has any. */
   scenarioMigrationNotice?: React.ReactNode;
   /** S6 mounts the judge rubric editor under the user-value group. */
@@ -99,6 +105,7 @@ export function SuitePassOrFailSection({
       availableModels={availableModels}
       requireOrgKeys={requireOrgKeys}
       onManageOrgProviders={onManageOrgProviders}
+      onAddProvider={onAddProvider}
       scenarioMigrationNotice={scenarioMigrationNotice}
       rubricEditor={rubricEditor}
       stageFacts={stageFacts}

@@ -26,6 +26,15 @@ export function getInitialThemeMode(): ThemeMode {
   return resolveThemeMode(getInitialThemePreference());
 }
 
+/**
+ * The theme this tab renders: the root `dark` class that `updateThemeMode`
+ * sets on every change. Storage can lag behind it when another tab switched
+ * the theme, since the preferences store does not sync across tabs.
+ */
+export function getRenderedThemeMode(): ThemeMode {
+  return document.documentElement.classList.contains("dark") ? "dark" : "light";
+}
+
 export function updateThemeMode(value: ThemeMode) {
   const doc = document.documentElement;
   doc.classList.add("disable-transitions");

@@ -30,6 +30,7 @@
  * modern server never embeds a round.
  */
 import type { z } from "zod";
+import { withStampedAuthChallenge } from "../../utils/connection-effective-auth.js";
 import type { MCPClientManager, MrtrInputCollector } from "@mcpjam/sdk";
 import {
   attachHostedRouteLogs,
@@ -262,7 +263,10 @@ export async function runHostedDirectMrtrOperation<S extends z.ZodTypeAny, R>(
     // suspend produces the discriminated `input_required` envelope.
     let outcome: R | HostedDirectMrtrPending;
     try {
-      outcome = await runVerb(manager, body as z.infer<S>, forwardLogMessages);
+      // Stamped here, where the server is known: see `connection-effective-auth`.
+      outcome = await withStampedAuthChallenge(manager, targetServerId, () =>
+        runVerb(manager, body as z.infer<S>, forwardLogMessages),
+      );
     } catch (error) {
       // A suspend is NOT a failure: the round was persisted + captured; return
       // the pending outcome so the browser drives the resume out of band.

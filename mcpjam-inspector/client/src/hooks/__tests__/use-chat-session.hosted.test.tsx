@@ -207,7 +207,6 @@ vi.mock("@/lib/apis/web/context", () => ({
       projectId,
       serverIds,
       serverNames,
-      oauthTokens,
       accessScope,
       scenarioId,
       accessVersion,
@@ -215,7 +214,6 @@ vi.mock("@/lib/apis/web/context", () => ({
       projectId: string;
       serverIds: string[];
       serverNames: string[];
-      oauthTokens?: Record<string, string>;
       accessScope?: string;
       scenarioId?: string;
       accessVersion?: number;
@@ -223,7 +221,6 @@ vi.mock("@/lib/apis/web/context", () => ({
       projectId,
       serverIds,
       serverNames,
-      ...(oauthTokens ? { oauthTokens } : {}),
       ...(accessScope ? { accessScope } : {}),
       ...(scenarioId ? { scenarioId } : {}),
       ...(scenarioId && Number.isFinite(accessVersion)
@@ -674,9 +671,6 @@ describe("useChatSession hosted mode", () => {
           selectedServerIds: ["server-id-1"],
           scenarioId: "cbx_test",
           accessVersion: 1,
-          oauthTokens: {
-            "server-id-1": "browser-token",
-          },
         },
       }),
     );
@@ -2587,7 +2581,11 @@ describe("useChatSession — hidden environment (a Playground chat's plugins)", 
     );
     expect(again.result.current.hiddenEnvironmentActive).toBe(false);
     const body = lastTransportOptions.body();
-    expect(body).toEqual(plain);
+    expect(body).toEqual({
+      ...plain,
+      harnessStartupRequestId: expect.any(String),
+    });
+    expect(body.harnessStartupRequestId).not.toBe(plain.harnessStartupRequestId);
     expect(body.hostId).toBe("host_1");
     expect(body).not.toHaveProperty("executionTarget");
     expect(body).not.toHaveProperty("environmentOverrides");

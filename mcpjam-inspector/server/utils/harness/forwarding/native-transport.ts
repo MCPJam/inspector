@@ -47,7 +47,8 @@ export async function forwardNativeMcp(args: {
     }
   }
   const id =
-    typeof args.message?.id === "string" || typeof args.message?.id === "number"
+    typeof args.message?.method === "string" &&
+    (typeof args.message.id === "string" || typeof args.message.id === "number")
       ? args.message.id
       : undefined;
   return nativeResponse({

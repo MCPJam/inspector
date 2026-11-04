@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { harnessElicitationModes } from "./input-host.js";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { createHash } from "node:crypto";
 import { canonicalJson } from "../tool-approval-token.js";
@@ -49,6 +50,7 @@ export function isEnhancedModelPolicy(
 /** Only connection behavior crosses the sandbox; credentials and callbacks stay on the server. */
 export const harnessConnectionProfileSchema = z
   .object({
+    taskMode: z.literal("expose").optional(),
     clientCapabilities: z.record(z.string(), z.unknown()).optional(),
     clientInfo: z
       .object({ name: z.string().optional(), version: z.string().optional() })
@@ -84,12 +86,14 @@ export function enhancedConnectionProfiles(
   serverIds: string[],
   respectToolVisibility: boolean,
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults,
+  exposeTasks = false,
 ): Record<string, HarnessConnectionProfile> {
   return Object.fromEntries(
     serverIds.map((id) => [
       id,
       {
         ...harnessConnectionProfile(manager, id),
+        ...(exposeTasks ? { taskMode: "expose" as const } : {}),
         mcpProtocolVersion: "2026-07-28",
         respectToolVisibility,
         modelVisibleMcpToolResults,
@@ -99,9 +103,11 @@ export function enhancedConnectionProfiles(
 }
 
 /** Apps are bridged only on the qualified stateless upstream protocol. */
-export function isModernAppsProfile(
+export function isEnhancedMcpProfile(
   manager: MCPClientManager,
   serverId: string,
+  allowElicitation = false,
+  allowTasks = false,
 ): boolean {
   const info = manager.getInitializationInfo(serverId);
   const caps = info?.clientCapabilities;
@@ -109,10 +115,19 @@ export function isModernAppsProfile(
     info?.protocolVersion !== "2026-07-28" ||
     !caps ||
     Object.keys(caps).some(
-      (key) => key !== "extensions" && key !== "experimental",
+      (key) =>
+        key !== "extensions" &&
+        key !== "experimental" &&
+        !(allowElicitation && key === "elicitation"),
     )
   )
     return false;
+  if (
+    caps.elicitation &&
+    (!allowElicitation || !harnessElicitationModes(caps).length)
+  )
+    return false;
+  if (caps.experimental && Object.keys(caps.experimental).length) return false;
   const config = manager.getServerConfig(serverId);
   if (
     !config ||
@@ -122,13 +137,15 @@ export function isModernAppsProfile(
   )
     return false;
   const extensions = caps.extensions;
+  if (!extensions) return allowElicitation && !!caps.elicitation;
   if (
     !extensions ||
-    Object.keys(extensions).length !== 1 ||
-    !extensions["io.modelcontextprotocol/ui"]
+    Object.keys(extensions).some((key) => key !== "io.modelcontextprotocol/ui" && !(allowTasks && key === "io.modelcontextprotocol/tasks")) ||
+    (!extensions["io.modelcontextprotocol/ui"] && !extensions["io.modelcontextprotocol/tasks"])
   )
     return false;
   const ui = extensions["io.modelcontextprotocol/ui"];
+  if (!ui) return allowTasks && !!extensions["io.modelcontextprotocol/tasks"];
   if (
     typeof ui !== "object" ||
     ui === null ||
@@ -143,7 +160,6 @@ export function isModernAppsProfile(
     mimeTypes[0] !== "text/html;profile=mcp-app"
   )
     return false;
-  if (caps.experimental && Object.keys(caps.experimental).length) return false;
   return true;
 }
 

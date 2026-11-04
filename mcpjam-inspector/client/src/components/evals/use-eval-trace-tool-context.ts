@@ -6,7 +6,6 @@ import {
 } from "@/lib/apis/mcp-tools-api";
 import { HOSTED_MODE } from "@/lib/config";
 import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
-import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useProjectClientConfigSyncPending } from "@/hooks/use-project-client-config-sync-pending";
 import { useProjectServers } from "@/hooks/useViews";
 import { useSharedAppState } from "@/state/app-state-context";
@@ -18,7 +17,6 @@ type EvalTraceToolContextState = {
   toolServerMap: ToolServerMap;
   connectedServerIds: string[];
   hostedSelectedServerIds: string[];
-  hostedOAuthTokens?: Record<string, string>;
   isLoading: boolean;
   isReady: boolean;
   error: string | null;
@@ -32,7 +30,6 @@ function buildEmptyState(
     toolServerMap: {},
     connectedServerIds: [],
     hostedSelectedServerIds: [],
-    hostedOAuthTokens: undefined,
     isLoading: false,
     isReady: false,
     error: null,
@@ -135,15 +132,6 @@ export function useEvalTraceToolContext({
         .filter((serverId): serverId is string => !!serverId),
     [normalizedServerNames, serversByName],
   );
-  const hostedOAuthTokens = useMemo(
-    () =>
-      buildOAuthTokensByServerId(
-        normalizedServerNames,
-        (serverName) => serversByName.get(serverName),
-        (serverName) => appState.servers[serverName]?.oauthTokens?.access_token,
-      ),
-    [normalizedServerNames, serversByName, appState.servers],
-  );
   const hostedContextReady =
     !HOSTED_MODE ||
     (Boolean(effectiveHostedProjectId) &&
@@ -176,7 +164,6 @@ export function useEvalTraceToolContext({
           toolServerMap: previous.toolServerMap,
           connectedServerIds: previous.connectedServerIds,
           hostedSelectedServerIds,
-          hostedOAuthTokens,
           isLoading: true,
         }),
       );
@@ -191,7 +178,6 @@ export function useEvalTraceToolContext({
         toolServerMap: previous.toolServerMap,
         connectedServerIds: previous.connectedServerIds,
         hostedSelectedServerIds,
-        hostedOAuthTokens,
         isLoading: true,
       }),
     );
@@ -249,7 +235,6 @@ export function useEvalTraceToolContext({
             toolServerMap: nextToolServerMap,
             connectedServerIds: Array.from(nextConnectedServerIds),
             hostedSelectedServerIds,
-            hostedOAuthTokens,
             isReady: true,
           }),
         );
@@ -265,7 +250,6 @@ export function useEvalTraceToolContext({
               toolServerMap: previous.toolServerMap,
               connectedServerIds: previous.connectedServerIds,
               hostedSelectedServerIds,
-              hostedOAuthTokens,
               isLoading: true,
             }),
           );
@@ -275,7 +259,6 @@ export function useEvalTraceToolContext({
         setState(
           buildEmptyState({
             hostedSelectedServerIds,
-            hostedOAuthTokens,
             error:
               error instanceof Error
                 ? error.message
@@ -292,7 +275,6 @@ export function useEvalTraceToolContext({
     };
   }, [
     hostedContextReady,
-    hostedOAuthTokens,
     hostedSelectedServerIds,
     normalizedServerNames,
     retryKey,

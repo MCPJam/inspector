@@ -9,6 +9,7 @@ import type { ModelSelection } from "../environment-stack";
 
 const mockModels = vi.hoisted(() => ({
   requireOrgKeys: false,
+  onAddProvider: null as (() => void) | null,
   availableModels: [
     {
       id: "google/gemini-2.5-flash",
@@ -31,7 +32,25 @@ vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({
     availableModels: mockModels.availableModels,
     requireOrgKeys: mockModels.requireOrgKeys,
+    onAddProvider: mockModels.onAddProvider,
   }),
+}));
+
+// The active project sits in another organization whose providers this
+// viewer may manage: a scoped picker must never hand off there.
+const activeOrg = vi.hoisted(() => ({ handoff: vi.fn(), orgId: vi.fn() }));
+vi.mock("@/state/app-state-context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/state/app-state-context")>()),
+  useOptionalSharedAppState: () => ({
+    activeProjectId: "active",
+    projects: { active: { id: "active", organizationId: "org_active" } },
+  }),
+}));
+vi.mock("@/hooks/use-org-models-handoff", () => ({
+  useOrgModelsHandoff: (organizationId: string | null) => {
+    activeOrg.orgId(organizationId);
+    return activeOrg.handoff;
+  },
 }));
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
@@ -51,6 +70,9 @@ const DEFAULT_MODELS = [...mockModels.availableModels];
 beforeEach(() => {
   mockModels.availableModels = [...DEFAULT_MODELS];
   mockModels.requireOrgKeys = false;
+  mockModels.onAddProvider = null;
+  activeOrg.handoff.mockClear();
+  activeOrg.orgId.mockClear();
 });
 
 /** A model row in the open picker (cmdk option; `aria-checked` in multi). */
@@ -866,5 +888,35 @@ describe("ModelsPill — a bare-id organization row", () => {
       includeClientDefaults: false,
       explicitTargets: [{ modelId: "gpt-5" }],
     });
+  });
+});
+
+describe("ModelsPill — a search with no match", () => {
+  async function searchMixtral() {
+    const user = userEvent.setup();
+    renderPill({ includeClientDefaults: true, explicitTargets: [] });
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    await user.type(screen.getByPlaceholderText("Search models"), "mixtral");
+    expect(
+      await screen.findByText('No models match "mixtral".')
+    ).toBeInTheDocument();
+    return user;
+  }
+
+  it("offers nothing when its own project's organization offers none", async () => {
+    await searchMixtral();
+    expect(
+      screen.queryByRole("button", { name: "Add a provider" })
+    ).not.toBeInTheDocument();
+    expect(activeOrg.orgId).not.toHaveBeenCalled();
+  });
+
+  it("hands off to its own project's organization", async () => {
+    const onAddProvider = vi.fn();
+    mockModels.onAddProvider = onAddProvider;
+    const user = await searchMixtral();
+    await user.click(screen.getByRole("button", { name: "Add a provider" }));
+    expect(onAddProvider).toHaveBeenCalledTimes(1);
+    expect(activeOrg.handoff).not.toHaveBeenCalled();
   });
 });

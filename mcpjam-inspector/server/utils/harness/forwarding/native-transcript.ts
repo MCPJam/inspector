@@ -4,7 +4,7 @@ import {
   readMcpToolOriginServerId,
   type McpToolOriginProviderMetadata,
   readMcpOriginalResult,
-  readMcpWidgetContext,
+  hasMcpResultPresentation,
 } from "@/shared/mcp-tool-origin-metadata";
 import { isRecord } from "../../byok/list-request.js";
 
@@ -77,16 +77,35 @@ export function preserveNativeUiPresentations(
     if (!isRecord(message) || !Array.isArray(message.parts)) continue;
     for (const part of message.parts) {
       if (!isRecord(part) || typeof part.toolCallId !== "string") continue;
+      const serverId =
+        readMcpToolOriginServerId(part.callProviderMetadata) ??
+        readMcpToolOriginServerId(part.resultProviderMetadata);
       for (const metadata of [
         part.resultProviderMetadata,
         part.callProviderMetadata,
       ]) {
         const result = readMcpOriginalResult(metadata);
-        if (result !== undefined)
+        if (result !== undefined) {
+          const restored = mergeMcpToolOriginMetadata(metadata, serverId);
+          const callOrigin = mergeMcpToolOriginMetadata(
+            part.callProviderMetadata,
+            serverId,
+          );
+          // The call carries account attribution too; it is not model context.
+          if (
+            restored &&
+            callOrigin?.mcpjam?.connection &&
+            !restored.mcpjam?.connection
+          )
+            restored.mcpjam = {
+              ...restored.mcpjam,
+              connection: callOrigin.mcpjam.connection,
+            };
           presentations.set(part.toolCallId, {
             result,
-            metadata: mergeMcpToolOriginMetadata(metadata, undefined),
+            metadata: restored,
           });
+        }
       }
     }
   }
@@ -104,7 +123,7 @@ export function stampNativePresentation(
 ) {
   const original =
     readMcpOriginalResult(metadata) ??
-    (readMcpWidgetContext(metadata) ? fallback : undefined);
+    (hasMcpResultPresentation(metadata) ? fallback : undefined);
   const signature =
     original === undefined ? null : sign(ctx, { ...call, output: original });
   if (!signature) return metadata;
