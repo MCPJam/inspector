@@ -333,7 +333,7 @@ export async function startOAuthConformance(
     redirectUrl: input.redirectUrl,
     owner: input.owner,
   });
-  session.cancelRunner = deadline.cancel;
+  session.cancelRunner = input.runTimeoutSeconds === undefined ? undefined : deadline.cancel;
   const { controller } = session;
   const onAbort = () => controller.fail(deadline.signal.reason);
   deadline.signal.addEventListener("abort", onAbort, { once: true });

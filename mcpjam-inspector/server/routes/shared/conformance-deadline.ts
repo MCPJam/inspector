@@ -15,28 +15,45 @@ export interface ConformanceDeadlineInput {
 /** Each suite receives the remaining budget of the same browser-owned run. */
 export function createConformanceDeadline(input: ConformanceDeadlineInput) {
   const controller = new AbortController();
-  const timeoutMs = input.runTimeoutSeconds === undefined ? undefined : Math.min(
-    input.runTimeoutSeconds * 1_000,
-    input.remainingRunTimeoutMs ?? input.runTimeoutSeconds * 1_000,
+  const timeoutMs =
+    input.runTimeoutSeconds === undefined
+      ? undefined
+      : Math.min(
+          input.runTimeoutSeconds * 1_000,
+          input.remainingRunTimeoutMs ?? input.runTimeoutSeconds * 1_000,
+        );
+  const error = new Error(
+    `Run timed out after ${input.runTimeoutSeconds} seconds`,
   );
-  const error = new Error(`Run timed out after ${input.runTimeoutSeconds} seconds`);
-  const remaining = timeoutMs === undefined ? undefined : timeoutMs - (Date.now() - (input.requestStartedAt ?? Date.now()));
+  const remaining =
+    timeoutMs === undefined
+      ? undefined
+      : timeoutMs - (Date.now() - (input.requestStartedAt ?? Date.now()));
   if (remaining !== undefined && remaining <= 0) controller.abort(error);
-  const timer = remaining === undefined || remaining <= 0 ? undefined : setTimeout(() => controller.abort(error), remaining);
+  const timer =
+    remaining === undefined || remaining <= 0
+      ? undefined
+      : setTimeout(() => controller.abort(error), remaining);
   const signal = input.signal
     ? AbortSignal.any([input.signal, controller.signal])
     : controller.signal;
   return {
     signal,
     cancel: (reason: Error) => controller.abort(reason),
-    dispose: () => { if (timer !== undefined) clearTimeout(timer); },
+    dispose: () => {
+      if (timer !== undefined) clearTimeout(timer);
+    },
   };
 }
 
-export function deadlineFetch(fetchFn: typeof fetch, signal: AbortSignal): typeof fetch {
+export function deadlineFetch(
+  fetchFn: typeof fetch,
+  signal: AbortSignal,
+): typeof fetch {
   return (input, init) => {
     signal.throwIfAborted();
-    const requestSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    const requestSignal =
+      init?.signal ?? (input instanceof Request ? input.signal : undefined);
     return fetchFn(input, {
       ...init,
       signal: requestSignal ? AbortSignal.any([signal, requestSignal]) : signal,

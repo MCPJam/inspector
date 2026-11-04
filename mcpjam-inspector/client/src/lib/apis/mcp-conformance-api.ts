@@ -25,7 +25,7 @@ export interface ConformanceRunBudget {
   signal?: AbortSignal;
 }
 
-function budgetFields(budget?: ConformanceRunBudget) {
+export function conformanceBudgetFields(budget?: ConformanceRunBudget) {
   return budget?.runTimeoutSeconds === undefined ? {} : {
     runTimeoutSeconds: budget.runTimeoutSeconds,
     remainingRunTimeoutMs: budget.remainingRunTimeoutMs,
@@ -105,7 +105,7 @@ export async function runProtocolConformance(
   },
 ): Promise<{ success: boolean; result: MCPConformanceResult }> {
   const versionFields = {
-    ...budgetFields(options),
+    ...conformanceBudgetFields(options),
     ...(options?.protocolVersion
       ? { protocolVersion: options.protocolVersion }
       : {}),
@@ -143,7 +143,7 @@ export async function runAppsConformance(
   },
 ): Promise<{ success: boolean; result: MCPAppsConformanceResult }> {
   const checkFields = {
-    ...budgetFields(options),
+    ...conformanceBudgetFields(options),
     ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
     ...(options?.protocolVersion
       ? { protocolVersion: options.protocolVersion }
@@ -183,7 +183,7 @@ export async function runTasksConformance(
   },
 ): Promise<{ success: boolean; result: MCPTasksConformanceResult }> {
   const optionFields = {
-    ...budgetFields(options),
+    ...conformanceBudgetFields(options),
     ...(options?.protocolVersion
       ? { protocolVersion: options.protocolVersion }
       : {}),
@@ -218,7 +218,7 @@ export async function startOAuthConformance(
     local: () =>
       localPost("/api/mcp/conformance/oauth/start", {
         serverId: input.serverNameOrId,
-        ...budgetFields(input),
+        ...conformanceBudgetFields(input),
         oauthProfile: input.oauthProfile,
         callbackOrigin: input.callbackOrigin,
         ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
@@ -227,7 +227,7 @@ export async function startOAuthConformance(
       const request = buildServerRequest(input.serverNameOrId);
       return webPost("/api/web/conformance/oauth/start", {
         ...request,
-        ...budgetFields(input),
+        ...conformanceBudgetFields(input),
         oauthProfile: input.oauthProfile,
         callbackOrigin: input.callbackOrigin,
         ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),

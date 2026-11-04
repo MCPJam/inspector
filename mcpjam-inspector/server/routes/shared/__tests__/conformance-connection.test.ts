@@ -50,8 +50,9 @@ describe("temporary conformance connection", () => {
         accessToken: "saved-token",
         mcpProtocolVersion: "2026-07-28",
         supportedProtocolVersions: ["2026-07-28"],
-        baseFetch: guardedFetch,
+        baseFetch: expect.any(Function),
       }),
+      { signal: expect.any(AbortSignal) },
     );
     expect(disconnect).toHaveBeenCalledTimes(1);
     expect(listTools).not.toHaveBeenCalled();
@@ -80,8 +81,9 @@ describe("temporary conformance connection", () => {
       expect.objectContaining({
         mcpProtocolVersion: undefined,
         supportedProtocolVersions: undefined,
-        baseFetch: guardedFetch,
+        baseFetch: expect.any(Function),
       }),
+      { signal: expect.any(AbortSignal) },
     );
   });
 

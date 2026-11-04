@@ -20,25 +20,45 @@ export function useConformanceDeadline(onExpire: (message: string) => void) {
       run.controller.abort();
     }
   }, []);
-  const start = useCallback((seconds?: number) => {
-    clear();
-    if (seconds !== undefined && (!Number.isInteger(seconds) || seconds < 1 || seconds > 300)) {
-      throw new Error("Run timeout must be a whole number from 1 to 300 seconds.");
-    }
-    setRunTimeoutSeconds(seconds);
-    if (seconds === undefined) return;
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      const message = `Run timed out after ${seconds} seconds`;
-      expireRef.current(message);
-      controller.abort(new Error(message));
-      current.current = null;
-    }, seconds * 1_000);
-    current.current = { seconds, endsAt: Date.now() + seconds * 1_000, controller, timer };
-  }, [clear]);
+  const start = useCallback(
+    (seconds?: number) => {
+      clear();
+      if (
+        seconds !== undefined &&
+        (!Number.isInteger(seconds) || seconds < 1 || seconds > 300)
+      ) {
+        throw new Error(
+          "Run timeout must be a whole number from 1 to 300 seconds.",
+        );
+      }
+      setRunTimeoutSeconds(seconds);
+      if (seconds === undefined) return;
+      const controller = new AbortController();
+      const timer = setTimeout(() => {
+        const message = `Run timed out after ${seconds} seconds`;
+        expireRef.current(message);
+        controller.abort(new Error(message));
+        current.current = null;
+      }, seconds * 1_000);
+      current.current = {
+        seconds,
+        endsAt: Date.now() + seconds * 1_000,
+        controller,
+        timer,
+      };
+    },
+    [clear],
+  );
   const budget = useCallback((): ConformanceRunBudget => {
     const run = current.current;
     if (!run) return {};
+    if (Date.now() >= run.endsAt && !run.controller.signal.aborted) {
+      clearTimeout(run.timer);
+      current.current = null;
+      const message = `Run timed out after ${run.seconds} seconds`;
+      expireRef.current(message);
+      run.controller.abort(new Error(message));
+    }
     run.controller.signal.throwIfAborted();
     return {
       runTimeoutSeconds: run.seconds,

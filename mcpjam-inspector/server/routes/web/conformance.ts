@@ -52,6 +52,7 @@ import { reportRouteFailure } from "../../utils/route-error-report.js";
 import {
   awaitRendezvousResult,
   createRendezvous,
+  cancelRendezvous,
   isConformanceOAuthRendezvousEnabled,
   runRendezvousOnThisReplica,
   submitRendezvousCode,
@@ -257,6 +258,7 @@ function toWebError(error: unknown): WebRouteError {
 
 const connectionCheckSchema = z
   .object({
+    ...conformanceDeadlineFields,
     protocolVersion: z.enum(["auto", ...MCP_PROTOCOL_VERSIONS]),
   })
   .passthrough();
@@ -264,6 +266,7 @@ const connectionCheckSchema = z
 conformanceWeb.post("/connection-check", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
+    const requestStartedAt = Date.now();
     const body = await readJsonBody<Record<string, unknown>>(c);
     const parsed = parseWithSchema(connectionCheckSchema, body);
     const resolved = await resolveHostedHttpConfig(c, bearerToken, body, {
@@ -276,6 +279,7 @@ conformanceWeb.post("/connection-check", async (c) =>
         requestInit: { headers: resolved.customHeaders },
       },
       parsed.protocolVersion,
+      { requestStartedAt, signal: c.req.raw.signal, runTimeoutSeconds: parsed.runTimeoutSeconds, remainingRunTimeoutMs: parsed.remainingRunTimeoutMs },
     );
   }),
 );
@@ -641,6 +645,9 @@ conformanceWeb.post("/oauth/cancel", async (c) =>
     assertBearerToken(c);
     const body = await readJsonBody<Record<string, unknown>>(c);
     const parsed = parseWithSchema(z.object({ sessionId: z.string().min(1) }), body);
+    if (isConformanceOAuthRendezvousEnabled()) {
+      await cancelRendezvous(await getConvexBearerForRequest(c), parsed.sessionId);
+    }
     cancelOAuthConformance({ sessionId: parsed.sessionId, owner: principalKey(c) });
     return { success: true };
   })

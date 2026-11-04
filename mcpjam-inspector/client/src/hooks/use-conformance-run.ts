@@ -102,29 +102,14 @@ export type {
 export interface UseConformanceRunOptions {
   runTimeoutSeconds?: number;
   server: ServerWithName;
-  /**
-   * When true, a run that reaches OAuth's authorization step PARKS at
-   * `needs-authorization` instead of opening the popup, and the caller decides
-   * when (or whether) to proceed via `authorizeOAuth`.
-   *
-   * The panel leaves this false: an operator who pressed "Run" in the product
-   * asked for the whole run, popup included. The score page turns it on,
-   * because an unrequested popup on a public landing page is a different
-   * thing entirely — there, OAuth is an opt-in "authorize to include OAuth in
-   * your score" step, and skipping it shows as *not scored*, never a
-   * deduction.
-   */
+  /** Park OAuth until the caller explicitly authorizes it. */
   deferOAuthAuthorization?: boolean;
   /** The revision the first run tests against, e.g. one picked before Run. */
   initialVersionPin?: ProtocolVersionPin;
   initialResolvedProtocolVersion?: McpProtocolVersion;
   /** What to run, as picked before Run. Absent ⇒ every check of every suite. */
   selection?: ConformanceSelection;
-  /**
-   * Tools named as safe for the checks that must call one, as set in the
-   * check list. Absent ⇒ nothing on the server is executed, and those checks
-   * report could-not-run.
-   */
+  /** Tools explicitly approved for checks that execute calls. */
   probes?: ConformanceProbes;
 }
 
@@ -428,14 +413,7 @@ export function useConformanceRun({
     [isOAuthRunActive, pollOAuthComplete, runBudget],
   );
 
-  /**
-   * Open the authorization popup and listen for the code coming back.
-   *
-   * Both local and hosted modes deliver the code through `/oauth/authorize`,
-   * so there is no polling here — `handleOAuthCallback` owns everything after
-   * the code arrives. Two channels are wired because a popup opened
-   * cross-origin may only be able to reach one of them.
-   */
+  /** Listen for the popup callback on both supported browser channels. */
   const beginOAuthAuthorization = useCallback(
     (
       sessionId: string,
@@ -669,7 +647,7 @@ export function useConformanceRun({
     );
     let resolved: McpProtocolVersion | undefined;
     try {
-      resolved = await resolveVersion(currentServer, versionPin);
+      resolved = await resolveVersion(currentServer, versionPin, runBudget());
     } catch (error) {
       if (!isRunActive(runToken, currentServer.name)) return;
       const state = {
@@ -737,7 +715,7 @@ export function useConformanceRun({
     deadline.start,
     runTimeoutSeconds,
     isRunActive,
-    resolveVersion,
+    resolveVersion, runBudget,
     runApps,
     runOAuth,
     runProtocol,
@@ -746,9 +724,7 @@ export function useConformanceRun({
     versionPin,
   ]);
 
-  // Scores are derived, never stored: each finished suite contributes, and
-  // the headline pools their COUNTS (not an average of suite scores), so a
-  // 0-for-9 OAuth run stays visible inside 30 protocol passes.
+  // Pool counts across suites rather than averaging their percentages.
   const protocolScore = useMemo(
     () =>
       protocol.result ? scoreFromProtocolResult(protocol.result) : undefined,
@@ -796,7 +772,7 @@ export function useConformanceRun({
 
   useEffect(() => {
     if (!isRunning && oauth.status !== "needs-authorization") clearDeadline();
-  }, [isRunning, oauth.status, clearDeadline]);
+  }, [isRunning, oauth.status, clearDeadline, runVersion]);
 
   return {
     runTimeoutSeconds: deadline.runTimeoutSeconds,

@@ -82,12 +82,14 @@ function handleUnsupportedTransport(
 }
 
 const connectionCheckSchema = z.object({
+    ...conformanceDeadlineFields,
   serverId: z.string().min(1),
   protocolVersion: z.enum(["auto", ...MCP_PROTOCOL_VERSIONS]),
 });
 
 conformance.post("/connection-check", async (c) => {
   try {
+    const requestStartedAt = Date.now();
     const parsed = connectionCheckSchema.safeParse(await readRequestJson(c));
     if (!parsed.success)
       return c.json(
@@ -109,6 +111,7 @@ conformance.post("/connection-check", async (c) => {
           requestInit: { headers: http.customHeaders },
         },
         parsed.data.protocolVersion,
+      { requestStartedAt, signal: c.req.raw.signal, runTimeoutSeconds: parsed.data.runTimeoutSeconds, remainingRunTimeoutMs: parsed.data.remainingRunTimeoutMs },
       ),
     );
   } catch (error) {
