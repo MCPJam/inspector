@@ -78,7 +78,7 @@ import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconci
 import { TracingTab } from "./components/TracingTab";
 import { WebmcpInspectorTab } from "./components/webmcp-inspector/WebmcpInspectorTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
-import type { ConformanceConnectServer } from "./components/conformance/ConformancePanel";
+import { createConformanceConnector } from "./components/conformance/connect-conformance-server";
 import { ConformanceTab } from "./components/conformance/ConformanceTab";
 import { ServerDetailModal } from "./components/connection/ServerDetailModal";
 import {
@@ -342,7 +342,6 @@ import {
 import {
   buildElectronMcpCallbackUrl,
   resolveEffectiveWireProtocolVersion,
-  type EnsureServersReadyResult,
 } from "./hooks/use-server-state";
 import { disconnectAllRuntimeServers } from "./state/mcp-api";
 import {
@@ -1687,6 +1686,7 @@ export function ConformanceRoute() {
     handleUpdate,
     handleDisconnect,
     handleReconnect,
+    reconnectServerWithResult,
   } = useAppRouteContext();
   const {
     servers: projectServers,
@@ -1744,17 +1744,10 @@ export function ConformanceRoute() {
       serversByName.get(editing.snapshot.name) ??
       null)
     : null;
-  const connectServer: ConformanceConnectServer = async (name, options) => {
-    // An explicit sign-in must refresh credentials even if the main
-    // connection still looks connected while a draft version check gets 401.
-    if (options?.signIn) await handleReconnect(name, { forceOAuthFlow: true });
-    const result: EnsureServersReadyResult = await ensureServersReady(
-      [name],
-      options?.signIn ? { allowInteractiveOAuthFlow: true } : undefined,
-    );
-    if (result.readyServerNames.includes(name)) return "ready";
-    return result.reauthServerNames.includes(name) ? "reauth" : "failed";
-  };
+  const connectServer = createConformanceConnector({
+    ensureServersReady,
+    reconnectServerWithResult,
+  });
   return (
     <>
       <ConformanceTab
@@ -6522,6 +6515,7 @@ export default function App() {
     handleOrganizationDeleted,
     handleProjectShared,
     handleReconnect,
+    reconnectServerWithResult,
     handleRuntimeDisconnect,
     handleRefreshTokensFromOAuthFlow,
     handleRemoveServer,
