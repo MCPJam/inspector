@@ -261,6 +261,8 @@ function OrganizationProviderSettings({
     useOrgModelConfig(organizationId);
   const navigate = useAppNavigate();
 
+  const [showAllProviders, setShowAllProviders] = useState(false);
+
   // Dialog state
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [configTarget, setConfigTarget] = useState<{
@@ -287,6 +289,7 @@ function OrganizationProviderSettings({
     entry: ProviderCatalogEntry,
     existing?: OrgModelProvider,
   ) => {
+    setShowAllProviders(false);
     setConfigTarget({
       providerKey: entry.key,
       kind: entry.kind,
@@ -371,6 +374,7 @@ function OrganizationProviderSettings({
               {PROVIDER_CATALOG.map((entry) => {
                 const provider = providerMap.get(entry.key);
                 const configured = !!provider?.hasSecret || !!provider?.baseUrl;
+                if (isAdmin && !configured && !showAllProviders) return null;
                 return (
                   <ProviderRow
                     key={entry.key}
@@ -403,6 +407,14 @@ function OrganizationProviderSettings({
 
               {isAdmin ? (
                 <div className="flex flex-wrap items-center gap-2 pt-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-expanded={showAllProviders}
+                    onClick={() => setShowAllProviders(!showAllProviders)}
+                  >
+                    {showAllProviders ? "Hide providers" : "Add provider"}
+                  </Button>
                   <Button variant="outline" size="sm" onClick={openAddCustom}>
                     <Plus className="mr-2 size-4" />
                     Add Custom Provider

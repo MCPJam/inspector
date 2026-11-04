@@ -1,7 +1,14 @@
 import { getFunctionName } from "convex/server";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render as renderComponent, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OrganizationModelsSection } from "../OrganizationModelsSection";
+
+function render(...args: Parameters<typeof renderComponent>) {
+  const result = renderComponent(...args);
+  const add = screen.queryByRole("button", { name: "Add provider", exact: true });
+  if (add) fireEvent.click(add);
+  return result;
+}
 
 const mocks = vi.hoisted(() => ({
   pathname: "/organizations/org_1/models/usage",
@@ -162,6 +169,16 @@ describe("OrganizationModelsSection", () => {
       }
       return undefined;
     });
+  });
+
+  it("reveals unconfigured providers only when adding one", () => {
+    mocks.pathname = "/organizations/org_1/models";
+    renderComponent(<OrganizationModelsSection organizationId="org_1" isAdmin />);
+    expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add provider", exact: true }));
+    expect(screen.getByText("OpenAI")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Hide providers" }));
+    expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
   });
 
   it("links to usage beside provider actions without loading usage inline", () => {
