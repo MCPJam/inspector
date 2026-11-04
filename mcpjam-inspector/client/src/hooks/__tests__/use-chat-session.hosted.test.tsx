@@ -2581,7 +2581,11 @@ describe("useChatSession — hidden environment (a Playground chat's plugins)", 
     );
     expect(again.result.current.hiddenEnvironmentActive).toBe(false);
     const body = lastTransportOptions.body();
-    expect(body).toEqual(plain);
+    expect(body).toEqual({
+      ...plain,
+      harnessStartupRequestId: expect.any(String),
+    });
+    expect(body.harnessStartupRequestId).not.toBe(plain.harnessStartupRequestId);
     expect(body.hostId).toBe("host_1");
     expect(body).not.toHaveProperty("executionTarget");
     expect(body).not.toHaveProperty("environmentOverrides");

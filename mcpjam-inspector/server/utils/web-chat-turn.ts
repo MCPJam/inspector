@@ -1,4 +1,5 @@
 import { HOSTED_MODE } from "../config.js";
+import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { buildLocalScopeStepUpResume, buildLocalScopeStepUpCancellation, readProtectedResourceUrl } from "../services/chat-turn/local-interactions.js";
 import { createLocalScopeStepUpContinuation } from "./scope-step-up-continuation.js";
 import { prepareDirectProvider, type DirectProviderInput } from "../services/chat-turn/direct-provider.js";
@@ -294,6 +295,7 @@ export interface WebChatTurnPersistContext {
   systemPrompt?: string;
   temperature?: number;
   requireToolApproval?: boolean;
+  requireNativeToolDiscovery?: boolean;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   /** Resolved host harness (absent ⇒ emulated). Routes a claude-code host
    *  through the real Claude Code runtime via handleMCPJamFreeChatModel. */
@@ -425,6 +427,9 @@ export interface WebChatTurnPersistContext {
  * here so the helper signature is self-contained.
  */
 export interface WebChatTurnPrepareInputs {
+  harnessStartupRequestId?: string;
+  harnessHostCapabilities?: MCPJamHandlerOptions["harnessHostCapabilities"];
+  requireNativeToolDiscovery?: boolean;
   /** A local ingress has selected its direct-provider path. */
   directProvider?: DirectProviderInput;
   localMcpRuntimeRequired?: boolean;
@@ -743,6 +748,7 @@ export async function streamChatTurn(
   source: "managed" | "standalone",
 ): Promise<Response> {
   const { manager, prepare, persist, runtime } = args;
+  if (!persist.harness) assertNativeDiscovery({ required: persist.requireNativeToolDiscovery });
   const { c } = runtime;
   if (source === "standalone" && (HOSTED_MODE || persist.projectId ||
       persist.environmentId || persist.scenarioId || persist.harness)) {
@@ -1483,6 +1489,7 @@ export async function streamChatTurn(
                   ? { reasoningEffort: prepare.reasoningEffort }
                   : {}),
                 requireToolApproval: persist.requireToolApproval,
+                requireNativeToolDiscovery: persist.requireNativeToolDiscovery,
                 respectToolVisibility: persist.respectToolVisibility,
                 modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
                 mcpToolResultImageRendering:
@@ -1581,6 +1588,9 @@ export async function streamChatTurn(
         : "remote",
     );
     const onComplete = buildOnConversationComplete(String(prepare.modelDefinition.id), "byok");
+    // One array for the stream and the transcript: settling a call a sign-in
+    // suspended inserts its answer here, and the saved history must carry it.
+    const directHistory = scrubMessages(modelMessages);
     return streamDirectChatWithLiveTrace({
       llmModel: provider.model,
       provider: prepare.modelDefinition.provider,
@@ -1591,7 +1601,7 @@ export async function streamChatTurn(
         transport: "http_stream",
       }),
       modelId: String(prepare.modelDefinition.id),
-      messageHistory: scrubMessages(modelMessages),
+      messageHistory: directHistory,
       systemPrompt: effectiveEnhancedSystemPrompt,
       temperature: resolvedTemperature,
       providerOptions: provider.providerOptions,
@@ -1613,6 +1623,9 @@ export async function streamChatTurn(
       abortSignal: runtime.abortSignal,
       chatSessionId: persist.chatSessionId,
       scopeStepUpResume,
+      ...(settleSuspendedHistoryToolCall
+        ? { settleSuspendedHistoryToolCall }
+        : {}),
       shouldPauseAfterStep: () => suspendedScopeStepUpToolCallIds.size > 0,
       suspendedToolCallIds: () => suspendedScopeStepUpToolCallIds,
       onStreamComplete: cleanupStream,
@@ -1624,7 +1637,7 @@ export async function streamChatTurn(
         runtime.taskCreatedBridge?.attachStreamWriter(writer);
       },
       onPersist: onComplete ? async (event) => {
-        const history = [...modelMessages];
+        const history = [...directHistory];
         appendDedupedModelMessages(history, event.responseMessages);
         return onComplete(history, event.turnTrace);
       } : undefined,
@@ -1686,6 +1699,7 @@ export async function streamChatTurn(
         })
       : { runtimeLocation: "cloud", providerKey };
 
+    assertNativeDiscovery({ required: persist.requireNativeToolDiscovery });
     const orgMaxSteps =
       orgRuntime.runtimeLocation === "local"
         ? resolveLocalOrgMaxSteps(undefined)
@@ -1926,6 +1940,9 @@ export async function streamChatTurn(
       ...Array.from(unavailableServers?.keys() ?? []),
     ],
     requireToolApproval: persist.requireToolApproval,
+    requireNativeToolDiscovery: persist.requireNativeToolDiscovery,
+    harnessHostCapabilities: prepare.harnessHostCapabilities,
+    harnessStartupRequestId: prepare.harnessStartupRequestId,
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     // The browser sent this history (MJ-008): its unresolved calls run only
     // under a verified approval.

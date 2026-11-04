@@ -63,6 +63,11 @@ export interface BaseUrls {
 export interface CreateModelOptions {
   /** @internal Lease ownership for a suite run. */
   mcpjamLeaseScope?: McpjamModelLeaseScope;
+  /**
+   * @internal The server an eval run started on. Its leases are minted there,
+   * ahead of `baseUrls.mcpjam`, so a run's key never goes to another server.
+   */
+  mcpjamBaseUrl?: string;
   apiKey: string;
   baseUrls?: BaseUrls;
   /** Custom providers registry (name -> config) */
@@ -436,6 +441,9 @@ export function createModelFromString(
       const slash = model.indexOf("/");
       const vendor = slash === -1 ? model : model.slice(0, slash);
       const auth = options.mcpjamAuth ?? options.mcpjamLeaseScope?.auth;
+      const mcpjamBaseUrl = resolveMcpjamBaseUrl(
+        options.mcpjamBaseUrl ?? baseUrls?.mcpjam
+      );
       let client;
       if (auth) {
         // Two credential sources would make WHO a lease is minted and billed
@@ -449,7 +457,7 @@ export function createModelFromString(
         }
         client = getMcpjamLeaseClient(
           {
-            baseUrl: resolveMcpjamBaseUrl(baseUrls?.mcpjam),
+            baseUrl: mcpjamBaseUrl,
             getAuth: auth.getAuth,
             ...(auth.headers ? { headers: auth.headers } : {}),
             project: resolveMcpjamProject(mcpjamProject),
@@ -469,7 +477,7 @@ export function createModelFromString(
         }
         client = getMcpjamLeaseClient(
           {
-            baseUrl: resolveMcpjamBaseUrl(baseUrls?.mcpjam),
+            baseUrl: mcpjamBaseUrl,
             apiKey: mcpjamApiKey,
             project: resolveMcpjamProject(mcpjamProject),
             model,

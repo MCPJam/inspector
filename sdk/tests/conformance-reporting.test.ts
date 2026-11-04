@@ -308,18 +308,18 @@ describe("report score", () => {
         ],
         readiness: [
           {
-            id: "readiness-metadata-quality",
-            title: "Metadata Quality",
+            id: "readiness-deprecated-feature-use",
+            title: "Deprecated Feature Use",
             severity: "warning",
-            specStrength: "SHOULD",
+            specStrength: "Deprecation Notice",
             message: "…",
           },
         ],
       } as Partial<MCPConformanceResult>),
     );
 
-    // 1/1 applicable passed, one SHOULD advisory: 95 + (5 − 2) = 98.
-    expect(single.score?.score).toBe(98);
+    // 1/1 applicable passed; the deprecation advisory is worth 0.
+    expect(single.score?.score).toBe(100);
     expect(single.score?.applicable).toBe(1);
 
     const suite = toConformanceReport(createProtocolSuiteResult());
@@ -477,5 +477,106 @@ describe("renderConformanceReportJUnitXml", () => {
 
     expect(xml).not.toContain("<failure");
     expect(xml).toContain('failures="0"');
+  });
+});
+
+describe("report advisories", () => {
+  const warning = (id: string, specStrength = "SHOULD") => ({
+    id,
+    title: `${id} title`,
+    severity: "warning" as const,
+    specStrength,
+    message: `${id} message`,
+  });
+
+  it("saves a protocol run's advice, so a reopened run can list it", () => {
+    const report = toConformanceReport(
+      createProtocolResult({
+        readiness: [
+          {
+            ...warning("readiness-tool-order-deterministic", "MAY"),
+            details: { a: 1 },
+          },
+        ],
+      } as Partial<MCPConformanceResult>)
+    );
+
+    expect(report.advisories).toEqual([
+      {
+        id: "readiness-tool-order-deterministic",
+        title: "readiness-tool-order-deterministic title",
+        group: "mcp-1",
+        kind: "readiness",
+        status: "MAY",
+        message: "readiness-tool-order-deterministic message",
+        details: { a: 1 },
+      },
+    ]);
+  });
+
+  it("has no advisories key when a run raised no advice", () => {
+    expect("advisories" in toConformanceReport(createProtocolResult())).toBe(
+      false
+    );
+    expect("advisories" in toConformanceReport(createAppsResult())).toBe(false);
+    expect("advisories" in toConformanceReport(createOAuthResult())).toBe(
+      false
+    );
+  });
+
+  it("lists matrix advice once, under the first run that raised it", () => {
+    const suite = createProtocolSuiteResult();
+    suite.results[0]!.readiness = [warning("readiness-a")] as never;
+    suite.results[1]!.readiness = [
+      warning("readiness-a"),
+      warning("readiness-b"),
+    ] as never;
+
+    expect(
+      toConformanceReport(suite).advisories?.map(({ id, group }) => ({
+        id,
+        group,
+      }))
+    ).toEqual([
+      { id: "readiness-a", group: "mcp-1" },
+      { id: "readiness-b", group: "mcp-2" },
+    ]);
+  });
+
+  it("saves Apps, Tasks, and OAuth advice under their own group", () => {
+    const apps = toConformanceReport(
+      createAppsResult({
+        readiness: [warning("apps-readiness-deprecated-resource-uri")],
+      } as never)
+    );
+    const oauth = toConformanceReport(
+      createOAuthResult({
+        readiness: [warning("readiness-oauth-iss-advertised")],
+      } as never)
+    );
+    const tasks = toConformanceReport({
+      passed: true,
+      outcome: "passed",
+      target: "https://mcp.example.com/mcp",
+      durationMs: 1,
+      summary: "ok",
+      checks: [],
+      categorySummary: {},
+      discovery: { wire: "extension", toolCount: 1, taskCapableToolCount: 1 },
+      readiness: [warning("tasks-readiness-failed-status-message")],
+    } as unknown as MCPTasksConformanceResult);
+
+    expect(apps.advisories?.[0]).toMatchObject({
+      id: "apps-readiness-deprecated-resource-uri",
+      group: "apps-1",
+    });
+    expect(oauth.advisories?.[0]).toMatchObject({
+      id: "readiness-oauth-iss-advertised",
+      group: "oauth-1",
+    });
+    expect(tasks.advisories?.[0]).toMatchObject({
+      id: "tasks-readiness-failed-status-message",
+      group: "tasks-1",
+    });
   });
 });

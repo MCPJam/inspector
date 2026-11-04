@@ -234,6 +234,17 @@ describe("executePersistedConformanceRun replay", () => {
       outcome: "failed",
       score: { score: 37 },
       durationMs: 9,
+      advisories: [
+        {
+          id: "apps-readiness-deprecated-resource-uri",
+          title: "Deprecated resource URI",
+          group: "apps-1",
+          kind: "readiness",
+          status: "SHOULD",
+          message: "Use the new field.",
+          details: { big: "x" },
+        },
+      ],
       groups: [
         {
           id: "apps",
@@ -277,6 +288,7 @@ describe("executePersistedConformanceRun replay", () => {
         passed: boolean;
         outcome?: string;
         score?: { score: number };
+        advisories?: Array<Record<string, unknown>>;
         groups: Array<{ cases: Array<{ id: string; error?: string }> }>;
       };
     };
@@ -285,6 +297,17 @@ describe("executePersistedConformanceRun replay", () => {
     expect(fallback.report.passed).toBe(false);
     expect(fallback.report.outcome).toBe("failed");
     expect(fallback.report.score?.score).toBe(37);
+    // The advice survives too, without its details.
+    expect(fallback.report.advisories).toEqual([
+      {
+        id: "apps-readiness-deprecated-resource-uri",
+        title: "Deprecated resource URI",
+        group: "apps-1",
+        kind: "readiness",
+        status: "SHOULD",
+        message: "Use the new field.",
+      },
+    ]);
     expect(fallback.report.groups[0]!.cases[0]!.id).toBe(
       "apps-report-not-persisted"
     );

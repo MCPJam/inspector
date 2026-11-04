@@ -1,3 +1,4 @@
+import { assertNativeDiscovery } from "../../utils/harness/native-discovery.js";
 import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { readTasksPolicy } from "@mcpjam/sdk";
@@ -11,7 +12,11 @@ import {
 } from "../../../shared/swarm-attempt-error.js";
 import type { SpendRefusal } from "./admission-retry.js";
 import { prepareTargetGrounding } from "./target-grounding";
-import { SwarmSetupError, setupFailureMessage } from "./swarm-setup-turn";
+import {
+  SETUP_PLATFORM_STOPPED_MESSAGE,
+  SwarmSetupError,
+  setupFailureMessage,
+} from "./swarm-setup-turn";
 import { HOSTED_STEP_MAX_OUTPUT_TOKENS } from "../hosted-step-limits";
 import { isCreditExhaustion } from "../../../shared/credit-exhaustion.js";
 import { composeAbortSignals } from "@mcpjam/sdk";
@@ -905,6 +910,7 @@ async function runJourneyFanOut(
     const targetSponsored = targetHasSponsored(target);
     const targetSignal = targetSponsored ? sessionSignal : creditSignal;
     try {
+      assertNativeDiscovery({ required: target.requireNativeToolDiscovery });
       // Nothing left that could start: a spend cap or platform limit already
       // stopped everything this target has. Its attempts stay pending for the
       // run-level finalize (never claimed, so sponsored ones are refunded).
@@ -942,6 +948,7 @@ async function runJourneyFanOut(
               {
                 terminalStatus: "failed",
                 errorCode: "prerequisites_unavailable",
+                errorMessage: SETUP_PLATFORM_STOPPED_MESSAGE,
               },
             );
           }
@@ -1536,6 +1543,7 @@ async function runJourneyFanOut(
               requireToolApproval: target.requireToolApproval,
               respectToolVisibility: target.respectToolVisibility,
               progressiveToolDiscovery: target.progressiveToolDiscovery,
+              requireNativeToolDiscovery: target.requireNativeToolDiscovery,
               builtInToolIds: target.builtInToolIds,
               // The unattended browser's only authorization. Threading it is
               // what makes `browser` reachable on a swarm target at all: the
@@ -2217,7 +2225,7 @@ async function runJourneyFanOut(
       const failureMessage =
         signInMessage ??
         (err instanceof SwarmSetupError && !signInFailure
-          ? setupFailureMessage(err.partial)
+          ? setupFailureMessage(err.partial, err.platformFailure)
           : undefined);
       const failureCode =
         signInFailure ??

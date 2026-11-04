@@ -121,7 +121,8 @@ function unconfirmedBinding(
     : { kind: "none" };
 }
 
-async function resolveCredentialBinding(
+/** Whose credential this is, as the host bridge confirms it; unconfirmed is shared. */
+export async function resolveCredentialBinding(
   server: ServerWithName,
   connectionId: string | undefined,
 ): Promise<StepUpCredentialBinding> {

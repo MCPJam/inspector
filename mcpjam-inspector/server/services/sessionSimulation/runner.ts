@@ -1,3 +1,4 @@
+import { assertNativeDiscovery } from "../../utils/harness/native-discovery.js";
 import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
 import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
 import {
@@ -351,6 +352,7 @@ export interface SyntheticHostRuntime {
   requireToolApproval: boolean;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
+  requireNativeToolDiscovery?: boolean;
   builtInToolIds?: string[];
   /**
    * What the hosted `browser_*` tools may do in this unattended run. A
@@ -623,6 +625,7 @@ export async function runSyntheticHostSession(
 
   let harness: ReturnType<typeof resolveAgentLoop>["harnessId"];
   try {
+    assertNativeDiscovery({ required: runtime.requireNativeToolDiscovery });
     harness = resolveAgentLoop({ agentLoop, harness: configuredHarness }).harnessId;
   } catch (error) {
     return {

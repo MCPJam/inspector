@@ -4,11 +4,13 @@ import type {
   ToolSecuritySchemeResolution,
 } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/state/app-types";
+import { CHAT_AUTH_RECOVERY_MESSAGE } from "@/lib/chat-auth-recovery";
 import {
   AUTH_CHALLENGE_DISMISSED_MESSAGE,
   connectAuthChallenge,
   clearAuthChallengeCards,
   dismissAuthChallenge,
+  noteSignInCallbackFailed,
   presentAuthChallenge,
   presentWidgetAuthChallenge,
   registerAuthChallengeHostProfile,
@@ -23,6 +25,13 @@ import {
   type DirectScopeStepUpReplayDescriptor,
 } from "../scope-step-up-replay";
 import { useAuthChallengeNoticeStore } from "../auth-challenge-chat";
+import {
+  preparePendingChatAuthRequired,
+  readPendingChatScopeStepUp,
+  savePendingChatScopeStepUp,
+  settlePendingChatScopeStepUpAfterCallback,
+} from "../scope-step-up-pending";
+import type { AuthRequiredEvent } from "@/shared/auth-challenge";
 import { registerScopeStepUpHostBridge } from "../scope-step-up";
 import { authorizationFlowDigest } from "../oauth/flow-digest";
 import { persistRequestedScopes } from "../oauth/requested-scopes";
@@ -471,10 +480,15 @@ describe("auth challenge lifecycle", () => {
         return original.call(this, key, value);
       });
       try {
-        await expect(settleSignInCallback("orders", { state: "flow-1" }))
-          .resolves.toContain("MCPJam couldn’t continue this call");
-        expect(peekPendingDirectScopeStepUpReplay()?.phase).toBe("awaiting_oauth");
-      } finally { save.mockRestore(); }
+        await expect(
+          settleSignInCallback("orders", { state: "flow-1" }),
+        ).resolves.toBe(CHAT_AUTH_RECOVERY_MESSAGE);
+        expect(peekPendingDirectScopeStepUpReplay()?.phase).toBe(
+          "awaiting_oauth",
+        );
+      } finally {
+        save.mockRestore();
+      }
     });
 
     it("replays after its own callback", async () => {
@@ -541,6 +555,15 @@ describe("auth challenge lifecycle", () => {
       }
     });
 
+    it("treats a credential no bridge can confirm as shared", async () => {
+      const card = await presentCard({ connectionId: "unconfirmed-cred" });
+      await connectAuthChallenge(card, server, { isTrusted: true });
+      expect(peekPendingDirectScopeStepUpReplay()?.credentialBinding).toEqual({
+        kind: "shared",
+        credentialId: "unconfirmed-cred",
+      });
+    });
+
     it("drops the saved call when sign-in fails before redirecting", async () => {
       initiateOAuthMock.mockResolvedValueOnce({
         success: false,
@@ -604,6 +627,154 @@ describe("auth challenge lifecycle", () => {
         replay: card.replay,
       });
       expect(repeat).toMatchObject({ kind: "notice", reason: "permanent" });
+    });
+  });
+
+  describe("a chat Connect that never leaves the page", () => {
+    const pendingChat = () => ({
+      event: {
+        version: 1,
+        kind: "auth_required",
+        continuationId: "c1",
+        serverId: "orders",
+        serverName: "orders",
+        toolCallId: "tool-c1",
+        operation: { method: "tools/call", operation: "lookup" },
+        source: "http_401",
+        effectiveAuth: "discover",
+        action: "prompt",
+        readOnly: true,
+        expiresAt: Date.now() + 60_000,
+      } satisfies AuthRequiredEvent & { continuationId: string },
+      serverName: "orders",
+      chatSessionId: "chat-1",
+      projectId: "p1",
+      phase: "awaiting_click" as const,
+    });
+    const chatCard = async () => {
+      const input = pendingChat();
+      expect(savePendingChatScopeStepUp(input)).toEqual({ ok: true });
+      return presentCard({
+        replay: undefined,
+        continuationId: "c1",
+        onConnect: () => preparePendingChatAuthRequired(input),
+      });
+    };
+    const phase = () =>
+      readPendingChatScopeStepUp({ continuationId: "c1" })?.phase;
+
+    it.each([
+      [
+        "sign-in throws",
+        () => initiateOAuthMock.mockRejectedValueOnce(new Error("boom")),
+      ],
+      [
+        "sign-in fails before redirecting",
+        () =>
+          initiateOAuthMock.mockResolvedValueOnce({
+            success: false,
+            error: "metadata unreachable",
+          }),
+      ],
+    ])("hands the call back to its card when %s", async (_exit, arrange) => {
+      arrange();
+      const card = await chatCard();
+      const failed = await connectAuthChallenge(card, server, {
+        isTrusted: true,
+      });
+      expect(failed.kind).toBe("failed");
+      expect(phase()).toBe("awaiting_click");
+      // Another sign-in's callback on this server leaves the call alone.
+      expect(
+        settlePendingChatScopeStepUpAfterCallback(
+          "orders",
+          undefined,
+          "another-flow",
+        ),
+      ).toEqual({ kind: "ignored" });
+      expect(phase()).toBe("awaiting_click");
+      // And Connect still works from the same card.
+      expect(
+        await connectAuthChallenge(card, server, { isTrusted: true }),
+      ).toEqual({ kind: "started" });
+      expect(phase()).toBe("awaiting_oauth");
+    });
+
+    it("hands the call back to its card when its binding cannot be saved", async () => {
+      const card = await chatCard();
+      // The click writes the call once; the binding is the next write.
+      let chatWrites = 0;
+      const original = Storage.prototype.setItem;
+      const failBinding = vi
+        .spyOn(Storage.prototype, "setItem")
+        .mockImplementation(function (this: Storage, key, value) {
+          if (key === "mcp-scope-step-up-chat-v2" && ++chatWrites === 2)
+            throw new Error("quota");
+          return original.call(this, key, value);
+        });
+      try {
+        expect(
+          await connectAuthChallenge(card, server, { isTrusted: true }),
+        ).toEqual({ kind: "failed", message: CHAT_AUTH_RECOVERY_MESSAGE });
+      } finally {
+        failBinding.mockRestore();
+      }
+      expect(initiateOAuthMock).not.toHaveBeenCalled();
+      expect(phase()).toBe("awaiting_click");
+    });
+  });
+
+  describe("telemetry", () => {
+    const signInEvents = () =>
+      trackMock.mock.calls.filter(([name]) =>
+        String(name).startsWith("auth_challenge_"),
+      );
+
+    it("sends only closed-vocabulary fields, never scopes, URLs or server text", async () => {
+      const card = await presentCard();
+      await connectAuthChallenge(card, server, { isTrusted: true });
+      await settleSignInCallback("orders", { state: "flow-1" });
+      // A second call: dismissed, then a failed start.
+      const dismissed = await presentCard({
+        operation: { ...OPERATION, operation: "write" },
+      });
+      dismissAuthChallenge(dismissed);
+      localStorage.clear();
+      sessionStorage.clear();
+      initiateOAuthMock.mockRejectedValueOnce(
+        new Error("https://as.example/boom"),
+      );
+      const failing = await presentCard();
+      await connectAuthChallenge(failing, server, { isTrusted: true });
+
+      const prompt = {
+        location: "tools",
+        source: "http_401",
+        action: "prompt",
+      };
+      expect(signInEvents()).toEqual([
+        ["auth_challenge_card_shown", prompt],
+        ["auth_challenge_connect_clicked", prompt],
+        ["auth_challenge_completed", { location: "oauth_callback" }],
+        ["auth_challenge_card_shown", prompt],
+        ["auth_challenge_dismissed", prompt],
+        ["auth_challenge_card_shown", prompt],
+        ["auth_challenge_connect_clicked", prompt],
+        [
+          "auth_challenge_failed",
+          { location: "tools", source: "http_401", stage: "start" },
+        ],
+      ]);
+    });
+
+    it("reports a failed callback with only its location and stage", async () => {
+      const card = await presentCard();
+      await connectAuthChallenge(card, server, { isTrusted: true });
+      noteSignInCallbackFailed("orders");
+      expect(signInEvents().at(-1)).toEqual([
+        "auth_challenge_failed",
+        { location: "oauth_callback", stage: "callback" },
+      ]);
     });
   });
 

@@ -542,12 +542,95 @@ describe("step-up grading", () => {
     expect(finding.status).toBe("not-evaluated");
     expect(finding.notEvaluatedReason).toMatch(/lacks the tool's scope/);
   });
+
+  it("fails a 2xx that refuses the call with a tool error result", () => {
+    // HTTP 200 carrying `isError: true` is a refusal, not a success. Claude
+    // re-authorizes only on a 403 insufficient_scope, so this server leaves it
+    // with no way to ask for the missing scope.
+    const finding = gradeClaudeIntrusiveObservations(
+      withTool(),
+      {
+        stepUp: {
+          attempted: true,
+          toolName: "read_private",
+          status: 200,
+          refusal: "tool-error",
+        },
+      },
+      STAMP,
+    ).find((f) => f.id === "claude.intrusive.step-up-challenge")!;
+    expect(finding.status).toBe("violated");
+    expect(finding.remediation).toMatch(/tool error result/);
+    expect(finding.details).toMatchObject({ refusal: "tool-error" });
+  });
+
+  it("fails a 2xx that refuses the call with a JSON-RPC error", () => {
+    const finding = gradeClaudeIntrusiveObservations(
+      withTool(),
+      {
+        stepUp: {
+          attempted: true,
+          toolName: "read_private",
+          status: 200,
+          refusal: "rpc-error",
+          error: "forbidden",
+        },
+      },
+      STAMP,
+    ).find((f) => f.id === "claude.intrusive.step-up-challenge")!;
+    expect(finding.status).toBe("violated");
+    expect(finding.remediation).toMatch(/JSON-RPC error/);
+  });
+
+  it("does not grade a call whose arguments were rejected", () => {
+    // The probe sends no arguments. A tool that needs some refuses before it
+    // decides anything about sign-in, so the server was never asked.
+    const finding = gradeClaudeIntrusiveObservations(
+      withTool(),
+      {
+        stepUp: {
+          attempted: true,
+          toolName: "read_private",
+          status: 200,
+          refusal: "tool-error",
+          invalidArguments: true,
+        },
+      },
+      STAMP,
+    ).find((f) => f.id === "claude.intrusive.step-up-challenge")!;
+    expect(finding.status).toBe("not-evaluated");
+    expect(finding.notEvaluatedReason).toMatch(/rejected the call's arguments/);
+  });
+
+  it("does not grade a 2xx with no readable result", () => {
+    const finding = gradeClaudeIntrusiveObservations(
+      withTool(),
+      {
+        stepUp: {
+          attempted: true,
+          toolName: "read_private",
+          status: 200,
+          error: "tools/call returned no result",
+        },
+      },
+      STAMP,
+    ).find((f) => f.id === "claude.intrusive.step-up-challenge")!;
+    expect(finding.status).toBe("not-evaluated");
+    expect(finding.notEvaluatedReason).toMatch(/returned no result/);
+  });
 });
 
 describe("the step-up probe, against a real server", () => {
   const LOW_SCOPE = "Bearer low-scope-token";
 
-  async function startScopedServer(): Promise<{
+  type ToolCallAnswer = { status: number; body: (id: unknown) => unknown; headers?: Record<string, string> };
+  const CHALLENGE: ToolCallAnswer = {
+    status: 403,
+    body: (id) => ({ jsonrpc: "2.0", id, error: { code: -32001, message: "forbidden" } }),
+    headers: { "www-authenticate": 'Bearer error="insufficient_scope", scope="private:read"' },
+  };
+
+  async function startScopedServer(answer: ToolCallAnswer = CHALLENGE): Promise<{
     url: string;
     calls: Array<{ tool?: string; authorization?: string }>;
     close: () => Promise<void>;
@@ -589,11 +672,7 @@ describe("the step-up probe, against a real server", () => {
         }
         if (body.method === "tools/call") {
           calls.push({ tool: body.params?.name, authorization: req.headers.authorization });
-          return send(
-            403,
-            { jsonrpc: "2.0", id: body.id, error: { code: -32001, message: "forbidden" } },
-            { "www-authenticate": 'Bearer error="insufficient_scope", scope="private:read"' },
-          );
+          return send(answer.status, answer.body(body.id), answer.headers);
         }
         return send(200, { jsonrpc: "2.0", id: body.id, result: { resources: [] } });
       });
@@ -642,6 +721,64 @@ describe("the step-up probe, against a real server", () => {
           (f) => f.id === "claude.auth.insufficient-scope-challenge-shape",
         )?.status,
       ).toBe("satisfied");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("records a 2xx tool error result as a refusal", async () => {
+    const server = await startScopedServer({
+      status: 200,
+      body: (id) => ({
+        jsonrpc: "2.0",
+        id,
+        result: { isError: true, content: [{ type: "text", text: "missing scope private:read" }] },
+      }),
+    });
+    try {
+      const observed = await probeStepUpChallenge(
+        armed({
+          enabled: true,
+          grantOrigin: "dedicated-test-account",
+          testCredentials: { clientId: "c" },
+          protectedToolName: "read_private",
+          expectedScopes: ["private:read"],
+        }),
+        { enteredUrl: server.url, fetchFn: fetch, mcpHeaders: { authorization: LOW_SCOPE } },
+      );
+      expect(observed).toMatchObject({ attempted: true, status: 200, refusal: "tool-error" });
+      expect(observed.invalidArguments).toBeUndefined();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("marks a 2xx input-validation refusal as rejected arguments", async () => {
+    const server = await startScopedServer({
+      status: 200,
+      body: (id) => ({
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32602, message: "Invalid params: path is required" },
+      }),
+    });
+    try {
+      const observed = await probeStepUpChallenge(
+        armed({
+          enabled: true,
+          grantOrigin: "dedicated-test-account",
+          testCredentials: { clientId: "c" },
+          protectedToolName: "read_private",
+          expectedScopes: ["private:read"],
+        }),
+        { enteredUrl: server.url, fetchFn: fetch, mcpHeaders: { authorization: LOW_SCOPE } },
+      );
+      expect(observed).toMatchObject({
+        attempted: true,
+        status: 200,
+        refusal: "rpc-error",
+        invalidArguments: true,
+      });
     } finally {
       await server.close();
     }

@@ -37,6 +37,10 @@ interface FixtureServerOptions {
   cityResult?: Record<string, unknown>;
   /** Record every method the server was asked for. */
   calls?: string[];
+  /** List only `plain`, so no tool declares an `outputSchema`. */
+  noOutputSchemas?: boolean;
+  /** Hand back the same `nextCursor` on every `tools/list` page. */
+  repeatToolsCursor?: boolean;
 }
 
 async function serveFixtureServer(options: FixtureServerOptions) {
@@ -74,18 +78,23 @@ async function serveFixtureServer(options: FixtureServerOptions) {
         case "tools/list":
           return ok({
             tools: [
-              {
-                name: "weather",
-                inputSchema: { type: "object", properties: {} },
-                outputSchema: OUTPUT_SCHEMA,
-              },
-              {
-                name: "city",
-                inputSchema: { type: "object", properties: {} },
-                outputSchema: DRAFT_07_OUTPUT_SCHEMA,
-              },
+              ...(options.noOutputSchemas
+                ? []
+                : [
+                    {
+                      name: "weather",
+                      inputSchema: { type: "object", properties: {} },
+                      outputSchema: OUTPUT_SCHEMA,
+                    },
+                    {
+                      name: "city",
+                      inputSchema: { type: "object", properties: {} },
+                      outputSchema: DRAFT_07_OUTPUT_SCHEMA,
+                    },
+                  ]),
               { name: "plain", inputSchema: { type: "object", properties: {} } },
             ],
+            ...(options.repeatToolsCursor ? { nextCursor: "again" } : {}),
           });
         case "prompts/list":
           return ok({ prompts: [{ name: "welcome" }] });
@@ -167,10 +176,12 @@ function byId(checks: MCPCheckResult[], id: MCPCheckId): MCPCheckResult {
 const ID: MCPCheckId = "modern-tool-output-schema-conformant";
 
 describe("nothing is executed without a fixture", () => {
-  it("skips, and never calls a tool, when no fixtures are configured", async () => {
+  it("could not run, and never calls a tool, when a tool declares a schema but no fixture is configured", async () => {
     const calls: string[] = [];
     const result = await run({ calls }, undefined, [ID]);
     const check = byId(result.checks, ID);
+    // The MUST binds `weather` and `city`, and nothing graded them: the
+    // requirement went unverified, like any probe check without its tool.
     expect([check.status, check.skipReason]).toEqual([
       "skipped",
       "could-not-run",
@@ -180,6 +191,38 @@ describe("nothing is executed without a fixture", () => {
     expect(calls.filter((call) => call.startsWith("tools/call"))).toEqual([]);
     // And the skip says what it needs, rather than reading as a server defect.
     expect(check.error?.message).toContain("fixtures.toolCalls");
+  });
+
+  it("is not applicable without a fixture when no tool declares a schema", async () => {
+    const calls: string[] = [];
+    const check = byId(
+      (await run({ calls, noOutputSchemas: true }, undefined, [ID])).checks,
+      ID,
+    );
+    expect([check.status, check.skipReason]).toEqual([
+      "skipped",
+      "not-applicable",
+    ]);
+    expect(calls.filter((call) => call.startsWith("tools/call"))).toEqual([]);
+  });
+
+  it("could not run when the tools/list walk did not finish", async () => {
+    // A cut-off listing cannot show that no tool declares a schema.
+    const check = byId(
+      (
+        await run(
+          { noOutputSchemas: true, repeatToolsCursor: true },
+          undefined,
+          [ID]
+        )
+      ).checks,
+      ID
+    );
+    expect([check.status, check.skipReason]).toEqual([
+      "skipped",
+      "could-not-run",
+    ]);
+    expect(check.error?.message).toContain("did not finish");
   });
 });
 

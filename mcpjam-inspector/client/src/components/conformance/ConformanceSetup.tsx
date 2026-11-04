@@ -4,16 +4,23 @@
  * its Run starts the run with them.
  */
 
-import { useId, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import type { McpProtocolVersion } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
-import type {
-  ConformanceSelection,
-  ProtocolVersionPin,
+import {
+  type ConformanceSelection,
+  type ProtocolVersionPin,
 } from "@/hooks/use-conformance-run";
+import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
+import type { ConformanceDefaults } from "@/hooks/use-conformance-server-data";
+import { ConformanceChecksEditor } from "./ConformanceChecksEditor";
 import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { toast } from "@/lib/toast";
+import { startConnectToast } from "@/lib/connect-toast";
+import { useConformanceProtocolConnection } from "@/hooks/use-conformance-protocol-connection";
+import { ConformanceProtocolConnection } from "./ConformanceProtocolConnection";
 import type {
   ConformanceConnectOutcome,
   ConformanceConnectServer,
@@ -26,7 +33,6 @@ import {
   RUN_LABEL,
 } from "./ConformancePageChrome";
 import {
-  ConformanceCheckPicker,
   checkCatalogs,
   nothingPicked,
 } from "./ConformanceCheckPicker";
@@ -47,6 +53,8 @@ export function ConformanceSetup({
   defaultsLoaded = true,
   onConnectServer,
   onEditServer,
+  probesFor,
+  onLoadDefaults,
   onCancel,
   onRun,
 }: {
@@ -72,15 +80,28 @@ export function ConformanceSetup({
   onConnectServer?: ConformanceConnectServer;
   /** Opens a server's connection settings, offered when a connect fails. */
   onEditServer?: (serverName: string) => void;
+  /** The tools a server's checks may call, as last set for it. */
+  probesFor?: (serverName: string) => ConformanceProbes;
+  onLoadDefaults?: (serverName: string) => Promise<ConformanceDefaults>;
   onCancel: () => void;
   onRun: (
     serverName: string,
     versionPin: ProtocolVersionPin,
     selection: ConformanceSelection,
+    probes: ConformanceProbes,
+    resolvedProtocolVersion?: McpProtocolVersion,
   ) => void;
 }) {
+  // The tools the checks that must call one may use, set in step 2's list,
+  // and whether each one's arguments box (and the Tasks answers) parses.
+  const [probes, setProbes] = useState<ConformanceProbes>({});
+  const [inputsValid, setInputsValid] = useState(true);
   // A draft until Run, so Cancel leaves the page's selection as it was.
   const [serverName, setServerName] = useState(initialServerName);
+  const currentServerName = useRef(serverName);
+  useLayoutEffect(() => {
+    currentServerName.current = serverName;
+  }, [serverName]);
   const [versionPin, setVersionPin] = useState(initialVersionPin);
   const [step, setStep] = useState(0);
   // Step 2 starts from the picked server's checks: the last run's on the same
@@ -96,6 +117,15 @@ export function ConformanceSetup({
   const serverLabelId = useId();
   const versionLabelId = useId();
   const picked = servers.find((server) => server.name === serverName);
+  const protocolConnection = useConformanceProtocolConnection(
+    picked,
+    versionPin,
+  );
+  const resolvedVersion =
+    protocolConnection.result?.status === "ready"
+      ? protocolConnection.result.protocolVersion
+      : undefined;
+  const effectiveVersion = resolvedVersion ?? versionPin;
   // Picked from the project's list before this session loaded it: it has no
   // runtime entry until it connects.
   const pickedName =
@@ -108,21 +138,47 @@ export function ConformanceSetup({
   const [connecting, setConnecting] = useState<readonly string[]>([]);
   // The run needs the server live, so the steps wait until it is: the picker
   // connects it in place.
-  const canContinue = picked?.connectionStatus === "connected";
-  // A server that is not connected can be picked, but the steps wait for it:
-  // say so once, when it is picked, rather than under the field.
-  const selectServer = (name: string) => {
-    setServerName(name);
+  const canContinue = protocolConnection.ready;
+  // Picking a server readies it: one that is not connected starts
+  // connecting in the background, with no separate Connect to remember.
+  const needsConnect = (name: string) => {
     const status = servers.find(
       (server) => server.name === name,
     )?.connectionStatus;
-    const underway =
+    return !(
       connecting.includes(name) ||
       status === "connected" ||
       status === "connecting" ||
-      status === "oauth-flow";
-    if (!underway) toast.error(`Connect ${name} to continue.`);
+      status === "oauth-flow"
+    );
   };
+  const selectServer = (name: string) => {
+    currentServerName.current = name;
+    setServerName(name);
+    if (!needsConnect(name)) return;
+    if (onConnectServer) void connect(name);
+    else toast.error(`Connect ${name} to continue.`);
+  };
+  // The page's own pick, when it is not connected: on open, or when it
+  // arrives after the steps opened (the server list was still loading). Once
+  // per server, through the latest `connect`, so the effect keys on the pick.
+  const connectPagePick = useRef(() => {});
+  useEffect(() => {
+    connectPagePick.current = () => {
+      // Not when the user already chose another server.
+      if (!initialServerName || (picked && picked.name !== initialServerName)) {
+        return;
+      }
+      if (needsConnect(initialServerName)) void connect(initialServerName);
+    };
+  });
+  const pagePickTried = useRef<string | null>(null);
+  useEffect(() => {
+    if (!onConnectServer || !initialServerName) return;
+    if (pagePickTried.current === initialServerName) return;
+    pagePickTried.current = initialServerName;
+    connectPagePick.current();
+  }, [onConnectServer, initialServerName]);
   // Opened while the server list was still loading: take the page's pick
   // once it arrives, unless the user already chose one.
   const [pageServerName, setPageServerName] = useState(initialServerName);
@@ -130,17 +186,26 @@ export function ConformanceSetup({
     setPageServerName(initialServerName);
     if (!picked && initialServerName) setServerName(initialServerName);
   }
-  // The last Connect that did not end connected, kept per server so the
-  // alert names the one it failed on.
-  const [connectFailure, setConnectFailure] = useState<{
-    serverName: string;
-    needsSignIn: boolean;
-  } | null>(null);
+  // Each server's last connect that did not end connected. Per server: two
+  // connects can settle out of order, and one must not erase the other's.
+  const [connectFailures, setConnectFailures] = useState<
+    Readonly<Record<string, { needsSignIn: boolean }>>
+  >({});
+  const clearFailure = (name: string) =>
+    setConnectFailures((prev) => {
+      if (!Object.hasOwn(prev, name)) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
   const connect = async (name: string, signIn = false) => {
     if (!onConnectServer) return;
+    currentServerName.current = name;
     setServerName(name);
-    setConnectFailure(null);
+    clearFailure(name);
     setConnecting((names) => (names.includes(name) ? names : [...names, name]));
+    // Picking connects on its own, so the toast is what says it is happening.
+    const progress = startConnectToast(name);
     let outcome: ConformanceConnectOutcome;
     try {
       outcome = await onConnectServer(name, { signIn });
@@ -148,34 +213,85 @@ export function ConformanceSetup({
       outcome = "failed";
     }
     setConnecting((names) => names.filter((other) => other !== name));
-    if (outcome !== "ready") {
-      setConnectFailure({
-        serverName: name,
-        needsSignIn: outcome === "reauth",
-      });
+    if (outcome === "ready") {
+      progress.connected();
+      return;
     }
+    progress.failed(
+      outcome === "reauth"
+        ? `${name} needs you to sign in again. Sign in below to continue.`
+        : `Couldn't connect to ${name}. Retry below, or edit its connection.`,
+    );
+    setConnectFailures((prev) => ({
+      ...prev,
+      [name]: { needsSignIn: outcome === "reauth" },
+    }));
   };
   // Connected some other way (Edit connection, the server menu): the failure
   // is over, so a later drop does not bring the old alert back.
-  if (canContinue && connectFailure?.serverName === pickedName) {
-    setConnectFailure(null);
+  // Own keys only: `in` also finds what every object inherits, so a server
+  // named `constructor` would read as failed and clear on every render.
+  if (
+    picked?.connectionStatus === "connected" &&
+    pickedName &&
+    Object.hasOwn(connectFailures, pickedName)
+  ) {
+    clearFailure(pickedName);
   }
   const failure =
-    pickedName && !canContinue && connectFailure?.serverName === pickedName
-      ? connectFailure
+    pickedName &&
+    picked?.connectionStatus !== "connected" &&
+    Object.hasOwn(connectFailures, pickedName)
+      ? connectFailures[pickedName]!
       : null;
   const noServers =
     !projectServersLoading &&
     servers.length === 0 &&
     (projectServerNames?.length ?? 0) === 0;
 
-  const continueToChecks = () => {
-    if (serverName !== selectionFor) {
-      setSelection(startingSelection(serverName));
-      setSelectionFor(serverName);
+  const [loadingDefaults, setLoadingDefaults] = useState(false);
+  const [defaultsError, setDefaultsError] = useState(false);
+  const continueToChecks = async () => {
+    const targetServerName = serverName;
+    setLoadingDefaults(true);
+    setDefaultsError(false);
+    try {
+      const loaded =
+        targetServerName && onLoadDefaults
+          ? await onLoadDefaults(targetServerName)
+          : undefined;
+      if (currentServerName.current !== targetServerName) return;
+      if (targetServerName !== selectionFor) {
+        setSelection(loaded?.selection ?? startingSelection(targetServerName));
+        setSelectionFor(targetServerName);
+        setProbes(
+          loaded?.inputs ??
+            (targetServerName ? (probesFor?.(targetServerName) ?? {}) : {}),
+        );
+        setInputsValid(true);
+      }
+      setStep(1);
+    } catch {
+      if (currentServerName.current === targetServerName)
+        setDefaultsError(true);
+    } finally {
+      setLoadingDefaults(false);
     }
-    setStep(1);
   };
+
+  const protocolNotice = (
+    <ConformanceProtocolConnection
+      checking={protocolConnection.checking}
+      result={protocolConnection.result}
+      serverName={serverName ?? "Server"}
+      version={versionPin}
+      onRetry={protocolConnection.retry}
+      onSignIn={() => {
+        if (pickedName)
+          void connect(pickedName, true).then(protocolConnection.retry);
+      }}
+    />
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
@@ -220,12 +336,8 @@ export function ConformanceSetup({
                   servers={servers}
                   moreServerNames={projectServerNames}
                   loading={projectServersLoading}
-                  connectingNames={connecting}
                   selectedName={serverName}
                   onSelect={selectServer}
-                  onConnect={
-                    onConnectServer ? (name) => void connect(name) : undefined
-                  }
                   labelledBy={serverLabelId}
                 />
                 {noServers ? (
@@ -259,27 +371,39 @@ export function ConformanceSetup({
                   Select protocol version
                 </div>
                 <ProtocolVersionSelect
+                  id={`${versionLabelId}-select`}
                   value={versionPin}
                   onChange={setVersionPin}
                   labelledBy={versionLabelId}
                 />
+                {protocolNotice}
               </div>
             </div>
 
+            {defaultsError ? (
+              <p role="alert" className="mt-3 text-sm text-destructive">
+                Could not load your saved inputs. Try again.
+              </p>
+            ) : null}
             <div className="mt-7 flex items-center justify-end gap-2">
               <Button variant="ghost" onClick={onCancel}>
                 Cancel
               </Button>
               <Button
-                disabled={!canContinue || !defaultsLoaded}
-                onClick={continueToChecks}
+                disabled={!canContinue || !defaultsLoaded || loadingDefaults}
+                onClick={() => void continueToChecks()}
               >
-                Continue
+                {defaultsError
+                  ? "Retry"
+                  : loadingDefaults
+                    ? "Loading defaults..."
+                    : "Continue"}
               </Button>
             </div>
           </>
         ) : (
           <>
+            {protocolNotice}
             <h2 className="mt-3 text-2xl font-semibold tracking-[-0.02em]">
               Set what you'd like to test
             </h2>
@@ -289,10 +413,14 @@ export function ConformanceSetup({
 
             {/* The protocol list follows the revision picked in step 1. */}
             <div className="mt-3">
-              <ConformanceCheckPicker
-                versionPin={versionPin}
+              <ConformanceChecksEditor
+                server={picked}
+                versionPin={effectiveVersion}
                 selection={selection}
                 onChange={setSelection}
+                probes={probes}
+                onProbesChange={setProbes}
+                onValidChange={setInputsValid}
               />
             </div>
 
@@ -303,10 +431,18 @@ export function ConformanceSetup({
               <Button
                 disabled={
                   !canContinue ||
-                  nothingPicked(selection, checkCatalogs(versionPin))
+                  nothingPicked(selection, checkCatalogs(effectiveVersion)) ||
+                  !inputsValid
                 }
                 onClick={() => {
-                  if (serverName) onRun(serverName, versionPin, selection);
+                  if (serverName)
+                    onRun(
+                      serverName,
+                      versionPin,
+                      selection,
+                      probes,
+                      resolvedVersion,
+                    );
                 }}
               >
                 {RUN_LABEL}
