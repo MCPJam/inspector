@@ -21,15 +21,15 @@
  *   - `not-applicable` checks leave the denominator entirely — a server
  *     without auth, a stdio server's HTTP checks, a legacy pin's modern
  *     checks: none of them cost points.
- *   - `could-not-run` checks stay IN the denominator as unearned points, so
- *     an incomplete run can never display 100.
+ *   - `could-not-run` checks stay in the denominator unless caller input was
+ *     missing. Missing inputs leave the run incomplete but do not cost points.
  *   - `pending` checks — ones the run's conformance profile does not score yet
  *     (see `conformance-profile.ts`) — leave the denominator AND the verdict.
  *     A newly added MUST check must not silently re-grade every server that
  *     was green before it existed; promoting it is a profile version bump.
  *
- * 100 therefore means exactly one thing: every applicable check ran and
- * passed.
+ * A score of 100 means every scored check passed. Read the outcome as well:
+ * missing inputs can leave the run incomplete even with a score of 100.
  *
  * Pure data reasoning — no MCP client, no transport, no Node built-ins — so
  * it is exported from the browser entry alongside the catalog.
@@ -42,6 +42,7 @@ import {
   type ConformanceRunOutcome,
   type OutcomeCheckLike,
 } from "./conformance-outcome.js";
+import { isMissingInputCheck } from "./conformance-input.js";
 import {
   partitionByStamp,
   type ConformanceProfileStamp,
@@ -78,7 +79,7 @@ export interface ConformanceScore {
    */
   score: number | null;
   outcome: ConformanceRunOutcome;
-  /** The denominator: passed + failed + couldNotRun. Always display it. */
+  /** The denominator excludes checks blocked by missing caller input. */
   applicable: number;
   passed: number;
   failed: number;
@@ -111,9 +112,8 @@ function scoreFromCounts(
   advisories: ScoredAdvisory[],
   outcome: ConformanceRunOutcome,
   protocolVersion?: string,
+  applicable = counts.passed + counts.failed + counts.couldNotRun,
 ): ConformanceScore {
-  const applicable = counts.passed + counts.failed + counts.couldNotRun;
-
   // One decimal, rounded down: rounding to nearest would print 100 for
   // 1999/2000. Multiplying before dividing keeps 150/150 an exact 100.
   const score =
@@ -164,7 +164,14 @@ export function computeConformanceScore(
   // arithmetic — the score annotates the verdict, it does not override it. It
   // reads the SCORED checks only, for the same reason the counts do.
   const { outcome } = decideConformanceOutcome(scored);
-  return scoreFromCounts(counts, advisories, outcome, protocolVersion);
+  return scoreFromCounts(
+    counts,
+    advisories,
+    outcome,
+    protocolVersion,
+    counts.passed + counts.failed + counts.couldNotRun -
+      scored.filter(isMissingInputCheck).length,
+  );
 }
 
 /**
@@ -220,7 +227,13 @@ export function pooledConformanceScore(
       ? [...versions][0]
       : undefined;
 
-  return scoreFromCounts(counts, advisories, outcome, protocolVersion);
+  return scoreFromCounts(
+    counts,
+    advisories,
+    outcome,
+    protocolVersion,
+    sum(parts, (part) => part.applicable),
+  );
 }
 
 function sum<T>(items: T[], select: (item: T) => number): number {
@@ -229,7 +242,19 @@ function sum<T>(items: T[], select: (item: T) => number): number {
 
 /** The one-line rendering every surface shares, so the wording cannot drift. */
 export function describeConformanceScore(score: ConformanceScore): string {
+  const missingInputs = Math.max(
+    0,
+    score.passed + score.failed + score.couldNotRun - score.applicable
+  );
+  const otherUnrun = score.couldNotRun - missingInputs;
+  const unrun = [
+    missingInputs > 0
+      ? `${missingInputs} check${missingInputs === 1 ? " needs" : "s need"} input`
+      : null,
+    otherUnrun > 0 ? `${otherUnrun} could not run` : null,
+  ].filter((part): part is string => part !== null);
   if (score.score === null) {
+    if (unrun.length > 0) return `not scored. ${unrun.join(", ")}`;
     return `not scored — 0 applicable checks (${score.notApplicable} not applicable)`;
   }
   const parts = [
@@ -238,9 +263,7 @@ export function describeConformanceScore(score: ConformanceScore): string {
   if (score.failed > 0) {
     parts.push(`${score.failed} failed`);
   }
-  if (score.couldNotRun > 0) {
-    parts.push(`${score.couldNotRun} could not run`);
-  }
+  parts.push(...unrun);
   if (score.advisories.length > 0) {
     parts.push(
       `${score.advisories.length} advisor${score.advisories.length === 1 ? "y" : "ies"}`

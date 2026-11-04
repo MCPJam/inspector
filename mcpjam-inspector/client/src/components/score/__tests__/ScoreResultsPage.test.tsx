@@ -116,6 +116,168 @@ describe("ScoreResultsPage pending profile stamp", () => {
     mockFetchScoreRun.mockReset();
   });
 
+  it.each([
+    [null, 0, 0, 1, "not scored. 1 check needs input"],
+    [null, 0, 0, 7, "not scored. 7 checks need input"],
+    [
+      100,
+      1,
+      1,
+      7,
+      "100/100 — 1/1 applicable checks passed, 7 checks need input",
+    ],
+    [
+      25,
+      1,
+      4,
+      5,
+      "25/100 — 1/4 applicable checks passed, 2 checks need input, 3 could not run",
+    ],
+  ])(
+    "names missing inputs in saved summaries (%s, %i/%i, %i unrun)",
+    async (score, passed, applicable, couldNotRun, expected) => {
+      const headline = summary({
+        score,
+        passed,
+        applicable,
+        couldNotRun,
+        outcome: "incomplete",
+      });
+      mockFetchScoreRun.mockResolvedValue({
+        ...pendingBearingRun(),
+        ...headline,
+        suiteSummaries: [{ suiteId: "tasks", ...headline }],
+        report: {},
+      });
+      renderPage();
+      await waitFor(() => {
+        // The suite always shows a summary; a scored run also has a headline.
+        expect(
+          screen.getAllByText(
+            score === null ? expected : `${expected} [2025-11-25]`,
+          ),
+        ).toHaveLength(score === null ? 1 : 2);
+      });
+    },
+  );
+
+  it.each([
+    [
+      "tasksProbe",
+      "Select a tool that creates a task in setup, then run again.",
+    ],
+    ["logProbe", "Select a tool that emits logs in setup, then run again."],
+    [
+      "inputRequiredProbe",
+      "Select a tool that asks for input in setup, then run again.",
+    ],
+    [
+      "toolCallProbe",
+      "Select a tool to check output in setup, then run again.",
+    ],
+    [undefined, "Select a tool that creates a task in setup, then run again."],
+  ])(
+    "shows neutral setup guidance for shared missing-input rows (%s)",
+    async (missingInput, expected) => {
+      const raw =
+        "no probe tool could be selected automatically: choose a task tool";
+      mockFetchScoreRun.mockResolvedValue({
+        ...pendingBearingRun(),
+        report: {
+          tasks: {
+            checks: [
+              {
+                id: "tasks-result-type-discipline",
+                title: "Result Type Discipline",
+                status: "skipped",
+                skipReason: "could-not-run",
+                error: { message: raw },
+                ...(missingInput ? { details: { missingInput } } : {}),
+              },
+            ],
+          },
+        },
+      });
+      renderPage();
+      const message = await screen.findByText(expected);
+      const row = message.closest("li");
+      expect(row).toHaveTextContent("Not run");
+      expect(message).toHaveClass("text-muted-foreground");
+      expect(row?.querySelector("svg")).toHaveClass("text-muted-foreground");
+      expect(screen.queryByText(raw)).not.toBeInTheDocument();
+      expect(screen.queryByText("could-not-run")).not.toBeInTheDocument();
+    },
+  );
+
+  it.each([
+    [
+      0,
+      1,
+      0,
+      "0/100 — 0/1 applicable checks passed, 1 could not run [2025-11-25]",
+    ],
+    [
+      100,
+      1,
+      1,
+      "100/100 — 1/1 applicable checks passed, 1 check needs input [2025-11-25]",
+    ],
+  ])(
+    "does not claim a missing-input row was excluded from stored score %i",
+    async (score, applicable, passed, expected) => {
+      const headline = summary({
+        score,
+        applicable,
+        passed,
+        couldNotRun: 1,
+        outcome: "incomplete",
+      });
+      mockFetchScoreRun.mockResolvedValue({
+        ...pendingBearingRun(),
+        ...headline,
+        suiteSummaries: [{ suiteId: "tasks", ...headline }],
+        report: {
+          tasks: {
+            checks: [
+              {
+                id: "tasks-result-type-discipline",
+                title: "Result Type Discipline",
+                status: "skipped",
+                skipReason: "could-not-run",
+                error: {
+                  message:
+                    "no probe tool could be selected automatically: choose a task tool",
+                },
+              },
+            ],
+          },
+        },
+      });
+      renderPage();
+      const label = await screen.findByText("Not run");
+      expect(label).toHaveAttribute(
+        "title",
+        "This check needs an input before it can run.",
+      );
+      expect(screen.queryByTitle(/Not scored/)).not.toBeInTheDocument();
+      expect(screen.getAllByText(expected)).toHaveLength(2);
+      expect(
+        screen.getByText(
+          "Select a tool that creates a task in setup, then run again.",
+        ),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it("keeps an actual server failure red on shared score rows", async () => {
+    mockFetchScoreRun.mockResolvedValue(stampLessLegacyRun());
+    renderPage();
+    expect(await screen.findByText("schema mismatch")).toHaveClass(
+      "text-red-400",
+    );
+    expect(screen.queryByText("Not run")).not.toBeInTheDocument();
+  });
+
   it("names pending in the headline and marks the pending failed row unscored", async () => {
     mockFetchScoreRun.mockResolvedValue(pendingBearingRun());
     renderPage();

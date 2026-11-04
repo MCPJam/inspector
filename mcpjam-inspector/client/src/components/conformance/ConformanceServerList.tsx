@@ -23,6 +23,7 @@ export function ConformanceServerList({
   onViewRun,
   onRun,
   disabled = false,
+  disabledServerName,
 }: {
   /** Each server's latest run, by server name. */
   runs: Array<{ serverName: string; run: ConformanceRunListItem }>;
@@ -32,6 +33,8 @@ export function ConformanceServerList({
   onRun: (serverName: string) => void;
   /** A run is connecting, or the saved defaults are still loading. */
   disabled?: boolean;
+  /** The server whose saved defaults could not be loaded. */
+  disabledServerName?: string;
 }) {
   return (
     <ul className="flex w-full flex-col gap-4" aria-label="Servers">
@@ -75,7 +78,7 @@ export function ConformanceServerList({
             </Button>
             <Button
               size="sm"
-              disabled={disabled}
+              disabled={disabled || disabledServerName === serverName}
               onClick={() => onRun(serverName)}
               aria-label={`Run ${serverName}`}
             >

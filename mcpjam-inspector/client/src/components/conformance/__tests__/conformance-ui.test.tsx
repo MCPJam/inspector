@@ -14,6 +14,87 @@ function passedScore(score: number): ScoreSummary {
 }
 
 describe("OverallScoreCard", () => {
+  it("keeps a score of 100 visibly incomplete when some checks need input", () => {
+    render(
+      <OverallScoreCard
+        score={{ ...passedScore(100), outcome: "incomplete", couldNotRun: 2 }}
+        serverName="srv"
+        version="2025-11-25"
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Incomplete. 2 checks need input. Select tools in setup and run again.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("10 passed · 2 not run (missing input)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("10/10 · partial")).toBeInTheDocument();
+    expect(screen.queryByText("Fully conformant.")).toBeNull();
+  });
+
+  it.each([
+    [
+      3,
+      0,
+      "Incomplete. 3 checks could not run. 2 checks need input. Select tools in setup and run again.",
+    ],
+    [
+      3,
+      3,
+      "Incomplete. 3 checks could not run because the server did not answer in time. 2 checks need input. Select tools in setup and run again.",
+    ],
+    [
+      3,
+      2,
+      "Incomplete. 2 checks could not run because the server did not answer in time. 1 more could not run. 2 checks need input. Select tools in setup and run again.",
+    ],
+  ])(
+    "keeps other unrun causes alongside missing inputs (%i unrun, %i timed out)",
+    (otherUnrun, timedOut, expected) => {
+      render(
+        <OverallScoreCard
+          score={{
+            ...passedScore(76.9),
+            outcome: "incomplete",
+            applicable: 10 + otherUnrun,
+            couldNotRun: 2 + otherUnrun,
+          }}
+          serverName="srv"
+          version="Auto"
+          timedOut={timedOut}
+        />,
+      );
+      expect(screen.getByText(expected)).toBeInTheDocument();
+    },
+  );
+
+  it("names missing inputs when no selected check ran", () => {
+    render(
+      <OverallScoreCard
+        score={{
+          ...passedScore(100),
+          score: null,
+          passed: 0,
+          applicable: 0,
+          couldNotRun: 7,
+          outcome: "incomplete",
+        }}
+        serverName="srv"
+        version="Auto"
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Incomplete. 7 checks need input. Select tools in setup and run again.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Nothing applicable to score on this server."),
+    ).toBeNull();
+  });
+
   it("reads a passed run with advice as advised even without its advisories", () => {
     // A saved run's summary carries an advice count, not an advisories list.
     render(

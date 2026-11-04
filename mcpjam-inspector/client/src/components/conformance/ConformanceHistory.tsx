@@ -8,26 +8,35 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "convex/react";
-import { Loader2, Share2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FlaskConical } from "lucide-react";
 import { buildConformanceRunPath, useAppNavigate } from "@/lib/app-navigation";
-import { ShareDialog } from "@/components/sharing/ShareDialog";
-import { ResourceSharePanel } from "@/components/sharing/ResourceSharePanel";
 import { SharedArtifactPage } from "@/components/sharing/SharedArtifactPage";
 import { useSharedArtifact } from "@/hooks/useSharedArtifact";
-import { buildConformanceSharePath } from "@/lib/app-navigation";
-import { fetchArtifact, useArtifactQuery } from "@/lib/artifact-urls";
+import { useArtifactQuery } from "@/lib/artifact-urls";
 import {
   OverallScoreCard,
-  StatusIcon,
   SUITE_COPY,
   SuiteRow,
   VerdictBadge,
 } from "./conformance-ui";
-import { CatalogList, UnscoredTag } from "./ConformanceCheckRows";
+import { CatalogList } from "./ConformanceCheckRows";
+import { SuiteReportCases } from "./ConformanceSavedChecks";
+import { ConformanceAdvice, reportAdviceGroups } from "./ConformanceAdvice";
+import {
+  useSavedRunReports,
+  type LoadReport,
+  type SavedReportCase,
+} from "./use-saved-run-reports";
+import { ConformanceVersionNotice } from "./ConformanceVersionNotice";
+import { conformanceVersionRefusal } from "./conformance-version-refusal";
 import { suiteCatalog } from "./conformance-catalogs";
+import {
+  SavedRunActions,
+  SavedRunSettings,
+  type SavedRunServerSettings,
+} from "./ConformanceRunActions";
 
 export type ConformanceRunListItem = {
   _id: string;
@@ -254,68 +263,22 @@ export function ConformanceHistory({
   );
 }
 
-/**
- * Share for one saved run: opens the share dialog. Only a finished run can be
- * shared.
- */
-export function ConformanceRunShareButton({
-  runId,
-  finished,
-}: {
-  runId: string;
-  finished: boolean;
-}) {
-  const [shareOpen, setShareOpen] = useState(false);
-
-  return (
-    <>
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={!finished}
-        onClick={() => setShareOpen(true)}
-        data-testid="conformance-share-open"
-      >
-        <Share2 className="size-3.5" aria-hidden /> Share
-      </Button>
-      <ShareDialog
-        open={shareOpen}
-        onOpenChange={setShareOpen}
-        title="Share conformance run"
-        description="A frozen redacted snapshot. Guests who redeem the link are auditable browser sessions, not verified individuals."
-      >
-        <ResourceSharePanel
-          resourceType="conformanceRun"
-          resourceId={runId}
-          disabledReason={finished ? null : "Only a finished run can be shared"}
-          footerSlot={
-            <p className="text-xs text-muted-foreground">
-              Viewers see a frozen snapshot. Revoking access is immediate even
-              though the artifact itself does not change.
-            </p>
-          }
-          linkLabel="Share link"
-          buildShareUrl={(token) =>
-            `${window.location.origin}${buildConformanceSharePath(token)}`
-          }
-          testIdPrefix="conformance-share"
-          invites={false}
-        />
-      </ShareDialog>
-    </>
-  );
-}
-
 export function ConformanceRunDetailPage({
   runId,
   serverNames,
+  serverSettings,
+  serversLoading = false,
 }: {
   runId: string;
   projectId?: string | null;
   /** Saved server id → display name, for the breadcrumb and score card. */
   serverNames?: ReadonlyMap<string, string>;
+  /** The servers' default checks, for Settings. Omit to hide Settings. */
+  serverSettings?: SavedRunServerSettings;
+  serversLoading?: boolean;
 }) {
   const navigate = useAppNavigate();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // Each report carries a short-lived artifact link.
   const detail = useArtifactQuery<
     | (ConformanceRunListItem & {
@@ -336,6 +299,10 @@ export function ConformanceRunDetailPage({
       })
     | null
   >("conformanceRuns:getRun", runId ? { runId } : "skip");
+  const { advice, loadReport, cases: versionCases } = useSavedRunReports(
+    runId,
+    detail?.reports ?? [],
+  );
   if (detail === undefined) {
     return (
       <p className="p-6 text-sm text-muted-foreground" role="status">
@@ -353,10 +320,24 @@ export function ConformanceRunDetailPage({
     );
   }
 
+  // A saved server the project still has: Run again and Settings act on it.
+  const savedServerName = detail.serverId
+    ? serverNames?.get(detail.serverId)
+    : undefined;
   const serverName =
-    (detail.serverId ? serverNames?.get(detail.serverId) : undefined) ??
-    detail.targetKey.replace(/^server:/, "");
+    savedServerName ?? detail.targetKey.replace(/^server:/, "");
   const finished = detail.status === "completed";
+
+  if (settingsOpen && savedServerName && serverSettings) {
+    return (
+      <SavedRunSettings
+        key={detail.serverId ?? serverName}
+        serverName={savedServerName}
+        settings={serverSettings}
+        onBack={() => setSettingsOpen(false)}
+      />
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -371,12 +352,14 @@ export function ConformanceRunDetailPage({
           </button>
           <span className="text-muted-foreground/70">/</span>
           <span className="truncate font-semibold">{serverName}</span>
-          <div className="ml-auto flex items-center gap-2">
-            <ConformanceRunShareButton runId={detail._id} finished={finished} />
-            <Button size="sm" onClick={() => navigate("/conformance")}>
-              Run again
-            </Button>
-          </div>
+          <SavedRunActions
+            runId={detail._id}
+            finished={finished}
+            serverName={savedServerName}
+            settings={serverSettings}
+            serversLoading={serversLoading}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
         </div>
         <p className="text-sm text-muted-foreground">
           {detailDateFormat.format(detail.createdAt)} ·{" "}
@@ -385,6 +368,7 @@ export function ConformanceRunDetailPage({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-8 pt-6 pb-8">
+        <ConformanceVersionNotice refusal={conformanceVersionRefusal(versionCases, detail.protocolVersion)} serverName={serverName} />
         <OverallScoreCard
           score={
             detail.outcome
@@ -414,11 +398,14 @@ export function ConformanceRunDetailPage({
           </p>
         ) : null}
 
+        <ConformanceAdvice groups={advice} />
+
         <div className="mt-3 overflow-hidden rounded-lg border border-border bg-popover">
           {detail.reports.map((report) => (
             <SavedSuiteRow
               key={report.suiteKind}
               report={report}
+              loadReport={loadReport}
               runSettled={
                 detail.status === "completed" ||
                 detail.status === "timed_out" ||
@@ -458,12 +445,15 @@ function SavedSuiteRow({
   report,
   runSettled,
   cases,
+  loadReport,
 }: {
   report: SavedSuiteReport;
   /** The run as a whole is over, so an unsettled suite will never finish. */
   runSettled: boolean;
   /** Checks already in hand, as in a shared artifact; skips the fetch. */
   cases?: SavedReportCase[];
+  /** Shares the page's fetch of this report. */
+  loadReport?: LoadReport;
 }) {
   const copy = SUITE_COPY[report.suiteKind as keyof typeof SUITE_COPY] ?? {
     title: report.suiteKind,
@@ -543,124 +533,15 @@ function SavedSuiteRow({
         />
       ) : (
         <SuiteReportCases
+          suiteKind={report.suiteKind}
           reportUrl={report.reportUrl}
+          loadReport={loadReport}
           inlineCases={cases}
           incompleteReason={report.incompleteReason}
           load={expanded || override !== null}
         />
       )}
     </SuiteRow>
-  );
-}
-
-type SavedReportCase = {
-  id: string;
-  title: string;
-  status: string;
-  skipReason?: string;
-  error?: string;
-  /** Left out of the score: a profile's pending check or an unscored OAuth step. */
-  pending?: boolean;
-};
-
-/**
- * The checks of a saved suite, read from its report artifact. Fetched the
- * first time the row opens, not on page load.
- */
-function SuiteReportCases({
-  reportUrl,
-  inlineCases,
-  incompleteReason,
-  load,
-}: {
-  reportUrl?: string | null;
-  inlineCases?: SavedReportCase[];
-  incompleteReason: string | null;
-  load: boolean;
-}) {
-  const [fetched, setCases] = useState<SavedReportCase[] | null | "error">(
-    null,
-  );
-  const cases = inlineCases ?? fetched;
-  useEffect(() => {
-    if (inlineCases || !load || !reportUrl || fetched !== null) return;
-    let cancelled = false;
-    fetchArtifact(reportUrl)
-      .then((response) => {
-        // An expired link answers with an error body; never show that as the
-        // report. `fetchArtifact` renews the link and retries once.
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.json();
-      })
-      .then((json: { groups?: Array<{ cases?: SavedReportCase[] }> }) => {
-        if (cancelled) return;
-        setCases((json.groups ?? []).flatMap((group) => group.cases ?? []));
-      })
-      .catch(() => {
-        if (!cancelled) setCases("error");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [inlineCases, load, reportUrl, fetched]);
-
-  return (
-    <div>
-      {incompleteReason ? (
-        <p className="py-2 pl-7 text-[13px] text-amber-700 dark:text-amber-400">
-          {incompleteReason}
-        </p>
-      ) : null}
-      {(!reportUrl && !inlineCases) || cases === "error" ? (
-        <p className="py-3 pl-7 text-[13px] text-muted-foreground">
-          The detailed report for this suite is not available. Run the checks
-          again to generate a new one.
-        </p>
-      ) : cases === null ? (
-        <p className="flex items-center gap-2 py-3 pl-7 text-[13px] text-muted-foreground">
-          <Loader2 className="size-3.5 animate-spin" /> Loading checks…
-        </p>
-      ) : (
-        cases.map((check) => (
-          <div
-            key={check.id}
-            className="flex items-start gap-2.5 border-b border-border/60 py-1.75 pl-7 pr-1 last:border-0"
-          >
-            <span className="mt-0.5">
-              <StatusIcon
-                status={check.status}
-                skipReason={check.skipReason}
-                muted={check.pending === true}
-              />
-            </span>
-            {check.pending ? <UnscoredTag /> : null}
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span
-                className={
-                  check.status === "skipped" &&
-                  check.skipReason !== "could-not-run"
-                    ? "text-[13px] text-muted-foreground"
-                    : "text-[13px]"
-                }
-              >
-                {check.title}
-              </span>
-              {check.error ? (
-                <span
-                  className={
-                    check.status === "failed" && !check.pending
-                      ? "text-[13px] font-medium text-red-600 dark:text-red-400"
-                      : "text-[13px] text-muted-foreground"
-                  }
-                >
-                  {check.error}
-                </span>
-              ) : null}
-            </span>
-          </div>
-        ))
-      )}
-    </div>
   );
 }
 
@@ -678,6 +559,7 @@ type SharedSuiteReport = {
     couldNotRun?: number;
   };
   groups?: Array<{ cases?: SavedReportCase[] }>;
+  advisories?: unknown;
 };
 
 type SharedConformanceArtifact = {
@@ -770,6 +652,14 @@ export function ConformanceSharedPage({ token }: { token: string }) {
         }
         serverName="Shared run"
         version={run.protocolVersion ?? "Auto"}
+      />
+      <ConformanceAdvice
+        groups={reportAdviceGroups(
+          suiteKinds.map((kind) => ({
+            suiteKind: kind,
+            advisories: reports[kind]!.advisories,
+          })),
+        )}
       />
       {suiteKinds.length > 0 ? (
         <div className="overflow-hidden rounded-lg border border-border bg-popover">
