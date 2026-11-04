@@ -98,6 +98,9 @@
     },
     "@google/design.md": {
       "zod": "^4.6.6"
+    },
+    "@sentry/bundler-plugins": {
+      "glob": "^14.0.2"
     }
   }
 }
