@@ -496,3 +496,22 @@ it("preserves safe route fields introduced by an ampersand", () => {
   const url = "https://example.com/#/authors&sort=name&compact";
   expect(redactSharedServerUrl(url)).toBe(url);
 });
+
+it.each([
+  "/search&view=compact?x-api-key=live",
+  "!/search&view=compact?x-api-key=live",
+  "/search&view=compact?sort=name?x-api-key=live",
+  "/search?x-api-key=live?secret-suffix&view=compact",
+  "/search&x-api-key=live?secret-suffix&view=compact",
+])("redacts mixed route delimiters: %s", (fragment) => {
+  const result = redactSharedServerUrl(`https://example.com/#${fragment}`);
+  expect(result).not.toContain("live");
+  expect(result).not.toContain("secret-suffix");
+  expect(result).toContain("view=compact");
+  expect(result).toContain("REDACTED");
+});
+it("preserves safe mixed route delimiters", () => {
+  const url =
+    "https://example.com/#/search&view=compact?sort=name&label=hello%20world";
+  expect(redactSharedServerUrl(url)).toBe(url);
+});

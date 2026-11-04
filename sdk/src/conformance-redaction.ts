@@ -149,15 +149,25 @@ function looksSensitiveParam(name: string): boolean {
   );
 }
 
-function redactParams(raw: string): string | null {
+function redactParams(raw: string, isRoute = false): string | null {
   let touched = false;
   // Preserve safe fields verbatim: fragment readers need not use form decoding.
   const result = raw.split("&").map((field) => {
-    const name = new URLSearchParams(field).keys().next().value;
-    if (name === undefined || !looksSensitiveParam(name)) return field;
-    touched = true;
-    const equals = field.indexOf("=");
-    return `${equals < 0 ? field : field.slice(0, equals)}=${encodeURIComponent(REDACTED)}`;
+    const parts = isRoute ? field.split("?") : [field];
+    for (let index = 0; index < parts.length; index++) {
+      const part = parts[index];
+      const name = new URLSearchParams(part).keys().next().value;
+      if (name === undefined || !looksSensitiveParam(name)) continue;
+      touched = true;
+      const equals = part.indexOf("=");
+      const key = equals < 0 ? part : part.slice(0, equals);
+      // A later question mark may belong to the secret value; drop its suffix too.
+      return [
+        ...parts.slice(0, index),
+        `${key}=${encodeURIComponent(REDACTED)}`,
+      ].join("?");
+    }
+    return field;
   });
   return touched ? result.join("&") : null;
 }
@@ -208,7 +218,7 @@ export function redactUrlSecrets(value: string): string {
         : ""
       : fragment;
     if (parameters.includes("=")) {
-      const redacted = redactParams(parameters);
+      const redacted = redactParams(parameters, isRoute);
       if (redacted !== null) {
         parsed.hash = `#${prefix}${redacted}`;
         touched = true;
