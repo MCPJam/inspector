@@ -39,6 +39,55 @@ export function suiteAdviceGroups(
   }));
 }
 
+/** One advisory as a saved suite report stores it. */
+interface SavedReportAdvisory {
+  id?: unknown;
+  title?: unknown;
+  kind?: unknown;
+  status?: unknown;
+  message?: unknown;
+}
+
+/**
+ * One group per saved suite report, from the advice the report saved. Reports
+ * from before advice was saved have none, so their suites add nothing.
+ */
+export function reportAdviceGroups(
+  reports: ReadonlyArray<{
+    suiteKind: string;
+    /** Read as saved, so it is checked here: a shared report can be anything. */
+    advisories?: unknown;
+  }>,
+): AdviceGroup[] {
+  return reports.map(({ suiteKind, advisories }) => ({
+    suite: SUITE_COPY[suiteKind as keyof typeof SUITE_COPY]?.title ?? suiteKind,
+    readiness: (Array.isArray(advisories) ? advisories : []).flatMap(
+      (entry: unknown) => {
+        const advisory = (entry ?? {}) as SavedReportAdvisory;
+        return advisory.kind === "readiness" &&
+          typeof advisory.id === "string" &&
+          typeof advisory.title === "string" &&
+          typeof advisory.status === "string"
+          ? [
+              {
+                id: advisory.id,
+                title: advisory.title,
+                specStrength:
+                  suiteKind === "protocol" &&
+                  advisory.id === "readiness-deprecated-feature-use" &&
+                  advisory.status === "SHOULD"
+                    ? "Deprecation Notice"
+                    : advisory.status,
+                message:
+                  typeof advisory.message === "string" ? advisory.message : "",
+              },
+            ]
+          : [];
+      },
+    ),
+  }));
+}
+
 /** The spec's requirement words are defined by BCP 14 (RFC 2119 + RFC 8174). */
 const BCP_14_URL = "https://datatracker.ietf.org/doc/html/bcp14";
 
@@ -99,8 +148,7 @@ export function ConformanceAdvice({ groups }: { groups: AdviceGroup[] }) {
       <p className="px-4 pb-4 pl-11 text-sm text-muted-foreground">
         None of these fail a check. Suggested (<SpecWord word="SHOULD" />) means
         the spec asks for it. Optional (<SpecWord word="MAY" />) means it helps
-        but the spec doesn't require it. A deprecation notice means the spec
-        will remove something the server still uses.
+        but the spec doesn't require it.
       </p>
       <Collapse open={open}>
         <ul className="border-t border-border/60 px-4">

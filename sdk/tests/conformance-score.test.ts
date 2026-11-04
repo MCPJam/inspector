@@ -73,7 +73,52 @@ describe("computeConformanceScore", () => {
     expect(score.score).toBe(100);
   });
 
-  it("keeps could-not-run in the denominator, so an incomplete run cannot reach 100", () => {
+  it.each(["tasksProbe", "logProbe", "inputRequiredProbe", "toolCallProbe"])(
+    "leaves missing %s input unscored while keeping the run incomplete",
+    (missingInput) => {
+      const score = computeConformanceScore([
+        ...passing(25),
+        {
+          ...check("missing", "skipped", "could-not-run"),
+          details: { missingInput },
+        },
+      ]);
+      expect(score).toMatchObject({
+        score: 100,
+        applicable: 25,
+        couldNotRun: 1,
+        failed: 0,
+        outcome: "incomplete",
+      });
+      const pooled = pooledConformanceScore([
+        score,
+        computeConformanceScore(passing(5)),
+      ]);
+      expect(pooled).toMatchObject({
+        score: 100,
+        applicable: 30,
+        couldNotRun: 1,
+        outcome: "incomplete",
+      });
+    }
+  );
+
+  it("has no score when every selected check needs input", () => {
+    const score = computeConformanceScore([
+      {
+        ...check("missing", "skipped", "could-not-run"),
+        details: { missingInput: "tasksProbe" },
+      },
+    ]);
+    expect(score).toMatchObject({
+      score: null,
+      applicable: 0,
+      couldNotRun: 1,
+      outcome: "incomplete",
+    });
+  });
+
+  it("keeps execution failures in the denominator", () => {
     const score = computeConformanceScore([
       ...passing(25),
       check("unrun", "skipped", "could-not-run"),
@@ -248,6 +293,33 @@ describe("pooledConformanceScore", () => {
 });
 
 describe("describeConformanceScore", () => {
+  it.each([
+    [0, 1, 0, "not scored. 1 check needs input"],
+    [0, 7, 0, "not scored. 7 checks need input"],
+    [1, 7, 0, "100/100 — 1/1 applicable checks passed, 7 checks need input"],
+    [
+      1,
+      2,
+      3,
+      "25/100 — 1/4 applicable checks passed, 2 checks need input, 3 could not run",
+    ],
+  ])(
+    "names missing inputs separately with %i passed, %i missing and %i other unrun",
+    (passed, missing, otherUnrun, expected) => {
+      const score = computeConformanceScore([
+        ...passing(passed),
+        ...Array.from({ length: missing }, (_, index) => ({
+          ...check(`missing-${index}`, "skipped", "could-not-run"),
+          details: { missingInput: "tasksProbe" },
+        })),
+        ...Array.from({ length: otherUnrun }, (_, index) =>
+          check(`timeout-${index}`, "skipped", "could-not-run")
+        ),
+      ]);
+      expect(describeConformanceScore(score)).toBe(expected);
+    }
+  );
+
   it("always shows the number, the denominator, and the version", () => {
     const line = describeConformanceScore(
       computeConformanceScore(
@@ -306,7 +378,7 @@ describe("suite adapters", () => {
           id: "readiness-deprecated-feature-use",
           title: "Deprecated Feature Use",
           severity: "warning",
-          specStrength: "SHOULD",
+          specStrength: "Deprecation Notice",
           message: "…",
         },
         {
@@ -345,7 +417,7 @@ describe("suite adapters", () => {
 
   it("lists protocol readiness advice without letting it move the score", () => {
     const score = scoreFromProtocolResult(protocolResult());
-    // 1/1 applicable passed; the SHOULD and MAY advice are worth 0.
+    // 1/1 applicable passed; the deprecation and MAY advice are worth 0.
     expect(score.advisories).toHaveLength(2);
     expect(score.score).toBe(100);
     expect(score.notApplicable).toBe(1);

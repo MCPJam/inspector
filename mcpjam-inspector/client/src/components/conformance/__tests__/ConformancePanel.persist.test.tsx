@@ -15,6 +15,13 @@ const { startRun, finalizeRun, cancelRun, upsertReport } = vi.hoisted(() => ({
   cancelRun: vi.fn().mockResolvedValue({ cancelled: true }),
 }));
 
+vi.mock("@/lib/apis/conformance-connection-api", () => ({
+  checkConformanceConnection: vi.fn(async () => ({
+    status: "ready",
+    protocolVersion: "2026-07-28",
+  })),
+}));
+
 vi.mock("@/lib/apis/mcp-conformance-api", () => ({
   runProtocolConformance: (...args: unknown[]) => mockRunProtocol(...args),
   runAppsConformance: (...args: unknown[]) => mockRunApps(...args),

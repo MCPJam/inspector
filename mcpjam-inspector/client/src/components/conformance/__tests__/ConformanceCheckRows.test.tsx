@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import type { MCPCheckResult, OAuthConformanceStepResult } from "@mcpjam/sdk";
+import type { MCPCheckResult, MCPTasksCheckResult, OAuthConformanceStepResult } from "@mcpjam/sdk";
 import { CheckRow, OAuthStepRow } from "../ConformanceCheckRows";
 
 function check(overrides: Partial<MCPCheckResult>): MCPCheckResult {
@@ -16,6 +16,95 @@ function check(overrides: Partial<MCPCheckResult>): MCPCheckResult {
 }
 
 describe("CheckRow", () => {
+  it("keeps debugging data behind More details and labels the requests clearly", () => {
+    const probes = [
+      { method: "tasks/get", outcome: "rejected", code: -32021 },
+      { method: "tasks/update", outcome: "rejected", code: -32021 },
+      { method: "subscriptions/listen", outcome: "answered" },
+      { method: "tasks/cancel", outcome: "rejected", code: -32021 },
+    ];
+    const error = "subscriptions/listen was answered instead of rejected";
+    render(
+      <CheckRow
+        check={check({
+          status: "failed",
+          error: { message: error },
+          details: { taskId: "task-123", probes },
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Server Initialize/ }));
+
+    const toggle = screen.getByRole("button", { name: "More details" });
+    const taskId = screen.getByText("task-123");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(taskId.closest("[inert]")).not.toBeNull();
+    expect(screen.getByText(error).closest("[inert]")).toBeNull();
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(
+      document.getElementById(toggle.getAttribute("aria-controls")!),
+    ).toContainElement(taskId);
+    expect(taskId.closest("[inert]")).toBeNull();
+    expect(screen.getByText("Task ID:")).toBeInTheDocument();
+    expect(screen.getByText("Requests tested:")).toBeInTheDocument();
+    expect(screen.queryByText("Probes:")).toBeNull();
+    expect(screen.getByText(/"method": "tasks\/get"/).textContent).toBe(
+      JSON.stringify(probes, null, 2),
+    );
+
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(taskId.closest("[inert]")).not.toBeNull();
+    expect(screen.getByText(error).closest("[inert]")).toBeNull();
+  });
+
+  it.each([undefined, {}, { missingInput: "tasksProbe" }])(
+    "omits More details when there is no debugging data (%j)",
+    (details) => {
+      render(<CheckRow check={check({ details })} />);
+      fireEvent.click(screen.getByRole("button", { name: /^Server Initialize/ }));
+      expect(screen.queryByRole("button", { name: "More details" })).toBeNull();
+    },
+  );
+
+  it.each([true, false])(
+    "shows a gray Not run row for missing input (marked: %s)",
+    (marked) => {
+      const message =
+        "no probe tool could be selected automatically: tools are chosen by `execution.taskSupport`";
+      const taskCheck: MCPTasksCheckResult = {
+        id: "tasks-result-type-discipline",
+        category: "creation",
+        title: "Result Type Discipline",
+        description: "Checks the task creation result.",
+        status: "skipped",
+        skipReason: "could-not-run",
+        durationMs: 0,
+        error: { message },
+        details: marked ? { missingInput: "tasksProbe" } : undefined,
+      };
+      render(<CheckRow check={taskCheck} />);
+      expect(screen.getByText("Not run")).toHaveAttribute(
+        "title",
+        "This check needs an input before it can run.",
+      );
+      expect(screen.queryByText(message)).toBeNull();
+      expect(
+        screen.getAllByText(
+          "Select a tool that creates a task in setup, then run again.",
+        ).length,
+      ).toBeGreaterThan(0);
+      const icon = screen.getByRole("button").querySelector("span > span");
+      expect(icon).toHaveClass("bg-muted", "text-muted-foreground");
+      expect(icon).not.toHaveTextContent("!");
+      fireEvent.click(screen.getByRole("button"));
+      expect(screen.queryByText(message)).toBeNull();
+    },
+  );
+
   it("shows how long a check that ran took", () => {
     render(<CheckRow check={check({})} />);
     expect(screen.getByText("420ms")).toBeInTheDocument();
@@ -48,7 +137,7 @@ describe("CheckRow", () => {
     );
     expect(screen.getByText("Timed out")).toBeInTheDocument();
     expect(
-      within(screen.getByRole("button")).getByText(
+      within(screen.getByRole("button", { name: /Server Initialize/ })).getByText(
         "The server did not answer within 15 seconds.",
       ),
     ).toBeInTheDocument();

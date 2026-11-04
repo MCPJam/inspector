@@ -10,14 +10,19 @@ import {
   ChevronRight,
   MinusCircle,
 } from "lucide-react";
-import type {
-  MCPAppsCheckResult,
-  MCPCheckResult,
-  MCPTasksCheckResult,
-  OAuthConformanceStepResult,
-} from "@mcpjam/sdk";
-import { isTimedOutCheck } from "@mcpjam/sdk/browser";
+import type { OAuthConformanceStepResult } from "@mcpjam/sdk";
+import {
+  isTimedOutCheck,
+  isMissingInputCheck,
+  missingInputMessage,
+} from "@mcpjam/sdk/browser";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
+import { Button } from "@mcpjam/design-system/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@mcpjam/design-system/collapsible";
 import { cn } from "@/lib/utils";
 import { Collapse, StatusIcon } from "./conformance-ui";
 
@@ -32,6 +37,8 @@ export interface CatalogEntry {
 }
 
 function formatDetailLabel(label: string) {
+  if (label === "probes") return "Requests tested";
+  if (label === "taskId") return "Task ID";
   return label
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/[_-]+/g, " ")
@@ -162,10 +169,10 @@ export function NeedsInputTag({
       title={
         advice
           ? missing
-            ? "Pick a tool for this advice. Without one it does not run."
+            ? "Select a tool and fill in its required arguments before running this check."
             : "This advice calls the tool set for it."
           : missing
-            ? "Pick a tool for this check. Without one it reports that it could not run."
+            ? "Select a tool and fill its required arguments before this check can run."
             : "This check calls the tool set for it."
       }
       className={cn(
@@ -180,16 +187,44 @@ export function NeedsInputTag({
   );
 }
 
+export function NotRunTag() {
+  return (
+    <span
+      title="This check needs an input before it can run."
+      className="shrink-0 rounded-sm border border-border/60 px-1 py-px text-xs leading-none text-muted-foreground"
+    >
+      Not run
+    </span>
+  );
+}
+
+/** Display fields shared by live checks and saved report cases. */
+export interface CheckRowResult {
+  id: string;
+  title: string;
+  status: string;
+  skipReason?: string;
+  description?: string;
+  durationMs?: number;
+  error?: { message: string };
+  details?: unknown;
+  warnings?: string[];
+}
+
 export function CheckRow({
   check,
   pending = false,
 }: {
-  check: MCPCheckResult | MCPAppsCheckResult | MCPTasksCheckResult;
+  check: CheckRowResult;
   pending?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const detailEntries = Object.entries(check.details ?? {});
-  const warnings = "warnings" in check ? check.warnings : undefined;
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const missingInput = isMissingInputCheck(check);
+  const detailEntries = Object.entries(check.details ?? {}).filter(
+    ([key]) => key !== "missingInput",
+  );
+  const warnings = check.warnings;
 
   return (
     <div className="border-b border-border/60 last:border-0">
@@ -202,18 +237,18 @@ export function CheckRow({
         <span className="mt-0.5">
           <StatusIcon
             status={check.status}
-            skipReason={check.skipReason}
+            skipReason={missingInput ? undefined : check.skipReason}
             muted={pending}
           />
         </span>
-        {pending ? <UnscoredTag /> : null}
+        {missingInput ? <NotRunTag /> : pending ? <UnscoredTag /> : null}
         {isTimedOutCheck(check) ? <TimedOutTag /> : null}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span
             className={cn(
               "text-sm",
               check.status === "skipped" &&
-                check.skipReason !== "could-not-run" &&
+                (missingInput || check.skipReason !== "could-not-run") &&
                 "text-muted-foreground",
             )}
           >
@@ -222,7 +257,7 @@ export function CheckRow({
           {check.error &&
           !expanded && showsMessageShut(check.status, check.skipReason) ? (
             <ResultMessage
-              message={check.error.message}
+              message={missingInputMessage(check) ?? check.error.message}
               tone={
                 check.status === "failed" && !pending ? "error" : "neutral"
               }
@@ -231,7 +266,7 @@ export function CheckRow({
           ) : null}
         </span>
         {/* A skipped check never ran: its 0ms says nothing. */}
-        {check.status !== "skipped" && (
+        {check.status !== "skipped" && check.durationMs !== undefined && (
           <span className="flex-shrink-0 pt-0.5 text-xs text-muted-foreground">
             {check.durationMs}ms
           </span>
@@ -245,7 +280,7 @@ export function CheckRow({
           </div>
           {check.error && (
             <ResultMessage
-              message={check.error.message}
+              message={missingInputMessage(check) ?? check.error.message}
               tone={
                 check.status === "failed" && !pending ? "error" : "neutral"
               }
@@ -254,18 +289,41 @@ export function CheckRow({
           )}
 
           {detailEntries.length > 0 && (
-            <div className="rounded-sm bg-muted/20 px-2 py-1.5 space-y-1">
-              {detailEntries.map(([key, value]) => (
-                <div key={key} className="text-sm">
-                  <span className="font-medium text-foreground/80">
-                    {formatDetailLabel(key)}:
-                  </span>{" "}
-                  <span className="text-muted-foreground whitespace-pre-wrap break-words">
-                    {formatDetailValue(value)}
-                  </span>
-                </div>
-              ))}
-            </div>
+            <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
+              <CollapsibleTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="-ml-2 h-auto gap-1 px-2 py-1 text-sm text-muted-foreground"
+                >
+                  <ChevronRight
+                    aria-hidden="true"
+                    className={cn(
+                      "size-3.5 transition-transform motion-reduce:transition-none",
+                      detailsOpen && "rotate-90",
+                    )}
+                  />
+                  More details
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent forceMount>
+                <Collapse open={detailsOpen}>
+                  <div className="mt-1 rounded-sm bg-muted/20 px-2 py-1.5 space-y-1">
+                    {detailEntries.map(([key, value]) => (
+                      <div key={key} className="text-sm">
+                        <span className="font-medium text-foreground/80">
+                          {formatDetailLabel(key)}:
+                        </span>{" "}
+                        <span className="text-muted-foreground whitespace-pre-wrap break-words">
+                          {formatDetailValue(value)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </Collapse>
+              </CollapsibleContent>
+            </Collapsible>
           )}
 
           {warnings && warnings.length > 0 && (

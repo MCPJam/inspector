@@ -4,7 +4,7 @@
  * its default checks, as the server list's Run does.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Settings, Share2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ShareDialog } from "@/components/sharing/ShareDialog";
@@ -15,6 +15,11 @@ import {
   buildConformanceSharePath,
   useAppNavigate,
 } from "@/lib/app-navigation";
+import type { ServerWithName } from "@/hooks/use-app-state";
+import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
+import type { ConformanceDefaults } from "@/hooks/use-conformance-server-data";
+import type { ConformanceConnectServer } from "./ConformancePanel";
+import { ConformanceDefaultsError } from "./ConformanceDefaultsError";
 import { ConformanceSettings } from "./ConformanceSettings";
 
 /** The project's saved default checks, read and written by server name. */
@@ -22,7 +27,15 @@ export type SavedRunServerSettings = {
   defaults?: Record<string, ConformanceSelection>;
   /** False while `defaults` is still loading. */
   loaded: boolean;
-  save: (serverName: string, selection: ConformanceSelection) => Promise<void>;
+  inputs?: Record<string, ConformanceProbes>;
+  servers?: Record<string, ServerWithName>;
+  connect?: ConformanceConnectServer;
+  load?: (serverName: string) => Promise<ConformanceDefaults>;
+  save: (
+    serverName: string,
+    selection: ConformanceSelection,
+    inputs?: ConformanceProbes,
+  ) => Promise<void>;
 };
 
 /**
@@ -140,20 +153,54 @@ export function SavedRunSettings({
   settings: SavedRunServerSettings;
   onBack: () => void;
 }) {
-  const [pendingSaves, setPendingSaves] = useState(0);
+  const [initial, setInitial] = useState<ConformanceDefaults | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const load = settings.load;
+  useEffect(() => {
+    if (!load) return;
+    let active = true;
+    setFailed(false);
+    void load(serverName).then(
+      (defaults) => {
+        if (active) setInitial(defaults);
+      },
+      () => {
+        if (active) setFailed(true);
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [load, serverName, attempt]);
+  if (load && !initial)
+    return (
+      <div>
+        <Button variant="link" onClick={onBack}>
+          Back
+        </Button>
+        {failed ? (
+          <ConformanceDefaultsError
+            onRetry={() => setAttempt((prev) => prev + 1)}
+          />
+        ) : (
+          <p role="status" className="p-8 text-sm">
+            Loading defaults...
+          </p>
+        )}
+      </div>
+    );
   return (
     <ConformanceSettings
+      key={serverName}
       serverName={serverName}
-      defaults={settings.defaults?.[serverName]}
-      onSave={async (selection) => {
-        setPendingSaves((count) => count + 1);
-        try {
-          await settings.save(serverName, selection);
-        } finally {
-          setPendingSaves((count) => count - 1);
-        }
-      }}
-      backDisabled={pendingSaves > 0}
+      server={settings.servers?.[serverName]}
+      onConnectServer={settings.connect}
+      defaults={settings.defaults?.[serverName] ?? initial?.selection}
+      inputs={settings.inputs?.[serverName] ?? initial?.inputs}
+      onSave={(selection, inputs) =>
+        settings.save(serverName, selection, inputs)
+      }
       onBack={onBack}
     />
   );
