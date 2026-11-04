@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import conformanceWeb from "../conformance.js";
 
 /**
  * The hosted tasks route has to answer inside the hosted call budget. Capping
@@ -48,7 +49,6 @@ vi.mock("../../shared/conformance", () => ({
 }));
 
 const post = async (body: Record<string, unknown>) => {
-  const { default: conformanceWeb } = await import("../conformance.js");
   return conformanceWeb.request("/tasks", {
     method: "POST",
     headers: {
