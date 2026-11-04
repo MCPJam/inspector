@@ -101,4 +101,16 @@ describe("reportAdviceGroups", () => {
       { suite: "Protocol", readiness: [] },
     ]);
   });
+
+  it("ignores advisories that are not a list of objects", () => {
+    expect(
+      reportAdviceGroups([
+        { suiteKind: "protocol", advisories: "not a list" },
+        { suiteKind: "tasks", advisories: [null, 3, "x"] },
+      ]),
+    ).toEqual([
+      { suite: "Protocol", readiness: [] },
+      { suite: "Tasks", readiness: [] },
+    ]);
+  });
 });

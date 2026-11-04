@@ -22,7 +22,7 @@ export function readinessAdvisoryFields(
   entries: ReadonlyArray<{
     readiness?: readonly ReadinessWarningLike[];
     group: string;
-  }>,
+  }>
 ): { advisories?: ConformanceReportAdvisory[] } {
   const byId = new Map<string, ConformanceReportAdvisory>();
   for (const { readiness, group } of entries) {

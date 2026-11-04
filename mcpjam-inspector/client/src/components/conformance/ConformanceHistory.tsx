@@ -25,7 +25,6 @@ import {
 } from "./conformance-ui";
 import { CatalogList, UnscoredTag } from "./ConformanceCheckRows";
 import { ConformanceAdvice, reportAdviceGroups } from "./ConformanceAdvice";
-import type { SavedReportAdvisory } from "./ConformanceAdvice";
 import {
   useSavedRunReports,
   type LoadReport,
@@ -657,7 +656,7 @@ type SharedSuiteReport = {
     couldNotRun?: number;
   };
   groups?: Array<{ cases?: SavedReportCase[] }>;
-  advisories?: SavedReportAdvisory[];
+  advisories?: unknown;
 };
 
 type SharedConformanceArtifact = {

@@ -596,7 +596,7 @@ function createProtocolReport(
         result.results.map((entry, index) => ({
           readiness: entry.readiness,
           group: `mcp-${index + 1}`,
-        })),
+        }))
       ),
     };
   }
@@ -636,7 +636,7 @@ function createAppsReport(
         result.results.map((entry, index) => ({
           readiness: entry.readiness,
           group: `apps-${index + 1}`,
-        })),
+        }))
       ),
     };
   }
@@ -733,7 +733,7 @@ function createOAuthReport(
         result.results.map((entry, index) => ({
           readiness: entry.readiness,
           group: `oauth-${index + 1}`,
-        })),
+        }))
       ),
     };
   }

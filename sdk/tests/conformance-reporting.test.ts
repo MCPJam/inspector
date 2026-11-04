@@ -493,9 +493,12 @@ describe("report advisories", () => {
     const report = toConformanceReport(
       createProtocolResult({
         readiness: [
-          { ...warning("readiness-tool-order-deterministic", "MAY"), details: { a: 1 } },
+          {
+            ...warning("readiness-tool-order-deterministic", "MAY"),
+            details: { a: 1 },
+          },
         ],
-      } as Partial<MCPConformanceResult>),
+      } as Partial<MCPConformanceResult>)
     );
 
     expect(report.advisories).toEqual([
@@ -512,9 +515,13 @@ describe("report advisories", () => {
   });
 
   it("has no advisories key when a run raised no advice", () => {
-    expect("advisories" in toConformanceReport(createProtocolResult())).toBe(false);
+    expect("advisories" in toConformanceReport(createProtocolResult())).toBe(
+      false
+    );
     expect("advisories" in toConformanceReport(createAppsResult())).toBe(false);
-    expect("advisories" in toConformanceReport(createOAuthResult())).toBe(false);
+    expect("advisories" in toConformanceReport(createOAuthResult())).toBe(
+      false
+    );
   });
 
   it("lists matrix advice once, under the first run that raised it", () => {
@@ -526,7 +533,10 @@ describe("report advisories", () => {
     ] as never;
 
     expect(
-      toConformanceReport(suite).advisories?.map(({ id, group }) => ({ id, group })),
+      toConformanceReport(suite).advisories?.map(({ id, group }) => ({
+        id,
+        group,
+      }))
     ).toEqual([
       { id: "readiness-a", group: "mcp-1" },
       { id: "readiness-b", group: "mcp-2" },
@@ -537,12 +547,12 @@ describe("report advisories", () => {
     const apps = toConformanceReport(
       createAppsResult({
         readiness: [warning("apps-readiness-deprecated-resource-uri")],
-      } as never),
+      } as never)
     );
     const oauth = toConformanceReport(
       createOAuthResult({
         readiness: [warning("readiness-oauth-iss-advertised")],
-      } as never),
+      } as never)
     );
     const tasks = toConformanceReport({
       passed: true,

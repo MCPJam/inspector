@@ -495,6 +495,24 @@ describe("ConformanceRunDetailPage", () => {
     expect(fetchArtifactMock).toHaveBeenCalledTimes(1);
   });
 
+  it("tries a report again when its load-time fetch failed", async () => {
+    fetchArtifactMock
+      .mockResolvedValueOnce({ ok: false, status: 503 })
+      .mockResolvedValue(
+        reportBody([{ id: "ping", title: "Ping", status: "passed" }]),
+      );
+    useArtifactQueryMock.mockReturnValue(run([report()]));
+    render(<ConformanceRunDetailPage runId="run_1" />);
+    await waitFor(() => expect(fetchArtifactMock).toHaveBeenCalledTimes(1));
+    // Let the failure settle before the suite opens.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    fireEvent.click(suiteHeader("protocol"));
+
+    await screen.findByText("Ping");
+    expect(fetchArtifactMock).toHaveBeenCalledTimes(2);
+  });
+
   it("lists the advice each saved report holds, like the live page", async () => {
     fetchArtifactMock.mockImplementation(async (url: string) => ({
       ok: true,
