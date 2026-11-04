@@ -71,6 +71,7 @@ import { USER_OWNED_DENIAL_CODES } from "../../../utils/mcpjam-stream-handler.js
 import { classifyTurnFailure } from "../../../utils/turn-failure-classification.js";
 import { __clearPinnedSkillCacheForTest } from "../pinned-skill-cache.js";
 import { SwarmAgentError } from "../../swarm-agent.js";
+import { logger } from "../../../utils/logger.js";
 
 const HOST = {
   hostId: "host-1",
@@ -158,6 +159,48 @@ describe("swarm single-host runner — attempt ordering", () => {
       "run:synth_run-1_host-1_1",
       "succeeded:1:synth_run-1_host-1_1",
     ]);
+  });
+
+  it("applies the pinned host style under sparse MCP Apps overrides", async () => {
+    await startJourneyRun(
+      baseOpts({
+        sessionsPerTarget: 1,
+        hosts: [
+          {
+            ...HOST,
+            hostStyle: "chatgpt",
+            mcpProfile: { apps: { mcpAppsOverrides: { serverResources: true } } },
+          },
+        ],
+      }),
+    );
+
+    const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
+    // ChatGPT's preset plus the override, not only the override's own keys.
+    expect(adapter.runtime.hostCapabilities).toMatchObject({
+      openLinks: {},
+      serverTools: {},
+      serverResources: {},
+    });
+    expect(adapter.runtime.hostCapabilities).not.toHaveProperty("downloadFile");
+  });
+
+  it("advertises only the override's own keys while the snapshot has no host style", async () => {
+    // Runs created before the backend pins hostStyle onto swarm targets.
+    await startJourneyRun(
+      baseOpts({
+        sessionsPerTarget: 1,
+        hosts: [
+          {
+            ...HOST,
+            mcpProfile: { apps: { mcpAppsOverrides: { serverResources: true } } },
+          },
+        ],
+      }),
+    );
+
+    const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
+    expect(adapter.runtime.hostCapabilities).toEqual({ serverResources: {} });
   });
 
   it("passes the pinned host runtime + swarm persist attribution into the shared core", async () => {
@@ -959,6 +1002,27 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
       .map((a) => a.sessionIdx)
       .sort();
     expect(host1Failed).toEqual([0, 1]);
+  });
+
+  it("hands the worker's thrown Error to logger.error, not the context object", async () => {
+    // Sentry captures logger.error's second argument. Passing the context
+    // there captured a plain object as "Error: Error" with no throw-site stack
+    // (INSPECTOR-HONO-29).
+    const errorLog = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const thrown = new Error("model-less host: cannot resolve modelId");
+    runSyntheticHostSessionMock.mockRejectedValue(thrown);
+
+    try {
+      await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
+
+      expect(errorLog).toHaveBeenCalledWith(
+        "[swarm.runner] target worker failed; finalizing its attempts",
+        thrown,
+        expect.objectContaining({ runId: "run-1", hostId: "host-1" }),
+      );
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 });
 
@@ -2054,6 +2118,37 @@ describe("target setup before claims", () => {
       }),
     );
     expect(runSyntheticHostSessionMock).toHaveBeenCalledOnce();
+  });
+  it("stores why a failed setup stopped the target instead of a bare prerequisites code", async () => {
+    const { SwarmSetupError } = await import("../swarm-setup-turn");
+    setupTurnMock.mockImplementation(async ({ target }) => {
+      if (target.targetId !== "bad") return record;
+      throw new SwarmSetupError(
+        { ...record, status: "failed", readiness: "unavailable", reason: "timeout" },
+        undefined,
+        new Error("aborted"),
+      );
+    });
+    await startJourneyRun(
+      baseOpts({
+        hosts: [
+          { ...HOST, targetId: "bad" },
+          { ...HOST_2, targetId: "good" },
+        ],
+        setupWrites: true,
+        sessionsPerTarget: 1,
+      }),
+    );
+    const bad = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.targetId === "bad" && a.status !== "running");
+    expect(bad).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        errorCode: "prerequisites_unavailable",
+        errorMessage: expect.stringContaining("Setup ran out of time"),
+      }),
+    ]);
   });
   it("stores a setup that could not sign in to the server as that sign-in failure, and does not retry it", async () => {
     const { SwarmSetupError } = await import("../swarm-setup-turn");

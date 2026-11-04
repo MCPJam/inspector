@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   available: vi.fn(), query: vi.fn(), mutation: vi.fn(), action: vi.fn(),
   admission: vi.fn(() => ({ ok: true, harness: "claude-code" })),
-  run: vi.fn(),
+  run: vi.fn(), pinned: vi.fn(),
 }));
 vi.mock("convex/browser", () => ({ ConvexHttpClient: class {
   setAuth() {}
@@ -33,6 +33,10 @@ vi.mock("../../../services/evals/route-helpers.js", async (original) => ({
   connectReplayManagerServers: async () => {},
   storeReplayConfig: async () => {},
 }));
+vi.mock("../../../services/evals/pinned-skill-source.js", async (original) => {
+  const actual = await original<typeof import("../../../services/evals/pinned-skill-source.js")>();
+  return { ...actual, buildPinnedSkillSource: mocks.pinned.mockImplementation(actual.buildPinnedSkillSource) };
+});
 import { prepareEvalRun } from "../evals";
 import { prepareSuiteReplayFromRun } from "../../../services/evals/replay-suite-run";
 
@@ -152,6 +156,25 @@ it("current-config replays select the current suite harness instead of the sourc
   expect(mocks.available).toHaveBeenCalledWith("codex", "token", "project-1", { scope: "unattended" });
   expect(mocks.mutation).toHaveBeenCalledWith("testSuites:startTestSuiteRun", expect.objectContaining({ runtimeVenue: "hosted" }));
   await prepared.cleanup();
+});
+
+// A GitHub check replaces every server with the PR's temporary one, so a
+// deleted server left in the environment's group must not refuse it.
+it.each([["github_check", true, ["pr-server"]], ["api", undefined, ["s1"]]] as const)("a %s environment launch sends serversReplaced=%s", async (source, expected, pinNames) => {
+  mocks.available.mockResolvedValue(false);
+  await prepareEvalRun({
+    listServers: () => ["s1"], hasServer: () => true, getConnectionStatus: () => "connected",
+    getServerNames: () => ({ s1: "s1" }), getServerReplayConfigs: () => [],
+    listTools: async () => ({ tools: [] }),
+  } as any, {
+    suiteId: "suite-1", suiteRerun: true, projectId: "project-1", environmentId: "env-1",
+    serverIds: ["s1"], serverNames: ["pr-server"], tests: [], convexAuthToken: "token",
+    source, orgModelConfig: { providers: [] },
+  } as any);
+  const resolveArgs = mocks.query.mock.calls.find(([name]) => name === "projectEnvironments:resolveEnvironmentForLaunch")![1];
+  expect(resolveArgs.serversReplaced).toBe(expected);
+  // Skill pins name the servers the run connected: the PR's own, for a check.
+  expect(mocks.pinned).toHaveBeenCalledWith(expect.objectContaining({ serverNames: pinNames }));
 });
 
 it("refuses a suite launch when its authorization project cannot be resolved", async () => {

@@ -68,7 +68,7 @@ describe("Client editor tabs — readOnly prop wiring", () => {
     expect(modelTrigger).toBeDisabled();
   });
 
-  it("BehaviorTab readOnly disables the system-prompt textarea", () => {
+  it("BehaviorTab readOnly disables system-prompt editing", () => {
     render(
       <BehaviorTab
         draft={emptyHostConfigInputV2()}
@@ -77,10 +77,7 @@ describe("Client editor tabs — readOnly prop wiring", () => {
         readOnly
       />
     );
-    const textarea = screen.getByPlaceholderText(
-      "You are a helpful assistant…"
-    ) as HTMLTextAreaElement;
-    expect(textarea).toHaveAttribute("readonly");
+    expect(screen.getByRole("textbox", { name: "System prompt" })).toBeDisabled();
   });
 
   it("BehaviorTab readOnly disables tool-approval, visibility, and tool-image switches", () => {

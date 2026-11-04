@@ -1,3 +1,4 @@
+import { attachComputerSandbox } from "../../utils/computers/attach-computer.js";
 /**
  * Computer file upload (`POST /api/web/computers/upload`).
  *
@@ -30,7 +31,6 @@
 import { randomUUID } from "node:crypto";
 import { posix } from "node:path";
 import type { Context } from "hono";
-import { Sandbox } from "e2b";
 import { verifyComputerTerminalToken } from "../../utils/computers/terminal-token.js";
 import {
   computerUnavailableError,
@@ -60,8 +60,7 @@ export interface UploadSandbox {
 }
 
 export interface ComputerUploadDeps {
-  /** Connect to a live sandbox by vendor id. Defaults to E2B `Sandbox.connect`
-   *  (which auto-resumes a paused box, like the terminal route). */
+  /** Test seam for an already-authorized sandbox. Production uses the control plane. */
   connectSandbox?: (sandboxId: string) => Promise<UploadSandbox>;
 }
 
@@ -89,10 +88,6 @@ function safeUploadName(rawName: string): string {
 }
 
 export function createComputerUploadHandler(deps: ComputerUploadDeps = {}) {
-  const connectSandbox =
-    deps.connectSandbox ??
-    ((id: string) => Sandbox.connect(id) as unknown as Promise<UploadSandbox>);
-
   return async (c: Context): Promise<Response> => {
     if (!isComputersDataPlaneConfigured()) {
       return c.json(
@@ -226,7 +221,9 @@ export function createComputerUploadHandler(deps: ComputerUploadDeps = {}) {
     // ── write into the box ─────────────────────────────────────────────────
     let sandbox: UploadSandbox;
     try {
-      sandbox = await connectSandbox(sandboxId);
+      sandbox = deps.connectSandbox
+        ? await deps.connectSandbox(sandboxId)
+        : await attachComputerSandbox(info.value, c.req.raw.signal);
     } catch (err) {
       logger.warn("[computer-upload] sandbox connect failed", {
         computerId: claims.computerId,

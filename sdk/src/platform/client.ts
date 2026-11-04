@@ -1,3 +1,4 @@
+import { MCPJAM_CLOUD_API_URL } from "../deployment/address.js";
 import type {
   JudgeBacktestRequest,
   JudgeBacktestReport,
@@ -28,6 +29,7 @@ import type {
   PlatformScenarioDetail,
   PlatformGoal,
   PlatformGoalArchived,
+  PlatformGoalJudgeWrite,
   PlatformGoalRun,
   PlatformGoalRunCanceled,
   PlatformGoalRunLaunched,
@@ -178,7 +180,7 @@ import type {
   PlatformRegistryInstall,
 } from "./types.js";
 
-export const DEFAULT_PLATFORM_API_BASE_URL = "https://app.mcpjam.com/api/v1";
+export const DEFAULT_PLATFORM_API_BASE_URL = MCPJAM_CLOUD_API_URL;
 
 /**
  * Parse a request URL, tolerating a relative `baseUrl`.
@@ -603,6 +605,8 @@ type ServerScope = {
 function pickReadinessStartBody(params: {
   idempotencyKey?: string;
   includeLlmObservations?: boolean;
+  lazyAuthProbe?: PlatformReadinessStartBody["lazyAuthProbe"];
+  claimedFeatures?: string[];
 }): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   if (params.idempotencyKey !== undefined) {
@@ -610,6 +614,22 @@ function pickReadinessStartBody(params: {
   }
   if (params.includeLlmObservations !== undefined) {
     body.includeLlmObservations = params.includeLlmObservations;
+  }
+  // Picked field by field, like the start body itself: the endpoint's schema
+  // is strict, and a wider object forwarded whole would turn a valid start
+  // into a 400.
+  if (params.lazyAuthProbe !== undefined) {
+    const probe = params.lazyAuthProbe;
+    body.lazyAuthProbe = {
+      enabled: probe.enabled,
+      ...(probe.toolName !== undefined ? { toolName: probe.toolName } : {}),
+      ...(probe.publicToolName !== undefined
+        ? { publicToolName: probe.publicToolName }
+        : {}),
+    };
+  }
+  if (params.claimedFeatures !== undefined) {
+    body.claimedFeatures = [...params.claimedFeatures];
   }
   return body;
 }
@@ -3806,6 +3826,16 @@ export class PlatformApiClient {
    * `POST /projects/{p}/servers/{s}/tools/call` — execute one tool and return
    * the MCP CallToolResult. Tool-level failures (`isError: true`) are
    * successful calls; only transport/auth errors throw.
+   *
+   * Sign-in challenges (a server that allows the connection and asks for
+   * sign-in on one call):
+   * - an HTTP 401 from the MCP server on the call throws `AUTH_REQUIRED`,
+   *   which the platform API returns as HTTP 403 (not 401, which would mean
+   *   the caller's own API key failed), with the parsed challenge in
+   *   `details.authChallenge`;
+   * - a completed `isError` result carrying `_meta["mcp/www_authenticate"]`
+   *   (the ChatGPT convention) is returned unchanged, with the parsed
+   *   challenge added beside it as `authChallenge`.
    */
   callServerTool(
     params: ServerScope & {
@@ -4134,6 +4164,8 @@ export class PlatformApiClient {
       environmentIds?: string[];
       serverAttachmentId?: string;
       hostIds?: string[];
+      /** Omitted: the managed defaults. */
+      judge?: PlatformGoalJudgeWrite;
     },
     options?: RequestOptions
   ): Promise<PlatformGoal> {
@@ -4166,6 +4198,8 @@ export class PlatformApiClient {
       iterations?: number;
       maxTurns?: number;
       setupWrites?: boolean;
+      /** Fields named are changed; `null` clears the judge to the defaults. */
+      judge?: PlatformGoalJudgeWrite | null;
     },
     options?: RequestOptions
   ): Promise<PlatformGoal> {

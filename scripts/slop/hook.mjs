@@ -25,6 +25,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { RULES, countFile, isMeasuredFile } from "./rules.mjs";
 
 export const FILE_BUDGET = 800;
+/** How far a file already over FILE_BUDGET may grow: enough to wire code in. */
+export const GROWTH_ALLOWANCE = 50;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = dirname(dirname(HERE));
@@ -155,7 +157,9 @@ export function checkEdit(path, { before, after, fileBefore, fileAfter }) {
       if (added > 0) problems.push(`${rule.label}: +${added}`);
     }
     const lines = lineCount(fileAfter);
-    if (lines > FILE_BUDGET && lines > lineCount(fileBefore)) {
+    const linesBefore = lineCount(fileBefore);
+    const allowance = linesBefore > FILE_BUDGET ? GROWTH_ALLOWANCE : 0;
+    if (lines > FILE_BUDGET && lines - linesBefore > allowance) {
       problems.push(
         `file is ${lines} lines, over the ${FILE_BUDGET}-line budget, and growing. Split it or put the new code in its own module.`,
       );

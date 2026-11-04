@@ -23,7 +23,7 @@ export function ClientSelectionSync({ projectId }: { projectId: string }) {
     projectId,
     intent: "default",
     needed: isAuthenticated && !isLoading && hosts.length === 0,
-    run: () => ensureProjectClient({ projectId, themeMode }),
+    run: (pid) => ensureProjectClient({ projectId: pid, themeMode }),
   });
 
   useEffect(() => {

@@ -61,7 +61,7 @@ describe("the Codex adapter", () => {
     // MCP delivery is host-executed, so MCPJam's gate applies to relayed calls;
     // a future switch to native delivery must not inherit a promise for free.
     expect(getHarnessAdapter("codex").supportsMcpToolApproval).toBe(false);
-    expect(getHarnessAdapter("codex").mcpDelivery).toBe("host-executed");
+    expect(getHarnessAdapter("codex").mcpDelivery).toBe("mcpjam");
   });
 
   it("names Codex's native tools as measured against the pinned binary", () => {

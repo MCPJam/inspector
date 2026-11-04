@@ -7,7 +7,7 @@ import {
 
 /**
  * The sponsored split of a launch, shown on Confirm above the launch button:
- * "5 sponsored conversations · 10 use org credits", why some use credits, and a
+ * "5 sponsored · 10 use org credits", why some use credits, and a
  * notice when a launch stopped because the split moved.
  *
  * It says what the preview says and no more. Sponsored capacity is MCPJam's and
@@ -64,8 +64,8 @@ export function SwarmFundingSummary({
           data-testid="new-swarm-funding-pending"
         >
           {pendingGoals === 1
-            ? "This covers your existing goals. The new goal's conversations are placed when it is created, and you will see the split before anything runs."
-            : `This covers your existing goals. The ${pendingGoals} new goals' conversations are placed when they are created, and you will see the split before anything runs.`}
+            ? "Doesn't include your new goal yet."
+            : `Doesn't include your ${pendingGoals} new goals yet.`}
         </p>
       ) : null}
       {notice ? (

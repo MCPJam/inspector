@@ -236,6 +236,25 @@ describe("resolveElicitationGate", () => {
 });
 
 describe("HostedElicitationBridge", () => {
+  it("delivers owned chat input without a worker-local stream writer", async () => {
+    stubFetch({ "/elicitations/poll": [pollAnswered] });
+    const bridge = makeBridge({ delivery: "owned-chat-query" });
+    const result = bridge.callback(formRequest());
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(await result).toMatchObject({ action: "accept" });
+    expect(mutation.mock.calls[0][1]).toMatchObject({
+      chatSessionId: "sess-1",
+      serverId: "srv-1",
+    });
+    await bridge.dispose();
+  });
+
+  it("requires an owned chat before allowing query delivery", () => {
+    expect(() =>
+      makeBridge({ delivery: "owned-chat-query", chatSessionId: undefined }),
+    ).toThrow("requires a chat session");
+  });
+
   it("joins abort and repeated disposal through one pending cancellation", async () => {
     let release!: (value: unknown) => void;
     const cancellation = new Promise((resolve) => {
@@ -621,6 +640,81 @@ describe("HostedElicitationBridge", () => {
     await vi.advanceTimersByTimeAsync(2000);
 
     await expect(promise).resolves.toEqual(expected);
+  });
+
+  it("withdraws an individual native request while leaving the chat usable", async () => {
+    const { calls } = stubFetch({ "/elicitations/poll": [pollPending] });
+    const request = new AbortController();
+    const { writer, events } = makeWriter();
+    const bridge = makeBridge();
+    bridge.attachStreamWriter(writer);
+    const pending = bridge.callback(formRequest(), request.signal);
+    await vi.advanceTimersByTimeAsync(1500);
+    request.abort();
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(pending).resolves.toEqual({ action: "cancel" });
+    expect(
+      calls.filter((call) => call.path === "/elicitations/cancel"),
+    ).toHaveLength(1);
+    expect(events()).toContainEqual(
+      expect.objectContaining({ kind: "resolved", outcome: "cancelled" }),
+    );
+
+    stubFetch({
+      "/elicitations/poll": [
+        { ok: true, elicitation: { status: "answered", action: "decline" } },
+      ],
+    });
+    const next = bridge.callback(formRequest());
+    await vi.advanceTimersByTimeAsync(1500);
+    await expect(next).resolves.toEqual({ action: "decline" });
+  });
+
+  it("cancels a pending native poll and refuses an answer arriving after cancellation", async () => {
+    let finishPoll!: (response: Response) => void;
+    const polling = new Promise<Response>((resolve) => {
+      finishPoll = resolve;
+    });
+    const paths: string[] = [];
+    let pollSignal: AbortSignal | null | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = new URL(String(input)).pathname;
+        paths.push(path);
+        if (path === "/elicitations/poll") {
+          pollSignal = init?.signal;
+          return polling;
+        }
+        return Response.json({ ok: true });
+      }),
+    );
+    const request = new AbortController();
+    const { writer, events } = makeWriter();
+    const bridge = makeBridge();
+    bridge.attachStreamWriter(writer);
+    const pending = bridge.callback(formRequest(), request.signal);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(pollSignal?.aborted).toBe(false);
+    request.abort();
+    expect(pollSignal?.aborted).toBe(true);
+    finishPoll(
+      Response.json({
+        ok: true,
+        elicitation: {
+          status: "answered",
+          action: "accept",
+          content: { branch: "late" },
+        },
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(pending).resolves.toEqual({ action: "cancel" });
+    expect(paths).toContain("/elicitations/cancel");
+    expect(paths).not.toContain("/elicitations/ack");
+    expect(events()).not.toContainEqual(
+      expect.objectContaining({ outcome: "answered" }),
+    );
   });
 
   it("cancels on client abort and withdraws the row without emitting", async () => {

@@ -5,9 +5,12 @@
  * SDK — the controller owns the "wait for auth URL / deliver code" dance, this
  * store owns the `sessionId → controller` mapping and TTL eviction.
  *
- * Sessions expire after 5 minutes and are swept every 60 seconds.
+ * A session waits up to 10 minutes for the user to finish authorizing, and is
+ * dropped after 15 minutes without activity (creation, the code arriving, or a
+ * client poll). The sweep runs every 60 seconds.
  */
 
+import { randomUUID } from "node:crypto";
 import {
   createRemoteBrowserAuthorizationController,
   type ConformanceResult,
@@ -18,6 +21,12 @@ import {
 
 export interface OAuthConformanceSession {
   id: string;
+  /**
+   * Who started the run (`principalKey`), on hosted sessions. Code delivery
+   * and polling answer only that caller: the result carries the run's
+   * evidence, so another signed-in user must not be able to claim it.
+   */
+  owner?: string;
   controller: RemoteBrowserAuthorizationController;
   /** Authorization URL once the runner has surfaced it. */
   authorizationUrl?: string;
@@ -29,11 +38,21 @@ export interface OAuthConformanceSession {
   /** If the run errored out. */
   error?: string;
   createdAt: number;
+  /** Last time the browser or a poll touched this session; drives expiry. */
+  lastActivityAt: number;
 }
 
 // ── Store ───────────────────────────────────────────────────────────────
 
-const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
+/**
+ * How long the runner waits for the user to come back from the authorization
+ * server. A consent screen with a login, MFA or an account picker easily takes
+ * longer than the runner's 30s per-step timeout, which used to cap this wait.
+ */
+export const AUTHORIZATION_WAIT_MS = 10 * 60 * 1000; // 10 minutes
+// Longer than the wait, so a session still waiting on consent (no polls yet:
+// the client only polls once the code is back) is never swept first.
+const SESSION_IDLE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const CLEANUP_INTERVAL_MS = 60 * 1000; // 60 seconds
 
 const sessions = new Map<string, OAuthConformanceSession>();
@@ -45,7 +64,7 @@ function ensureCleanupTimer() {
   cleanupTimer = setInterval(() => {
     const now = Date.now();
     for (const [id, session] of sessions) {
-      if (now - session.createdAt > SESSION_TTL_MS) {
+      if (now - session.lastActivityAt > SESSION_IDLE_TTL_MS) {
         session.controller.fail(new Error("Session expired"));
         sessions.delete(id);
       }
@@ -67,8 +86,6 @@ function ensureCleanupTimer() {
 
 // ── Public API ──────────────────────────────────────────────────────────
 
-let nextId = 1;
-
 export interface CreateSessionOptions {
   /**
    * Public URL that the authorization server will redirect back to. For local
@@ -77,25 +94,31 @@ export interface CreateSessionOptions {
    */
   redirectUrl: string;
   /**
-   * Optional hard timeout for waiting on an authorization code after the URL
-   * is surfaced. Falls back to the runner's per-step timeout when omitted.
+   * How long to wait for an authorization code after the URL is surfaced.
+   * Defaults to {@link AUTHORIZATION_WAIT_MS}.
    */
   codeTimeoutMs?: number;
+  /** The caller that started the run; see {@link OAuthConformanceSession.owner}. */
+  owner?: string;
 }
 
 export function createSession(
   options: CreateSessionOptions,
 ): OAuthConformanceSession {
-  const id = `oauth-conf-${Date.now()}-${nextId++}`;
+  // Unguessable: the ID is the only handle on a run's result.
+  const id = `oauth-conf-${randomUUID()}`;
   const controller = createRemoteBrowserAuthorizationController({
     redirectUrl: options.redirectUrl,
-    codeTimeoutMs: options.codeTimeoutMs,
+    codeTimeoutMs: options.codeTimeoutMs ?? AUTHORIZATION_WAIT_MS,
   });
+  const now = Date.now();
   const session: OAuthConformanceSession = {
     id,
+    ...(options.owner ? { owner: options.owner } : {}),
     controller,
     completedSteps: [],
-    createdAt: Date.now(),
+    createdAt: now,
+    lastActivityAt: now,
   };
 
   // Once the runner surfaces the auth URL, mirror it onto the session so the
@@ -113,10 +136,23 @@ export function createSession(
   return session;
 }
 
+/**
+ * A session, if it exists and `owner` is the caller that started it. A local
+ * session has no owner and matches only a caller that names none; a mismatch
+ * reads as "not found" so it reveals nothing about another caller's run.
+ */
 export function getSession(
   sessionId: string,
+  owner?: string,
 ): OAuthConformanceSession | undefined {
-  return sessions.get(sessionId);
+  const session = sessions.get(sessionId);
+  return session && session.owner === owner ? session : undefined;
+}
+
+/** Keep a session alive while a client is still polling it. */
+export function touchSession(sessionId: string): void {
+  const session = sessions.get(sessionId);
+  if (session) session.lastActivityAt = Date.now();
 }
 
 export function deleteSession(sessionId: string): void {
@@ -135,12 +171,14 @@ export function submitAuthorizationCode(
   sessionId: string,
   code: string,
   state?: string,
+  owner?: string,
 ): boolean {
-  const session = sessions.get(sessionId);
+  const session = getSession(sessionId, owner);
   // No way to ask the SDK controller "are you waiting?" directly, so we rely
   // on the runner's own state-mismatch handling and treat any unknown session
-  // as a miss.
-  if (!session) return false;
+  // as a miss. A result before the code means the authorization wait ran out.
+  if (!session || session.result) return false;
+  session.lastActivityAt = Date.now();
   session.controller.deliverCode({ code, state });
   return true;
 }

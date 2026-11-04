@@ -4,9 +4,13 @@ description: "API reference for running an MCPJam suite file locally from code"
 icon: "book"
 ---
 
+<Note>
+The upcoming SDK 10, CLI 6, and Vitest 0.3 releases require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. These versions must ship after the backend run-start endpoint is deployed. Earlier versions keep their existing behavior.
+</Note>
+
 `runSuiteFile(sourceText, options)` runs an MCPJam suite file locally and decides it with the v2 verdict policy. It is the engine behind [`mcpjam test`](/cli/local-evals), exposed for code that wants the same run without the CLI.
 
-It takes **explicit** configuration: server bindings, provider keys, and — only if a case needs MCPJam-hosted inference — a callback that returns a platform connection. It does not discover files, read environment variables or a login store, print, write artifacts or exit the process. It never uploads results and sends no usage telemetry — that belongs to the caller.
+It takes **explicit** configuration: server bindings, provider keys, and an optional callback that returns an MCPJam connection. Every run resolves MCPJam identity; when the callback is absent, it uses the SDK credential resolver. It does not discover suite files, print, write artifacts or exit the process. It never uploads results and sends no usage telemetry — that belongs to the caller.
 
 ```typescript
 import { readFile } from "node:fs/promises";
@@ -43,7 +47,7 @@ try {
 | `inference.mode` | `"auto"` | `"auto"`, `"byok"` or `"mcpjam"` — see [Inference](/cli/local-evals#inference). |
 | `inference.providerKeys` | `{}` | BYOK keys by provider id (`anthropic`, `openai`, `google`, `deepseek`, `mistral`, `openrouter`, `xai`). |
 | `inference.baseUrls` | — | Non-secret provider base URLs (`anthropic`, `openai`, `ollama`, …). |
-| `inference.resolveMcpjam` | — | `() => Promise<{ baseUrl, projectId, getAuth, headers? }>`, called at most once and only when a case needs MCPJam-hosted inference. `baseUrl` is the app origin (not `/api/v1`), `projectId` a concrete id, `getAuth` returns the current bearer and is re-read for every mint, retry and revoke. `headers` go to MCPJam's API only. |
+| `inference.resolveMcpjam` | — | `() => Promise<{ baseUrl, projectId, getAuth, headers? }>`, called once before every run, including BYOK. `baseUrl` is the app origin (not `/api/v1`), `projectId` a concrete id, `getAuth` returns the current bearer and is re-read for every mint, retry and revoke. `headers` go to MCPJam's API only. |
 | `hostTemplateId` | — | One host template to emulate (`claude-code`, `chatgpt`, …). |
 | `importApprovals` | — | `{ caseId, reason }[]` approving `approximated` imported cases for this run. |
 | `concurrency` | `1` | Iterations of one case in flight at once. Cases run sequentially. |
@@ -88,3 +92,7 @@ One error comes after execution: `REPORT_INVALID` (phase `reporting`, category `
 | `integrity` | The run's own report failed validation, after the cases ran |
 
 An iteration that failed its assertions is evidence, not an error: it comes back in the result. A provider refusal during execution is attributed on the iteration (`refusal`) and never counted as a failing assertion. Refusal attributions include `credentials`, `billing`, `orgPolicy` (organization AI-key policy), `rateLimited`, and `unavailable`. A terminal refusal (`credentials`, `billing`, or `orgPolicy`) stops scheduling further iterations.
+
+## Eval authentication
+
+For the upcoming releases, see [eval identity and local data](/cli/local-evals#eval-identity-and-local-data) for credential precedence, CI setup, failure behavior, and the exact fields sent before an eval.

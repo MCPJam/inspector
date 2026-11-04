@@ -11,6 +11,7 @@ const { version: SDK_VERSION } = JSON.parse(
 export default defineConfig({
   entry: [
     "src/index.ts",
+    "src/platform-auth.ts",
     "src/browser.ts",
     "src/worker.ts",
     "src/operations.ts",
@@ -43,6 +44,8 @@ export default defineConfig({
     // and instance session reducer. Published as `./internal/plugin-host`.
     "src/internal/plugin-host.ts",
     "src/internal/telemetry.ts",
+    "src/internal/deployment.ts",
+    "src/internal/network-proxy.ts",
     // Node-only SSRF-hardened OAuth networking (classifier + DNS-pinned
     // transport) for backend actions that must not load the whole SDK graph.
     "src/oauth/node.ts",

@@ -48,7 +48,7 @@ test("Docker releases upload from the shared server stage without build secrets"
 test("the shared base installs and verifies the TLS trust store", () => {
   const base = dockerfile.split("FROM base AS deps")[0];
   const install = base.replace(/\\\r?\n/g, " ");
-  assert.match(install, /apt-get install -y --no-install-recommends ca-certificates=20250419~deb12u1/);
+  assert.match(install, /apt-get install -y --no-install-recommends ca-certificates=20250419~deb12u2/);
   assert.match(install, /test -s \/etc\/ssl\/certs\/ca-certificates\.crt/);
   assert.doesNotMatch(install, /--only-upgrade ca-certificates/);
   assert.doesNotMatch(dockerfile, /SENTRY_DISABLE_SSL_VERIFICATION|ssl_verify=false/);

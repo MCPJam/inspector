@@ -49,6 +49,17 @@ function tool(result: unknown = { ok: true }): FakeTool {
 }
 
 describe("projectSelectedMcpServersAsHostTools", () => {
+  it("never enumerates a refused server's cached tools", async () => {
+    const manager = fakeManager({ live: { read: tool() }, refused: { write: tool() } });
+    const projected = await projectSelectedMcpServersAsHostTools({
+      manager, selectedServerIds: ["live", "refused"], unavailableServerIds: ["refused"],
+    });
+    expect(manager.getToolsForAiSdk).toHaveBeenCalledTimes(1);
+    expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(["live"]);
+    expect(Object.values(projected.keyToServerId)).toEqual(["live"]);
+    expect(Object.keys(projected.tools)).toEqual(["mcp__live__read"]);
+  });
+
   it("names projected tools exactly as Claude Code namespaces its MCP tools", async () => {
     const manager = fakeManager({
       "weather-api": { get_forecast: tool() },

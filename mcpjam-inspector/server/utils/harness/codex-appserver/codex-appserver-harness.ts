@@ -58,6 +58,7 @@ import {
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { WebSocket } from "ws";
+import type { HarnessMcpJson } from "../mcp-config.js";
 import { logger } from "../../logger.js";
 import { CODEX_APPSERVER_BUILTIN_TOOLS } from "./codex-appserver-builtin-tools.js";
 import {
@@ -96,6 +97,7 @@ export const DEFAULT_CODEX_APPSERVER_MODEL = "gpt-5.5";
 const CODEX_SKILLS_SUBDIR = ".agents/skills";
 
 export type CodexAppServerSettings = {
+  nativeMcpServers?: HarnessMcpJson["mcpServers"];
   /** Native model id. Omitted ⇒ Codex's own default. */
   model?: string;
   /** Placeholder credential env (`CODEX_API_KEY`, `OPENAI_BASE_URL`). The real
@@ -887,6 +889,7 @@ function createCodexAppServerSession(input: {
         ? { reasoningEffort: input.settings.reasoningEffort }
         : {}),
       ...(input.settings.webSearch ? { webSearch: true } : {}),
+      ...(input.settings.nativeMcpServers ? { nativeMcpServers: input.settings.nativeMcpServers } : {}),
       ...(input.settings.codexConfig
         ? { codexConfig: input.settings.codexConfig }
         : {}),

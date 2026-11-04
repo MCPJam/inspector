@@ -1,3 +1,13 @@
+export { toolResultAuthChallengeFindings } from "../host-compat/tool-auth-compatibility.js";
+import {
+  environmentNamesFor,
+  resolveSuiteHostTargets,
+} from "./suite-client-targets.js";
+import {
+  resolveByIdOrName,
+  resolutionError,
+  operationInputError,
+} from "./resource-selectors.js";
 import { gradingPolicyFromPlatformSuiteSettings } from "../eval-grading-policy.js";
 import { planEvalGradingPolicyEdit } from "../contract/grading-policy.js";
 import {
@@ -53,6 +63,10 @@ import {
   type ModelReasoningEffort,
   type ModelSelection,
 } from "../host-config/model-selection.js";
+import {
+  DIRECTORY_FEATURE_CLAIMS,
+  LAZY_AUTH_PROBE_LIMITS,
+} from "../directory-readiness/lazy-auth.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
 import {
@@ -65,7 +79,6 @@ import {
 import {
   computeRunTargets,
   type RunTarget,
-  type RunTargetHost,
   type RunTargetPlan,
 } from "./suite-run-plans.js";
 import {
@@ -446,7 +459,7 @@ export const listOrganizationsOperation: PlatformOperation<
   name: "list_organizations",
   title: "List MCPJam organizations",
   description:
-    "List the organizations the caller belongs to. Use this to discover the organization id that list_projects filters by and create_project takes. An organization-scoped API key only ever sees its own organization.",
+    "List the organizations the caller belongs to. Each row includes the organization id for project filtering and creation. An organization-scoped API key only ever sees its own organization.",
   readOnly: true,
   permalink: derivePermalinks((result) =>
     result.items.map((organization) => ({
@@ -980,62 +993,6 @@ function environmentRef(environment: {
 
 // ── Named-resource resolution ────────────────────────────────────────
 
-/**
- * Resolve a suite/scenario/server selector against a project listing the same
- * way `resolveProject` works: exact id first, then unique case-insensitive
- * name. Failures become NOT_FOUND platform errors whose message enumerates
- * the valid choices, so every surface renders the same actionable text.
- */
-function resolveByIdOrName<T extends { id: string; name?: string | null }>(
-  items: T[],
-  selector: string,
-  kind: string,
-  scope: string
-): T {
-  const trimmedSelector = selector.trim();
-  const idMatch = items.find((item) => item.id === trimmedSelector);
-  if (idMatch) {
-    return idMatch;
-  }
-
-  const normalizedSelector = trimmedSelector.toLocaleLowerCase();
-  const nameMatches = items.filter(
-    (item) => item.name?.toLocaleLowerCase() === normalizedSelector
-  );
-
-  if (nameMatches.length === 1) {
-    return nameMatches[0]!;
-  }
-
-  if (nameMatches.length > 1) {
-    throw resolutionError(
-      `${kind} name "${trimmedSelector}" is ambiguous in ${scope}. Use one of these IDs: ${formatResourceList(
-        nameMatches
-      )}.`
-    );
-  }
-
-  throw resolutionError(
-    items.length > 0
-      ? `${kind} "${trimmedSelector}" was not found in ${scope}. Available: ${formatResourceList(
-          items
-        )}.`
-      : `${kind} "${trimmedSelector}" was not found: ${scope} has none.`
-  );
-}
-
-function formatResourceList(
-  items: Array<{ id: string; name?: string | null }>
-): string {
-  return items
-    .map((item) => `${item.name ?? "(unnamed)"} (id: ${item.id})`)
-    .join(", ");
-}
-
-function resolutionError(message: string): PlatformApiError {
-  return new PlatformApiError(message, "NOT_FOUND", { status: 0 });
-}
-
 function toSelectedProjectInfo(project: PlatformProject): SelectedProjectInfo {
   return {
     id: project.id,
@@ -1280,7 +1237,7 @@ export const listServerToolsOperation: PlatformOperation<
   name: "list_server_tools",
   title: "List MCPJam server tools",
   description:
-    "List the tools a saved MCP server exposes: names, descriptions, and input schemas. Use before call_server_tool to find the tool name and required parameters. Paginated — pass nextCursor back as cursor for the next page.",
+    "List the tools a saved MCP server exposes: names, descriptions, and input schemas. Paginated — pass nextCursor back as cursor for the next page.",
   readOnly: true,
   permalink: derivePermalinks((result) => [serverRef(result)]),
   inputSchema: serverPagedInput,
@@ -1301,7 +1258,7 @@ export const listServerPromptsOperation: PlatformOperation<
   name: "list_server_prompts",
   title: "List MCPJam server prompts",
   description:
-    "List the prompts a saved MCP server exposes: names, descriptions, and arguments. Use before get_server_prompt to find the prompt name and its arguments. Paginated — pass nextCursor back as cursor for the next page.",
+    "List the prompts a saved MCP server exposes: names, descriptions, and arguments. Paginated — pass nextCursor back as cursor for the next page.",
   readOnly: true,
   permalink: derivePermalinks((result) => [serverRef(result)]),
   inputSchema: serverPagedInput,
@@ -1322,7 +1279,7 @@ export const listServerResourcesOperation: PlatformOperation<
   name: "list_server_resources",
   title: "List MCPJam server resources",
   description:
-    "List the resources a saved MCP server exposes: uris, names, and mime types. Use before read_server_resource to find the resource uri. Paginated — pass nextCursor back as cursor for the next page.",
+    "List the resources a saved MCP server exposes: uris, names, and mime types. Paginated — pass nextCursor back as cursor for the next page.",
   readOnly: true,
   permalink: derivePermalinks((result) => [serverRef(result)]),
   inputSchema: serverPagedInput,
@@ -1475,7 +1432,7 @@ export const callServerToolOperation: PlatformOperation<
   name: "call_server_tool",
   title: "Call MCPJam server tool",
   description:
-    "Execute a tool on a saved MCP server and return its result. Sends an MCP tools/call request (https://modelcontextprotocol.io/specification/2025-11-25/server/tools) with `toolName` and `parameters` exactly as given; the tool name and its parameter schema come from that server's own listing (list_server_tools). Runs with the caller's own authorization for that server and may have side effects there, including modifying or deleting data.",
+    "Execute a tool on a saved MCP server and return its result. Sends an MCP tools/call request (https://modelcontextprotocol.io/specification/2025-11-25/server/tools) with `toolName` and `parameters` exactly as given; the tool name and its parameter schema come from that server's own listing (list_server_tools). Runs with the caller's own authorization for that server and may have side effects there, including modifying or deleting data. If the server asks for sign-in on this call, the error is AUTH_REQUIRED (HTTP 403) with the parsed challenge in details.authChallenge; a completed result can also carry authChallenge beside it. Nothing signs in automatically: the user must connect the server with OAuth, then call again.",
   readOnly: false,
   mayBeDestructive: true,
   permalink: noPermalink(
@@ -1540,7 +1497,7 @@ export const getServerPromptOperation: PlatformOperation<
   name: "get_server_prompt",
   title: "Get MCPJam server prompt",
   description:
-    "Render a prompt from a saved MCP server with the given arguments and return its messages. Get the prompt name and argument list from list_server_prompts first.",
+    "Render a prompt from a saved MCP server with the given arguments and return its messages. Requires a prompt name and arguments matching the saved server’s prompt catalog.",
   readOnly: true,
   permalink: noPermalink(
     "external-resource",
@@ -1600,7 +1557,7 @@ export const readServerResourceOperation: PlatformOperation<
   name: "read_server_resource",
   title: "Read MCPJam server resource",
   description:
-    "Read one resource from a saved MCP server by uri and return its contents. Get the uri from list_server_resources first.",
+    "Read one resource from a saved MCP server by uri and return its contents. Requires a uri from the saved server’s resource catalog.",
   readOnly: true,
   permalink: noPermalink(
     "external-resource",
@@ -1776,7 +1733,7 @@ export const readServerSkillFileOperation: PlatformOperation<
   name: "read_server_skill_file",
   title: "Read MCPJam server skill file",
   description:
-    "Read one supporting file of a server-served skill, checked against that skill's own manifest for byte length and digest. Get both uris from list_server_skills or get_server_skill first.",
+    "Read one supporting file of a server-served skill, checked against that skill's own manifest for byte length and digest. Requires the skill uri and file uri advertised in the saved server’s skill manifest.",
   readOnly: true,
   permalink: noPermalink(
     "external-resource",
@@ -1890,6 +1847,12 @@ export const checkHostCompatibilityOperation: PlatformOperation<
       tools: rawTools.map((tool) => ({
         name: String(tool.name),
         _meta: tool._meta as Record<string, unknown> | undefined,
+        // KEPT, not dropped: the per-tool auth declaration is what tells a
+        // host whether to act on a tool-result sign-in challenge. `_meta`
+        // (and any `_meta.securitySchemes` in it) rides along above.
+        ...(tool.securitySchemes !== undefined
+          ? { securitySchemes: tool.securitySchemes }
+          : {}),
       })),
     };
 
@@ -1976,12 +1939,51 @@ const readinessRunScopedInput = z.object({
 
 export type ReadinessRunScopedInput = z.infer<typeof readinessRunScopedInput>;
 
+const readinessProbeToolName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(LAZY_AUTH_PROBE_LIMITS.toolNameMaxChars);
+
+/**
+ * The lazy-auth probe's request. `enabled` is a LITERAL `true`: a field that
+ * makes a run call tools on somebody else's server is not one a falsy-looking
+ * value should be able to set, and `false` is expressed by omitting the field.
+ */
+const readinessLazyAuthProbeInput = z
+  .strictObject({
+    enabled: z.literal(true),
+    toolName: readinessProbeToolName
+      .optional()
+      .describe("The protected read-only tool to call without credentials."),
+    publicToolName: readinessProbeToolName
+      .optional()
+      .describe("The public read-only tool to call without credentials."),
+  })
+  .refine(
+    (probe) =>
+      probe.toolName === undefined || probe.toolName !== probe.publicToolName,
+    { message: "toolName and publicToolName must name different tools" }
+  );
+
 const startReadinessInput = serverScopedInput.extend({
   includeLlmObservations: z
     .boolean()
     .optional()
     .describe(
       "Ask a model for optional experience observations. Included with MCPJam; no customer credits consumed; subject to MCPJam's daily analysis budget. Defaults false; the deterministic grade is complete without it."
+    ),
+  lazyAuthProbe: readinessLazyAuthProbeInput
+    .optional()
+    .describe(
+      "Verify lazy authentication (mid-session sign-in): the run calls at most two tools annotated readOnlyHint: true — one public, one protected — WITHOUT credentials and grades how the protected call is refused. The saved server's credential is never sent on these calls. Omit to make no tool calls. Without tool names, tools are picked by their securitySchemes."
+    ),
+  claimedFeatures: z
+    .array(z.enum(DIRECTORY_FEATURE_CLAIMS))
+    .max(LAZY_AUTH_PROBE_LIMITS.maxFeatureClaims)
+    .optional()
+    .describe(
+      `Features the submitter claims (${DIRECTORY_FEATURE_CLAIMS.join(", ")}). A claim is reported as claimed, never as verified.`
     ),
   idempotencyKey: z
     .string()
@@ -2011,6 +2013,26 @@ const startMuseReadinessInput = serverScopedInput.extend({
   idempotencyKey: startReadinessInput.shape.idempotencyKey,
 });
 
+/**
+ * The two optional readiness fields, present only when supplied.
+ *
+ * Absent rather than `undefined`: a start that asked for neither must send a
+ * body an endpoint that predates them still accepts.
+ */
+function readinessProbeFields(input: {
+  lazyAuthProbe?: z.infer<typeof readinessLazyAuthProbeInput>;
+  claimedFeatures?: string[];
+}): { lazyAuthProbe?: z.infer<typeof readinessLazyAuthProbeInput>; claimedFeatures?: string[] } {
+  return {
+    ...(input.lazyAuthProbe !== undefined
+      ? { lazyAuthProbe: input.lazyAuthProbe }
+      : {}),
+    ...(input.claimedFeatures !== undefined && input.claimedFeatures.length > 0
+      ? { claimedFeatures: [...new Set(input.claimedFeatures)].sort() }
+      : {}),
+  };
+}
+
 export type StartClaudeReadinessInput = z.infer<typeof startReadinessInput>;
 export type StartMuseReadinessInput = z.infer<typeof startMuseReadinessInput>;
 export type StartOpenAIReadinessInput = z.infer<
@@ -2030,7 +2052,7 @@ export const startClaudeReadinessRunOperation: PlatformOperation<
   name: "start_claude_readiness_run",
   title: "Start a Claude directory readiness run",
   description:
-    "Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id — poll `get_readiness_run` for the verdict, which is NOT in this response. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget.",
+    "Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id; the verdict is available on the run after completion, not in this response. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -2061,6 +2083,7 @@ export const startClaudeReadinessRunOperation: PlatformOperation<
         ...(input.idempotencyKey
           ? { idempotencyKey: input.idempotencyKey }
           : {}),
+        ...readinessProbeFields(input),
       },
       { signal }
     );
@@ -2079,7 +2102,7 @@ export const startOpenAIReadinessRunOperation: PlatformOperation<
   name: "start_openai_readiness_run",
   title: "Start an OpenAI directory readiness run",
   description:
-    "Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit `submissionMode` — it is never inferred, because guessing turns a missing input into a clean bill of health. Starts a durable run and returns its id; poll `get_readiness_run` for the verdict. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget.",
+    "Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit `submissionMode` — it is never inferred, because guessing turns a missing input into a clean bill of health. Starts a durable run and returns its id; the verdict is available on the run after completion. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -2109,6 +2132,7 @@ export const startOpenAIReadinessRunOperation: PlatformOperation<
         ...(input.idempotencyKey
           ? { idempotencyKey: input.idempotencyKey }
           : {}),
+        ...readinessProbeFields(input),
       },
       { signal }
     );
@@ -2127,7 +2151,7 @@ export const startMuseReadinessRunOperation: PlatformOperation<
   name: "start_muse_readiness_run",
   title: "Start a Muse directory readiness run",
   description:
-    "Grade a saved MCP server against Meta's Muse connector guidelines. Starts a durable run and returns its id — poll `get_readiness_run` for the verdict, which is NOT in this response. Free: Muse readiness has no AI observations. Muse reviews every submission by hand, so a ready verdict is a preflight, not a prediction of approval.",
+    "Grade a saved MCP server against Meta's Muse connector guidelines. Starts a durable run and returns its id; the verdict is available on the run after completion, not in this response. Free: Muse readiness has no AI observations. Muse reviews every submission by hand, so a ready verdict is a preflight, not a prediction of approval.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -2478,7 +2502,7 @@ export const startConformanceRunOperation: PlatformOperation<
   name: "start_conformance_run",
   title: "Start a conformance run",
   description:
-    "Run the protocol, apps, and tasks conformance suites against a saved MCP server. Starts a durable run and returns its id — poll `get_conformance_run` for the verdict, which is NOT in this response. OAuth is not available here. Status, outcome, and score are three different answers.",
+    "Run the protocol, apps, and tasks conformance suites against a saved MCP server. Starts a durable run and returns its id; the verdict is available on the run after completion, not in this response. OAuth is not available here. Status, outcome, and score are three different answers.",
   readOnly: false,
   risk: "none",
   permalink: derivePermalinks((result) => [
@@ -2719,17 +2743,6 @@ const DEPRECATED_HOST_SELECTOR_SUFFIX =
   " DEPRECATED: use `client`, which means exactly this.";
 const DEPRECATED_HOSTS_SELECTOR_SUFFIX =
   " DEPRECATED: use `clients`, which means exactly this.";
-
-/**
- * A caller-input problem the SDK can see without a round trip. Carries the same
- * `VALIDATION_ERROR` code the API would return, so surfaces render it
- * identically. Guards live in `execute` bodies, not `.refine()`, because the
- * CLI calls `execute` directly and never parses the input schema — a
- * refine-only guard would simply not fire there.
- */
-function operationInputError(message: string): PlatformApiError {
-  return new PlatformApiError(message, "VALIDATION_ERROR", { status: 0 });
-}
 
 /**
  * Fold a `client` / `clients` selector onto the `host` / `hosts` field every
@@ -3062,63 +3075,6 @@ async function resolveSuiteEnvironmentTargets(
     });
   }
   return resolved;
-}
-
-/**
- * Display names for a suite's attached environment ids.
- *
- * BEST EFFORT on purpose: these names are read by people, never matched on, so
- * a listing that fails or omits a row costs a nicer message and nothing else.
- * Failing the launch over it would trade a real run for a cosmetic lookup.
- */
-async function environmentNamesFor(
-  client: PlatformApiClient,
-  project: PlatformProject,
-  environmentIds: string[],
-  signal: AbortSignal | undefined
-): Promise<Map<string, string>> {
-  if (environmentIds.length === 0) return new Map();
-  try {
-    const page = await client.listEnvironments(
-      { projectId: project.id },
-      { signal }
-    );
-    const wanted = new Set(environmentIds);
-    return new Map(
-      page.items
-        .filter((environment) => wanted.has(environment.id) && environment.name)
-        .map((environment) => [environment.id, environment.name])
-    );
-  } catch {
-    return new Map();
-  }
-}
-
-/** Host selectors → attached hosts, by id or unique name. Same rationale as
- *  the environment resolver above: validated here so a fan-out cannot spend on
- *  its first targets and then discover a bad one. */
-function resolveSuiteHostTargets(
-  suite: PlatformEvalSuite,
-  detail: PlatformEvalSuiteDetail | undefined,
-  selectors: string[]
-): RunTargetHost[] {
-  if (selectors.length === 0) return [];
-  const hosts = detail?.hosts ?? [];
-  if (hosts.length === 0) {
-    throw operationInputError(
-      `Suite "${
-        suite.name ?? suite.id
-      }" has no attached hosts, so there is no host to run. Attach one to the suite first, or omit the host selector.`
-    );
-  }
-  return selectors.map((selector) =>
-    resolveByIdOrName(
-      hosts,
-      selector,
-      "Suite host",
-      `suite "${suite.name ?? suite.id}"`
-    )
-  );
 }
 
 /** The knobs both launch shapes forward, in the wire's own vocabulary. */
@@ -4482,7 +4438,7 @@ export const runEvalSuiteOperation: PlatformOperation<
   name: "run_eval_suite",
   title: "Run MCPJam eval suite",
   description:
-    "Start an asynchronous rerun of an existing eval suite. Returns immediately; poll get_eval_run with the returned project and runId until status is completed, failed, or cancelled. Eval runs execute LLM iterations and CONSUME the organization's credits or configured provider keys.\n\nWHICH TARGET RUNS is explicit, never guessed. A suite with nothing attached runs its saved server selection. A suite with exactly ONE attached environment or host runs against that one automatically. A suite with SEVERAL fails with TARGET_REQUIRED, listing them — name one with environment or host, several with environments or hosts, or every one with allAttached. Each named target is a separate paid run.\n\nA multi-target launch returns a group receipt: outcome (started | partial | failed), startedCount, failedCount, and one entry per target that either started (with its runId) or failed (with its reason). A failed target does not abort its siblings, so read outcome rather than assuming everything started.",
+    "Start an asynchronous rerun of an existing eval suite. Returns immediately with the project and runId; the run status progresses to completed, failed, or cancelled. Eval runs execute LLM iterations and CONSUME the organization's credits or configured provider keys.\n\nWHICH TARGET RUNS is explicit, never guessed. A suite with nothing attached runs its saved server selection. A suite with exactly ONE attached environment or host runs against that one automatically. A suite with SEVERAL fails with TARGET_REQUIRED, listing them — name one with environment or host, several with environments or hosts, or every one with allAttached. Each named target is a separate paid run.\n\nA multi-target launch returns a group receipt: outcome (started | partial | failed), startedCount, failedCount, and one entry per target that either started (with its runId) or failed (with its reason). A failed target does not abort its siblings, so read outcome rather than assuming everything started.",
   readOnly: false,
   risk: "spend",
   permalink: derivePermalinks((result) => {
@@ -4618,10 +4574,13 @@ export const runEvalSuiteOperation: PlatformOperation<
       input.environment ? [input.environment] : input.environments ?? [],
       signal
     );
-    const selectedHosts = resolveSuiteHostTargets(
+    const selectedClients = await resolveSuiteHostTargets(
+      client,
+      project,
       suite,
       detail,
-      input.host ? [input.host] : input.hosts ?? []
+      input.host ? [input.host] : input.hosts ?? [],
+      signal
     );
 
     // Attached environments arrive as bare IDS — the suite detail carries no
@@ -4663,8 +4622,11 @@ export const runEvalSuiteOperation: PlatformOperation<
             id: host.id,
             name: host.name,
           })),
-          selectedEnvironments,
-          selectedHosts,
+          selectedEnvironments: [
+            ...selectedEnvironments,
+            ...selectedClients.environments,
+          ],
+          selectedHosts: selectedClients.hosts,
           ...(input.allAttached !== undefined
             ? { allAttached: input.allAttached }
             : {}),
@@ -5073,7 +5035,7 @@ export const runEvalCaseOperation: PlatformOperation<
   name: "run_eval_case",
   title: "Run a single MCPJam eval case",
   description:
-    "Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). For a suite with attached project environments, pass environment to choose which one runs; for one with attached hosts, pass host so the run is stamped with that host's configuration. Returns a runId immediately; poll get_eval_run until terminal. CONSUMES credits like any eval run.",
+    "Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (with status, iterations, and step results available like a full run). For a suite with attached project environments, pass environment to choose which one runs; for one with attached hosts, pass host so the run is stamped with that host's configuration. Returns a runId immediately; execution continues asynchronously until the run reaches a terminal status. CONSUMES credits like any eval run.",
   readOnly: false,
   risk: "spend",
   permalink: derivePermalinks((result) => [
@@ -5155,16 +5117,21 @@ export const runEvalCaseOperation: PlatformOperation<
     // The suite detail is read ONLY when a host was named — a case run is
     // otherwise unchanged, and paying for an extra request on every call to
     // support an optional selector would be a tax on the common path.
-    const host = input.host
-      ? resolveSuiteHostTargets(
+    const selectedClients = input.host
+      ? await resolveSuiteHostTargets(
+          client,
+          project,
           suite,
           await client.getEvalSuite(
             { projectId: project.id, suiteId: suite.id },
             { signal }
           ),
-          [input.host]
-        )[0]!
+          [input.host],
+          signal
+        )
       : undefined;
+    const host = selectedClients?.hosts[0];
+    const clientEnvironment = selectedClients?.environments[0];
     const created = await createEvalRunOrReportCompose(composed, () =>
       client.createEvalRun(
         {
@@ -5187,6 +5154,7 @@ export const runEvalCaseOperation: PlatformOperation<
             ...(composed ? { environmentId: composed.environment.id } : {}),
             ...(environment ? { environmentId: environment.id } : {}),
             ...(host ? { namedHostId: host.id } : {}),
+            ...(clientEnvironment ? { environmentId: clientEnvironment.id } : {}),
             ...(ephemeralLaunch ? { ephemeralEnvironment: true } : {}),
             ...(input.iterations !== undefined ||
             input.repetitions !== undefined
@@ -5338,7 +5306,9 @@ const evalCaseInput = z.object({
   matchOptions: z
     .record(z.string(), z.any())
     .optional()
-    .describe("Per-case matcher options (advanced)."),
+    .describe(
+      'Per-case tool-call match options, as on create_eval_case: toolCallOrder (any | in-order | exact), extraToolCalls ("unlimited" or a max count), arguments (ignore | partial | exact).'
+    ),
   // CHECK is the user-facing word for this rule: the API field name, the UI
   // section, and the SDK's own `CheckPolicy` / `checkRole` / `checkSeverity`
   // prefix. An agent that authors a suite here and then edits one of its own
@@ -5469,7 +5439,7 @@ export const createEvalSuiteOperation: PlatformOperation<
   name: "create_eval_suite",
   title: "Create MCPJam eval suite",
   description:
-    "Create a runnable eval suite from authored test cases. Specify a name, a default model, the project HTTP servers it runs against, optionally the clients (hosts) to attach it to, and one or more cases. Each case is an ordered `steps` array (prompt / toolCall / interact / assert) plus optional expected-output / negative-test. Returns the new suite id; run it with run_eval_suite. Does NOT run the suite — authoring is free. Servers must be HTTP; stdio servers can never run hosted.",
+    "Create a runnable eval suite from authored test cases. Specify a name, a default model, the project HTTP servers it runs against, optionally the clients (hosts) to attach it to, and one or more cases. Each case is an ordered `steps` array (prompt / toolCall / interact / assert) plus optional expected-output / negative-test. Returns the new suite id for subsequent execution. Does NOT run the suite — authoring is free. Servers must be HTTP; stdio servers can never run hosted.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     {
@@ -5819,10 +5789,13 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
     // suite-base derivation, which a host config's own model/harness can
     // contradict. `testSuites:getRunDisclosure` now takes `namedHostId`, so
     // the refusal is gone and the host axis is disclosed for real.
-    const selectedHosts = resolveSuiteHostTargets(
+    const selectedClients = await resolveSuiteHostTargets(
+      client,
+      project,
       suite,
       detail,
-      input.host ? [input.host] : []
+      input.host ? [input.host] : [],
+      signal
     );
     const plan = computeRunTargets({
       attachedEnvironments: (detail.environmentIds ?? []).map((id) => ({
@@ -5835,8 +5808,11 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
         id: host.id,
         name: host.name,
       })),
-      selectedEnvironments,
-      selectedHosts,
+      selectedEnvironments: [
+        ...selectedEnvironments,
+        ...selectedClients.environments,
+      ],
+      selectedHosts: selectedClients.hosts,
     });
     if (plan.kind === "target-required") {
       // `readOnly` wording: this operation spends nothing, and has no
@@ -6027,7 +6003,7 @@ const updateEvalSuiteInput = z
               .enum(["advisory", "gating", "required"])
               .optional()
               .describe(
-                "Whether the judge decides the verdict. `required` (legacy spelling: `gating`) is accepted only on a calibrated judge, and only where the deployment allows it."
+                "Whether the judge decides the verdict. `required` (legacy spelling: `gating`) lets the judge fail a run."
               ),
             severity: z
               .literal("warn")
@@ -6136,7 +6112,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
   name: "update_eval_suite",
   title: "Update MCPJam eval suite",
   description:
-    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature, plus modelSelection or the reasoningEffort shorthand for a saved model choice and its effort), hosts, minimum accuracy, minimum iterations, match options, checks, LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available), and the per-case grading fields (repetitions/passThreshold/validity — FRACTIONS). minimumAccuracy is the suite-wide accuracy threshold, a PERCENT over the whole run; passThreshold is the per-case criterion, a fraction each case must meet over its own iterations. They are different criteria, not two units of one number — ten cases, nine always passing and one always failing, passes a 90% suite-wide bar and fails a 0.9 per-case one — and a read's settings.policy says which one the suite uses. The operation reads the current criterion first and refuses repetitions (including the repetitions/passThreshold pair) on a suite-wide suite, and minimumIterations on a per-case suite. Changing criterion is API-only for now. Only the fields you pass change.",
+    "Update selected settings of an existing eval suite; omitted fields stay unchanged. Supports name, description, servers, computer image, execution configuration, client attachments, match options, checks and grading settings. Does not start a run. minimumAccuracy is a suite-wide percentage; passThreshold is a per-case fraction. The current grading criterion determines which edits are valid: repetitions and passThreshold cannot change a suite-wide criterion, and minimumIterations cannot change a per-case criterion. Changing criterion is API-only. Judge autoRun controls automatic grading; enabled alone only makes the judge available. Supply either clients or the deprecated hosts alias, never both.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     { type: "eval_suite", id: result.id, ...projectIdOf(result) },
@@ -7528,7 +7504,7 @@ export const listEvalSuiteRevisionsOperation: PlatformOperation<
   name: "list_eval_suite_revisions",
   title: "List MCPJam eval suite revisions",
   description:
-    "List a suite's settings history, newest first: one entry per committed edit, with who made it, which stored fields moved, the note they left, how many runs were launched against it, and the revision group that ties one request's writes together. Rows carry no configuration snapshots. Pass a revisionNumber back as expectedRevisionNumber on update_eval_suite to make an edit a compare-and-set.",
+    "List a suite's settings history, newest first: one entry per committed edit, with who made it, which stored fields moved, the note they left, how many runs were launched against it, and the revision group that ties one request's writes together. Rows carry no configuration snapshots. The revisionNumber is the concurrency token for compare-and-set edits.",
   readOnly: true,
   // The suite, not the revision: a revision has no page of its own, and the
   // settings sheet's history panel is reached from the suite.
@@ -8022,7 +7998,7 @@ export const proposeEvalDescriptionRewriteOperation: PlatformOperation<
   name: "propose_eval_description_rewrite",
   title: "Propose an eval description rewrite",
   description:
-    "Draft a rewritten tool description from a finished eval run's failed trials: the tool's current description and input schema, sibling tool names, the expected vs observed calls, and the failing prompts. Included with MCPJam; no customer credits consumed; subject to MCPJam's daily analysis budget. Returns immediately with a proposing receipt — poll get_eval_description_experiment until status is proposed (or failed). Does not launch runs, write a verdict, or change a gate. Report-only throughout.",
+    "Draft a rewritten tool description from a finished eval run's failed trials: the tool's current description and input schema, sibling tool names, the expected vs observed calls, and the failing prompts. Included with MCPJam; no customer credits consumed; subject to MCPJam's daily analysis budget. Returns immediately with a proposing receipt; the experiment status progresses to proposed or failed. Does not launch runs, write a verdict, or change a gate. Report-only throughout.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -8101,7 +8077,7 @@ export const startEvalDescriptionExperimentOperation: PlatformOperation<
   name: "start_eval_description_experiment",
   title: "Start an eval description experiment",
   description:
-    "Launch the two-arm description-rewrite experiment: one ORIGINAL replay of the source run and one REWRITE replay that applies the proposed description. SPENDS eval-iteration credits — plannedTrials = cases × iterations × 2, refused over the cap (default 200, hard 400) — plus whatever the suite's judge auto-run costs on both arms. Returns immediately with a launching receipt; poll get_eval_description_experiment. Report-only: nothing writes result, a gate, or a verdict. Emulated engine only in v1; a harness source is refused.",
+    "Launch the two-arm description-rewrite experiment: one ORIGINAL replay of the source run and one REWRITE replay that applies the proposed description. SPENDS eval-iteration credits — plannedTrials = cases × iterations × 2, refused over the cap (default 200, hard 400) — plus whatever the suite's judge auto-run costs on both arms. Returns immediately with a launching receipt; subsequent status belongs to the experiment record. Report-only: nothing writes result, a gate, or a verdict. Emulated engine only in v1; a harness source is refused.",
   readOnly: false,
   risk: "spend",
   permalink: noPermalink("mutation-only"),
@@ -9408,7 +9384,7 @@ const sendChatMessageInput = z.object({
     .min(1)
     .optional()
     .describe(
-      'Provider-prefixed model id, e.g. "anthropic/claude-sonnet-5". Required on a first turn. A bare id is REJECTED rather than guessed, because an unprefixed id is indistinguishable from a local Ollama model.'
+      'Provider-prefixed model id, e.g. "anthropic/claude-sonnet-5". Optional on a first turn: the environment model, then the client model, supplies the default; the resolved model is pinned for continuations. A bare id is REJECTED rather than guessed, because an unprefixed id is indistinguishable from a local Ollama model.'
     ),
   hostId: z
     .string()
@@ -9428,11 +9404,10 @@ const sendChatMessageInput = z.object({
     ),
   serverIds: z
     .array(z.string().trim().min(1))
-    .min(1)
     .max(20)
     .optional()
     .describe(
-      "Run against these project servers. Mutually exclusive with environmentId. First turn only."
+      "Run against these project servers; [] explicitly selects no MCP servers. Mutually exclusive with environmentId, including when empty. First turn only; continuations retain this selection."
     ),
   systemPrompt: z.string().max(8000).optional().describe("First turn only."),
   temperature: z
@@ -11316,7 +11291,7 @@ export const getEnvironmentCapabilitiesOperation: PlatformOperation<
   name: "get_project_environment_capabilities",
   title: "Check what an MCPJam deployment's environment surface supports",
   description:
-    "Report which environment features this MCPJam deployment accepts. Call it before sending a model override or a secret grant: this SDK ships independently of the platform, and a field an older deployment does not know is a hard validation error there rather than a silently ignored one. A deployment too old to answer reports false for everything, which is the correct assumption.",
+    "Report which environment features this MCPJam deployment accepts. The SDK ships independently of the platform; model overrides or secret grants unknown to an older deployment cause a hard validation error rather than being silently ignored. A deployment too old to answer reports false for everything, which is the correct assumption.",
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",
@@ -11474,7 +11449,7 @@ const createEnvironmentInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Optional sandbox image (see the images operations) to pin: eval runs in this environment boot a fresh sandbox from it. Must be project-shared; personal drafts are rejected — promote first."
+      "Optional sandbox image to pin: eval runs in this environment boot a fresh sandbox from it. Must be project-shared; personal drafts are rejected."
     ),
 });
 export type CreateEnvironmentInput = z.infer<typeof createEnvironmentInput>;
@@ -11608,7 +11583,7 @@ const composeStackFields = {
     .min(1)
     .optional()
     .describe(
-      "Sandbox image (name or ID) to pin, so runs boot a fresh computer from it. Must be project-shared; promote a personal draft first."
+      "Sandbox image (name or ID) to pin, so runs boot a fresh computer from it. Must be project-shared; personal drafts are rejected."
     ),
   skills: skillSelectionInput.optional(),
   secrets: secretSelectionInput.optional(),
@@ -12094,7 +12069,7 @@ export const updateEnvironmentOperation: PlatformOperation<
   name: "update_project_environment",
   title: "Update an MCPJam project environment",
   description:
-    "Edit a project environment. Only the fields you pass change; pass null for serverAttachmentId, modelId, modelSelection, skillSelection, secretSelection, pluginVersionIds, or sandboxImageId to clear them. `reasoningEffort` edits the effort on the environment's existing model selection (refused when it has none — send `modelSelection`). Requires `expectedRevision` (read it first with get_project_environment) and project admin.",
+    "Edit a project environment. Only the fields you pass change; pass null for serverAttachmentId, modelId, modelSelection, skillSelection, secretSelection, pluginVersionIds, or sandboxImageId to clear them. `reasoningEffort` edits the effort on the environment's existing model selection (refused when it has none — send `modelSelection`). Requires the current environment revision as `expectedRevision` and project admin.",
   readOnly: false,
   permalink: derivePermalinks((result) => [environmentRef(result)]),
   inputSchema: updateEnvironmentInput,
@@ -12317,7 +12292,7 @@ export const listProjectSkillsOperation: PlatformOperation<
   name: "list_project_skills",
   title: "List MCPJam project skills",
   description:
-    'List the Cloud Skills visible to you in an MCPJam project — the project-shared ones plus your own personal drafts. Use this to obtain the skill IDs that environments pin via skillSelection and that eval runs pin via --compose-skill. Only `sharing: "project"` skills can be pinned; each row\'s `pinnability` says whether that skill is eligible and, if not, why.',
+    'List the Cloud Skills visible to you in an MCPJam project — the project-shared ones plus your own personal drafts. Includes skill IDs for environment skillSelection and composed eval runs. Only `sharing: "project"` skills can be pinned; each row\'s `pinnability` says whether that skill is eligible and, if not, why.',
   readOnly: true,
   permalink: noPermalink(
     "route-not-addressable",
@@ -12723,7 +12698,7 @@ export const buildImageOperation: PlatformOperation<
   name: "build_sandbox_image",
   title: "Build a sandbox image",
   description:
-    "Trigger a build of the sandbox image. Async — poll list_sandbox_image_builds for status.",
+    "Trigger an asynchronous build of the sandbox image. Status is recorded on the image build.",
   readOnly: false,
   permalink: noPermalink(
     "route-not-addressable",
@@ -13106,7 +13081,7 @@ export const listGoalsOperation: PlatformOperation<
   name: "list_goals",
   title: "List MCPJam goals",
   description:
-    "List the goals in an MCPJam project. A goal is one persona pursuing a task against one or more environments — the unit that Swarms actually executes. Use the returned id with list_goal_runs.",
+    "List the goals in an MCPJam project. A goal is one persona pursuing a task against one or more environments — the unit that Swarms actually executes. Each goal includes its id for identifying its runs.",
   readOnly: true,
   permalink: noPermalink(
     "route-not-addressable",
@@ -13371,7 +13346,7 @@ export const launchGoalRunOperation: PlatformOperation<
   risk: "spend",
   title: "Launch an MCPJam goal run",
   description:
-    "Start a goal run and return immediately with its id — a fan-out can take hours, so nothing here waits for it. Poll get_goal_run, or list_goal_run_sessions for per-session detail. Idempotent on idempotencyKey: a retry with the same key does not run the goal twice. Behind the sandboxes-enabled beta.",
+    "Start a goal run and return immediately with its id — a fan-out can take hours, so nothing here waits for it. Run status and per-session details become available as execution progresses. Idempotent on idempotencyKey: a retry with the same key does not run the goal twice. Behind the sandboxes-enabled beta.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     {
@@ -13483,6 +13458,71 @@ export const getGoalOperation: PlatformOperation<GetGoalInput, GetGoalResult> =
     },
   };
 
+/**
+ * A goal's judge, in the vocabulary `update_eval_suite`'s `settings.judge`
+ * uses. STRICT like `modelSelectionInput`: storage's spellings (`judgeModel`,
+ * `judgeSelection`) are refused rather than dropped.
+ */
+const goalJudgeInput = z
+  .object({
+    enabled: z
+      .boolean()
+      .optional()
+      .describe(
+        "Make the judge available on this goal. On its own this grades nothing — autoRun is what makes grading happen."
+      ),
+    autoRun: z
+      .boolean()
+      .optional()
+      .describe(
+        "Grade every session automatically as each run completes. SPENDS on each run."
+      ),
+    model: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "Judge model id. `mcpjam/<vendor>/<model>` names a hosted model."
+      ),
+    modelSelection: z
+      .union([
+        modelSelectionInput,
+        // A STORED legacy selection, as get_goal can return one: accepted so
+        // a read can be sent back, never a way to pick a new judge.
+        z
+          .object({
+            source: z.literal("legacy"),
+            modelId: z.string().trim().min(1),
+            provider: z.string().min(1).optional(),
+          })
+          .strict(),
+      ])
+      .optional()
+      .describe(
+        "The judge's saved model choice (source, connection, effort). Must name `model` when both are sent; sent alone, it names the model."
+      ),
+    modelSelectionOrigin: z
+      .literal("backfill")
+      .optional()
+      .describe(
+        "Read-only marker from get_goal. Accepted so a read can be sent back; it changes nothing."
+      ),
+    threshold: z
+      .number()
+      .min(0)
+      .max(1)
+      .optional()
+      .describe("Advisory pass threshold, 0–1."),
+  })
+  .strict()
+  // The API refuses a judge that changes nothing; refusing it here reports
+  // that before the request goes out.
+  .refine(
+    (value) => Object.keys(value).some((key) => key !== "modelSelectionOrigin"),
+    { message: "Provide at least one judge field." }
+  );
+
 const createGoalInput = z.object({
   project: z
     .string()
@@ -13525,6 +13565,11 @@ const createGoalInput = z.object({
     .optional()
     .describe(
       "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Use a test account."
+    ),
+  judge: goalJudgeInput
+    .optional()
+    .describe(
+      "The goal-completion judge that grades each session against the goal. Omit it for the managed defaults (enabled, automatic, the default judge model)."
     ),
   idempotencyKey: z.string().trim().min(1).max(200).optional(),
 });
@@ -13570,6 +13615,7 @@ export const createGoalOperation: PlatformOperation<
         ...(input.environmentIds !== undefined
           ? { environmentIds: input.environmentIds }
           : {}),
+        ...(input.judge !== undefined ? { judge: input.judge } : {}),
       },
       {
         signal,
@@ -13596,6 +13642,12 @@ const updateGoalInput = goalSelectorInput.extend({
     .optional()
     .describe(
       "Attempt prerequisite creation with creation-like tools annotated non-destructive; requests prefixed names and leaves created data. Off unless set. Replacing iterations/maxTurns without this field clears it; send its current value to preserve it. Use a test account."
+    ),
+  judge: goalJudgeInput
+    .nullable()
+    .optional()
+    .describe(
+      "Only the judge fields you pass change; a new model drops the stored selection unless it names the same model. null clears the judge back to the managed defaults."
     ),
 });
 
@@ -13640,6 +13692,7 @@ export const updateGoalOperation: PlatformOperation<
         ...(input.setupWrites !== undefined
           ? { setupWrites: input.setupWrites }
           : {}),
+        ...(input.judge !== undefined ? { judge: input.judge } : {}),
       },
       { signal }
     );
@@ -13757,7 +13810,7 @@ export const listJourneysOperation: PlatformOperation<
   name: "list_journeys",
   title: "List MCPJam journeys",
   description:
-    "List the journeys in an MCPJam project. A journey is one persona pursuing a goal against one or more environments — the unit that Swarms actually executes. Use the returned id with list_journey_runs.",
+    "List the journeys in an MCPJam project. A journey is one persona pursuing a goal against one or more environments — the unit that Swarms actually executes. Each journey includes its id for identifying its runs.",
   readOnly: true,
   permalink: noPermalink(
     "route-not-addressable",
@@ -14021,7 +14074,7 @@ export const launchJourneyRunOperation: PlatformOperation<
   risk: "spend",
   title: "Launch an MCPJam journey run",
   description:
-    "Start a journey run and return immediately with its id — a fan-out can take hours, so nothing here waits for it. Poll get_journey_run, or list_journey_run_sessions for per-session detail. IDEMPOTENT on idempotencyKey: pass one, because a launch spends model credits and a retry must not run the journey twice. Behind the sandboxes-enabled beta.",
+    "Start a journey run and return immediately with its id — a fan-out can take hours, so nothing here waits for it. Run status and per-session details become available as execution progresses. IDEMPOTENT on idempotencyKey: pass one, because a launch spends model credits and a retry must not run the journey twice. Behind the sandboxes-enabled beta.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     {
@@ -16324,7 +16377,7 @@ export const getSwarmRunInsightsOperation: PlatformOperation<
   name: "get_swarm_run_insights",
   title: "Get an MCPJam swarm run's insights",
   description:
-    "The model's analysis of a whole swarm run — the batch of sibling goal runs launched together — if one has been requested. Poll this after request_swarm_run_insights; status goes pending → completed. Not-found means nobody has requested it, which is different from 'requested and still working'. " +
+    "The model's analysis of a whole swarm run — the batch of sibling goal runs launched together — if one has been requested. An existing analysis progresses from pending to completed. Not-found means nobody has requested it, which is different from 'requested and still working'. " +
     INCLUDED_ANALYSIS_FAILURE_NOTE,
   readOnly: true,
   permalink: derivePermalinks((result) => [
@@ -16376,7 +16429,7 @@ export const requestSwarmRunInsightsOperation: PlatformOperation<
   name: "request_swarm_run_insights",
   title: "Request MCPJam swarm run insights",
   description:
-    "Ask a model to analyze a whole swarm run. Returns immediately with status pending; poll get_swarm_run_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with user-testing insights, so a request here takes one from there. Run scorecards (get_goal_run_scorecard) cost no quota.",
+    "Ask a model to analyze a whole swarm run. Returns immediately with status pending; the analysis continues asynchronously. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with user-testing insights, so a request here takes one from there. Run scorecards (get_goal_run_scorecard) cost no quota.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -16771,7 +16824,7 @@ export const publishStudyOperation: PlatformOperation<
   risk: "exposure",
   title: "Publish a project environment as a study",
   description:
-    "Publish a project environment so people outside the project can talk to it through a share link. Optional name, description and mode apply atomically at create time, so the study is never briefly live in a wider mode than asked for. Each call creates a new study with its own share link — an environment can back several — and a name the project already uses is refused with a conflict rather than reusing that study. Requires project admin.",
+    "Publish a project environment as a study with a share link, subject to its access mode. Requires project admin. Accepts optional name, description and mode; the returned study contains the actual settings. If overridesIgnored is true, the backend did not apply those optional settings: a requested restricted mode is not proof that the returned link is restricted. A conflicting study name is refused. Publishing exposes the environment to people allowed by the returned study's access mode.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     // The study's own page. `result.study.link` is the token-bearing GUEST
@@ -17342,7 +17395,7 @@ export const requestStudyInsightsOperation: PlatformOperation<
   name: "request_study_insights",
   title: "Request insights for a study",
   description:
-    "Ask a model to analyze the study's current window. Returns immediately with the windowId and status pending; poll get_study_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with swarm-run insights. A 409 means the window has not been mined yet.",
+    "Ask a model to analyze the study's current window. Returns immediately with the windowId and status pending; the analysis continues asynchronously. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with swarm-run insights. A 409 means the window has not been mined yet.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -18110,7 +18163,7 @@ export const getUserTestingSignalsOperation: PlatformOperation<
   name: "get_user_testing_signals",
   title: "Get a user-testing scenario's current window signals",
   description:
-    "The scenario's live analysis window, and the `windowId` you need to read its insights. Call this first when you want insights for 'the current window'.",
+    "The scenario's live analysis window and its `windowId`, which identifies the window associated with its insights.",
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",
@@ -18210,7 +18263,7 @@ export const requestUserTestingInsightsOperation: PlatformOperation<
   name: "request_user_testing_insights",
   title: "Request insights for a user-testing scenario",
   description:
-    "Ask a model to analyze the scenario's current window. Returns immediately with the windowId and status pending; poll get_user_testing_insights. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with swarm wave insights. A 409 means the window has not been mined yet.",
+    "Ask a model to analyze the scenario's current window. Returns immediately with the windowId and status pending; the analysis continues asynchronously. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with swarm wave insights. A 409 means the window has not been mined yet.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -18683,7 +18736,7 @@ export const connectProjectServerOperation: PlatformOperation<
   name: "connect_project_server",
   title: "Connect an MCP server to a project",
   description:
-    "Connect an MCP server URL to an MCPJam project. Discovers whether the server needs OAuth, saves it to the project, and returns a connection request. When the next step belongs to a person — choosing a project, or granting consent — the result carries an authorization link meant only for the requester, since opening it acts on that person's connection request. Poll get_project_server_connection_status until the status is ready or failed. Uses MCPJam's server-connections API (POST /server-connections, documented at https://docs.mcpjam.com/api-reference/server-connections/connect-an-mcp-server); authorization follows the MCP authorization specification (https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).",
+    "Connect an MCP server URL to an MCPJam project. Discovers whether the server needs OAuth, saves it to the project, and returns a connection request. When the next step belongs to a person — choosing a project, or granting consent — the result carries an authorization link meant only for the requester, since opening it acts on that person's connection request. The connection request progresses to ready or failed. Uses MCPJam's server-connections API (POST /server-connections, documented at https://docs.mcpjam.com/api-reference/server-connections/connect-an-mcp-server); authorization follows the MCP authorization specification (https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).",
   readOnly: false,
   permalink: derivePermalinks((result) =>
     // The saved server, once one exists. The connection's own `handoffUrl` is
@@ -18950,7 +19003,7 @@ export const rotateShareLinkOperation: PlatformOperation<
 const CONNECTION_STATUS_OP = "get_project_server_connection_status" as const;
 
 const INSTALL_NOT_CONNECT_DESCRIPTION =
-  "Install writes a project `servers` row and provenance and stops — it is NOT a live connection. Follow with get_project_server_connection_status. A first-time OAuth install returns a browser connect-link in nextSteps.connectLinkUrl (or nextSteps.connectLinkError when minting it failed); a reconnected install returns no link — check the connection status and use connect_project_server if it is not connected.";
+  "Install writes a project `servers` row and provenance and stops — it is NOT a live connection. Connection readiness is recorded separately on the server connection request. A first-time OAuth install returns a browser connect-link in nextSteps.connectLinkUrl (or nextSteps.connectLinkError when minting it failed); a reconnected install returns no link. An installed server may still require a separate connection request.";
 
 async function nextStepsForInstall(
   client: PlatformApiClient,
@@ -19014,7 +19067,7 @@ export const searchRegistryDirectoryOperation: PlatformOperation<
   name: "search_registry_directory",
   title: "Search the MCP directory",
   description:
-    "Search scraped MCP directories (Claude, ChatGPT, and any future source). `source` is a free string; omit it or pass `all` to search every source. Discover source ids with list_registry_directory_sources — do not hardcode source names. Prefer a matching organization card from list_registry_servers when one exists: those carry config someone in the org already set up.",
+    "Search scraped MCP directories (Claude, ChatGPT, and any future source). `source` is a free string; omit it or pass `all` to search every source. Source ids reflect the currently available directories. Organization registry cards are separate from these scraped directory results and may carry preconfigured connection settings.",
   readOnly: true,
   permalink: noPermalink(
     "external-resource",

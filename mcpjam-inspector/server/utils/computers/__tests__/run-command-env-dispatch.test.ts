@@ -17,8 +17,9 @@ const connectMock = vi.fn(async () => ({
   files: { makeDir: makeDirMock },
 }));
 
+vi.mock("../attach-sandbox.js", () => ({ attachRunningSandbox: () => connectMock() }));
+
 vi.mock("e2b", () => ({
-  Sandbox: { connect: (...args: unknown[]) => connectMock(...(args as [])) },
   CommandExitError: class CommandExitError extends Error {
     exitCode = 2;
     stdout = "";

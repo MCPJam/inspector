@@ -76,7 +76,12 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ToolSet, UIMessageChunk } from "ai";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
 import { isSkillToolName } from "@/shared/eval-matching";
+import { stampNativePresentation, PRESENTATION_SIGNATURE_FIELD } from "./harness/forwarding/native-transcript.js";
 import { hydratedToolResultOutput } from "@/shared/hydrated-tool-output";
+import {
+  readMcpToolOriginServerId,
+  readMcpOriginalResult,
+} from "@/shared/mcp-tool-origin-metadata";
 import { UI_CONTEXT_PART_TYPE } from "@/shared/ui-context";
 import {
   canonicalDigest,
@@ -100,6 +105,7 @@ export const REASONING_SIGNATURE_FIELD = "reasoningSig";
 export const FILE_SIGNATURE_FIELD = "fileSig";
 export const CALL_SIGNATURE_FIELD = "callSig";
 export const RESULT_SIGNATURE_FIELD = "resultSig";
+
 
 /**
  * The mark on content the server could not verify as its own. On a tool
@@ -254,7 +260,7 @@ function hmac(key: Buffer, prefix: string, fields: readonly unknown[]): string {
 }
 
 type ItemKind = "assistant-text" | "assistant-reasoning" | "assistant-file";
-type ToolKind = "tool-call" | "tool-result";
+type ToolKind = "tool-call" | "tool-result" | "app-resource-source";
 
 const ITEM_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -568,6 +574,16 @@ export function verifyToolResult(
   );
 }
 
+/** Host-only account source attestation has a separate purpose from server tool results. */
+export function signAppResourceSource(ctx: ProvenanceContext, source: unknown): string | null {
+  const digest = canonicalDigest(source);
+  return digest ? toolSignature(ctx, "app-resource-source", [digest]) : null;
+}
+export function verifyAppResourceSource(ctx: ProvenanceContext, source: unknown, signature: unknown): boolean {
+  const digest = canonicalDigest(source);
+  return checkToolSignature(ctx, "app-resource-source", digest ? [digest] : null, signature);
+}
+
 // ── metadata helpers ───────────────────────────────────────────────────────
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -639,6 +655,7 @@ function mark(
 /** A tool call the signer knows of. */
 export interface KnownToolCall {
   toolName: string;
+  serverId?: string;
   input: unknown;
   /**
    * The history marks this call as not issued by the server
@@ -669,7 +686,12 @@ export function toolCallLookupFor(
           continue;
         }
         // The latest call with this id names it.
-        found = { toolName: part.toolName, input: part.input };
+        const serverId = readMcpToolOriginServerId(part.providerOptions);
+        found = {
+          toolName: part.toolName,
+          input: part.input,
+          ...(serverId ? { serverId } : {}),
+        };
         if (isMarkedUnverifiedCall(part.providerOptions)) unverified = true;
       }
     }
@@ -921,10 +943,20 @@ export function createUiChunkProvenanceSigner(
         return [
           {
             ...chunk,
-            providerMetadata: withMcpjamField(
-              chunk.providerMetadata,
-              RESULT_SIGNATURE_FIELD,
-              signature,
+            providerMetadata: stampNativePresentation(
+              ctx,
+              {
+                toolCallId: chunk.toolCallId,
+                toolName: call.toolName,
+                input: call.input ?? {},
+              },
+              withMcpjamField(
+                chunk.providerMetadata,
+                RESULT_SIGNATURE_FIELD,
+                signature,
+              ),
+              undefined,
+              signToolResult,
             ) as never,
           },
         ];
@@ -1077,9 +1109,33 @@ function verifyUiToolPart(
     }
   }
   const resultUnverified = !callVerified || (withResult && !resultVerified);
+  const checkedPresentation = (metadata: unknown) => {
+    const original = readMcpOriginalResult(metadata);
+    if (original === undefined) return metadata;
+    const valid =
+      ctx &&
+      !resultUnverified &&
+      toolName &&
+      toolCallId &&
+      toolPartSignatures(part, PRESENTATION_SIGNATURE_FIELD).some((signature) =>
+        verifyToolResult(
+          ctx,
+          {
+            toolCallId,
+            toolName,
+            input: toolInputOfUiPart(part) ?? {},
+            output: original,
+          },
+          signature,
+        ),
+      );
+    return valid
+      ? metadata
+      : withMcpjamField(metadata, "originalResult", undefined);
+  };
   const marked = (metadata: unknown) =>
     mark(
-      mark(metadata, resultUnverified),
+      mark(checkedPresentation(metadata), resultUnverified),
       !callVerified,
       CALL_PROVENANCE_FIELD,
     );
@@ -1416,7 +1472,17 @@ export function signHistoryForPersistence(
         };
         return {
           ...part,
-          providerOptions: { ...merged, mcpjam },
+          providerOptions: stampNativePresentation(
+            ctx,
+            {
+              toolCallId: part.toolCallId,
+              toolName: part.toolName,
+              input: call.input ?? {},
+            },
+            { ...merged, mcpjam },
+            "result" in part ? part.result : undefined,
+            signToolResult,
+          ),
         } as typeof part;
       });
       return changed ? ({ ...message, content } as ModelMessage) : message;

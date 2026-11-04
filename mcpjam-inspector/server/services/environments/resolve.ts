@@ -225,6 +225,12 @@ export async function resolveEnvironmentForLaunch(
     runtimeVenue?: "local" | "hosted";
     /** The launch's own declaration, when it has made one. */
     runnerCapabilities?: readonly string[];
+    /**
+     * GitHub check runs replace every server, so a deleted group server is not
+     * refused and the group comes back as stored: its ids may name deleted
+     * servers, so never connect them.
+     */
+    serversReplaced?: boolean;
   },
 ): Promise<ResolvedEnvironmentForLaunch> {
   // A local preview says which harnesses this runner can run here, so the
@@ -408,6 +414,9 @@ const LAUNCH_REJECTION_STATUS: Record<string, 400 | 404> = {
   ENV_ARCHIVED: 400,
   ENV_CROSS_PROJECT: 404,
   ENV_NOT_FOUND: 404,
+  // The client pins a saved browser profile the launcher cannot use. The
+  // backend's message names the client, never the profile id.
+  BROWSER_PROFILE_NOT_DELIVERABLE: 400,
 };
 
 export function environmentLaunchRejectionError(

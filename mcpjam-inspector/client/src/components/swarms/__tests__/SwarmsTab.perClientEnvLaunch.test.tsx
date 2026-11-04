@@ -248,6 +248,7 @@ vi.mock("@/components/project-environments/environment-picker", () => ({
 }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 
 /** Both per-client environments, as the Environments page saved them. */
 function perClientEnvironments() {
@@ -277,7 +278,13 @@ function perClientEnvironments() {
 
 /** Describe with a paragraph and BOTH per-client environments selected. */
 function describeAcrossBothClients() {
-  render(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
+  // Confirm's judge picker shows a provider logo, which reads the theme from
+  // the provider the app mounts the flow under.
+  render(
+    <PreferencesStoreProvider themeMode="light" themePreset="default">
+      <SwarmsTab projectId="proj-1" isAuthenticated createFlow />
+    </PreferencesStoreProvider>,
+  );
   fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
     target: { value: "Finance ops reconciling payouts" },
   });

@@ -12,6 +12,7 @@ import { track } from "@/lib/analytics";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { markPendingInviteDialog } from "@/lib/pending-invite-dialog";
+import { LegalConsentNotice } from "@/components/legal/LegalConsentNotice";
 
 const LOCATION = "invite_signup_nudge";
 
@@ -103,6 +104,7 @@ export function InviteTeamSignUpDialog({
             Sign in
           </Button>
         </div>
+        <LegalConsentNotice />
       </DialogContent>
     </Dialog>
   );

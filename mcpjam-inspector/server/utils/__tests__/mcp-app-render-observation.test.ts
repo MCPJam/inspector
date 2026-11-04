@@ -296,6 +296,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("renderMcpAppToolResult — real harness in
     const html = await bundleGuestHtml();
     const harness = new McpAppBrowserHarness({
       callTool: async () => ({ content: [] }),
+      readResource: vi.fn(),
       budgets: { renderTimeoutMs: 1500 },
     });
     harnesses.push(harness);

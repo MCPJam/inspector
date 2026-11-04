@@ -8,6 +8,14 @@ import {
 const DEFAULTS = ["search", "reserve", "computer", "finish_widget"];
 
 describe("applyPrepareAdvertisedTools — contract", () => {
+  it("awaits asynchronous discovery before returning the allowed subset", async () => {
+    const result = applyPrepareAdvertisedTools({
+      defaultToolNames: ["server_tool", "widget_tools"],
+      stepIndex: 1,
+      prepareAdvertisedTools: async () => ["widget_tools", "unknown"],
+    });
+    expect(await result).toEqual(["widget_tools"]);
+  });
   it("returns the default set unchanged when no hook is provided", () => {
     const out = applyPrepareAdvertisedTools({
       defaultToolNames: DEFAULTS,

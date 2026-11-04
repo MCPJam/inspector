@@ -12,6 +12,13 @@ const api = vi.hoisted(() => ({
   runTasksConformance: vi.fn(),
 }));
 
+vi.mock("@/lib/apis/conformance-connection-api", () => ({
+  checkConformanceConnection: vi.fn(async (_name: string, version: string) => ({
+    status: "ready",
+    protocolVersion: version === "auto" ? "2026-07-28" : version,
+  })),
+}));
+
 vi.mock("@/lib/apis/mcp-conformance-api", () => api);
 
 vi.mock("@/components/oauth/utils", () => ({

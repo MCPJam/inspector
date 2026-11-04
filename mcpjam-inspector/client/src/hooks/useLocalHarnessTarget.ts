@@ -266,6 +266,14 @@ export type LocalHarnessPhase =
   /** A verified runtime and a valid grant: a turn can run. */
   | "ready";
 
+export function localHarnessSetupBlocksSend({ inScope, phase }: {
+  inScope: boolean;
+  phase: LocalHarnessPhase;
+}): boolean {
+  return inScope && (phase === "needs-consent" || phase === "needs-workspace");
+}
+
+
 export interface LocalHarnessPendingApproval {
   attemptId: string;
   /** What the human was shown and clicked against. */

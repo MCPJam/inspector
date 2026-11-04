@@ -1,3 +1,4 @@
+import { usesMcpjamClient } from "@/shared/harness-descriptors";
 import { makeFunctionReference } from "convex/server";
 import type { PluginWorkspaceDescriptor } from "../../../shared/plugin-workspace.js";
 import { createConvexClient } from "../evals/route-helpers.js";
@@ -304,12 +305,12 @@ export interface PluginWorkspaceAdmission {
 /** Runtime identity comes from the resolved host, never the workspace label. */
 export function assertPluginWorkspaceRuntime(runtime: {
   harness?: string;
+  agentLoop?: string;
   hostPolicy: { hostStyle?: string };
 }): void {
   if (
-    runtime.harness !== "codex" &&
-    (runtime.harness !== undefined ||
-      runtime.hostPolicy.hostStyle !== "chatgpt")
+    !usesMcpjamClient(runtime) ||
+    (!runtime.agentLoop && !runtime.harness && runtime.hostPolicy.hostStyle !== "chatgpt")
   ) {
     throw new PluginWorkspaceAdmissionError();
   }

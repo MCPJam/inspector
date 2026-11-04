@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
-import { toXaaConnectFailure } from "../xaa-connect-error.js";
+import {
+  toXaaConnectFailure,
+  xaaMintCapturePolicy,
+} from "../xaa-connect-error.js";
 import { XaaConnectFailureReason } from "../../../shared/xaa-connect-failure.js";
 
 const target = {
@@ -190,5 +193,109 @@ describe("toXaaConnectFailure", () => {
     expect(framed.message).not.toContain("cannot read x of null");
     // Nothing is lost: the original still reaches Sentry/Axiom as the cause.
     expect(framed.cause).toBeInstanceOf(TypeError);
+  });
+});
+
+describe("xaaMintCapturePolicy", () => {
+  // The AS answered the jwt-bearer grant with a refusal: the customer's
+  // authorization server or their server configuration, never MCPJam. It
+  // still reaches Sentry, tagged so the generic paging rule skips it and so
+  // triage can read the RFC 6749 code without the (scrubbed) message.
+  it("tags an authorization-server rejection as routine with the AS status and error code", () => {
+    const policy = xaaMintCapturePolicy(
+      new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        "XAA token exchange (jwt-bearer grant) was rejected by the authorization server at https://as.example.com/token (HTTP 400) — invalid_client: unknown client",
+        {
+          status: 400,
+          authorizationServer: "rejected",
+          oauthError: "invalid_client",
+        }
+      )
+    );
+
+    expect(policy).toEqual({
+      always: true,
+      level: "warning",
+      tags: {
+        page_class: "routine",
+        xaa_failure: "authorization_rejected",
+        xaa_as_status: "400",
+        xaa_as_error: "invalid_client",
+      },
+    });
+  });
+
+  it("omits the error code tag when the AS sent no RFC 6749 error", () => {
+    const policy = xaaMintCapturePolicy(
+      new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        "XAA token exchange (jwt-bearer grant) was rejected by the authorization server at https://as.example.com/token (HTTP 503)",
+        { status: 503, authorizationServer: "rejected" }
+      )
+    );
+
+    expect(policy?.tags).toEqual({
+      page_class: "routine",
+      xaa_failure: "authorization_rejected",
+      xaa_as_status: "503",
+    });
+  });
+
+  it("tags a failed authorization-server discovery as routine", () => {
+    const policy = xaaMintCapturePolicy(
+      new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        "Couldn't discover an authorization server. Set the issuer in Configure Server to Test.",
+        { authorizationServer: "undiscovered" }
+      )
+    );
+
+    expect(policy).toEqual({
+      always: true,
+      level: "warning",
+      tags: {
+        page_class: "routine",
+        xaa_failure: "authorization_server_unknown",
+      },
+    });
+  });
+
+  // The secret-reveal leg maps a backend 404/502 onto the same NOT_FOUND and
+  // SERVER_UNREACHABLE codes the refusals use, and may carry a status in
+  // `details` too. Only the mint's own `authorizationServer` marker counts;
+  // everything else is MCPJam's and keeps the default capture policy.
+  it("leaves every other mint failure to the default policy", () => {
+    const notARefusal = [
+      new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        "The server secrets service request failed (404)"
+      ),
+      new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        "Failed to reach the server secrets service: fetch failed",
+        { status: 502 }
+      ),
+      new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        "The authorization server at https://as.example.com/token accepted the grant (HTTP 200) but returned no access_token."
+      ),
+      new WebRouteError(
+        401,
+        ErrorCode.UNAUTHORIZED,
+        "Missing or invalid bearer token"
+      ),
+      new Error("signing key unavailable"),
+      null,
+    ];
+    for (const error of notARefusal) {
+      expect(xaaMintCapturePolicy(error)).toBeUndefined();
+    }
   });
 });

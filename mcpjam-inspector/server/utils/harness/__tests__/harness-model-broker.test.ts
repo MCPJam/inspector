@@ -236,7 +236,7 @@ describe("startHarnessModelBroker", () => {
       modelId: "openai/gpt-5.5",
       bearer: "t",
     });
-    expect(seenBody.harnessRuntimeVersion).toBe("0.149.1");
+    expect(seenBody.harnessRuntimeVersion).toBe("0.163.0");
     expect(seenBody.harnessRuntimeVersion).toBe(HARNESS_PINNED_VERSIONS.codex);
   });
 

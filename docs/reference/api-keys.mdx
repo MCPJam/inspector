@@ -4,6 +4,10 @@ description: "Which 'API key' is which in MCPJam — and the one you need to cal
 icon: "key"
 ---
 
+<Note>
+The upcoming SDK 10, CLI 6, and Vitest 0.3 releases require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. These versions must ship after the backend run-start endpoint is deployed. Earlier versions keep their existing behavior.
+</Note>
+
 "API key" gets used for a few different things in MCPJam. The short version:
 
 - To call the **[MCPJam API](/reference/public-api)**, you want the **MCPJam API key** (`sk_…`) — the first one below.
@@ -66,3 +70,7 @@ This was a project-scoped token for `@mcpjam/sdk` / CLI traffic to the hosted ba
 | LLM provider key | provider-specific | the LLM provider | Playground chat — *third-party* |
 | Playground BYOK | server-specific | your MCP server | Authenticating to one MCP server — *third-party* |
 | Project API Key | `mcpjam_…` | — (no longer issued) | **Retired** — no longer works |
+
+## Eval authentication
+
+For the upcoming releases, see [eval identity and local data](/cli/local-evals#eval-identity-and-local-data) for credential precedence, CI setup, failure behavior, and the exact fields sent before an eval.

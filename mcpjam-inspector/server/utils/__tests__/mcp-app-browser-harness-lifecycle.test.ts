@@ -37,7 +37,7 @@ function fixture() {
       return { executablePath: () => process.execPath, launch };
     }
   }
-  const harness = new TestHarness({ callTool: vi.fn() });
+  const harness = new TestHarness({ callTool: vi.fn(), readResource: vi.fn() });
   const render = (id: string) =>
     harness.renderWidget({
       toolCallId: id,
@@ -61,7 +61,7 @@ describe("widget browser lifecycle", () => {
         "no_ui_resource",
         "no_ui_resource",
       ]);
-      expect(f.page.exposeBinding).toHaveBeenCalledTimes(3);
+      expect(f.page.exposeBinding).toHaveBeenCalledTimes(4);
     } finally {
       f.released.resolve();
       await f.harness.dispose();
@@ -115,7 +115,10 @@ it.runIf(
         return super.loadChromium();
       }
     }
-    const harness = new RealHarness({ callTool: vi.fn() });
+    const harness = new RealHarness({
+      callTool: vi.fn(),
+      readResource: vi.fn(),
+    });
     try {
       const results = await Promise.all(
         Array.from({ length: 10 }, (_, index) =>

@@ -24,6 +24,7 @@ export type EvalTraceSpanInput = {
   status?: EvalTraceSpanStatus;
   toolCallId?: string;
   toolName?: string;
+  toolOrigin?: "mcp" | "native" | "builtin" | "unknown";
   serverId?: string;
   modelId?: string;
   inputTokens?: number;

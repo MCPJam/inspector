@@ -65,7 +65,8 @@ const mockLocalHarness = vi.hoisted(() => ({
 const localControllerArgs = vi.hoisted(() => ({
   last: null as { harnessId?: string | null } | null,
 }));
-vi.mock("@/hooks/useLocalHarnessTarget", () => ({
+vi.mock("@/hooks/useLocalHarnessTarget", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/hooks/useLocalHarnessTarget")>(),
   useLocalHarnessController: (args: { harnessId?: string | null }) => {
     localControllerArgs.last = args;
     return mockLocalHarness.state;
@@ -1106,6 +1107,20 @@ describe("PlaygroundMain — local Claude Code", () => {
       };
       expect(props.submitDisabled).toBeFalsy();
     });
+
+    it.each(["needs-consent", "needs-workspace"])(
+      "keeps the draft and starts no cloud turn when local setup is %s",
+      async (phase) => {
+        mockLocalHarness.state.requestedTarget = "hosted";
+        mockLocalHarness.state.phase = phase;
+        render(<PlaygroundMain {...defaultProps} />);
+        type("keep this draft");
+        await submit();
+        expect(ensureReadyMock).not.toHaveBeenCalled();
+        expect(screen.getByRole("textbox")).toHaveValue("keep this draft");
+        expect(mockLocalHarness.state.resolveSendTarget).not.toHaveBeenCalled();
+      },
+    );
 
     it("IS disabled while setup is running", () => {
       mockLocalHarness.state.phase = "installing";

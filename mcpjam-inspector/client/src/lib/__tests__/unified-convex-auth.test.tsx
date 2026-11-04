@@ -15,10 +15,18 @@ const mockState = vi.hoisted(() => ({
   markGuestActivated: vi.fn(),
   getGuestSessionRefusal: vi.fn(() => null as { until: number } | null),
   reportCaught: vi.fn(),
+  hostedMode: false,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => mockState.workos,
+}));
+
+vi.mock("@/lib/config", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/config")>()),
+  get HOSTED_MODE() {
+    return mockState.hostedMode;
+  },
 }));
 
 vi.mock("@/lib/error-reporting", () => ({
@@ -42,6 +50,7 @@ describe("useUnifiedConvexAuth", () => {
     mockState.workos.user = null;
     mockState.getCachedGuestSession.mockReturnValue(null);
     mockState.getGuestSessionRefusal.mockReturnValue(null);
+    mockState.hostedMode = false;
     useSessionRefreshStore.setState({
       status: "idle",
       kind: null,
@@ -430,6 +439,86 @@ describe("useUnifiedConvexAuth", () => {
       );
     });
 
+    // What `requestGuestSession` throws when `fetch` itself rejected: its own
+    // wrapper, no status, the browser's error as `cause`.
+    function unansweredFetch(thrown: Error): Error {
+      return Object.assign(new Error(thrown.message, { cause: thrown }), {
+        name: "GuestSessionRequestError",
+      });
+    }
+
+    // A self-hosted tab whose own inspector process is gone. The fetch to
+    // 127.0.0.1 throws with no status at all, which is not an authority
+    // outage and must not page like one, but still has to be visible and say
+    // what the browser saw.
+    it("tags a refresh whose fetch never reached the local inspector as routine", async () => {
+      mockState.getCachedGuestSession.mockReturnValue(null);
+      mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(null);
+
+      const result = await mountGuest();
+      mockState.getOrCreateGuestSessionOrThrow.mockReset();
+      mockState.getOrCreateGuestSessionOrThrow.mockRejectedValue(
+        unansweredFetch(
+          new TypeError("NetworkError when attempting to fetch resource."),
+        ),
+      );
+
+      let pending: Promise<string | null>;
+      await act(async () => {
+        pending = result.current.fetchAccessToken();
+        await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
+      });
+
+      await act(async () => {
+        await expect(pending).resolves.toBeNull();
+      });
+      expect(mockState.reportCaught).toHaveBeenCalledWith(
+        new Error("guest_token_refresh failed"),
+        {
+          source: "guest_token_refresh",
+          level: "warning",
+          tags: {
+            page_class: "routine",
+            guest_refresh_failure: "local_server_unreachable",
+          },
+          fingerprint: ["guest_token_refresh", "local_server_unreachable"],
+          extra: { attempts: 4, errorName: "TypeError" },
+        },
+      );
+      // The banner and its automatic retry are unchanged.
+      expect(useSessionRefreshStore.getState().kind).toBe("transient");
+    });
+
+    it("keeps a hosted refresh that threw without a status on the default policy", async () => {
+      mockState.hostedMode = true;
+      mockState.getCachedGuestSession.mockReturnValue(null);
+      mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(null);
+
+      const result = await mountGuest();
+      mockState.getOrCreateGuestSessionOrThrow.mockReset();
+      mockState.getOrCreateGuestSessionOrThrow.mockRejectedValue(
+        unansweredFetch(new TypeError("Failed to fetch")),
+      );
+
+      let pending: Promise<string | null>;
+      await act(async () => {
+        pending = result.current.fetchAccessToken();
+        await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
+      });
+
+      await act(async () => {
+        await expect(pending).resolves.toBeNull();
+      });
+      expect(mockState.reportCaught).toHaveBeenCalledWith(
+        new Error("guest_token_refresh failed"),
+        {
+          source: "guest_token_refresh",
+          level: "warning",
+          extra: { attempts: 4, errorName: "TypeError" },
+        },
+      );
+    });
+
     it("still honors the explicit force-refresh path", async () => {
       mockState.getCachedGuestSession.mockReturnValue(session);
       mockState.getOrCreateGuestSessionOrThrow.mockResolvedValue(session);
@@ -635,6 +724,7 @@ describe("useUnifiedConvexAuth on a vanity landing", () => {
     mockState.workos.user = null;
     mockState.getCachedGuestSession.mockReturnValue(null);
     mockState.getGuestSessionRefusal.mockReturnValue(null);
+    mockState.hostedMode = false;
     useSessionRefreshStore.setState({
       status: "idle",
       kind: null,

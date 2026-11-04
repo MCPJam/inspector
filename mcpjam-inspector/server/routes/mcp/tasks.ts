@@ -13,7 +13,17 @@ import {
 } from "../../utils/task-route-handlers";
 import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 
+import type { TaskRequestTarget } from "../../../shared/hosted-tasks.js";
+import { taskConnectionKey } from "../../utils/task-connection-key.js";
+import { WebRouteError } from "../web/errors.js";
+
 const tasks = new Hono();
+tasks.use('*', async (c, next) => {
+  const body = await c.req.json();
+  if (body?.sourceExecutions !== undefined)
+    return c.json({error: "Open this hosted Task in its original MCPJam chat.", code: "TASKS_UNSUPPORTED"}, 400);
+  await next();
+});
 
 /**
  * Tasks exist on two mutually incompatible wires: the 2025-11-25 in-core
@@ -38,6 +48,14 @@ function requireIds(body: { serverId?: string; taskId?: string }) {
  * 400 with the resolved wire, never a 500.
  */
 function featureErrorResponse(error: unknown) {
+  if (error instanceof WebRouteError) {
+    const status =
+      error.status === 403 ? 403 : error.status === 409 ? 409 : 400;
+    return {
+      body: { error: error.message, code: error.code },
+      status,
+    } as const;
+  }
   return error instanceof TasksFeatureError
     ? ({ body: { error: error.message, code: error.code, wire: error.wire } , status: 400 } as const)
     : null;
@@ -45,14 +63,18 @@ function featureErrorResponse(error: unknown) {
 
 tasks.post("/list", async (c) => {
   try {
-    const { serverId, cursor } = (await readRequestJson(c)) as {
+    const body = (await readRequestJson(c)) as TaskRequestTarget & {
       serverId?: string;
       cursor?: string;
     };
+    const { serverId, cursor } = body;
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
 
     return c.json(
-      await listTasksForWire(c.mcpClientManager, { serverId, cursor }),
+      await listTasksForWire(c.mcpClientManager, {
+        serverId: taskConnectionKey(c.mcpClientManager, body),
+        cursor,
+      }),
     );
   } catch (error) {
     const feature = featureErrorResponse(error);
@@ -66,14 +88,17 @@ tasks.post("/list", async (c) => {
 });
 
 tasks.post("/get", async (c) => {
-  const body = (await readRequestJson(c)) as { serverId?: string; taskId?: string };
+  const body = (await readRequestJson(c)) as TaskRequestTarget & {
+    serverId?: string;
+    taskId?: string;
+  };
   const missing = requireIds(body);
   if (missing) return c.json({ error: missing }, 400);
 
   try {
     return c.json(
       await getTaskForWire(c.mcpClientManager, {
-        serverId: body.serverId as string,
+        serverId: taskConnectionKey(c.mcpClientManager, body),
         taskId: body.taskId as string,
       }),
     );
@@ -96,26 +121,31 @@ tasks.post("/get", async (c) => {
 
 // Legacy only: the extension carries the result inline on tasks/get.
 tasks.post("/result", async (c) => {
-  const body = (await readRequestJson(c)) as { serverId?: string; taskId?: string };
+  const body = (await readRequestJson(c)) as TaskRequestTarget & {
+    serverId?: string;
+    taskId?: string;
+  };
   const missing = requireIds(body);
   if (missing) return c.json({ error: missing }, 400);
 
-  const support = c.mcpClientManager.getTasksSupport(body.serverId as string);
-  if (support.wire !== "legacy") {
-    return c.json(
-      {
-        error:
-          "tasks/result exists only on the 2025-11-25 wire; use tasks/get (the result is inline)",
-        wire: support.wire,
-      },
-      400,
-    );
-  }
-
   try {
+    const support = c.mcpClientManager.getTasksSupport(
+      taskConnectionKey(c.mcpClientManager, body),
+    );
+    if (support.wire !== "legacy") {
+      return c.json(
+        {
+          error:
+            "tasks/result exists only on the 2025-11-25 wire; use tasks/get (the result is inline)",
+          wire: support.wire,
+        },
+        400,
+      );
+    }
+
     return c.json(
       await getTaskResultForWire(c.mcpClientManager, {
-        serverId: body.serverId as string,
+        serverId: taskConnectionKey(c.mcpClientManager, body),
         taskId: body.taskId as string,
       }),
     );
@@ -132,7 +162,7 @@ tasks.post("/result", async (c) => {
 
 // Extension only: submit responses to the keyed inputRequests snapshot.
 tasks.post("/update", async (c) => {
-  const body = (await readRequestJson(c)) as {
+  const body = (await readRequestJson(c)) as TaskRequestTarget & {
     serverId?: string;
     taskId?: string;
     inputResponses?: Record<string, unknown>;
@@ -143,18 +173,20 @@ tasks.post("/update", async (c) => {
     return c.json({ error: "inputResponses is required" }, 400);
   }
 
-  const support = c.mcpClientManager.getTasksSupport(body.serverId as string);
-  if (!support.update) {
-    return c.json(
-      { error: "Server does not support tasks/update", wire: support.wire },
-      400,
-    );
-  }
-
   try {
+    const support = c.mcpClientManager.getTasksSupport(
+      taskConnectionKey(c.mcpClientManager, body),
+    );
+    if (!support.update) {
+      return c.json(
+        { error: "Server does not support tasks/update", wire: support.wire },
+        400,
+      );
+    }
+
     return c.json(
       await updateTaskForWire(c.mcpClientManager, {
-        serverId: body.serverId as string,
+        serverId: taskConnectionKey(c.mcpClientManager, body),
         taskId: body.taskId as string,
         inputResponses: body.inputResponses,
       }),
@@ -177,26 +209,31 @@ tasks.post("/update", async (c) => {
 });
 
 tasks.post("/cancel", async (c) => {
-  const body = (await readRequestJson(c)) as { serverId?: string; taskId?: string };
+  const body = (await readRequestJson(c)) as TaskRequestTarget & {
+    serverId?: string;
+    taskId?: string;
+  };
   const missing = requireIds(body);
   if (missing) return c.json({ error: missing }, 400);
 
-  const support = c.mcpClientManager.getTasksSupport(body.serverId as string);
-  if (!support.cancel) {
-    return c.json(
-      {
-        error:
-          "Server does not support task cancellation (tasks.cancel capability not declared)",
-        wire: support.wire,
-      },
-      400,
-    );
-  }
-
   try {
+    const support = c.mcpClientManager.getTasksSupport(
+      taskConnectionKey(c.mcpClientManager, body),
+    );
+    if (!support.cancel) {
+      return c.json(
+        {
+          error:
+            "Server does not support task cancellation (tasks.cancel capability not declared)",
+          wire: support.wire,
+        },
+        400,
+      );
+    }
+
     return c.json(
       await cancelTaskForWire(c.mcpClientManager, {
-        serverId: body.serverId as string,
+        serverId: taskConnectionKey(c.mcpClientManager, body),
         taskId: body.taskId as string,
       }),
     );
@@ -213,11 +250,19 @@ tasks.post("/cancel", async (c) => {
 
 tasks.post("/capabilities", async (c) => {
   try {
-    const { serverId } = (await readRequestJson(c)) as { serverId?: string };
-    if (!serverId) return c.json({ error: "serverId is required" }, 400);
-
-    return c.json(taskCapabilitiesForWire(c.mcpClientManager, serverId));
+    const body = (await readRequestJson(c)) as TaskRequestTarget & {
+      serverId?: string;
+    };
+    if (!body.serverId) return c.json({ error: "serverId is required" }, 400);
+    return c.json(
+      taskCapabilitiesForWire(
+        c.mcpClientManager,
+        taskConnectionKey(c.mcpClientManager, body),
+      ),
+    );
   } catch (error) {
+    const feature = featureErrorResponse(error);
+    if (feature) return c.json(feature.body, feature.status);
     reportRouteFailure("Error getting task capabilities", error, {
       // Reads already-negotiated capability state off the manager; it makes
       // no request to the server.
@@ -231,13 +276,20 @@ tasks.post("/capabilities", async (c) => {
 // Progress is local-only: hosted connections are ephemeral per request.
 tasks.post("/progress", async (c) => {
   try {
-    const { serverId } = (await readRequestJson(c)) as { serverId?: string };
+    const body = (await readRequestJson(c)) as TaskRequestTarget & {
+      serverId?: string;
+    };
+    const { serverId } = body;
 
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
 
-    const progress = progressStore.getLatestProgress(serverId);
+    const progress = progressStore.getLatestProgress(
+      taskConnectionKey(c.mcpClientManager, body),
+    );
     return c.json({ progress: progress ?? null });
   } catch (error) {
+    const feature = featureErrorResponse(error);
+    if (feature) return c.json(feature.body, feature.status);
     reportRouteFailure("Error getting progress", error, {
       // Progress is local-only (see the note above the route) — our state.
       source: "mcp.tasks.progress",
@@ -249,13 +301,20 @@ tasks.post("/progress", async (c) => {
 
 tasks.post("/progress/all", async (c) => {
   try {
-    const { serverId } = (await readRequestJson(c)) as { serverId?: string };
+    const body = (await readRequestJson(c)) as TaskRequestTarget & {
+      serverId?: string;
+    };
+    const { serverId } = body;
 
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
 
-    const allProgress = progressStore.getAllProgress(serverId);
+    const allProgress = progressStore.getAllProgress(
+      taskConnectionKey(c.mcpClientManager, body),
+    );
     return c.json({ progress: allProgress });
   } catch (error) {
+    const feature = featureErrorResponse(error);
+    if (feature) return c.json(feature.body, feature.status);
     reportRouteFailure("Error getting all progress", error, {
       source: "mcp.tasks.progress.all",
       hop: "mcpjam_internal",

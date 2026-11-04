@@ -1,3 +1,5 @@
+import { resolveAgentLoop } from './harness/agent-loop-dispatch.js';
+import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { readRuntimeModelChoice } from "./runtime-model-choice.js";
 /**
  * Shared resolver: hostConfig record + per-call overrides → resolved execution fields.
@@ -121,11 +123,14 @@ export interface ResolvedExecutionContext {
   systemPrompt: string | undefined;
   temperature: number | undefined;
   requireToolApproval: boolean;
+  requireNativeToolDiscovery?: boolean;
   respectToolVisibility: boolean | undefined;
   progressiveToolDiscovery: boolean | undefined;
   modelId: string | undefined;
   /** Which real agent harness runs the turn (host-level). Absent ⇒ emulated. */
   harness: Harness | undefined;
+  agentLoop?: Harness;
+  executionBindingVersion?: 1;
   /**
    * The host's saved model selection (`hostConfig.modelSelection`), carrying
    * its saved `settings` (reasoning effort).
@@ -310,7 +315,7 @@ function pickField<T>(
  *  surfaced (membership via the SDK's `isHarness`, the persistence-contract
  *  source of truth); anything else (or absent) ⇒ undefined (emulated). */
 function readHarness(hostConfig: Record<string, unknown>): Harness | undefined {
-  return isHarness(hostConfig.harness) ? hostConfig.harness : undefined;
+  return resolveAgentLoop(hostConfig).harnessId;
 }
 
 /**
@@ -331,6 +336,12 @@ export function resolveExecutionContext(args: {
   namedHostId?: string;
 }): ResolvedExecutionContext {
   const { hostConfig, overrides = {}, precedence, namedHostId } = args;
+  if (hostConfig?.requireNativeToolDiscovery !== undefined && typeof hostConfig.requireNativeToolDiscovery !== "boolean") {
+    throw new Error("Native tool discovery requirement must be a boolean.");
+  }
+  if (hostConfig?.requireNativeToolDiscovery && !readHarness(hostConfig)) {
+    assertNativeDiscovery({ required: true });
+  }
   const drift: ExecutionDriftEntry[] = [];
 
   // hostConfig === null short-circuit: no host values, return overrides
@@ -510,10 +521,13 @@ export function resolveExecutionContext(args: {
     temperature: temperature.value,
     // `requireToolApproval` defaults to `false` (boolean-required slot).
     requireToolApproval: requireToolApprovalPick.value ?? false,
+    ...(hostConfig.requireNativeToolDiscovery !== undefined ? { requireNativeToolDiscovery: hostConfig.requireNativeToolDiscovery } : {}),
     respectToolVisibility: respectToolVisibility.value,
     progressiveToolDiscovery: progressiveToolDiscovery.value,
     modelId: modelId.value,
     harness: readHarness(hostConfig),
+    executionBindingVersion: hostConfig.executionBindingVersion === 1 ? 1 : undefined,
+    ...(isHarness(hostConfig.agentLoop) ? { agentLoop: hostConfig.agentLoop } : {}),
     modelSelection: readModelSelection(hostConfig),
     routingSelection: readRuntimeModelChoice(hostConfig).selection, modelSelectionOrigin: readRuntimeModelChoice(hostConfig).origin,
     tasksPolicy: readTasksPolicy(

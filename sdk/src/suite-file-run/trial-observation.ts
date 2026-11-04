@@ -116,6 +116,9 @@ export function observeIteration(args: {
   );
   const evidence: SuiteFileIterationEvidence = {
     iterationNumber: args.iterationNumber,
+    ...(iteration.billingPaymentId
+      ? { billingPaymentId: iteration.billingPaymentId }
+      : {}),
     status,
     ...(observation.taskVerdict !== undefined
       ? { taskVerdict: observation.taskVerdict }

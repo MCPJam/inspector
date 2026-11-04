@@ -33,6 +33,14 @@ describe("explainTelemetry: Axiom log rows", () => {
     ).toThrow(/route: rewritten to "unknown_route"/);
     expect(() => expectTelemetryFields({ log: "http.request.failed", context: { statusCode: undefined } }, ["statusCode"])).toThrow();
   });
+
+  it("keeps a Convex ID from request context and explains a payload one", () => {
+    const orgId = "org".padEnd(32, "0");
+    expect(expectTelemetryFields({ log: "http.request.failed", context: { orgId } }, ["orgId"])).toMatchObject({ orgId });
+    expect(explainTelemetry({ log: "mcp.tool.execution.failed", payload: { serverId: orgId } }).dropped.serverId).toMatch(
+      /request context \(a LogConvexId\), never from an event payload/,
+    );
+  });
 });
 
 describe("explainTelemetry: server analytics", () => {

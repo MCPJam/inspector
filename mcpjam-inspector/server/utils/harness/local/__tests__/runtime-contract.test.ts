@@ -109,7 +109,7 @@ describe("which conformance legs run", () => {
     expect(plan.claude_pack_version).toBe("");
     expect(plan.codex_pack_version).toBe("");
     expect(JSON.parse(plan.posix_matrix)).toHaveLength(4);
-    expect(JSON.parse(plan.codex_matrix)).toHaveLength(4);
+    expect(JSON.parse(plan.codex_matrix)).toHaveLength(5);
     expect(plan.run_windows).toBe("true");
   });
 
@@ -140,7 +140,7 @@ describe("the release gate's conformance evidence", () => {
     await mkdir(dir, { recursive: true });
     const advertised: Record<string, string[]> = {
       "claude-code": ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "win32-x64"],
-      codex: ["darwin-arm64", "linux-x64"],
+      codex: ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"],
     };
     for (const [harnessId, targets] of Object.entries(advertised)) {
       for (const target of targets) {

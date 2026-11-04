@@ -77,7 +77,12 @@ env:
   # production monitor passes the other file explicitly.
   DEFAULT_SUITE_FILE: .mcpjam/evals/mcpjam-mcp.yaml
   PRODUCTION_SUITE_FILE: .mcpjam/evals/mcpjam-mcp-production.yaml
-  CLI_VERSION: 5.10.3
+  # At least 5.15.0, the first CLI that gives hosted eval commands a 120s
+  # deadline. Older ones keep the 30s probe default, and syncing this suite
+  # file (one request per case, then the launch) always runs past it: the CLI
+  # gives up before the launch answers, so no run id and every verdict is
+  # no-verdict.
+  CLI_VERSION: 5.16.1
 
 jobs:
   # The CLI lane. Syncs the suite file, runs it, gates the result, and reports a
@@ -113,8 +118,13 @@ jobs:
       # `set +e` and an explicit output: `eval run --wait` owns a six-code
       # contract, and reading it through a pipe would report the pipe's status
       # instead. Only `1` is a measured eval failure.
+      #
+      # Outside the checkout: in it, `npx @mcpjam/cli@<v>` resolves this repo's
+      # own unbuilt `cli` workspace whenever <v> is its version, and fails with
+      # "mcpjam: not found" (exit 127) instead of fetching the published CLI.
       - name: Sync the suite file and run it
         id: run
+        working-directory: ${{ runner.temp }}
         env:
           MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
           SUITE_FILE: ${{ inputs.suite_file }}
@@ -130,8 +140,11 @@ jobs:
           elif [ "$GITHUB_EVENT_NAME" = "schedule" ]; then file="$PRODUCTION_SUITE_FILE"
           else file="$DEFAULT_SUITE_FILE"; fi
           echo "Suite file: $file"
+          # This step runs outside the checkout, so a repo-relative path is
+          # resolved against it; an absolute one is used as given.
+          case "$file" in /*) file_path="$file" ;; *) file_path="$GITHUB_WORKSPACE/$file" ;; esac
           args=(cloud eval run
-            --file "$file"
+            --file "$file_path"
             --project "$MCPJAM_PROJECT"
             --wait
             --notes "dogfood @ ${GITHUB_SHA} (${GITHUB_EVENT_NAME}, $file)"
@@ -164,12 +177,15 @@ jobs:
       - name: Gate the run and write JUnit
         id: gate
         if: ${{ always() && steps.run.outputs.run_id != '' }}
+        # Outside the checkout, for the same reason as the run step.
+        working-directory: ${{ runner.temp }}
         env:
           MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
+          RUN_ID: ${{ steps.run.outputs.run_id }}
         run: |
           set +e
           npx -y "@mcpjam/cli@$CLI_VERSION" cloud eval gate \
-            --run "${{ steps.run.outputs.run_id }}" \
+            --run "$RUN_ID" \
             --project "$MCPJAM_PROJECT" \
             --wait \
             --min-pass-rate-percent 80 \
@@ -250,7 +266,7 @@ jobs:
             case "$RUN_CODE" in
               0) echo "- Run: passed." ;;
               1) echo "- Run: **a measured eval failure**. The server's behaviour changed." ;;
-              2) echo "- Run: usage error or an invalid suite file. Not a server problem." ;;
+              2) echo "- Run: usage error, an invalid suite file, or the organization's AI-key policy refused the model. Not a server problem." ;;
               3) echo "- Run: authentication failed. Check \`MCPJAM_API_KEY\` and its organization." ;;
               4) echo "- Run: connection or setup failure, or a local write failure. Infrastructure, not a verdict." ;;
               5) echo "- Run: no valid verdict — inconclusive, non-terminal, or the wait timed out. Nothing was decided." ;;

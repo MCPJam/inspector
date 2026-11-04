@@ -191,7 +191,9 @@ read from source by `scripts/generate-telemetry-catalogs.mjs`, which `npm
 install`, every SDK and Inspector build, test and typecheck, and the dev loops
 (`dev`, `dev:app`, `dev:server`, `dev:client`, SDK `dev`, `electron:dev`,
 `test:watch`) run for you. A new logger message, route or error class is
-catalogued on save; there is no file to commit.
+catalogued on save; there is no file to commit. Error names that dependencies
+set are not in our source: add them to `DEPENDENCY_ERRORS` in that script, or
+their errors reach Sentry and Axiom as `UnknownError`.
 
 **Does my field arrive?** Telemetry forwards only fields that have a rule, so a
 new diagnostic field can be dropped without any error. Check it in the test
@@ -200,7 +202,9 @@ that adds it: `expectTelemetryFields(sample, ["statusCode"])` from
 through the real log-row or server-analytics builder and fails with each
 missing field's drop reason (for example, "no field rule: declare it in
 server/utils/log-events.ts"). `explainTelemetry(sample)` returns the same
-`{ forwarded, dropped }` for a look before you write the assertion.
+`{ forwarded, dropped }` for a look before you write the assertion. An org,
+project or server ID arrives only from the server's request context, never
+from a payload; see `mcpjam-inspector/server/utils/LOGGING.md`.
 
 **Reload semantics**, which differ by process:
 

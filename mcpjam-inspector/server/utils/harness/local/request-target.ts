@@ -86,17 +86,16 @@ export function parseHarnessExecutionTarget(args: {
     return {
       kind: "refused",
       reason:
-        "Running Claude Code on this machine is disabled on this server " +
-        "(MCPJAM_LOCAL_HARNESS_ENABLED).",
+        "Running a client on this machine is unavailable. " +
+        "Choose cloud execution or contact the operator of this Inspector.",
     };
   }
   if (!args.actorEligible) {
     return {
       kind: "refused",
       reason:
-        "Running on this machine requires an attended, signed-in member " +
-        "running their own turn. Guests, shared scenario sessions and " +
-        "swarm-scoped runs run hosted.",
+        "Local execution requires a signed-in member in their own chat. " +
+        "Sign in and start your own chat, or choose cloud execution.",
     };
   }
 
@@ -108,8 +107,7 @@ export function parseHarnessExecutionTarget(args: {
     return {
       kind: "refused",
       reason:
-        "Running on this machine requires a signed-in member; this request " +
-        "carries no resolved user.",
+        "Sign in to run this client on your machine.",
     };
   }
 

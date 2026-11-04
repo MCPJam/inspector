@@ -21,6 +21,33 @@ describe("harnessRuntimeFingerprint", () => {
     permissionMode: "allow-all",
   };
 
+  it("forks forwarded processes when their launch configuration changes", () => {
+    const forwarded = { ...base, nativeForwarding: "v2" };
+    expect(harnessRuntimeFingerprint({ ...forwarded, forwardingConfigurationVersion: "tool-search-auto-v1" })).not.toBe(harnessRuntimeFingerprint(forwarded));
+    expect(harnessRuntimeFingerprint({ ...forwarded, forwardingConfigurationVersion: undefined })).toBe(harnessRuntimeFingerprint(forwarded));
+    expect(harnessRuntimeFingerprint({ ...base, forwardingConfigurationVersion: "unused" })).toBe(harnessRuntimeFingerprint(base));
+  });
+
+  it("versions required discovery on a retained client without changing eager clients", () => {
+    const required = { ...base, requireNativeToolDiscovery: true };
+    expect(harnessRuntimeFingerprint({ ...required, forwardingConfigurationVersion: "tool-search-auto-v1" }))
+      .not.toBe(harnessRuntimeFingerprint({ ...required, forwardingConfigurationVersion: "tool-search-auto-v2" }));
+    expect(harnessRuntimeFingerprint({ ...base, forwardingConfigurationVersion: "unused" }))
+      .toBe(harnessRuntimeFingerprint(base));
+  });
+
+  it("forks when a selected server disconnects or recovers", () => {
+    const healthy = harnessRuntimeFingerprint(base);
+    const refused = harnessRuntimeFingerprint({ ...base, unavailableServerIds: ["srv-a"] });
+    expect(refused).not.toBe(healthy);
+    expect(harnessRuntimeFingerprint({ ...base, unavailableServerIds: [] })).toBe(healthy);
+    expect(harnessRuntimeFingerprint({ ...base, unavailableServerIds: ["unselected"] })).toBe(healthy);
+    expect(harnessRuntimeFingerprint({ ...base, unavailableServerIds: ["srv-a", "srv-a", "unselected"] })).toBe(refused);
+    expect(harnessRuntimeFingerprint({ ...base, unavailableServerIds: ["srv-a", "srv-b"] })).toBe(
+      harnessRuntimeFingerprint({ ...base, unavailableServerIds: ["srv-b", "srv-a"] }),
+    );
+  });
+
   // The consented PROFILE is part of the lane. A user who narrows their grant
   // from workspace-edits to read-only must not resume the session that was
   // created under the wider terms — the resumed bridge already exists and keeps

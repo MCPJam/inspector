@@ -40,6 +40,7 @@ const provisionJourneySandboxMock = vi.fn();
 const releaseSandboxMock = vi.fn();
 
 const callOrder: string[] = [];
+let useRealPersistence = false;
 
 // Phase 6: a harness runs on the attempt's OWN disposable box, so the harness
 // case below goes through the control plane. Mocked here for the same reason
@@ -86,7 +87,11 @@ vi.mock("../../../utils/chat-ingestion.js", async () => {
     ...actual,
     persistChatSessionToConvex: (...args: unknown[]) => {
       callOrder.push("persist");
-      return persistChatSessionToConvexMock(...args);
+      return useRealPersistence
+        ? actual.persistChatSessionToConvex(
+            ...(args as Parameters<typeof actual.persistChatSessionToConvex>),
+          )
+        : persistChatSessionToConvexMock(...args);
     },
   };
 });
@@ -133,6 +138,7 @@ vi.mock("../../swarm-agent.js", async () => {
 });
 
 import { startJourneyRun } from "../swarm-runner.js";
+import { logger } from "../../../utils/logger.js";
 
 const TURN_TRACE = {
   requestPayloads: [
@@ -208,6 +214,7 @@ function baseOpts() {
 }
 
 beforeEach(() => {
+  useRealPersistence = false;
   localFixture.enabled = false;
   localFixture.cleanup.mockClear();
   callOrder.length = 0;
@@ -261,6 +268,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
 
@@ -501,4 +509,242 @@ it("runs a local Claude swarm through the shared core without reserving a cloud 
   expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
   expect(localFixture.cleanup).toHaveBeenCalledOnce();
   expect(persistChatSessionToConvexMock).toHaveBeenCalled();
+});
+
+const PERSISTENCE_COMMIT = {
+  ownerType: "swarm-chat" as const,
+  chatSessionId: "synth_run-1_host-1_0",
+  leaseId: "lease-1",
+  expectedStateVersion: 1,
+  harnessId: "claude-code" as const,
+  harnessSessionId: "hs-1",
+  resumeState: { cursor: 7 },
+  computerId: "computer-1",
+  runtimeFingerprint: "fp-1",
+};
+
+function persistenceHarnessOptions() {
+  runAssistantTurnMock.mockImplementation(async (opts: { messages: unknown[] }) => ({
+    messages: [...opts.messages, { role: "assistant", content: "hi back" }],
+    assistantMessages: [], toolCalls: [], toolResults: [], turnTrace: TURN_TRACE,
+    harnessSessionCommit: PERSISTENCE_COMMIT,
+  }));
+  const opts = baseOpts();
+  return {
+    ...opts,
+    hosts: [{
+      ...opts.hosts[0]!, harness: "claude-code" as const,
+      computer: { kind: "personal" as const },
+      computerEnvironment: { environmentId: "env-img-1", environmentBuildId: "bld-1" },
+    }],
+  };
+}
+
+describe("swarm harness persistence HTTP boundary", () => {
+  it.each([
+    {
+      kind: "duplicate",
+      response: { skipped: true, duplicateTurn: true, version: 1 },
+      status: 200,
+      failed: false,
+    },
+    {
+      kind: "legacy skip",
+      response: { skipped: true, version: 1 },
+      status: 200,
+      failed: true,
+    },
+    {
+      kind: "version conflict",
+      response: { code: "VERSION_CONFLICT", currentVersion: 2 },
+      status: 409,
+      failed: true,
+    },
+    {
+      kind: "validation failure",
+      response: { error: "invalid transcript" },
+      status: 400,
+      failed: true,
+    },
+  ])(
+    "$kind stops or continues according to the persisted receipt",
+    async ({ response, status, failed }) => {
+      useRealPersistence = true;
+      const fetchMock = vi.fn(
+        async (input: string | URL | Request, _init?: RequestInit) =>
+          String(input).endsWith("/ingest-chat")
+            ? Response.json(response, { status })
+            : Response.json({ ok: true }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      await startJourneyRun(persistenceHarnessOptions());
+
+      expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
+      expect(swarmPersonaNextTurnMock).toHaveBeenCalledTimes(failed ? 1 : 2);
+      const calls = fetchMock.mock.calls.map(([url, init]) => ({
+        url: String(url),
+        body: JSON.parse(String(init?.body)),
+      }));
+      const ingests = calls.filter(({ url }) => url.endsWith("/ingest-chat"));
+      expect(ingests).toHaveLength(1);
+      expect(ingests[0]?.body.harnessSessionCommit).toEqual(PERSISTENCE_COMMIT);
+      const releases = calls.filter(({ url }) =>
+        url.endsWith("/session-state/release"),
+      );
+      expect(releases).toHaveLength(failed ? 1 : 0);
+      if (failed) {
+        expect(releases[0]?.body).toEqual({
+          projectId: "proj-1",
+          harnessId: "claude-code",
+          ownerType: "swarm-chat",
+          chatSessionId: PERSISTENCE_COMMIT.chatSessionId,
+          journeyRunId: "run-1",
+          hostId: "host-1",
+          leaseId: "lease-1",
+        });
+        expect(reportAttemptMock).toHaveBeenLastCalledWith(
+          expect.anything(),
+          expect.anything(),
+          expect.objectContaining({
+            status: "failed",
+            errorCode: "harness_persistence_failed",
+            errorMessage:
+              "The conversation could not be saved. Start a new run to try again.",
+          }),
+        );
+      } else {
+        expect(reportAttemptMock).toHaveBeenLastCalledWith(
+          expect.anything(),
+          expect.anything(),
+          expect.objectContaining({ status: "succeeded" }),
+        );
+      }
+      expect(
+        calls.some(({ url }) => url.endsWith("/session-state/commit")),
+      ).toBe(false);
+    },
+  );
+});
+
+describe("swarm harness persistence failures without a usable receipt", () => {
+  const UNSAVED = expect.objectContaining({
+    status: "failed",
+    errorCode: "harness_persistence_failed",
+  });
+
+  /** Fake Convex: `/ingest-chat` and the lane release answer as told. */
+  function stubConvex(answers: {
+    ingest?: () => Response;
+    release?: () => Response;
+  }) {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/ingest-chat") && answers.ingest)
+        return answers.ingest();
+      if (url.endsWith("/session-state/release") && answers.release) {
+        return answers.release();
+      }
+      return Response.json({ ok: true });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const posted = (suffix: string) =>
+      fetchMock.mock.calls.filter(([url]) => String(url).endsWith(suffix));
+    return { posted };
+  }
+
+  it("releases the lane and fails the session after exhausted 5xx retries", async () => {
+    useRealPersistence = true;
+    const { posted } = stubConvex({
+      ingest: () => Response.json({ error: "down" }, { status: 503 }),
+    });
+
+    await startJourneyRun(persistenceHarnessOptions());
+
+    expect(posted("/ingest-chat")).toHaveLength(3);
+    expect(posted("/session-state/release")).toHaveLength(1);
+    expect(swarmPersonaNextTurnMock).toHaveBeenCalledTimes(1);
+    expect(reportAttemptMock).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      UNSAVED,
+    );
+  }, 10_000);
+
+  it("releases the lane when the ingest body cannot be serialized", async () => {
+    useRealPersistence = true;
+    const opts = persistenceHarnessOptions();
+    const resumeState: Record<string, unknown> = {};
+    resumeState.self = resumeState;
+    runAssistantTurnMock.mockImplementation(
+      async (turn: { messages: unknown[] }) => ({
+        messages: [...turn.messages, { role: "assistant", content: "hi back" }],
+        assistantMessages: [],
+        toolCalls: [],
+        toolResults: [],
+        turnTrace: TURN_TRACE,
+        // JSON.stringify throws on a cycle, so the save throws before any request.
+        harnessSessionCommit: { ...PERSISTENCE_COMMIT, resumeState },
+      }),
+    );
+    const { posted } = stubConvex({});
+
+    await startJourneyRun(opts);
+
+    // Nothing carrying the commit was sent; the lane was released instead.
+    for (const [, init] of posted("/ingest-chat")) {
+      expect(
+        JSON.parse(String(init?.body)).harnessSessionCommit,
+      ).toBeUndefined();
+    }
+
+    const releases = posted("/session-state/release");
+    expect(releases).toHaveLength(1);
+    expect(JSON.parse(String(releases[0]?.[1]?.body))).toMatchObject({
+      leaseId: "lease-1",
+      journeyRunId: "run-1",
+      hostId: "host-1",
+    });
+    expect(swarmPersonaNextTurnMock).toHaveBeenCalledTimes(1);
+    expect(reportAttemptMock).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      UNSAVED,
+    );
+  });
+
+  it("reports a release that fails, and still fails the session as unsaved", async () => {
+    useRealPersistence = true;
+    const warnLog = vi.spyOn(logger, "warn");
+    stubConvex({
+      ingest: () =>
+        Response.json({ error: "invalid transcript" }, { status: 400 }),
+      release: () => Response.json({ error: "unavailable" }, { status: 500 }),
+    });
+
+    await startJourneyRun(persistenceHarnessOptions());
+
+    expect(warnLog).toHaveBeenCalledWith(
+      "[harness-session-state] release failed",
+      expect.anything(),
+    );
+    expect(reportAttemptMock).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      UNSAVED,
+    );
+  });
+
+  it("leaves an emulated turn's persist throw as it was", async () => {
+    persistChatSessionToConvexMock.mockRejectedValue(new Error("boom"));
+    const { posted } = stubConvex({});
+
+    await startJourneyRun(baseOpts());
+
+    expect(posted("/session-state/release")).toHaveLength(0);
+    expect(reportAttemptMock).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.not.objectContaining({ errorCode: "harness_persistence_failed" }),
+    );
+  });
 });

@@ -79,6 +79,7 @@
                   "input": {
                     "message": "conformance"
                   },
+                  "providerExecuted": true,
                   "providerOptions": {
                     "mcpjam": {
                       "serverId": "probe"
@@ -135,7 +136,8 @@
               "status": "ok",
               "stepIndex": 0,
               "toolCallId": "<id-2>",
-              "toolName": "echo"
+              "toolName": "echo",
+              "toolOrigin": "mcp"
             },
             {
               "category": "llm",
@@ -203,6 +205,7 @@
                   "input": {
                     "message": "conformance"
                   },
+                  "providerExecuted": true,
                   "providerOptions": {
                     "mcpjam": {
                       "serverId": "probe"
@@ -268,7 +271,8 @@
               "status": "ok",
               "stepIndex": 0,
               "toolCallId": "<id-2>",
-              "toolName": "echo"
+              "toolName": "echo",
+              "toolOrigin": "mcp"
             },
             {
               "category": "llm",
@@ -357,6 +361,7 @@
             "input": {
               "message": "conformance"
             },
+            "providerExecuted": true,
             "providerOptions": {
               "mcpjam": {
                 "serverId": "probe"

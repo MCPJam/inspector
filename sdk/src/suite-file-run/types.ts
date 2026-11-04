@@ -9,6 +9,7 @@
  */
 
 import type { MCPServerConfig } from "../mcp-client-manager/types.js";
+import type { AuthChallengeSignal } from "../mcp-client-manager/auth-challenge.js";
 import type { BaseUrls } from "../model-factory.js";
 import type { McpjamGetAuth } from "../mcpjam-model-lease.js";
 import type { IterationStatus } from "../contract/chain.js";
@@ -40,9 +41,7 @@ export type SuiteFileServerBinding = {
 export type SuiteFileInferenceMode = "auto" | "byok" | "mcpjam";
 
 /**
- * How to reach MCPJam-hosted inference. Resolved lazily — only when a
- * selected case actually needs the platform rail — so a BYOK-only run never
- * touches the caller's login.
+ * How to reach MCPJam for run identity and hosted inference.
  */
 export type McpjamInferenceConnection = {
   /** MCPJam app origin, e.g. `https://app.mcpjam.com` — not the `/api/v1` base. */
@@ -66,7 +65,7 @@ export type SuiteFileInferenceOptions = {
   /** Non-secret provider base URLs (a gateway, a local stub). */
   baseUrls?: Omit<BaseUrls, "mcpjam">;
   /**
-   * Called at most once, and only when the platform rail is needed. The
+   * Called once before every run, including BYOK. The
    * signal aborts when the setup deadline passes or the run is cancelled.
    */
   resolveMcpjam?: (signal: AbortSignal) => Promise<McpjamInferenceConnection>;
@@ -79,6 +78,8 @@ export type SuiteFileImportApproval = {
 };
 
 export type RunSuiteFileOptions = {
+  surface?: "sdk" | "cli" | "vitest";
+  clientVersion?: string;
   /** Bindings for the file's target servers, keyed by server NAME. */
   servers: Readonly<Record<string, SuiteFileServerBinding>>;
   /** Exact authored case ids. Omitted: every enabled case. */
@@ -103,6 +104,7 @@ export type RunSuiteFileOptions = {
 // ── progress ─────────────────────────────────────────────────────────────────
 
 export type SuiteFileRunProgressEvent =
+  | { type: "identity"; organizationId: string; projectId: string }
   | {
       type: "setup";
       stage: "connect" | "discover" | "credentials" | "lease";
@@ -133,11 +135,22 @@ export type SuiteFileRunTermination = "completed" | "aborted" | "stopped";
 
 export type SuiteFileInferenceRail = "byok" | "mcpjam";
 
-/** Why a run-affecting problem is attached to a result. */
+/**
+ * Why a run-affecting problem is attached to a result.
+ *
+ * `authorization` (code `AUTHORIZATION_REQUIRED`): a target server asked for
+ * sign-in on a tool call. Reported with what to fix, never a changed outcome:
+ * whether such a trial should leave the verdict is the verdict policy's call,
+ * not this report's.
+ */
 export type SuiteFileRunIssue = {
   code: string;
   phase: SuiteFileRunPhase;
-  category: SuiteFileRunErrorCategory | "observer" | "cleanup";
+  category:
+    | SuiteFileRunErrorCategory
+    | "observer"
+    | "cleanup"
+    | "authorization";
   message: string;
   caseId?: string;
   iterationNumber?: number;
@@ -163,7 +176,39 @@ export type SuiteFileToolPolicyBlock = {
 export type SuiteFileRefusalAttribution =
   "credentials" | "billing" | "orgPolicy" | "rateLimited" | "unavailable";
 
+/**
+ * A tool call in this iteration hit a sign-in challenge: an HTTP 401 with
+ * `WWW-Authenticate`, a 403 `insufficient_scope`, or an `isError` result
+ * carrying `_meta["mcp/www_authenticate"]`.
+ *
+ * A local run never signs in. The iteration is classified
+ * `authorization_required` and its other evidence (the model saw the refusal)
+ * should be read with that in mind. Every string in `challenge` came from the
+ * server under test, length-capped by the SDK's parser: render it as text.
+ */
+export type SuiteFileAuthRequired = {
+  classification: "authorization_required";
+  /** The target server's NAME, when the tool's owner is known. Never a URL. */
+  server?: string;
+  /** The first challenged call. */
+  toolName: string;
+  toolCallId?: string;
+  /** How many of this iteration's tool calls hit a challenge (at least 1). */
+  challengedCalls: number;
+  /** The first challenge, as parsed. */
+  challenge: Pick<
+    AuthChallengeSignal,
+    | "source"
+    | "error"
+    | "errorDescription"
+    | "requiredScope"
+    | "resourceMetadataUrl"
+    | "facets"
+  >;
+};
+
 export type SuiteFileIterationEvidence = {
+  billingPaymentId?: string;
   iterationNumber: number;
   /** The LIFECYCLE — never inferred from a pass/fail. */
   status: IterationStatus;
@@ -174,6 +219,11 @@ export type SuiteFileIterationEvidence = {
   error?: string;
   /** A provider/platform refusal behind `error`, when one was observed. */
   refusal?: SuiteFileRefusalAttribution;
+  /**
+   * A tool call hit a sign-in challenge; see the type. Never keyed
+   * `authorization`: redaction treats that key as a credential header.
+   */
+  authRequired?: SuiteFileAuthRequired;
   toolCalls: Array<{
     toolName: string;
     arguments: Record<string, unknown>;

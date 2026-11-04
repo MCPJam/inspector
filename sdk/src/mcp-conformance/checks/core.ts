@@ -1,9 +1,8 @@
-import type { MCPClientCheckContext, MCPClientCheckDefinition } from "../types.js";
-import {
-  errorMessage,
-  failedResult,
-  passedResult,
-} from "./helpers.js";
+import type {
+  MCPClientCheckContext,
+  MCPClientCheckDefinition,
+} from "../types.js";
+import { caughtErrorResult, failedResult, passedResult } from "./helpers.js";
 
 function selectCompletionReference(ctx: Parameters<
   MCPClientCheckDefinition["run"]
@@ -76,17 +75,18 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
     title: "Server Initialize",
     description: "Server responds to initialize and reports capabilities.",
     async run(ctx) {
-      const startedAt = Date.now();
+      // The handshake already happened on connect; report how long it took.
+      const durationMs = ctx.connectDurationMs ?? 0;
       const info = ctx.initializationInfo;
       if (!info) {
         return failedResult(
           this,
-          Date.now() - startedAt,
+          durationMs,
           "Initialization info is unavailable after connecting to the server",
         );
       }
 
-      return passedResult(this, Date.now() - startedAt, {
+      return passedResult(this, durationMs, {
         protocolVersion: info.protocolVersion,
         transport: info.transport,
         serverCapabilities: info.serverCapabilities as Record<string, unknown>,
@@ -102,17 +102,18 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
     async run(ctx) {
       const startedAt = Date.now();
       try {
-        const result = await ctx.manager.pingServer(ctx.serverId);
+        const result = await ctx.manager.pingServer(ctx.serverId, {
+          signal: ctx.config.signal,
+        });
         return passedResult(this, Date.now() - startedAt, {
           result: result as Record<string, unknown>,
         });
       } catch (error) {
-        return failedResult(
+        return caughtErrorResult(
           this,
-          Date.now() - startedAt,
-          errorMessage(error),
-          undefined,
+          startedAt,
           error,
+          ctx.config.checkTimeout
         );
       }
     },
@@ -141,18 +142,17 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
         // returns an `EmptyResult` the manager discards). A clean resolve —
         // no thrown JSON-RPC error — is the pass condition; there is no
         // result body to inspect.
-        await ctx.client.setLoggingLevel("info");
+        await ctx.client.setLoggingLevel("info", { signal: ctx.config.signal });
 
         return passedResult(this, Date.now() - startedAt, {
           level: "info",
         });
       } catch (error) {
-        return failedResult(
+        return caughtErrorResult(
           this,
-          Date.now() - startedAt,
-          errorMessage(error),
-          undefined,
+          startedAt,
           error,
+          ctx.config.checkTimeout
         );
       }
     },
@@ -194,7 +194,9 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
       }
 
       try {
-        const result = await ctx.client.complete(completionReference);
+        const result = await ctx.client.complete(completionReference, {
+          signal: ctx.config.signal,
+        });
         if (!Array.isArray(result.completion.values)) {
           return failedResult(
             this,
@@ -210,12 +212,11 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
           completion: result.completion as Record<string, unknown>,
         });
       } catch (error) {
-        return failedResult(
+        return caughtErrorResult(
           this,
-          Date.now() - startedAt,
-          errorMessage(error),
-          undefined,
+          startedAt,
           error,
+          ctx.config.checkTimeout
         );
       }
     },

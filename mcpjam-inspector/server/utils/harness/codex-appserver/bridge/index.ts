@@ -9,16 +9,16 @@
  *
  *   1. the host-tool relay binds first, because
  *   2. the rendered `CODEX_HOME` has to name its port, because
- *   3. Codex reads that config when it starts and never re-reads it.
+ *   3. Codex reads that config at startup. Forwarding credentials can later
+ *      rotate through its explicit MCP reload without resuming a model turn.
  *
- * A tool set that changes between turns therefore restarts the thread rather
- * than trying to update a server Codex has already connected to — there is no
- * `tools/list_changed` handling in this version, and pretending otherwise
- * would silently serve a stale catalog.
+ * Host-executed tool catalog changes still require a new runtime; they are
+ * separate from rotating credentials for the same native MCP server set.
  */
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { runBridge, type BridgeTurn } from "@ai-sdk/harness/bridge";
+import { callHostTool } from "./host-tool-call.js";
 import { RELAY_MCP_SERVER_NAME } from "../shared/tool-names.js";
 import {
   runtimeConfigFingerprint,
@@ -43,10 +43,16 @@ import type {
   ThreadStartResult,
   TurnStartResult,
 } from "./app-server-protocol.js";
+import {
+  createNativeMcpRefresher,
+  type NativeMcpRuntime,
+} from "./native-mcp-refresh.js";
+import { waitForMcpStartup, waitForNativeMcpServers } from "./native-mcp-ready.js";
 import { createApprovalController } from "./approval-controller.js";
 import { foreignMcpServerOverrides } from "./mcp-isolation.js";
+import { setupWindowsSandbox } from "./windows-sandbox-setup.js";
 import { buildHostToolCatalog } from "./host-tool-catalog.js";
-import { prepareCodexHome, untrustedProjectPathsFor } from "./codex-home.js";
+import { prepareCodexHome, untrustedProjectPathsFor, type CodexHomeInput } from "./codex-home.js";
 import { startHostToolRelay, type HostToolRelay } from "./host-tool-relay.js";
 import { createStreamTranslator } from "./stream-translator.js";
 
@@ -199,20 +205,26 @@ export function toCodexPermissions(
  */
 function withThreadConfig(
   start: StartMessage,
+  effectiveConfig?: unknown,
 ): { config?: Record<string, unknown> } {
-  const config = threadConfig(start);
+  const config = threadConfig(start, effectiveConfig);
   return Object.keys(config).length > 0 ? { config } : {};
 }
 
-function threadConfig(start: StartMessage): Record<string, unknown> {
+function threadConfig(start: StartMessage, effectiveConfig?: unknown): Record<string, unknown> {
   const config: Record<string, unknown> = { ...(start.codexConfig ?? {}) };
-  const foreign = foreignMcpServerOverrides({ keep: RELAY_MCP_SERVER_NAME });
+  const foreign = foreignMcpServerOverrides({ keep: RELAY_MCP_SERVER_NAME, effectiveConfig });
   if (Object.keys(foreign).length > 0) {
     const existing =
       config.mcp_servers && typeof config.mcp_servers === "object"
         ? (config.mcp_servers as Record<string, unknown>)
         : {};
     config.mcp_servers = { ...foreign, ...existing };
+  }
+  for (const key of Object.keys(start.nativeMcpServers ?? {})) {
+    if (config.mcp_servers && typeof config.mcp_servers === "object") {
+      delete (config.mcp_servers as Record<string, unknown>)[key];
+    }
   }
   return config;
 }
@@ -249,7 +261,6 @@ async function main(): Promise<void> {
     | {
         turn: BridgeTurn;
         aliasToCanonical: Map<string, string>;
-        toolCallSeq: number;
       }
     | undefined;
   let catalog = buildHostToolCatalog([]);
@@ -270,6 +281,28 @@ async function main(): Promise<void> {
    *    enough — the thread is not what holds the catalog.
    */
   let runtimeConfig: string | undefined;
+  let nativeHome: CodexHomeInput | undefined;
+  const invalidateRuntime = async (runtime: NativeMcpRuntime) => {
+    nativeHome = undefined;
+    if (client !== runtime) return;
+    client = undefined;
+    threadId = undefined;
+    const oldRelay = relay;
+    relay = undefined;
+    await oldRelay?.close();
+  };
+  const retireRuntime = async (runtime: NativeMcpRuntime) => {
+    try {
+      await runtime.kill();
+    } finally {
+      await invalidateRuntime(runtime);
+    }
+  };
+  const nativeRefresh = createNativeMcpRefresher({
+    current: () => client && nativeHome ? { runtime: client, home: nativeHome, threadId } : undefined,
+    commit: (home) => { nativeHome = home; },
+    invalidate: invalidateRuntime,
+  });
   const runtimeConfigOf = (start: StartMessage): string =>
     runtimeConfigFingerprint(start);
 
@@ -289,35 +322,12 @@ async function main(): Promise<void> {
 
     relay = await startHostToolRelay({
       listTools: () => catalog.descriptors,
-      callTool: async ({ toolName, input }) => {
-        const active = activeTurn;
-        if (!active) throw new Error("no active turn for a host tool call");
-        const canonical = active.aliasToCanonical.get(toolName) ?? toolName;
-        const toolCallId = `mcpjam-host-${++active.toolCallSeq}`;
-        // `providerExecuted: false` is the signal that MCPJam runs this one.
-        // The framework's approval gate (HarnessAgent `toolApproval`) fires on
-        // the host side before `execute`, which is why the bridge must not
-        // prompt for it as well.
-        active.turn.emit({
-          type: "tool-call",
-          toolCallId,
-          toolName: canonical,
-          input: JSON.stringify(input ?? {}),
-          providerExecuted: false,
-        });
-        const result = await active.turn.requestToolResult(toolCallId);
-        active.turn.emit({
-          type: "tool-result",
-          toolCallId,
-          toolName: canonical,
-          result,
-        });
-        return result;
-      },
+      callTool: (request) => callHostTool(activeTurn, request),
     });
 
-    const codexHome = prepareCodexHome({
+    const homeInput: CodexHomeInput = {
       codexHome: join(args.sessionDataDir, "codex-home"),
+      nativeMcpServers: start.nativeMcpServers,
       // Delivered per session as the adapter's credential environment: the
       // hosted proxy's `…/openai/v1`, or the local gateway's bare origin. The
       // real lease is injected outside the process; `CODEX_API_KEY` is the
@@ -331,7 +341,9 @@ async function main(): Promise<void> {
       // Keeps the folder's own `.codex/config.toml` (MCP servers, hooks, exec
       // policies) out: see `untrustedProjectPathsFor`.
       untrustedProjectPaths: untrustedProjectPathsFor(args.workdir),
-    });
+    };
+    nativeHome = homeInput;
+    const codexHome = prepareCodexHome(homeInput);
 
     client = spawnAppServerClient({
       command: process.execPath,
@@ -392,9 +404,22 @@ async function main(): Promise<void> {
       },
     });
     client.notify("initialized", {});
+    if (process.platform === "win32") {
+      try {
+        await setupWindowsSandbox(spawned, args.workdir);
+      } catch (error) {
+        // A later turn must not reuse a process whose sandbox never initialized.
+        await spawned.kill();
+        if (client === spawned) client = undefined;
+        throw error;
+      }
+    }
   };
 
-  await runBridge<StartMessage>({
+  const bridgeOptions: Parameters<typeof runBridge<StartMessage>>[0] & {
+    onMcpRefresh(candidate: unknown): Promise<void>;
+  } = {
+    onMcpRefresh: (candidate) => nativeRefresh.refresh(candidate),
     // Kept as `codex`: `bridge-meta.json`'s type is matched by the framework's
     // `waitForBridgeReady`, and both Codex transports are the same harness id.
     bridgeType: "codex",
@@ -418,14 +443,26 @@ async function main(): Promise<void> {
       // The catalog has to exist BEFORE Codex starts: it reads the MCP server's
       // tools once, at startup.
       catalog = buildHostToolCatalog(start.tools ?? []);
+      await nativeRefresh.settled();
       await ensureRuntime(start);
       const runtime = client;
       if (!runtime) throw new Error("codex app-server failed to start");
 
+      if (start.nativeMcpServers && nativeHome) {
+        nativeHome = { ...nativeHome, nativeMcpServers: start.nativeMcpServers };
+        prepareCodexHome(nativeHome);
+        try {
+          await waitForNativeMcpServers({
+            runtime, serverNames: [], reload: true, signal: turn.abortSignal,
+          });
+        } catch (error) {
+          await retireRuntime(runtime);
+          throw error;
+        }
+      }
       activeTurn = {
         turn,
         aliasToCanonical: catalog.aliasToCanonical,
-        toolCallSeq: 0,
       };
 
       const translator = createStreamTranslator({
@@ -459,7 +496,9 @@ async function main(): Promise<void> {
         ...(start.instructions
           ? { developerInstructions: start.instructions }
           : {}),
-        ...withThreadConfig(start),
+        ...withThreadConfig(start, process.platform === "win32"
+          ? await runtime.request("config/read", { cwd: args.workdir, includeLayers: true })
+          : undefined),
         serviceName: "mcpjam-inspector",
       };
 
@@ -481,6 +520,19 @@ async function main(): Promise<void> {
             threadParams,
           );
       threadId = thread.thread?.id ?? resumeId;
+      const nativeNames = Object.keys(start.nativeMcpServers ?? {});
+      if (!threadId) throw new Error("MCP startup requires a thread");
+      try {
+        await waitForMcpStartup({
+          runtime,
+          threadId,
+          serverNames: nativeNames,
+          signal: turn.abortSignal,
+        });
+      } catch (error) {
+        await retireRuntime(runtime);
+        throw error;
+      }
       if (threadId) turn.emit({ type: "bridge-thread", threadId });
       turn.emit({
         type: "stream-start",
@@ -546,7 +598,8 @@ async function main(): Promise<void> {
       settled = true;
       activeTurn = undefined;
     },
-  });
+  };
+  await runBridge<StartMessage>(bridgeOptions);
 }
 
 /*

@@ -1541,3 +1541,13 @@ describe("suiteTestResultsToEvalResultInputs", () => {
     expect(withoutResult?.expectedToolCalls).toBeUndefined();
   });
 });
+
+
+it("preserves the complete individual mapping in suite results apart from suite metadata", () => {
+  const iteration = makeIteration({ prompts: [makePrompt({ prompt: "hello" })] });
+  const [single] = iterationsToEvalResultInputs("same-case", [iteration]);
+  const [suite] = suiteTestResultsToEvalResultInputs(new Map([
+    ["same-case", makeRunResult([iteration])],
+  ]));
+  expect(suite).toEqual({ ...single, metadata: { ...single.metadata, testName: "same-case" } });
+});

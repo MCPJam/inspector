@@ -677,15 +677,19 @@ export function createHostedMrtrCollector(
     if (!created.ok) {
       // No durable record ⇒ nothing for the browser to answer. Fail the op
       // honestly rather than emit a continuation id the store never accepted.
-      logger.error("[mrtr-continuation] create failed; failing operation", {
-        error: created.error,
-        ...redactContinuationForLog({
-          continuationId,
-          serverId: deps.serverId,
-          round: state.round,
-          operationMethod: state.method as MrtrOperationMethod,
-        }),
-      });
+      logger.error(
+        "[mrtr-continuation] create failed; failing operation",
+        undefined,
+        {
+          error: created.error,
+          ...redactContinuationForLog({
+            continuationId,
+            serverId: deps.serverId,
+            round: state.round,
+            operationMethod: state.method as MrtrOperationMethod,
+          }),
+        },
+      );
       throw new Error(
         `Failed to persist MRTR continuation (${created.status}): ${created.error}`,
       );

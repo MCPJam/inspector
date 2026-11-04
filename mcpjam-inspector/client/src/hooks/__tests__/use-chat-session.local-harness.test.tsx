@@ -237,7 +237,7 @@ async function renderWithHarness(
     useChatSession({
       selectedServers: ["server-1"],
       ...(localHarnessExecution ? { localHarnessExecution } : {}),
-      ...(hostedContext ? { hostedContext } : {}),
+      ...(hostedContext ? { hostedContext: { selectedServerIds: ["server-id-1"], ...hostedContext } } : {}),
       ...(extra ?? {}),
     } as never),
   );
@@ -406,7 +406,7 @@ describe("useChatSession — local Claude Code transmission", () => {
     // target and hand the user a cloud sandbox they never asked for.
     await renderWithHarness({ requested: true, resolveSendTarget: () => null });
     expect(() => sendRequest()).toThrow(
-      "Local execution is not authorized for this turn",
+      "Local execution is not authorized. Set up this client on your machine and try again.",
     );
   });
 
@@ -460,13 +460,14 @@ describe("useChatSession — local Claude Code transmission", () => {
     expect(headers[LOCAL_HARNESS_GRANT_HEADER]).toBeUndefined();
   });
 
-  it("never sends local on a surface forced onto the web route", async () => {
+  it("keeps an explicitly local harness on local ingress for managed surfaces", async () => {
     await renderWithHarness(grantedController(), {
       projectId: "proj-1",
       requiresWebChatApi: true,
     });
-    expect(() => sendRequest()).toThrow("Choose a model available in this workspace");
-    expect(latestTransport().headers ?? {}).not.toHaveProperty(LOCAL_HARNESS_GRANT_HEADER);
+    const { body, headers } = sendRequest();
+    expect(body.harnessTarget).toEqual(LOCAL_TARGET);
+    expect(headers[LOCAL_HARNESS_GRANT_HEADER]).toBe("grant-token-value");
   });
 });
 
@@ -488,13 +489,14 @@ describe("useChatSession — routing an org-runtime model that asks for local", 
     providers: [{ providerKey: "openai", enabled: true, hasSecret: true }],
   } as never;
 
-  it("routes an org-runtime model to the web API when nothing asks for local", async () => {
-    // The control. Without this the assertion below would pass whether or not
-    // the carve-out exists.
+  it("keeps an org-runtime model on the local route, with no local runtime ask, when nothing asks for local", async () => {
+    // The control. Without this the `localMcpRuntimeRequired` assertions below
+    // would pass whether or not a local ask is what sets the flag.
     await renderWithHarness(undefined, { projectId: "proj-1" }, {
       hostedOrgModelConfig: ORG_CONFIG,
     });
-    expect(chatApi()).toBe("/api/web/chat-v2");
+    expect(chatApi()).toBe("/api/mcp/chat-v2");
+    expect(sendRequest().body.localMcpRuntimeRequired).toBeUndefined();
   });
 
   it("keeps a requested local turn on the route that can run it", async () => {

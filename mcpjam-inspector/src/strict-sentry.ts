@@ -16,6 +16,31 @@ import {
   crashReportingIntegrations,
   dropUpdaterInstallSpawnRejection,
 } from "./crash-reporting.js";
+import type { DesktopStartupFailureCode } from "../shared/desktop-startup-failure.js";
+
+/**
+ * Page #mcpjam-alerts: the app still could not start after its automatic
+ * restart, so the user is looking at the startup dialog. `surface` and
+ * `page_class` are what the alert rule matches; `code` and `port` are the
+ * only details the strict boundary lets through.
+ *
+ * Flushed before returning because the caller shows a blocking dialog and
+ * then quits; an event still queued at exit is never sent.
+ */
+export async function reportDesktopStartupFailure(details: {
+  code: DesktopStartupFailureCode;
+  port?: number;
+}): Promise<void> {
+  Sentry.captureMessage(
+    "Desktop app could not start after an automatic restart",
+    {
+      level: "error",
+      tags: { surface: "desktop", page_class: "incident" },
+      extra: { ...details },
+    },
+  );
+  await Sentry.flush(2000);
+}
 
 export function initDesktopSentry(input: {
   release: string;

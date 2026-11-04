@@ -29,9 +29,12 @@ import { registerRegistryCommands } from "./commands/registry.js";
 import {
   detectOutputFormatFromArgv,
   normalizeCliError,
+  routeConsoleToStderr,
   usageError,
   writeError,
 } from "./lib/output.js";
+import { installDeploymentPreflight } from "./lib/deployment-preflight.js";
+import { installProxyDispatcher } from "./lib/network-proxy.js";
 import { addGlobalOptions } from "./lib/server-config.js";
 import {
   captureCommandEvent,
@@ -90,6 +93,7 @@ export async function main(
       }),
   );
   const telemetry = initTelemetry(program, pkgVersion, dependencies.telemetry);
+  installDeploymentPreflight(program);
 
   program.commandsGroup("Local MCP testing:");
   registerTestCommand(program, dependencies.localTest);
@@ -127,7 +131,12 @@ export async function main(
   }
 
   try {
-    await program.parseAsync(argv as string[]);
+    const restoreConsole = routeConsoleToStderr();
+    try {
+      await program.parseAsync(argv as string[]);
+    } finally {
+      restoreConsole();
+    }
     const normalizedExitCode =
       typeof process.exitCode === "number" ? process.exitCode : 0;
     captureCommandEvent(
@@ -178,6 +187,9 @@ export async function runCliEntrypoint(
   argv: readonly string[] = process.argv,
   dependencies: CliEntrypointDependencies = {},
 ): Promise<CliMainResult> {
+  // Here and not in `main`: a program embedding the CLI keeps its own
+  // process-wide networking.
+  installProxyDispatcher();
   const result = await main(argv, dependencies);
   process.exitCode = result.exitCode;
 

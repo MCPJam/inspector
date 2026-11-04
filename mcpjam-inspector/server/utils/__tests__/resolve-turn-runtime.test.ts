@@ -352,8 +352,7 @@ describe("resolveTurnRuntime — runtime shape", () => {
         baseArgs({ modelDefinition: LOCAL_MODEL, harness: "claude-code" }),
       ),
     ).rejects.toThrow(
-      "This host runs the claude-code harness, which isn't available: the " +
-        "Claude Code harness requires a supported model and an eligible Anthropic connection.",
+      "The Claude Code client needs a supported model and an eligible Anthropic connection. Choose another model or contact your organization admin.",
     );
     expect(buildOrgModelFromResolvedConfigMock).not.toHaveBeenCalled();
   });

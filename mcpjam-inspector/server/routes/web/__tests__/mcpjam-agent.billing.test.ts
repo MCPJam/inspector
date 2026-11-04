@@ -134,4 +134,18 @@ describe("web routes — Ask MCPJam billing claim", () => {
     const args = await postTurn({ guestId: "guest-abc" });
     expect(String(args.prepare.modelDefinition.id)).toBe(MCPJAM_AGENT_MODEL);
   });
+
+  it("does not advertise web_search to a guest", async () => {
+    // The backend refuses every guest search outside a shared scenario, so an
+    // advertised tool would only fail at execution and page as an incident.
+    const args = await postTurn({ guestId: "guest-abc" });
+    expect(args.prepare.builtInTools).toBeUndefined();
+  });
+
+  it("still advertises web_search to a signed-in caller", async () => {
+    const args = await postTurn();
+    expect(Object.keys(args.prepare.builtInTools ?? {})).toContain(
+      "web_search",
+    );
+  });
 });
