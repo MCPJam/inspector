@@ -129,13 +129,6 @@ export function ConformanceSetup({
   // connects it in place.
   const protocolConnection = useConformanceProtocolConnection(picked, versionPin);
   const canContinue = protocolConnection.ready;
-  const [focusVersion, setFocusVersion] = useState(false);
-  useEffect(() => {
-    if (step === 0 && focusVersion) {
-      document.getElementById(`${versionLabelId}-select`)?.focus();
-      setFocusVersion(false);
-    }
-  }, [step, focusVersion, versionLabelId]);
   // Picking a server readies it: one that is not connected starts
   // connecting in the background, with no separate Connect to remember.
   const needsConnect = (name: string) => {
@@ -282,10 +275,6 @@ export function ConformanceSetup({
       result={protocolConnection.result}
       serverName={serverName ?? "Server"}
       version={versionPin}
-      onChangeVersion={() => {
-        setStep(0);
-        setFocusVersion(true);
-      }}
       onRetry={protocolConnection.retry}
       onSignIn={() => {
         if (pickedName)
