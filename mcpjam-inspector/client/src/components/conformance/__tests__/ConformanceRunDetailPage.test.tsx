@@ -151,7 +151,10 @@ describe("ConformanceRunDetailPage", () => {
       .mockResolvedValueOnce(reportBody([{ id: "completion-complete", title: "Completion", status: "failed", error: 'MCP server "bart" doesn\'t support MCP protocol version 2026-07-28, which this client is pinned to.' }]));
     useArtifactQueryMock.mockReturnValue(run([report({ outcome: "failed", status: "failed" })], { protocolVersion: "2026-07-28" }));
     const { rerender } = render(<ConformanceRunDetailPage runId="run_1" />);
-    await screen.findByText("Connection timed out");
+    const completion = await screen.findByRole("button", { name: /Completion/ });
+    expect(
+      within(completion).getByText("Connection timed out"),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
     useArtifactQueryMock.mockReturnValue(run([report({ outcome: "failed", status: "failed", reportUrl: "https://artifacts.test/final.json" })], { protocolVersion: "2026-07-28" }));
     rerender(<ConformanceRunDetailPage runId="run_2" />);
