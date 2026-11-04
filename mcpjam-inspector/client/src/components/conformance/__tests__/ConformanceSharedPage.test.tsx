@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 const { useSharedArtifactMock } = vi.hoisted(() => ({
   useSharedArtifactMock: vi.fn(),
@@ -106,9 +106,15 @@ describe("ConformanceSharedPage", () => {
     });
     render(<ConformanceSharedPage token="tok" />);
 
+    const header = screen.getByRole("button", {
+      name: /^Additional enhancements/,
+    });
+    expect(header).toHaveTextContent("Additional enhancements1");
+    fireEvent.click(header);
+    expect(screen.getByText("Tool order is stable")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /^Additional enhancements/ }),
-    ).toHaveTextContent("Additional enhancements1");
+      screen.getByText("Return tools in the same order."),
+    ).toBeInTheDocument();
   });
 
   it("claims nothing about verification when the artifact has no field", () => {
