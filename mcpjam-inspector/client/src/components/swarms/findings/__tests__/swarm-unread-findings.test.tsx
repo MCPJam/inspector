@@ -65,6 +65,30 @@ function unreadWire(verdict: "passed" | "failed" | "notEstablished") {
 }
 
 describe("unread swarm findings", () => {
+  it.each(["passed", "failed", "notEstablished"] as const)(
+    "exposes a failed report while retaining the %s verdict",
+    (verdict) => {
+      const wire = unreadWire(verdict);
+      wire.coverageNotes.push("analysisUnavailable");
+      wire.findings.forEach((row) => {
+        row.coverageNotes.push("analysisUnavailable");
+      });
+      render(<SwarmFindingsTab {...props} journeyFindings={wire} />);
+      expect(
+        screen.getByText("A session report couldn't be generated"),
+      ).toBeInTheDocument();
+      const detail = within(screen.getByRole("complementary"));
+      expect(
+        detail.getByText(/Session report couldn't be generated/),
+      ).toBeInTheDocument();
+      if (verdict === "passed") {
+        expect(
+          detail.getByText(/The grader recorded this goal as met/),
+        ).toBeInTheDocument();
+      }
+    },
+  );
+
   it("retains a scored persona when the published reader result is unavailable", () => {
     const view = render(<SwarmFindingsTab {...props} />);
     expect(

@@ -647,7 +647,11 @@ export function composeWireFindingsSummary(
 
 export function wireFindingsFootnotes(wire: SwarmJourneyFindings): string[] {
   const notes = wire.coverageNotes.map(
-    (note) => SWARM_FINDING_COVERAGE_NOTE_LABELS[note],
+    (note) =>
+      note === "analysisUnavailable" &&
+      wire.findings.some((row) => row.coverageNotes.includes("analysisUnavailable"))
+        ? "A session report couldn't be generated"
+        : SWARM_FINDING_COVERAGE_NOTE_LABELS[note],
   );
   const verification = wire.verification;
   if (!verification) return notes;
