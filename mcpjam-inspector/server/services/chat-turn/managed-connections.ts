@@ -492,8 +492,7 @@ export async function prepareManagedConnections(args: {
         modelVisibleMcpToolResults,
       });
     }
-    // Legacy and inline consumers cover the whole batch's shared capabilities.
-    let legacyExecutor: typeof modelToolExecutor;
+    let legacyExecutor: ReturnType<typeof createModelFormExecutor> | undefined;
     const inlineServerIds = pluginFormPlan.inlineServerIds ?? [];
     const liveFormServerIds = [...new Set([...eligibleServerIds, ...inlineServerIds])];
     if (liveFormServerIds.length) {
@@ -515,6 +514,7 @@ export async function prepareManagedConnections(args: {
         dispatch: modelFormDispatch,
         inlineMrtr: inlineServerIds.length > 0,
       });
+      resources.own(legacyExecutor.dispose);
     }
     // An Auto server is in both plans; each call follows its negotiated era.
     modelToolExecutor = chatPluginToolExecutor({
