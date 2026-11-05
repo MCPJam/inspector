@@ -1701,9 +1701,10 @@ export async function streamChatTurn(
 
     assertNativeDiscovery({ required: persist.requireNativeToolDiscovery });
     const orgMaxSteps =
-      orgRuntime.runtimeLocation === "local"
+      runtime.maxSteps ??
+      (orgRuntime.runtimeLocation === "local"
         ? resolveLocalOrgMaxSteps(undefined)
-        : DEFAULT_TURN_MAX_STEPS;
+        : DEFAULT_TURN_MAX_STEPS);
     setupAtTurn = await captureSetup(
       orgMaxSteps,
       orgRuntime.runtimeLocation === "local" ? localTools.tools : preparedTools,
