@@ -389,9 +389,14 @@ export function OverallScoreCard({
     // advice from one without; read the advice itself.
     const advised =
       (scored.advisories?.length ?? scored.advisoryCount ?? 0) > 0;
-    return advised
+    // Checks that need input don't hold the verdict back, but the run did not
+    // check everything, so it is not "fully" conformant.
+    const conformant = advised
       ? "Conformant, with guidance."
-      : "Fully conformant.";
+      : inputSentence
+        ? "Conformant."
+        : "Fully conformant.";
+    return [conformant, inputSentence].filter(Boolean).join(" ");
   })();
 
   // The fraction already says how many passed. This line is only the checks

@@ -59,7 +59,7 @@ describe("Inspector Tasks group requests", () => {
       });
       expect(result?.checks.filter(isMissingInputCheck)).toHaveLength(1);
       expect(result?.checks[1]?.status).toBe("passed");
-      expect(result?.outcome).toBe("incomplete");
+      expect(result?.outcome).toBe("passed");
       expect(readStoredProbes("blank-test")).toEqual(saved);
     },
   );

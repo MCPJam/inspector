@@ -34,6 +34,25 @@ describe("OverallScoreCard", () => {
     expect(screen.queryByText("Fully conformant.")).toBeNull();
   });
 
+  it("calls a passed run that skipped checks for missing input conformant, not fully", () => {
+    render(
+      <OverallScoreCard
+        score={{ ...passedScore(100), couldNotRun: 2 }}
+        serverName="srv"
+        version="2025-11-25"
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Conformant. 2 checks need input. Select tools in setup and run again.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("2 not run (missing input).")).toBeInTheDocument();
+    expect(screen.getByText("10/10")).toBeInTheDocument();
+    expect(screen.queryByText(/partial/)).toBeNull();
+    expect(screen.queryByText("Fully conformant.")).toBeNull();
+  });
+
   it.each([
     [
       3,

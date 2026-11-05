@@ -47,25 +47,33 @@ const TAB_CLASSNAME =
  * `motion-reduce` takes the movement away and keeps the colour: the darkening
  * is the part that says "this is the thing under your cursor", and someone who
  * asked for less motion still needs that answer.
+ *
+ * Conformance's run pages use it too, so every detail
+ * page's way back looks the same.
  */
 export function DetailBackLink({
   label,
   onBack,
   testId,
+  disabled = false,
 }: {
   label: string;
   onBack: () => void;
   testId?: string;
+  /** Leaving now would lose work in progress. */
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onBack}
+      disabled={disabled}
       className={cn(
         "group inline-flex h-8 shrink-0 items-center gap-2 rounded-lg",
         "border border-border/60 bg-card pl-2.5 pr-3 shadow-sm",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         "focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+        "disabled:pointer-events-none disabled:opacity-50",
       )}
       data-testid={testId}
     >
@@ -99,6 +107,7 @@ export function DetailPageHeader<T extends string>({
   backLabel,
   onBack,
   backTestId,
+  backDisabled,
   title,
   meta,
   actions,
@@ -110,6 +119,8 @@ export function DetailPageHeader<T extends string>({
   backLabel: string;
   onBack: () => void;
   backTestId?: string;
+  /** Leaving would lose work in progress, e.g. a run that is still going. */
+  backDisabled?: boolean;
   title: ReactNode;
   /** Outcome / count in the gap before the actions, not against the tabs. */
   meta?: ReactNode;
@@ -140,6 +151,7 @@ export function DetailPageHeader<T extends string>({
             label={backLabel}
             onBack={onBack}
             testId={backTestId}
+            disabled={backDisabled}
           />
           <div
             className="hidden h-4 w-px shrink-0 bg-border/60 sm:block"

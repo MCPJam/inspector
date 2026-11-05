@@ -15,6 +15,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import {
@@ -294,6 +295,7 @@ export function ConformanceProbeField({
   onChange,
   onValidChange,
   showLevel = false,
+  forCheck,
 }: {
   probeKey: ConformanceProbeKey;
   tools: ProbeTools;
@@ -303,6 +305,8 @@ export function ConformanceProbeField({
   onValidChange?: (valid: boolean) => void;
   /** Also ask for the log level, under the log level filtering advice. */
   showLevel?: boolean;
+  /** The check this field belongs to, so each row's dropdown has its own name. */
+  forCheck?: string;
 }) {
   const id = useId();
   // A tool with no output schema gives the output check nothing to grade.
@@ -367,7 +371,11 @@ export function ConformanceProbeField({
         onValueChange={changeTool}
         disabled={status === "loading" || status === "idle"}
       >
-        <SelectTrigger id={id} className="h-8 w-full text-xs">
+        <SelectTrigger
+          id={id}
+          className="h-8 w-full text-xs"
+          aria-label={forCheck ? `${copy.label} for ${forCheck}` : undefined}
+        >
           <SelectValue
             placeholder={status === "loading" ? "Loading tools..." : "Not set"}
           />
@@ -432,13 +440,123 @@ export function ConformanceProbeField({
   );
 }
 
+function sameArguments(
+  a: Record<string, unknown> | undefined,
+  b: Record<string, unknown> | undefined,
+): boolean {
+  return JSON.stringify(a ?? {}) === JSON.stringify(b ?? {});
+}
+
+/**
+ * A check's own tool, under its row. The dropdown always shows, filled with
+ * the tool the check inherits until the operator picks another. A change to
+ * the tool or its arguments becomes this check's own choice and clears the
+ * box; ticking the box drops that choice. A change that keeps the inherited
+ * tool and arguments (the log level) still edits the inherited probe.
+ */
+export function CheckToolField({
+  probeKey,
+  tools,
+  inherited,
+  override,
+  inheritLabel,
+  checkTitle,
+  hint,
+  showLevel = false,
+  keepAnswers = false,
+  onOverrideChange,
+  onInheritedChange,
+  onValidChange,
+}: {
+  probeKey: ConformanceProbeKey;
+  tools: ProbeTools;
+  inherited: ConformanceProbe | undefined;
+  override: ConformanceProbe | undefined;
+  inheritLabel: string;
+  /** The row's title, so its dropdown has its own accessible name. */
+  checkTitle?: string;
+  hint?: string;
+  /** Also ask for the log level, under the log level filtering advice. */
+  showLevel?: boolean;
+  /** Keep the task's input answers on this check's own choice. */
+  keepAnswers?: boolean;
+  onOverrideChange: (probe: ConformanceProbe | undefined) => void;
+  onInheritedChange?: (probe: ConformanceProbe) => void;
+  /** False while this check's own choice has no tool or a draft that does not parse. */
+  onValidChange: (valid: boolean) => void;
+}) {
+  const effective = override ?? inherited;
+  // Only the extras this check sends: a level for the log advice, answers for
+  // the update check.
+  const own = (probe: ConformanceProbe): ConformanceProbe => {
+    const { level, inputResponses, ...rest } = probe;
+    return {
+      ...rest,
+      ...(showLevel && level ? { level } : {}),
+      ...(keepAnswers && inputResponses ? { inputResponses } : {}),
+    };
+  };
+  const change = (next: ConformanceProbe | undefined) => {
+    if (
+      !override &&
+      next &&
+      inherited &&
+      onInheritedChange &&
+      next.toolName === inherited.toolName &&
+      sameArguments(next.arguments, inherited.arguments)
+    ) {
+      onInheritedChange(next);
+      return;
+    }
+    // "Not set" on this check alone leaves it waiting for a tool, rather
+    // than quietly falling back to the inherited one.
+    onOverrideChange(next ? own(next) : { toolName: "" });
+  };
+  const [draftValid, setDraftValid] = useState(true);
+  const valid = draftValid && (!override || override.toolName.trim() !== "");
+  const onValidChangeRef = useRef(onValidChange);
+  useEffect(() => {
+    onValidChangeRef.current = onValidChange;
+  });
+  useEffect(() => {
+    onValidChangeRef.current(valid);
+  }, [valid]);
+  useEffect(() => () => onValidChangeRef.current(true), []);
+  return (
+    <div className="space-y-2">
+      <label className="flex items-center gap-2 text-xs">
+        <Checkbox
+          checked={!override}
+          onCheckedChange={(inherit) =>
+            onOverrideChange(
+              inherit ? undefined : own(effective ?? { toolName: "" }),
+            )
+          }
+        />
+        {inheritLabel}
+      </label>
+      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+      <ConformanceProbeField
+        probeKey={probeKey}
+        tools={tools}
+        probe={effective}
+        onChange={change}
+        onValidChange={setDraftValid}
+        showLevel={showLevel}
+        forCheck={checkTitle}
+      />
+    </div>
+  );
+}
+
 /**
  * What a check or advice row shows under it for its probe: the field, under
- * the first picked one that calls the tool, and a pointer to it under the
- * others. The log level filtering advice also asks for its log level. Nothing for a
- * row that calls no tool or is not picked.
+ * the first picked one that calls the tool. The log level filtering advice,
+ * when the logging check is picked too, shows its own field filled with the
+ * logging check's tool, plus its log level. Nothing for a row that calls no
+ * tool or is not picked.
  *
- * `onValidChange` names the probe whose arguments it validates.
+ * `onValidChange` names the probe, or the advice, whose input it validates.
  */
 export function ProbeCheckExtra({
   checkId,
@@ -456,7 +574,7 @@ export function ProbeCheckExtra({
   probes: ConformanceProbes;
   onProbesChange: (probes: ConformanceProbes) => void;
   onValidChange?: (
-    part: ConformanceProbeKey | "answers",
+    part: ConformanceProbeKey | "answers" | typeof LOG_LEVEL_ADVICE,
     valid: boolean,
   ) => void;
 }) {
@@ -485,19 +603,30 @@ export function ProbeCheckExtra({
       />
     );
   }
-  const pointer = (
-    <p className="text-xs text-muted-foreground">
-      Calls the tool set under {owner ? checkTitle(owner) : "the check above"}.
-    </p>
-  );
-  return showLevel && probe ? (
-    <div className="space-y-2">
-      {pointer}
-      <div className={FIELD_BOX}>
-        <LogLevelField probe={probe} onChange={setProbe} />
-      </div>
-    </div>
-  ) : (
-    pointer
+  // Only the log level filtering advice shares its tool with an earlier row.
+  if (!showLevel) return null;
+  const ownerTitle = owner ? checkTitle(owner) : undefined;
+  return (
+    <CheckToolField
+      probeKey={key}
+      tools={tools}
+      inherited={probe}
+      override={probes.logLevelOverride}
+      inheritLabel={
+        ownerTitle
+          ? `Use the tool from ${ownerTitle}`
+          : "Use the logging check's tool"
+      }
+      checkTitle={checkTitle(checkId)}
+      showLevel
+      onOverrideChange={(next) => {
+        const all = { ...probes };
+        if (next) all.logLevelOverride = next;
+        else delete all.logLevelOverride;
+        onProbesChange(all);
+      }}
+      onInheritedChange={setProbe}
+      onValidChange={(valid) => onValidChange?.(LOG_LEVEL_ADVICE, valid)}
+    />
   );
 }
