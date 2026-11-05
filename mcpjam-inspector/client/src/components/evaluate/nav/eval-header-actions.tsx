@@ -1,5 +1,7 @@
 import { useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { ArrowLeft } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
 
 /**
  * A page's own buttons in Evaluate's breadcrumb bar. The bar is rendered by
@@ -25,7 +27,7 @@ function subscribe(listener: () => void) {
 const readSlot = () => slotElement;
 const readNoSlot = () => null;
 
-/** The right end of the breadcrumb bar. Render it inside a `relative` box. */
+/** The right end of the breadcrumb bar. Render it inside a `relative` box, such as the bar's strip. */
 export function EvalHeaderActionsSlot() {
   return (
     <div
@@ -40,4 +42,28 @@ export function EvalHeaderActionsSlot() {
 export function EvalHeaderActions({ children }: { children: ReactNode }) {
   const target = useSyncExternalStore(subscribe, readSlot, readNoSlot);
   return target ? createPortal(children, target) : null;
+}
+
+/** A page's Back button, as every new page shows it in the breadcrumb bar. */
+export function EvalHeaderBack({
+  label,
+  onClick,
+  testId,
+}: {
+  label: string;
+  onClick: () => void;
+  testId?: string;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      onClick={onClick}
+      data-testid={testId}
+    >
+      <ArrowLeft className="size-3.5" aria-hidden />
+      {label}
+    </Button>
+  );
 }

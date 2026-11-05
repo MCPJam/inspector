@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback } from "react";
 import type { SuiteSettingsRouteTab } from "@/lib/eval-route-types";
 import { parseEvalRouteFromUrl } from "@/lib/eval-route-url";
 import type { EvalSuiteSettingKey } from "@/shared/eval-suite-settings-manifest";
 import { useEvaluateNavPage } from "../nav/eval-nav-pages";
 import { useEvaluateNavEnabled } from "../nav/use-evaluate-nav-enabled";
-import { trackEvalNav, type EvalNavArrival } from "../nav/eval-nav-events";
+import { useEvalNavPageViewed } from "../nav/eval-nav-link";
 import { navigatePlaygroundEvalsRoute } from "../create-suite-navigation";
 
 /** The suite whose Suite settings page `pathname` names, if it names one. */
@@ -32,12 +32,6 @@ function suiteSettingsTabFor(
   return key === "passOrFail" ? "evaluators" : "settings";
 }
 
-/** In-app navigation leaves a history index above 0; a pasted link does not. */
-function firstArrival(): EvalNavArrival {
-  const index = (window.history.state as { idx?: unknown } | null)?.idx;
-  return typeof index === "number" && index > 0 ? "link" : "direct";
-}
-
 export type SuiteSettingsNav = {
   /** The open tab while the new Suite settings page shows; null otherwise. */
   tab: SuiteSettingsRouteTab | null;
@@ -63,16 +57,7 @@ export function useSuiteSettingsNav(suiteId: string): SuiteSettingsNav {
   const onPage = route.type === "suite-settings" && route.suiteId === suiteId;
   const tab = onPage && enabled === true ? route.tab : null;
 
-  const viewed = useRef(false);
-  useEffect(() => {
-    if (!tab) return;
-    trackEvalNav("eval_nav_page_viewed", {
-      page: "suite-settings",
-      tab,
-      arrived_via: viewed.current ? "link" : firstArrival(),
-    });
-    viewed.current = true;
-  }, [tab]);
+  useEvalNavPageViewed("suite-settings", tab !== null, tab ?? undefined);
 
   const openTab = useCallback(
     (next: SuiteSettingsRouteTab) =>

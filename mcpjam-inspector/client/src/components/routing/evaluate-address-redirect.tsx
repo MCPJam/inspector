@@ -12,26 +12,12 @@ import {
   trackEvalNav,
   type EvalNavArrivalState,
 } from "@/components/evaluate/nav/eval-nav-events";
-import { useEvaluateNavEnabled } from "@/components/evaluate/nav/use-evaluate-nav-enabled";
+import { useSettledEvaluateNavFlag } from "@/components/evaluate/nav/use-settled-evaluate-nav-flag";
 import { ScopedNavigate } from "./scoped-navigate";
-
-/** How long an address that depends on the flag waits for PostHog before reading it as off. */
-export const FLAG_WAIT_MS = 2000;
 
 const REDIRECT_ARRIVAL: EvalNavArrivalState = {
   [EVAL_NAV_ARRIVAL_STATE_KEY]: "redirect",
 };
-
-function useSettledNavFlag(): boolean | undefined {
-  const enabled = useEvaluateNavEnabled();
-  const [expired, setExpired] = useState(false);
-  useEffect(() => {
-    if (enabled !== undefined) return;
-    const timer = setTimeout(() => setExpired(true), FLAG_WAIT_MS);
-    return () => clearTimeout(timer);
-  }, [enabled]);
-  return enabled ?? (expired ? false : undefined);
-}
 
 type Lookup = { iterationId: string; found: IterationLocation | null };
 
@@ -82,7 +68,7 @@ function useResolvedPlan(
  */
 export function EvaluateAddressRedirect({ children }: { children: ReactNode }) {
   const { pathname, search, hash } = useCurrentLocationParts();
-  const enabled = useSettledNavFlag();
+  const enabled = useSettledEvaluateNavFlag();
   const plan = useMemo(
     () =>
       enabled === undefined

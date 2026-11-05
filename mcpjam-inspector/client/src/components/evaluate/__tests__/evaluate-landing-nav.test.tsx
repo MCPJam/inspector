@@ -1,4 +1,5 @@
 import { act, render, renderHook, screen } from "@testing-library/react";
+import { createMemoryRouter, RouterProvider, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EvalRoute } from "@/lib/eval-route-types";
 
@@ -12,12 +13,7 @@ vi.mock("../create-suite-navigation", () => ({
   navigatePlaygroundEvalsRoute: mocks.navigate,
 }));
 
-import {
-  consumeEvalNavArrival,
-  noteEvalNavArrival,
-  resetEvalNavArrival,
-  useEvaluateLandingNav,
-} from "../evaluate-landing-nav";
+import { useEvaluateLandingNav } from "../evaluate-landing-nav";
 import { HOW_SUITES_WORK_SEEN_KEY } from "../how-suites-work/how-suites-work-model";
 
 type Props = {
@@ -45,7 +41,6 @@ const pageViews = () =>
 
 beforeEach(() => {
   localStorage.clear();
-  resetEvalNavArrival();
   mocks.track.mockClear();
   mocks.navigate.mockClear();
 });
@@ -79,23 +74,32 @@ describe("useEvaluateLandingNav", () => {
     expect(pageViews()).toHaveLength(0);
   });
 
-  it("records a page view per tab with how it was reached", () => {
-    const { rerender } = setup();
+  it("records a page view per tab with how it was reached", async () => {
+    function Landing() {
+      const { pathname } = useLocation();
+      useEvaluateLandingNav({
+        enabled: true,
+        addressRoute: pathname.endsWith("/runs") ? runs : list,
+        suiteCount: 2,
+      });
+      return null;
+    }
+    const router = createMemoryRouter(
+      [{ path: "/evaluate/*", element: <Landing /> }],
+      { initialEntries: ["/evaluate"] },
+    );
+    render(<RouterProvider router={router} />);
     expect(pageViews()[0]?.[1]).toEqual({
       page: "suites",
       arrived_via: "direct",
       location: "evaluate",
     });
-    noteEvalNavArrival("link");
-    rerender({ enabled: true, addressRoute: runs, suiteCount: 2 });
+    await act(() => router.navigate("/evaluate/runs"));
     expect(pageViews()[1]?.[1]).toMatchObject({
       page: "runs",
       arrived_via: "link",
     });
-    act(() => {
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    });
-    rerender({ enabled: true, addressRoute: list, suiteCount: 2 });
+    await act(() => router.navigate(-1));
     expect(pageViews()[2]?.[1]).toMatchObject({
       page: "suites",
       arrived_via: "back",
@@ -154,13 +158,5 @@ describe("useEvaluateLandingNav", () => {
       trigger: "first_suite",
       step: 1,
     });
-  });
-});
-
-describe("consumeEvalNavArrival", () => {
-  it("reads a noted arrival once", () => {
-    noteEvalNavArrival("crumb");
-    expect(consumeEvalNavArrival()).toBe("crumb");
-    expect(consumeEvalNavArrival()).toBe("link");
   });
 });

@@ -19,10 +19,8 @@ vi.mock(
 );
 
 import { EVAL_NAV_ARRIVAL_STATE_KEY } from "@/components/evaluate/nav/eval-nav-events";
-import {
-  EvaluateAddressRedirect,
-  FLAG_WAIT_MS,
-} from "../evaluate-address-redirect";
+import { NAV_FLAG_WAIT_MS as FLAG_WAIT_MS } from "@/components/evaluate/nav/use-settled-evaluate-nav-flag";
+import { EvaluateAddressRedirect } from "../evaluate-address-redirect";
 
 const project = "/p/k5700000000000000000000000a";
 

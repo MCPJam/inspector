@@ -62,6 +62,7 @@ vi.mock("../iteration-report", () => ({
 
 import { TestRunPage } from "../test-run-page";
 import { IterationPage } from "../iteration-page";
+import { EvalHeaderActionsSlot } from "../../nav/eval-header-actions";
 
 function run(id: string, model: string): EvalSuiteRun {
   return {
@@ -130,6 +131,11 @@ const route = {
   runId: "run-a",
   testCaseId: "case",
 };
+
+// The pages put their buttons in the breadcrumb bar's slot.
+beforeEach(() => {
+  render(<EvalHeaderActionsSlot />);
+});
 
 beforeEach(() => {
   track.mockClear();
@@ -258,7 +264,7 @@ describe("TestRunPage", () => {
         runs={[]}
       />,
     );
-    expect(screen.queryByTestId("test-run-execution-preview")).toBeNull();
+    expect(screen.queryByTestId("execution-preview")).toBeNull();
     await userEvent.click(screen.getByTestId("test-run-preview-toggle"));
     expect(track).toHaveBeenCalledWith(
       "eval_execution_preview_opened",

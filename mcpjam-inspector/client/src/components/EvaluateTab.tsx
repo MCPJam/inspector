@@ -51,23 +51,8 @@ import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useEvaluateNavPage } from "./evaluate/nav/eval-nav-pages";
 import { useEvaluateNavEnabled } from "./evaluate/nav/use-evaluate-nav-enabled";
-import { EvalHeaderActionsSlot } from "./evaluate/nav/eval-header-actions";
-import {
-  CaseStepsNavPage,
-  isCaseStepsRoute,
-} from "./evaluate/case-steps/case-steps-nav-page";
-import {
-  buildEvalBreadcrumbs,
-  evalRouteTestCaseId,
-  evalsHeaderTrailProps,
-} from "./evaluate/nav/eval-breadcrumbs";
-import {
-  isTestRunLayerRoute,
-  TestRunLayerLoading,
-  TestRunLayerPage,
-  useSettledEvaluateNavFlag,
-} from "./evaluate/test-run/test-run-layer-page";
-import { useIterationCrumbNumber } from "./evaluate/test-run/iteration-page";
+import { useEvalNavPageMount } from "./evaluate/nav/eval-nav-page-mounts";
+import { useEvalNavTrail } from "./evaluate/nav/use-eval-nav-trail";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
@@ -94,8 +79,7 @@ import { LaunchedCaseJudge } from "./evaluate/case-scorecard/launched-case-judge
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { createSuiteFromPayload } from "./evals/create-suite-from-payload";
 import { useEnvironmentCapabilities } from "@/hooks/use-environment-capabilities";
-import { ConnectedSuitesOverview } from "./evaluate/suites-overview";
-import { ConnectedSuiteCards } from "./evaluate/suite-cards";
+import { ConnectedSuitesOverview as SuitesOverview } from "./evaluate/suites-overview";
 import * as landing from "./evaluate/evaluate-landing-nav";
 import { SuiteListRunReview } from "./evaluate/suite-list-run-review";
 import { ProjectRunsTable } from "./evals/project-runs-table";
@@ -301,9 +285,7 @@ function EvaluateTabContent({
     addressRoute,
     suiteCount: overviewQueries.isOverviewLoading ? null : visibleSuites.length,
   });
-  const SuitesOverview = landingNav
-    ? ConnectedSuiteCards
-    : ConnectedSuitesOverview;
+  const SuitesList = landingNav?.SuiteCards ?? SuitesOverview;
 
   const selectedSuiteEntry = useMemo(() => {
     if (!selectedSuiteId) {
@@ -662,7 +644,6 @@ function EvaluateTabContent({
   );
 
   const handleNavigateToEvalList = useCallback(() => {
-    landing.noteEvalNavArrival("crumb");
     navigatePlaygroundEvalsRoute({ type: "list" });
   }, []);
 
@@ -1395,29 +1376,20 @@ function EvaluateTabContent({
       })
     : null;
 
-  const addressCaseId = evalRouteTestCaseId(addressRoute);
-  const testRunNavFlag = useSettledEvaluateNavFlag();
-  const iterationNumber = useIterationCrumbNumber(
-    addressRoute,
-    testRunNavFlag === true,
-  );
-  // With the flag on, the trail comes from the address alone.
-  const navTrail =
-    evaluateNavEnabled === true && !generatingCases
-      ? evalsHeaderTrailProps(
-          buildEvalBreadcrumbs(addressRoute, {
-            suite: suiteBreadcrumbLabel,
-            runNumber: runBreadcrumbNumber,
-            testCase: addressCaseId
-              ? suiteDetails?.testCases.find(({ _id }) => _id === addressCaseId)
-                  ?.title
-              : null,
-            server: evalServer?.name ?? evalServerReturn?.name,
-            iterationNumber,
-          }),
-          (target) => navigatePlaygroundEvalsRoute(target),
-        )
-      : null;
+  const navTrail = useEvalNavTrail(addressRoute, {
+    enabled: evaluateNavEnabled === true && !generatingCases,
+    suite: suiteBreadcrumbLabel,
+    runNumber: runBreadcrumbNumber,
+    server: evalServer?.name ?? evalServerReturn?.name,
+    cases: suiteDetails?.testCases,
+  });
+  const navPage = useEvalNavPageMount(addressRoute, {
+    projectId,
+    queries,
+    projectServers,
+    runCase: handleRunTestCaseWithQuota,
+    deleteCases: handleDeleteTestCasesBatch,
+  });
 
   const handleBackToEvalServer = useCallback((serverId: string) => {
     navigatePlaygroundEvalsRoute({ type: "eval-server", serverId });
@@ -1486,6 +1458,7 @@ function EvaluateTabContent({
     }
 
     const isLandingList = route.type === "list";
+    const shownLandingView = landingNav?.header.landingView ?? landingView;
     const landingLoading = (
       <div className="flex min-h-0 flex-1 items-center justify-center">
         <div className="text-center">
@@ -1518,10 +1491,7 @@ function EvaluateTabContent({
       return landingEmpty;
     }
 
-    if (
-      isLandingList &&
-      (landingNav?.header.landingView ?? landingView) === "runs"
-    ) {
+    if (isLandingList && shownLandingView === "runs") {
       return projectId && shouldQueryProjectId(projectId) ? (
         <div
           className="flex min-h-0 flex-1 flex-col overflow-hidden"
@@ -1556,24 +1526,7 @@ function EvaluateTabContent({
       return landingEmpty;
     }
 
-    if (
-      testRunNavFlag !== false &&
-      selectedSuite &&
-      isTestRunLayerRoute(addressRoute)
-    ) {
-      // Wait for the flag rather than flash today's run page (plan E10).
-      return testRunNavFlag === undefined ? (
-        <TestRunLayerLoading />
-      ) : (
-        <TestRunLayerPage
-          route={addressRoute}
-          projectId={projectId}
-          suite={selectedSuite}
-          cases={suiteDetails?.testCases}
-          runs={runsForSelectedSuite}
-        />
-      );
-    }
+    if (navPage) return navPage;
 
     if (hasDetailRoute) {
       return (
@@ -1600,7 +1553,7 @@ function EvaluateTabContent({
         data-testid="evals-suites-landing"
       >
         <div>
-          <SuitesOverview
+          <SuitesList
             projectId={projectId}
             overview={visibleSuites}
             onSelectSuite={handleSelectSuite}
@@ -1627,23 +1580,6 @@ function EvaluateTabContent({
   const renderSuiteIterationsDetail = () => {
     if (!selectedSuite) {
       return null;
-    }
-
-    if (evaluateNavEnabled === true && isCaseStepsRoute(addressRoute)) {
-      return (
-        <CaseStepsNavPage
-          route={addressRoute}
-          suite={selectedSuite}
-          cases={suiteDetails?.testCases ?? []}
-          projectId={projectId}
-          projectServers={projectServers}
-          readOnly={isCiOwnedSuite(selectedSuite)}
-          onRunCase={(testCase, options) =>
-            handleRunTestCaseWithQuota(selectedSuite, testCase, options)
-          }
-          onDeleteCase={(id) => handleDeleteTestCasesBatch([id])}
-        />
-      );
     }
 
     return (
@@ -1767,23 +1703,7 @@ function EvaluateTabContent({
       projectId={projectId}
       isDirectGuest={isDirectGuest}
       header={
-        route.type === "create" ? undefined : navTrail ? (
-          <div className="relative shrink-0">
-            <EvalsHeader
-              onSetupRun={() => setSuiteAction("run")}
-              onAddCase={() => setSuiteAction("case")}
-              onCreateSuite={
-                route.type === "list" ? handleOpenCreateSuite : undefined
-              }
-              landingView={landingView}
-              onLandingViewChange={setLandingView}
-              {...landingNav?.header}
-              onEvaluateClick={handleNavigateToEvalList}
-              {...navTrail}
-            />
-            <EvalHeaderActionsSlot />
-          </div>
-        ) : (
+        route.type === "create" ? undefined : (
           <EvalsHeader
             onSetupRun={() => setSuiteAction("run")}
             onAddCase={() => setSuiteAction("case")}
@@ -1825,6 +1745,7 @@ function EvaluateTabContent({
             }
             landingView={landingView}
             onLandingViewChange={setLandingView}
+            {...(navTrail && landingNav?.header)}
             onEvaluateClick={handleNavigateToEvalList}
             isDetail={Boolean(hasDetailRoute) || route.type === "eval-server"}
             parentCrumb={
@@ -1847,16 +1768,19 @@ function EvaluateTabContent({
                       }
                     : undefined
             }
+            {...navTrail}
           >
-            {route.type === "eval-server"
-              ? evalServer?.name
-              : route.type === "test-edit" && route.fromEvalServer
-                ? (previewCaseTitleFromDraft(
-                    route.fromEvalServer,
-                    route.suiteId,
-                    route.testId,
-                  ) ?? nestedPageLabel)
-                : renderPlaygroundBreadcrumb()}
+            {navTrail
+              ? navTrail.children
+              : route.type === "eval-server"
+                ? evalServer?.name
+                : route.type === "test-edit" && route.fromEvalServer
+                  ? (previewCaseTitleFromDraft(
+                      route.fromEvalServer,
+                      route.suiteId,
+                      route.testId,
+                    ) ?? nestedPageLabel)
+                  : renderPlaygroundBreadcrumb()}
           </EvalsHeader>
         )
       }

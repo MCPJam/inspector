@@ -5,32 +5,8 @@ import { navigatePlaygroundEvalsRoute } from "./create-suite-navigation";
 import type { EvalLandingView } from "./evals-header";
 import { HowSuitesWorkDialog } from "./how-suites-work/how-suites-work-dialog";
 import { useHowSuitesWork } from "./how-suites-work/use-how-suites-work";
-import { trackEvalNav, type EvalNavArrival } from "./nav/eval-nav-events";
-
-let pendingArrival: EvalNavArrival | null = null;
-let viewedAnyPage = false;
-
-/** Say how the next page view was reached, just before navigating. */
-export function noteEvalNavArrival(via: EvalNavArrival): void {
-  pendingArrival = via;
-}
-
-/**
- * The first page viewed in this document was opened directly; later ones
- * without a noted arrival were reached through an in-app link.
- */
-export function consumeEvalNavArrival(): EvalNavArrival {
-  const via = pendingArrival ?? (viewedAnyPage ? "link" : "direct");
-  pendingArrival = null;
-  viewedAnyPage = true;
-  return via;
-}
-
-/** Tests only. */
-export function resetEvalNavArrival(): void {
-  pendingArrival = null;
-  viewedAnyPage = false;
-}
+import { useEvalNavPageViewed } from "./nav/eval-nav-link";
+import { ConnectedSuiteCards } from "./suite-cards";
 
 export function landingViewOf(route: EvalRoute): EvalLandingView | null {
   if (route.type === "list") return "suites";
@@ -47,6 +23,8 @@ export interface EvaluateLandingNav {
   };
   /** The tutorial dialog; mount it once, on every Evaluate page. */
   tutorial: ReactNode;
+  /** The Suites tab's list: suite cards in place of today's table. */
+  SuiteCards: typeof ConnectedSuiteCards;
 }
 
 /**
@@ -70,20 +48,7 @@ export function useEvaluateLandingNav({
   const on = enabled === true;
   const landingView = on ? landingViewOf(addressRoute) : null;
 
-  useEffect(() => {
-    if (!on) return;
-    const onPop = () => noteEvalNavArrival("back");
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, [on]);
-
-  useEffect(() => {
-    if (!landingView) return;
-    trackEvalNav("eval_nav_page_viewed", {
-      page: landingView,
-      arrived_via: consumeEvalNavArrival(),
-    });
-  }, [landingView]);
+  useEvalNavPageViewed(landingView ?? "suites", landingView !== null);
 
   // The first visit opens it even before the project has a suite.
   const onLanding = landingView !== null;
@@ -101,7 +66,6 @@ export function useEvaluateLandingNav({
   }, [on, suiteCount, openAutomatically]);
 
   const onLandingViewChange = useCallback((view: EvalLandingView) => {
-    noteEvalNavArrival("link");
     navigatePlaygroundEvalsRoute(
       view === "runs" ? { type: "evaluate-runs" } : { type: "list" },
     );
@@ -121,5 +85,6 @@ export function useEvaluateLandingNav({
         }
       />
     ),
+    SuiteCards: ConnectedSuiteCards,
   };
 }

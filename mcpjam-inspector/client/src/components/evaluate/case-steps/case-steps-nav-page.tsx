@@ -4,14 +4,13 @@
  * `evaluate-nav-enabled` on; each route says where Back leads.
  */
 
-import { useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import { buildEvaluatePath, navigateApp } from "@/lib/app-navigation";
 import type { EvalRoute } from "@/lib/eval-route-types";
 import type { RemoteServer } from "@/hooks/useProjects";
 import type { EvalCase, EvalSuite } from "@/components/evals/types";
 import { navigatePlaygroundEvalsRoute } from "../create-suite-navigation";
-import { trackEvalNav, type EvalNavArrival } from "../nav/eval-nav-events";
+import { useEvalNavPageViewed } from "../nav/eval-nav-link";
 import type { EvalNavPageId } from "../nav/eval-nav-pages";
 import { CaseStepsPage, type CaseRunOutcome } from "./case-steps-page";
 import { CaseEvaluatorsPage } from "./case-evaluators-page";
@@ -72,14 +71,6 @@ export function openCaseEditorAt(route: EvalRoute, anchor: EditorAnchor) {
   navigateApp(`${buildEvaluatePath(route)}${anchorSearch(anchor)}`);
 }
 
-/** React Router numbers history entries; 0 is the page the tab opened on. */
-function arrival(): EvalNavArrival {
-  const state: unknown = window.history.state;
-  const index =
-    state && typeof state === "object" && "idx" in state ? state.idx : null;
-  return index === 0 ? "direct" : "link";
-}
-
 export function CaseStepsNavPage({
   route,
   suite,
@@ -105,9 +96,7 @@ export function CaseStepsNavPage({
 }) {
   const page = PAGE_OF[route.type];
   const caseId = route.type === "case-new" ? null : route.testCaseId;
-  useEffect(() => {
-    trackEvalNav("eval_nav_page_viewed", { page, arrived_via: arrival() });
-  }, [page, caseId]);
+  useEvalNavPageViewed(page, true);
 
   const back = caseBackTarget(route);
   const backButton = {

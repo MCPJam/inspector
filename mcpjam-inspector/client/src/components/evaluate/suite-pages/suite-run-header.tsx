@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
-import { ArrowLeft, Layers, SlidersHorizontal } from "lucide-react";
+import { Layers, SlidersHorizontal } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { openEvalNavPage, useEvalNavBack } from "./eval-nav-link";
+import { EvalHeaderActions, EvalHeaderBack } from "../nav/eval-header-actions";
+import { openEvalNavPage, useEvalNavBack } from "../nav/eval-nav-link";
 
 /**
- * The Suite run page's header: "Suite Run #4" with its suite in a pill, Back
- * to wherever the reader came from, and Suite settings beside the run actions.
- * No overflow menu: the improve prompt lives in Findings.
+ * The Suite run page's header: "Suite Run #4" with its suite in a pill. Suite
+ * settings, the run actions and Back to wherever the reader came from sit in
+ * the breadcrumb bar. No overflow menu: the improve prompt lives in Findings.
  */
 export function SuiteRunNavHeader({
   title,
@@ -37,18 +38,6 @@ export function SuiteRunNavHeader({
       className="flex flex-col gap-3 px-5 py-4"
       data-testid="evaluate-run-header"
     >
-      <div className="flex justify-end">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={back.go}
-          data-testid="suite-run-back"
-        >
-          <ArrowLeft className="size-3.5" aria-hidden />
-          {back.label}
-        </Button>
-      </div>
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
         <div className="flex min-w-0 flex-col gap-1.5">
           <div className="flex min-w-0 flex-wrap items-center gap-3">
@@ -74,7 +63,7 @@ export function SuiteRunNavHeader({
             </p>
           ) : null}
         </div>
-        <div className="flex min-w-0 flex-wrap items-center gap-1">
+        <EvalHeaderActions>
           {canEditSuite ? (
             <Button
               type="button"
@@ -93,7 +82,12 @@ export function SuiteRunNavHeader({
             </Button>
           ) : null}
           {actions}
-        </div>
+          <EvalHeaderBack
+            label={back.label}
+            onClick={back.go}
+            testId="suite-run-back"
+          />
+        </EvalHeaderActions>
       </div>
     </header>
   );

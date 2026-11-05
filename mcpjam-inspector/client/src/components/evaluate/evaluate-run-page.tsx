@@ -53,7 +53,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { useEvaluateNavEnabled } from "./nav/use-evaluate-nav-enabled";
 import { SuiteRunNavHeader } from "./suite-pages/suite-run-header";
-import { useEvalNavPageViewed } from "./suite-pages/eval-nav-link";
+import { useEvalNavPageViewed } from "./nav/eval-nav-link";
 import { suiteRunLabel } from "./suite-pages/suite-run-test-runs";
 
 /** Hidden until we are ready to expose report export on this page. */

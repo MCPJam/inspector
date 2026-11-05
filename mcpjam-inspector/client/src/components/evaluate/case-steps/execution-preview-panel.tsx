@@ -7,8 +7,8 @@ import type {
   EndOfRunAssertion,
   ExecutionPreviewItem,
   PreviewEndOfRun,
-} from "../case-steps/case-steps-model";
-import { previewAssertionLabel } from "./test-run-model";
+} from "./case-steps-model";
+import { previewAssertionLabel } from "../test-run/test-run-model";
 
 const PROVENANCE_LABEL: Record<EndOfRunAssertion["provenance"], string> = {
   route: "Route",
@@ -129,8 +129,8 @@ function ItemLine({ item }: { item: ExecutionPreviewItem }): ReactNode {
 }
 
 /**
- * The case's steps in the order it runs, docked beside a test run. A step
- * opens the case editor at that step.
+ * The execution preview: the case's steps in the order it runs, docked beside
+ * the editor or a test run. A step opens the case editor at that step.
  */
 export function ExecutionPreviewPanel({
   items,
@@ -145,7 +145,7 @@ export function ExecutionPreviewPanel({
     <aside
       className="flex flex-col rounded-xl border border-border bg-card"
       aria-label="Execution preview"
-      data-testid="test-run-execution-preview"
+      data-testid="execution-preview"
     >
       <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
         <div>

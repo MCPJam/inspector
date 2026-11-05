@@ -1,7 +1,15 @@
 /** The steps editor page: numbered steps, Save, Run and the preview. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import type { ReactNode } from "react";
+import { createMemoryRouter, RouterProvider } from "react-router";
 import { getFunctionName } from "convex/server";
 import type { EvalCase, EvalSuite } from "@/components/evals/types";
 
@@ -38,6 +46,7 @@ vi.mock("../../create-suite-navigation", () => ({
 
 import { CaseStepsPage } from "../case-steps-page";
 import { CaseStepsNavPage, caseBackTarget } from "../case-steps-nav-page";
+import { EvalHeaderActionsSlot } from "../../nav/eval-header-actions";
 
 const suite = {
   _id: "suite-1",
@@ -69,6 +78,17 @@ const testCase: EvalCase = {
   ],
 };
 
+const PAGE = "/evaluate/suite/suite-1/settings/cases/case-1";
+
+/** The editor guards unsaved edits with the router, so it renders in one. */
+function renderInRouter(page: ReactNode) {
+  const router = createMemoryRouter([{ path: "*", element: page }], {
+    initialEntries: [PAGE],
+  });
+  render(<RouterProvider router={router} />);
+  return router;
+}
+
 function renderPage(
   overrides: Partial<Parameters<typeof CaseStepsPage>[0]> = {},
 ) {
@@ -85,9 +105,14 @@ function renderPage(
     onOpenTestRun: vi.fn(),
     ...overrides,
   };
-  render(<CaseStepsPage {...props} />);
-  return props;
+  const router = renderInRouter(<CaseStepsPage {...props} />);
+  return Object.assign(props, { router });
 }
+
+// The pages put their buttons in the breadcrumb bar's slot.
+beforeEach(() => {
+  render(<EvalHeaderActionsSlot />);
+});
 
 beforeEach(() => {
   track.mockClear();
@@ -198,6 +223,67 @@ describe("CaseStepsPage", () => {
   });
 });
 
+describe("CaseStepsPage safety prompts", () => {
+  const unsavedPrompt =
+    "You have unsaved changes to this test case. Leave without saving?";
+
+  it("asks before leaving with unsaved edits, and stays when told to", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const { router } = renderPage();
+    fireEvent.change(screen.getByLabelText("Expected outcome"), {
+      target: { value: "One box." },
+    });
+    await act(() => router.navigate("/evaluate"));
+    expect(confirm).toHaveBeenCalledWith(unsavedPrompt);
+    expect(router.state.location.pathname).toBe(PAGE);
+    confirm.mockRestore();
+  });
+
+  it("leaves without asking when nothing changed", async () => {
+    const confirm = vi.spyOn(window, "confirm");
+    const { router } = renderPage({ testCase: null });
+    await act(() => router.navigate("/evaluate"));
+    expect(confirm).not.toHaveBeenCalled();
+    expect(router.state.location.pathname).toBe("/evaluate");
+    confirm.mockRestore();
+  });
+
+  it("asks before removing a step that has assertions", () => {
+    renderPage({
+      testCase: {
+        ...testCase,
+        steps: [
+          ...testCase.steps!,
+          { id: "p2", kind: "prompt", prompt: "Label the boxes." },
+        ],
+      },
+    });
+    fireEvent.click(screen.getByLabelText("Remove step 1"));
+    expect(screen.getByTestId("spine-delete-action")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove step and its check" }),
+    );
+    expect(screen.queryByTestId("spine-delete-action")).toBeNull();
+    expect(screen.queryByDisplayValue("Sketch a tiny flow.")).toBeNull();
+    expect(screen.getByDisplayValue("Label the boxes.")).toBeInTheDocument();
+  });
+
+  it("removes a step with no assertions straight away", () => {
+    renderPage({
+      testCase: {
+        ...testCase,
+        steps: [
+          ...testCase.steps!,
+          { id: "p2", kind: "prompt", prompt: "Label the boxes." },
+        ],
+      },
+    });
+    fireEvent.click(screen.getByLabelText("Remove step 2"));
+    expect(screen.queryByTestId("spine-delete-action")).toBeNull();
+    expect(screen.queryByDisplayValue("Label the boxes.")).toBeNull();
+  });
+});
+
 describe("CaseStepsNavPage", () => {
   it("says where Back leads from each case page", () => {
     const ids = { suiteId: "s", testCaseId: "c" };
@@ -218,7 +304,7 @@ describe("CaseStepsNavPage", () => {
   });
 
   it("fires the page view and waits for a case that has not loaded", () => {
-    render(
+    renderInRouter(
       <CaseStepsNavPage
         route={{ type: "case-settings", suiteId: "suite-1", testCaseId: "x" }}
         suite={suite}
@@ -235,7 +321,7 @@ describe("CaseStepsNavPage", () => {
   });
 
   it("goes back to the test run from the editor opened there", () => {
-    render(
+    renderInRouter(
       <CaseStepsNavPage
         route={{
           type: "test-run-edit",

@@ -2,16 +2,19 @@
 import type { EvalRoute } from "@/lib/eval-route-types";
 import { buildEvaluatePath, navigateApp } from "@/lib/app-navigation";
 import type { SuiteNavigation } from "../evals/suite-iterations-view";
+import { navigateEvalNav } from "./nav/eval-nav-link";
 
 function applyEvaluatePath(route: EvalRoute, options?: { replace?: boolean }) {
   navigateApp(buildEvaluatePath(route), { replace: options?.replace });
 }
 
+/** `via: "crumb"` tags the page view a breadcrumb opens. */
 export function navigatePlaygroundEvalsRoute(
   route: EvalRoute,
-  options?: { replace?: boolean },
+  options?: { replace?: boolean; via?: "crumb" },
 ) {
-  applyEvaluatePath(route, options);
+  if (options?.via) navigateEvalNav(route, options);
+  else applyEvaluatePath(route, options);
 }
 
 export function createPlaygroundSuiteNavigation(): SuiteNavigation {

@@ -3,7 +3,6 @@
  * `evaluate-nav-enabled` is on. With the flag off, Evaluate keeps rendering
  * today's run page and drawers for the same addresses (`eval-nav-pages.ts`).
  */
-import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import type { EvalRoute } from "@/lib/eval-route-types";
 import { stripTimestampSuffix } from "../../evals/suite-overview-presentation";
@@ -15,26 +14,6 @@ import type {
 } from "../../evals/types";
 import { IterationPage } from "./iteration-page";
 import { TestRunPage } from "./test-run-page";
-import { useEvaluateNavEnabled } from "../nav/use-evaluate-nav-enabled";
-
-/** How long a test-run or iteration address waits for PostHog before reading the flag as off (as 2F's redirects do). */
-export const NAV_FLAG_WAIT_MS = 2000;
-
-/**
- * `evaluate-nav-enabled`, settled: `undefined` while PostHog loads, `false`
- * once it has not answered within {@link NAV_FLAG_WAIT_MS}. The page waits
- * on `undefined` so the old screen never flashes before the new one (plan E10).
- */
-export function useSettledEvaluateNavFlag(): boolean | undefined {
-  const enabled = useEvaluateNavEnabled();
-  const [expired, setExpired] = useState(false);
-  useEffect(() => {
-    if (enabled !== undefined) return;
-    const timer = setTimeout(() => setExpired(true), NAV_FLAG_WAIT_MS);
-    return () => clearTimeout(timer);
-  }, [enabled]);
-  return enabled ?? (expired ? false : undefined);
-}
 
 export type TestRunLayerRoute = Extract<
   EvalRoute,

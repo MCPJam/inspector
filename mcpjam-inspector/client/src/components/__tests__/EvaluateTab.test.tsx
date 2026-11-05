@@ -1858,11 +1858,10 @@ describe("EvaluateTab page-per-layer addresses", () => {
     const header = screen.getByTestId("evals-header");
     expect(header).toHaveTextContent("Evaluate/Suite suite-a/Run/Test case");
     await userEvent.click(screen.getByRole("button", { name: "Run" }));
-    expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
-      type: "run-detail",
-      suiteId: "suite-a",
-      runId: "run-1",
-    });
+    expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
+      { type: "run-detail", suiteId: "suite-a", runId: "run-1" },
+      { via: "crumb" },
+    );
   });
 });
 

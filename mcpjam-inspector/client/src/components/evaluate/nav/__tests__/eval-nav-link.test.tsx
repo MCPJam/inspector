@@ -3,6 +3,8 @@ import { act, render, screen } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { setAppRouter } from "../../../../router-ref";
 import {
+  evalNavArrivalOf,
+  navigateEvalNav,
   openEvalNavPage,
   useEvalNavBack,
   useEvalNavPageViewed,
@@ -85,5 +87,41 @@ describe("eval nav links", () => {
   it("counts no page view with the flag off", () => {
     mount("/evaluate/suite/s1/runs/r1", false);
     expect(track).not.toHaveBeenCalled();
+  });
+
+  it("tags a crumb, and counts a history move as back", async () => {
+    const router = mount("/evaluate/runs");
+    await act(async () => {
+      navigateEvalNav(
+        { type: "run-detail", suiteId: "s1", runId: "r1" },
+        { via: "crumb" },
+      );
+    });
+    await act(async () => {
+      void router.navigate("/evaluate/runs");
+    });
+    await act(async () => {
+      void router.navigate(-1);
+    });
+    expect(track.mock.calls.map(([, props]) => props.arrived_via)).toEqual([
+      "crumb",
+      "back",
+    ]);
+  });
+});
+
+describe("evalNavArrivalOf", () => {
+  it("reads history moves first, then the navigation's tag", () => {
+    expect(evalNavArrivalOf(null, "POP", false)).toBe("direct");
+    expect(evalNavArrivalOf({ evalNavArrival: "link" }, "POP", true)).toBe(
+      "back",
+    );
+    expect(
+      evalNavArrivalOf({ evalNavArrival: "redirect" }, "REPLACE", false),
+    ).toBe("redirect");
+    expect(evalNavArrivalOf({ evalNavArrival: "bogus" }, "PUSH", true)).toBe(
+      "link",
+    );
+    expect(evalNavArrivalOf(null, "PUSH", true)).toBe("link");
   });
 });

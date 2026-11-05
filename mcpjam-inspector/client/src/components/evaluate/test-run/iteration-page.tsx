@@ -2,10 +2,9 @@
  * Iteration: one iteration of a test run, as a page (spec C12). The same
  * evidence the drawer showed, at full height, with Back to test run.
  */
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { useQuery } from "convex/react";
 import { makeFunctionReference } from "convex/server";
-import { Button } from "@mcpjam/design-system/button";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import {
@@ -19,8 +18,9 @@ import { useSelectedRun } from "../../evals/use-selected-run";
 import type { EvalIteration, EvalSuiteRunListItem } from "../../evals/types";
 import { navigatePlaygroundEvalsRoute } from "../create-suite-navigation";
 import { launchRuns } from "../run-results-matrix-model";
+import { EvalHeaderActions, EvalHeaderBack } from "../nav/eval-header-actions";
+import { useEvalNavPageViewed } from "../nav/eval-nav-link";
 import { IterationOutcomeBadge, IterationReport } from "./iteration-report";
-import { useEvalNavPageView } from "./use-eval-nav-page-view";
 
 type IterationRoute = Extract<EvalRoute, { type: "iteration" }>;
 
@@ -57,7 +57,7 @@ export function IterationPage({
   runs: readonly EvalSuiteRunListItem[];
 }) {
   const { suiteId, runId, testCaseId, iterationId } = route;
-  useEvalNavPageView("iteration", iterationId);
+  useEvalNavPageViewed("iteration", true);
   const iteration = useRouteIteration(iterationId);
   const iterationRunId = iteration?.suiteRunId ?? runId;
   const { run, isLoading: runLoading } = useSelectedRun(
@@ -87,10 +87,9 @@ export function IterationPage({
     });
 
   const backButton = (
-    <Button variant="outline" size="sm" onClick={backToTestRun}>
-      <ArrowLeft className="size-3.5" aria-hidden />
-      Back to test run
-    </Button>
+    <EvalHeaderActions>
+      <EvalHeaderBack label="Back to test run" onClick={backToTestRun} />
+    </EvalHeaderActions>
   );
 
   if (iteration === undefined || (iteration && runLoading)) {
@@ -121,7 +120,7 @@ export function IterationPage({
       className="flex min-h-0 flex-1 flex-col gap-4 px-6 py-6"
       data-testid="iteration-page"
     >
-      <div className="flex justify-end">{backButton}</div>
+      {backButton}
       <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card">
         <header className="border-b border-border px-6 py-4">
           <div className="flex flex-wrap items-center gap-2">

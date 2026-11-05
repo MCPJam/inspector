@@ -5,16 +5,15 @@
  */
 
 import { useRef, useState } from "react";
-import { ArrowLeft } from "lucide-react";
 import { useMutation } from "convex/react";
 import { makeFunctionReference } from "convex/server";
-import { Button } from "@mcpjam/design-system/button";
 import { resolveMatchOptions } from "@/shared/eval-matching";
 import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import type { EvalCase, EvalSuite } from "@/components/evals/types";
 import { areAllChecksValid } from "@/components/evals/checks-section";
 import type { StandardCheckDraft } from "@/components/evals/standard-checks-model";
 import { CaseChecksPage } from "../case-workspace/case-checks-page";
+import { EvalHeaderActions, EvalHeaderBack } from "../nav/eval-header-actions";
 import { withCaseJudgeSkipped } from "../case-scorecard/case-scorecard-model";
 import type { CaseStepsDraft } from "./case-steps-draft";
 
@@ -89,17 +88,9 @@ export function CaseEvaluatorsPage({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="flex justify-end px-6 pt-4">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={back.onClick}
-        >
-          <ArrowLeft className="size-4" aria-hidden="true" />
-          {back.label}
-        </Button>
-      </div>
+      <EvalHeaderActions>
+        <EvalHeaderBack label={back.label} onClick={back.onClick} />
+      </EvalHeaderActions>
       <CaseChecksPage
         title={testCase.title}
         predicates={fields.predicates}

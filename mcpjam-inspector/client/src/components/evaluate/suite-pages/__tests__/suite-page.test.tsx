@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({ open: vi.fn(), track: vi.fn() }));
 vi.mock("../../nav/use-evaluate-nav-enabled", () => ({
   useEvaluateNavEnabled: () => true,
 }));
-vi.mock("../eval-nav-link", async (original) => ({
+vi.mock("../../nav/eval-nav-link", async (original) => ({
   ...(await original<object>()),
   openEvalNavPage: mocks.open,
 }));

@@ -36,9 +36,11 @@ import {
 } from "../case-steps/case-steps-model";
 import { launchRuns, resultCounts } from "../run-results-matrix-model";
 import { UnifiedFindingsSection } from "../unified-findings-section";
+import { ExecutionPreviewPanel } from "../case-steps/execution-preview-panel";
+import { EvalHeaderActions } from "../nav/eval-header-actions";
 import { trackEvalNav } from "../nav/eval-nav-events";
+import { useEvalNavPageViewed } from "../nav/eval-nav-link";
 import { CaseIterations } from "./case-iterations";
-import { ExecutionPreviewPanel } from "./execution-preview-panel";
 import {
   caseIterations,
   caseScorecardInput,
@@ -48,7 +50,6 @@ import {
 } from "./test-run-model";
 import { buildTestRunScorecard } from "./test-run-scorecard-model";
 import { TestRunScorecardTable } from "./test-run-scorecard";
-import { useEvalNavPageView } from "./use-eval-nav-page-view";
 import { useTestRunIterations } from "./use-test-run-iterations";
 
 type TestRunRoute = Extract<EvalRoute, { type: "test-run" }>;
@@ -80,7 +81,7 @@ export function TestRunPage({
   hostNamesById?: ReadonlyMap<string, string | null>;
 }) {
   const { suiteId, runId, testCaseId } = route;
-  useEvalNavPageView("test-run", `${runId}:${testCaseId}`);
+  useEvalNavPageViewed("test-run", true);
 
   const launch = useMemo(
     () => launchRuns<EvalSuiteRunListItem>(run, runs),
@@ -219,10 +220,16 @@ export function TestRunPage({
           </p>
         </div>
         {testCase ? (
-          <Button variant="outline" onClick={() => editCase("page")}>
-            <Pencil className="size-3.5" aria-hidden />
-            Edit Test Case
-          </Button>
+          <EvalHeaderActions>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => editCase("page")}
+            >
+              <Pencil className="size-3.5" aria-hidden />
+              Edit Test Case
+            </Button>
+          </EvalHeaderActions>
         ) : null}
       </header>
 

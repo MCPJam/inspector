@@ -1,9 +1,7 @@
 import type { ReactNode } from "react";
-import { ArrowLeft } from "lucide-react";
-import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import type { SuiteSettingsRouteTab } from "@/lib/eval-route-types";
-import { EvalHeaderActions } from "../nav/eval-header-actions";
+import { EvalHeaderActions, EvalHeaderBack } from "../nav/eval-header-actions";
 import type { SuiteSettingsNav } from "./use-suite-settings-nav";
 
 const SUITE_SETTINGS_TABS: readonly {
@@ -105,10 +103,7 @@ export function SuiteSettingsHeaderActions({
   return (
     <EvalHeaderActions>
       {save}
-      <Button type="button" variant="outline" size="sm" onClick={onBack}>
-        <ArrowLeft className="size-3.5" aria-hidden />
-        Back to suite
-      </Button>
+      <EvalHeaderBack label="Back to suite" onClick={onBack} />
     </EvalHeaderActions>
   );
 }

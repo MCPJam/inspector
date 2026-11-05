@@ -2,22 +2,32 @@
  * The Test case page: the steps editor, reached from Suite settings (or from
  * a test run). It shows no results; those live on Test run pages.
  *
- * Header: the case title, the execution preview toggle, then Delete, Test
- * Case Evaluators and Run. Save appears while there are unsaved edits. Run
+ * Header: the case title and the execution preview toggle. Delete, Test
+ * Case Evaluators, Run and Back sit in the breadcrumb bar, with Save while
+ * there are unsaved edits. Run
  * saves first, keeps the user here and confirms with a toast that links to
  * the new test run (plan O4).
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Diamond, ListChecks, Play, Trash2 } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { Diamond, ListChecks, Play, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { cn } from "@/lib/utils";
 import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import { useUnsavedChangesGuard } from "@/hooks/use-unsaved-changes-guard";
 import type { RemoteServer } from "@/hooks/useProjects";
 import type { EvalCase, EvalSuite } from "@/components/evals/types";
 import { getEffectiveSuiteServers } from "@/components/evals/helpers";
+import { EvalHeaderActions, EvalHeaderBack } from "../nav/eval-header-actions";
 import { trackEvalNav } from "../nav/eval-nav-events";
 import { buildExecutionPreview, type EditorAnchor } from "./case-steps-model";
 import { caseSavePayload, draftScorecard } from "./case-steps-draft";
@@ -25,7 +35,7 @@ import { useCaseStepsDraft } from "./use-case-steps-draft";
 import { useCaseTools } from "./use-case-tools";
 import { anchorFromSearch, endOfRunOf, revealAnchor } from "./editor-rows";
 import { CaseStepsEditor } from "./case-steps-editor";
-import { ExecutionPreviewPanel } from "./execution-preview";
+import { ExecutionPreviewPanel } from "./execution-preview-panel";
 import { DeleteCaseDialog } from "./delete-case-dialog";
 
 export type CaseRunOutcome = { suiteRunId: string | null };
@@ -62,12 +72,19 @@ export function CaseStepsPage({
   onOpenTestRun,
   onDeleteCase,
 }: CaseStepsPageProps) {
-  const { draft, update, dirty, saving, save } = useCaseStepsDraft({
-    suiteId: suite._id,
-    testCase,
-    suiteCases,
-    onCreated,
-  });
+  const { draft, update, dirty, edited, discard, saving, save } =
+    useCaseStepsDraft({ suiteId: suite._id, testCase, suiteCases, onCreated });
+  // Leaving with edits asks first. A save in flight lets New case move to
+  // its saved address, and a deleted case takes its edits with it.
+  const deletingCase = useRef(false);
+  const letsThrough = useCallback(() => deletingCase.current, []);
+  useUnsavedChangesGuard(
+    edited && !saving,
+    discard,
+    "You have unsaved changes to this test case. Leave without saving?",
+    false,
+    letsThrough,
+  );
   const { capabilities } = useSuiteCapabilities(suite._id);
   const { tools } = useCaseTools(suite, projectId);
   const suiteServers = useMemo(() => getEffectiveSuiteServers(suite), [suite]);
@@ -139,17 +156,53 @@ export function CaseStepsPage({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="flex justify-end px-6 pt-4">
+      <EvalHeaderActions>
+        {!readOnly && dirty ? (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={saving}
+            onClick={() => void save()}
+          >
+            {testCase ? "Save changes" : "Create test case"}
+          </Button>
+        ) : null}
+        {testCase && onDeleteCase && !readOnly ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="size-8"
+            aria-label="Delete test case"
+            onClick={() => setDeleting(true)}
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        ) : null}
         <Button
           type="button"
           variant="outline"
           size="sm"
-          onClick={back.onClick}
+          disabled={!testCase}
+          title={testCase ? undefined : "Create the test case first."}
+          onClick={() => testCase && onOpenEvaluators(testCase._id)}
         >
-          <ArrowLeft className="size-4" aria-hidden="true" />
-          {back.label}
+          <ListChecks className="size-4" aria-hidden="true" />
+          Test Case Evaluators
         </Button>
-      </div>
+        <Button
+          type="button"
+          size="sm"
+          disabled={!testCase || running || saving}
+          title={testCase ? undefined : "Create the test case first."}
+          onClick={() => void run()}
+        >
+          <Play className="size-4" aria-hidden="true" />
+          {running ? "Running…" : "Run"}
+        </Button>
+        <EvalHeaderBack label={back.label} onClick={back.onClick} />
+      </EvalHeaderActions>
       <header className="mx-6 flex flex-wrap items-center gap-3 border-b border-border py-4">
         <Input
           aria-label="Test case title"
@@ -170,48 +223,6 @@ export function CaseStepsPage({
         >
           <Diamond className="size-4" />
         </Button>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          {!readOnly && dirty ? (
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={saving}
-              onClick={() => void save()}
-            >
-              {testCase ? "Save changes" : "Create test case"}
-            </Button>
-          ) : null}
-          {testCase && onDeleteCase && !readOnly ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              aria-label="Delete test case"
-              onClick={() => setDeleting(true)}
-            >
-              <Trash2 className="size-4" />
-            </Button>
-          ) : null}
-          <Button
-            type="button"
-            variant="outline"
-            disabled={!testCase}
-            title={testCase ? undefined : "Create the test case first."}
-            onClick={() => testCase && onOpenEvaluators(testCase._id)}
-          >
-            <ListChecks className="size-4" aria-hidden="true" />
-            Test Case Evaluators
-          </Button>
-          <Button
-            type="button"
-            disabled={!testCase || running || saving}
-            title={testCase ? undefined : "Create the test case first."}
-            onClick={() => void run()}
-          >
-            <Play className="size-4" aria-hidden="true" />
-            {running ? "Running…" : "Run"}
-          </Button>
-        </div>
       </header>
       <div
         className={cn(
@@ -223,7 +234,7 @@ export function CaseStepsPage({
           <div className="lg:sticky lg:top-0 lg:self-start">
             <ExecutionPreviewPanel
               items={preview}
-              onSelect={openAnchor}
+              onOpenStep={openAnchor}
               onClose={() => setPreviewOpen(false)}
             />
           </div>
@@ -250,8 +261,13 @@ export function CaseStepsPage({
           title={testCase.title}
           onCancel={() => setDeleting(false)}
           onConfirm={async () => {
-            await onDeleteCase(testCase._id);
-            setDeleting(false);
+            deletingCase.current = true;
+            try {
+              await onDeleteCase(testCase._id);
+            } finally {
+              deletingCase.current = false;
+              setDeleting(false);
+            }
           }}
         />
       ) : null}

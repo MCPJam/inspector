@@ -57,6 +57,10 @@ export type CaseStepsDraftState = {
   draft: CaseStepsDraft;
   update: (patch: Partial<CaseStepsDraft>) => void;
   dirty: boolean;
+  /** The draft differs from what was loaded (a fresh New case is not edited). */
+  edited: boolean;
+  /** Drops the edits, back to what was loaded. */
+  discard: () => void;
   saving: boolean;
   blockReason: string | null;
   /** Saves and returns the case id, or null when the save was refused. */
@@ -100,10 +104,12 @@ export function useCaseStepsDraft({
       setDraft((current) => ({ ...current, ...patch })),
     [],
   );
-  const dirty = useMemo(
-    () => !testCase || !draftsEqual(draft, baseline),
-    [draft, baseline, testCase],
+  const edited = useMemo(
+    () => !draftsEqual(draft, baseline),
+    [draft, baseline],
   );
+  const dirty = !testCase || edited;
+  const discard = useCallback(() => setDraft(baseline), [baseline]);
   const blockReason = caseSaveBlockReason(draft);
 
   const save = useCallback(async (): Promise<string | null> => {
@@ -172,5 +178,5 @@ export function useCaseStepsDraft({
     onCreated,
   ]);
 
-  return { draft, update, dirty, saving, blockReason, save };
+  return { draft, update, dirty, edited, discard, saving, blockReason, save };
 }

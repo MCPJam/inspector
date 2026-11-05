@@ -7,7 +7,7 @@ import type {
 import { buildRunResultsMatrix } from "../run-results-matrix-model";
 import { RunTestRunRows } from "../run-case-rows";
 import { trackEvalNav } from "../nav/eval-nav-events";
-import { openEvalNavPage } from "./eval-nav-link";
+import { openEvalNavPage } from "../nav/eval-nav-link";
 
 const NO_HOST_NAMES: ReadonlyMap<string, string | null> = new Map();
 

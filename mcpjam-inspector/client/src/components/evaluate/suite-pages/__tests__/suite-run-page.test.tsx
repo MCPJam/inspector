@@ -5,6 +5,7 @@ import { CombinedRunContent } from "../../combined-run-content";
 import { SingleRunContent } from "../../evaluate-run-content";
 import { EvaluateRunPage } from "../../evaluate-run-page";
 import { RunTestRunRows } from "../../run-case-rows";
+import { EvalHeaderActionsSlot } from "../../nav/eval-header-actions";
 import { buildRunResultsMatrix } from "../../run-results-matrix-model";
 import type { EvalIteration, EvalSuiteRun } from "../../../evals/types";
 import type { ProjectRunHistoryDetail } from "../../../evals/use-project-run-history";
@@ -22,7 +23,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../nav/use-evaluate-nav-enabled", () => ({
   useEvaluateNavEnabled: () => true,
 }));
-vi.mock("../eval-nav-link", async (original) => ({
+vi.mock("../../nav/eval-nav-link", async (original) => ({
   ...(await original<object>()),
   openEvalNavPage: mocks.open,
 }));
@@ -138,6 +139,11 @@ function renderPage({ editable = true } = {}) {
     </EvaluateRunPage>,
   );
 }
+
+// The pages put their buttons in the breadcrumb bar's slot.
+beforeEach(() => {
+  render(<EvalHeaderActionsSlot />);
+});
 
 beforeEach(() => {
   mocks.history.details = new Map(

@@ -10,7 +10,7 @@ import type { SuiteSettingsRouteTab } from "@/lib/eval-route-types";
 import { targetKeyLabel } from "@/lib/eval-target-key";
 import { modelDisplayName } from "@/lib/model-display-name";
 import { useEvaluateNavEnabled } from "../nav/use-evaluate-nav-enabled";
-import { openEvalNavPage, useEvalNavPageViewed } from "./eval-nav-link";
+import { openEvalNavPage, useEvalNavPageViewed } from "../nav/eval-nav-link";
 
 /**
  * Whether the Suite page renders for the page-per-layer flow, and how its run

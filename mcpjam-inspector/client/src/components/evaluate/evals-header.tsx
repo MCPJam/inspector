@@ -69,6 +69,7 @@ export function EvalsHeader({
   onEvaluateClick,
   isDetail: isDetailProp,
   onOpenTutorial,
+  actions,
 }: {
   onCreateSuite?: () => void;
   onSetupRun?: () => void;
@@ -89,6 +90,8 @@ export function EvalsHeader({
    * suite, and a ⋮ menu that holds Tutorial.
    */
   onOpenTutorial?: () => void;
+  /** At the right end of the trail: the new pages' buttons. */
+  actions?: ReactNode;
 }) {
   const isDetail = isDetailProp ?? Boolean(children || parentCrumb);
   const detailCrumbs = detailCrumb
@@ -176,6 +179,7 @@ export function EvalsHeader({
             ))}
           </BreadcrumbList>
         </Breadcrumb>
+        {actions}
       </div>
     );
   }

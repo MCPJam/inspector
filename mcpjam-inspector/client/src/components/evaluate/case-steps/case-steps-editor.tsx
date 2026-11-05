@@ -17,11 +17,14 @@ import { ActionRow } from "../case-spine/action-row";
 import { SpineCheckRow } from "../case-spine/spine-check-row";
 import { SpineDragProvider } from "../case-spine/spine-drag";
 import { EvalAddDrawer } from "../case-spine/assertion-drawer";
+import { DeleteActionPrompt } from "../case-spine/case-spine";
 import {
   canRemoveAction,
+  deleteActionPlan,
   moveActionBlock,
   removeActionWithChecks,
   reorderSpineSteps,
+  type DeleteActionPlan,
 } from "../case-spine/case-spine-model";
 import { removeStepById } from "../simple-case/simple-case-model";
 import type { CaseScorecard } from "../case-scorecard/case-scorecard-model";
@@ -86,6 +89,20 @@ export function CaseStepsEditor({
   );
   const setSteps = (next: TestStep[]) => {
     if (!readOnly) onChange({ steps: next });
+  };
+  // A step with assertions asks first, as the old editor does: they can
+  // move to the step before or go with it.
+  const [pendingRemove, setPendingRemove] = useState<
+    (DeleteActionPlan & { stepId: string }) | null
+  >(null);
+  const removeAction = (stepId: string) => {
+    const plan = deleteActionPlan(steps, stepId);
+    if (plan.needsConfirm) setPendingRemove({ ...plan, stepId });
+    else setSteps(removeActionWithChecks(steps, stepId));
+  };
+  const settleRemove = (next: TestStep[]) => {
+    setSteps(next);
+    setPendingRemove(null);
   };
 
   const add = (choice: EvalAddChoice, actionId: string | null) => {
@@ -249,9 +266,7 @@ export function CaseStepsEditor({
                     setSteps(moveActionBlock(steps, item.step.id, dir))
                   }
                   canRemove={canRemoveAction(steps, item.step.id)}
-                  onRemove={() =>
-                    setSteps(removeActionWithChecks(steps, item.step.id))
-                  }
+                  onRemove={() => removeAction(item.step.id)}
                 >
                   <div className="space-y-2 pt-1">
                     {STEP_HINTS[item.kind] && item.kind !== "prompt" ? (
@@ -291,6 +306,18 @@ export function CaseStepsEditor({
           ];
         })}
       </ol>
+      {pendingRemove ? (
+        <DeleteActionPrompt
+          plan={pendingRemove}
+          onCancel={() => setPendingRemove(null)}
+          onRemoveOnly={() =>
+            settleRemove(removeStepById(steps, pendingRemove.stepId))
+          }
+          onRemoveWithChecks={() =>
+            settleRemove(removeActionWithChecks(steps, pendingRemove.stepId))
+          }
+        />
+      ) : null}
     </SpineDragProvider>
   );
 }
