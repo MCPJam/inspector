@@ -2,12 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthChallengeSignal } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/state/app-types";
 
-const { applyToolCallAuthChallengeMock, reportCaughtMock } = vi.hoisted(
-  () => ({
-    applyToolCallAuthChallengeMock: vi.fn(),
-    reportCaughtMock: vi.fn(),
-  }),
-);
+const { applyToolCallAuthChallengeMock, reportCaughtMock } = vi.hoisted(() => ({
+  applyToolCallAuthChallengeMock: vi.fn(),
+  reportCaughtMock: vi.fn(),
+}));
 vi.mock("@/state/oauth-orchestrator", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/state/oauth-orchestrator")>()),
   applyToolCallAuthChallenge: applyToolCallAuthChallengeMock,
