@@ -31,7 +31,7 @@ export async function withPluginOperationAuthorization<T>(
     metadata.data.requestId !== requestId ||
     metadata.data.pluginOperation.invocationId !== operation.invocationId
   )
-    throw new Error("App operation authorization did not match this request");
+    throw new Error("This app action is not authorized. Reopen the app and try the action again.");
   const {
     tokenExpiresAt: _tokenExpiry,
     expiresAt: _expiry,
