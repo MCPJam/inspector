@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createInlineMrtrCollector } from "../inline-mrtr.js";
-import type { MrtrInputCollector } from "@mcpjam/sdk";
+import { validateRoundResponses, type MrtrInputCollector } from "@mcpjam/sdk";
 
 type Input = Parameters<MrtrInputCollector>[0];
 const form = {
@@ -36,6 +36,21 @@ const input = (inputRequests: Input["inputRequests"], signal?: AbortSignal) =>
   }) as Input;
 
 describe("owned inline MRTR form collection", () => {
+  it("preserves server-selected keys that also name Object properties", async () => {
+    const requests = Object.fromEntries(
+      ["__proto__", "constructor", "toString"].map((key) => [key, form]),
+    );
+    const state = input(requests);
+    const answer = vi.fn().mockResolvedValue({ action: "accept", content: { count: 0 } });
+    const responses = await createInlineMrtrCollector("server", answer)(state);
+    for (const key of Object.keys(requests)) {
+      expect(Object.hasOwn(responses, key)).toBe(true);
+      expect(responses[key]).toEqual({ action: "accept", content: { count: 0 } });
+    }
+    expect(() => validateRoundResponses(state.state, responses)).not.toThrow();
+    expect(answer).toHaveBeenCalledTimes(3);
+  });
+
   it("uses extension schemas and preserves zero and terminal actions", async () => {
     const answer = vi
       .fn()
