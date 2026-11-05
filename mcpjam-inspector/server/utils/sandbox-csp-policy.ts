@@ -308,3 +308,13 @@ export function buildCSP(
 
   return directives.join("; ");
 }
+
+export const PERMISSIVE_SANDBOX_CSP = [
+  "default-src * 'unsafe-inline' 'unsafe-eval' data: blob: filesystem: about:",
+  "script-src * 'unsafe-inline' 'unsafe-eval' data: blob:",
+  "style-src * 'unsafe-inline' data: blob:", "img-src * data: blob: https: http:",
+  "media-src * data: blob: https: http:", "font-src * data: blob: https: http:",
+  "connect-src * data: blob: https: http: ws: wss: about:",
+  "frame-src * data: blob: https: http: about:", "object-src * data: blob:",
+  "base-uri *", "form-action *",
+].join("; ");

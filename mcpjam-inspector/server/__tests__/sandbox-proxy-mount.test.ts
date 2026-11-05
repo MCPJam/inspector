@@ -21,6 +21,7 @@
  * require — so that property is asserted in the browser e2e, not here.
  */
 import { describe, it, expect, vi } from "vitest";
+import { createHash, webcrypto } from "node:crypto";
 import { MCP_APPS_SANDBOX_PROXY_HTML } from "../routes/apps/SandboxProxyHtml.bundled";
 import { JSDOM } from "jsdom";
 
@@ -152,6 +153,53 @@ function harness(proxyInstanceId = "proxy-a"): { dom: JSDOM; h: MountHarness } {
 }
 
 const WIDGET = "<!doctype html><html><body><p id='w'>hi</p></body></html>";
+function admittedDom(admitted = true) {
+  const source = html
+    .replace(
+      '"__MCPJAM_HOST_ORIGINS__"',
+      JSON.stringify(["http://localhost:6274"]),
+    )
+    .replace(
+      '"__MCPJAM_VIEW_CONTEXT__"',
+      JSON.stringify(admitted ? {
+        htmlSha256: createHash("sha256").update(WIDGET).digest("hex"),
+        hostOrigin: "http://localhost:6274",
+        admissionId: "fixture-admission",
+      } : null),
+    );
+  return new JSDOM(source, {
+    url: "http://localhost:6274/api/apps/mcp-apps/sandbox-proxy",
+    runScripts: "dangerously",
+    beforeParse(window) {
+      Object.defineProperty(window.crypto, "subtle", {
+        value: webcrypto.subtle,
+      });
+      Object.defineProperty(window, "TextEncoder", { value: TextEncoder });
+    },
+  });
+}
+
+describe("existing proxy compatibility", () => {
+  it("still mounts a legacy host message without an admission context", async () => {
+    const dom = admittedDom(false);
+    try {
+      dom.window.dispatchEvent(new dom.window.MessageEvent("message", {
+        source: dom.window,
+        origin: "http://localhost:6274",
+        data: {
+          jsonrpc: "2.0",
+          method: "ui/notifications/sandbox-resource-ready",
+          params: { html: WIDGET, permissive: false },
+        },
+      }));
+      await vi.waitFor(() => expect(
+        dom.window.document.querySelector("iframe")?.contentDocument?.getElementById("w")?.textContent,
+      ).toBe("hi"));
+    } finally {
+      dom.window.close();
+    }
+  });
+});
 
 describe("sandbox-proxy createInnerFrame", () => {
   it("sets sandbox and allow on the element without appending it", () => {
@@ -303,17 +351,8 @@ describe("sandbox-proxy mountInner", () => {
     });
   });
 
-  it("echoes client restrictions from the real resource-ready handler", () => {
-    const dom = new JSDOM(
-      html.replace(
-        '"__MCPJAM_HOST_ORIGINS__"',
-        JSON.stringify(["http://localhost:6274"]),
-      ),
-      {
-        url: "http://localhost:6274/api/apps/mcp-apps/sandbox-proxy",
-        runScripts: "dangerously",
-      },
-    );
+  it("echoes client restrictions from the real resource-ready handler", async () => {
+    const dom = admittedDom();
     try {
       const posted: [unknown, unknown][] = [];
       dom.window.postMessage = (data: unknown, targetOrigin: unknown) => {
@@ -346,6 +385,14 @@ describe("sandbox-proxy mountInner", () => {
             },
           },
         }),
+      );
+      await vi.waitFor(() =>
+        expect(
+          posted.some(
+            ([data]) =>
+              (data as { type?: string }).type === "mcpjam:csp-applied",
+          ),
+        ).toBe(true),
       );
       const applied = posted.find(
         ([data]) => (data as { type?: string }).type === "mcpjam:csp-applied",
@@ -431,7 +478,8 @@ describe("sandbox-proxy opaque mount", () => {
     Object.defineProperty(frame, "contentWindow", {
       configurable: true,
       get: () => ({
-        postMessage: (data: unknown, target: string) => sent.push([data, target]),
+        postMessage: (data: unknown, target: string) =>
+          sent.push([data, target]),
       }),
     });
     return sent;
@@ -601,17 +649,8 @@ describe("sandbox-proxy opaque mount", () => {
     expect(sent).toEqual([[{ n: 1 }, "*"]]);
   });
 
-  it("mounts Claude's opaque-mode frame from a real resource-ready", () => {
-    const dom = new JSDOM(
-      html.replace(
-        '"__MCPJAM_HOST_ORIGINS__"',
-        JSON.stringify(["http://localhost:6274"]),
-      ),
-      {
-        url: "http://localhost:6274/api/apps/mcp-apps/sandbox-proxy",
-        runScripts: "dangerously",
-      },
-    );
+  it("mounts Claude's opaque-mode frame from a real resource-ready", async () => {
+    const dom = admittedDom();
     try {
       const posted: [unknown, unknown][] = [];
       dom.window.postMessage = (data: unknown, targetOrigin: unknown) => {
@@ -637,6 +676,11 @@ describe("sandbox-proxy opaque mount", () => {
           },
         }),
       );
+      await vi.waitFor(() =>
+        expect(
+          dom.window.document.querySelector("iframe")?.getAttribute("srcdoc"),
+        ).toContain("<p id='w'>hi</p>"),
+      );
       const frames = dom.window.document.querySelectorAll("iframe");
       expect(frames).toHaveLength(1);
       expect(frames[0].getAttribute("sandbox")).toBe(CLAUDE_SANDBOX);
@@ -648,7 +692,9 @@ describe("sandbox-proxy opaque mount", () => {
         posted.find(
           ([data]) => (data as { type?: string }).type === "mcpjam:view-mode",
         )?.[0],
-      ).toEqual(expect.objectContaining({ mode: "opaque", url: "about:srcdoc" }));
+      ).toEqual(
+        expect.objectContaining({ mode: "opaque", url: "about:srcdoc" }),
+      );
     } finally {
       dom.window.close();
     }
@@ -694,9 +740,9 @@ describe("sandbox-proxy inner sandbox and allow values", () => {
   });
 
   it("still rejects a token with internal whitespace", () => {
-    expect(
-      sandboxValue(undefined, ["allow-forms allow-popups"], false),
-    ).toBe("allow-same-origin allow-scripts");
+    expect(sandboxValue(undefined, ["allow-forms allow-popups"], false)).toBe(
+      "allow-same-origin allow-scripts",
+    );
   });
 
   it("adds fullscreen * only on the opaque mount", () => {

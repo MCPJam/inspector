@@ -1,3 +1,7 @@
+import { buildSandboxProxyFrameAncestors, renderSandboxProxyHtml } from "./sandbox-proxy-html.js";
+import { serveSandboxViewDocument } from "./view-document.js";
+import { sandboxSourceReceipt } from "../../../services/sandbox-view-source.js";
+import { sandboxViewAdmissionRoutes } from "./view-admissions.js";
 import { readResourceDisplayHints } from "@mcpjam/sdk/widget-runtime";
 /**
  * MCP Apps (SEP-1865) Server Routes
@@ -13,10 +17,6 @@ import { logger } from "../../../utils/logger";
 import { getRequestLogger } from "../../../utils/request-logger";
 import { classifyWidgetError } from "../../../utils/error-classify";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
-import {
-  buildSandboxProxyFrameAncestors,
-  renderSandboxProxyHtml,
-} from "./sandbox-proxy-html";
 import { injectOpenAICompat } from "../../../utils/widget-helpers";
 import {
   canSkipListingLookup,
@@ -26,6 +26,7 @@ import {
 import { viewOriginLabelForConfig } from "../../../utils/view-origin-label";
 
 const apps = new Hono();
+apps.route("/", sandboxViewAdmissionRoutes());
 
 /**
  * SEP-1865 mandated mimetype for MCP Apps
@@ -334,6 +335,7 @@ apps.post("/widget-content", async (c) => {
     );
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     return c.json({
+      sourceReceipt: await sandboxSourceReceipt(c, { serverId, resourceUri: resolvedResourceUri, toolCallId: toolId }, html, csp),
       html,
       // Always report what the resource declared. The request's `cspMode`
       // decides whether a CSP is *injected* (`permissive` below), never what
@@ -397,6 +399,8 @@ apps.post("/widget-content", async (c) => {
 });
 
 apps.get("/sandbox-proxy", (c) => {
+  if ((c.req.header("Host") ?? "").startsWith("v-"))
+    return serveSandboxViewDocument(c);
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "no-cache, no-store, must-revalidate");
   // Same list the proxy pins its host origin against — see

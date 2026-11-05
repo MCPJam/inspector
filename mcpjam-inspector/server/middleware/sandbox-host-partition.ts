@@ -1,3 +1,4 @@
+import { sandboxViewHeaders, SANDBOX_VIEW_DENY_POLICY } from "../utils/sandbox-view-response.js";
 /**
  * Sandbox-host partition
  *
@@ -78,7 +79,7 @@ function requestHost(c: Context): string {
 }
 
 /** A per-server view label, as `view-origin-label.ts` derives them. */
-const VIEW_ORIGIN_LABEL = /^[a-f0-9]{16}$/;
+const VIEW_ORIGIN_LABEL = /^(?:v-)?[a-f0-9]{16}$/;
 
 /**
  * How a hostname relates to the sandbox.
@@ -95,14 +96,14 @@ const VIEW_ORIGIN_LABEL = /^[a-f0-9]{16}$/;
  * One label only. A nested subdomain is not a name this service mints, and
  * matching it would extend the partition to hostnames nobody derived.
  */
-function sandboxHostKind(host: string): "exact" | "view" | null {
+function sandboxHostKind(host: string): "exact" | "view" | "admission" | null {
   if (SANDBOX_HOSTS.has(host)) return "exact";
   const dot = host.indexOf(".");
   if (dot === -1) return null;
   const label = host.slice(0, dot);
   const parent = host.slice(dot + 1);
   if (!VIEW_ORIGIN_LABEL.test(label)) return null;
-  return SANDBOX_HOSTS.has(parent) ? "view" : null;
+  return SANDBOX_HOSTS.has(parent) ? (label.startsWith("v-") ? "admission" : "view") : null;
 }
 
 const sandboxHostPartition: MiddlewareHandler = async (c, next) => {
@@ -111,8 +112,11 @@ const sandboxHostPartition: MiddlewareHandler = async (c, next) => {
     await next();
     return;
   }
+  if (kind === "admission") {
+    for (const [name, value] of Object.entries(sandboxViewHeaders(SANDBOX_VIEW_DENY_POLICY))) c.header(name, value);
+  }
   const openPaths =
-    kind === "view" ? SANDBOX_VIEW_HOST_OPEN_PATHS : SANDBOX_HOST_OPEN_PATHS;
+    kind === "exact" ? SANDBOX_HOST_OPEN_PATHS : SANDBOX_VIEW_HOST_OPEN_PATHS;
   if (openPaths.has(c.req.path)) {
     await next();
     return;
