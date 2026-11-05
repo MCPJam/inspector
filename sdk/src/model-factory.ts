@@ -31,6 +31,9 @@ import { anthropicNativeModelId } from "./model-native-ids.js";
 
 export {
   ANTHROPIC_NATIVE_MODEL_IDS,
+  OPENAI_NATIVE_MODEL_IDS,
+  GOOGLE_NATIVE_MODEL_IDS,
+  nativeModelIdFor,
   anthropicNativeModelId,
   type NativeModelIdMapping,
 } from "./model-native-ids.js";
