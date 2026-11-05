@@ -105,6 +105,8 @@ vi.mock("posthog-js/react", () => ({
     flag === "description-experiments-enabled"
       ? descriptionExperimentFlag.current
       : flagEnabled.current,
+  usePostHog: () => undefined,
+  useActiveFeatureFlags: () => undefined,
 }));
 vi.mock("../use-eval-description-experiment", () => ({
   useEvalDescriptionExperiment: (args: { enabled?: boolean }) => {
