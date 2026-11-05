@@ -59,6 +59,16 @@ const ROWS: [string, EvalNavRoute][] = [
     "/evaluate/suite/s1/runs/r1/cases/c1/edit",
     { type: "test-run-edit", suiteId: "s1", runId: "r1", testCaseId: "c1" },
   ],
+  [
+    "/evaluate/suite/s1/runs/r1/cases/c1/edit?step=assertion%3Aa1",
+    {
+      type: "test-run-edit",
+      suiteId: "s1",
+      runId: "r1",
+      testCaseId: "c1",
+      step: "assertion:a1",
+    },
+  ],
 ];
 
 function parse(url: string) {

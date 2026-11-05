@@ -34,6 +34,11 @@ export type UnifiedFindingsSectionProps = {
   clientLabel?: string | null;
   /** Shown when no findings have been built, so the slot is never empty. */
   fallback?: React.ReactNode;
+  /**
+   * Keep only findings whose evidence cites one of these iterations: the
+   * Test run page shows the run's findings about its one case.
+   */
+  onlyIterationIds?: ReadonlySet<string>;
 };
 
 function UnifiedFindingsBody({
@@ -44,9 +49,17 @@ function UnifiedFindingsBody({
   onOpenIteration,
   clientLabel,
   fallback,
+  onlyIterationIds,
 }: UnifiedFindingsSectionProps) {
   const envelope = useInsightsEnvelope({ kind: "eval_run", suiteRunId });
   const state = useUnifiedFindings({ suiteRunId, envelope, generation });
+  const findings = onlyIterationIds
+    ? state.findings.filter((finding) =>
+        finding.evidence.some(
+          (item) => item.iterationId && onlyIterationIds.has(item.iterationId),
+        ),
+      )
+    : state.findings;
 
   const onOpenEvidence = onOpenIteration
     ? (locator: FindingEvidenceLocator) => {
@@ -67,7 +80,7 @@ function UnifiedFindingsBody({
           )}
           analysis={state.experiment?.analysis}
           snapshot={state.experiment?.snapshot ?? null}
-          findings={state.findings}
+          findings={findings}
           provenance={state.provenance}
           observationState={state.envelope?.observationState ?? null}
           observationCoverage={state.envelope?.observationCoverage ?? null}

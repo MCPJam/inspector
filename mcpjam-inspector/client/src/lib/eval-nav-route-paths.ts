@@ -71,7 +71,14 @@ export function parseSuiteNavRoute(
     };
   }
   if (rest.length === 5 && leaf === "edit") {
-    return { type: "test-run-edit", suiteId, runId, testCaseId };
+    const step = params.get("step");
+    return {
+      type: "test-run-edit",
+      suiteId,
+      runId,
+      testCaseId,
+      ...(step ? { step } : {}),
+    };
   }
   if (rest.length === 6 && leaf === "iter" && iterationId) {
     return { type: "iteration", suiteId, runId, testCaseId, iterationId };
@@ -136,6 +143,8 @@ export function buildEvalNavRoutePath(
     case "iteration":
       return `${testRun}/iter/${encodeURIComponent(route.iterationId)}`;
     case "test-run-edit":
-      return `${testRun}/edit`;
+      return route.step
+        ? `${testRun}/edit?${new URLSearchParams({ step: route.step })}`
+        : `${testRun}/edit`;
   }
 }

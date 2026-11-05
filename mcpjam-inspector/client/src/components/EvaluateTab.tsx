@@ -56,6 +56,13 @@ import {
   evalRouteTestCaseId,
   evalsHeaderTrailProps,
 } from "./evaluate/nav/eval-breadcrumbs";
+import {
+  isTestRunLayerRoute,
+  TestRunLayerLoading,
+  TestRunLayerPage,
+  useSettledEvaluateNavFlag,
+} from "./evaluate/test-run/test-run-layer-page";
+import { useIterationCrumbNumber } from "./evaluate/test-run/iteration-page";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
@@ -1384,6 +1391,11 @@ function EvaluateTabContent({
     : null;
 
   const addressCaseId = evalRouteTestCaseId(addressRoute);
+  const testRunNavFlag = useSettledEvaluateNavFlag();
+  const iterationNumber = useIterationCrumbNumber(
+    addressRoute,
+    testRunNavFlag === true,
+  );
   // With the flag on, the trail comes from the address alone.
   const navTrail =
     evaluateNavEnabled === true && !generatingCases
@@ -1396,6 +1408,7 @@ function EvaluateTabContent({
                   ?.title
               : null,
             server: evalServer?.name ?? evalServerReturn?.name,
+            iterationNumber,
           }),
           (target) => navigatePlaygroundEvalsRoute(target),
         )
@@ -1536,6 +1549,25 @@ function EvaluateTabContent({
 
     if (visibleSuites.length === 0) {
       return landingEmpty;
+    }
+
+    if (
+      testRunNavFlag !== false &&
+      selectedSuite &&
+      isTestRunLayerRoute(addressRoute)
+    ) {
+      // Wait for the flag rather than flash today's run page (plan E10).
+      return testRunNavFlag === undefined ? (
+        <TestRunLayerLoading />
+      ) : (
+        <TestRunLayerPage
+          route={addressRoute}
+          projectId={projectId}
+          suite={selectedSuite}
+          cases={suiteDetails?.testCases}
+          runs={runsForSelectedSuite}
+        />
+      );
     }
 
     if (hasDetailRoute) {

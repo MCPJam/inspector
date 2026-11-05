@@ -208,6 +208,25 @@ vi.mock("../evals/use-playground-project-executions", () => ({
   }),
 }));
 
+const testRunLayer = vi.hoisted(() => ({
+  page: vi.fn(),
+  iterationNumber: null as number | null,
+}));
+
+vi.mock("../evaluate/test-run/test-run-layer-page", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../evaluate/test-run/test-run-layer-page")
+  >()),
+  TestRunLayerPage: (props: Record<string, unknown>) => {
+    testRunLayer.page(props);
+    return <div data-testid="test-run-layer-page" />;
+  },
+}));
+
+vi.mock("../evaluate/test-run/iteration-page", () => ({
+  useIterationCrumbNumber: () => testRunLayer.iterationNumber,
+}));
+
 vi.mock("../evaluate/create-suite-page", () => ({
   CreateSuitePage: (props: Record<string, unknown>) => {
     mocks.createSuitePage(props);
@@ -1819,6 +1838,7 @@ describe("EvaluateTab page-per-layer addresses", () => {
   };
 
   it("renders today's run page for a test run address", () => {
+    mocks.evaluateFlag.enabled = false;
     Object.assign(mocks.route, { current: TEST_RUN });
     render(<EvaluateTab projectId="ws-1" />);
     expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0].route).toEqual({
@@ -1842,6 +1862,72 @@ describe("EvaluateTab page-per-layer addresses", () => {
       type: "run-detail",
       suiteId: "suite-a",
       runId: "run-1",
+    });
+  });
+});
+
+describe("EvaluateTab Test run and Iteration pages", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.evaluateFlag.enabled = undefined;
+    testRunLayer.iterationNumber = null;
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
+        makeQueryState(selectedSuiteId),
+    );
+  });
+
+  const ITERATION = {
+    type: "iteration" as const,
+    suiteId: "suite-a",
+    runId: "run-1",
+    testCaseId: "case-a",
+    iterationId: "iter-2",
+  };
+
+  it("mounts the Iteration page, with its number in the trail, when the nav flag is on", () => {
+    mocks.evaluateFlag.enabled = true;
+    testRunLayer.iterationNumber = 2;
+    Object.assign(mocks.route, { current: ITERATION });
+    render(<EvaluateTab projectId="ws-1" />);
+    expect(screen.getByTestId("test-run-layer-page")).toBeInTheDocument();
+    expect(testRunLayer.page.mock.calls.at(-1)?.[0].route).toEqual(ITERATION);
+    expect(screen.queryByTestId("suite-iterations-view")).toBeNull();
+    expect(screen.getByTestId("evals-header")).toHaveTextContent(
+      "Iteration #2",
+    );
+  });
+
+  it("waits for the nav flag instead of flashing today's run page", () => {
+    vi.useFakeTimers();
+    try {
+      Object.assign(mocks.route, { current: ITERATION });
+      render(<EvaluateTab projectId="ws-1" />);
+      expect(screen.getByText("Loading…")).toBeInTheDocument();
+      expect(screen.queryByTestId("suite-iterations-view")).toBeNull();
+      expect(screen.queryByTestId("test-run-layer-page")).toBeNull();
+      // PostHog never answered: after the wait the flag reads as off.
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+      expect(screen.queryByText("Loading…")).toBeNull();
+      expect(screen.getByTestId("suite-iterations-view")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps today's run page and drawer when the nav flag is off", () => {
+    mocks.evaluateFlag.enabled = false;
+    Object.assign(mocks.route, { current: ITERATION });
+    render(<EvaluateTab projectId="ws-1" />);
+    expect(screen.queryByTestId("test-run-layer-page")).toBeNull();
+    expect(
+      mocks.suiteIterationsView.mock.calls.at(-1)?.[0].route,
+    ).toMatchObject({
+      type: "run-detail",
+      runId: "run-1",
+      iteration: "iter-2",
     });
   });
 });

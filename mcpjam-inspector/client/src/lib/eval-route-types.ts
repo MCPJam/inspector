@@ -98,6 +98,8 @@ export type EvalNavRoute =
       suiteId: string;
       runId: string;
       testCaseId: string;
+      /** The editor anchor to open at, when a preview step opened the editor. */
+      step?: string;
     };
 
 export type EvalNavRouteKind = EvalNavRoute["type"];
