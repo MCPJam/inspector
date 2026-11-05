@@ -5,6 +5,7 @@ const replayIntegration = vi.fn(() => ({ name: "Replay" }));
 const browserTracingIntegration = vi.fn(() => ({ name: "BrowserTracing" }));
 const getClient = vi.fn();
 const addIntegration = vi.fn();
+const captureException = vi.fn();
 
 vi.mock("@sentry/react", () => ({
   init,
@@ -12,6 +13,7 @@ vi.mock("@sentry/react", () => ({
   browserTracingIntegration,
   getClient,
   addIntegration,
+  captureException,
 }));
 
 /** Stand in for the Replay integration instance the client hands back. */
@@ -485,5 +487,114 @@ describe("syncSentryReplay, a quick in-and-out", () => {
     finishStop();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(replay.start).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Sentry Replay waits for analytics consent", () => {
+  const CONSENT_KEY = "mcpjam-analytics-consent";
+  const posthog = {
+    opt_in_capturing: vi.fn(),
+    opt_out_capturing: vi.fn(),
+    set_config: vi.fn(),
+  };
+
+  beforeEach(() => {
+    vi.stubGlobal("__APP_VERSION__", "2.34.0-test");
+    vi.stubGlobal("__BUILD_SURFACE__", "npm");
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+    window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
+    window.localStorage.removeItem(CONSENT_KEY);
+    init.mockClear();
+    getClient.mockReset();
+    addIntegration.mockReset();
+    replayIntegration.mockClear();
+    captureException.mockClear();
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    window.localStorage.removeItem(CONSENT_KEY);
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  /** An initialized `../sentry` at `full`, with the consent store it reads. */
+  async function initAtFull() {
+    await allowFullContext();
+    const sentry = await import("../sentry");
+    sentry.initSentry();
+    return {
+      ...sentry,
+      ...(await import("../analytics-consent")),
+      ...(await import("../session-privacy")),
+    };
+  }
+
+  it("does not construct the recorder before the visitor answers", async () => {
+    getClient.mockReturnValue({ getIntegrationByName: () => undefined });
+    const { syncSentryReplay } = await initAtFull();
+
+    syncSentryReplay("/servers");
+
+    expect(replayIntegration).not.toHaveBeenCalled();
+    expect(addIntegration).not.toHaveBeenCalled();
+  });
+
+  it("does not construct it after the visitor declines", async () => {
+    getClient.mockReturnValue({ getIntegrationByName: () => undefined });
+    const { syncSentryReplay, setAnalyticsConsent } = await initAtFull();
+
+    setAnalyticsConsent(posthog, "denied");
+    syncSentryReplay("/servers");
+
+    expect(addIntegration).not.toHaveBeenCalled();
+  });
+
+  it("constructs it as soon as the visitor allows analytics", async () => {
+    getClient.mockReturnValue({ getIntegrationByName: () => undefined });
+    const { syncSentryReplay, setAnalyticsConsent, SENTRY_REPLAY_OPTIONS } =
+      await initAtFull();
+    syncSentryReplay("/servers");
+
+    setAnalyticsConsent(posthog, "granted");
+
+    expect(replayIntegration).toHaveBeenCalledWith(SENTRY_REPLAY_OPTIONS);
+    expect(addIntegration).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops a running replay on withdrawal and resumes it on a new grant", async () => {
+    window.localStorage.setItem(CONSENT_KEY, "granted");
+    const replay = stubReplay(true);
+    replay.stop.mockImplementation(() =>
+      replay.getReplayId.mockReturnValue(undefined),
+    );
+    const { syncSentryReplay, setAnalyticsConsent } = await initAtFull();
+    syncSentryReplay("/servers");
+    expect(replay.stop).not.toHaveBeenCalled();
+
+    setAnalyticsConsent(posthog, "denied");
+    expect(replay.stop).toHaveBeenCalledTimes(1);
+    expect(replay.start).not.toHaveBeenCalled();
+
+    syncSentryReplay("/tools");
+    expect(replay.start).not.toHaveBeenCalled();
+
+    setAnalyticsConsent(posthog, "granted");
+    expect(replay.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports errors without consent", async () => {
+    getClient.mockReturnValue({ getIntegrationByName: () => undefined });
+    const { captureSentryException } = await initAtFull();
+    const error = new Error("boom");
+
+    captureSentryException(error);
+
+    expect(init).toHaveBeenCalledTimes(1);
+    expect(init.mock.calls[0][0].enabled).toBe(true);
+    expect(captureException).toHaveBeenCalledWith(error, undefined);
+    expect(replayIntegration).not.toHaveBeenCalled();
   });
 });
