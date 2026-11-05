@@ -315,12 +315,12 @@ export function OverallScoreCard({
   // result the run has not reached. The card shows progress until it ends.
   const scored =
     !isRunning && score && score.score !== null ? score : undefined;
-  // Checks that could not run stay in the denominator, so the number is only
-  // a partial picture.
-  const partial = Boolean(scored && scored.couldNotRun > 0);
   const missingInputs = score
     ? Math.max(0, score.passed + score.failed + score.couldNotRun - score.applicable)
     : 0;
+  // Checks that could not run stay in the denominator, so the number is only
+  // a partial picture. Checks that need input are out of it, so they don't.
+  const partial = Boolean(scored && scored.couldNotRun > missingInputs);
 
   const verdict = (() => {
     // A partial score is no verdict: a clean Protocol would read "Fully
@@ -386,9 +386,14 @@ export function OverallScoreCard({
     // advice from one without; read the advice itself.
     const advised =
       (scored.advisories?.length ?? scored.advisoryCount ?? 0) > 0;
-    return advised
+    // Checks that need input don't hold the verdict back, but the run did not
+    // check everything, so it is not "fully" conformant.
+    const conformant = advised
       ? "Conformant, with guidance."
-      : "Fully conformant.";
+      : inputSentence
+        ? "Conformant."
+        : "Fully conformant.";
+    return [conformant, inputSentence].filter(Boolean).join(" ");
   })();
 
   // Every kind of count on its own, so "10/62" never has to stand in for
