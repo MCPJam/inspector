@@ -469,10 +469,17 @@ it("keeps plain anchors unchanged", () => {
 it.each([
   "/authors?sort=name&compact",
   "!/authors?sort=name&compact",
-  "/authors=profile",
+  "/books=profile",
+  "/settings?tab=x",
 ])("preserves safe hash routes: %s", (fragment) => {
   const url = `https://example.com/#${fragment}`;
   expect(redactSharedServerUrl(url)).toBe(url);
+});
+it("treats a first route segment with `=` as a field, like the query", () => {
+  // `authors` matches the `auth` substring, as it already does in `?authors=`.
+  expect(redactSharedServerUrl("https://example.com/#/authors=profile")).toBe(
+    "https://example.com/#/authors=%5BREDACTED%5D"
+  );
 });
 it.each(["/authors?", "!/authors?", "/authors&", "!/authors&"])(
   "redacts route query credentials while preserving %s",
@@ -483,6 +490,22 @@ it.each(["/authors?", "!/authors?", "/authors&", "!/authors&"])(
       )
     ).toBe(
       `https://example.com/#${prefix}x-api-key=%5BREDACTED%5D&label=hello%20world&compact`
+    );
+  }
+);
+it.each([
+  [
+    "/access_token=secret&token_type=bearer",
+    "/access_token=%5BREDACTED%5D&token_type=%5BREDACTED%5D",
+  ],
+  ["/access_token=secret", "/access_token=%5BREDACTED%5D"],
+  ["!/access_token=secret", "!/access_token=%5BREDACTED%5D"],
+  ["/access_token=secret?view=compact", "/access_token=%5BREDACTED%5D"],
+])(
+  "redacts a credential in the first field after a route marker: %s",
+  (fragment, expected) => {
+    expect(redactSharedServerUrl(`https://example.com/#${fragment}`)).toBe(
+      `https://example.com/#${expected}`
     );
   }
 );
