@@ -1,6 +1,8 @@
 import {
   INVOCATION_RECEIPT_VALUE_BYTES,
   INVOCATION_RECEIPT_MAX_ROUNDS,
+  INVOCATION_RECEIPT_TTL_MS,
+  INVOCATION_RECEIPT_RETENTION_MS,
 } from "../../../shared/plugin-invocation-receipts.js";
 import { createHash, randomBytes } from "node:crypto";
 import { logger } from "../../utils/logger.js";
@@ -646,14 +648,15 @@ export class AuthorizedToolInvoker {
   }
 
   private async recoverReadOnly(origin: PluginInvocationOrigin, id: string,
-    params: PluginToolCallParams, fingerprint: string, signal?: AbortSignal) {
+    params: PluginToolCallParams, fingerprint: string, signal?: AbortSignal,
+    completedOnly = false) {
     let receipt = this.receipts.get(id);
     if (receipt && receipt.fingerprint !== fingerprint) fail("INVOCATION_ID_REUSED");
     if (!receipt?.terminal || receipt.evicted) {
       const active = signal ?? new AbortController().signal;
       const saved = this.ports.receipts ? await awaitOwned(active, () => this.ports.receipts!.read(id, active)) : null;
       const state = saved?.legs.at(-1)?.state;
-      if (!saved || !state || !["completed", "failed", "unknown", "unavailable"].includes(state))
+      if (!saved || !state || (completedOnly ? state !== "completed" : !["completed", "failed", "unknown", "unavailable"].includes(state)))
         fail("INVOCATION_OUTCOME_UNKNOWN", true);
       receipt = { fingerprint, result: undefined!, continuations: new Map(), terminal: true };
       this.restore(receipt, saved!);
@@ -960,10 +963,13 @@ export class AuthorizedToolInvoker {
     if (
       !saved.revision ||
       !Number.isSafeInteger(saved.expiresAt) ||
-      saved.expiresAt <= Date.now() ||
       !Array.isArray(saved.legs) ||
       saved.legs.length < 1 ||
-      saved.legs.length > INVOCATION_RECEIPT_MAX_ROUNDS + 1
+      saved.legs.length > INVOCATION_RECEIPT_MAX_ROUNDS + 1 ||
+      (saved.expiresAt <= Date.now() && (
+        saved.legs.at(-1)?.state !== "completed" ||
+        saved.expiresAt + INVOCATION_RECEIPT_RETENTION_MS - INVOCATION_RECEIPT_TTL_MS <= Date.now()
+      ))
     )
       fail("RECEIPT_STORE_INVALID");
     receipt.revision = saved.revision;
@@ -1376,6 +1382,16 @@ export class AuthorizedToolInvoker {
       }
       return result;
     } catch (error) {
+      if (
+        !claimed && !dispatched && !this.closed && !signal.aborted &&
+        this.ports.receipts && error instanceof PluginInvocationError &&
+        error.code === "RECEIPT_EXPIRED"
+      ) {
+        // Retained completed data can be delivered after its write lease ends;
+        // the read and replay still require the original live owner and revision.
+        receipt.retryable = true;
+        return this.recoverReadOnly(origin, invocationId, params, receipt.fingerprint, signal, true);
+      }
       // A cancelled/revoked owner cannot deliver a result or safely retry a
       // write. Only an authoritative server failure is a known outcome.
       logInvocationFailure(error, dispatched);
