@@ -1,4 +1,3 @@
-import { useSwarmRerunRepair } from "./swarm-rerun-repair";
 /**
  * Project-scoped Swarms surface (redesign): Persona → Journey → Run.
  *
@@ -95,7 +94,7 @@ import {
 import { getShareableAppOrigin } from "@/lib/scenario-session";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { SwarmOverviewPanel } from "@/components/swarms/swarm-overview-panel";
-import { SwarmRunDetail } from "@/components/swarms/swarm-run-detail";
+import { RepairableSwarmRunDetail } from "./swarm-rerun-repair";
 import { SwarmLiveStreamPane } from "@/components/swarms/journey-run-results";
 import { findAttemptForSelection } from "@/components/swarms/swarm-targets";
 import {
@@ -660,15 +659,12 @@ export function SwarmsTab({
     [projectId],
   );
 
-  const rerunRepair = useSwarmRerunRepair(projectId);
   const handleRunAgainFromDetail = useCallback(
-    async (journeyRefIds: string[], runIds?: string[]) => {
-      const prepared = runIds ? await rerunRepair.prepare(runIds) : journeyRefIds;
-      if (!prepared) return { cancelled: true };
+    async (journeyRefIds: string[]) => {
       const swarmRunGroupId = crypto.randomUUID();
       const errors: string[] = [];
       let landedUnderNewWave = false;
-      for (const journeyId of prepared) {
+      for (const journeyId of journeyRefIds) {
         try {
           const result = await launchJourney(journeyId, { swarmRunGroupId });
           if (result.status === "already_launching") continue;
@@ -709,7 +705,7 @@ export function SwarmsTab({
       if (!landedUnderNewWave) return {};
       return { swarmRunGroupId };
     },
-    [launchJourney, rerunRepair],
+    [launchJourney],
   );
   // Exact (case-insensitive) resolution against the loaded lists — unknown or
   // ambiguous → invalid_request, never a fuzzy guess.
@@ -1060,8 +1056,7 @@ export function SwarmsTab({
             onChange={onRunningPersonasChange}
           />
         </ErrorBoundary>
-        {rerunRepair.dialog}
-        <SwarmRunDetail
+        <RepairableSwarmRunDetail
           organizationId={organizationId}
           // Remount per wave. Every piece of state in here is about the wave
           // being looked at — the persona filter, the stop confirmation, and

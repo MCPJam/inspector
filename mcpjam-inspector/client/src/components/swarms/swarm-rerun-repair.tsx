@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, type ComponentProps } from "react";
+import { SwarmRunDetail } from "./swarm-run-detail";
 import { useConvex } from "convex/react";
 import { makeFunctionReference } from "convex/server";
 import type { ModelSelection } from "@mcpjam/sdk/browser";
@@ -92,6 +93,26 @@ export function useSwarmRerunRepair(projectId: string | null) {
         />
       ) : null,
   };
+}
+
+/** Keep the rerun subscription and repair state on the run detail surface. */
+export function RepairableSwarmRunDetail(
+  props: ComponentProps<typeof SwarmRunDetail>,
+) {
+  const repair = useSwarmRerunRepair(props.projectId);
+  return (
+    <>
+      {repair.dialog}
+      <SwarmRunDetail
+        {...props}
+        onRunAgain={async (journeyIds, runIds) => {
+          const approved = runIds ? await repair.prepare(runIds) : journeyIds;
+          if (!approved) return { cancelled: true };
+          return props.onRunAgain(approved);
+        }}
+      />
+    </>
+  );
 }
 
 export function SwarmRerunRepairDialog({
