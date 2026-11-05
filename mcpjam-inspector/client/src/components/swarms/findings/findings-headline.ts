@@ -17,6 +17,7 @@
  * Chen left frustrated"); a persona never fails.
  */
 
+import { sessionReportUnavailableMessage } from "./findings-report-availability";
 import {
   SWARM_FINDING_COVERAGE_NOTE_LABELS,
   SWARM_FINDING_SIGNAL_LABELS,
@@ -648,10 +649,9 @@ export function composeWireFindingsSummary(
 export function wireFindingsFootnotes(wire: SwarmJourneyFindings): string[] {
   const notes = wire.coverageNotes.map(
     (note) =>
-      note === "analysisUnavailable" &&
-      wire.findings.some((row) => row.coverageNotes.includes("analysisUnavailable"))
-        ? "A session report couldn't be generated"
-        : SWARM_FINDING_COVERAGE_NOTE_LABELS[note],
+      (wire.findings.some((row) => row.coverageNotes.includes(note))
+        ? sessionReportUnavailableMessage([note])
+        : undefined) ?? SWARM_FINDING_COVERAGE_NOTE_LABELS[note],
   );
   const verification = wire.verification;
   if (!verification) return notes;

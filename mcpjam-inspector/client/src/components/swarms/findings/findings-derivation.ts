@@ -1,4 +1,5 @@
 /** Presentation joins for the canonical swarm findings contract. */
+import { sessionReportUnavailableMessage } from "./findings-report-availability";
 import {
   SWARM_FINDING_DISPOSITIONS,
   SWARM_FINDING_DISPOSITION_LABELS,
@@ -376,12 +377,10 @@ export function deriveSwarmFindingsModelFromWire({
         JOURNEY_STAGES.find((stage) => stages[stage.id].state === "fail")?.id ??
         null;
       const disposition = lead?.disposition ?? "notMeasured";
-      const reportUnavailable = rows.some((row) =>
-        row.coverageNotes.includes("analysisUnavailable"),
+      const reportUnavailable = sessionReportUnavailableMessage(
+        rows.flatMap((row) => row.coverageNotes),
       );
-      const reportStatus = reportUnavailable
-        ? "Session report couldn't be generated."
-        : "No session report is available.";
+      const reportStatus = reportUnavailable ?? "No session report is available.";
       return {
         runId,
         journeyRefId: lead?.goal.journeyRefId ?? run?.journeyRefId ?? "",

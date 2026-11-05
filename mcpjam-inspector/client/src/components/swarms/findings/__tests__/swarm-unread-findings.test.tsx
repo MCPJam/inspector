@@ -75,11 +75,11 @@ describe("unread swarm findings", () => {
       });
       render(<SwarmFindingsTab {...props} journeyFindings={wire} />);
       expect(
-        screen.getByText("A session report couldn't be generated"),
-      ).toBeInTheDocument();
+        screen.getAllByText("AI explanations are unavailable for this session.").length,
+      ).toBeGreaterThan(0);
       const detail = within(screen.getByRole("complementary"));
       expect(
-        detail.getByText(/Session report couldn't be generated/),
+        detail.getByText(/AI explanations are unavailable for this session/),
       ).toBeInTheDocument();
       if (verdict === "passed") {
         expect(
