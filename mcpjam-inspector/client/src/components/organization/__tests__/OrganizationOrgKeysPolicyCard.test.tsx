@@ -198,13 +198,12 @@ describe("OrganizationOrgKeysPolicyCard", () => {
     });
     expect(toggle).not.toBeChecked();
     expect(toggle).toBeEnabled();
-    expect(
-      screen.getByText(
-        /AI requests must use an approved organization provider\. MCPJam-provided models are disabled\. Features without a compatible provider are unavailable\./,
-      ),
-    ).toBeInTheDocument();
+    // Off, the description is conditional so it can't contradict the switch.
+    expect(screen.getByTestId("org-ai-keys-description")).toHaveTextContent(
+      "When on, AI requests must use an approved organization provider and MCPJam-provided models are disabled.",
+    );
     expect(screen.getByTestId("org-ai-keys-off-summary")).toHaveTextContent(
-      "MCPJam-provided models are used where you haven't chosen an organization model.",
+      "Now off: MCPJam-provided models are used where you haven't chosen an organization model.",
     );
     // Coverage is about the policy; off, it would only list "MCPJam-provided".
     expect(screen.queryByText("Feature coverage")).not.toBeInTheDocument();
@@ -366,6 +365,9 @@ describe("OrganizationOrgKeysPolicyCard", () => {
     hookState.config = makeConfig({ requireOrgKeys: true });
     render(<OrganizationOrgKeysPolicyCard organizationId="org-1" isAdmin />);
 
+    expect(screen.getByTestId("org-ai-keys-description")).toHaveTextContent(
+      "AI requests must use an approved organization provider. MCPJam-provided models are disabled. Features without a compatible provider are unavailable.",
+    );
     expect(screen.getByTestId("org-ai-keys-billing")).toHaveTextContent(
       "Model tokens are billed by your providers. MCPJam product fees and usage limits still apply.",
     );

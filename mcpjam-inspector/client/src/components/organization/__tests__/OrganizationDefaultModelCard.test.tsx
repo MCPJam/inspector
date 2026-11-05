@@ -146,7 +146,7 @@ describe("OrganizationDefaultModelCard", () => {
     // No decision kind here, so the default model still answers typed decisions.
     expect(
       within(row).getByText(
-        "Insights and findings, generation, typed decisions and simulated users",
+        "Ask MCPJam, insights and findings, generation, typed decisions and simulated users",
       ),
     ).toBeInTheDocument();
     expect(within(row).getByText("Not set")).toBeInTheDocument();
@@ -808,7 +808,7 @@ describe("OrganizationDefaultModelCard", () => {
 
       expect(
         within(screen.getByTestId("org-ai-model-default")).getByText(
-          "Insights and findings, generation and simulated users",
+          "Ask MCPJam, insights and findings, generation and simulated users",
         ),
       ).toBeInTheDocument();
       const row = screen.getByTestId("org-ai-model-decision");

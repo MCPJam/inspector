@@ -22,7 +22,11 @@ import {
   runClaudeAuthChecks,
   type ClaudeAuthEvidence,
 } from "../../src/claude-readiness/checks/auth.js";
-import { parseChallengeHeader } from "../../src/mcp-client-manager/auth-challenge.js";
+import type { DirectoryLazyAuthToolCall } from "../../src/directory-readiness/lazy-auth.js";
+import {
+  parseChallengeHeader,
+  parseToolResultAuthChallenge,
+} from "../../src/mcp-client-manager/auth-challenge.js";
 
 const STAMP = { evaluatedAt: "2026-08-19T00:00:00.000Z" };
 const URL_UNDER_TEST = "https://mcp.example.com/mcp";
@@ -428,6 +432,76 @@ describe("a server whose protected call asks for sign-in but publishes no metada
     }
     expect(badge(output, "claude.auth.mode").detail).not.toMatch(/authless/);
   });
+
+  const bearer401: DirectoryLazyAuthToolCall = {
+    toolName: "read_order",
+    selectedBy: "named",
+    schemes: { schemes: [], source: "unresolved" },
+    outcome: "unauthorized",
+    status: 401,
+    challenge: parseChallengeHeader(
+      'Bearer resource_metadata="https://elsewhere.example/prm"'
+    ),
+  };
+  it.each([
+    ["a 401 with a Bearer challenge", bearer401, "supported"],
+    [
+      "a 401 with no WWW-Authenticate header",
+      { ...bearer401, challenge: parseChallengeHeader(undefined) },
+      "claimed",
+    ],
+    [
+      "a 403 insufficient_scope challenge",
+      {
+        ...bearer401,
+        outcome: "forbidden" as const,
+        status: 403,
+        challenge: parseChallengeHeader(
+          'Bearer error="insufficient_scope"',
+          "http_403_insufficient_scope"
+        ),
+      },
+      "claimed",
+    ],
+    [
+      "a _meta challenge on a tool error",
+      {
+        ...bearer401,
+        outcome: "tool-error" as const,
+        status: 200,
+        challenge: parseToolResultAuthChallenge({
+          isError: true,
+          _meta: {
+            "mcp/www_authenticate": [
+              'Bearer resource_metadata="https://elsewhere.example/prm"',
+            ],
+          },
+        }),
+      },
+      "claimed",
+    ],
+  ])(
+    "reports lazy authentication confidently only for %s",
+    (_label, protectedCall, state) => {
+      const mode = badge(
+        runClaudeAuthChecks(
+          {
+            ...STRANDED,
+            lazyAuthProbe: {
+              attempted: true,
+              protocolVersion: "2025-06-18",
+              eraNote: "test",
+              protectedCall,
+            },
+          },
+          STAMP
+        ),
+        "claude.auth.mode"
+      );
+      expect(mode.state).toBe(state);
+      expect(mode.detail).toMatch(/a protected call asked for sign-in/);
+    }
+  );
 });
 
 describe("WWW-Authenticate on a successful response", () => {

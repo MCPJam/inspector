@@ -52,6 +52,11 @@
       "import": "./dist/skill-reference.js",
       "default": "./dist/skill-reference.js"
     },
+    "./model-native-ids": {
+      "types": "./dist/model-native-ids.d.ts",
+      "import": "./dist/model-native-ids.js",
+      "default": "./dist/model-native-ids.js"
+    },
     "./model-factory": {
       "types": "./dist/model-factory.d.ts",
       "import": "./dist/model-factory.js",

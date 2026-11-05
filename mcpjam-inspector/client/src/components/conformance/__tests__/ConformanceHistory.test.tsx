@@ -91,6 +91,53 @@ describe("ConformanceHistory", () => {
     expect(startRun).not.toHaveBeenCalled();
   });
 
+  it("shows each run's result as a ring of its checks", () => {
+    useQueryMock.mockReturnValue({
+      page: [
+        makeRun({
+          passed: 19,
+          failed: 2,
+          applicable: 21,
+          outcome: "failed",
+          score: 90.4,
+        }),
+      ],
+      isDone: true,
+      continueCursor: "",
+    });
+    render(<ConformanceHistory projectId="proj_1" />);
+
+    expect(
+      screen.getByRole("img", { name: "19 passed, 2 failed of 21" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("FAILED")).toBeNull();
+    const header = screen.getByText("SERVER").parentElement;
+    expect(header?.textContent).toBe(
+      "SERVERPROTOCOLSCORECHECKSRESULTDATESOURCE",
+    );
+  });
+
+  it("names a run that has not finished instead of drawing an empty ring", () => {
+    const unfinished = { applicable: 0, passed: 0, failed: 0, couldNotRun: 0 };
+    useQueryMock.mockReturnValue({
+      page: [
+        makeRun({ _id: "run_q", status: "queued", ...unfinished }),
+        makeRun({ _id: "run_c", status: "cancelled", ...unfinished }),
+        makeRun({ _id: "run_t", status: "timed_out", ...unfinished }),
+      ],
+      isDone: true,
+      continueCursor: "",
+    });
+    render(<ConformanceHistory projectId="proj_1" />);
+
+    expect(screen.getByText("RUNNING")).toBeInTheDocument();
+    expect(screen.getByText("CANCELLED")).toBeInTheDocument();
+    expect(screen.getByText("TIMED OUT")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("img", { name: "No applicable checks" }),
+    ).toBeNull();
+  });
+
   it("keeps the empty state compact so the suites below stay visible", () => {
     useQueryMock.mockReturnValue({
       page: [],

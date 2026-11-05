@@ -2,22 +2,31 @@ import { z } from "zod";
 import type { UIMessage } from "ai";
 import { OpenAIMessageParamsSchema } from "@openai/mcp-extensions/app";
 import { pluginResourceLinkModelText } from "./plugin-resource-link.js";
+import { MODEL_CONTEXT_POLICY_DEFAULTS } from "@mcpjam/sdk/host-config/internal";
 import {
   assertPluginResourceRepresentations,
   parsePluginModelContext,
   pluginInlineContentBlock,
 } from "./plugin-model-context.js";
 
-/** Full envelope; supplied bytes and inert reference data share the context codec. */
+/** Full envelope; supplied bytes and inert reference data share the context
+ * codec. A message keeps MCPJam's default budgets whatever the client's
+ * context policy says. */
 export function parsePluginMessage(value: unknown) {
-  assertPluginResourceRepresentations(value);
+  assertPluginResourceRepresentations(
+    value,
+    MODEL_CONTEXT_POLICY_DEFAULTS.maxBlocks,
+  );
   const params = OpenAIMessageParamsSchema.parse(value);
   if (!params.content.length || params.content.length > 64)
     throw new Error("PLUGIN_MESSAGE_CONTENT_INVALID");
-  parsePluginModelContext({
-    content: params.content,
-    ...(params._meta ? { _meta: params._meta } : {}),
-  });
+  parsePluginModelContext(
+    {
+      content: params.content,
+      ...(params._meta ? { _meta: params._meta } : {}),
+    },
+    MODEL_CONTEXT_POLICY_DEFAULTS,
+  );
   return structuredClone(params);
 }
 export type PluginMessageParams = ReturnType<typeof parsePluginMessage>;

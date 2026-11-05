@@ -56,6 +56,16 @@ import {
 } from "../lib/app-signin-return-path";
 import { getGuestSessionRefusal } from "../lib/guest-session";
 
+// The organization key policy binding has its own tests; here a template
+// seed is created as it is.
+vi.mock("@/hooks/use-org-bound-template-seed", () => ({
+  useOrgBoundTemplateSeed: () => ({
+    ready: true,
+    bind: (input: unknown) => ({ kind: "unchanged", input }),
+    prepare: (input: unknown) => ({ input }),
+  }),
+}));
+
 /** Convex-shaped project ids for the cross-organization switch cases. */
 const ORG_A_PROJECT_ID = "k57aaaaaaaaaaaaaaaaaaaaaaaa1";
 const ORG_B_PROJECT_ID = "k57bbbbbbbbbbbbbbbbbbbbbbbb1";

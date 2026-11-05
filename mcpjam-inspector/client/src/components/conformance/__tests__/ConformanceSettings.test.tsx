@@ -16,6 +16,7 @@ import {
 import type { ConformanceDefaults } from "@/hooks/use-conformance-server-data";
 import { ConformanceSettings } from "../ConformanceSettings";
 import { SavedRunSettings } from "../ConformanceRunActions";
+const toolsMock = vi.hoisted(() => ({ outputSchema: true }));
 vi.mock("../ConformanceProbeField", async (original) => ({
   ...(await original<typeof import("../ConformanceProbeField")>()),
   useProbeTools: () => ({
@@ -31,7 +32,7 @@ vi.mock("../ConformanceProbeField", async (original) => ({
         name: "output",
         readOnly: true,
         destructive: false,
-        hasOutputSchema: true,
+        hasOutputSchema: toolsMock.outputSchema,
       },
     ],
   }),
@@ -91,6 +92,42 @@ function Harness({
   );
 }
 describe("Settings inputs", () => {
+  it("keeps a saved output tool visible when no tool declares an output schema", async () => {
+    toolsMock.outputSchema = false;
+    try {
+      const user = userEvent.setup();
+      render(<Harness saved={false} onSave={vi.fn(async () => {})} />);
+      // The saved tool is still called, so the user must see it to clear it.
+      const field = screen.getByRole("combobox", {
+        name: "Tool to check output",
+      });
+      // The server still lists it, so it is not shown as missing.
+      expect(field).toHaveTextContent("output·read-only");
+      expect(
+        screen.getByText(
+          "This tool no longer declares an output schema. It is still called, but its result cannot be checked. Pick another tool or clear it.",
+        ),
+      ).toBeInTheDocument();
+      const box = screen.getByRole("checkbox", {
+        name: "Run Tool Output Schema Honored",
+      });
+      expect(box.closest("label")!.parentElement).not.toHaveClass(
+        "opacity-50",
+      );
+      await user.click(field);
+      await user.click(screen.getByRole("option", { name: "Not set" }));
+      // Cleared, the check has nothing to grade: shaded, no field.
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("combobox", { name: "Tool to check output" }),
+        ).toBeNull(),
+      );
+      expect(box.closest("label")!.parentElement).toHaveClass("opacity-50");
+    } finally {
+      toolsMock.outputSchema = true;
+    }
+  });
+
   it.each([false, true])(
     "shows and saves every input in both Settings views (saved: %s)",
     async (saved) => {
