@@ -30,6 +30,7 @@ import {
   type SavedReportCase,
 } from "./use-saved-run-reports";
 import { ConformanceVersionNotice } from "./ConformanceVersionNotice";
+import { RunResultRing } from "./RunResultRing";
 import { conformanceVersionRefusal } from "./conformance-version-refusal";
 import { suiteCatalog } from "./conformance-catalogs";
 import {
@@ -93,44 +94,6 @@ export const historyDateFormat = new Intl.DateTimeFormat("en-US", {
   hour: "numeric",
   minute: "2-digit",
 });
-
-export function RunResultBadge({ run }: { run: ConformanceRunListItem }) {
-  const base =
-    "inline-flex h-5.5 shrink-0 items-center rounded-sm px-2 text-[11px] font-semibold tracking-[0.06em]";
-  const neutral = "bg-muted text-muted-foreground";
-  if (run.status === "timed_out") {
-    return (
-      <span
-        className={`${base} bg-amber-400/25 text-amber-700 dark:text-amber-400`}
-      >
-        TIMED OUT
-      </span>
-    );
-  }
-  if (run.status === "cancelled") {
-    return <span className={`${base} ${neutral}`}>CANCELLED</span>;
-  }
-  if (run.status !== "completed") {
-    return <span className={`${base} ${neutral}`}>RUNNING</span>;
-  }
-  if (run.outcome === "passed") {
-    return (
-      <span
-        className={`${base} bg-emerald-500/15 text-emerald-700 dark:text-emerald-400`}
-      >
-        PASSED
-      </span>
-    );
-  }
-  if (run.outcome === "failed") {
-    return (
-      <span className={`${base} bg-red-500/10 text-red-600 dark:text-red-400`}>
-        FAILED
-      </span>
-    );
-  }
-  return <span className={`${base} ${neutral}`}>INCOMPLETE</span>;
-}
 
 /**
  * Every conformance run in the project, newest first, as one table. A row
@@ -196,16 +159,21 @@ export function ConformanceHistory({
   }
 
   const header = "text-[11px] font-semibold tracking-[0.06em] text-foreground";
+  const columns =
+    "grid w-full grid-cols-[minmax(0,1.8fr)_repeat(6,minmax(0,1fr))] items-center gap-x-4";
+  const cell = "min-w-0 truncate";
 
   return (
     <section className="space-y-3" aria-label="Run history">
       <div className="overflow-hidden rounded-lg border border-border bg-card">
-        <div className="flex items-center gap-4 bg-muted/60 px-4.5 py-2">
-          <span className={`w-30 shrink-0 ${header}`}>SERVER</span>
-          <span className={`w-35 shrink-0 ${header}`}>DATE</span>
-          <span className={`min-w-0 grow ${header}`}>SOURCE</span>
-          <span className={`shrink-0 ${header}`}>RESULT</span>
-          <span className={`w-12 shrink-0 text-right ${header}`}>SCORE</span>
+        <div className={`${columns} bg-muted/60 px-4.5 py-2`}>
+          <span className={`${cell} ${header}`}>SERVER</span>
+          <span className={`${cell} ${header}`}>PROTOCOL</span>
+          <span className={`${cell} ${header}`}>CHECKS</span>
+          <span className={`${cell} ${header}`}>SCORE</span>
+          <span className={`${cell} ${header}`}>RESULT</span>
+          <span className={`${cell} ${header}`}>DATE</span>
+          <span className={`${cell} ${header}`}>SOURCE</span>
         </div>
         <ul>
           {rows.map((run) => (
@@ -215,7 +183,7 @@ export function ConformanceHistory({
             >
               <button
                 type="button"
-                className="flex w-full items-center gap-4 px-4.5 py-3.5 text-left transition-colors hover:bg-muted/30"
+                className={`${columns} bg-popover px-4.5 py-3.5 text-left text-popover-foreground transition-colors hover:bg-muted/30`}
                 data-testid="conformance-history-row"
                 onClick={(event) => {
                   event.preventDefault();
@@ -223,22 +191,30 @@ export function ConformanceHistory({
                   navigate(buildConformanceRunPath(run._id, projectId));
                 }}
               >
-                <span className="w-30 shrink-0 truncate text-sm font-semibold">
+                <span className={`${cell} text-sm font-semibold`}>
                   {serverLabel(run)}
                 </span>
-                <span className="w-35 shrink-0 text-[13px] text-muted-foreground">
-                  {historyDateFormat.format(run.createdAt)}
+                <span className={`${cell} text-[13px] text-muted-foreground`}>
+                  {run.protocolVersion ?? "Auto"}
                 </span>
-                <span className="min-w-0 grow truncate text-[13px] text-muted-foreground">
-                  {HISTORY_SOURCE_LABEL[run.source] ?? run.source}
+                <span className={`${cell} text-sm font-semibold tabular-nums`}>
+                  {run.passed}/{run.applicable}
                 </span>
-                <RunResultBadge run={run} />
                 <span
-                  className={`w-14 shrink-0 text-right text-sm font-semibold tabular-nums ${
+                  className={`${cell} text-sm tabular-nums ${
                     run.score == null ? "text-muted-foreground" : ""
                   }`}
                 >
                   {run.score == null ? "—" : `${run.score}%`}
+                </span>
+                <span className="flex min-w-0 items-center">
+                  <RunResultRing run={run} />
+                </span>
+                <span className="whitespace-nowrap text-[13px] text-muted-foreground">
+                  {historyDateFormat.format(run.createdAt)}
+                </span>
+                <span className={`${cell} text-[13px] text-muted-foreground`}>
+                  {HISTORY_SOURCE_LABEL[run.source] ?? run.source}
                 </span>
               </button>
             </li>

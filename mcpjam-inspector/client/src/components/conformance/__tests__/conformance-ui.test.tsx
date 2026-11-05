@@ -27,10 +27,10 @@ describe("OverallScoreCard", () => {
         "Incomplete. 2 checks need input. Select tools in setup and run again.",
       ),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText("10 passed · 2 not run (missing input)"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("10/10 · partial")).toBeInTheDocument();
+    expect(screen.getByText("2 not run (missing input).")).toBeInTheDocument();
+    expect(screen.queryByText(/passed/)).toBeNull();
+    expect(screen.getByText("10/10")).toBeInTheDocument();
+    expect(screen.queryByText(/partial/)).toBeNull();
     expect(screen.queryByText("Fully conformant.")).toBeNull();
   });
 
@@ -180,7 +180,7 @@ describe("OverallScoreCard", () => {
     );
     expect(
       screen.getByText(
-        "Incomplete. 51 checks could not run because sign-in failed. 1 check failed. Reconnect the server and run again.",
+        "Incomplete. 51 checks could not run because sign-in failed. Reconnect the server and run again.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Not conformant/)).toBeNull();
@@ -228,7 +228,7 @@ describe("OverallScoreCard", () => {
     ).toBeInTheDocument();
   });
 
-  it("lists every count on its own and marks a score with unrun checks partial", () => {
+  it("lists every count on its own", () => {
     render(
       <OverallScoreCard
         score={signInBlocked}
@@ -236,18 +236,39 @@ describe("OverallScoreCard", () => {
         version="Auto"
       />,
     );
-    expect(
-      screen.getByText("Not conformant. 1 check failed."),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Not conformant.")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "10 passed · 1 failed · 51 could not run · 15 unscored · 3 not applicable",
+        "51 could not run, 15 unscored, and 3 not applicable.",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText("10/62 · partial")).toBeInTheDocument();
+    expect(screen.getByText("10/62")).toBeInTheDocument();
+    expect(screen.queryByText(/partial/)).toBeNull();
   });
 
-  it("does not mark a complete run partial", () => {
+  it("joins leftover checks as a sentence after the verdict", () => {
+    render(
+      <OverallScoreCard
+        score={{
+          score: 76.4,
+          outcome: "failed",
+          applicable: 51,
+          passed: 39,
+          failed: 1,
+          couldNotRun: 11,
+          notApplicable: 15,
+        }}
+        serverName="srv"
+        version="Auto"
+      />,
+    );
+    expect(screen.getByText("Not conformant.")).toBeInTheDocument();
+    expect(
+      screen.getByText("11 could not run and 15 not applicable."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the fraction without a partial mark", () => {
     render(
       <OverallScoreCard
         score={passedScore(100)}
@@ -256,6 +277,6 @@ describe("OverallScoreCard", () => {
       />,
     );
     expect(screen.getByText("10/10")).toBeInTheDocument();
-    expect(screen.getByText("10 passed")).toBeInTheDocument();
+    expect(screen.queryByText("10 passed")).toBeNull();
   });
 });

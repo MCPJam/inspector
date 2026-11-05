@@ -91,6 +91,28 @@ describe("ConformanceHistory", () => {
     expect(startRun).not.toHaveBeenCalled();
   });
 
+  it("shows each run's result as a ring of its checks", () => {
+    useQueryMock.mockReturnValue({
+      page: [
+        makeRun({
+          passed: 19,
+          failed: 2,
+          applicable: 21,
+          outcome: "failed",
+          score: 90.4,
+        }),
+      ],
+      isDone: true,
+      continueCursor: "",
+    });
+    render(<ConformanceHistory projectId="proj_1" />);
+
+    expect(
+      screen.getByRole("img", { name: "19 passed, 2 failed of 21" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("FAILED")).toBeNull();
+  });
+
   it("keeps the empty state compact so the suites below stay visible", () => {
     useQueryMock.mockReturnValue({
       page: [],
