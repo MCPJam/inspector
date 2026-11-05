@@ -366,7 +366,7 @@ it.each(["accept", "cancel"] as const)("delivers a model App's %s through its ac
   fireEvent.click(await screen.findByRole("button", { name: "Ask App form" }));
   await waitFor(() => expect(screen.getByTestId("owned-form-slot")).toHaveTextContent("Choose model input"));
   expect(screen.queryByRole("dialog")).toBeNull();
-  if (action === "cancel") fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  if (action === "cancel") fireEvent.click(screen.getByRole("button", { name: "Cancel form" }));
   else {
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
@@ -855,7 +855,7 @@ it("gives a direct MCP tool's actual form priority without replaying the model A
   await waitFor(() => expect(screen.getByTestId("owned-form-slot")).toHaveTextContent("Direct tool form"));
   expect(mocks.pendingInputs.get("original-call")).toBe(true);
   expect(mocks.fetch.mock.calls.filter(([url]) => url.endsWith("/model/call"))).toHaveLength(1);
-  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  fireEvent.click(screen.getByRole("button", { name: "Cancel form" }));
   await waitFor(() => expect(mocks.pendingInputs.get("original-call")).toBe(false));
   expect(submit).toHaveBeenCalledOnce();
   expect(cancel).not.toHaveBeenCalled();

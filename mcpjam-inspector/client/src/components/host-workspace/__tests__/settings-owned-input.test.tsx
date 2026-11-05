@@ -43,7 +43,10 @@ vi.mock("../../chat-v2/thread/mcp-apps/use-widget-host", () => ({
     services: {},
     resolvers: {
       resolveEffectiveHostCapabilities: () => ({ serverTools: {} }),
-      resolveEffectiveMcpAppsCapabilities: () => ({ serverTools: true }),
+      resolveEffectiveMcpAppsCapabilities: () => ({
+        serverTools: true,
+        availableDisplayModes: ["inline", "fullscreen"],
+      }),
     },
   }),
 }));
@@ -282,7 +285,7 @@ it.each(cases)(
     await vi.waitFor(() =>
       expect(useComposerFormStore.getState().forms[0]?.operation).toBeDefined(),
     );
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
     if (close) {
       if (signOut) act(() => useSignOutStore.setState({ isSigningOut: true }));
       else view.unmount();

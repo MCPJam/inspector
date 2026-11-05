@@ -1,5 +1,6 @@
 import { useSettingsLaunchObservation } from "@/lib/use-extension-launch-health";
 import type { ExtensionLaunchProfile } from "@/lib/extension-launch-health";
+import { SettingsDialogPresentationProvider, useSettingsDialogPresentation } from "../host-workspace/settings-dialog-presentation";
 import { ServerSettingsPanel } from "../host-workspace/ServerSettingsPanel";
 import { useServerSettingsAvailability } from "../host-workspace/use-server-settings";
 import type { ThreadAppScope } from "../host-workspace/thread-app-api";
@@ -158,10 +159,14 @@ interface PluginServerDetailModalProps {
 export function ServerDetailModal(
   props: ServerDetailModalProps | PluginServerDetailModalProps
 ) {
-  return props.plugin ? (
-    <PluginServerDetailModal {...props} />
-  ) : (
-    <ProjectServerDetailModal {...props} />
+  return (
+    <SettingsDialogPresentationProvider>
+      {props.plugin ? (
+        <PluginServerDetailModal {...props} />
+      ) : (
+        <ProjectServerDetailModal {...props} />
+      )}
+    </SettingsDialogPresentationProvider>
   );
 }
 
@@ -173,6 +178,7 @@ function PluginServerDetailModal({
   extensionSettingsScope = null,
   extensionLaunchProfile,
 }: PluginServerDetailModalProps) {
+  const presentation = useSettingsDialogPresentation();
   const settings = useServerSettingsAvailability(
     isOpen ? extensionSettingsScope : null,
     plugin.serverId
@@ -184,8 +190,16 @@ function PluginServerDetailModal({
     settings.failed,
   );
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+    <Dialog
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open && !presentation?.dismissApp()) onClose();
+      }}
+    >
       <DialogContent
+        {...presentation?.contentProps}
+        data-settings-dialog-app={presentation?.active || undefined}
+        data-settings-dialog-fullscreen={presentation?.fullscreen || undefined}
         translate="no"
         className="notranslate sm:max-w-2xl max-h-[85vh] flex flex-col overflow-hidden outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
         onOpenAutoFocus={(event) => {
@@ -193,7 +207,7 @@ function PluginServerDetailModal({
         }}
         data-testid="plugin-server-detail-modal"
       >
-        <DialogHeader>
+        <DialogHeader data-settings-dialog-header>
           {/* No connect switch: plugin servers connect on every message. The
               Plugin section below says whether chats run the plugin now. */}
           <DialogTitle className="flex items-center gap-2 min-w-0 pr-6">
@@ -209,11 +223,18 @@ function PluginServerDetailModal({
             ) : null}
           </DialogTitle>
           <DialogDescription className="sr-only">
-            The plugin that adds this server: its versions, setup and lifecycle.
+            Manage this plugin's versions, setup and lifecycle.
           </DialogDescription>
         </DialogHeader>
-        <Tabs value="settings" className="flex min-h-0 flex-col">
-          <TabsList className="-ml-1 flex h-9 w-full p-[3px]">
+        <Tabs
+          data-settings-layout
+          value="settings"
+          className="flex min-h-0 flex-col"
+        >
+          <TabsList
+            data-settings-dialog-chrome
+            className="-ml-1 flex h-9 w-full p-[3px]"
+          >
             <TabsTrigger
               value="settings"
               className="min-w-0 flex-1 px-1.5 text-xs sm:px-2 sm:text-sm"
@@ -222,20 +243,26 @@ function PluginServerDetailModal({
             </TabsTrigger>
           </TabsList>
           <TabsContent
+            data-settings-layout
             value="settings"
             className="mt-4 max-h-[60vh] overflow-y-auto pl-1 pr-2"
           >
-            <PluginSettingsSection
-              projectId={projectId}
-              pluginId={plugin.pluginId}
-              focusServerId={plugin.serverId}
-              onUninstalled={onClose}
-            />
+            <div data-settings-background>
+              <PluginSettingsSection
+                projectId={projectId}
+                pluginId={plugin.pluginId}
+                focusServerId={plugin.serverId}
+                onUninstalled={onClose}
+              />
+            </div>
             {isOpen &&
             extensionSettingsScope &&
             plugin.serverId &&
             (settings.available || settings.failed) ? (
-              <div className="mt-4 border-t border-border/60 pt-4">
+              <div
+                data-settings-layout
+                className="mt-4 border-t border-border/60 pt-4"
+              >
                 {settings.failed ? (
                   <div role="alert" className="space-y-2">
                     <p>{settings.errorMessage ?? "Settings could not be loaded."}</p>
@@ -284,6 +311,7 @@ function ProjectServerDetailModal({
   hostDefaultMcpProtocolVersion,
   projectXaaDefaultIdentity = null,
 }: ServerDetailModalProps) {
+  const presentation = useSettingsDialogPresentation();
   const settings = useServerSettingsAvailability(
     isOpen ? extensionSettingsScope : null,
     hostedServerId
@@ -752,8 +780,17 @@ function ProjectServerDetailModal({
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+    <Dialog
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open && presentation?.dismissApp()) return;
+        handleOpenChange(open);
+      }}
+    >
       <DialogContent
+        {...presentation?.contentProps}
+        data-settings-dialog-app={presentation?.active || undefined}
+        data-settings-dialog-fullscreen={presentation?.fullscreen || undefined}
         // Browser translators rewrite text nodes in-place. React then cannot
         // safely remove this portaled dialog after its close animation.
         translate="no"
@@ -776,7 +813,7 @@ function ProjectServerDetailModal({
           }
         }}
       >
-        <DialogHeader>
+        <DialogHeader data-settings-dialog-header>
           <DialogTitle
             // `flex-wrap` is what keeps the server name on screen. The
             // status cluster opposite it is `flex-shrink-0`, and inside
@@ -866,10 +903,12 @@ function ProjectServerDetailModal({
         </DialogHeader>
 
         <form
+          data-settings-layout
           onSubmit={handleConfigurationSubmit}
           className="flex min-h-0 flex-col"
         >
           <Tabs
+            data-settings-layout
             value={activeTab}
             onValueChange={(v) => {
               setActiveTab(v as ServerDetailTab);
@@ -877,7 +916,10 @@ function ProjectServerDetailModal({
             }}
             className="flex min-h-0 flex-col"
           >
-            <TabsList className="-ml-1 flex h-9 w-full shrink-0 p-[3px]">
+            <TabsList
+              data-settings-dialog-chrome
+              className="-ml-1 flex h-9 w-full shrink-0 p-[3px]"
+            >
               <TabsTrigger
                 value="configuration"
                 aria-label="Configuration"
@@ -919,9 +961,13 @@ function ProjectServerDetailModal({
               )}
             </TabsList>
 
-            <div className="relative mt-4 -mr-6 -ml-1 flex min-h-0 flex-col overflow-hidden">
+            <div
+              data-settings-layout
+              className="relative mt-4 -mr-6 -ml-1 flex min-h-0 flex-col overflow-hidden"
+            >
               {/* Configuration: always rendered via forceMount, sets container height */}
               <TabsContent
+                data-settings-background
                 value="configuration"
                 forceMount
                 className="mt-0 min-h-0 max-h-[60vh] overflow-y-auto data-[state=inactive]:invisible"
@@ -955,6 +1001,7 @@ function ProjectServerDetailModal({
 
               {/* Footer inside the relative container so overlays cover it */}
               <DialogFooter
+                data-settings-dialog-chrome
                 data-testid="modal-footer"
                 className="min-h-9 flex-shrink-0 pt-4 pl-1 pr-6 border-t border-border/50 sm:justify-end data-[state=inactive]:invisible"
                 style={{
@@ -992,6 +1039,7 @@ function ProjectServerDetailModal({
               {isOpen && extensionSettingsScope && hostedServerId &&
                 settingsVisited && (settings.available || settings.failed) && (
                   <TabsContent
+                    data-settings-layout
                     value="settings"
                     forceMount
                     className="mt-0 absolute inset-0 overflow-y-auto bg-background data-[state=inactive]:hidden"
