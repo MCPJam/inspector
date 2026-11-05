@@ -16,6 +16,7 @@ const f = vi.hoisted(() => ({
   get: vi.fn(),
   live: vi.fn(),
   lifetime: vi.fn(),
+  describeFormFiles: vi.fn(),
 }));
 vi.mock("../../../services/evals/route-helpers.js", () => ({
   createConvexClient: () => ({ query: f.plugins }),
@@ -54,6 +55,10 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
 }));
 vi.mock("../../../utils/tool-approval-token.js", () => ({
   toolApprovalSubjectFromAuthHeader: () => "verified-subject",
+}));
+vi.mock("../../../services/plugin-host/form-files.js", async original => ({
+  ...await original<typeof import("../../../services/plugin-host/form-files.js")>(),
+  describePluginFormFiles: f.describeFormFiles,
 }));
 import routes from "../plugin-instances";
 import { PluginWorkspaceAdmissionError } from "../../../services/plugin-host/admission";
@@ -1034,4 +1039,22 @@ describe("form preview refusals", () => {
       });
     },
   );
+});
+
+
+describe("form operation projection request", () => {
+  const request = { projectId: "project", pluginWorkspace: body.pluginWorkspace, sourceToken: "s".repeat(43), parent: { kind: "legacy", id: "form", round: 0 } };
+  it("passes only an explicit operation projection opt-in through the authorized service route", async () => {
+    f.describeFormFiles.mockResolvedValue({ userResources: false, userResourceKinds: [] });
+    const response = await post("form-files/services", { ...request, includeOperation: true });
+    expect(response.status).toBe(200);
+    expect(f.admission).toHaveBeenCalled();
+    expect(f.describeFormFiles).toHaveBeenCalledWith(expect.objectContaining({ includeOperation: true, sourceToken: request.sourceToken }));
+    expect(await response.json()).toEqual({ userResources: false, userResourceKinds: [] });
+  });
+  it("refuses a caller-authored operation tuple before service access", async () => {
+    const response = await post("form-files/services", { ...request, operation: { instanceId: "forged" } });
+    expect(response.status).toBe(400);
+    expect(f.describeFormFiles).not.toHaveBeenCalled();
+  });
 });

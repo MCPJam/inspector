@@ -1,3 +1,4 @@
+import { watchOwnedLegacyInput } from "@/lib/owned-legacy-input";
 import { withPluginOperationAuthorization } from "@/lib/plugin-operation-authorization";
 import { readTransferredFile, writeTransferredFile } from "./file-transfer";
 import { PLUGIN_FILE_MEDIA_TYPE } from "@/shared/plugin-file-transfer";
@@ -43,6 +44,8 @@ export interface ThreadAppDeclaration {
 }
 const declaredIcons = pluginIconMetadataSchema.shape.toolIcons.optional();
 export interface ThreadAppHandle {
+  /** Captured from the admitted open target, never from App-authored metadata. */
+  serverId?: string;
   localFilesAvailable?: boolean;
   presentation?: "app" | "result";
   deepLink?: { url: string };
@@ -526,7 +529,7 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "", canI
         .safeParse(value);
       if (!handle.success)
         throw new ThreadAppError("INSTANCE_RESPONSE_INVALID");
-      return handle.data;
+      return { ...handle.data, serverId };
     },
     invoke: async (
       handle: ThreadAppHandle,
@@ -551,7 +554,23 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "", canI
           accepted(reply.response, reply.value);
           return reply.value;
         },
-        (authorization) => post(path, { ...next, ...(authorization ? { authorization } : {}) }, signal),
+        (authorization) => {
+          const stop = watchOwnedLegacyInput(
+            handle.serverId ? {
+              projectId: scope.projectId,
+              workspaceId: scope.pluginWorkspace.workspaceId,
+              instanceId: handle.instanceId,
+              generation: handle.generation,
+              serverId: handle.serverId,
+              invocationId: call ? body.invocationId! : handle.operationId,
+            } : undefined,
+            signal,
+            onInputPending,
+          );
+          return post(
+            path, { ...next, ...(authorization ? { authorization } : {}) }, signal,
+          ).finally(stop);
+        },
       );
       let reply = await send(body);
       if (
