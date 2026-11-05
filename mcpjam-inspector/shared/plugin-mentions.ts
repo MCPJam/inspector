@@ -224,13 +224,19 @@ export function pluginMentionLink(selection: PluginMentionSelection) {
       };
 }
 
+/** Whether a selection is small enough for `pluginMentionModelText`. */
+export function pluginMentionSelectionFits(
+  selection: PluginMentionSelection,
+): boolean {
+  return (
+    new TextEncoder().encode(JSON.stringify(selection)).byteLength <= 256 * 1024
+  );
+}
+
 /** Explicit text fallback for engines without a typed resource-link input. */
 export function pluginMentionModelText(value: unknown): string {
   const selection = pluginMentionSelectionSchema.parse(value);
-  if (
-    new TextEncoder().encode(JSON.stringify(selection)).byteLength >
-    256 * 1024
-  )
+  if (!pluginMentionSelectionFits(selection))
     throw new PluginMentionError("PLUGIN_MENTION_RESULT_TOO_LARGE");
   return pluginResourceLinkModelText(pluginMentionLink(selection), "mention");
 }
