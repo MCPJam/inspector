@@ -1145,7 +1145,7 @@ export function useThreadAppWorkspace(
           currentThreadId: options.currentThreadId,
           capabilities,
           navigate: options.routeNavigate ?? navigateDeepLink,
-          openFile: (server, entry) => launch(server, entry, undefined, true),
+          openFile: (server, entry) => options.routeLaunch?.(server, entry) ?? launch(server, entry, undefined, true),
           chooseViewer,
           renderOutcome,
           approve: (...args) => current.current.approve(...args),
@@ -1173,16 +1173,18 @@ export function useThreadAppWorkspace(
     fileActions:
       api && scope
         ? {
+            workspaceId: scope.pluginWorkspace.workspaceId,
             api,
             serverIds: servers.map((server) => server.serverId),
             enabled: capabilities.fileViewers,
+            chooseViewer,
             open: async (serverId: string, entry: ThreadAppDeclaration) => {
               const server = servers.find(
                 (value) => value.serverId === serverId,
               );
               if (!server || entry.kind !== "file")
                 throw new Error("File viewer unavailable");
-              await launch(server, entry);
+              await launch(server, entry, undefined, true);
             },
           }
         : null,
@@ -1243,6 +1245,7 @@ export function useThreadAppWorkspace(
       appPorts && scope ? (
         <>
           <WidgetWorkspaceProvider
+            inheritAppTools
             key={scope.pluginWorkspace.workspaceId}
             workspaceId={scope.pluginWorkspace.workspaceId}
           >
@@ -1469,10 +1472,17 @@ export function AppRegistration({
   const params = useMemo<MCPAppsRendererProps>(
     () => ({
       chatSessionId: workspace.workspaceId,
+      getModelChatSessionId: () =>
+        row.declaration.kind === "global"
+          ? (presentationCallbacks.current.currentThreadId?.() ?? scope.threadId)
+          : scope.threadId,
       serverId: row.server.serverId,
       serverName: row.server.name,
       toolCallId: handle.operationId,
       toolName: row.declaration.toolName,
+      appToolSourceLabel: handle.file
+        ? `File viewer: ${handle.file.name.split(/[/\\]/).pop()}`
+        : `${row.declaration.kind === "global" ? "Global App" : "App"}: ${row.declaration.toolName}`,
       resourceUri: handle.resourceUri,
       toolMetadata: handle.toolMetadata,
       toolsMetadata: handle.toolsMetadata,
@@ -1515,6 +1525,7 @@ export function AppRegistration({
     }),
     [
       workspace.workspaceId,
+      scope.threadId,
       row,
       row.result,
       handle,
@@ -1808,6 +1819,7 @@ export function RetainedAppsView({
   return (
     <>
       <WidgetWorkspaceProvider
+        inheritAppTools
         key={workspace.scope.pluginWorkspace.workspaceId}
         workspaceId={workspace.scope.pluginWorkspace.workspaceId}
       >

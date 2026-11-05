@@ -94,9 +94,10 @@ describe("caller-owned thread App lifetime", () => {
     // An unresolved activation can exceed any guest RPC budget: its acceptance
     // has already returned, without mounting/executing a second destination.
     await act(async () => {
-      await result.current.launch(servers[0], file, undefined, true);
+      await result.current.fileActions!.open("saved", file);
     });
     expect(f.invoke).toHaveBeenCalledTimes(1);
+    expect(result.current.fileActions?.workspaceId).toBe("workspace");
     await act(async () => {
       finish({ content: [] });
     });

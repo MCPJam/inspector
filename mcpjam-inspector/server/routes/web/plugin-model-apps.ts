@@ -16,6 +16,7 @@ import {
   findListingMetaForUri,
 } from "../../utils/ui-resource-meta.js";
 import { viewOriginLabelForConfig } from "../../utils/view-origin-label.js";
+import { openOwnedLocalFile } from "../../services/plugin-host/open-local-file.js";
 const scope = z.strictObject({
   projectId: z.string().min(1).max(256),
   pluginWorkspace: z.unknown(),
@@ -32,6 +33,11 @@ const call = handle.extend({
   approval: z
     .strictObject({ id: z.string().max(4096), approved: z.boolean() })
     .optional(),
+  resume: z.strictObject({
+    continuationId: z.string().min(1).max(256),
+    round: z.number().int().positive(),
+    responsesBlobId: z.string().min(1).max(512),
+  }).optional(),
 });
 const denied = () => new PluginInvocationError("MODEL_APP_UNAVAILABLE");
 export function pluginModelAppRoutes(ports: {
@@ -107,6 +113,8 @@ export function pluginModelAppRoutes(ports: {
           toolMetadata: source.tool._meta,
           appToolsEnabled: fresh.appToolsEnabled,
           resourcesEnabled: fresh.resourcesEnabled,
+          localFilesAvailable: !!fresh.localFileTargetContract &&
+            fresh.extensions?.capabilities.localFiles !== false && fresh.extensions?.capabilities.fileViewers !== false,
           contextEnabled: fresh.contextEnabled,
           messageEnabled: fresh.messageEnabled,
           contextSnapshot: record.context.snapshot(
@@ -246,6 +254,32 @@ export function pluginModelAppRoutes(ports: {
       }
     }),
   );
+  router.post("/files/open", (c) =>
+    ports.route(c, async () => {
+      const body = handle.extend({ path: z.string().min(1).max(4096) }).parse(await c.req.json());
+      const { actor, bearer, admission } = await ports.admitted(c, body);
+      const record = modelApps.get(body.instanceToken, actor);
+      const runtime = createPluginRequestRuntime(c, admission, bearer,
+        { hostId: record.owner.hostId, serverId: record.owner.owner.serverId },
+        record.owner, { ownedForms: false });
+      const signal = AbortSignal.any([c.req.raw.signal, record.abort.signal]);
+      const verify = async () => {
+        const source = await runtime.resolve(record.toolName, signal);
+        if (source.revision !== record.revision || pluginResourceUri(source.tool._meta) !== record.resourceUri)
+          throw denied();
+        modelApps.get(body.instanceToken, actor);
+        signal.throwIfAborted();
+      };
+      try {
+        await verify();
+        return c.json(await openOwnedLocalFile({
+          current: await runtime.catalog(signal), actorId: actor.actorId,
+          projectId: actor.projectId, serverId: record.owner.owner.serverId,
+          bearer, path: body.path, signal, verify,
+        }));
+      } finally { await runtime.release(); }
+    }),
+  );
   router.post("/call", (c) =>
     ports.route(c, async () => {
       const body = call.parse(await c.req.json());
@@ -257,7 +291,6 @@ export function pluginModelAppRoutes(ports: {
         bearer,
         { hostId: record.owner.hostId, serverId: record.owner.owner.serverId },
         record.owner,
-        { ownedForms: false },
       );
       return await invokePluginRequest(c, {
         actor,
@@ -268,6 +301,7 @@ export function pluginModelAppRoutes(ports: {
         invocationId: body.invocationId,
         params: body.params,
         approval: body.approval,
+        resume: body.resume,
         assertLive: () => {
           modelApps.get(body.instanceToken, actor);
         },

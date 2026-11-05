@@ -24,6 +24,12 @@ export type AppToolCatalogState = Pick<
   "aliases" | "instancesByBridgeId" | "activeBridgeByParent" | "enabled"
 >;
 
+export function modelChatSessionId(instance: AppInstance): string | undefined {
+  return instance.getModelChatSessionId
+    ? instance.getModelChatSessionId()
+    : instance.chatSessionId;
+}
+
 /** Alias order is the wire order, including when an app re-registers. */
 export function listAppToolCatalog(
   state: AppToolCatalogState,
@@ -35,10 +41,12 @@ export function listAppToolCatalog(
   for (const [alias, reference] of state.aliases) {
     if (!/^app_[a-z0-9]{8}$/i.test(alias)) continue;
     const instance = state.instancesByBridgeId.get(reference.bridgeId);
-    if (!instance || instance.chatSessionId !== chatSessionId) continue;
+    if (!instance || modelChatSessionId(instance) !== chatSessionId) continue;
     if (
       state.activeBridgeByParent.get(
-        `${chatSessionId}\0${instance.parentToolCallId}`,
+        instance.chatSessionId
+          ? `${instance.chatSessionId}\0${instance.parentToolCallId}`
+          : instance.parentToolCallId,
       ) !== instance.bridgeId
     )
       continue;
@@ -79,6 +87,14 @@ export function listAppToolCatalog(
   for (const entry of offered) {
     const key = `${entry.instance.appName}\0${entry.rawName}`;
     const total = counts.get(key) ?? 1;
+    const presentation = entry.instance.presentation;
+    if (presentation?.label || presentation?.visibility) {
+      const prefix = `[${[presentation.label?.replace(/\s+/g, " ").trim().slice(0, 200), presentation.visibility].filter(Boolean).join("; ")}] `;
+      const hint = total > 1 ? ` (instance ${(indices.get(key) ?? 0) + 1} of ${total})` : "";
+      entry.description = prefix + (entry.description ?? "").slice(0, Math.max(0, MAX_DESCRIPTION_CHARS - prefix.length - hint.length)) + hint;
+      indices.set(key, (indices.get(key) ?? 0) + 1);
+      continue;
+    }
     if (total <= 1) continue;
     const index = (indices.get(key) ?? 0) + 1;
     indices.set(key, index);

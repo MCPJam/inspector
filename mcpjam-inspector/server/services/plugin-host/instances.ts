@@ -238,7 +238,7 @@ export class PluginInstanceRegistry {
     { instance: PluginFormOwner; expiresAt: number; signal: AbortSignal }
   >();
 
-  /** The normal gated model executor owns this lifetime; no UI entrypoint is invented. */
+  /** A gated model call or retained model App owns this lifetime. */
   retainModelOwner(instance: PluginFormOwner, signal: AbortSignal) {
     signal.throwIfAborted();
     this.sweep();
@@ -261,10 +261,19 @@ export class PluginInstanceRegistry {
       pluginFormSources.closeOwner(instance.owner);
       pluginFormFileGrants.closeOwner(instance.owner);
     };
-    const expiry = setTimeout(release, this.ttlMs);
+    let expiry = setTimeout(release, this.ttlMs);
     expiry.unref();
     signal.addEventListener("abort", release, { once: true });
-    return release;
+    const renew = () => {
+      signal.throwIfAborted();
+      if (this.modelOwners.get(key) !== record)
+        throw new PluginInvocationError("FORM_SOURCE_UNAVAILABLE");
+      clearTimeout(expiry);
+      record.expiresAt = this.now() + this.ttlMs;
+      expiry = setTimeout(release, this.ttlMs);
+      expiry.unref();
+    };
+    return Object.assign(release, { renew });
   }
   private readonly closed = new Map<string, number>();
   constructor(

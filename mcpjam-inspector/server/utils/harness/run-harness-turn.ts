@@ -1,3 +1,4 @@
+import { harnessAppTools } from "./app-tools";
 import { harnessStartupPart } from "@/shared/harness-startup";
 import { withRetainedResourceSource } from "@/shared/retained-app-resources";
 import { retainedResourceExecutor, type RetainedResourcePresentation } from "./forwarding/retained-resources";
@@ -1602,7 +1603,7 @@ export async function runHarnessTurn(
       });
       const forwardingRuntime = qualifiedForwardingRuntime(harnessAdapter);
       const nativeCandidate = process.env.HARNESS_NATIVE_FORWARDING === "true" && hasForwardingOrganization(mcpClientManager) && (nativeMcpDelivery || (forwardingRuntime !== undefined && !hasAccountRouting(accountGroups))) && forwardingRuntime !== undefined && harnessMcpProxy?.plane === "web-authorized" && !scenarioId && !evalIterationId && !journeyRunId && !harnessExecutionTarget && !!hostId && !!selectedServers?.length;
-      const admission = nativeCandidate ? forwardingAdmission({ manager: mcpClientManager, hostCapabilities: options.harnessHostCapabilities, serverIds: selectedServers ?? [], respectToolVisibility, modelVisibleMcpToolResults, hasClientTools: options.harnessUnavailableAppTools, hasTasks: tasks !== undefined,
+      const admission = nativeCandidate ? forwardingAdmission({ manager: mcpClientManager, hostCapabilities: options.harnessHostCapabilities, serverIds: selectedServers ?? [], respectToolVisibility, modelVisibleMcpToolResults, hasClientTools: options.harnessUnavailableAppTools || !!options.harnessAppTools?.length, hasTasks: tasks !== undefined,
             elicitationRuntimeVersion: onHarnessElicitation ? harnessAdapter.pinnedRuntimeVersion : undefined,
             modernInputAvailable: options.harnessOwnedInput === true,
             ownedTasksAvailable: options.harnessOwnedTasks === true && tasks?.mode === "expose",
@@ -2796,7 +2797,11 @@ export async function runHarnessTurn(
           },
         ),
       );
+      const appTools = harness === "codex" && options.harnessAppTools?.length && projectId && chatSessionId && authHeader
+        ? harnessAppTools({ entries: options.harnessAppTools, projectId, chatSessionId, turnId, authHeader, signal: abortSignal, writer })
+        : {};
       const hostExecutedTools = {
+        ...appTools,
         ...hostExecutedMcp.tools,
         ...offeredBuiltInTools,
       } as Record<string, unknown>;

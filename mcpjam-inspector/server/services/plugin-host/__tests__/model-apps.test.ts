@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { ModelAppRegistry } from "../model-apps.js";
 import { PluginContextMemory } from "../context-memory.js";
 import { PLUGIN_MODEL_APP_META } from "../../../../shared/plugin-model-app.js";
-import type { PluginFormOwner } from "../instances.js";
+import { pluginInstances, type PluginFormOwner } from "../instances.js";
 const owner = {
   owner: {
     actorId: "a",
@@ -131,6 +131,24 @@ describe("trusted completed model App ownership", () => {
     );
   });
 
+  it("renews the same form owner with the App and withdraws it on close", () => {
+    vi.useFakeTimers();
+    const registry = new ModelAppRegistry();
+    const token = publish(registry)._meta[PLUGIN_MODEL_APP_META].instanceToken;
+    const source = registry.get(token, actor).owner.owner;
+    try {
+      vi.advanceTimersByTime(20 * 60_000);
+      registry.renew(token, actor);
+      vi.advanceTimersByTime(20 * 60_000);
+      expect(pluginInstances.getFormOwner(source, actor).owner).toEqual(source);
+      expect(() => pluginInstances.getFormOwner(source, { ...actor, subject: "other" })).toThrow();
+      registry.close(token, actor);
+      expect(() => pluginInstances.getFormOwner(source, actor)).toThrow();
+    } finally {
+      registry.close(token, actor);
+      vi.useRealTimers();
+    }
+  });
   it("renews a retained model App past its original lifetime", () => {
     vi.useFakeTimers();
     try {

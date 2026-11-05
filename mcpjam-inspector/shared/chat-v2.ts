@@ -209,6 +209,8 @@ export interface ChatV2Request {
  * registry).
  */
 export interface AppToolSnapshotEntry {
+  /** Exact bridge generation; older clients omit it and cannot use native app tools. */
+  bridgeId?: string;
   alias: string;
   appName: string;
   appVersion?: string;
