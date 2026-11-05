@@ -394,7 +394,15 @@ export function ConformanceProbeField({
         </SelectContent>
       </Select>
       <p className="text-xs text-muted-foreground">
-        {toolName === NONE ? unsetHint : copy.hint}
+        {toolName === NONE
+          ? unsetHint
+          : // The SDK still calls it, but with no schema there is nothing to
+            // grade, so the check reports that it could not run.
+            probeKey === "toolCallProbe" &&
+              selected &&
+              !selected.hasOutputSchema
+            ? "This tool no longer declares an output schema, so this check cannot run. Pick another tool or clear it."
+            : copy.hint}
       </p>
       {status === "failed" ? (
         <p className="text-xs text-destructive">

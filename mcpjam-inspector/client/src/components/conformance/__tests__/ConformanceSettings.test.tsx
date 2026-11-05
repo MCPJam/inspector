@@ -103,6 +103,11 @@ describe("Settings inputs", () => {
       });
       // The server still lists it, so it is not shown as missing.
       expect(field).toHaveTextContent("output · read-only");
+      expect(
+        screen.getByText(
+          "This tool no longer declares an output schema, so this check cannot run. Pick another tool or clear it.",
+        ),
+      ).toBeInTheDocument();
       const box = screen.getByRole("checkbox", {
         name: "Run Tool Output Schema Honored",
       });
