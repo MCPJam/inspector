@@ -37,6 +37,7 @@ vi.mock("../mcpjam-stream-handler.js", () => ({
 }));
 
 vi.mock("../org-model-stream-handler.js", () => ({
+  resolveLocalOrgMaxSteps: () => 30,
   handleHostedOrgChatModel: handlers.hostedOrg,
   handleLocalOrgChatModel: handlers.localOrg,
 }));

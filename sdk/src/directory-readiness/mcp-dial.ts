@@ -33,6 +33,7 @@
 
 import {
   fetchDiscoveryJson,
+  resolveMcpHeaders,
   type DirectoryDiscoveryOptions,
 } from "./discovery.js";
 
@@ -83,6 +84,14 @@ export interface DirectoryInitializeEvidence {
   instructions?: string;
   /** A JSON-RPC error the server returned, or a transport failure. */
   error?: string;
+  /**
+   * `WWW-Authenticate` on a refused `initialize`, verbatim and capped.
+   *
+   * Kept so a caller can parse the refusal once with the shared challenge
+   * parser instead of re-dialling to read a header this request already
+   * carried. Server-controlled text: render it, never interpret it here.
+   */
+  wwwAuthenticate?: string;
   /**
    * Whether anything answered at all.
    *
@@ -145,7 +154,7 @@ export interface DirectoryListingEvidence<Entry> {
   complete: boolean;
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
+export function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
@@ -160,12 +169,23 @@ function boundedCap(value: number | undefined, fallback: number): number {
     : fallback;
 }
 
-function asString(value: unknown): string | undefined {
+export function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
 /** Cap on a server-controlled free-text field we only ever display. */
 const MAX_INSTRUCTIONS_CHARS = 4_000;
+
+/** Cap on a server-controlled `WWW-Authenticate` value kept as evidence. */
+const MAX_CHALLENGE_CHARS = 2_048;
+
+export function readChallengeHeader(headers: Headers | undefined): string | undefined {
+  const value = headers?.get("www-authenticate") ?? undefined;
+  if (value === undefined) return undefined;
+  return value.length > MAX_CHALLENGE_CHARS
+    ? value.slice(0, MAX_CHALLENGE_CHARS)
+    : value;
+}
 
 interface JsonRpcCall {
   document?: Record<string, unknown>;
@@ -182,7 +202,7 @@ interface JsonRpcCall {
  * returned the document alone collapses them, and the collapse always fails in
  * the same direction: an unreachable host is graded as a non-conforming one.
  */
-async function callJsonRpc(
+export async function callJsonRpc(
   options: DirectoryDialOptions,
   id: number,
   method: string,
@@ -192,6 +212,9 @@ async function callJsonRpc(
   const result = await fetchDiscoveryJson(options.enteredUrl, options, {
     method: "POST",
     headers: {
+      // The dial is the authenticated half of a run, and the only requests
+      // here that carry the caller's credential.
+      ...resolveMcpHeaders(options),
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
       "mcp-protocol-version": DIRECTORY_DIAL_PROTOCOL_VERSION,
@@ -232,6 +255,7 @@ async function sendInitializedNotification(
     await fetchDiscoveryJson(options.enteredUrl, options, {
       method: "POST",
       headers: {
+        ...resolveMcpHeaders(options),
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         "mcp-protocol-version": DIRECTORY_DIAL_PROTOCOL_VERSION,
@@ -264,16 +288,34 @@ export async function dialInitialize(
     clientInfo: DIRECTORY_DIAL_CLIENT_INFO,
   });
 
+  const wwwAuthenticate = readChallengeHeader(call.headers);
+
   if (!call.document) {
     return {
       ok: false,
       status: call.status,
+      ...(wwwAuthenticate !== undefined ? { wwwAuthenticate } : {}),
       unreachable: call.transportError !== undefined || !call.status,
       error:
         call.transportError ??
         (call.status !== undefined
           ? `initialize answered ${call.status} with no readable JSON body`
           : "initialize could not be reached"),
+    };
+  }
+
+  // A refusal that came WITH a body is still a refusal. A server may answer a
+  // 401 with a JSON-RPC error document, and reading the body first would
+  // report it as an ordinary initialize error and lose the challenge.
+  if (call.status !== undefined && (call.status < 200 || call.status >= 300)) {
+    const bodyError = asRecord(call.document.error);
+    return {
+      ok: false,
+      status: call.status,
+      ...(wwwAuthenticate !== undefined ? { wwwAuthenticate } : {}),
+      error:
+        asString(bodyError?.message) ??
+        `initialize answered ${call.status}`,
     };
   }
 
@@ -471,6 +513,7 @@ export async function dialToolListing(
     (record) => {
       const name = asString(record.name);
       if (!name) return undefined;
+      const meta = asRecord(record._meta);
       return {
         name,
         title: asString(record.title),
@@ -478,8 +521,15 @@ export async function dialToolListing(
         annotations: asRecord(record.annotations),
         inputSchema: record.inputSchema,
         outputSchema: record.outputSchema,
-        _meta: asRecord(record._meta),
-        securitySchemes: record.securitySchemes ?? record.security,
+        _meta: meta,
+        // THREE PLACES, in the order a host reads them. OpenAI documents the
+        // per-tool declaration as `securitySchemes` and its Apps SDK examples
+        // also carry it in `_meta.securitySchemes`; a reader that looked only
+        // at the top level would report a tool that declares its schemes as
+        // one that declares none, which then reads as "inherits the server
+        // default" — a different claim. `security` is an older spelling.
+        securitySchemes:
+          record.securitySchemes ?? record.security ?? meta?.securitySchemes,
       };
     },
   );
@@ -660,3 +710,7 @@ export async function dialMcpServer(
 
   return { initialize, tools, appResources };
 }
+
+export { type DirectoryToolCallEvidence } from "./mcp-tool-call.js";
+
+export { dialToolCall } from "./mcp-tool-call.js";

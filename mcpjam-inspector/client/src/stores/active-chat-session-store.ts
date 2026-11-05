@@ -19,6 +19,8 @@ interface ActiveChatSessionState {
   approvalSettings: Record<string, boolean>;
   setApprovalSetting: (id: string, enabled: boolean) => void;
   sessionId: string | null;
+  compareActive: boolean;
+  viewOnly: boolean;
   browserLocation: BrowserLocation | null;
   setBrowserLocation: (location: BrowserLocation) => void;
   /** The current conversation has successfully opened a browser session. */
@@ -46,6 +48,8 @@ export const useActiveChatSessionStore = create<ActiveChatSessionState>(
         approvalSettings: { ...state.approvalSettings, [id]: enabled },
       })),
     sessionId: null,
+    compareActive: false,
+    viewOnly: false,
     browserLocation: null,
     setBrowserLocation: (browserLocation) => set({ browserLocation }),
     browserSessionId: null,

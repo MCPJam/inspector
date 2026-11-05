@@ -2267,6 +2267,7 @@ export function ChatInput({
                   onMultiModelEnabledChange={onMultiModelEnabledChange}
                   respondToProviderTabIntent
                   onManageOrgProviders={onManageOrgProviders}
+                  onAddProvider={null}
                   requireOrgKeys={requireOrgKeys}
                   {...modelEfforts}
                   // Servers attached means the turn can call tools.

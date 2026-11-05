@@ -18,7 +18,10 @@ vi.mock("@/lib/apis/web/base", () => ({
 }));
 
 import { webPost } from "@/lib/apis/web/base";
-import { runTasksConformance } from "../mcp-conformance-api";
+import {
+  runAppsConformance,
+  runTasksConformance,
+} from "../mcp-conformance-api";
 
 beforeEach(() => {
   vi.mocked(webPost).mockClear();
@@ -48,3 +51,17 @@ describe("runTasksConformance (hosted)", () => {
     });
   });
 });
+
+for (const [suite, run] of [
+  ["apps", runAppsConformance],
+  ["tasks", runTasksConformance],
+] as const) {
+  it(`sends ${suite}'s resolved protocol to the hosted route`, async () => {
+    await run("target", { protocolVersion: "2026-07-28" });
+    expect(webPost).toHaveBeenCalledWith(`/api/web/conformance/${suite}`, {
+      projectId: "ws-1",
+      serverId: "srv-1",
+      protocolVersion: "2026-07-28",
+    });
+  });
+}

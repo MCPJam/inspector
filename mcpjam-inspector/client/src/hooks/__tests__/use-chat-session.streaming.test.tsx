@@ -5,6 +5,14 @@ import type { UIMessageChunk } from "ai";
 import type { MultiModelCardSummary } from "@/components/chat-v2/model-compare-card-header";
 import { MultiModelPlaygroundCard } from "@/components/ui-playground/multi-model-playground-card";
 
+vi.mock("@/hooks/use-playground-hidden-environment", () => ({
+  usePlaygroundHiddenEnvironment: () => ({
+    wanted: false,
+    failed: false,
+    pluginServerIds: [],
+  }),
+}));
+
 const mockState = vi.hoisted(() => ({
   empty: [] as never[],
   appState: { servers: {} },

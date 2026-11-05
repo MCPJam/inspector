@@ -1,3 +1,4 @@
+import { withAbortSignalFetch } from "../abort-signal.js";
 /**
  * The single raw-HTTP harness the conformance raw checks drive (Phase 7 §15.5).
  *
@@ -57,9 +58,9 @@ export const DEFAULT_LEGACY_PROTOCOL_VERSION = "2025-11-25";
  * paginates within what a real client would read is covered in full and one
  * that never stops handing out cursors cannot hang the run.
  *
- * Shared rather than defined per caller: the SEP-2243 declaration CHECK and its
- * readiness sibling scan the same listing for the same faults, and two
- * independent `64`s that must agree is exactly the kind of pair that drifts.
+ * Shared rather than defined per caller: every check that walks the full
+ * listing reads the same cap, and two independent `64`s that must agree is
+ * exactly the kind of pair that drifts.
  */
 export const MAX_TOOLS_LIST_PAGES = 64;
 
@@ -81,11 +82,10 @@ export type ToolsListWalk = {
 /**
  * Walk a raw `tools/list` to the end, bounded and cycle-safe.
  *
- * Shared by the SEP-2243 declaration CHECK and its readiness sibling: they scan
- * the same listing for the same faults, and two copies of a paginated walk is
- * two places for a cursor bug to live. The caller decides what a truncated walk
- * MEANS — a check cannot claim a pass over tools it never read, while advice
- * simply reports on what it saw — so the reason is returned, not judged here.
+ * Shared by every check that scans the full listing: two copies of a paginated
+ * walk is two places for a cursor bug to live. The caller decides what a
+ * truncated walk MEANS — a check cannot claim a pass over tools it never
+ * read — so the reason is returned, not judged here.
  *
  * Cycles are detected against every cursor already issued, not just the
  * previous one: a server that alternates `A → B → A` never repeats
@@ -388,7 +388,9 @@ export async function rawRequest(
     options.timeoutMs ?? ctx.config.checkTimeout
   );
 
-  const capture = createCapturingFetch(ctx.fetchFn);
+  const capture = createCapturingFetch(
+    withAbortSignalFetch(ctx.fetchFn, ctx.config.signal)
+  );
   try {
     await capture.fetch(options.url ?? ctx.serverUrl, {
       method: options.method ?? "POST",
@@ -400,6 +402,7 @@ export async function rawRequest(
     clearTimeout(timeoutId);
   }
 
+  ctx.config.signal?.throwIfAborted();
   const exchange = capture.exchanges[0];
   if (!exchange) {
     throw new Error("Raw HTTP capture recorded no exchange");
@@ -457,11 +460,14 @@ export async function rawHeadersProbe(
     options.timeoutMs ?? ctx.config.checkTimeout
   );
   try {
-    const response = await ctx.fetchFn(options.url ?? ctx.serverUrl, {
-      method: options.method ?? "GET",
-      headers,
-      signal: controller.signal,
-    });
+    const response = await withAbortSignalFetch(ctx.fetchFn, ctx.config.signal)(
+      options.url ?? ctx.serverUrl,
+      {
+        method: options.method ?? "GET",
+        headers,
+        signal: controller.signal,
+      }
+    );
     const captured: Record<string, string> = {};
     response.headers.forEach((value, key) => {
       captured[key.toLowerCase()] = value;
@@ -550,4 +556,13 @@ export function jsonRpcNotifications(
         typeof message.method === "string" &&
         message.id === undefined
     );
+}
+
+/** `notifications/message` records carried on a response. */
+export function logRecords(
+  result: RawHttpResult
+): Array<Record<string, unknown>> {
+  return jsonRpcNotifications(result).filter(
+    (notification) => notification.method === "notifications/message"
+  );
 }

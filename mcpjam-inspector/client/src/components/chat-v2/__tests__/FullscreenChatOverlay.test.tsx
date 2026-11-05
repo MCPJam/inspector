@@ -1,5 +1,6 @@
+import type { HarnessStartupPhase } from "@/shared/harness-startup";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import type { UIMessage } from "@ai-sdk/react";
 
@@ -30,11 +31,14 @@ vi.mock("../shared/loading-indicator-content", async (importOriginal) => {
     ...actual,
     LoadingIndicatorContent: ({
       modelProvider,
+      startupPhase,
     }: {
       className?: string;
       modelProvider?: string | null;
+      startupPhase?: HarnessStartupPhase | null;
     }) => {
       const hostStyle = useScenarioHostStyle();
+      if (startupPhase) return <actual.LoadingIndicatorContent modelProvider={modelProvider} startupPhase={startupPhase} />;
       let resolved: string | null = hostStyle;
       if (!resolved && modelProvider) {
         const normalized = modelProvider.toLowerCase();
@@ -117,6 +121,28 @@ describe("FullscreenChatOverlay", () => {
         <ScenarioHostThemeProvider value={theme}>{ui}</ScenarioHostThemeProvider>
       </ScenarioHostStyleProvider>
     );
+
+  it("shows delayed startup phases in fullscreen and restores the brand indicator", () => {
+    vi.useFakeTimers();
+    try {
+      const view = renderWithProviders(
+        <FullscreenChatOverlay {...defaultProps} isThinking modelProvider="openai" startupPhase="computer" />,
+      );
+      expect(screen.queryByText("Starting your computer…")).not.toBeInTheDocument();
+      act(() => vi.advanceTimersByTime(500));
+      expect(screen.getByText("Starting your computer…")).toBeInTheDocument();
+      view.rerender(
+        <PreferencesStoreProvider themeMode="light" themePreset="default">
+          <FullscreenChatOverlay {...defaultProps} isThinking modelProvider="openai" startupPhase={null} />
+        </PreferencesStoreProvider>,
+      );
+      expect(screen.queryByText("Starting your computer…")).not.toBeInTheDocument();
+      expect(screen.getByTestId("loading-indicator-chatgpt-dot")).toBeInTheDocument();
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("shows a standalone Claude placeholder row before the first assistant token appears", () => {
     renderWithProviders(
