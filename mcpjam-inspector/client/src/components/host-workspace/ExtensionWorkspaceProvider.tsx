@@ -518,7 +518,10 @@ const GlobalOwner = memo(function GlobalOwner({
       if (declaration.kind === "global") return undefined;
       const { chats, currentChatId } = store.getState();
       const chat = currentChatId ? chats[currentChatId] : undefined;
-      if (chat) return chat.launch(server, declaration);
+      if (chat) {
+        store.getState().global?.select(null);
+        return chat.launch(server, declaration);
+      }
       logExtensionEvent({
         serverId: server.serverId,
         serverName: server.name,
@@ -526,6 +529,8 @@ const GlobalOwner = memo(function GlobalOwner({
         level: "warning",
         message: `${declaration.title}: this App opens in the current chat, and no chat is ready yet. Open or start a chat, then open it again.`,
       });
+      if (declaration.kind === "file")
+        return Promise.reject(new Error("Open a chat before opening this file."));
       return Promise.resolve();
     },
   });

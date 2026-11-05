@@ -1,4 +1,7 @@
 import { withModelAppResources } from "./model-app-resources";
+import { withLocalFileHost } from "./local-file-host";
+import { useWorkspaceFileActions } from "./file-actions";
+import { negotiateRetainedAppHost, withCurrentHostContext } from "./retained-app-host";
 import {
   createContext,
   useCallback,
@@ -12,6 +15,7 @@ import {
   WidgetHostProvider,
   MCPAppsRenderer,
   type MCPAppsRendererProps,
+  type WidgetHost,
 } from "@mcpjam/widget-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -273,6 +277,9 @@ function ModelApp({
   // A retained leaf keeps its original workspace admission. Changing chat or
   // account cannot rebind its publications or messages through a new provider.
   const ports = useRef(currentPorts).current;
+  const files = useWorkspaceFileActions();
+  const currentFiles = useRef(files);
+  currentFiles.current = files;
   const [handle, setHandle] = useState<ThreadAppHandle | null>(null);
   const [error, setError] = useState(false);
   const [approval, setApproval] = useState<{
@@ -430,13 +437,36 @@ function ModelApp({
       handle,
       context,
     );
+    const requireFiles = () => {
+      const actions = currentFiles.current;
+      if (!actions || actions.workspaceId !== marker.workspaceId ||
+          actions.enabled === false || !actions.serverIds.includes(marker.serverId))
+        throw new Error("File viewer unavailable");
+      return actions;
+    };
+    const withFiles = files && files.workspaceId === marker.workspaceId &&
+      files.enabled !== false && files.serverIds.includes(marker.serverId)
+      ? withLocalFileHost(withContext, {
+          ...api,
+          resolveLocalFile: (...args) => {
+            requireFiles();
+            return api.resolveLocalFile(...args);
+          },
+        }, handle, lifetime.signal,
+          (entry) => requireFiles().open(marker.serverId, entry),
+          async (entries, signal) => {
+            const selected = await requireFiles().chooseViewer?.(entries, signal) ?? null;
+            requireFiles();
+            return selected;
+          })
+      : withContext;
     return ports
-      ? withAppMessages(withContext, base, handle, {
+      ? withAppMessages(withFiles, base, handle, {
           threadId: scope.threadId,
           isLive: () => mounted.current && !lifetime.signal.aborted,
           send: ports.sendMessage,
         })
-      : withContext;
+      : withFiles;
   }, [
     base,
     handle,
@@ -446,22 +476,29 @@ function ModelApp({
     ports,
     scope.threadId,
     lifetime,
+    files,
   ]);
+  const negotiatedHost = useRef<WidgetHost | null>(null);
+  // Replacing bridge services aborts outstanding requests, including a form
+  // waiting in the native file picker. Negotiate once per mounted owner.
+  if (ownedHost && !negotiatedHost.current)
+    negotiatedHost.current = negotiateRetainedAppHost(ownedHost);
   // Context notifications change environment data, never owned bridge services.
   const host = useMemo(
-    () =>
-      ownedHost
-        ? {
-            ...ownedHost,
-            environment: {
-              ...ownedHost.environment,
-              draftHostContext: {
-                ...ownedHost.environment.draftHostContext,
-                "openai/modelContext": context.snapshot.state,
-              },
-            },
-          }
-        : null,
+    () => {
+      if (!ownedHost || !negotiatedHost.current) return null;
+      const current = withCurrentHostContext(negotiatedHost.current, ownedHost);
+      return {
+        ...current,
+        environment: {
+          ...current.environment,
+          draftHostContext: {
+            ...current.environment.draftHostContext,
+            "openai/modelContext": context.snapshot.state,
+          },
+        },
+      };
+    },
     [ownedHost, context.snapshot],
   );
   const queue = useRef(Promise.resolve());
@@ -481,6 +518,7 @@ function ModelApp({
           {...renderProps}
           toolOutput={withoutModelAppControl(renderProps.toolOutput)}
           toolResponseMetadata={guestMetadata}
+          appToolSourceLabel={`Model App: ${renderProps.toolName}`}
           serverId={marker.serverId}
           serverName={serverName}
           resourceUri={handle.resourceUri}

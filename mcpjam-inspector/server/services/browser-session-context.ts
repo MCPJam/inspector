@@ -701,6 +701,7 @@ export async function createBrowserSessionContext(
           const ts = Date.now();
           const videoOffsetMs = videoOffsetFor(ts);
           const step: RunnerBrowserInteractionStep = {
+            ...(result.pluginWorkspace ? { pluginWorkspace: result.pluginWorkspace } : {}),
             toolCallId,
             stepIndex,
             promptIndex: activePromptIndex,
@@ -778,6 +779,7 @@ export async function createBrowserSessionContext(
       }
       const locatorLabel = describeScriptedStep(step);
       browserInteractionSteps.push({
+        ...(res.pluginWorkspace ? { pluginWorkspace: res.pluginWorkspace } : {}),
         toolCallId,
         stepIndex,
         promptIndex: activePromptIndex,
@@ -860,6 +862,7 @@ export async function createBrowserSessionContext(
     const ts = Date.now();
     const videoOffsetMs = videoOffsetFor(ts);
     browserInteractionSteps.push({
+      ...(res.pluginWorkspace ? { pluginWorkspace: res.pluginWorkspace } : {}),
       toolCallId,
       stepIndex,
       promptIndex: activePromptIndex,

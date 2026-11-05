@@ -19,6 +19,7 @@ import {
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { ThreadAppApi, ThreadAppDeclaration } from "./thread-app-api";
+import type { ChooseFileViewer } from "./local-file-host";
 import { logExtensionEvent } from "./extension-log";
 
 export interface FileResourceReference {
@@ -26,14 +27,18 @@ export interface FileResourceReference {
   resourceUri: string;
 }
 export interface WorkspaceFileActions {
+  /** Embedded Apps open viewers only in this same owning workspace. */
+  workspaceId?: string;
   api: ThreadAppApi;
   /** Enabled saved IDs from the current workspace, never a name lookup. */
   serverIds: readonly string[];
   open: (serverId: string, entry: ThreadAppDeclaration) => Promise<void>;
+  chooseViewer?: ChooseFileViewer;
   /** The client's file viewers setting; off means no new opens. */
   enabled?: boolean;
 }
 const FileActionsContext = createContext<WorkspaceFileActions | null>(null);
+export const useWorkspaceFileActions = () => useContext(FileActionsContext);
 
 export interface ResourceLinkTarget {
   serverId: string;

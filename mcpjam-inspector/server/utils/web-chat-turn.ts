@@ -1961,7 +1961,8 @@ export async function streamChatTurn(
     ...(persist.harness ? { harness: persist.harness } : {}),
     ...(persist.agentLoop ? { agentLoop: persist.agentLoop } : {}),
     harnessTurnContext: widgetModelContextSystemPrompt,
-    harnessUnavailableAppTools: Boolean(prepare.appTools?.length || prepare.pageTools?.length || prepare.uiTools?.length),
+    harnessAppTools: persist.harness === "codex" ? prepare.appTools : undefined,
+    harnessUnavailableAppTools: Boolean((persist.harness !== "codex" && prepare.appTools?.length) || prepare.pageTools?.length || prepare.uiTools?.length),
     // Preserve the resolved selection for hosted steps and harness leases.
     ...(forwardableSelection(prepare.routingSelection)
       ? { modelSelection: forwardableSelection(prepare.routingSelection), modelSelectionOrigin: prepare.routingSelectionOrigin }

@@ -1,4 +1,5 @@
 import { createAppToolDiscovery } from "./app-tool-discovery";
+import { useAppToolPresentation } from "./app-tool-presentation";
 import { useInitialRenderOutcome } from "./use-initial-render-outcome";
 import { useSandboxProxyGeneration } from "./use-sandbox-proxy-generation";
 import { WidgetFullscreenPlacementContext } from "./widget-fullscreen-placement";
@@ -326,7 +327,11 @@ function sanitizeHostStyleVariables(
 // CSP and permissions metadata types are now imported from SDK
 
 export interface MCPAppsRendererProps {
+  /** Host-owned instance label, never a filesystem path or guest claim. */
+  appToolSourceLabel?: string;
   chatSessionId?: string;
+  /** Conversation eligible to call a retained workspace App; ownership stays fixed. */
+  getModelChatSessionId?: () => string | undefined;
   serverId: string;
   serverName?: string;
   toolCallId: string;
@@ -792,7 +797,9 @@ export function MCPAppsRenderer(props: MCPAppsRendererProps) {
 }
 
 export function MCPAppsRendererSurface({
+  appToolSourceLabel,
   chatSessionId,
+  getModelChatSessionId,
   serverId,
   serverName,
   toolCallId,
@@ -2280,13 +2287,23 @@ export function MCPAppsRendererSurface({
     []
   );
 
+  const modelChatAccessorRef = useRef(getModelChatSessionId);
+  modelChatAccessorRef.current = getModelChatSessionId;
+  const readModelChatSessionId = useCallback(
+    () =>
+      modelChatAccessorRef.current
+        ? modelChatAccessorRef.current()
+        : chatSessionId,
+    [chatSessionId],
+  );
+  const readAppToolPresentation = useAppToolPresentation(appToolsRegistry, appToolsBridgeIdState, appToolSourceLabel, () => sandboxRef.current?.getIframeElement() ?? null);
   const discoverAppTools = useMemo(() => createAppToolDiscovery({
     registry: appToolsRegistry,
-    context: () => ({ chatSessionId, parentToolCallId: toolCallIdRef.current, serverId: serverIdRef.current }),
+    context: () => ({ chatSessionId, getModelChatSessionId: readModelChatSessionId, parentToolCallId: toolCallIdRef.current, serverId: serverIdRef.current, presentation: readAppToolPresentation() }),
     onError: error => logWidgetDebug("ui-to-host", "debug/app-tools-list-failed", {
       error: error instanceof Error ? error.message : String(error),
     }),
-  }), [appToolsRegistry, chatSessionId, logWidgetDebug]);
+  }), [appToolsRegistry, chatSessionId, readModelChatSessionId, logWidgetDebug, readAppToolPresentation]);
   const refreshAppProvidedTools = useCallback((bridge: AppBridge, bridgeId: string, options: {
     force?: boolean; surface?: "inline" | "modal";
     getIframeElement?: () => HTMLIFrameElement | null; isLive?: () => boolean;

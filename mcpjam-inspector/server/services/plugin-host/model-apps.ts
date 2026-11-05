@@ -7,7 +7,7 @@ import { pluginContextMemory } from "./context-memory.js";
 import type { PluginContextLimits } from "../../../shared/plugin-model-context.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { PLUGIN_MODEL_APP_META } from "../../../shared/plugin-model-app.js";
-import type { PluginFormOwner, PluginInstanceIdentity } from "./instances.js";
+import { pluginInstances, type PluginFormOwner, type PluginInstanceIdentity } from "./instances.js";
 import { pluginBindingDigest, pluginResourceUri } from "./bindings.js";
 import { PluginInvocationError } from "./invocation.js";
 import { RequestOwnedToolInvoker } from "./request-invoker.js";
@@ -37,6 +37,7 @@ export class ModelAppRegistry {
       resourceUri: string;
       invoker: RequestOwnedToolInvoker;
       abort: AbortController;
+      formOwner: ReturnType<typeof pluginInstances.retainModelOwner>;
       expiry: ReturnType<typeof setTimeout>;
       expiresAt: number;
     }
@@ -86,6 +87,7 @@ export class ModelAppRegistry {
       };
       const actor = identity(owner);
       const abort = new AbortController();
+      const formOwner = pluginInstances.retainModelOwner(owner, abort.signal);
       const key = token;
       const invoker = new RequestOwnedToolInvoker(owner.owner, () =>
         this.get(key, actor),
@@ -114,6 +116,7 @@ export class ModelAppRegistry {
         resourceUri,
         invoker,
         abort,
+        formOwner,
         expiry,
         expiresAt: Date.now() + this.ttlMs,
       });
@@ -160,6 +163,7 @@ export class ModelAppRegistry {
    * history continue. Closed or expired Apps cannot be renewed. */
   renew(token: string, actor: PluginInstanceIdentity) {
     const entry = this.get(token, actor);
+    entry.formOwner.renew();
     clearTimeout(entry.expiry);
     entry.expiry = setTimeout(() => this.close(token, actor), this.ttlMs);
     entry.expiry.unref();
