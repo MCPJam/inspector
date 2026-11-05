@@ -11,7 +11,9 @@ import type {
 import type { PluginIcons } from "@/lib/plugins/plugin-api-types";
 import {
   createModelContextController,
+  PLUGIN_CONTEXT_NOT_PERSISTED_CODES,
   PluginContextHeld,
+  PluginContextNotPersisted,
 } from "./model-context-controller";
 import {
   createThreadAppApi,
@@ -160,8 +162,22 @@ export function useAppContext(
               throw new PluginContextHeld(
                 "Context was removed from this chat. Use the App to attach it again.",
               );
+            // Its diagnostic is already in Logs (`thread-app-api` posts it).
+            if (
+              error instanceof ThreadAppError &&
+              PLUGIN_CONTEXT_NOT_PERSISTED_CODES.has(error.code)
+            )
+              throw new PluginContextNotPersisted(error.code);
             throw error;
           }),
+      onRefused: (refusal) =>
+        logPluginExtensionIssue({
+          code: refusal.reason,
+          level: "warning",
+          message: `${handle.toolTitle ?? "App"}: ${describePluginError(refusal.reason)}`,
+          ...(refusal.excess ? { detail: refusal.excess } : {}),
+          dedupeKey: `context-refused:${handle.instanceToken}`,
+        }),
       userAttaching: () => appFrameFocused(toolNameRef.current),
       onHeld: () =>
         logPluginExtensionIssue({

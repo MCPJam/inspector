@@ -105,7 +105,18 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
     "A model-context update arrived out of order and was ignored. Send updates one at a time.",
   INSTANCE_CONTEXT_REMOVAL_INVALID:
     "That context removal didn't match this App's current context, so nothing was removed. Remove it again from the composer.",
-  INSTANCE_CONTEXT_TOO_LARGE: "The App's model context is too large.",
+  INSTANCE_CONTEXT_TOO_LARGE:
+    "The App's context is too large to keep, so its last accepted context stays. Send less context.",
+  INVALID_INSTANCE_CONTEXT:
+    "MCPJam couldn't store the App's context, so its last accepted context stays. Send less context and try again.",
+  INSTANCE_CONTEXT_RATE_LIMITED:
+    "The App updated its context too often, so this update wasn't kept and its last accepted context stays. Send updates less often.",
+  PLUGIN_CONTEXT_TOO_LARGE:
+    "This context update is larger than MCPJam accepts, so the App's last accepted context stays. Send less context.",
+  PLUGIN_CONTEXT_TURN_TOO_LARGE:
+    "The Apps in this chat hold more context than MCPJam sends in one turn. Remove an App's context from the composer, then send again.",
+  PLUGIN_CONTEXT_MEMORY_LIMIT:
+    "MCPJam is holding as much App context for you as it can, so this update wasn't kept. Close Apps you no longer need or remove their context, then try again.",
   INSTANCE_CONTEXT_HELD:
     "You removed this App's context from the chat, so context the App sends on its own isn't attached. Use the App (for example its attach button) to attach it again.",
   INSTANCE_MESSAGE_UNAVAILABLE:
@@ -265,6 +276,27 @@ export function describePluginError(code: unknown): string | undefined {
   if (Object.hasOwn(PLUGIN_ERROR_DESCRIPTIONS, code))
     return PLUGIN_ERROR_DESCRIPTIONS[code];
   return PREFIX_DESCRIPTIONS.find(([prefix]) => code.startsWith(prefix))?.[1];
+}
+
+/** The budget an App context refusal crossed: sizes only, never content. */
+export type PluginContextExcess = {
+  budget: string;
+  actual: number;
+  allowed: number;
+};
+
+/** The Logs entry for an App context refusal, with the budget it crossed. */
+export function pluginContextRefusalDiagnostic(
+  code: string,
+  excess?: PluginContextExcess,
+): PluginDiagnostic {
+  return pluginErrorDiagnostic(
+    code,
+    excess
+      ? `App context over its ${excess.budget} budget (${excess.actual} > ${excess.allowed})`
+      : "App context update refused",
+    excess,
+  );
 }
 
 /** An error diagnostic for the Logs panel, described from the shared map. */
