@@ -96,6 +96,10 @@ import {
 } from "../ConformancePageChrome";
 import { SUITE_COPY } from "../conformance-ui";
 
+/** A tool option: its name, then its safety badge. */
+const toolOption = (name: string, tag: string) =>
+  new RegExp(`^${name}\\s*·\\s*${tag}$`);
+
 function createProtocolResult(
   overrides: Partial<MCPConformanceResult> = {},
 ): MCPConformanceResult {
@@ -2147,7 +2151,7 @@ describe("ConformanceTab", () => {
         await waitFor(() => expect(tool).toBeEnabled());
         await user.click(tool);
         await user.click(
-          screen.getByRole("option", { name: "echo · read-only" }),
+          screen.getByRole("option", { name: toolOption("echo", "read-only") }),
         );
         const checkRow = screen.getByRole("button", {
           name: new RegExp(`^${row}`),
@@ -2223,7 +2227,7 @@ describe("ConformanceTab", () => {
         expect(checkRow).toHaveTextContent("Needs input");
         await user.click(tool);
         await user.click(
-          screen.getByRole("option", { name: "echo · read-only" }),
+          screen.getByRole("option", { name: toolOption("echo", "read-only") }),
         );
         expect(checkRow).toHaveTextContent("Input set");
         fireEvent.click(screen.getByRole("switch"));
@@ -2254,10 +2258,10 @@ describe("ConformanceTab", () => {
       );
       // Only tools that declare an output schema can be graded.
       expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(
-        ["Not set", "weather · read-only"],
+        ["Not set", "weather·read-only"],
       );
       await user.click(
-        screen.getByRole("option", { name: "weather · read-only" }),
+        screen.getByRole("option", { name: toolOption("weather", "read-only") }),
       );
 
       fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
@@ -2292,12 +2296,12 @@ describe("ConformanceTab", () => {
       const options = screen.getAllByRole("option").map((o) => o.textContent);
       expect(options).toEqual([
         "Not set",
-        "echo · read-only",
-        "weather · read-only",
-        "delete_row · may modify data",
+        "echo·read-only",
+        "weather·read-only",
+        "delete_row·may modify data",
       ]);
       await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
 
       // The arguments editor Evals uses, here with its Raw JSON switch on.
@@ -2356,7 +2360,7 @@ describe("ConformanceTab", () => {
         screen.getByRole("combobox", { name: "Tool that emits logs" }),
       );
       await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
 
       await user.click(screen.getByRole("button", { name: "Add argument" }));
@@ -2394,7 +2398,7 @@ describe("ConformanceTab", () => {
         screen.getByRole("combobox", { name: "Tool that emits logs" }),
       );
       await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
 
       expect(screen.getAllByText("Input set")).toHaveLength(2);
@@ -2497,7 +2501,7 @@ describe("ConformanceTab", () => {
           screen.getByRole("combobox", { name: "Tool that creates a task" }),
         );
         await user.click(
-          screen.getByRole("option", { name: "echo · read-only" }),
+          screen.getByRole("option", { name: toolOption("echo", "read-only") }),
         );
         expect(within(header).queryByText(/needs? input/)).toBeNull();
         expect(taskRow).toHaveTextContent("Input set");
@@ -2554,7 +2558,7 @@ describe("ConformanceTab", () => {
 
         await user.click(tool);
         await user.click(
-          screen.getByRole("option", { name: "create_task · read-only" }),
+          screen.getByRole("option", { name: toolOption("create_task", "read-only") }),
         );
         expect(taskRow).toHaveTextContent("Input set");
         await user.click(tool);
@@ -2660,7 +2664,7 @@ describe("ConformanceTab", () => {
       ).toBeNull();
 
       await user.click(tool);
-      await user.click(screen.getByRole("option", { name: "echo · read-only" }));
+      await user.click(screen.getByRole("option", { name: toolOption("echo", "read-only") }));
 
       const answers = screen.getByRole("textbox", {
         name: "Answers to the task's questions (optional)",
@@ -2710,7 +2714,7 @@ describe("ConformanceTab", () => {
         screen.getByRole("combobox", { name: "Tool that asks for input" }),
       );
       expect(
-        screen.getByRole("option", { name: "ask_user · read-only" }),
+        screen.getByRole("option", { name: toolOption("ask_user", "read-only") }),
       ).toBeInTheDocument();
       // Two fields, two pages: one call per page, not one per field.
       expect(mockListTools).toHaveBeenCalledTimes(2);
@@ -2742,7 +2746,7 @@ describe("ConformanceTab", () => {
         screen.getByRole("combobox", { name: "Tool that emits logs" }),
       );
       await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
 
       // The check and the advice that would call it are left out.
@@ -2776,7 +2780,7 @@ describe("ConformanceTab", () => {
         screen.getByRole("combobox", { name: "Tool that emits logs" }),
       );
       await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
       // Under the advice row: a pointer to the check's tool, and the level.
       expect(

@@ -15,6 +15,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Badge } from "@mcpjam/design-system/badge";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import {
@@ -362,12 +363,21 @@ export function ConformanceProbeField({
       <Label htmlFor={id} className="text-xs">
         {copy.label}
       </Label>
+      {/* Above the dropdown: what to pick is read before picking. */}
+      <p id={`${id}-hint`} className="text-xs text-muted-foreground">
+        {copy.hint}
+      </p>
       <Select
         value={toolName}
         onValueChange={changeTool}
         disabled={status === "loading" || status === "idle"}
       >
-        <SelectTrigger id={id} className="h-8 w-full text-xs">
+        {/* The value and item text stretch so a tool's badge sits at the right. */}
+        <SelectTrigger
+          id={id}
+          className="h-8 w-full text-xs *:data-[slot=select-value]:flex-1"
+          aria-describedby={`${id}-hint`}
+        >
           <SelectValue
             placeholder={status === "loading" ? "Loading tools..." : "Not set"}
           />
@@ -379,21 +389,39 @@ export function ConformanceProbeField({
               {toolName} (not listed by the server)
             </SelectItem>
           ) : null}
-          {options.map((tool) => (
-            <SelectItem key={tool.name} value={tool.name}>
-              {tool.name}
-              {tool.readOnly
-                ? " · read-only"
-                : tool.destructive
-                  ? " · may modify data"
-                  : ""}
-            </SelectItem>
-          ))}
+          {options.map((tool) => {
+            const safety = tool.readOnly
+              ? "read-only"
+              : tool.destructive
+                ? "may modify data"
+                : undefined;
+            return (
+              <SelectItem
+                key={tool.name}
+                value={tool.name}
+                className="*:[span]:last:flex-1"
+              >
+                <span className="flex w-full min-w-0 items-center justify-between gap-2">
+                  <span className="truncate">{tool.name}</span>
+                  {safety ? (
+                    <Badge
+                      variant="outline"
+                      className="rounded-full px-1.5 py-0 text-[11px] font-normal text-muted-foreground"
+                    >
+                      {/* Read aloud as "echo · read-only", not "echoread-only". */}
+                      <span className="sr-only">·</span>
+                      {safety}
+                    </Badge>
+                  ) : null}
+                </span>
+              </SelectItem>
+            );
+          })}
         </SelectContent>
       </Select>
-      <p className="text-xs text-muted-foreground">
-        {toolName === NONE ? unsetHint : copy.hint}
-      </p>
+      {toolName === NONE ? (
+        <p className="text-xs text-muted-foreground">{unsetHint}</p>
+      ) : null}
       {status === "failed" ? (
         <p className="text-xs text-destructive">
           Couldn't list this server's tools. Check its connection, then open
@@ -407,12 +435,6 @@ export function ConformanceProbeField({
       ) : status === "idle" ? (
         <p className="text-xs text-muted-foreground">
           Connect this server to list its tools.
-        </p>
-      ) : null}
-      {selected?.destructive ? (
-        <p className="text-xs text-warning">
-          This tool says it may modify data. Choose it only if calling it is
-          safe on this server.
         </p>
       ) : null}
       {toolName !== NONE ? (
