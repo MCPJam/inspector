@@ -1363,6 +1363,13 @@ describe("buildBrokerDummyAuth", () => {
     expect(codex.CODEX_API_KEY).toBeTruthy();
   });
 
+  it("closes model connections only for the warm-agent pilot", () => {
+    expect(buildBrokerDummyAuth("claude-code", "https://proxy.example")).not.toHaveProperty("ANTHROPIC_CUSTOM_HEADERS");
+    expect(buildBrokerDummyAuth("codex", "https://proxy.example")).not.toHaveProperty("MCPJAM_CLOSE_MODEL_CONNECTIONS");
+    expect(buildBrokerDummyAuth("claude-code", "https://proxy.example", true).ANTHROPIC_CUSTOM_HEADERS).toBe("Connection: close");
+    expect(buildBrokerDummyAuth("codex", "https://proxy.example", true).MCPJAM_CLOSE_MODEL_CONNECTIONS).toBe("1");
+  });
+
   it("THROWS for an external-account harness rather than defaulting", () => {
     // This was a fallthrough `if (codex) … else Anthropic`, so a cursor id would
     // have silently received Claude Code's ANTHROPIC_* environment — a dummy

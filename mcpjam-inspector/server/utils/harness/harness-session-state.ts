@@ -210,6 +210,17 @@ async function postSessionState(
   return { ok: true, payload };
 }
 
+export function sessionClaimConflictMessage(reason: string | undefined): string {
+  switch (reason) {
+    case "harness_approval_expired":
+      return "This approval has ended. Send a new message to request the action again.";
+    case "harness_approval_pending":
+      return "Answer the pending tool approval before sending another message, or start a new chat.";
+    default:
+      return "Another turn is already running for this chat — wait for it to finish.";
+  }
+}
+
 export async function claimHarnessSessionState(args: {
   approvalIds?: string[];
   owner: HarnessOwnerRef;
