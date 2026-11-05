@@ -130,8 +130,9 @@ export function SettingsApp({
     () =>
       createThreadAppHost(host, handle, serverId, "model", {
         openAIDisplayModes: openAIRules,
+        projectId: scope.projectId,
       }),
-    [host, handle, serverId, openAIRules],
+    [host, handle, serverId, openAIRules, scope.projectId],
   );
   const [opening] = useState(() => {
     const modes = settingsAppModes(host, app, openAIRules);

@@ -18,7 +18,10 @@ const preparedViewSchema = z.object({
 });
 const admissionIdSchema = preparedViewSchema.pick({ admissionId: true });
 
-export function createSandboxViewServices(forceWeb: () => boolean) {
+export function createSandboxViewServices(
+  forceWeb: () => boolean,
+  serverContext: (serverId: string) => Record<string, unknown> = buildServerRequest,
+) {
   const endpoints = new Map<string, { endpoint: string; context: Record<string, unknown> }>();
   const prepareSandboxView = async (
     request: PrepareSandboxViewRequest,
@@ -27,7 +30,7 @@ export function createSandboxViewServices(forceWeb: () => boolean) {
     const platform = request.source.serverId === MCPJAM_PLATFORM_SERVER_ID;
     const web = HOSTED_MODE || forceWeb() || platform;
     const endpoint = `/api/${web ? "web/apps" : "apps"}/mcp-apps/view-admissions`;
-    const context = { source: request.source, ...(web && !platform ? buildServerRequest(request.source.serverId) : {}) };
+    const context = { source: request.source, ...(web && !platform ? serverContext(request.source.serverId) : {}) };
     const response = await authFetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

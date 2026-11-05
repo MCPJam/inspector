@@ -456,6 +456,7 @@ function ModelApp({
     if (!handle) return null;
     const withContext = withAppContext(
       withModelAppResources(createThreadAppHost(base, handle, marker.serverId, "model", {
+        projectId: scope.projectId,
         openAIDisplayModes: ports?.openAIDisplayModes === true,
       }), base, handle, marker.serverId, api, lifetime.signal),
       base,
@@ -499,6 +500,7 @@ function ModelApp({
     context.update,
     api,
     ports,
+    scope.projectId,
     scope.threadId,
     lifetime,
     files,

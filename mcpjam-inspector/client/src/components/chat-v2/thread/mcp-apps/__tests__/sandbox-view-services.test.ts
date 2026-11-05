@@ -52,3 +52,20 @@ describe("sandbox view API routing", () => {
     expect(mocks.fetch).toHaveBeenLastCalledWith("/api/apps/mcp-apps/view-admissions/admission", expect.objectContaining({ method: "DELETE" }));
   });
 });
+
+it("prepares hidden owned servers using captured context without global name lookup", async () => {
+  mocks.server.mockImplementation(() => { throw new Error("No globally selected server"); });
+  const context = { projectId: "owner-project", serverId: "hidden-owned-server" };
+  const service = createSandboxViewServices(() => true, () => context);
+  const source = { ...request.source, serverId: context.serverId };
+  await service.prepareSandboxView({ ...request, source });
+  expect(mocks.server).not.toHaveBeenCalled();
+  expect(JSON.parse(mocks.fetch.mock.calls[0][1].body)).toMatchObject({
+    ...context, source,
+  });
+  context.projectId = "changed-after-open";
+  await service.releaseSandboxView({ admissionId: prepared.admissionId });
+  expect(JSON.parse(mocks.fetch.mock.calls.at(-1)![1].body)).toMatchObject({
+    projectId: "owner-project", serverId: "hidden-owned-server", source,
+  });
+});
