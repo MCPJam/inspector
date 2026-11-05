@@ -23,6 +23,10 @@ import { UNSAFE_LocationContext, UNSAFE_NavigationContext } from "react-router";
 import { getAppRouter } from "../router-ref";
 import type { EvalRoute } from "./eval-route-types";
 import type { EvalRoutePrefix } from "./eval-route-url";
+import {
+  buildEvaluateNavRoutePath,
+  isEvaluateNavRoute,
+} from "./evaluate-nav-route-path";
 import { normalizeHostedHashTab } from "./hosted-tab-policy";
 import { isProjectScopedRoutePath } from "./app-routes";
 import {
@@ -512,16 +516,25 @@ export function buildOrganizationPath(
  */
 export function buildEvalsPath(route: EvalRoute): string {
   return buildEvalRoutePath(
-    route.type === "test-edit" || route.type === "test-detail"
-      ? routePaths.evaluate : routePaths.evals, route,
+    opensOnEvaluate(route) ? routePaths.evaluate : routePaths.evals,
+    route,
   );
 }
 
 /** Build a Runs route; test cases always open Ding Dong. */
 export function buildEvalsRunsPath(route: EvalRoute): string {
   return buildEvalRoutePath(
-    route.type === "test-edit" || route.type === "test-detail"
-      ? routePaths.evaluate : routePaths.evalsRuns, route,
+    opensOnEvaluate(route) ? routePaths.evaluate : routePaths.evalsRuns,
+    route,
+  );
+}
+
+/** Test cases and the navigation-rework pages exist only under `/evaluate`. */
+function opensOnEvaluate(route: EvalRoute): boolean {
+  return (
+    route.type === "test-edit" ||
+    route.type === "test-detail" ||
+    isEvaluateNavRoute(route)
   );
 }
 
@@ -561,6 +574,9 @@ export function legacyEvalCasePathToEvaluatePath(pathname: string, search = "", 
 }
 
 function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
+  if (isEvaluateNavRoute(route)) {
+    return buildEvaluateNavRoutePath(routePaths.evaluate, route);
+  }
   switch (route.type) {
     case "list":
       return prefix;

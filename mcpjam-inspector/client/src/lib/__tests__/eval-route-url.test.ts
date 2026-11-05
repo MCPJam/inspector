@@ -5,6 +5,7 @@ import {
   buildEvaluatePath,
 } from "../app-navigation";
 import { parseEvalRouteFromUrl } from "../eval-route-url";
+import type { EvalRoute } from "../eval-route-types";
 
 describe("eval-route-url", () => {
   it("preserves the originating case checks when opening suite evaluators", () => {
@@ -423,5 +424,121 @@ describe("eval-route-url", () => {
       testId: "case 2",
       iteration: undefined,
     });
+  });
+});
+
+describe("Evaluate navigation route kinds", () => {
+  const rows: Array<[string, EvalRoute]> = [
+    ["/evaluate/runs", { type: "evaluate-runs" }],
+    [
+      "/evaluate/suite/s_1/settings",
+      { type: "suite-settings", suiteId: "s_1", tab: "settings" },
+    ],
+    [
+      "/evaluate/suite/s_1/settings/cases",
+      { type: "suite-settings", suiteId: "s_1", tab: "cases" },
+    ],
+    [
+      "/evaluate/suite/s_1/settings/evaluators",
+      { type: "suite-settings", suiteId: "s_1", tab: "evaluators" },
+    ],
+    [
+      "/evaluate/suite/s_1/settings/cases/new",
+      { type: "case-new", suiteId: "s_1" },
+    ],
+    [
+      "/evaluate/suite/s_1/settings/cases/c_1",
+      { type: "case-settings", suiteId: "s_1", caseId: "c_1" },
+    ],
+    [
+      "/evaluate/suite/s_1/settings/cases/c_1/evaluators",
+      { type: "case-evaluators", suiteId: "s_1", caseId: "c_1" },
+    ],
+    [
+      "/evaluate/suite/s_1/runs/r_1/cases/c_1",
+      { type: "test-run", suiteId: "s_1", runId: "r_1", caseId: "c_1" },
+    ],
+    [
+      "/evaluate/suite/s_1/runs/r_1/cases/c_1?target=model-b",
+      {
+        type: "test-run",
+        suiteId: "s_1",
+        runId: "r_1",
+        caseId: "c_1",
+        target: "model-b",
+      },
+    ],
+    [
+      "/evaluate/suite/s_1/runs/r_1/cases/c_1/edit",
+      { type: "test-run-edit", suiteId: "s_1", runId: "r_1", caseId: "c_1" },
+    ],
+    [
+      "/evaluate/suite/s_1/runs/r_1/cases/c_1/iter/i_2",
+      {
+        type: "iteration",
+        suiteId: "s_1",
+        runId: "r_1",
+        caseId: "c_1",
+        iterationId: "i_2",
+      },
+    ],
+  ];
+
+  it.each(rows)("parses and builds %s", (url, route) => {
+    const [path, search = ""] = url.split("?");
+    expect(parseEvalRouteFromUrl("/evaluate", path, search)).toEqual(route);
+    expect(buildEvaluatePath(route)).toBe(url);
+    expect(
+      parseEvalRouteFromUrl(
+        "/evaluate",
+        `/p/k5700000000000000000000000a${path}`,
+        search,
+      ),
+    ).toEqual(route);
+  });
+
+  it("builds the new pages under /evaluate from every builder", () => {
+    const route: EvalRoute = { type: "case-new", suiteId: "s_1" };
+    expect(buildEvalsPath(route)).toBe(
+      "/evaluate/suite/s_1/settings/cases/new",
+    );
+    expect(buildEvalsRunsPath(route)).toBe(
+      "/evaluate/suite/s_1/settings/cases/new",
+    );
+  });
+
+  it("encodes and decodes ids in every segment", () => {
+    const route: EvalRoute = {
+      type: "iteration",
+      suiteId: "suite one",
+      runId: "run/1",
+      caseId: "case 2",
+      iterationId: "iter#3",
+    };
+    const path = buildEvaluatePath(route);
+    expect(path).toBe(
+      "/evaluate/suite/suite%20one/runs/run%2F1/cases/case%202/iter/iter%233",
+    );
+    expect(parseEvalRouteFromUrl("/evaluate", path)).toEqual(route);
+  });
+
+  it.each([
+    "/evaluate/suite/s_1/settings/other",
+    "/evaluate/suite/s_1/settings/cases/c_1/other",
+    "/evaluate/suite/s_1/runs/r_1/cases",
+    "/evaluate/suite/s_1/runs/r_1/cases/c_1/iter",
+    "/evaluate/suite/s_1/runs/r_1/cases/c_1/other",
+    "/evaluate/runs/extra",
+  ])("falls back to the list for unknown %s", (path) => {
+    expect(parseEvalRouteFromUrl("/evaluate", path)).toEqual({ type: "list" });
+  });
+
+  it("keeps the new kinds out of the /evals tabs", () => {
+    expect(
+      parseEvalRouteFromUrl("/evals", "/evals/suite/s_1/settings"),
+    ).toEqual({ type: "list" });
+    expect(
+      parseEvalRouteFromUrl("/evals", "/evals/suite/s_1/runs/r_1/cases/c_1"),
+    ).toEqual({ type: "list" });
   });
 });

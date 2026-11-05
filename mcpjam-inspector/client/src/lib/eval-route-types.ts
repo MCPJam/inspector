@@ -4,6 +4,40 @@ export type SuiteOverviewView =
   | "executions"
   | "cross-host";
 
+/** Suite settings tabs, each with its own address (`…/settings[/cases|/evaluators]`). */
+export type SuiteSettingsTab = "settings" | "cases" | "evaluators";
+
+/**
+ * Route kinds of the Evaluate navigation rework, `/evaluate` only. Every
+ * level of a run and of a suite's settings is a path, so the breadcrumb can
+ * be built from the route alone.
+ */
+export type EvaluateNavRoute =
+  | { type: "evaluate-runs" }
+  | { type: "suite-settings"; suiteId: string; tab: SuiteSettingsTab }
+  | { type: "case-new"; suiteId: string }
+  | { type: "case-settings"; suiteId: string; caseId: string }
+  | { type: "case-evaluators"; suiteId: string; caseId: string }
+  | {
+      type: "test-run";
+      suiteId: string;
+      runId: string;
+      caseId: string;
+      /** Model target picked on a run that used several (`?target=`). */
+      target?: string;
+    }
+  /** The case editor opened from a test run, so Back returns to it (D13). */
+  | { type: "test-run-edit"; suiteId: string; runId: string; caseId: string }
+  | {
+      type: "iteration";
+      suiteId: string;
+      runId: string;
+      caseId: string;
+      iterationId: string;
+    };
+
+export type EvaluateNavRouteType = EvaluateNavRoute["type"];
+
 /**
  * Unified eval routes for both Evaluate modes: Suites (`/evals`) and Runs
  * (`/evals/runs`). Runs-only shapes (`commit-detail`, `fromCommit`) are
@@ -11,6 +45,7 @@ export type SuiteOverviewView =
  */
 
 export type EvalRoute =
+  | EvaluateNavRoute
   | { type: "list" }
   | { type: "create" }
   /** Frontend-first preview of suites we'd generate from a connected server. */
