@@ -452,6 +452,7 @@ describe("retry helpers", () => {
       selectedServerIds: ["mine"],
       executionTarget: { kind: "environment", environmentId: "new" },
       environmentOverrides: { serverIds: ["mine", "new_plugin"] },
+      autoContributedPluginServerIds: ["new_plugin"],
       includeProjectSkills: true,
       chatSessionId: "c",
     });
