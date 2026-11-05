@@ -1,4 +1,5 @@
 import { pluginOperationRequest, pluginOperationAuthorization } from "../../../shared/plugin-operation-authorization.js";
+import { sandboxSourceReceipt } from "../../services/sandbox-view-source.js";
 import { preparePluginOperation, bindPluginOperation, cancelPluginOperation, receiptOnlyPorts, rootPluginOperation } from "../../services/plugin-host/operation-authorization.js";
 import { discoveryIcons, openOwnedLocalFile } from "../../services/plugin-host/open-local-file.js";
 import { fileReadResponse, readFileWriteBody } from "../../services/plugin-host/file-transfer.js";
@@ -1205,6 +1206,17 @@ instances.post("/activation/open", (c) =>
           : {}),
         widgetContent: {
           ...widgetContent,
+          sourceReceipt: await sandboxSourceReceipt(
+            c,
+            {
+              serverId: body.serverId,
+              resourceUri: uri,
+              toolCallId: opened.instance.activation.operationId,
+            },
+            widgetContent.html,
+            widgetContent.csp,
+            body.projectId,
+          ),
           permissive: false,
           injectedOpenAiCompat: false,
           viewOriginLabel: viewOriginLabelForConfig(
@@ -1623,25 +1635,40 @@ instances.post("/form-preview/app/open", (c) =>
   route(c, async () => {
     const body = pluginFormPreviewRequestSchema.parse(await c.req.json());
     const { admission, bearer, actor } = await admitted(c, body);
-    return c.json(
-      await openPluginFormAppPreview({
-        actor,
-        bearer,
-        sourceToken: body.sourceToken,
-        parent: body.parent,
-        target: body.target,
-        signal: c.req.raw.signal,
-        runtime: (instance) =>
-          createPluginRequestRuntime(
-            c,
-            admission,
-            bearer,
-            { hostId: instance.hostId, serverId: instance.owner.serverId },
-            instance,
-            { ownedForms: false },
-          ),
-      }),
-    );
+    const preview = await openPluginFormAppPreview({
+      actor,
+      bearer,
+      sourceToken: body.sourceToken,
+      parent: body.parent,
+      target: body.target,
+      signal: c.req.raw.signal,
+      runtime: (instance) =>
+        createPluginRequestRuntime(
+          c,
+          admission,
+          bearer,
+          { hostId: instance.hostId, serverId: instance.owner.serverId },
+          instance,
+          { ownedForms: false },
+        ),
+    });
+    return c.json({
+      ...preview,
+      widgetContent: {
+        ...preview.widgetContent,
+        sourceReceipt: await sandboxSourceReceipt(
+          c,
+          {
+            serverId: preview.serverId,
+            resourceUri: preview.resourceUri,
+            toolCallId: preview.operationId,
+          },
+          preview.widgetContent.html,
+          preview.widgetContent.csp,
+          body.projectId,
+        ),
+      },
+    });
   }),
 );
 for (const action of ["execute", "call-tool"] as const)

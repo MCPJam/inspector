@@ -51,6 +51,7 @@ import routes from "../plugin-settings";
 import { PLUGIN_APP_READ_RESULT_BYTES } from "../../../services/plugin-host/tool-call-validation";
 import { resolvePluginSettingsCatalog } from "../../../services/plugin-host/settings-catalog";
 import { settingsFixture } from "../../../../shared/__tests__/plugin-settings-fixture";
+import { webReceiptApp, withReceiptSigning, expectOwnedSourceReceipt } from "./owned-source-receipt-fixture.js";
 const app = new Hono().route("/settings", routes);
 const scope = {
   projectId: "project",
@@ -393,5 +394,32 @@ describe("owned structured settings", () => {
       (await post("discover", { ...server, actorId: "foreign" })).status,
     ).toBe(400);
     expect(f.admit).not.toHaveBeenCalled();
+  });
+});
+
+it("binds Settings App receipts to the child token and refuses undeclared actions before reading", async () => {
+  await withReceiptSigning(async () => {
+    await opened();
+    const html = "<p>Settings α</p>";
+    const csp = { connectDomains: ["https://settings.example"] };
+    f.read.mockResolvedValue({ contents: [{ uri: "ui://settings", mimeType: "text/html;profile=mcp-app", text: html, _meta: { ui: { csp } } }] });
+    const web = webReceiptApp(routes, "settings");
+    const request = (toolName: string) => web.request("/api/web/settings/app/open", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...handle(), toolName }),
+    });
+    const response = await request("reset");
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    try {
+      expect(result.widgetContent).toMatchObject({ html, csp });
+      expectOwnedSourceReceipt(result.widgetContent, { serverId: "server", resourceUri: "ui://settings", toolCallId: result.childToken });
+      f.read.mockClear();
+      const denied = await request("not-declared");
+      expect(denied.status).toBe(403);
+      expect(await denied.text()).not.toContain("sourceReceipt");
+      expect(f.read).not.toHaveBeenCalled();
+    } finally {
+      await post("app/close", { ...handle(), childToken: result.childToken });
+    }
   });
 });
