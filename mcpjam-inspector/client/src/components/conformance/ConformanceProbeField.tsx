@@ -16,6 +16,7 @@ import {
   useState,
 } from "react";
 import { Badge } from "@mcpjam/design-system/badge";
+import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import {
@@ -288,6 +289,34 @@ export function TaskAnswersField({
   );
 }
 
+/** A tool's name, with what its annotations say about safety as a badge. */
+function ToolOptionLabel({
+  tool,
+}: {
+  tool: { name: string; readOnly: boolean; destructive: boolean };
+}) {
+  const safety = tool.readOnly
+    ? "read-only"
+    : tool.destructive
+      ? "may modify data"
+      : undefined;
+  return (
+    <span className="flex w-full min-w-0 items-center justify-between gap-2">
+      <span className="truncate">{tool.name}</span>
+      {safety ? (
+        <Badge
+          variant="outline"
+          className="rounded-full px-1.5 py-0 text-[11px] font-normal text-muted-foreground"
+        >
+          {/* Read aloud as "echo · read-only", not "echoread-only". */}
+          <span className="sr-only">·</span>
+          {safety}
+        </Badge>
+      ) : null}
+    </span>
+  );
+}
+
 export function ConformanceProbeField({
   probeKey,
   tools: { tools: allTools, status, truncated },
@@ -295,6 +324,7 @@ export function ConformanceProbeField({
   onChange,
   onValidChange,
   showLevel = false,
+  forCheck,
 }: {
   probeKey: ConformanceProbeKey;
   tools: ProbeTools;
@@ -304,6 +334,8 @@ export function ConformanceProbeField({
   onValidChange?: (valid: boolean) => void;
   /** Also ask for the log level, under the log level filtering advice. */
   showLevel?: boolean;
+  /** The check this field belongs to, so each row's dropdown has its own name. */
+  forCheck?: string;
 }) {
   const id = useId();
   // A tool with no output schema gives the output check nothing to grade.
@@ -311,16 +343,11 @@ export function ConformanceProbeField({
     probeKey === "toolCallProbe"
       ? allTools.filter((tool) => tool.hasOutputSchema)
       : allTools;
-  // With no output schema declared, the output check does not apply at all.
-  // A cut-off list cannot show that: a later tool may declare one.
+  // With no output schema declared at all, the editor shades the output check
+  // and shows no field, so this field never has to say it does not apply.
   const unsetHint =
-    probeKey === "toolCallProbe" &&
-    status === "ready" &&
-    !truncated &&
-    options.length === 0
-      ? "No tool on this server declares an output schema, so this check does not apply."
-      : (PROBE_COPY[probeKey].unsetHint ??
-        "Without a tool, this check reports that it could not run.");
+    PROBE_COPY[probeKey].unsetHint ??
+    "Without a tool, this check reports that it could not run.";
   // The editor reports validity from an effect keyed on this callback, so it
   // must keep one identity while the parent re-renders.
   const onValidChangeRef = useRef(onValidChange);
@@ -336,7 +363,9 @@ export function ConformanceProbeField({
   // A saved tool the server no longer lists stays selectable, so opening the
   // list never silently drops a choice.
   const listed = options.some((tool) => tool.name === toolName);
-  const selected = options.find((tool) => tool.name === toolName);
+  // Look in every tool, not just the offered ones: a saved tool that lost its
+  // output schema is still called, so it keeps its warning and arguments.
+  const selected = allTools.find((tool) => tool.name === toolName);
   const copy = PROBE_COPY[probeKey];
 
   const level = probe?.level ? { level: probe.level } : {};
@@ -376,6 +405,7 @@ export function ConformanceProbeField({
         <SelectTrigger
           id={id}
           className="h-8 w-full text-xs *:data-[slot=select-value]:flex-1"
+          aria-label={forCheck ? `${copy.label} for ${forCheck}` : undefined}
           aria-describedby={`${id}-hint`}
         >
           <SelectValue
@@ -385,42 +415,34 @@ export function ConformanceProbeField({
         <SelectContent>
           <SelectItem value={NONE}>Not set</SelectItem>
           {!listed && toolName !== NONE ? (
-            <SelectItem value={toolName}>
-              {toolName} (not listed by the server)
+            <SelectItem value={toolName} className="*:[span]:last:flex-1">
+              {selected ? (
+                <ToolOptionLabel tool={selected} />
+              ) : (
+                `${toolName} (not listed by the server)`
+              )}
             </SelectItem>
           ) : null}
-          {options.map((tool) => {
-            const safety = tool.readOnly
-              ? "read-only"
-              : tool.destructive
-                ? "may modify data"
-                : undefined;
-            return (
-              <SelectItem
-                key={tool.name}
-                value={tool.name}
-                className="*:[span]:last:flex-1"
-              >
-                <span className="flex w-full min-w-0 items-center justify-between gap-2">
-                  <span className="truncate">{tool.name}</span>
-                  {safety ? (
-                    <Badge
-                      variant="outline"
-                      className="rounded-full px-1.5 py-0 text-[11px] font-normal text-muted-foreground"
-                    >
-                      {/* Read aloud as "echo · read-only", not "echoread-only". */}
-                      <span className="sr-only">·</span>
-                      {safety}
-                    </Badge>
-                  ) : null}
-                </span>
-              </SelectItem>
-            );
-          })}
+          {options.map((tool) => (
+            <SelectItem
+              key={tool.name}
+              value={tool.name}
+              className="*:[span]:last:flex-1"
+            >
+              <ToolOptionLabel tool={tool} />
+            </SelectItem>
+          ))}
         </SelectContent>
       </Select>
       {toolName === NONE ? (
         <p className="text-xs text-muted-foreground">{unsetHint}</p>
+      ) : // The SDK still calls it, but with no schema there is nothing to
+      // grade, so the check reports that it could not run.
+      probeKey === "toolCallProbe" && selected && !selected.hasOutputSchema ? (
+        <p className="text-xs text-muted-foreground">
+          This tool no longer declares an output schema. It is still called,
+          but its result cannot be checked. Pick another tool or clear it.
+        </p>
       ) : null}
       {status === "failed" ? (
         <p className="text-xs text-destructive">
@@ -454,13 +476,123 @@ export function ConformanceProbeField({
   );
 }
 
+function sameArguments(
+  a: Record<string, unknown> | undefined,
+  b: Record<string, unknown> | undefined,
+): boolean {
+  return JSON.stringify(a ?? {}) === JSON.stringify(b ?? {});
+}
+
+/**
+ * A check's own tool, under its row. The dropdown always shows, filled with
+ * the tool the check inherits until the operator picks another. A change to
+ * the tool or its arguments becomes this check's own choice and clears the
+ * box; ticking the box drops that choice. A change that keeps the inherited
+ * tool and arguments (the log level) still edits the inherited probe.
+ */
+export function CheckToolField({
+  probeKey,
+  tools,
+  inherited,
+  override,
+  inheritLabel,
+  checkTitle,
+  hint,
+  showLevel = false,
+  keepAnswers = false,
+  onOverrideChange,
+  onInheritedChange,
+  onValidChange,
+}: {
+  probeKey: ConformanceProbeKey;
+  tools: ProbeTools;
+  inherited: ConformanceProbe | undefined;
+  override: ConformanceProbe | undefined;
+  inheritLabel: string;
+  /** The row's title, so its dropdown has its own accessible name. */
+  checkTitle?: string;
+  hint?: string;
+  /** Also ask for the log level, under the log level filtering advice. */
+  showLevel?: boolean;
+  /** Keep the task's input answers on this check's own choice. */
+  keepAnswers?: boolean;
+  onOverrideChange: (probe: ConformanceProbe | undefined) => void;
+  onInheritedChange?: (probe: ConformanceProbe) => void;
+  /** False while this check's own choice has no tool or a draft that does not parse. */
+  onValidChange: (valid: boolean) => void;
+}) {
+  const effective = override ?? inherited;
+  // Only the extras this check sends: a level for the log advice, answers for
+  // the update check.
+  const own = (probe: ConformanceProbe): ConformanceProbe => {
+    const { level, inputResponses, ...rest } = probe;
+    return {
+      ...rest,
+      ...(showLevel && level ? { level } : {}),
+      ...(keepAnswers && inputResponses ? { inputResponses } : {}),
+    };
+  };
+  const change = (next: ConformanceProbe | undefined) => {
+    if (
+      !override &&
+      next &&
+      inherited &&
+      onInheritedChange &&
+      next.toolName === inherited.toolName &&
+      sameArguments(next.arguments, inherited.arguments)
+    ) {
+      onInheritedChange(next);
+      return;
+    }
+    // "Not set" on this check alone leaves it waiting for a tool, rather
+    // than quietly falling back to the inherited one.
+    onOverrideChange(next ? own(next) : { toolName: "" });
+  };
+  const [draftValid, setDraftValid] = useState(true);
+  const valid = draftValid && (!override || override.toolName.trim() !== "");
+  const onValidChangeRef = useRef(onValidChange);
+  useEffect(() => {
+    onValidChangeRef.current = onValidChange;
+  });
+  useEffect(() => {
+    onValidChangeRef.current(valid);
+  }, [valid]);
+  useEffect(() => () => onValidChangeRef.current(true), []);
+  return (
+    <div className="space-y-2">
+      <label className="flex items-center gap-2 text-xs">
+        <Checkbox
+          checked={!override}
+          onCheckedChange={(inherit) =>
+            onOverrideChange(
+              inherit ? undefined : own(effective ?? { toolName: "" }),
+            )
+          }
+        />
+        {inheritLabel}
+      </label>
+      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+      <ConformanceProbeField
+        probeKey={probeKey}
+        tools={tools}
+        probe={effective}
+        onChange={change}
+        onValidChange={setDraftValid}
+        showLevel={showLevel}
+        forCheck={checkTitle}
+      />
+    </div>
+  );
+}
+
 /**
  * What a check or advice row shows under it for its probe: the field, under
- * the first picked one that calls the tool, and a pointer to it under the
- * others. The log level filtering advice also asks for its log level. Nothing for a
- * row that calls no tool or is not picked.
+ * the first picked one that calls the tool. The log level filtering advice,
+ * when the logging check is picked too, shows its own field filled with the
+ * logging check's tool, plus its log level. Nothing for a row that calls no
+ * tool or is not picked.
  *
- * `onValidChange` names the probe whose arguments it validates.
+ * `onValidChange` names the probe, or the advice, whose input it validates.
  */
 export function ProbeCheckExtra({
   checkId,
@@ -478,7 +610,7 @@ export function ProbeCheckExtra({
   probes: ConformanceProbes;
   onProbesChange: (probes: ConformanceProbes) => void;
   onValidChange?: (
-    part: ConformanceProbeKey | "answers",
+    part: ConformanceProbeKey | "answers" | typeof LOG_LEVEL_ADVICE,
     valid: boolean,
   ) => void;
 }) {
@@ -507,19 +639,30 @@ export function ProbeCheckExtra({
       />
     );
   }
-  const pointer = (
-    <p className="text-xs text-muted-foreground">
-      Calls the tool set under {owner ? checkTitle(owner) : "the check above"}.
-    </p>
-  );
-  return showLevel && probe ? (
-    <div className="space-y-2">
-      {pointer}
-      <div className={FIELD_BOX}>
-        <LogLevelField probe={probe} onChange={setProbe} />
-      </div>
-    </div>
-  ) : (
-    pointer
+  // Only the log level filtering advice shares its tool with an earlier row.
+  if (!showLevel) return null;
+  const ownerTitle = owner ? checkTitle(owner) : undefined;
+  return (
+    <CheckToolField
+      probeKey={key}
+      tools={tools}
+      inherited={probe}
+      override={probes.logLevelOverride}
+      inheritLabel={
+        ownerTitle
+          ? `Use the tool from ${ownerTitle}`
+          : "Use the logging check's tool"
+      }
+      checkTitle={checkTitle(checkId)}
+      showLevel
+      onOverrideChange={(next) => {
+        const all = { ...probes };
+        if (next) all.logLevelOverride = next;
+        else delete all.logLevelOverride;
+        onProbesChange(all);
+      }}
+      onInheritedChange={setProbe}
+      onValidChange={(valid) => onValidChange?.(LOG_LEVEL_ADVICE, valid)}
+    />
   );
 }

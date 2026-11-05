@@ -8,10 +8,12 @@ import {
   type ProtocolVersionPin,
 } from "@/hooks/use-conformance-run";
 import {
+  LOG_LEVEL_ADVICE,
   probeInputStatus,
   PROBE_KEYS,
   probeKeyFor,
   probesApply,
+  protocolProbesFor,
   tasksProbeRuns,
   taskProbePartIsSelected,
   type ConformanceProbes,
@@ -65,24 +67,51 @@ export function ConformanceChecksEditor({
       ),
     [probes, probeTools.tools],
   );
+  // The advice's own log tool counts only while the logging check is picked.
+  const usedProbes = protocolProbesFor(probes, selection.protocol);
+  const overrideFor = (checkId: string) =>
+    isTasksToolCheck(checkId)
+      ? usedProbes.tasksOverrides?.[checkId]
+      : checkId === LOG_LEVEL_ADVICE
+        ? usedProbes.logLevelOverride
+        : undefined;
   const inputStatusFor = (checkId: string) => {
-    if (isTasksToolCheck(checkId) && probes.tasksOverrides?.[checkId]) {
-      const probe = probes.tasksOverrides[checkId];
+    const override = overrideFor(checkId);
+    if (override) {
       const tool = probeTools.tools.find(
-        (item) => item.name === probe.toolName,
+        (item) => item.name === override.toolName,
       );
       return probeValid[checkId] === false ||
         (tool?.inputSchema !== undefined &&
-          acceptsToolArguments(tool.inputSchema, probe.arguments ?? {}) ===
+          acceptsToolArguments(tool.inputSchema, override.arguments ?? {}) ===
             false)
         ? "missing"
-        : probeInputStatus(checkId, probes);
+        : probeInputStatus(checkId, usedProbes);
     }
     const key = probeKeyFor(checkId);
-    return key && (invalidProbeArguments.has(key) || probeValid[key] === false)
+    // A row's own field can hold an unparsed draft while it still inherits.
+    return key &&
+      (invalidProbeArguments.has(key) ||
+        probeValid[key] === false ||
+        probeValid[checkId] === false)
       ? "missing"
-      : probeInputStatus(checkId, probes);
+      : probeInputStatus(checkId, usedProbes);
   };
+  // With no output schema declared, the output check has nothing to grade, so
+  // it does not apply. A cut-off list cannot show that: a later tool may
+  // declare one.
+  const noOutputSchemas =
+    probeTools.status === "ready" &&
+    !probeTools.truncated &&
+    !probeTools.tools.some((tool) => tool.hasOutputSchema);
+  // A saved output tool still gets called, so its field stays shown until the
+  // user clears it.
+  const outputCheckNotApplicable = (suite: string, checkId: string) =>
+    suite === "protocol" &&
+    protocolProbes &&
+    noOutputSchemas &&
+    !probes.toolCallProbe &&
+    probeKeyFor(checkId) === "toolCallProbe";
   const valid = !Object.entries(probeValid).some(
     ([part, valid]) =>
       !valid && taskProbePartIsSelected(part, probes, selection.tasks),
@@ -116,6 +145,7 @@ export function ConformanceChecksEditor({
               suite === "tasks" && tasksProbe ? (
                 <TasksCheckOverride
                   checkId={checkId}
+                  checkTitle={checkTitle(checkId)}
                   picked={isPicked(checkId)}
                   tools={probeTools}
                   probes={probes}
@@ -124,7 +154,9 @@ export function ConformanceChecksEditor({
                     setProbeValid((prev) => ({ ...prev, [part]: valid }))
                   }
                 />
-              ) : suite === "protocol" && protocolProbes ? (
+              ) : suite === "protocol" &&
+                protocolProbes &&
+                !outputCheckNotApplicable(suite, checkId) ? (
                 <ProbeCheckExtra
                   checkId={checkId}
                   checkTitle={checkTitle}
@@ -144,13 +176,7 @@ export function ConformanceChecksEditor({
       }
       checkInputStatus={(suite, checkId) => {
         if (suite === "protocol" && protocolProbes) {
-          // The output check needs a tool only when one declares
-          // an output schema; otherwise it does not apply.
-          const noOutputSchemas =
-            probeTools.status === "ready" &&
-            !probeTools.truncated &&
-            !probeTools.tools.some((tool) => tool.hasOutputSchema);
-          return probeKeyFor(checkId) === "toolCallProbe" && noOutputSchemas
+          return outputCheckNotApplicable(suite, checkId)
             ? undefined
             : inputStatusFor(checkId);
         }
@@ -170,6 +196,11 @@ export function ConformanceChecksEditor({
         }
         return undefined;
       }}
+      checkNotApplicable={(suite, checkId) =>
+        outputCheckNotApplicable(suite, checkId)
+          ? "No tool on this server declares an output schema, so this check does not apply."
+          : undefined
+      }
     />
   );
 }

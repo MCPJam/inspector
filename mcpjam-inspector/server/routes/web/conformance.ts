@@ -343,6 +343,7 @@ conformanceWeb.post("/protocol", async (c) =>
           checkIds: parsed.checkIds,
           readinessIds: parsed.readinessIds,
           logProbe: parsed.logProbe,
+          logLevelFilteringProbe: parsed.logLevelFilteringProbe,
           inputRequiredProbe: parsed.inputRequiredProbe,
           toolCallProbe: parsed.toolCallProbe,
           checkTimeout: HOSTED_CHECK_TIMEOUT_MS,
