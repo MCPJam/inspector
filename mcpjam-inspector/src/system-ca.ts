@@ -23,7 +23,9 @@ type Logger = {
  * is off and a Finder or Start-menu launch never sees shell variables, so it
  * has to happen here, before the server makes its first request.
  *
- * `NODE_EXTRA_CA_CERTS` keeps working: it is already part of the default list.
+ * The same fuse makes a packaged build ignore `NODE_EXTRA_CA_CERTS`, so the OS
+ * store is the only way a company root reaches the server there. An unfused
+ * development build still reads that variable into the default list.
  */
 export function trustSystemCertificates(
   log: Logger,

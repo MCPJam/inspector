@@ -49,7 +49,12 @@ describe("trustSystemCertificates", () => {
     expect(log.warn).toHaveBeenCalledOnce();
   });
 
-  it("puts the system roots into the default list this Node actually uses", () => {
+  // Early Node 22 releases lack one or both APIs, and the engines range allows them.
+  const realApi =
+    typeof tls.getCACertificates === "function" &&
+    typeof tls.setDefaultCACertificates === "function";
+
+  it.runIf(realApi)("puts the system roots into the default list this Node actually uses", () => {
     // The real API: every later TLS connection without its own `ca`, including
     // the server's `fetch`, verifies against this list.
     const before = tls.getCACertificates("default");
