@@ -78,8 +78,8 @@ export interface ConformanceProbe {
   toolName: string;
   arguments?: Record<string, unknown>;
   /**
-   * `logProbe` only: the log level the log level filtering advice asks for.
-   * Absent means the SDK's default, `warning`.
+   * `logProbe` and `logLevelOverride` only: the log level the log level
+   * filtering advice asks for. Absent means the SDK's default, `warning`.
    */
   level?: MCPLogLevel;
   /**
@@ -102,6 +102,12 @@ export interface ConformanceProbes {
   toolCallProbe?: ConformanceProbe;
   tasksProbe?: ConformanceProbe;
   tasksOverrides?: Partial<Record<MCPTasksToolCheckId, ConformanceProbe>>;
+  /**
+   * The log level filtering advice's own tool, used instead of `logProbe`.
+   * Absent means the advice uses `logProbe`. Kept on this browser, like
+   * `tasksOverrides`.
+   */
+  logLevelOverride?: ConformanceProbe;
 }
 
 export async function runProtocolConformance(
@@ -122,6 +128,9 @@ export async function runProtocolConformance(
     ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
     ...(options?.readinessIds ? { readinessIds: options.readinessIds } : {}),
     ...(options?.probes?.logProbe ? { logProbe: options.probes.logProbe } : {}),
+    ...(options?.probes?.logLevelOverride
+      ? { logLevelFilteringProbe: options.probes.logLevelOverride }
+      : {}),
     ...(options?.probes?.inputRequiredProbe
       ? { inputRequiredProbe: options.probes.inputRequiredProbe }
       : {}),

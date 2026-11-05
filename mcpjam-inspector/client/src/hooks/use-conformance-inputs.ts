@@ -1,7 +1,10 @@
 import { useMemo } from "react";
 import type { ConformanceProbes } from "./use-conformance-probes";
 
-/** Protocol inputs are shared; Tasks settings on this browser take precedence. */
+/**
+ * Protocol inputs are shared; Tasks settings and the log level filtering
+ * advice's own tool on this browser take precedence.
+ */
 export function mergeConformanceInputs(
   shared: ConformanceProbes,
   local: ConformanceProbes,
@@ -10,6 +13,9 @@ export function mergeConformanceInputs(
     ...shared,
     ...(local.tasksProbe ? { tasksProbe: local.tasksProbe } : {}),
     ...(local.tasksOverrides ? { tasksOverrides: local.tasksOverrides } : {}),
+    ...(local.logLevelOverride
+      ? { logLevelOverride: local.logLevelOverride }
+      : {}),
   };
 }
 

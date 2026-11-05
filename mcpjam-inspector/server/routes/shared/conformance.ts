@@ -189,6 +189,9 @@ export async function runProtocolConformance(
     ...(input.checkIds ? { checkIds: input.checkIds } : {}),
     ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
     ...(input.logProbe ? { logProbe: input.logProbe } : {}),
+    ...(input.logLevelFilteringProbe
+      ? { logLevelFilteringProbe: input.logLevelFilteringProbe }
+      : {}),
     ...(input.inputRequiredProbe
       ? { inputRequiredProbe: input.inputRequiredProbe }
       : {}),

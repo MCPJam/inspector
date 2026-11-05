@@ -259,8 +259,11 @@ export function ConformanceTab({
         inputs?: ConformanceProbes,
       ) => {
         if (inputs) setProbes(serverName, inputs);
-        const { tasksOverrides: _localOverrides, ...sharedInputs } =
-          inputs ?? {};
+        const {
+          tasksOverrides: _localOverrides,
+          logLevelOverride: _localLogTool,
+          ...sharedInputs
+        } = inputs ?? {};
         setChangedDefaults((prev) => ({ ...prev, [serverName]: selection }));
         const settle = () =>
           setChangedDefaults((prev) => {
