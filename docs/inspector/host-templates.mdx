@@ -1,267 +1,95 @@
 ---
 title: "Contribute a Host"
-description: "Add a new host preset to MCPJam so widgets can render under that host's identity, capabilities, and sandbox policy."
+description: "Submit your MCP client's details through a GitHub issue so the MCPJam team can add or update its host preset."
 icon: "plus-square"
 tag: "NEW"
 ---
 
-MCPJam ships built-in host presets for Claude, ChatGPT, Cursor, Copilot, Codex, and MCPJam itself. Each preset captures what a real host publishes during MCP `initialize` and `ui/initialize` — `clientInfo`, `hostInfo`, capability advertise, `hostContext` (theme, viewport, device, locale), and sandbox policy (CSP directives, permissions, allow-features). With a preset selected, a widget rendered in the [Playground](/inspector/playground) behaves the way it would in production under that host.
+MCPJam ships built-in host presets for Claude, ChatGPT, Cursor, Copilot, Codex, and MCPJam itself. Each preset captures a client's identity, capabilities, appearance, and sandbox policy so you can test widgets under that host in the [Playground](/inspector/playground).
 
-If your host isn't in the list yet — or if Microsoft, Anthropic, OpenAI, etc. ship a new capability and the inspector hasn't caught up — adding a preset is a small, self-contained contribution. This page walks through it.
+If your MCP client is missing, or its existing preset is out of date, [open a GitHub issue](https://github.com/MCPJam/inspector/issues/new) with the client details below. The MCPJam team will review your captures and handle adding or updating the preset.
 
 <Note>
-  Host presets are values, not code. There's no runtime to write. A new preset
-  is a TypeScript object that conforms to two interfaces, plus a logo file.
+  You do not need to write code or open a pull request. Your contribution is the
+  client's details and supporting evidence, submitted to the team through a GitHub
+  issue.
 </Note>
 
-## What a preset includes
+## What to submit
 
-A host preset has two pieces:
+Include these details in your issue:
 
-1. **Host style** — branding, label, scenario chrome, font CSS, and the capability **surface** the host supports (which MCP Apps and OpenAI Apps SDK features it implements). Defined in `client/src/lib/client-styles/built-ins.ts`.
-2. **Catalog host** — the backend-owned host row used for creation, compare, caniuse, and "update to latest". It includes label/provenance facts plus the full `HostConfigInputV2` template: `clientCapabilities`, `hostContext`, `mcpProfile`, image policy, sandbox policy, model defaults, and other host fields. Defined in `mcpjam-backend/convex/marketHostCatalog/templates.ts` and `mcpjam-backend/convex/marketHostCatalog/seed.ts`.
+- **Client identity** — product name, website, version, platform, and whether this is a new preset or an update to an existing one.
+- **Protocol and capabilities** — supported MCP protocol versions, whether the client renders MCP Apps or OpenAI Apps SDK widgets, and the capabilities it advertises.
+- **Initialization captures** — the MCP `initialize` exchange and, if the client renders MCP Apps, the `ui/initialize` exchange.
+- **Sandbox behavior** — iframe `sandbox` and `allow` attributes, response `Content-Security-Policy` headers, and any observed restrictions on storage, links, or permissions.
+- **Appearance** — a logo or link to an official asset, screenshots, and any published design tokens or fonts used by widgets.
+- **Evidence and gaps** — capture dates, links to official documentation, known limitations, and anything you could not verify.
 
-The backend catalog is canonical at runtime. The SDK carries a generated fallback snapshot for CLI/offline/dev paths; do not hand-edit SDK fallback data when changing host facts.
+## Capture values from the real client
 
-## The probe-driven philosophy
-
-The single most important rule when adding a host: **capture values from a live probe, don't invent them.**
-
-Every existing preset has inline comments citing a real source — a captured `ui/initialize` response, a DevTools Network capture of the host's response Content-Security-Policy header, or an official vendor doc. Examples from the codebase:
-
-- `CLAUDE_HOST_STYLE_VARIABLES` — verbatim from Claude's published design tokens.
-- `CHATGPT` template `cspDirectives` — "captured 2026-05-18 via DevTools → Network → oaiusercontent.com response".
-- `COPILOT` template — links to Microsoft Learn's "Supported MCP Apps capabilities in Copilot" table.
-
-Inventing values silently misrepresents the host. A widget that works in MCPJam-as-YourHost but fails in production YourHost is the failure mode we're avoiding.
-
-<Info>
-  When a field can't be probed (no live capture, no public doc), say so in a
-  code comment. Several existing presets use phrases like *"Undocumented; chosen
-  to match the ChatGPT convention"* — that's honest. Don't hide guesses behind
-  clean values.
-</Info>
-
-## Steps
+The most important rule is to **capture values from a live client rather than inventing them**. A preset that advertises unsupported behavior can make a widget pass in MCPJam but fail in the real client.
 
 <Steps>
-  <Step title="Probe the real host">
-    Capture as much as you can from the live host before writing any code:
+  <Step title="Capture initialization and sandbox details">
+    Record as much as you can from the client:
 
-    - **MCP `initialize` response** — `serverInfo`, `clientInfo`, advertised `capabilities` (including the `experimental` block and the MCP UI extension).
-    - **`ui/initialize` response** — `hostInfo`, `hostCapabilities`, `hostContext` (theme, displayMode, containerDimensions, locale, timeZone, userAgent, platform, deviceCapabilities, safeAreaInsets, styles).
-    - **Outer iframe** — `sandbox=` attribute, `allow=` attribute, and the response `Content-Security-Policy` header.
-    - **Inner iframe** (if the host nests) — same three things.
+    - **MCP `initialize` request** — `clientInfo`, the requested `protocolVersion`, and advertised client `capabilities`, including extensions and experimental capabilities. Include the response to show the negotiated protocol version and server capabilities.
+    - **`ui/initialize` response** — `hostInfo`, `hostCapabilities`, and `hostContext`, including theme, display modes, container dimensions, locale, time zone, platform, device capabilities, safe-area insets, and styles.
+    - **Outer iframe** — the complete `sandbox` and `allow` attributes, plus the response `Content-Security-Policy` header.
+    - **Inner iframe**, if the client nests frames — the same attributes and header, captured separately.
 
-    DevTools → Network → Response Headers + the inspector's own JSON-RPC logger ([Playground](/inspector/playground)) are the easiest capture surfaces. Save these somewhere referenceable — you'll cite them in code comments.
+    DevTools → Network → Response Headers and JSON-RPC logs are useful capture surfaces. Record the client version, platform, and capture date so the team can tell which behavior the evidence describes.
 
-  </Step>
+    If the client does not render widgets, say so and omit the UI-specific captures.
 
-  <Step title="Add the host style">
-    Open `client/src/lib/client-styles/built-ins.ts` and add a `HostStyleDefinition` for your host alongside `CLAUDE_HOST_STYLE`, `CHATGPT_HOST_STYLE`, etc.
-
-    ```ts
-    export const YOURHOST_HOST_STYLE: HostStyleDefinition = {
-      id: "yourhost",
-      mcp: {
-        // Which Apps SDK protocol the host implements. UIType.MCP_APPS for
-        // MCP Apps spec, UIType.OPENAI_SDK for the OpenAI Apps SDK surface.
-        protocolOverride: UIType.MCP_APPS,
-        // window.navigator-like fields exposed to widget HTML.
-        platform: YOURHOST_PLATFORM,
-        // Optional @font-face block injected into the widget iframe.
-        fontCss: YOURHOST_FONT_CSS,
-        // Which capabilities your host implements. Use MCP_APPS_FULL_SURFACE,
-        // MCP_APPS_NO_CLAIMS_SURFACE, or a custom subset.
-        mcpAppsCapabilities: MCP_APPS_FULL_SURFACE,
-        resolveStyleVariables: getYourHostStyleVariables,
-      },
-      chatUi: {
-        label: "YourHost",
-        shortLabel: "YourHost-style host",
-        pickerDescription: "YourHost scenario chrome",
-        logoSrc: yourHostLogo,
-        family: "yourhost",
-        resolveChatBackground: (theme) => YOURHOST_CHAT_BACKGROUND[theme],
-        loadingIndicator: YourHostMarkIndicator,
-      },
-    };
-    ```
-
-    Then register it in `BUILT_IN_HOST_STYLES` (same file, bottom):
-
-    ```ts
-    export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
-      MCPJAM_HOST_STYLE,
-      CLAUDE_HOST_STYLE,
-      CHATGPT_HOST_STYLE,
-      CURSOR_HOST_STYLE,
-      COPILOT_HOST_STYLE,
-      CODEX_HOST_STYLE,
-      YOURHOST_HOST_STYLE,
-    ];
-    ```
+    <Warning>
+      Remove credentials, tokens, cookies, private URLs, and user data before
+      attaching logs or screenshots to a public issue.
+    </Warning>
 
   </Step>
 
-  <Step title="Drop in the logo">
-    Add the host's logo to `client/public/` as `yourhost_logo.png` (or `.svg`). Existing presets use 256-512px square assets.
+  <Step title="Open a GitHub issue with the client details">
+    [Open an issue in MCPJam/inspector](https://github.com/MCPJam/inspector/issues/new) titled **Host preset: YourClient**. Include the details from [What to submit](#what-to-submit), attach your sanitized captures and logo, and link each reported behavior to a capture or official source.
 
-    Then register it in the inspector's host UI metadata so picker/compare surfaces can show the right icon. Logos are presentation-only; they do not live in the backend catalog template.
+    Mark unverified fields as **unknown** and explain what you could not capture. If a value is an assumption, label it explicitly instead of presenting it as measured behavior. You can submit an issue even if the captures are incomplete.
 
-  </Step>
-
-  <Step title="Add the backend catalog host">
-    In `mcpjam-backend/convex/marketHostCatalog/templates.ts`, add the full `HostConfigInputV2` template keyed by host id. In `mcpjam-backend/convex/marketHostCatalog/seed.ts`, add the catalog metadata for that same id: label, provenance, MCP Apps rendering, protocol versions, verification date, and image support.
-
-    The template should include every host field that can change — model, colors/styles, host context, sandbox, visibility, progressive tool discovery, image policy, and MCP Apps capability matrix. Fill in what you probed, delete what doesn't apply (see [Field guide](#field-guide) for what each one does):
-
-    ```ts
-    // templates.ts
-    yourhost: {
-      hostStyle: "yourhost",
-      modelId: "anthropic/claude-haiku-4.5",
-      systemPrompt: "",
-      temperature: 0.7,
-      requireToolApproval: false,
-      respectToolVisibility: true,
-      progressiveToolDiscovery: false,
-      serverIds: [],
-      optionalServerIds: [],
-      builtInToolIds: [],
-      connectionDefaults: { headers: {}, requestTimeout: 10000 },
-      clientCapabilities: {
-        extensions: {
-          "io.modelcontextprotocol/ui": {
-            mimeTypes: ["text/html;profile=mcp-app"],
-          },
-        },
-      },
-      hostContext: {
-        theme: "dark",
-        displayMode: "inline",
-        availableDisplayModes: ["inline", "fullscreen"],
-        containerDimensions: { width: 720, maxHeight: 5000 },
-        locale: "en-US",
-        timeZone: "America/Los_Angeles",
-        userAgent: "yourhost",
-        platform: "desktop",
-        deviceCapabilities: { touch: false, hover: true },
-        safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
-      },
-      mcpProfile: {
-        profileVersion: 1,
-        initialize: {
-          clientInfo: { name: "yourhost-mcp", version: "1.0.0" },
-        },
-        apps: {
-          uiInitialize: {
-            hostInfo: { name: "YourHost", version: "1.0.0" },
-          },
-          compatRuntime: { openaiApps: false },
-          mcpAppsOverrides: {
-            availableDisplayModes: ["inline", "fullscreen"],
-            openLinks: true,
-            serverTools: true,
-            serverResources: true,
-            logging: true,
-            widgetDisplayModeRequests: "accept",
-          },
-          sandbox: {
-            csp: { mode: "declared" },
-            permissions: {
-              mode: "custom",
-              allow: { clipboardWrite: true },
-            },
-            sandboxAttrs: ["allow-forms"],
-            allowFeatures: { fullscreen: "*" },
-          },
-        },
-      },
-    },
-    ```
+    The MCPJam team will review the evidence, follow up on missing details, and handle the preset integration. The GitHub issue is the place to coordinate that work.
 
   </Step>
 
-  <Step title="Regenerate the SDK fallback">
-    After backend catalog/template changes, regenerate the SDK fallback snapshot from the backend seed:
+  <Step title="Validate the preset with the team">
+    Once the team makes the preset available, try a widget under it in the [Playground](/inspector/playground) and report any differences in the issue:
 
-    ```bash
-    MCPJAM_BACKEND_DIR=/path/to/mcpjam-backend npm run generate:host-catalog-fallback -w @mcpjam/sdk
-    ```
+    - Does the preset show the right client name and logo?
+    - Does `app.getHostContext()` report the expected theme and dimensions?
+    - Does a widget that checks the host identity behave as it does in your client?
+    - Do sandbox restrictions and CSP violations match the real client?
 
-    The generated SDK catalog is fallback data only. Product UI and API template creation should fetch the live backend catalog first.
-
-  </Step>
-
-  <Step title="Test it">
-    Run the inspector locally, create a new host using your preset, and try a widget under it:
-
-    - Does the brand pill render with your logo?
-    - Does `app.getHostContext()` (or `window.openai.theme`, etc.) report what you'd expect from the real host?
-    - Does a widget that probes `hostInfo.name === "YourHost"` take that branch?
-    - Are CSP violations reported in DevTools the same ones the real host would emit?
-
-    The Playground's "Compare hosts" mode lets you render the same tool call under YourHost alongside Claude or ChatGPT side-by-side — useful for catching capability gaps.
+    Include screenshots or a small reproduction for mismatches. Call out any behavior that could let a widget pass in MCPJam but fail in your client.
 
   </Step>
 </Steps>
 
-## Field guide
+## Capture checklist
 
-A non-exhaustive reference for the fields most often gotten wrong:
+| Detail | What to record | Common mistake |
+| --- | --- | --- |
+| `clientInfo.name` | The exact value from the client's MCP `initialize` request. | Substituting a friendly product name for the protocol identity. |
+| `hostInfo.name` | The exact value from the `ui/initialize` response. | Reusing `clientInfo.name`; these identify different protocol layers. |
+| Capabilities | Both advertised capabilities and any observed behavior that differs from them. | Reporting a capability as supported without checking that it works. |
+| CSP | The complete response header for each frame, with its source and capture date. | Replacing the captured policy with a guessed allowlist. |
+| Iframe sandbox | The complete `sandbox` attribute for each frame, including whether `allow-same-origin` is absent. | Assuming the outer and inner frames use the same policy, or omitting an opaque-origin restriction. |
+| Permissions | Both the iframe `allow` attribute and the permissions advertised in `hostCapabilities`. | Assuming an advertised permission is also granted by the iframe. |
+| Container dimensions | The dimensions reported by the host, separately from the measured iframe size. | Treating the host's layout intent as a literal viewport size. |
 
-| Field                              | What to capture                                                                                     | Common mistake                                                                                                          |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `clientInfo.name`                  | Verbatim from the host's MCP `initialize` request.                                                  | Inventing a "friendly" name. Apps that branch on this string break under your preset.                                   |
-| `hostInfo.name`                    | Verbatim from `ui/initialize`. **Different protocol layer from `clientInfo`.**                      | Reusing `clientInfo.name`. ChatGPT uses `openai-mcp` and `chatgpt` respectively.                                        |
-| `mcpProfile.apps.mcpAppsOverrides` | Only what the host's MCP Apps surface actually supports.                                            | Advertising capabilities the renderer can't honor. If `listChanged` notifications aren't forwarded, omit the sub-field. |
-| `cspDirectives`                    | Verbatim from the host's response CSP header.                                                       | Hand-curating a "reasonable" set. Real hosts ship surprising values (e.g. real ChatGPT emits only `frame-src`).         |
-| `sandboxAttrs`                     | From the iframe `sandbox=` attribute, **minus** `allow-scripts` + `allow-same-origin` (baseline).   | Including the baseline. The schema layers your entries on top of the renderer's required-by-spec set.                   |
-| `permissions.allow`                | The intersection of the outer iframe `allow=` and what `ui/initialize.hostCapabilities` advertises. | Granting permissions the host advertises but doesn't actually attach.                                                   |
-| `containerDimensions`              | The host's intent (e.g. 720px chat column), not your inspector's iframe size.                       | Treating it as a literal viewport. Views interpret it as policy intent.                                                 |
+## Keep an existing preset accurate
 
-## Gotchas
-
-<Warning>
-  **Almost never set `restrictTo` on `sandbox.csp`.** SEP-1865 makes
-  `restrictTo` an *intersection* with the view's declared `_meta.ui.csp`, not a
-  union. Adding the host's production allowlist here can only narrow widgets —
-  never help them. A view declaring `connect-src https://api.example.com`
-  silently goes to zero if your `restrictTo.connectDomains` doesn't list
-  `api.example.com`. Use `mode: "declared"` and trust the view's CSP. The only
-  legitimate use of `restrictTo` is to express a *deny* intent via empty arrays
-  (for example, `frameDomains: []` to deny iframe nesting at the host layer).
-</Warning>
-
-<Warning>
-  **`mcpProfile.apps.mcpAppsOverrides` is what the host advertises for MCP
-  Apps.** Listing capabilities the renderer doesn't actually implement misleads
-  widget authors — they'll gate on the advertised flag, hit a dead path at
-  runtime, and blame their widget. If a capability's `listChanged` notifications
-  aren't forwarded by the renderer yet, omit the sub-field. Several existing
-  presets call this out explicitly in comments — match that discipline.
-</Warning>
-
-<Tip>
-  When mirroring a host that doesn't render widgets at all (e.g. Codex CLI),
-  replace `clientCapabilities` instead of spreading — a spread leaks the
-  SDK-default MCP UI extension back in and misrepresents the host as UI-capable.
-  See the Codex preset for the pattern.
-</Tip>
-
-## Open a PR
-
-When the preset is working locally:
-
-1. Add a screenshot of a widget rendered under your preset to the PR description.
-2. Cite the sources for each non-default value (capture date for probes, doc URL for vendor specs).
-3. If any field is a guess, mark it as such in a comment.
-
-The maintainers will eyeball the values against the cited captures, run a couple of widgets under the preset, and merge. If your host evolves later — a new capability, a CSP change — open a follow-up PR with a fresh probe.
+When your client ships a new capability, changes its sandbox policy, or otherwise differs from its preset, [open a GitHub issue](https://github.com/MCPJam/inspector/issues/new) with the client name, new version, what changed, and fresh captures. Link any earlier contribution issue for context. The MCPJam team handles preset updates through the same process.
 
 <Info>
-  Stuck on a probe? Open a thread in the [MCPJam
-  Discord](https://discord.gg/JEnDtz8X6z) — the team can usually help with
-  capture techniques or sanity-check what a vendor's docs actually mean.
+  Stuck on a capture? Ask in your GitHub issue or in the [MCPJam
+  Discord](https://discord.gg/JEnDtz8X6z). The team can help with capture techniques
+  or interpreting a client's documentation.
 </Info>
