@@ -34,6 +34,10 @@ const PUBLIC_CAN_I_USE_EXCLUDED_FIELD_IDS = new Set([
   "modelId",
   "temperature",
   "systemPrompt",
+  // The Playground's own pause-before-each-tool-call switch. Every template
+  // carries MCPJam's default (`false`), not a probe reading, so the row would
+  // mark hosts that do ask before running a tool as "Not supported".
+  "requireToolApproval",
   "mcpProtocolVersion",
   "clientInfo.name",
   "connectionDefaults.requestTimeout",
