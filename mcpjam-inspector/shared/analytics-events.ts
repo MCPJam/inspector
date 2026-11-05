@@ -289,6 +289,12 @@ export const ANALYTICS_EVENTS = {
   eval_test_case_run_completed: { source: "client" },
   eval_test_case_run_started: { source: "client" },
   eval_tests_generated_from_sidebar: { source: "client" },
+  // How suites work tutorial: one shown per opening, then one of completed
+  // (closed on the last step) or dismissed (closed earlier). Props: trigger
+  // (first_visit | first_suite | menu) and the 1-based step.
+  eval_tutorial_completed: { source: "client" },
+  eval_tutorial_dismissed: { source: "client" },
+  eval_tutorial_shown: { source: "client" },
   evals_cross_host_viewed: { source: "client" },
   evaluate_tab_viewed: { source: "client" },
   export_server_clicked: { source: "client" },

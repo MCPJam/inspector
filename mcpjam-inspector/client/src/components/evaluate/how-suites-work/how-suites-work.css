@@ -1,0 +1,37 @@
+/* The stand-in possum's idle motion (`tutorial-possum.tsx`): a slow bob and a
+   tail wave. Both stop under reduced motion. */
+@keyframes how-suites-work-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes how-suites-work-wave {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(-16deg);
+  }
+}
+
+.how-suites-work-bob {
+  animation: how-suites-work-bob 2.6s ease-in-out infinite;
+}
+
+.how-suites-work-wave {
+  animation: how-suites-work-wave 1.4s ease-in-out infinite;
+  transform-origin: 20px 60px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .how-suites-work-bob,
+  .how-suites-work-wave {
+    animation: none;
+  }
+}
