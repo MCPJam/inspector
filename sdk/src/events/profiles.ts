@@ -295,8 +295,12 @@ export function getEventsProfile(id: EventsProfileId): EventsProfile {
   return EVENTS_PROFILES[id];
 }
 
+/** Every registered profile, historical ones included, so stored ids stay valid. */
 export function isEventsProfileId(value: unknown): value is EventsProfileId {
-  return value === DRAFT_PROFILE_ID || value === CHATGPT_PROFILE_ID;
+  return (
+    typeof value === "string" &&
+    (EVENTS_PROFILE_IDS as readonly string[]).includes(value)
+  );
 }
 
 /**

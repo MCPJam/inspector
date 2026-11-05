@@ -21,7 +21,7 @@ Draft pin: `modelcontextprotocol/experimental-ext-triggers-events` @ [`28ec35e`]
 
 ## C1. Profiles
 
-`EventsProfileId = "draft@28ec35e" | "chatgpt@2026-09-30"`. Development overrides are a separate `overrides` set on a run and are never a profile.
+`EventsProfileId = "draft@28ec35e" | "chatgpt@2026-11-05" | "chatgpt@2026-09-30"`. `chatgpt@2026-09-30` is a historical snapshot; every registered id stays valid input. Development overrides are a separate `overrides` set on a run and are never a profile.
 
 Every profile field carries a provenance tag:
 

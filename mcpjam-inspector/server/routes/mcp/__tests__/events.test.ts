@@ -182,6 +182,28 @@ describe("local events routes", () => {
     expect(paused.body.subscription.generation).toBe(2);
   });
 
+  it("accepts every registered profile id, the historical ChatGPT one included", async () => {
+    for (const profile of ["chatgpt@2026-11-05", "chatgpt@2026-09-30"]) {
+      const created = await call("POST", "/subscriptions", {
+        serverId: SERVER_ID,
+        eventName: "build.failed",
+        arguments: { branch: profile },
+        mode: "poll",
+        profile,
+      });
+      expect(created.status).toBe(200);
+      expect(created.body.subscription.profile).toBe(profile);
+    }
+    const unknown = await call("POST", "/subscriptions", {
+      serverId: SERVER_ID,
+      eventName: "build.failed",
+      arguments: { branch: "unknown" },
+      mode: "poll",
+      profile: "chatgpt@1999-01-01",
+    });
+    expect(unknown.status).toBe(400);
+  });
+
   it("simulates into the simulation namespace", async () => {
     const created = await call("POST", "/subscriptions", {
       serverId: SERVER_ID,

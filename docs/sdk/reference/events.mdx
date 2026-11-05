@@ -8,7 +8,9 @@ MCP Events let a server tell a client that something happened, such as a new com
 
 <Note>
   Events are a **draft** extension. Results name the profile they were judged
-  by: `draft@28ec35e`, or `chatgpt@2026-09-30` for what ChatGPT supports.
+  by: `draft@28ec35e`, or `chatgpt@2026-11-05` for what ChatGPT supports.
+  `chatgpt@2026-09-30` is a historical snapshot that accepted only protocol
+  version `2026-07-28`.
 </Note>
 
 ## Discover events
@@ -113,7 +115,7 @@ const receiver = await startEventsConformanceReceiver({ tls: { cert, key } }); /
 const result = await runEventsConformance({
   manager,
   serverId: "docs",
-  profile: "draft@28ec35e", // or "chatgpt@2026-09-30" for ChatGPT readiness
+  profile: "draft@28ec35e", // or "chatgpt@2026-11-05" for ChatGPT readiness
   receiver,
   eventArguments: { "comment.created": { document_id: "doc_123" } },
   triggerEvent: async () => { /* cause one matching event, e.g. call a tool */ },
