@@ -90,10 +90,13 @@ export function ConformanceChecksEditor({
     probeTools.status === "ready" &&
     !probeTools.truncated &&
     !probeTools.tools.some((tool) => tool.hasOutputSchema);
+  // A saved output tool still gets called, so its field stays shown until the
+  // user clears it.
   const outputCheckNotApplicable = (suite: string, checkId: string) =>
     suite === "protocol" &&
     protocolProbes &&
     noOutputSchemas &&
+    !probes.toolCallProbe &&
     probeKeyFor(checkId) === "toolCallProbe";
   const valid = !Object.entries(probeValid).some(
     ([part, valid]) =>

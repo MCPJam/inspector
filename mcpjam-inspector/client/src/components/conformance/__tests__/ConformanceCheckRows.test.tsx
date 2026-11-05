@@ -268,6 +268,23 @@ describe("CatalogRow", () => {
     expect(changes).toEqual([false]);
   });
 
+  it("lets keyboard users reach the reason even without a description", async () => {
+    render(
+      <CatalogRow
+        entry={{ id: "c", title: "Some Check" }}
+        selected
+        notApplicable="Nothing to check here."
+      />,
+    );
+    const title = screen.getByRole("button", { name: /Some Check/ });
+    expect(title).toBeEnabled();
+    fireEvent.focus(title);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Nothing to check here.",
+    );
+    expect(title).toHaveAttribute("aria-describedby");
+  });
+
   it("does not shade a check that applies", () => {
     render(<CatalogRow entry={{ id: "c", title: "Some Check" }} selected />);
     const box = screen.getByRole("checkbox", { name: "Run Some Check" });

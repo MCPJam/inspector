@@ -526,7 +526,9 @@ export function CatalogRow({
       type="button"
       className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left transition-colors enabled:hover:bg-muted/30 enabled:cursor-pointer disabled:cursor-default"
       onClick={() => setExpanded((value) => !value)}
-      disabled={!expandable}
+      // A shaded row keeps its title focusable, so keyboard and screen reader
+      // users can reach the reason it does not apply.
+      disabled={!expandable && !notApplicable}
       aria-expanded={expandable ? expanded : undefined}
     >
       {selectable ? null : (
@@ -570,11 +572,8 @@ export function CatalogRow({
           </label>
         ) : null}
         {notApplicable ? (
-          // A disabled button gets no hover, so the tooltip sits on a wrapper.
           <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="flex min-w-0 flex-1">{title}</span>
-            </TooltipTrigger>
+            <TooltipTrigger asChild>{title}</TooltipTrigger>
             <TooltipContent side="bottom" className="max-w-xs">
               {notApplicable}
             </TooltipContent>
