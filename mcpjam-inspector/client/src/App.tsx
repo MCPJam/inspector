@@ -370,6 +370,7 @@ import type { GatedFeatureId } from "@/components/guest-preview/feature-highligh
 import { useUnifiedSessionsEnabledState } from "@/hooks/useUnifiedSessionsEnabled";
 import { useEvaluateEnabled } from "@/hooks/useEvaluateEnabled";
 import { LegacyEvalRedirect } from "./components/routing/legacy-eval-redirect";
+import { EvaluateLegacyRedirect } from "./components/routing/evaluate-legacy-redirect";
 import {
   HOST_TEMPLATES,
   seedFromHostTemplate,
@@ -1668,14 +1669,16 @@ function EvaluateRouteContent() {
   }
 
   return (
-    <EvaluateNavHost projectId={convexProjectId}>
-      <EvaluateTab
-        projectId={convexProjectId}
-        ensureServersReady={ensureServersReady}
-        onContinueInChat={handleContinueEvalInChat}
-        handleConnect={handleConnect}
-      />
-    </EvaluateNavHost>
+    <EvaluateLegacyRedirect>
+      <EvaluateNavHost projectId={convexProjectId}>
+        <EvaluateTab
+          projectId={convexProjectId}
+          ensureServersReady={ensureServersReady}
+          onContinueInChat={handleContinueEvalInChat}
+          handleConnect={handleConnect}
+        />
+      </EvaluateNavHost>
+    </EvaluateLegacyRedirect>
   );
 }
 
