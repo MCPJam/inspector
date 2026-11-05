@@ -26,7 +26,11 @@ import {
 } from "./bench-worker";
 
 export interface BackgroundWorkers {
-  /** Stops every loop, each after its in-flight job (if any) settles. */
+  /**
+   * Stops every loop at once, then resolves when each one's in-flight job (if
+   * any) has settled. Each `stop()` aborts its polling before it awaits, so no
+   * loop goes on claiming while another one's job finishes.
+   */
   stop: () => Promise<void>;
 }
 
@@ -67,10 +71,12 @@ export function startBackgroundWorkers(): BackgroundWorkers {
 
   return {
     stop: async () => {
-      await scheduledEvalsWorker?.stop();
-      await githubChecksWorker?.stop();
-      await benchWorker?.stop();
-      await productionChecksWorker.stop();
+      await Promise.all([
+        scheduledEvalsWorker?.stop(),
+        githubChecksWorker?.stop(),
+        benchWorker?.stop(),
+        productionChecksWorker.stop(),
+      ]);
     },
   };
 }
