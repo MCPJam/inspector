@@ -67,7 +67,7 @@ export function OrganizationOrgKeysPolicyCard({
   // that left Enterprise must still be able to turn it off.
   const enterpriseLocked = configReady && !config.canEnable && !requireOrgKeys;
   const leftEnterprise = configReady && !config.canEnable && requireOrgKeys;
-  const disabled = !canManage || isSaving || !configReady || enterpriseLocked;
+  const disabled = !canManage || isSaving || !configReady || enterpriseLocked || config?.contractKeysRequired === true;
   const showConfirmOff = confirmingOff && requireOrgKeys && canManage;
 
   const turnOff = () => {
@@ -158,6 +158,7 @@ export function OrganizationOrgKeysPolicyCard({
           </p>
         ) : null}
 
+        {config?.contractKeysRequired ? <p className="text-sm text-muted-foreground">Your contract requires organization keys. Contact support to change this policy.</p> : null}
         {enterpriseLocked ? (
           <div
             className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border px-3 py-2.5"

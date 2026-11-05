@@ -4,6 +4,11 @@ import { toast as sonnerToast } from "sonner";
 import { OrganizationsTab } from "../OrganizationsTab";
 import { ImageUploadError } from "@/lib/image-upload";
 
+vi.mock("@/hooks/useCreditBalance", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/hooks/useCreditBalance")>(),
+  useUnlimitedCredits: vi.fn(() => false),
+}));
+
 const mockUseAuth = vi.fn();
 const mockUseConvexAuth = vi.fn();
 const mockUseOrganizationQueries = vi.fn();

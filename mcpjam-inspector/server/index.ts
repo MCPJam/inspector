@@ -18,6 +18,7 @@ import { reportServiceCredentialAtBoot } from "./services/service-credential-boo
 import { reportRouteFailure } from "./utils/route-error-report.js";
 import { attachSocketDiagnostics } from "./utils/socket-diagnostics.js";
 import { startProcessVitalsSampler } from "./utils/process-vitals.js";
+import { resolveShutdownSettings } from "../bin/shutdown-settings.mjs";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { isSpaDocumentRequest } from "./utils/spa-document-request.js";
 import { readFileSync } from "fs";
@@ -207,25 +208,7 @@ import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
 import { stopLiveConformanceOAuthRuns } from "./services/conformance-oauth-rendezvous.js";
-import {
-  isScheduledEvalsWorkerEnabled,
-  startScheduledEvalsWorker,
-  type ScheduledEvalsWorkerHandle,
-} from "./services/scheduled-evals-worker";
-import {
-  isGithubChecksWorkerEnabled,
-  startGithubChecksWorker,
-  type GithubChecksWorkerHandle,
-} from "./services/github-checks-worker";
-import {
-  startProductionChecksWorker,
-  type ProductionChecksWorkerHandle,
-} from "./services/production-checks-worker";
-import {
-  isBenchWorkerEnabled,
-  startBenchWorker,
-  type BenchWorkerHandle,
-} from "./services/bench-worker";
+import { startBackgroundWorkers } from "./services/background-workers";
 import {
   startEventsKeeper,
   type EventsKeeperHandle,
@@ -1017,37 +1000,8 @@ startProcessVitalsSampler();
 // Attach the WebSocket upgrade listener (computer terminal bridge).
 injectWebSocket(server);
 
-// Scheduled eval runs (synthetic monitors): claim-and-execute polling loop.
-// Env-gated; the backend cron has its own SCHEDULED_EVALS_ENABLED gate.
-let scheduledEvalsWorker: ScheduledEvalsWorkerHandle | undefined;
-if (isScheduledEvalsWorkerEnabled()) {
-  scheduledEvalsWorker = startScheduledEvalsWorker();
-}
-
-// GitHub PR check runs: claim a PR trigger, build its MCP server in a sandbox,
-// run the dedicated eval suite, report an outcome. Env-gated; the backend has
-// its own GITHUB_CHECKS_ENABLED gate and 404s the routes when it is off.
-let githubChecksWorker: GithubChecksWorkerHandle | undefined;
-if (isGithubChecksWorkerEnabled()) {
-  githubChecksWorker = startGithubChecksWorker();
-}
-
-// Hosted Connector Bench runs: claim a benchmark job, run one eval child per
-// matrix cell against the run's pinned server, attach the evidence. Env-gated;
-// the backend has its own BENCHMARK_RUNS_ENABLED gate and 404s the routes when
-// it is off, which parks this loop on a slow poll.
-let benchWorker: BenchWorkerHandle | undefined;
-if (isBenchWorkerEnabled()) {
-  benchWorker = startBenchWorker();
-}
-
-// Production scoring: claim-and-grade polling loop for real User Testing
-// sessions. Started unconditionally and deliberately flagless — it self-gates
-// on the service-token env (a non-peer deployment gets an inert handle), and
-// the feature's single switch is the backend's PRODUCTION_CHECKS_ENABLED,
-// which 404s the claim route and parks this loop on a slow poll when off.
-const productionChecksWorker: ProductionChecksWorkerHandle =
-  startProductionChecksWorker();
+// Claim loops (scheduled evals, GitHub checks, bench, production scoring).
+const backgroundWorkers = startBackgroundWorkers();
 
 // MCP Events (hosted). The keeper leases due subscriptions from the Convex
 // registry and runs one coordinator step each (subscribe/refresh/poll/
@@ -1070,13 +1024,12 @@ const expectedParentPid = Number.parseInt(
 );
 let orphanCheckInterval: ReturnType<typeof setInterval> | undefined;
 let shuttingDown = false;
-const shutdownForceExitMs = 5000;
-const logFlushExitMs = 1000;
+const shutdownSettings = resolveShutdownSettings();
 
 function exitAfterLogFlush(code: number) {
   const exitFallbackTimer = setTimeout(
     () => process.exit(code),
-    logFlushExitMs,
+    shutdownSettings.logFlushMs,
   );
   exitFallbackTimer.unref();
 
@@ -1104,7 +1057,7 @@ async function shutdown() {
       new Error("Shutdown timed out; forcing process exit."),
     );
     exitAfterLogFlush(1);
-  }, shutdownForceExitMs);
+  }, shutdownSettings.forceExitMs);
   forceExitTimer.unref();
 
   // Cleared BEFORE the worker awaits: a `stop()` that rejects must not leave a
@@ -1123,13 +1076,14 @@ async function shutdown() {
     // Inside the guarded path so a rejecting worker still reaches the rest of
     // shutdown rather than skipping straight to the force-exit deadline.
     await localServerCheckQueue.shutdown();
-    await scheduledEvalsWorker?.stop();
-    await githubChecksWorker?.stop();
-    await benchWorker?.stop();
-    await productionChecksWorker.stop();
-    // Each waits at most a second: an in-flight keeper step or trigger run is
+    // Every claim loop stops at once. The events keeper and executor each wait
+    // at most a second: an in-flight keeper step or trigger run is
     // lease-recoverable, and the teardowns below are not.
-    await Promise.all([eventsKeeper?.stop(), eventsExecutor?.stop()]);
+    await Promise.all([
+      backgroundWorkers.stop(),
+      eventsKeeper?.stop(),
+      eventsExecutor?.stop(),
+    ]);
     stopRevokedSessionCache();
     // Abort active synthetic-session runs and write a terminal "failed"
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded

@@ -20,9 +20,14 @@ const REFUSALS = new Set([
   "PLUGIN_WORKSPACE_DENIED",
 ]);
 function refused(error: unknown) {
+  if (error instanceof PluginContextUpdateRejected) return true;
+  if (!(error instanceof ThreadAppError)) return false;
+  // A context refusal describes the App's context, which re-sending doesn't
+  // change. The memory budget is the exception: it frees as Apps close.
   return (
-    error instanceof PluginContextUpdateRejected ||
-    (error instanceof ThreadAppError && REFUSALS.has(error.code))
+    REFUSALS.has(error.code) ||
+    (error.code.startsWith("PLUGIN_CONTEXT_") &&
+      error.code !== "PLUGIN_CONTEXT_MEMORY_LIMIT")
   );
 }
 
