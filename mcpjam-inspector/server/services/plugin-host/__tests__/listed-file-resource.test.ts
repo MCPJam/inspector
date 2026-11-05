@@ -28,6 +28,32 @@ describe("listed file resource admission", () => {
       { signal, cacheMode: "bypass" },
     );
   });
+  it.each(["", "same"])(
+    "treats the repeated cursor %j as an opaque continuation token",
+    async (cursor) => {
+      const listResources = vi
+        .fn()
+        .mockResolvedValueOnce({ resources: [], nextCursor: cursor })
+        .mockResolvedValueOnce({ resources: [], nextCursor: cursor })
+        .mockResolvedValueOnce({
+          resources: [{ uri: "resource://a", name: "a.cad" }],
+        });
+      await expect(
+        resolveListedFileResource(
+          { listResources } as never,
+          "saved",
+          "resource://a",
+          signal,
+        ),
+      ).resolves.toEqual({ uri: "resource://a", name: "a.cad" });
+      expect(listResources).toHaveBeenNthCalledWith(
+        3,
+        "saved",
+        { cursor },
+        { signal, cacheMode: "bypass" },
+      );
+    },
+  );
   it.each(["../a.cad", "folder/a.cad", "a\\b.cad", "a\0.cad", ".", ""])(
     "refuses unsafe display filename %j",
     async (name) => {
@@ -55,7 +81,7 @@ describe("listed file resource admission", () => {
       ),
     ).rejects.toThrow();
   });
-  it("bounds cyclic pagination", async () => {
+  it("bounds pagination when the resource never appears", async () => {
     const listResources = vi
       .fn()
       .mockResolvedValue({ resources: [], nextCursor: "same" });
@@ -67,7 +93,23 @@ describe("listed file resource admission", () => {
         signal,
       ),
     ).rejects.toThrow();
-    expect(listResources).toHaveBeenCalledTimes(2);
+    expect(listResources).toHaveBeenCalledTimes(64);
+  });
+  it("stops pagination when its owner aborts", async () => {
+    const controller = new AbortController();
+    const listResources = vi.fn().mockImplementation(async () => {
+      controller.abort();
+      return { resources: [], nextCursor: "next" };
+    });
+    await expect(
+      resolveListedFileResource(
+        { listResources } as never,
+        "saved",
+        "resource://a",
+        controller.signal,
+      ),
+    ).rejects.toThrow();
+    expect(listResources).toHaveBeenCalledTimes(1);
   });
   it("retains exact Unicode bytes and digest", () => {
     const value = readListedFileBytes(
