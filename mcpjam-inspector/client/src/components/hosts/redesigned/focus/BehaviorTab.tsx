@@ -30,6 +30,7 @@ import {
   setMcpToolResultImageRenderPlacement,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
+import { HOST_MODEL_SELECTION_PURPOSE } from "@/lib/host-model-selection";
 import { hostConfigField } from "@/lib/host-config-field-schema";
 import {
   ENFORCED_CONTROL,
@@ -178,11 +179,6 @@ function ImagePolicyRow({
   );
 }
 
-/**
- * A host's saved model feeds evals and swarms as well as the Playground, so it
- * is saved with the automated purposes' default: no silent provider fallback.
- */
-const HOST_MODEL_SELECTION_PURPOSE = "evalTarget" as const;
 
 interface BehaviorTabProps {
   draft: HostConfigInputV2;
@@ -404,6 +400,7 @@ export function BehaviorTab({
                     purpose: HOST_MODEL_SELECTION_PURPOSE,
                     selectionsSupported: modelSelectionsSupported,
                     harness: draft.harness,
+                    requireOrgKeys,
                   });
                   setEffortNotice(
                     carried.dropped

@@ -23,6 +23,7 @@ import {
   selectionBesideLegacyId,
 } from "@/components/chat-v2/shared/model-selection";
 import { modelTarget, sameModelTarget } from "@/lib/model-target";
+import { orgCanonicalTarget } from "@/lib/org-keys-model-target";
 import type { ModelSelectionPurpose } from "@mcpjam/sdk/browser";
 
 /**
@@ -84,8 +85,21 @@ export function carryEffortToModel(args: {
   /** The deployment stores selections; false ⇒ the legacy id alone. */
   selectionsSupported: boolean;
   harness?: Harness;
+  /**
+   * The organization requires its own keys: a bare-id organization row is
+   * stored as its {@link orgCanonicalTarget}, since the bare id alone is
+   * refused under the policy.
+   */
+  requireOrgKeys?: boolean;
 }): EffortCarryResult {
-  const { row, previousEffort, purpose, selectionsSupported, harness } = args;
+  const {
+    row,
+    previousEffort,
+    purpose,
+    selectionsSupported,
+    harness,
+    requireOrgKeys = false,
+  } = args;
   const legacyId = String(row.id);
   if (!selectionsSupported) {
     return {
@@ -111,9 +125,10 @@ export function carryEffortToModel(args: {
       };
     }
   }
+  const org = requireOrgKeys ? orgCanonicalTarget(row, purpose) : undefined;
   return {
-    modelId: legacyId,
-    selection: selectionBesideLegacyId(row, purpose),
+    modelId: org?.modelId ?? legacyId,
+    selection: org?.selection ?? selectionBesideLegacyId(row, purpose),
     ...(previousEffort ? { dropped: previousEffort } : {}),
   };
 }

@@ -13,6 +13,8 @@ import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { getHostLogoSrc } from "@/lib/host-ui-metadata";
+import { useOrgBoundTemplateSeed } from "@/hooks/use-org-bound-template-seed";
+import { withStartedOn } from "@/lib/org-bound-template-seed";
 
 const RECOMMENDED_HOST_IDS = ["claude", "chatgpt", "cursor"] as const;
 
@@ -22,6 +24,7 @@ interface RecommendedHostsProps {
 
 export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
   const { createHost } = useHostMutations();
+  const orgSeed = useOrgBoundTemplateSeed(projectId);
   const navigate = useAppNavigate();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const catalogState = useHostCatalog();
@@ -57,16 +60,20 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
     }
     const label =
       (catalog ? getCatalogHost(catalog, hostId)?.label : undefined) ?? hostId;
+    const prepared = orgSeed.prepare(
+      cloneHostTemplateInput(template, { themeMode }),
+      label,
+    );
+    if (!prepared) return;
     setCreatingId(hostId);
     try {
-      const seed = cloneHostTemplateInput(template, { themeMode });
       const { hostId } = await createHost({
         projectId,
         name: label,
-        input: { ...seed, serverIds: [] },
+        input: { ...prepared.input, serverIds: [] },
         applyDefaultSystemPrompt: true,
       });
-      toast.success(`Created ${label} client.`);
+      toast.success(withStartedOn(`Created ${label} client.`, prepared.startedOn));
       navigate(buildHostsPath(hostId));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -100,6 +107,7 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
                 type="button"
                 disabled={
                   isCreating ||
+                  !orgSeed.ready ||
                   !projectId ||
                   !canManageClients ||
                   !canCreateFromLiveTemplate
