@@ -166,6 +166,7 @@ import {
   resolveLocalModelSelection,
 } from "../utils/model-resolution-local.js";
 import { connectionPolicyEligibility } from "@/shared/org-ai-key-policy";
+import { AZURE_PROVIDER_KEY } from "@/shared/azure-deployment";
 import {
   resolveEffectiveModelSettings,
   type DirectProviderOptions,
@@ -3695,8 +3696,14 @@ const executeTestCase = async (params: {
   // Azure runs only a named deployment. A case without a saved org selection
   // (written as `{ model, provider }`, saved before selections, or a legacy
   // one) reaches `/stream/org` too, so the rule applies to the id it sends.
+  // Only when the organization has an Azure connection (the resolved config
+  // lists enabled ones only): without one, the missing connection is the
+  // problem, and the run sheet applies the same rule.
   const azureRefusal =
-    orgByokRuntime?.kind === "cloud"
+    orgByokRuntime?.kind === "cloud" &&
+    orgModelConfig?.providers.some(
+      (provider) => provider.providerKey === AZURE_PROVIDER_KEY,
+    )
       ? azureDeploymentRefusal(orgByokRuntime.providerKey, {
           modelId: String(modelDefinition.id),
         })

@@ -666,6 +666,19 @@ describe("eval runner reads saved model selections", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it("leaves an unlabelled case to the backend when the organization has no Azure connection", async () => {
+      await run(
+        { model: AZURE_CATALOG.modelId, provider: "azure" },
+        {
+          orgModelConfigTarget: { projectId: "project-1" },
+          orgModelConfig: {
+            providers: [{ providerKey: "openai", apiKey: "sk-openai" }],
+          },
+        },
+      );
+      expect(requestTo("/stream/org")).toMatchObject({ providerKey: "azure" });
+    });
+
     it("runs an unlabelled deployment name on /stream/org", async () => {
       await run({ model: "prod-codex-mini", provider: "azure" }, AZURE_ORG);
       expect(requestTo("/stream/org")).toMatchObject({ providerKey: "azure" });
