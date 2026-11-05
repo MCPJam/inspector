@@ -1,6 +1,7 @@
 import type { LaunchEngagement } from "../../shared/launch-engagement.js";
 import type { ErrorOrigin } from "@mcpjam/sdk";
 import type { RouteFailureHop } from "./route-error-report.js";
+import type { ChatOrigin } from "./chat-ingestion.js";
 import type { LogConvexId } from "./log-convex-id.js";
 import type { PluginContextRefusedEvent } from "./context-refused-event.js";
 
@@ -378,14 +379,7 @@ export type RequestEventMap = {
     // CAUTION: this `origin` is a DIFFERENT axis from the ErrorOrigin field
     // of the same name on `http.request.failed` / `route.operation.failed` —
     // never join the two in an APL query.
-    origin?:
-      | "playground"
-      | "mcpjam_agent"
-      | "scenario"
-      | "eval"
-      | "swarm"
-      | "api"
-      | "event";
+    origin?: ChatOrigin;
   };
   /**
    * The backend accepted the request but declined the write, judging the
@@ -395,14 +389,7 @@ export type RequestEventMap = {
    */
   "chat.session.persist.skipped": {
     sourceType?: "scenario" | "direct" | "eval" | "swarm" | "event";
-    origin?:
-      | "playground"
-      | "mcpjam_agent"
-      | "scenario"
-      | "eval"
-      | "swarm"
-      | "api"
-      | "event";
+    origin?: ChatOrigin;
     /** False means the payload had no idempotency key to dedupe on. */
     hasTurnId: boolean;
   };
