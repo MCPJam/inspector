@@ -487,3 +487,26 @@ describe("WidgetRenderSessionRegistry", () => {
     expect(registry.size()).toBe(0);
   });
 });
+
+it("fences every scoped operation and expires without exposing the harness", async () => {
+  let now = 0;
+  const harness: SessionHarness = {
+    executeAction: vi.fn().mockResolvedValue({}),
+    captureSnapshot: vi.fn().mockResolvedValue({}),
+    runScriptedStep: vi.fn().mockResolvedValue({}),
+    dispose: vi.fn().mockResolvedValue(undefined),
+  };
+  const registry = new WidgetRenderSessionRegistry({ now: () => now, idleTimeoutMs: 20 });
+  const session = registry.register({ serverId: "server", mountedWidgetId: "widget", viewport: { width: 800, height: 600 }, harness, ownerKey: "owner" });
+  expect(registry.get(session.sessionId)).toBeUndefined();
+  await expect(registry.executeAction(session.sessionId, { action: "screenshot" })).rejects.toThrow(WidgetSessionNotFoundError);
+  await expect(registry.captureSnapshot(session.sessionId, "other")).rejects.toThrow(WidgetSessionNotFoundError);
+  await expect(registry.runScriptedStep(session.sessionId, { kind: "wait", ms: 1 }, undefined, "other")).rejects.toThrow(WidgetSessionNotFoundError);
+  await expect(registry.close(session.sessionId, "other")).rejects.toThrow(WidgetSessionNotFoundError);
+  now = 21;
+  await expect(registry.captureSnapshot(session.sessionId, "owner")).rejects.toThrow(WidgetSessionNotFoundError);
+  expect(registry.get(session.sessionId, "owner")).toBeUndefined();
+  await registry.disposeAll();
+  expect(harness.dispose).toHaveBeenCalledOnce();
+  expect(harness.captureSnapshot).not.toHaveBeenCalled();
+});

@@ -82,6 +82,7 @@ export class WidgetSessionUnavailableError extends Error {
 
 interface RegisteredSession extends WidgetRenderSession {
   harness: SessionHarness;
+  ownerKey?: string;
   /** Count of in-flight actions. A busy session is never idle-swept, and the
    *  TTL effectively pauses until the action settles. */
   inFlight: number;
@@ -115,6 +116,8 @@ const TERMINAL_ACTION_NOTES = new Set([
 
 export interface RegisterSessionInput {
   harness: SessionHarness;
+  /** A scoped session cannot be reached through the legacy unowned routes. */
+  ownerKey?: string;
   serverId: string;
   mountedWidgetId: string;
   viewport: { width: number; height: number };
@@ -268,6 +271,7 @@ export class WidgetRenderSessionRegistry {
       createdAt,
       expiresAt: createdAt + this.idleTimeoutMs,
       harness: input.harness,
+      ownerKey: input.ownerKey,
       inFlight: 0,
     };
     this.sessions.set(session.sessionId, session);
@@ -276,9 +280,9 @@ export class WidgetRenderSessionRegistry {
   }
 
   /** Public view of a live (non-expired) session, or undefined. */
-  get(sessionId: string): WidgetRenderSession | undefined {
+  get(sessionId: string, ownerKey?: string): WidgetRenderSession | undefined {
     const session = this.sessions.get(sessionId);
-    if (!session) return undefined;
+    if (!session || session.ownerKey !== ownerKey) return undefined;
     if (this.isIdleExpired(session)) {
       void this.disposeSession(sessionId, "idle");
       return undefined;
@@ -294,8 +298,9 @@ export class WidgetRenderSessionRegistry {
   async executeAction(
     sessionId: string,
     action: BrowserActionSpec,
+    ownerKey?: string,
   ): Promise<{ result: BrowserActionResult; expiresAt: number }> {
-    const session = this.requireLiveSession(sessionId);
+    const session = this.requireLiveSession(sessionId, ownerKey);
     // The harness is a single page — overlapping actions would interleave input
     // and corrupt the result. Serialize by rejecting while one is in flight.
     if (session.inFlight > 0) {
@@ -354,8 +359,9 @@ export class WidgetRenderSessionRegistry {
    */
   async captureSnapshot(
     sessionId: string,
+    ownerKey?: string,
   ): Promise<{ snapshot: WidgetSnapshot; expiresAt: number }> {
-    const session = this.requireLiveSession(sessionId);
+    const session = this.requireLiveSession(sessionId, ownerKey);
     if (session.inFlight > 0) {
       throw new WidgetSessionBusyError(
         `Widget session "${sessionId}" is already running an action.`,
@@ -392,8 +398,9 @@ export class WidgetRenderSessionRegistry {
     sessionId: string,
     step: ScriptedStep,
     priorWidgetToolCalls?: WidgetToolCall[],
+    ownerKey?: string,
   ): Promise<{ result: ScriptedStepResult; expiresAt: number }> {
-    const session = this.requireLiveSession(sessionId);
+    const session = this.requireLiveSession(sessionId, ownerKey);
     if (session.inFlight > 0) {
       throw new WidgetSessionBusyError(
         `Widget session "${sessionId}" is already running an action.`,
@@ -432,8 +439,10 @@ export class WidgetRenderSessionRegistry {
    * as gone — the check that sweeps an idle session is the same check that
    * refuses to act on it.
    */
-  private requireLiveSession(sessionId: string): RegisteredSession {
+  private requireLiveSession(sessionId: string, ownerKey?: string): RegisteredSession {
     const session = this.sessions.get(sessionId);
+    if (session && session.ownerKey !== ownerKey)
+      throw new WidgetSessionNotFoundError(`Widget session "${sessionId}" not found.`);
     if (!session || this.isIdleExpired(session)) {
       if (session) void this.disposeSession(sessionId, "idle");
       throw new WidgetSessionNotFoundError(
@@ -444,7 +453,10 @@ export class WidgetRenderSessionRegistry {
   }
 
   /** Dispose + remove a session. Returns false if it didn't exist. */
-  async close(sessionId: string): Promise<boolean> {
+  async close(sessionId: string, ownerKey?: string): Promise<boolean> {
+    const session = this.sessions.get(sessionId);
+    if (session && session.ownerKey !== ownerKey)
+      throw new WidgetSessionNotFoundError(`Widget session "${sessionId}" not found.`);
     return this.disposeSession(sessionId, "close");
   }
 
