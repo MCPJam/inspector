@@ -25,14 +25,10 @@ import {
 } from "./mcp-app-render-observation";
 import { hasUpstreamFailureEvidence } from "./hosted-connect-failure";
 import { markLocalRouteFailure } from "./hosted-route-failure";
+import { currentAppToolVisibility, findCurrentTool } from "./browser-harness/current-tool";
 
 /** Actionable hint surfaced when the harness reports `browser_unavailable`. */
 export const CHROMIUM_INSTALL_HINT = "npx playwright install chromium";
-
-/** Safety bound on `tools/list` pages drained while resolving a tool's metadata
- *  (a server that loops cursors forever can't hang the gate). 50 pages covers
- *  any realistic tool count. */
-const MAX_TOOL_LIST_PAGES = 50;
 
 export interface RenderWidgetForRequestParams {
   mcpClientManager: Pick<MCPClientManager, "listTools" | "readResource"> & {
@@ -92,30 +88,8 @@ export async function renderWidgetForRequest(
   // only retains the LAST page — so read each page's `_meta` directly and drain
   // pages until we find `toolName` (a renderable tool on page 2+ must not be
   // missed).
-  let toolMetadata: Record<string, unknown> = {};
-  let cursor: string | undefined;
-  for (let page = 0; page < MAX_TOOL_LIST_PAGES; page++) {
-    const { tools, nextCursor } = await mcpClientManager.listTools(
-      serverId,
-      // Presence, not truthiness: `""` is a valid continuation cursor.
-      cursor !== undefined ? { cursor } : undefined,
-    );
-    const match = tools.find((tool) => tool.name === toolName);
-    if (match) {
-      toolMetadata = (match._meta ?? {}) as Record<string, unknown>;
-      break;
-    }
-    // Stop at the last page. "Last page" means NO cursor — MCP 2026-07-28
-    // `server/utilities/pagination` makes `""` a valid cursor that MUST NOT be
-    // treated as the end of results, and a non-string is not a cursor at all.
-    //
-    // No repeated-cursor guard: comparing two cursors for equality is itself a
-    // determination based on cursor value, and a server may legally reissue
-    // one constant token — `""` included — for every page.
-    // `MAX_TOOL_LIST_PAGES` is the bound.
-    if (typeof nextCursor !== "string") break;
-    cursor = nextCursor;
-  }
+  const declaredTool = await findCurrentTool(mcpClientManager, serverId, toolName);
+  const toolMetadata = (declaredTool?._meta ?? {}) as Record<string, unknown>;
 
   // Gate BEFORE executing — a non-MCP-App / resource-less tool has no widget to
   // mount, so report no_ui_resource without running a possibly side-effectful
@@ -144,6 +118,7 @@ export async function renderWidgetForRequest(
 
   const harness = new McpAppBrowserHarness({
     callTool: (s, n, a) => mcpClientManager.executeTool(s, n, a),
+    resolveToolVisibility: (s, n) => currentAppToolVisibility(mcpClientManager, s, n),
     readResource: (s, p) => mcpClientManager.readResource(s, p),
     ...(params.viewport ? { viewport: params.viewport } : {}),
   });
