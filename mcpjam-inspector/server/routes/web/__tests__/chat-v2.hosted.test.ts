@@ -856,7 +856,7 @@ describe("web routes — chat-v2 hosted mode", () => {
           hostId: "host-1",
           selectedServerIds: ["server-1"],
           chatSessionId: "saved-pins",
-          messages: [{ role: "user", content: "hello" }],
+          messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
           model: { id: "openai/gpt-5-mini", provider: "openai" },
         },
         token,
