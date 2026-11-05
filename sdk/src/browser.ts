@@ -1109,6 +1109,12 @@ export type {
   MrtrSupport,
 } from "./host-config/index.js";
 
+// Reviewed canonical ↔ native model ids (also at `@mcpjam/sdk/model-factory`).
+// Pure and browser-safe: the Inspector client canonicalizes picker rows with
+// the same rows the SDK sends.
+export { ANTHROPIC_NATIVE_MODEL_IDS } from "./model-native-ids.js";
+export type { NativeModelIdMapping } from "./model-native-ids.js";
+
 // Saved model selection (also at `@mcpjam/sdk/host-config`). Pure and
 // browser-safe.
 export {

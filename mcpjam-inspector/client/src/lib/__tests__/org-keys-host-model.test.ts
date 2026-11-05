@@ -18,7 +18,7 @@ import {
 } from "../reasoning-effort-selection";
 
 // Organization rows as the client editor lists them under the key policy:
-// bare ids on the organization's own OpenAI and Anthropic connections.
+// bare ids on the organization's own provider connections.
 const ORG_LUNA = {
   id: "gpt-5.6-luna",
   name: "GPT-5.6 Luna",
@@ -34,7 +34,14 @@ const ORG_SONNET = {
   supportedReasoningEfforts: ["low", "medium", "high"],
   orgProvider: { providerKey: "anthropic", id: "orgprov_anthropic" },
 } as ModelDefinition;
-const ORG_ROWS = [ORG_LUNA, ORG_SONNET];
+const ORG_BEDROCK_CUSTOM = {
+  id: "acme.custom-model-v1:0",
+  name: "Acme custom",
+  provider: "bedrock",
+  hosted: false,
+  orgProvider: { providerKey: "bedrock", id: "orgprov_bedrock" },
+} as ModelDefinition;
+const ORG_ROWS = [ORG_LUNA, ORG_SONNET, ORG_BEDROCK_CUSTOM];
 
 const purpose = HOST_MODEL_SELECTION_PURPOSE;
 
@@ -72,7 +79,7 @@ function editorRow(input: ReturnType<typeof reload>) {
 }
 
 describe("client editor under the organization key policy (QA-26)", () => {
-  it.each([ORG_LUNA, ORG_SONNET])(
+  it.each(ORG_ROWS)(
     "a pick of $id saves the canonical id with its org connection",
     (row) => {
       const carried = carryEffortToModel({
@@ -208,14 +215,9 @@ describe("orgCanonicalTarget", () => {
 });
 
 describe("client editor rows under the organization key policy", () => {
-  // An organization Bedrock row whose bare id has no canonical catalog id: a
-  // pick could save only the bare id, which the policy refuses after reload.
-  const ORG_BEDROCK_CUSTOM = {
-    id: "acme.custom-model-v1:0",
-    name: "Acme custom",
-    provider: "bedrock",
-    hosted: false,
-    orgProvider: { providerKey: "bedrock", id: "orgprov_bedrock" },
+  const invalidBedrockRow = {
+    ...ORG_BEDROCK_CUSTOM,
+    id: "invalid model id",
   } as ModelDefinition;
   const HOSTED_DISALLOWED = {
     id: "openai/gpt-5.6-luna",
@@ -224,12 +226,11 @@ describe("client editor rows under the organization key policy", () => {
     disabled: true,
     disabledReason: "org_keys",
   } as ModelDefinition;
-  const rows = [ORG_LUNA, ORG_SONNET, ORG_BEDROCK_CUSTOM, HOSTED_DISALLOWED];
+  const rows = [...ORG_ROWS, invalidBedrockRow, HOSTED_DISALLOWED];
 
   it("offers only rows a pick saves with an org selection", () => {
     expect(orgKeysSavableRows(rows, true, purpose)).toEqual([
-      ORG_LUNA,
-      ORG_SONNET,
+      ...ORG_ROWS,
       HOSTED_DISALLOWED,
     ]);
   });
