@@ -133,7 +133,18 @@ describe("Computer file target adapter", () => {
     expect(files).not.toHaveBeenCalled();
   });
 
-  it("compares then writes through a temporary file and honors ifMatch", async () => {
+  it("keeps reads available but refuses writes without the atomic helper", async () => {
+    const fs = fakeComputerFiles({ "/home/user/parts/bolt.stl": "v1" });
+    delete fs.compareAndReplace;
+    const adapter = createComputerFileTargetAdapter(target, async () => fs);
+    expect(new TextDecoder().decode((await adapter.read(target.uri, signal())).bytes)).toBe("v1");
+    expect(await adapter.supportsConditionalWrite!(signal())).toBe(false);
+    await expect(adapter.conditionalWrite!(target.uri, new TextEncoder().encode("v2"), sha("v1"), signal()))
+      .rejects.toMatchObject({ code: "RESOURCE_WRITE_UNAVAILABLE" });
+    expect(new TextDecoder().decode(fs.files.get("/home/user/parts/bolt.stl"))).toBe("v1");
+  });
+
+  it("uses the Computer atomic primitive and honors ifMatch", async () => {
     const fs = fakeComputerFiles({ "/home/user/parts/bolt.stl": "v1" });
     const adapter = createComputerFileTargetAdapter(target, async () => fs);
     const encode = (text: string) => new TextEncoder().encode(text);
@@ -148,15 +159,13 @@ describe("Computer file target adapter", () => {
     expect(
       [...fs.files.keys()].filter((path) => path.includes(".mcpjam-save-")),
     ).toEqual([]);
-    expect(fs.calls.some((call) => call.startsWith("rename /home/user/parts/.mcpjam-save-"))).toBe(true);
+    expect(fs.calls.some((call) => call.startsWith("compareAndReplace /home/user/parts/bolt.stl"))).toBe(true);
   });
 
   it("refuses to replace a file that changed after the comparison", async () => {
     const fs = fakeComputerFiles({ "/home/user/parts/bolt.stl": "v1" });
     const adapter = createComputerFileTargetAdapter(target, async () => fs);
-    const write = fs.write.bind(fs);
-    fs.write = async (path, data) => {
-      await write(path, data);
+    fs.beforeCompare = () => {
       // Another writer outside this process replaces the file mid-save.
       fs.files.set("/home/user/parts/bolt.stl", new TextEncoder().encode("theirs"));
     };
@@ -172,7 +181,7 @@ describe("Computer file target adapter", () => {
       .toBe("theirs");
   });
 
-  it("serializes writers to one path in this process", async () => {
+  it("uses atomic comparison for competing writers", async () => {
     const fs = fakeComputerFiles({ "/home/user/parts/bolt.stl": "v1" });
     const adapter = createComputerFileTargetAdapter(target, async () => fs);
     const encode = (text: string) => new TextEncoder().encode(text);
@@ -281,7 +290,7 @@ describe("owned file sessions on the Computer", () => {
     const lifetime = new AbortController();
     try {
       const session = resources.get(instance, lifetime.signal);
-      expect(session.capabilities).toEqual({ write: true, subscribe: false });
+      expect(session.capabilities).toEqual({ write: false, subscribe: false });
       const ports = {
         authorize: async () => {},
         read: async () => {
@@ -294,6 +303,7 @@ describe("owned file sessions on the Computer", () => {
         session.read({ uri }, signal()),
       );
       expect(read.contents[0]).toMatchObject({ text: "v1" });
+      expect(session.capabilities).toEqual({ write: true, subscribe: false });
       await resources.run(instance, ports, () =>
         session.write(
           "11111111-1111-4111-8111-111111111111",
