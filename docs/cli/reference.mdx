@@ -389,6 +389,11 @@ mode will dial a link-local or cloud-metadata address.
 | `--category <category>` | No | all | Restrict checks to one or more categories |
 | `--check-id <id>` | No | all | Restrict checks to one or more check IDs |
 | `--advice-id <id>` | No | all | Restrict advice to one or more advice IDs. An unknown ID is an error that lists the valid ones |
+| `--log-filter-tool <name>` | No | `--log-probe-tool` | Tool the log level advice calls instead of `--log-probe-tool`. It must write logs and be safe to call |
+| `--log-filter-args <json>` | No | `{}` | Arguments for `--log-filter-tool`, as a JSON object |
+| `--log-filter-level <level>` | No | `warning` | Log level the advice asks `--log-filter-tool` for |
+| `--input-required-tool <name>` | No | | Tool that asks the client for input and is safe to call. Lets the 2026-07-28 undeclared capability check run |
+| `--input-required-args <json>` | No | `{}` | Arguments for `--input-required-tool`, as a JSON object |
 | `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
 Use `--format json|human` for raw output and `--reporter json-summary|junit-xml` for CI reports.

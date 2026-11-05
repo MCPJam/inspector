@@ -225,3 +225,72 @@ test("buildTasksConformanceConfig rejects a malformed --input-responses", () => 
       error instanceof CliError && error.message.includes("--input-responses")
   );
 });
+
+test("tasks conformance threads --check-overrides into checkOverrides", async () => {
+  const program = new Command();
+  program.exitOverride();
+  registerTasksCommands(program);
+  const conformance = program.commands
+    .find((c) => c.name() === "tasks")
+    ?.commands.find((c) => c.name() === "conformance");
+  assert.ok(conformance, "tasks conformance should be registered");
+  let captured: ReturnType<typeof buildTasksConformanceConfig> | undefined;
+  // Replace the network-running action so only option parsing is exercised.
+  conformance.action((options) => {
+    captured = buildTasksConformanceConfig(options);
+  });
+
+  await program.parseAsync(
+    [
+      "tasks",
+      "conformance",
+      "--url",
+      "https://example.com/mcp",
+      "--tool-name",
+      "long_job",
+      "--check-overrides",
+      '{"tasks-cancel-ack-shape":{"toolName":" slow_job ","toolArguments":{"seconds":5}}}',
+    ],
+    { from: "user" }
+  );
+
+  // The suite tool stays the default for every check left out.
+  assert.equal(captured?.toolName, "long_job");
+  assert.deepEqual(captured?.checkOverrides, {
+    "tasks-cancel-ack-shape": {
+      toolName: "slow_job",
+      toolArguments: { seconds: 5 },
+    },
+  });
+});
+
+test("buildTasksConformanceConfig omits checkOverrides when the flag is absent or empty", () => {
+  for (const checkOverrides of [undefined, "{}"]) {
+    const config = buildTasksConformanceConfig({
+      url: "https://example.com/mcp",
+      checkOverrides,
+    });
+    assert.equal("checkOverrides" in config, false);
+  }
+});
+
+test("buildTasksConformanceConfig rejects a bad --check-overrides as a usage error", () => {
+  for (const [checkOverrides, pattern] of [
+    ["not json", /--check-overrides/],
+    ['{"tasks-wire-resolvable":{"toolName":"long_job"}}', /does not accept a tool override/],
+    ['{"tasks-ttl-shape":{"toolName":"long_job","arguments":{}}}', /Unknown tool override field/],
+    ['{"tasks-ttl-shape":{"toolName":"  "}}', /A tool name is required/],
+  ] as const) {
+    assert.throws(
+      () =>
+        buildTasksConformanceConfig({
+          url: "https://example.com/mcp",
+          checkOverrides,
+        }),
+      (error) =>
+        error instanceof CliError &&
+        error.message.includes("--check-overrides") &&
+        pattern.test(error.message)
+    );
+  }
+});
