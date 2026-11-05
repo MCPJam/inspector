@@ -36,6 +36,7 @@ export const EVENTS_CHECK_IDS = [
   "events-push-heartbeat",
   "chatgpt-readiness-webhook-listed",
   "chatgpt-readiness-protocol-version",
+  "chatgpt-readiness-transport",
 ] as const;
 
 export type EventsCheckId = (typeof EVENTS_CHECK_IDS)[number];

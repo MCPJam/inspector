@@ -87,6 +87,7 @@ describe("events conformance", () => {
     expect(notPassed).toEqual([
       expect.objectContaining({ id: "chatgpt-readiness-webhook-listed", status: "skipped" }),
       expect.objectContaining({ id: "chatgpt-readiness-protocol-version", status: "skipped" }),
+      expect.objectContaining({ id: "chatgpt-readiness-transport", status: "skipped" }),
     ]);
     expect(result.outcome).toBe("passed");
     expect(result.profile).toBe("draft@28ec35e");
@@ -96,6 +97,7 @@ describe("events conformance", () => {
     const { result } = await run({ profile: CHATGPT_PROFILE_ID, protocolVersion: "2026-07-28" });
     expect(status(result, "chatgpt-readiness-webhook-listed")).toBe("passed");
     expect(status(result, "chatgpt-readiness-protocol-version")).toBe("passed");
+    expect(status(result, "chatgpt-readiness-transport")).toBe("passed");
     expect(result.checks.find((c) => c.id === "events-delivery-body-size")?.strength).toBe("MUST");
     expect(result.outcome).toBe("passed");
   });
@@ -106,6 +108,10 @@ describe("events conformance", () => {
       protocolVersion: "2025-11-25",
     });
     expect(status(result, "chatgpt-readiness-protocol-version")).toBe("passed");
+    expect(status(result, "chatgpt-readiness-transport")).toBe("passed");
+    expect(
+      result.checks.find((c) => c.id === "chatgpt-readiness-protocol-version")?.title
+    ).toBe("The connection negotiated 2025-11-25");
   });
 
   it("keeps the 2026-09-30 snapshot's rule: only 2026-07-28 passed", async () => {

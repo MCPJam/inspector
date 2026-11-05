@@ -75,7 +75,8 @@ const TITLES: Record<EventsCheckId, string> = {
   "events-unsubscribe-twice": "A second unsubscribe is {} or NotFound",
   "events-push-heartbeat": "Push streams send heartbeats (30 s cadence)",
   "chatgpt-readiness-webhook-listed": "At least one event lists webhook delivery",
-  "chatgpt-readiness-protocol-version": "The connection negotiated 2026-07-28",
+  "chatgpt-readiness-protocol-version": "ChatGPT accepts the negotiated protocol version",
+  "chatgpt-readiness-transport": "ChatGPT can connect over the server's transport",
 };
 
 function strengthFor(id: EventsCheckId, profile: EventsProfileId): EventsCheckStrength {
@@ -122,7 +123,13 @@ export async function runEventsConformance(
     id: EventsCheckId,
     status: EventsCheckResult["status"] | "violation",
     message: string,
-    extras: { skipReason?: EventsCheckResult["skipReason"]; details?: Record<string, unknown>; startedAt?: number } = {}
+    extras: {
+      skipReason?: EventsCheckResult["skipReason"];
+      details?: Record<string, unknown>;
+      startedAt?: number;
+      /** Names what this run observed, in place of the generic title. */
+      title?: string;
+    } = {}
   ) => {
     if (!selected.has(id)) return;
     const strength = strengthFor(id, profile);
@@ -131,7 +138,7 @@ export async function runEventsConformance(
       status === "violation" ? (strength === "MUST" ? "failed" : "warned") : status;
     results.set(id, {
       id,
-      title: TITLES[id],
+      title: extras.title ?? TITLES[id],
       strength,
       status: resolved,
       message,
@@ -160,16 +167,48 @@ export async function runEventsConformance(
   );
 
   if (isChatgptProfileId(profile)) {
-    const accepted = getEventsProfile(profile).protocolVersions.value;
+    const host = getEventsProfile(profile);
+    const accepted = host.protocolVersions.value;
     record(
       "chatgpt-readiness-protocol-version",
       protocolVersion !== undefined && accepted.includes(protocolVersion)
         ? "passed"
         : "violation",
-      `negotiated ${protocolVersion ?? "unknown"}; ${getEventsProfile(profile).title} accepts ${accepted.join(", ")}`
+      `negotiated ${protocolVersion ?? "unknown"}; ${host.title} accepts ${accepted.join(", ")}`,
+      {
+        title:
+          protocolVersion === undefined
+            ? "The connection negotiated no protocol version"
+            : `The connection negotiated ${protocolVersion}`,
+      }
+    );
+    // The version alone is not enough: ChatGPT reaches a server over HTTP,
+    // so a stdio server is not ready whatever version it negotiates.
+    const transport = manager.getInitializationInfo(serverId)?.transport;
+    const transports: readonly string[] = host.transports.value;
+    record(
+      "chatgpt-readiness-transport",
+      transport !== undefined && transports.includes(transport)
+        ? "passed"
+        : "violation",
+      `connected over ${transport ?? "an unknown transport"}; ${host.title} connects over ${transports.join(", ")}`,
+      {
+        title:
+          transport === undefined
+            ? "The connection's transport was not observed"
+            : `The connection uses ${transport}`,
+      }
     );
   } else {
-    skipAll(["chatgpt-readiness-protocol-version", "chatgpt-readiness-webhook-listed"], "ChatGPT profile only", "not-applicable");
+    skipAll(
+      [
+        "chatgpt-readiness-protocol-version",
+        "chatgpt-readiness-transport",
+        "chatgpt-readiness-webhook-listed",
+      ],
+      "ChatGPT profile only",
+      "not-applicable"
+    );
   }
 
   if (!support.declared) {

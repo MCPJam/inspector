@@ -171,7 +171,7 @@ The exit code is `0` when the run passed, `1` when it failed, and `3` when it wa
 
 | Flag | Description |
 |---|---|
-| `--profile <profile>` | `draft` (default) or `chatgpt`. The `chatgpt` profile adds the readiness checks (webhook delivery listed, protocol `2026-07-28`) and makes the 256 KiB body limit a MUST. |
+| `--profile <profile>` | `draft` (default) or `chatgpt`. The `chatgpt` profile adds the readiness checks (webhook delivery listed, a Streamable HTTP connection, and a protocol version ChatGPT accepts) and makes the 256 KiB body limit a MUST. |
 | `--event-args <name>=<json>` | Subscription arguments for one event type. Repeat it for several types. The runner never invents arguments, so a type whose schema requires fields you did not supply is reported `could-not-run`. |
 | `--tls-cert <path>` / `--tls-key <path>` | Serve the webhook receiver over https with this certificate. The server under test must trust it. |
 | `--public-url <origin>` | An https origin (a tunnel) that forwards to the receiver. Paths are not rewritten. |

@@ -65,6 +65,8 @@ export interface ProfileFact<T> {
 }
 
 export type DeliveryMode = "poll" | "push" | "webhook";
+/** The transport a connection actually runs over. */
+export type McpTransport = "stdio" | "sse" | "streamable-http";
 
 export interface EventsProfile {
   id: EventsProfileId;
@@ -72,6 +74,8 @@ export interface EventsProfile {
   /** Where the host reads the capability. */
   capabilityPlacement: ProfileFact<"capabilities.events">;
   protocolVersions: ProfileFact<string[]>;
+  /** Transports the host connects over. */
+  transports: ProfileFact<McpTransport[]>;
   deliveryModes: ProfileFact<DeliveryMode[]>;
   /** Control envelopes the host handles. */
   controlEnvelopes: ProfileFact<Array<"gap" | "terminated" | "verification">>;
@@ -126,6 +130,10 @@ export const DRAFT_PROFILE: EventsProfile = {
     provenance: policy(
       "The draft is version-agnostic; MCPJam exercises it on both eras it speaks."
     ),
+  },
+  transports: {
+    value: ["stdio", "sse", "streamable-http"],
+    provenance: policy("The draft is transport-agnostic."),
   },
   deliveryModes: {
     value: ["poll", "push", "webhook"],
@@ -194,6 +202,12 @@ export const CHATGPT_PROFILE: EventsProfile = {
   // or MCP 2.0 HTTP at 2026-07-28.
   protocolVersions: {
     value: [...MCP_PROTOCOL_VERSIONS],
+    provenance: openai("Before you start"),
+  },
+  // HTTP only: ChatGPT cannot launch a local stdio server, and the guide
+  // names no SSE transport.
+  transports: {
+    value: ["streamable-http"],
     provenance: openai("Before you start"),
   },
   deliveryModes: {
