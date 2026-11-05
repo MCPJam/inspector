@@ -1,3 +1,4 @@
+import { useSwarmRerunRepair } from "./swarm-rerun-repair";
 /**
  * Project-scoped Swarms surface (redesign): Persona → Journey → Run.
  *
@@ -659,12 +660,15 @@ export function SwarmsTab({
     [projectId],
   );
 
+  const rerunRepair = useSwarmRerunRepair(projectId);
   const handleRunAgainFromDetail = useCallback(
-    async (journeyRefIds: string[]) => {
+    async (journeyRefIds: string[], runIds?: string[]) => {
+      const prepared = runIds ? await rerunRepair.prepare(runIds) : journeyRefIds;
+      if (!prepared) return { cancelled: true };
       const swarmRunGroupId = crypto.randomUUID();
       const errors: string[] = [];
       let landedUnderNewWave = false;
-      for (const journeyId of journeyRefIds) {
+      for (const journeyId of prepared) {
         try {
           const result = await launchJourney(journeyId, { swarmRunGroupId });
           if (result.status === "already_launching") continue;
@@ -705,7 +709,7 @@ export function SwarmsTab({
       if (!landedUnderNewWave) return {};
       return { swarmRunGroupId };
     },
-    [launchJourney],
+    [launchJourney, rerunRepair],
   );
   // Exact (case-insensitive) resolution against the loaded lists — unknown or
   // ambiguous → invalid_request, never a fuzzy guess.
@@ -1056,6 +1060,7 @@ export function SwarmsTab({
             onChange={onRunningPersonasChange}
           />
         </ErrorBoundary>
+        {rerunRepair.dialog}
         <SwarmRunDetail
           organizationId={organizationId}
           // Remount per wave. Every piece of state in here is about the wave
