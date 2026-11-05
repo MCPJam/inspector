@@ -1,3 +1,4 @@
+import { admitWarmChatManager } from "../../utils/harness/warm-approval-binding";
 import { setManagerResourceHostConfig } from "../../utils/mcp-connections";
 import { TurnResources } from "./resources.js";
 import {
@@ -103,7 +104,7 @@ export async function prepareManagedConnections(args: {
   bearerToken: string;
   rpcCollector: ReturnType<typeof createHostedRpcLogCollector>;
   resources: TurnResources;
-  setup: Pick<
+  setup: { authorizedOrganizationId?: string } & Pick<
     ManagedSetup,
     | "hostedBody"
     | "initializePins"
@@ -623,6 +624,7 @@ export async function prepareManagedConnections(args: {
       ...(executionScope ? { executionScope } : {}),
     },
   );
+  admitWarmChatManager(manager, args.setup.authorizedOrganizationId, effectiveServerIds.length > 0);
   if (typeof hostRuntimeConfig?.hostConfigId === "string" && typeof hostRuntimeConfig.hostId === "string") setManagerResourceHostConfig(manager, hostRuntimeConfig.hostConfigId, hostRuntimeConfig.hostId);
   connectedManager = manager;
   taskCreatedBridge?.bindOwner(hostedBody.projectId, authenticatedUserId);
