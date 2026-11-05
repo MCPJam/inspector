@@ -2,4 +2,4 @@
 "@mcpjam/inspector": patch
 ---
 
-Start hosted event subscription and trigger workers automatically when the backend connection is configured.
+Gate Events and Triggers behind the mcp-events-enabled rollout flag and start their hosted workers automatically when the backend connection is configured.

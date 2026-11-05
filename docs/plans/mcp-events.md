@@ -227,7 +227,7 @@ Results report the profile, each check's strength (MUST fails, SHOULD warns) and
 
 ## Rules that apply throughout
 
-- **Labelling:** mark events "Draft" in the UI instead of hiding them behind a flag, and name the profile.
+- **Labelling:** gate the Events and Triggers tabs with `mcp-events-enabled`, mark events "Draft" in the UI, and name the profile.
 - **Advertising:** MCPJam's client declares nothing for events unless the ChatGPT profile shows ChatGPT does.
 - **Event data is untrusted:** show it as data, never pass it to the model as instructions. Secrets are redacted at capture (C8).
 - **Shared files:** `MCPClientManager.ts`, `official-sdk-client-adapter.ts`, `managed-mcp-client.ts`, `transport-utils.ts` and `assistant-turn.ts` should have one owner at a time.

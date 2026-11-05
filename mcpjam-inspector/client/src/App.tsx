@@ -370,6 +370,7 @@ import { GuestPreviewCta } from "@/components/guest-preview/GuestPreviewCta";
 import type { GatedFeatureId } from "@/components/guest-preview/feature-highlights";
 import { useUnifiedSessionsEnabledState } from "@/hooks/useUnifiedSessionsEnabled";
 import { useEvaluateEnabled } from "@/hooks/useEvaluateEnabled";
+import { useEventsEnabledState } from "@/hooks/useEventsEnabled";
 import { LegacyEvalRedirect } from "./components/routing/legacy-eval-redirect";
 import {
   HOST_TEMPLATES,
@@ -2558,6 +2559,11 @@ export function TasksRoute() {
 export function EventsRoute() {
   const { selectedMCPConfig, appState, convexProjectId } =
     useAppRouteContext();
+  const eventsEnabled = useEventsEnabledState();
+  if (eventsEnabled === false) {
+    return <ScopedNavigate to={routePaths.servers} replace />;
+  }
+  if (eventsEnabled === undefined) return null;
   return (
     <div className="h-full overflow-hidden">
       <EventsTab
@@ -2582,6 +2588,11 @@ export function EventsRoute() {
 export function EventTriggersRoute() {
   const { convexProjectId, isAuthenticated, isGuestProjectActor } =
     useAppRouteContext();
+  const eventsEnabled = useEventsEnabledState();
+  if (eventsEnabled === false) {
+    return <ScopedNavigate to={routePaths.servers} replace />;
+  }
+  if (eventsEnabled === undefined) return null;
   return (
     <div className="h-full overflow-hidden">
       <EventTriggersTab
