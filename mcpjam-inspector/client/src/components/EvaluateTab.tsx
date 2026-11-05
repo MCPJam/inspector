@@ -51,6 +51,7 @@ import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useEvaluateNavPage } from "./evaluate/nav/eval-nav-pages";
 import { useEvaluateNavEnabled } from "./evaluate/nav/use-evaluate-nav-enabled";
+import { EvalHeaderActionsSlot } from "./evaluate/nav/eval-header-actions";
 import {
   buildEvalBreadcrumbs,
   evalRouteTestCaseId,
@@ -1746,18 +1747,21 @@ function EvaluateTabContent({
       isDirectGuest={isDirectGuest}
       header={
         route.type === "create" ? undefined : navTrail ? (
-          <EvalsHeader
-            onSetupRun={() => setSuiteAction("run")}
-            onAddCase={() => setSuiteAction("case")}
-            onCreateSuite={
-              route.type === "list" ? handleOpenCreateSuite : undefined
-            }
-            landingView={landingView}
-            onLandingViewChange={setLandingView}
-            {...landingNav?.header}
-            onEvaluateClick={handleNavigateToEvalList}
-            {...navTrail}
-          />
+          <div className="relative shrink-0">
+            <EvalsHeader
+              onSetupRun={() => setSuiteAction("run")}
+              onAddCase={() => setSuiteAction("case")}
+              onCreateSuite={
+                route.type === "list" ? handleOpenCreateSuite : undefined
+              }
+              landingView={landingView}
+              onLandingViewChange={setLandingView}
+              {...landingNav?.header}
+              onEvaluateClick={handleNavigateToEvalList}
+              {...navTrail}
+            />
+            <EvalHeaderActionsSlot />
+          </div>
         ) : (
           <EvalsHeader
             onSetupRun={() => setSuiteAction("run")}

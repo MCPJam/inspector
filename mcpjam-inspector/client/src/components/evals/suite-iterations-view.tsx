@@ -173,6 +173,14 @@ import {
 } from "./suite-settings-subsections";
 import { useSuiteSettingsCommit } from "./use-suite-settings-draft";
 import { SuiteSettingsCommitBar } from "./suite-settings-commit-bar";
+import { cn } from "@/lib/utils";
+import { useSuiteSettingsNav } from "../evaluate/suite-settings/use-suite-settings-nav";
+import {
+  SuiteSettingsChrome,
+  SuiteSettingsEyebrow,
+  suiteSettingsTabRowsClass,
+} from "../evaluate/suite-settings/suite-settings-tabs";
+import { SuiteTestCasesTab } from "../evaluate/suite-settings/suite-test-cases-tab";
 import { useUnsavedChangesGuard } from "@/hooks/use-unsaved-changes-guard";
 import { useSharedAppState } from "@/state/app-state-context";
 import { Button } from "@mcpjam/design-system/button";
@@ -733,7 +741,11 @@ export function SuiteIterationsView({
   // does NOT include the CI lock — see the long note further down. It is
   // computed here, ahead of the lock, because the capabilities query below is
   // scoped to it and the lock reads that query's answer.
-  const isEditMode = route.type === "suite-edit" && !readOnlyConfig;
+  // With `evaluate-nav-enabled`, Suite settings tabs are this sheet too.
+  const settingsNav = useSuiteSettingsNav(suite._id);
+  const settingsTab = settingsNav.tab;
+  const isEditMode =
+    (route.type === "suite-edit" || settingsTab !== null) && !readOnlyConfig;
 
   // WHAT THE SUITE IS, asked twice, and both answers count.
   //
@@ -1036,8 +1048,12 @@ export function SuiteIterationsView({
   // prompt. Without it the draft outlives the sheet: the guard re-prompts on
   // every later navigation, ⌘S saves from the run list, and
   // the edits they were told they were leaving behind are still there.
-  useUnsavedChangesGuard(hasUnsavedSettings, () =>
-    dispatchDraft({ type: "discard" }),
+  useUnsavedChangesGuard(
+    hasUnsavedSettings,
+    () => dispatchDraft({ type: "discard" }),
+    undefined,
+    false,
+    settingsNav.keepsDraft,
   );
 
   // The suite moved under us. An untouched row simply refreshes; a row the
@@ -2068,6 +2084,46 @@ export function SuiteIterationsView({
         !selectedCompareBaseRunId &&
         !selectedRunTestCaseId));
 
+  const openImport =
+    projectId && !editingDisabled ? () => setImportOpen(true) : undefined;
+  let settingsCommitControl: ReactNode = null;
+  if (!editingDisabled)
+    settingsCommitControl =
+      draftChanges.length > 0 ? (
+        <SuiteSettingsCommitBar
+          layout="inline"
+          changeCount={draftChanges.length}
+          conflictCount={draft.conflicts.length}
+          canCommit={draftCanCommit}
+          isCommitting={isCommitting}
+          onDiscard={() => dispatchDraft({ type: "discard" })}
+          onSave={() => void handleCommitSettings()}
+          revisionNumber={suite.revisionNumber}
+          blockingErrors={[
+            ...(nameRowError
+              ? [
+                  {
+                    message: nameRowError.message,
+                    onFix: () => settingsNav.fix("name", openSetting),
+                  },
+                ]
+              : []),
+            ...(passOrFailRowError
+              ? [
+                  {
+                    message: passOrFailRowError.message,
+                    onFix: () => settingsNav.fix("passOrFail", openSetting),
+                  },
+                ]
+              : []),
+          ]}
+        />
+      ) : (
+        <Button size="sm" disabled>
+          Save settings
+        </Button>
+      );
+
   const content = (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {projectId && !editingDisabled && (
@@ -2084,51 +2140,21 @@ export function SuiteIterationsView({
       {/* Header */}
       {showSuiteHeader ? (
         <div className="shrink-0">
+          {settingsTab ? <SuiteSettingsEyebrow /> : null}
           <SuiteHeader
             settingsActions={
-              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => navigation.toSuiteOverview(suite._id)}
-                >
-                  Back to suite
-                </Button>
-                {editingDisabled ? null : draftChanges.length > 0 ? (
-                  <SuiteSettingsCommitBar
-                    layout="inline"
-                    changeCount={draftChanges.length}
-                    conflictCount={draft.conflicts.length}
-                    canCommit={draftCanCommit}
-                    isCommitting={isCommitting}
-                    onDiscard={() => dispatchDraft({ type: "discard" })}
-                    onSave={() => void handleCommitSettings()}
-                    revisionNumber={suite.revisionNumber}
-                    blockingErrors={[
-                      ...(nameRowError
-                        ? [
-                            {
-                              message: nameRowError.message,
-                              onFix: () => openSetting("name"),
-                            },
-                          ]
-                        : []),
-                      ...(passOrFailRowError
-                        ? [
-                            {
-                              message: passOrFailRowError.message,
-                              onFix: () => openSetting("passOrFail"),
-                            },
-                          ]
-                        : []),
-                    ]}
-                  />
-                ) : (
-                  <Button size="sm" disabled>
-                    Save settings
+              settingsTab ? undefined : (
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => navigation.toSuiteOverview(suite._id)}
+                  >
+                    Back to suite
                   </Button>
-                )}
-              </div>
+                  {settingsCommitControl}
+                </div>
+              )
             }
             suite={suite}
             viewMode={headerViewMode}
@@ -2177,6 +2203,12 @@ export function SuiteIterationsView({
                   }
                 : undefined
             }
+          />
+          <SuiteSettingsChrome
+            nav={settingsNav}
+            caseCount={cases.length}
+            save={settingsCommitControl}
+            onBack={() => navigation.toSuiteOverview(suite._id)}
           />
         </div>
       ) : null}
@@ -2496,11 +2528,7 @@ export function SuiteIterationsView({
                   onEditSuite={() => navigation.toSuiteEdit(suite._id)}
                   onEditCases={onCreateTestCase}
                   onDescribeCases={onDescribeTestCase}
-                  onImportCases={
-                    projectId && !editingDisabled
-                      ? () => setImportOpen(true)
-                      : undefined
-                  }
+                  onImportCases={openImport}
                   onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                   onGenerateTestCases={onGenerateTestCases}
                   canGenerateTestCases={canGenerateTestCases}
@@ -2780,9 +2808,27 @@ export function SuiteIterationsView({
             {configLocked ? (
               <SuiteCiOwnedNotice onDuplicate={onDuplicateSuite} />
             ) : null}
+            {settingsTab === "cases" ? (
+              <SuiteTestCasesTab
+                suite={suite}
+                cases={cases}
+                projectId={projectId ?? null}
+                readOnlyConfig={readOnlyConfig}
+                configLocked={configLocked}
+                onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+                onImportCases={openImport}
+                canGenerate={canGenerateTestCases && !!onGenerateTestCases}
+                generateDisabledReason={generateTestCasesDisabledReason}
+                isGenerating={isGeneratingTestCases}
+              />
+            ) : null}
             <fieldset
+              hidden={settingsTab === "cases"}
               disabled={editingDisabled}
-              className="m-0 min-w-0 space-y-8 border-0 p-0"
+              className={cn(
+                "m-0 min-w-0 space-y-8 border-0 p-0",
+                suiteSettingsTabRowsClass(settingsTab),
+              )}
               data-testid={
                 editingDisabled ? "suite-settings-locked" : undefined
               }
@@ -3321,6 +3367,8 @@ export function SuiteIterationsView({
       ) : null}
     </div>
   );
+  if (settingsNav.pending)
+    return <RowsLoading label="Loading suite settings..." />;
   return isEditMode ? (
     <SharedSettingsGate
       projectId={projectId}
