@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 import { FindingsSummaryCard } from "../findings/findings-summary-card";
+import { wireFindingsFootnotes } from "../findings/findings-headline";
+import { truncatedWire } from "./swarm-findings-wire-fixtures";
 
 /**
  * The card takes SENTENCES and renders ONE PARAGRAPH.
@@ -14,6 +16,30 @@ import { FindingsSummaryCard } from "../findings/findings-summary-card";
  */
 
 describe("FindingsSummaryCard", () => {
+  it("renders a rejected cause once when coverage and counts report it", () => {
+    const wire = truncatedWire({
+      verification: {
+        proposed: 1,
+        confirmed: 0,
+        rejected: 1,
+        unverified: 0,
+        omitted: 0,
+      },
+    });
+    wire.coverageNotes = ["mechanismsRejected"];
+
+    render(
+      <FindingsSummaryCard
+        sessionCount={6}
+        summary={["The run finished."]}
+        footnotes={wireFindingsFootnotes(wire)}
+      />,
+    );
+
+    expect(screen.getAllByText(/possible cause.*rejected/)).toHaveLength(1);
+    expect(screen.getByText("1 possible cause was rejected.")).toBeInTheDocument();
+  });
+
   it("joins the sentences into a single paragraph element", () => {
     render(
       <FindingsSummaryCard
