@@ -74,6 +74,7 @@ describe("Evaluate nav page map", () => {
         Boolean(EVALUATE_NAV_PAGES[route.type].Page),
       );
     }
+    expect(EVALUATE_NAV_PAGES["suite-settings"].Page).toBeDefined();
   });
 
   it("covers every new route kind", () => {

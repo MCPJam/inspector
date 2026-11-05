@@ -38,7 +38,7 @@ describe("EvaluateNavHost", () => {
   });
 
   it("renders today's page without waiting when the route has no new page", () => {
-    renderAt("/evaluate/suite/s_1/settings");
+    renderAt("/evaluate/suite/s_1");
     expect(screen.getByText("today")).toBeTruthy();
   });
 

@@ -9,6 +9,7 @@ import { draftTestCaseId } from "../../evals/draft-test-case";
 import { EvaluateLandingPage } from "../landing/evaluate-landing-page";
 import { IterationPage } from "../test-run/iteration-page";
 import { TestRunPage } from "../test-run/test-run-page";
+import { SuiteSettingsPage } from "../suite-settings/suite-settings-page";
 
 /** A route kind that today's Evaluate tab renders. */
 export type CurrentEvalRoute = Exclude<EvalRoute, EvaluateNavRoute>;
@@ -64,6 +65,7 @@ export const EVALUATE_NAV_PAGES: EvaluateNavPageMap = {
       tab === "cases"
         ? { type: "suite-overview", suiteId, view: "test-cases" }
         : { type: "suite-edit", suiteId },
+    Page: SuiteSettingsPage,
   },
   "case-new": {
     page: "case_new",

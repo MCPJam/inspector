@@ -32,10 +32,13 @@ export function useSuiteSettingsEditor({
   suite,
   projectId,
   editingDisabled,
+  keepsDraft,
 }: {
   suite: EvalSuite;
   projectId: string | null;
   editingDisabled: boolean;
+  /** Addresses that show this same draft; leaving for one never prompts. */
+  keepsDraft?: (nextPathname: string) => boolean;
 }) {
   // ── The settings draft (S1) ─────────────────────────────────────────────
   //
@@ -133,8 +136,12 @@ export function useSuiteSettingsEditor({
   // prompt. Without it the draft outlives the sheet: the guard re-prompts on
   // every later navigation, ⌘S saves from the run list, and
   // the edits they were told they were leaving behind are still there.
-  useUnsavedChangesGuard(hasUnsavedSettings, () =>
-    dispatchDraft({ type: "discard" }),
+  useUnsavedChangesGuard(
+    hasUnsavedSettings,
+    () => dispatchDraft({ type: "discard" }),
+    undefined,
+    false,
+    keepsDraft,
   );
 
   // The suite moved under us. An untouched row simply refreshes; a row the

@@ -30,6 +30,11 @@ export function useUnsavedChangesGuard(
   onDiscard?: () => void,
   message = "You have unsaved settings. Leave without saving?",
   pendingSave = false,
+  /**
+   * Whether `nextPathname` still shows the same draft, so leaving for it
+   * loses nothing (Suite settings tabs share one draft across addresses).
+   */
+  keepsDraft?: (nextPathname: string) => boolean,
 ) {
   // Stable across renders that do not change the answer: react-router
   // re-registers the blocker whenever this function's identity moves, and this
@@ -43,10 +48,11 @@ export function useUnsavedChangesGuard(
       nextLocation: { pathname: string; search?: string; hash?: string };
     }) =>
       hasUnsavedChanges &&
+      !keepsDraft?.(nextLocation.pathname) &&
       (currentLocation.pathname !== nextLocation.pathname ||
         currentLocation.search !== nextLocation.search ||
         currentLocation.hash !== nextLocation.hash),
-    [hasUnsavedChanges],
+    [hasUnsavedChanges, keepsDraft],
   );
   const blocker = useBlocker(shouldBlock);
 
