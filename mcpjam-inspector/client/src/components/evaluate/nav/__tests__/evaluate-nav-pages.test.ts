@@ -3,6 +3,7 @@ import type { EvalRoute, EvaluateNavRoute } from "@/lib/eval-route-types";
 import { buildEvaluatePath } from "@/lib/app-navigation";
 import {
   EVALUATE_NAV_PAGES,
+  resolveEvaluatePage,
   resolveEvaluateNavPage,
   toCurrentEvalRoute,
 } from "../evaluate-nav-pages";
@@ -67,16 +68,29 @@ describe("Evaluate nav page map", () => {
     expect(resolved.page).toBe(EVALUATE_NAV_PAGES[route.type].page);
   });
 
-  it("has no new page yet, so nothing waits for the flag", () => {
+  it("waits for the flag only on routes with a new page", () => {
+    const built = new Set(["evaluate-runs"]);
     for (const [route] of rows) {
-      expect(resolveEvaluateNavPage(route).element).toBeUndefined();
+      expect(Boolean(resolveEvaluateNavPage(route).element)).toBe(
+        built.has(route.type),
+      );
     }
   });
 
   it("covers every new route kind", () => {
     expect(new Set(rows.map(([route]) => route.type))).toEqual(
-      new Set(Object.keys(EVALUATE_NAV_PAGES)),
+      new Set(Object.keys(EVALUATE_NAV_PAGES).filter((k) => k !== "evaluate")),
     );
+  });
+
+  it("gives /evaluate the landing's Suites page and leaves today's routes alone", () => {
+    const landing = resolveEvaluatePage({ type: "list" });
+    expect(landing?.page).toBe("evaluate_suites");
+    expect(landing?.currentRoute).toEqual({ type: "list" });
+    expect(landing?.element).toBeDefined();
+    expect(
+      resolveEvaluatePage({ type: "suite-overview", suiteId: "s_1" }),
+    ).toBeNull();
   });
 
   it("passes today's routes through unchanged", () => {

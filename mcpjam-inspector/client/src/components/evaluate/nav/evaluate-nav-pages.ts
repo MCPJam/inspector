@@ -6,12 +6,14 @@ import type {
 } from "@/lib/eval-route-types";
 import { isEvaluateNavRoute } from "@/lib/evaluate-nav-route-path";
 import { draftTestCaseId } from "../../evals/draft-test-case";
+import { EvaluateLandingPage } from "../landing/evaluate-landing-page";
 
 /** A route kind that today's Evaluate tab renders. */
 export type CurrentEvalRoute = Exclude<EvalRoute, EvaluateNavRoute>;
 
 /** The `page` property of `eval_nav_page_viewed`. */
 export type EvaluateNavPageName =
+  | "evaluate_suites"
   | "evaluate_runs"
   | "suite_settings"
   | "case_new"
@@ -21,7 +23,7 @@ export type EvaluateNavPageName =
   | "test_run_edit"
   | "iteration";
 
-export interface EvaluateNavPageEntry<R extends EvaluateNavRoute> {
+export interface EvaluateNavPageEntry<R extends EvalRoute> {
   page: EvaluateNavPageName;
   /** Today's route for the same content: shown with the flag off, or until `Page` exists. */
   currentRoute: (route: R) => CurrentEvalRoute;
@@ -29,11 +31,14 @@ export interface EvaluateNavPageEntry<R extends EvaluateNavRoute> {
   Page?: ComponentType<{ route: R }>;
 }
 
+/** `/evaluate` itself: the landing's Suites tab, a route today's tab also renders. */
+type EvaluateLandingRoute = Extract<EvalRoute, { type: "list" }>;
+
 export type EvaluateNavPageMap = {
   [K in EvaluateNavRouteType]: EvaluateNavPageEntry<
     Extract<EvaluateNavRoute, { type: K }>
   >;
-};
+} & { evaluate: EvaluateNavPageEntry<EvaluateLandingRoute> };
 
 /**
  * Route kind → page (E3). Each Phase 2 page adds its `Page` here instead of
@@ -41,9 +46,15 @@ export type EvaluateNavPageMap = {
  * is also what a new-style link opens with the flag off (PD3).
  */
 export const EVALUATE_NAV_PAGES: EvaluateNavPageMap = {
+  evaluate: {
+    page: "evaluate_suites",
+    currentRoute: (route) => route,
+    Page: EvaluateLandingPage,
+  },
   "evaluate-runs": {
     page: "evaluate_runs",
     currentRoute: () => ({ type: "list" }),
+    Page: EvaluateLandingPage,
   },
   "suite-settings": {
     page: "suite_settings",
@@ -138,7 +149,16 @@ export function resolveEvaluateNavPage(
   }
 }
 
-function applyEntry<R extends EvaluateNavRoute>(
+/** The nav page for any route that has one: the nav kinds and `/evaluate`. */
+export function resolveEvaluatePage(
+  route: EvalRoute,
+): ResolvedEvaluateNavPage | null {
+  if (route.type === "list")
+    return applyEntry(EVALUATE_NAV_PAGES.evaluate, route);
+  return isEvaluateNavRoute(route) ? resolveEvaluateNavPage(route) : null;
+}
+
+function applyEntry<R extends EvalRoute>(
   entry: EvaluateNavPageEntry<R>,
   route: R,
 ): ResolvedEvaluateNavPage {

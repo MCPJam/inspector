@@ -1,5 +1,11 @@
 import type { ReactNode } from "react";
-import { ChevronDown, Play, Plus } from "lucide-react";
+import {
+  ChevronDown,
+  GraduationCap,
+  MoreVertical,
+  Play,
+  Plus,
+} from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Breadcrumb,
@@ -32,6 +38,12 @@ export const EVAL_LANDING_VIEW_OPTIONS = [
 
 export type EvalLandingView =
   (typeof EVAL_LANDING_VIEW_OPTIONS)[number]["value"];
+
+/** Landing tabs with the nav rework on: Suites first, and each tab an address (C1). */
+const EVALUATE_NAV_LANDING_TABS = [
+  { value: "suites", label: "Suites" },
+  { value: "runs", label: "Runs" },
+] as const satisfies readonly ViewModeSelectorOption<EvalLandingView>[];
 
 export type EvalsHeaderParentCrumb = {
   label: string;
@@ -236,6 +248,63 @@ export function EvalsHeader({
             Create suite
           </Button>
         ) : null
+      }
+    />
+  );
+}
+
+/**
+ * The Evaluate landing header with the nav rework on (C1): Suites | Runs,
+ * Create suite as the primary button, and a ⋮ menu holding Tutorial.
+ */
+export function EvaluateNavLandingHeader({
+  view,
+  onViewChange,
+  onCreateSuite,
+  onTutorial,
+}: {
+  view: EvalLandingView;
+  onViewChange: (view: EvalLandingView) => void;
+  onCreateSuite: () => void;
+  onTutorial: () => void;
+}) {
+  return (
+    <LandingPageHeader
+      testId="evals-header"
+      title="Evaluate"
+      description={EVALUATE_HEADER_DESCRIPTION}
+      tabs={{
+        value: view,
+        options: EVALUATE_NAV_LANDING_TABS,
+        onChange: onViewChange,
+        ariaLabel: "Evaluate view",
+        indicatorId: "evals-landing",
+      }}
+      actions={
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Button size="sm" className="gap-1.5" onClick={onCreateSuite}>
+            <Plus className="h-4 w-4" aria-hidden />
+            Create suite
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                aria-label="More options"
+              >
+                <MoreVertical className="size-4" aria-hidden />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={onTutorial}>
+                <GraduationCap className="h-4 w-4" aria-hidden />
+                Tutorial
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       }
     />
   );

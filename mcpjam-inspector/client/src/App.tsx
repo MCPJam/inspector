@@ -1668,7 +1668,7 @@ function EvaluateRouteContent() {
   }
 
   return (
-    <EvaluateNavHost>
+    <EvaluateNavHost projectId={convexProjectId}>
       <EvaluateTab
         projectId={convexProjectId}
         ensureServersReady={ensureServersReady}

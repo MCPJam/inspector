@@ -1,9 +1,9 @@
 import { useContext, useEffect, useMemo, type ReactNode } from "react";
 import { UNSAFE_LocationContext } from "react-router";
 import { useEvaluateRouteFromUrl } from "@/lib/eval-route-url";
-import { isEvaluateNavRoute } from "@/lib/evaluate-nav-route-path";
+import { EvaluateTutorialProvider } from "../landing/evaluate-tutorial";
 import {
-  resolveEvaluateNavPage,
+  resolveEvaluatePage,
   toCurrentEvalRoute,
   type CurrentEvalRoute,
 } from "./evaluate-nav-pages";
@@ -18,12 +18,15 @@ export const EVAL_NAV_ARRIVAL_STATE_KEY = "evalNavArrival";
  * page exists, and `children` (today's Evaluate tab) otherwise. It waits for
  * the flag only on routes that have a new page.
  */
-export function EvaluateNavHost({ children }: { children: ReactNode }) {
+export function EvaluateNavHost({
+  projectId,
+  children,
+}: {
+  projectId?: string | null;
+  children: ReactNode;
+}) {
   const route = useEvaluateRouteFromUrl();
-  const resolved = useMemo(
-    () => (isEvaluateNavRoute(route) ? resolveEvaluateNavPage(route) : null),
-    [route],
-  );
+  const resolved = useMemo(() => resolveEvaluatePage(route), [route]);
   const navEnabled = useEvaluateNavEnabled();
   const arrivedVia = readArrival(
     useContext(UNSAFE_LocationContext)?.location.state,
@@ -41,9 +44,21 @@ export function EvaluateNavHost({ children }: { children: ReactNode }) {
     });
   }, [route, page, tab, arrivedVia]);
 
-  if (!resolved?.element) return <>{children}</>;
-  if (navEnabled === undefined) return null;
-  return <>{navEnabled ? resolved.element : children}</>;
+  const body = !resolved?.element
+    ? children
+    : navEnabled === undefined
+      ? null
+      : navEnabled
+        ? resolved.element
+        : children;
+  return (
+    <EvaluateTutorialProvider
+      enabled={navEnabled === true}
+      projectId={projectId}
+    >
+      {body}
+    </EvaluateTutorialProvider>
+  );
 }
 
 /** The parsed route as today's Evaluate tab renders it. */
