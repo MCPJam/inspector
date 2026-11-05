@@ -1,3 +1,4 @@
+import type { ModelDefinition } from "@/shared/types";
 import {
   act,
   fireEvent,
@@ -17,13 +18,17 @@ const mocks = vi.hoisted(() => ({
   query: vi.fn(),
   mutation: vi.fn(),
   resolve: vi.fn(),
+  models: new Array<ModelDefinition>(),
 }));
 vi.mock("convex/react", () => ({ useConvex: () => mocks }));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => [],
 }));
 vi.mock("@/hooks/use-available-models", () => ({
-  useAvailableModels: () => ({ availableModels: [], onAddProvider: null }),
+  useAvailableModels: () => ({
+    availableModels: mocks.models,
+    onAddProvider: null,
+  }),
 }));
 vi.mock("@/components/environment-composer/use-composer-resolver", () => ({
   useComposerResolver: () => mocks.resolve,
@@ -46,7 +51,22 @@ vi.mock("../new-swarm-judge-row", () => ({
   NewSwarmJudgeRow: () => <div>Judge picker</div>,
 }));
 vi.mock("@/components/chat-v2/chat-input/model-selector", () => ({
-  ModelSelector: () => <div>Model picker</div>,
+  ModelSelector: ({
+    currentModel,
+    availableModels,
+    onModelChange,
+  }: {
+    currentModel: ModelDefinition;
+    availableModels: ModelDefinition[];
+    onModelChange: (model: ModelDefinition) => void;
+  }) => (
+    <div>
+      <span>{currentModel.name}</span>
+      <button onClick={() => onModelChange(availableModels[1])}>
+        Choose second connection
+      </button>
+    </div>
+  ),
 }));
 const goal: RerunGoal = {
   runId: "run-old",
@@ -66,6 +86,7 @@ const goal: RerunGoal = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.models = [];
   mocks.query.mockResolvedValue([goal]);
   mocks.resolve.mockResolvedValue({ environmentIds: ["env-org"], skipped: [] });
 });
@@ -138,4 +159,54 @@ it("keeps the repair open after a rejected save", async () => {
     "This connection is no longer available.",
   );
   expect(onDone).not.toHaveBeenCalled();
+});
+
+it("keeps the simulated user model tied to the explicitly picked connection", async () => {
+  mocks.models = [
+    {
+      id: "gpt-4o",
+      name: "Connection A",
+      provider: "openai",
+      hosted: false,
+      orgProvider: { providerKey: "openai", id: "connection-a" },
+    },
+    {
+      id: "gpt-4o",
+      name: "Connection B",
+      provider: "openai",
+      hosted: false,
+      orgProvider: { providerKey: "openai", id: "connection-b" },
+    },
+  ];
+  mocks.mutation.mockResolvedValue("repaired");
+  render(
+    <SwarmRerunRepairDialog
+      projectId="project"
+      goal={{
+        ...goal,
+        problems: [
+          {
+            dependency: "persona",
+            label: "Simulated user",
+            reason: "Choose an organization model.",
+          },
+        ],
+      }}
+      onDone={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByText("Choose second connection"));
+  expect(screen.getByText("Connection B")).toBeTruthy();
+  fireEvent.click(screen.getByText("Save replacements"));
+  await waitFor(() =>
+    expect(mocks.mutation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        personaSelection: expect.objectContaining({
+          modelId: "openai/gpt-4o",
+          connectionRef: { kind: "orgProvider", id: "connection-b" },
+        }),
+      }),
+    ),
+  );
 });

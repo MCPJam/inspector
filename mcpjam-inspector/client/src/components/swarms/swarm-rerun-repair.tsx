@@ -25,7 +25,10 @@ import { useComposerResolver } from "@/components/environment-composer/use-compo
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
-import { storedModelChoice } from "@/components/chat-v2/shared/model-selection";
+import {
+  findModelForStoredChoice,
+  storedModelChoice,
+} from "@/components/chat-v2/shared/model-selection";
 import { NewSwarmJudgeRow } from "./new-swarm-judge-row";
 import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 
@@ -237,10 +240,18 @@ export function SwarmRerunRepairDialog({
             <ModelSelector
               inModal
               onAddProvider={models.onAddProvider}
+              requireOrgKeys={models.requireOrgKeys}
+              onManageOrgProviders={models.onManageOrgProviders}
               availableModels={models.availableModels}
               currentModel={
-                models.availableModels.find(
-                  (model) => model.id === personaSelection?.modelId,
+                findModelForStoredChoice(
+                  {
+                    modelId: personaSelection?.modelId ?? "",
+                    selection: personaSelection,
+                  },
+                  models.availableModels,
+                  undefined,
+                  { exactSelection: true },
                 ) ?? models.availableModels[0]
               }
               onModelChange={(model) =>
