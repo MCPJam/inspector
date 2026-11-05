@@ -15,6 +15,7 @@ import {
   isTimedOutCheck,
   isMissingInputCheck,
   missingInputMessage,
+  noTaskCreatedMessage,
 } from "@mcpjam/sdk/browser";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Button } from "@mcpjam/design-system/button";
@@ -257,7 +258,11 @@ export function CheckRow({
           {check.error &&
           !expanded && showsMessageShut(check.status, check.skipReason) ? (
             <ResultMessage
-              message={missingInputMessage(check) ?? check.error.message}
+              message={
+                missingInputMessage(check) ??
+                noTaskCreatedMessage(check) ??
+                check.error.message
+              }
               tone={
                 check.status === "failed" && !pending ? "error" : "neutral"
               }
@@ -280,7 +285,11 @@ export function CheckRow({
           </div>
           {check.error && (
             <ResultMessage
-              message={missingInputMessage(check) ?? check.error.message}
+              message={
+                missingInputMessage(check) ??
+                noTaskCreatedMessage(check) ??
+                check.error.message
+              }
               tone={
                 check.status === "failed" && !pending ? "error" : "neutral"
               }

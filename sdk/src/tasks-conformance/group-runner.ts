@@ -464,9 +464,9 @@ export class TaskGroupRunner extends TaskOperations {
             if (!createdTaskId) {
               return couldNotRun(
                 id,
-                `the probed tool ${JSON.stringify(
+                `${JSON.stringify(
                   probeTool.name
-                )} returned a normal result, so no task existed to inspect; name a task-creating tool with --tool-name (SDK: toolName) or supply --tool-args (SDK: toolArguments) that provoke one`
+                )} returned a normal result instead of a task, so there was nothing to check; pass --tool-name (SDK: toolName) with a tool that creates a task, or --tool-args (SDK: toolArguments) that make this one create a task`
               );
             }
             return couldNotRun(

@@ -16,7 +16,10 @@ import {
 import type { MCPTasksCheckResult } from "../../src/tasks-conformance/index.js";
 import * as operations from "../../src/operations.js";
 import type { MCPServerConfig } from "../../src/mcp-client-manager/index.js";
-import { isMissingInputCheck } from "../../src/conformance-input.js";
+import {
+  isMissingInputCheck,
+  noTaskCreatedMessage,
+} from "../../src/conformance-input.js";
 import { scoreFromTasksResult } from "../../src/conformance-score.js";
 
 let activeFetch: typeof fetch | undefined;
@@ -1089,7 +1092,15 @@ describe("MCPTasksConformanceTest", () => {
     expect(statusMap(result)["tasks-result-type-discipline"]).toBe("passed");
     expect(statusMap(result)["tasks-ttl-shape"]).toBe("skipped");
     expect(result.outcome).toBe("incomplete");
-    expect(result.incompleteReason).toContain("no task existed to inspect");
+    expect(result.incompleteReason).toContain(
+      '"long_job" returned a normal result instead of a task'
+    );
+    expect(result.incompleteReason).toContain("--tool-name");
+    // The app swaps the CLI flags for setup copy.
+    const ttl = result.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(noTaskCreatedMessage(ttl)).toBe(
+      '"long_job" did not create a task, so there was nothing to check. Select a tool that creates a task in setup, or change its arguments so it does, then run again.'
+    );
   });
 
   it("skips the task checks when the connection has no tasks wire", async () => {
