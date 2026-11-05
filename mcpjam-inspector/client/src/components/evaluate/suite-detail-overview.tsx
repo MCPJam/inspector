@@ -83,6 +83,8 @@ import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
 import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
 import { CI_OWNED_REASON_COPY } from "@/lib/evals/is-ci-owned-suite";
 import { targetKeyLabel } from "@/lib/eval-target-key";
+import { useEvaluateNavEnabled } from "./nav/use-evaluate-nav-enabled";
+import { SuiteSettingsButton } from "./nav/suite-settings-button";
 
 export const SUITE_EMPTY_CASES_TITLE = "No cases yet";
 export const SUITE_EMPTY_CASES_DESCRIPTION =
@@ -252,6 +254,8 @@ export function SuiteDetailOverview({
     listedRuns,
   );
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
+  // Loading counts as off: today's Suite page is the safe default.
+  const navEnabled = useEvaluateNavEnabled() === true;
   const [clientFilter, setClientFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [modelFilter, setModelFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [showAllRuns, setShowAllRuns] = useState(false);
@@ -507,7 +511,7 @@ export function SuiteDetailOverview({
       size="sm"
       className="h-8 gap-1.5"
       disabled={runDisabled}
-      aria-label="Setup Run"
+      aria-label={navEnabled ? "Run" : "Setup Run"}
       aria-busy={isRerunning}
       onClick={() => setReviewRun(true)}
     >
@@ -516,7 +520,7 @@ export function SuiteDetailOverview({
       ) : (
         <Play className="h-3.5 w-3.5 shrink-0" aria-hidden />
       )}
-      Setup Run
+      {navEnabled ? "Run" : "Setup Run"}
     </Button>
   );
 
@@ -587,7 +591,8 @@ export function SuiteDetailOverview({
               className="h-8"
               onClick={onSetupSdk}
             >
-              <Code2 className="size-3.5" aria-hidden /> Setup SDK
+              <Code2 className="size-3.5" aria-hidden />{" "}
+              {navEnabled ? "Export as SDK" : "Setup SDK"}
             </Button>
           )}
           {configLocked ? (
@@ -600,6 +605,8 @@ export function SuiteDetailOverview({
             >
               {CI_OWNED_REASON_COPY}
             </span>
+          ) : navEnabled && !readOnlyConfig ? (
+            <SuiteSettingsButton suiteId={suite._id} />
           ) : !readOnlyConfig ? (
             <Button
               type="button"
@@ -793,7 +800,8 @@ export function SuiteDetailOverview({
           onImport={onImportCases}
           fillRemaining={!showRunHistory}
         />
-      ) : hasCases ? (
+      ) : hasCases && !navEnabled ? (
+        // With the navigation rework the case list lives in Suite settings.
         <section
           className={evalSurfaceCardClass}
           data-testid="suite-detail-test-cases"
