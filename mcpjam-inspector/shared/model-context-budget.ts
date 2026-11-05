@@ -49,6 +49,13 @@ export type FitMessagesOptions = {
   contextTokens?: number;
   /** Tokens the step spends outside `messages`: system prompt and tools. */
   fixedTokens?: number;
+  /**
+   * Drop earlier-turn reasoning once anything is cleared: a replayed thinking
+   * block bound to the old history is a 400 on Claude Fable 5.1 and Opus 5.5.
+   * Off for OpenAI Responses, which rejects a reply sent without its
+   * reasoning item, and where a caller already prunes reasoning.
+   */
+  dropEarlierReasoning?: boolean;
 };
 
 const DENSE_RUN = /[A-Za-z0-9+/=_-]{64,}/g;
@@ -166,10 +173,19 @@ function cutText(
     cutMarker(originalTokens, originalTokens),
   );
   const budget = Math.max(0, cap - markerTokens - 1);
-  let keepChars = Math.floor((budget * text.length) / originalTokens);
+  let keepChars =
+    originalTokens > 0
+      ? Math.floor((budget * text.length) / originalTokens)
+      : 0;
   for (;;) {
-    const head = text.slice(0, Math.ceil(keepChars / 2));
-    const tail = text.slice(text.length - Math.floor(keepChars / 2));
+    // No half of a surrogate pair at the cut: a lone one is invalid JSON
+    // text to some providers.
+    const head = text
+      .slice(0, Math.ceil(keepChars / 2))
+      .replace(/[\uD800-\uDBFF]$/, "");
+    const tail = text
+      .slice(text.length - Math.floor(keepChars / 2))
+      .replace(/^[\uDC00-\uDFFF]/, "");
     const keptTokens = estimateModelTokens(head) + estimateModelTokens(tail);
     const result = `${head}${cutMarker(originalTokens - keptTokens, originalTokens)}${tail}`;
     if (estimateModelTokens(result) < cap || keepChars === 0) {
@@ -195,31 +211,30 @@ function capOutput(
       return { output: { type, value: cut.text }, ...cut };
     }
     case "content": {
+      // The text parts become one, cut once: a marker per part outgrows parts
+      // smaller than it. Images and files stay as they are.
       const parts = output.value as unknown[];
-      const textTokens = parts.reduce(
-        (sum: number, part) =>
-          sum + (isRecord(part) && part.type === "text" ? partTokens(part) : 0),
-        0,
+      const texts = new Set(
+        parts.filter((part) => isRecord(part) && part.type === "text"),
       );
-      const textCap = cap - (tokens - textTokens);
-      if (textTokens === 0 || textCap <= 0) return undefined;
-      let kept = 0;
-      const value = parts.map((part) => {
-        if (!isRecord(part) || part.type !== "text") return part;
-        const own = partTokens(part);
-        const share = Math.floor((textCap * own) / textTokens);
-        if (own < share) {
-          kept += own;
-          return part;
-        }
-        const cut = cutText(serialize(part.text), share);
-        kept += cut.keptTokens;
-        return { ...part, text: cut.text };
-      });
+      const text = [...texts]
+        .map((part) => serialize((part as { text?: unknown }).text))
+        .join("\n");
+      const nonText = (parts.length - texts.size) * FILE_PART_TOKENS;
+      if (!text || cap - nonText <= 0) return undefined;
+      const cut = cutText(text, cap - nonText);
+      const first = parts.findIndex((part) => texts.has(part));
+      const value = parts.flatMap((part, index) =>
+        index === first
+          ? [{ ...(part as object), text: cut.text }]
+          : texts.has(part)
+            ? []
+            : [part],
+      );
       return {
         output: { ...output, value },
         originalTokens: tokens,
-        keptTokens: kept,
+        keptTokens: nonText + cut.keptTokens,
       };
     }
     default:
@@ -336,19 +351,14 @@ export function fitMessagesToModelContext(
   const hasReport = report.shortened.length > 0 || report.cleared.length > 0;
   return {
     messages:
-      report.cleared.length > 0
+      report.cleared.length > 0 && options.dropEarlierReasoning
         ? withoutEarlierReasoning(fitted, turnStart)
         : fitted,
     ...(hasReport ? { report } : {}),
   };
 }
 
-/**
- * Earlier-turn reasoning, dropped once clearing has edited those turns: a
- * replayed thinking block bound to the old history is a 400 on Claude Fable
- * 5.1 and Opus 5.5. The hosted engine already prunes it; the direct engine
- * relies on this.
- */
+/** See `FitMessagesOptions.dropEarlierReasoning`. */
 function withoutEarlierReasoning(
   messages: ModelMessage[],
   turnStart: number,

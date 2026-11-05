@@ -170,6 +170,63 @@ describe("runDirectChatTurn context budget", () => {
     expect(estimateModelTokens(toolText(step.messages))).toBeLessThan(10_000);
   });
 
+  it("drops earlier reasoning when clearing, except on OpenAI Responses", async () => {
+    const earlierTurn = (id: string): ModelMessage[] => [
+      { role: "user", content: `turn ${id}` },
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "thinking" },
+          {
+            type: "tool-call",
+            toolCallId: id,
+            toolName: "get_events",
+            input: {},
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: id,
+            toolName: "get_events",
+            output: { type: "text", value: "event ok. ".repeat(700) },
+          },
+        ],
+      },
+    ];
+    const long: ModelMessage[] = [
+      ...earlierTurn("a"),
+      ...earlierTurn("b"),
+      ...earlierTurn("c"),
+      { role: "user", content: "next" },
+    ];
+    const reasoningLeft = async (provider: string) => {
+      streamTextMock.mockClear();
+      const { prepareStep, onContextCompaction } = startTurn({
+        llmModel: { id: "mock", provider } as never,
+        messageHistory: long,
+        modelContextTokens: 10_000,
+      });
+      const step = await prepareStep({
+        stepNumber: 0,
+        messages: long,
+        initialMessages: long,
+        responseMessages: [],
+      });
+      expect(onContextCompaction).toHaveBeenCalled();
+      return (step.messages ?? [])
+        .flatMap((message) =>
+          Array.isArray(message.content) ? message.content : [],
+        )
+        .filter((part) => part.type === "reasoning").length;
+    };
+    expect(await reasoningLeft("anthropic.messages")).toBe(0);
+    expect(await reasoningLeft("openai.responses")).toBe(3);
+  });
+
   it("leaves a step alone when every result fits and nothing presents it", async () => {
     const small: ModelMessage[] = [{ role: "user", content: "hello" }];
     const { prepareStep } = startTurn({ messageHistory: small });

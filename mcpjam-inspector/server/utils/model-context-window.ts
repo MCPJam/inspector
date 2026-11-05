@@ -51,7 +51,12 @@ export function fitStepForModel(args: {
   provider?: string;
   contextTokens?: number;
   systemPrompt?: string;
+  /**
+   * Every tool the turn can use, not one step's advertised subset: a count
+   * that moves between steps would move the cleared set mid-turn.
+   */
   tools?: unknown;
+  dropEarlierReasoning?: boolean;
 }): { messages: ModelMessage[]; report?: ContextCompactionReport } {
   try {
     return fitMessagesToModelContext(args.messages, {
@@ -63,6 +68,7 @@ export function fitStepForModel(args: {
       fixedTokens:
         estimateModelTokens(args.systemPrompt ?? "") +
         estimateModelTokens(serializedSize(args.tools)),
+      dropEarlierReasoning: args.dropEarlierReasoning,
     });
   } catch (error) {
     logger.warn("[context-budget] fit failed", {

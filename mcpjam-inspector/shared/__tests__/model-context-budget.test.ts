@@ -193,6 +193,58 @@ describe("fitMessagesToModelContext: cap", () => {
     );
   });
 
+  it("finishes on an empty text part beside an image", () => {
+    const image = {
+      type: "file",
+      mediaType: "image/png",
+      data: { type: "data", data: "iVBOR".repeat(10) },
+    };
+    const fitted = fitMessagesToModelContext(
+      history({
+        type: "content",
+        value: [
+          { type: "text", text: "" },
+          image,
+          { type: "text", text: prose(4_000) },
+        ],
+      }),
+      { contextTokens: 8_000 },
+    );
+    const capped = toolOutput(fitted.messages, "c1");
+    expect(capped.value).toContainEqual(image);
+    expect(fitted.report?.shortened).toHaveLength(1);
+  });
+
+  it("cuts many small text parts once, so the result shrinks", () => {
+    const rows = Array.from({ length: 2_000 }, (_, i) => ({
+      type: "text",
+      text: `row ${i}: ${"status ok ".repeat(7)}`,
+    }));
+    const fitted = fitMessagesToModelContext(
+      history({ type: "content", value: rows }),
+      { contextTokens: 200_000 },
+    );
+    const capped = toolOutput(fitted.messages, "c1");
+    const all = capped.value
+      .map((part: { text: string }) => part.text)
+      .join("");
+    expect(all.match(/\[MCPJam cut /g)).toHaveLength(1);
+    expect(estimateModelTokens(all)).toBeLessThan(MAX_TOOL_RESULT_TOKENS);
+    expect(fitted.report?.shortened[0].keptTokens).toBeGreaterThan(20_000);
+  });
+
+  it("never leaves half of a surrogate pair at the cut", () => {
+    const lone =
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    for (const prefix of ["", "a", "ab", "abc"]) {
+      const fitted = fitMessagesToModelContext(
+        history(text(prefix + "ok 😀 ".repeat(20_000))),
+        { contextTokens: 200_000 },
+      );
+      expect(toolOutput(fitted.messages, "c1").value).not.toMatch(lone);
+    }
+  });
+
   it("bounds the cap by a quarter of a small window", () => {
     const fitted = fitMessagesToModelContext(history(text(BASE64)), {
       contextTokens: 32_000,
@@ -395,18 +447,25 @@ describe("fitMessagesToModelContext: clear", () => {
       ...reasoningTurn,
       { role: "user", content: "next" } as ModelMessage,
     ];
-    const fitted = fitMessagesToModelContext(messages, {
+    const reasoningOf = (fitted: { messages: ModelMessage[] }) =>
+      fitted.messages.flatMap((message) =>
+        Array.isArray(message.content)
+          ? (message.content as Array<{ type: string }>).filter(
+              (part) => part.type === "reasoning",
+            )
+          : [],
+      );
+    const dropped = fitMessagesToModelContext(messages, {
       contextTokens: WINDOW,
+      dropEarlierReasoning: true,
     });
-    expect(fitted.report?.cleared.length).toBeGreaterThan(0);
-    const reasoning = fitted.messages.flatMap((message) =>
-      Array.isArray(message.content)
-        ? (message.content as Array<{ type: string }>).filter(
-            (part) => part.type === "reasoning",
-          )
-        : [],
-    );
-    expect(reasoning).toEqual([]);
+    expect(dropped.report?.cleared.length).toBeGreaterThan(0);
+    expect(reasoningOf(dropped)).toEqual([]);
+    // OpenAI Responses replays a reply by id and rejects it without its
+    // reasoning item, so a caller on that API keeps it.
+    const kept = fitMessagesToModelContext(messages, { contextTokens: WINDOW });
+    expect(kept.report?.cleared.length).toBeGreaterThan(0);
+    expect(reasoningOf(kept)).toHaveLength(1);
   });
 
   it("keeps reasoning when nothing is cleared", () => {

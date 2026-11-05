@@ -821,7 +821,12 @@ export function runDirectChatTurn(
             provider,
             contextTokens: modelContextTokens,
             systemPrompt: providerSystemPrompt,
-            tools: stepTools,
+            tools,
+            // OpenAI Responses (`openai.responses`, `azure.responses`) replays
+            // a reply by id and rejects it without its reasoning item.
+            dropEarlierReasoning:
+              typeof llmModel === "string" ||
+              !llmModel.provider?.endsWith(".responses"),
           })
         : undefined;
       if (fitted?.report) {

@@ -4008,7 +4008,9 @@ async function processOneStep(ctx: StepContext): Promise<{
     modelId,
     provider,
     systemPrompt: providerSystemPrompt,
-    tools: activeToolDefs,
+    tools: toolDefs,
+    // No `dropEarlierReasoning`: the scrub above already prunes it, except
+    // on OpenAI Responses, which needs it.
   });
   const scrubbedMessages = fitted.messages;
   if (fitted.report) {
