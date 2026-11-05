@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { ModelDefinition } from "@/shared/types";
 import { findModelForStoredChoice } from "@/components/chat-v2/shared/model-selection";
-import { hostConfigDtoToInput, type HostConfigDtoV2 } from "../client-config-v2";
+import {
+  hostConfigDtoToInput,
+  type HostConfigDtoV2,
+} from "../client-config-v2";
 import { HOST_MODEL_SELECTION_PURPOSE } from "../host-model-selection";
-import { orgCanonicalTarget, pickedModelTarget } from "../org-keys-model-target";
+import {
+  orgCanonicalTarget,
+  orgKeysSavableRows,
+  pickedModelTarget,
+} from "../org-keys-model-target";
 import {
   carryEffortToModel,
   selectionReasoningEffort,
@@ -197,5 +204,37 @@ describe("orgCanonicalTarget", () => {
       hosted: true,
     } as ModelDefinition;
     expect(orgCanonicalTarget(hosted, purpose)).toBeUndefined();
+  });
+});
+
+describe("client editor rows under the organization key policy", () => {
+  // An organization Bedrock row whose bare id has no canonical catalog id: a
+  // pick could save only the bare id, which the policy refuses after reload.
+  const ORG_BEDROCK_CUSTOM = {
+    id: "acme.custom-model-v1:0",
+    name: "Acme custom",
+    provider: "bedrock",
+    hosted: false,
+    orgProvider: { providerKey: "bedrock", id: "orgprov_bedrock" },
+  } as ModelDefinition;
+  const HOSTED_DISALLOWED = {
+    id: "openai/gpt-5.6-luna",
+    name: "GPT-5.6 Luna",
+    provider: "openai",
+    disabled: true,
+    disabledReason: "org_keys",
+  } as ModelDefinition;
+  const rows = [ORG_LUNA, ORG_SONNET, ORG_BEDROCK_CUSTOM, HOSTED_DISALLOWED];
+
+  it("offers only rows a pick saves with an org selection", () => {
+    expect(orgKeysSavableRows(rows, true, purpose)).toEqual([
+      ORG_LUNA,
+      ORG_SONNET,
+      HOSTED_DISALLOWED,
+    ]);
+  });
+
+  it("leaves the list alone with the policy off", () => {
+    expect(orgKeysSavableRows(rows, false, purpose)).toBe(rows);
   });
 });

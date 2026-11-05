@@ -32,10 +32,38 @@ export function orgCanonicalTarget(
   purpose: ModelSelectionPurpose,
 ): Required<ModelTarget> | undefined {
   if (selectionBesideLegacyId(model, purpose)) return undefined;
+  return orgSelectionTarget(model, purpose);
+}
+
+/**
+ * The id and organization selection a pick of this row saves. `undefined`
+ * when the row cannot be saved as one, such as an organization row whose bare
+ * id has no canonical catalog id: the policy refuses it after reload.
+ */
+export function orgSelectionTarget(
+  model: ModelDefinition,
+  purpose: ModelSelectionPurpose,
+): Required<ModelTarget> | undefined {
   const choice = storedModelChoice(model, undefined, purpose);
   return choice.selection?.source === "org"
     ? { modelId: choice.modelId, selection: choice.selection }
     : undefined;
+}
+
+/**
+ * Under the organization's key policy, a picker that saves a model offers
+ * only rows it can save with an organization selection. Disabled rows stay,
+ * so the saved model's warning row is still shown on the trigger.
+ */
+export function orgKeysSavableRows(
+  models: ModelDefinition[],
+  requireOrgKeys: boolean,
+  purpose: ModelSelectionPurpose,
+): ModelDefinition[] {
+  if (!requireOrgKeys) return models;
+  return models.filter(
+    (row) => row.disabled === true || orgSelectionTarget(row, purpose),
+  );
 }
 
 /**
@@ -51,7 +79,9 @@ export function pickedModelTarget(
   const org = requireOrgKeys
     ? orgCanonicalTarget(model, "evalTarget")
     : undefined;
-  return org ? modelTarget(org.modelId, org.selection) : { modelId: String(model.id) };
+  return org
+    ? modelTarget(org.modelId, org.selection)
+    : { modelId: String(model.id) };
 }
 
 /** A saved strict target must name its source and connection, not just a model id. */
