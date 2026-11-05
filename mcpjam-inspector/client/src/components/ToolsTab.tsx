@@ -398,11 +398,13 @@ export function ToolsTab({
     stopLoading = true,
     clearTaskCapabilities = true,
     clearSelection = true,
+    clearTools = true,
   }: {
     invalidateRequests?: boolean;
     stopLoading?: boolean;
     clearTaskCapabilities?: boolean;
     clearSelection?: boolean;
+    clearTools?: boolean;
   } = {}) => {
     if (invalidateRequests) {
       toolFetchVersionRef.current += 1;
@@ -415,8 +417,10 @@ export function ToolsTab({
         setElicitationLoading(false);
       }
     }
-    setTools({});
-    setToolListComplete(false);
+    if (clearTools) {
+      setTools({});
+      setToolListComplete(false);
+    }
     if (clearSelection) {
       clearSelectedTool();
       setActiveElicitation(null);
@@ -607,11 +611,14 @@ export function ToolsTab({
     setListError(null);
     setFetchingTools(true);
     if (reset) {
+      // The current list stays until the new one arrives: a failed refresh
+      // must not cost the selected tool its definition (form, task policy).
       resetLoadedToolState({
         invalidateRequests: false,
         stopLoading: false,
         clearTaskCapabilities: false,
         clearSelection: false,
+        clearTools: false,
       });
     }
     const fetchVersion = ++toolFetchVersionRef.current;

@@ -58,6 +58,7 @@ vi.mock("../logger-view", () => ({ LoggerView: () => <div /> }));
 
 const tool = (name: string) => ({
   name,
+  description: `Selected ${name}`,
   inputSchema: { type: "object", properties: {} },
 });
 
@@ -144,10 +145,12 @@ describe("ToolsTab selection across a list refresh", () => {
     expect(mockExecuteToolApi).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a selected tool usable when the refresh fails", async () => {
+  it("keeps a selected tool and its definition when the refresh fails", async () => {
     await refreshWithoutSelectedTool({ refreshFails: true });
     expect(screen.queryByText("No selection")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^run/i })).toBeEnabled();
+    // The form and task policy come from the definition, so it must survive.
+    expect(screen.getByText("Selected old-tool")).toBeInTheDocument();
   });
 
   it("does not save an empty request when the tool leaves the list", async () => {
