@@ -130,6 +130,7 @@ export interface PinnedHostExecutionSpec {
   agentLoop?: Harness;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
+  requireNativeToolDiscovery?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   /**

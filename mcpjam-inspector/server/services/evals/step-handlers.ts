@@ -1,3 +1,4 @@
+import { viewToolEvidenceForStep } from "./view-tool-evidence.js";
 // Phase-4 PR2 (plan: please-do-a-sequential-fail-fast-verdict.md).
 //
 // Production `StepExecutorHandlers` for the LOCAL (BYOK / AI-SDK) path. These are
@@ -57,6 +58,7 @@ export function buildLocalStepHandlers(
   ): Promise<StepEngineOutcome> {
     const messagesBefore = acc.conversationMessages.length;
     const spansBefore = acc.capturedSpans.length;
+    const viewCallsBefore = ctx.browser.viewToolCalls?.length ?? 0;
     const inBefore = acc.accumulatedUsage.inputTokens ?? 0;
     const outBefore = acc.accumulatedUsage.outputTokens ?? 0;
     const totalBefore = acc.accumulatedUsage.totalTokens ?? 0;
@@ -73,7 +75,7 @@ export function buildLocalStepHandlers(
     // Delta the acc mutated into a return-style outcome.
     const messages = acc.conversationMessages.slice(messagesBefore);
     const spans = acc.capturedSpans.slice(spansBefore);
-    const toolCalls = acc.toolsCalledByPrompt[turnOrdinal] ?? [];
+    const toolCalls = viewToolEvidenceForStep(acc.toolsCalledByPrompt[turnOrdinal] ?? [], ctx.browser.viewToolCalls?.slice(viewCallsBefore) ?? []);
     const toolErrors = acc.toolErrorsByPrompt[turnOrdinal] ?? [];
     const usage = {
       inputTokens: (acc.accumulatedUsage.inputTokens ?? 0) - inBefore,
@@ -123,6 +125,7 @@ export function buildLocalStepHandlers(
   ): Promise<StepEngineOutcome> {
     const messagesBefore = acc.conversationMessages.length;
     const spansBefore = acc.capturedSpans.length;
+    const viewCallsBefore = ctx.browser.viewToolCalls?.length ?? 0;
     const inBefore = acc.accumulatedUsage.inputTokens ?? 0;
     const outBefore = acc.accumulatedUsage.outputTokens ?? 0;
     const totalBefore = acc.accumulatedUsage.totalTokens ?? 0;
@@ -138,7 +141,7 @@ export function buildLocalStepHandlers(
 
     const messages = acc.conversationMessages.slice(messagesBefore);
     const spans = acc.capturedSpans.slice(spansBefore);
-    const toolCalls = driverParams.extractToolCalls({ messages });
+    const toolCalls = viewToolEvidenceForStep(driverParams.extractToolCalls({ messages }), ctx.browser.viewToolCalls?.slice(viewCallsBefore) ?? []);
     const toolErrors = extractToolErrors({
       spans,
       messages: messages as Array<{ role: string; content: unknown }>,
@@ -241,6 +244,7 @@ export function buildHostedStepHandlers(
   ): Promise<StepEngineOutcome> {
     const messagesBefore = acc.messageHistory.length;
     const spansBefore = acc.capturedSpans.length;
+    const viewCallsBefore = ctx.browser.viewToolCalls?.length ?? 0;
     const inBefore = acc.accumulatedUsage.inputTokens ?? 0;
     const outBefore = acc.accumulatedUsage.outputTokens ?? 0;
     const totalBefore = acc.accumulatedUsage.totalTokens ?? 0;
@@ -254,7 +258,7 @@ export function buildHostedStepHandlers(
 
     const messages = acc.messageHistory.slice(messagesBefore);
     const spans = acc.capturedSpans.slice(spansBefore);
-    const toolCalls = acc.toolsCalledByPrompt[turnOrdinal] ?? [];
+    const toolCalls = viewToolEvidenceForStep(acc.toolsCalledByPrompt[turnOrdinal] ?? [], ctx.browser.viewToolCalls?.slice(viewCallsBefore) ?? []);
     const usage = {
       inputTokens: (acc.accumulatedUsage.inputTokens ?? 0) - inBefore,
       outputTokens: (acc.accumulatedUsage.outputTokens ?? 0) - outBefore,
@@ -306,6 +310,7 @@ export function buildHostedStepHandlers(
   ): Promise<StepEngineOutcome> {
     const messagesBefore = acc.messageHistory.length;
     const spansBefore = acc.capturedSpans.length;
+    const viewCallsBefore = ctx.browser.viewToolCalls?.length ?? 0;
     const inBefore = acc.accumulatedUsage.inputTokens ?? 0;
     const outBefore = acc.accumulatedUsage.outputTokens ?? 0;
     const totalBefore = acc.accumulatedUsage.totalTokens ?? 0;
@@ -319,7 +324,7 @@ export function buildHostedStepHandlers(
 
     const messages = acc.messageHistory.slice(messagesBefore);
     const spans = acc.capturedSpans.slice(spansBefore);
-    const toolCalls = ctx.extractToolCalls(messages);
+    const toolCalls = viewToolEvidenceForStep(ctx.extractToolCalls(messages), ctx.browser.viewToolCalls?.slice(viewCallsBefore) ?? []);
     const toolErrors = extractToolErrors({
       spans,
       messages: messages as Array<{ role: string; content: unknown }>,

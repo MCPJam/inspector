@@ -249,6 +249,7 @@ export async function runTransportChecks(
   ctx: RawHttpCheckContext,
   selectedCheckIds: Set<MCPCheckId>,
 ): Promise<MCPCheckResult[]> {
+  ctx.config.signal?.throwIfAborted();
   const results: MCPCheckResult[] = [];
   // Membership in the metadata record, NOT a name-prefix test: a prefix
   // predicate silently drops any new transport id that doesn't happen to match
@@ -303,6 +304,7 @@ export async function runTransportChecks(
     try {
       session = await initializeSession(ctx);
     } catch (error) {
+      ctx.config.signal?.throwIfAborted();
       if (selectedCheckIds.has("server-sse-polling-session")) {
         results.push(
           failedResult(
@@ -649,6 +651,7 @@ export async function runTransportChecks(
               ),
         );
       } catch (error) {
+        ctx.config.signal?.throwIfAborted();
         results.push(
           couldNotRunResult(
             TRANSPORT_CHECK_METADATA["notification-post-accepted"],
@@ -693,6 +696,7 @@ export async function runTransportChecks(
               ),
         );
       } catch (error) {
+        ctx.config.signal?.throwIfAborted();
         results.push(
           couldNotRunResult(
             TRANSPORT_CHECK_METADATA["get-stream-or-405"],

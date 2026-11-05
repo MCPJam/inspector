@@ -23,6 +23,8 @@ interface MaskedValueInputProps {
   pendingReveal?: boolean;
   /** A reveal is in flight; the eye becomes a spinner and stops accepting clicks. */
   isRevealing?: boolean;
+  /** Display only: the value can be uncovered and selected, never typed into. */
+  readOnly?: boolean;
 }
 
 /** Fixed-width stand-in for a hidden value — the same twelve dots
@@ -49,6 +51,7 @@ export function MaskedValueInput({
   className,
   pendingReveal = false,
   isRevealing = false,
+  readOnly = false,
 }: MaskedValueInputProps) {
   // An empty row has nothing to give away, so it keeps its placeholder rather
   // than showing dots for a value that isn't there. A pending row is the
@@ -61,11 +64,11 @@ export function MaskedValueInput({
         type="text"
         value={hidden ? HIDDEN_MASK : value}
         onChange={(e) => {
-          if (hidden) return;
+          if (hidden || readOnly) return;
           onChange(e.target.value);
         }}
-        readOnly={hidden}
-        aria-readonly={hidden || undefined}
+        readOnly={hidden || readOnly}
+        aria-readonly={hidden || readOnly || undefined}
         placeholder={placeholder}
         spellCheck={false}
         autoCapitalize="off"

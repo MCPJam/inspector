@@ -1,3 +1,4 @@
+import { attachComputerSandbox } from "../../utils/computers/attach-computer.js";
 /**
  * Computer terminal WebSocket bridge (`GET /api/web/computers/terminal`).
  *
@@ -37,13 +38,14 @@
 import { randomUUID } from "node:crypto";
 import type { UpgradeWebSocket } from "hono/ws";
 import type { MiddlewareHandler } from "hono";
-import { Sandbox, type CommandHandle } from "e2b";
+import type { Sandbox, CommandHandle } from "e2b";
 import { verifyComputerTerminalToken } from "../../utils/computers/terminal-token.js";
 import {
   createPtyWithCwd,
   sanitizeTerminalCwd,
 } from "../../utils/computers/create-pty.js";
 import {
+  type ComputerSandboxInfo,
   computerUnavailableError,
   getComputerSandboxInfo,
   isComputersDataPlaneConfigured,
@@ -116,6 +118,7 @@ export function createComputerTerminalWsHandler(
     let rejectMessage = "";
     let computerId: string | null = null;
     let sandboxId: string | null = null;
+    let authorizedComputer: ComputerSandboxInfo | null = null;
 
     if (!isComputersDataPlaneConfigured()) {
       rejectCode = CLOSE_UNAVAILABLE;
@@ -149,10 +152,12 @@ export function createComputerTerminalWsHandler(
           rejectMessage = "Computer is still provisioning.";
         } else {
           sandboxId = info.value.providerComputerId;
+          authorizedComputer = info.value;
         }
       }
     }
 
+    const attachAbort = new AbortController();
     const sessionId = randomUUID();
     let pty: CommandHandle | null = null;
     let sandbox: Sandbox | null = null;
@@ -170,7 +175,7 @@ export function createComputerTerminalWsHandler(
 
     return {
       onOpen: (_evt, ws) => {
-        if (rejectCode !== null || !sandboxId || !computerId) {
+        if (rejectCode !== null || !sandboxId || !computerId || !authorizedComputer) {
           ws.send(
             JSON.stringify({
               type: "error",
@@ -183,11 +188,11 @@ export function createComputerTerminalWsHandler(
           );
           return;
         }
-        // Bring up the PTY asynchronously; Sandbox.connect auto-resumes a
-        // paused machine, so a cold terminal open doubles as a wake.
+        // Keep cold wakes and timeout renewal inside the control plane.
+        const selectedComputer = authorizedComputer;
         void (async () => {
           try {
-            sandbox = await Sandbox.connect(sandboxId);
+            sandbox = await attachComputerSandbox(selectedComputer, attachAbort.signal);
             pty = await createPtyWithCwd(
               sandbox,
               {
@@ -288,6 +293,7 @@ export function createComputerTerminalWsHandler(
 
       onClose: () => {
         closed = true;
+        attachAbort.abort();
         const handle = pty;
         const box = sandbox;
         pty = null;

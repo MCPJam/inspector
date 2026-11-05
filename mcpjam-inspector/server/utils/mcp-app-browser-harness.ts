@@ -1,3 +1,6 @@
+import { McpAppViewTools, type ViewToolCallRecord } from "./mcp-app-view-tools.js";
+import { WEBMCP_RELAY_SOURCE } from "./webmcp-view/webmcp-relay-source.js";
+import { WEBMCP_VIEW_POLYFILL_JS } from "./webmcp-view/webmcp-view-polyfill.js";
 import { randomUUID } from "node:crypto";
 import type { MCPClientManager, MCPReadResourceResult } from "@mcpjam/sdk";
 import { MODEL_CONTEXT_POLICY_DEFAULTS } from "@mcpjam/sdk/host-config/internal";
@@ -52,6 +55,7 @@ import {
   sanitizeProxyDomain,
 } from "./sandbox-proxy-csp";
 import { HARNESS_PAGE_BUNDLE } from "./browser-harness/HarnessPageBundle.generated";
+import type { ToolDataDelivery } from "./browser-harness/tool-data-delivery";
 import {
   ensureLocalChromiumInstalled,
   isChromiumInstalled,
@@ -407,6 +411,8 @@ export interface RenderWidgetInput {
 type ResourceReadParams = Parameters<MCPClientManager["readResource"]>[1];
 
 export interface McpAppBrowserHarnessOptions {
+  enableViewTools?: boolean;
+  onViewToolCall?: (call: ViewToolCallRecord) => void;
   /** Current host transcript/appearance. Pure data; never an execution callback. */
   getWorkspacePresentation?: () => HarnessPresentation;
   /** Dispatch a widget-initiated tools/call (app->host). */
@@ -559,13 +565,13 @@ export function pushBoundedDiagnostic(arr: string[], value: string): void {
  * `content="…"` and truncate or disable the policy we are injecting. A
  * well-formed CSP never contains `&"<>`, so this is a no-op for real policies.
  */
-export function injectCspMeta(html: string, cspContent: string): string {
+export function injectCspMeta(html: string, cspContent: string, prefix = ""): string {
   const escaped = cspContent
     .replace(/&/g, "&amp;")
     .replace(/"/g, "&quot;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-  const tag = `<meta http-equiv="Content-Security-Policy" content="${escaped}">`;
+  const tag = prefix + `<meta http-equiv="Content-Security-Policy" content="${escaped}">`;
   const headOpen = /<head\b[^>]*>/i.exec(html);
   if (headOpen) {
     const at = headOpen.index + headOpen[0].length;
@@ -603,6 +609,7 @@ const DEFAULT_HOST_CAPABILITIES = {
 } as const;
 
 interface MountedWidget {
+  resourceUri?: string;
   serverId: string;
   actionCount: number;
 }
@@ -688,11 +695,20 @@ export class McpAppBrowserHarness {
   /** SSRF guard's private-network tier (see {@link isBlockedEgressHost}). */
   private readonly blockPrivateNetworks: boolean;
 
+  readonly viewTools: McpAppViewTools;
   constructor(opts: McpAppBrowserHarnessOptions) {
     this.opts = opts;
     this.budgets = { ...DEFAULT_HARNESS_BUDGETS, ...(opts.budgets ?? {}) };
     this.viewport = opts.viewport ?? { ...DEFAULT_VIEWPORT };
     this.blockPrivateNetworks = opts.blockPrivateNetworks ?? HOSTED_MODE;
+    this.viewTools = new McpAppViewTools({
+      onCall: opts.onViewToolCall,
+      enabled: opts.enableViewTools === true, page: () => this.page,
+      mount: () => { const viewId = this.getMountedWidgetId(); const mount = viewId ? this.mounted.get(viewId) : null; return viewId && mount ? { viewId, serverId: mount.serverId, resourceUri: mount.resourceUri } : null; },
+      dismiss: id => this.unmount(id),
+      beginAction: () => { this.toolCallBuffer = []; this.followUpBuffer = []; },
+      drain: async () => ({ widgetToolCalls: await this.drainAfterAction(), followUps: this.followUpBuffer.splice(0) }),
+    });
   }
 
   hasRenderedWidget(): boolean {
@@ -894,6 +910,7 @@ export class McpAppBrowserHarness {
           return { error: "widget not mounted" };
         }
         const serverId = widget.serverId;
+        const ownedBuffer = this.opts.enableViewTools ? this.toolCallBuffer : undefined;
         const startedAt = Date.now();
         // Count the RPC as in-flight BEFORE awaiting so `drainAfterAction` waits
         // for slow tool calls instead of returning before they land (and
@@ -909,7 +926,7 @@ export class McpAppBrowserHarness {
             payload.name,
             payload.args,
           );
-          this.toolCallBuffer.push({
+          (ownedBuffer ?? this.toolCallBuffer).push({
             name: payload.name,
             args: payload.args,
             ok: true,
@@ -920,7 +937,7 @@ export class McpAppBrowserHarness {
           return { result };
         } catch (err) {
           const error = err instanceof Error ? err.message : String(err);
-          this.toolCallBuffer.push({
+          (ownedBuffer ?? this.toolCallBuffer).push({
             name: payload.name,
             args: payload.args,
             ok: false,
@@ -1030,12 +1047,14 @@ export class McpAppBrowserHarness {
     await this.page.setContent(
       "<!doctype html><html><head><meta charset='utf-8'></head><body></body></html>",
     );
+    if (this.opts.enableViewTools) await this.page.addScriptTag({ content: WEBMCP_RELAY_SOURCE });
     await this.page.addScriptTag({ content: HARNESS_PAGE_BUNDLE });
   }
 
   /* ---- render ---- */
 
   renderWidget(input: RenderWidgetInput): Promise<WidgetRenderObservation> {
+    if (this.opts.enableViewTools && !this.renderReceipts.has(input.toolCallId)) this.viewTools.invalidate();
     const fingerprint = createHash("sha256")
       .update(JSON.stringify(input))
       .digest("hex");
@@ -1148,6 +1167,7 @@ export class McpAppBrowserHarness {
     // check and drive the CURRENT page instead of the (gone) old widget.
     this.mounted.clear();
     this.mounted.set(input.toolCallId, {
+      resourceUri: input.resourceUri,
       serverId: input.serverId,
       actionCount: 0,
     });
@@ -1175,14 +1195,9 @@ export class McpAppBrowserHarness {
     // `resource_domains` origin; an undeclared widget gets the SEP restrictive
     // default (`default-src 'none'`) instead of running open.
     const cspContent = buildSandboxProxyWidgetCsp(input.cspMeta);
-    const policedHtml = injectCspMeta(input.html, cspContent);
+    const policedHtml = injectCspMeta(input.html, cspContent, this.opts.enableViewTools ? `<script>${WEBMCP_VIEW_POLYFILL_JS}</script>` : "");
 
-    let pageResult: {
-      mounted: boolean;
-      bridgeInitialized: boolean;
-      blank: boolean;
-      mountError?: string;
-    };
+    let pageResult: HarnessPageRenderResult;
     try {
       pageResult = await page.evaluate(
         (opts) =>
@@ -1191,6 +1206,7 @@ export class McpAppBrowserHarness {
           ).__mcpjamHarness.renderWidget(opts),
         {
           widgetId: input.toolCallId,
+          enableViewTools: this.opts.enableViewTools,
           html: policedHtml,
           presentation: this.opts.getWorkspacePresentation?.(),
           hostCapabilities:
@@ -1238,6 +1254,7 @@ export class McpAppBrowserHarness {
         elapsedMs: Date.now() - started,
       };
     }
+    const toolDataProblems = pageResult.toolData?.problems ?? [];
 
     // `pageResult.blank` is a DOM check sampled the instant the bridge
     // handshakes — but handshaking is not painting, and DOM-presence is not
@@ -1274,15 +1291,19 @@ export class McpAppBrowserHarness {
         ...base,
         status: "screenshot_failed",
         bridgeInitialized: pageResult.bridgeInitialized,
-        consoleErrors: [...this.consoleErrors],
+        consoleErrors: [...toolDataProblems, ...this.consoleErrors],
         elapsedMs: Date.now() - started,
       };
     }
 
     let status: WidgetRenderStatus;
     if (!pageResult.bridgeInitialized) status = "bridge_timeout";
+    // A widget that rejected its data, or never received it, has not rendered
+    // it, however much it painted.
+    else if (toolDataProblems.length) status = "render_error";
     else if (blank) status = "blank_screenshot";
     else status = "rendered";
+    const consoleErrors = [...toolDataProblems, ...this.consoleErrors];
 
     // Only a fully-rendered widget stays mounted for Computer Use. Any other
     // outcome is torn down IN THE PAGE too (not just removed from `mounted`),
@@ -1297,9 +1318,7 @@ export class McpAppBrowserHarness {
       status,
       bridgeInitialized: pageResult.bridgeInitialized,
       screenshotBase64,
-      consoleErrors: this.consoleErrors.length
-        ? [...this.consoleErrors]
-        : undefined,
+      consoleErrors: consoleErrors.length ? consoleErrors : undefined,
       blockedRequests: this.blockedRequests.length
         ? [...this.blockedRequests]
         : undefined,
@@ -1382,10 +1401,14 @@ export class McpAppBrowserHarness {
 
   /* ---- interact ---- */
 
-  async executeAction(input: {
+  executeAction(input: {
     toolCallId: string;
     action: BrowserActionSpec;
   }): Promise<BrowserActionResult> {
+    return this.viewTools.runAction(input.toolCallId, () => this.executeActionSerial(input));
+  }
+
+  private async executeActionSerial(input: Parameters<McpAppBrowserHarness["executeAction"]>[0]): Promise<BrowserActionResult> {
     const started = Date.now();
     const widget = this.mounted.get(input.toolCallId);
     if (!widget || !this.page) {
@@ -1493,11 +1516,15 @@ export class McpAppBrowserHarness {
    * `widgetToolCalls` across the run and passes them as `priorWidgetToolCalls`
    * so a `widgetToolCalled` assertion can see a call an earlier step triggered.
    */
-  async runScriptedStep(input: {
+  runScriptedStep(input: {
     toolCallId: string;
     step: ScriptedStep;
     priorWidgetToolCalls?: WidgetToolCall[];
   }): Promise<ScriptedStepResult> {
+    return this.viewTools.runAction(input.toolCallId, () => this.runScriptedStepSerial(input));
+  }
+
+  private async runScriptedStepSerial(input: Parameters<McpAppBrowserHarness["runScriptedStep"]>[0]): Promise<ScriptedStepResult> {
     const started = Date.now();
     const { step } = input;
     const widget = this.mounted.get(input.toolCallId);
@@ -1935,6 +1962,7 @@ export class McpAppBrowserHarness {
   /** Tear the widget down IN THE PAGE (close its host bridge + remove its
    *  iframe) and drop the Node-side mount entry. Best-effort. */
   private async unmount(toolCallId: string): Promise<void> {
+    if (this.opts.enableViewTools && this.mounted.has(toolCallId)) this.viewTools.invalidate();
     if (this.page) {
       await this.page
         .evaluate(
@@ -2009,6 +2037,7 @@ export class McpAppBrowserHarness {
   }
 
   dispose(): Promise<void> {
+    this.viewTools.invalidate();
     this.closing = true;
     this.disposePromise ??= this.disposeOnce();
     return this.disposePromise;
@@ -2039,17 +2068,22 @@ export class McpAppBrowserHarness {
   }
 }
 
+/** host-page.ts's `HostPageRenderResult`, restated so Node never imports the
+ *  page module (it pulls in client code). */
+interface HarnessPageRenderResult {
+  mounted: boolean;
+  bridgeInitialized: boolean;
+  blank: boolean;
+  mountError?: string;
+  toolData?: ToolDataDelivery;
+}
+
 // Shape of the in-page harness API (defined in host-page.ts, installed on the
 // page's global after the bundle is injected). Referenced via a `globalThis`
 // cast inside `page.evaluate` callbacks — those run in the browser, where
 // `globalThis === window`, but are typechecked here in the Node context.
 interface HarnessPageApi {
-  renderWidget: (opts: unknown) => Promise<{
-    mounted: boolean;
-    bridgeInitialized: boolean;
-    blank: boolean;
-    mountError?: string;
-  }>;
+  renderWidget: (opts: unknown) => Promise<HarnessPageRenderResult>;
   dismissWidget: (widgetId: string) => boolean;
   isBlank: (widgetId: string) => boolean;
 }

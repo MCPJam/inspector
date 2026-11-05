@@ -1,3 +1,4 @@
+import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
 import { wrapModelToolsets, type ModelToolExecutor } from "./model-tool-executor.js";
 import {
   mergeConnectionToolsets,
@@ -1271,6 +1272,7 @@ export function applySkillToolApproval(
 }
 
 export interface PrepareChatV2Result {
+  liveServerSkills?: boolean;
   connectionsAtTurn?: Array<{
     serverId: string;
     connectionId: string;
@@ -1979,7 +1981,7 @@ export async function prepareChatV2(
           availableToolNames,
           // A page's tools exist only while that page is open; what the model
           // did with them is still what happened. See the parameter's doc.
-          isWebmcpPageToolName,
+          name => isWebmcpPageToolName(name) || WIDGET_TOOL_VERBS.includes(name),
         ),
         mcpClientManager,
         knownSelectedServers,
@@ -1989,6 +1991,7 @@ export async function prepareChatV2(
     );
 
   return {
+    liveServerSkills: serverSkills.buildPromptSection !== null,
     ...(selectedGroups
       ? {
           toolConnections,

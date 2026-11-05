@@ -105,76 +105,14 @@ export const SCHEDULED_EVALS_WRITE_ENABLED =
  * a LOCAL browser, and the route refuses that explicitly rather than by being
  * unreachable.
  *
- * Hosted reachability is a second, independent gate — see
- * `webmcpInspectorHostedEnabled` — and client visibility follows the
- * deployment's `local-browser-enabled` / `hosted-browser-enabled` rollout.
+ * Who may start one on the hosted browser is the backend's `hosted-browser`
+ * gate, which the desktop reservation and the browser token both enforce, so
+ * the PostHog flag decides launch here as on every other hosted-browser path.
+ * This switch is the inspector's own off switch, independent of PostHog: off,
+ * the route answers 404 and chat stops advertising any page's tools.
  */
 export const WEBMCP_INSPECTOR_ENABLED =
   process.env.MCPJAM_WEBMCP_INSPECTOR_ENABLED !== "false";
-
-/**
- * May a hosted replica serve the WebMCP Inspector at all?
- *
- * A SEPARATE environment variable from `HOSTED_BROWSER_TOOLS_ENABLED`, and
- * that separation is the whole point. Both switches lead to the same hosted
- * browser, but they expose it to different consumers: this one lets a PERSON
- * drive their own page from the inspector, while `HOSTED_BROWSER_TOOLS_ENABLED`
- * hands six `browser_*` tools to a MODEL. The inspector's blast radius is one
- * member's own tab; the catalog's includes co-tenancy with bash and approval
- * threading on four chat surfaces. Rolling the first out must never imply the
- * second, and one shared variable would make it imply exactly that.
- *
- * READ AT CALL TIME, like `hostedBrowserEnabled`: flipped per-process in
- * staging and per-test, and a module constant would freeze whatever the
- * environment said when the module first loaded.
- */
-export function webmcpInspectorHostedEnabled(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return HOSTED_MODE && env.MCPJAM_WEBMCP_INSPECTOR_HOSTED_ENABLED === "1";
-}
-
-/**
- * Can a WebMCP Inspector SESSION exist on this deployment at all?
- *
- * The kill switch and the hosted-reachability switch, composed — the same
- * question the inspector router answers with a 404, asked by anything that
- * must not offer a capability the session behind it cannot provide. The chat
- * routes ask it before advertising a page's tools to a model: a turn that
- * offered them where no session can exist would strand on a call nothing can
- * fulfil.
- *
- * Lives HERE rather than in the router so a caller can ask without importing
- * a Hono app.
- */
-export function webmcpInspectorReachable(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  if (!WEBMCP_INSPECTOR_ENABLED) return false;
-  return !HOSTED_MODE || webmcpInspectorHostedEnabled(env);
-}
-
-/**
- * Is the hosted browser (E2B Desktop + browserd) reachable at all?
- *
- * The dark switch the hosted runtime ships behind until the durable backend
- * exposure gate opens (W7). READ AT CALL TIME, not captured at import: this is
- * flipped per-process in staging and per-test, and a module constant would
- * freeze whatever the environment happened to say when the module first
- * loaded.
- *
- * Two callers must agree on it — the built-in tool registry, which decides
- * whether the MODEL gets browser tools, and the WebMCP Inspector route, which
- * decides whether a person may run their inspector session on a hosted
- * browser. Both reserve a desktop computer and both bill for it, so a second
- * copy of this literal is how one of them stays reachable after the other is
- * turned off.
- */
-export function hostedBrowserEnabled(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return env.HOSTED_BROWSER_TOOLS_ENABLED === "1";
-}
 
 /**
  * How a page's WebMCP tools reach the model.
@@ -193,7 +131,7 @@ export function hostedBrowserEnabled(
  * because the two positions are no longer "new thing on/off" — `verbs` is a
  * named behaviour somebody may deliberately choose, not merely an absence.
  *
- * READ AT CALL TIME, like `hostedBrowserEnabled` beside it: flipped
+ * READ AT CALL TIME, like `browserShapeRedactionEnabled` below it: flipped
  * per-process in staging and per-test, and a module constant would freeze
  * whatever the environment said when this module first loaded.
  */

@@ -60,6 +60,18 @@ export type {
 } from "./app-tool-invocations.js";
 
 export { mcpAppToolResultSchema } from "./tool-result-schema.js";
+export { WEBMCP_APP_CONTRACT } from "./webmcp-contract.js";
+export {
+  appToolSourceFor,
+  listViewWebmcpTools,
+  callViewWebmcpTool,
+  discoverViewAppTools,
+} from "./webmcp-tools.js";
+export type {
+  AppToolDescriptor,
+  AppToolSource,
+  SandboxToolsRequester,
+} from "./webmcp-tools.js";
 
 export {
   readResourceDisplayHints,

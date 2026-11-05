@@ -310,11 +310,11 @@ export interface EnsureBrowserSessionArgs {
   /**
    * Persistent Chrome profile (playground/inspector) unless stated.
    *
-   * `ephemeral` boots the daemon with no profile directory at all, so an
-   * eval or swarm iteration cannot inherit the previous one's cookies. The
-   * mode is part of session identity: a row in the other mode is never
-   * reused, because handing an eval a logged-in profile (or a human a blank
-   * one) is a silent correctness failure either way.
+   * `ephemeral` never carries state between runs: the daemon starts blank, or
+   * from a saved-profile archive copied in for this run, and never exports it
+   * back. The mode is part of session identity: a row in the other mode is
+   * never reused, because handing an eval a member's live profile (or a human
+   * a blank one) is a silent correctness failure either way.
    */
   contextMode?: BrowserContextMode;
   /** Durable logical identity, when this surface has one. */

@@ -7,8 +7,33 @@ vi.mock("../../../services/hosted-model-catalog.js", () => ({
   ingestHostedCatalogIds: vi.fn(),
 }));
 
+// The real reporter and logger run: the assertion is on what reaches Sentry.
+// Only the transports are stubbed.
+const { captureExceptionMock } = vi.hoisted(() => ({
+  captureExceptionMock: vi.fn(),
+}));
+
+vi.mock("@sentry/node", () => ({
+  captureException: captureExceptionMock,
+  captureMessage: vi.fn(),
+  withScope: (callback: (scope: unknown) => unknown) => callback({}),
+}));
+
+vi.mock("@axiomhq/js", () => ({
+  Axiom: vi.fn().mockImplementation(function () {
+    return {
+      ingest: vi.fn(),
+      flush: vi.fn().mockResolvedValue(undefined),
+    };
+  }),
+}));
+
 import models, { __resetModelsCacheForTests } from "../models.js";
 import { ingestHostedCatalogIds } from "../../../services/hosted-model-catalog.js";
+import {
+  INSPECTOR_SENTRY_CATALOG,
+  rebuildSentryEvent,
+} from "../../../../shared/strict-sentry.js";
 
 const ingestMock = vi.mocked(ingestHostedCatalogIds);
 
@@ -33,6 +58,7 @@ describe("GET /api/mcp/models (catalog proxy)", () => {
     process.env.CONVEX_HTTP_URL = "https://backend.test";
     __resetModelsCacheForTests();
     ingestMock.mockClear();
+    captureExceptionMock.mockReset();
     fetchMock = vi.fn();
     global.fetch = fetchMock as unknown as typeof fetch;
   });
@@ -43,6 +69,7 @@ describe("GET /api/mcp/models (catalog proxy)", () => {
     if (originalConvexUrl === undefined) delete process.env.CONVEX_HTTP_URL;
     else process.env.CONVEX_HTTP_URL = originalConvexUrl;
     vi.useRealTimers();
+    vi.unstubAllEnvs();
   });
 
   it("normalizes the backend page and serves the memo within the TTL", async () => {
@@ -98,6 +125,33 @@ describe("GET /api/mcp/models (catalog proxy)", () => {
     const res = await mount().request("/api/mcp/models");
     expect(res.status).toBe(502);
     expect((await res.json()).ok).toBe(false);
+  });
+
+  it("reports the backend's HTTP status under a key the Sentry boundary keeps", async () => {
+    // A shell with the telemetry opt-out set would skip the capture entirely.
+    vi.stubEnv("DO_NOT_TRACK", "");
+    fetchMock.mockResolvedValueOnce(new Response("", { status: 503 }));
+    await mount().request("/api/mcp/models");
+
+    expect(captureExceptionMock).toHaveBeenCalledTimes(1);
+    const [captured, options] = captureExceptionMock.mock.calls[0]! as [
+      Error,
+      { extra?: Record<string, unknown>; tags?: Record<string, string> },
+    ];
+
+    // The strict boundary rebuilds every event from an allowlist; a status
+    // under any other key reaches Sentry as nothing.
+    const sent = rebuildSentryEvent(
+      {
+        exception: {
+          values: [{ type: captured.name, value: captured.message }],
+        },
+        extra: options.extra,
+        tags: options.tags,
+      },
+      INSPECTOR_SENTRY_CATALOG,
+    ) as { extra: Record<string, unknown> };
+    expect(sent.extra.httpStatus).toBe(503);
   });
 
   it("serves the last-good catalog when the backend fails after the memo goes stale", async () => {

@@ -1,6 +1,7 @@
 /**
  * Error handling utilities for MCPClientManager
  */
+import { SdkErrorCode } from "@modelcontextprotocol/client";
 
 /**
  * Checks if an error indicates that a method is not available/implemented by the server.
@@ -19,6 +20,15 @@ export function isMethodUnavailableError(
   }
 
   const message = error.message.toLowerCase();
+  // A malformed or unhandled result is not an absent method. Keeping it visible
+  // prevents list operations from silently becoming an empty tool/resource set.
+  if (
+    ("code" in error &&
+      (error.code === SdkErrorCode.UnsupportedResultType ||
+        error.code === SdkErrorCode.InvalidResult)) ||
+    message.includes("unsupported result type")
+  )
+    return false;
 
   // Build set of tokens from the method name
   const methodTokens = new Set<string>();

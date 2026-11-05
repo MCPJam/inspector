@@ -7,6 +7,7 @@ import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import { patchClaudeCodeBackgroundDrain } from "./claude-code-background-drain.js";
 import { patchClaudeCodeSubagentSteps } from "./claude-code-subagent-steps.js";
+import { patchClaudeCodeElicitation } from "./claude-code-elicitation.js";
 
 export function createClaudeCodeHarness(
   settings?: Parameters<typeof createClaudeCode>[0],
@@ -534,7 +535,7 @@ export function patchClaudeCodeHarnessBootstrap(
               ? {
                   ...file,
                   content: enforceStrictMcpConfig(
-                    patchClaudeCodeBridgeContent(file.content),
+                    patchClaudeCodeElicitation(patchClaudeCodeBridgeContent(file.content)),
                   ),
                 }
               : file,

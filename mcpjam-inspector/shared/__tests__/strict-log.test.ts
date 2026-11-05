@@ -7,6 +7,24 @@ import {
 import catalog from "../telemetry-catalog.generated.json";
 
 describe("strict log boundary", () => {
+  it.each(["timeout", "transport_failed", "model_reported_missing"])(
+    "retains the bounded swarm setup reason %s",
+    (setupReason) => {
+      const row = buildLegacyLogRow(
+        "[swarm.runner] target worker failed; finalizing its attempts",
+        { setupReason },
+      );
+      expect(row.setupReason).toBe(setupReason);
+    },
+  );
+  it("omits arbitrary text from the swarm setup reason", () => {
+    const row = buildLegacyLogRow(
+      "[swarm.runner] target worker failed; finalizing its attempts",
+      { setupReason: "PRIVATE_SENTINEL" },
+    );
+    expect(row).not.toHaveProperty("setupReason");
+  });
+
   it.each(["fetch_failed", "invalid_catalog"])(
     "retains a catalog refresh failure with bounded reason %s and warning level",
     (reason) => {
@@ -186,6 +204,21 @@ describe("strict log boundary", () => {
     expect(row).toMatchObject({ event: "log.unknown", route: "unknown_route" });
     expect(row).not.toHaveProperty("durationMs");
     expect(JSON.stringify(row)).not.toContain("PRIVATE_SENTINEL");
+  });
+  it("names a dependency error class and keeps an unlisted one unknown", () => {
+    const named = (name: string) =>
+      Object.assign(new Error("PRIVATE_SENTINEL"), { name });
+    expect(
+      buildStrictLogRow("http.request.failed", {}, {}, named("McpError")),
+    ).toMatchObject({ errorClass: "McpError", knownError: true });
+    expect(
+      buildStrictLogRow(
+        "http.request.failed",
+        {},
+        {},
+        named("PRIVATE_SENTINEL"),
+      ),
+    ).toMatchObject({ errorClass: "UnknownError", knownError: false });
   });
   it("copies Convex IDs from the server's context and never from a payload", () => {
     const [org, project, server, forged] = ["org", "project", "server", "forged"]

@@ -512,6 +512,69 @@ describe("oauth server obligation checks", () => {
       });
     });
 
+    it("probes 2026-07-28 with a stateless tools/list request, not initialize", async () => {
+      const trackedRequest = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        headers: { "www-authenticate": BEARER_WITH_METADATA },
+        body: { error: "unauthorized" },
+      });
+
+      const result = await runUnauthenticatedChallengeCheck({
+        ...(baseObligationInput as any),
+        config: {
+          ...baseObligationInput.config,
+          protocolVersion: "2026-07-28",
+        },
+        trackedRequest,
+      });
+
+      const request = trackedRequest.mock.calls[0][0];
+      expect(request.body.method).toBe("tools/list");
+      expect(request.headers["Mcp-Method"]).toBe("tools/list");
+      expect(request.headers["MCP-Protocol-Version"]).toBe("2026-07-28");
+      expect(request.headers.Authorization).toBeUndefined();
+      expect(result).toMatchObject({
+        step: "oauth_unauthenticated_challenge",
+        status: "passed",
+      });
+    });
+
+    it("sends one Mcp-Method and one MCP-Protocol-Version when customHeaders use another case", async () => {
+      const trackedRequest = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        headers: { "www-authenticate": BEARER_WITH_METADATA },
+        body: { error: "unauthorized" },
+      });
+
+      await runUnauthenticatedChallengeCheck({
+        ...(baseObligationInput as any),
+        config: {
+          ...baseObligationInput.config,
+          protocolVersion: "2026-07-28",
+          customHeaders: {
+            "mcp-method": "initialize",
+            "mcp-protocol-version": "2025-11-25",
+            "X-Gateway": "bypass",
+          },
+        },
+        trackedRequest,
+      });
+
+      const headers: Record<string, string> =
+        trackedRequest.mock.calls[0][0].headers;
+      const valuesFor = (name: string) =>
+        Object.entries(headers)
+          .filter(([key]) => key.toLowerCase() === name)
+          .map(([, value]) => value);
+      expect(valuesFor("mcp-method")).toEqual(["tools/list"]);
+      expect(valuesFor("mcp-protocol-version")).toEqual(["2026-07-28"]);
+      expect(headers["X-Gateway"]).toBe("bypass");
+    });
+
     it("fails when the server returns 500 instead of 401", async () => {
       const result = await runUnauthenticatedChallengeCheck({
         ...(baseObligationInput as any),
@@ -597,6 +660,31 @@ describe("oauth server obligation checks", () => {
       });
     });
 
+    it("skips on 2026-07-28 when the stateless probe is served without a token", async () => {
+      const trackedRequest = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: { jsonrpc: "2.0", id: 1001, result: { tools: [] } },
+      });
+
+      const result = await runUnauthenticatedChallengeCheck({
+        ...(baseObligationInput as any),
+        config: {
+          ...baseObligationInput.config,
+          protocolVersion: "2026-07-28",
+        },
+        trackedRequest,
+      });
+
+      expect(trackedRequest.mock.calls[0][0].body.method).toBe("tools/list");
+      expect(result).toMatchObject({
+        step: "oauth_unauthenticated_challenge",
+        status: "skipped",
+      });
+    });
+
     it("still fails a non-401 rejection such as 403", async () => {
       const result = await runUnauthenticatedChallengeCheck({
         ...(baseObligationInput as any),
@@ -647,6 +735,76 @@ describe("oauth server obligation checks", () => {
       expect(result).toMatchObject({
         step: "oauth_resource_metadata_challenge",
         status: "passed",
+      });
+    });
+
+    it("passes on 2026-07-28, probing with the stateless tools/list", async () => {
+      const trackedRequest = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        headers: { "www-authenticate": BEARER_WITH_METADATA },
+        body: undefined,
+      });
+
+      const result = await runResourceMetadataChallengeCheck({
+        ...(baseObligationInput as any),
+        config: {
+          ...baseObligationInput.config,
+          protocolVersion: "2026-07-28",
+        },
+        trackedRequest,
+      });
+
+      const request = trackedRequest.mock.calls[0][0];
+      expect(request.body.method).toBe("tools/list");
+      expect(request.headers["Mcp-Method"]).toBe("tools/list");
+      expect(request.headers["MCP-Protocol-Version"]).toBe("2026-07-28");
+      expect(result).toMatchObject({
+        step: "oauth_resource_metadata_challenge",
+        status: "passed",
+      });
+    });
+
+    it("passes an omitted resource_metadata on 2026-07-28 when a well-known URI serves the metadata", async () => {
+      const trackedRequest = jest.fn().mockImplementation(async (request) => {
+        if (request.url.includes("/.well-known/oauth-protected-resource")) {
+          return {
+            ok: true,
+            status: 200,
+            statusText: "OK",
+            headers: { "content-type": "application/json" },
+            body: {
+              resource: "https://mcp.example.com/api/mcp",
+              authorization_servers: ["https://as.example.com"],
+            },
+          };
+        }
+        return {
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          headers: { "www-authenticate": 'Bearer error="invalid_token"' },
+          body: undefined,
+        };
+      });
+
+      const result = await runResourceMetadataChallengeCheck({
+        ...(baseObligationInput as any),
+        config: {
+          ...(baseObligationInput.config as any),
+          serverUrl: "https://mcp.example.com/api/mcp",
+          protocolVersion: "2026-07-28",
+        },
+        trackedRequest,
+      });
+
+      // 2026-07-28, like 2025-11-25, sanctions the well-known URI as the
+      // second discovery mechanism.
+      expect(result).toMatchObject({
+        step: "oauth_resource_metadata_challenge",
+        status: "passed",
+        warnings: [expect.stringContaining("well-known URI")],
       });
     });
 
