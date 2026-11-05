@@ -6,8 +6,11 @@ import {
   createOAuthStateMachine,
   getBrowserDebugDynamicRegistrationMetadata,
   isAuthenticatedRequestFailure,
+  isDynamicClientRegistrationHttpError,
   stepFailureFindingKey,
   isResourceMetadataNotImplemented,
+  isTlsTrustFailure,
+  isUnreachableTargetFailure,
   isUnexpectedProbeStatus,
   isLoopbackOAuthUrl,
   type OAuthFlowState,
@@ -194,6 +197,15 @@ export function createDebugRequestExecutor(
         requestMethod: request.method,
         proxyStatus: proxyResponse.status,
       });
+      // The server's certificate failed, or the connection to it did. The
+      // reason already says so; "Backend debug proxy error: 502" would blame
+      // MCPJam.
+      if (
+        reason &&
+        (isTlsTrustFailure(reason) || isUnreachableTargetFailure(reason))
+      ) {
+        throw new Error(reason);
+      }
       throw new Error(
         `Backend debug proxy error: ${proxyResponse.status} ${
           proxyResponse.statusText
@@ -322,6 +334,22 @@ function createHostedClientSecretResolver({
  * real response, and the target said no. A proxy failure throws its own
  * "Backend debug proxy error" instead, so that one still reports.
  *
+ * A registration endpoint that answers the DCR POST with any non-2xx status is
+ * the same again: no open registration, an initial access token we were never
+ * given, metadata it will not accept. INSPECTOR-CLIENT-2N2, -2JB and -2JM were
+ * that, filed twice per refusal (the bare message, then the same message with
+ * the fallback hint). A proxy failure there reads "Client registration
+ * failed: …" and still reports.
+ *
+ * A server certificate Node.js would not accept is one more (PLB-273). The
+ * local proxy answers 502 with a sentence the SDK owns (`isTlsTrustFailure`)
+ * followed by Node's own fix. A certificate failure on MCPJam's own hosts
+ * never gets that sentence, so it still reports.
+ *
+ * So is a server the local proxy could not connect to: refused, reset or timed
+ * out (PLB-428, `isUnreachableTargetFailure`), answered 502 or 504 with the
+ * same kind of sentence and the same exception for MCPJam's own hosts.
+ *
  * The SDK owns all of these messages and exports them, so matching here cannot
  * drift out of sync with what the machines actually throw.
  */
@@ -336,7 +364,10 @@ function isUnreportedStepFailure(error: string): boolean {
     UNREPORTED_STEP_FAILURES.has(error) ||
     isAuthenticatedRequestFailure(error) ||
     isResourceMetadataNotImplemented(error) ||
-    isUnexpectedProbeStatus(error)
+    isUnexpectedProbeStatus(error) ||
+    isDynamicClientRegistrationHttpError(error) ||
+    isTlsTrustFailure(error) ||
+    isUnreachableTargetFailure(error)
   );
 }
 

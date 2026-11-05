@@ -18,6 +18,7 @@ import { reportServiceCredentialAtBoot } from "./services/service-credential-boo
 import { reportRouteFailure } from "./utils/route-error-report.js";
 import { attachSocketDiagnostics } from "./utils/socket-diagnostics.js";
 import { startProcessVitalsSampler } from "./utils/process-vitals.js";
+import { resolveShutdownSettings } from "../bin/shutdown-settings.mjs";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { isSpaDocumentRequest } from "./utils/spa-document-request.js";
 import { readFileSync } from "fs";
@@ -180,6 +181,7 @@ import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completio
 import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
 import internalAgentTurns from "./routes/internal/agent-turns.js";
 import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
+import internalHostedBrowserSynthetic from "./routes/internal/hosted-browser-synthetic.js";
 import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
 import { createComputerBrowserStreamWsHandler } from "./routes/web/computer-browser-stream.js";
 import {
@@ -195,32 +197,18 @@ import cliAuthRoutes from "./routes/cli-auth/index";
 import relayRoutes, { relayBodyLimit } from "./routes/relay";
 import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata";
 import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd";
+import { registerSyntheticWebMcpPageRoutes } from "./routes/synthetic-webmcp-page.js";
 import { registerPreviewIdentityRoute } from "./routes/preview-identity";
 import { createXaaWebRouter } from "./routes/web/xaa";
 import workosAuthkitRoutes from "./routes/workos-authkit";
 import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
+import { resolveTrustedClientIpHeader } from "./utils/client-ip.js";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
-import {
-  isScheduledEvalsWorkerEnabled,
-  startScheduledEvalsWorker,
-  type ScheduledEvalsWorkerHandle,
-} from "./services/scheduled-evals-worker";
-import {
-  isGithubChecksWorkerEnabled,
-  startGithubChecksWorker,
-  type GithubChecksWorkerHandle,
-} from "./services/github-checks-worker";
-import {
-  startProductionChecksWorker,
-  type ProductionChecksWorkerHandle,
-} from "./services/production-checks-worker";
-import {
-  isBenchWorkerEnabled,
-  startBenchWorker,
-  type BenchWorkerHandle,
-} from "./services/bench-worker";
+import { stopLiveConformanceOAuthRuns } from "./services/conformance-oauth-rendezvous.js";
+import { startBackgroundWorkers } from "./services/background-workers";
+import { drainBeforeTeardown } from "./services/lifecycle/shutdown-drain.js";
 import {
   SERVER_PORT,
   CORS_OPTIONS,
@@ -577,6 +565,10 @@ app.route("/api/internal/evals", internalEvalJudgeCompletions);
 // backend's own queue rather than from anything the caller named.
 app.route("/api/internal/chat-stage", internalChatStageDerivations);
 app.route("/api/internal/agent-turns", internalAgentTurns);
+// Backend → inspector hourly hosted-browser check. Service-token gated like
+// the doorbells above; it reserves a desktop as the backend's synthetic user
+// and deletes it before answering. Mirror of the mount in server/app.ts.
+app.route("/api/internal/hosted-browser", internalHostedBrowserSynthetic);
 // W1 hosted-browser debug probe — mounted only when explicitly enabled (it
 // provisions a desktop and boots browserd end to end), service-token gated.
 // Mirror of the mount in server/app.ts.
@@ -673,6 +665,10 @@ app.route("/api/surface-link", surfaceLinkRoutes);
 // at boot rather than at the first WorkOS call. Unset — every deployment — this
 // is a no-op.
 resolveWorkosApiBaseUrl(process.env);
+// Same for `MCPJAM_TRUSTED_CLIENT_IP_HEADER` (mirror of server/app.ts): a value
+// that is not one header name fails here, not in every request that asks for a
+// client address. Unset, this is a no-op.
+resolveTrustedClientIpHeader(process.env);
 
 // Mounted in EVERY runtime, hosted included. AuthKit's `initialize()` makes no
 // network call at all unless the page's own cookies carry `workos-has-session`
@@ -720,6 +716,10 @@ app.route("/tlm", relayRoutes);
 // server/app.ts::createHonoApp — both production entries must wire this up.
 registerXaaClientMetadataRoute(app);
 registerXaaConfidentialCimdRoute(app);
+// The page the hosted-browser check opens. Outside /api for the same reason:
+// a cloud desktop's browser fetches it with no credential. Mirror of the
+// mount in server/app.ts.
+registerSyntheticWebMcpPageRoutes(app);
 // PR previews only (no-op unless PREVIEW_EDGE_SECRET is set): lets the
 // *.mcpjam.dev preview router verify it's talking to one of our previews.
 // Not mirrored in server/app.ts: Electron is never a PR preview.
@@ -984,37 +984,8 @@ startProcessVitalsSampler();
 // Attach the WebSocket upgrade listener (computer terminal bridge).
 injectWebSocket(server);
 
-// Scheduled eval runs (synthetic monitors): claim-and-execute polling loop.
-// Env-gated; the backend cron has its own SCHEDULED_EVALS_ENABLED gate.
-let scheduledEvalsWorker: ScheduledEvalsWorkerHandle | undefined;
-if (isScheduledEvalsWorkerEnabled()) {
-  scheduledEvalsWorker = startScheduledEvalsWorker();
-}
-
-// GitHub PR check runs: claim a PR trigger, build its MCP server in a sandbox,
-// run the dedicated eval suite, report an outcome. Env-gated; the backend has
-// its own GITHUB_CHECKS_ENABLED gate and 404s the routes when it is off.
-let githubChecksWorker: GithubChecksWorkerHandle | undefined;
-if (isGithubChecksWorkerEnabled()) {
-  githubChecksWorker = startGithubChecksWorker();
-}
-
-// Hosted Connector Bench runs: claim a benchmark job, run one eval child per
-// matrix cell against the run's pinned server, attach the evidence. Env-gated;
-// the backend has its own BENCHMARK_RUNS_ENABLED gate and 404s the routes when
-// it is off, which parks this loop on a slow poll.
-let benchWorker: BenchWorkerHandle | undefined;
-if (isBenchWorkerEnabled()) {
-  benchWorker = startBenchWorker();
-}
-
-// Production scoring: claim-and-grade polling loop for real User Testing
-// sessions. Started unconditionally and deliberately flagless — it self-gates
-// on the service-token env (a non-peer deployment gets an inert handle), and
-// the feature's single switch is the backend's PRODUCTION_CHECKS_ENABLED,
-// which 404s the claim route and parks this loop on a slow poll when off.
-const productionChecksWorker: ProductionChecksWorkerHandle =
-  startProductionChecksWorker();
+// Claim loops (scheduled evals, GitHub checks, bench, production scoring).
+const backgroundWorkers = startBackgroundWorkers();
 
 const expectedParentPid = Number.parseInt(
   process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
@@ -1022,13 +993,12 @@ const expectedParentPid = Number.parseInt(
 );
 let orphanCheckInterval: ReturnType<typeof setInterval> | undefined;
 let shuttingDown = false;
-const shutdownForceExitMs = 5000;
-const logFlushExitMs = 1000;
+const shutdownSettings = resolveShutdownSettings();
 
 function exitAfterLogFlush(code: number) {
   const exitFallbackTimer = setTimeout(
     () => process.exit(code),
-    logFlushExitMs,
+    shutdownSettings.logFlushMs,
   );
   exitFallbackTimer.unref();
 
@@ -1056,7 +1026,7 @@ async function shutdown() {
       new Error("Shutdown timed out; forcing process exit."),
     );
     exitAfterLogFlush(1);
-  }, shutdownForceExitMs);
+  }, shutdownSettings.forceExitMs);
   forceExitTimer.unref();
 
   // Cleared BEFORE the worker awaits: a `stop()` that rejects must not leave a
@@ -1068,19 +1038,17 @@ async function shutdown() {
 
   appLogger.info("Shutting down gracefully...");
   try {
+    // First, and bounded internally: a hosted OAuth conformance run on this
+    // replica dies with it, and its user should hear so now rather than when
+    // the run's window expires.
+    await stopLiveConformanceOAuthRuns();
     // Inside the guarded path so a rejecting worker still reaches the rest of
     // shutdown rather than skipping straight to the force-exit deadline.
     await localServerCheckQueue.shutdown();
-    await scheduledEvalsWorker?.stop();
-    await githubChecksWorker?.stop();
-    await benchWorker?.stop();
-    await productionChecksWorker.stop();
+    await drainBeforeTeardown(backgroundWorkers, shutdownSettings);
     stopRevokedSessionCache();
-    // Abort active synthetic-session runs and write a terminal "failed"
-    // status so the dialog/UI doesn't see a stuck "running" run. Bounded
-    // by an internal timeout; the outer `forceExitTimer` still wins.
-    // Abort active swarm (journey-execution) runs — stops each run's heartbeat
-    // and lets in-flight sessions report a terminal attempt. Bounded internally.
+    // Abort the swarm runs still going after the drain: each stops its
+    // heartbeat and reports a terminal attempt. Bounded internally.
     await shutdownRunningJourneyRuns();
     await tunnelManager.closeAll();
     // Kill local PTYs BEFORE server.close(): close() stops new connections but

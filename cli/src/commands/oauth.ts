@@ -1,8 +1,10 @@
 import {
   reportIncomplete,
+  reportReadiness,
   reportScore,
 } from "../lib/conformance-exit-code.js";
 import {
+  MCP_OAUTH_READINESS_IDS,
   type OAuthConformanceConfig,
   type OAuthConformanceSuiteResult,
   type OAuthLoginConfig,
@@ -142,6 +144,7 @@ export interface OAuthCommandOptions {
   verifyTools?: boolean;
   verifyCallTool?: string;
   conformanceChecks?: boolean;
+  adviceId?: string[];
   printUrl?: boolean;
   credentialsOut?: string;
 }
@@ -374,6 +377,12 @@ export function registerOAuthCommands(program: Command): void {
       "Run additional OAuth negative checks (invalid client, invalid redirect, token format) after the main flow",
     )
     .option(
+      "--advice-id <id>",
+      "Specific advice ID to run. Repeat for multiple. Default: all.",
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option(
       "--credentials-out <path>",
       "Write OAuth credentials to <path> (mode 0600); stdout output has secret fields redacted to [SAVED_TO_FILE]",
     )
@@ -427,6 +436,7 @@ export function registerOAuthCommands(program: Command): void {
       // incomplete run gets the same third exit code as every other suite —
       // "we never established anything" is a different failure from "the
       // server violated the spec", and a human must not have to dig for why.
+      reportReadiness(result, command);
       reportIncomplete(result, command);
       await maybeUploadSingleSuite({
         suiteKind: "oauth",
@@ -522,6 +532,7 @@ export function registerOAuthCommands(program: Command): void {
       }
       for (const run of result.results) {
         reportScore(scoreFromOAuthResult(run), command, run.label);
+        reportReadiness(run, command);
         reportIncomplete(run, command);
       }
       // Worst-of the flows, matching the shared ordering: a violation (1)
@@ -678,6 +689,21 @@ export function buildOAuthConformanceConfig(
     assertValidUrl(redirectUrl, "redirect URL");
   }
 
+  // A blank id is a mistake, not an omitted flag: dropping it would run every
+  // advice instead of the one asked for.
+  if (options.adviceId?.some((id) => !id.trim())) {
+    throw usageError("--advice-id needs an advice id.");
+  }
+  const readinessIds = options.adviceId;
+  const invalidReadinessIds = (readinessIds ?? []).filter(
+    (id) => !(MCP_OAUTH_READINESS_IDS as readonly string[]).includes(id),
+  );
+  if (invalidReadinessIds.length > 0) {
+    throw usageError(
+      `Unknown advice id${invalidReadinessIds.length === 1 ? "" : "s"}: ${invalidReadinessIds.join(", ")}. Valid advice ids: ${MCP_OAUTH_READINESS_IDS.join(", ")}`,
+    );
+  }
+
   const customHeaders = parseHeadersOption(options.header);
   const client: NonNullable<OAuthConformanceConfig["client"]> = {};
 
@@ -726,6 +752,12 @@ export function buildOAuthConformanceConfig(
     stepTimeout: options.stepTimeout ?? 30_000,
     verification,
     oauthConformanceChecks: options.conformanceChecks ?? false,
+    ...(readinessIds && readinessIds.length > 0
+      ? {
+          readinessIds:
+            readinessIds as OAuthConformanceConfig["readinessIds"],
+        }
+      : {}),
   };
 }
 

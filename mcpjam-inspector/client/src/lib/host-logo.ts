@@ -43,6 +43,8 @@ const LOGO_NAME_HINTS: Array<[RegExp, string]> = [
   [/vs ?code/i, "vscode"],
   [/goose/i, "goose"],
   [/cline/i, "cline"],
+  // Matches the product name and the ADK client name the wire actually sends.
+  [/gemini|google[ -]?adk/i, "gemini"],
   [/perplexity/i, "perplexity"],
   [/notion/i, "notion"],
   [/slack/i, "slack"],

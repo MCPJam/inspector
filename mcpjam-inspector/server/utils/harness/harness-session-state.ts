@@ -95,6 +95,7 @@ export type HarnessClaimResult =
       state: HarnessResumePayload | null;
       stateVersion: number;
       fingerprintChanged: boolean;
+      laneId?: string;
     }
   | { ok: false; status: number; error: string };
 
@@ -239,6 +240,7 @@ export async function claimHarnessSessionState(args: {
     state: res.payload.state ?? null,
     stateVersion: Number(res.payload.stateVersion ?? 0),
     fingerprintChanged: Boolean(res.payload.fingerprintChanged),
+    ...(typeof res.payload.laneId === "string" ? { laneId: res.payload.laneId } : {}),
   };
 }
 

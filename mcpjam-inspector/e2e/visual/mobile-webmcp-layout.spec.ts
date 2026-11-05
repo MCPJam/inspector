@@ -120,9 +120,11 @@ for (const theme of ["light", "dark"])
             json:
               c.type === "capture_screenshot"
                 ? { screenshotBase64: jpeg }
-                : c.type === "invoke_tool"
-                  ? { outcome: { state: "succeeded", output: "Added olives" } }
-                  : { ok: true },
+                : c.type === "set_screencast"
+                  ? { streaming: c.enabled }
+                  : c.type === "invoke_tool"
+                    ? { outcome: { state: "succeeded", output: "Added olives" } }
+                    : { ok: true },
           });
         },
       );

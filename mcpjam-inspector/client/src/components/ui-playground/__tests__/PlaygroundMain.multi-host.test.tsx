@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import type { UIMessage } from "ai";
 /** Saved-client comparison wiring and mode transitions. */
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -10,6 +11,7 @@ import {
   within,
 } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
+import { GUEST_LOCKED_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { useHostContextStore } from "@/stores/client-context-store";
 import type { HostDetail } from "@/hooks/useClients";
@@ -371,6 +373,12 @@ vi.mock("@/components/evals/trace-view-mode-tabs", () => ({
 // the right `compareId`, `hostSnapshot`, `executionConfig`, etc.
 vi.mock("@/components/ui-playground/multi-model-playground-card", () => ({
   MultiModelPlaygroundCard: (props: any) => {
+    useEffect(() => {
+      props.onSendReadinessChange?.(
+        `${props.compareKind}:${props.compareId}`,
+        true,
+      );
+    }, [props.onSendReadinessChange, props.compareKind, props.compareId]);
     mockMultiModelPlaygroundCard(props);
     return (
       <div
@@ -840,6 +848,340 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(mockUseChatSession.startChatWithMessages).toHaveBeenCalledTimes(1);
     expect(onConsumed).not.toHaveBeenCalled();
     expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps restoring comparison columns visible before their messages hydrate", () => {
+    const a = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const b = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = { "h-A": a, "h-B": b };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    window.history.replaceState(
+      {},
+      "",
+      "/playground?comparisonRecovery=recovery-test",
+    );
+    sessionStorage.setItem(
+      "mcp-comparison-auth-v1:recovery-test",
+      JSON.stringify({
+        version: 1,
+        id: "recovery-test",
+        projectId: "local",
+        multiModelEnabled: false,
+        hostIds: ["h-A", "h-B"],
+        selectedServers: [],
+        modelSelections: null,
+        clickedColumn: "h-A",
+        continuationId: "c1",
+        columns: ["h-A", "h-B"].map((compareId, order) => ({
+          compareId,
+          order,
+          kind: "host",
+          chatSessionId: "chat-" + compareId,
+          hasMessages: true,
+        })),
+      }),
+    );
+    try {
+      render(<PlaygroundMain {...defaultProps} />);
+      expect(
+        screen.getByTestId("playground-multi-host-compare-section"),
+      ).toHaveAttribute("aria-hidden", "false");
+    } finally {
+      sessionStorage.clear();
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("settles a restored host column whose host no longer exists", async () => {
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }];
+    multiHostFixture.hosts = { "h-A": makeHost("h-A", "Host A") };
+    multiHostFixture.selectedHostIds = ["h-A", "h-gone"];
+    window.history.replaceState({}, "", "/playground?comparisonRecovery=gone");
+    const key = "mcp-comparison-auth-v1:gone";
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({
+        version: 1,
+        id: "gone",
+        projectId: "local",
+        multiModelEnabled: false,
+        hostIds: ["h-A", "h-gone"],
+        selectedServers: [],
+        modelSelections: null,
+        clickedColumn: "h-gone",
+        continuationId: "c1",
+        columns: [
+          {
+            compareId: "h-gone",
+            order: 1,
+            kind: "host",
+            chatSessionId: "chat-gone",
+            hasMessages: true,
+          },
+        ],
+      }),
+    );
+    try {
+      render(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => expect(sessionStorage.getItem(key)).toBeNull());
+      expect(window.location.search).toBe("");
+    } finally {
+      sessionStorage.clear();
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("keeps the saved comparison server set while other servers reconnect", () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/playground?comparisonRecovery=server-recovery",
+    );
+    sessionStorage.setItem(
+      "mcp-comparison-auth-v1:server-recovery",
+      JSON.stringify({
+        version: 1,
+        id: "server-recovery",
+        projectId: "local",
+        multiModelEnabled: false,
+        hostIds: [],
+        selectedServers: ["saved-server"],
+        modelSelections: null,
+        clickedColumn: "a",
+        continuationId: "c1",
+        columns: [
+          {
+            compareId: "a",
+            order: 0,
+            kind: "model",
+            chatSessionId: "chat-a",
+            hasMessages: true,
+          },
+        ],
+      }),
+    );
+    try {
+      render(<PlaygroundMain {...defaultProps} />);
+      expect(capturedChatSessionOptions?.selectedServers).toEqual([
+        "saved-server",
+      ]);
+    } finally {
+      sessionStorage.clear();
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("uses later server selections after the saved comparison selection restores", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/playground?comparisonRecovery=selection-recovery",
+    );
+    sessionStorage.setItem(
+      "mcp-comparison-auth-v1:selection-recovery",
+      JSON.stringify({
+        version: 1,
+        id: "selection-recovery",
+        projectId: "local",
+        multiModelEnabled: false,
+        hostIds: [],
+        selectedServers: ["test-server"],
+        modelSelections: null,
+        clickedColumn: "a",
+        continuationId: "c1",
+        columns: [
+          {
+            compareId: "a",
+            order: 0,
+            kind: "model",
+            chatSessionId: "chat-a",
+            hasMessages: true,
+          },
+        ],
+      }),
+    );
+    mockSharedAppState.servers["other-server"] = {
+      connectionStatus: "connected",
+    };
+    const selector = {
+      serverConfigs: {},
+      selectedServer: "test-server",
+      selectedMultipleServers: ["test-server"],
+      isMultiSelectEnabled: true,
+      onServerChange: vi.fn(),
+      onMultiServerToggle: vi.fn(),
+      onConnect: vi.fn(),
+    };
+    try {
+      const view = render(
+        <PlaygroundMain
+          {...defaultProps}
+          playgroundServerSelectorProps={selector}
+        />,
+      );
+      await waitFor(() =>
+        expect(capturedChatSessionOptions?.selectedServers).toEqual([
+          "test-server",
+        ]),
+      );
+      view.rerender(
+        <PlaygroundMain
+          {...defaultProps}
+          playgroundServerSelectorProps={{
+            ...selector,
+            selectedMultipleServers: ["other-server"],
+          }}
+        />,
+      );
+      await waitFor(() =>
+        expect(capturedChatSessionOptions?.selectedServers).toEqual([
+          "other-server",
+        ]),
+      );
+    } finally {
+      delete mockSharedAppState.servers["other-server"];
+      sessionStorage.clear();
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("restores the saved servers that still exist when one was removed", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/playground?comparisonRecovery=subset-recovery",
+    );
+    sessionStorage.setItem(
+      "mcp-comparison-auth-v1:subset-recovery",
+      JSON.stringify({
+        version: 1,
+        id: "subset-recovery",
+        projectId: "local",
+        multiModelEnabled: false,
+        hostIds: [],
+        selectedServers: ["test-server", "gone-server"],
+        modelSelections: null,
+        clickedColumn: "a",
+        continuationId: "c1",
+        columns: [
+          {
+            compareId: "a",
+            order: 0,
+            kind: "model",
+            chatSessionId: "chat-a",
+            hasMessages: true,
+          },
+        ],
+      }),
+    );
+    const selector = {
+      serverConfigs: {},
+      selectedServer: "test-server",
+      selectedMultipleServers: ["test-server"],
+      isMultiSelectEnabled: true,
+      onServerChange: vi.fn(),
+      onMultiServerToggle: vi.fn(),
+      onConnect: vi.fn(),
+    };
+    try {
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          playgroundServerSelectorProps={selector}
+        />,
+      );
+      await waitFor(() =>
+        expect(capturedChatSessionOptions?.selectedServers).toEqual([
+          "test-server",
+        ]),
+      );
+    } finally {
+      sessionStorage.clear();
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("does not report a failed restore when Connect saves the comparison on this page", () => {
+    const view = render(<PlaygroundMain {...defaultProps} />);
+    // What a comparison Connect click does just before it redirects.
+    act(() => {
+      window.history.replaceState(
+        {},
+        "",
+        "/playground?comparisonRecovery=just-saved",
+      );
+    });
+    try {
+      view.rerender(<PlaygroundMain {...defaultProps} />);
+      expect(
+        screen.queryByText(/couldn’t restore this comparison/),
+      ).not.toBeInTheDocument();
+    } finally {
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("follows a single-server change made after the saved server is back", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/playground?comparisonRecovery=single-recovery",
+    );
+    sessionStorage.setItem(
+      "mcp-comparison-auth-v1:single-recovery",
+      JSON.stringify({
+        version: 1,
+        id: "single-recovery",
+        projectId: "local",
+        multiModelEnabled: false,
+        hostIds: [],
+        selectedServers: ["test-server"],
+        modelSelections: null,
+        clickedColumn: "a",
+        continuationId: "c1",
+        columns: [
+          {
+            compareId: "a",
+            order: 0,
+            kind: "model",
+            chatSessionId: "chat-a",
+            hasMessages: true,
+          },
+        ],
+      }),
+    );
+    const saved = mockSharedAppState.servers["test-server"];
+    mockSharedAppState.servers["test-server"] = {
+      ...saved,
+      connectionStatus: "connecting",
+    };
+    mockSharedAppState.servers["other-server"] = {
+      connectionStatus: "connected",
+    };
+    try {
+      const view = render(<PlaygroundMain {...defaultProps} />);
+      expect(capturedChatSessionOptions?.selectedServers).toEqual([
+        "test-server",
+      ]);
+      // The saved server never reconnects; the user picks another one.
+      view.rerender(
+        <PlaygroundMain {...defaultProps} serverName="other-server" />,
+      );
+      await waitFor(() =>
+        expect(capturedChatSessionOptions?.selectedServers).toEqual([
+          "other-server",
+        ]),
+      );
+    } finally {
+      mockSharedAppState.servers["test-server"] = saved;
+      delete mockSharedAppState.servers["other-server"];
+      sessionStorage.clear();
+      window.history.replaceState({}, "", "/");
+    }
   });
 
   it("selects MCPJam as the previewed client when no current client is selected", async () => {
@@ -1474,6 +1816,53 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(screen.getAllByTestId("multi-host-card")).toHaveLength(1);
     expect(screen.getByText("The saved model or connection is unavailable. Edit this client in Connect.")).toBeTruthy();
     expect(mockChatInput.mock.calls.at(-1)?.[0].submitDisabled).toBe(true);
+  });
+
+  it("sign-in-locked saved model leaves the reason to the composer notice", () => {
+    const hostA = makeHost("h-A", "Host A", {
+      hostStyle: "chatgpt",
+      modelId: "openai/gpt-5-mini",
+    });
+    const hostB = makeHost("h-B", "Host B", {
+      hostStyle: "claude",
+      modelId: "anthropic/claude-sonnet-4.5",
+    });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+
+    const previousModels = mockUseChatSession.availableModels;
+    mockUseChatSession.availableModels = previousModels.map((model) =>
+      model.id === "anthropic/claude-sonnet-4.5"
+        ? {
+            ...model,
+            disabled: true,
+            disabledReason: GUEST_LOCKED_MODEL_REASON,
+          }
+        : model,
+    );
+    try {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(screen.getAllByTestId("multi-host-card")).toHaveLength(1);
+      expect(
+        screen.queryByText(
+          "The saved model or connection is unavailable. Edit this client in Connect.",
+        ),
+      ).toBeNull();
+      const inputProps = mockChatInput.mock.calls.at(-1)![0];
+      expect(inputProps.submitDisabled).toBe(true);
+      render(<>{inputProps.notice}</>);
+      expect(screen.getByTestId("sign-in-model-notice").textContent).toContain(
+        "Host B can't run Claude Sonnet 4.5.",
+      );
+    } finally {
+      mockUseChatSession.availableModels = previousModels;
+    }
   });
 
   it("keeps client transcripts by identity when adding, removing and reordering clients", () => {

@@ -82,7 +82,9 @@ import {
   updateThemePreset,
 } from "./lib/theme-utils";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
+import { useAppLoadStallReport } from "./lib/app-load-stall";
 import { DbUserReadyProvider } from "./contexts/db-user-ready-context";
+import { LegalAcceptanceGate } from "./components/legal/LegalAcceptanceGate";
 import {
   clearLegacyWorkosRefreshTokenStorage,
   resolveWorkosClientOptions,
@@ -119,6 +121,7 @@ if (sandboxOriginFault) {
 
 function AuthBootstrap({ children }: { children: ReactNode }) {
   const { isEnsuringUser, isUserReady } = useEnsureDbUser();
+  useAppLoadStallReport(isUserReady);
   useEffect(() => {
     authRefusalDiagnostics.update({ ready: isUserReady });
     return () => authRefusalDiagnostics.update({ ready: false });
@@ -132,6 +135,7 @@ function AuthBootstrap({ children }: { children: ReactNode }) {
       <GuestTabRecoveryBoundary ready={isUserReady}>
         <AuthRecoveryBoundary ready={isUserReady}>
           {children}
+          <LegalAcceptanceGate />
         </AuthRecoveryBoundary>
       </GuestTabRecoveryBoundary>
     </DbUserReadyProvider>

@@ -21,15 +21,12 @@
  *  - an id that already has a lowercase `provider/` prefix is kept, with a
  *    Gateway-spelled prefix rewritten (`xai/grok-4` → `x-ai/grok-4`) — hosted
  *    catalog rows, OpenRouter rows, static Azure rows;
- *  - a bare own-provider id is canonical only when a table says what it is,
- *    never by adding a prefix alone (`claude-sonnet-4-5` is not
- *    `anthropic/claude-sonnet-4-5`; the canonical id is
- *    `anthropic/claude-sonnet-4.5`). {@link BARE_MODEL_ID_CANONICAL} lists
- *    the ids whose canonical spelling differs; otherwise the model catalog
- *    must list the provider's `<vendor>/<id>` (`gpt-4o` (openai) →
- *    `openai/gpt-4o`, `grok-code-fast-1` (xai) → `x-ai/grok-code-fast-1`).
- *    Any other bare id (`grok-3`, `deepseek-chat`) has no known canonical id,
- *    so it gets no selection and keeps the legacy id;
+ *  - a bare own-provider id gets the canonical id `canonicalModelIdForNative`
+ *    (`shared/canonical-model-id.ts`) derives: a reviewed exception first
+ *    (Anthropic's dashed `claude-sonnet-4-5` → `anthropic/claude-sonnet-4.5`),
+ *    then the catalog's own `<vendor>/<id>` entry (`grok-4.5` (xai) →
+ *    `spacexai/grok-4.5`), else the provider's vendor prefix (`gpt-5.1`
+ *    (openai) → `openai/gpt-5.1`, a Bedrock model id → `bedrock/<id>`);
  *  - local namespaces that name no catalog model: Ollama `llama3.2:latest` →
  *    `ollama/llama3.2:latest`, custom `custom:<slug>:<model>` →
  *    `custom:<slug>/<model>`.
@@ -61,67 +58,14 @@ import {
 } from "@mcpjam/sdk/browser";
 import { getCanonicalModelId, type ModelDefinition } from "@/shared/types";
 import {
+  PROVIDER_SEGMENT,
+  canonicalModelIdForNative,
+  canonicalPrefix,
+} from "@/shared/canonical-model-id";
+import {
   isMCPJamProvidedModelMenuItem,
   type OrgVisibleConfig,
 } from "./model-helpers";
-
-const PROVIDER_SEGMENT = /^[a-z0-9][a-z0-9._:-]*$/;
-
-/**
- * Canonical vendor prefix for a provider key / Gateway spelling. Keys not
- * listed are already canonical (`openai`, `anthropic`, `ollama`, …).
- */
-const CANONICAL_PROVIDER_PREFIX: Readonly<Record<string, string>> = {
-  xai: "x-ai",
-  zai: "z-ai",
-  meta: "meta-llama",
-  mistral: "mistralai",
-  alibaba: "qwen",
-};
-
-/** The canonical vendor prefix for a provider key (`xai` → `x-ai`). */
-export function canonicalPrefix(prefix: string): string {
-  return CANONICAL_PROVIDER_PREFIX[prefix] ?? prefix;
-}
-
-/**
- * Bare own-provider ids whose canonical id is not `<vendor>/<id>`, keyed by
- * provider. Each target must be a canonical catalog id (the test pins them
- * against `shared/hosted-model-ids.generated.ts`).
- *
- * Evidence: Anthropic's API names these models with a dashed version
- * (`claude-sonnet-4-5`, `SUPPORTED_MODELS` / `Model` in `shared/types.ts`),
- * while the canonical catalog spells the same model with a dot
- * (`anthropic/claude-sonnet-4.5` in the generated hosted id list); the
- * dashed `anthropic/claude-sonnet-4-5` is no catalog id.
- */
-export const BARE_MODEL_ID_CANONICAL: Readonly<
-  Record<string, Readonly<Record<string, string>>>
-> = {
-  anthropic: {
-    "claude-haiku-4-5": "anthropic/claude-haiku-4.5",
-    "claude-sonnet-4-5": "anthropic/claude-sonnet-4.5",
-    "claude-sonnet-4-6": "anthropic/claude-sonnet-4.6",
-    "claude-opus-4-6": "anthropic/claude-opus-4.6",
-    "claude-opus-4-7": "anthropic/claude-opus-4.7",
-    "claude-opus-4-8": "anthropic/claude-opus-4.8",
-  },
-};
-
-/**
- * The canonical id of a bare own-provider id, from the table above or from a
- * catalog entry listing exactly `<vendor>/<id>` under that provider; `null`
- * when neither knows it.
- */
-function canonicalIdForBareId(provider: string, raw: string): string | null {
-  const listed = BARE_MODEL_ID_CANONICAL[provider]?.[raw];
-  if (listed) return listed;
-  const known = getCanonicalModelId(raw, provider);
-  const slash = known.indexOf("/");
-  return slash > 0 && known.slice(slash + 1) === raw
-    ? `${canonicalPrefix(known.slice(0, slash))}/${raw}`
-    : null;
-}
 
 /** A row MCPJam's own credentials serve (the hosted catalog). */
 export function isHostedRow(model: ModelDefinition): boolean {
@@ -185,8 +129,7 @@ export function canonicalSelectionModelId(
     return native ? `custom:${name.toLowerCase()}/${native}` : null;
   }
   if (provider === "ollama") return `ollama/${raw}`;
-  if (!PROVIDER_SEGMENT.test(provider)) return null;
-  return canonicalIdForBareId(provider, raw);
+  return canonicalModelIdForNative(provider, raw);
 }
 
 /**
@@ -346,7 +289,9 @@ export function ownKeyRowsForLegacySelection(
  * With a selection: the row whose own selection has the same `selectionKey`
  * (same source, same connection, same model) — so an id listed both in the
  * hosted catalog and under an org OpenRouter connection resolves to the row
- * that was actually picked. With a stored legacy selection ("own key only"):
+ * that was actually picked — else, for an org selection, the row on the same
+ * connection with the same native id ({@link orgRowForNativeModel}). With a
+ * stored legacy selection ("own key only"):
  * the one own-key row with that id (narrowed by the provider hint when it
  * has one; a disabled row does not count against an enabled one); none when
  * several qualify, since the legacy fields cannot say which connection ran
@@ -380,13 +325,45 @@ export function findModelForStoredChoice(
       const own = modelSelectionFromDefinition(model, orgConfig, "chat");
       return own !== null && selectionKey(own) === wanted;
     });
-    if (match || exactSelection) return match;
+    if (match) return match;
+    const sameModel = orgRowForNativeModel(choice.selection, models, orgConfig);
+    if (sameModel || exactSelection) return sameModel;
   }
   if (exactSelection) return undefined;
   return (
     models.find((model) => String(model.id) === id && isHostedRow(model)) ??
     models.find((model) => String(model.id) === id)
   );
+}
+
+/**
+ * The org row a saved org selection names by connection and native id, when
+ * no row derives that selection's canonical id any more. A canonical id that
+ * was the provider's prefix plus the native id (`x-ai/grok-4.5`) can later
+ * get the catalog's spelling (`spacexai/grok-4.5`) or a reviewed exception;
+ * the connection and the id the provider is called with do not change, so
+ * the saved choice still finds its model. Only such a prefix-derived id
+ * qualifies: a saved canonical id that names another model than its native
+ * id stays unmatched.
+ */
+function orgRowForNativeModel(
+  saved: ModelSelection,
+  models: readonly ModelDefinition[],
+  orgConfig: OrgVisibleConfig | undefined,
+): ModelDefinition | undefined {
+  const ref = saved.connectionRef;
+  if (saved.source !== "org" || ref?.kind !== "orgProvider") return undefined;
+  const native = saved.nativeModelId;
+  if (!native || !saved.modelId.endsWith(`/${native}`)) return undefined;
+  return models.find((model) => {
+    const own = modelSelectionFromDefinition(model, orgConfig, "chat");
+    return (
+      own?.source === "org" &&
+      own.connectionRef?.kind === "orgProvider" &&
+      own.connectionRef.id === ref.id &&
+      (own.nativeModelId ?? own.modelId) === native
+    );
+  });
 }
 
 /**
@@ -486,14 +463,11 @@ export function caseModelEntryValue(
   if (models.some((row) => `${row.provider}/${String(row.id)}` === direct)) {
     return direct;
   }
-  const wanted = selectionKey(selection);
-  const row = models.find((candidate) => {
-    const own = modelSelectionFromDefinition(
-      candidate,
-      undefined,
-      "evalTarget",
-    );
-    return own !== null && selectionKey(own) === wanted;
-  });
+  const row = findModelForStoredChoice(
+    { modelId: entry.model, selection },
+    models,
+    undefined,
+    { exactSelection: true },
+  );
   return row ? `${row.provider}/${String(row.id)}` : direct;
 }

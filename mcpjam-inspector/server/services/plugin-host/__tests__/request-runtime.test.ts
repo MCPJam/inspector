@@ -87,6 +87,7 @@ import {
   createPluginRequestRuntime,
 } from "../request-runtime";
 import { pluginConnectionPool } from "../connection-pool";
+import { MODEL_CONTEXT_POLICY_DEFAULTS } from "@mcpjam/sdk/host-config/internal";
 import {
   pluginInstances,
   type PluginInstanceAdmissionRead,
@@ -935,6 +936,41 @@ describe("fresh request runtime admission", () => {
       await live.release();
     },
   );
+  it("reads the client's model-context policy per request, without closing an App opened before it was saved", async () => {
+    const apps = { mcpAppsOverrides: { updateModelContext: true } };
+    const profile = { profileVersion: 1, mcpProtocolVersion: "2025-11-25" };
+    const before = { ...config, mcpProfile: { ...profile, apps } };
+    const saved = {
+      ...config,
+      mcpProfile: {
+        ...profile,
+        apps: { ...apps, modelContextPolicy: { maxBlocks: 256 } },
+      },
+    };
+    f.query.mockImplementation(async (_, args) => ({
+      actorId: "actor",
+      projectId: "project",
+      ...(args.hostId ? { hostConfig: saved } : {}),
+      serverBindings: args.serverIds?.map((serverId: string) => ({
+        kind: "standalone",
+        serverId,
+      })),
+    }));
+    const live = await runtime({
+      hostRevision: pluginHostBindingDigest(before),
+      serverIdentity: { kind: "standalone" as const, serverId: "server" },
+      owner: {
+        bindingId: pluginServerBindingDigest(identity()),
+        workspaceId: "workspace",
+      },
+    } as Parameters<typeof createPluginRequestRuntime>[4]);
+    const resolved = await live.resolve("app", new AbortController().signal);
+    expect(resolved.modelContextPolicy).toEqual({
+      ...MODEL_CONTEXT_POLICY_DEFAULTS,
+      maxBlocks: 256,
+    });
+    await live.release();
+  });
   it("enforces per-client extension toggles: no forms handler or claim, no model context", async () => {
     const profiled = {
       ...config,

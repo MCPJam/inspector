@@ -73,6 +73,7 @@ export interface HarnessProxyServerInput {
 export interface HarnessMcpHttpEntry {
   type: "http";
   url: string;
+  timeout?: number;
   headers?: Record<string, string>;
 }
 

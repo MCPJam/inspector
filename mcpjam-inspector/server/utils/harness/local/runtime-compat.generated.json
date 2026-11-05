@@ -4,36 +4,56 @@
   "harnesses": {
     "claude-code": {
       "conformance": {
-        "version": "published-claude-code-1.0.4-d485100534d0",
-        "evidence": "https://github.com/MCPJam/inspector/actions/runs/38324753081"
+        "version": "published-claude-code-1.0.5-2c5f17bc91bf",
+        "evidence": "https://github.com/MCPJam/inspector/actions/runs/40646619108"
       },
       "targets": {
         "darwin-arm64": {
           "desired": {
+            "packVersion": "1.0.5",
+            "treeDigest": "sha256:edf9232d7eed0cf3c1af2bbd814a105ace53322a63b011d2a4960e6e021182f0"
+          },
+          "permitted": {
             "packVersion": "1.0.4",
             "treeDigest": "sha256:5611ae8b02e0f325e5a9624bacf36a583172641fd55d6473f1cb30a3956d4a40"
           }
         },
         "darwin-x64": {
           "desired": {
+            "packVersion": "1.0.5",
+            "treeDigest": "sha256:28d9771865f95988066a5f05f938a2eeeeca0cb0b3335f1355afe8bab862c40c"
+          },
+          "permitted": {
             "packVersion": "1.0.4",
             "treeDigest": "sha256:e551ee37091ac7edb2d7bf6f40dc3aea15fa5e39a5119e9f8e00dd14b0de7526"
           }
         },
         "linux-arm64": {
           "desired": {
+            "packVersion": "1.0.5",
+            "treeDigest": "sha256:dc38e8a3c978600983359aaebdfc0fc724c6ae3a9e364e28d2bff62c2977e719"
+          },
+          "permitted": {
             "packVersion": "1.0.4",
             "treeDigest": "sha256:6ba6505bb2a053e35dbb50b05cf46b2a61bdee51be02935ded19091bbe220610"
           }
         },
         "linux-x64": {
           "desired": {
+            "packVersion": "1.0.5",
+            "treeDigest": "sha256:e50c4cbc612f5d32eb31ea85cb7b0e751ee77a9674ee87eb11b5aee34ee725b6"
+          },
+          "permitted": {
             "packVersion": "1.0.4",
             "treeDigest": "sha256:34acb460678b6cb366513f1fb539f91ae5113f63058d6c5af65fa2f42a7a8091"
           }
         },
         "win32-x64": {
           "desired": {
+            "packVersion": "1.0.5",
+            "treeDigest": "sha256:49716aab69eabf900d2c2bb9c42c10c4b40609d294ece9b747af01cbcbc15fde"
+          },
+          "permitted": {
             "packVersion": "1.0.4",
             "treeDigest": "sha256:a5cbfeefa8d33dd276d5203863bb2da93bca1c84728ce890861d7c13449ef3a3"
           }

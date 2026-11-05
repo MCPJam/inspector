@@ -109,6 +109,8 @@ export interface ResolvedEnvironmentRuntime {
   /** Additive-compatibility DIAGNOSTIC only — never a substitute for the
    *  invariant checks in {@link resolveEnvironmentForRuntime}. */
   specVersion?: number;
+  serverConfigHashes?: Record<string, string>;
+  selectedSecretIds?: string[];
   environmentRef: {
     environmentId: string;
     name: string;
@@ -204,6 +206,18 @@ export function translateEnvironmentRuntimeError(
   const structuredMessage =
     typeof data?.message === "string" ? data.message : undefined;
 
+  if (code === "HOST_UNRESOLVED") {
+    return new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      structuredMessage ??
+        "Client not found. Select another client and try again.",
+      {
+        reason: "HOST_UNRESOLVED",
+        ...(data?.details?.hostId ? { hostId: data.details.hostId } : {}),
+      },
+    );
+  }
   if (code && code.startsWith("ENV_")) {
     if (RUNTIME_NOT_FOUND_CODES.has(code)) {
       return new WebRouteError(
@@ -292,12 +306,14 @@ export function resolveRuntimeVenue(): RuntimeVenue | undefined {
  * connectable names, server provenance) are deliberately NOT checked — those are
  * the deploy-skew surface.
  */
-function assertRuntimeInvariants(raw: unknown): ResolvedEnvironmentRuntime {
+export function assertRuntimeInvariants(
+  raw: unknown,
+): ResolvedEnvironmentRuntime {
   const fail = (detail: string): never => {
     throw new WebRouteError(
       502,
       ErrorCode.INTERNAL_ERROR,
-      `This environment resolved to an unusable runtime specification (${detail}). The turn was stopped rather than run with an unknown configuration.`
+      `This environment resolved to an unusable runtime specification (${detail}). The turn was stopped rather than run with an unknown configuration.`,
     );
   };
   if (!isRecord(raw)) return fail("empty response");
@@ -366,6 +382,7 @@ export async function resolveEnvironmentForRuntime(
     projectId: string;
     environmentId: string;
     overrides?: EnvironmentOverrides;
+    serverSelectionSource?: "client-default";
   }
 ): Promise<ResolvedEnvironmentRuntime> {
   const serverOverrideIds = args.overrides?.serverIds;
@@ -377,6 +394,9 @@ export async function resolveEnvironmentForRuntime(
       {
         projectId: args.projectId,
         environmentId: args.environmentId,
+        ...(args.serverSelectionSource
+          ? { serverSelectionSource: args.serverSelectionSource }
+          : {}),
         ...(serverOverrideIds !== undefined ? { serverOverrideIds } : {}),
         ...(runtimeVenue !== undefined ? { runtimeVenue } : {}),
       } as any

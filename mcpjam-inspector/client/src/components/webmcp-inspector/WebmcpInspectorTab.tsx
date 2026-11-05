@@ -958,8 +958,6 @@ const ERROR_GUIDANCE: Record<string, string> = {
   "hosted-auth-required": "Sign in again to run a browser on your computer.",
   "hosted-project-required":
     "Pick a project first — the browser runs on that project's computer.",
-  "hosted-browser-disabled":
-    "Hosted browsers are turned off on this server right now.",
   "hosted-local-unsupported":
     "This inspector only runs browsers on your MCPJam computer. For a browser on this machine, run the inspector locally with `npx @mcpjam/inspector`.",
   "lease-blocked":

@@ -90,7 +90,11 @@
           {
             "group": "Authentication",
             "icon": "shield-check",
-            "pages": ["inspector/guided-oauth", "inspector/xaa-debugger"]
+            "pages": [
+              "inspector/guided-oauth",
+              "inspector/xaa-debugger",
+              "inspector/lazy-authentication"
+            ]
           },
           {
             "group": "Primitives",
@@ -139,6 +143,7 @@
               "cli/tasks-conformance",
               "cli/tools-resources-prompts",
               "cli/ci",
+              "cli/self-hosted",
               "cli/telemetry"
             ]
           },
@@ -260,6 +265,18 @@
     {
       "source": "/inspector/views",
       "destination": "/inspector/playground"
+    },
+    {
+      "source": "/inspector/llm-playground",
+      "destination": "/inspector/playground"
+    },
+    {
+      "source": "/inspector/elicitation",
+      "destination": "/inspector/playground"
+    },
+    {
+      "source": "/inspector/server",
+      "destination": "/inspector/connecting-servers"
     },
     {
       "source": "/sdk/reference/test-agent",

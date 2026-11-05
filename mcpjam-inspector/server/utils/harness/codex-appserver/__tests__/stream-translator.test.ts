@@ -416,7 +416,7 @@ describe("constructed frames (not recorded — see fixtures/README.md)", () => {
       params: { item },
     });
     const call = parts.find((p) => p.type === "tool-call");
-    expect(call?.toolName).toBe("someone-elses-server__do_thing");
+    expect(call?.toolName).toBe("mcp__someone-elses-server__do_thing");
     expect(call?.dynamic).toBe(true);
   });
 

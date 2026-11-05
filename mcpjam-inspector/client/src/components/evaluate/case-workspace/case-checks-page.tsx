@@ -96,6 +96,8 @@ export function CaseChecksPage({
           }}
           matchOptions={matchOptions}
           judgeConfig={suiteJudgeConfig}
+          // Without `onJudgeConfigChange` the table shows no judge picker.
+          onAddProvider={null}
           capabilities={capabilities}
           passOrFailHint={PASS_OR_FAIL_HINT}
           judgeHint={JUDGE_HINT}

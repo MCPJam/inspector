@@ -143,6 +143,13 @@ export function CreditBalanceCard({
     evalIterationQuota?.windowKind,
   );
 
+  if ((balance?.unlimitedCreditsUntil ?? 0) > Date.now()) return (
+    <Card><CardContent className="py-4">
+      <p>Credits: Unlimited</p>
+      <p className="text-sm text-muted-foreground">Included in your contract through {new Date(balance!.unlimitedCreditsUntil!).toLocaleDateString()}.</p>
+      <Button variant="link" onClick={() => navigate('/models/usage')}>See usage</Button>
+    </CardContent></Card>
+  );
   return (
     <Card className="border-0 bg-transparent py-0 shadow-none">
       <CardContent className="flex flex-col gap-5 p-0">

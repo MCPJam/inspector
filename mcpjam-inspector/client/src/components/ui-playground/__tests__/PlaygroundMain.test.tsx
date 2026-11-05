@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
@@ -34,6 +35,7 @@ const mockThread = vi.fn();
 const mockChatInputProps = vi.fn();
 const mockFullscreenChatOverlay = vi.fn();
 const mockMultiModelPlaygroundCard = vi.fn();
+const compareSetup = { ready: true, error: undefined as string | undefined };
 const mockTraceViewer = vi.fn();
 const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn());
 const mockChatHistoryAction = vi.hoisted(() => vi.fn());
@@ -380,7 +382,6 @@ const mockUseChatSession = {
   disableForAuthentication: false,
   submitBlocked: false,
   hiddenEnvironmentActive: false,
-  hiddenEnvironmentOffReason: null,
 } as any;
 let capturedChatSessionOptions: any = null;
 
@@ -638,7 +639,13 @@ vi.mock("@/components/evals/trace-view-mode-tabs", () => {
 });
 
 vi.mock("@/components/ui-playground/multi-model-playground-card", () => ({
-  MultiModelPlaygroundCard: (props: { model: { name: string } }) => {
+  MultiModelPlaygroundCard: (props: {
+    model: { name: string }; compareId: string; compareKind: string;
+    onSendReadinessChange?: (id: string, ready: boolean, error?: string) => void;
+  }) => {
+    useEffect(() => {
+      props.onSendReadinessChange?.(`${props.compareKind}:${props.compareId}`, compareSetup.ready, compareSetup.error);
+    }, [props.onSendReadinessChange, props.compareKind, props.compareId, compareSetup.ready, compareSetup.error]);
     mockMultiModelPlaygroundCard(props);
     return (
       <div data-testid="multi-model-playground-card">{props.model.name}</div>
@@ -937,6 +944,8 @@ describe("PlaygroundMain", () => {
     mockChatInputProps.mockClear();
     mockFullscreenChatOverlay.mockClear();
     mockMultiModelPlaygroundCard.mockClear();
+    compareSetup.ready = true;
+    compareSetup.error = undefined;
   });
 
   describe("installed plugins (hidden environment)", () => {
@@ -982,7 +991,6 @@ describe("PlaygroundMain", () => {
       mockHiddenEnvironment.state = { ...nothing };
       mockHiddenEnvironment.calls = [];
       mockUseChatSession.hiddenEnvironmentActive = false;
-      mockUseChatSession.hiddenEnvironmentOffReason = null;
       resetShownPluginNotices();
     });
 
@@ -1144,7 +1152,7 @@ describe("PlaygroundMain", () => {
       }
     });
 
-    it("says plugins don't run in comparisons on each comparison's first send", async () => {
+    it("does not say that plugins are disabled in comparisons", async () => {
       vi.mocked(showPluginNotice).mockClear();
       installBits();
       const models = [
@@ -1172,34 +1180,13 @@ describe("PlaygroundMain", () => {
           });
         };
         const { rerender } = render(<PlaygroundMain {...props} />);
-        // Entering a comparison says nothing; its first send does.
-        expect(showPluginNotice).not.toHaveBeenCalled();
         await compareSend("first");
-        const compare = { kind: "off", reason: "compare" };
-        expect(showPluginNotice).toHaveBeenCalledTimes(1);
-        expect(showPluginNotice).toHaveBeenLastCalledWith(
-          expect.stringContaining("chat-session-1"),
-          compare,
-        );
-        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
-          true,
-        );
-        // Not again in the same comparison.
         await compareSend("second");
-        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
-          false,
-        );
-
-        // A later comparison in the same tab is a new chat: it says so again.
         mockUseChatSession.chatSessionId = "chat-session-2";
         rerender(<PlaygroundMain {...props} />);
         await compareSend("third");
-        expect(showPluginNotice).toHaveBeenLastCalledWith(
-          expect.stringContaining("chat-session-2"),
-          compare,
-        );
-        expect(vi.mocked(showPluginNotice).mock.results.at(-1)?.value).toBe(
-          true,
+        expect(showPluginNotice).not.toHaveBeenCalledWith(
+          expect.anything(), expect.objectContaining({ reason: "compare" }),
         );
       } finally {
         mockUseChatSession.chatSessionId = "chat-session-1";
@@ -1208,10 +1195,65 @@ describe("PlaygroundMain", () => {
       }
     });
 
+    it.each([undefined, "This project has reached its setup limit."])(
+      "retains the compare draft and attachments when a lane is unavailable: %s",
+      async (error) => {
+        compareSetup.ready = false;
+        compareSetup.error = error;
+        mockUseChatSession.availableModels = [
+          { id: "openai/gpt-5-mini", name: "Mini", provider: "openai" },
+          {
+            id: "anthropic/claude-sonnet-4.5",
+            name: "Sonnet",
+            provider: "anthropic",
+          },
+        ];
+        mockUseChatSession.multiModelEnabled = true;
+        try {
+          render(<PlaygroundMain {...defaultProps} enableMultiModelChat />);
+          type Composer = {
+            onChange: (text: string) => void;
+            onSubmit: (e: { preventDefault: () => void }) => Promise<void>;
+            value: string;
+            fileAttachments: unknown[];
+            onChangeFileAttachments: (files: unknown[]) => void;
+          };
+          const latest = () =>
+            mockChatInputProps.mock.calls.at(-1)?.[0] as Composer;
+          const attachment = {
+            id: "file-1",
+            name: "notes.txt",
+            file: new File(["notes"], "notes.txt"),
+            url: "blob:notes",
+          };
+          await act(async () => {
+            latest().onChange("Keep this prompt");
+            latest().onChangeFileAttachments([attachment]);
+          });
+          const before =
+            mockMultiModelPlaygroundCard.mock.calls.at(-1)?.[0].broadcastRequest;
+          await act(async () => latest().onSubmit({ preventDefault() {} }));
+          await act(async () => {
+            useAgentToolPromptBridge.getState().requestRun("Keep this agent prompt");
+          });
+          await act(async () => {});
+          expect(latest().value).toBe("Keep this agent prompt");
+          expect(latest().fileAttachments).toEqual([attachment]);
+          expect(
+            mockMultiModelPlaygroundCard.mock.calls.at(-1)?.[0].broadcastRequest,
+          ).toBe(before);
+        } finally {
+          mockUseChatSession.availableModels = [];
+          mockUseChatSession.multiModelEnabled = false;
+          compareSetup.ready = true;
+          compareSetup.error = undefined;
+        }
+      },
+    );
+
     it("shows no plugin servers on a turn that runs without them", () => {
       installBits();
       mockUseChatSession.hiddenEnvironmentActive = false;
-      mockUseChatSession.hiddenEnvironmentOffReason = "local_model";
       render(<PlaygroundMain {...defaultProps} />);
       const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
       expect(composer.pluginServers).toEqual([]);
@@ -1381,6 +1423,46 @@ describe("PlaygroundMain", () => {
         const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
         expect(composer.reasoningEffort).toBe("low");
         expect(composer.onReasoningEffortChange).toBeTypeOf("function");
+      });
+
+      it("settles a saved comparison column when an effort change replaces its card", () => {
+        localStorage.setItem(V2_KEY, JSON.stringify([hosted(sonnet.id)]));
+        render(
+          <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />,
+        );
+        const [lead] = renderedCardProps();
+        // The card is still restoring a comparison saved before sign-in.
+        window.history.replaceState({}, "", "/?comparisonRecovery=saved");
+        const column = { kind: "model", order: 0, hasMessages: true };
+        sessionStorage.setItem(
+          "mcp-comparison-auth-v1:saved",
+          JSON.stringify({
+            version: 1,
+            id: "saved",
+            projectId: "local",
+            multiModelEnabled: true,
+            hostIds: [],
+            modelSelections: null,
+            selectedServers: [],
+            clickedColumn: lead.compareId,
+            continuationId: "c1",
+            columns: [
+              { ...column, compareId: lead.compareId, chatSessionId: "a" },
+            ],
+          }),
+        );
+        try {
+          act(() => {
+            lead.effort.onChange("low");
+          });
+          expect(
+            sessionStorage.getItem("mcp-comparison-auth-v1:saved"),
+          ).toBeNull();
+          expect(window.location.search).toBe("");
+        } finally {
+          sessionStorage.clear();
+          window.history.replaceState({}, "", "/");
+        }
       });
 
       it("caps the line-up at three cards", () => {
@@ -2365,10 +2447,19 @@ describe("PlaygroundMain", () => {
       mockUseChatSession.chatSessionId = ORIGINAL_CONVERSATION_ID;
       // The URL is dropped from `onBeforeBranch`, which the real hook fires as
       // the branch is minted — so a refused rewind keeps its `?conversation=`.
+      // It is read right there because this mock never mints the branch's own
+      // session id: once the hook's mask lifts, its sync effect writes the
+      // mock's unchanged id, the original's, back into the URL. The read sees
+      // the clear only because nothing here renders a router: the hook's
+      // navigate then falls back to a synchronous `history.replaceState`. A
+      // data router updates `window.location` later, and a `MemoryRouter`
+      // never does.
+      let searchAfterBranch: string | undefined;
       mockUseChatSession.rewindToMessage = vi
         .fn()
         .mockImplementation(async (options) => {
           options?.onBeforeBranch?.();
+          searchAfterBranch = window.location.search;
           return { previousChatSessionId: ORIGINAL_CONVERSATION_ID };
         });
 
@@ -2383,19 +2474,8 @@ describe("PlaygroundMain", () => {
         expect(mockUseChatSession.rewindToMessage).toHaveBeenCalled();
       });
 
-      // Not "no param at all": once the branch's transcript has content the sync
-      // effect writes the BRANCH's id here. What must never survive is the
-      // original's, which is what the restore effect would act on. The URL
-      // updates after several effects settle, which can pass the default
-      // one-second wait on a loaded CI runner.
-      await waitFor(
-        () => {
-          expect(window.location.search).not.toContain(
-            ORIGINAL_CONVERSATION_ID
-          );
-        },
-        { timeout: 5000 }
-      );
+      // Gone as the branch is minted, so the restore effect has nothing to act on.
+      expect(searchAfterBranch).toBe("");
     });
 
     it("withholds the edit affordance when signed out, where there is no history to go back to", () => {

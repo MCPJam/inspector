@@ -190,6 +190,22 @@ function summaryFallbackReport(
     ...(report.score !== undefined
       ? { score: jsonSafeReport(report.score) as ConformanceReport["score"] }
       : {}),
+    // Advice is part of what the run found, like the score; only each
+    // entry's `details` is dropped, to keep this degraded body small.
+    ...(report.advisories?.length
+      ? {
+          advisories: report.advisories.map((advisory) => ({
+            id: advisory.id,
+            title: advisory.title,
+            group: advisory.group,
+            kind: advisory.kind,
+            status: advisory.status,
+            ...(advisory.message !== undefined
+              ? { message: advisory.message }
+              : {}),
+          })),
+        }
+      : {}),
     durationMs: report.durationMs,
     groups: [
       {

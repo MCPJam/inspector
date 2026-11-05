@@ -2,6 +2,7 @@ import type { LaunchEngagement } from "../../shared/launch-engagement.js";
 import type { ErrorOrigin } from "@mcpjam/sdk";
 import type { RouteFailureHop } from "./route-error-report.js";
 import type { LogConvexId } from "./log-convex-id.js";
+import type { PluginContextRefusedEvent } from "./context-refused-event.js";
 
 export type Environment =
   | "prod"
@@ -100,6 +101,17 @@ export interface RequestLogContext extends CommonLogContext {
 }
 
 export interface SystemLogContext extends CommonLogContext {
+  /** Code-owned setup outcomes only; arbitrary model/server text is excluded. */
+  setupReason?:
+    | "timeout"
+    | "transport_failed"
+    | "no_eligible_write_tools"
+    | "invalid_model_report"
+    | "model_reported_missing"
+    | "unsupported_claim"
+    | "entity_record_limit"
+    | "call_record_limit"
+    | "write_errored";
   requestId: null;
   route: null;
   method: null;
@@ -422,6 +434,8 @@ export type RequestEventMap = {
     totalMs: number;
     spans: Record<string, { count: number; totalMs: number; maxMs: number }>;
   };
+  /** An App context update refused before anything was stored. */
+  "plugin.instance.context.refused": PluginContextRefusedEvent;
   /**
    * One plugin onboarding turn (the Playground's Run onboarding or Set up),
    * from its request to its terminal result. `phases` holds the ms since the
@@ -536,6 +550,9 @@ export type RequestEventMap = {
 
 export type SystemEventMap = {
   telemetry_canary: Record<string, never>;
+  "server.shutdown.drain": import("./log-events/shutdown-drain.js").ShutdownDrainEvent;
+  /** One per start: `web` runs no claim loops; `worker` and `all` do. */
+  "server.process_role": { role: "all" | "web" | "worker" };
   llm_spend_unattested_ip_pooled: Record<string, never>;
   "model_catalog.refresh.failed": {
     reason: "fetch_failed" | "invalid_catalog";

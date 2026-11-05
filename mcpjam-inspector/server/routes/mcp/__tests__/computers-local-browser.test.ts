@@ -1722,3 +1722,51 @@ it("a real shell grant never authorizes Browser, even under the Browser header",
   }
   expect(chromiumState.installs).toBe(0);
 });
+
+describe("a Chromium that cannot start", () => {
+  // The contract the pane and the CLI read. The route mapping predates the
+  // launch classifier, so these pin the contract rather than the fix.
+  const post = (path: string, body: unknown, token: string) =>
+    createApp().request(`/api/mcp/computers/local-browser/${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [BROWSER_CONSENT_HEADER]: token,
+      },
+      body: JSON.stringify(body),
+    });
+
+  it.each(["chromium_sandbox_unavailable", "launch_failed"] as const)(
+    "answers the pane and the agent with the typed refusal: %s",
+    async (code) => {
+      const { LocalBrowserUnavailableError } = await import(
+        "../../../services/browserd/local/local-browser-session.js"
+      );
+      const refuse = async () => {
+        throw new LocalBrowserUnavailableError(code, `why: ${code}`);
+      };
+      const token = await grantConsent();
+
+      browserState.onLaunch = refuse;
+      const ensure = await post("ensure", { projectId: "proj" }, token);
+      expect(ensure.status).toBe(503);
+      expect(await ensure.json()).toEqual({
+        error: `why: ${code}`,
+        code: "browser_runtime_unavailable",
+        reason: code,
+      });
+
+      browserState.onLaunch = refuse;
+      const session = await post(
+        "session",
+        { projectId: "proj", policy: { mode: "allow_all" }, observe: "none" },
+        token,
+      );
+      expect(session.status).toBe(409);
+      expect(await session.json()).toEqual({
+        error: code,
+        detail: `why: ${code}`,
+      });
+    },
+  );
+});

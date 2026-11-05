@@ -8,7 +8,7 @@
  * for as long as the tab stayed open, while the panel itself showed nothing.
  */
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { ConvexError } from "convex/values";
 
 const mintProject = vi.fn();
@@ -23,8 +23,13 @@ vi.mock("@/hooks/useProjectComputer", () => ({
 }));
 
 vi.mock("../BrowserStream", () => ({ BrowserStream: () => null }));
-vi.mock("@/components/browser/BrowserProfileSaveButton", () => ({
-  BrowserProfileSaveButton: () => null,
+// The real save button, not a stub: it is a menu item, and stubbing it hid a
+// panel that crashed the page the moment a browser connected.
+vi.mock("@/lib/browser-profiles/availability", () => ({
+  useBrowserProfileArchivesAvailable: () => true,
+}));
+vi.mock("@/lib/browser-profiles/client", () => ({
+  saveBrowserProfile: vi.fn(),
 }));
 
 const setBrowserLocation = vi.fn();
@@ -121,5 +126,39 @@ describe("BrowserPanel token discipline", () => {
       await vi.advanceTimersByTimeAsync(300_000);
     });
     expect(mintProject).toHaveBeenCalledTimes(afterStop);
+  });
+});
+
+describe("BrowserPanel toolbar", () => {
+  beforeEach(() => {
+    mintProject.mockReset();
+    mintProject.mockResolvedValue({
+      token: "tok",
+      expiresAt: Date.now() + 600_000,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => sessionOk()),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("offers saving the profile from a menu once the browser is live", async () => {
+    render(<BrowserPanel projectId="p1" />);
+    const trigger = await screen.findByLabelText("More browser actions");
+    expect(screen.getByText("Watching")).toBeTruthy();
+
+    fireEvent.pointerDown(
+      trigger,
+      new MouseEvent("pointerdown", { bubbles: true }) as never,
+    );
+    fireEvent.click(trigger);
+
+    expect(
+      await screen.findByText("Save profile for other chats…"),
+    ).toBeTruthy();
   });
 });

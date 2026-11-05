@@ -107,6 +107,7 @@ vi.mock("@/components/ui/sidebar", () => ({
 }));
 
 import { SidebarUser } from "../sidebar-user";
+import { useAuthExitCleanup } from "@/hooks/use-sign-out";
 
 describe("SidebarUser", () => {
   it("opens Support in Settings from the account menu", async () => {
@@ -292,8 +293,17 @@ describe("SidebarUser", () => {
       lastName: "Example",
     };
     const onBeforeSignOut = vi.fn().mockResolvedValue(undefined);
+    function RegistersCleanup() {
+      useAuthExitCleanup(onBeforeSignOut);
+      return null;
+    }
 
-    render(<SidebarUser onBeforeSignOut={onBeforeSignOut} />);
+    render(
+      <>
+        <RegistersCleanup />
+        <SidebarUser />
+      </>,
+    );
 
     fireEvent.click(screen.getByText("Log out"));
 

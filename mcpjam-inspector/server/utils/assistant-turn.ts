@@ -90,12 +90,8 @@ export interface RunAssistantTurnOptions {
   modelSelectionOrigin?: "backfill";
 
   selectedServerIds?: string[];
-  /**
-   * Optional display names for the selected servers. Reserved for the
-   * upcoming synthetic runner adapter so a generated `chatSessions.row`
-   * can resolve `serverIds → serverNames` without re-querying the
-   * manager. Stage 1 does not consume this; persist when present.
-   */
+  unavailableServerIds?: readonly string[];
+  /** Optional display names aligned with selectedServerIds for persistence. */
   selectedServerNames?: string[];
 
   mcpClientManager: MCPClientManager;
@@ -498,6 +494,7 @@ function buildHandlerOptions(
     systemPrompt: opts.systemPrompt,
     tools: opts.tools,
     mcpClientManager: opts.mcpClientManager,
+    unavailableServerIds: opts.unavailableServerIds,
     authHeader: opts.authContext.token,
     ...(opts.temperature !== undefined
       ? { temperature: opts.temperature }

@@ -204,6 +204,7 @@ export function CombinedRunContent({
   useRunErrorBreakdownToast(
     String(routeRun.runGroupId ?? routeRun._id),
     errorBreakdown,
+    projectId ?? undefined,
   );
   const clearPairingFilters = () => {
     setClient(ALL_EVAL_FILTER_VALUES);

@@ -1007,6 +1007,26 @@ describe("ScenarioChatPage", () => {
     });
   });
 
+  it("blocks chat before sending when the saved study model needs repair, then clears on reload", async () => {
+    consentAlreadyGiven();
+    const body = await (await mockAuthFetch()).json();
+    mockAuthFetch.mockResolvedValue(createFetchResponse({
+      ...body, bootstrap: { ...body.bootstrap, modelReadiness: { ready: false, code: "org_keys_required" } },
+    }));
+    const mounted = render(<ScenarioChatPage pathToken="scenario-token" />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Ask the study owner or an editor");
+    await waitFor(() => expect(mockChatTabV2).toHaveBeenLastCalledWith(expect.objectContaining({ scenarioComposerBlocked: true })));
+    expect(readScenarioSession()?.payload.modelReadiness?.ready).toBe(false);
+    mounted.unmount();
+    mockAuthFetch.mockResolvedValue(createFetchResponse({
+      ...body, bootstrap: { ...body.bootstrap, modelReadiness: { ready: true } },
+    }));
+    render(<ScenarioChatPage pathToken="scenario-token" />);
+    await waitFor(() => expect(readScenarioSession()?.payload.modelReadiness?.ready).toBe(true));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(mockChatTabV2).toHaveBeenLastCalledWith(expect.objectContaining({ scenarioComposerBlocked: false }));
+  });
+
   it("persists the redeemed session to sessionStorage when standalone", async () => {
     window.history.replaceState({}, "", "/user-testing/demo/scenario-token");
 

@@ -1,3 +1,4 @@
+import { useContractExpiry } from "./use-contract-expiry";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { useEffect, useMemo } from "react";
@@ -10,6 +11,7 @@ import {
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 export interface CreditBalanceState {
+  unlimitedCreditsUntil?: number | null;
   platformPaidFallback?: boolean;
   platformFreeBudgetExhausted?: boolean;
   platformFreeBudgetResetAt?: number | null;
@@ -90,6 +92,7 @@ export const normalizeBalance = (
   if (!raw || typeof raw !== "object") return undefined;
   const r = raw as Record<string, unknown>;
   return {
+    unlimitedCreditsUntil: optionalNumberOrUndefined(r.unlimitedCreditsUntil) ?? null,
     platformPaidFallback: r.platformPaidFallback === true,
     platformFreeBudgetExhausted: r.platformFreeBudgetExhausted === true,
     platformFreeBudgetResetAt: optionalNumberOrUndefined(r.platformFreeBudgetResetAt) ?? null,
@@ -162,7 +165,8 @@ export function useCreditBalance({
   // when the underlying data is unchanged, so the normalized object stays
   // referentially stable across renders. Keeps downstream effects/memos
   // that depend on `balance` from re-running when nothing actually changed.
-  const balance = useMemo(() => normalizeBalance(raw), [raw]);
+  const normalized = useMemo(() => normalizeBalance(raw), [raw]);
+  const balance = useContractExpiry(normalized);
   // Treat the bootstrap window as loading so the card shows a skeleton
   // instead of flashing an empty zero state before the query resolves.
   const isLoading =
@@ -189,7 +193,7 @@ export function useCreditBalance({
 export function isOutOfCredits(
   balance: CreditBalanceState | undefined,
 ): boolean {
-  if (!balance) return false;
+  if (!balance || (balance.unlimitedCreditsUntil ?? 0) > Date.now()) return false;
   const paidRemaining = balance.paidCreditsRemaining;
   if (
     balance.billingModel === "monthly_per_seat" ||
@@ -272,7 +276,7 @@ export function useOutOfCredits(organizationId?: string | null): boolean {
     resolvedOrganizationId,
   ]);
 
-  return balanceOutOfCredits || locallyLimited;
+  return (balance?.unlimitedCreditsUntil ?? 0) > Date.now() ? false : balanceOutOfCredits || locallyLimited;
 }
 
 /**
@@ -342,4 +346,11 @@ export function useFreeTierOnly(organizationId?: string | null): boolean {
     includeGuests: true,
   });
   return isFreeTierOnly(balance, hasWorkOsUser);
+}
+
+export function useUnlimitedCredits(): boolean {
+  const { user } = useAuth();
+  const organizationId = user ? readStoredActiveOrganizationId(user.id) : null;
+  const { balance } = useCreditBalance({ organizationId });
+  return (balance?.unlimitedCreditsUntil ?? 0) > Date.now();
 }

@@ -4,6 +4,13 @@ import {
   isUnrunCheck,
 } from "../conformance-outcome.js";
 import {
+  AUTHORIZATION_REQUIRED_MESSAGE,
+  authorizationRequiredDetails,
+  isAuthorizationRefusal,
+  isUnauthorizedProbe,
+} from "../conformance-authorization.js";
+import { PROTOCOL_CHECK_CATALOG } from "../conformance-catalog.js";
+import {
   buildConformanceProfileStamp,
   conformanceProfile,
   partitionByProfile,
@@ -27,14 +34,13 @@ import { TOOL_CHECKS } from "./checks/tools.js";
 import { PROMPT_CHECKS } from "./checks/prompts.js";
 import {
   errorMessage,
-  eraSkipMessage,
   failedResult,
   couldNotRunResult,
-  notApplicableResult,
 } from "./checks/helpers.js";
+import { awaitWithSignal } from "../abort-signal.js";
+import { eraGate, runSelectedClientChecks } from "./client-check-runner.js";
 import type {
   MCPCheckCategory,
-  MCPCheckEra,
   MCPCheckId,
   MCPCheckResult,
   MCPClientCheckContext,
@@ -46,11 +52,8 @@ import type {
   NormalizedMCPConformanceConfig,
   RawHttpCheckContext,
 } from "./types.js";
-import { CHECK_ERAS, MCP_CHECK_CATEGORIES } from "./types.js";
-import {
-  collectClientReadiness,
-  collectRawReadiness,
-} from "./readiness.js";
+import { MCP_CHECK_CATEGORIES } from "./types.js";
+import { collectClientReadiness, collectRawReadiness } from "./readiness.js";
 import { WireObservationRecorder } from "./wire-observations.js";
 import { createCapturingFetch } from "./raw-capture.js";
 import {
@@ -148,6 +151,7 @@ function createServerConfig(
   // wrapper sits on the Client's `baseFetch`. The two stacks never share an
   // exchange.
   const recordingFetch: typeof fetch = async (input, init) => {
+    init?.signal?.throwIfAborted();
     // ONE CAPTURE PER CALL. A single shared instance appends every exchange to
     // one array, and reading the last element after an `await` is only correct
     // while nothing else is in flight — which is never true here: the client
@@ -206,26 +210,9 @@ function createServerConfig(
   };
 }
 
-/**
- * Era gate for a client-backed check. Returns a `skipped` result (never
- * filtered out — the check still appears in the report) when the check does
- * not apply to the run's era per {@link CHECK_ERAS}, else `undefined` so the
- * check runs normally. Skipped checks never fail a run (the verdict is
- * `checks.every(c => c.status !== "failed")`).
- */
-function eraGate(
-  check: MCPClientCheckDefinition,
-  era: MCPCheckEra,
-  protocolVersion: string | undefined,
-): MCPCheckResult | undefined {
-  if (CHECK_ERAS[check.id].includes(era)) {
-    return undefined;
-  }
-  return notApplicableResult(check, eraSkipMessage(era, protocolVersion));
-}
-
 async function safeListResourceTemplates(
   ctx: Pick<MCPClientCheckContext, "manager" | "serverId">,
+  signal?: AbortSignal
 ): Promise<string[]> {
   try {
     // Conformance is a raw-evidence surface: bypass the SEP-2549 response
@@ -233,7 +220,7 @@ async function safeListResourceTemplates(
     const result = await ctx.manager.listResourceTemplates(
       ctx.serverId,
       undefined,
-      { cacheMode: "bypass" },
+      { cacheMode: "bypass", signal }
     );
     return (result.resourceTemplates ?? []).map((template) => template.uriTemplate);
   } catch {
@@ -243,9 +230,10 @@ async function safeListResourceTemplates(
 
 async function safeListTools(
   ctx: Pick<MCPClientCheckContext, "manager" | "serverId">,
+  signal?: AbortSignal
 ) {
   try {
-    return await listTools(ctx.manager, { serverId: ctx.serverId });
+    return await listTools(ctx.manager, { serverId: ctx.serverId, signal });
   } catch {
     return {
       tools: [],
@@ -256,9 +244,10 @@ async function safeListTools(
 
 async function safeListPrompts(
   ctx: Pick<MCPClientCheckContext, "manager" | "serverId">,
+  signal?: AbortSignal
 ) {
   try {
-    return await listPrompts(ctx.manager, { serverId: ctx.serverId });
+    return await listPrompts(ctx.manager, { serverId: ctx.serverId, signal });
   } catch {
     return {
       prompts: [],
@@ -269,9 +258,10 @@ async function safeListPrompts(
 
 async function safeListResources(
   ctx: Pick<MCPClientCheckContext, "manager" | "serverId">,
+  signal?: AbortSignal
 ) {
   try {
-    return await listResources(ctx.manager, { serverId: ctx.serverId });
+    return await listResources(ctx.manager, { serverId: ctx.serverId, signal });
   } catch {
     return {
       resources: [],
@@ -289,6 +279,13 @@ async function runClientChecks(
   config: NormalizedMCPConformanceConfig;
   surface?: MCPServerSurfaceSnapshot;
   readiness: MCPReadinessWarning[];
+  /**
+   * An Auto run's connection was refused for credentials before the era was
+   * negotiated. `checks` then already holds every selected check, client and
+   * raw, as could-not-run, and the raw families must not run against a
+   * guessed era.
+   */
+  authorizationRefused?: true;
 }> {
   const selectedClientChecks = CLIENT_CHECKS.filter((check) =>
     selectedCheckIds.has(check.id),
@@ -304,10 +301,15 @@ async function runClientChecks(
     return { checks: [], config, readiness: [] };
   }
 
+  // The connect is the initialize handshake, so `server-initialize` reports
+  // its duration rather than the near-zero time to read the stored result.
+  const connectStartedAt = Date.now();
   try {
     return await withEphemeralClient(
       createServerConfig(config, recorder),
       async (manager, serverId) => {
+        config.signal?.throwIfAborted();
+        const connectDurationMs = Date.now() - connectStartedAt;
         // `getManagedClient()` works for every era — the modern pin and the
         // legacy path both resolve to a `ManagedMcpClient` (the stateless
         // preview adapter was removed in Phase 1C; both go through the
@@ -331,13 +333,19 @@ async function runClientChecks(
               }
             : config;
 
-        const [toolsResult, promptsResult, resourcesResult, availableResourceTemplates] =
-          await Promise.all([
-            safeListTools({ manager, serverId }),
-            safeListPrompts({ manager, serverId }),
-            safeListResources({ manager, serverId }),
-            safeListResourceTemplates({ manager, serverId }),
-          ]);
+        const [
+          toolsResult,
+          promptsResult,
+          resourcesResult,
+          availableResourceTemplates,
+        ] = await Promise.all([
+          safeListTools({ manager, serverId }, config.signal),
+          safeListPrompts({ manager, serverId }, config.signal),
+          safeListResources({ manager, serverId }, config.signal),
+          safeListResourceTemplates({ manager, serverId }, config.signal),
+        ]);
+
+        config.signal?.throwIfAborted();
 
         // A server may answer a list method with an unusable payload; the
         // snapshot models "nothing discovered" rather than throwing, so a
@@ -363,6 +371,7 @@ async function runClientChecks(
           serverId,
           config: effectiveConfig,
           initializationInfo,
+          connectDurationMs,
           availableTools: surface.toolNames,
           availablePrompts: surface.promptNames,
           availableResources: surface.resourceUris,
@@ -377,48 +386,10 @@ async function runClientChecks(
           return { checks: [], config: effectiveConfig, surface, readiness };
         }
 
-        const results: MCPCheckResult[] = [];
-        let connectionLost = false;
-
-        for (const check of selectedClientChecks) {
-          // Era gate first: an era-inapplicable check is a deterministic skip
-          // that never runs `check.run`, so it neither observes nor affects
-          // the `connectionLost` sequencing below.
-          const eraSkip = eraGate(
-            check,
-            effectiveConfig.era,
-            effectiveConfig.protocolVersion,
-          );
-          if (eraSkip) {
-            results.push(eraSkip);
-            continue;
-          }
-
-          if (connectionLost) {
-            results.push(
-              couldNotRunResult(
-                check,
-                "Skipping check because the MCP client session is no longer healthy",
-              ),
-            );
-            continue;
-          }
-
-          try {
-            results.push(await check.run(ctx));
-          } catch (error) {
-            results.push(
-              failedResult(
-                check,
-                0,
-                errorMessage(error),
-                undefined,
-                error,
-              ),
-            );
-            connectionLost = true;
-          }
-        }
+        const results = await runSelectedClientChecks(
+          selectedClientChecks,
+          ctx
+        );
 
         return {
           checks: results,
@@ -430,10 +401,41 @@ async function runClientChecks(
       {
         clientName: config.clientName,
         timeout: config.checkTimeout,
-      },
+        signal: config.signal,
+      }
     );
 
   } catch (error) {
+    config.signal?.throwIfAborted();
+    // Refused for credentials on an Auto run: the connection that would have
+    // negotiated the era never completed, so the era is UNKNOWN — not the
+    // legacy default. Gating against that default would report the other
+    // era's checks `not-applicable`, a verdict about a server this run never
+    // reached. Every selected check, client or raw, could not run, and the raw
+    // probes do not run against a guessed era. A pinned run knows its era and
+    // keeps era gating below.
+    if (
+      config.protocolVersion === undefined &&
+      isAuthorizationRefusal(error)
+    ) {
+      return {
+        checks: [...selectedCheckIds].map((id) =>
+          couldNotRunResult(
+            selectedClientChecks.find((check) => check.id === id) ?? {
+              id,
+              category: CHECK_CATEGORY_BY_ID.get(id) ?? "protocol",
+              ...PROTOCOL_CHECK_CATALOG[id],
+            },
+            AUTHORIZATION_REQUIRED_MESSAGE,
+            authorizationRequiredDetails(error),
+          ),
+        ),
+        config,
+        readiness: [],
+        authorizationRefused: true,
+      };
+    }
+
     // A raw-only Auto run has no client-backed check on which to report a
     // failed negotiation. Reject the run instead of silently executing raw
     // checks with the legacy default after detection failed.
@@ -442,6 +444,7 @@ async function runClientChecks(
     }
 
     const checks: MCPCheckResult[] = [];
+    const connectDurationMs = Date.now() - connectStartedAt;
 
     // Era gate applies even when the connection could not be established: an
     // era-inapplicable check is a deterministic era-skip, never a failure. On a
@@ -453,6 +456,31 @@ async function runClientChecks(
     const firstApplicableCheck = selectedClientChecks.find(
       (check) => !eraGate(check, config.era, config.protocolVersion),
     );
+
+    // Refused for credentials on a PINNED run: the era is the pin, so era
+    // gating still holds, and every applicable client check could not run —
+    // `incomplete` rather than `failed`. The raw probes run as usual and any
+    // 401 they see is reclassified the same way. The degenerate
+    // all-era-skipped selection still anchors one result on the first check,
+    // so the refusal can never vanish into a `passed` run.
+    if (isAuthorizationRefusal(error)) {
+      const refused = (check: MCPClientCheckDefinition) =>
+        couldNotRunResult(
+          check,
+          AUTHORIZATION_REQUIRED_MESSAGE,
+          authorizationRequiredDetails(error),
+        );
+      return {
+        checks: selectedClientChecks.map((check, index) =>
+          !firstApplicableCheck && index === 0
+            ? refused(check)
+            : (eraGate(check, config.era, config.protocolVersion) ??
+              refused(check)),
+        ),
+        config,
+        readiness: [],
+      };
+    }
 
     // Degenerate modern-era selection: EVERY selected client check is
     // legacy-only, so there is no era-applicable check to pin the connect
@@ -467,7 +495,13 @@ async function runClientChecks(
       return {
         checks: selectedClientChecks.map((check, index) =>
           index === 0
-            ? failedResult(check, 0, errorMessage(error), undefined, error)
+            ? failedResult(
+                check,
+                connectDurationMs,
+                errorMessage(error),
+                undefined,
+                error,
+              )
             : (eraGate(check, config.era, config.protocolVersion) ??
               couldNotRunResult(
                 check,
@@ -493,7 +527,7 @@ async function runClientChecks(
         checks.push(
           failedResult(
             check,
-            0,
+            connectDurationMs,
             errorMessage(error),
             undefined,
             error,
@@ -513,6 +547,24 @@ async function runClientChecks(
   }
 }
 
+/**
+ * A raw probe that "failed" on a 401 graded the authorization layer, not the
+ * MCP behaviour it names (a missing JSON-RPC error object, an initialize that
+ * did not return a session). Same rule the transport checks already apply to
+ * a gateway's 401 page: the run establishes nothing there, so it could not
+ * run. The original failure message stays in `details` for the record.
+ */
+function reclassifyUnauthorizedProbe(check: MCPCheckResult): MCPCheckResult {
+  if (check.status !== "failed" || !isUnauthorizedProbe(check.details)) {
+    return check;
+  }
+  return couldNotRunResult(check, AUTHORIZATION_REQUIRED_MESSAGE, {
+    ...check.details,
+    ...authorizationRequiredDetails(),
+    probeFailure: check.error?.message,
+  });
+}
+
 export class MCPConformanceTest {
   private readonly config: NormalizedMCPConformanceConfig;
 
@@ -521,6 +573,7 @@ export class MCPConformanceTest {
   }
 
   async run(): Promise<MCPConformanceResult> {
+    this.config.signal?.throwIfAborted();
     const startedAt = Date.now();
     const selectedCheckIds = buildCheckSelection(this.config);
     // ONE record for the whole run, opened before the first byte moves. The
@@ -534,6 +587,7 @@ export class MCPConformanceTest {
       recorder,
     );
 
+    this.config.signal?.throwIfAborted();
     const rawContext: RawHttpCheckContext = {
       config: clientRun.config,
       serverUrl: clientRun.config.serverUrl,
@@ -542,26 +596,37 @@ export class MCPConformanceTest {
       recorder,
     };
 
+    // A refused Auto run already reported every selected check as
+    // could-not-run; the raw families get nothing to grade against an era the
+    // run never learned.
+    const rawSelection: Set<MCPCheckId> = clientRun.authorizationRefused
+      ? new Set()
+      : selectedCheckIds;
+
     const [
       protocolChecks,
       securityChecks,
       transportChecks,
       modernChecks,
       rawReadiness,
-    ] = await Promise.all([
-      runProtocolChecks(rawContext, selectedCheckIds),
-      runSecurityChecks(rawContext, selectedCheckIds),
-      runTransportChecks(rawContext, selectedCheckIds),
-      runModernChecks(rawContext, selectedCheckIds),
-      collectRawReadiness(rawContext),
-    ]);
+    ] = await awaitWithSignal(
+      Promise.all([
+        runProtocolChecks(rawContext, rawSelection),
+        runSecurityChecks(rawContext, rawSelection),
+        runTransportChecks(rawContext, rawSelection),
+        runModernChecks(rawContext, rawSelection),
+        collectRawReadiness(rawContext),
+      ]),
+      this.config.signal
+    );
+    this.config.signal?.throwIfAborted();
 
     // LAST, and deliberately not inside the `Promise.all` above: its subject is
     // everything the other families made the server say, so it has to run after
     // all of them or it would grade a partial record and call it complete.
     const wireSchema = await runWireSchemaCheck(
       rawContext,
-      selectedCheckIds,
+      rawSelection,
       recorder,
     );
 
@@ -572,7 +637,7 @@ export class MCPConformanceTest {
       ...transportChecks,
       ...modernChecks,
       ...wireSchema.results,
-    ];
+    ].map(reclassifyUnauthorizedProbe);
     // The tally reports EVERYTHING that ran, pending checks included: a report
     // that hid them would misstate what the run did. Only the VERDICT is
     // narrowed to the scored set, below.
