@@ -390,6 +390,28 @@ describe("isMCPJamModelLimitError", () => {
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
   });
 
+  it("still opens for a new exhaustion that quotes an earlier decline", () => {
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "signedIn",
+      hasPendingLimit: false,
+      isOpen: false,
+      intent: null,
+      pendingInput: null,
+    });
+    expect(
+      notifyMCPJamLimitError({
+        code: "user_rate_limit",
+        message: "Monthly MCPJam model limit reached.",
+        details: {
+          previous:
+            "Your card was declined, so auto-reload is paused and this organization is out of MCPJam credits.",
+        },
+        showsDeclinedCard: true,
+      }),
+    ).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
   it("forwards limitKind from response payload so concurrency is suppressed", async () => {
     useMCPJamLimitDialogStore.setState({
       authStatus: "signedIn",

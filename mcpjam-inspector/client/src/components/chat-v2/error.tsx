@@ -407,7 +407,9 @@ export function ErrorBox({
           <ShieldAlert className="h-6 w-6 flex-shrink-0 text-warning" />
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium leading-6">
-              {isDeclinedCard ? "Card declined" : "Spend budget reached"}
+              {isDeclinedCard
+                ? "Update your declined card"
+                : "Spend budget reached"}
             </p>
             <p className="text-sm leading-6 opacity-90">
               {isDeclinedCard

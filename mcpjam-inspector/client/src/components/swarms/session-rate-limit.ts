@@ -143,7 +143,7 @@ export function describeHeldCredits(message: string): NormalizedError {
 export function describeDeclinedCard(message: string): NormalizedError {
   return {
     ...describeAsSlug("provider/mcpjam_limit"),
-    title: "Card declined",
+    title: "Update your declined card",
     oneLine: AUTO_TOPUP_DECLINED_MESSAGE,
     likelyCauses: [
       "Auto-reload could not add credits because your card was declined. Update your payment method and turn auto-reload back on, or add credits.",

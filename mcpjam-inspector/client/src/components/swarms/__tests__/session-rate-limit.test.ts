@@ -403,7 +403,7 @@ describe("describeSwarmAttemptFailure declined card", () => {
       "user_rate_limit",
       "Anthropic",
     );
-    expect(result.title).toBe("Card declined");
+    expect(result.title).toBe("Update your declined card");
     expect(result.oneLine).toMatch(/update your payment method/i);
     expect(result.slug).toBe(ERROR_CATALOG["provider/mcpjam_limit"].slug);
     expect(result.rawMessage).toBe(DECLINED);
@@ -415,6 +415,6 @@ describe("describeSwarmAttemptFailure declined card", () => {
       "user_rate_limit",
       "Anthropic",
     );
-    expect(result.title).toBe("Card declined");
+    expect(result.title).toBe("Update your declined card");
   });
 });

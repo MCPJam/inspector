@@ -381,7 +381,7 @@ describe("ErrorBox declined card", () => {
         onResetChat={vi.fn()}
       />,
     );
-    expect(screen.getByText("Card declined")).toBeInTheDocument();
+    expect(screen.getByText("Update your declined card")).toBeInTheDocument();
     expect(screen.getByText(AUTO_TOPUP_DECLINED_MESSAGE)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);

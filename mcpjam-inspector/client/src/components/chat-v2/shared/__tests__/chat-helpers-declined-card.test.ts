@@ -39,4 +39,16 @@ describe("formatErrorMessage — declined card", () => {
     );
     expect(formatted?.code).toBe("user_rate_limit");
   });
+
+  it("reads a reason nested under details, as the dialog does", () => {
+    const { refusalReason: _reason, ...rest } = body;
+    expect(
+      formatErrorMessage(
+        JSON.stringify({
+          ...rest,
+          details: { refusalReason: "auto_topup_declined" },
+        }),
+      )?.code,
+    ).toBe(AUTO_TOPUP_DECLINED_CODE);
+  });
 });

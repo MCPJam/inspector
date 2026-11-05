@@ -5,7 +5,7 @@ import {
   AUTO_TOPUP_DECLINED_CODE,
   AUTO_TOPUP_DECLINED_MESSAGE,
 } from "@/lib/mcpjam-limit";
-import { isDeclinedCardRefusal } from "@/shared/swarm-attempt-error";
+import { isDeclinedCardLimit } from "@/shared/credit-exhaustion";
 import {
   formatOrgKeysRefusalEnvelope,
   formatPrefixedOrgKeysRefusal,
@@ -499,7 +499,7 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
       if (orgKeysRefusal) return orgKeysRefusal;
 
       // A declined card, not a spent allowance: the top-up dialog would hide it.
-      if (isDeclinedCardRefusal(parsed.refusalReason, message))
+      if (isDeclinedCardLimit(parsed))
         return {
           code: AUTO_TOPUP_DECLINED_CODE,
           message: AUTO_TOPUP_DECLINED_MESSAGE,
