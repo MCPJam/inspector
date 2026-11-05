@@ -1290,7 +1290,7 @@ export function CaseSpine({
  * every later assert into the PREVIOUS turn, so a check written to grade turn 2
  * starts grading turn 1. That has to be said before it happens.
  */
-function DeleteActionPrompt({
+export function DeleteActionPrompt({
   plan,
   onCancel,
   onRemoveOnly,
