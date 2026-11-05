@@ -359,7 +359,7 @@ function registerConformance(events: Command): void {
           )
           .option(
             "--profile <profile>",
-            'Profile to judge by: "draft" (draft@28ec35e) or "chatgpt" (chatgpt@2026-09-30)',
+            'Profile to judge by: "draft" (draft@28ec35e) or "chatgpt" (chatgpt@2026-11-05)',
             "draft",
           )
           .option(

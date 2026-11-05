@@ -2,26 +2,46 @@
  * MCP Events profiles (contract C1).
  *
  * A profile names WHICH rulebook a result, an emulation or a UI label is
- * judged by. There are two, and they are not ordered — ChatGPT's is not a
- * "stricter draft", it is a different, dated product surface:
+ * judged by. They are not ordered — ChatGPT's is not a "stricter draft", it
+ * is a different, dated product surface:
  *
  *   - `draft@28ec35e` — the pinned working-group draft.
  *   - {@link CHATGPT_PROFILE_ID} (dated by the OpenAI docs it follows) — what
  *     OpenAI documents for ChatGPT, plus what we have observed ourselves
  *     (dated), plus MCPJam policy where ChatGPT's internals cannot be
  *     observed. Every field says which of those it is.
+ *   - {@link CHATGPT_2026_09_30_PROFILE_ID} — an earlier ChatGPT snapshot,
+ *     kept only so results already judged by it can still be read.
  *
  * Development overrides (e.g. the plain-http fixture mode) are NOT a profile:
  * they are recorded on the run, always labelled, and never count as a pass.
  */
 
+import { MCP_PROTOCOL_VERSIONS } from "../mcp-client-manager/mcp-protocol-version.js";
+
 export const DRAFT_PROFILE_ID = "draft@28ec35e" as const;
-export const CHATGPT_PROFILE_ID = "chatgpt@2026-09-30" as const;
-export type EventsProfileId = typeof DRAFT_PROFILE_ID | typeof CHATGPT_PROFILE_ID;
+/** ChatGPT as OpenAI currently documents it; the `chatgpt` alias. */
+export const CHATGPT_PROFILE_ID = "chatgpt@2026-11-05" as const;
+/**
+ * A historical snapshot, kept so results judged by it stay readable. It
+ * accepted only `2026-07-28`; OpenAI's docs now also accept Streamable HTTP
+ * with `initialize`.
+ */
+export const CHATGPT_2026_09_30_PROFILE_ID = "chatgpt@2026-09-30" as const;
+export type EventsProfileId =
+  | typeof DRAFT_PROFILE_ID
+  | typeof CHATGPT_PROFILE_ID
+  | typeof CHATGPT_2026_09_30_PROFILE_ID;
 export const EVENTS_PROFILE_IDS: readonly EventsProfileId[] = [
   DRAFT_PROFILE_ID,
   CHATGPT_PROFILE_ID,
+  CHATGPT_2026_09_30_PROFILE_ID,
 ];
+
+/** Whether a profile judges by ChatGPT's rules, current or historical. */
+export function isChatgptProfileId(id: EventsProfileId): boolean {
+  return id === CHATGPT_PROFILE_ID || id === CHATGPT_2026_09_30_PROFILE_ID;
+}
 
 export const DRAFT_SOURCE_URL =
   "https://github.com/modelcontextprotocol/experimental-ext-triggers-events/blob/28ec35e905daa241f019981e2836b4a02f1c0368/docs/design-sketch-proposal.md";
@@ -165,13 +185,15 @@ export const DRAFT_PROFILE: EventsProfile = {
 
 export const CHATGPT_PROFILE: EventsProfile = {
   id: CHATGPT_PROFILE_ID,
-  title: "ChatGPT (as of 2026-09-30)",
+  title: "ChatGPT (as of 2026-11-05)",
   capabilityPlacement: {
     value: "capabilities.events",
     provenance: openai("Advertise event support"),
   },
+  // Streamable HTTP with `initialize` (every listed version from 2025-03-26),
+  // or MCP 2.0 HTTP at 2026-07-28.
   protocolVersions: {
-    value: ["2026-07-28"],
+    value: [...MCP_PROTOCOL_VERSIONS],
     provenance: openai("Before you start"),
   },
   deliveryModes: {
@@ -238,9 +260,21 @@ export const CHATGPT_PROFILE: EventsProfile = {
   },
 };
 
+/** The same facts, except that it accepted only `2026-07-28`. */
+export const CHATGPT_2026_09_30_PROFILE: EventsProfile = {
+  ...CHATGPT_PROFILE,
+  id: CHATGPT_2026_09_30_PROFILE_ID,
+  title: "ChatGPT (as of 2026-09-30, historical)",
+  protocolVersions: {
+    value: ["2026-07-28"],
+    provenance: openai("Before you start"),
+  },
+};
+
 export const EVENTS_PROFILES: Record<EventsProfileId, EventsProfile> = {
   [DRAFT_PROFILE_ID]: DRAFT_PROFILE,
   [CHATGPT_PROFILE_ID]: CHATGPT_PROFILE,
+  [CHATGPT_2026_09_30_PROFILE_ID]: CHATGPT_2026_09_30_PROFILE,
 };
 
 export function getEventsProfile(id: EventsProfileId): EventsProfile {

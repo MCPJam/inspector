@@ -1,5 +1,5 @@
 /**
- * The two MCP Events profiles (contract C1), as the Events tab needs them.
+ * The MCP Events profiles (contract C1), as the Events tab needs them.
  *
  * Replicated from `sdk/src/events/profiles.ts` rather than imported: the
  * `@mcpjam/sdk/events` entry also carries the coordinator, the wire schemas
@@ -14,6 +14,9 @@ import type {
 
 export const DRAFT_EVENTS_PROFILE_ID: EventsProfileIdView = "draft@28ec35e";
 export const CHATGPT_EVENTS_PROFILE_ID: EventsProfileIdView =
+  "chatgpt@2026-11-05";
+/** Historical: shown on results judged by it, never offered in a picker. */
+export const CHATGPT_2026_09_30_EVENTS_PROFILE_ID: EventsProfileIdView =
   "chatgpt@2026-09-30";
 
 /** The commit date of the pinned draft in {@link EVENTS_DRAFT_SOURCE_URL}: how the UI names it. */
@@ -42,16 +45,28 @@ export const EVENTS_PROFILES: readonly EventsProfileOption[] = [
   },
   {
     id: CHATGPT_EVENTS_PROFILE_ID,
-    label: "ChatGPT (2026-09-30)",
+    label: "ChatGPT (2026-11-05)",
     description:
-      "ChatGPT as OpenAI documents it on 2026-09-30, with webhook delivery only.",
+      "ChatGPT as OpenAI documents it on 2026-11-05, with webhook delivery only.",
+    deliveryModes: ["webhook"],
+  },
+];
+
+const HISTORICAL_EVENTS_PROFILES: readonly EventsProfileOption[] = [
+  {
+    id: CHATGPT_2026_09_30_EVENTS_PROFILE_ID,
+    label: "ChatGPT (2026-09-30, historical)",
+    description:
+      "An earlier ChatGPT snapshot that accepted only protocol version 2026-07-28.",
     deliveryModes: ["webhook"],
   },
 ];
 
 export function getEventsProfile(id: EventsProfileIdView): EventsProfileOption {
   return (
-    EVENTS_PROFILES.find((profile) => profile.id === id) ?? EVENTS_PROFILES[0]!
+    [...EVENTS_PROFILES, ...HISTORICAL_EVENTS_PROFILES].find(
+      (profile) => profile.id === id,
+    ) ?? EVENTS_PROFILES[0]!
   );
 }
 

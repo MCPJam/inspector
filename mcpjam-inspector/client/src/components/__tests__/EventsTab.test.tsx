@@ -295,7 +295,7 @@ describe("EventsTab (local)", () => {
     expect(screen.getByRole("radio", { name: /Push/ })).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Events profile"), {
-      target: { value: "chatgpt@2026-09-30" },
+      target: { value: "chatgpt@2026-11-05" },
     });
 
     expect(screen.queryByRole("radio", { name: /Poll/ })).toBeNull();

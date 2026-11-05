@@ -12,7 +12,10 @@
  * viewer token outside `EventsViewerTokenResponse` (contract C8).
  */
 
-export type EventsProfileIdView = "draft@28ec35e" | "chatgpt@2026-09-30";
+export type EventsProfileIdView =
+  | "draft@28ec35e"
+  | "chatgpt@2026-11-05"
+  | "chatgpt@2026-09-30";
 export type EventsDeliveryModeView = "poll" | "push" | "webhook";
 
 export interface EventsSupportView {

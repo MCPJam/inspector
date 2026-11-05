@@ -21,7 +21,11 @@ import { EVENTS_SUBSCRIPTION_ID_META_KEY } from "../mcp-client-manager/events-ex
 import { generateWebhookSecret } from "../mcp-client-manager/events-ext.js";
 import type { MCPClientManager } from "../mcp-client-manager/MCPClientManager.js";
 import { EVENT_DELIVERY_MODES } from "../mcp-client-manager/events-ext-schemas.js";
-import { CHATGPT_PROFILE_ID, getEventsProfile, type EventsProfileId } from "../events/profiles.js";
+import {
+  getEventsProfile,
+  isChatgptProfileId,
+  type EventsProfileId,
+} from "../events/profiles.js";
 import type { EventsConformanceReceiver } from "./receiver.js";
 import {
   EVENTS_CHECK_IDS,
@@ -155,11 +159,14 @@ export async function runEventsConformance(
         : "the handshake was not observed"
   );
 
-  if (profile === CHATGPT_PROFILE_ID) {
+  if (isChatgptProfileId(profile)) {
+    const accepted = getEventsProfile(profile).protocolVersions.value;
     record(
       "chatgpt-readiness-protocol-version",
-      protocolVersion === "2026-07-28" ? "passed" : "violation",
-      `negotiated ${protocolVersion ?? "unknown"}; ChatGPT requires 2026-07-28`
+      protocolVersion !== undefined && accepted.includes(protocolVersion)
+        ? "passed"
+        : "violation",
+      `negotiated ${protocolVersion ?? "unknown"}; ${getEventsProfile(profile).title} accepts ${accepted.join(", ")}`
     );
   } else {
     skipAll(["chatgpt-readiness-protocol-version", "chatgpt-readiness-webhook-listed"], "ChatGPT profile only", "not-applicable");
@@ -196,7 +203,7 @@ export async function runEventsConformance(
     });
   }
 
-  if (profile === CHATGPT_PROFILE_ID) {
+  if (isChatgptProfileId(profile)) {
     const webhookTypes = descriptors.filter((d) => d.delivery.includes("webhook"));
     record(
       "chatgpt-readiness-webhook-listed",

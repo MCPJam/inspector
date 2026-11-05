@@ -135,7 +135,7 @@ export function addEventsTargetOptions(command: Command): Command {
         command
           .option(
             "--profile <profile>",
-            'Events profile the run is judged by: "draft" (draft@28ec35e) or "chatgpt" (chatgpt@2026-09-30)',
+            'Events profile the run is judged by: "draft" (draft@28ec35e) or "chatgpt" (chatgpt@2026-11-05)',
             "draft",
           )
           .option(

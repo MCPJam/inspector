@@ -75,7 +75,7 @@ export interface EventSubscriptionRow {
   /** The hosted OAuth connection the binding acts with, pinned at creation. */
   oauthConnectionId?: string;
   locality: "hosted" | "local";
-  profile: "draft@28ec35e" | "chatgpt@2026-09-30";
+  profile: "draft@28ec35e" | "chatgpt@2026-11-05" | "chatgpt@2026-09-30";
   protocolVersion?: string;
   eventName: string;
   arguments: Record<string, unknown>;

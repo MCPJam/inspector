@@ -13,7 +13,11 @@ import {
   type EventsConformanceReceiver,
   type EventsConformanceResult,
 } from "../src/events-conformance/index.js";
-import { CHATGPT_PROFILE_ID, DRAFT_PROFILE_ID } from "../src/events/profiles.js";
+import {
+  CHATGPT_2026_09_30_PROFILE_ID,
+  CHATGPT_PROFILE_ID,
+  DRAFT_PROFILE_ID,
+} from "../src/events/profiles.js";
 import { startEventsFixture, type EventsFixtureHandle } from "./support/events-fixture.js";
 import { mintTestCertificate, trustingFetch } from "./support/events-tls.js";
 
@@ -35,7 +39,10 @@ afterEach(async () => {
 
 async function run(options: {
   fixture?: Parameters<typeof startEventsFixture>[0];
-  profile?: typeof DRAFT_PROFILE_ID | typeof CHATGPT_PROFILE_ID;
+  profile?:
+    | typeof DRAFT_PROFILE_ID
+    | typeof CHATGPT_PROFILE_ID
+    | typeof CHATGPT_2026_09_30_PROFILE_ID;
   insecureReceiver?: boolean;
   protocolVersion?: "2025-11-25" | "2026-07-28";
 }): Promise<{ result: EventsConformanceResult; fixture: EventsFixtureHandle }> {
@@ -93,8 +100,19 @@ describe("events conformance", () => {
     expect(result.outcome).toBe("passed");
   });
 
-  it("fails ChatGPT readiness on a legacy-only connection", async () => {
-    const { result } = await run({ profile: CHATGPT_PROFILE_ID, protocolVersion: "2025-11-25" });
+  it("passes current ChatGPT readiness over Streamable HTTP with initialize", async () => {
+    const { result } = await run({
+      profile: CHATGPT_PROFILE_ID,
+      protocolVersion: "2025-11-25",
+    });
+    expect(status(result, "chatgpt-readiness-protocol-version")).toBe("passed");
+  });
+
+  it("keeps the 2026-09-30 snapshot's rule: only 2026-07-28 passed", async () => {
+    const { result } = await run({
+      profile: CHATGPT_2026_09_30_PROFILE_ID,
+      protocolVersion: "2025-11-25",
+    });
     expect(status(result, "chatgpt-readiness-protocol-version")).toBe("failed");
   });
 

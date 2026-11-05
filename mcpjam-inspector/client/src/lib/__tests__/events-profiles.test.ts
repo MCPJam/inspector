@@ -6,14 +6,20 @@ import {
 } from "../events-profiles";
 
 describe("events profiles", () => {
-  it("offers exactly the two C1 profiles, draft first", () => {
+  it("offers the draft and the current ChatGPT profile, draft first", () => {
     expect(EVENTS_PROFILES.map((profile) => profile.id)).toEqual([
       "draft@28ec35e",
-      "chatgpt@2026-09-30",
+      "chatgpt@2026-11-05",
     ]);
     expect(getEventsProfile("draft@28ec35e").label).toBe("Draft (2026-09-04)");
+    expect(getEventsProfile("chatgpt@2026-11-05").label).toBe(
+      "ChatGPT (2026-11-05)",
+    );
+  });
+
+  it("still names the historical ChatGPT snapshot without offering it", () => {
     expect(getEventsProfile("chatgpt@2026-09-30").label).toBe(
-      "ChatGPT (2026-09-30)",
+      "ChatGPT (2026-09-30, historical)",
     );
   });
 
@@ -23,9 +29,9 @@ describe("events profiles", () => {
     ).toEqual(["poll", "push", "webhook"]);
     // ChatGPT only ever registers webhooks.
     expect(
-      usableDeliveryModes(["poll", "push", "webhook"], "chatgpt@2026-09-30"),
+      usableDeliveryModes(["poll", "push", "webhook"], "chatgpt@2026-11-05"),
     ).toEqual(["webhook"]);
-    expect(usableDeliveryModes(["poll"], "chatgpt@2026-09-30")).toEqual([]);
+    expect(usableDeliveryModes(["poll"], "chatgpt@2026-11-05")).toEqual([]);
     // Unknown modes and duplicates in a descriptor are ignored.
     expect(
       usableDeliveryModes(["sse", "poll", "poll"], "draft@28ec35e"),

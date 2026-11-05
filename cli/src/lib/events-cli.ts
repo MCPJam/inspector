@@ -29,6 +29,7 @@ import {
   type MCPServerConfig,
 } from "@mcpjam/sdk";
 import {
+  CHATGPT_2026_09_30_PROFILE_ID,
   CHATGPT_PROFILE_ID,
   DRAFT_PROFILE_ID,
   getEventsProfile,
@@ -44,6 +45,7 @@ export const EVENTS_PROFILE_ALIASES: Readonly<Record<string, EventsProfileId>> =
   chatgpt: CHATGPT_PROFILE_ID,
   [DRAFT_PROFILE_ID]: DRAFT_PROFILE_ID,
   [CHATGPT_PROFILE_ID]: CHATGPT_PROFILE_ID,
+  [CHATGPT_2026_09_30_PROFILE_ID]: CHATGPT_2026_09_30_PROFILE_ID,
 };
 
 export function parseEventsProfile(value: string | undefined): EventsProfile {

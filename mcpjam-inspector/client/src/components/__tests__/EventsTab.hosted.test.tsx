@@ -226,7 +226,9 @@ describe("EventsTab (hosted)", () => {
 
     // The registry row for this server renders.
     const card = await screen.findByTestId("subscription-sub_convex_1");
-    expect(within(card).getByText("ChatGPT (2026-09-30)")).toBeInTheDocument();
+    expect(
+      within(card).getByText("ChatGPT (2026-09-30, historical)"),
+    ).toBeInTheDocument();
 
     // Hosted webhooks need no acknowledgement: they use the public inbox.
     fireEvent.click(screen.getByRole("radio", { name: /Webhook/ }));
