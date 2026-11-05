@@ -3817,13 +3817,23 @@ describe("ConformanceTab", () => {
 
     render(<ConformanceTab server={createHttpServer()} />);
     await clickRun();
+    // The live region is there before sign-in is needed, so filling it is
+    // announced; inserted with its text, it may not be.
+    const announcement = await screen.findByTestId(
+      "conformance-oauth-announcement",
+    );
+    expect(announcement.getAttribute("role")).toBe("status");
 
     // Below the fold, a run waiting on sign-in looked like one that never
     // stops loading (CQT-97).
-    const prompt = (
-      await screen.findByText("Waiting for browser authorization...")
-    ).closest('[role="status"]') as HTMLElement;
-    expect(prompt).not.toBeNull();
+    await screen.findByText("Waiting for browser authorization...");
+    const prompt = screen.getByTestId("conformance-oauth-prompt");
+    expect(screen.getByTestId("conformance-oauth-announcement")).toBe(
+      announcement,
+    );
+    expect(announcement.textContent).toBe(
+      "This run is waiting for you to sign in.",
+    );
     expect(
       prompt.compareDocumentPosition(suiteHeader("protocol")) &
         Node.DOCUMENT_POSITION_FOLLOWING,
