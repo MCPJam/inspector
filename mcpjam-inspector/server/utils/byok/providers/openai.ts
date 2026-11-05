@@ -25,6 +25,26 @@ const HOSTED = `${VERBATIM}; canonical spelling from hosted-model-ids.generated.
 
 export const OPENAI_NATIVE_IDS: readonly NativeIdMapping[] = [
   {
+    canonicalId: "openai/gpt-6.1-sol",
+    nativeId: "gpt-6.1-sol",
+    evidence: HOSTED,
+  },
+  {
+    canonicalId: "openai/gpt-6-luna",
+    nativeId: "gpt-6-luna",
+    evidence: HOSTED,
+  },
+  {
+    canonicalId: "openai/gpt-6-sol",
+    nativeId: "gpt-6-sol",
+    evidence: HOSTED,
+  },
+  {
+    canonicalId: "openai/gpt-6-astra",
+    nativeId: "gpt-6-astra",
+    evidence: HOSTED,
+  },
+  {
     canonicalId: "openai/gpt-5.6-luna",
     nativeId: "gpt-5.6-luna",
     evidence: HOSTED,

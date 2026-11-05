@@ -217,6 +217,39 @@ describe("org model helpers", () => {
     }
   });
 
+  it("offers the GPT-6 family on an org OpenAI connection, on the org's key", () => {
+    const models = buildAvailableModelsFromOrgConfig(
+      {
+        providers: [
+          {
+            id: "conn-openai",
+            providerKey: "openai",
+            enabled: true,
+            hasSecret: true,
+          },
+        ],
+      },
+      [CATALOG_ONLY],
+    );
+    const byId = new Map(models.map((m) => [String(m.id), m]));
+
+    for (const id of [
+      "gpt-6.1-sol",
+      "gpt-6-sol",
+      "gpt-6-luna",
+      "gpt-6-astra",
+    ]) {
+      const row = byId.get(id);
+      expect(row, `${id} missing from the org OpenAI list`).toMatchObject({
+        provider: "openai",
+        contextLength: 1_050_000,
+        hosted: false,
+        orgProvider: { providerKey: "openai", id: "conn-openai" },
+      });
+      expect(isMCPJamProvidedModelMenuItem(row!)).toBe(false);
+    }
+  });
+
   it("buildAvailableModelsFromOrgConfig uses the injected catalog for the hosted source", () => {
     const models = buildAvailableModelsFromOrgConfig(
       { providers: [] },
