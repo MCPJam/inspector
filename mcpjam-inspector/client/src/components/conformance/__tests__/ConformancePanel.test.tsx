@@ -473,7 +473,7 @@ describe("ConformanceTab", () => {
     fireEvent.click(advice);
     const row = screen.getByText("Deprecated Feature Use").closest("li")!;
     expect(row).toHaveTextContent(
-      "Deprecation notice Protocol Deprecated Feature Use",
+      "Suggested Protocol Deprecated Feature Use",
     );
   });
 
@@ -603,9 +603,7 @@ describe("ConformanceTab", () => {
     await clickRun();
 
     // The run's own header, which leads back to History.
-    expect(
-      screen.getByRole("button", { name: "Conformance History" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "History" })).toBeInTheDocument();
     expect(screen.queryByText("History table")).toBeNull();
     await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
   });
@@ -628,10 +626,8 @@ describe("ConformanceTab", () => {
     await clickRun();
     expect(window.location.search).toBe("");
 
-    // The run header's breadcrumb goes back to History.
-    fireEvent.click(
-      screen.getByRole("button", { name: "Conformance History" }),
-    );
+    // The run header's History tab goes back to History.
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
     expect(window.location.search).toBe("?view=history");
     expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute(
       "aria-selected",
@@ -643,9 +639,7 @@ describe("ConformanceTab", () => {
       window.history.pushState({}, "", "/conformance");
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
-    expect(
-      screen.getByRole("button", { name: "Conformance History" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "History" })).toBeInTheDocument();
   });
 
   it("stays on History when Run has no server to run", async () => {
@@ -1749,7 +1743,7 @@ describe("ConformanceTab", () => {
       expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Conformance History" }));
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
     fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
 
     // The page's home, not the run it just left.
@@ -1991,7 +1985,7 @@ describe("ConformanceTab", () => {
     );
     await runToCompletion();
 
-    fireEvent.click(screen.getByRole("button", { name: "Conformance History" }));
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByText("History table")).toBeInTheDocument();
@@ -2892,7 +2886,7 @@ describe("ConformanceTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
     // From History, Run opens the setup steps again.
-    fireEvent.click(screen.getByRole("button", { name: "Conformance History" }));
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     await continueSetup();
 
@@ -2971,10 +2965,17 @@ describe("ConformanceTab", () => {
     );
     await runToCompletion();
 
-    // Breadcrumb, Run again and when it ran; no pickers in the run's header.
-    expect(
-      screen.getByRole("button", { name: "Conformance History" }),
-    ).toBeInTheDocument();
+    // Swarm's header: back, the server's name and the page's tabs, then
+    // Run again and when it ran; no pickers in the run's header.
+    expect(screen.getByTestId("conformance-run-back")).toHaveTextContent(
+      "Conformance",
+    );
+    expect(screen.getByRole("heading", { name: "alpha" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Overview" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("button", { name: "History" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled();
     expect(screen.getByText(/ · UI$/)).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
