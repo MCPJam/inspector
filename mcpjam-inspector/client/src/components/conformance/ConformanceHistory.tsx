@@ -132,11 +132,14 @@ export function ConformanceHistory({
   const navigate = useAppNavigate();
 
   const query = search.trim().toLowerCase();
-  const readsEveryRun = query.length > 0 || sort === "server";
-  // Once History reads every run it keeps the large page, so clearing the
-  // search does not page again through runs it already has.
+  // One server's runs all share a name, so the name sort needs no more of
+  // them than are loaded. A search does.
+  const readsEveryRun =
+    query.length > 0 || (sort === "server" && serverFilter === null);
+  /** History is paging forward on its own, on the large page. */
   const [readAll, setReadAll] = useState(false);
-  if (readsEveryRun && !readAll) setReadAll(true);
+  /** Once there are runs, the toolbar stays up through every reload. */
+  const [hadRuns, setHadRuns] = useState(false);
 
   const page = useQuery(
     "conformanceRuns:listRuns" as any,
@@ -160,6 +163,16 @@ export function ConformanceHistory({
       }
     | undefined;
 
+  // A list that is already complete has nothing left to read.
+  if (readsEveryRun && !readAll && page && !page.isDone) setReadAll(true);
+  // Paging forward leaves only the last page watched: once cleared, go back to
+  // the first page, so new and finishing runs show again.
+  if (!readsEveryRun && readAll) {
+    setReadAll(false);
+    setCursor(null);
+  }
+  if (rows.length > 0 && !hadRuns) setHadRuns(true);
+
   useEffect(() => {
     if (!page) return;
     setRows((previous) => {
@@ -171,8 +184,8 @@ export function ConformanceHistory({
 
   // Search and the name sort keep loading pages until the history is complete.
   useEffect(() => {
-    if (readsEveryRun && page && !page.isDone) setCursor(page.continueCursor);
-  }, [readsEveryRun, page]);
+    if (readAll && page && !page.isDone) setCursor(page.continueCursor);
+  }, [readAll, page]);
 
   const serverLabel = (run: ConformanceRunListItem) =>
     (run.serverId ? serverNames?.get(run.serverId) : undefined) ??
@@ -184,13 +197,13 @@ export function ConformanceHistory({
     setServerFilter(next);
     setCursor(null);
     setRows([]);
-    setReadAll(readsEveryRun);
+    setReadAll(false);
   };
 
   // "Load more" changes the query's cursor, and the query reads undefined
   // again while that page loads: only the first page may replace the table.
-  // A server filter keeps the toolbar up, so it can be cleared.
-  if (serverFilter === null) {
+  // Only the first load returns early: a reload keeps the toolbar and its focus.
+  if (!hadRuns && serverFilter === null) {
     if (page === undefined && rows.length === 0) {
       return (
         <p className="text-sm text-muted-foreground" role="status">
@@ -221,7 +234,7 @@ export function ConformanceHistory({
     ],
     serverName: serverLabel,
   });
-  const readingEveryRun = readsEveryRun && (!page || !page.isDone);
+  const readingEveryRun = readAll && (!page || !page.isDone);
   const filteredServerName = serverFilter
     ? (serverNames?.get(serverFilter) ?? serverFilter)
     : null;
@@ -259,11 +272,17 @@ export function ConformanceHistory({
       {page === undefined && rows.length === 0 ? (
         notice("Loading run history…", true)
       ) : rows.length === 0 ? (
-        notice(`No runs for ${filteredServerName} yet.`)
+        notice(
+          filteredServerName
+            ? `No runs for ${filteredServerName} yet.`
+            : "No conformance runs yet.",
+          true,
+        )
       ) : visibleRows.length === 0 ? (
         readingEveryRun ? null : (
           <p
             className="px-1 text-sm text-muted-foreground"
+            role="status"
             data-testid="conformance-history-no-match"
           >
             No runs match &ldquo;{search.trim()}&rdquo;.

@@ -391,4 +391,150 @@ describe("ConformanceHistory — search, filter and sort (CQT-113)", () => {
       ["Beta", "old"],
     ]);
   });
+
+  const listCalls = () =>
+    useQueryMock.mock.calls
+      .map(([, args]) => args)
+      .filter((args): args is ListArgs => args !== "skip");
+
+  it("goes back to the live first page once the search is cleared", async () => {
+    const first: Page = {
+      page: [run("a1", "srv_alpha", "2025-11-25", 3)],
+      isDone: false,
+      continueCursor: "cursor_2",
+    };
+    const second: Page = {
+      page: [run("b1", "srv_beta", "2025-06-18", 1)],
+      isDone: true,
+      continueCursor: "",
+    };
+    servePages((args) =>
+      args.paginationOpts.cursor === "cursor_2" ? second : first,
+    );
+    render(<ConformanceHistory projectId="proj_1" serverNames={serverNames} />);
+    const user = userEvent.setup();
+    const search = screen.getByTestId("conformance-history-search");
+
+    await user.type(search, "beta");
+    await waitFor(() => expect(rowTexts()[0]).toContain("Beta"));
+    expect(lastListArgs().paginationOpts.cursor).toBe("cursor_2");
+
+    // Left on the last page, the query would no longer watch the newest runs.
+    await user.clear(search);
+    await waitFor(() =>
+      expect(lastListArgs().paginationOpts).toEqual({
+        numItems: 20,
+        cursor: null,
+      }),
+    );
+    await waitFor(() => expect(rowTexts()).toHaveLength(1));
+    expect(rowTexts()[0]).toContain("Alpha");
+    expect(screen.getByRole("button", { name: "Load more" })).toBeDefined();
+  });
+
+  it("keeps the toolbar up while All servers reloads", async () => {
+    const all: Page = {
+      page: [run("b1", "srv_beta", "2025-11-25", 2)],
+      isDone: true,
+      continueCursor: "",
+    };
+    const alphaOnly: Page = {
+      page: [run("a1", "srv_alpha", "2025-11-25", 1)],
+      isDone: true,
+      continueCursor: "",
+    };
+    // Convex reads undefined for new args until the backend answers.
+    let allLoaded = true;
+    servePages((args) =>
+      args.targetKey ? alphaOnly : allLoaded ? all : undefined,
+    );
+    render(<ConformanceHistory projectId="proj_1" serverNames={serverNames} />);
+
+    await choose("conformance-history-server-filter", "Alpha");
+    await waitFor(() => expect(rowTexts()[0]).toContain("Alpha"));
+
+    allLoaded = false;
+    await choose("conformance-history-server-filter", "All servers");
+
+    expect(screen.getByTestId("conformance-history-search")).toBeDefined();
+    expect(
+      screen.getByTestId("conformance-history-server-filter"),
+    ).toBeDefined();
+    expect(screen.getByText("Loading run history…")).toBeDefined();
+  });
+
+  it("does not read every run to sort one server's runs by name", async () => {
+    const all: Page = {
+      page: [run("b1", "srv_beta", "2025-11-25", 2)],
+      isDone: true,
+      continueCursor: "",
+    };
+    const alphaFirst: Page = {
+      page: [run("a1", "srv_alpha", "2025-11-25", 2)],
+      isDone: false,
+      continueCursor: "alpha_2",
+    };
+    servePages((args) => (args.targetKey ? alphaFirst : all));
+    render(<ConformanceHistory projectId="proj_1" serverNames={serverNames} />);
+
+    await choose("conformance-history-server-filter", "Alpha");
+    await waitFor(() => expect(rowTexts()[0]).toContain("Alpha"));
+    await choose("conformance-history-sort", "Server name");
+
+    // Every row is Alpha's: the sort changes nothing, so nothing more loads.
+    expect(
+      listCalls().some((args) => args.paginationOpts.cursor === "alpha_2"),
+    ).toBe(false);
+    expect(
+      listCalls().some((args) => args.paginationOpts.numItems === 100),
+    ).toBe(false);
+    expect(screen.getByRole("button", { name: "Load more" })).toBeDefined();
+  });
+
+  it("does not reload a complete list to search it", async () => {
+    const page: Page = {
+      page: [
+        run("a1", "srv_alpha", "2025-11-25", 2),
+        run("b1", "srv_beta", "2025-06-18", 1),
+      ],
+      isDone: true,
+      continueCursor: "",
+    };
+    servePages(() => page);
+    render(<ConformanceHistory projectId="proj_1" serverNames={serverNames} />);
+    const user = userEvent.setup();
+
+    await user.type(screen.getByTestId("conformance-history-search"), "beta");
+    await waitFor(() => expect(rowTexts()).toHaveLength(1));
+
+    expect(
+      listCalls().some((args) => args.paginationOpts.numItems === 100),
+    ).toBe(false);
+    expect(screen.queryByText("Loading every run…")).toBeNull();
+  });
+
+  it("announces when a filtered server or a search has no runs", async () => {
+    const all: Page = {
+      page: [run("b1", "srv_beta", "2025-11-25", 2)],
+      isDone: true,
+      continueCursor: "",
+    };
+    const none: Page = { page: [], isDone: true, continueCursor: "" };
+    servePages((args) => (args.targetKey ? none : all));
+    render(<ConformanceHistory projectId="proj_1" serverNames={serverNames} />);
+    const user = userEvent.setup();
+
+    await user.type(screen.getByTestId("conformance-history-search"), "zzz");
+    expect(
+      (await screen.findByTestId("conformance-history-no-match")).getAttribute(
+        "role",
+      ),
+    ).toBe("status");
+
+    await user.clear(screen.getByTestId("conformance-history-search"));
+    await choose("conformance-history-server-filter", "Alpha");
+    expect(
+      (await screen.findByText("No runs for Alpha yet.")).getAttribute("role"),
+    ).toBe("status");
+  });
 });
