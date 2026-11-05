@@ -310,16 +310,11 @@ export function ConformanceProbeField({
     probeKey === "toolCallProbe"
       ? allTools.filter((tool) => tool.hasOutputSchema)
       : allTools;
-  // With no output schema declared, the output check does not apply at all.
-  // A cut-off list cannot show that: a later tool may declare one.
+  // With no output schema declared at all, the editor shades the output check
+  // and shows no field, so this field never has to say it does not apply.
   const unsetHint =
-    probeKey === "toolCallProbe" &&
-    status === "ready" &&
-    !truncated &&
-    options.length === 0
-      ? "No tool on this server declares an output schema, so this check does not apply."
-      : (PROBE_COPY[probeKey].unsetHint ??
-        "Without a tool, this check reports that it could not run.");
+    PROBE_COPY[probeKey].unsetHint ??
+    "Without a tool, this check reports that it could not run.";
   // The editor reports validity from an effect keyed on this callback, so it
   // must keep one identity while the parent re-renders.
   const onValidChangeRef = useRef(onValidChange);

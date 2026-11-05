@@ -23,6 +23,11 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { Collapse, StatusIcon } from "./conformance-ui";
 
@@ -493,6 +498,7 @@ export function CatalogRow({
   onSelectedChange,
   children,
   tag,
+  notApplicable,
 }: {
   entry: CatalogEntry;
   /** Shown under the row, e.g. the tool a picked check will call. */
@@ -506,14 +512,52 @@ export function CatalogRow({
    */
   selected?: boolean;
   onSelectedChange?: (selected: boolean) => void;
+  /**
+   * Why the check has nothing to test on this server. Set, the row is shaded
+   * and the reason shows as a tooltip; the checkbox still works.
+   */
+  notApplicable?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const expandable = Boolean(entry.description);
   const selectable = selected !== undefined;
+  const title = (
+    <button
+      type="button"
+      className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left transition-colors enabled:hover:bg-muted/30 enabled:cursor-pointer disabled:cursor-default"
+      onClick={() => setExpanded((value) => !value)}
+      disabled={!expandable}
+      aria-expanded={expandable ? expanded : undefined}
+    >
+      {selectable ? null : (
+        <MinusCircle className="h-3.5 w-3.5 text-muted-foreground/50 flex-shrink-0" />
+      )}
+      <span className="flex-1 min-w-0 truncate text-sm text-muted-foreground">
+        {entry.title}
+      </span>
+      {tag}
+      {entry.note && (
+        <span className="flex-shrink-0 text-xs text-muted-foreground/70">
+          {entry.note}
+        </span>
+      )}
+      {expandable &&
+        (expanded ? (
+          <ChevronDown className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+        ) : (
+          <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+        ))}
+    </button>
+  );
 
   return (
     <div className="border-b border-border/30 last:border-0">
-      <div className="flex items-center gap-2 px-1">
+      <div
+        className={cn(
+          "flex items-center gap-2 px-1",
+          notApplicable && "opacity-50",
+        )}
+      >
         {selectable ? (
           // A 24px target around the box: the label passes its clicks on.
           <label className="flex size-6 shrink-0 cursor-pointer items-center justify-center has-[:disabled]:cursor-default">
@@ -525,32 +569,19 @@ export function CatalogRow({
             />
           </label>
         ) : null}
-        <button
-          type="button"
-          className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left transition-colors enabled:hover:bg-muted/30 enabled:cursor-pointer disabled:cursor-default"
-          onClick={() => setExpanded((value) => !value)}
-          disabled={!expandable}
-          aria-expanded={expandable ? expanded : undefined}
-        >
-          {selectable ? null : (
-            <MinusCircle className="h-3.5 w-3.5 text-muted-foreground/50 flex-shrink-0" />
-          )}
-          <span className="flex-1 min-w-0 truncate text-sm text-muted-foreground">
-            {entry.title}
-          </span>
-          {tag}
-          {entry.note && (
-            <span className="flex-shrink-0 text-xs text-muted-foreground/70">
-              {entry.note}
-            </span>
-          )}
-          {expandable &&
-            (expanded ? (
-              <ChevronDown className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-            ) : (
-              <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-            ))}
-        </button>
+        {notApplicable ? (
+          // A disabled button gets no hover, so the tooltip sits on a wrapper.
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="flex min-w-0 flex-1">{title}</span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-xs">
+              {notApplicable}
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          title
+        )}
       </div>
       <Collapse open={expanded && Boolean(entry.description)}>
         <div className="px-6 pb-2 text-sm text-muted-foreground whitespace-pre-wrap break-words">
@@ -574,6 +605,7 @@ export function CatalogList({
   onSelectedChange,
   renderExtra,
   renderTag,
+  notApplicableReason,
 }: {
   catalog: CatalogEntry[];
   /** The rest of the line after "N checks in this suite", punctuation included. */
@@ -584,6 +616,8 @@ export function CatalogList({
   renderExtra?: (entry: CatalogEntry) => ReactNode;
   /** What a row shows after its title; see `CatalogRow`'s tag. */
   renderTag?: (entry: CatalogEntry) => ReactNode;
+  /** Why a row's check does not apply; see `CatalogRow`'s notApplicable. */
+  notApplicableReason?: (entry: CatalogEntry) => string | undefined;
   /**
    * Each row carries a checkbox showing whether it runs; with
    * `onSelectedChange` too, the user picks rows one by one.
@@ -608,6 +642,7 @@ export function CatalogList({
               }
             : {})}
           tag={renderTag?.(entry)}
+          notApplicable={notApplicableReason?.(entry)}
         >
           {renderExtra?.(entry)}
         </CatalogRow>
