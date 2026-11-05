@@ -53,6 +53,10 @@ import { useEvaluateNavPage } from "./evaluate/nav/eval-nav-pages";
 import { useEvaluateNavEnabled } from "./evaluate/nav/use-evaluate-nav-enabled";
 import { EvalHeaderActionsSlot } from "./evaluate/nav/eval-header-actions";
 import {
+  CaseStepsNavPage,
+  isCaseStepsRoute,
+} from "./evaluate/case-steps/case-steps-nav-page";
+import {
   buildEvalBreadcrumbs,
   evalRouteTestCaseId,
   evalsHeaderTrailProps,
@@ -1623,6 +1627,23 @@ function EvaluateTabContent({
   const renderSuiteIterationsDetail = () => {
     if (!selectedSuite) {
       return null;
+    }
+
+    if (evaluateNavEnabled === true && isCaseStepsRoute(addressRoute)) {
+      return (
+        <CaseStepsNavPage
+          route={addressRoute}
+          suite={selectedSuite}
+          cases={suiteDetails?.testCases ?? []}
+          projectId={projectId}
+          projectServers={projectServers}
+          readOnly={isCiOwnedSuite(selectedSuite)}
+          onRunCase={(testCase, options) =>
+            handleRunTestCaseWithQuota(selectedSuite, testCase, options)
+          }
+          onDeleteCase={(id) => handleDeleteTestCasesBatch([id])}
+        />
+      );
     }
 
     return (
