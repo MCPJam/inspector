@@ -14,15 +14,20 @@
  * of a silent registration.
  */
 
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   gradeClaudeIntrusiveObservations,
   probeDynamicRegistration,
   probeRefreshRotation,
+  probeStepUpChallenge,
   resolveClaudeIntrusiveMode,
   type ClaudeIntrusiveMode,
 } from "../../src/claude-readiness/intrusive.js";
+import { gatherClaudeReadinessEvidence } from "../../src/claude-readiness/gather.js";
+import { gradeClaudeReadiness } from "../../src/claude-readiness/runner.js";
 
 const STAMP = { evaluatedAt: "2026-08-19T00:00:00.000Z" };
 const NO_BORROWED = { hasBorrowedAccessToken: false };
@@ -524,5 +529,294 @@ describe("step-up grading", () => {
     ).find((f) => f.id === "claude.intrusive.step-up-challenge")!;
     expect(finding.status).toBe("violated");
     expect(finding.remediation).toMatch(/insufficient_scope/);
+  });
+
+  it("does not fail a server when the supplied token already held the scope", () => {
+    // The server was never asked the question: a 2xx means the token was not
+    // missing anything, which is a probe misconfiguration and not a defect.
+    const finding = gradeClaudeIntrusiveObservations(
+      withTool(),
+      { stepUp: { attempted: true, toolName: "read_private", status: 200 } },
+      STAMP,
+    ).find((f) => f.id === "claude.intrusive.step-up-challenge")!;
+    expect(finding.status).toBe("not-evaluated");
+    expect(finding.notEvaluatedReason).toMatch(/lacks the tool's scope/);
+  });
+
+  it("fails a 2xx that refuses the call with a tool error result", () => {
+    // HTTP 200 carrying `isError: true` is a refusal, not a success. Claude
+    // re-authorizes only on a 403 insufficient_scope, so this server leaves it
+    // with no way to ask for the missing scope.
+    const finding = gradeClaudeIntrusiveObservations(
+      withTool(),
+      {
+        stepUp: {
+          attempted: true,
+          toolName: "read_private",
+          status: 200,
+          refusal: "tool-error",
+        },
+      },
+      STAMP,
+    ).find((f) => f.id === "claude.intrusive.step-up-challenge")!;
+    expect(finding.status).toBe("violated");
+    expect(finding.remediation).toMatch(/tool error result/);
+    expect(finding.details).toMatchObject({ refusal: "tool-error" });
+  });
+
+  it("fails a 2xx that refuses the call with a JSON-RPC error", () => {
+    const finding = gradeClaudeIntrusiveObservations(
+      withTool(),
+      {
+        stepUp: {
+          attempted: true,
+          toolName: "read_private",
+          status: 200,
+          refusal: "rpc-error",
+          error: "forbidden",
+        },
+      },
+      STAMP,
+    ).find((f) => f.id === "claude.intrusive.step-up-challenge")!;
+    expect(finding.status).toBe("violated");
+    expect(finding.remediation).toMatch(/JSON-RPC error/);
+  });
+
+  it("does not grade a call whose arguments were rejected", () => {
+    // The probe sends no arguments. A tool that needs some refuses before it
+    // decides anything about sign-in, so the server was never asked.
+    const finding = gradeClaudeIntrusiveObservations(
+      withTool(),
+      {
+        stepUp: {
+          attempted: true,
+          toolName: "read_private",
+          status: 200,
+          refusal: "tool-error",
+          invalidArguments: true,
+        },
+      },
+      STAMP,
+    ).find((f) => f.id === "claude.intrusive.step-up-challenge")!;
+    expect(finding.status).toBe("not-evaluated");
+    expect(finding.notEvaluatedReason).toMatch(/rejected the call's arguments/);
+  });
+
+  it("does not grade a 2xx with no readable result", () => {
+    const finding = gradeClaudeIntrusiveObservations(
+      withTool(),
+      {
+        stepUp: {
+          attempted: true,
+          toolName: "read_private",
+          status: 200,
+          error: "tools/call returned no result",
+        },
+      },
+      STAMP,
+    ).find((f) => f.id === "claude.intrusive.step-up-challenge")!;
+    expect(finding.status).toBe("not-evaluated");
+    expect(finding.notEvaluatedReason).toMatch(/returned no result/);
+  });
+});
+
+describe("the step-up probe, against a real server", () => {
+  const LOW_SCOPE = "Bearer low-scope-token";
+
+  type ToolCallAnswer = { status: number; body: (id: unknown) => unknown; headers?: Record<string, string> };
+  const CHALLENGE: ToolCallAnswer = {
+    status: 403,
+    body: (id) => ({ jsonrpc: "2.0", id, error: { code: -32001, message: "forbidden" } }),
+    headers: { "www-authenticate": 'Bearer error="insufficient_scope", scope="private:read"' },
+  };
+
+  async function startScopedServer(answer: ToolCallAnswer = CHALLENGE): Promise<{
+    url: string;
+    calls: Array<{ tool?: string; authorization?: string }>;
+    close: () => Promise<void>;
+  }> {
+    const calls: Array<{ tool?: string; authorization?: string }> = [];
+    const server = http.createServer((req, res) => {
+      let raw = "";
+      req.on("data", (chunk) => (raw += chunk));
+      req.on("end", () => {
+        const body = raw ? JSON.parse(raw) : {};
+        const send = (status: number, payload: unknown, headers = {}) => {
+          res.writeHead(status, { "content-type": "application/json", ...headers });
+          res.end(JSON.stringify(payload));
+        };
+        if (req.method !== "POST") return send(405, {});
+        if (body.method === "notifications/initialized") {
+          res.writeHead(202);
+          res.end();
+          return;
+        }
+        if (body.method === "initialize") {
+          return send(200, {
+            jsonrpc: "2.0",
+            id: body.id,
+            result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "s" } },
+          });
+        }
+        if (body.method === "tools/list") {
+          return send(200, {
+            jsonrpc: "2.0",
+            id: body.id,
+            result: {
+              tools: [
+                { name: "read_private", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+                { name: "wipe_private", inputSchema: { type: "object" }, annotations: { readOnlyHint: false } },
+              ],
+            },
+          });
+        }
+        if (body.method === "tools/call") {
+          calls.push({ tool: body.params?.name, authorization: req.headers.authorization });
+          return send(answer.status, answer.body(body.id), answer.headers);
+        }
+        return send(200, { jsonrpc: "2.0", id: body.id, result: { resources: [] } });
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
+    return {
+      url,
+      calls,
+      close: () =>
+        new Promise<void>((resolve) => {
+          server.closeAllConnections?.();
+          server.close(() => resolve());
+        }),
+    };
+  }
+
+  it("calls the declared read-only tool once with the supplied token and grades the challenge", async () => {
+    const server = await startScopedServer();
+    try {
+      const evidence = await gatherClaudeReadinessEvidence({
+        enteredUrl: server.url,
+        fetchFn: fetch,
+        mcpHeaders: { authorization: LOW_SCOPE },
+        capabilities: ["intrusive-probes"],
+        intrusive: {
+          enabled: true,
+          grantOrigin: "dedicated-test-account",
+          testCredentials: { clientId: "c" },
+          protectedToolName: "read_private",
+          expectedScopes: ["private:read"],
+        },
+      });
+      expect(server.calls).toEqual([
+        { tool: "read_private", authorization: LOW_SCOPE },
+      ]);
+      const result = gradeClaudeReadiness(evidence);
+      const stepUp = result.findings.find(
+        (f) => f.id === "claude.intrusive.step-up-challenge",
+      )!;
+      expect(stepUp.status).toBe("satisfied");
+      expect(stepUp.details).toMatchObject({ scopesOverlapExpectation: true });
+      // The same challenge is what the shape check grades.
+      expect(
+        result.findings.find(
+          (f) => f.id === "claude.auth.insufficient-scope-challenge-shape",
+        )?.status,
+      ).toBe("satisfied");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("records a 2xx tool error result as a refusal", async () => {
+    const server = await startScopedServer({
+      status: 200,
+      body: (id) => ({
+        jsonrpc: "2.0",
+        id,
+        result: { isError: true, content: [{ type: "text", text: "missing scope private:read" }] },
+      }),
+    });
+    try {
+      const observed = await probeStepUpChallenge(
+        armed({
+          enabled: true,
+          grantOrigin: "dedicated-test-account",
+          testCredentials: { clientId: "c" },
+          protectedToolName: "read_private",
+          expectedScopes: ["private:read"],
+        }),
+        { enteredUrl: server.url, fetchFn: fetch, mcpHeaders: { authorization: LOW_SCOPE } },
+      );
+      expect(observed).toMatchObject({ attempted: true, status: 200, refusal: "tool-error" });
+      expect(observed.invalidArguments).toBeUndefined();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("marks a 2xx input-validation refusal as rejected arguments", async () => {
+    const server = await startScopedServer({
+      status: 200,
+      body: (id) => ({
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32602, message: "Invalid params: path is required" },
+      }),
+    });
+    try {
+      const observed = await probeStepUpChallenge(
+        armed({
+          enabled: true,
+          grantOrigin: "dedicated-test-account",
+          testCredentials: { clientId: "c" },
+          protectedToolName: "read_private",
+          expectedScopes: ["private:read"],
+        }),
+        { enteredUrl: server.url, fetchFn: fetch, mcpHeaders: { authorization: LOW_SCOPE } },
+      );
+      expect(observed).toMatchObject({
+        attempted: true,
+        status: 200,
+        refusal: "rpc-error",
+        invalidArguments: true,
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("refuses a declared tool that is not annotated read-only, calling nothing", async () => {
+    const server = await startScopedServer();
+    try {
+      const observed = await probeStepUpChallenge(
+        armed({
+          enabled: true,
+          grantOrigin: "dedicated-test-account",
+          testCredentials: { clientId: "c" },
+          protectedToolName: "wipe_private",
+          expectedScopes: ["private:write"],
+        }),
+        { enteredUrl: server.url, fetchFn: fetch, mcpHeaders: { authorization: LOW_SCOPE } },
+      );
+      expect(observed.attempted).toBe(false);
+      expect(observed.error).toMatch(/readOnlyHint: true/);
+      expect(server.calls).toEqual([]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("refuses to run without a token to call with", async () => {
+    const observed = await probeStepUpChallenge(
+      armed({
+        enabled: true,
+        grantOrigin: "dedicated-test-account",
+        testCredentials: { clientId: "c" },
+        protectedToolName: "read_private",
+        expectedScopes: ["private:read"],
+      }),
+      { enteredUrl: "http://127.0.0.1:1/mcp", fetchFn: vi.fn() as unknown as typeof fetch, mcpHeaders: {} },
+    );
+    expect(observed.attempted).toBe(false);
+    expect(observed.error).toMatch(/no(ne)? .*supplied/);
   });
 });

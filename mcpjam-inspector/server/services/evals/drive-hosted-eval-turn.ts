@@ -1,3 +1,4 @@
+import { guardEvalViewTools } from "./view-tool-policy.js";
 import { appendPluginModelContext } from "../../../shared/plugin-model-context.js";
 import { createConvexEvidenceReadTransport } from "../../utils/harness/harness-evidence-reader.js";
 import { expandPersistedRequestPayloads } from "@/shared/live-chat-trace";
@@ -527,6 +528,7 @@ export async function driveHostedEvalTurn(
   const mergedTools = {
     ...prepared.allTools,
     ...browser.computerWidgetTools,
+    ...guardEvalViewTools(browser.viewTools ?? {}, params.toolPolicyGate),
   };
   const tracedTools = wrapToolSetForEvalTrace(
     params.toolPolicyGate
@@ -544,7 +546,7 @@ export async function driveHostedEvalTurn(
   acc.messageHistory.push({ role: "user", content: params.prompt });
   acc.traceMessageHistory.push({ role: "user", content: params.prompt });
   const messageCountBeforeTurn = acc.messageHistory.length;
-  const appContext = browser.getModelContext?.();
+  let appContext: ReturnType<BrowserSessionContext["getModelContext"]>;
   const inputMessages: ModelMessage[] = [...acc.messageHistory];
 
   const baselineUsage = {
@@ -716,6 +718,7 @@ export async function driveHostedEvalTurn(
   // iteration-abort path (CodeRabbit, PR 2610).
   try {
     await browser.dismissCarriedWidget();
+    appContext = browser.getModelContext?.();
     sinks =
       params.buildSinks?.({
         promptIndex,
@@ -1074,7 +1077,15 @@ export async function driveHostedEvalTurn(
           iterationErrorDetails: lastEngineError.rawText,
         }
       : { iterationError: fallbackError };
-    logger.error(logLine);
+    // `logger.error` with no error object always captures. An empty step was
+    // already reported once by the engine, which decided whether it is ours
+    // (`isMcpjamOwnedEmptyStep`); capturing it again here, untagged, would
+    // page on the provider-owned ones that verdict declines.
+    if (lastEngineError?.code === "provider_empty_response") {
+      logger.warn(logLine);
+    } else {
+      logger.error(logLine);
+    }
     sinks.onTurnFailure?.(failure);
     // WHICH LAYER, from the engine's own report rather than from this call
     // site's position.

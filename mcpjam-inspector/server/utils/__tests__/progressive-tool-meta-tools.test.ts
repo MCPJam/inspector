@@ -85,11 +85,14 @@ describe("createProgressiveMetaTools", () => {
     });
     const res = (await execTool(tools, META_TOOL_SEARCH, {
       query: "task",
-    })) as { matches: { name: string; toolId: string }[] };
+    })) as { matches: { name: string }[] };
     expect(res.matches.length).toBeGreaterThan(0);
     expect(res.matches[0].name).toBe("asana_create_task");
     // Verify the match object is intentionally narrow — no `inputSchema`.
     expect(res.matches[0]).not.toHaveProperty("inputSchema");
+    // One handle per tool: the model never sees an id it could call by.
+    expect(res.matches[0]).not.toHaveProperty("toolId");
+    expect(res.matches[0]).not.toHaveProperty("serverId");
   });
 
   it("search_mcp_tools ignores stray serverIds so guessed filters do not hide exact matches", async () => {
@@ -112,7 +115,7 @@ describe("createProgressiveMetaTools", () => {
     const res = (await execTool(tools, META_TOOL_SEARCH, {
       query: "get_categories",
       serverIds: ["gstack"],
-    })) as { matches: { name: string; serverId: string }[] };
+    })) as { matches: { name: string }[] };
     expect(res.matches.map((m) => m.name)).toContain("get_categories");
   });
 
@@ -205,7 +208,23 @@ describe("createProgressiveMetaTools", () => {
     expect(res.truncated).toBe(false);
   });
 
-  it("load_mcp_tools marks ids as newlyLoaded in state", async () => {
+  it("load_mcp_tools loads by name and stages the catalog id", async () => {
+    const state = createDiscoveryState();
+    const catalog = makeCatalog();
+    const tools = createProgressiveMetaTools({
+      getCatalog: () => catalog,
+      state,
+      policy: DEFAULT_TOOL_DISCOVERY_POLICY,
+    });
+    const res = (await execTool(tools, META_TOOL_LOAD, {
+      names: ["asana_create_task", "missing_tool"],
+    })) as { loaded: { name: string }[]; notFound: string[] };
+    expect(res.loaded).toEqual([{ name: "asana_create_task" }]);
+    expect(res.notFound).toEqual(["missing_tool"]);
+    expect([...state.newlyLoadedToolIds]).toEqual(["asana::asana_create_task"]);
+  });
+
+  it("load_mcp_tools still accepts legacy toolIds from older chats", async () => {
     const state = createDiscoveryState();
     const catalog = makeCatalog();
     const tools = createProgressiveMetaTools({
@@ -215,10 +234,8 @@ describe("createProgressiveMetaTools", () => {
     });
     const res = (await execTool(tools, META_TOOL_LOAD, {
       toolIds: ["asana::asana_create_task", "nope::missing"],
-    })) as { loaded: { toolId: string }[]; notFound: string[] };
-    expect(res.loaded.map((l) => l.toolId)).toEqual([
-      "asana::asana_create_task",
-    ]);
+    })) as { loaded: { name: string }[]; notFound: string[] };
+    expect(res.loaded).toEqual([{ name: "asana_create_task" }]);
     expect(res.notFound).toEqual(["nope::missing"]);
     expect([...state.newlyLoadedToolIds]).toEqual(["asana::asana_create_task"]);
   });

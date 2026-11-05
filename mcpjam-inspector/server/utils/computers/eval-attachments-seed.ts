@@ -1,3 +1,4 @@
+import { attachRunningSandbox } from "./attach-sandbox.js";
 /**
  * COMP-17 — seed an eval iteration's fresh ephemeral sandbox with the case's
  * attachments.
@@ -17,7 +18,6 @@
  * is strictly better. Mirrors the tri-state skill-file contract (never treat a
  * fetch failure as "no files").
  */
-import { Sandbox } from "e2b";
 import {
   resolveEvalRunAttachments,
   type ResolvedEvalAttachment,
@@ -41,7 +41,7 @@ export const e2bAttachmentSeedWriter: AttachmentSeedWriter = async ({
   sandboxId,
   files,
 }) => {
-  const sandbox = await Sandbox.connect(sandboxId);
+  const sandbox = await attachRunningSandbox(sandboxId);
   for (const file of files) {
     const slash = file.path.lastIndexOf("/");
     const dir = slash > 0 ? file.path.slice(0, slash) : "";

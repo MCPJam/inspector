@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
 import type { HarnessV1SandboxProvider } from "@ai-sdk/harness";
 import {
@@ -558,6 +559,39 @@ describe("the generated bake context", () => {
     expect(run.stderr).toMatch(/do not match .*stale-lock\.json/);
     expect(run.stderr).toMatch(/--write-lock/);
     expect(existsSync(join(out, "refused"))).toBe(false);
+  }, 120_000);
+
+  it("needs no built workspace package, as in the computer template build", () => {
+    // The template build installs with --ignore-scripts and builds nothing.
+    // Failing every resolution into the SDK's or the evaluators' dist/ proves
+    // each module the generator loads reads their sources, where CI's built
+    // dist/ would otherwise hide one that does not.
+    const repo = realpathSync(join(PACKAGE_ROOT, ".."));
+    const built = ["sdk", "evaluators"].map(
+      (name) => `${pathToFileURL(join(repo, name, "dist")).href}/`,
+    );
+    const guard = `import { registerHooks } from "node:module";
+const built = ${JSON.stringify(built)};
+const linked = ["/node_modules/@mcpjam/sdk/dist/", "/node_modules/@mcpjam/evaluators/dist/"];
+registerHooks({ resolve(specifier, context, next) {
+  const resolved = next(specifier, context);
+  if (built.some((dist) => resolved.url.startsWith(dist)) || linked.some((dist) => resolved.url.includes(dist)))
+    throw new Error("resolved " + specifier + " to a built workspace package");
+  return resolved;
+} });`;
+    const run = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        `data:text/javascript,${encodeURIComponent(guard)}`,
+        "scripts/harness-bake-context.mjs",
+        "--out",
+        join(out, "no-built-packages"),
+      ],
+      { cwd: PACKAGE_ROOT, encoding: "utf8" },
+    );
+    expect(run.stderr).not.toMatch(/to a built workspace package/);
+    expect(run.status).toBe(0);
   }, 120_000);
 
   it("refuses to overwrite a directory it did not write", () => {

@@ -22,11 +22,12 @@ import {
  *      and an unthreaded surface would now gate correctly — but because
  *      `approvalDelivery` is the one thing this file cannot work out for
  *      itself: whether A PERSON IS WATCHING. That answer decides the browser's
- *      context mode (a persistent, signed-in profile or a blank ephemeral
- *      one), the owner key, and whether an unattended run's policy is
- *      mandatory. A surface that has not said which kind of run it is has not
- *      chosen any of those, and defaulting them is how an eval comes to run
- *      against whatever profile the last playground session left signed in.
+ *      context mode (a persistent, signed-in profile or an ephemeral one that
+ *      keeps nothing between runs), the owner key, and whether an unattended
+ *      run's policy is mandatory. A surface that has not said which kind of
+ *      run it is has not chosen any of those, and defaulting them is how an
+ *      eval comes to run against whatever profile the last playground session
+ *      left signed in.
  *
  *   2. A SCREENSHOT REACHES THE MODEL AS AN IMAGE, via `toModelOutput`. The
  *      implementation result carries the capture as base64 in an ordinary

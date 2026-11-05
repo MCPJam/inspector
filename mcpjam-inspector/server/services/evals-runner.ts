@@ -1,3 +1,6 @@
+import { assertNativeDiscovery } from "../utils/harness/native-discovery.js";
+import { mergeViewToolEvidence } from "./evals/view-tool-evidence.js";
+import { evalWidgetServerCall } from "./evals/view-tool-policy.js";
 import {
   InvalidClientProfileError,
   resolveBrowserHostCapabilities,
@@ -172,6 +175,7 @@ import { buildLocalExecutionRecord } from "../utils/local-execution-record.js";
 import { postLocalUsage } from "../utils/org-model-stream-handler.js";
 import type { LocalModelCallSettled } from "./evals/drive-local-eval-turn.js";
 import {
+  extractToolErrors,
   hasSkillTools,
   mergeToolCallsByPromptIndex,
   summarizeRenderObservations,
@@ -194,6 +198,7 @@ import {
   createSuiteRunRecorder,
   type SuiteRunRecorder,
 } from "./evals/recorder";
+import { findPrecreatedIterationByCase } from "./evals/precreated-iteration";
 import { finalizeAiSdkTraceOnFailure } from "./evals/eval-trace-capture";
 import type {
   EvalTraceBlobV1,
@@ -254,6 +259,7 @@ import {
   type SideEffectGate,
 } from "./evals/tool-policy-gate.js";
 import type { BenchmarkWriteGuard } from "./evals/artifact-ledger.js";
+import { deferredViewToolPolicyNames } from "./evals/view-tool-policy-name.js";
 import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
 import { resolveEvalCaseModelDefinition } from "./evals/harness-admission.js";
 import { resolveBrowserSecrets } from "../utils/secrets/browser-secrets.js";
@@ -1801,6 +1807,7 @@ function buildPromptTraceSummaries(
           ),
         };
       }),
+      ...(summary.retries?.length ? { retries: summary.retries } : {}),
     };
   });
 }
@@ -1837,6 +1844,7 @@ function toStreamToolCalls(toolCalls: ToolCall[]): EvalStreamToolCall[] {
   return toolCalls.map((toolCall) => ({
     toolName: toolCall.toolName,
     arguments: toolCall.arguments,
+    ...(toolCall.toolCallId ? { toolCallId: toolCall.toolCallId } : {}),
   }));
 }
 
@@ -2892,6 +2900,7 @@ const runHostedIteration = async (
       isPinnedTurn(t) && typeof t.pinnedToolCall?.renderTimeoutMs === "number",
   )?.pinnedToolCall?.renderTimeoutMs;
   const browser = await createBrowserSessionContext({
+    enableViewTools: true,
     model: params.test.model,
     mcpClientManager: params.mcpClientManager,
     injectOpenAiCompat: params.injectOpenAiCompat,
@@ -2930,8 +2939,9 @@ const runHostedIteration = async (
 // the guard-vs-model-free-fork at the top and the per-branch runner family
 // differ. `runTestCase` / `streamTestCase` are thin wrappers below.
 // Locate the pending/running iteration row for a (test, runIndex) so a timeout
-// can mark it `timed_out`. Prefers the precreated id; otherwise matches on
-// testCaseId (model-free) or snapshot identity + iteration number.
+// or credit stop can settle it. Prefers the precreated id; otherwise pairs like
+// the recorder does: by case, iteration and model, or by case and iteration
+// alone for a case with no prompt.
 async function findIterationIdForTimeout(args: {
   convexClient: ConvexHttpClient;
   runId: string | null;
@@ -2946,37 +2956,35 @@ async function findIterationIdForTimeout(args: {
     return undefined;
   }
 
-  const resolvedTest = resolveEvalTestCase(args.test);
-  const shouldMatchByTestCaseOnly =
-    !turnsNeedModel({
-      caseType: args.test.caseType,
-      promptTurns: resolvedTest.promptTurns,
-    }) && Boolean(args.test.testCaseId);
   try {
     const response = await args.convexClient.query(
       "testSuites:getTestSuiteRunDetails" as any,
       { runId: args.runId },
     );
-    const iterations = response?.iterations ?? [];
-    const matching = iterations.find((iteration: any) => {
-      if (
-        shouldMatchByTestCaseOnly &&
-        iteration.testCaseId === args.test.testCaseId &&
-        iteration.iterationNumber === args.runIndex + 1 &&
-        (iteration.status === "pending" || iteration.status === "running")
-      ) {
-        return true;
-      }
-
-      const snapshot = iteration.testCaseSnapshot ?? {};
-      return (
-        snapshot.title === args.test.title &&
-        snapshot.query === resolvedTest.query &&
-        snapshot.model === args.test.model &&
-        snapshot.provider === args.test.provider &&
-        iteration.iterationNumber === args.runIndex + 1 &&
-        (iteration.status === "pending" || iteration.status === "running")
-      );
+    const open = (response?.iterations ?? []).filter(
+      (iteration: any) =>
+        iteration.status === "pending" || iteration.status === "running",
+    );
+    const resolvedTest = resolveEvalTestCase(args.test);
+    // The backend files a case with no prompt under a display-only sentinel
+    // model, so its row cannot be matched on the runner's model.
+    const caseNeedsModel = turnsNeedModel({
+      caseType: args.test.caseType,
+      promptTurns: resolvedTest.promptTurns,
+    });
+    const matching = findPrecreatedIterationByCase(open, {
+      testCaseId: args.test.testCaseId,
+      ...(caseNeedsModel
+        ? {
+            testCaseSnapshot: {
+              title: args.test.title,
+              query: resolvedTest.query,
+              model: args.test.model,
+              provider: args.test.provider,
+            },
+          }
+        : {}),
+      iterationNumber: args.runIndex + 1,
     });
     return matching?._id as string | undefined;
   } catch (error) {
@@ -4298,11 +4306,13 @@ export const runEvalSuiteWithAiSdk = async ({
           "computer",
           "finish_widget",
           EVAL_BASH_TOOL_NAME,
+          "widget_tools", "widget_call_tool",
         ]);
         resolvedToolPolicyWarnings = validateToolPolicyNames({
           policy: toolPolicy,
           availableToolNames,
-          deferredToolNames: [...SKILL_TOOL_NAMES, ...META_TOOL_NAMES],
+          // Bare names must still match at launch; only view: names are deferred.
+          deferredToolNames: [...SKILL_TOOL_NAMES, ...META_TOOL_NAMES, ...deferredViewToolPolicyNames(toolPolicy)],
         });
       } catch (error) {
         if (error instanceof UnmatchedToolPolicyNameError) {
@@ -5054,6 +5064,7 @@ const runLocalIteration = async ({
     },
     precedence: "override-wins",
   });
+  assertNativeDiscovery({ required: resolvedExecution.requireNativeToolDiscovery });
   const skillsSource = resolveIterationSkillsSource({
     harness: resolvedExecution.harness,
     pinnedSkillSource,
@@ -5140,11 +5151,9 @@ const runLocalIteration = async ({
     (precreatedIterationId !== undefined || recorder !== null);
   const iterationParams = {
     ...iterationParamsBase,
-    // Model-free (pinned-only) iterations omit the testCaseSnapshot so the
-    // recorder pairs the pre-created row by testCaseId + iterationNumber. The
-    // snapshot's query is synthesized ("Pinned tool call: …") and would never
-    // match the pre-created row's stored query, leaving the row unpaired and
-    // perpetually pending. Mirrors the old probe path, which passed no snapshot.
+    // Model-free (pinned-only) iterations omit the testCaseSnapshot so pairing
+    // never compares the backend's display-only sentinel model. A row without
+    // a case id still cannot pair (PLB-407). Mirrors the old probe path.
     ...(shouldOmitSnapshotForPairing ? {} : { testCaseSnapshot }),
   };
 
@@ -5218,6 +5227,8 @@ const runLocalIteration = async ({
   // Use. Declared BEFORE the
   // try so the finally can dispose even on a mid-stream abort.
   const browser = await createBrowserSessionContext({
+    enableViewTools: true,
+    callWidgetTool: evalWidgetServerCall(toolPolicyGate, mcpClientManager),
     getWorkspacePresentation: () => projectWorkspaceTranscript(acc.conversationMessages, test.hostConfigOverride?.hostContext ?? suiteHostConfig?.hostContext, workspacePresentationHostConfig(suiteHostConfig, test.hostConfigOverride)),
     // Model-free (pinned-only) iterations pass no model: no Computer Use, but
     // the harness still renders pinned widgets and records observations.
@@ -5727,7 +5738,7 @@ const runLocalIteration = async ({
     // matching uniformly — including counting as actuals for extras/negative
     // accounting (a click that fires a tool the case forbade SHOULD fail it).
     const toolsCalledByPromptWithWidgets = mergeToolCallsByPromptIndex(
-      acc.toolsCalledByPrompt,
+      mergeViewToolEvidence(acc.toolsCalledByPrompt, browser.viewToolCalls ?? []),
       widgetToolCallsByPromptIndex(browser.browserInteractionSteps),
     );
     // Per-turn predicate results from step assert execution facts (not a
@@ -6107,6 +6118,14 @@ const runLocalIteration = async ({
       acc.toolsCalledByPrompt,
       test.isNegativeTest,
       test.matchOptions,
+      // The failures the verdict path grades with, so a retried attempt reads
+      // as a retry in this failed iteration's turn summaries too.
+      {
+        toolErrors: extractToolErrors({
+          messages: failMessages,
+          spans: acc.capturedSpans,
+        }),
+      },
     );
     // Suite summary aggregates `evaluation.passed` (see runEvalSuiteWithAiSdk).
     // The persisted iteration is hard-coded `passed: false` below, but the
@@ -6377,6 +6396,8 @@ const runHostedIterationWithBrowser = async (
     annotations: toolAnnotations ?? new Map(),
     ...(toolPolicyWarnings ? { warnings: toolPolicyWarnings } : {}),
   });
+  browser.setWidgetToolCallPolicy(evalWidgetServerCall(toolPolicyGate, mcpClientManager));
+
 
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
@@ -6455,6 +6476,7 @@ const runHostedIterationWithBrowser = async (
     },
     precedence: "override-wins",
   });
+  assertNativeDiscovery({ required: resolvedExecution.requireNativeToolDiscovery });
   const skillsSource = resolveIterationSkillsSource({
     harness: resolvedExecution.harness,
     pinnedSkillSource,
@@ -7497,7 +7519,7 @@ const runHostedIterationWithBrowser = async (
   // local path) so a single "tool was called" check covers widget-initiated
   // calls whether authored as an expected tool call or a predicate.
   const toolsCalledByPromptWithWidgets = mergeToolCallsByPromptIndex(
-    toolsCalledByPrompt,
+    mergeViewToolEvidence(toolsCalledByPrompt, browser.viewToolCalls ?? []),
     widgetToolCallsByPromptIndex(browser.browserInteractionSteps),
   );
   const failOnToolError =

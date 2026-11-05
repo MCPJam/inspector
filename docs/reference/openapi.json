@@ -2462,7 +2462,7 @@
         },
         "responses": {
           "200": {
-            "description": "The MCP `CallToolResult` plus additive `durationMs`. Check `isError` for tool-level failures.",
+            "description": "The MCP `CallToolResult` plus additive `durationMs`. Check `isError` for tool-level failures. When the result is an `isError` sign-in challenge carrying `_meta[\"mcp/www_authenticate\"]`, an additive `authChallenge` holds the parsed challenge. An HTTP 401 from the MCP server is answered with `403 AUTH_REQUIRED` instead, with the challenge in `details.authChallenge`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -11529,6 +11529,40 @@
                     "type": "boolean",
                     "default": false,
                     "description": "Add model-backed experience observations. **Consumes MCPJam credits.** Off by default, and deliberately: a billed opt-in that defaulted on would start charging every existing caller on the day it shipped. Observations are non-dispositive and can never make a server not-ready; a refused reservation makes no provider call and completes the run with `llmObservations.reason` set to `billing_limit_reached`."
+                  },
+                  "lazyAuthProbe": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["enabled"],
+                    "description": "Opt in to the lazy-authentication probe: it calls one public tool, then one protected tool, both without credentials. It makes at most two calls and calls only tools annotated `readOnlyHint: true`. Omit the field to leave the probe off. When no tool is named, the probe picks them from their `securitySchemes`.",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean",
+                        "enum": [true],
+                        "description": "Must be `true`. To leave the probe off, omit `lazyAuthProbe`."
+                      },
+                      "toolName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "description": "The protected tool to call."
+                      },
+                      "publicToolName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "description": "The public tool to call first. Must name a different tool than `toolName`."
+                      }
+                    }
+                  },
+                  "claimedFeatures": {
+                    "type": "array",
+                    "maxItems": 10,
+                    "items": {
+                      "type": "string",
+                      "enum": ["lazy-authentication", "enterprise-managed-auth"]
+                    },
+                    "description": "Features the server claims to offer, so the report shows them as claimed."
                   }
                 }
               }
@@ -11604,6 +11638,40 @@
                     "type": "boolean",
                     "default": false,
                     "description": "Add model-backed experience observations. **Consumes MCPJam credits.** Off by default, and deliberately: a billed opt-in that defaulted on would start charging every existing caller on the day it shipped. Observations are non-dispositive and can never make a server not-ready; a refused reservation makes no provider call and completes the run with `llmObservations.reason` set to `billing_limit_reached`."
+                  },
+                  "lazyAuthProbe": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["enabled"],
+                    "description": "Opt in to the lazy-authentication probe: it calls one public tool, then one protected tool, both without credentials. It makes at most two calls and calls only tools annotated `readOnlyHint: true`. Omit the field to leave the probe off. When no tool is named, the probe picks them from their `securitySchemes`.",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean",
+                        "enum": [true],
+                        "description": "Must be `true`. To leave the probe off, omit `lazyAuthProbe`."
+                      },
+                      "toolName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "description": "The protected tool to call."
+                      },
+                      "publicToolName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "description": "The public tool to call first. Must name a different tool than `toolName`."
+                      }
+                    }
+                  },
+                  "claimedFeatures": {
+                    "type": "array",
+                    "maxItems": 10,
+                    "items": {
+                      "type": "string",
+                      "enum": ["lazy-authentication", "enterprise-managed-auth"]
+                    },
+                    "description": "Features the server claims to offer, so the report shows them as claimed."
                   }
                 }
               }
@@ -14945,6 +15013,7 @@
               "SERVER_UNREACHABLE",
               "TIMEOUT",
               "OAUTH_REQUIRED",
+              "AUTH_REQUIRED",
               "INTERNAL_ERROR"
             ]
           },
@@ -16224,7 +16293,7 @@
           },
           "matchOptions": {
             "type": "object",
-            "description": "Absent when the case sets none — omitted from the response rather than sent as `null`."
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). Absent when the case sets none — omitted from the response rather than sent as `null`."
           },
           "assertions": {
             "type": "object",
@@ -16380,7 +16449,7 @@
           },
           "matchOptions": {
             "type": ["object", "null"],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "assertions": {
             "type": ["object", "null"],
@@ -16589,7 +16658,7 @@
           },
           "matchOptions": {
             "type": ["object", "null"],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "assertions": {
             "type": ["object", "null"],
@@ -17000,7 +17069,8 @@
                 "description": "Suite-level floor on per-case iterations: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` clears it."
               },
               "matchOptions": {
-                "type": ["object", "null"]
+                "type": ["object", "null"],
+                "description": "Suite default tool-call match options, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. Fields you omit keep their current values; `null` clears them."
               },
               "defaultAssertions": {
                 "type": ["array", "null"],
@@ -17272,7 +17342,7 @@
           },
           "matchOptions": {
             "type": "object",
-            "description": "Absent when the case sets none — omitted from the response rather than sent as `null`."
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). Absent when the case sets none — omitted from the response rather than sent as `null`."
           },
           "checks": {
             "type": "object",
@@ -17597,7 +17667,7 @@
               "object",
               "null"
             ],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "checks": {
             "type": [
@@ -18218,7 +18288,7 @@
               "object",
               "null"
             ],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "checks": {
             "type": [
@@ -18719,6 +18789,43 @@
             "type": "integer",
             "minimum": 0,
             "description": "Wall-clock milliseconds spent in `executeTool` on this request. Additive MCPJam field; not part of the MCP `CallToolResult` spec. A server that already returns its own top-level `durationMs` keeps it — MCPJam never overwrites the field — so this value is MCPJam's measurement only when the server did not report one."
+          },
+          "authChallenge": {
+            "type": "object",
+            "description": "Additive MCPJam field, present only when the result is an `isError` sign-in challenge carrying `_meta[\"mcp/www_authenticate\"]` (the ChatGPT convention). The parsed challenge; the result itself is returned unchanged. An HTTP 401 from the MCP server never reaches this field: it is answered with `403 AUTH_REQUIRED` instead.",
+            "required": [
+              "source",
+              "facets"
+            ],
+            "properties": {
+              "source": {
+                "type": "string",
+                "enum": [
+                  "tool_result_meta"
+                ]
+              },
+              "error": {
+                "type": "string",
+                "description": "RFC 6750 `error`, e.g. `invalid_token`."
+              },
+              "errorDescription": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "type": "string",
+                "description": "The challenge's `scope`, space-separated as sent."
+              },
+              "resourceMetadataUrl": {
+                "type": "string",
+                "description": "RFC 9728 `resource_metadata` pointer."
+              },
+              "facets": {
+                "type": "object",
+                "description": "What the server actually sent.",
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": true
           }
         },
         "additionalProperties": true
@@ -18883,7 +18990,7 @@
           },
           "matchOptions": {
             "type": "object",
-            "description": "Per-case tool-call matching override, in the INTERNAL vocabulary (`toolCallOrder`, `maxExtraToolCalls`, `argumentMatching`).",
+            "description": "Per-case tool-call matching override, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object.",
             "additionalProperties": true
           },
           "predicates": {
@@ -19142,7 +19249,7 @@
                 },
                 "matchOptions": {
                   "type": "object",
-                  "description": "Per-case tool-call matching override, in the INTERNAL vocabulary (`toolCallOrder`, `maxExtraToolCalls`, `argumentMatching`).",
+                  "description": "Per-case tool-call matching override, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object.",
                   "additionalProperties": true
                 },
                 "predicates": {
@@ -19613,7 +19720,8 @@
             "description": "Suite-level floor on per-case iterations, 1–10: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` means no floor — the suite's real state, not a stand-in for 1. PATCH `null` to remove it."
           },
           "matchOptions": {
-            "type": ["object", "null"]
+            "type": ["object", "null"],
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). `null` when the suite sets none."
           },
           "checks": {
             "type": "array",
@@ -19780,7 +19888,8 @@
             "description": "Suite-level floor on per-case iterations, 1–10: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` means no floor — the suite's real state, not a stand-in for 1. PATCH `null` to remove it."
           },
           "matchOptions": {
-            "type": ["object", "null"]
+            "type": ["object", "null"],
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). `null` when the suite sets none."
           },
           "defaultAssertions": {
             "type": "array",
@@ -24288,7 +24397,8 @@
                 "description": "Suite-level floor on per-case iterations: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` clears it."
               },
               "matchOptions": {
-                "type": ["object", "null"]
+                "type": ["object", "null"],
+                "description": "Suite default tool-call match options, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. Fields you omit keep their current values; `null` clears them."
               },
               "checks": {
                 "type": ["array", "null"],
@@ -31601,7 +31711,7 @@
           },
           "modelId": {
             "type": "string",
-            "description": "Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Required on a first turn. A BARE id is rejected with `details.reason: \"MODEL_AMBIGUOUS\"` rather than guessed — an unprefixed id is indistinguishable from a local Ollama model, and guessing would spend on the wrong rail."
+            "description": "Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Optional on a first turn: defaults to the environment model, then the client model, and pins the resolved model for continuations. A BARE id is rejected with `details.reason: \"MODEL_AMBIGUOUS\"` rather than guessed — an unprefixed id is indistinguishable from a local Ollama model, and guessing would spend on the wrong rail."
           },
           "hostId": {
             "type": "string",
@@ -31617,7 +31727,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Target these project servers. Mutually exclusive with `environmentId`. First turn only. Server CONFIGS are never accepted — only ids the project already holds."
+            "description": "Target these project servers; [] explicitly selects no MCP servers and remains empty on continuation. Mutually exclusive with `environmentId`, including when empty. First turn only. Server CONFIGS are never accepted — only ids the project already holds."
           },
           "systemPrompt": {
             "type": "string",
@@ -32134,6 +32244,9 @@
           "spanCount"
         ],
         "properties": {
+          "setupHashAtTurn": { "type": "string", "description": "Hash of a complete effective setup manifest. Absent when provenance is incomplete." },
+          "setupStatus": { "type": "string", "enum": ["complete", "incomplete"] },
+          "setupIncompleteReasons": { "type": "array", "items": { "type": "string" } },
           "turnId": {
             "type": "string"
           },

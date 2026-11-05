@@ -180,6 +180,7 @@ import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completio
 import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
 import internalAgentTurns from "./routes/internal/agent-turns.js";
 import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
+import internalHostedBrowserSynthetic from "./routes/internal/hosted-browser-synthetic.js";
 import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
 import { createComputerBrowserStreamWsHandler } from "./routes/web/computer-browser-stream.js";
 import {
@@ -195,13 +196,16 @@ import cliAuthRoutes from "./routes/cli-auth/index";
 import relayRoutes, { relayBodyLimit } from "./routes/relay";
 import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata";
 import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd";
+import { registerSyntheticWebMcpPageRoutes } from "./routes/synthetic-webmcp-page.js";
 import { registerPreviewIdentityRoute } from "./routes/preview-identity";
 import { createXaaWebRouter } from "./routes/web/xaa";
 import workosAuthkitRoutes from "./routes/workos-authkit";
 import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
+import { resolveTrustedClientIpHeader } from "./utils/client-ip.js";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
+import { stopLiveConformanceOAuthRuns } from "./services/conformance-oauth-rendezvous.js";
 import {
   isScheduledEvalsWorkerEnabled,
   startScheduledEvalsWorker,
@@ -577,6 +581,10 @@ app.route("/api/internal/evals", internalEvalJudgeCompletions);
 // backend's own queue rather than from anything the caller named.
 app.route("/api/internal/chat-stage", internalChatStageDerivations);
 app.route("/api/internal/agent-turns", internalAgentTurns);
+// Backend → inspector hourly hosted-browser check. Service-token gated like
+// the doorbells above; it reserves a desktop as the backend's synthetic user
+// and deletes it before answering. Mirror of the mount in server/app.ts.
+app.route("/api/internal/hosted-browser", internalHostedBrowserSynthetic);
 // W1 hosted-browser debug probe — mounted only when explicitly enabled (it
 // provisions a desktop and boots browserd end to end), service-token gated.
 // Mirror of the mount in server/app.ts.
@@ -673,6 +681,10 @@ app.route("/api/surface-link", surfaceLinkRoutes);
 // at boot rather than at the first WorkOS call. Unset — every deployment — this
 // is a no-op.
 resolveWorkosApiBaseUrl(process.env);
+// Same for `MCPJAM_TRUSTED_CLIENT_IP_HEADER` (mirror of server/app.ts): a value
+// that is not one header name fails here, not in every request that asks for a
+// client address. Unset, this is a no-op.
+resolveTrustedClientIpHeader(process.env);
 
 // Mounted in EVERY runtime, hosted included. AuthKit's `initialize()` makes no
 // network call at all unless the page's own cookies carry `workos-has-session`
@@ -720,6 +732,10 @@ app.route("/tlm", relayRoutes);
 // server/app.ts::createHonoApp — both production entries must wire this up.
 registerXaaClientMetadataRoute(app);
 registerXaaConfidentialCimdRoute(app);
+// The page the hosted-browser check opens. Outside /api for the same reason:
+// a cloud desktop's browser fetches it with no credential. Mirror of the
+// mount in server/app.ts.
+registerSyntheticWebMcpPageRoutes(app);
 // PR previews only (no-op unless PREVIEW_EDGE_SECRET is set): lets the
 // *.mcpjam.dev preview router verify it's talking to one of our previews.
 // Not mirrored in server/app.ts: Electron is never a PR preview.
@@ -1068,6 +1084,10 @@ async function shutdown() {
 
   appLogger.info("Shutting down gracefully...");
   try {
+    // First, and bounded internally: a hosted OAuth conformance run on this
+    // replica dies with it, and its user should hear so now rather than when
+    // the run's window expires.
+    await stopLiveConformanceOAuthRuns();
     // Inside the guarded path so a rejecting worker still reaches the rest of
     // shutdown rather than skipping straight to the force-exit deadline.
     await localServerCheckQueue.shutdown();

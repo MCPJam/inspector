@@ -182,7 +182,8 @@ describe("harness MCP proxy tool policy", () => {
     expect(mockManager.executeTool).toHaveBeenCalledWith(
       "srv-a",
       "read_file",
-      {}
+      {},
+      { request: { signal: undefined } }
     );
   });
 
@@ -255,7 +256,8 @@ describe("harness MCP proxy tool policy", () => {
     expect(mockManager.executeTool).toHaveBeenCalledWith(
       "srv-a",
       "delete_repo",
-      {}
+      {},
+      { request: { signal: undefined } }
     );
   });
 });

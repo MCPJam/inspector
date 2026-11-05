@@ -46,12 +46,10 @@ export const PLATFORM_FEATURE_KEYS = [
   "shared-slack-channel",
   "automatic-paid-slack",
   "trace-destinations",
-  "grading-engine-mode",
   "description-experiments",
   "conformance",
   "unified-sessions",
   "unified-share-evals",
-  "unified-share-conformance",
   "github-checks",
   "scheduled-evals",
 ] as const;
@@ -78,12 +76,10 @@ export const PLATFORM_FEATURES: Readonly<Record<PlatformFeatureKey, string>> = {
   "shared-slack-channel": "Shared Slack channels",
   "automatic-paid-slack": "Automatic Slack onboarding",
   "trace-destinations": "Trace destinations",
-  "grading-engine-mode": "The grading engine",
   "description-experiments": "Description experiments",
   conformance: "Conformance",
   "unified-sessions": "The unified sessions feed",
   "unified-share-evals": "Eval run sharing",
-  "unified-share-conformance": "Conformance run sharing",
   "github-checks": "GitHub checks",
   "scheduled-evals": "Scheduled evals",
 };
@@ -101,9 +97,10 @@ export const PLATFORM_FEATURES: Readonly<Record<PlatformFeatureKey, string>> = {
 export type OperationFeature =
   PlatformFeatureKey | readonly PlatformFeatureKey[] | null;
 
+// A conformance run shares under `conformance`, the feature of its tab.
 const SHARE_FAMILY: readonly PlatformFeatureKey[] = [
   "unified-share-evals",
-  "unified-share-conformance",
+  "conformance",
   "sandboxes",
 ];
 
@@ -202,7 +199,8 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   rebind_study: "sandboxes",
   // Minting a new share link, for several resource types: available when any
   // of them is. The backend checks the resource type (study shares follow
-  // `sandboxes`, eval and conformance runs their own share beta).
+  // `sandboxes`, eval runs their own share beta, conformance runs
+  // `conformance`).
   rotate_share_link: SHARE_FAMILY,
   // Kept available whatever the feature reports: what the backend leaves
   // open on purpose so an organization that lost a feature can still stop,
