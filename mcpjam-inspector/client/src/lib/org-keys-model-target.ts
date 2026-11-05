@@ -9,7 +9,10 @@ import {
 } from "@/components/chat-v2/shared/model-selection";
 import { modelTarget, type ModelTarget } from "@/lib/model-target";
 import type { ModelDefinition } from "@/shared/types";
-import type { ModelSelection } from "@mcpjam/sdk/browser";
+import type {
+  ModelSelection,
+  ModelSelectionPurpose,
+} from "@mcpjam/sdk/browser";
 import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
 import {
   orgKeysDisallowedRow,
@@ -18,24 +21,67 @@ import {
 import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
 
 /**
- * The target a picked row saves. Under the organization's key policy, an
- * organization row whose id is bare (`gpt-5` on an org OpenAI connection) is
- * saved under its canonical id with its org selection: the bare id alone runs
- * as a legacy id, which the policy refuses (`org_keys_required`). Every other
- * row keeps its own id, and `syncExplicitTargets` adds the selection it can
- * carry beside it.
+ * The canonical target of an organization row whose id is bare (`gpt-5` on an
+ * org OpenAI connection): its canonical id with its org selection. The bare id
+ * alone runs as a legacy id, which the organization's key policy refuses
+ * (`org_keys_required`). `undefined` for every other row, including one whose
+ * selection can sit beside its unchanged id.
+ */
+export function orgCanonicalTarget(
+  model: ModelDefinition,
+  purpose: ModelSelectionPurpose,
+): Required<ModelTarget> | undefined {
+  if (selectionBesideLegacyId(model, purpose)) return undefined;
+  return orgSelectionTarget(model, purpose);
+}
+
+/**
+ * The id and organization selection a pick of this row saves. `undefined`
+ * when the row cannot be saved as one, such as an organization row whose bare
+ * id has no canonical catalog id: the policy refuses it after reload.
+ */
+export function orgSelectionTarget(
+  model: ModelDefinition,
+  purpose: ModelSelectionPurpose,
+): Required<ModelTarget> | undefined {
+  const choice = storedModelChoice(model, undefined, purpose);
+  return choice.selection?.source === "org"
+    ? { modelId: choice.modelId, selection: choice.selection }
+    : undefined;
+}
+
+/**
+ * Under the organization's key policy, a picker that saves a model offers
+ * only rows it can save with an organization selection. Disabled rows stay,
+ * so the saved model's warning row is still shown on the trigger.
+ */
+export function orgKeysSavableRows(
+  models: ModelDefinition[],
+  requireOrgKeys: boolean,
+  purpose: ModelSelectionPurpose,
+): ModelDefinition[] {
+  if (!requireOrgKeys) return models;
+  return models.filter(
+    (row) => row.disabled === true || orgSelectionTarget(row, purpose),
+  );
+}
+
+/**
+ * The target a picked row saves. Under the organization's key policy, a
+ * bare-id organization row is saved as its {@link orgCanonicalTarget}. Every
+ * other row keeps its own id, and `syncExplicitTargets` adds the selection it
+ * can carry beside it.
  */
 export function pickedModelTarget(
   model: ModelDefinition,
   requireOrgKeys: boolean,
 ): ModelTarget {
-  if (requireOrgKeys && !selectionBesideLegacyId(model, "evalTarget")) {
-    const choice = storedModelChoice(model, undefined, "evalTarget");
-    if (choice.selection?.source === "org") {
-      return modelTarget(choice.modelId, choice.selection);
-    }
-  }
-  return { modelId: String(model.id) };
+  const org = requireOrgKeys
+    ? orgCanonicalTarget(model, "evalTarget")
+    : undefined;
+  return org
+    ? modelTarget(org.modelId, org.selection)
+    : { modelId: String(model.id) };
 }
 
 /** A saved strict target must name its source and connection, not just a model id. */

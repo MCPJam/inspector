@@ -1,0 +1,5 @@
+---
+"@mcpjam/inspector": patch
+---
+
+Preserve the organization provider connection when saving a client model, whether or not organization keys are required. A picked organization model now saves with its connection and reloads without "isn't allowed here", and a client created from a template uses that same model on an organization connection when available. When unavailable, the client prompts you to choose an organization model before running.
