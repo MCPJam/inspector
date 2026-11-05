@@ -121,6 +121,50 @@ beforeEach(() => {
   );
 });
 
+describe("App context update admission", () => {
+  it("leaves the block budget to admission, so its refusal stays typed", async () => {
+    const opened = pluginActivationFromCatalog(
+      catalog as never,
+      "library",
+      selector,
+    );
+    f.persistent.mockResolvedValue({
+      contextEnabled: true,
+      hostId: "host",
+      owner: { serverId: "server" },
+      activation: {
+        selector,
+        toolName: "reference",
+        sourceToolName: "library",
+        revision: opened.revision,
+      },
+    });
+    f.change.mockResolvedValue({
+      result: { _meta: { "openai/modelContext": { updateId: "u" } } },
+      snapshot: { revision: 1, sequence: 1, state: null },
+    });
+    const response = await routes().request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        projectId: "p",
+        pluginWorkspace: { version: 1, workspaceId: "w" },
+        instanceToken: token,
+        operationId: "8a0f0c1e-0b7e-4bfa-9f5e-0f0f0f0f0f0f",
+        sequence: 1,
+        params: {
+          content: Array.from({ length: 65 }, () => ({
+            type: "text",
+            text: "part",
+          })),
+        },
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(f.change.mock.calls[0][2]).toMatchObject({ kind: "update" });
+  });
+});
+
 describe("App context routes for an open quick-action App", () => {
   it("removes all of its context, authorized against the revision it opened with", async () => {
     const opened = pluginActivationFromCatalog(
