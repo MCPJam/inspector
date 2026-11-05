@@ -6,7 +6,7 @@ import { OAuthPopupBlockedDialog } from "@/components/conformance/OAuthPopupBloc
 import { ConformanceAdvice, suiteAdviceGroups } from "./ConformanceAdvice";
 import { ConformanceVersionNotice } from "./ConformanceVersionNotice";
 import { liveConformanceVersionRefusal } from "./conformance-version-refusal";
-import { Loader2, AlertTriangle, Settings, Share2 } from "lucide-react";
+import { Loader2, AlertTriangle } from "lucide-react";
 import { UncheckedAdvice } from "@/components/conformance/UncheckedAdvice";
 import type { ServerWithName } from "@/hooks/use-app-state";
 // Import from the browser-safe SDK entry — the top-level `@mcpjam/sdk` pulls
@@ -54,8 +54,7 @@ import {
   type ProtocolVersionPin,
   type SuiteState,
 } from "@/hooks/use-conformance-run";
-import { detailDateFormat } from "./ConformanceHistory";
-import { ConformanceRunShareButton } from "./ConformanceRunActions";
+import { ConformanceRunHeader } from "./ConformanceRunHeader";
 import {
   PersistConformanceRun,
   type ConformancePersistConfig,
@@ -122,11 +121,8 @@ function SuiteSection({
   score?: ConformanceScore;
   children?: React.ReactNode;
 }) {
-  // `null` follows the suite: a finished suite that did not pass opens itself
-  // so the failures are visible; a passing or running one stays shut. OAuth
-  // waiting on the browser opens too, so its prompt is not hidden. Clicking
-  // pins an explicit choice until the next run remounts. A suite that does not
-  // apply stays shut but still opens on click, to its list of checks.
+  // Without an explicit choice, show failures and pending OAuth prompts.
+  // Clicks pin the choice until the next run remounts.
   const [override, setOverride] = useState<boolean | null>(null);
   const running = state.status === "running";
   const unavailable = state.status === "unavailable";
@@ -232,6 +228,7 @@ export function ConformanceContent({
   initialVersionPin,
   initialResolvedProtocolVersion,
   selection,
+  runTimeoutSeconds,
   probes,
 }: {
   server: ServerWithName;
@@ -255,11 +252,8 @@ export function ConformanceContent({
   onOpenSettings?: () => void;
   /** The server's logo, when the project or the server provides one. */
   serverIconUrl?: string;
-  /**
-   * Overview's tab after a finished run: back to the page's home (the server
-   * list) instead of the run, which History still holds.
-   */
-  onShowHome?: () => void;
+  /** Return to the server list; the completed run remains in History. */
+  onShowHome: () => void;
   /** The saved defaults Settings edits have not loaded yet. */
   settingsLoading?: boolean;
   /** Run once on mount: the setup steps just chose this server. */
@@ -269,17 +263,17 @@ export function ConformanceContent({
   initialResolvedProtocolVersion?: McpProtocolVersion;
   /** What to run, as picked in the setup steps. */
   selection?: ConformanceSelection;
+  runTimeoutSeconds?: number;
   /** The tools the checks that must call one may use. */
   probes?: ConformanceProbes;
 }) {
-  // Run state, per-suite scores and the pooled headline all live in the shared
-  // hook — score.mcpjam.com runs the same four suites and must pool them the
-  // same way. Rendering stays here.
+  // The public score page shares this run state and score calculation.
   const snapshot = useConformanceRun({
     server,
     initialVersionPin,
     initialResolvedProtocolVersion,
     selection,
+    runTimeoutSeconds,
     probes,
   });
   const {
@@ -509,82 +503,26 @@ export function ConformanceContent({
         />
       ) : null}
       {liveRun ? (
-        // A run on screen reads like its saved page: where it sits in
-        // History, what can be done with it, and when it ran.
-        <div className="flex shrink-0 flex-col gap-2 border-b border-border px-8 pt-5 pb-4">
-          <div className="flex items-center gap-2 text-sm">
-            {showHistory ? (
-              <button
-                type="button"
-                className="font-medium tracking-tight text-muted-foreground hover:text-foreground"
-                onClick={() => onViewChange("history")}
-              >
-                Conformance History
-              </button>
-            ) : (
-              <span className="font-medium tracking-tight text-muted-foreground">
-                Conformance
-              </span>
-            )}
-            <span className="text-muted-foreground/70">/</span>
-            <span className="truncate font-semibold">{server.name}</span>
-            <div className="ml-auto flex items-center gap-2">
-              {onOpenSettings ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onOpenSettings}
-                  disabled={settingsLoading}
-                >
-                  <Settings className="size-3.5" aria-hidden /> Settings
-                </Button>
-              ) : null}
-              {persist ? (
-                savedRunId ? (
-                  <ConformanceRunShareButton
-                    runId={savedRunId}
-                    finished={!isRunning}
-                  />
-                ) : (
-                  // Not saved yet: Share waits for the run to finish.
-                  <Button variant="outline" size="sm" disabled>
-                    <Share2 className="size-3.5" aria-hidden /> Share
-                  </Button>
-                )
-              ) : null}
-              <Button
-                size="sm"
-                onClick={onRunAgain ? () => onRunAgain(versionPin) : handleRun}
-                disabled={
-                  isRunning || isConnecting || settingsLoading || runDisabled
-                }
-              >
-                {isRunning || isConnecting ? (
-                  <>
-                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                    {isConnecting ? "Connecting..." : "Running..."}
-                  </>
-                ) : (
-                  "Run again"
-                )}
-              </Button>
-            </div>
-          </div>
-          {startedAt ? (
-            <p className="text-sm text-muted-foreground">
-              {detailDateFormat.format(startedAt)} · UI
-            </p>
-          ) : null}
-        </div>
+        <ConformanceRunHeader
+          serverName={server.name}
+          startedAt={startedAt}
+          onBack={onShowHome}
+          busy={isRunning || isConnecting}
+          isConnecting={isConnecting}
+          showHistory={showHistory}
+          onShowHistory={() => onViewChange("history")}
+          onOpenSettings={onOpenSettings}
+          settingsLoading={settingsLoading}
+          showShare={Boolean(persist)}
+          savedRunId={savedRunId}
+          onRunAgain={onRunAgain ? () => onRunAgain(versionPin) : handleRun}
+          runDisabled={runDisabled}
+        />
       ) : (
         <ConformanceHeader
           view={view}
           onViewChange={(next) =>
-            next === "overview" &&
-            hasStarted &&
-            !isRunning &&
-            !isConnecting &&
-            onShowHome
+            next === "overview" && hasStarted && !isRunning && !isConnecting
               ? onShowHome()
               : onViewChange(next)
           }

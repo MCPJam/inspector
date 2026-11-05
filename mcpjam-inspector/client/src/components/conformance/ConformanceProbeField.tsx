@@ -35,7 +35,6 @@ import { acceptsEmptyToolArguments } from "./conformance-tool-input";
 import {
   LOG_LEVEL_ADVICE,
   PROBE_CHECKS,
-  TASK_ANSWERS_CHECK,
   probeKeyFor,
   type ConformanceProbe,
   type ConformanceProbeKey,
@@ -64,7 +63,7 @@ const PROBE_COPY: Record<
   },
   tasksProbe: {
     label: "Tool that creates a task",
-    hint: "Called up to 2 times, to create the task these checks inspect.",
+    hint: "Creates tasks for the selected checks. Checks that change a task use separate tasks.",
     unsetHint:
       "Without a tool, these checks could not run on a server that uses the Tasks extension.",
   },
@@ -200,7 +199,7 @@ function LogLevelField({
 /** The Tasks routes refuse answers that serialize past this (a 400). */
 const MAX_ANSWERS_CHARS = 10_000;
 
-function TaskAnswersField({
+export function TaskAnswersField({
   probe,
   onChange,
   onInvalidChange,
@@ -294,9 +293,7 @@ export function ConformanceProbeField({
   probe,
   onChange,
   onValidChange,
-  onAnswersValidChange,
   showLevel = false,
-  showAnswers = false,
 }: {
   probeKey: ConformanceProbeKey;
   tools: ProbeTools;
@@ -304,12 +301,8 @@ export function ConformanceProbeField({
   onChange: (probe: ConformanceProbe | undefined) => void;
   /** False while the Raw JSON box holds text that does not parse. */
   onValidChange?: (valid: boolean) => void;
-  /** False while the answers box holds text that is not a JSON object. */
-  onAnswersValidChange?: (valid: boolean) => void;
   /** Also ask for the log level, under the log level filtering advice. */
   showLevel?: boolean;
-  /** Also ask for the Tasks answers, under the update acknowledgement check. */
-  showAnswers?: boolean;
 }) {
   const id = useId();
   // A tool with no output schema gives the output check nothing to grade.
@@ -337,7 +330,8 @@ export function ConformanceProbeField({
     (invalid: boolean) => onValidChangeRef.current?.(!invalid),
     [],
   );
-  const toolName = probe?.toolName ?? NONE;
+  useEffect(() => () => onValidChangeRef.current?.(true), []);
+  const toolName = probe?.toolName || NONE;
   // A saved tool the server no longer lists stays selectable, so opening the
   // list never silently drops a choice.
   const listed = options.some((tool) => tool.name === toolName);
@@ -434,15 +428,6 @@ export function ConformanceProbeField({
       {showLevel && probe ? (
         <LogLevelField probe={probe} onChange={onChange} />
       ) : null}
-      {showAnswers && probe ? (
-        // Keyed by tool: another tool's answers start over.
-        <TaskAnswersField
-          key={`answers:${probe.toolName}`}
-          probe={probe}
-          onChange={onChange}
-          onInvalidChange={(invalid) => onAnswersValidChange?.(!invalid)}
-        />
-      ) : null}
     </div>
   );
 }
@@ -450,12 +435,10 @@ export function ConformanceProbeField({
 /**
  * What a check or advice row shows under it for its probe: the field, under
  * the first picked one that calls the tool, and a pointer to it under the
- * others. The log level filtering advice also asks for its log level, and the
- * Tasks update acknowledgement check for the task's answers. Nothing for a
+ * others. The log level filtering advice also asks for its log level. Nothing for a
  * row that calls no tool or is not picked.
  *
- * `onValidChange` names what it reports on: a probe key for its arguments,
- * or `answers` for the Tasks answers.
+ * `onValidChange` names the probe whose arguments it validates.
  */
 export function ProbeCheckExtra({
   checkId,
@@ -478,7 +461,7 @@ export function ProbeCheckExtra({
   ) => void;
 }) {
   const key = probeKeyFor(checkId);
-  if (!key || !isPicked(checkId)) return null;
+  if (!key || key === "tasksProbe" || !isPicked(checkId)) return null;
   const owner = PROBE_CHECKS[key].find(
     (id) => checkTitle(id) !== undefined && isPicked(id),
   );
@@ -490,8 +473,6 @@ export function ProbeCheckExtra({
     onProbesChange(all);
   };
   const showLevel = checkId === LOG_LEVEL_ADVICE;
-  const showAnswers = checkId === TASK_ANSWERS_CHECK;
-  const reportAnswers = (valid: boolean) => onValidChange?.("answers", valid);
   if (owner === checkId) {
     return (
       <ConformanceProbeField
@@ -500,9 +481,7 @@ export function ProbeCheckExtra({
         probe={probe}
         onChange={setProbe}
         onValidChange={(valid) => onValidChange?.(key, valid)}
-        onAnswersValidChange={reportAnswers}
         showLevel={showLevel}
-        showAnswers={showAnswers}
       />
     );
   }
@@ -511,21 +490,11 @@ export function ProbeCheckExtra({
       Calls the tool set under {owner ? checkTitle(owner) : "the check above"}.
     </p>
   );
-  return (showLevel || showAnswers) && probe ? (
+  return showLevel && probe ? (
     <div className="space-y-2">
       {pointer}
       <div className={FIELD_BOX}>
-        {showLevel ? (
-          <LogLevelField probe={probe} onChange={setProbe} />
-        ) : (
-          // Keyed by tool: another tool's answers start over.
-          <TaskAnswersField
-            key={`answers:${probe.toolName}`}
-            probe={probe}
-            onChange={setProbe}
-            onInvalidChange={(invalid) => reportAnswers(!invalid)}
-          />
-        )}
+        <LogLevelField probe={probe} onChange={setProbe} />
       </div>
     </div>
   ) : (

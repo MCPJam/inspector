@@ -1,7 +1,6 @@
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import {
   DataManagementSettings,
-  PermissionGroupsDialog,
   enterpriseContactHref,
 } from "./organization/EnterpriseSettings";
 import { Badge } from "@mcpjam/design-system/badge";
@@ -2035,13 +2034,6 @@ function OrganizationPage({
                     role={memberRoleFilter}
                     onRoleChange={setMemberRoleFilter}
                     roles={["owner", "admin", "member", "guest", "pending"]}
-                    actions={
-                      <PermissionGroupsDialog
-                        enterprise={
-                          billingStatus?.effectivePlan === "enterprise"
-                        }
-                      />
-                    }
                   />
                   <div className="overflow-hidden rounded-lg border border-border">
                     <MemberListHeader

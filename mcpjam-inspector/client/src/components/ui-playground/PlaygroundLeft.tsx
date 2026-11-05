@@ -8,6 +8,7 @@
  */
 
 import { useState, useEffect, useMemo } from "react";
+import { PlaygroundAuthChallengeCards } from "@/components/auth-challenge/PlaygroundAuthChallengeCards";
 import type { Tool } from "@modelcontextprotocol/client";
 import { useAppToolRun } from "@/components/playground/use-app-tool-run";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
@@ -379,6 +380,8 @@ export function PlaygroundLeft({
         onRefresh={onRefresh}
         onClose={onClose}
       />
+
+      <PlaygroundAuthChallengeCards />
 
       {/* Middle Content Area + Logger */}
       {showLogger ? (
