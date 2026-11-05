@@ -10,7 +10,7 @@
  *
  * This file is DATA, not application code. It is uploaded verbatim into a
  * sandbox and executed there with `node mcpjam-plugin-shim.mjs`, in an image
- * that may carry nothing but a Node 20+ runtime. It therefore imports ONLY
+ * that may carry nothing but a Node 20+ runtime. The bundle imports ONLY
  * Node builtins, never a package and never anything from this repository —
  * a single repo import would make the file unrunnable at its destination.
  *
@@ -64,20 +64,15 @@
  * ---------------------------------------------------------------------------
  *   POST   /mcp       one JSON-RPC message in, one JSON-RPC message out.
  *   DELETE /mcp       terminate the session named by `Mcp-Session-Id`.
- *   GET    /mcp       405 + `Allow` — the shim offers no server-initiated SSE
- *                     stream, which is the spec's other permitted answer and
- *                     the one MCP clients treat as "no stream here" instead of
- *                     as a transport failure.
+ *   GET    /mcp       authenticated server input stream for one MCP session.
  *   GET    /healthz   unauthenticated liveness. Carries no secrets.
  *   anything else     404.
  *
- * Deliberately NOT bridged: server-to-client requests (sampling, elicitation,
- * roots) and server notifications. Both need a stream this endpoint does not
- * open. A server-initiated REQUEST is answered on the child's own stdin with
- * JSON-RPC -32601 so the child fails fast instead of blocking forever;
- * notifications are dropped with a stderr note.
+ * Server requests have bounded input waits and are tied to their sole active
+ * parent. A disconnected stream fails pending inputs without replay.
  */
 import { spawn } from "node:child_process";
+import { createServerRequestRelay, isJsonRpcResponse, requestDeadline } from "./server-request-relay.mjs";
 import {
   createHmac,
   randomBytes,
@@ -367,13 +362,13 @@ export function jsonRpcError(id, code, message) {
 /**
  * What a client-sent JSON-RPC message is, for routing purposes.
  *
- * A JSON-RPC *response* classifies as "unsupported": responses only exist as
- * answers to server-initiated requests, which this endpoint never delivers, so
- * accepting one would be accepting a message that can never be correlated.
+ * A response is classified separately and forwarded only after the exact
+ * session relay correlates it with an outstanding server request.
  */
 export function classifyClientMessage(message) {
   if (isRecord(message) === false) return "invalid";
   if (message.jsonrpc !== "2.0") return "invalid";
+  if (isJsonRpcResponse(message)) return "response";
   if (typeof message.method !== "string" || message.method.length === 0) {
     return "unsupported";
   }
@@ -534,6 +529,7 @@ export function createShim(config) {
       pending.settle(jsonRpcError(pending.id, SHIM_CHILD_UNAVAILABLE, reason));
     }
     session.pending.clear();
+    session.serverRequests.close();
   }
 
   function writeToChild(session, message) {
@@ -589,24 +585,8 @@ export function createShim(config) {
     }
 
     if (typeof message.method === "string") {
-      const hasId = "id" in message && message.id !== null;
-      if (hasId) {
-        writeToChild(
-          session,
-          jsonRpcError(
-            message.id,
-            JSONRPC_METHOD_NOT_FOUND,
-            "the MCPJam plugin shim does not bridge server-initiated requests"
-          )
-        );
-        diagnostic(
-          `session ${session.shortId}: refused server request ${message.method}`
-        );
-      } else {
-        diagnostic(
-          `session ${session.shortId}: dropped server notification ${message.method}`
-        );
-      }
+      if (session.initialized) session.serverRequests.receive(message);
+      else if ("id" in message) writeToChild(session, jsonRpcError(message.id, JSONRPC_METHOD_NOT_FOUND, "Host input is unavailable during initialize."));
       return;
     }
 
@@ -759,6 +739,7 @@ export function createShim(config) {
 
     const session = {
       id,
+      initialized: false,
       shortId: id.slice(0, 8),
       child,
       pending: new Map(),
@@ -773,6 +754,14 @@ export function createShim(config) {
       closeTimer: undefined,
     };
 
+    session.serverRequests = createServerRequestRelay({
+      send: (message) => writeToChild(session, message),
+      beginInput: () => {
+        if (session.pending.size !== 1) return null;
+        const parent = session.pending.values().next().value;
+        return { release: parent.pause(), signal: parent.signal };
+      },
+    });
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => handleChildStdout(session, chunk));
     child.stderr.setEncoding("utf8");
@@ -837,12 +826,14 @@ export function createShim(config) {
         );
       }
 
-      let timer;
+      let deadline;
+      const inputAbort = new AbortController();
       let settled = false;
       const settle = (response) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        deadline?.stop();
+        inputAbort.abort();
         if (session.pending.get(key)?.settle === settle) {
           session.pending.delete(key);
         }
@@ -854,7 +845,7 @@ export function createShim(config) {
         resolve(response);
       };
 
-      timer = setTimeout(() => {
+      deadline = requestDeadline(() => {
         settle(
           jsonRpcError(
             message.id,
@@ -863,9 +854,8 @@ export function createShim(config) {
           )
         );
       }, config.requestTimeoutMs);
-      timer.unref();
 
-      session.pending.set(key, { id: message.id, settle });
+      session.pending.set(key, { id: message.id, settle, pause: deadline.pause, signal: inputAbort.signal });
 
       if (writeToChild(session, message) === false) {
         settle(
@@ -945,9 +935,14 @@ export function createShim(config) {
       return;
     }
 
-    // GET lands here too: 405 is the spec's sanctioned answer for an endpoint
-    // that offers no server-initiated SSE stream, and the one MCP clients read
-    // as "no stream" rather than as a broken transport.
+    if (req.method === "GET") {
+      const session = sessions.get(sessionHeader);
+      if (!session) { sendEmpty(res, sessionHeader === undefined ? 400 : 404); return; }
+      touch(session);
+      session.serverRequests.open(req, res);
+      return;
+    }
+    // Only the defined MCP methods are accepted.
     if (req.method !== "POST") {
       sendEmpty(res, 405, { allow: "POST, DELETE" });
       return;
@@ -1050,6 +1045,7 @@ export function createShim(config) {
       // reusing one by accident would hand a client another client's child.
       const session = createSession();
       const response = await dispatch(session, message);
+      session.initialized = true;
       // Only advertise a session the client can still address: a child that
       // died during the handshake leaves no session behind, and naming it
       // would send the client's next request to a guaranteed 404.
@@ -1092,6 +1088,10 @@ export function createShim(config) {
     }
     touch(session);
 
+    if (kind === "response") {
+      sendEmpty(res, session.serverRequests.respond(message) ? 202 : 400);
+      return;
+    }
     if (kind === "notification") {
       writeToChild(session, message);
       // 202 with no body, and no pending entry: a notification has no id to

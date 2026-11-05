@@ -1,3 +1,4 @@
+import { loadSuiteHostConfig } from "../../services/evals/compat-runtime.js";
 import type { Context } from "hono";
 import { z } from "zod";
 import {
@@ -183,6 +184,11 @@ export async function handleEvalAuthoring(c: Context, local: boolean) {
             undefined,
             "authorized",
           );
+      const hostConfig = await loadSuiteHostConfig(
+        convex,
+        input.suiteId,
+        environment?.hostId,
+      );
       const { manager } = await createAuthorizedManager(
         callerContextFromHono(c),
         token,
@@ -192,6 +198,7 @@ export async function handleEvalAuthoring(c: Context, local: boolean) {
         undefined,
         undefined,
         {
+          pluginComputerRuntime: !!hostConfig.computer,
           serverNames: selection.serverNames,
           // A Cross-App Access server mints its token with MCPJam as the IdP,
           // and the ID-JAG's `iss` is this issuer (as on the other eval routes).

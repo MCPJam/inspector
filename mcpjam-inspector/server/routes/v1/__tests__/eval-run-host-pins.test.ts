@@ -69,6 +69,7 @@ const SUITE_ID = "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx";
 
 /** A host that pins one of everything the connection can carry. */
 const PINNED_HOST = {
+  computer: { kind: "personal" },
   clientCapabilities: { roots: {}, sampling: {} },
   connectionDefaults: { requestTimeout: 12_000 },
   mcpProfile: {
@@ -244,11 +245,22 @@ describe("v1 eval run — connects as the run's host", () => {
     expect(prepareEvalRunMock).not.toHaveBeenCalled();
     expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
   });
+  it("keeps Computer-off execution denied", async () => {
+    loadSuiteHostConfigMock.mockResolvedValue({
+      ...PINNED_HOST,
+      computer: null,
+    });
+    const response = await request({ suiteId: SUITE_ID, serverIds: ["srv-1"] });
+    expect(response.status).toBeLessThan(400);
+    expect(managerOptions()[7].pluginComputerRuntime).toBe(false);
+  });
+
   it("sends the host's initialize pins, capabilities and timeouts", async () => {
     const response = await request({ suiteId: SUITE_ID, serverIds: ["srv-1"] });
     expect(response.status).toBeLessThan(400);
 
     const [, , , , timeoutMs, , clientCapabilities, options] = managerOptions();
+    expect(options.pluginComputerRuntime).toBe(true);
 
     // The host's own request timeout, not the route's 30s default.
     expect(timeoutMs).toBe(12_000);

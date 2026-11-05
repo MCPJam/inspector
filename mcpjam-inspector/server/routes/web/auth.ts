@@ -80,6 +80,7 @@ import {
 import type { EffectiveAuthMethod } from "../../utils/effective-auth.js";
 import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config.js";
 import { resolveLocalStdioServerConfig } from "../../utils/local-server-resolver.js";
+import { canColocatePluginStdio } from "../../services/plugins/computer-stdio.js";
 import {
   resolvePluginStdioHttpTarget,
   type PluginStdioHttpTarget,
@@ -506,6 +507,7 @@ export type ConvexAuthorizeResponse = {
     // own `serverNames` still win (see `displayNameForServer`).
     name?: string;
     transportType: "stdio" | "http";
+    pluginComponent?: true;
     url?: string;
     // Declared wire transport from a plugin manifest (parser `httpVariant`),
     // once the backend persists + serves it. Absent on every ordinary row
@@ -842,6 +844,7 @@ export async function authorizeBatch(
   projectId: string,
   serverIds: string[],
   options?: {
+    pluginComputerRuntime?: boolean;
     connectionId?: string;
     connectionIds?: Record<string, string>;
     includeConnections?: boolean;
@@ -891,6 +894,9 @@ export async function authorizeBatch(
         // the docstring on `normalizeAuthorizeResult` in
         // mcpjam-backend/convex/http.ts for the full rationale.
         ...(!HOSTED_MODE ? { localRuntime: true } : {}),
+        ...(options?.pluginComputerRuntime === true && canColocatePluginStdio()
+          ? { pluginComputerRuntime: true }
+          : {}),
       }),
     });
   } catch (error) {
@@ -1438,6 +1444,8 @@ export async function createAuthorizedManager(
   options?: {
     /** Authorize fully, but let a request owner decide when to connect. */
     lazyConnect?: boolean;
+    /** Set only from the server-resolved host Computer setting. */
+    pluginComputerRuntime?: boolean;
     multiConnection?: boolean;
     /** Build transports only for the explicitly pinned accounts. */
     onlySelectedConnections?: boolean;
@@ -1667,6 +1675,7 @@ export async function createAuthorizedManager(
     projectId,
     uniqueServerIds,
     {
+      pluginComputerRuntime: options?.pluginComputerRuntime,
       includeConnections:
         options?.multiConnection || options?.onlySelectedConnections,
       connectionIds: options?.connectionIds,
@@ -2212,7 +2221,12 @@ export async function createAuthorizedManager(
         // that will not verify, a session record that did not land) and leaves
         // the `toHttpConfig` refusal below exactly as it was.
         let pluginRuntime: PluginStdioHttpTarget | undefined;
-        if (auth.serverConfig.transportType !== "http") {
+        if (
+          options?.pluginComputerRuntime === true &&
+          canColocatePluginStdio() &&
+          auth.serverConfig.transportType !== "http" &&
+          auth.serverConfig.pluginComponent === true
+        ) {
           pluginRuntime =
             (await resolvePluginStdioHttpTarget({
               bearerToken,
@@ -2232,15 +2246,6 @@ export async function createAuthorizedManager(
               // wake a second, unrelated machine purely because a plugin was
               // pinned.
               executionScope: options?.executionScope,
-              workosApiKeyActingAs:
-                caller.authMethod === "workos_api_key" &&
-                caller.workosUserId &&
-                caller.mcpjamOrganizationId
-                  ? {
-                      workosUserId: caller.workosUserId,
-                      mcpjamOrganizationId: caller.mcpjamOrganizationId,
-                    }
-                  : undefined,
             })) ?? undefined;
         }
 
@@ -3241,6 +3246,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     (runHostConfig ? hostClientCapabilities(runHostConfig) : undefined) ??
       (raw.clientCapabilities as Record<string, unknown> | undefined),
     {
+      pluginComputerRuntime: !!runHostConfig?.computer,
       ...(options?.lazyConnect ? { lazyConnect: true } : {}),
       ...(typeof raw.connectionId === "string" &&
       typeof raw.serverId === "string"

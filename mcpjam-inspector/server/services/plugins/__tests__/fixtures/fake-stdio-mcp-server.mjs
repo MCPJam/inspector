@@ -163,7 +163,7 @@ function handle(message) {
       write({
         jsonrpc: "2.0",
         id: requestId,
-        method: "sampling/createMessage",
+        method: args.method ?? "sampling/createMessage",
         params: {},
       });
       return;
