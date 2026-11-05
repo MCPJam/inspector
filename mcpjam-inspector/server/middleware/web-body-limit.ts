@@ -18,6 +18,7 @@
  * transit this surface, all well under 1MB.
  */
 import { bodyLimit } from "hono/body-limit";
+import { PLUGIN_FILE_MAX_BYTES, PLUGIN_FILE_MEDIA_TYPE } from "../../shared/plugin-file-transfer.js";
 import type { Context, Next } from "hono";
 import { MODEL_CONTEXT_POLICY_CEILINGS } from "@mcpjam/sdk/host-config/internal";
 import { describePluginError } from "../../shared/plugin-diagnostics.js";
@@ -76,6 +77,11 @@ const SELF_LIMITED_UPLOAD_PATHS = new Set([
 
 export function webBodyLimit() {
   return (c: Context, next: Next) => {
+    if (c.req.method === "POST" &&
+        c.req.path === "/api/web/apps/plugin-instances/files/write" &&
+        c.req.header("content-type") === PLUGIN_FILE_MEDIA_TYPE) {
+      return bodyLimit({ maxSize: PLUGIN_FILE_MAX_BYTES })(c, next);
+    }
     if (c.req.method === "POST" && SELF_LIMITED_UPLOAD_PATHS.has(c.req.path)) {
       return next();
     }

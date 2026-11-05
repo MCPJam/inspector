@@ -320,7 +320,7 @@ try {
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
 const loadedEnv = loadInspectorEnv(__dirname);
 warnOnConvexDevMisconfiguration(loadedEnv);
-if (!HOSTED_MODE) void startPluginFormFileJanitor();
+void startPluginFormFileJanitor(!HOSTED_MODE);
 // One line, after the env is loaded: which grading-engine mode this process
 // could reach. Mirror of the call in server/app.ts.
 logGradingEngineModeOnce();

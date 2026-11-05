@@ -232,6 +232,21 @@ async function bucketKeys(
     ];
   }
 
+  const contentType = c.req
+    .header("content-type")
+    ?.split(";", 1)[0]
+    ?.trim()
+    .toLowerCase();
+  // Binary and multipart requests share this bucket. Decoding them for JSON
+  // inspection would corrupt the bytes Hono caches for the route handler.
+  if (
+    contentType &&
+    contentType !== "application/json" &&
+    !contentType.endsWith("+json")
+  ) {
+    return [{ key: `${prefix}${SHARED_SERVER_KEY}`, burst }];
+  }
+
   let body: unknown;
   try {
     // Hono caches the body, so the route handler's own read still sees it.

@@ -1,3 +1,4 @@
+import { isPluginFileBase64 } from "../../../shared/plugin-file-transfer.js";
 import { randomUUID } from "node:crypto";
 import { pluginResourceToolMetadata } from "./resource-metadata.js";
 
@@ -301,11 +302,12 @@ export class ResourceGrantService {
       (params.ifMatch !== undefined && params.ifMatch.length === 0)
     )
       throw new ResourceGrantError("RESOURCE_INVALID");
+    if (params.blob !== undefined &&
+        params.blob.length > Math.ceil(this.options.maxBytes / 3) * 4)
+      return { outcome: "too-large", maxBytes: this.options.maxBytes };
     if (
       params.blob !== undefined &&
-      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-        params.blob,
-      )
+      !isPluginFileBase64(params.blob)
     )
       throw new ResourceGrantError("RESOURCE_INVALID");
     const byteLength =

@@ -1,3 +1,4 @@
+import { PLUGIN_FILE_MAX_BYTES, isPluginFileBase64 } from "../../../shared/plugin-file-transfer.js";
 import { createHash } from "node:crypto";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { ResourceGrantError, type ResourceVersion } from "./resource-grants.js";
@@ -49,19 +50,20 @@ export function readListedFileBytes(
   const matches = result.contents.filter((content) => content.uri === uri);
   if (matches.length !== 1) throw new ResourceGrantError("RESOURCE_INVALID");
   const content = matches[0];
+  if ("blob" in content && typeof content.blob === "string" &&
+      content.blob.length > Math.ceil(PLUGIN_FILE_MAX_BYTES / 3) * 4)
+    throw new ResourceGrantError("RESOURCE_TOO_LARGE");
   let bytes: Uint8Array;
   if ("text" in content && typeof content.text === "string")
     bytes = new TextEncoder().encode(content.text);
   else if (
     "blob" in content &&
     typeof content.blob === "string" &&
-    /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-      content.blob,
-    )
+    isPluginFileBase64(content.blob)
   )
     bytes = Buffer.from(content.blob, "base64");
   else throw new ResourceGrantError("RESOURCE_INVALID");
-  if (bytes.byteLength > 1024 * 1024)
+  if (bytes.byteLength > PLUGIN_FILE_MAX_BYTES)
     throw new ResourceGrantError("RESOURCE_TOO_LARGE");
   return {
     bytes,

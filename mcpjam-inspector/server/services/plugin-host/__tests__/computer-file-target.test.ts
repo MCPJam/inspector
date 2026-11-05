@@ -123,6 +123,16 @@ describe("Computer file target adapter", () => {
     });
   });
 
+  it("reports an oversized write without accessing the Computer", async () => {
+    const files = vi.fn();
+    const adapter = createComputerFileTargetAdapter(target, files, 8);
+    await expect(adapter.conditionalWrite!(target.uri, new Uint8Array(9), undefined, signal()))
+      .rejects.toMatchObject({ code: "RESOURCE_TOO_LARGE" });
+    await expect(adapter.conditionalWrite!("cad://other", new Uint8Array(9), undefined, signal()))
+      .rejects.toMatchObject({ code: "RESOURCE_DENIED" });
+    expect(files).not.toHaveBeenCalled();
+  });
+
   it("compares then writes through a temporary file and honors ifMatch", async () => {
     const fs = fakeComputerFiles({ "/home/user/parts/bolt.stl": "v1" });
     const adapter = createComputerFileTargetAdapter(target, async () => fs);

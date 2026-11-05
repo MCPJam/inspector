@@ -30,6 +30,15 @@ const REMOVE_ALL = "*";
 
 type ContextItem = ReturnType<typeof pluginContextAttachments>[number];
 
+function appContextGroupTitle(item: ContextItem): string {
+  const group = item.block?._meta?.["openai/group"];
+  if (group && typeof group === "object" && "title" in group &&
+      typeof group.title === "string" && group.title.trim()) {
+    return group.title.trim();
+  }
+  return "Context";
+}
+
 function plainJson(text: string) {
   const trimmed = text.trim();
   if (!/^[[{]/.test(trimmed)) return false;
@@ -289,8 +298,7 @@ export function useAppContext(
         );
     };
     const group = {
-      id: handle.instanceId,
-      title: handle.toolTitle,
+      removeAllLabel: `Remove all ${handle.toolTitle ?? "App"} context`,
       serverName,
       ...(pluginIcons ? { icons: pluginIcons } : {}),
       ...(serverIcons?.length ? { serverIcons } : {}),
@@ -300,11 +308,16 @@ export function useAppContext(
       const updateId = snapshot.state!.updateId;
       const id = `${handle.instanceId}:${updateId}:${item.index}`;
       const shown = appContextBlock(item);
+      const groupTitle = appContextGroupTitle(item);
       return {
         id,
         title: shown.title,
         description: handle.toolTitle,
-        group,
+        group: {
+          ...group,
+          id: JSON.stringify([handle.instanceId, groupTitle]),
+          title: groupTitle,
+        },
         block: shown.block,
         removing: removing === REMOVE_ALL,
       };
