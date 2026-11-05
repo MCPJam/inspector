@@ -142,6 +142,7 @@
               "cli/tasks",
               "cli/tasks-conformance",
               "cli/tools-resources-prompts",
+              "cli/browser",
               "cli/ci",
               "cli/self-hosted",
               "cli/telemetry"
