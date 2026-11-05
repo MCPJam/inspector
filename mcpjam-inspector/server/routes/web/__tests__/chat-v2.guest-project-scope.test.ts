@@ -128,7 +128,7 @@ function turn(projectId: string, extra: Record<string, unknown> = {}) {
   return {
     projectId,
     selectedServerIds: [],
-    messages: [{ role: "user", content: "go" }],
+    messages: [{ role: "user", parts: [{ type: "text", text: "go" }] }],
     model: {
       id: "anthropic/claude-haiku-4.5",
       provider: "anthropic",
