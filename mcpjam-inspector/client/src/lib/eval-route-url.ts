@@ -1,6 +1,10 @@
 import { useContext, useMemo } from "react";
 import { UNSAFE_LocationContext } from "react-router";
-import type { EvalRoute, SuiteOverviewView } from "./eval-route-types";
+import type {
+  EvalNavRoute,
+  EvalRoute,
+  SuiteOverviewView,
+} from "./eval-route-types";
 import { stripProjectFromPath } from "./project-route";
 
 /**
@@ -62,6 +66,11 @@ export function parseEvalRouteFromUrl(
       type: "eval-server",
       serverId: decodePathSegment(tail[1]),
     };
+  }
+
+  if (prefix === "/evaluate") {
+    const navRoute = parseEvalNavTail(tail, params);
+    if (navRoute) return navRoute;
   }
 
   if (prefix === "/evals/runs" && tail[0] === "commit" && tail[1]) {
@@ -201,6 +210,73 @@ export function useEvalsRunsRouteFromUrl(): EvalRoute {
 /** Evaluate (New): same typed routes, parsed under the `/evaluate` prefix. */
 export function useEvaluateRouteFromUrl(): EvalRoute {
   return useEvalRouteFromUrl("/evaluate");
+}
+
+/**
+ * The per-layer page addresses (settings and test-run trees, the Runs tab).
+ * Returns null when the tail is not one of them, so the caller's own rules
+ * (and its unknown-path fallback to the list) apply unchanged.
+ */
+function parseEvalNavTail(
+  tail: readonly string[],
+  params: URLSearchParams,
+): EvalNavRoute | { type: "list" } | null {
+  if (tail[0] === "runs") {
+    return tail.length === 1 ? { type: "evaluate-runs" } : { type: "list" };
+  }
+  if (tail[0] !== "suite" || !tail[1]) return null;
+  const suiteId = decodePathSegment(tail[1]);
+  const rest = tail.slice(2);
+
+  if (rest[0] === "settings") {
+    const [, section, caseSegment, leaf] = rest;
+    if (rest.length === 1) {
+      return { type: "suite-settings", suiteId, tab: "settings" };
+    }
+    if (rest.length === 2 && (section === "cases" || section === "evaluators")) {
+      return { type: "suite-settings", suiteId, tab: section };
+    }
+    if (section !== "cases" || !caseSegment) return { type: "list" };
+    // `new` is the create page, never a case whose id happens to be "new".
+    if (caseSegment === "new") {
+      return rest.length === 3 ? { type: "case-new", suiteId } : { type: "list" };
+    }
+    const testCaseId = decodePathSegment(caseSegment);
+    if (rest.length === 3) return { type: "case-settings", suiteId, testCaseId };
+    if (rest.length === 4 && leaf === "evaluators") {
+      return { type: "case-evaluators", suiteId, testCaseId };
+    }
+    return { type: "list" };
+  }
+
+  if (rest[0] !== "runs" || !rest[1] || rest[2] !== "cases") return null;
+  const runId = decodePathSegment(rest[1]);
+  const caseSegment = rest[3];
+  if (!caseSegment) return { type: "list" };
+  const testCaseId = decodePathSegment(caseSegment);
+  if (rest.length === 4) {
+    const target = params.get("target");
+    return {
+      type: "test-run",
+      suiteId,
+      runId,
+      testCaseId,
+      ...(target ? { target } : {}),
+    };
+  }
+  if (rest.length === 5 && rest[4] === "edit") {
+    return { type: "test-run-edit", suiteId, runId, testCaseId };
+  }
+  if (rest.length === 6 && rest[4] === "iter" && rest[5]) {
+    return {
+      type: "iteration",
+      suiteId,
+      runId,
+      testCaseId,
+      iterationId: decodePathSegment(rest[5]),
+    };
+  }
+  return { type: "list" };
 }
 
 function parseSuiteOverviewView(value: string | null): SuiteOverviewView {

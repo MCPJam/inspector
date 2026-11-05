@@ -54,6 +54,7 @@ import { IterationDetails } from "../evals/iteration-details";
 import { RunAccountsProvider } from "../evals/run-accounts-context";
 import { IterationReportScorecard } from "./case-scorecard/iteration-report-subscriber";
 import { authoredForTrial } from "./case-scorecard/trial-authored";
+import { useEvalNavDrawerView } from "./nav/eval-nav-analytics";
 
 type StatusFilter = "failed" | "passed" | "pending" | "cancelled";
 const STATUS_LABEL: Record<StatusFilter, string> = {
@@ -345,6 +346,15 @@ export function RunResultsMatrix({
       : [];
   const selectedIteration =
     selectedItems.find((item) => item._id === selectedIterationId) ?? null;
+  // These drawers open without a URL change, so route-based page views miss them.
+  const trackDrawerView = useEvalNavDrawerView();
+  const inspectOpen = Boolean(selectedRow && selectedTarget);
+  useEffect(() => {
+    if (inspectOpen) trackDrawerView("test_run");
+  }, [inspectOpen, trackDrawerView]);
+  useEffect(() => {
+    if (selectedIterationId) trackDrawerView("iteration");
+  }, [selectedIterationId, trackDrawerView]);
 
   return (
     <section
@@ -582,7 +592,7 @@ export function RunResultsMatrix({
         )}
       </div>
       <EvalInspectSheet
-        open={Boolean(selectedRow && selectedTarget)}
+        open={inspectOpen}
         onOpenChange={(open) => {
           if (!open) {
             setSelection(null);

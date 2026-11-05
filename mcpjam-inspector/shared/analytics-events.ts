@@ -53,6 +53,18 @@ export const ANALYTICS_EVENTS = {
   // through the SDK, so the app has no `_server` twin.
   conformance_run_triggered: { source: "client" },
 
+  // --- Evals navigation ---
+  // Typed in client/src/components/evaluate/nav/eval-nav-analytics.ts.
+  // eval_nav_page_viewed: page, tab (suite settings only, else null),
+  //   arrived_via (link | crumb | back | redirect | direct), ui (legacy | nav).
+  // eval_nav_redirected: from_kind, to_kind (null when unmatched), matched.
+  // eval_edit_from_test_run: surface (list | page | preview_step).
+  // eval_execution_preview_opened: surface (editor | test_run).
+  eval_nav_page_viewed: { source: "client" },
+  eval_nav_redirected: { source: "client" },
+  eval_edit_from_test_run: { source: "client" },
+  eval_execution_preview_opened: { source: "client" },
+
   // --- Public API agent surface (server-authoritative; no client twin) ---
   api_agent_turn_completed: { source: "server" },
   /**

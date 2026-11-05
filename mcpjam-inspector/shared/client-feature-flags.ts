@@ -21,6 +21,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "eval-account-selection-enabled",
   "eval-run-stage-analytics",
   "evaluate-enabled",
+  "evaluate-nav-enabled",
   "evaluate-observe-first",
   "evals-start-recording",
   "guest-credit-wall-copy",

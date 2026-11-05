@@ -1,5 +1,13 @@
-import { renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { act, renderHook } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
+import {
+  MemoryRouter,
+  createMemoryRouter,
+  useLocation,
+  type createBrowserRouter,
+} from "react-router";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { setAppRouter } from "../../router-ref";
 import {
   buildConformanceRunPath,
   buildEvalsPath,
@@ -30,6 +38,7 @@ import {
   buildProjectSwitchTarget,
   scopeNavigationTarget,
   useActiveTab,
+  useAppNavigate,
   useCurrentOrgRoute,
   useCurrentSearchParam,
 } from "../app-navigation";
@@ -695,5 +704,69 @@ describe("Ding Dong case destinations", () => {
   });
   it.each(["/evals", "/evals/runs"])("redirects old %s case bookmarks and preserves query state", prefix => {
     expect(legacyEvalCasePathToEvaluatePath(`${prefix}/suite/s%201/test/c%202/edit`, "?checks=1&project=p1", "#trace")).toBe("/evaluate/suite/s%201/test/c%202/edit?checks=1&project=p1#trace");
+  });
+});
+
+describe("navigation carries router state", () => {
+  const PROJECT_A = "k57aaaaaaaaaaaaaaaaaaaaaaaaa";
+  const state = { evalNav: { via: "link" } };
+
+  afterEach(() => setAppRouter(null));
+
+  function renderInRouter() {
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(
+        MemoryRouter,
+        { initialEntries: [`/p/${PROJECT_A}/evaluate`] },
+        children,
+      );
+    return renderHook(
+      () => ({ navigate: useAppNavigate(), location: useLocation() }),
+      { wrapper },
+    );
+  }
+
+  it("useAppNavigate puts state on the pushed entry", () => {
+    const { result } = renderInRouter();
+    act(() => result.current.navigate("/evaluate/runs", { state }));
+    expect(result.current.location.pathname).toBe(
+      `/p/${PROJECT_A}/evaluate/runs`,
+    );
+    expect(result.current.location.state).toEqual(state);
+  });
+
+  it("useAppNavigate puts state on a replaced entry", () => {
+    const { result } = renderInRouter();
+    act(() =>
+      result.current.navigate("/evaluate/runs", { state, replace: true }),
+    );
+    expect(result.current.location.state).toEqual(state);
+  });
+
+  it("useAppNavigate without state keeps today's empty state", () => {
+    const { result } = renderInRouter();
+    act(() => result.current.navigate("/evaluate/runs"));
+    expect(result.current.location.state).toBeNull();
+  });
+
+  it("navigateApp hands state to the app router", async () => {
+    const router = createMemoryRouter([{ path: "*", element: null }], {
+      initialEntries: [`/p/${PROJECT_A}/evaluate`],
+    });
+    // A memory router stands in for the browser router the app registers.
+    const appRouter: ReturnType<typeof createBrowserRouter> = router;
+    setAppRouter(appRouter);
+    navigateApp("/evaluate/runs", { state });
+    await Promise.resolve();
+    expect(router.state.location.state).toEqual(state);
+  });
+
+  it("navigateApp's history fallback writes the state", () => {
+    window.history.replaceState({}, "", `/p/${PROJECT_A}/evaluate`);
+    navigateApp("/evaluate/runs", { state });
+    expect(window.location.pathname).toBe(`/p/${PROJECT_A}/evaluate/runs`);
+    expect(window.history.state).toEqual(state);
+    navigateApp("/evaluate", { replace: true });
+    expect(window.history.state).toEqual({});
   });
 });
