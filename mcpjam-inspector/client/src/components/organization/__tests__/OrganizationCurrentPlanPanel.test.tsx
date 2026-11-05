@@ -73,6 +73,13 @@ describe("OrganizationCurrentPlanPanel: Enterprise without Stripe", () => {
     expect(screen.queryByRole("button", { name: "Manage billing" })).toBeNull();
   });
 
+  it("says managed by MCPJam even when a period end is present", () => {
+    const status = makeStatus({ stripeCurrentPeriodEnd: Date.UTC(2027, 0, 15) });
+    expect(getCurrentPlanRenewalLine(status, "Jan 15, 2027", "", "")).toBe(
+      "Managed by MCPJam",
+    );
+  });
+
   it("keeps the Stripe wording for an Enterprise org that has a customer", () => {
     const status = makeStatus({
       hasCustomer: true,

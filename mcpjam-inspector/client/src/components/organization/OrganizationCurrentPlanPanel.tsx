@@ -94,14 +94,14 @@ export function getCurrentPlanRenewalLine(
   if (billingStatus.paymentState === "past_due") {
     return "Payment failed";
   }
+  if (isEnterpriseBilledOffline(billingStatus)) {
+    return "Managed by MCPJam";
+  }
   if (billingStatus.stripeCurrentPeriodEnd != null) {
     if (billingStatus.subscriptionStatus === "trialing") {
       return `First charge ${formattedPeriodEnd}`;
     }
     return `Renews ${formattedPeriodEnd}`;
-  }
-  if (isEnterpriseBilledOffline(billingStatus)) {
-    return "Managed by MCPJam";
   }
   if (billingStatus.plan === "free" || !billingStatus.hasCustomer) {
     return "No active subscription";
