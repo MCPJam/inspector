@@ -280,6 +280,8 @@ export function RunCaseRows({
   routeLines,
   onOpenIteration,
   renderBody,
+  onOpenRow,
+  renderActions,
 }: {
   rows: readonly EvaluateCaseRow[];
   defaultOpenKey: string | null;
@@ -293,6 +295,10 @@ export function RunCaseRows({
   }) => void;
   /** The expanded body, supplied by the container. */
   renderBody?: (row: EvaluateCaseRow) => React.ReactNode;
+  /** Rows open a page instead of expanding in place. */
+  onOpenRow?: (row: EvaluateCaseRow) => void;
+  /** Buttons at the end of each row, outside its own click target. */
+  renderActions?: (row: EvaluateCaseRow) => React.ReactNode;
 }) {
   const [openKey, setOpenKey] = useState<string | null>(defaultOpenKey);
   // The rows arrive after the decision read resolves, so the FIRST render has
@@ -318,99 +324,110 @@ export function RunCaseRows({
   return (
     <div className="divide-y divide-border/40" data-testid="run-case-rows">
       {rows.map((row) => {
-        const open = openKey === row.key;
+        const open = !onOpenRow && openKey === row.key;
         const note = verdictNote(row);
         return (
           <div key={row.key} data-testid={`run-case-row-${row.key}`}>
-            <button
-              type="button"
-              aria-expanded={open}
-              onClick={() => setOpenKey(open ? null : row.key)}
-              className="flex w-full items-start gap-3 px-5 py-3 text-left hover:bg-muted/50"
-            >
-              <span className="pt-0.5" aria-hidden="true">
-                <ChevronRight
-                  className={cn(
-                    "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
-                    open && "rotate-90",
-                  )}
-                />
-              </span>
-              {row.mark ? (
-                <span className="pt-0.5">
-                  <Mark row={row} />
-                </span>
-              ) : null}
-              <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-baseline gap-x-2">
-                  <span className="text-[14px] font-semibold text-foreground">
-                    {row.title}
+            <div className="flex items-center hover:bg-muted/50">
+              <button
+                type="button"
+                {...(onOpenRow ? {} : { "aria-expanded": open })}
+                onClick={() =>
+                  onOpenRow ? onOpenRow(row) : setOpenKey(open ? null : row.key)
+                }
+                className="flex min-w-0 flex-1 items-start gap-3 px-5 py-3 text-left"
+              >
+                {onOpenRow ? null : (
+                  <span className="pt-0.5" aria-hidden="true">
+                    <ChevronRight
+                      className={cn(
+                        "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+                        open && "rotate-90",
+                      )}
+                    />
                   </span>
-                  {row.iterations.total > 1 ? (
-                    // Grey, always. The fraction is evidence about a sample;
-                    // 1/1 and 10/10 are both "100%" and are not the same
-                    // evidence, so it never carries the verdict's colour.
-                    <span className="text-[12px] tabular-nums text-muted-foreground">
-                      {row.iterations.passed}/{row.iterations.total}
+                )}
+                {row.mark ? (
+                  <span className="pt-0.5">
+                    <Mark row={row} />
+                  </span>
+                ) : null}
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="text-[14px] font-semibold text-foreground">
+                      {row.title}
+                    </span>
+                    {row.iterations.total > 1 ? (
+                      // Grey, always. The fraction is evidence about a sample;
+                      // 1/1 and 10/10 are both "100%" and are not the same
+                      // evidence, so it never carries the verdict's colour.
+                      <span className="text-[12px] tabular-nums text-muted-foreground">
+                        {row.iterations.passed}/{row.iterations.total}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="mt-0.5 block text-[12.5px] text-muted-foreground">
+                    {breakText(row)}
+                  </span>
+                  {routeLines?.get(row.key) ? (
+                    <span
+                      className="mt-0.5 block text-[12px] text-muted-foreground"
+                      data-testid={`route-line-${row.key}`}
+                    >
+                      {routeLines.get(row.key)}
                     </span>
                   ) : null}
+                  {note ? (
+                    <span className="mt-0.5 block text-[11.5px] text-muted-foreground">
+                      {note}
+                    </span>
+                  ) : null}
+                  {row.coverage.note ? (
+                    <span className="mt-0.5 block text-[11.5px] text-muted-foreground">
+                      {row.coverage.note}
+                    </span>
+                  ) : null}
+                  <IterationStrip row={row} />
                 </span>
-                <span className="mt-0.5 block text-[12.5px] text-muted-foreground">
-                  {breakText(row)}
+                <ChainCells row={row} />
+                {pills?.get(row.key) ? (
+                  <ChangePill pill={pills.get(row.key) as RunChangePill} />
+                ) : (
+                  <span className="hidden w-32 shrink-0 sm:block" />
+                )}
+                <span className="hidden w-16 shrink-0 text-right text-[12.5px] tabular-nums text-muted-foreground sm:block">
+                  {formatRunCaseLatencyMs(row.p50Ms)}
                 </span>
-                {routeLines?.get(row.key) ? (
-                  <span
-                    className="mt-0.5 block text-[12px] text-muted-foreground"
-                    data-testid={`route-line-${row.key}`}
-                  >
-                    {routeLines.get(row.key)}
-                  </span>
-                ) : null}
-                {note ? (
-                  <span className="mt-0.5 block text-[11.5px] text-muted-foreground">
-                    {note}
-                  </span>
-                ) : null}
-                {row.coverage.note ? (
-                  <span className="mt-0.5 block text-[11.5px] text-muted-foreground">
-                    {row.coverage.note}
-                  </span>
-                ) : null}
-                <IterationStrip row={row} />
-              </span>
-              <ChainCells row={row} />
-              {pills?.get(row.key) ? (
-                <ChangePill pill={pills.get(row.key) as RunChangePill} />
-              ) : (
-                <span className="hidden w-32 shrink-0 sm:block" />
-              )}
-              <span className="hidden w-16 shrink-0 text-right text-[12.5px] tabular-nums text-muted-foreground sm:block">
-                {formatRunCaseLatencyMs(row.p50Ms)}
-              </span>
-              <span
-                // Wider than the latency cell beside it: a cost renders as
-                // `$1234.56` or `<$0.0001`, both longer than any duration
-                // this column shows, and clipping a money figure is worse
-                // than the space it costs to show it.
-                className="hidden w-24 shrink-0 truncate text-right text-[12.5px] tabular-nums text-muted-foreground sm:block"
-                title={
-                  row.costUsd === null
-                    ? "No iteration in this case has a cost"
-                    : [
-                        row.costedIterations < row.coverage.total
-                          ? `${row.costedIterations} of ${row.coverage.total} iterations priced`
-                          : null,
-                        row.hasRunnerReportedCost
-                          ? "Includes cost reported by your runner, not measured by MCPJam."
-                          : null,
-                      ]
-                        .filter(Boolean)
-                        .join(" ") || undefined
-                }
-              >
-                {formatCostOrDash(row.costUsd)}
-              </span>
-            </button>
+                <span
+                  // Wider than the latency cell beside it: a cost renders as
+                  // `$1234.56` or `<$0.0001`, both longer than any duration
+                  // this column shows, and clipping a money figure is worse
+                  // than the space it costs to show it.
+                  className="hidden w-24 shrink-0 truncate text-right text-[12.5px] tabular-nums text-muted-foreground sm:block"
+                  title={
+                    row.costUsd === null
+                      ? "No iteration in this case has a cost"
+                      : [
+                          row.costedIterations < row.coverage.total
+                            ? `${row.costedIterations} of ${row.coverage.total} iterations priced`
+                            : null,
+                          row.hasRunnerReportedCost
+                            ? "Includes cost reported by your runner, not measured by MCPJam."
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" ") || undefined
+                  }
+                >
+                  {formatCostOrDash(row.costUsd)}
+                </span>
+              </button>
+              {renderActions ? (
+                <span className="flex shrink-0 items-center gap-1 pr-4">
+                  {renderActions(row)}
+                </span>
+              ) : null}
+            </div>
             {open ? (
               <div
                 className="px-5 pb-4 pl-[52px]"

@@ -25,6 +25,7 @@ import {
   Play,
   Square,
   Download,
+  Layers,
   MoreHorizontal,
   TrendingUp,
 } from "lucide-react";
@@ -43,6 +44,8 @@ import type {
   EvalSuiteRunListItem,
 } from "../evals/types";
 import { EvaluateRunCompare } from "./evaluate-run-compare";
+import { useEvaluateNavEnabled } from "./nav/use-evaluate-nav-enabled";
+import { SuiteSettingsButton } from "./nav/suite-settings-button";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { modelsFromRun } from "./run-launch-context";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
@@ -160,9 +163,12 @@ export function EvaluateRunPage({
     useState<EvaluateRunPageHeaderActions | null>(null);
   const [, setHeaderVerdict] = useState<HeaderVerdict | null>(null);
   const canCompare = otherRuns.length >= 1;
+  // Loading counts as off. The new header has no ⋮ menu, so Prompt to improve
+  // and Open failing trace stay in the verdict hero (no actions provider).
+  const navEnabled = useEvaluateNavEnabled() === true;
 
   return (
-    <HeaderActionsContext.Provider value={setHeaderActions}>
+    <HeaderActionsContext.Provider value={navEnabled ? null : setHeaderActions}>
       <HeaderVerdictContext.Provider value={setHeaderVerdict}>
         <section
           className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
@@ -175,11 +181,21 @@ export function EvaluateRunPage({
             <div className="flex min-w-0 flex-col gap-1.5">
               <div className="flex min-w-0 items-center gap-3">
                 <h2 className="min-w-0 truncate text-2xl font-bold leading-8 tracking-tight text-foreground">
+                  {navEnabled ? "Suite " : ""}
                   {targets[0].runNumber
                     ? `Run #${targets[0].runNumber}`
                     : `Run ${formatRunId(targets[0]._id)}`}
-                  {suiteName ? ` of ${suiteName}` : ""}
+                  {suiteName && !navEnabled ? ` of ${suiteName}` : ""}
                 </h2>
+                {navEnabled && suiteName ? (
+                  <span
+                    className="inline-flex h-7 min-w-0 items-center gap-1.5 rounded-full border border-border px-2.5 text-xs text-muted-foreground"
+                    data-testid="suite-run-suite-pill"
+                  >
+                    <Layers className="size-3.5 shrink-0" aria-hidden />
+                    <span className="truncate">{suiteName}</span>
+                  </span>
+                ) : null}
                 <RunPairingDecisions
                   targets={targets}
                   hostNamesById={hostNamesById}
@@ -207,6 +223,9 @@ export function EvaluateRunPage({
                   Export report
                 </Button>
               )}
+              {navEnabled && launchReview?.onEditSettings ? (
+                <SuiteSettingsButton suiteId={run.suiteId} />
+              ) : null}
               <Button
                 type="button"
                 variant="ghost"

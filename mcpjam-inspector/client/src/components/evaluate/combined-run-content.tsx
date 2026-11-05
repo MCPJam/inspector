@@ -47,6 +47,8 @@ import { UnifiedFindingsSection } from "./unified-findings-section";
 import { useRunErrorBreakdownToast } from "./run-error-breakdown";
 import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
 import type { SingleRunContent } from "./evaluate-run-content";
+import { useEvaluateNavEnabled } from "./nav/use-evaluate-nav-enabled";
+import { SuiteRunTestRuns } from "./suite-run/suite-run-test-runs";
 
 type MemberReport = {
   pending: boolean;
@@ -77,6 +79,7 @@ export function CombinedRunContent({
   onOpenIteration,
 }: Parameters<typeof SingleRunContent>[0] & { runs: EvalSuiteRunListItem[] }) {
   const [findingsRunId, setFindingsRunId] = useState(routeRun._id);
+  const navEnabled = useEvaluateNavEnabled() === true;
   const history = useProjectRunHistory(
     projectId ?? "",
     runs,
@@ -291,6 +294,20 @@ export function CombinedRunContent({
         </div>
       ) : (
         <>
+          {navEnabled ? (
+            // One model filter for the whole page (C10); it scopes the stats,
+            // the findings picker and the Test runs list below.
+            <div className="px-5 pt-3" data-testid="suite-run-model-filter">
+              <EvalListFilter
+                label="Model"
+                className="w-48"
+                value={model}
+                options={options.model}
+                formatOption={formatModelOption}
+                onChange={setModel}
+              />
+            </div>
+          ) : null}
           <RunVerdictHero
             view={view}
             headerVerdict={fullVerdict}
@@ -332,24 +349,56 @@ export function CombinedRunContent({
               />
             </div>
           ) : null}
-          <div className="border-t border-border/40">
-            <RunResultsMatrix
-              onEditCase={onEditCase}
-              onEditEvaluator={onEditEvaluator}
-              run={selectedRuns[0]}
-              suiteName={suiteName}
-              runs={selectedRuns}
-              iterations={selectedIterations}
-              hostNamesById={hostNamesById}
-              diagnostics={diagnostics}
-              chains={chains}
-              modelIds={model === ALL_EVAL_FILTER_VALUES ? undefined : [model]}
-              toolbarExtra={<PairingFilters {...pairingFilterProps} />}
-              extraFiltersActive={isFiltered}
-              onClearExtraFilters={clearPairingFilters}
-              onFilterChange={setMatrixFilters}
-            />
-          </div>
+          {navEnabled ? (
+            <div className="border-t border-border/40">
+              <SuiteRunTestRuns
+                link={{
+                  suiteId: routeRun.suiteId,
+                  runId:
+                    model !== ALL_EVAL_FILTER_VALUES &&
+                    selectedRuns.length === 1
+                      ? selectedRuns[0]._id
+                      : routeRun._id,
+                  ...(model !== ALL_EVAL_FILTER_VALUES
+                    ? { target: model }
+                    : {}),
+                }}
+                iterations={selectedIterations}
+                decision={{
+                  // Verdicts are per member run; a combined list shows each
+                  // case's iteration fraction without a merged verdict mark.
+                  summary: null,
+                  diagnostics,
+                  chains,
+                  chainsLoaded:
+                    selectedReports.length === selectedRuns.length &&
+                    selectedReports.every((report) => !report.pending),
+                  decisionStatus: "disabled",
+                }}
+              />
+            </div>
+          ) : (
+            <div className="border-t border-border/40">
+              <RunResultsMatrix
+                onEditCase={onEditCase}
+                onEditEvaluator={onEditEvaluator}
+                run={selectedRuns[0]}
+                suiteName={suiteName}
+                runs={selectedRuns}
+                iterations={selectedIterations}
+                hostNamesById={hostNamesById}
+                diagnostics={diagnostics}
+                chains={chains}
+                modelIds={
+                  model === ALL_EVAL_FILTER_VALUES ? undefined : [model]
+                }
+                toolbarExtra={<PairingFilters {...pairingFilterProps} />}
+                extraFiltersActive={isFiltered}
+                onClearExtraFilters={clearPairingFilters}
+                onFilterChange={setMatrixFilters}
+              />
+            </div>
+          )}
         </>
       )}
     </div>
