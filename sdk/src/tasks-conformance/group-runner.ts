@@ -461,6 +461,18 @@ export class TaskGroupRunner extends TaskOperations {
           // an inapplicability (no tasks wire).
           const noTask = (id: MCPTasksCheckId): MCPTasksCheckResult => {
             if (!probeTool) return missingProbeTool(id);
+            // A thrown call is not "a normal result": say the call failed, so
+            // the app's setup advice does not hide the real error.
+            if (!createdTaskId && creationResult instanceof Error) {
+              return couldNotRun(
+                id,
+                `calling ${JSON.stringify(
+                  probeTool.name
+                )} failed, so there was no task to check: ${errorMessage(
+                  creationResult
+                )}`
+              );
+            }
             if (!createdTaskId) {
               return couldNotRun(
                 id,

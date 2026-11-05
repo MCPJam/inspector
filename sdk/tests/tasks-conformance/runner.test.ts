@@ -1103,6 +1103,26 @@ describe("MCPTasksConformanceTest", () => {
     );
   });
 
+  it("names a failed tool call instead of calling it a normal result", async () => {
+    const manager = extensionManager({
+      executeTool: async () => {
+        throw new Error("tool blew up");
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    const ttl = result.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(ttl.skipReason).toBe("could-not-run");
+    expect(ttl.error?.message).toContain(
+      'calling "long_job" failed, so there was no task to check: tool blew up'
+    );
+    // The app keeps the real error instead of the setup advice.
+    expect(noTaskCreatedMessage(ttl)).toBeUndefined();
+  });
+
   it("skips the task checks when the connection has no tasks wire", async () => {
     const manager = extensionManager({
       getNegotiatedProtocolVersion: () => "2025-06-18",
