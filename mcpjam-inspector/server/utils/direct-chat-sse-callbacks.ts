@@ -26,6 +26,7 @@ import {
   writeTraceEvent,
 } from "./live-chat-trace-stream.js";
 import { buildResolvedModelRequestPayload } from "./model-request-payload.js";
+import { contextCompactionChunk } from "./model-context-window.js";
 
 export type DirectChatSseWriter = {
   write: (chunk: UIMessageChunk) => void;
@@ -119,6 +120,9 @@ export function buildDirectChatTraceCallbacks(
         promptIndex,
         usage: traceTurn.turnUsage,
       });
+    },
+    onContextCompaction: ({ turnId, report }) => {
+      writer.write(contextCompactionChunk(turnId, report));
     },
     onTurnFinish: ({ turnId, promptIndex, finishReason, usage }) => {
       writeTraceEvent(writer, {

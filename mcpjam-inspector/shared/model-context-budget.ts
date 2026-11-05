@@ -334,5 +334,37 @@ export function fitMessagesToModelContext(
 
   if (!changed) return { messages: messages as ModelMessage[] };
   const hasReport = report.shortened.length > 0 || report.cleared.length > 0;
-  return { messages: fitted, ...(hasReport ? { report } : {}) };
+  return {
+    messages:
+      report.cleared.length > 0
+        ? withoutEarlierReasoning(fitted, turnStart)
+        : fitted,
+    ...(hasReport ? { report } : {}),
+  };
+}
+
+/**
+ * Earlier-turn reasoning, dropped once clearing has edited those turns: a
+ * replayed thinking block bound to the old history is a 400 on Claude Fable
+ * 5.1 and Opus 5.5. The hosted engine already prunes it; the direct engine
+ * relies on this.
+ */
+function withoutEarlierReasoning(
+  messages: ModelMessage[],
+  turnStart: number,
+): ModelMessage[] {
+  return messages.flatMap((message, index) => {
+    if (
+      index >= turnStart ||
+      message.role !== "assistant" ||
+      !Array.isArray(message.content)
+    ) {
+      return [message];
+    }
+    const content = (message.content as Part[]).filter(
+      (part) => part.type !== "reasoning",
+    );
+    if (content.length === message.content.length) return [message];
+    return content.length > 0 ? [{ ...message, content } as ModelMessage] : [];
+  });
 }

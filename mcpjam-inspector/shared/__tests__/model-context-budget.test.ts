@@ -373,6 +373,59 @@ describe("fitMessagesToModelContext: clear", () => {
     ).toBeUndefined();
   });
 
+  it("drops earlier-turn reasoning when it clears, so no replayed thinking follows an edit", () => {
+    const reasoningTurn: ModelMessage[] = [
+      { role: "user", content: "turn r" },
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "thinking about it" },
+          {
+            type: "tool-call",
+            toolCallId: "r",
+            toolName: "get_shipment_events",
+            input: {},
+          },
+        ],
+      },
+      result("r", "get_shipment_events", text(prose(20_000))),
+    ];
+    const messages = [
+      ...earlierTurns(["a", "b", "c", "d"]),
+      ...reasoningTurn,
+      { role: "user", content: "next" } as ModelMessage,
+    ];
+    const fitted = fitMessagesToModelContext(messages, {
+      contextTokens: WINDOW,
+    });
+    expect(fitted.report?.cleared.length).toBeGreaterThan(0);
+    const reasoning = fitted.messages.flatMap((message) =>
+      Array.isArray(message.content)
+        ? (message.content as Array<{ type: string }>).filter(
+            (part) => part.type === "reasoning",
+          )
+        : [],
+    );
+    expect(reasoning).toEqual([]);
+  });
+
+  it("keeps reasoning when nothing is cleared", () => {
+    const messages: ModelMessage[] = [
+      { role: "user", content: "hi" },
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "thinking" },
+          { type: "text", text: "hello" },
+        ],
+      },
+      { role: "user", content: "again" },
+    ];
+    expect(
+      fitMessagesToModelContext(messages, { contextTokens: WINDOW }).messages,
+    ).toBe(messages);
+  });
+
   it("decides the same cleared set on every step of a turn", () => {
     const turnStart = [
       ...earlierTurns(["a", "b", "c", "d"]),

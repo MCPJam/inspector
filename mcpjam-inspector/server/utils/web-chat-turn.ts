@@ -1601,6 +1601,7 @@ export async function streamChatTurn(
         transport: "http_stream",
       }),
       modelId: String(prepare.modelDefinition.id),
+      modelContextTokens: prepare.modelDefinition.contextLength,
       messageHistory: directHistory,
       systemPrompt: effectiveEnhancedSystemPrompt,
       temperature: resolvedTemperature,
