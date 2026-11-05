@@ -263,8 +263,8 @@ export function SubscribeForm({
             <div className="flex items-start gap-2 text-xs text-foreground">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warning" />
               <p>
-                Make sure the server can reach this machine over plain http.
-                Runs that use a local receiver are not counted as passing.
+                Allow the server to reach this machine over plain http. Runs
+                that use a local receiver do not count as passing.
               </p>
             </div>
             <div className="flex items-center gap-2">

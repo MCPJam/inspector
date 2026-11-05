@@ -387,7 +387,7 @@ function TriggersWorkspace({ projectId }: { projectId: string }) {
         icon={Zap}
         className="py-16"
         title="Run an agent when an event arrives"
-        description="A trigger runs your instructions each time its subscription delivers an event. Tool calls that need approval are refused."
+        description="Triggers run your instructions each time a subscription delivers an event. Tool calls that need approval are refused."
       >
         <Button size="sm" onClick={() => setSelection({ kind: "new" })}>
           <Plus className="mr-1.5 h-3.5 w-3.5" />
