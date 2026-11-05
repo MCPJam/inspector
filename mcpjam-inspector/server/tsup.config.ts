@@ -128,6 +128,7 @@ export default defineConfig({
     "@mcpjam/sdk/events",
     "@mcpjam/sdk/internal/plugin-host",
     "@mcpjam/sdk/internal/telemetry",
+    "@mcpjam/sdk/internal/network-proxy",
   ],
   esbuildOptions(options) {
     options.platform = "node";
@@ -154,6 +155,10 @@ export default defineConfig({
       "@mcpjam/sdk/internal/telemetry": join(
         rootDir,
         "../sdk/dist/internal/telemetry.js",
+      ),
+      "@mcpjam/sdk/internal/network-proxy": join(
+        rootDir,
+        "../sdk/dist/internal/network-proxy.js",
       ),
       "@mcpjam/sdk": join(rootDir, "../sdk/dist/index.js"),
       "@mcpjam/sdk/operations": join(rootDir, "../sdk/dist/operations.js"),

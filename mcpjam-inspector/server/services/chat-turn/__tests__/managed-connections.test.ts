@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getManagerResourceSnapshot, setManagerResourceSnapshots } from "../../../utils/mcp-connections";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { HOSTED_HARNESS_INPUT_VERSION } from "../../../../shared/hosted-elicitation";
 const m = vi.hoisted(() => ({ order: [] as string[] }));
 vi.mock("../../../routes/web/hosted-elicitation.js", async (original) => ({
   ...(await original<
@@ -69,21 +71,80 @@ describe("managed connection ownership", () => {
   beforeEach(() => {
     m.order = [];
   });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each([
+    { harness: "claude-code" as const, expected: true, resolved: false, rail: "hosted" as const },
+    { harness: "codex" as const, expected: true, resolved: false, rail: "hosted" as const },
+    { harness: "cursor" as const, expected: false, resolved: false, rail: "hosted" as const },
+    { harness: "codex" as const, expected: true, resolved: true, rail: "hosted" as const },
+    { harness: "claude-code" as const, expected: true, resolved: false, rail: "org" as const },
+    { harness: "codex" as const, expected: true, resolved: false, rail: "org" as const },
+    { harness: "codex" as const, expected: false, resolved: false, rail: "own-key" as const },
+    { harness: "codex" as const, expected: false, resolved: false, rail: "local" as const },
+  ])(
+    "installs owned input for $harness on $rail (saved host: $resolved)",
+    async ({ harness, expected, resolved, rail }) => {
+      vi.stubEnv("HARNESS_NATIVE_FORWARDING", "true");
+      const resources = new TurnResources((error) => {
+        throw error;
+      });
+      const app = new Hono();
+      app.post("/", async (c) => {
+        const prepared = await prepareManagedConnections({
+          c,
+          rawBody: { hostedHarnessInputVersion: HOSTED_HARNESS_INPUT_VERSION },
+          bearerToken: "bearer",
+          rpcCollector: createHostedRpcLogCollector({}),
+          resources,
+          setup: {
+            ...setup,
+            turnRail: rail,
+            hostId: resolved ? undefined : "host",
+            isHostAuthoritative: resolved,
+            ...(resolved
+              ? {
+                  hostRuntimeConfig: {
+                    hostConfigId: "saved-config",
+                    hostId: "saved-host",
+                    hostStyle: "codex" as const,
+                    modelId: "openai/gpt-5.5",
+                    systemPrompt: "",
+                    temperature: 0,
+                    requireToolApproval: true,
+                  },
+                }
+              : {}),
+            resolvedExecution: { ...setup.resolvedExecution, harness },
+          },
+          onOAuthServerUrls: () => {},
+        });
+        return c.json({ ownedInput: prepared.harnessOwnedInput });
+      });
+      const response = await app.request("/", { method: "POST" });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ownedInput: expected });
+      await resources.dispose();
+    },
+  );
+
   it("withdraws pending elicitations before it disconnects the turn's servers", async () => {
     const resources = new TurnResources((error) => {
       throw error;
     });
     const app = new Hono();
     app.post("/", async (c) => {
-      await prepareManagedConnections({
+      const prepared = await prepareManagedConnections({
         c,
         rawBody: {},
         bearerToken: "bearer",
         rpcCollector: createHostedRpcLogCollector({}),
         resources,
-        setup,
+        setup: {...setup, hostRuntimeConfig: {hostConfigId: "saved-host-config", hostId: "host", hostStyle: "claude", modelId: "anthropic/claude-haiku-4.5", systemPrompt: "", temperature: 0, requireToolApproval: false}},
         onOAuthServerUrls: () => {},
       });
+      setManagerResourceSnapshots(prepared.manager, new Map([["server-1", {serverUpdatedAt: 1, credentialAuthorizedAt: null}]]));
+      expect(getManagerResourceSnapshot(prepared.manager, "server-1")?.hostConfigId).toBe("saved-host-config");
       return c.json({});
     });
     expect((await app.request("/", { method: "POST" })).status).toBe(200);

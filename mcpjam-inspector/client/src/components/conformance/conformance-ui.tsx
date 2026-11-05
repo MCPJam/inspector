@@ -3,7 +3,7 @@
  * run's detail page, so a run reads the same in both places.
  */
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Check, ChevronRight, Loader2, Minus, X } from "lucide-react";
 import type { ConformanceScore } from "@mcpjam/sdk/browser";
 import { cn } from "@/lib/utils";
@@ -182,14 +182,14 @@ export function SuiteRow({
         </span>
         <span className="flex shrink-0 items-center gap-4">
           {badge}
-          <span className="flex w-22 shrink-0 items-baseline justify-end gap-1">
+          <span className="flex shrink-0 items-baseline gap-1">
             {score ? (
               <>
                 <span className="text-xl font-medium tabular-nums">
                   {score.score}
                 </span>
                 <span className="text-[13px] font-medium">%</span>
-                <span className="pl-1 text-xs font-medium text-muted-foreground tabular-nums">
+                <span className="pl-1 text-sm font-medium text-muted-foreground tabular-nums">
                   {score.passed}/{score.applicable}
                 </span>
               </>
@@ -209,14 +209,71 @@ export function SuiteRow({
   );
 }
 
+function initialsOf(name: string): string {
+  const letters = name.replace(/[^a-z0-9]/gi, "").slice(0, 2) || "?";
+  return letters.charAt(0).toUpperCase() + letters.slice(1).toLowerCase();
+}
+
+/**
+ * A server's logo, or its initials when it has none or the image fails, so
+ * a broken link never leaves an empty square.
+ */
+export function ServerAvatar({
+  name,
+  iconUrl,
+  className,
+}: {
+  name: string;
+  iconUrl?: string;
+  className?: string;
+}) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const box = cn(
+    "flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-md",
+    className,
+  );
+  if (iconUrl && failedUrl !== iconUrl) {
+    return (
+      <span className={cn(box, "bg-muted/40")}>
+        <img
+          src={iconUrl}
+          alt=""
+          aria-hidden="true"
+          referrerPolicy="no-referrer"
+          className="size-full object-contain p-1"
+          onError={() => setFailedUrl(iconUrl)}
+        />
+      </span>
+    );
+  }
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(box, "bg-primary/10 text-[13px] font-bold text-primary")}
+    >
+      {initialsOf(name)}
+    </span>
+  );
+}
+
 /** The counts a headline needs; a live score and a saved run both have them. */
 export type ScoreSummary = Pick<
   ConformanceScore,
   "score" | "outcome" | "applicable" | "passed" | "failed" | "couldNotRun"
 > &
-  Partial<Pick<ConformanceScore, "notApplicable" | "advisories" | "pending">>;
+  Partial<Pick<ConformanceScore, "notApplicable" | "advisories" | "pending">> & {
+    /** A saved run's advice count, where there is no advisories list. */
+    advisoryCount?: number;
+  };
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** A sentence after the verdict: "11 could not run and 15 not applicable." */
+function exceptionSentence(parts: string[]): string {
+  if (parts.length <= 1) return `${parts[0] ?? ""}.`;
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}.`;
+  return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}.`;
+}
 
 /**
  * The run's headline: pooled score, what it was judged against, the verdict
@@ -226,17 +283,23 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 export function OverallScoreCard({
   score,
   serverName,
+  serverIconUrl,
   version,
   isRunning = false,
+  progress,
   oauthNotScored = false,
   blockedBySignIn = 0,
+  timedOut = 0,
   action,
 }: {
   score: ScoreSummary | undefined;
   serverName: string;
+  serverIconUrl?: string;
   /** Protocol revision shown in the eyebrow, e.g. "2025-11-25" or "Auto". */
   version: string;
   isRunning?: boolean;
+  /** How many suites have finished, while the run is going. */
+  progress?: { done: number; total: number };
   oauthNotScored?: boolean;
   /**
    * How many checks were refused for credentials. A run blocked that way says
@@ -246,30 +309,52 @@ export function OverallScoreCard({
    * `couldNotRun`.
    */
   blockedBySignIn?: number;
+  /**
+   * How many scored checks timed out. They could not run, so the verdict
+   * names the timeout; clamped to `couldNotRun` like `blockedBySignIn`.
+   */
+  timedOut?: number;
   /** Shown at the end of the verdict line, e.g. a link to the saved run. */
   action?: ReactNode;
 }) {
-  const scored = score && score.score !== null ? score : undefined;
-  const initials = serverName.replace(/[^a-z0-9]/gi, "").slice(0, 2) || "?";
-  // Checks that could not run stay in the denominator, so the number is only
-  // a partial picture until every applicable check has run.
-  const partial = Boolean(scored && (isRunning || scored.couldNotRun > 0));
+  // No number while the run is going: it moves as each suite lands (a clean
+  // first suite reads 100% before a later one fails), so it would claim a
+  // result the run has not reached. The card shows progress until it ends.
+  const scored =
+    !isRunning && score && score.score !== null ? score : undefined;
+  const missingInputs = score
+    ? Math.max(0, score.passed + score.failed + score.couldNotRun - score.applicable)
+    : 0;
 
   const verdict = (() => {
     // A partial score is no verdict: a clean Protocol would read "Fully
     // conformant." until a suite still running fails.
-    if (isRunning) return "Running conformance checks...";
+    if (isRunning) {
+      return progress
+        ? `Running conformance checks. ${progress.done} of ${progress.total} suites done.`
+        : "Running conformance checks...";
+    }
     const signInBlocked = Math.min(blockedBySignIn, score?.couldNotRun ?? 0);
     if (score && signInBlocked > 0) {
       const otherUnrun = score.couldNotRun - signInBlocked;
       return [
         `Incomplete. ${plural(signInBlocked, "check")} could not run because sign-in failed.`,
         otherUnrun > 0 ? `${otherUnrun} more could not run.` : null,
-        score.failed > 0 ? `${plural(score.failed, "check")} failed.` : null,
         "Reconnect the server and run again.",
       ]
         .filter(Boolean)
         .join(" ");
+    }
+    const inputSentence =
+      missingInputs > 0
+        ? `${plural(missingInputs, "check")} need${missingInputs === 1 ? "s" : ""} input. Select tools in setup and run again.`
+        : null;
+    if (
+      score?.outcome === "incomplete" &&
+      missingInputs > 0 &&
+      score.couldNotRun === missingInputs
+    ) {
+      return `Incomplete. ${inputSentence}`;
     }
     if (!scored) {
       // A run that ended before any check was scored, such as one that timed
@@ -279,85 +364,120 @@ export function OverallScoreCard({
         : "Nothing applicable to score on this server.";
     }
     if (scored.outcome === "failed") {
-      return `Not conformant. ${plural(scored.failed, "check")} failed.`;
+      return "Not conformant.";
     }
     if (scored.outcome === "incomplete") {
-      return `Incomplete. ${plural(scored.couldNotRun, "check")} could not run.`;
+      const otherUnrun = scored.couldNotRun - missingInputs;
+      const late = Math.min(timedOut, otherUnrun);
+      if (late === 0) {
+        return [
+          `Incomplete. ${plural(otherUnrun, "check")} could not run.`,
+          inputSentence,
+        ]
+          .filter(Boolean)
+          .join(" ");
+      }
+      return [
+        `Incomplete. ${plural(late, "check")} could not run because the server did not answer in time.`,
+        otherUnrun > late ? `${otherUnrun - late} more could not run.` : null,
+        inputSentence,
+      ]
+        .filter(Boolean)
+        .join(" ");
     }
-    // A saved run carries no advisories list, but a passed run only scores
-    // under 100 when it has advisories.
-    return scored.score! < 100
-      ? "Conformant, with advice."
-      : "Fully conformant.";
+    // Advice is worth 0 points, so the score cannot tell a passed run with
+    // advice from one without; read the advice itself.
+    const advised =
+      (scored.advisories?.length ?? scored.advisoryCount ?? 0) > 0;
+    // Checks that need input don't hold the verdict back, but the run did not
+    // check everything, so it is not "fully" conformant.
+    const conformant = advised
+      ? "Conformant, with guidance."
+      : inputSentence
+        ? "Conformant."
+        : "Fully conformant.";
+    return [conformant, inputSentence].filter(Boolean).join(" ");
   })();
 
-  // Every kind of count on its own, so "10/62" never has to stand in for
-  // what failed, what could not run, and what was left out of the score.
-  const counts = score
-    ? [
-        scored ? `${score.passed} passed` : null,
-        score.failed ? `${score.failed} failed` : null,
-        score.couldNotRun ? `${score.couldNotRun} could not run` : null,
-        score.pending ? `${score.pending} unscored` : null,
-        score.notApplicable ? `${score.notApplicable} not applicable` : null,
-        oauthNotScored ? "OAuth not scored (no auth)" : null,
-      ].filter(Boolean)
-    : [];
+  // The fraction already says how many passed. This line is only the checks
+  // the fraction leaves out.
+  const counts =
+    score && !isRunning
+      ? [
+          score.couldNotRun > missingInputs ? `${score.couldNotRun - missingInputs} could not run` : null,
+          missingInputs ? `${missingInputs} not run (missing input)` : null,
+          score.pending ? `${score.pending} unscored` : null,
+          score.notApplicable ? `${score.notApplicable} not applicable` : null,
+          oauthNotScored ? "OAuth not scored (no auth)" : null,
+        ].filter((part): part is string => part !== null)
+      : [];
 
   return (
     <div className="relative flex flex-col gap-4.5 overflow-hidden rounded-lg border border-border bg-popover px-6 pt-6 pb-5">
-      <div className="text-[11px] font-semibold tracking-[0.08em] text-primary">
+      <div className="text-xs font-semibold tracking-[0.08em] text-primary">
         OVERALL SCORE · PROTOCOL {version.toUpperCase()}
       </div>
       <div className="flex items-center justify-between gap-6">
-        <div className="flex items-end gap-2.5">
+        <div className="flex items-baseline gap-2.5">
           {scored ? (
             <>
-              <div className="flex items-end gap-px">
-                <span className="text-7xl leading-16 font-medium tracking-[-0.04em] tabular-nums">
-                  {Math.round(scored.score!)}
+              <div className="flex items-baseline gap-px">
+                <span className="text-6xl leading-none font-medium tracking-[-0.04em] tabular-nums">
+                  {scored.score!}
                 </span>
-                <span className="pb-1 text-[28px] leading-8 font-medium">
-                  %
-                </span>
+                <span className="text-3xl leading-none font-medium">%</span>
               </div>
-              <span className="pb-2 text-sm font-medium text-muted-foreground tabular-nums">
+              <span className="text-2xl font-medium text-muted-foreground tabular-nums">
                 {scored.passed}/{scored.applicable}
-                {partial ? " · partial" : ""}
               </span>
             </>
+          ) : isRunning ? (
+            <span className="flex h-16 items-center gap-3 text-muted-foreground">
+              <Loader2 className="h-10 w-10 animate-spin" aria-hidden="true" />
+              {progress ? (
+                <span className="text-2xl font-medium tabular-nums">
+                  {progress.done}/{progress.total}
+                </span>
+              ) : null}
+            </span>
           ) : (
-            <span className="text-7xl leading-16 font-medium text-muted-foreground/40">
-              {isRunning ? <Loader2 className="h-12 w-12 animate-spin" /> : "—"}
+            <span className="text-6xl leading-none font-medium text-muted-foreground/40">
+              —
             </span>
           )}
         </div>
         <div className="flex min-w-0 items-center gap-2.5">
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-indigo-500/10 text-[13px] font-bold text-indigo-700 dark:text-indigo-300">
-            {initials.charAt(0).toUpperCase() + initials.slice(1).toLowerCase()}
-          </span>
+          <ServerAvatar name={serverName} iconUrl={serverIconUrl} />
           <span className="truncate text-base font-semibold">{serverName}</span>
         </div>
       </div>
       <div className="flex items-center justify-between gap-4">
-        <div className="flex min-w-0 flex-col gap-1">
-          <div className="text-sm font-medium">{verdict}</div>
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+          <div className="text-base font-medium">{verdict}</div>
           {counts.length > 0 && (
-            <div className="text-xs text-muted-foreground tabular-nums">
-              {counts.join(" · ")}
+            <div className="text-sm text-muted-foreground tabular-nums">
+              {exceptionSentence(counts)}
             </div>
           )}
         </div>
         {action}
       </div>
+      {isRunning ? (
+        // Indeterminate: the run's length is not known up front.
+        <div
+          aria-hidden="true"
+          className="absolute inset-x-0 bottom-0 h-1.5 animate-pulse bg-primary/40 motion-reduce:animate-none"
+        />
+      ) : null}
       {scored && scored.applicable > 0 && (
         <div className="absolute inset-x-0 bottom-0 flex h-1.5">
           <div className="bg-emerald-500" style={{ flexGrow: scored.passed }} />
           <div className="bg-red-500" style={{ flexGrow: scored.failed }} />
           <div
             className="bg-amber-400"
-            style={{ flexGrow: scored.couldNotRun }}
+            style={{ flexGrow: scored.couldNotRun - missingInputs }}
           />
+          {missingInputs > 0 && <div className="bg-muted-foreground/30" style={{ flexGrow: missingInputs }} />}
         </div>
       )}
     </div>

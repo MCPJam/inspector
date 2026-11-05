@@ -141,6 +141,7 @@
               "cli/events",
               "cli/tools-resources-prompts",
               "cli/ci",
+              "cli/self-hosted",
               "cli/telemetry"
             ]
           },

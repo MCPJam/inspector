@@ -340,6 +340,7 @@ export const navigationSections: NavSection[] = [
         // PostHog. Keep the `mcpjam-` prefix so it's obvious at a glance that
         // this is an internal-only flag (same convention as `mcpjam-learning`).
         featureFlag: "mcpjam-conformance",
+        badge: "New",
       },
       {
         title: "Compatibility",

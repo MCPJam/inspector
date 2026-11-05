@@ -93,6 +93,52 @@ describe("hosted-browser verdict freshness", () => {
     expect(mod.hostedBrowserAdvertisable()).toBe(false);
   });
 
+  it("a stale answer does not strip the browser from a run that already booked its desktop", async () => {
+    stubBackend(BOOT, []);
+    const mod = await load(true);
+    const { resolveHostTools } = await import("../../built-in-tools/registry");
+    const ctx = {
+      authHeader: "Bearer token-123",
+      projectId: "project-1",
+      chatSessionId: "session-1",
+    };
+
+    vi.advanceTimersByTime(mod.HOSTED_BROWSER_VERDICT_MAX_AGE_MS + 1);
+
+    // The runner asks this before booking, so no new box is booked.
+    expect(mod.hostedBrowserAdvertisable()).toBe(false);
+    const bookedRun = resolveHostTools(
+      { builtInToolIds: ["browser"] },
+      {
+        ...ctx,
+        browserApprovalDelivery: {
+          kind: "unattended",
+          policy: { mode: "allow_all" },
+        },
+        runKey: "iteration-7",
+        isJourneySession: true,
+        sandboxBinding: {
+          sandboxId: "sbx_desktop_1",
+          sandboxRowId: "row_desktop_1",
+          runtimeKind: "desktop-browser",
+        },
+      },
+    );
+    expect(Object.keys(bookedRun ?? {})).toContain("browser_navigate");
+
+    const suppressed: Array<{ id: string; reason: string }> = [];
+    const projectComputer = resolveHostTools(
+      { builtInToolIds: ["browser"], computer: { kind: "personal" } },
+      {
+        ...ctx,
+        browserApprovalDelivery: { kind: "attested" },
+        onToolSuppressed: (info) => suppressed.push(info),
+      },
+    );
+    expect(projectComputer).toBeUndefined();
+    expect(suppressed[0]?.reason).toContain("out of date");
+  });
+
   it("a successful refresh renews the answer", async () => {
     const fetchMock = stubBackend(BOOT, [
       () => respond({ ok: true, hostedBrowser: BOOT }),
@@ -124,6 +170,8 @@ describe("hosted-browser verdict freshness", () => {
     await mod.refreshHostedBrowserVerdict();
 
     expect(mod.isHostedBrowserRefused()).toBe(true);
+    // A refusal, unlike age, holds for a run that already booked its box.
+    expect(mod.isHostedBrowserRefused({ boxBooked: true })).toBe(true);
     expect(mod.isHostedDesktopUnavailable()).toBe(true);
   });
 

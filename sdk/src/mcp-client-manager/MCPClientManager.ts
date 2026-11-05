@@ -1,3 +1,5 @@
+import { runOperationWithAuthRecovery } from "./auth-provider-recovery.js";
+import { isolateAuthChallenge, matchingRecordedChallenge, attachRecordedAuthChallenge } from "./auth-challenge-isolation.js";
 import { connectionErrorMessage } from "./connection-error-message.js";
 import { z } from "zod";
 import { ToolDeclarationCapture } from "./tool-declaration-capture.js";
@@ -51,7 +53,15 @@ import {
 } from "@modelcontextprotocol/client";
 // beta.4 moved the Node stdio client transport to the `/stdio` subpath.
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { wrapFetchForHttpErrors } from "./http-error-fetch.js";
+import {
+  wrapFetchForHttpErrors,
+  authChallengeOperationKey,
+  type AuthChallengeRecorder,
+} from "./http-error-fetch.js";
+import {
+  resolveToolSecuritySchemes,
+  type ToolSecuritySchemeResolution,
+} from "./auth-challenge.js";
 
 import type {
   MCPClientManagerConfig,
@@ -376,6 +386,17 @@ export class MCPClientManager {
    * across a reconnect.
    */
   private readonly aggregatedToolsListWarmed = new Set<string>();
+  /**
+   * The newest refresh token per server, with the configured value it
+   * replaced. Rotation is single-use at most authorization servers, so a
+   * rebuilt provider must start from the newest token, not the configured
+   * one. Kept for the registration's life: a reconnect or a recovery reset
+   * would otherwise present a spent token.
+   */
+  private readonly rotatedRefreshTokens = new Map<
+    string,
+    { configured: string; current: string }
+  >();
   private readonly retryAbortControllers = new Map<
     string,
     Set<AbortController>
@@ -1074,6 +1095,7 @@ export class MCPClientManager {
   async removeServer(serverId: string): Promise<void> {
     await this.disconnectServer(serverId);
     this.registeredServers.delete(serverId);
+    this.rotatedRefreshTokens.delete(serverId);
     this.toolsMetadataCache.delete(serverId);
     this.toolsAnnotationsCache.delete(serverId);
     this.toolDeclarationCapture.clear(serverId);
@@ -1126,30 +1148,45 @@ export class MCPClientManager {
     params?: Parameters<Client["listTools"]>[0],
     options?: ClientRequestOptions
   ): Promise<ListToolsResult> {
-    return this.runRetryableReadOperation(serverId, options, async (client) => {
-      try {
-        const result = await client.listTools(
-          params,
-          this.withTimeout(serverId, options)
-        );
-        this.cacheToolsMetadata(serverId, result.tools);
-        if (params?.cursor === undefined && options?.cacheMode !== "bypass") {
-          this.aggregatedToolsListWarmed.add(serverId);
-        }
-        return result;
-      } catch (error) {
-        this.toolDeclarationCapture.clear(serverId);
-        if (isMethodUnavailableError(error, "tools/list")) {
-          this.toolsMetadataCache.set(serverId, new Map());
-          this.toolsAnnotationsCache.set(serverId, new Map());
-          // A server without `tools/list` cannot declare `x-mcp-header` on
-          // anything, so the mirroring source is trivially complete.
-          this.aggregatedToolsListWarmed.add(serverId);
-          return { tools: [] } as ListToolsResult;
-        }
-        throw error;
+    return this.runRetryableReadOperation(serverId, options, (client) =>
+      this.listToolsOnClient(serverId, client, params, options)
+    );
+  }
+
+  /**
+   * One `tools/list` on an already-connected client, with the caches it feeds.
+   * Callers that are already inside a manager operation use this directly:
+   * going back through `listTools` would queue behind themselves on a server
+   * whose operations are serialized.
+   */
+  private async listToolsOnClient(
+    serverId: string,
+    client: ManagedMcpClient,
+    params: Parameters<Client["listTools"]>[0] | undefined,
+    options: ClientRequestOptions | undefined
+  ): Promise<ListToolsResult> {
+    try {
+      const result = await client.listTools(
+        params,
+        this.withTimeout(serverId, options)
+      );
+      this.cacheToolsMetadata(serverId, result.tools);
+      if (params?.cursor === undefined && options?.cacheMode !== "bypass") {
+        this.aggregatedToolsListWarmed.add(serverId);
       }
-    });
+      return result;
+    } catch (error) {
+      this.toolDeclarationCapture.clear(serverId);
+      if (isMethodUnavailableError(error, "tools/list")) {
+        this.toolsMetadataCache.set(serverId, new Map());
+        this.toolsAnnotationsCache.set(serverId, new Map());
+        // A server without `tools/list` cannot declare `x-mcp-header` on
+        // anything, so the mirroring source is trivially complete.
+        this.aggregatedToolsListWarmed.add(serverId);
+        return { tools: [] } as ListToolsResult;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -1240,6 +1277,29 @@ export class MCPClientManager {
   /** Raw declarations before SDK aggregation, name merging, or schema filtering. */
   getCapturedToolDeclarations(serverId: string) {
     return this.toolDeclarationCapture.read(serverId);
+  }
+
+  /**
+   * A tool's `securitySchemes`, resolved by OpenAI's inheritance rule.
+   *
+   * Read from the raw `tools/list` frames (the upstream schema strips the
+   * top-level field). Where a server advertises the default a tool without
+   * schemes inherits is not known, so such a tool resolves as `unresolved`.
+   */
+  getToolSecuritySchemes(
+    serverId: string,
+    toolName: string
+  ): ToolSecuritySchemeResolution {
+    const declaration = this.toolDeclarationCapture
+      .read(serverId)
+      ?.tools.find((tool) => tool.name === toolName);
+    const cachedMeta = this.toolsMetadataCache.get(serverId)?.get(toolName);
+    return resolveToolSecuritySchemes({
+      declaration: declaration ?? {
+        _meta:
+          cachedMeta && typeof cachedMeta === "object" ? cachedMeta : undefined,
+      },
+    });
   }
 
   hasCachedToolAnnotations(serverId: string): boolean {
@@ -1556,7 +1616,13 @@ export class MCPClientManager {
       serverId,
       request.request,
       request.retry ?? { retries: 0, retryDelayMs: 0 },
-      operation
+      operation,
+      {
+        authChallengeOperation: authChallengeOperationKey(
+          "tools/call",
+          toolName
+        ),
+      }
     );
   }
 
@@ -1614,8 +1680,9 @@ export class MCPClientManager {
     try {
       // No `cursor`, no `cacheMode` override: the one call shape that writes
       // upstream's aggregated `tools/list` entry. Marks the connection warm
-      // via `listTools` itself, so this runs at most once per connection.
-      await this.listTools(serverId, undefined, options);
+      // itself, so this runs at most once per connection. It runs on the
+      // caller's client, inside the caller's operation.
+      await this.listToolsOnClient(serverId, client, undefined, options);
     } catch {
       // Deliberately swallowed — see the docblock. A `tools/list` failure must
       // not convert an otherwise-valid `tools/call` into an error.
@@ -1668,8 +1735,15 @@ export class MCPClientManager {
         mrtrCollect
       );
     }
-    return this.runRetryableReadOperation(serverId, options, (client) =>
-      client.readResource(params, this.withProgressHandler(serverId, options))
+    return this.runRetryableReadOperation(
+      serverId,
+      options,
+      (client) =>
+        client.readResource(
+          params,
+          this.withProgressHandler(serverId, options)
+        ),
+      authChallengeOperationKey("resources/read", params.uri)
     );
   }
 
@@ -1767,8 +1841,12 @@ export class MCPClientManager {
         mrtrCollect
       );
     }
-    return this.runRetryableReadOperation(serverId, options, (client) =>
-      client.getPrompt(params, this.withProgressHandler(serverId, options))
+    return this.runRetryableReadOperation(
+      serverId,
+      options,
+      (client) =>
+        client.getPrompt(params, this.withProgressHandler(serverId, options)),
+      authChallengeOperationKey("prompts/get", params.name)
     );
   }
 
@@ -3182,11 +3260,20 @@ export class MCPClientManager {
         }
       }
 
+      const remembered = this.rotatedRefreshTokens.get(serverId);
       effectiveAuthProvider = new RefreshTokenOAuthProvider(
         trimmedClientId,
-        trimmedRefresh,
+        remembered?.configured === trimmedRefresh
+          ? remembered.current
+          : trimmedRefresh,
         trimmedClientSecret,
-        config.onTokensRotated
+        async (rotated) => {
+          this.rotatedRefreshTokens.set(serverId, {
+            configured: trimmedRefresh,
+            current: rotated.refreshToken,
+          });
+          await config.onTokensRotated?.(rotated);
+        }
       );
       state.authProvider =
         effectiveAuthProvider instanceof RefreshTokenOAuthProvider
@@ -3200,6 +3287,8 @@ export class MCPClientManager {
       config.requestInit
     );
     const preferSSE = config.preferSSE ?? url.pathname.endsWith("/sse");
+    const authChallengeRecorder: AuthChallengeRecorder = {};
+    state.authChallengeRecorder = authChallengeRecorder;
 
     let streamableError: unknown;
 
@@ -3214,7 +3303,8 @@ export class MCPClientManager {
         // `httpLogger` is configured — see `buildTransportFetch`.
         fetch: wrapFetchForHttpErrors(
           this.buildTransportFetch(serverId, config),
-          effectiveAuthProvider !== undefined
+          effectiveAuthProvider !== undefined,
+          authChallengeRecorder
         ),
         reconnectionOptions: config.reconnectionOptions,
         authProvider: effectiveAuthProvider,
@@ -3364,7 +3454,14 @@ export class MCPClientManager {
       // GET SSE is the connection, not the listen channel, so `listens:false`
       // is a documented no-op here rather than a connection failure (a real
       // client on HTTP+SSE cannot not-listen either).
-      fetch: this.buildTransportFetch(serverId, config, { listenGuard: false }),
+      // The same challenge-preserving wrapper as Streamable HTTP. It only acts
+      // on POSTs, so the GET event stream is untouched; a `_meta` challenge
+      // delivered over that stream is read from the result, not here.
+      fetch: wrapFetchForHttpErrors(
+        this.buildTransportFetch(serverId, config, { listenGuard: false }),
+        effectiveAuthProvider !== undefined,
+        authChallengeRecorder
+      ),
       eventSourceInit: config.eventSourceInit,
       authProvider: effectiveAuthProvider,
     });
@@ -4273,8 +4370,7 @@ export class MCPClientManager {
     state?: LiveClientState
   ): DeclaredElicitationCapability {
     const capabilities = state?.initializedClientCapabilities as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     const elicitation = capabilities?.elicitation;
     return elicitation != null
       ? (elicitation as DeclaredElicitationCapability)
@@ -4525,48 +4621,50 @@ export class MCPClientManager {
                   declarations,
                   (req.params as { arguments?: unknown } | undefined)?.arguments
                 );
-          return this.withElicitationTimeoutSuspension(
-            serverId,
-            mergedOptions,
-            (callOptions) =>
-              this.guardMrtrLeg(
-                serverId,
-                req,
-                leg,
-                () =>
-                  client.requestWithSchema(
-                    req as Request,
-                    withInputRequired(
-                      defaultResultSchemaForMethod("tools/call")
-                    ),
-                    // Pass `callOptions` through untouched (matching the legacy
-                    // `client.callTool(callParams, callOptions)` sibling): it carries
-                    // the composed elicitation-timeout watchdog signal. Overwriting
-                    // `.signal` with the outer retry `signal` would drop that
-                    // watchdog; the outer abort is already enforced by
-                    // `runRetriedOperation`'s `awaitWithAbort` wrapper.
-                    {
-                      ...callOptions,
-                      allowInputRequired: true,
-                      // Caller-supplied headers win: an explicit override is a
-                      // deliberate act, and the debugger must be able to send a
-                      // deliberately wrong header to exercise a server's -32020.
-                      ...(paramHeaders && Object.keys(paramHeaders).length > 0
-                        ? {
-                            headers: {
-                              ...paramHeaders,
-                              ...(
-                                callOptions as {
-                                  headers?: Record<string, string>;
-                                }
-                              ).headers,
-                            },
-                          }
-                        : {}),
-                    }
-                  ) as Promise<CallToolResult | InputRequiredResult>
-              )
+          // Host approval is local waiting, not upstream server time. Start
+          // the wire budget only when the gate dispatches this exact leg.
+          return this.guardMrtrLeg(serverId, req, leg, () =>
+            this.withElicitationTimeoutSuspension(
+              serverId,
+              mergedOptions,
+              (callOptions) =>
+                client.requestWithSchema(
+                  req as Request,
+                  withInputRequired(defaultResultSchemaForMethod("tools/call")),
+                  // Pass `callOptions` through untouched (matching the legacy
+                  // `client.callTool(callParams, callOptions)` sibling): it carries
+                  // the composed elicitation-timeout watchdog signal. Overwriting
+                  // `.signal` with the outer retry `signal` would drop that
+                  // watchdog; the outer abort is already enforced by
+                  // `runRetriedOperation`'s `awaitWithAbort` wrapper.
+                  {
+                    ...callOptions,
+                    allowInputRequired: true,
+                    // Caller-supplied headers win: an explicit override is a
+                    // deliberate act, and the debugger must be able to send a
+                    // deliberately wrong header to exercise a server's -32020.
+                    ...(paramHeaders && Object.keys(paramHeaders).length > 0
+                      ? {
+                          headers: {
+                            ...paramHeaders,
+                            ...(
+                              callOptions as {
+                                headers?: Record<string, string>;
+                              }
+                            ).headers,
+                          },
+                        }
+                      : {}),
+                  }
+                ) as Promise<CallToolResult | InputRequiredResult>
+            )
           );
+        },
+        {
+          authChallengeOperation: authChallengeOperationKey(
+            "tools/call",
+            callParams.name
+          ),
         }
       );
 
@@ -4593,17 +4691,21 @@ export class MCPClientManager {
     collect: MrtrInputCollector
   ): Promise<ReadResourceResult> {
     const sender: MrtrLegSender<ReadResourceResult> = (req, leg) =>
-      this.runRetryableReadOperation(serverId, options, (client) =>
-        this.guardMrtrLeg(
-          serverId,
-          req,
-          leg,
-          () =>
-            client.readResource(req.params as ReadResourceParams, {
-              ...this.withProgressHandler(serverId, options),
-              allowInputRequired: true,
-            }) as Promise<ReadResourceResult | InputRequiredResult>
-        )
+      this.runRetryableReadOperation(
+        serverId,
+        options,
+        (client) =>
+          this.guardMrtrLeg(
+            serverId,
+            req,
+            leg,
+            () =>
+              client.readResource(req.params as ReadResourceParams, {
+                ...this.withProgressHandler(serverId, options),
+                allowInputRequired: true,
+              }) as Promise<ReadResourceResult | InputRequiredResult>
+          ),
+        authChallengeOperationKey("resources/read", params.uri)
       );
 
     return runInputRequiredOperation<ReadResourceResult>({
@@ -4631,21 +4733,25 @@ export class MCPClientManager {
     // also exercises the modern per-request log-level `_meta` injection end to
     // end at the manager level.
     const sender: MrtrLegSender<GetPromptResult> = (req, leg) =>
-      this.runRetryableReadOperation(serverId, options, (client) =>
-        this.guardMrtrLeg(
-          serverId,
-          req,
-          leg,
-          () =>
-            client.requestWithSchema(
-              req as Request,
-              withInputRequired(defaultResultSchemaForMethod("prompts/get")),
-              {
-                ...this.withProgressHandler(serverId, options),
-                allowInputRequired: true,
-              }
-            ) as Promise<GetPromptResult | InputRequiredResult>
-        )
+      this.runRetryableReadOperation(
+        serverId,
+        options,
+        (client) =>
+          this.guardMrtrLeg(
+            serverId,
+            req,
+            leg,
+            () =>
+              client.requestWithSchema(
+                req as Request,
+                withInputRequired(defaultResultSchemaForMethod("prompts/get")),
+                {
+                  ...this.withProgressHandler(serverId, options),
+                  allowInputRequired: true,
+                }
+              ) as Promise<GetPromptResult | InputRequiredResult>
+          ),
+        authChallengeOperationKey("prompts/get", params.name)
       );
 
     return runInputRequiredOperation<GetPromptResult>({
@@ -5090,7 +5196,8 @@ export class MCPClientManager {
   private async runRetryableReadOperation<T>(
     serverId: string,
     options: RequestOptions | undefined,
-    operation: (client: ManagedMcpClient) => Promise<T>
+    operation: (client: ManagedMcpClient) => Promise<T>,
+    authChallengeOperation?: string
   ): Promise<T> {
     return this.runRetriedOperation(
       serverId,
@@ -5100,7 +5207,10 @@ export class MCPClientManager {
         await this.ensureConnected(serverId, signal);
         return operation(this.getClientOrThrow(serverId));
       },
-      { resetConnectionOnRetry: false }
+      {
+        resetConnectionOnRetry: false,
+        ...(authChallengeOperation ? { authChallengeOperation } : {}),
+      }
     );
   }
 
@@ -5110,13 +5220,40 @@ export class MCPClientManager {
     retryPolicy: RetryPolicy,
     operation: (signal?: AbortSignal) => Promise<T>,
     config: {
+      authChallengeIsolated?: boolean;
       resetConnectionOnRetry?: boolean;
+      authChallengeOperation?: string;
     } = {}
   ): Promise<T> {
+    const serverConfig = this.registeredServers.get(serverId)?.config;
+    if (
+      !config.authChallengeIsolated &&
+      serverConfig &&
+      this.isHttpConfig(serverConfig) &&
+      (serverConfig.authProvider || serverConfig.refreshToken)
+    ) {
+      return isolateAuthChallenge(
+        this,
+        serverId,
+        () =>
+          this.runRetriedOperation(serverId, options, retryPolicy, operation, {
+            ...config,
+            authChallengeIsolated: true,
+          }),
+        options?.signal
+      );
+    }
     const { signal, cleanup } = this.createRetrySignal(
       serverId,
       options?.signal
     );
+    const startedAt = Date.now();
+    if (config.authChallengeIsolated && config.authChallengeOperation)
+      this.liveClientStates
+        .get(serverId)
+        ?.authChallengeRecorder?.byOperation?.delete(
+          config.authChallengeOperation
+        );
 
     const runWithTransientRetry = () =>
       retryWithPolicy({
@@ -5134,19 +5271,26 @@ export class MCPClientManager {
       });
 
     try {
-      try {
-        return await runWithTransientRetry();
-      } catch (error) {
-        const refreshed = await this.refreshAccessTokenAfterUnauthorized(
-          serverId,
-          error,
-          signal
-        );
-        if (!refreshed) {
-          throw error;
-        }
-        return await runWithTransientRetry();
-      }
+      return await runOperationWithAuthRecovery({
+        run: runWithTransientRetry,
+        usesAuthProvider:
+          !!serverConfig &&
+          this.isHttpConfig(serverConfig) &&
+          !!(serverConfig.authProvider || serverConfig.refreshToken),
+        attach: (error) =>
+          attachRecordedAuthChallenge(
+            this.liveClientStates.get(serverId)?.authChallengeRecorder,
+            error,
+            startedAt,
+            config.authChallengeOperation
+          ),
+        hasChallenge: () => !!matchingRecordedChallenge(
+          this.liveClientStates.get(serverId)?.authChallengeRecorder, startedAt, config.authChallengeOperation),
+        reset: () =>
+          this.destroyLiveState(serverId, { abortRetryOperations: false }),
+        refresh: (error) =>
+          this.refreshAccessTokenAfterUnauthorized(serverId, error, signal),
+      });
     } finally {
       cleanup();
     }

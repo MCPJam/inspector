@@ -4,69 +4,105 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { stableStringifyJson } from "@mcpjam/sdk/widget-runtime";
 import { ChevronLeft } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import type { ServerWithName } from "@/hooks/use-app-state";
+import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
+import type { ConformanceConnectServer } from "./ConformancePanel";
+import { ConformanceChecksEditor } from "./ConformanceChecksEditor";
+import { ConformanceSettingsConnection } from "./ConformanceSettingsConnection";
 import type { ConformanceSelection } from "@/hooks/use-conformance-run";
 import { toast } from "@/lib/toast";
 import {
-  ConformanceCheckPicker,
   checkCatalogs,
   nothingPicked,
 } from "./ConformanceCheckPicker";
 
 export function ConformanceSettings({
   serverName,
+  server,
+  inputs,
+  onConnectServer,
+  onEditServer,
   defaults,
   onSave,
   onBack,
+  backDisabled = false,
 }: {
   serverName: string;
+  server?: ServerWithName;
+  inputs?: ConformanceProbes;
+  onConnectServer?: ConformanceConnectServer;
+  onEditServer?: (name: string) => void;
   /** The saved defaults; absent means every check. */
   defaults?: ConformanceSelection;
-  onSave: (selection: ConformanceSelection) => Promise<void>;
+  onSave: (
+    selection: ConformanceSelection,
+    inputs: ConformanceProbes,
+  ) => Promise<void>;
   onBack: () => void;
+  backDisabled?: boolean;
 }) {
-  // Shown at once while the save goes out; the saved row catches up after.
-  const [selection, setSelection] = useState<ConformanceSelection>(
-    defaults ?? {},
-  );
+  const storedKey = stableStringifyJson({
+    selection: defaults ?? {},
+    inputs: inputs ?? {},
+  });
+  const [draft, setDraft] = useState({
+    selection: defaults ?? {},
+    inputs: inputs ?? {},
+  });
   const [touched, setTouched] = useState(false);
+  const [inputsValid, setInputsValid] = useState(true);
+  const [pending, setPending] = useState(0);
+  const [editorVersion, setEditorVersion] = useState(0);
+  const latestChange = useRef(0);
+  const sent = useRef(storedKey);
   useEffect(() => {
-    if (!touched) setSelection(defaults ?? {});
-  }, [defaults, touched]);
-  // The newest change, so only its save hands the boxes back to the row.
-  const latestChange = useRef<ConformanceSelection | null>(null);
-
+    if (touched || pending || !inputsValid) return;
+    if (stableStringifyJson(draft) !== storedKey)
+      setEditorVersion((version) => version + 1);
+    setDraft({ selection: defaults ?? {}, inputs: inputs ?? {} });
+    sent.current = storedKey;
+  }, [storedKey, touched, pending, inputsValid]);
+  const draftKey = stableStringifyJson(draft);
+  useEffect(() => {
+    if (!touched || !inputsValid) return;
+    if (draftKey === sent.current) {
+      if (!pending) setTouched(false);
+      return;
+    }
+    sent.current = draftKey;
+    const id = ++latestChange.current;
+    setPending((count) => count + 1);
+    onSave(draft.selection, draft.inputs)
+      .catch(() => {
+        toast.error("Could not save the default checks and inputs. Try again.");
+      })
+      .finally(() => {
+        setPending((count) => count - 1);
+        if (latestChange.current === id) setTouched(false);
+      });
+  }, [draftKey, touched, inputsValid, onSave]);
   const change = (next: ConformanceSelection) => {
-    // Run again and the server list's Run use these as they are: with nothing
-    // picked they would start a run that checks nothing.
     if (nothingPicked(next, checkCatalogs("auto"))) {
       toast.error("Keep at least one check selected.");
       return;
     }
-    latestChange.current = next;
     setTouched(true);
-    setSelection(next);
-    onSave(next)
-      .catch(() => {
-        toast.error("Could not save the default checks. Try again.");
-      })
-      .finally(() => {
-        // Settled: the saved row is the truth again, so a failed change (or
-        // two in a row) cannot stay on screen while runs use the row. Unless
-        // a newer change is still on its way.
-        if (latestChange.current === next) setTouched(false);
-      });
+    setDraft((prev) => ({ ...prev, selection: next }));
   };
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-border/40 px-8 py-2.5">
+      {/* The same padding as a run's header, which Settings opens from. */}
+      <div className="shrink-0 border-b border-border/40 px-8 pt-5 pb-4">
         <div className="flex min-w-0 items-center gap-3">
           <Button
             variant="link"
             size="sm"
             onClick={onBack}
+            disabled={backDisabled || pending > 0 || touched || !inputsValid}
             className="h-auto gap-1 px-0 text-sm has-[>svg]:px-0"
           >
             <ChevronLeft className="size-3.5" />
@@ -85,12 +121,24 @@ export function ConformanceSettings({
               Default Checks
             </h3>
             {/* Defaults are revision-agnostic: the list is the full one. */}
-            <ConformanceCheckPicker
+            <ConformanceSettingsConnection
+              server={server}
+              onConnectServer={onConnectServer}
+              onEditServer={onEditServer}
+            />
+            <ConformanceChecksEditor
+              key={editorVersion}
+              server={server}
               versionPin="auto"
-              selection={selection}
+              selection={draft.selection}
               onChange={change}
-              countLabel={(picked, total) => `${picked} of ${total}`}
-              defaultOpen
+              probes={draft.inputs}
+              onProbesChange={(next) => {
+                setTouched(true);
+                setDraft((prev) => ({ ...prev, inputs: next }));
+              }}
+              onValidChange={setInputsValid}
+              defaultsMode
             />
           </section>
         </div>

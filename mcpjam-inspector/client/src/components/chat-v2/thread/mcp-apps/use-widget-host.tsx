@@ -512,9 +512,12 @@ export function useWidgetHost(): WidgetHostImpl {
  */
 export function InspectorWidgetHostProvider({
   children,
+  bindResources,
 }: {
   children: ReactNode;
+  bindResources?: (host: WidgetHost) => WidgetHost;
 }) {
   const host = useWidgetHost();
-  return <WidgetHostProvider value={host}>{children}</WidgetHostProvider>;
+  const bound = useMemo(() => bindResources ? bindResources(host) : host, [host, bindResources]);
+  return <WidgetHostProvider value={bound}>{children}</WidgetHostProvider>;
 }

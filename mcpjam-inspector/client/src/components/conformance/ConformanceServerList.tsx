@@ -5,62 +5,60 @@
  */
 
 import { Button } from "@mcpjam/design-system/button";
-import {
-  RunResultBadge,
-  type ConformanceRunListItem,
-} from "./ConformanceHistory";
-
-const lastRunDateFormat = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-});
-
-function initialsOf(name: string): string {
-  const letters = name.replace(/[^a-z0-9]/gi, "").slice(0, 2) || "?";
-  return letters.charAt(0).toUpperCase() + letters.slice(1).toLowerCase();
-}
+import { type ConformanceRunListItem } from "./ConformanceHistory";
+import { RunResultRing } from "./RunResultRing";
+import { ServerAvatar } from "./conformance-ui";
 
 export function ConformanceServerList({
   runs,
+  serverIcons,
   onViewRun,
   onRun,
   disabled = false,
+  disabledServerName,
 }: {
   /** Each server's latest run, by server name. */
   runs: Array<{ serverName: string; run: ConformanceRunListItem }>;
+  /** Each server's logo URL, by name; initials where there is none. */
+  serverIcons?: Record<string, string>;
   onViewRun: (runId: string) => void;
   onRun: (serverName: string) => void;
   /** A run is connecting, or the saved defaults are still loading. */
   disabled?: boolean;
+  /** The server whose saved defaults could not be loaded. */
+  disabledServerName?: string;
 }) {
   return (
     <ul className="flex w-full flex-col gap-4" aria-label="Servers">
       {runs.map(({ serverName, run }) => (
         <li
           key={serverName}
-          className="flex items-center justify-between gap-6 rounded-lg border border-border bg-card px-6 py-4"
+          className="flex items-center justify-between gap-6 rounded-lg bg-popover px-6 py-4 text-popover-foreground shadow-sm"
         >
           <div className="flex min-w-0 grow items-center gap-3">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-[13px] font-bold text-primary">
-              {initialsOf(serverName)}
-            </span>
-            <div className="flex min-w-0 flex-col gap-0.5">
+            <ServerAvatar
+              name={serverName}
+              iconUrl={serverIcons?.[serverName]}
+              className="size-9"
+            />
+            <div className="flex min-w-0 items-baseline gap-2">
               <span className="truncate text-[15px] font-semibold">
                 {serverName}
               </span>
-              <span className="text-[13px] text-muted-foreground">
-                Last run {lastRunDateFormat.format(run.createdAt)}
+              <span className="shrink-0 text-sm text-muted-foreground">
+                · Protocol {run.protocolVersion ?? "Auto"}
               </span>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-4">
-            <RunResultBadge run={run} />
-            <span className="text-base font-semibold tabular-nums">
-              {run.score == null ? "—" : `${Math.round(run.score)}%`}
+            <span className="flex min-w-6 justify-center">
+              <RunResultRing run={run} />
             </span>
-            <span className="text-base tabular-nums">
+            <span className="w-16 text-right text-xl font-semibold tabular-nums">
               {run.passed}/{run.applicable}
+            </span>
+            <span className="w-10 text-right text-sm tabular-nums text-muted-foreground">
+              {run.score == null ? "—" : `${Math.round(run.score)}%`}
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -73,7 +71,7 @@ export function ConformanceServerList({
             </Button>
             <Button
               size="sm"
-              disabled={disabled}
+              disabled={disabled || disabledServerName === serverName}
               onClick={() => onRun(serverName)}
               aria-label={`Run ${serverName}`}
             >

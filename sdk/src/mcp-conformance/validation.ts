@@ -1,11 +1,16 @@
+import { withAbortSignalFetch } from "../abort-signal.js";
 import {
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_LOG_LEVELS,
+  MCP_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
+  RETIRED_MCP_CHECK_IDS,
   type MCPCheckCategory,
   type MCPCheckEra,
   type MCPCheckId,
   type MCPConformanceConfig,
+  type MCPReadinessId,
   type NormalizedMCPConformanceConfig,
 } from "./types.js";
 import {
@@ -31,7 +36,7 @@ function normalizeCategories(
 }
 
 function normalizeCheckIds(
-  checkIds: MCPConformanceConfig["checkIds"],
+  checkIds: MCPCheckId[] | undefined,
 ): MCPCheckId[] | undefined {
   if (!checkIds || checkIds.length === 0) {
     return undefined;
@@ -41,6 +46,57 @@ function normalizeCheckIds(
   for (const checkId of normalized) {
     if (!MCP_CHECK_IDS.includes(checkId)) {
       throw new Error(`Unknown MCP conformance check id: ${checkId}`);
+    }
+  }
+
+  return normalized;
+}
+
+/**
+ * Picks with each retired check id swapped for the advice that replaced it.
+ * Advice runs whatever checks are picked, so the advice is added only when
+ * the caller narrowed it. A retired id picked on its own keeps the run to the
+ * logging check, which calls the same log tool: an emptied list would run
+ * every check instead.
+ */
+function resolveRetiredCheckIds(
+  checkIds: MCPConformanceConfig["checkIds"],
+  readinessIds: MCPConformanceConfig["readinessIds"],
+): { checkIds?: MCPCheckId[]; readinessIds?: MCPReadinessId[] } {
+  const retired = (checkIds ?? []).filter((id) =>
+    Object.hasOwn(RETIRED_MCP_CHECK_IDS, id),
+  ) as (keyof typeof RETIRED_MCP_CHECK_IDS)[];
+  if (retired.length === 0) {
+    return { checkIds: checkIds as MCPCheckId[] | undefined, readinessIds };
+  }
+  const current = checkIds!.filter(
+    (id) => !Object.hasOwn(RETIRED_MCP_CHECK_IDS, id),
+  ) as MCPCheckId[];
+  return {
+    checkIds:
+      current.length > 0 ? current : ["modern-logs-require-log-level"],
+    readinessIds:
+      readinessIds === undefined
+        ? undefined
+        : [
+            ...readinessIds,
+            ...retired.map((id) => RETIRED_MCP_CHECK_IDS[id]),
+          ],
+  };
+}
+
+/** Unlike check ids, an empty list stays empty: it means no advice at all. */
+function normalizeReadinessIds(
+  readinessIds: MCPConformanceConfig["readinessIds"]
+): MCPReadinessId[] | undefined {
+  if (readinessIds === undefined) {
+    return undefined;
+  }
+
+  const normalized = Array.from(new Set(readinessIds));
+  for (const readinessId of normalized) {
+    if (!MCP_READINESS_IDS.includes(readinessId)) {
+      throw new Error(`Unknown MCP conformance readiness id: ${readinessId}`);
     }
   }
 
@@ -78,7 +134,7 @@ function normalizeProtocolVersion(
 
 function normalizeToolProbe(
   probe: MCPConformanceConfig["inputRequiredProbe"],
-  optionName: "inputRequiredProbe" | "logProbe",
+  optionName: "inputRequiredProbe" | "logProbe" | "logLevelFilteringProbe"
 ): NormalizedMCPConformanceConfig["inputRequiredProbe"] {
   if (!probe) {
     return undefined;
@@ -92,6 +148,22 @@ function normalizeToolProbe(
   }
 
   return { toolName, arguments: probe.arguments };
+}
+
+function normalizeLogProbe(
+  probe: MCPConformanceConfig["logProbe"],
+  optionName: "logProbe" | "logLevelFilteringProbe" = "logProbe"
+): NormalizedMCPConformanceConfig["logProbe"] {
+  const normalized = normalizeToolProbe(probe, optionName);
+  if (!normalized || probe?.level === undefined) {
+    return normalized;
+  }
+  if (!(MCP_LOG_LEVELS as readonly string[]).includes(probe.level)) {
+    throw new Error(
+      `MCP conformance ${optionName}.level must be one of ${MCP_LOG_LEVELS.join(", ")}, got ${JSON.stringify(probe.level)}`
+    );
+  }
+  return { ...normalized, level: probe.level };
 }
 
 /**
@@ -217,19 +289,23 @@ export function normalizeMCPConformanceConfig(
   }
 
   const categories = normalizeCategories(config.categories);
-  const checkIds = normalizeCheckIds(config.checkIds);
+  const picks = resolveRetiredCheckIds(config.checkIds, config.readinessIds);
+  const checkIds = normalizeCheckIds(picks.checkIds);
+  const readinessIds = normalizeReadinessIds(picks.readinessIds);
   const { protocolVersion, era } = normalizeProtocolVersion(
     config.protocolVersion,
   );
 
   return {
     serverUrl,
+    signal: config.signal,
     accessToken: config.accessToken,
     customHeaders: config.customHeaders,
     checkTimeout: config.checkTimeout ?? 30_000,
     categories,
     checkIds,
-    fetchFn: config.fetchFn ?? fetch,
+    ...(readinessIds ? { readinessIds } : {}),
+    fetchFn: withAbortSignalFetch(config.fetchFn ?? fetch, config.signal),
     clientName: config.clientName?.trim() || "mcpjam-sdk-conformance",
     protocolVersion,
     era,
@@ -237,7 +313,15 @@ export function normalizeMCPConformanceConfig(
       config.inputRequiredProbe,
       "inputRequiredProbe",
     ),
-    logProbe: normalizeToolProbe(config.logProbe, "logProbe"),
+    logProbe: normalizeLogProbe(config.logProbe),
+    ...(config.logLevelFilteringProbe
+      ? {
+          logLevelFilteringProbe: normalizeLogProbe(
+            config.logLevelFilteringProbe,
+            "logLevelFilteringProbe"
+          ),
+        }
+      : {}),
     fixtures: normalizeFixtures(config.fixtures),
   };
 }

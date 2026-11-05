@@ -51,7 +51,6 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "tool-quality-enabled",
   "trace-destinations",
   "unified-sessions-enabled",
-  "unified-share-conformance",
   "unified-share-evals",
   "xaa",
 ] as const;

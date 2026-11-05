@@ -910,6 +910,20 @@ export function buildConformanceRunPath(
   return projectId ? buildProjectPath(projectId, base) : base;
 }
 
+/** The query key the Conformance page reads to start a run on arrival. */
+export const CONFORMANCE_RUN_PARAM = "run";
+
+/**
+ * The Conformance page, told to start a run on `serverName` with its default
+ * checks: a saved run's Run again. The page drops the key once it starts, so
+ * a refresh or Back does not run it twice.
+ */
+export function buildConformanceRunServerPath(serverName: string): string {
+  return `${routePaths.conformance}?${new URLSearchParams({
+    [CONFORMANCE_RUN_PARAM]: serverName,
+  })}`;
+}
+
 export function buildConformanceSharePath(token: string): string {
   return `${routePaths.conformanceShared}/${encodeURIComponent(token)}`;
 }

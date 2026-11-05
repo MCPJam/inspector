@@ -4,6 +4,7 @@ import type {
 } from "../conformance-outcome.js";
 import type { ConformanceProfileStamp } from "../conformance-profile.js";
 import type { MCPServerConfig } from "../mcp-client-manager/index.js";
+import type { MCPReadinessWarning } from "../mcp-conformance/types.js";
 import type { TasksWire } from "../mcp-client-manager/tasks-dispatch.js";
 
 export const MCP_TASKS_CHECK_CATEGORIES = [
@@ -34,12 +35,93 @@ export const MCP_TASKS_CHECK_IDS = [
   "tasks-invalid-task-id-rejected",
   "tasks-status-payload-shape",
   "tasks-cancel-ack-shape",
-  "tasks-input-required-update-completes",
+  "tasks-update-ack-shape",
   "tasks-ttl-integer-shape",
   "tasks-undeclared-capability-names-requirements",
 ] as const;
 
 export type MCPTasksCheckId = (typeof MCP_TASKS_CHECK_IDS)[number];
+
+/** Checks whose setup includes a tool call or a task created by one. */
+export const MCP_TASKS_TOOL_CHECK_IDS = [
+  "tasks-result-type-discipline",
+  "tasks-undeclared-creation-refused",
+  "tasks-undeclared-capability-rejected",
+  "tasks-ttl-shape",
+  "tasks-inline-result",
+  "tasks-mcp-name-routing",
+  "tasks-status-payload-shape",
+  "tasks-cancel-ack-shape",
+  "tasks-update-ack-shape",
+  "tasks-ttl-integer-shape",
+  "tasks-undeclared-capability-names-requirements",
+] as const satisfies readonly MCPTasksCheckId[];
+export type MCPTasksToolCheckId = (typeof MCP_TASKS_TOOL_CHECK_IDS)[number];
+export function isTasksToolCheck(id: string): id is MCPTasksToolCheckId {
+  return MCP_TASKS_TOOL_CHECK_IDS.some((check) => check === id);
+}
+export interface MCPTasksToolSetup {
+  toolName: string;
+  toolArguments?: Record<string, unknown>;
+}
+export type MCPTasksCheckOverrides = Partial<
+  Record<MCPTasksToolCheckId, MCPTasksToolSetup>
+>;
+export interface MCPTasksRunOptions {
+  protocolVersion?: import("../mcp-client-manager/mcp-protocol-version.js").McpProtocolVersion;
+  checkIds?: MCPTasksCheckId[];
+  readinessIds?: MCPTasksReadinessId[];
+  toolName?: string;
+  toolArguments?: Record<string, unknown>;
+  inputResponses?: Record<string, unknown>;
+  checkOverrides?: MCPTasksCheckOverrides;
+}
+
+/**
+ * Tasks check ids an older SDK accepted under another name, each with its
+ * current name. Kept so configs and `--check-id` values written for that SDK
+ * still run instead of failing as unknown.
+ */
+export const RENAMED_MCP_TASKS_CHECK_IDS = {
+  "tasks-input-required-update-completes": "tasks-update-ack-shape",
+} as const satisfies Record<string, MCPTasksCheckId>;
+
+export type RenamedMCPTasksCheckId = keyof typeof RENAMED_MCP_TASKS_CHECK_IDS;
+
+/**
+ * The Tasks suite's advice channel: the extension's SHOULDs, typed with their
+ * spec strength like the protocol suite's readiness warnings. Informational
+ * until advice has a grading rubric.
+ */
+export const MCP_TASKS_READINESS_IDS = [
+  "tasks-readiness-failed-status-message",
+  "tasks-readiness-unknown-task-id-mutations",
+] as const;
+
+export type MCPTasksReadinessId = (typeof MCP_TASKS_READINESS_IDS)[number];
+
+export interface MCPTasksReadinessWarning extends Omit<
+  MCPReadinessWarning,
+  "id"
+> {
+  id: MCPTasksReadinessId;
+  /**
+   * The check that produced this advice. Advice from a check the profile does
+   * not score yet costs no points, like a pending check's warnings.
+   */
+  checkId: MCPTasksCheckId;
+}
+
+/**
+ * Picked advice the run could not judge, and why. Kept apart from `readiness`
+ * so it never reads as a shortfall: a SHOULD about failed
+ * tasks says nothing when the task did not fail.
+ */
+export interface MCPTasksUncheckedAdvice {
+  id: MCPTasksReadinessId;
+  title: string;
+  reason: string;
+}
 
 export type MCPTasksCheckStatus = "passed" | "failed" | "skipped";
 
@@ -89,7 +171,18 @@ export interface MCPTasksCheckResult {
 }
 
 export type MCPTasksConformanceConfig = MCPServerConfig & {
-  checkIds?: MCPTasksCheckId[];
+  /** Cancel active requests and polling, then close the owned connection. */
+  signal?: AbortSignal;
+  /**
+   * Run only these checks. A renamed id
+   * ({@link RENAMED_MCP_TASKS_CHECK_IDS}) runs the check under its new name.
+   */
+  checkIds?: (MCPTasksCheckId | RenamedMCPTasksCheckId)[];
+  /**
+   * Report only this advice. Absent ⇒ all of it; empty ⇒ none. The advice
+   * comes from checks that already run, so leaving it out sends nothing less.
+   */
+  readinessIds?: MCPTasksReadinessId[];
   /**
    * Tool used to provoke a task. Without it the runner picks the first tool
    * whose `execution.taskSupport` is `required`, then the first with
@@ -100,6 +193,7 @@ export type MCPTasksConformanceConfig = MCPServerConfig & {
    */
   toolName?: string;
   toolArguments?: Record<string, unknown>;
+  checkOverrides?: MCPTasksCheckOverrides;
   /** Upper bound on polling a created task to a terminal status. */
   pollTimeoutMs?: number;
   /**
@@ -109,8 +203,8 @@ export type MCPTasksConformanceConfig = MCPServerConfig & {
    * OPT-IN, for the same reason the protocol suite's fixtures are: what a task
    * is asking for is server-defined, and inventing an answer would submit
    * arbitrary content into somebody's workflow. Absent ⇒
-   * `tasks-input-required-update-completes` reports a skip naming what it
-   * needs, and the run stops polling as soon as the task parks on
+   * `tasks-update-ack-shape` is not applicable and names what it needs, and
+   * the run stops polling as soon as the task parks on
    * `input_required` (further polls cannot advance it) rather than burning
    * `pollTimeoutMs`.
    */
@@ -118,13 +212,17 @@ export type MCPTasksConformanceConfig = MCPServerConfig & {
 };
 
 export interface NormalizedMCPTasksConformanceConfig {
+  signal?: AbortSignal;
   serverConfig: MCPServerConfig;
   target: string;
   timeout: number;
   pollTimeoutMs: number;
   checkIds?: MCPTasksCheckId[];
+  /** @see {@link MCPTasksConformanceConfig.readinessIds} */
+  readinessIds?: MCPTasksReadinessId[];
   toolName?: string;
   toolArguments?: Record<string, unknown>;
+  checkOverrides?: MCPTasksCheckOverrides;
   /** @see {@link MCPTasksConformanceConfig.inputResponses} */
   inputResponses?: Record<string, unknown>;
 }
@@ -144,6 +242,10 @@ export interface MCPTasksConformanceResult {
   incompleteReason?: string;
   target: string;
   checks: MCPTasksCheckResult[];
+  /** SHOULD/MAY advice, beside the verdict. Absent when there is none. */
+  readiness?: MCPTasksReadinessWarning[];
+  /** Picked advice this run could not judge. Absent when there is none. */
+  uncheckedAdvice?: MCPTasksUncheckedAdvice[];
   summary: string;
   durationMs: number;
   categorySummary: Record<

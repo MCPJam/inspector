@@ -6,6 +6,7 @@ import {
   createOAuthStateMachine,
   getBrowserDebugDynamicRegistrationMetadata,
   isAuthenticatedRequestFailure,
+  isDynamicClientRegistrationHttpError,
   stepFailureFindingKey,
   isResourceMetadataNotImplemented,
   isTlsTrustFailure,
@@ -326,6 +327,13 @@ function createHostedClientSecretResolver({
  * real response, and the target said no. A proxy failure throws its own
  * "Backend debug proxy error" instead, so that one still reports.
  *
+ * A registration endpoint that answers the DCR POST with any non-2xx status is
+ * the same again: no open registration, an initial access token we were never
+ * given, metadata it will not accept. INSPECTOR-CLIENT-2N2, -2JB and -2JM were
+ * that, filed twice per refusal (the bare message, then the same message with
+ * the fallback hint). A proxy failure there reads "Client registration
+ * failed: …" and still reports.
+ *
  * A server certificate Node.js would not accept is one more (PLB-273). The
  * local proxy answers 502 with a sentence the SDK owns (`isTlsTrustFailure`)
  * followed by Node's own fix. A certificate failure on MCPJam's own hosts
@@ -346,6 +354,7 @@ function isUnreportedStepFailure(error: string): boolean {
     isAuthenticatedRequestFailure(error) ||
     isResourceMetadataNotImplemented(error) ||
     isUnexpectedProbeStatus(error) ||
+    isDynamicClientRegistrationHttpError(error) ||
     isTlsTrustFailure(error)
   );
 }

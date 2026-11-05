@@ -29,6 +29,7 @@ import {
   type ClaimedGithubCheck,
 } from "../github-checks-worker";
 import { CheckStepError, type CheckSandbox } from "../github-checks/sandbox";
+import { platformFeeRefusalError } from "../evals/platform-fee-refusal";
 import {
   CheckStoppedByPlan,
   PlanProtocolError,
@@ -1102,6 +1103,14 @@ describe("describeCheckFailure", () => {
     expect(
       describeCheckFailure(
         new Error('{"code":"ORGANIZATION_SPEND_BUDGET_REACHED"}'),
+      ),
+    ).toMatchObject({ failureReason: "spend_budget_reached" });
+    // The recorder's 403 names the code in `details.reason`, not its message.
+    expect(
+      describeCheckFailure(
+        platformFeeRefusalError({
+          data: { code: "ORGANIZATION_SPEND_BUDGET_REACHED" },
+        }),
       ),
     ).toMatchObject({ failureReason: "spend_budget_reached" });
     // A build error that merely mentions a budget keeps its own message.

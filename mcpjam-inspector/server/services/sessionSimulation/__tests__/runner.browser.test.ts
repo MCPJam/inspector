@@ -315,6 +315,15 @@ afterEach(() => {
 });
 
 describe("runSyntheticHostSession — browser pipeline wiring", () => {
+  it("refuses a required discovery route before building a manager or model", async () => {
+    const args = baseAdapter({ runtime: { requireNativeToolDiscovery: true } });
+    const factory = vi.fn(args.managerFactory);
+    const result = await runSyntheticHostSession({ ...args, managerFactory: factory });
+    expect(result.outcome).toBe("failed");
+    expect(result.errorMessage).toContain("Native tool discovery");
+    expect(factory).not.toHaveBeenCalled();
+    expect(runAssistantTurnMock).not.toHaveBeenCalled();
+  });
   it.each(["", "I have enough information already."])(
     "fails a persona stop before the first user turn (%j)",
     async (message) => {

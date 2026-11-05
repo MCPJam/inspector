@@ -5,6 +5,9 @@ const replayIntegration = vi.fn(() => ({ name: "Replay" }));
 const browserTracingIntegration = vi.fn(() => ({ name: "BrowserTracing" }));
 const getClient = vi.fn();
 const addIntegration = vi.fn();
+const captureMessage = vi.fn();
+const addEventProcessor = vi.fn();
+const withScope = vi.fn((callback: (scope: unknown) => void) => callback({ addEventProcessor }));
 
 vi.mock("@sentry/react", () => ({
   init,
@@ -12,6 +15,8 @@ vi.mock("@sentry/react", () => ({
   browserTracingIntegration,
   getClient,
   addIntegration,
+  captureMessage,
+  withScope,
 }));
 
 /** Stand in for the Replay integration instance the client hands back. */
@@ -486,4 +491,18 @@ describe("syncSentryReplay, a quick in-and-out", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(replay.start).toHaveBeenCalledTimes(1);
   });
+});
+
+
+it("removes OAuth callback URLs and breadcrumbs from recovery alerts only", async () => {
+  const { captureSentryMessage } = await import("../sentry");
+  addEventProcessor.mockClear();
+  captureSentryMessage("Chat sign-in recovery failed", { tags: { source: "chat_auth_resume" }, extra: { continuationId: "c1" } });
+  const filter = addEventProcessor.mock.calls[0][0];
+  const cleaned = filter({ request: { url: "https://app.test/oauth/callback?code=SECRET&state=SECRET" }, breadcrumbs: [{ message: "SECRET" }], contexts: { page: { url: "SECRET" } }, extra: { continuationId: "c1" } });
+  expect(JSON.stringify(cleaned)).not.toContain("SECRET");
+  expect(cleaned.extra.continuationId).toBe("c1");
+  addEventProcessor.mockClear();
+  captureSentryMessage("Other issue", { tags: { source: "other" } });
+  expect(addEventProcessor).not.toHaveBeenCalled();
 });

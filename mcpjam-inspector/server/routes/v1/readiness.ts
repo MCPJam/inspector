@@ -54,7 +54,13 @@ import {
   toReadinessRunDto,
   type ReadinessPublisher as Publisher,
 } from "../shared/readiness-runs.js";
-import type { OpenAISubmissionMode } from "@mcpjam/sdk";
+import {
+  DIRECTORY_FEATURE_CLAIMS,
+  LAZY_AUTH_PROBE_LIMITS,
+  type DirectoryFeatureClaim,
+  type DirectoryLazyAuthProbeConfig,
+  type OpenAISubmissionMode,
+} from "@mcpjam/sdk";
 import { requireProjectIdArg } from "./convex-id-param.js";
 
 const readiness = new Hono();
@@ -102,6 +108,44 @@ const startFields = {
   idempotencyKey: z.string().trim().min(1).max(200).optional(),
   /** Opt in to model-backed observations, which SPEND MCPJam credits. */
   includeLlmObservations: z.boolean().optional(),
+  /**
+   * Opt in to the lazy-auth probe: at most two calls to tools annotated
+   * `readOnlyHint: true`, made WITHOUT credentials. `enabled` is a literal
+   * `true` — a field that makes a run call tools on a third party's server is
+   * not one a falsy-looking value may set — and "off" is the field's absence.
+   * Strict, so a caller cannot smuggle a credential in beside it.
+   */
+  lazyAuthProbe: z
+    .strictObject({
+      enabled: z.literal(true),
+      toolName: z
+        .string()
+        .trim()
+        .min(1)
+        .max(LAZY_AUTH_PROBE_LIMITS.toolNameMaxChars)
+        .optional(),
+      publicToolName: z
+        .string()
+        .trim()
+        .min(1)
+        .max(LAZY_AUTH_PROBE_LIMITS.toolNameMaxChars)
+        .optional(),
+    })
+    .refine(
+      (probe) =>
+        probe.toolName === undefined || probe.toolName !== probe.publicToolName,
+      { message: "toolName and publicToolName must name different tools" },
+    )
+    .optional(),
+  /**
+   * Features the submitter claims. An enum rather than free text: a typo'd
+   * claim would otherwise read as "nothing claimed" while the caller believed
+   * the opposite.
+   */
+  claimedFeatures: z
+    .array(z.enum(DIRECTORY_FEATURE_CLAIMS))
+    .max(LAZY_AUTH_PROBE_LIMITS.maxFeatureClaims)
+    .optional(),
 };
 
 const startClaudeSchema = z.strictObject(startFields);
@@ -179,7 +223,12 @@ async function startRun(
   c: any,
   publisher: Publisher,
   submissionMode: OpenAISubmissionMode | undefined,
-  body: { idempotencyKey?: string; includeLlmObservations?: boolean },
+  body: {
+    idempotencyKey?: string;
+    includeLlmObservations?: boolean;
+    lazyAuthProbe?: DirectoryLazyAuthProbeConfig;
+    claimedFeatures?: DirectoryFeatureClaim[];
+  },
 ) {
   const projectId = c.req.param("projectId");
   const serverId = c.req.param("serverId");
@@ -200,6 +249,14 @@ async function startRun(
     submissionMode,
     idempotencyKey: body.idempotencyKey,
     includeLlmObservations: body.includeLlmObservations === true,
+    // Forwarded only when supplied, so a start that asked for neither sends
+    // the backend exactly the arguments it sent before these existed.
+    ...(body.lazyAuthProbe !== undefined
+      ? { lazyAuthProbe: body.lazyAuthProbe }
+      : {}),
+    ...(body.claimedFeatures !== undefined && body.claimedFeatures.length > 0
+      ? { claimedFeatures: [...new Set(body.claimedFeatures)].sort() }
+      : {}),
     authorized,
     analyticsActor: readinessAnalyticsActor(c, projectId),
     translateError: (error) =>

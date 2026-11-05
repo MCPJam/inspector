@@ -14,6 +14,8 @@ import { prepareChatV2 } from "../../../utils/chat-v2-orchestration";
 import {
   createSetupToolGate,
   runSwarmSetupTurn,
+  SETUP_PLATFORM_STOPPED_MESSAGE,
+  setupFailureMessage,
   SwarmSetupError,
 } from "../swarm-setup-turn";
 import {
@@ -116,28 +118,94 @@ describe("setup evidence and readiness", () => {
       }).unsupportedClaims,
     ).toBe(1);
   });
-  it("fails malformed JSON even with zero writes; skipped means not assessed", () => {
-    expect(judgeReadiness(setup(), parseSetupReport("nope")).readiness).toBe(
-      "unavailable",
+  it("judges setup's own evidence and keeps the model's report only as the reason", () => {
+    const writeCall = (ok: boolean) => ({
+      serverId: "s",
+      toolName: "create_project",
+      ok,
+      isWrite: true,
+      dispatched: ok,
+    });
+    const missing = parseSetupReport(
+      '{"ready":false,"created":[],"missing":[{"kind":"file","why":"not found"}]}',
     );
+    const wrote = {
+      ...setup(),
+      toolCalls: [writeCall(true)],
+      writeCallsDispatched: 1,
+    };
+    const writeFailed = {
+      ...wrote,
+      toolCalls: [writeCall(true), writeCall(false)],
+    };
     expect(
       judgeReadiness(
         setup(),
         parseSetupReport('{"ready":true,"created":[],"missing":[]}'),
-      ).readiness,
-    ).toBe("not_needed");
+      ),
+    ).toEqual({ readiness: "not_needed" });
+    expect(judgeReadiness(setup(), parseSetupReport("nope"))).toEqual({
+      readiness: "not_needed",
+      reason: "invalid_model_report",
+    });
+    expect(judgeReadiness(setup(), missing)).toEqual({
+      readiness: "not_needed",
+      reason: "model_reported_missing",
+    });
+    expect(
+      judgeReadiness(
+        { ...setup(), unsupportedClaims: 1 },
+        parseSetupReport(
+          '{"ready":true,"created":[{"name":"swarm-test-A"}],"missing":[]}',
+        ),
+      ),
+    ).toEqual({ readiness: "not_needed", reason: "unsupported_claim" });
+    expect(judgeReadiness(wrote, parseSetupReport("nope"))).toEqual({
+      readiness: "ready",
+      reason: "invalid_model_report",
+    });
+    // A refused write (budget or cancel) is not dispatched and not ok.
+    expect(judgeReadiness(writeFailed, missing)).toEqual({
+      readiness: "unavailable",
+      reason: "write_errored",
+    });
+    // Calls past the record limit are dropped, so a write among them is unknown.
+    expect(
+      judgeReadiness({ ...wrote, toolCallsTruncated: true }, missing),
+    ).toEqual({ readiness: "unavailable", reason: "call_record_limit" });
+    expect(
+      judgeReadiness(
+        { ...writeFailed, createdEntitiesTruncated: true },
+        missing,
+      ),
+    ).toEqual({ readiness: "unavailable", reason: "entity_record_limit" });
     expect(
       judgeReadiness(
         { ...setup(), status: "skipped", reason: "no_eligible_write_tools" },
         undefined,
       ).readiness,
     ).toBe("not_assessed");
+  });
+  it("stores a sentence that names what stopped setup", () => {
+    const stopped = (reason: string) =>
+      setupFailureMessage({ ...setup(), reason });
+    expect(stopped("write_errored")).toBe(
+      "Setup couldn't create this target's test data, so its conversations didn't run. Run it again.",
+    );
+    expect(stopped("entity_record_limit")).toBe(
+      "Setup created more test data than it can track, so this target's conversations didn't run.",
+    );
+    expect(stopped("call_record_limit")).toBe(
+      "Setup made more tool calls than it can track, so this target's conversations didn't run.",
+    );
+    expect(stopped("timeout")).toMatch(/^Setup ran out of time/);
+    expect(stopped("transport_failed")).toMatch(/^Setup couldn't reach/);
     expect(
-      judgeReadiness(
-        setup(),
-        parseSetupReport('{"ready":false,"created":[],"missing":[]}'),
-      ).readiness,
-    ).toBe("unavailable");
+      setupFailureMessage(
+        { ...setup(), status: "failed", reason: "transport_failed" },
+        { code: "platform_capacity", message: "capacity" },
+      ),
+    ).toBe(SETUP_PLATFORM_STOPPED_MESSAGE);
   });
   it("does not count errors or echoed arguments as creations", () => {
     const s = setup();
@@ -319,6 +387,7 @@ describe("setup turn integration", () => {
       writeCallsDispatched: 1,
       createdEntities: [{ id: "real-id", name: "Created" }],
     });
+    expect(error.partial.reason).toBe("transport_failed");
     expect(dispose).toHaveBeenCalledOnce();
     expect(prepareChatV2).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -327,6 +396,53 @@ describe("setup turn integration", () => {
         requireToolApproval: false,
       }),
     );
+  });
+  it("keeps the record-limit reason when setup throws after overflowing it", async () => {
+    vi.mocked(prepareChatV2).mockResolvedValue({
+      allTools: {
+        create_project: {
+          inputSchema: {},
+          execute: async () => ({
+            structuredContent: {
+              projects: Array.from({ length: 26 }, (_, i) => ({
+                id: `id-${i}`,
+                name: `Project ${i}`,
+              })),
+            },
+          }),
+        },
+      },
+      enhancedSystemPrompt: "setup",
+      resolvedTemperature: 0,
+    } as never);
+    vi.mocked(drainAssistantTurn).mockImplementation(async (args) => {
+      await args.tools!.create_project.execute!(
+        {},
+        { toolCallId: "c", messages: [], context: {} },
+      );
+      throw new Error("connection lost after write");
+    });
+    const error = await runSwarmSetupTurn({
+      runId: "r",
+      projectId: "p",
+      target: { hostId: "h", targetId: "t" } as never,
+      persona: { name: "Tester" } as never,
+      modelDefinition: { id: "model" } as never,
+      authHeader: "Bearer test",
+      managerFactory: async () => ({
+        manager: {
+          listTools: vi.fn(async () => ({
+            tools: [tool("create_project", write)],
+          })),
+        } as never,
+        connectedServerIds: ["s"],
+        dispose: async () => {},
+      }),
+    }).catch((e) => e);
+    expect(error.partial).toMatchObject({
+      createdEntitiesTruncated: true,
+      reason: "entity_record_limit",
+    });
   });
   it("does not label a sibling parent reference as a newly created entity", () => {
     const s = setup();

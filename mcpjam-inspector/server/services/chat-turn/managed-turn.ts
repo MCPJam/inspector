@@ -31,7 +31,10 @@ import {
 } from "../../routes/web/auth.js";
 import { createHostedRpcLogCollector } from "../../routes/web/hosted-rpc-logs.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
-import { toolCallCancellationFromMcpProfile } from "../../utils/effective-auth.js";
+import {
+  authChallengeFromMcpProfile,
+  toolCallCancellationFromMcpProfile,
+} from "../../utils/effective-auth.js";
 import { harnessSupportsSkills } from "../../utils/harness/registry.js";
 import { runtimeServersAreOverridden } from "../environments/runtime.js";
 import { withLiveProjectSkills } from "../environments/effective-capabilities.js";
@@ -109,6 +112,7 @@ export async function handleManagedChatTurn(
       modelDefinition,
       turnMode,
       hostRuntimeConfig,
+      harnessHostCapabilities,
       environmentSpec,
       scenarioEnvironment,
       authoritativeConnectionPolicy,
@@ -420,6 +424,9 @@ export async function handleManagedChatTurn(
                 harness: resolvedExecution.harness,
                 agentLoop: resolvedExecution.agentLoop,
                 ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
+                requireNativeToolDiscovery: resolvedExecution.requireNativeToolDiscovery,
+                harnessHostCapabilities,
+                harnessStartupRequestId: hostedBody.harnessStartupRequestId,
               }
             : {}),
           ...(tasksSeam ? { tasks: tasksSeam } : {}),
@@ -504,6 +511,7 @@ export async function handleManagedChatTurn(
           },
         },
         persist: {
+          requireNativeToolDiscovery: resolvedExecution.requireNativeToolDiscovery,
           executionBindingVersion: resolvedExecution.executionBindingVersion,
           executionTarget: toResumeExecutionTarget(executionTarget),
           chatSessionId: body.chatSessionId,
@@ -521,7 +529,7 @@ export async function handleManagedChatTurn(
           ...(scenarioBox ? { scenarioBox } : {}),
           ...(scenarioParticipant ? { scenarioParticipant: true } : {}),
           authenticatedUserId,
-          ...(hostId ? { hostId } : {}),
+          ...(sourceType === "direct" && typeof hostRuntimeConfig?.hostId === "string" ? { hostId: hostRuntimeConfig.hostId } : hostId ? { hostId } : {}),
           originalMessages: messages,
           ...(resolvedExecution.harness
             ? {
@@ -623,6 +631,7 @@ export async function handleManagedChatTurn(
                   requestedTemperature: temperature,
                   resolvedTemperature,
                   requireToolApproval,
+                  requireNativeToolDiscovery: resolvedExecution.requireNativeToolDiscovery,
                   respectToolVisibility,
                   modelVisibleMcpToolResults:
                     resolvedExecution.modelVisibleMcpToolResults,
@@ -673,6 +682,17 @@ export async function handleManagedChatTurn(
           ...(modelMrtr ? { modelFormBridge: modelMrtr } : {}),
           ...(taskCreatedBridge ? { taskCreatedBridge } : {}),
           ...(mrtrEngineResume ? { mrtrResume: mrtrEngineResume } : {}),
+          // Mid-session sign-in: the host's reaction is read per turn from
+          // the server-resolved host config, never the body; no host means
+          // the spec defaults. Without a chat session the turn cannot save
+          // the call, so a Connect card is display-only (see `scopeStepUp`).
+          authChallenge: {
+            policy: hostRuntimeConfig
+              ? authChallengeFromMcpProfile(
+                  (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
+                )
+              : undefined,
+          },
           ...(scopeStepUpEnabled && convexBearer
             ? {
                 scopeStepUp: {

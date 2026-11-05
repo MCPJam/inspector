@@ -1,3 +1,4 @@
+import { setManagerResourceSnapshots, setManagerResourceHostConfig, type ManagerResourceSnapshot } from "../../utils/mcp-connections";
 import { taskOwnerScope } from "../../../shared/task-owner.js";
 import {
   setManagerTaskOwnerScope,
@@ -18,10 +19,16 @@ import {
   type AuthorizedOAuthConnection,
 } from "../../../shared/oauth-connections.js";
 import { setManagerConnections } from "../../utils/mcp-connections.js";
+import {
+  recordConnectionEffectiveAuth,
+  stampAuthChallenge,
+  withStampedAuthChallenge,
+} from "../../utils/connection-effective-auth.js";
 import { z } from "zod";
 import type { Context } from "hono";
 import {
   MCPClientManager,
+  extractAuthChallenge,
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
   withSkillsExtensionCapability,
@@ -384,6 +391,7 @@ export const promptsGetSchema = projectServerSchema.extend({
 
 export const hostedChatSchema = z
   .object({
+    harnessStartupRequestId: z.string().uuid().optional(),
     projectId: z.string().min(1),
     selectedServerIds: z.array(z.string().min(1)),
     selectedServerNames: z.array(z.string().min(1)).optional(),
@@ -493,6 +501,7 @@ export type ConvexAuthorizeResponse = {
   };
   serverConfig: {
     credentialConfigurationId?: string;
+    updatedAt?: number;
     // The server's stored display name. Absent on older backends; a caller's
     // own `serverNames` still win (see `displayNameForServer`).
     name?: string;
@@ -564,6 +573,7 @@ export type ConvexBatchAuthorizeFailure = {
  * dispatch is a silent regression.
  */
 export type ConvexOAuthUnavailableReason =
+  | "refresh_token_unavailable"
   /** The credential is fine; only this machine can reach its authorization server. */
   | "private_authorization_server"
   /** The credential is fine; the authorization server never answered usably. */
@@ -1646,6 +1656,10 @@ export async function createAuthorizedManager(
         const selectedId = options.onlySelectedConnections
           ? options.connectionIds?.[id]
           : undefined;
+        // Selected-account authorization returns one credential, not the account list.
+        if (selectedId && !auth.oauthConnections && auth.oauthCredentialId === selectedId && auth.oauthAccessToken) {
+          auth.oauthConnections = [{connectionId: selectedId, accessToken: auth.oauthAccessToken, credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt, isDefault: false}];
+        }
         const live = (auth.oauthConnections ?? []).filter(
           (c) =>
             c.accessToken &&
@@ -2044,6 +2058,7 @@ export async function createAuthorizedManager(
   const admittedServerIds = uniqueServerIds.filter(
     (serverId) => !Object.hasOwn(refusedServers, serverId),
   );
+  const reconstructibleHeaderServers = new Set<string>();
   const configEntries = await Promise.all(
     admittedServerIds.map(async (serverId) => {
       try {
@@ -2063,14 +2078,18 @@ export async function createAuthorizedManager(
         ) as EffectiveAuthMethod;
         // `recoveredOAuthTokens` first: it is the freshest, minted moments ago
         // by PASS 1b for a credential the backend could not refresh itself.
+        const storedOAuthToken = recoveredOAuthTokens[serverId] ?? auth.oauthAccessToken;
         const oauthToken =
-          recoveredOAuthTokens[serverId] ??
-          auth.oauthAccessToken ??
+          storedOAuthToken ??
           callerOAuthTokenUnlessRefused(
             auth,
             effectiveAuth,
             oauthTokens?.[serverId],
           );
+        if (auth.serverConfig.transportType === "http" &&
+            (typeof storedOAuthToken === "string" || !oauthToken)) {
+          reconstructibleHeaderServers.add(serverId);
+        }
         const displayServerName = displayNameForServer(
           serverId,
           serverNamesById,
@@ -2364,7 +2383,29 @@ export async function createAuthorizedManager(
         // the non-interactive chat surfaces already render it as their
         // "complete OAuth first" affordance.
         if (effectiveAuth === "discover" && !connectToken) {
-          connectOnUnauthorized = async () => {
+          connectOnUnauthorized = async ({ error }: { error?: unknown } = {}) => {
+            // A 401 on a PROTECTED OPERATION mid-session (lazy authentication)
+            // carries its parsed challenge; a connect-time 401 does not. The
+            // first is a per-call sign-in request, answered like every other
+            // upstream auth failure (403 UPSTREAM_AUTH_FAILED, never 401, which
+            // `authFetch` would answer with a guest-session retry) and WITHOUT
+            // `oauthRequired`, which several surfaces escalate on by
+            // themselves. The challenge rides along so the client can offer a
+            // consented sign-in for this call.
+            const challenge = extractAuthChallenge(error);
+            if (challenge?.source === "http_401") {
+              throw new WebRouteError(
+                403,
+                ErrorCode.UPSTREAM_AUTH_FAILED,
+                `Server "${displayServerName}" asked for sign-in to complete this request.`,
+                {
+                  upstreamAuthRequired: true,
+                  authChallenge: stampAuthChallenge(challenge, "discover"),
+                  serverId,
+                  serverName: serverNamesById?.[serverId] ?? null,
+                },
+              );
+            }
             throw new WebRouteError(
               401,
               ErrorCode.UNAUTHORIZED,
@@ -2648,8 +2689,28 @@ export async function createAuthorizedManager(
       }
     }
   }
+  // Every connection's effective auth method, for the stamp a sign-in
+  // challenge carries back to the browser (see `connection-effective-auth`).
+  for (const [serverId, effectiveAuth] of effectiveAuthByServerId) {
+    recordConnectionEffectiveAuth(manager, serverId, effectiveAuth);
+    for (const connection of connectionsByServerId[serverId] ?? []) {
+      recordConnectionEffectiveAuth(manager, connection.key, effectiveAuth);
+    }
+  }
   if (Object.keys(connectionsByServerId).length)
     setManagerConnections(manager, connectionsByServerId);
+  const resourceSnapshots = new Map<string, ManagerResourceSnapshot>();
+  for (const [key] of connectionEntries) {
+    const connection = connectionsByKey.get(key);
+    const serverId = connection?.serverId ?? key;
+    const auth = batch.results[serverId];
+    if (!auth?.ok || auth.serverConfig.updatedAt === undefined || auth.serverConfig.httpVariant === "sse") continue;
+    const account = connection ? auth.oauthConnections?.find(c => c.connectionId === connection.connectionId) : undefined;
+    const credentialAuthorizedAt = account ? account.credentialAuthorizedAt ?? account.authorizedAt : auth.oauthCredentialAuthorizedAt ?? null;
+    if (connection && credentialAuthorizedAt === undefined) continue;
+    resourceSnapshots.set(key, {serverUpdatedAt: auth.serverConfig.updatedAt, credentialAuthorizedAt: credentialAuthorizedAt ?? null, credentialId: connection?.connectionId ?? auth.oauthCredentialId ?? undefined, headersReconstructible: !!connection || reconstructibleHeaderServers.has(serverId)});
+  }
+  setManagerResourceSnapshots(manager, resourceSnapshots);
   setManagerOrganization(manager, batch.organizationId);
   const ownerScope = taskOwnerScope(projectId, authorizedUserId);
   if (ownerScope)
@@ -3182,6 +3243,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     },
   );
 
+  if (typeof runHostConfig?.hostConfigId === "string" && typeof runHostConfig.hostId === "string") setManagerResourceHostConfig(manager, runHostConfig.hostConfigId, runHostConfig.hostId);
   return {
     manager,
     body: body as z.infer<S>,
@@ -3352,11 +3414,21 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       schema,
       async (manager, body, refusedServers) => {
         await options?.beforeOperation?.(body);
-        return fn(
+        // A failure's sign-in challenge is stamped with the connection's
+        // effective auth method here, where the server is known; the error
+        // mapping below has no server context.
+        return withStampedAuthChallenge(
           manager,
-          body,
-          forwardLogMessagesInto(manager, rpcCollector),
-          refusedServers,
+          typeof (body as { serverId?: unknown })?.serverId === "string"
+            ? (body as { serverId: string }).serverId
+            : undefined,
+          () =>
+            fn(
+              manager,
+              body,
+              forwardLogMessagesInto(manager, rpcCollector),
+              refusedServers,
+            ),
         );
       },
       {
