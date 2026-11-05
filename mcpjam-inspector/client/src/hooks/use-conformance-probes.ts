@@ -11,15 +11,20 @@
  * because nothing a server advertises says whether calling a tool charges a
  * card or deletes a row. Without one, those checks report could-not-run.
  *
- * The Tasks suite calls one tool to create the task its checks inspect. On a
+ * The Tasks suite uses a default tool plus optional per-check overrides. On a
  * server that uses the Tasks extension no tool says it creates a task, so
  * without one those checks could not run either.
  *
- * Saved-server defaults live in Convex. Unsaved servers keep session drafts.
+ * Protocol defaults for saved servers live in Convex; their drafts stay in
+ * session. Tasks defaults and overrides also persist in browser storage.
  */
 import { useCallback, useRef, useState } from "react";
 import {
   CHECK_ERAS,
+  MCP_TASKS_TOOL_CHECK_IDS,
+  isTasksToolCheck,
+  type MCPTasksCheckOverrides,
+  MCP_LOG_LEVELS,
   PROTOCOL_VERSION_ERAS,
   READINESS_ERAS,
   type MCPCheckId,
@@ -36,7 +41,10 @@ import type {
 } from "@/lib/apis/mcp-conformance-api";
 
 export type { ConformanceProbe, ConformanceProbes };
-export type ConformanceProbeKey = keyof ConformanceProbes;
+export type ConformanceProbeKey = Exclude<
+  keyof ConformanceProbes,
+  "tasksOverrides"
+>;
 
 export const PROBE_KEYS = [
   "logProbe",
@@ -61,19 +69,7 @@ const PROTOCOL_PROBE_CHECKS: Record<
  * creation checks, the call itself). The others never call it, and the Tasks
  * advice only reads what these checks already saw.
  */
-const TASKS_PROBE_CHECKS: readonly MCPTasksCheckId[] = [
-  "tasks-result-type-discipline",
-  "tasks-undeclared-creation-refused",
-  "tasks-undeclared-capability-rejected",
-  "tasks-ttl-shape",
-  "tasks-inline-result",
-  "tasks-mcp-name-routing",
-  "tasks-status-payload-shape",
-  "tasks-cancel-ack-shape",
-  "tasks-update-ack-shape",
-  "tasks-ttl-integer-shape",
-  "tasks-undeclared-capability-names-requirements",
-];
+const TASKS_PROBE_CHECKS = MCP_TASKS_TOOL_CHECK_IDS;
 
 /**
  * The checks, and advice, each probe is called for. The first one picked shows
@@ -89,7 +85,8 @@ function isProtocolProbe(key: ConformanceProbeKey): key is ProtocolProbeKey {
 }
 
 /** The check that sends the Tasks answers, so its row shows the answers box. */
-export const TASK_ANSWERS_CHECK: MCPTasksCheckId = "tasks-update-ack-shape";
+export const TASK_ANSWERS_CHECK =
+  "tasks-update-ack-shape" satisfies MCPTasksCheckId;
 
 /** The advice that asks for a log level, so its row shows the level field. */
 export const LOG_LEVEL_ADVICE: MCPReadinessId = "readiness-log-level-filtering";
@@ -161,7 +158,10 @@ export function probeInputStatus(
 ): "missing" | "set" | undefined {
   const key = probeKeyFor(checkId);
   if (!key) return undefined;
-  return probes[key] ? "set" : "missing";
+  const probe = isTasksToolCheck(checkId)
+    ? (probes.tasksOverrides?.[checkId] ?? probes.tasksProbe)
+    : probes[key];
+  return probe?.toolName ? "set" : "missing";
 }
 
 /**
@@ -219,6 +219,16 @@ export function tasksRunOptions(
   const checkIds = picked?.tasks;
   const readinessIds = picked?.tasksAdvice;
   const probe = tasksProbeRuns(checkIds) ? probes.tasksProbe : undefined;
+  const checkOverrides: MCPTasksCheckOverrides = {};
+  for (const id of MCP_TASKS_TOOL_CHECK_IDS) {
+    const override = probes.tasksOverrides?.[id];
+    if (override && (!checkIds || checkIds.includes(id)))
+      checkOverrides[id] = {
+        toolName: override.toolName,
+        ...(override.arguments ? { toolArguments: override.arguments } : {}),
+      };
+  }
+  const update = probes.tasksOverrides?.[TASK_ANSWERS_CHECK] ?? probe;
   const sendsAnswers =
     checkIds === undefined || checkIds.includes(TASK_ANSWERS_CHECK);
   return {
@@ -228,18 +238,18 @@ export function tasksRunOptions(
       ? {
           toolName: probe.toolName,
           ...(probe.arguments ? { toolArguments: probe.arguments } : {}),
-          ...(probe.inputResponses && sendsAnswers
-            ? { inputResponses: probe.inputResponses }
-            : {}),
         }
+      : {}),
+    ...(Object.keys(checkOverrides).length ? { checkOverrides } : {}),
+    ...(sendsAnswers && update?.inputResponses
+      ? { inputResponses: update.inputResponses }
       : {}),
   };
 }
 
 /**
- * What a server keeps after a run: the draft's tool for each probe whose
- * checks ran, the saved one for the rest. A tool picked only for checks that
- * were then left out is not saved, so no later run calls it unasked.
+ * Keep the default for each probe whose checks ran and preserve every Tasks
+ * override. Execution filters unselected overrides without deleting settings.
  * `picked` holds each suite's picks; a list absent means all of it.
  */
 export function probesAfterRun(
@@ -248,24 +258,153 @@ export function probesAfterRun(
   picked: ConformanceSelection | undefined,
   pin: ProtocolVersionPin,
 ): ConformanceProbes {
-  return Object.fromEntries(
-    PROBE_KEYS.flatMap((key) => {
-      const ran = isProtocolProbe(key)
-        ? probeRuns(key, pin, picked?.protocol, picked?.protocolAdvice)
-        : tasksProbeRuns(picked?.tasks);
-      const probe = ran ? draft[key] : saved[key];
-      return probe ? [[key, probe]] : [];
-    }),
-  ) as ConformanceProbes;
+  return {
+    ...Object.fromEntries(
+      PROBE_KEYS.flatMap((key) => {
+        const ran = isProtocolProbe(key)
+          ? probeRuns(key, pin, picked?.protocol, picked?.protocolAdvice)
+          : tasksProbeRuns(picked?.tasks);
+        const probe = ran ? draft[key] : saved[key];
+        return probe ? [[key, probe]] : [];
+      }),
+    ),
+    ...(draft.tasksOverrides ? { tasksOverrides: draft.tasksOverrides } : {}),
+  } as ConformanceProbes;
 }
 
-/** Session drafts for servers without a saved project/server ID. */
-export function useConformanceProbeStore() {
-  const [changed, setChanged] = useState<ReadonlyMap<string, ConformanceProbes>>(() => new Map());
-  const empty = useRef<ConformanceProbes>({});
-  const probesFor = useCallback((name: string) => changed.get(name) ?? empty.current, [changed]);
-  const setProbes = useCallback((name: string, probes: ConformanceProbes) => {
-    setChanged((prev) => new Map(prev).set(name, probes));
-  }, []);
+const STORAGE_PREFIX = "mcpjam.conformance.probes.v1:";
+
+function isProbe(
+  value: unknown,
+  allowEmptyTool = false,
+): value is ConformanceProbe {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const probe = value as { toolName?: unknown; arguments?: unknown };
+  return (
+    typeof probe.toolName === "string" &&
+    (allowEmptyTool || probe.toolName.trim() !== "") &&
+    (probe.arguments === undefined ||
+      (typeof probe.arguments === "object" &&
+        probe.arguments !== null &&
+        !Array.isArray(probe.arguments)))
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A saved probe keeping only the extras its key can send: a valid `level` on
+ * the log probe, an object `inputResponses` on the Tasks probe.
+ */
+function withOwnExtras(
+  probe: ConformanceProbe,
+  key: ConformanceProbeKey,
+): ConformanceProbe {
+  const { level, inputResponses, ...rest } = probe;
+  return {
+    ...rest,
+    ...(key === "logProbe" &&
+    (MCP_LOG_LEVELS as readonly unknown[]).includes(level)
+      ? { level }
+      : {}),
+    ...(key === "tasksProbe" && isRecord(inputResponses)
+      ? { inputResponses }
+      : {}),
+  };
+}
+
+/** What was saved for `serverName`, dropping anything malformed. */
+export function readStoredProbes(serverName: string): ConformanceProbes {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_PREFIX + serverName);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const tasksOverrides: NonNullable<ConformanceProbes["tasksOverrides"]> = {};
+    if (isRecord(parsed.tasksOverrides))
+      for (const [id, value] of Object.entries(parsed.tasksOverrides)) {
+        if (isTasksToolCheck(id) && isProbe(value, true))
+          tasksOverrides[id] = withOwnExtras(value, "tasksProbe");
+      }
+    return {
+      ...Object.fromEntries(
+        (["tasksProbe"] as const).flatMap((key) => {
+          const probe = parsed[key];
+          return isProbe(probe) ? [[key, withOwnExtras(probe, key)]] : [];
+        }),
+      ),
+      ...(Object.keys(tasksOverrides).length ? { tasksOverrides } : {}),
+    } as ConformanceProbes;
+  } catch {
+    // Unreadable storage or a corrupt entry: as if nothing was chosen.
+    return {};
+  }
+}
+
+function writeStoredProbes(serverName: string, probes: ConformanceProbes) {
+  try {
+    const key = STORAGE_PREFIX + serverName;
+    if (
+      PROBE_KEYS.every((name) => !probes[name]) &&
+      !Object.keys(probes.tasksOverrides ?? {}).length
+    ) {
+      window.localStorage.removeItem(key);
+    } else {
+      window.localStorage.setItem(
+        key,
+        JSON.stringify({
+          tasksProbe: probes.tasksProbe,
+          tasksOverrides: probes.tasksOverrides,
+        }),
+      );
+    }
+  } catch {
+    // Unwritable storage: the choice still applies to this session's runs.
+  }
+}
+
+/**
+ * Every server's probes, for one page: the setup steps, Settings and the run
+ * view read and write the same choice, so Run again uses what was just set.
+ */
+export function useConformanceProbeStore(): {
+  probesFor: (serverName: string) => ConformanceProbes;
+  setProbes: (serverName: string, probes: ConformanceProbes) => void;
+} {
+  // Maps, not objects: a server may be named `constructor` or `__proto__`.
+  const [changed, setChanged] = useState<
+    ReadonlyMap<string, ConformanceProbes>
+  >(() => new Map());
+  // Read from storage once per server: the tab asks on every render, and a
+  // fresh object each time would also look like a change to its readers.
+  const loaded = useRef(new Map<string, ConformanceProbes>());
+  const probesFor = useCallback(
+    (serverName: string) => {
+      const set = changed.get(serverName);
+      if (set) return set;
+      let stored = loaded.current.get(serverName);
+      if (!stored) {
+        stored = readStoredProbes(serverName);
+        loaded.current.set(serverName, stored);
+      }
+      return stored;
+    },
+    [changed],
+  );
+  const setProbes = useCallback(
+    (serverName: string, probes: ConformanceProbes) => {
+      setChanged((prev) => new Map(prev).set(serverName, probes));
+      writeStoredProbes(serverName, probes);
+    },
+    [],
+  );
   return { probesFor, setProbes };
+}
+
+/** Only selected inputs can block Run, including a default used by at least one check. */
+export function taskProbePartIsSelected(part: string, probes: ConformanceProbes, selected?: readonly string[]): boolean {
+  if (part === "tasksProbe") return MCP_TASKS_TOOL_CHECK_IDS.some(id => (!selected || selected.includes(id)) && !probes.tasksOverrides?.[id]);
+  const check = part.replace(/:answers$/, "");
+  return !isTasksToolCheck(check) || !selected || selected.includes(check);
 }
