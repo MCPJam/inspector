@@ -4,6 +4,7 @@ import { localServerCheckQueue } from "./utils/local-server-check-queue.js";
 import { registerBrowserController } from "./services/browserd/local/security-policy.js";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
+import { createLocalMrtrStream } from "./routes/web/local-mrtr-stream.js";
 import fixPath from "fix-path";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -409,6 +410,7 @@ const app = new Hono().onError((err, c) => {
 // registered on this app below; `injectWebSocket` is called on the node
 // server after `serve()` at the bottom of this file.
 const { upgradeWebSocket, injectWebSocket } = createNodeWebSocket({ app });
+const localMrtrStream = createLocalMrtrStream(upgradeWebSocket);
 const strictModeResponse = (c: any, path: string) =>
   c.json(
     {
@@ -630,6 +632,7 @@ if (!HOSTED_MODE) {
 // stream. Auth is the ordinary session token on `Sec-WebSocket-Protocol` —
 // see routes/web/webmcp-frames.
 if (!HOSTED_MODE) {
+  app.get("/api/web/mcp/mrtr/stream", localMrtrStream.handler);
   app.get(
     "/api/web/webmcp/sessions/:id/frames",
     createWebMcpFramesWsHandler(upgradeWebSocket),
@@ -1058,6 +1061,7 @@ async function shutdown() {
     // Same reason, same moment: a frame socket is an established connection
     // that `server.close()` would leave attached to an exiting process.
     shutdownWebMcpFrameSockets();
+    localMrtrStream.shutdown();
     // Same again for the agent browser's own viewport sockets.
     shutdownLocalBrowserFrameSockets();
     // Hosted panes too: an established WS survives `server.close()`.

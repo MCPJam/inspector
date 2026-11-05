@@ -133,7 +133,6 @@ async function serveHttp(
       });
     if (
       url.pathname === "/api/mcp/subscribe" ||
-      url.pathname === "/api/mcp/mrtr/stream" ||
       url.pathname === "/api/mcp/servers/rpc/stream"
     ) {
       return route.fulfill({
@@ -222,6 +221,16 @@ export async function prepareApp(
     serveHttp(route, failures, fixture, origin),
   );
   await context.routeWebSocket("**/*", (socket) => {
+    const url = new URL(socket.url());
+    if (url.origin === origin.replace(/^http/, "ws") && url.pathname === "/api/web/mcp/mrtr/stream") {
+      socket.send(JSON.stringify({ type: "snapshot_start" }));
+      socket.send(JSON.stringify({ type: "snapshot_end" }));
+      socket.onMessage(() => {
+        failures.push("Unexpected response to an empty local form fixture");
+        socket.close();
+      });
+      return;
+    }
     if (
       new URL(socket.url()).origin ===
       (fixture.convexOrigin ?? "wss://visual.invalid")

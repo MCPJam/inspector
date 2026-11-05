@@ -1,7 +1,13 @@
 import { resolveEffectiveClientCapabilities } from "../../../../client/src/lib/effective-client";
 import { toMCPServerConfig } from "../../../utils/local-server-resolver";
 import http from "node:http";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { Hono } from "hono";
+import { createNodeWebSocket } from "@hono/node-ws";
+import { WebSocket } from "ws";
+import { createLocalMrtrStream } from "../../web/local-mrtr-stream";
+import { generateSessionToken } from "../../../services/session-token";
+import { localMrtrMessageSchema, localMrtrProtocols, type LocalMrtrMessage } from "@/shared/local-mrtr-wire";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import {
   requestFormInput,
@@ -9,9 +15,8 @@ import {
 } from "@openai/mcp-extensions/server";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { MCPClientManager } from "@mcpjam/sdk";
-import mrtr, {
+import {
   registerLocalMrtrCollector,
-  submitMrtrResponses,
   withLocalMrtrElicitationCapability,
 } from "../mrtr";
 
@@ -74,11 +79,22 @@ async function fixture() {
 }
 
 describe("manual modern extended form transport", () => {
-  it("declares support and completes the original tool through SSE using the extended schema and false/zero", async () => {
+  it("declares support and completes the original tool through the authenticated WebSocket using the extended schema and false/zero", async () => {
     const served = await fixture();
     const manager = new MCPClientManager();
-    const response = await mrtr.request("/stream");
-    const reader = response.body!.getReader();
+    const app = new Hono();
+    const adapter = createNodeWebSocket({ app });
+    const localStream = createLocalMrtrStream(adapter.upgradeWebSocket);
+    app.get("/api/web/mcp/mrtr/stream", localStream.handler);
+    const bridge = http.createServer((_request, response) => response.end());
+    adapter.injectWebSocket(bridge);
+    await new Promise<void>((resolve) => bridge.listen(0, "127.0.0.1", resolve));
+    const address = bridge.address();
+    if (!address || typeof address === "string") throw new Error("Missing bridge address");
+    const socket = new WebSocket(`ws://127.0.0.1:${address.port}/api/web/mcp/mrtr/stream`, localMrtrProtocols(generateSessionToken()), { origin: "http://localhost:5173" });
+    const frames: LocalMrtrMessage[] = [];
+    socket.on("message", (data) => frames.push(localMrtrMessageSchema.parse(JSON.parse(data.toString()))));
+    await new Promise<void>((resolve, reject) => { socket.once("open", resolve); socket.once("error", reject); });
     try {
       registerLocalMrtrCollector(manager, "manual");
       const clientCapabilities = resolveEffectiveClientCapabilities({
@@ -95,32 +111,16 @@ describe("manual modern extended form transport", () => {
       }, { clientCapabilities, timeoutMs: 5_000 });
       await manager.connectToServer("manual", withLocalMrtrElicitationCapability(config));
       expect(manager.getInitializationInfo("manual")?.protocolVersion).toBe("2026-07-28");
-      await reader.read();
       const result = manager.executeTool("manual", "review", {});
-      const frame = await Promise.race([
-        reader.read(),
-        result.then((value) => {
-          throw new Error(`Completed before input: ${JSON.stringify(value)}`);
-        }),
-      ]);
-      const message = new TextDecoder().decode(frame.value);
-      const event = JSON.parse(message.replace(/^data: /, "").trim());
+      await vi.waitFor(() => expect(frames.some((frame) => frame.type === "mrtr_input_request")).toBe(true));
+      const event = frames.find((frame) => frame.type === "mrtr_input_request");
+      if (!event || event.type !== "mrtr_input_request") throw new Error("Missing input round");
       expect(event.requests[0]).toMatchObject({
         pluginForm: true,
         requestedSchema: schema,
       });
-      const invalid = submitMrtrResponses(event.opId, {
-        review: {
-          action: "accept",
-          content: {
-            name: "invalid",
-            revision: 0,
-            approved: false,
-            date: "2026-11-04",
-          },
-        },
-      });
-      expect(invalid).toMatchObject({ ok: false, status: 400 });
+      socket.send(JSON.stringify({ type: "respond", requestId: "invalid", opId: event.opId, roundKey: event.roundKey, responses: { review: { action: "accept", content: { name: "invalid", revision: 0, approved: false, date: "2026-11-04" } } } }));
+      await vi.waitFor(() => expect(frames).toContainEqual(expect.objectContaining({ type: "response", requestId: "invalid", result: expect.objectContaining({ ok: false, status: 400 }) })));
       expect(served.calls()).toBe(1);
       const answer = {
         name: "QA",
@@ -128,11 +128,8 @@ describe("manual modern extended form transport", () => {
         approved: false,
         date: "2026-11-04",
       };
-      expect(
-        submitMrtrResponses(event.opId, {
-          review: { action: "accept", content: answer },
-        }),
-      ).toEqual({ ok: true });
+      socket.send(JSON.stringify({ type: "respond", requestId: "valid", opId: event.opId, roundKey: event.roundKey, responses: { review: { action: "accept", content: answer } } }));
+      await vi.waitFor(() => expect(frames).toContainEqual({ type: "response", requestId: "valid", result: { ok: true } }));
       await expect(result).resolves.toMatchObject({
         structuredContent: answer,
       });
@@ -144,7 +141,9 @@ describe("manual modern extended form transport", () => {
           extensions: { "openai/elicitation": { form: {} } },
         });
     } finally {
-      await reader.cancel();
+      socket.terminate();
+      localStream.kill();
+      await new Promise<void>((resolve) => bridge.close(() => resolve()));
       await manager.disconnectAllServers();
       await served.close();
     }
