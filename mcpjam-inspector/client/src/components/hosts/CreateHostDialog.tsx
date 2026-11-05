@@ -60,7 +60,7 @@ import {
 } from "@/lib/host-ui-metadata";
 import { filterHostsByFeatureFlags } from "@/lib/host-compat/feature-visibility";
 import { useOrgBoundTemplateSeed } from "@/hooks/use-org-bound-template-seed";
-import { withStartedOn } from "@/lib/org-bound-template-seed";
+import { withModelChoiceNotice } from "@/lib/org-bound-template-seed";
 
 interface CreateHostDialogProps {
   isOpen: boolean;
@@ -319,7 +319,7 @@ export function CreateHostDialog({
           .catch(error => toast.error(`Client created. ${error instanceof Error ? error.message : `${harnessName} setup needs a retry.`}`, { id: setupToast }));
       }
       toast.success(
-        withStartedOn(`Client "${trimmed}" created`, prepared.startedOn),
+        withModelChoiceNotice(`Client "${trimmed}" created`, prepared.needsModelChoice),
       );
       handleClose();
       onCreated(hostId);

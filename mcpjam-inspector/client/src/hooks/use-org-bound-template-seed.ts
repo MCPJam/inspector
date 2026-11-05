@@ -1,7 +1,6 @@
 import { useCallback } from "react";
 import { toast } from "@/lib/toast";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
-import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import {
   bindTemplateSeedToOrg,
@@ -11,11 +10,8 @@ import {
 
 export type PreparedTemplateSeed = {
   input: HostConfigInputV2;
-  /**
-   * The organization model a new client starts on when it is not the
-   * template's own, for the success message. Absent otherwise.
-   */
-  startedOn?: string;
+  /** The user must choose an organization model in the client editor. */
+  needsModelChoice?: boolean;
 };
 
 /**
@@ -74,13 +70,10 @@ export function useOrgBoundTemplateSeed(projectId: string | null): {
         );
         return null;
       }
-      return bound.kind === "bound" && bound.via === "firstConfigured"
-        ? {
-            input: bound.input,
-            startedOn:
-              compactModelLabel(bound.row.name) || String(bound.row.id),
-          }
-        : { input: bound.input };
+      return {
+        input: bound.input,
+        needsModelChoice: bound.kind === "needs_choice",
+      };
     },
     [bind, onManageOrgProviders],
   );

@@ -113,20 +113,17 @@ beforeEach(() => {
 });
 
 describe("Create client dialog under the organization key policy (QA-25)", () => {
-  it("creates the default client on an organization model", async () => {
+  it("keeps an unavailable template model and prompts for an explicit choice", async () => {
     models.state = { ...models.state, availableModels: [ORG_SONNET] };
     const create = renderDialog();
     await waitFor(() => expect(create).toBeEnabled());
     await userEvent.click(create);
     await waitFor(() => expect(createHost).toHaveBeenCalledTimes(1));
     const { input } = createHost.mock.calls[0][0];
-    expect(input.modelId).toBe("anthropic/claude-sonnet-5");
-    expect(input.modelSelection).toMatchObject({
-      source: "org",
-      connectionRef: { kind: "orgProvider", id: "orgprov_anthropic" },
-    });
+    expect(input.modelId).toBe("anthropic/claude-haiku-5.5");
+    expect(input.modelSelection).toBeUndefined();
     expect(toastSuccess).toHaveBeenCalledWith(
-      expect.stringContaining("It starts on Claude Sonnet 5."),
+      expect.stringContaining("Choose an organization model in the client's Agent tab"),
     );
   });
 

@@ -45,7 +45,7 @@ import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
 import { filterReportsByFeatureFlags } from "@/lib/host-compat/feature-visibility";
 import { useOrgBoundTemplateSeed } from "@/hooks/use-org-bound-template-seed";
-import { withStartedOn } from "@/lib/org-bound-template-seed";
+import { withModelChoiceNotice } from "@/lib/org-bound-template-seed";
 import type { ToolsDataStatus } from "@/lib/host-compat/use-host-compat";
 
 const FINDING_ICON: Record<
@@ -226,9 +226,9 @@ export function HostCompatContent({
         input: { ...prepared.input, serverIds: [serverId] },
         applyDefaultSystemPrompt: true,
       });
-      if (prepared.startedOn) {
+      if (prepared.needsModelChoice) {
         toast.success(
-          withStartedOn(`Created ${label} client.`, prepared.startedOn),
+          withModelChoiceNotice(`Created ${label} client.`, prepared.needsModelChoice),
         );
       }
       // Same event the create dialog fires, so host creation stays one

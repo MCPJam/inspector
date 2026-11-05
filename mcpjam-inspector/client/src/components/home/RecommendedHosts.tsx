@@ -14,7 +14,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { getHostLogoSrc } from "@/lib/host-ui-metadata";
 import { useOrgBoundTemplateSeed } from "@/hooks/use-org-bound-template-seed";
-import { withStartedOn } from "@/lib/org-bound-template-seed";
+import { withModelChoiceNotice } from "@/lib/org-bound-template-seed";
 
 const RECOMMENDED_HOST_IDS = ["claude", "chatgpt", "cursor"] as const;
 
@@ -73,7 +73,7 @@ export function RecommendedHosts({ projectId }: RecommendedHostsProps) {
         input: { ...prepared.input, serverIds: [] },
         applyDefaultSystemPrompt: true,
       });
-      toast.success(withStartedOn(`Created ${label} client.`, prepared.startedOn));
+      toast.success(withModelChoiceNotice(`Created ${label} client.`, prepared.needsModelChoice));
       navigate(buildHostsPath(hostId));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

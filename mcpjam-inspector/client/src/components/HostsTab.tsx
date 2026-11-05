@@ -313,7 +313,9 @@ export function HostsTab({
             hostId,
             name,
             template: templateId,
-            note: "The new host's editor is open. Change its model or behavior there; attach servers with ui_set_host_servers.",
+            note: bound.kind === "needs_choice"
+              ? "The client editor is open. Choose an organization model in the Agent tab before running it."
+              : "The new host's editor is open. Change its model or behavior there; attach servers with ui_set_host_servers.",
           };
         } catch (e) {
           throw createInspectorCommandClientError(

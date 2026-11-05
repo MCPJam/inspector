@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ModelDefinition } from "@/shared/types";
+import { SUPPORTED_MODELS, type ModelDefinition } from "@/shared/types";
 import {
   emptyHostConfigInputV2,
   type HostConfigInputV2,
@@ -50,8 +50,6 @@ describe("bindTemplateSeedToOrg (QA-25)", () => {
     const out = bindTemplateSeedToOrg(chatgptSeed, on([ORG_SONNET, ORG_GPT5, ORG_LUNA]));
     expect(out.kind).toBe("bound");
     if (out.kind !== "bound") return;
-    expect(out.via).toBe("template");
-    expect(out.row).toBe(ORG_LUNA);
     expect(out.input.modelId).toBe("openai/gpt-5.6-luna");
     expect(out.input.modelSelection).toMatchObject({
       modelId: "openai/gpt-5.6-luna",
@@ -63,25 +61,47 @@ describe("bindTemplateSeedToOrg (QA-25)", () => {
     expect(out.input.hostStyle).toBe("chatgpt");
   });
 
-  it("falls back to the first model from the template's provider", () => {
-    const out = bindTemplateSeedToOrg(chatgptSeed, on([ORG_SONNET, ORG_GPT5]));
-    expect(out).toMatchObject({ kind: "bound", via: "firstConfigured", row: ORG_GPT5 });
-    if (out.kind === "bound") expect(out.input.modelId).toBe("openai/gpt-5");
+  it.each([[ORG_SONNET, ORG_GPT5], [ORG_SONNET]])(
+    "requires an explicit choice when the template model is unavailable (%j)",
+    (...models) => {
+      expect(bindTemplateSeedToOrg(chatgptSeed, on(models))).toEqual({
+        kind: "needs_choice",
+        input: chatgptSeed,
+      });
+    },
+  );
+
+  it("does not substitute a model from the full Anthropic catalog", () => {
+    const models = SUPPORTED_MODELS.filter((row) => row.provider === "anthropic")
+      .map((row) => orgRow(String(row.id), "anthropic", row));
+    const seed = { ...chatgptSeed, modelId: "anthropic/claude-haiku-5.5" };
+    expect(bindTemplateSeedToOrg(seed, on(models))).toEqual({
+      kind: "needs_choice",
+      input: seed,
+    });
   });
 
-  it("then to the first listed model", () => {
-    const out = bindTemplateSeedToOrg(chatgptSeed, on([ORG_SONNET]));
-    expect(out).toMatchObject({ kind: "bound", via: "firstConfigured", row: ORG_SONNET });
-    if (out.kind === "bound") {
-      expect(out.input.modelId).toBe("anthropic/claude-sonnet-5");
-      expect(out.input.modelSelection?.source).toBe("org");
+  it("selects the same connection regardless of row order", () => {
+    const first = orgRow("gpt-5.6-luna", "openai", {
+      orgProvider: { providerKey: "openai", id: "connection-a" },
+    });
+    const second = orgRow("gpt-5.6-luna", "openai", {
+      orgProvider: { providerKey: "openai", id: "connection-b" },
+    });
+    for (const rows of [[first, second], [second, first]]) {
+      expect(bindTemplateSeedToOrg(chatgptSeed, on(rows))).toMatchObject({
+        kind: "bound",
+        input: { modelSelection: { connectionRef: { id: "connection-a" } } },
+      });
     }
   });
 
-  it("never starts on a disabled (locked) row", () => {
+  it("requires a choice when the template model is disabled", () => {
     const locked = orgRow("gpt-5.6-luna", "openai", { disabled: true });
-    const out = bindTemplateSeedToOrg(chatgptSeed, on([locked, ORG_SONNET]));
-    expect(out).toMatchObject({ kind: "bound", row: ORG_SONNET });
+    expect(bindTemplateSeedToOrg(chatgptSeed, on([locked, ORG_SONNET]))).toEqual({
+      kind: "needs_choice",
+      input: chatgptSeed,
+    });
   });
 
   it("never starts on a hosted row, even one the list still holds", () => {

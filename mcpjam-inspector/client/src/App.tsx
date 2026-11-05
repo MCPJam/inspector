@@ -357,7 +357,7 @@ import {
   gateMcpToolResultImageRenderingByModelVisibility,
 } from "./lib/client-config-v2";
 import { useOrgBoundTemplateSeed } from "@/hooks/use-org-bound-template-seed";
-import { withStartedOn } from "@/lib/org-bound-template-seed";
+import { withModelChoiceNotice } from "@/lib/org-bound-template-seed";
 import type { ProjectServerConfigDto } from "./lib/project-server-config";
 import {
   shouldQueryHostId,
@@ -1317,9 +1317,9 @@ function useTemplateVerifyDeepLink({
           input: { ...prepared.input, serverIds: [] },
           applyDefaultSystemPrompt: true,
         });
-        if (prepared.startedOn) {
+        if (prepared.needsModelChoice) {
           toast.success(
-            withStartedOn(`Created ${template.label} client.`, prepared.startedOn),
+            withModelChoiceNotice(`Created ${template.label} client.`, prepared.needsModelChoice),
           );
         }
         navigate(buildHostVerifyLandingPath(hostId, requestedFocusTab), {

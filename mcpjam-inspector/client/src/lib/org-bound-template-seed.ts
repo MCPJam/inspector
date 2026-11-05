@@ -2,13 +2,9 @@
  * The model a client created from a catalog template starts on while the
  * organization requires its own provider keys. Pure and React-free.
  *
- * A template names a hosted model (`openai/gpt-5.6-luna` for ChatGPT), which
- * the policy refuses, so a new client takes the first organization model it
- * can run instead: the template's own model on an organization connection,
- * else the first listed model from the template's provider, else the first
- * listed model. With none, nothing may be created: the backend cannot store a
- * client without a model, and a hosted one would only show "isn't allowed
- * here". Policy off, the template is used exactly as it is.
+ * The template's model binds to an organization connection when available.
+ * Otherwise the client keeps its template model until a person chooses an
+ * organization model in its editor. Execution enforces the key policy.
  */
 import type { ModelDefinition } from "@/shared/types";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
@@ -19,14 +15,8 @@ import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
 
 export type OrgBoundTemplateSeed =
   | { kind: "unchanged"; input: HostConfigInputV2 }
-  | {
-      kind: "bound";
-      input: HostConfigInputV2;
-      /** The organization row the client starts on, for the success message. */
-      row: ModelDefinition;
-      /** `firstConfigured` means a model other than the template's was chosen. */
-      via: "template" | "firstConfigured";
-    }
+  | { kind: "bound"; input: HostConfigInputV2 }
+  | { kind: "needs_choice"; input: HostConfigInputV2 }
   | { kind: "needs_model" };
 
 /** Why a template create saved nothing, and what to do about it. */
@@ -39,11 +29,14 @@ export function needsOrgModelMessage(
     : `${label} was not created. Your organization has no model this client can run; ask an organization admin to add one.`;
 }
 
-/** A success message, naming the model when it is not the template's own. */
-export function withStartedOn(message: string, startedOn?: string): string {
-  if (!startedOn) return message;
+/** The next step for a client whose template model cannot use org keys. */
+export function withModelChoiceNotice(
+  message: string,
+  needsModelChoice?: boolean,
+): string {
+  if (!needsModelChoice) return message;
   const sentence = /[.!?]$/.test(message) ? message : `${message}.`;
-  return `${sentence} It starts on ${startedOn}.`;
+  return `${sentence} Choose an organization model in the client's Agent tab before running it.`;
 }
 
 export function bindTemplateSeedToOrg(
@@ -70,18 +63,21 @@ export function bindTemplateSeedToOrg(
   ).filter((row) => row.disabled !== true);
   const candidates = runnable.flatMap((row) => {
     const choice = storedModelChoice(row, undefined, HOST_MODEL_SELECTION_PURPOSE);
-    return choice.selection?.source === "org"
-      ? [{ row, modelId: choice.modelId, selection: choice.selection }]
+    const connection = choice.selection?.connectionRef;
+    return choice.selection?.source === "org" && connection?.kind === "orgProvider"
+      ? [{
+          modelId: choice.modelId,
+          selection: choice.selection,
+          connectionId: connection.id,
+        }]
       : [];
   });
 
-  const templateProvider = seed.modelId.split("/")[0];
-  const template = candidates.find((c) => c.modelId === seed.modelId);
-  const picked =
-    template ??
-    candidates.find((c) => String(c.row.provider) === templateProvider) ??
-    candidates[0];
-  if (!picked) return { kind: "needs_model" };
+  if (candidates.length === 0) return { kind: "needs_model" };
+  const picked = candidates
+    .filter((candidate) => candidate.modelId === seed.modelId)
+    .sort((a, b) => a.connectionId.localeCompare(b.connectionId))[0];
+  if (!picked) return { kind: "needs_choice", input: seed };
   return {
     kind: "bound",
     input: {
@@ -89,7 +85,5 @@ export function bindTemplateSeedToOrg(
       modelId: picked.modelId,
       modelSelection: picked.selection,
     },
-    row: picked.row,
-    via: template ? "template" : "firstConfigured",
   };
 }

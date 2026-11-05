@@ -118,7 +118,7 @@ describe("Home → ChatGPT → Create (QA-25)", () => {
     expect(toastSuccess).toHaveBeenCalledWith("Created ChatGPT client.");
   });
 
-  it("policy on: names a fallback model in the success message", async () => {
+  it("policy on: preserves the unavailable template model and prompts for a choice", async () => {
     models.state = {
       ...models.state,
       requireOrgKeys: true,
@@ -127,10 +127,10 @@ describe("Home → ChatGPT → Create (QA-25)", () => {
     await createChatgpt();
     await waitFor(() => expect(createHost).toHaveBeenCalledTimes(1));
     expect(createHost.mock.calls[0][0].input.modelId).toBe(
-      "anthropic/claude-sonnet-5",
+      "openai/gpt-5.6-luna",
     );
     expect(toastSuccess).toHaveBeenCalledWith(
-      "Created ChatGPT client. It starts on Claude Sonnet 5.",
+      "Created ChatGPT client. Choose an organization model in the client's Agent tab before running it.",
     );
   });
 
