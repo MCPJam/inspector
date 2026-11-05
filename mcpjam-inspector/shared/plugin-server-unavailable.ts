@@ -11,8 +11,8 @@
 export const PLUGIN_SERVER_UNAVAILABLE_DATA_PART_TYPE =
   "data-plugin-server-unavailable" as const;
 
-/** `needs_auth` when signing in again is the fix; `unreachable` otherwise. */
-export type PluginServerUnavailableReason = "needs_auth" | "unreachable";
+/** Signing in, reviewing a local command, or retrying the connection. */
+export type PluginServerUnavailableReason = "needs_auth" | "needs_approval" | "unreachable";
 
 /** Non-secret fields from an insufficient-scope challenge, bound to this server. */
 export interface PluginServerScopeChallenge {
@@ -35,7 +35,7 @@ export interface PluginServerUnavailableDataPart {
   };
 }
 
-const REASONS: ReadonlySet<string> = new Set(["needs_auth", "unreachable"]);
+const REASONS: ReadonlySet<string> = new Set(["needs_auth", "needs_approval", "unreachable"]);
 
 function isScopeChallenge(value: unknown): value is PluginServerScopeChallenge {
   if (!value || typeof value !== "object") return false;
