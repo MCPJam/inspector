@@ -15,6 +15,7 @@ export type NativeMcpRefreshState = {
 /** Serialize credential refreshes without starting or resuming a model turn. */
 export function createNativeMcpRefresher(options: {
   current(): NativeMcpRefreshState | undefined;
+  timeoutMs?: number;
   commit(home: CodexHomeInput): void;
   invalidate(runtime: NativeMcpRuntime): Promise<void>;
 }) {
@@ -38,6 +39,7 @@ export function createNativeMcpRefresher(options: {
             threadId: state.threadId,
             serverNames: Object.keys(servers),
             reload: true,
+            timeoutMs: options.timeoutMs,
           });
           options.commit(next);
         } catch (error) {
