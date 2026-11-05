@@ -989,10 +989,8 @@ export async function discoverAuthorizationServerMetadata(
   return undefined;
 }
 
-function firstAuthorizationServer(document: unknown): string | undefined {
+function firstAuthorizationServer(document: object): string | undefined {
   if (
-    typeof document !== "object" ||
-    document === null ||
     !("authorization_servers" in document) ||
     !Array.isArray(document.authorization_servers)
   ) {
