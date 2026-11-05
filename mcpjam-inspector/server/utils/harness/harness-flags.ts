@@ -17,3 +17,11 @@
 export function harnessBrokerDeliveryEnabled(): boolean {
   return process.env.MCPJAM_HARNESS_BROKER_DELIVERY !== "false";
 }
+
+/** Only the organization resolved by hosted authorization may enter the pilot. */
+export function hostedWarmAgentEnabled(organizationId: string | undefined): boolean {
+  return process.env.MCPJAM_HOSTED_WARM_AGENT === "1" && !!organizationId &&
+    (process.env.MCPJAM_HOSTED_WARM_AGENT_ORG_IDS ?? "")
+      .split(",")
+      .some((id) => id.trim() === organizationId);
+}

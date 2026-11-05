@@ -1,3 +1,5 @@
+import { admitWarmChatManager, isWarmChatManager, warmApprovalBindings } from "../../../utils/harness/warm-approval-binding";
+import { assertPendingPolicy, nativePolicyDigest, stampNativeForwardingPolicy } from "../../../utils/harness/forwarding/native-policy";
 import { getManagerResourceSnapshot, setManagerResourceHostConfig } from "../../../utils/mcp-connections";
 import { taskOwnerScope } from "../../../../shared/task-owner.js";
 import { taskConnectionKey } from "../../../utils/task-connection-key.js";
@@ -95,6 +97,49 @@ describe("web auth manager batching", () => {
     expect(new Headers(config.requestInit?.headers).get("authorization")).toBe(`Bearer ${stored ? "stored" : "caller"}-token`);
     setManagerResourceHostConfig(result.manager, "host-config", "host");
     expect(getManagerResourceSnapshot(result.manager, "server-1")?.headersReconstructible).toBe(stored);
+  });
+
+  it("binds a paused approval to its actual authorized account even when the server name stays the same", async () => {
+    vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT", "1");
+    vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT_ORG_IDS", "pilot-org");
+    const digest = async (credentialId: string | undefined, token: string, authorizedAt = 7) => {
+      global.fetch = vi.fn(async () => Response.json({organizationId: "pilot-org", results: {"same-server": {
+        ok: true, role: "member", accessLevel: "project_member", permissions: {chatOnly: false},
+        ...(credentialId ? {oauthCredentialId: credentialId, oauthAccessToken: token, oauthCredentialAuthorizedAt: authorizedAt} : {}),
+        serverConfig: {updatedAt: 100, name: "Same label", transportType: "http", useOAuth: true, url: "https://fixture.example/mcp"},
+      }}}));
+      const {manager} = await createAuthorizedManager({}, "bearer", "project", ["same-server"], 1000,
+        {"same-server": token}, undefined, {lazyConnect: true});
+      const bindings = warmApprovalBindings(manager);
+      expect(bindings).toHaveLength(1);
+      expect(JSON.stringify(bindings)).not.toContain(token);
+      return nativePolicyDigest({}, bindings);
+    };
+    try {
+      const original = stampNativeForwardingPolicy({data: {}}, await digest("account-a", "first-access-token"));
+      expect(() => assertPendingPolicy(original, "different-policy")).toThrow();
+      const refreshed = await digest("account-a", "rotated-access-token");
+      expect(() => assertPendingPolicy(original, refreshed)).not.toThrow();
+      for (const next of [await digest("account-b", "other-account-token"), await digest("account-a", "new-auth-token", 8)])
+        expect(() => assertPendingPolicy(original, next)).toThrow("policy has changed");
+      expect(await digest(undefined, "caller-token-a")).not.toBe(await digest(undefined, "caller-token-b"));
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("admits text-only Playground chats from the signed project and refuses missing or mismatched organizations", async () => {
+    vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT", "1");
+    vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT_ORG_IDS", "pilot-org");
+    try {
+      const {manager} = await createAuthorizedManager({}, "bearer", "project", [], 1000);
+      for (const projectOrg of [undefined, "unrelated"]) {
+        admitWarmChatManager(manager, projectOrg, false);
+        expect(isWarmChatManager(manager)).toBe(false);
+      }
+      admitWarmChatManager(manager, "pilot-org", true);
+      expect(isWarmChatManager(manager)).toBe(false);
+      admitWarmChatManager(manager, "pilot-org", false);
+      expect(isWarmChatManager(manager)).toBe(true);
+    } finally { vi.unstubAllEnvs(); }
   });
 
   const originalFetch = global.fetch;
