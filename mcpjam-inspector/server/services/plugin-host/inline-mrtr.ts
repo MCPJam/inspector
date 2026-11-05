@@ -23,7 +23,7 @@ export function createInlineMrtrCollector(
     const responses: Record<
       string,
       ReturnType<typeof openAILegacyFormSchemas.result.parse>
-    > = {};
+    > = Object.create(null);
     for (const [key, params] of requests) {
       signal?.throwIfAborted();
       responses[key] = openAILegacyFormSchemas.result.parse(
