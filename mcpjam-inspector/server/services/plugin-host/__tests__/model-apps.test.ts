@@ -112,6 +112,25 @@ describe("trusted completed model App ownership", () => {
     expect(registry.updateContext(first, actor, request)).toEqual(applied);
   });
 
+  it("answers a retry under the client's policy, not the default limits", () => {
+    const registry = new ModelAppRegistry(60_000);
+    const token = publish(registry)._meta[PLUGIN_MODEL_APP_META].instanceToken;
+    // 300 KiB: over the 256 KiB default, within this client's policy.
+    const limits = { updateMaxBytes: 1024 * 1024, maxBlocks: 64 };
+    const request = {
+      operationId: "large",
+      sequence: 1,
+      params: {
+        content: [{ type: "text" as const, text: "x".repeat(300 * 1024) }],
+      },
+    };
+    const applied = registry.updateContext(token, actor, request, limits);
+    registry.removeContext(token, actor, { operationId: "remove", basis: 0 });
+    expect(registry.updateContext(token, actor, request, limits)).toEqual(
+      applied,
+    );
+  });
+
   it("renews a retained model App past its original lifetime", () => {
     vi.useFakeTimers();
     try {
