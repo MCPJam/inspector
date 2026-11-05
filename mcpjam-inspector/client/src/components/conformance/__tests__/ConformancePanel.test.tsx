@@ -1824,9 +1824,10 @@ describe("ConformanceTab", () => {
     fireEvent.click(suiteHeader("oauth"));
     const row = screen.getByText(left.title).closest("button")!;
     expect(within(row).getByText("unscored")).toBeInTheDocument();
-    // Its failure is reported, not counted: grey, not red.
-    // The tone is on the box around the clamped text.
-    const message = within(row).getByText("profile shape is wrong").parentElement;
+    // Its failure is reported, not counted: grey, not red. It shows once open.
+    expect(within(row).queryByText("profile shape is wrong")).toBeNull();
+    fireEvent.click(row);
+    const message = screen.getByText("profile shape is wrong");
     expect(message).toHaveClass("text-muted-foreground");
     expect(message).not.toHaveClass("text-red-600");
     expect(screen.queryByText(/^Not conformant\./)).toBeNull();
@@ -3496,9 +3497,7 @@ describe("ConformanceTab", () => {
     fireEvent.click(suiteHeader("protocol"));
 
     // Shut, an era skip stays in the inert content without a row preview.
-    const reason = screen.getByText(
-      /Not applicable to the legacy era/,
-    ).parentElement!;
+    const reason = screen.getByText(/Not applicable to the legacy era/);
     expect(isCollapsed(reason)).toBe(true);
 
     clickRow("No Session Id Minted");
@@ -4489,15 +4488,15 @@ describe("ConformanceTab", () => {
         .closest("button"),
     ).toBe(pendingRow);
     // An unscored finding reads as information, not as a failure that counts.
-    expect(
-      within(pendingRow!).getByText("schema mismatch").parentElement,
-    ).toHaveClass("text-muted-foreground");
+    fireEvent.click(pendingRow!);
+    expect(screen.getByText("schema mismatch")).toHaveClass(
+      "text-muted-foreground",
+    );
 
     const scoredRow = screen.getByText("Ping").closest("button");
     expect(scoredRow).not.toHaveTextContent("unscored");
-    expect(
-      within(scoredRow!).getByText("pong missing").parentElement,
-    ).toHaveClass("text-red-600");
+    fireEvent.click(scoredRow!);
+    expect(screen.getByText("pong missing")).toHaveClass("text-red-600");
   });
 
   it("badges an incomplete tasks run distinctly from a passing one", async () => {
@@ -4629,13 +4628,14 @@ describe("ConformanceTab", () => {
     render(<ConformanceTab server={createHttpServer()} />);
     await runToCompletion();
 
-    // On the row itself, not only inside its collapsed details.
+    // The row shows its status; the reason waits for the row to open.
     const row = screen.getByText("Request Resource Metadata").closest("button");
     expect(row).not.toBeNull();
     expect(within(row!).getByText("!")).toBeInTheDocument();
-    expect(
-      within(row!).getByText("The authorization server timed out."),
-    ).toBeInTheDocument();
+    const reason = "The authorization server timed out.";
+    expect(within(row!).queryByText(reason)).toBeNull();
+    fireEvent.click(row!);
+    expect(screen.getByText(reason).closest("[inert]")).toBeNull();
   });
 });
 

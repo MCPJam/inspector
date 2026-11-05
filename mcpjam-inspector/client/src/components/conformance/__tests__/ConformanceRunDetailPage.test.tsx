@@ -151,10 +151,8 @@ describe("ConformanceRunDetailPage", () => {
       .mockResolvedValueOnce(reportBody([{ id: "completion-complete", title: "Completion", status: "failed", error: 'MCP server "bart" doesn\'t support MCP protocol version 2026-07-28, which this client is pinned to.' }]));
     useArtifactQueryMock.mockReturnValue(run([report({ outcome: "failed", status: "failed" })], { protocolVersion: "2026-07-28" }));
     const { rerender } = render(<ConformanceRunDetailPage runId="run_1" />);
-    const completion = await screen.findByRole("button", { name: /Completion/ });
-    expect(
-      within(completion).getByText("Connection timed out"),
-    ).toBeInTheDocument();
+    await screen.findByRole("button", { name: /Completion/ });
+    expect(screen.getByText("Connection timed out")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
     useArtifactQueryMock.mockReturnValue(run([report({ outcome: "failed", status: "failed", reportUrl: "https://artifacts.test/final.json" })], { protocolVersion: "2026-07-28" }));
     rerender(<ConformanceRunDetailPage runId="run_2" />);
@@ -478,7 +476,9 @@ describe("ConformanceRunDetailPage", () => {
     expect(suiteHeader("protocol")).toHaveAttribute("aria-expanded", "true");
     await screen.findByText("Ping");
     const check = screen.getByRole("button", { name: /Ping/ });
-    expect(within(check).getByText("pong missing").parentElement).toHaveClass(
+    expect(within(check).queryByText("pong missing")).toBeNull();
+    fireEvent.click(check);
+    expect(screen.getByText("pong missing")).toHaveClass(
       "border-red-500/20",
       "bg-red-500/5",
     );
@@ -516,12 +516,10 @@ describe("ConformanceRunDetailPage", () => {
     await screen.findByText("Token format");
     const scored = screen.getByRole("button", { name: /Ping/ });
     const unscored = screen.getByRole("button", { name: /Token format/ });
-    expect(within(scored).getByText("pong missing").parentElement).toHaveClass(
-      "text-red-600",
-    );
-    expect(within(unscored).getByText("not a JWT").parentElement).toHaveClass(
-      "text-muted-foreground",
-    );
+    fireEvent.click(scored);
+    fireEvent.click(unscored);
+    expect(screen.getByText("pong missing")).toHaveClass("text-red-600");
+    expect(screen.getByText("not a JWT")).toHaveClass("text-muted-foreground");
   });
 
   it.each([0, 100])(
@@ -559,13 +557,13 @@ describe("ConformanceRunDetailPage", () => {
       );
       render(<ConformanceRunDetailPage runId="run_1" />);
 
-      expect(
-        within(
-          await screen.findByRole("button", { name: /Result Type Discipline/ }),
-        ).getByText(
-          "Select a tool that creates a task in setup, then run again.",
-        ),
-      ).toBeInTheDocument();
+      const row = await screen.findByRole("button", {
+        name: /Result Type Discipline/,
+      });
+      const hint = "Select a tool that creates a task in setup, then run again.";
+      expect(within(row).queryByText(hint)).toBeNull();
+      fireEvent.click(row);
+      expect(screen.getByText(hint).closest("[inert]")).toBeNull();
       expect(screen.getByText("Not run")).toHaveAttribute(
         "title",
         "This check needs an input before it can run.",

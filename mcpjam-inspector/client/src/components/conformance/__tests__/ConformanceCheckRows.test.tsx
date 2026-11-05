@@ -136,11 +136,11 @@ describe("CheckRow", () => {
       />,
     );
     expect(screen.getByText("Timed out")).toBeInTheDocument();
-    expect(
-      within(screen.getByRole("button", { name: /Server Initialize/ })).getByText(
-        "The server did not answer within 15 seconds.",
-      ),
-    ).toBeInTheDocument();
+    const row = screen.getByRole("button", { name: /Server Initialize/ });
+    const reason = "The server did not answer within 15 seconds.";
+    expect(within(row).queryByText(reason)).toBeNull();
+    fireEvent.click(row);
+    expect(screen.getByText(reason).closest("[inert]")).toBeNull();
   });
 
   it("leaves the timeout tag off a check that ran", () => {
@@ -203,7 +203,7 @@ describe("OAuthStepRow", () => {
 });
 
 describe.each(["check", "OAuth step"] as const)("%s expansion", (kind) => {
-  it("keeps the explanation and error together outside the expanded button", () => {
+  it("shows only the title when shut, then the explanation and error when open", () => {
     const explanation = "Explain the requirement before the failure.";
     const message = "The server did not meet the requirement.";
     render(
@@ -228,7 +228,8 @@ describe.each(["check", "OAuth step"] as const)("%s expansion", (kind) => {
     const button = screen.getByRole("button");
     const description = screen.getByText(explanation);
     expect(description.closest("[inert]")).not.toBeNull();
-    expect(within(button).getByText(message)).toBeInTheDocument();
+    expect(within(button).queryByText(message)).toBeNull();
+    expect(screen.getByText(message).closest("[inert]")).not.toBeNull();
 
     fireEvent.click(button);
 
@@ -247,7 +248,7 @@ describe.each(["check", "OAuth step"] as const)("%s expansion", (kind) => {
     expect(screen.getByText(explanation)).toBe(description);
     expect(description.closest("[inert]")).not.toBeNull();
     expect(error.closest("[inert]")).not.toBeNull();
-    expect(within(button).getByText(message)).toBeInTheDocument();
+    expect(within(button).queryByText(message)).toBeNull();
   });
 });
 
