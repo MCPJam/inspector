@@ -75,8 +75,8 @@ export type EffortCarryResult = {
  * Pick a new model for a saved config. The effort is kept only when the new
  * row lists it AND the row can be saved as a selection (an effort lives on the
  * selection); otherwise it is dropped and reported, never silently carried.
- * With no effort involved the legacy behaviour is unchanged: a selection is
- * stored only beside an unchanged row id.
+ * An explicit organization choice always carries its connection, including
+ * when no effort survives. The key policy only controls which rows are offered.
  */
 export function carryEffortToModel(args: {
   row: ModelDefinition;
@@ -85,12 +85,6 @@ export function carryEffortToModel(args: {
   /** The deployment stores selections; false ⇒ the legacy id alone. */
   selectionsSupported: boolean;
   harness?: Harness;
-  /**
-   * The organization requires its own keys: a bare-id organization row is
-   * stored as its {@link orgCanonicalTarget}, since the bare id alone is
-   * refused under the policy.
-   */
-  requireOrgKeys?: boolean;
 }): EffortCarryResult {
   const {
     row,
@@ -98,7 +92,6 @@ export function carryEffortToModel(args: {
     purpose,
     selectionsSupported,
     harness,
-    requireOrgKeys = false,
   } = args;
   const legacyId = String(row.id);
   if (!selectionsSupported) {
@@ -125,7 +118,7 @@ export function carryEffortToModel(args: {
       };
     }
   }
-  const org = requireOrgKeys ? orgCanonicalTarget(row, purpose) : undefined;
+  const org = orgCanonicalTarget(row, purpose);
   return {
     modelId: org?.modelId ?? legacyId,
     selection: org?.selection ?? selectionBesideLegacyId(row, purpose),

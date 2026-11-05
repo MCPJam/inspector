@@ -73,7 +73,6 @@ describe("client editor under the organization key policy (QA-26)", () => {
         previousEffort: undefined,
         purpose,
         selectionsSupported: true,
-        requireOrgKeys: true,
       });
       expect(carried.modelId).toBe(`${row.provider}/${row.id}`);
       expect(carried.selection).toMatchObject({
@@ -92,7 +91,6 @@ describe("client editor under the organization key policy (QA-26)", () => {
         previousEffort: undefined,
         purpose,
         selectionsSupported: true,
-        requireOrgKeys: true,
       });
       const input = reload({
         modelId: carried.modelId,
@@ -113,7 +111,6 @@ describe("client editor under the organization key policy (QA-26)", () => {
       previousEffort: "high",
       purpose,
       selectionsSupported: true,
-      requireOrgKeys: true,
     });
     expect(carried.dropped).toBe("high");
     expect(carried.modelId).toBe("openai/gpt-5.6-luna");
@@ -127,7 +124,6 @@ describe("client editor under the organization key policy (QA-26)", () => {
       previousEffort: undefined,
       purpose,
       selectionsSupported: true,
-      requireOrgKeys: true,
     });
     const input = reload({
       modelId: carried.modelId,
@@ -150,14 +146,36 @@ describe("client editor under the organization key policy (QA-26)", () => {
     expect(editorRow(reload(next))).toBe(ORG_SONNET);
   });
 
-  it("with the policy off a pick keeps the bare id, as before", () => {
+  it("keeps the chosen connection when the policy allows both hosted and org rows", () => {
     const carried = carryEffortToModel({
       row: ORG_LUNA,
       previousEffort: undefined,
       purpose,
       selectionsSupported: true,
     });
-    expect(carried).toEqual({ modelId: "gpt-5.6-luna", selection: undefined });
+    expect(carried.modelId).toBe("openai/gpt-5.6-luna");
+    expect(carried.selection).toMatchObject({
+      source: "org",
+      connectionRef: { kind: "orgProvider", id: "orgprov_openai" },
+    });
+    const hosted = {
+      ...ORG_LUNA,
+      id: "openai/gpt-5.6-luna",
+      hosted: true,
+      orgProvider: undefined,
+    };
+    const otherConnection = {
+      ...ORG_LUNA,
+      orgProvider: { providerKey: "openai", id: "another-connection" },
+    };
+    expect(
+      findModelForStoredChoice(
+        { modelId: carried.modelId, selection: carried.selection },
+        [hosted, otherConnection, ORG_LUNA],
+        undefined,
+        { exactSelection: false },
+      ),
+    ).toBe(ORG_LUNA);
   });
 });
 

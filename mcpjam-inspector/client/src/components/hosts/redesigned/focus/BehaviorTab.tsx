@@ -400,7 +400,6 @@ export function BehaviorTab({
                     purpose: HOST_MODEL_SELECTION_PURPOSE,
                     selectionsSupported: modelSelectionsSupported,
                     harness: draft.harness,
-                    requireOrgKeys,
                   });
                   setEffortNotice(
                     carried.dropped
