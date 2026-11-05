@@ -20,8 +20,8 @@
     {
       "harnessId": "cursor",
       "bootstrapDir": ".harness-bootstrap/cursor",
-      "identity": "1e02a0aee92902b9",
-      "runtimeVersion": "2026.10.01-e373342"
+      "identity": "1cd3c8b5f9bfa1d3",
+      "runtimeVersion": "2026.11.05-86047df"
     }
   ]
 }
