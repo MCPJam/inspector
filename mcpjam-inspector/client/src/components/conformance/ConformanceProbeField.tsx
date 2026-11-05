@@ -15,6 +15,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Badge } from "@mcpjam/design-system/badge";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
@@ -288,12 +289,32 @@ export function TaskAnswersField({
   );
 }
 
-function toolSuffix(tool: { readOnly: boolean; destructive: boolean }) {
-  return tool.readOnly
-    ? " · read-only"
+/** A tool's name, with what its annotations say about safety as a badge. */
+function ToolOptionLabel({
+  tool,
+}: {
+  tool: { name: string; readOnly: boolean; destructive: boolean };
+}) {
+  const safety = tool.readOnly
+    ? "read-only"
     : tool.destructive
-      ? " · may modify data"
-      : "";
+      ? "may modify data"
+      : undefined;
+  return (
+    <span className="flex w-full min-w-0 items-center justify-between gap-2">
+      <span className="truncate">{tool.name}</span>
+      {safety ? (
+        <Badge
+          variant="outline"
+          className="rounded-full px-1.5 py-0 text-[11px] font-normal text-muted-foreground"
+        >
+          {/* Read aloud as "echo · read-only", not "echoread-only". */}
+          <span className="sr-only">·</span>
+          {safety}
+        </Badge>
+      ) : null}
+    </span>
+  );
 }
 
 export function ConformanceProbeField({
@@ -371,15 +392,21 @@ export function ConformanceProbeField({
       <Label htmlFor={id} className="text-xs">
         {copy.label}
       </Label>
+      {/* Above the dropdown: what to pick is read before picking. */}
+      <p id={`${id}-hint`} className="text-xs text-muted-foreground">
+        {copy.hint}
+      </p>
       <Select
         value={toolName}
         onValueChange={changeTool}
         disabled={status === "loading" || status === "idle"}
       >
+        {/* The value and item text stretch so a tool's badge sits at the right. */}
         <SelectTrigger
           id={id}
-          className="h-8 w-full text-xs"
+          className="h-8 w-full text-xs *:data-[slot=select-value]:flex-1"
           aria-label={forCheck ? `${copy.label} for ${forCheck}` : undefined}
+          aria-describedby={`${id}-hint`}
         >
           <SelectValue
             placeholder={status === "loading" ? "Loading tools..." : "Not set"}
@@ -388,30 +415,35 @@ export function ConformanceProbeField({
         <SelectContent>
           <SelectItem value={NONE}>Not set</SelectItem>
           {!listed && toolName !== NONE ? (
-            <SelectItem value={toolName}>
-              {toolName}
-              {selected ? toolSuffix(selected) : " (not listed by the server)"}
+            <SelectItem value={toolName} className="*:[span]:last:flex-1">
+              {selected ? (
+                <ToolOptionLabel tool={selected} />
+              ) : (
+                `${toolName} (not listed by the server)`
+              )}
             </SelectItem>
           ) : null}
           {options.map((tool) => (
-            <SelectItem key={tool.name} value={tool.name}>
-              {tool.name}
-              {toolSuffix(tool)}
+            <SelectItem
+              key={tool.name}
+              value={tool.name}
+              className="*:[span]:last:flex-1"
+            >
+              <ToolOptionLabel tool={tool} />
             </SelectItem>
           ))}
         </SelectContent>
       </Select>
-      <p className="text-xs text-muted-foreground">
-        {toolName === NONE
-          ? unsetHint
-          : // The SDK still calls it, but with no schema there is nothing to
-            // grade, so the check reports that it could not run.
-            probeKey === "toolCallProbe" &&
-              selected &&
-              !selected.hasOutputSchema
-            ? "This tool no longer declares an output schema. It is still called, but its result cannot be checked. Pick another tool or clear it."
-            : copy.hint}
-      </p>
+      {toolName === NONE ? (
+        <p className="text-xs text-muted-foreground">{unsetHint}</p>
+      ) : // The SDK still calls it, but with no schema there is nothing to
+      // grade, so the check reports that it could not run.
+      probeKey === "toolCallProbe" && selected && !selected.hasOutputSchema ? (
+        <p className="text-xs text-muted-foreground">
+          This tool no longer declares an output schema. It is still called,
+          but its result cannot be checked. Pick another tool or clear it.
+        </p>
+      ) : null}
       {status === "failed" ? (
         <p className="text-xs text-destructive">
           Couldn't list this server's tools. Check its connection, then open
@@ -425,12 +457,6 @@ export function ConformanceProbeField({
       ) : status === "idle" ? (
         <p className="text-xs text-muted-foreground">
           Connect this server to list its tools.
-        </p>
-      ) : null}
-      {selected?.destructive ? (
-        <p className="text-xs text-warning">
-          This tool says it may modify data. Choose it only if calling it is
-          safe on this server.
         </p>
       ) : null}
       {toolName !== NONE ? (

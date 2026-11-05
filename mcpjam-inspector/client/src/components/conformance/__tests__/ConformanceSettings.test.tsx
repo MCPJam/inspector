@@ -102,7 +102,7 @@ describe("Settings inputs", () => {
         name: "Tool to check output",
       });
       // The server still lists it, so it is not shown as missing.
-      expect(field).toHaveTextContent("output · read-only");
+      expect(field).toHaveTextContent("output·read-only");
       expect(
         screen.getByText(
           "This tool no longer declares an output schema. It is still called, but its result cannot be checked. Pick another tool or clear it.",
