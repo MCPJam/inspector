@@ -66,10 +66,12 @@ async function refreshWithoutSelectedTool({
   selected = "old-tool",
   nextCursor,
   beforeRefresh,
+  refreshFails = false,
 }: {
   selected?: string;
   nextCursor?: string;
   beforeRefresh?: () => void;
+  refreshFails?: boolean;
 } = {}) {
   mockListTools.mockResolvedValueOnce({ tools: [tool(selected)] });
   render(
@@ -83,10 +85,12 @@ async function refreshWithoutSelectedTool({
     expect(screen.queryByText("No selection")).not.toBeInTheDocument(),
   );
   beforeRefresh?.();
-  mockListTools.mockResolvedValueOnce({
-    tools: [tool("new-tool")],
-    ...(nextCursor ? { nextCursor } : {}),
-  });
+  if (refreshFails) mockListTools.mockRejectedValueOnce(new Error("list down"));
+  else
+    mockListTools.mockResolvedValueOnce({
+      tools: [tool("new-tool")],
+      ...(nextCursor ? { nextCursor } : {}),
+    });
   fireEvent.click(screen.getByTitle("Refresh tools"));
   await waitFor(() => expect(mockListTools).toHaveBeenCalledTimes(2));
   await waitFor(() =>
@@ -136,6 +140,14 @@ describe("ToolsTab selection across a list refresh", () => {
     expect(await screen.findByText(/call finished/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^run/i })).toBeDisabled();
     expect(screen.getByTitle("Save request")).toBeDisabled();
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(mockExecuteToolApi).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a selected tool usable when the refresh fails", async () => {
+    await refreshWithoutSelectedTool({ refreshFails: true });
+    expect(screen.queryByText("No selection")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^run/i })).toBeEnabled();
   });
 
   it("does not save an empty request when the tool leaves the list", async () => {

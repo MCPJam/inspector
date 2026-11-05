@@ -215,6 +215,9 @@ export function ToolsTab({
 }: ToolsTabProps) {
   const logger = useLogger("ToolsTab");
   const [tools, setTools] = useState<ToolMap>({});
+  // The server returned its last page since the list was last cleared. A
+  // cleared or failed list says nothing about whether a tool is listed.
+  const [toolListComplete, setToolListComplete] = useState(false);
   const formSelectionRef = useRef("");
   const restoringInputsRef = useRef<{
     toolName: string;
@@ -371,10 +374,7 @@ export function ToolsTab({
   // Kept selected through a refresh that dropped it (its call was running):
   // its result stays on screen, but it cannot run or be saved again.
   const selectedToolUnlisted =
-    !!selectedTool &&
-    !fetchingTools &&
-    cursor === undefined &&
-    !Object.hasOwn(tools, selectedTool);
+    !!selectedTool && toolListComplete && !Object.hasOwn(tools, selectedTool);
   const executeDisabledReason = taskRequiredButTasksOff
     ? "This tool requires task execution, and tasks are disabled by the host configuration."
     : selectedToolUnlisted
@@ -416,6 +416,7 @@ export function ToolsTab({
       }
     }
     setTools({});
+    setToolListComplete(false);
     if (clearSelection) {
       clearSelectedTool();
       setActiveElicitation(null);
@@ -649,6 +650,7 @@ export function ToolsTab({
       setCursor(
         typeof data.nextCursor === "string" ? data.nextCursor : undefined,
       );
+      setToolListComplete(typeof data.nextCursor !== "string");
       // SEP-2549 provenance: only ever set on an actual hit — a non-hit
       // fetch clears any stale badge from a previous cached response.
       setServedFromCache(data.servedFromCache);
@@ -1143,6 +1145,7 @@ export function ToolsTab({
         e.key === "Enter" &&
         !e.shiftKey &&
         selectedTool &&
+        !selectedToolUnlisted &&
         isServerConnected &&
         !loadingExecuteTool
       ) {
@@ -1162,7 +1165,12 @@ export function ToolsTab({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedTool, isServerConnected, loadingExecuteTool]);
+  }, [
+    selectedTool,
+    selectedToolUnlisted,
+    isServerConnected,
+    loadingExecuteTool,
+  ]);
 
   const handleElicitationResponse = async (
     action: "accept" | "decline" | "cancel",
