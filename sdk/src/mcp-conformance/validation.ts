@@ -134,7 +134,7 @@ function normalizeProtocolVersion(
 
 function normalizeToolProbe(
   probe: MCPConformanceConfig["inputRequiredProbe"],
-  optionName: "inputRequiredProbe" | "logProbe" | "logLevelFilteringProbe",
+  optionName: "inputRequiredProbe" | "logProbe" | "logLevelFilteringProbe"
 ): NormalizedMCPConformanceConfig["inputRequiredProbe"] {
   if (!probe) {
     return undefined;
