@@ -328,6 +328,28 @@ describe("failure messages are stored without signing secrets (C8)", () => {
     expect(stored).not.toContain(sent.slice("whsec_".length));
   });
 
+  it("records a successful subscribe whose delivery status nests too deep to walk", async () => {
+    let nested: unknown = "bottom";
+    for (let level = 0; level < 2_500; level += 1) nested = [nested];
+    const { outcome } = await stepWith(() => ({
+      id: "srv-sub-1",
+      cursor: null,
+      deliveryStatus: { active: true, extra: nested },
+    }));
+    expect(outcome.patch.observedState).toBe("active");
+    expect(outcome.patch.lastError).toBeUndefined();
+    // Bounded: below the limit the value is dropped, not walked.
+    let depth = 0;
+    let level: unknown = (outcome.patch.deliveryStatus as { extra: unknown })
+      .extra;
+    while (Array.isArray(level)) {
+      depth += 1;
+      level = level[0];
+    }
+    expect(level).toBeNull();
+    expect(depth).toBeLessThan(64);
+  });
+
   it("redacts every whsec_ string even when the secret is not known", () => {
     expect(
       redactWebhookSecretsInText(

@@ -98,23 +98,32 @@ export function redactWebhookSecretsInText(
   return redacted;
 }
 
+const MAX_WEBHOOK_REDACTION_DEPTH = 8;
+
 /**
  * `redactWebhookSecretsInText` over every string in a JSON-shaped value, keys
- * included, for a server's own report that is stored and shown as-is.
+ * included, for a server's own report that is stored and shown as-is. Values
+ * nested deeper than the bound become `null` rather than being walked, so a
+ * hostile shape cannot exhaust the stack.
  */
 export function redactWebhookSecretsDeep(
   value: unknown,
-  known: readonly (string | undefined)[] = []
+  known: readonly (string | undefined)[] = [],
+  depth = 0
 ): unknown {
-  if (typeof value === "string") return redactWebhookSecretsInText(value, known);
-  if (Array.isArray(value)) {
-    return value.map((item) => redactWebhookSecretsDeep(item, known));
-  }
+  if (typeof value === "string")
+    return redactWebhookSecretsInText(value, known);
   if (value === null || typeof value !== "object") return value;
+  if (depth >= MAX_WEBHOOK_REDACTION_DEPTH) return null;
+  if (Array.isArray(value)) {
+    return value.map((item) =>
+      redactWebhookSecretsDeep(item, known, depth + 1)
+    );
+  }
   return Object.fromEntries(
     Object.entries(value).map(([key, item]) => [
       redactWebhookSecretsInText(key, known),
-      redactWebhookSecretsDeep(item, known),
+      redactWebhookSecretsDeep(item, known, depth + 1),
     ])
   );
 }
