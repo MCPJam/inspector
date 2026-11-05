@@ -412,7 +412,8 @@ export const ORG_AI_MODEL_PRESENTATION: Record<
   search: {
     label: "Search model",
     noun: "search model",
-    runs: "Web search",
+    runs: "Web search in chat needs an Anthropic or OpenAI model.",
+    whenUnset: "Not set, so web search is off",
   },
   decision: {
     label: "Decision model",

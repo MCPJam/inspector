@@ -209,6 +209,7 @@ import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
 import { stopLiveConformanceOAuthRuns } from "./services/conformance-oauth-rendezvous.js";
 import { startBackgroundWorkers } from "./services/background-workers";
+import { drainBeforeTeardown } from "./services/lifecycle/shutdown-drain.js";
 import {
   startEventsKeeper,
   type EventsKeeperHandle,
@@ -1076,20 +1077,17 @@ async function shutdown() {
     // Inside the guarded path so a rejecting worker still reaches the rest of
     // shutdown rather than skipping straight to the force-exit deadline.
     await localServerCheckQueue.shutdown();
-    // Every claim loop stops at once. The events keeper and executor each wait
-    // at most a second: an in-flight keeper step or trigger run is
+    // The events keeper and executor stop alongside the drain and wait at most
+    // a second each: an in-flight keeper step or trigger run is
     // lease-recoverable, and the teardowns below are not.
     await Promise.all([
-      backgroundWorkers.stop(),
+      drainBeforeTeardown(backgroundWorkers, shutdownSettings),
       eventsKeeper?.stop(),
       eventsExecutor?.stop(),
     ]);
     stopRevokedSessionCache();
-    // Abort active synthetic-session runs and write a terminal "failed"
-    // status so the dialog/UI doesn't see a stuck "running" run. Bounded
-    // by an internal timeout; the outer `forceExitTimer` still wins.
-    // Abort active swarm (journey-execution) runs — stops each run's heartbeat
-    // and lets in-flight sessions report a terminal attempt. Bounded internally.
+    // Abort the swarm runs still going after the drain: each stops its
+    // heartbeat and reports a terminal attempt. Bounded internally.
     await shutdownRunningJourneyRuns();
     await tunnelManager.closeAll();
     // Kill local PTYs BEFORE server.close(): close() stops new connections but
