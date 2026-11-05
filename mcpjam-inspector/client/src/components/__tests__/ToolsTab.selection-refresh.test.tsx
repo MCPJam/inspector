@@ -116,14 +116,26 @@ describe("ToolsTab selection across a list refresh", () => {
     expect(screen.queryByText("No selection")).not.toBeInTheDocument();
   });
 
-  it("keeps a removed tool selected while its call runs", async () => {
-    mockExecuteToolApi.mockReturnValue(new Promise(() => {}));
+  it("keeps a removed tool selected while its call runs, then disables it", async () => {
+    let finish!: (response: unknown) => void;
+    mockExecuteToolApi.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
     await refreshWithoutSelectedTool({
       beforeRefresh: () =>
         fireEvent.click(screen.getByRole("button", { name: /^run/i })),
     });
-    expect(mockExecuteToolApi).toHaveBeenCalled();
     expect(screen.queryByText("No selection")).not.toBeInTheDocument();
+    finish({
+      status: "completed",
+      result: { content: [{ type: "text", text: "call finished" }] },
+    });
+    // The result stays under its tool, which can no longer run or be saved.
+    expect(await screen.findByText(/call finished/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^run/i })).toBeDisabled();
+    expect(screen.getByTitle("Save request")).toBeDisabled();
   });
 
   it("does not save an empty request when the tool leaves the list", async () => {

@@ -368,9 +368,18 @@ export function ToolsTab({
     tasksWire === "legacy" &&
     serverSupportsTaskToolCalls &&
     selectedToolTaskSupport === "required";
+  // Kept selected through a refresh that dropped it (its call was running):
+  // its result stays on screen, but it cannot run or be saved again.
+  const selectedToolUnlisted =
+    !!selectedTool &&
+    !fetchingTools &&
+    cursor === undefined &&
+    !Object.hasOwn(tools, selectedTool);
   const executeDisabledReason = taskRequiredButTasksOff
     ? "This tool requires task execution, and tasks are disabled by the host configuration."
-    : undefined;
+    : selectedToolUnlisted
+      ? "The server no longer lists this tool. Pick another tool."
+      : undefined;
 
   const clearSelectedTool = () => {
     formSelectionRef.current = "";
@@ -1030,8 +1039,8 @@ export function ToolsTab({
     // not the one active when the (possibly much later) task_created
     // response arrives — and a concurrent execution must not clobber it.
     const scopeAtCall = getTrackedTaskScope();
-    if (!selectedTool) {
-      logger.warn("Cannot execute tool: no tool selected");
+    if (!selectedTool || selectedToolUnlisted) {
+      logger.warn("Cannot execute tool: no listed tool selected");
       return;
     }
     // Guarded HERE, not only at the button: the global Enter keydown and
@@ -1330,7 +1339,7 @@ export function ToolsTab({
       loading={loadingExecuteTool}
       waitingOnElicitation={!!activeElicitation}
       onExecute={executeTool}
-      onSave={handleSaveCurrent}
+      onSave={selectedToolUnlisted ? undefined : handleSaveCurrent}
       executeAsTask={
         serverSupportsTaskToolCalls &&
         (tasksWire === "extension" || selectedToolTaskSupport !== "forbidden")
@@ -1352,7 +1361,7 @@ export function ToolsTab({
       taskTtl={taskTtl}
       taskWire={tasksWire}
       tasksDisabledByHost={tasksDisabledByHost}
-      executeDisabled={taskRequiredButTasksOff}
+      executeDisabled={taskRequiredButTasksOff || selectedToolUnlisted}
       executeDisabledReason={executeDisabledReason}
       onTaskTtlChange={tasksWire === "extension" ? undefined : setTaskTtl}
       serverSupportsTaskToolCalls={serverSupportsTaskToolCalls}
