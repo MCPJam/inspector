@@ -287,6 +287,14 @@ export function TaskAnswersField({
   );
 }
 
+function toolSuffix(tool: { readOnly: boolean; destructive: boolean }) {
+  return tool.readOnly
+    ? " · read-only"
+    : tool.destructive
+      ? " · may modify data"
+      : "";
+}
+
 export function ConformanceProbeField({
   probeKey,
   tools: { tools: allTools, status, truncated },
@@ -330,7 +338,9 @@ export function ConformanceProbeField({
   // A saved tool the server no longer lists stays selectable, so opening the
   // list never silently drops a choice.
   const listed = options.some((tool) => tool.name === toolName);
-  const selected = options.find((tool) => tool.name === toolName);
+  // Look in every tool, not just the offered ones: a saved tool that lost its
+  // output schema is still called, so it keeps its warning and arguments.
+  const selected = allTools.find((tool) => tool.name === toolName);
   const copy = PROBE_COPY[probeKey];
 
   const level = probe?.level ? { level: probe.level } : {};
@@ -371,17 +381,14 @@ export function ConformanceProbeField({
           <SelectItem value={NONE}>Not set</SelectItem>
           {!listed && toolName !== NONE ? (
             <SelectItem value={toolName}>
-              {toolName} (not listed by the server)
+              {toolName}
+              {selected ? toolSuffix(selected) : " (not listed by the server)"}
             </SelectItem>
           ) : null}
           {options.map((tool) => (
             <SelectItem key={tool.name} value={tool.name}>
               {tool.name}
-              {tool.readOnly
-                ? " · read-only"
-                : tool.destructive
-                  ? " · may modify data"
-                  : ""}
+              {toolSuffix(tool)}
             </SelectItem>
           ))}
         </SelectContent>

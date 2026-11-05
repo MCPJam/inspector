@@ -101,6 +101,8 @@ describe("Settings inputs", () => {
       const field = screen.getByRole("combobox", {
         name: "Tool to check output",
       });
+      // The server still lists it, so it is not shown as missing.
+      expect(field).toHaveTextContent("output · read-only");
       const box = screen.getByRole("checkbox", {
         name: "Run Tool Output Schema Honored",
       });
