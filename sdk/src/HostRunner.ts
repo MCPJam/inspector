@@ -24,6 +24,7 @@ import type {
 import type { CallToolResult } from "@modelcontextprotocol/client";
 import { resolveToolUiResourceUri } from "./widget-runtime/tool-ui-resource.js";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
+import { withProviderSafeToolNames } from "./provider-tool-names.js";
 import { isToolPolicyBlockResult } from "./contract/tool-policy.js";
 
 /**
@@ -912,9 +913,11 @@ export class HostRunner implements HostExecutor {
         baseUrls: this.baseUrls,
         customProviders: this.customProviders,
       };
-      const model = (this.createLanguageModel ?? createModelFromString)(
-        this.model,
-        modelOptions
+      const model = withProviderSafeToolNames(
+        (this.createLanguageModel ?? createModelFromString)(
+          this.model,
+          modelOptions
+        )
       );
       const stopAfterToolCallNames = this.normalizeStopAfterToolCall(
         options?.stopAfterToolCall
