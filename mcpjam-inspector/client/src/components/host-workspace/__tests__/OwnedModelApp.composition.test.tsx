@@ -18,7 +18,7 @@ import {
   useOwnedModelAppWorkspace,
 } from "../OwnedModelApp";
 import { HostedMrtrHost } from "../../elicitation/HostedMrtrHost";
-import { registerComposerSlot } from "../../elicitation/composer-form-store";
+import { registerComposerForm, registerComposerSlot } from "../../elicitation/composer-form-store";
 import { useHostedMrtrStore } from "@/stores/hosted-mrtr-store";
 import {
   ContextAttachmentChip,
@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   sourceEffects: 0,
   notifications: [] as unknown[],
   hosts: new Map<string, WidgetHost>(),
+  pendingInputs: new Map<string, boolean>(),
   upload: vi.fn(),
 }));
 vi.mock("@/lib/apis/web/base", () => ({ webPost: mocks.upload, WebApiError: class extends Error {} }));
@@ -86,11 +87,14 @@ vi.mock("@mcpjam/widget-react", async () => {
   MCPAppsRenderer: ({
     onCallTool,
     toolCallId,
+    hostInputPending,
   }: {
+    hostInputPending?: boolean;
     onCallTool: (name: string, args: object) => Promise<unknown>;
     toolCallId: string;
   }) => {
     const host = useContext(Host);
+    mocks.pendingInputs.set(toolCallId, hostInputPending === true);
     const [answer, setAnswer] = useState("");
     if (host) mocks.hosts.set(toolCallId, host);
     mocks.renderCount++;
@@ -205,6 +209,7 @@ beforeEach(() => {
   mocks.sourceEffects = 0;
   mocks.notifications = [];
   mocks.hosts.clear();
+  mocks.pendingInputs.clear();
   useHostedMrtrStore.getState().__reset();
 });
 
@@ -731,4 +736,57 @@ describe("the client's Model context toggle", () => {
     expect(screen.getByTestId("references")).toHaveTextContent(token);
     expect(mocks.mounted).toBe(1);
   });
+});
+
+it("only exposes a direct model-tool form to Apps in its own Compare workspace", async () => {
+  mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    const body = JSON.parse(init.body as string);
+    if (url.endsWith("/model/open")) return reply({ ...handle, instanceToken: body.instanceToken });
+    if (url.endsWith("/model/close")) return reply({ closed: true });
+    throw new Error("Unexpected API path");
+  });
+  const view = render(<><CompareModelLane lane="c" /><CompareModelLane lane="d" /></>);
+  await waitFor(() => expect(mocks.pendingInputs.size).toBe(2));
+  const workspace = compareLaneWorkspace({ actorId: "actor", projectId: "project", hostId: "host" }, "model", "c", "chat-c");
+  const cancel = vi.fn();
+  let unregister = () => {};
+  act(() => { unregister = registerComposerForm({ id: "direct-mrtr-form", workspaceId: workspace.workspaceId, serverName: "CAD", cancel }); });
+  expect(mocks.pendingInputs.get("c")).toBe(true);
+  expect(mocks.pendingInputs.get("d")).toBe(false);
+  act(() => unregister());
+  expect(mocks.pendingInputs.get("c")).toBe(false);
+  expect(cancel).not.toHaveBeenCalled();
+  expect(mocks.mounted).toBe(2);
+  view.unmount();
+});
+
+it("gives a direct MCP tool's actual form priority without replaying the model App", async () => {
+  mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/model/open")) return reply(handle);
+    if (url.endsWith("/model/close")) return reply({ closed: true });
+    if (url.endsWith("/model/call") && JSON.parse(init.body as string).params.name === "fixture.load") return reply({ status: "completed", result: { content: [] } });
+    throw new Error("Unexpected App operation");
+  });
+  const view = render(<ModelFormWorkspace />);
+  await screen.findByRole("button", { name: "Ask App form" });
+  await waitFor(() => expect(mocks.fetch.mock.calls.filter(([url]) => url.endsWith("/model/call"))).toHaveLength(1));
+  const cancel = vi.fn();
+  const submit = vi.fn();
+  act(() => useHostedMrtrStore.getState().enqueue({
+    key: "direct-model-tool:1", continuationId: "direct-model-tool", round: 1,
+    serverId: "saved-server", method: "tools/call", operationLabel: "cad.reviewForm",
+    pluginFormServiceScope: { projectId: "project", workspaceId: "workspace" },
+    pluginFormProfile: { origin: "server", fileResources: false, userResources: false, previews: false },
+    requests: [{ key: "review", mode: "form", message: "Direct tool form", requestedSchema: {
+      type: "object", properties: { name: { type: "string", title: "Name" } },
+    } }], expiresAt: Date.now() + 60_000, timestamp: new Date().toISOString(),
+  }, { submit, cancel }));
+  await waitFor(() => expect(screen.getByTestId("owned-form-slot")).toHaveTextContent("Direct tool form"));
+  expect(mocks.pendingInputs.get("original-call")).toBe(true);
+  expect(mocks.fetch.mock.calls.filter(([url]) => url.endsWith("/model/call"))).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(mocks.pendingInputs.get("original-call")).toBe(false));
+  expect(submit).toHaveBeenCalledOnce();
+  expect(cancel).not.toHaveBeenCalled();
+  view.unmount();
 });
