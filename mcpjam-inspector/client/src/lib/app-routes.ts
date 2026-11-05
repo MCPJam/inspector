@@ -23,6 +23,9 @@
  * `buildProjectPath` turns one into the concrete browser path.
  */
 import type { AppSurfaceId } from "@/shared/app-surfaces";
+import {
+  EVALUATE_NAV_ROUTE_PATTERNS,
+} from "@/shared/evaluate-nav-route-patterns";
 
 /**
  * Who owns a route.
@@ -631,6 +634,15 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "evaluate",
     scope: "project",
   },
+  // Evaluate navigation rework; `evaluate/nav/` picks the page for each.
+  ...EVALUATE_NAV_ROUTE_PATTERNS.map(
+    (path): AppRouteEntry => ({
+      path,
+      kind: "screen",
+      surfaceId: "evaluate",
+      scope: "project",
+    }),
+  ),
   {
     path: "ci-evals",
     kind: "redirect",

@@ -1,6 +1,10 @@
 import { useContext, useMemo } from "react";
 import { UNSAFE_LocationContext } from "react-router";
-import type { EvalRoute, SuiteOverviewView } from "./eval-route-types";
+import type {
+  EvalRoute,
+  EvaluateNavRoute,
+  SuiteOverviewView,
+} from "./eval-route-types";
 import { stripProjectFromPath } from "./project-route";
 
 /**
@@ -64,6 +68,10 @@ export function parseEvalRouteFromUrl(
     };
   }
 
+  if (prefix === "/evaluate" && tail[0] === "runs" && tail.length === 1) {
+    return { type: "evaluate-runs" };
+  }
+
   if (prefix === "/evals/runs" && tail[0] === "commit" && tail[1]) {
     return {
       type: "commit-detail",
@@ -92,6 +100,11 @@ export function parseEvalRouteFromUrl(
         ? { importJob: params.get("importJob") || undefined }
         : {}),
     };
+  }
+
+  if (prefix === "/evaluate") {
+    const navRoute = parseEvaluateNavSuiteTail(suiteId, rest, params);
+    if (navRoute) return navRoute;
   }
 
   if (rest.length === 1 && rest[0] === "edit") {
@@ -152,6 +165,71 @@ export function parseEvalRouteFromUrl(
   }
 
   return { type: "list" };
+}
+
+/**
+ * The suite-level paths of the Evaluate navigation rework:
+ * `settings[/cases|/evaluators]`, `settings/cases/new`,
+ * `settings/cases/:case[/evaluators]` and
+ * `runs/:run/cases/:case[/edit|/iter/:iter]`. Null for anything else, so the
+ * caller falls through to the older suite routes.
+ */
+function parseEvaluateNavSuiteTail(
+  suiteId: string,
+  rest: string[],
+  params: URLSearchParams,
+): EvaluateNavRoute | null {
+  if (rest[0] === "settings") {
+    if (rest.length === 1) {
+      return { type: "suite-settings", suiteId, tab: "settings" };
+    }
+    if (rest.length === 2 && rest[1] === "evaluators") {
+      return { type: "suite-settings", suiteId, tab: "evaluators" };
+    }
+    if (rest[1] !== "cases") return null;
+    if (rest.length === 2) {
+      return { type: "suite-settings", suiteId, tab: "cases" };
+    }
+    if (rest.length === 3 && rest[2] === "new") {
+      return { type: "case-new", suiteId };
+    }
+    if (!rest[2]) return null;
+    const caseId = decodePathSegment(rest[2]);
+    if (rest.length === 3) return { type: "case-settings", suiteId, caseId };
+    if (rest.length === 4 && rest[3] === "evaluators") {
+      return { type: "case-evaluators", suiteId, caseId };
+    }
+    return null;
+  }
+
+  if (rest[0] !== "runs" || !rest[1] || rest[2] !== "cases" || !rest[3]) {
+    return null;
+  }
+  const runId = decodePathSegment(rest[1]);
+  const caseId = decodePathSegment(rest[3]);
+  if (rest.length === 4) {
+    const target = params.get("target");
+    return {
+      type: "test-run",
+      suiteId,
+      runId,
+      caseId,
+      ...(target ? { target } : {}),
+    };
+  }
+  if (rest.length === 5 && rest[4] === "edit") {
+    return { type: "test-run-edit", suiteId, runId, caseId };
+  }
+  if (rest.length === 6 && rest[4] === "iter" && rest[5]) {
+    return {
+      type: "iteration",
+      suiteId,
+      runId,
+      caseId,
+      iterationId: decodePathSegment(rest[5]),
+    };
+  }
+  return null;
 }
 
 export function useEvalRouteFromUrl(prefix: EvalRoutePrefix): EvalRoute {

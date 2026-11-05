@@ -25,6 +25,8 @@
  * agent decides where to go.
  */
 
+import { EVALUATE_NAV_ROUTE_PATTERNS } from "./evaluate-nav-route-patterns";
+
 /** Stable surface id. Also the atlas key and the snapshot-provider key. */
 export type AppSurfaceId = (typeof APP_SURFACES)[number]["id"];
 
@@ -425,6 +427,7 @@ export const APP_SURFACES = [
       "evaluate/suite/:suiteId/runs/:runId/compare",
       "evaluate/suite/:suiteId/test/:testId",
       "evaluate/suite/:suiteId/test/:testId/edit",
+      ...EVALUATE_NAV_ROUTE_PATTERNS,
     ],
     navSegments: ["evaluate"],
     title: "Evaluate (New)",

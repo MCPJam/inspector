@@ -49,7 +49,7 @@ import type { ServerFormData } from "@/shared/types.js";
 import { useProjectServers } from "@/hooks/useViews";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
-import { useEvaluateRouteFromUrl } from "@/lib/eval-route-url";
+import { useEvaluateCurrentRoute } from "./evaluate/nav/evaluate-nav-host";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
@@ -195,7 +195,7 @@ function EvaluateTabContent({
   const hostsEnabled = isAuthenticated;
   // Decision summaries are part of the public Evaluate experience.
   const decisionSummaryEnabled = true;
-  const route = useEvaluateRouteFromUrl();
+  const route = useEvaluateCurrentRoute();
   const isDirectGuest = useIsDirectGuest({ projectId });
   const [previewedHostId] = usePreviewedHostId(projectId ?? null);
   const {

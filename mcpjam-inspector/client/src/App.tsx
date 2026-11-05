@@ -52,6 +52,7 @@ import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capab
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
 import { EvaluateTab } from "./components/EvaluateTab";
+import { EvaluateNavHost } from "./components/evaluate/nav/evaluate-nav-host";
 import { CiEvalsTab } from "./components/CiEvalsTab";
 import { UserTestingTab } from "./components/UserTestingTab";
 import { SwarmsTab } from "./components/swarms/SwarmsTab";
@@ -1667,12 +1668,14 @@ function EvaluateRouteContent() {
   }
 
   return (
-    <EvaluateTab
-      projectId={convexProjectId}
-      ensureServersReady={ensureServersReady}
-      onContinueInChat={handleContinueEvalInChat}
-      handleConnect={handleConnect}
-    />
+    <EvaluateNavHost>
+      <EvaluateTab
+        projectId={convexProjectId}
+        ensureServersReady={ensureServersReady}
+        onContinueInChat={handleContinueEvalInChat}
+        handleConnect={handleConnect}
+      />
+    </EvaluateNavHost>
   );
 }
 

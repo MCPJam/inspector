@@ -64,6 +64,9 @@ import {
 } from "./lib/app-navigation";
 import { APP_ROUTES, type AppRouteEntry } from "./lib/app-routes";
 import {
+  EVALUATE_NAV_ROUTE_PATTERNS,
+} from "@/shared/evaluate-nav-route-patterns";
+import {
   buildProjectPath,
   isProjectIdShape,
   parseProjectPath,
@@ -315,6 +318,13 @@ const ROUTE_ELEMENTS: Record<
     element: <EvaluateRoute />,
   },
   "evaluate/suite/:suiteId/edit": { element: <EvaluateRoute /> },
+  // Evaluate navigation rework; the same list registers them in APP_ROUTES.
+  ...Object.fromEntries(
+    EVALUATE_NAV_ROUTE_PATTERNS.map((path) => [
+      path,
+      { element: <EvaluateRoute /> },
+    ]),
+  ),
   // Old CI links always land in public Evaluate, with fragments intact.
   "ci-evals": { element: <LegacyEvalRedirect /> },
   "ci-evals/*": { element: <LegacyEvalRedirect /> },
