@@ -198,8 +198,9 @@ export class ConvexHttpStatusError extends Error {
   constructor(
     readonly status: number,
     body: string,
+    options?: ErrorOptions,
   ) {
-    super(body);
+    super(body, options);
     this.name = "ConvexHttpStatusError";
   }
 }
@@ -217,7 +218,14 @@ export const convexReadFetch: typeof fetch = async (input, init) => {
   if (response.ok || response.status === CONVEX_FUNCTION_FAILED_STATUS) {
     return response;
   }
-  throw new ConvexHttpStatusError(response.status, await response.text());
+  let body: string;
+  try {
+    body = await response.text();
+  } catch (cause) {
+    // A connection dropped mid-body still answered with this status.
+    throw new ConvexHttpStatusError(response.status, "", { cause });
+  }
+  throw new ConvexHttpStatusError(response.status, body);
 };
 
 export type ConvexReadFailure =

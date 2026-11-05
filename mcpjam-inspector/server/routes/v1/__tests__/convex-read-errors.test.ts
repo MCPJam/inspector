@@ -336,6 +336,28 @@ describe("convexReadFetch", () => {
     expect((thrown as Error).message).toBe("Error");
   });
 
+  it("keeps the status when the body cannot be read", async () => {
+    const dropped = new Error("socket hang up");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              start: (controller) => controller.error(dropped),
+            }),
+            { status: 503 },
+          ),
+      ),
+    );
+    const thrown = await convexReadFetch("https://convex.test/api/query").catch(
+      (error: unknown) => error,
+    );
+    expect(thrown).toBeInstanceOf(ConvexHttpStatusError);
+    expect((thrown as ConvexHttpStatusError).status).toBe(503);
+    expect((thrown as Error).cause).toBe(dropped);
+  });
+
   it.each([200, 560])(
     "hands a %s answer back for the client to read",
     async (status) => {
