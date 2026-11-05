@@ -246,7 +246,7 @@ export function OrganizationCurrentPlanPanel({
       ? billingStatus.effectivePlan
       : currentPlan;
   const billingConfigured = billingStatus.billingConfigured ?? false;
-  const canManageBilling = billingStatus.canManageBilling ?? false;
+  const canManageBilling = (billingStatus.canManageBilling ?? false) && billingStatus.hasCustomer === true;
   const formattedPeriodEnd = formatBillingDate(
     billingStatus.stripeCurrentPeriodEnd,
   );
@@ -261,7 +261,9 @@ export function OrganizationCurrentPlanPanel({
   const effectiveBillingInterval = billingStatus.billingInterval ?? "monthly";
   const targetBillingInterval: BillingInterval =
     effectiveBillingInterval === "annual" ? "monthly" : "annual";
-  const billingDetailLine = planCatalog
+  const billingDetailLine = (billingStatus.unlimitedCreditsUntil ?? 0) > Date.now()
+    ? `Contract through ${formatBillingDate(billingStatus.unlimitedCreditsUntil ?? null)}`
+    : planCatalog
     ? formatCurrentPlanBillingDetailLine(billingStatus, planCatalog)
     : null;
   const scheduledCancellationDetailLine = getScheduledCancellationDetailLine(
