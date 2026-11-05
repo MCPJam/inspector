@@ -1534,6 +1534,8 @@ export function MCPAppsRendererSurface({
   // Per-server label for a dedicated view origin, from the widget-content
   // response. Changing it re-navigates the sandbox iframe, so it is state
   // rather than a ref.
+  const [sourceReceipt, setSourceReceipt] = useState<string | undefined>();
+  const [sandboxSource, setSandboxSource] = useState({ serverId, resourceUri, toolCallId });
   const [viewOriginLabel, setViewOriginLabel] = useState<string | undefined>(
     undefined
   );
@@ -1661,6 +1663,7 @@ export function MCPAppsRendererSurface({
     hasRenderedLiveRef.current = false;
     liveRenderIdentityRef.current = null;
     setWidgetHtml(null);
+    setSourceReceipt(undefined);
     setResourceDisplayHints(undefined);
     setBridgeTransportReady(false);
     setLoadedCspMode(null);
@@ -1930,6 +1933,7 @@ export function MCPAppsRendererSurface({
       hasRenderedLiveRef.current = false;
       liveRenderIdentityRef.current = null;
       setWidgetHtml(html);
+      setSourceReceipt(undefined);
       setWidgetCsp(undefined);
       // Same reasoning as the live commit below: new bytes, so a violation
       // held from the previous resource no longer describes the screen.
@@ -1987,6 +1991,7 @@ export function MCPAppsRendererSurface({
     // returned an invalid mimetype (which is a content error — caller
     // should surface it and NOT fall back to a cached blob).
     const loadFromLiveFetch = async (): Promise<boolean> => {
+      const fetchedSource = { serverId, resourceUri, toolCallId: toolCallIdRef.current };
       const {
         html,
         csp,
@@ -1998,6 +2003,7 @@ export function MCPAppsRendererSurface({
         resourceDisplayHints: resourceHints,
         declaredDomain: serverDeclaredDomain,
         viewOriginLabel: serverViewOriginLabel,
+        sourceReceipt: serverSourceReceipt,
         injectedOpenAiCompat: serverInjectedOpenAiCompat,
         injectedOpenAiCompatCapabilities:
           serverInjectedOpenAiCompatCapabilities,
@@ -2018,7 +2024,7 @@ export function MCPAppsRendererSurface({
           readToolResultMeta(toolOutputRef.current) ??
           null,
         initialWidgetState,
-        toolId: toolCallIdRef.current,
+        toolId: fetchedSource.toolCallId,
         toolName,
         theme: themeModeRef.current,
         cspMode,
@@ -2098,6 +2104,8 @@ export function MCPAppsRendererSurface({
         setDisplayMode(initialMode);
       }
       setWidgetHtml(html);
+      setSourceReceipt(serverSourceReceipt);
+      setSandboxSource(fetchedSource);
       setWidgetCsp(csp);
       // New bytes are going on screen, so a violation still held here was
       // reported against the previous ones. The identity-keyed reset effect
@@ -4591,6 +4599,16 @@ export function MCPAppsRendererSurface({
     <SandboxedIframe
       ref={sandboxRef}
       html={bridgeTransportReady ? widgetHtml : null}
+      viewAdmission={host.services.prepareSandboxView ? {
+        services: host.services,
+        request: {
+          source: sandboxSource, sourceReceipt,
+          html: widgetHtml ?? "",
+          policy: { csp: effectiveSandbox.csp, cspDirectives: effectiveSandbox.cspDirectives,
+            cspSubtypePolicy: effectiveSandbox.cspSubtypePolicy, permissive: effectiveSandbox.permissive },
+          mode: effectiveSandbox.permissive || Object.keys(effectiveSandbox.cspDirectives ?? {}).length > 0 ? "debugger" : "declared",
+        },
+      } : undefined}
       // A new bridge always gets a freshly loaded guest to initialize it.
       reloadKey={bridgeGeneration}
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"

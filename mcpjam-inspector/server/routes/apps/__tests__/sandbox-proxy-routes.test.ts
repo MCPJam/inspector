@@ -4,16 +4,16 @@ import { Hono } from "hono";
 import mcpAppsRoutes from "../mcp-apps";
 
 describe("Sandbox proxy routes", () => {
-  it("preserves the existing generic proxy while strict admissions are available", async () => {
+  it("refuses an unsigned generic proxy document", async () => {
     const app = new Hono();
     app.route("/api/apps/mcp-apps", mcpAppsRoutes);
 
     const res = await app.request("/api/apps/mcp-apps/sandbox-proxy");
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
     expect(res.headers.get("Content-Security-Policy")).toContain(
-      "frame-ancestors",
+      "default-src 'none'",
     );
-    expect(await res.text()).toContain("<script");
+    expect(await res.text()).not.toContain("<script");
   });
 
   it("materializes the admitted proxy with its guarded runtime", () => {

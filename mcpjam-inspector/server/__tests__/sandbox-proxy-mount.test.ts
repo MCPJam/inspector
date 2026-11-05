@@ -153,7 +153,7 @@ function harness(proxyInstanceId = "proxy-a"): { dom: JSDOM; h: MountHarness } {
 }
 
 const WIDGET = "<!doctype html><html><body><p id='w'>hi</p></body></html>";
-function admittedDom(admitted = true) {
+function admittedDom() {
   const source = html
     .replace(
       '"__MCPJAM_HOST_ORIGINS__"',
@@ -161,11 +161,11 @@ function admittedDom(admitted = true) {
     )
     .replace(
       '"__MCPJAM_VIEW_CONTEXT__"',
-      JSON.stringify(admitted ? {
+      JSON.stringify({
         htmlSha256: createHash("sha256").update(WIDGET).digest("hex"),
         hostOrigin: "http://localhost:6274",
         admissionId: "fixture-admission",
-      } : null),
+      }),
     );
   return new JSDOM(source, {
     url: "http://localhost:6274/api/apps/mcp-apps/sandbox-proxy",
@@ -178,28 +178,6 @@ function admittedDom(admitted = true) {
     },
   });
 }
-
-describe("existing proxy compatibility", () => {
-  it("still mounts a legacy host message without an admission context", async () => {
-    const dom = admittedDom(false);
-    try {
-      dom.window.dispatchEvent(new dom.window.MessageEvent("message", {
-        source: dom.window,
-        origin: "http://localhost:6274",
-        data: {
-          jsonrpc: "2.0",
-          method: "ui/notifications/sandbox-resource-ready",
-          params: { html: WIDGET, permissive: false },
-        },
-      }));
-      await vi.waitFor(() => expect(
-        dom.window.document.querySelector("iframe")?.contentDocument?.getElementById("w")?.textContent,
-      ).toBe("hi"));
-    } finally {
-      dom.window.close();
-    }
-  });
-});
 
 describe("sandbox-proxy createInnerFrame", () => {
   it("sets sandbox and allow on the element without appending it", () => {
