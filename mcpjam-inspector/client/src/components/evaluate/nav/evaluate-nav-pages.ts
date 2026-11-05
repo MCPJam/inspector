@@ -7,6 +7,8 @@ import type {
 import { isEvaluateNavRoute } from "@/lib/evaluate-nav-route-path";
 import { draftTestCaseId } from "../../evals/draft-test-case";
 import { EvaluateLandingPage } from "../landing/evaluate-landing-page";
+import { IterationPage } from "../test-run/iteration-page";
+import { TestRunPage } from "../test-run/test-run-page";
 
 /** A route kind that today's Evaluate tab renders. */
 export type CurrentEvalRoute = Exclude<EvalRoute, EvaluateNavRoute>;
@@ -96,6 +98,7 @@ export const EVALUATE_NAV_PAGES: EvaluateNavPageMap = {
       runId,
       testCaseId: caseId,
     }),
+    Page: TestRunPage,
   },
   "test-run-edit": {
     page: "test_run_edit",
@@ -114,6 +117,7 @@ export const EVALUATE_NAV_PAGES: EvaluateNavPageMap = {
       testCaseId: caseId,
       iteration: iterationId,
     }),
+    Page: IterationPage,
   },
 };
 

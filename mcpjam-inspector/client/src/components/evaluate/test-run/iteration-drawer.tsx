@@ -2,22 +2,14 @@ import type {
   EvalRunDecisionChain,
   EvalRunDecisionDiagnostic,
 } from "@mcpjam/sdk/contract";
-import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@mcpjam/design-system/cn";
-import { hostSnapshotFromStyle } from "@/lib/host-snapshot";
-import {
-  formatRelativeTime,
-  formatRunId,
-  runClientIdentity,
-} from "../../evals/helpers";
+import { formatRelativeTime, formatRunId } from "../../evals/helpers";
 import { computeIterationResult } from "../../evals/pass-criteria";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
-import { IterationDetails } from "../../evals/iteration-details";
 import { useSelectedRun } from "../../evals/use-selected-run";
-import { IterationReportScorecard } from "../case-scorecard/iteration-report-subscriber";
-import { authoredForTrial } from "../case-scorecard/trial-authored";
 import { EvalInspectBody, EvalInspectHeader } from "../eval-inspect-sheet";
 import type { RunResultsMatrixData } from "../run-results-matrix-model";
+import { IterationEvidence } from "./iteration-evidence";
 import { outcomeLabel } from "./iteration-outcome";
 
 export function IterationDrawer({
@@ -43,15 +35,10 @@ export function IterationDrawer({
 }) {
   const result = computeIterationResult(iteration);
   const fullRun = useSelectedRun(target.run.suiteId, target.run._id).run;
-  const authored = authoredForTrial({
-    trial: { kind: "persisted", iteration, source: "route" },
-    draft: { steps: [], toolsChoice: "unset" },
-    run:
-      "tests" in (target.run.configSnapshot ?? {})
-        ? (target.run as EvalSuiteRun)
-        : fullRun,
-    forceSnapshot: true,
-  }).authored;
+  const snapshotRun =
+    "tests" in (target.run.configSnapshot ?? {})
+      ? (target.run as EvalSuiteRun)
+      : fullRun;
   const decisionChain = diagnostic?.chain ?? chain;
 
   return (
@@ -95,37 +82,12 @@ export function IterationDrawer({
           handle. */}
       <EvalInspectBody fill>
         <div className="flex min-h-0 flex-1 flex-col">
-          <IterationDetails
-            hostSnapshot={hostSnapshotFromStyle(
-              runClientIdentity(target.run).hostStyle,
-            )}
+          <IterationEvidence
             iteration={iteration}
-            testCase={null}
-            layoutMode="full"
-            trialVerdictWord={outcomeLabel(result)}
-            scorecard={{
-              render: (context) => (
-                <>
-                  <IterationReportScorecard
-                    authored={authored}
-                    iteration={iteration}
-                    steps={authored.steps}
-                    chain={decisionChain}
-                    envelope={context.envelope}
-                    trace={context.trace}
-                    scoresSection={context.scoresSection}
-                    judgeHidden={context.judgeHidden}
-                  />
-                  {onEditEvaluator && (
-                    <div className="mt-4 flex justify-end">
-                      <Button onClick={onEditEvaluator}>
-                        Configure test case evaluators
-                      </Button>
-                    </div>
-                  )}
-                </>
-              ),
-            }}
+            listRun={target.run}
+            run={snapshotRun}
+            chain={decisionChain}
+            onEditEvaluator={onEditEvaluator}
           />
         </div>
       </EvalInspectBody>

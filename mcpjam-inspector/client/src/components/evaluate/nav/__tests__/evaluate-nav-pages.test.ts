@@ -68,11 +68,10 @@ describe("Evaluate nav page map", () => {
     expect(resolved.page).toBe(EVALUATE_NAV_PAGES[route.type].page);
   });
 
-  it("waits for the flag only on routes with a new page", () => {
-    const built = new Set(["evaluate-runs"]);
+  it("renders a new page only for entries that have one", () => {
     for (const [route] of rows) {
       expect(Boolean(resolveEvaluateNavPage(route).element)).toBe(
-        built.has(route.type),
+        Boolean(EVALUATE_NAV_PAGES[route.type].Page),
       );
     }
   });
