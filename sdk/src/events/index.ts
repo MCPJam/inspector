@@ -50,6 +50,7 @@ export type {
 export {
   REDACTED_WEBHOOK_SECRET,
   redactRpcMessageForLog,
+  redactWebhookSecretsInText,
   createRpcLogRedactor,
 } from "../mcp-client-manager/rpc-log-redaction.js";
 export * from "./identity.js";

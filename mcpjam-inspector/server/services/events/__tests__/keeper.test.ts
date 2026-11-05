@@ -276,4 +276,22 @@ describe("events keeper", () => {
     expect(request.patch).toEqual({ observedState: "paused", consecutiveFailures: 0, nextActionAt: 123 });
     expect(request.clear).toEqual(["serverSubscriptionId", "lastError"]);
   });
+
+  it("never persists a signing secret in lastError", () => {
+    const request = commitRequestFromOutcome(claim(row()), {
+      patch: {
+        lastError: {
+          kind: "transient",
+          message:
+            "server said: delivery.secret whsec_QUJDREVGR0hJSktMTU5PUA== is invalid",
+          at: 1,
+          retryable: true,
+        },
+      },
+      nextActionAt: 123,
+    });
+    const message = (request.patch.lastError as { message: string }).message;
+    expect(message).not.toContain("QUJDREVGR0hJSktMTU5PUA");
+    expect(message).toContain("whsec_<redacted>");
+  });
 });

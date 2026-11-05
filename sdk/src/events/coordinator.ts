@@ -144,10 +144,11 @@ export class EventsCoordinator {
     record: SubscriptionRecord,
     method: string,
     error: unknown,
-    extraPatch: SubscriptionPatch = {}
+    extraPatch: SubscriptionPatch = {},
+    secrets: readonly (string | undefined)[] = []
   ): StepOutcome {
     const now = this.now();
-    const failure = classifyStepFailure(method, error, now);
+    const failure = classifyStepFailure(method, error, now, secrets);
     // `challenge_failed` is capped on its OWN streak: failures of another
     // kind before it (an outage on the first subscribe) must not spend its
     // attempts, so the count — and with it the backoff — restarts when the
@@ -312,7 +313,7 @@ export class EventsCoordinator {
       // Outcome unknown during a rotation: keep `rotated` (the slot already
       // holds the new secret as current) and retry with it — the previous
       // secret is NOT retired until a refresh is known to have landed.
-      return this.fail(record, "events/subscribe", error, patch);
+      return this.fail(record, "events/subscribe", error, patch, [secret]);
     }
 
     // 4. Reconcile the server's id onto the slot. A different id already on

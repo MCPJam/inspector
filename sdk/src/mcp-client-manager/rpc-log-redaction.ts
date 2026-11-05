@@ -77,6 +77,28 @@ function redactSecretsDeep(value: unknown, budget: { left: number }): unknown {
 }
 
 /**
+ * Text a server produced, such as an error message, with webhook signing
+ * secrets removed, so it can be stored and shown. Every `whsec_…` substring
+ * is replaced, and so is each secret in `known` with or without its `whsec_`
+ * prefix, because a server may quote only the key material.
+ */
+export function redactWebhookSecretsInText(
+  text: string,
+  known: readonly (string | undefined)[] = []
+): string {
+  let redacted = text.includes("whsec_")
+    ? text.replace(WHSEC_SUBSTRING, REDACTED_WEBHOOK_SECRET)
+    : text;
+  for (const secret of known) {
+    if (!secret) continue;
+    const material = secret.startsWith("whsec_") ? secret.slice(6) : secret;
+    if (material.length < 8) continue;
+    redacted = redacted.split(material).join(REDACTED_WEBHOOK_SECRET);
+  }
+  return redacted;
+}
+
+/**
  * `params.delivery` on ANY request, method-independent: a future method (or a
  * misspelled one a debugger is poking at) that carries a callback secret is
  * redacted by shape, not by a method allowlist that would lag behind it.

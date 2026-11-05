@@ -7,6 +7,7 @@ import {
 import {
   createRpcLogRedactor,
   redactRpcMessageForLog,
+  redactWebhookSecretsInText,
 } from "../../mcp-client-manager/rpc-log-redaction.js";
 import {
   EventsCapabilityCapture,
@@ -215,6 +216,53 @@ describe("profiles (C1)", () => {
     expect(computeRefreshAt({ now: 10, refreshBefore: 5, healthCheckIntervalMs: 1 })).toBe(
       10
     );
+  });
+});
+
+describe("failure messages are stored without signing secrets (C8)", () => {
+  it("removes the secret a server quotes back in a subscribe error, with or without its prefix", async () => {
+    let sent: string | undefined;
+    const rpc = {
+      subscribe: async (params: { delivery: { secret: string } }) => {
+        sent = params.delivery.secret;
+        throw new Error(
+          `delivery.secret ${sent} rejected (key material ${sent.slice("whsec_".length)})`
+        );
+      },
+    } as unknown as EventsRpcPort;
+    const inbox = new MemoryEventInbox({ publicOrigin: "https://h" });
+    const coordinator = new EventsCoordinator({
+      rpc: async () => rpc,
+      inbox: async () => inbox,
+    });
+    const outcome = await coordinator.step({
+      id: "esub_secret",
+      projectId: "p",
+      environmentId: null,
+      bindingKey: "b",
+      serverId: "srv_1",
+      profile: DRAFT_PROFILE_ID,
+      eventName: "thing.happened",
+      arguments: {},
+      mode: "webhook",
+      desiredState: "active",
+      observedState: "pending",
+      generation: 1,
+      nextActionAt: 0,
+      consecutiveFailures: 0,
+    });
+    expect(sent).toMatch(/^whsec_/);
+    const message = String(outcome.patch.lastError?.message);
+    expect(message).toContain("rejected");
+    expect(message).not.toContain(sent!.slice("whsec_".length));
+  });
+
+  it("redacts every whsec_ string even when the secret is not known", () => {
+    expect(
+      redactWebhookSecretsInText(
+        "bad secret whsec_QUJDREVGR0hJSktMTU5PUA== here"
+      )
+    ).toBe("bad secret whsec_<redacted> here");
   });
 });
 

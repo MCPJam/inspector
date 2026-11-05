@@ -32,6 +32,7 @@ import {
   EventsCoordinator,
   classifyStepFailure,
   computeBackoffMs,
+  redactWebhookSecretsInText,
   type EventsCoordinatorOptions,
   type EventsRpcPort,
   type InboxPort,
@@ -157,13 +158,17 @@ export function subscriptionRecordFromRow(
   return Object.assign(record, optional);
 }
 
-/** The backend's `lastError` validator takes exactly these four fields. */
+/**
+ * The backend's `lastError` validator takes exactly these four fields. The
+ * message is stored and shown to project members, so no signing secret
+ * reaches it, whichever path produced the failure.
+ */
 function sanitizeLastError(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
   const error = value as Record<string, unknown>;
   return {
     kind: String(error.kind ?? "unknown"),
-    message: String(error.message ?? ""),
+    message: redactWebhookSecretsInText(String(error.message ?? "")),
     at: typeof error.at === "number" ? error.at : Date.now(),
     retryable: error.retryable === true,
   };

@@ -11,6 +11,7 @@ import {
   classifyEventsRpcError,
   isInvalidEventsPayloadError,
 } from "../mcp-client-manager/events-ext-guards.js";
+import { redactWebhookSecretsInText } from "../mcp-client-manager/rpc-log-redaction.js";
 import { canonicalJson, sha256Hex } from "../contract/canonical.js";
 import {
   InboxBackpressureError,
@@ -152,16 +153,34 @@ export function parseRefreshBefore(value: string | null | undefined): number | n
 }
 
 function describe(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.length > 300 ? `${message.slice(0, 300)}…` : message;
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
  * Classify a failure as terminal, auth-lost or retryable. Every failure is
  * exactly one of these — there is no "retry forever" path for anything that
  * a retry cannot fix.
+ *
+ * The message usually comes from the server and is stored on the
+ * subscription and shown to project members, so it is redacted first: every
+ * `whsec_…` string, and each of `secrets` (the signing secrets this step
+ * sent) even when quoted without its prefix.
  */
 export function classifyStepFailure(
+  method: string,
+  error: unknown,
+  now: number,
+  secrets: readonly (string | undefined)[] = []
+): SubscriptionFailure & { authLost: boolean } {
+  const failure = classifyUnredacted(method, error, now);
+  const message = redactWebhookSecretsInText(failure.message, secrets);
+  return {
+    ...failure,
+    message: message.length > 300 ? `${message.slice(0, 300)}…` : message,
+  };
+}
+
+function classifyUnredacted(
   method: string,
   error: unknown,
   now: number
