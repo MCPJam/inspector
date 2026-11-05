@@ -29,6 +29,7 @@
  */
 
 import { normalizeCursor } from "../mcp-client-manager/events-ext-schemas.js";
+import { redactWebhookSecretsDeep } from "../mcp-client-manager/rpc-log-redaction.js";
 import { DEFAULT_POLL_FLOOR_MS } from "../mcp-client-manager/events-ext.js";
 import {
   BASE_BACKOFF_MS,
@@ -355,7 +356,10 @@ export class EventsCoordinator {
     patch.lastCursor = normalizeCursor(result.cursor);
     if (result.truncated) patch.lastGapAt = now;
     if (result.deliveryStatus !== undefined) {
-      patch.deliveryStatus = result.deliveryStatus;
+      // The server's own report, stored and shown to project members.
+      patch.deliveryStatus = redactWebhookSecretsDeep(result.deliveryStatus, [
+        secret,
+      ]);
     }
     patch.consecutiveFailures = 0;
     if (!patch.lastError) patch.lastError = undefined;

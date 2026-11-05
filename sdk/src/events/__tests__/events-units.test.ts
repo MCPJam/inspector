@@ -257,6 +257,77 @@ describe("failure messages are stored without signing secrets (C8)", () => {
     expect(message).not.toContain(sent!.slice("whsec_".length));
   });
 
+  const pendingRecord = {
+    id: "esub_secret",
+    projectId: "p",
+    environmentId: null,
+    bindingKey: "b",
+    serverId: "srv_1",
+    profile: DRAFT_PROFILE_ID,
+    eventName: "thing.happened",
+    arguments: {},
+    mode: "webhook" as const,
+    desiredState: "active" as const,
+    observedState: "pending" as const,
+    generation: 1,
+    nextActionAt: 0,
+    consecutiveFailures: 0,
+  };
+
+  async function stepWith(subscribe: (secret: string) => unknown) {
+    let sent = "";
+    const rpc = {
+      subscribe: async (params: { delivery: { secret: string } }) => {
+        sent = params.delivery.secret;
+        return subscribe(sent);
+      },
+    } as unknown as EventsRpcPort;
+    const inbox = new MemoryEventInbox({ publicOrigin: "https://h" });
+    const coordinator = new EventsCoordinator({
+      rpc: async () => rpc,
+      inbox: async () => inbox,
+    });
+    const outcome = await coordinator.step(pendingRecord);
+    expect(sent).toMatch(/^whsec_/);
+    return { outcome, sent };
+  }
+
+  it("never copies a callback error's reason into the stored kind unless the draft defines it", async () => {
+    const { outcome, sent } = await stepWith((secret) => {
+      throw Object.assign(new Error("callback rejected"), {
+        code: -32015,
+        data: { reason: secret },
+      });
+    });
+    expect(outcome.patch.lastError?.kind).toBe("callback_error");
+    expect(JSON.stringify(outcome.patch.lastError)).not.toContain(
+      sent.slice("whsec_".length)
+    );
+
+    const known = await stepWith(() => {
+      throw Object.assign(new Error("callback timed out"), {
+        code: -32015,
+        data: { reason: "timeout" },
+      });
+    });
+    expect(known.outcome.patch.lastError?.kind).toBe("callback_timeout");
+  });
+
+  it("removes the secret from a delivery status the server reports back", async () => {
+    const { outcome, sent } = await stepWith((secret) => ({
+      id: "srv-sub-1",
+      cursor: null,
+      deliveryStatus: {
+        active: false,
+        lastError: `challenge_failed for ${secret}`,
+        [secret.slice("whsec_".length)]: "echoed as a key",
+      },
+    }));
+    const stored = JSON.stringify(outcome.patch.deliveryStatus);
+    expect(stored).toContain("challenge_failed for");
+    expect(stored).not.toContain(sent.slice("whsec_".length));
+  });
+
   it("redacts every whsec_ string even when the secret is not known", () => {
     expect(
       redactWebhookSecretsInText(

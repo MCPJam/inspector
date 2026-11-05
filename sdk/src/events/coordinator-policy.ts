@@ -11,6 +11,7 @@ import {
   classifyEventsRpcError,
   isInvalidEventsPayloadError,
 } from "../mcp-client-manager/events-ext-guards.js";
+import { DELIVERY_ERROR_CATEGORIES } from "../mcp-client-manager/events-ext-schemas.js";
 import { redactWebhookSecretsInText } from "../mcp-client-manager/rpc-log-redaction.js";
 import { canonicalJson, sha256Hex } from "../contract/canonical.js";
 import {
@@ -180,6 +181,20 @@ export function classifyStepFailure(
   };
 }
 
+const CALLBACK_REASONS: ReadonlySet<string> = new Set(
+  DELIVERY_ERROR_CATEGORIES
+);
+
+/**
+ * `data.reason` is the server's text, and `kind` is stored and shown like the
+ * message, so only the draft's own categories reach it.
+ */
+function callbackFailureKind(reason: unknown): string {
+  return typeof reason === "string" && CALLBACK_REASONS.has(reason)
+    ? `callback_${reason}`
+    : "callback_error";
+}
+
 function classifyUnredacted(
   method: string,
   error: unknown,
@@ -207,8 +222,8 @@ function classifyUnredacted(
   if (classified) {
     const reason = (classified.data as { reason?: unknown } | undefined)?.reason;
     const kind =
-      classified.kind === "CallbackEndpointError" && typeof reason === "string"
-        ? `callback_${reason}`
+      classified.kind === "CallbackEndpointError"
+        ? callbackFailureKind(reason)
         : classified.kind;
     return {
       kind,

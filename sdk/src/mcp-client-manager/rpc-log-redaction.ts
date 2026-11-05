@@ -99,6 +99,27 @@ export function redactWebhookSecretsInText(
 }
 
 /**
+ * `redactWebhookSecretsInText` over every string in a JSON-shaped value, keys
+ * included, for a server's own report that is stored and shown as-is.
+ */
+export function redactWebhookSecretsDeep(
+  value: unknown,
+  known: readonly (string | undefined)[] = []
+): unknown {
+  if (typeof value === "string") return redactWebhookSecretsInText(value, known);
+  if (Array.isArray(value)) {
+    return value.map((item) => redactWebhookSecretsDeep(item, known));
+  }
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      redactWebhookSecretsInText(key, known),
+      redactWebhookSecretsDeep(item, known),
+    ])
+  );
+}
+
+/**
  * `params.delivery` on ANY request, method-independent: a future method (or a
  * misspelled one a debugger is poking at) that carries a callback secret is
  * redacted by shape, not by a method allowlist that would lag behind it.

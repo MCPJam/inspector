@@ -167,7 +167,7 @@ function sanitizeLastError(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
   const error = value as Record<string, unknown>;
   return {
-    kind: String(error.kind ?? "unknown"),
+    kind: redactWebhookSecretsInText(String(error.kind ?? "unknown")),
     message: redactWebhookSecretsInText(String(error.message ?? "")),
     at: typeof error.at === "number" ? error.at : Date.now(),
     retryable: error.retryable === true,
