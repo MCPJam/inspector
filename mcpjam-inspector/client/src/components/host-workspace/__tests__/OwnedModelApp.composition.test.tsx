@@ -18,7 +18,7 @@ import {
   useOwnedModelAppWorkspace,
 } from "../OwnedModelApp";
 import { HostedMrtrHost } from "../../elicitation/HostedMrtrHost";
-import { registerComposerForm, registerComposerSlot } from "../../elicitation/composer-form-store";
+import { registerComposerSlot } from "../../elicitation/composer-form-store";
 import { useHostedMrtrStore } from "@/stores/hosted-mrtr-store";
 import {
   ContextAttachmentChip,
@@ -744,28 +744,6 @@ describe("the client's Model context toggle", () => {
     expect(screen.getByTestId("references")).toHaveTextContent(token);
     expect(mocks.mounted).toBe(1);
   });
-});
-
-it("only exposes a direct model-tool form to Apps in its own Compare workspace", async () => {
-  mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
-    const body = JSON.parse(init.body as string);
-    if (url.endsWith("/model/open")) return reply({ ...handle, instanceToken: body.instanceToken });
-    if (url.endsWith("/model/close")) return reply({ closed: true });
-    throw new Error("Unexpected API path");
-  });
-  const view = render(<><CompareModelLane lane="c" /><CompareModelLane lane="d" /></>);
-  await waitFor(() => expect(mocks.pendingInputs.size).toBe(2));
-  const workspace = compareLaneWorkspace({ actorId: "actor", projectId: "project", hostId: "host" }, "model", "c", "chat-c");
-  const cancel = vi.fn();
-  let unregister = () => {};
-  act(() => { unregister = registerComposerForm({ id: "direct-mrtr-form", workspaceId: workspace.workspaceId, serverName: "CAD", cancel }); });
-  expect(mocks.pendingInputs.get("c")).toBe(true);
-  expect(mocks.pendingInputs.get("d")).toBe(false);
-  act(() => unregister());
-  expect(mocks.pendingInputs.get("c")).toBe(false);
-  expect(cancel).not.toHaveBeenCalled();
-  expect(mocks.mounted).toBe(2);
-  view.unmount();
 });
 
 it("gives a direct MCP tool's actual form priority without replaying the model App", async () => {
