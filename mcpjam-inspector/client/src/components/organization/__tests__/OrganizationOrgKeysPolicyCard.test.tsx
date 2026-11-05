@@ -1,6 +1,6 @@
 import {
   fireEvent,
-  render,
+  render as renderComponent,
   screen,
   waitFor,
   within,
@@ -12,6 +12,13 @@ import type {
   OrgAiConfig,
 } from "@/hooks/useOrgAiConfig";
 import { OrganizationOrgKeysPolicyCard } from "../OrganizationOrgKeysPolicyCard";
+
+function render(...args: Parameters<typeof renderComponent>) {
+  const result = renderComponent(...args);
+  const coverage = screen.queryByRole("button", { name: "Feature coverage" });
+  if (coverage) fireEvent.click(coverage);
+  return result;
+}
 
 const mockSetRequireOrgKeys = vi.fn();
 
@@ -561,7 +568,7 @@ describe("OrganizationOrgKeysPolicyCard", () => {
 
       expect(
         within(screen.getByTestId("org-ai-feature-insights")).getByText(
-          "Add a direct cloud provider below. Then choose the organization's default AI model.",
+          "Add a direct cloud provider in Providers. Then choose the organization's default AI model.",
         ),
       ).toBeInTheDocument();
     });
@@ -577,7 +584,7 @@ describe("OrganizationOrgKeysPolicyCard", () => {
 
     const chat = screen.getByTestId("org-ai-feature-chat");
     expect(
-      within(chat).getByText("Add a direct cloud provider below."),
+      within(chat).getByText("Add a direct cloud provider in Providers."),
     ).toBeInTheDocument();
     // Chat is never blocked by itself.
     expect(within(chat).queryByText(/Blocked by/)).not.toBeInTheDocument();
@@ -585,7 +592,7 @@ describe("OrganizationOrgKeysPolicyCard", () => {
     const evals = screen.getByTestId("org-ai-feature-evals");
     expect(
       within(evals).getByText(
-        "Add a direct cloud provider below. Then choose a judge model from it for each suite.",
+        "Add a direct cloud provider in Providers. Then choose a judge model from it for each suite.",
       ),
     ).toBeInTheDocument();
     expect(
@@ -681,4 +688,14 @@ describe("OrganizationOrgKeysPolicyCard", () => {
       "Use your keys for all AI features is available on Enterprise plans.",
     );
   });
+});
+
+it("keeps feature details collapsed until requested", () => {
+  hookState.config = makeConfig({ requireOrgKeys: true });
+  renderComponent(<OrganizationOrgKeysPolicyCard organizationId="org-1" isAdmin />);
+  const trigger = screen.getByRole("button", { name: "Feature coverage" });
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByTestId("org-ai-feature-chat")).not.toBeInTheDocument();
+  fireEvent.click(trigger);
+  expect(screen.getByTestId("org-ai-feature-chat")).toBeInTheDocument();
 });
