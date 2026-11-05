@@ -1,10 +1,12 @@
 import { conformanceExitCode } from "../lib/conformance-exit-code.js";
 import { Command } from "commander";
-import { reportScore } from "../lib/conformance-exit-code.js";
+import { reportReadiness, reportScore } from "../lib/conformance-exit-code.js";
 import {
   MCP_TASKS_CHECK_CATEGORIES,
   MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
   MCPTasksConformanceTest,
+  RENAMED_MCP_TASKS_CHECK_IDS,
   isMCPTasksWireError,
   isUnknownTaskError,
   type MCPClientManager,
@@ -77,7 +79,7 @@ const TASKS_CHECK_IDS_BY_CATEGORY: Record<
     "tasks-invalid-task-id-rejected",
     "tasks-status-payload-shape",
     "tasks-cancel-ack-shape",
-    "tasks-input-required-update-completes",
+    "tasks-update-ack-shape",
     "tasks-ttl-integer-shape",
     "tasks-undeclared-capability-names-requirements",
   ],
@@ -92,6 +94,7 @@ export const tasksConformanceExitCode = conformanceExitCode;
 export interface TasksConformanceOptions extends SharedServerTargetOptions {
   category?: string[];
   checkId?: string[];
+  adviceId?: string[];
   toolName?: string;
   toolArgs?: string;
   pollTimeout?: number;
@@ -123,13 +126,42 @@ export function buildTasksConformanceConfig(
     );
   }
 
-  const checkIds = options.checkId?.filter(Boolean);
+  // A renamed id runs under its current name; say what changed.
+  const checkIds = options.checkId?.filter(Boolean).map((id) => {
+    if (!Object.hasOwn(RENAMED_MCP_TASKS_CHECK_IDS, id)) return id;
+    const current =
+      RENAMED_MCP_TASKS_CHECK_IDS[
+        id as keyof typeof RENAMED_MCP_TASKS_CHECK_IDS
+      ];
+    process.stderr.write(
+      `Note: check ${id} is now ${current}. Running that instead.\n`
+    );
+    return current;
+  });
   const invalidCheckIds = collectInvalidEntries(checkIds, MCP_TASKS_CHECK_IDS);
   if (invalidCheckIds.length > 0) {
     throw usageError(
       `Unknown check id${
         invalidCheckIds.length === 1 ? "" : "s"
       }: ${invalidCheckIds.join(", ")}`
+    );
+  }
+
+  // A blank id is a mistake, not an omitted flag: dropping it would run every
+  // advice instead of the one asked for.
+  if (options.adviceId?.some((id) => !id.trim())) {
+    throw usageError("--advice-id needs an advice id.");
+  }
+  const readinessIds = options.adviceId;
+  const invalidReadinessIds = collectInvalidEntries(
+    readinessIds,
+    MCP_TASKS_READINESS_IDS
+  );
+  if (invalidReadinessIds.length > 0) {
+    throw usageError(
+      `Unknown advice id${
+        invalidReadinessIds.length === 1 ? "" : "s"
+      }: ${invalidReadinessIds.join(", ")}. Valid advice ids: ${MCP_TASKS_READINESS_IDS.join(", ")}`
     );
   }
 
@@ -151,6 +183,12 @@ export function buildTasksConformanceConfig(
     ...serverConfig,
     ...(resolvedCheckIds && resolvedCheckIds.length > 0
       ? { checkIds: resolvedCheckIds as MCPTasksConformanceConfig["checkIds"] }
+      : {}),
+    ...(readinessIds && readinessIds.length > 0
+      ? {
+          readinessIds:
+            readinessIds as MCPTasksConformanceConfig["readinessIds"],
+        }
       : {}),
     ...(options.toolName ? { toolName: options.toolName } : {}),
     ...(options.toolArgs
@@ -725,13 +763,19 @@ export function registerTasksCommands(program: Command): void {
         []
       )
       .option(
+        "--advice-id <id>",
+        "Specific advice ID to run. Repeat for multiple. Default: all.",
+        (value: string, previous: string[] = []) => [...previous, value],
+        []
+      )
+      .option(
         "--tool-name <tool>",
         "Tool used to provoke a task. Required for servers whose tools carry no task metadata (the extension wire)."
       )
       .option("--tool-args <json>", "Tool arguments as a JSON object")
       .option(
         "--input-responses <json>",
-        'Responses to submit when the probed task reports input_required, keyed by inputRequests key: {"name":{"result":{"action":"accept","content":{"name":"Ada"}}}}. Without it the run stops as soon as the task parks on input_required, and the round-trip check reports what it needs.'
+        'Responses to submit when the probed task reports input_required, keyed by inputRequests key: {"name":{"result":{"action":"accept","content":{"name":"Ada"}}}}. Without it the run stops as soon as the task parks on input_required, and the tasks/update acknowledgement check is not applicable.'
       )
       .option(
         "--poll-timeout <ms>",
@@ -787,6 +831,7 @@ export function registerTasksCommands(program: Command): void {
     process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
 
     reportScore(scoreFromTasksResult(result), command);
+    reportReadiness(result, command);
     const incompleteReason = (result as { incompleteReason?: string })
       .incompleteReason;
     if (incompleteReason && !globalOptions.quiet) {

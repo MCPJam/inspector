@@ -20,22 +20,40 @@ import {
   type TaskCreatedPayload,
 } from "../../shared/hosted-task-created.js";
 import { logger } from "./logger.js";
+import { taskOwnerScope } from "../../shared/task-owner.js";
 
 type ChunkWriter = { write: (chunk: UIMessageChunk) => void };
 
 export interface HostedTaskCreatedBridgeOptions {
+  ownerRequestId?: string;
+  requestedOwnerScope?: string;
   /**
-   * Display names by server id. The tracker is keyed by NAME, so a task
-   * delivered with only a Convex document id lands where the Tasks tab never
-   * looks — see `TaskCreatedPayload.serverName`.
+   * Display labels by canonical server id. Legacy unbound bookmarks still
+   * use the name as their lookup key.
    */
   serverNamesById: Record<string, string>;
 }
 
 export class HostedTaskCreatedBridge {
   private writer: ChunkWriter | null = null;
+  private ownerScope: string | undefined;
 
   constructor(private readonly options: HostedTaskCreatedBridgeOptions) {}
+
+  bindOwner(projectId: string, ownerUserId: string | null | undefined): void {
+    const scope = taskOwnerScope(projectId, ownerUserId);
+    if (this.ownerScope && this.ownerScope !== scope)
+      throw new Error("Task bridge owner cannot change");
+    this.ownerScope = scope;
+  }
+
+  get canDeliverOwnedTasks(): boolean {
+    return Boolean(
+      this.options.ownerRequestId &&
+      this.ownerScope &&
+      this.options.requestedOwnerScope === this.ownerScope,
+    );
+  }
 
   attachStreamWriter(writer: ChunkWriter): void {
     this.writer = writer;
@@ -43,9 +61,26 @@ export class HostedTaskCreatedBridge {
 
   /** The sink consumer. Bind this, not the class, when registering. */
   handle = (event: TaskCreatedEvent): void => {
+    const bound =
+      event.identity.connectionId !== undefined ||
+      event.sourceExecutionId !== undefined;
+    if (bound && !this.canDeliverOwnedTasks) {
+      logger.warn(
+        "[task-created-bridge] bound task has no ownership handshake; skipping delivery",
+      );
+      return;
+    }
     this.emit({
       taskId: event.identity.taskId,
       serverId: event.identity.serverId,
+      ...(bound
+        ? {
+            ownerRequestId: this.options.ownerRequestId,
+            ownerScope: this.ownerScope,
+            connectionId: event.identity.connectionId,
+            sourceExecutionId: event.sourceExecutionId,
+          }
+        : {}),
       ...(this.options.serverNamesById[event.identity.serverId]
         ? { serverName: this.options.serverNamesById[event.identity.serverId] }
         : {}),

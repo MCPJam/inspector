@@ -3,6 +3,10 @@ import { createHash, randomUUID } from "node:crypto";
 import type { ModelMessage, ToolSet, UIMessageChunk } from "ai";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import {
+  parseToolResultAuthChallenge,
+  type AuthChallengeSignal,
+} from "@mcpjam/sdk";
+import {
   SCOPE_STEP_UP_LIVE_TTL_MS,
   SCOPE_STEP_UP_FINISHED_DATA_PART_TYPE,
   SCOPE_STEP_UP_VERSION,
@@ -29,17 +33,69 @@ import type {
   MrtrEngineResume,
 } from "./mrtr-hosted-chat.js";
 import { scopeStepUpInfoFromToolError } from "./insufficient-scope-step-up.js";
+import {
+  AUTH_CHALLENGE_REASON,
+  authChallengeCancelledText,
+} from "@/shared/auth-challenge";
+import {
+  authChallengeInfoFromToolError,
+  emitRepeatedSignInNotice,
+} from "./auth-challenge-chat.js";
+import { isHostedAuthChallengeContinuationId } from "./hosted-auth-challenge-continuation.js";
+import {
+  checkRecordedCredentialBinding,
+  checkResumeCredentialBinding,
+  HostedCredentialBinding,
+  isCredentialBinding,
+  ownsHostedCredential,
+} from "./hosted-credential-binding.js";
 
-type HostedScopeStepUpState = {
+
+export {
+  cancelHostedContinuationForNewMessage,
+  createHostedAuthChallengeContinuation,
+  HOSTED_AUTH_CHALLENGE_CONTINUATION_PREFIX,
+  hostedAuthChallengeContinuationId,
+  isHostedAuthChallengeContinuationId,
+  settleHostedAuthChallengeHistoryCall,
+} from "./hosted-auth-challenge-continuation.js";
+export {
+  checkRecordedCredentialBinding,
+  checkResumeCredentialBinding,
+  resolveHostedCredentialBinding,
+  type HostedCredentialBinding,
+} from "./hosted-credential-binding.js";
+
+export type HostedScopeStepUpState = {
   v: 1;
+  /** Absent: a 403 step-up. */
+  reason?: typeof AUTH_CHALLENGE_REASON;
   serverId: string;
+  serverName?: string;
   connectionId?: string;
+  /** Recorded for sign-in continuations. */
+  credentialBinding?: HostedCredentialBinding;
   resourceUrl?: string;
   toolCallId: string;
   toolName: string;
   toolInput: unknown;
   inputHash: string;
 };
+
+/** The terminal reason of a sign-in whose replay was refused again. */
+export const HOSTED_AUTH_CHALLENGE_REPEATED_REASON =
+  "authorization_required repeated after sign-in";
+
+/** The model-facing text when a sign-in settled on another credential. */
+export function signedInWithAnotherCredentialText(
+  serverName: string,
+  toolName: string,
+  binding: HostedCredentialBinding | undefined,
+): string {
+  return binding?.kind === "shared"
+    ? `Not run: the user signed in to MCP server "${serverName}" with their own account instead of the shared connection "${toolName}" used, so it was not retried. Run it again if the user asks.`
+    : `Not run: the user signed in to MCP server "${serverName}" with a different account than "${toolName}" used, so it was not retried. Run it again if the user asks.`;
+}
 
 function stableJson(value: unknown): string {
   if (value === null || typeof value !== "object") {
@@ -55,11 +111,11 @@ function stableJson(value: unknown): string {
     .join(",")}}`;
 }
 
-function hashInput(value: unknown): string {
+export function hashInput(value: unknown): string {
   return createHash("sha256").update(stableJson(value)).digest("base64url");
 }
 
-function encodeState(state: HostedScopeStepUpState): string {
+export function encodeState(state: HostedScopeStepUpState): string {
   return JSON.stringify(state);
 }
 
@@ -83,13 +139,21 @@ function decodeState(value: unknown): HostedScopeStepUpState {
     throw new Error("scope_step_up_continuation_invalid");
   }
   const state = parsed as HostedScopeStepUpState;
+  if (
+    (state.reason !== undefined && state.reason !== AUTH_CHALLENGE_REASON) ||
+    (state.credentialBinding !== undefined &&
+      !isCredentialBinding(state.credentialBinding)) ||
+    (state.serverName !== undefined && typeof state.serverName !== "string")
+  ) {
+    throw new Error("scope_step_up_continuation_invalid");
+  }
   if (hashInput(state.toolInput) !== state.inputHash) {
     throw new Error("scope_step_up_continuation_input_mismatch");
   }
   return state;
 }
 
-function readProtectedResourceUrl(
+export function readProtectedResourceUrl(
   manager: Pick<MCPClientManager, "getServerConfig">,
   serverId: string
 ): string | undefined {
@@ -349,18 +413,56 @@ export function buildHostedScopeStepUpResume(input: {
         };
       }
 
-      if (
-        state.connectionId &&
-        toolConnectionAttribution(
-          originalTool,
-          state.toolInput,
-          state.toolCallId,
-        )?.connectionId !== state.connectionId
-      ) {
+      const resolvedConnectionId = toolConnectionAttribution(
+        originalTool,
+        state.toolInput,
+        state.toolCallId,
+      )?.connectionId;
+      const binding = state.credentialBinding
+        ? checkRecordedCredentialBinding(
+            state.credentialBinding,
+            resolvedConnectionId,
+          )
+        : checkResumeCredentialBinding(state.connectionId, resolvedConnectionId);
+      const ownershipVerified =
+        !binding.ok ||
+        !binding.firstBinding ||
+        state.reason !== AUTH_CHALLENGE_REASON ||
+        (resolvedConnectionId !== undefined &&
+          (await ownsHostedCredential({
+            bearer: input.bearer,
+            projectId: input.projectId,
+            serverId: state.serverId,
+            connectionId: resolvedConnectionId,
+            abortSignal: input.abortSignal,
+          })));
+      if (!binding.ok || !ownershipVerified) {
         await cancelContinuation(input.bearer, {
           continuationId: input.request.continuationId,
           reason: "original account is no longer available",
         });
+        if (state.reason === AUTH_CHALLENGE_REASON) {
+          // The sign-in produced another credential (a personal connection
+          // beside a shared one, or another account at the authorization
+          // server). Never replayed across credentials; the model is
+          // told to run it again rather than left with a paused call.
+          await scrubContinuation(input.bearer, {
+            continuationId: input.request.continuationId,
+          });
+          return {
+            kind: "recover",
+            reason: "signed in with a different credential",
+            toolResultMessage: buildErrorToolResult(
+              state.toolCallId,
+              state.toolName,
+              signedInWithAnotherCredentialText(
+                state.serverName ?? serverId,
+                state.toolName,
+                state.credentialBinding,
+              ),
+            ),
+          };
+        }
         return {
           kind: "halted",
           outcome: "failed",
@@ -370,6 +472,7 @@ export function buildHostedScopeStepUpResume(input: {
       }
 
       let replayError: unknown;
+      let replayResult: unknown;
       const execute = originalTool.execute.bind(originalTool);
       const replayTool = {
         ...originalTool,
@@ -386,13 +489,54 @@ export function buildHostedScopeStepUpResume(input: {
             throw new Error(marked.error);
           }
           try {
-            return await execute(toolInput, options);
+            replayResult = await execute(toolInput, options);
+            return replayResult;
           } catch (error) {
             replayError = error;
             throw error;
           }
         },
       };
+      // A sign-in refused again right after the user signed in is permanent
+      //: finalized as failed, answered with the repeat copy, no new card.
+      const refused = async (
+        terminalReason: string,
+        toolResultMessage: ModelMessage,
+      ): Promise<MrtrChatResumeResolution> => {
+        await finalizeContinuation(
+          input.bearer,
+          {
+            continuationId: input.request.continuationId,
+            leaseId,
+            expectedStateVersion: claimed.stateVersion,
+            status: "failed",
+            terminalReason,
+          },
+          input.abortSignal
+        );
+        await scrubContinuation(input.bearer, {
+          continuationId: input.request.continuationId,
+        });
+        return { kind: "recover", reason: terminalReason, toolResultMessage };
+      };
+      const repeatedSignIn = (signal: AuthChallengeSignal) =>
+        refused(
+          HOSTED_AUTH_CHALLENGE_REPEATED_REASON,
+          buildErrorToolResult(
+            state.toolCallId,
+            state.toolName,
+            emitRepeatedSignInNotice(
+              { write },
+              {
+                serverId,
+                ...(state.serverName ? { serverName: state.serverName } : {}),
+                toolCallId: state.toolCallId,
+                toolName: state.toolName,
+                signal,
+              },
+            ),
+          ),
+        );
       const replayHistory: ModelMessage[] = [
         {
           role: "assistant",
@@ -426,6 +570,17 @@ export function buildHostedScopeStepUpResume(input: {
           serverId,
           toolCallId: state.toolCallId,
         });
+        const repeatedAuthChallenge =
+          state.reason === AUTH_CHALLENGE_REASON && !repeatedChallenge
+            ? authChallengeInfoFromToolError({
+                error: replayError,
+                serverId,
+                toolCallId: state.toolCallId,
+              })
+            : undefined;
+        if (repeatedAuthChallenge) {
+          return repeatedSignIn(repeatedAuthChallenge.signal);
+        }
         if (repeatedChallenge) {
           await finalizeContinuation(
             input.bearer,
@@ -487,6 +642,18 @@ export function buildHostedScopeStepUpResume(input: {
         };
       }
 
+      // A challenged result is a refusal, not a success: it must not settle
+      // the continuation as completed.
+      const resultChallenge = parseToolResultAuthChallenge(replayResult);
+      if (resultChallenge) {
+        return state.reason === AUTH_CHALLENGE_REASON
+          ? repeatedSignIn(resultChallenge)
+          : refused(
+              "the retried call returned a sign-in challenge",
+              resultMessage,
+            );
+      }
+
       const completed = await finalizeContinuation(
         input.bearer,
         {
@@ -529,6 +696,8 @@ export function buildHostedScopeStepUpCancellation(input: {
   bearer: string;
   messages: ModelMessage[];
   tools: ToolSet;
+  /** Display names for the sign-in cancel copy. */
+  serverNameFor?: (serverId: string) => string | undefined;
 }): MrtrEngineResume {
   return {
     toolCallId: input.request.toolCallId,
@@ -586,6 +755,20 @@ export function buildHostedScopeStepUpCancellation(input: {
         },
         transient: true,
       } as unknown as UIMessageChunk);
+      if (isHostedAuthChallengeContinuationId(input.request.continuationId)) {
+        return {
+          kind: "recover",
+          reason: "sign-in was not completed",
+          toolResultMessage: buildErrorToolResult(
+            input.request.toolCallId,
+            unresolved.toolName,
+            authChallengeCancelledText(
+              input.serverNameFor?.(serverId) ?? serverId,
+              unresolved.toolName,
+            ),
+          ),
+        };
+      }
       return {
         kind: "recover",
         reason: "authorization was not completed",

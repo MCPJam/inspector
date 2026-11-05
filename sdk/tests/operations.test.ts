@@ -11,7 +11,9 @@ import {
   listTools,
   withEphemeralClient,
   withDisposableManager,
+  ephemeralServerId,
 } from "../src/operations";
+import { ProtocolVersionPinUnsupported } from "../src/mcp-client-manager";
 
 function createMockManager(overrides: Record<string, any> = {}) {
   return {
@@ -520,6 +522,56 @@ describe("withEphemeralClient", () => {
     expect(beforeConnect).toHaveBeenCalledTimes(1);
     // connectToServer is never reached, so fn (which follows it) never runs.
     expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("names the connection after the server, not an internal placeholder", async () => {
+    const beforeConnect = jest.fn(() => {
+      throw new Error("stop before connecting");
+    });
+
+    await expect(
+      withEphemeralClient(
+        { url: "https://bart.example.com/mcp" } as never,
+        jest.fn() as never,
+        { beforeConnect },
+      ),
+    ).rejects.toThrow("stop before connecting");
+
+    expect(beforeConnect).toHaveBeenCalledWith(
+      expect.anything(),
+      "bart.example.com",
+    );
+  });
+});
+
+describe("ephemeralServerId", () => {
+  it("is the endpoint's host, port included, for an HTTP server", () => {
+    expect(ephemeralServerId({ url: "https://bart.example.com/mcp" })).toBe(
+      "bart.example.com",
+    );
+    expect(ephemeralServerId({ url: "http://localhost:3000/mcp" })).toBe(
+      "localhost:3000",
+    );
+  });
+
+  it("keeps an unparseable URL as written", () => {
+    expect(ephemeralServerId({ url: "not a url" })).toBe("not a url");
+  });
+
+  it("is the command's name for a stdio server", () => {
+    expect(ephemeralServerId({ command: "/usr/local/bin/node" })).toBe("node");
+    expect(ephemeralServerId({ command: "C:\\tools\\server.exe" })).toBe(
+      "server.exe",
+    );
+  });
+
+  it("is what a protocol-version refusal names", () => {
+    const error = new ProtocolVersionPinUnsupported(
+      ephemeralServerId({ url: "https://bart.example.com/mcp" }),
+      "2026-07-28",
+    );
+    expect(error.message).toContain('MCP server "bart.example.com"');
+    expect(error.message).not.toContain("__ephemeral__");
   });
 });
 

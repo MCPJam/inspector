@@ -39,7 +39,7 @@ function contextRefusal(error: unknown): Refusal | undefined {
     return {
       code,
       // Content the client should never have sent, rather than a budget.
-      status: REFUSAL_STATUS[code] ?? 400,
+      status: Object.hasOwn(REFUSAL_STATUS, code) ? REFUSAL_STATUS[code] : 400,
       diagnostics: [pluginContextRefusalDiagnostic(code, error.excess)],
       ...(error.excess ? { excess: error.excess } : {}),
     };

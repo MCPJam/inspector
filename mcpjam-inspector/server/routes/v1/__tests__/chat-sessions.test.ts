@@ -489,7 +489,7 @@ describe("POST /v1/chat-sessions/messages", () => {
     expect(mutationMock).not.toHaveBeenCalled();
   });
 
-  it("requires a project and a model to start a session", async () => {
+  it("requires a project and an execution target to start a session", async () => {
     expect((await turn({ idempotencyKey: "k4", message: "hi" })).status).toBe(
       400,
     );

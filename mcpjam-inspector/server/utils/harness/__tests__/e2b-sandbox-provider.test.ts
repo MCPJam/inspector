@@ -25,23 +25,32 @@ const mocks = vi.hoisted(() => {
     read: vi.fn(),
     write: vi.fn(),
     connect: vi.fn(),
+    brokerConnect: vi.fn(),
   };
 });
 const { FakeCommandExitError } = mocks;
 const sandboxState = mocks;
 
-vi.mock("e2b", () => ({
-  Sandbox: {
-    connect: async (id: string, opts?: Record<string, unknown>) => {
-      await mocks.connect(id, opts);
-      return {
+vi.mock("../../computers/attach-sandbox.js", () => {
+  const connection = (id: string) => ({
         sandboxId: id,
         commands: { run: mocks.run },
         files: { read: mocks.read, write: mocks.write },
         getHost: (p: number) => `host-${p}.e2b.dev`,
-      };
+      });
+  return {
+    attachRunningSandbox: async (id: string, opts?: Record<string, unknown>) => {
+      await mocks.connect(id, opts);
+      return connection(id);
     },
-  },
+    attachBrokerPreparedSandbox: async (id: string, opts?: Record<string, unknown>) => {
+      await mocks.brokerConnect(id, opts);
+      return connection(id);
+    },
+  };
+});
+
+vi.mock("e2b", () => ({
   CommandExitError: mocks.FakeCommandExitError,
   FileNotFoundError: mocks.FakeFileNotFoundError,
   SandboxNotFoundError: mocks.FakeSandboxNotFoundError,
@@ -66,6 +75,7 @@ beforeEach(() => {
   sandboxState.run.mockReset();
   sandboxState.run.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
   sandboxState.connect.mockReset();
+  sandboxState.brokerConnect.mockReset();
 });
 
 afterEach(() => {
@@ -73,6 +83,28 @@ afterEach(() => {
 });
 
 const provider = () => createE2BHarnessSandboxProvider({ sandboxId: "sbx_1" });
+
+describe("broker-prepared connection", () => {
+  it("selects the shortcut only after the caller records broker success", async () => {
+    let ready = false;
+    const p = createE2BHarnessSandboxProvider({ sandboxId: "sbx_1", connectionPreparedByBroker: () => ready });
+    await p.createSession();
+    expect(sandboxState.connect).toHaveBeenCalledTimes(1);
+    expect(sandboxState.brokerConnect).not.toHaveBeenCalled();
+    ready = true;
+    await p.resumeSession!({ sessionId: "session" });
+    expect(sandboxState.brokerConnect).toHaveBeenCalledTimes(1);
+    expect(sandboxState.connect).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fall back to a wake when an acknowledged box disappears", async () => {
+    sandboxState.brokerConnect.mockRejectedValueOnce(new mocks.FakeSandboxNotFoundError("gone"));
+    const p = createE2BHarnessSandboxProvider({ sandboxId: "sbx_1", connectionPreparedByBroker: () => true });
+    await expect(p.createSession()).rejects.toBeInstanceOf(HarnessInfraSetupError);
+    expect(sandboxState.connect).not.toHaveBeenCalled();
+    expect(sandboxState.run).not.toHaveBeenCalled();
+  });
+});
 
 describe("the pnpm guard", () => {
   it("explains itself when pnpm is missing and installing it fails", async () => {

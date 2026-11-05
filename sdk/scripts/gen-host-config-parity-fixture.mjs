@@ -186,10 +186,11 @@ const inputs = [
       },
     },
   },
-  // Mid-session sign-in knobs (same enum discipline as above). Absent is
-  // omitted; the absent-value literals are stored and hash distinctly. For
-  // the `_meta` pair the absent action is "passthrough".
+  // ── Mid-session sign-in knobs (same enum discipline as above) ──
+  // Absent is omitted; the absent-value literals are stored and hash
+  // distinctly. For the `_meta` pair the absent ACTION is "passthrough".
   {
+    // Claude Code's seeded pair: notify, and only on a Bearer 401.
     label: "mcp-profile-auth-challenge-unauthorized-notify-bearer-header",
     input: {
       ...base(),

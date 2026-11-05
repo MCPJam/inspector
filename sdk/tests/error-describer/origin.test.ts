@@ -192,6 +192,13 @@ describe("origin — credential ownership override", () => {
       expect(originOf(normalized)).toBe("user_config");
     }
   );
+
+  it("leaves account/guest_input_too_large with the guest, whose request was over the cap", () => {
+    const normalized = describeAsSlug("account/guest_input_too_large");
+
+    expect(normalized.slug).toBe("account/guest_input_too_large");
+    expect(originOf(normalized)).toBe("user_config");
+  });
 });
 
 describe("originOf — reading across versions", () => {

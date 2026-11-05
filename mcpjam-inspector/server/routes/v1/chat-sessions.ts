@@ -104,6 +104,7 @@ type SessionRow = {
   resumeConfig?: {
     modelId?: string;
     toolMode?: "read_only" | "auto";
+    requireNativeToolDiscovery?: boolean;
     environmentId?: string;
     serverIds?: string[];
     systemPrompt?: string;
@@ -115,6 +116,9 @@ type SessionRow = {
 
 /** The `getSessionTurnTraces` projection, hand-mirrored. */
 type TurnTraceRow = {
+  setupHashAtTurn?: string;
+  setupStatus?: "complete" | "incomplete";
+  setupIncompleteReasons?: string[];
   turnId: string;
   promptIndex: number;
   startedAt: number;
@@ -470,6 +474,13 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
         ...(row.modelId ? { modelId: row.modelId } : {}),
         ...(row.usage ? { usage: normalizeUsage(row.usage) } : {}),
         spanCount: row.spanCount ?? 0,
+        ...(row.setupHashAtTurn
+          ? { setupHashAtTurn: row.setupHashAtTurn }
+          : {}),
+        ...(row.setupStatus ? { setupStatus: row.setupStatus } : {}),
+        ...(row.setupIncompleteReasons
+          ? { setupIncompleteReasons: row.setupIncompleteReasons }
+          : {}),
       };
       if (!includeSpans) return base;
       const parsed = await fetchJsonBlob(row.spansBlobUrl, {

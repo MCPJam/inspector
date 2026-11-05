@@ -110,3 +110,17 @@ describe("native automatic approval", () => {
     expect(f.submitToolApproval).not.toHaveBeenCalled();
   });
 });
+
+it("auto-answers only registered forwarded MCP names, leaving built-ins and unknown IDs alone", async () => {
+  const f = fixture(); const emit = vi.fn();
+  const session = await withAutoApprovedNativeRequests(f.harness, undefined, new Set(), name => !!name?.startsWith("mcp__server__")).doStart({} as never);
+  const control = await session.doPromptTurn({ emit } as never);
+  f.send({ type: "tool-call", toolCallId: "call", toolName: "mcp__server__read", input: {} });
+  f.send(request);
+  f.send({ type: "tool-call", toolCallId: "builtin", toolName: "Bash", input: {} });
+  f.send({ type: "tool-approval-request", toolCallId: "builtin", approvalId: "builtin-approval" });
+  f.send({ type: "tool-approval-request", toolCallId: "missing", approvalId: "unknown-approval" });
+  f.finish(); await control.done;
+  expect(f.submitToolApproval).toHaveBeenCalledExactlyOnceWith({ approvalId: "approval", approved: true });
+  expect(emit.mock.calls.flat().filter(part => part.type === "tool-approval-request").map(part => part.approvalId)).toEqual(["builtin-approval", "unknown-approval"]);
+});

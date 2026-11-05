@@ -16,6 +16,7 @@ import {
   stepsToPromptTurns,
 } from "@/shared/steps";
 import type { EvalIteration } from "../evals/types";
+import { describeOrgKeysRefusal, runRefusal } from "@/lib/org-keys-refusal";
 import { chainForQuickRunIteration } from "./simple-case/quick-run-chain";
 
 /** Recorded error categories. */
@@ -24,6 +25,7 @@ export type RunErrorCause =
   | "serverError"
   | "testInput"
   | "settings"
+  | "orgProviders"
   | "platform"
   | "unknown";
 
@@ -47,6 +49,8 @@ const CAUSE_COPY: Record<RunErrorCause, string> = {
   serverError: "Your MCP server returned an error",
   testInput: "Your server rejected the tool inputs saved in the test",
   settings: "A test or workspace setting stopped the run",
+  orgProviders:
+    "An organization admin needs to add or reconnect an AI provider",
   platform: "MCPJam or the AI model provider failed",
   unknown: "The cause wasn't recorded",
 };
@@ -156,6 +160,31 @@ function classifyReason(
 
   if (reasonCause === undefined && !erroredByLifecycle) return null;
 
+  // The organization has no usable provider for the model: adding or
+  // reconnecting one in Organization → AI providers lifts it. The code may
+  // sit only in the iteration's diagnostics or its infra error, and a
+  // recorded error whose text equals the iteration's own is treated as that
+  // same failure, so it reads them too. The error's own text counts only when
+  // the chain puts the stop on the model's provider or on setup, and a
+  // failure the chain pins on the MCP server stays the server's.
+  const ownFailure = error === iteration.error;
+  const refusal =
+    reasonCause === "serverUnreachable" || reasonCause === "serverError"
+      ? undefined
+      : runRefusal(
+          {
+            error,
+            errorDetails: ownFailure ? iteration.errorDetails : undefined,
+            infraErrorCode: ownFailure ? iteration.infraError?.code : undefined,
+          },
+          reason === "providerError" || reason === "setupAborted",
+        );
+  if (
+    refusal &&
+    describeOrgKeysRefusal(refusal.code).remediation === "add_org_provider"
+  )
+    return "orgProviders";
+
   // A pinned call sends inputs the user wrote into the test, so a server
   // rejecting that call is first a question about those inputs.
   if (reasonCause === "serverError" && reason !== "renderFailed") {
@@ -184,6 +213,7 @@ const CAUSE_ORDER: RunErrorCause[] = [
   "serverError",
   "testInput",
   "settings",
+  "orgProviders",
   "platform",
   "unknown",
 ];

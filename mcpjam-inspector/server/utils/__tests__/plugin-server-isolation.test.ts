@@ -368,10 +368,14 @@ describe("emitPluginServersUnavailable", () => {
 
 describe("chatTurnIsolatedServerIds", () => {
   it("isolates every interactive server, including an empty selection", () => {
-    expect(chatTurnIsolatedServerIds(["saved", "plugin"])).toEqual(["saved", "plugin"]);
-    expect(chatTurnIsolatedServerIds([])).toEqual([]);
+    expect(
+      chatTurnIsolatedServerIds(["saved", "plugin"], "interactive"),
+    ).toEqual(["saved", "plugin"]);
+    expect(chatTurnIsolatedServerIds([], "interactive")).toEqual([]);
   });
   it("keeps recorded scenarios strict", () => {
-    expect(chatTurnIsolatedServerIds(["saved", "plugin"], true)).toEqual([]);
+    expect(chatTurnIsolatedServerIds(["saved", "plugin"], "recorded")).toEqual(
+      [],
+    );
   });
 });

@@ -105,23 +105,6 @@ describe("describePluginNotice", () => {
     );
   });
 
-  it("says why a message ran without the chat's plugins, without naming environments", () => {
-    for (const reason of [
-      "local_harness",
-      "local_server",
-      "local_model",
-      "local_tools",
-      "compare",
-    ] as const) {
-      const line = describePluginNotice({ kind: "off", reason });
-      expect(line).toMatch(/^Plugins/);
-      expect(line).not.toMatch(/environment/i);
-    }
-    expect(describePluginNotice({ kind: "off", reason: "local_server" })).toBe(
-      "Plugins didn't run for this message: a selected server runs on this computer.",
-    );
-  });
-
   it("stays one line when several plugins were skipped", () => {
     const line = describePluginNotice({
       kind: "skipped",
@@ -221,28 +204,6 @@ describe("showPluginNotice", () => {
     expect(toastInfo).toHaveBeenCalledWith(PLUGINS_UNAVAILABLE_MESSAGE);
     expect(useTrafficLogStore.getState().mcpServerItems[0]?.method).toBe(
       "plugins/unavailable",
-    );
-  });
-
-  it("logs a message that ran without plugins once per chat and reason", () => {
-    expect(
-      showPluginNotice("chat-1", { kind: "off", reason: "local_model" }),
-    ).toBe(true);
-    expect(
-      showPluginNotice("chat-1", { kind: "off", reason: "local_model" }),
-    ).toBe(false);
-    expect(
-      showPluginNotice("chat-1", { kind: "off", reason: "local_server" }),
-    ).toBe(true);
-    const logs = useTrafficLogStore.getState().mcpServerItems;
-    expect(logs).toHaveLength(2);
-    expect(logs).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          method: "plugins/off",
-          payload: expect.objectContaining({ reason: "local_model" }),
-        }),
-      ]),
     );
   });
 

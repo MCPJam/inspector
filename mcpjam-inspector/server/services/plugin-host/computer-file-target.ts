@@ -1,6 +1,6 @@
+import { attachRunningSandbox } from "../../utils/computers/attach-sandbox.js";
 import { createHash, randomUUID } from "node:crypto";
 import { posix } from "node:path";
-import { Sandbox } from "e2b";
 import { confineToHome } from "../../utils/computers/path-confine.js";
 import {
   ensureComputerReady,
@@ -96,7 +96,7 @@ export function createProjectComputerConnector(
   const connect =
     deps.connect ??
     (async (sandboxId: string) =>
-      (await Sandbox.connect(sandboxId)).files as unknown as ComputerFileSystem);
+      (await attachRunningSandbox(sandboxId)).files as unknown as ComputerFileSystem);
   const configured = deps.configured ?? isComputersDataPlaneConfigured;
   return async (input) => {
     const unavailable = () => new PluginComputerUnavailableError(serverId);

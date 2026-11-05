@@ -28,26 +28,25 @@ for (const theme of ["light", "dark"])
       page.on("console", (m) => {
         if (m.type() === "error") errors.push(m.text());
       });
+      // Keep the app booted while checking its panels. Full document reloads
+      // repeat the Vite module graph and can exhaust the layout-test timeout.
+      const navigate = async (name: "Resources" | "Prompts" | "Tasks") => {
+        if (mobile)
+          await page
+            .getByRole("button", { name: "Open menu", exact: true })
+            .click();
+        const navigation = mobile ? page.getByRole("dialog") : page;
+        await navigation.getByRole("button", { name, exact: true }).click();
+        await expect(page).toHaveURL(new RegExp(`/${name.toLowerCase()}$`));
+        if (mobile) await expect(page.getByRole("dialog")).toBeHidden();
+      };
       try {
         await page.goto(`/p/${PROJECT_ID}/resources`);
         await expect(page.getByText(resourceName, { exact: true })).toBeVisible(
           { timeout: 20000 },
         );
-        if (mobile)
-          await page
-            .getByRole("button", { name: "Open menu", exact: true })
-            .click();
-        await page
-          .getByRole("button", { name: "Prompts", exact: true })
-          .click();
-        await expect(page).toHaveURL(/prompts/);
-        if (mobile) {
-          await expect(page.getByRole("dialog")).toBeHidden();
-        } else
-          await expect(
-            page.getByRole("button", { name: "Prompts", exact: true }),
-          ).toBeVisible();
-        await page.goto(`/p/${PROJECT_ID}/resources`);
+        await navigate("Prompts");
+        await navigate("Resources");
         await expect(page.getByText(resourceName, { exact: true })).toBeVisible(
           { timeout: 20000 },
         );
@@ -115,7 +114,7 @@ for (const theme of ["light", "dark"])
             page.getByRole("tab", { name: "Results", exact: true }),
           ).toHaveAttribute("aria-selected", "true");
         }
-        await page.goto(`/p/${PROJECT_ID}/prompts`);
+        await navigate("Prompts");
         await expect(page.getByText(promptName, { exact: true })).toBeVisible({
           timeout: 20000,
         });
@@ -142,7 +141,7 @@ for (const theme of ["light", "dark"])
           .click();
         await expect(page.getByText(promptName, { exact: true })).toBeVisible();
         await checkWidth(page);
-        await page.goto(`/p/${PROJECT_ID}/tasks`);
+        await navigate("Tasks");
         await expect(
           page.getByText(taskId.substring(0, 12), { exact: true }),
         ).toBeVisible({ timeout: 20000 });
