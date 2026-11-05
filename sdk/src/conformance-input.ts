@@ -41,17 +41,8 @@ export function missingInputForCheck(
   if (marked) return marked;
 
   // Saved reports without a marker carry these specific configuration diagnostics.
-  const error = check.error;
   const id = typeof check.id === "string" ? check.id : "";
-  const message =
-    typeof error === "string"
-      ? error
-      : error &&
-          typeof error === "object" &&
-          "message" in error &&
-          typeof error.message === "string"
-        ? error.message
-        : "";
+  const message = errorMessage(check.error);
   if (
     id.startsWith("tasks-") &&
     (message.startsWith("no probe tool could be selected automatically:") ||
@@ -94,4 +85,44 @@ const INPUT_MESSAGES: Record<ConformanceInputKey, string> = {
 export function missingInputMessage(check: InputCheck): string | undefined {
   const input = missingInputForCheck(check);
   return input ? INPUT_MESSAGES[input] : undefined;
+}
+
+/**
+ * A tasks check whose chosen tool returned a normal result instead of a task.
+ * The first form is the current SDK text; the second is what older saved
+ * reports carry. Group 1 is the tool name as a JSON string.
+ */
+const NO_TASK_CREATED =
+  /^(?:the probed tool )?("(?:[^"\\]|\\.)*") returned a normal result/;
+
+/**
+ * Product copy for a tasks check that had no task to inspect because the
+ * chosen tool returned a normal result. The SDK text names CLI flags; the app
+ * points at setup instead. Unlike a missing input, this still costs points.
+ */
+export function noTaskCreatedMessage(check: InputCheck): string | undefined {
+  if (check.status !== "skipped" || check.skipReason !== "could-not-run")
+    return undefined;
+  if (typeof check.id !== "string" || !check.id.startsWith("tasks-"))
+    return undefined;
+  const match = NO_TASK_CREATED.exec(errorMessage(check.error));
+  if (!match) return undefined;
+  let tool: unknown;
+  try {
+    tool = JSON.parse(match[1]!);
+  } catch {
+    return undefined;
+  }
+  if (typeof tool !== "string") return undefined;
+  return `"${tool}" did not create a task, so there was nothing to check. Select a tool that creates a task in setup, or change its arguments so it does, then run again.`;
+}
+
+function errorMessage(error: unknown): string {
+  if (typeof error === "string") return error;
+  return error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof error.message === "string"
+    ? error.message
+    : "";
 }
