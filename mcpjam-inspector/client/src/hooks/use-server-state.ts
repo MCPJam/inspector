@@ -1420,6 +1420,7 @@ export function useServerState({
         ? resolveEffectiveClientCapabilities({
             host: activeHostConfig,
             serverConfig,
+            localFormSupport: !HOSTED_MODE,
           })
         : resolveEffectiveClientCapabilities({
             host: activeProject?.clientConfig

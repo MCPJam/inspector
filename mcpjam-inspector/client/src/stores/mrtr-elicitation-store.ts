@@ -24,6 +24,7 @@ export interface MrtrBridgeInputRequest {
   mode: "form" | "url";
   message: string;
   requestedSchema?: Record<string, unknown>;
+  pluginForm?: boolean;
   url?: string;
 }
 
