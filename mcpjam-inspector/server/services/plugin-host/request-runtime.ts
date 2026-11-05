@@ -594,6 +594,7 @@ export function createPluginRequestRuntime(
               localFiles,
               uploadTarget,
               fileResources: extensions.capabilities.fileResources,
+              fileResourcesEnabled: () => latest?.capabilities.fileResources === true,
               formsEnabled,
             })
           : undefined;
