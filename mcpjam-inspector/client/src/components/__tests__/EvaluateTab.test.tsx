@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import * as errorReporting from "@/lib/error-reporting";
+import posthog from "posthog-js";
 import userEvent from "@testing-library/user-event";
 import { executeInspectorCommand } from "@/lib/inspector-command-handlers";
 import { readSurfaceSnapshot } from "@/lib/webmcp/surface-snapshot-registry";
@@ -658,6 +659,61 @@ describe("EvaluateTab", () => {
       expect(mocks.navigatePlaygroundEvalsRoute).not.toHaveBeenCalledWith({
         type: "create",
       });
+    });
+  });
+
+  describe("per-layer addresses open today's pages", () => {
+    const navViews = () =>
+      vi
+        .mocked(posthog.capture)
+        .mock.calls.filter(([event]) => event === "eval_nav_page_viewed");
+
+    it.each([undefined, false, true])(
+      "renders the run page for a test run address (flag %s)",
+      (flag) => {
+        mocks.evaluateFlag.enabled = flag;
+        mocks.route.current = {
+          type: "test-run",
+          suiteId: "suite-a",
+          runId: "run-1",
+          testCaseId: "case-a",
+        };
+        render(<EvaluateTab projectId="ws-1" />);
+        expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
+          route: {
+            type: "run-detail",
+            suiteId: "suite-a",
+            runId: "run-1",
+            testCaseId: "case-a",
+          },
+        });
+        expect(screen.queryByTestId("evals-runs-landing")).toBeNull();
+        expect(navViews()).toEqual([
+          [
+            "eval_nav_page_viewed",
+            expect.objectContaining({
+              page: "test_run",
+              tab: null,
+              arrived_via: "direct",
+              ui: "legacy",
+              project_id: "ws-1",
+              location: "evaluate_tab",
+            }),
+          ],
+        ]);
+      },
+    );
+
+    it("keeps the landing and counts it as the suites page", () => {
+      mocks.route.current = { type: "list" };
+      render(<EvaluateTab projectId="ws-1" />);
+      expect(screen.getByTestId("evals-runs-landing")).toBeInTheDocument();
+      expect(navViews()).toEqual([
+        [
+          "eval_nav_page_viewed",
+          expect.objectContaining({ page: "suites", ui: "legacy" }),
+        ],
+      ]);
     });
   });
 

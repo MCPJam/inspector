@@ -50,6 +50,9 @@ import { useProjectServers } from "@/hooks/useViews";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useEvaluateRouteFromUrl } from "@/lib/eval-route-url";
+import { useEvaluateNavEnabled } from "@/hooks/useEvaluateNavEnabled";
+import { resolveEvalNavPage } from "./evaluate/nav/eval-nav-pages";
+import { useEvalNavPageView } from "./evaluate/nav/eval-nav-analytics";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
@@ -196,7 +199,21 @@ function EvaluateTabContent({
   const hostsEnabled = isAuthenticated;
   // Decision summaries are part of the public Evaluate experience.
   const decisionSummaryEnabled = true;
-  const route = useEvaluateRouteFromUrl();
+  const parsedRoute = useEvaluateRouteFromUrl();
+  const navEnabled = useEvaluateNavEnabled();
+  // A per-layer address with no new page yet renders today's equivalent page.
+  // Memoized: effects below key on `route` identity.
+  const navResolution = useMemo(
+    () => resolveEvalNavPage(parsedRoute, navEnabled),
+    [parsedRoute, navEnabled],
+  );
+  const route = useMemo(
+    () =>
+      navResolution.kind === "legacy"
+        ? navResolution.route
+        : { type: "list" as const },
+    [navResolution],
+  );
   const isDirectGuest = useIsDirectGuest({ projectId });
   const [previewedHostId] = usePreviewedHostId(projectId ?? null);
   const {
@@ -455,6 +472,13 @@ function EvaluateTabContent({
       project_id: projectId ?? null,
     });
   }, [isLoading, projectId]);
+
+  // Counts views per eval layer on today's pages, by the address opened.
+  useEvalNavPageView(parsedRoute, {
+    projectId: projectId ?? null,
+    ui: "legacy",
+    enabled: !isLoading && navResolution.kind === "legacy",
+  });
 
   useEffect(() => {
     if (isLoading) return;
@@ -1655,13 +1679,13 @@ function EvaluateTabContent({
     { value: availableModels },
     <EvalTabGate
       variant="playground"
-      isLoading={isLoading}
+      isLoading={isLoading || navResolution.kind === "pending"}
       isAuthenticated={isAuthenticated}
       user={user}
       projectId={projectId}
       isDirectGuest={isDirectGuest}
       header={
-        route.type === "create" ? undefined : (
+        route.type === "create" || navResolution.kind === "page" ? undefined : (
           <EvalsHeader
             onSetupRun={() => setSuiteAction("run")}
             onAddCase={() => setSuiteAction("case")}
@@ -1746,7 +1770,12 @@ function EvaluateTabContent({
         {judgeRunIds.map((runId) => (
           <LaunchedCaseJudge key={runId} runId={runId} />
         ))}
-        {route.type === "create" ? (
+        {navResolution.kind === "page" ? (
+          <navResolution.Page
+            route={navResolution.route}
+            projectId={projectId ?? null}
+          />
+        ) : route.type === "create" ? (
           <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <CreateSuitePage
               onCancel={handleCancelCreateSuite}

@@ -582,9 +582,9 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "evals",
     scope: "project",
   },
-  // Public Evaluate. A sibling tree of `/evals`, so
-  // the original tab's URLs are untouched. Suites lens only: the new landing's
-  // Runs view is in-page state, and the commit lens stays on /evals/runs.
+  // Public Evaluate. A sibling tree of `/evals`, so the original tab's URLs
+  // are untouched. The landing's Runs view has its own address
+  // (`evaluate/runs`); the commit lens stays on /evals/runs.
   { path: "evaluate", kind: "screen", surfaceId: "evaluate", scope: "project" },
   {
     path: "evaluate/create",
@@ -638,6 +638,17 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "evaluate",
     scope: "project",
   },
+  // One page per eval layer. Today's page renders each until its new one ships.
+  { path: "evaluate/runs", kind: "screen", surfaceId: "evaluate", scope: "project" },
+  { path: "evaluate/suite/:suiteId/settings", kind: "screen", surfaceId: "evaluate", scope: "project" },
+  { path: "evaluate/suite/:suiteId/settings/cases", kind: "screen", surfaceId: "evaluate", scope: "project" },
+  { path: "evaluate/suite/:suiteId/settings/evaluators", kind: "screen", surfaceId: "evaluate", scope: "project" },
+  { path: "evaluate/suite/:suiteId/settings/cases/new", kind: "screen", surfaceId: "evaluate", scope: "project" },
+  { path: "evaluate/suite/:suiteId/settings/cases/:testCaseId", kind: "screen", surfaceId: "evaluate", scope: "project" },
+  { path: "evaluate/suite/:suiteId/settings/cases/:testCaseId/evaluators", kind: "screen", surfaceId: "evaluate", scope: "project" },
+  { path: "evaluate/suite/:suiteId/runs/:runId/cases/:testCaseId", kind: "screen", surfaceId: "evaluate", scope: "project" },
+  { path: "evaluate/suite/:suiteId/runs/:runId/cases/:testCaseId/edit", kind: "screen", surfaceId: "evaluate", scope: "project" },
+  { path: "evaluate/suite/:suiteId/runs/:runId/cases/:testCaseId/iter/:iterationId", kind: "screen", surfaceId: "evaluate", scope: "project" },
   {
     path: "ci-evals",
     kind: "redirect",
