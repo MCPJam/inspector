@@ -170,8 +170,8 @@ export function ConformanceHistory({
         <div className={`${columns} bg-muted/60 px-4.5 py-2`}>
           <span className={`${cell} ${header}`}>SERVER</span>
           <span className={`${cell} ${header}`}>PROTOCOL</span>
-          <span className={`${cell} ${header}`}>CHECKS</span>
           <span className={`${cell} ${header}`}>SCORE</span>
+          <span className={`${cell} ${header}`}>CHECKS</span>
           <span className={`${cell} ${header}`}>RESULT</span>
           <span className={`${cell} ${header}`}>DATE</span>
           <span className={`${cell} ${header}`}>SOURCE</span>
@@ -198,15 +198,15 @@ export function ConformanceHistory({
                 <span className={`${cell} text-[13px] text-muted-foreground`}>
                   {run.protocolVersion ?? "Auto"}
                 </span>
-                <span className={`${cell} text-sm font-semibold tabular-nums`}>
-                  {run.passed}/{run.applicable}
-                </span>
                 <span
                   className={`${cell} text-sm tabular-nums ${
                     run.score == null ? "text-muted-foreground" : ""
                   }`}
                 >
                   {run.score == null ? "—" : `${run.score}%`}
+                </span>
+                <span className={`${cell} text-sm font-semibold tabular-nums`}>
+                  {run.passed}/{run.applicable}
                 </span>
                 <span className="flex min-w-0 items-center">
                   <RunResultRing run={run} />

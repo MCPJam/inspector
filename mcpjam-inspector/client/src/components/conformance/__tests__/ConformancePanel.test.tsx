@@ -26,6 +26,12 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (key: string) => enabledFlags.has(key),
 }));
 
+// Home cards subscribe to each run for suite scores. These tests render
+// the home without a Convex client, so the suite rows stay empty.
+vi.mock("convex/react", () => ({
+  useQuery: () => undefined,
+}));
+
 vi.mock("../PersistConformanceRun", () => ({ PersistConformanceRun: () => null }));
 
 const mockRunProtocol = vi.fn();
@@ -1601,12 +1607,12 @@ describe("ConformanceTab", () => {
     const card = screen.getByRole("list", { name: "Servers" });
     expect(card).toHaveTextContent("alpha");
     expect(card).toHaveTextContent("· Protocol Auto");
-    expect(card).not.toHaveTextContent("Last run");
+    expect(card).toHaveTextContent(/Last run/);
     expect(
-      within(card).getByRole("img", { name: "22 passed of 22" }),
+      within(card).getByRole("img", { name: "100%. 22 passed of 22" }),
     ).toBeInTheDocument();
     expect(card).toHaveTextContent("100%");
-    expect(card).toHaveTextContent("22/22");
+    expect(card).not.toHaveTextContent("22/22");
 
     fireEvent.click(
       within(card).getByRole("button", { name: "View last run" }),
