@@ -192,11 +192,13 @@ const CONVEX_FUNCTION_FAILED_STATUS = 560;
  * A non-2xx answer from Convex's HTTP API itself: the function never ran, so
  * the backend's function logs have no row for it. The message is the response
  * body, exactly what `ConvexHttpClient` would have thrown, so every message
- * classifier above reads it unchanged.
+ * classifier above reads it unchanged. The field is not `status`: generic
+ * readers such as `describeError` and `mapRuntimeError` key on that name, and
+ * would read a Convex 401 or 429 as the caller's credential or LLM quota.
  */
 export class ConvexHttpStatusError extends Error {
   constructor(
-    readonly status: number,
+    readonly convexStatus: number,
     body: string,
     options?: ErrorOptions,
   ) {
@@ -222,8 +224,14 @@ export const convexReadFetch: typeof fetch = async (input, init) => {
   try {
     body = await response.text();
   } catch (cause) {
-    // A connection dropped mid-body still answered with this status.
-    throw new ConvexHttpStatusError(response.status, "", { cause });
+    // A connection dropped mid-body still answered with this status. Its
+    // message ("terminated", "socket hang up") is what the transport
+    // classifiers match, so it stands in for the body.
+    throw new ConvexHttpStatusError(
+      response.status,
+      cause instanceof Error ? cause.message : "",
+      { cause },
+    );
   }
   throw new ConvexHttpStatusError(response.status, body);
 };
@@ -339,7 +347,7 @@ export function translateConvexReadError(
   logger.error(`[${options.scope}] upstream read failed`, redacted, {
     message: redacted.message,
     ...(error instanceof ConvexHttpStatusError
-      ? { httpStatus: error.status }
+      ? { httpStatus: error.convexStatus }
       : { slug: describeError(error).slug }),
   });
   return new WebRouteError(

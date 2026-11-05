@@ -30,6 +30,7 @@ import {
   translateConvexReadError,
 } from "../convex-read-errors.js";
 import { WebRouteError } from "../../web/errors.js";
+import { describeError } from "@mcpjam/sdk";
 
 beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.clearAllMocks());
@@ -332,9 +333,21 @@ describe("convexReadFetch", () => {
       (error: unknown) => error,
     );
     expect(thrown).toBeInstanceOf(ConvexHttpStatusError);
-    expect((thrown as ConvexHttpStatusError).status).toBe(502);
+    expect((thrown as ConvexHttpStatusError).convexStatus).toBe(502);
     expect((thrown as Error).message).toBe("Error");
   });
+
+  // Not every caller translates the error first. One that reaches a generic
+  // describer must read as the `Error(body)` it replaced, not as the caller's
+  // credential (401) or LLM quota (429).
+  it.each([401, 403, 429])(
+    "describes a Convex %s like the bare error it replaces",
+    (status) => {
+      expect(
+        describeError(new ConvexHttpStatusError(status, "Error")).slug,
+      ).toBe(describeError(new Error("Error")).slug);
+    },
+  );
 
   it("keeps the status when the body cannot be read", async () => {
     const dropped = new Error("socket hang up");
@@ -354,7 +367,8 @@ describe("convexReadFetch", () => {
       (error: unknown) => error,
     );
     expect(thrown).toBeInstanceOf(ConvexHttpStatusError);
-    expect((thrown as ConvexHttpStatusError).status).toBe(503);
+    expect((thrown as ConvexHttpStatusError).convexStatus).toBe(503);
+    expect((thrown as Error).message).toBe("socket hang up");
     expect((thrown as Error).cause).toBe(dropped);
   });
 
