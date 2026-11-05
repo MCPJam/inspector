@@ -17,9 +17,10 @@ async function fixture(options: Partial<McpAppBrowserHarnessOptions> = {}) {
     on: vi.fn(),
     exposeBinding: vi.fn(async (name, callback) => bindings.set(name, callback)),
     goto: vi.fn(async () => null),
+    setContent: vi.fn(async () => {}),
     addScriptTag: vi.fn(),
     mainFrame: () => frame,
-  } as Pick<Page, "on" | "exposeBinding" | "goto" | "addScriptTag" | "mainFrame">;
+  } as Pick<Page, "on" | "exposeBinding" | "goto" | "setContent" | "addScriptTag" | "mainFrame">;
   const context = {
     route: vi.fn(),
     newPage: vi.fn(async () => page as Page),
