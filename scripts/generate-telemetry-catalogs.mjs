@@ -53,7 +53,7 @@ export const SKIP_DIRS = new Set([
 const CODE_LISTS = [
   "V1_ERROR_CODES", "AI_EXECUTION_REFUSAL_CODES", "AI_REUSED_REFUSAL_CODES",
   "PLATFORM_V1_ERROR_CODES", "ROUTINE_CODES", "ORG_POLICY_ROUTINE_CODES",
-  "DESKTOP_STARTUP_FAILURE_CODES",
+  "DESKTOP_STARTUP_FAILURE_CODES", "GUEST_SESSION_FAILURE_CODES", "APP_LOAD_STALL_CODES",
 ];
 // The `name` the Inspector's dependencies give their errors. Sentry and the
 // strict log row read the class from `error.name`, so an unlisted one becomes
