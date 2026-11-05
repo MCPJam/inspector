@@ -296,6 +296,22 @@ describe("Inspector OAuth debug proxy failures", () => {
       "Backend debug proxy error: 400 Bad Request",
     );
   });
+
+  // PLB-273: the proxy reached the server, and the server's certificate failed.
+  // "Backend debug proxy error: 502" would blame MCPJam for it.
+  it("shows a certificate failure as the server's, without the proxy prefix", async () => {
+    const reason =
+      "The server's TLS certificate could not be verified: unable to verify the first certificate; if the root CA is installed locally, try running Node.js with --use-system-ca";
+    authFetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: reason }), {
+        status: 502,
+        statusText: "Bad Gateway",
+      }),
+    );
+
+    const error = await createDebugRequestExecutor()(request).catch((e) => e);
+    expect(error.message).toBe(reason);
+  });
 });
 
 describe("Inspector OAuth adapter SSRF loopback opt-in", () => {

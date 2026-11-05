@@ -625,8 +625,10 @@ jobs:
   #
   # D8: the targets Codex's manifest certifies (`nativeTargets`) block; the
   # others run so their evidence stays visible without holding up a certified
-  # target's release. Windows has no leg: it is not a Codex native target, and
-  # its sandbox (`windowsSandbox/setupStart`) has no evidence yet.
+  # target's release. Windows is a certified target, so its leg blocks too:
+  # the pin needs evidence for every advertised target. Like the Claude Code
+  # `windows` job it builds the Job Object launcher into the pack and reads
+  # the process table through PowerShell.
   codex-scenarios:
     name: codex ${{ matrix.platform_key }}
     needs: [unit, plan]
@@ -638,6 +640,9 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.codex_matrix) }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - name: Read pack toolchain pins
@@ -656,16 +661,40 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: npm ci --legacy-peer-deps
 
+      # Windows only: the Job Object launcher goes inside the pack, as in the
+      # Claude Code `windows` job. Without it the pack cannot prove whole-tree
+      # cleanup and Windows stays refused.
+      - name: Set up the pinned Go toolchain
+        if: runner.os == 'Windows'
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.toolchain.outputs.go }}
+          cache-dependency-path: mcpjam-inspector/tools/mcpjam-job-launcher/go.sum
+
+      - name: Build the Job Object launcher
+        if: runner.os == 'Windows'
+        working-directory: mcpjam-inspector/tools/mcpjam-job-launcher
+        run: go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$RUNNER_TEMP/mcpjam-job-launcher.exe" .
+
+      # Windows ships Node as a zip, every other target as a tarball.
       - name: Download the bundled Node runtime
+        id: node_runtime
         run: |
           set -euo pipefail
-          url="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/node-v${BUNDLED_NODE_VERSION}-${{ matrix.node_dist }}.tar.gz"
-          curl -fsSL "$url" -o "$RUNNER_TEMP/node-runtime.tar.gz"
+          ext="tar.gz"
+          if [ "$RUNNER_OS" = "Windows" ]; then ext="zip"; fi
+          archive="node-v${BUNDLED_NODE_VERSION}-${{ matrix.node_dist }}.${ext}"
+          curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${archive}" -o "$RUNNER_TEMP/node-runtime.${ext}"
           curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt" -o "$RUNNER_TEMP/node-shasums.txt"
-          expected=$(awk -v name="node-v${BUNDLED_NODE_VERSION}-${{ matrix.node_dist }}.tar.gz" '$2 == name {print $1}' "$RUNNER_TEMP/node-shasums.txt")
+          expected=$(awk -v name="$archive" '$2 == name {print $1}' "$RUNNER_TEMP/node-shasums.txt")
           test -n "$expected"
-          actual=$(shasum -a 256 "$RUNNER_TEMP/node-runtime.tar.gz" | awk '{print $1}')
+          if command -v sha256sum >/dev/null; then
+            actual=$(sha256sum < "$RUNNER_TEMP/node-runtime.${ext}" | awk '{print $1}')
+          else
+            actual=$(shasum -a 256 "$RUNNER_TEMP/node-runtime.${ext}" | awk '{print $1}')
+          fi
           test "$actual" = "$expected"
+          echo "path=$RUNNER_TEMP/node-runtime.${ext}" >> "$GITHUB_OUTPUT"
 
       - name: Prepare the pinned published Codex pack
         if: needs.plan.outputs.codex_pack_version != ''
@@ -684,14 +713,19 @@ jobs:
         working-directory: mcpjam-inspector
         env:
           SOURCE_PACK_VERSION: ${{ inputs.pack_version || 'conformance' }}
+          NODE_RUNTIME: ${{ steps.node_runtime.outputs.path }}
         run: |
+          launcher=()
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            launcher=(--job-launcher "$RUNNER_TEMP/mcpjam-job-launcher.exe")
+          fi
           node scripts/build-local-harness-pack.mjs \
             --harness codex \
             --platform ${{ matrix.platform_key }} \
             --pack-version "$SOURCE_PACK_VERSION" \
-            --node-tarball "$RUNNER_TEMP/node-runtime.tar.gz" \
+            --node-tarball "$NODE_RUNTIME" \
             --out "$RUNNER_TEMP/conformance/runtime-src" \
-            --skip-archive
+            --skip-archive "${launcher[@]}"
           mkdir -p "$RUNNER_TEMP/conformance/runtime"
           cp -R "$RUNNER_TEMP/conformance/runtime-src/codex" \
             "$RUNNER_TEMP/conformance/runtime/codex"
@@ -728,9 +762,11 @@ jobs:
       # (Ubuntu 24.04's AppArmor user-namespace restriction blocks bubblewrap)
       # is exactly what this leg exists to surface. A target is recorded only
       # after this passes on it; until then unattended local Codex is refused
-      # there.
+      # there. Not on Windows: its commands are POSIX shell (`/tmp`,
+      # `/dev/tcp`), and unattended Windows Codex stays refused.
       - name: Unattended sandboxed turn (evidence)
         id: unattended
+        if: runner.os != 'Windows'
         continue-on-error: true
         working-directory: mcpjam-inspector
         env:
@@ -740,14 +776,14 @@ jobs:
         run: npx tsx server/utils/harness/local/conformance/run-codex-turn.ts unattended
 
       - name: Record the unattended outcome
-        if: always()
+        if: always() && runner.os != 'Windows'
         env:
           OUTCOME: ${{ steps.unattended.outcome }}
         run: |
           echo "### Codex unattended sandbox on ${{ matrix.platform_key }}: ${OUTCOME}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: No supervised process survived the run
-        if: always()
+        if: always() && runner.os != 'Windows'
         env:
           CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
         run: |
@@ -762,6 +798,26 @@ jobs:
           if [ -n "$survivors" ]; then
             echo "supervised processes survived the Codex conformance run:$survivors" >&2
             ps -o pid=,command= -p $survivors || true
+            exit 1
+          fi
+
+      # Same check as the Claude Code `windows` job: `pgrep` does not exist
+      # here, and a failed process-table read is a failure, not "no survivors".
+      - name: No supervised process survived the run (Windows)
+        if: always() && runner.os == 'Windows'
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+        run: |
+          set -euo pipefail
+          root="$(cygpath -w "$CONFORMANCE_ROOT/runtime/codex" 2>/dev/null || echo "$CONFORMANCE_ROOT/runtime/codex")"
+          if ! process_table="$(powershell -NoProfile -NonInteractive -Command 'Get-CimInstance Win32_Process | ForEach-Object { "{0} {1}" -f $_.ProcessId, $_.CommandLine }' 2>/dev/null)"; then
+            echo "could not read the Windows process table, so this check proved nothing" >&2
+            exit 1
+          fi
+          survivors="$(printf '%s\n' "$process_table" | grep -F "$root" || true)"
+          echo "${survivors:-(no supervised process)}"
+          if [ -n "$survivors" ]; then
+            echo "supervised processes survived the Codex conformance run" >&2
             exit 1
           fi
 

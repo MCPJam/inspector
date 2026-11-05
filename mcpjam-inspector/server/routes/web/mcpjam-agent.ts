@@ -1,9 +1,6 @@
 import { EVAL_DESCRIBE_ONLY_AGENT, evalAgentScopeSchema, evalAgentSystemPrompt, EVAL_AGENT_TOOL_NAMES } from "../../../shared/eval-agent-scope.js";
 import {
   AGENT_MAX_STEPS,
-  MCPJAM_AGENT_BILLING_FEATURE,
-  MCPJAM_AGENT_MODEL_DEFINITION,
-  MCPJAM_AGENT_MODEL_SELECTION,
 } from "../../../shared/mcpjam-agent-model.js";
 /**
  * MCPJam Agent — POST /api/web/mcpjam-agent
@@ -95,6 +92,7 @@ import {
 } from "../../utils/chat-v2-orchestration.js";
 import { WEB_SEARCH_TOOL_NAME } from "../../utils/built-in-tools/exa-web-search.js";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
+import { resolveAgentModel } from "../../utils/agent-model.js";
 import { injectOpenAICompat } from "../../utils/widget-helpers.js";
 import { resolveUiResourceMeta } from "../../utils/ui-resource-meta.js";
 import { viewOriginLabel } from "../../utils/view-origin-label.js";
@@ -484,17 +482,16 @@ mcpjamAgent.post("/", async (c) => {
         .join("\n\n");
 
       const authHeader = c.req.header("authorization");
-      // Ask MCPJam is paid by MCPJam for SIGNED-IN callers only. A guest keeps
-      // the path it has always had — its own cookie/IP spend buckets on the
-      // customer rail — because a cookie is free, and platform-paying for one
-      // is a farm waiting to happen (the 2026-09-15 wave). It also keeps the
-      // `guest-ai-on-mcpjam-money` page meaningful: no guest ever produces a
-      // `record_only` row on this surface.
-      //
-      // Keyed on `guestId`, not the `authMethod` label — the same rule the
-      // rest of this server uses for "is this actually a guest".
+      // Guests keep the hosted model on their own quota. Signed-in turns
+      // use the organization's default under its own-key policy; otherwise
+      // the fixed platform model carries the MCPJam-paid claim.
       const isGuest = Boolean(c.get("guestId"));
-      const billingFeature = isGuest ? undefined : MCPJAM_AGENT_BILLING_FEATURE;
+      const { modelDefinition, routingSelection, billingFeature } =
+        await resolveAgentModel({
+          projectId: body.projectId,
+          authHeader,
+          isGuest,
+        });
       const builtInTools = authHeader && !body.evalScope
         ? resolveHostTools(
             { builtInToolIds: [WEB_SEARCH_TOOL_NAME] },
@@ -502,6 +499,7 @@ mcpjamAgent.post("/", async (c) => {
               authHeader,
               projectId: body.projectId,
               chatSessionId: body.chatSessionId,
+              isGuest,
               // Web search follows the turn: platform-paid when the turn is.
               ...(billingFeature ? { billingFeature } : {}),
               // And its failures are the agent's failures.
@@ -514,14 +512,10 @@ mcpjamAgent.post("/", async (c) => {
         manager,
         prepare: {
           selectedServerIds,
-          // `body.model` is IGNORED. The agent used to ride the caller's
-          // last-used Playground model, which could be a frontier or BYOK
-          // model — fine while the customer paid for it, not something MCPJam
-          // can hand out. The backend only honours the platform-billing claim
-          // for this exact id, so sending anything else would refuse the turn
-          // rather than quietly bill someone.
-          modelDefinition: MCPJAM_AGENT_MODEL_DEFINITION as never,
-          routingSelection: MCPJAM_AGENT_MODEL_SELECTION,
+          // Organization policy selects its default; platform-paid turns
+          // retain the fixed model. Neither trusts the client's model.
+          modelDefinition,
+          routingSelection,
           systemPrompt: effectiveSystemPrompt,
           temperature: body.temperature,
           requireToolApproval: body.requireToolApproval,

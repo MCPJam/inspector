@@ -861,9 +861,11 @@ export function FirstRunOnboardingOverlay({
           ref={contentRef}
           className={cn(
             "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg outline-none duration-200 sm:max-w-lg",
+            // Each step's width keeps the base 1rem gutter on a phone; a bare
+            // `max-w-[420px]` replaced it, and the welcome ran edge to edge.
             step === "welcome"
-              ? "dark max-w-[420px] gap-0 border-0 bg-transparent p-1 text-left shadow-none"
-              : "max-h-[calc(100vh-2rem)] max-w-[408px] gap-0 overflow-y-auto rounded-xl border-border bg-card p-6 shadow-none",
+              ? "dark max-w-[min(420px,calc(100%-2rem))] gap-0 border-0 bg-transparent p-1 text-left shadow-none"
+              : "max-h-[calc(100vh-2rem)] max-w-[min(408px,calc(100%-2rem))] gap-0 overflow-y-auto rounded-xl border-border bg-card p-6 shadow-none",
           )}
           onOpenAutoFocus={(event) => {
             event.preventDefault();

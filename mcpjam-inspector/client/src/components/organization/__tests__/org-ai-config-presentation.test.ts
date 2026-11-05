@@ -20,6 +20,7 @@ import {
   orgModelIds,
   orgProviderLabel,
   selectionModelLabel,
+  orgAiModelRowText,
 } from "../org-ai-config-presentation";
 import { modelSelectionFromDefinition } from "@/components/chat-v2/shared/model-selection";
 
@@ -524,6 +525,10 @@ describe("the default model editor's helpers", () => {
     expect(listedModelFitsKind("gpt-4o-mini-transcribe", "transcription")).toBe(
       true,
     );
+    // OpenAI answers decisions on gpt-6-luna only.
+    expect(listedModelFitsKind("gpt-6-luna", "decision")).toBe(true);
+    expect(listedModelFitsKind("gpt-5.6-luna", "decision")).toBe(false);
+    expect(listedModelFitsKind("gpt-5", "decision")).toBe(false);
   });
 
   it("reads a test's result", () => {
@@ -558,7 +563,8 @@ describe("the default model editor's helpers", () => {
   it.each([
     ["http_400", "Refused", "destructive"],
     ["http_401", "Credentials rejected", "destructive"],
-    ["http_403", "Credentials rejected", "destructive"],
+    // The key works but lacks access: refused, not rejected.
+    ["http_403", "Refused", "destructive"],
     ["http_404", "Refused", "destructive"],
     ["http_408", "Provider unavailable", "warning"],
     ["http_429", "Provider unavailable", "warning"],
@@ -635,5 +641,32 @@ describe("orderedFeatures", () => {
       },
     ]).map((f) => f.id);
     expect(ids).toEqual(["chat", "insights", "future"]);
+  });
+});
+
+describe("orgAiModelRowText", () => {
+  it("keeps typed decisions on the default row until the backend offers a decision model", () => {
+    expect(
+      orgAiModelRowText("default", { kinds: ["default"], defaultSet: false })
+        .runs,
+    ).toBe(
+      "Ask MCPJam, insights and findings, generation, typed decisions and simulated users",
+    );
+    expect(
+      orgAiModelRowText("default", {
+        kinds: ["default", "decision"],
+        defaultSet: false,
+      }).runs,
+    ).toBe("Ask MCPJam, insights and findings, generation and simulated users");
+  });
+
+  it("says the decision row uses the default model only when one is set", () => {
+    const kinds = ["default", "decision"] as const;
+    expect(
+      orgAiModelRowText("decision", { kinds, defaultSet: true }).whenUnset,
+    ).toBe("Uses the default AI model");
+    expect(
+      orgAiModelRowText("decision", { kinds, defaultSet: false }).whenUnset,
+    ).toBeUndefined();
   });
 });

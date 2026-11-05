@@ -21,6 +21,7 @@ import {
   REGISTRATION_ENDPOINT_MISSING_STRICT_CONFORMANCE,
   RESOURCE_METADATA_NOT_IMPLEMENTED,
   classifyUnauthenticatedProbe,
+  executeDynamicClientRegistration,
 } from "@mcpjam/sdk/browser";
 
 import { createInspectorOAuthStateMachine } from "../debug-state-machine-adapter";
@@ -48,6 +49,44 @@ function wrappedUpdateState(updateState = vi.fn(), currentStep = "metadata") {
     requestExecutor: OAuthRequestExecutor;
   };
   return { wrapped: passed.updateState, updateState, execute: passed.requestExecutor };
+}
+
+/**
+ * Run the SDK's real registration against `requestExecutor`, then replay the
+ * two updates a machine writes when no pre-registered client is available:
+ * the bare failure, then the same failure with the fallback hint.
+ */
+async function replayRegistrationFailure(
+  requestExecutor: OAuthRequestExecutor,
+) {
+  const dcr = await executeDynamicClientRegistration({
+    request: {
+      method: "POST",
+      url: "https://auth.example.test/register",
+      headers: {},
+      body: { client_name: "MCPJam" },
+    },
+    requestExecutor,
+  });
+  if (dcr.status === "registered") throw new Error("expected a failure");
+
+  const { wrapped, updateState } = wrappedUpdateState(
+    vi.fn(),
+    "request_client_registration",
+  );
+  wrapped({ error: dcr.error });
+  wrapped({ error: dcr.errorWithFallbackHint });
+  return { updateState, dcr };
+}
+
+function registrationAnswer(status: number, body: unknown) {
+  return async () => ({
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: "",
+    headers: {},
+    body,
+  });
 }
 
 describe("OAuth debugger step-failure reporting", () => {
@@ -299,6 +338,37 @@ describe("OAuth debugger step-failure reporting", () => {
     expect(updateState).toHaveBeenCalledWith(serverFailure);
   });
 
+  // PLB-273: 34 events from 5 users in 120 days, every one a server under test
+  // whose certificate Node.js would not accept, filed as an MCPJam failure.
+  it("ignores a certificate failure on the server under test", async () => {
+    const { wrapped, updateState, execute } = wrappedUpdateState(
+      vi.fn(),
+      "request_without_token",
+    );
+    vi.mocked(authFetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error:
+            "The server's TLS certificate could not be verified: unable to verify the first certificate; if the root CA is installed locally, try running Node.js with --use-system-ca",
+        }),
+        { status: 502, statusText: "Bad Gateway" },
+      ),
+    );
+    const failure = await execute({
+      url: "https://mcp.example.test/mcp",
+      method: "POST",
+      headers: {},
+    }).catch((error: Error) => error);
+    const update = {
+      error: `Failed to request MCP server: ${(failure as Error).message}`,
+    };
+
+    wrapped(update);
+
+    expect(reportCaught).not.toHaveBeenCalled();
+    expect(updateState).toHaveBeenCalledWith(update);
+  });
+
   it("still reports the debug proxy failing on the probe", () => {
     const { wrapped } = wrappedUpdateState(vi.fn(), "request_without_token");
 
@@ -308,6 +378,51 @@ describe("OAuth debugger step-failure reporting", () => {
     });
 
     expect(reportCaught).toHaveBeenCalledTimes(1);
+  });
+
+  // INSPECTOR-CLIENT-2N2, -2JB, -2JM and others: an authorization server
+  // without open registration, or one that wants an initial access token. The
+  // proxy delivers every answer the server gives, so any status is its own.
+  it.each([400, 401, 403, 404, 500])(
+    "ignores a registration endpoint that answers %i",
+    async (status) => {
+      const { updateState } = await replayRegistrationFailure(
+        registrationAnswer(status, { error: "invalid_client_metadata" }),
+      );
+
+      expect(reportCaught).not.toHaveBeenCalled();
+      expect(updateState).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("still reports the debug proxy failing on registration", async () => {
+    vi.mocked(authFetch).mockResolvedValue(new Response("", { status: 500 }));
+    await replayRegistrationFailure(wrappedUpdateState().execute);
+
+    // Once per message: the bare failure and its hinted twin both report.
+    expect(reportCaught).toHaveBeenCalledTimes(2);
+  });
+
+  // A proxy answer without the target's status is our contract breaking.
+  it.each([undefined, 0])(
+    "still reports a proxy answer with status %s",
+    async (status) => {
+      vi.mocked(authFetch).mockResolvedValue(
+        new Response(JSON.stringify({ status, body: {} })),
+      );
+      const { dcr } = await replayRegistrationFailure(
+        wrappedUpdateState().execute,
+      );
+
+      expect(dcr.error).toBe(`Dynamic Client Registration failed (${status}).`);
+      expect(reportCaught).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("still reports a registration answer that is not a client", async () => {
+    await replayRegistrationFailure(registrationAnswer(201, "not json"));
+
+    expect(reportCaught).toHaveBeenCalled();
   });
 
   // INSPECTOR-CLIENT-2F9: 18 events, 4 users, escalating — every one a third

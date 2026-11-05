@@ -136,7 +136,6 @@ function readyCapabilities() {
         canUpgrade: true,
       },
       judge: {
-        gating: { enabled: false, reason: "not_enabled_on_deployment" },
         role: "advisory",
         hasRubric: false,
         agreement: {
@@ -144,12 +143,7 @@ function readyCapabilities() {
           agreements: 0,
           rate: null,
           lowerBound: null,
-          threshold: 0.8,
-          minReviews: 20,
-          eligible: false,
-          reasons: ["insufficient_reviews"],
         },
-        acknowledgement: null,
       },
       qualityGate: { storage: true, evaluator: true },
       revisionNumber: 1,

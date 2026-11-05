@@ -1,11 +1,20 @@
 import { useEffect, useId, useState } from "react";
 import { ChevronDown } from "lucide-react";
+import "./reasoning-part.css";
 
 export type ReasoningDisplayMode =
   | "inline"
   | "collapsible"
   | "collapsed"
   | "hidden";
+
+/**
+ * `Thread`'s default, so every live chat surface shows reasoning the same way
+ * without passing it. Read-only transcripts (eval traces, share-usage, the
+ * scenario chat page) pass their own mode.
+ */
+export const LIVE_CHAT_REASONING_DISPLAY_MODE: ReasoningDisplayMode =
+  "collapsed";
 
 export function ReasoningPart({
   text,
@@ -23,11 +32,17 @@ export function ReasoningPart({
   const [isExpanded, setIsExpanded] = useState(displayMode !== "collapsed");
   const contentId = useId();
 
+  // Only a mode change resets the panel. Text grows with every streamed delta,
+  // and a reader who opened the panel mid-stream must be able to keep reading.
   useEffect(() => {
     setIsExpanded(displayMode !== "collapsed");
-  }, [displayMode, text]);
+  }, [displayMode]);
 
-  if (isRedacted || isHidden) return null;
+  // While reasoning streams, a collapsible block shows its "Thinking…" header
+  // even before any text: a provider that sends no summary streams an empty
+  // block, and it may already hide the thread's own thinking indicator.
+  const showsEmptyHeader = isRedacted && isCollapsible && state === "streaming";
+  if ((isRedacted && !showsEmptyHeader) || isHidden) return null;
 
   if (!isCollapsible) {
     return (
@@ -46,13 +61,15 @@ export function ReasoningPart({
         aria-expanded={isExpanded}
         aria-controls={contentId}
       >
-        <span>Reasoning</span>
+        {/* Motion on the label shows a long reasoning turn is still alive. */}
+        <span
+          className={
+            state === "streaming" ? "reasoning-shimmer-text" : undefined
+          }
+        >
+          {state === "streaming" ? "Thinking…" : "Reasoning"}
+        </span>
         <span className="flex items-center gap-2">
-          {state === "streaming" ? (
-            <span className="text-[10px] normal-case tracking-normal text-muted-foreground/70">
-              Streaming
-            </span>
-          ) : null}
           <ChevronDown
             className={`h-3.5 w-3.5 transition-transform duration-150 ${
               isExpanded ? "rotate-180" : ""
@@ -60,7 +77,7 @@ export function ReasoningPart({
           />
         </span>
       </button>
-      {isExpanded ? (
+      {isExpanded && !isRedacted ? (
         <pre
           id={contentId}
           className="mt-3 whitespace-pre-wrap break-words text-[12px]"

@@ -294,6 +294,21 @@ describe("FirstRunOnboardingOverlay", () => {
     );
   });
 
+  it("keeps a side gutter on a phone, on the welcome and the server choice", () => {
+    renderOverlay();
+    // The base dialog leaves 1rem each side; a step's own width must not
+    // drop it, or a 390px phone runs the content into the screen edge.
+    expect(screen.getByRole("dialog")).toHaveClass(
+      "max-w-[min(420px,calc(100%-2rem))]",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+
+    expect(screen.getByRole("dialog")).toHaveClass(
+      "max-w-[min(408px,calc(100%-2rem))]",
+    );
+  });
+
   it("keeps its current step if eligibility briefly flickers", () => {
     const {
       view,

@@ -54,10 +54,15 @@ beforeEach(() => {
   });
 });
 describe("current owned turn context", () => {
-  it("reads persisted state once per owned token, preserving actual user turn semantics", async () => {
-    const result = await readOwnedTurnContext(input());
-    expect(result?.role).toBe("user");
-    expect(JSON.stringify(result)).toContain("server state");
+  it("reads persisted state once per owned token, leaving the turn budget to the chat", async () => {
+    expect(await readOwnedTurnContext(input())).toEqual([
+      {
+        instanceId: "i",
+        generation: 1,
+        updateId: "u",
+        content: [{ type: "text", text: "server state" }],
+      },
+    ]);
     expect(mocks.persistent).toHaveBeenCalledTimes(1);
     expect(mocks.release).toHaveBeenCalledTimes(1);
     expect(mocks.revalidate).toHaveBeenCalledTimes(1);

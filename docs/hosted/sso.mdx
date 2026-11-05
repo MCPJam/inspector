@@ -46,6 +46,30 @@ not grant those users MCPJam admin access.
 
 Complete SAML setup and a pilot sign-in before enabling SCIM provisioning.
 
+### Before you begin: open your organization's setup portal
+
+MCPJam uses a separate, organization-specific setup portal for your identity
+provider configuration. Signing in to the MCPJam application as an organization
+admin does not itself open this portal.
+
+1. Contact [support@mcpjam.com](mailto:support@mcpjam.com) with your MCPJam
+   organization name and the work email address of the Okta administrator who
+   will configure SSO. Request an SSO setup invitation for that organization.
+   Do not send passwords, API tokens or client secrets.
+2. Open the setup invitation sent to that administrator. Check that it is for
+   the intended MCPJam organization, then choose **Okta SAML**.
+3. Keep the portal open alongside your Okta Admin Console. The portal provides
+   the MCPJam service-provider values used below. Enter your Okta application's
+   **Metadata URL** in this portal to connect your Okta organization to MCPJam.
+4. Complete SAML setup and verify a pilot sign-in. Then request the provisioning
+   setup invitation for the same organization to obtain its SCIM endpoint and
+   bearer token.
+
+You do not need a WorkOS dashboard account. Use the setup invitation supplied
+for your organization; do not reuse another organization's setup link or
+credentials. If the invitation is missing or expired, ask MCPJam support for a
+replacement before continuing.
+
 ### 1. Add MCPJam from the OIN catalog
 
 1. In the Okta Admin Console, open **Applications → Applications**.
@@ -160,6 +184,18 @@ configuration. Contact MCPJam before configuring it.
 ## Troubleshooting
 
 <AccordionGroup>
+  <Accordion title="I cannot find where to enter my Okta configuration in MCPJam">
+    Open your organization's SSO setup invitation, not the MCPJam application
+    settings or the WorkOS dashboard. Select Okta SAML and enter the Metadata
+    URL from your Okta application's Sign On tab. If you have only an MCPJam
+    sign-in account, contact support@mcpjam.com with your organization name and
+    Okta administrator's work email to request the setup invitation.
+  </Accordion>
+  <Accordion title="My setup invitation is missing or expired">
+    Ask support@mcpjam.com to send a replacement to your organization's Okta
+    administrator. Specify whether you need SSO or provisioning setup. Do not
+    include the expired link, passwords or bearer tokens in your support email.
+  </Accordion>
   <Accordion title="MCPJam is not in the Okta App Catalog">
     The listing may still be under review. Contact support@mcpjam.com for
     assisted setup; the catalog steps become available after publication.

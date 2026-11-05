@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { MrtrElicitationHost } from "./elicitation/MrtrElicitationHost";
 import { SubscriptionStreamsPanel } from "./subscriptions/SubscriptionStreamsPanel";
 import { HostedMrtrHost } from "./elicitation/HostedMrtrHost";
@@ -42,12 +43,20 @@ import { HOSTED_MODE } from "@/lib/config";
 import type { ConnectionStatus } from "@/state/app-types";
 import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import {
+  authorizationRequiredCommandError,
+  presentAuthChallenge,
+} from "@/lib/auth-challenge-lifecycle";
+import type { AuthChallengeSignal } from "@/lib/apis/insufficient-scope";
+import type { DirectScopeStepUpReplayDescriptor } from "@/lib/scope-step-up-replay";
+import {
+  AuthChallengeCards,
+  authChallengeConnectMessage,
+} from "./auth-challenge/AuthChallengeCard";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { clampText } from "@/lib/webmcp/groups/shared";
-import {
-  resetScopeStepUp,
-  runWithScopeStepUp,
-} from "@/lib/scope-step-up";
+import { resetScopeStepUp, runWithScopeStepUp } from "@/lib/scope-step-up";
+import { resetAuthChallenge } from "@/state/oauth-orchestrator";
 import {
   claimPendingDirectScopeStepUpReplay,
   clearPendingDirectScopeStepUpReplay,
@@ -195,14 +204,24 @@ export function ResourcesTab({
     "resources",
   );
 
+  const isMobile = useIsMobile();
+  const [resourceSelection, setResourceSelection] = useState(0);
+
   // Resources state
   const [resources, setResources] = useState<MCPResource[]>([]);
   const [selectedResource, setSelectedResource] = useState<string>("");
+  const selectedResourceRef = useRef(selectedResource);
+  selectedResourceRef.current = selectedResource;
   const [resourceContent, setResourceContent] =
     useState<MCPReadResourceResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetchingResources, setFetchingResources] = useState(false);
   const [error, setError] = useState<string>("");
+  // A failed LIST, kept apart from a read's own error: each refresh clears it
+  // and leaves the read's error alone.
+  const [listError, setListError] = useState<string>("");
+  /** Why a sign-in challenge did not become a Connect card. Text only. */
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
   const [loadingMore, setLoadingMore] = useState(false);
   const [resourcesServedFromCache, setResourcesServedFromCache] = useState<
@@ -220,6 +239,7 @@ export function ResourcesTab({
   const [templateLoading, setTemplateLoading] = useState(false);
   const [fetchingTemplates, setFetchingTemplates] = useState(false);
   const [templateError, setTemplateError] = useState<string>("");
+  const [templateListError, setTemplateListError] = useState<string>("");
   const [templateOverrides, setTemplateOverrides] = useState<
     Record<string, string>
   >({});
@@ -273,6 +293,8 @@ export function ResourcesTab({
     setSelectedResource("");
     setResourceContent(null);
     setError("");
+    setListError("");
+    setTemplateListError("");
     setNextCursor(undefined);
     setTemplates([]);
     setSelectedTemplate("");
@@ -285,8 +307,17 @@ export function ResourcesTab({
     setTemplatesServedFromCache(undefined);
   };
 
-  // Fetch resources and templates on mount
+  const resourceScope = `${window.location.pathname.split("/").slice(0, 3).join("/")}:${serverName}`;
+  const resourceScopeRef = useRef(resourceScope);
+  resourceScopeRef.current = resourceScope;
+  const loadedResourceScopeRef = useRef(resourceScope);
+
+  // Refreshing a list must not erase a result restored by OAuth.
   useEffect(() => {
+    if (loadedResourceScopeRef.current !== resourceScope) {
+      loadedResourceScopeRef.current = resourceScope;
+      resetLoadedResourceState();
+    }
     if (!serverConfig || !serverName || !isServerConnected) {
       resetLoadedResourceState();
       return;
@@ -295,7 +326,7 @@ export function ResourcesTab({
     if (!HOSTED_MODE) {
       fetchTemplates();
     }
-  }, [serverConfig, serverName, isServerConnected]);
+  }, [serverConfig, serverName, isServerConnected, resourceScope]);
 
   useEffect(() => {
     if (HOSTED_MODE && activeTab === "templates") {
@@ -318,10 +349,8 @@ export function ResourcesTab({
       setLoadingMore(true);
     } else {
       setFetchingResources(true);
-      setError("");
+      setListError("");
       setResources([]);
-      setSelectedResource("");
-      setResourceContent(null);
       setNextCursor(undefined);
       // Clear stale provenance at the start of a non-append (re)fetch so a
       // failed/in-flight refresh cannot keep showing the previous badge.
@@ -342,12 +371,15 @@ export function ResourcesTab({
         setResources((prev) => [...prev, ...serverResources]);
       } else {
         setResources(serverResources);
-        if (serverResources.length === 0) {
-          setSelectedResource("");
-          setResourceContent(null);
-        } else if (
-          !serverResources.some((resource) => resource.uri === selectedResource)
+        // A resource that left a complete list is no longer selectable. A
+        // paged list may hold it on a later page, so it stays.
+        const selected = selectedResourceRef.current;
+        if (
+          typeof result.nextCursor !== "string" &&
+          selected &&
+          !serverResources.some((resource) => resource.uri === selected)
         ) {
+          setSelectedResource("");
           setResourceContent(null);
         }
       }
@@ -362,7 +394,7 @@ export function ResourcesTab({
       setResourcesServedFromCache(result.servedFromCache);
     } catch (err) {
       if (fetchVersion !== resourcesFetchVersionRef.current) return;
-      setError(`Network error fetching resources: ${err}`);
+      setListError(`Network error fetching resources: ${err}`);
     } finally {
       if (fetchVersion === resourcesFetchVersionRef.current) {
         setFetchingResources(false);
@@ -379,11 +411,8 @@ export function ResourcesTab({
     }
 
     setFetchingTemplates(true);
-    setTemplateError("");
+    setTemplateListError("");
     setTemplates([]);
-    setSelectedTemplate("");
-    setTemplateOverrides({});
-    setTemplateContent(null);
     // Clear stale provenance at the start of a template (re)fetch so a
     // failed/in-flight refresh cannot keep showing the previous badge.
     setTemplatesServedFromCache(undefined);
@@ -398,7 +427,7 @@ export function ResourcesTab({
       setTemplatesServedFromCache(serverTemplates.servedFromCache);
     } catch (err) {
       if (fetchVersion !== templatesFetchVersionRef.current) return;
-      setTemplateError(`Could not fetch resource templates: ${err}`);
+      setTemplateListError(`Could not fetch resource templates: ${err}`);
     } finally {
       if (fetchVersion === templatesFetchVersionRef.current) {
         setFetchingTemplates(false);
@@ -436,6 +465,37 @@ export function ResourcesTab({
     };
   }, [nextCursor, loadingMore, loadMoreResources]);
 
+  // A mid-session sign-in challenge on an on-screen read: a Connect card, or
+  // the reason there is none. Reads are read-only, so the read runs again
+  // after sign-in.
+  const presentResourceAuthChallenge = (
+    signal: AuthChallengeSignal,
+    uri: string,
+    replay: DirectScopeStepUpReplayDescriptor,
+    isCurrentRead: () => boolean,
+  ) => {
+    void presentAuthChallenge({
+      server,
+      signal,
+      surface: "resources",
+      operation: { method: "resources/read", operation: uri },
+      readOnly: true,
+      replay,
+    }).then((presentation) => {
+      // A later read owns the notice area by now.
+      if (!isCurrentRead()) return;
+      if (presentation.kind === "notice") setAuthNotice(presentation.message);
+    });
+  };
+
+  const clearSelectedResource = () => {
+    resourceReadVersionRef.current += 1;
+    setSelectedResource("");
+    setResourceContent(null);
+    setLoading(false);
+    setError("");
+  };
+
   // Read resource
   const readResource = async (uri: string) => {
     if (!serverName) return;
@@ -445,6 +505,7 @@ export function ResourcesTab({
     }
     setLoading(true);
     setError("");
+    setAuthNotice(null);
     const readVersion = ++resourceReadVersionRef.current;
 
     try {
@@ -459,9 +520,7 @@ export function ResourcesTab({
           beforeStepUp: () =>
             savePendingDirectScopeStepUpReplay({
               operation: {
-                resourceUrl: String(
-                  (server?.config as any)?.url ?? serverName,
-                ),
+                resourceUrl: String((server?.config as any)?.url ?? serverName),
                 method: "resources/read",
                 operation: uri,
               },
@@ -473,6 +532,19 @@ export function ResourcesTab({
                 target: "resource",
               },
             }),
+          onAuthChallenge: (signal) =>
+            presentResourceAuthChallenge(
+              signal,
+              uri,
+              {
+                kind: "resource",
+                surface: "resources",
+                serverName,
+                uri,
+                target: "resource",
+              },
+              () => readVersion === resourceReadVersionRef.current,
+            ),
         },
       );
       if (readVersion !== resourceReadVersionRef.current) return;
@@ -518,6 +590,7 @@ export function ResourcesTab({
 
     setTemplateLoading(true);
     setTemplateError("");
+    setAuthNotice(null);
     const readVersion = ++templateReadVersionRef.current;
 
     try {
@@ -530,9 +603,7 @@ export function ResourcesTab({
           beforeStepUp: () =>
             savePendingDirectScopeStepUpReplay({
               operation: {
-                resourceUrl: String(
-                  (server?.config as any)?.url ?? serverName,
-                ),
+                resourceUrl: String((server?.config as any)?.url ?? serverName),
                 method: "resources/read",
                 operation: uri,
               },
@@ -545,6 +616,20 @@ export function ResourcesTab({
                 selection: selectedTemplate,
               },
             }),
+          onAuthChallenge: (signal) =>
+            presentResourceAuthChallenge(
+              signal,
+              uri,
+              {
+                kind: "resource",
+                surface: "resources",
+                serverName,
+                uri,
+                target: "template",
+                selection: selectedTemplate,
+              },
+              () => readVersion === templateReadVersionRef.current,
+            ),
         },
       );
       if (readVersion !== templateReadVersionRef.current) return;
@@ -570,6 +655,19 @@ export function ResourcesTab({
     });
     if (!pending || pending.descriptor.kind !== "resource") return;
     const descriptor = pending.descriptor;
+    // Consume this generation before awaiting: a reload mid-read cannot leave
+    // it "replaying", and a newer sign-in saved meanwhile is a new generation.
+    clearPendingDirectScopeStepUpReplay(pending);
+    const replayScope = resourceScope;
+    const readVersionRef =
+      descriptor.target === "template"
+        ? templateReadVersionRef
+        : resourceReadVersionRef;
+    const readVersion = ++readVersionRef.current;
+    // A later read, or another project or server, owns the panel by now.
+    const isCurrentReplay = () =>
+      resourceScopeRef.current === replayScope &&
+      readVersion === readVersionRef.current;
     if (descriptor.target === "template") {
       setSelectedTemplate(descriptor.selection ?? descriptor.uri);
       setTemplateLoading(true);
@@ -581,17 +679,27 @@ export function ResourcesTab({
     }
     void readResourceApi(descriptor.serverName, descriptor.uri)
       .then((data) => {
+        const operation = {
+          method: "resources/read" as const,
+          operation: descriptor.uri,
+        };
+        // This attempt's sign-in is finished even when a newer read owns the
+        // panel, so its ledger entry goes now.
+        if (server && descriptor.authAttempt) {
+          resetAuthChallenge(server, operation, descriptor.authAttempt);
+        }
+        if (!isCurrentReplay()) return;
+        // The step-up budget is shared by every read of this resource; only
+        // the current read may reset it.
+        resetScopeStepUp(server, operation);
         if (descriptor.target === "template") {
           setTemplateContent(data?.content ?? null);
         } else {
           setResourceContent(data?.content ?? null);
         }
-        resetScopeStepUp(server, {
-          method: "resources/read",
-          operation: descriptor.uri,
-        });
       })
       .catch((error) => {
+        if (!isCurrentReplay()) return;
         const message = `Authorization finished, but the resource could not be replayed: ${
           error instanceof Error ? error.message : String(error)
         }`;
@@ -602,9 +710,9 @@ export function ResourcesTab({
         }
       })
       .finally(() => {
-        setLoading(false);
-        setTemplateLoading(false);
-        clearPendingDirectScopeStepUpReplay();
+        if (!isCurrentReplay()) return;
+        if (descriptor.target === "template") setTemplateLoading(false);
+        else setLoading(false);
       });
   }, [isServerConnected, server, serverName]);
 
@@ -780,9 +888,7 @@ export function ResourcesTab({
                     surface: "resources",
                     serverName,
                     uri,
-                    target: templateUriTemplate
-                      ? "template"
-                      : "resource",
+                    target: templateUriTemplate ? "template" : "resource",
                   },
                 }),
             },
@@ -812,9 +918,13 @@ export function ResourcesTab({
               : undefined,
           };
         } catch (e) {
-          throw createInspectorCommandClientError(
-            "execution_failed",
-            e instanceof Error ? e.message : "Failed to read the resource.",
+          // A sign-in challenge is reported as such; a command never signs in.
+          throw (
+            authorizationRequiredCommandError(e, serverName) ??
+            createInspectorCommandClientError(
+              "execution_failed",
+              e instanceof Error ? e.message : "Failed to read the resource.",
+            )
           );
         }
       },
@@ -848,13 +958,11 @@ export function ResourcesTab({
           .slice(0, RESOURCE_SNAPSHOT_MAX_ITEMS)
           .map((r) => ({ uri: r.uri, name: r.name })),
         templateCount: templates.length,
-        templates: templates
-          .slice(0, RESOURCE_SNAPSHOT_MAX_ITEMS)
-          .map((t) => ({
-            name: t.name,
-            uriTemplate: t.uriTemplate,
-            parameters: extractTemplateParameters(t.uriTemplate),
-          })),
+        templates: templates.slice(0, RESOURCE_SNAPSHOT_MAX_ITEMS).map((t) => ({
+          name: t.name,
+          uriTemplate: t.uriTemplate,
+          parameters: extractTemplateParameters(t.uriTemplate),
+        })),
         selectedResource: selectedResource || null,
         selectedTemplate: selectedTemplate || null,
         selectedTemplateParameters: templateParams.map((p) => p.name),
@@ -884,11 +992,15 @@ export function ResourcesTab({
     <div className="h-full flex flex-col border-r border-border bg-background">
       {/* Header with tabs and actions */}
       <div className="border-b border-border flex-shrink-0">
-        <div className="px-2 py-1.5 flex items-center gap-2">
+        <div className="px-2 py-1.5 flex flex-wrap md:flex-nowrap items-center gap-2">
           {/* Tabs */}
           <div className="flex items-center gap-1.5">
             <button
-              onClick={() => setActiveTab("resources")}
+              onClick={() => {
+                setActiveTab("resources");
+                if (isMobile && activeTab !== "resources")
+                  clearSelectedResource();
+              }}
               className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                 activeTab === "resources"
                   ? "bg-primary/10 text-primary"
@@ -902,7 +1014,11 @@ export function ResourcesTab({
             </button>
             {!HOSTED_MODE && (
               <button
-                onClick={() => setActiveTab("templates")}
+                onClick={() => {
+                  setActiveTab("templates");
+                  if (isMobile && activeTab !== "templates")
+                    clearSelectedResource();
+                }}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                   activeTab === "templates"
                     ? "bg-primary/10 text-primary"
@@ -953,7 +1069,7 @@ export function ResourcesTab({
               onClick={() => setIsSidebarVisible(false)}
               variant="ghost"
               size="sm"
-              className="h-7 w-7 p-0"
+              className="hidden md:inline-flex h-7 w-7 p-0"
               title="Hide sidebar"
             >
               <PanelLeftClose className="h-3.5 w-3.5" />
@@ -995,7 +1111,7 @@ export function ResourcesTab({
                   className="hover:bg-muted/50 rounded px-1.5 py-0.5 -mx-1.5 transition-colors text-left"
                   title="Click to go back to list"
                 >
-                  <code className="text-xs font-mono font-medium text-foreground truncate block">
+                  <code className="text-xs font-mono font-medium text-foreground break-all md:truncate block">
                     {selectedTemplateData?.name || selectedTemplate}
                   </code>
                 </button>
@@ -1005,7 +1121,7 @@ export function ResourcesTab({
                   </p>
                 )}
                 {/* URI preview */}
-                <p className="text-xs text-muted-foreground font-mono truncate mt-2">
+                <p className="text-xs text-muted-foreground font-mono break-all md:truncate mt-2">
                   {getResolvedUri() || selectedTemplate}
                 </p>
               </div>
@@ -1101,18 +1217,19 @@ export function ResourcesTab({
                           }`}
                           onClick={() => {
                             setSelectedResource(resource.uri);
+                            setResourceSelection((request) => request + 1);
                             readResource(resource.uri);
                           }}
                         >
                           <div className="flex items-center gap-2">
                             <File className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                            <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border truncate">
+                            <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border break-all md:truncate">
                               {resource.name}
                             </code>
                             <FileOpenWith reference={serverName ? { serverId: serverName, resourceUri: resource.uri } : null} />
                           </div>
                           {resource.description && (
-                            <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
+                            <p className="text-xs mt-2 line-clamp-none md:line-clamp-2 leading-relaxed text-muted-foreground">
                               {resource.description}
                             </p>
                           )}
@@ -1171,15 +1288,15 @@ export function ResourcesTab({
                     >
                       <div className="flex items-center gap-2">
                         <FileCode className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                        <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border truncate">
+                        <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border break-all md:truncate">
                           {template.name}
                         </code>
                       </div>
-                      <p className="text-xs mt-1 line-clamp-1 leading-relaxed text-muted-foreground font-mono">
+                      <p className="text-xs mt-1 break-all md:line-clamp-1 leading-relaxed text-muted-foreground font-mono">
                         {template.uriTemplate}
                       </p>
                       {template.description && (
-                        <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
+                        <p className="text-xs mt-2 line-clamp-none md:line-clamp-2 leading-relaxed text-muted-foreground">
                           {template.description}
                         </p>
                       )}
@@ -1205,12 +1322,34 @@ export function ResourcesTab({
     </div>
   );
 
+  const authChallengeBlock = (
+    <>
+      <AuthChallengeCards
+        surface="resources"
+        server={server}
+        className="p-4 pb-0"
+        onResult={(result) =>
+          setAuthNotice(authChallengeConnectMessage(result) ?? null)
+        }
+      />
+      {authNotice ? (
+        <p
+          className="px-4 pt-2 text-xs text-muted-foreground"
+          data-testid="auth-challenge-notice"
+        >
+          {authNotice}
+        </p>
+      ) : null}
+    </>
+  );
+
   const resourcesCenterContent = (
     <div className="h-full flex flex-col bg-background">
-      {error ? (
+      {authChallengeBlock}
+      {error || listError ? (
         <div className="p-4">
           <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-            {error}
+            {error || listError}
           </div>
         </div>
       ) : loading ? (
@@ -1267,10 +1406,11 @@ export function ResourcesTab({
 
   const templatesCenterContent = (
     <div className="h-full flex flex-col bg-background">
-      {templateError ? (
+      {authChallengeBlock}
+      {templateError || templateListError ? (
         <div className="p-4">
           <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-            {templateError}
+            {templateError || templateListError}
           </div>
         </div>
       ) : templateLoading ? (
@@ -1331,6 +1471,19 @@ export function ResourcesTab({
     <>
       <ThreePanelLayout
         id="resources"
+        mobileNavigation={{
+          selectionKey:
+            activeTab === "templates"
+              ? selectedTemplate
+              : selectedResource
+                ? `${selectedResource}:${resourceSelection}`
+                : "",
+          selectionPanel: activeTab === "templates" ? "sidebar" : "content",
+          onBack:
+            activeTab === "templates"
+              ? undefined
+              : clearSelectedResource,
+        }}
         sidebar={sidebarContent}
         content={
           activeTab === "templates"

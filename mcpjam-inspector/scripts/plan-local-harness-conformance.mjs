@@ -29,6 +29,7 @@ const CODEX_LEGS = [
   { platform_key: "darwin-arm64", runner: "macos-latest", node_dist: "darwin-arm64", certified: true },
   { platform_key: "linux-arm64", runner: "ubuntu-24.04-arm", node_dist: "linux-arm64", certified: false },
   { platform_key: "darwin-x64", runner: "macos-15-intel", node_dist: "darwin-x64", certified: false },
+  { platform_key: "win32-x64", runner: "windows-latest", node_dist: "win-x64", certified: true },
 ];
 
 function desiredVersion(record, harnessId) {

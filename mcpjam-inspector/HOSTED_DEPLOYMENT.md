@@ -132,6 +132,58 @@ Local development is unaffected. The dev client swaps between `localhost`
 and `127.0.0.1` to get origin separation without operator configuration, and
 no local Host header matches `SANDBOX_HOSTS`.
 
+## Client address behind your own ingress
+
+Rate limits and guest spend budgets are kept per client address. By default
+the server believes `CF-Connecting-IP` whenever a request carries it, which is
+right behind a Cloudflare edge. Behind any other ingress it is not: a client
+can send its own `CF-Connecting-IP`, and common ingresses such as Traefik and
+ingress-nginx pass it through untouched, so every request can claim a new
+address and get a new budget.
+
+Name the header your ingress overwrites with the client's address:
+
+```bash
+# Server runtime. One header name, in any case.
+MCPJAM_TRUSTED_CLIENT_IP_HEADER=x-real-ip
+```
+
+With it set:
+
+- The address comes from that header only. `CF-Connecting-IP`, `X-Real-IP`
+  and `X-Forwarded-For` are not read unless you named one of them.
+- If the header holds a comma-separated list, the last entry is used, never
+  an earlier one that a client could have written.
+- A request without the header did not come through your ingress. Most limits
+  then use its TCP peer address. The limits that only trust an address the
+  deployment can vouch for give it no budget of its own when it also carries
+  `CF-Connecting-IP`, `X-Real-IP` or `X-Forwarded-For`, because its peer may
+  then be a proxy.
+- A value that is not one header name, such as `x-real-ip,x-forwarded-for`,
+  stops the server at startup:
+
+  ```
+  MCPJAM_TRUSTED_CLIENT_IP_HEADER must be one HTTP header name such as x-real-ip (got "x-real-ip,x-forwarded-for")
+  ```
+
+Your ingress must overwrite the header on every request, not append to it or
+set it only when it is missing, and the server must be reachable only through
+that ingress. `X-Forwarded-For` qualifies only if your ingress rewrites the
+whole value.
+
+Unset, the server keeps believing `CF-Connecting-IP`.
+
+### With an edge secret
+
+A deployment behind Cloudflare can also set `MCPJAM_EDGE_SECRET` (and
+`MCPJAM_EDGE_SECRET_PREVIOUS` while rotating it) and have the edge send that
+value in an `x-mcpjam-edge-secret` header. A request with the secret keeps its
+`CF-Connecting-IP` even when `MCPJAM_TRUSTED_CLIENT_IP_HEADER` is set. For
+guest spend budgets and the limits that only trust a vouched-for address, the
+edge secret is then the only proof: a request without it gets no budget of its
+own, whatever the trusted header says. The other limits read the trusted
+header for it.
+
 ## Organization-derived confidential CIMD (disabled by default)
 
 Hosted confidential CIMD is disabled unless `XAA_CIMD_ORG_MASTER_KEY` is set.

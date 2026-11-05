@@ -207,6 +207,14 @@ export type PromptTraceSummary = {
     mismatchedArguments: string[];
   }>;
   /**
+   * Failed calls this turn's matcher graded as part of a later identical call
+   * rather than as extras. Indexes are into `actualToolCalls`. Absent ⇒ none,
+   * including on every trace recorded before retries were graded.
+   */
+  retries?: Array<
+    PromptTurnToolCall & { actualIndex: number; retriedByIndex: number }
+  >;
+  /**
    * Per-turn deterministic check verdicts for this turn (scope.kind === "turn",
    * scope.promptIndex === this turn). Absent/empty ⇒ the turn authored no
    * checks. Case-level predicate results live on the iteration, not here.
@@ -627,6 +635,14 @@ const promptTraceSummaryZ = z.object({
       mismatchedArguments: z.array(z.string()),
     }),
   ),
+  retries: z
+    .array(
+      traceToolCallZ.extend({
+        actualIndex: z.number().int().nonnegative(),
+        retriedByIndex: z.number().int().nonnegative(),
+      }),
+    )
+    .optional(),
 });
 
 const evalTraceWidgetSnapshotZ = z.object({

@@ -51,6 +51,40 @@ describe("HostConfigComparisonMatrix", () => {
     expect(screen.getByText(/No clients to compare/i)).toBeInTheDocument();
   });
 
+  it("uses fixed columns on mobile so long field labels cannot hide client values", () => {
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[
+          makeSubject("h_claude", "Claude"),
+          makeSubject("h_chatgpt", "ChatGPT"),
+        ]}
+        mobileOptimized
+      />,
+    );
+    expect(screen.getByRole("table")).toHaveClass("table-fixed", "min-w-full");
+    expect(screen.getByRole("table")).toHaveStyle({ width: "404px" });
+  });
+
+  it("allows stale verification labels to wrap inside mobile columns", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-08T00:00:00.001Z"));
+    render(
+      <HostConfigComparisonMatrix
+        subjects={[
+          makeSubject("preset:cline", "Cline", {}, "cline", Date.UTC(2026, 6, 8)),
+        ]}
+        verifyBaseUrl="https://app.mcpjam.com"
+        mobileOptimized
+      />,
+    );
+
+    const label = screen.getByText("Last checked over 30 days ago");
+    expect(label).toHaveClass("whitespace-normal");
+    expect(label).not.toHaveClass("whitespace-nowrap");
+    expect(label.closest("td")).toHaveClass("min-w-0");
+    expect(label.closest("td")).not.toHaveClass("min-w-[220px]");
+  });
+
   it("renders the three section bands in the canonical order", () => {
     render(
       <HostConfigComparisonMatrix

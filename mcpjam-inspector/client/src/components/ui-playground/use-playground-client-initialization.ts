@@ -12,6 +12,7 @@ import {
   savePreviewedHostId,
 } from "@/lib/previewed-client-storage";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { markQuietClientSwitch } from "@/hooks/useAutoConnectProjectServers";
 
 type Selection = { previewed: string | null; selected: string[] };
 
@@ -75,6 +76,9 @@ function applySelection(
   }
   const isActive = live.activeProjectIdRef.current === projectId;
   if (isActive && live.restoringAdhocRef.current) return;
+  // The user didn't switch clients, so the reconnect this lead triggers
+  // shouldn't announce itself.
+  markQuietClientSwitch(projectId, next.lead);
   savePreviewedHostId(projectId, next.lead);
   saveSelectedHostIds(projectId, next.lineup);
   if (!isActive) return;

@@ -1,3 +1,4 @@
+import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
 import type { ConvexHttpClient } from "convex/browser";
 import type { SuiteRunRecorder } from "./recorder.js";
 import { logger } from "../../utils/logger.js";
@@ -38,7 +39,7 @@ import { isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js"
  * when the host selects no harness, which is the overwhelming majority of runs
  * — exactly the ones its rule is about.
  */
-import { isHarness, type Harness } from "@mcpjam/sdk/host-config/internal";
+import { type Harness } from "@mcpjam/sdk/host-config/internal";
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { getCanonicalModelId } from "@/shared/types";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
@@ -124,7 +125,7 @@ export function harnessOfHostConfig(
   hostConfig: Record<string, unknown> | null | undefined
 ): Harness | undefined {
   if (!hostConfig) return undefined;
-  return isHarness(hostConfig.harness) ? hostConfig.harness : undefined;
+  return resolveAgentLoop(hostConfig).harnessId;
 }
 
 /**
@@ -191,8 +192,8 @@ function harnessCannotObserveWidgetsReason(
   return (
     `the ${name} harness reaches MCP servers through a signed proxy rather ` +
     "than through the inspector, so widgetRendered assertions have nothing to " +
-    "observe on a harness run. Remove them, or run these cases on a " +
-    `non-harness host. Cases asserting widgetRendered: ${named}` +
+    "observe with that MCP client. Use a client with MCPJam tool delivery, " +
+    `or remove those assertions. Cases asserting widgetRendered: ${named}` +
     (caseTitles.length > 10 ? `, +${caseTitles.length - 10} more` : "")
   );
 }
@@ -523,6 +524,7 @@ export function checkEvalHarnessAdmission(args: {
   }
 
   return admitHarness(harness, {
+    mcpClient: resolveAgentLoop(args.hostConfig ?? {}).mcpClient,
     // Passed THROUGH, never coerced: a caller may legitimately not know the
     // project, and refusing over a fact we do not hold is the same mistake as
     // admitting over one we do. The route passes an explicit `null` for an
@@ -690,6 +692,7 @@ function isModelKind(kind: HarnessUnavailableKind): boolean {
 function admitHarness(
   harness: Harness,
   args: {
+    mcpClient: "mcpjam" | "harness";
     widgetAssertingCaseTitles?: readonly string[];
     /** `undefined` ⇒ the caller did not resolve one (the static half), so the
      *  rule is deferred to the full check rather than decided without evidence.
@@ -705,7 +708,7 @@ function admitHarness(
     };
   }
   const widgetCases = args.widgetAssertingCaseTitles ?? [];
-  if (widgetCases.length > 0) {
+  if (widgetCases.length > 0 && args.mcpClient === "harness") {
     return {
       ok: false,
       harness,

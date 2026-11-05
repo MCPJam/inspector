@@ -5,6 +5,7 @@ import {
   maskPluginAppHandle,
   PLUGIN_EXTENSIONS_OFF,
   pluginExtensionsForHost,
+  pluginExtensionProfileForHost,
   setPluginExtensionCapabilityOnDraft,
   setPluginExtensionsEnabledOnDraft,
 } from "@/lib/client-config-v2-plugin-extensions";
@@ -141,5 +142,16 @@ describe("App-facing narrowing", () => {
         resolved,
       ),
     ).toEqual({});
+  });
+});
+
+describe("pluginExtensionProfileForHost", () => {
+  it("keeps ChatGPT App behavior when Codex owns its agent loop", () => {
+    expect(
+      pluginExtensionProfileForHost({ hostStyle: "chatgpt", agentLoop: "codex" }),
+    ).toBe("chatgpt");
+    expect(
+      pluginExtensionProfileForHost({ hostStyle: "codex", harness: "codex" }),
+    ).toBe("codex");
   });
 });

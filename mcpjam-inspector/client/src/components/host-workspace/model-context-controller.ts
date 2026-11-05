@@ -1,15 +1,65 @@
 import {
   parsePluginModelContext,
+  PLUGIN_CONTEXT_NOT_PERSISTED_MESSAGE,
   pluginContextRemoveAllResultSchema,
+  PluginModelContextError,
   type PluginModelContextParams,
   pluginContextSnapshotSchema,
   type PluginContextSnapshot,
 } from "@/shared/plugin-model-context";
+import type { PluginContextExcess } from "@/shared/plugin-diagnostics";
+import { MODEL_CONTEXT_POLICY_CEILINGS } from "@mcpjam/sdk/host-config/internal";
 
 export class PluginContextUpdateRejected extends Error {}
 /** The person removed this App's context; its own updates stay refused until
  * they use the App again. */
 export class PluginContextHeld extends PluginContextUpdateRejected {}
+/**
+ * The host refused the update before storing it (a size, rate or memory
+ * budget) and kept the App's last accepted context, so the next, smaller
+ * update can go at once. The App gets JSON-RPC -32000 with ChatGPT's
+ * message; the MCP SDK forwards an integer `code`.
+ */
+export class PluginContextNotPersisted extends PluginContextUpdateRejected {
+  readonly code = -32000;
+  constructor(
+    readonly reason: string,
+    readonly excess?: PluginContextExcess,
+  ) {
+    super(PLUGIN_CONTEXT_NOT_PERSISTED_MESSAGE);
+  }
+}
+/** Server refusals that mean the update was not stored. `RATE_LIMITED` is
+ * the hosted operation limiter, which answers before the route runs. */
+export const PLUGIN_CONTEXT_NOT_PERSISTED_CODES: ReadonlySet<string> = new Set([
+  "PLUGIN_CONTEXT_TOO_LARGE",
+  "PLUGIN_CONTEXT_MEMORY_LIMIT",
+  "INSTANCE_CONTEXT_RATE_LIMITED",
+  "INSTANCE_CONTEXT_TOO_LARGE",
+  "INVALID_INSTANCE_CONTEXT",
+  "RATE_LIMITED",
+]);
+/**
+ * Refuse an update no client may send, before sending it. The server admits
+ * an update against the client's policy, which the browser doesn't hold.
+ */
+function parseUpdate(
+  value: unknown,
+  onRefused?: (refusal: PluginContextNotPersisted) => void,
+): PluginModelContextParams {
+  try {
+    return parsePluginModelContext(value, MODEL_CONTEXT_POLICY_CEILINGS);
+  } catch (error) {
+    if (
+      !(error instanceof PluginModelContextError) ||
+      error.message !== "PLUGIN_CONTEXT_TOO_LARGE"
+    )
+      throw error;
+    const refusal = new PluginContextNotPersisted(error.message, error.excess);
+    onRefused?.(refusal);
+    throw refusal;
+  }
+}
 /** Serialize replaces. An uncertain delivery cannot silently retry or reorder state. */
 export function createModelContextController({
   requireLive,
@@ -19,6 +69,7 @@ export function createModelContextController({
   onSnapshot,
   userAttaching,
   onHeld,
+  onRefused,
 }: {
   requireLive: () => void;
   send: (request: {
@@ -40,6 +91,8 @@ export function createModelContextController({
    */
   userAttaching?: () => boolean;
   onHeld?: (error: PluginContextHeld) => void;
+  /** An update this controller refused itself, before sending it. */
+  onRefused?: (refusal: PluginContextNotPersisted) => void;
 }) {
   let sequence = 0;
   let uncertain = false;
@@ -50,13 +103,19 @@ export function createModelContextController({
     sequence: 0,
     state: null,
   };
+  /** The last update the server acknowledged, while it is still the state. */
+  let acknowledged: { params: string; updateId: string } | undefined;
   const acceptSnapshot = (value: unknown) => {
     const next = pluginContextSnapshotSchema.parse(value);
+    // State the server already admitted, under whatever policy held then.
     if (next.state)
-      parsePluginModelContext({
-        content: next.state.content,
-        structuredContent: next.state.structuredContent,
-      });
+      parsePluginModelContext(
+        {
+          content: next.state.content,
+          structuredContent: next.state.structuredContent,
+        },
+        MODEL_CONTEXT_POLICY_CEILINGS,
+      );
     if (next.revision < snapshot.revision) return false;
     if (
       next.revision === snapshot.revision &&
@@ -65,6 +124,9 @@ export function createModelContextController({
       throw new Error("Invalid app context revision");
     snapshot = structuredClone(next);
     sequence = snapshot.sequence;
+    // Context changed by anything else (a removal, another tab) is sent again.
+    if (next.state?.updateId !== acknowledged?.updateId)
+      acknowledged = undefined;
     onSnapshot?.(structuredClone(snapshot));
     return true;
   };
@@ -89,7 +151,7 @@ export function createModelContextController({
     return pending;
   };
   const update = (value: unknown) => {
-    const params = parsePluginModelContext(value);
+    const params = parseUpdate(value, onRefused);
     const user = userAttaching?.() === true;
     return enqueue(async () => {
       if (held && !user) {
@@ -99,6 +161,16 @@ export function createModelContextController({
         onHeld?.(refusal);
         throw refusal;
       }
+      // An App that re-sends the context it already has (Bits & Bolts does on
+      // every redraw) gets the same acknowledgement, with no write. A person
+      // using the App always sends: that is what re-attaches removed context.
+      const key = JSON.stringify(params);
+      if (!user && acknowledged?.params === key)
+        return {
+          _meta: {
+            "openai/modelContext": { updateId: acknowledged.updateId },
+          },
+        };
       let result: unknown;
       try {
         result = await send({
@@ -127,6 +199,7 @@ export function createModelContextController({
         if (!acceptSnapshot((result as { snapshot?: unknown }).snapshot))
           throw new Error("Stale app context acknowledgement");
       } else sequence++;
+      acknowledged = { params: key, updateId };
       return { _meta: { "openai/modelContext": { updateId } } };
     });
   };

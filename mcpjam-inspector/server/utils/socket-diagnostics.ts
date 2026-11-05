@@ -64,7 +64,9 @@ const stats: Record<ResetBucket, number> & { total: number } = {
 };
 
 function bucketFor(err: NodeJS.ErrnoException): ResetBucket {
-  const code = err?.code ?? "";
+  // ErrnoException types `code` as a string, but some emitters set a number;
+  // a throw here reaches uncaughtException and kills the server.
+  const code = typeof err?.code === "string" ? err.code : "";
   switch (code) {
     case "ECONNRESET":
       return "econnreset";

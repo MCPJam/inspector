@@ -52,7 +52,7 @@ vi.mock("../registry.js", () => ({
     defaultPermissionMode: "allow-all",
     supportsSkills: false,
     modelAccess: "broker",
-    mcpDelivery: "native",
+    mcpDelivery: "harness",
     // The mechanism, not just the mode: `deliverMcpServers` is only reached on
     // the `sandbox-files` arm, so a double without this would silently exercise
     // a path the real Claude Code adapter never takes.

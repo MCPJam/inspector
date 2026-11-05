@@ -18,6 +18,8 @@ import { filterSuppressedSuiteAssertions } from "@mcpjam/sdk/contract";
 import { z } from "zod";
 import {
   evaluateToolCalls,
+  findToolCallRetries,
+  markFailedToolCalls,
   MATCH_OPTIONS_DEFAULTS,
   resolveMatchOptions,
   type EvalArgumentMismatch,
@@ -25,6 +27,7 @@ import {
   type EvalOutOfOrderToolCall,
   type EvalToolCall,
   type EvalToolCallMatchResult,
+  type EvalToolCallRetry,
 } from "@mcpjam/sdk/matchers";
 
 export type ToolCall = EvalToolCall;
@@ -189,8 +192,14 @@ export type ToolCallMatchResult = {
   passed: boolean;
 };
 
-export type { EvalMatchOptions, EvalToolCallMatchResult };
-export { evaluateToolCalls, MATCH_OPTIONS_DEFAULTS, resolveMatchOptions };
+export type { EvalMatchOptions, EvalToolCallMatchResult, EvalToolCallRetry };
+export {
+  evaluateToolCalls,
+  findToolCallRetries,
+  markFailedToolCalls,
+  MATCH_OPTIONS_DEFAULTS,
+  resolveMatchOptions,
+};
 
 /**
  * Compatibility alias for the inspector's historical matcher.

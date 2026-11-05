@@ -82,6 +82,29 @@ const resolvedImagePolicyMatcher = (image: boolean) =>
     }),
   });
 
+vi.mock("convex/browser", async () => {
+  const { getFunctionName } = await import("convex/server");
+  return { ConvexHttpClient: class {
+    setAuth() {}
+    async mutation() {
+      return { hostId: "chat-host", environment: { environmentId: "chat-environment" } };
+    }
+    async query(ref: Parameters<typeof getFunctionName>[0], args: { environmentId?: string; serverOverrideIds?: string[] }) {
+      const name = getFunctionName(ref);
+      if (name === "hostConfigsV2:getProjectDefault") return null;
+      if (name === "projects:getProjectCapabilities") return { projectRole: "admin" };
+      const runtime = await fetchHostRuntimeConfigMock.mock.results.at(-1)?.value;
+      return {
+        specVersion: 1, environmentOrigin: "adhoc",
+        environmentRef: { environmentId: args.environmentId ?? "chat-environment", name: "Chat", revision: 1 },
+        host: { hostId: "chat-host", runtimeConfig: runtime?.config ?? {} },
+        servers: { effectiveServerIds: args.serverOverrideIds ?? [] },
+        skills: [], pluginVersions: [], selectedSecretIds: [], serverConfigHashes: {},
+      };
+    }
+  }};
+});
+
 vi.mock("ai", async () => {
   const actual = await vi.importActual<typeof import("ai")>("ai");
   return {
@@ -256,6 +279,7 @@ describe("web routes — chat-v2 hosted mode", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+    vi.stubEnv("CONVEX_URL", "https://example.convex.cloud");
 
     checkHarnessRuntimeAvailableMock.mockReturnValue({ ok: true });
     prepareChatV2Mock.mockResolvedValue({
@@ -298,8 +322,11 @@ describe("web routes — chat-v2 hosted mode", () => {
     });
 
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
       if (String(input).endsWith("/web/authorize-project")) {
-        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        return new Response(JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }), { status: 200 });
       }
       if (String(input).endsWith("/web/authorize-batch")) {
         const payload = JSON.parse(String(init?.body ?? "{}"));
@@ -509,6 +536,9 @@ describe("web routes — chat-v2 hosted mode", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(vi.mocked(global.fetch).mock.calls.some(([url]) =>
+      String(url).endsWith("/agent-browser/assert_web_writable")
+    )).toBe(false);
     expect(await response.text()).toBe("ok");
     expect(prepareChatV2Mock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -638,6 +668,57 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledTimes(1);
   });
 
+  it("enforces a direct conversation's saved discovery requirement after a client edit", async () => {
+    const { app, token } = createWebTestApp();
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true, requireNativeToolDiscovery: true });
+      }
+      return originalFetch(input, init);
+    });
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: { selectedServerIds: ["server-1"], requireNativeToolDiscovery: false },
+    });
+    const response = await postJson(app, "/api/web/chat-v2", {
+      projectId: "project-1", hostId: "host-1", chatSessionId: "required-chat",
+      selectedServerIds: ["server-1"],
+      messages: [{ role: "user", content: "continue" }],
+      model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
+    }, token);
+    expect(response.status).toBe(409);
+    expect(await response.text()).toContain("Native tool discovery");
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("carries the saved effective App declaration into harness admission", async () => {
+    const { app, token } = createWebTestApp();
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        harness: "claude-code", hostStyle: "claude", selectedServerIds: ["server-1"],
+        hostCapabilitiesOverride: { message: { audio: {} } },
+      },
+    });
+    const response = await postJson(app, "/api/web/chat-v2", {
+      projectId: "project-1", hostId: "host-1", chatSessionId: "host-capabilities-chat",
+      harnessStartupRequestId: "b19b8e67-f9a8-4d1f-9fce-7b6da581c041",
+      selectedServerIds: ["server-1"], hostCapabilitiesOverride: {},
+      messages: [{ role: "user", content: "hello" }],
+      model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
+    }, token);
+    expect(response.status).toBe(200);
+    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(expect.objectContaining({
+      harnessStartupRequestId: "b19b8e67-f9a8-4d1f-9fce-7b6da581c041",
+      chatSessionId: "host-capabilities-chat",
+      harnessHostCapabilities: {
+        capabilities: { message: { audio: {} } },
+        gaps: ["host-capability:message.audio"],
+      },
+    }));
+  });
+
   it("FAILS CLOSED when the host runtime-config fetch fails — never runs the engine", async () => {
     const { app, token } = createWebTestApp();
     fetchHostRuntimeConfigMock.mockResolvedValue({
@@ -734,6 +815,23 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(body.message).toContain("Unsupported enterprise-managed");
     expect(body.details?.reason).toBe("xaa_policy_invalid");
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("does not claim complete provenance for ad-hoc connection overrides", async () => {
+    const setup = await import("../../../services/chat-turn/setup-manifest.js");
+    const capture = vi.spyOn(setup, "capturePreparedWebSetup");
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", {
+      projectId: "project-1", selectedServerIds: ["server-1"],
+      chatSessionId: "chat-policy", messages: [{ role: "user", content: "hello" }],
+      model: { id: "openai/gpt-5-mini", provider: "openai" },
+      mirrorToolParamHeaders: false,
+    }, token);
+    expect(response.status).toBe(200);
+    expect(capture.mock.lastCall?.[0].persist.setupConnectionPolicyIncomplete).toBe(true);
+    capture.mockRestore();
+    expect(persistChatSessionToConvexMock.mock.lastCall?.[0].turnTrace?.setupAtTurn)
+      .toMatchObject({ status: "incomplete" });
   });
 
   it("FAILS CLOSED when the scenario runtime-config fetch fails — never runs the engine", async () => {
@@ -1096,7 +1194,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         sourceType: "direct",
         directVisibility: "project",
         resumeConfig: expect.objectContaining({
-          selectedServers: ["Asana"],
+          selectedServers: ["server-1"],
           executionTarget: { kind: "adhoc" },
         }),
         hostConfig: expect.objectContaining({
@@ -1368,12 +1466,15 @@ describe("web routes — chat-v2 hosted mode", () => {
     ]);
   });
 
-  it("returns server names in hosted oauth-required chat errors", async () => {
+  it("continues hosted chat when a named server needs sign-in", async () => {
     const { app, token } = createWebTestApp();
 
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
       if (String(input).endsWith("/web/authorize-project")) {
-        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        return new Response(JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }), { status: 200 });
       }
       if (String(input).endsWith("/web/authorize-batch")) {
         const payload = JSON.parse(String(init?.body ?? "{}"));
@@ -1427,19 +1528,13 @@ describe("web routes — chat-v2 hosted mode", () => {
       token
     );
 
-    expect(response.status).toBe(401);
-    expect(await response.json()).toEqual(
-      expect.objectContaining({
-        code: "UNAUTHORIZED",
-        message:
-          'Server "Asana" requires OAuth authentication. Please complete the OAuth flow first.',
-        details: expect.objectContaining({
-          oauthRequired: true,
-          serverId: "server-1",
-          serverName: "Asana",
-          serverUrl: "https://server-1.example.com/mcp",
-        }),
-      })
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("ok");
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ isolatedServers: ["server-1"] }),
+    );
+    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+      expect.objectContaining({ unavailableServerIds: ["server-1"] }),
     );
   });
 
@@ -1578,11 +1673,13 @@ describe("web routes — chat-v2 hosted mode", () => {
       // Losing the skills must not lose the turn.
       expect(response.status).toBe(200);
 
-      // No source at all is the LIVE shape: the orchestrator still composes the
-      // connected servers' skills, which never failed. Collapsing to
-      // `{ kind: "none" }` here would take those down with the project's.
+      // The shared setup retains the connected server set even if project
+      // skills are unavailable.
       const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-      expect(args.skillsSource).toBeUndefined();
+      expect(args.skillsSource).toMatchObject({
+        kind: "resolved",
+        capabilities: { standaloneSkills: [], effectiveServerIds: ["server-1"] },
+      });
     });
   });
 

@@ -131,6 +131,7 @@ function harness(proxyInstanceId = "proxy-a"): { dom: JSDOM; h: MountHarness } {
     let lastMount = null;
     // Pinning is off in this harness; the view-mode post falls back to "*".
     let hostOrigin = null;
+    const webmcpRelay = null;
     ${applyColorSchemeSrc}
     ${createInnerFrameSrc}
     ${mountInnerSrc}

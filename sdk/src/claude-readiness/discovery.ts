@@ -54,6 +54,10 @@ export async function traceConnectorRedirects(
  * actually makes first, so the response is the one Claude actually sees. It
  * creates no resources and consumes nothing beyond a session the server is
  * free to discard.
+ *
+ * It carries none of the caller's headers, `mcpHeaders` included. A run graded
+ * with a token would otherwise see an OAuth server serve the probe, and report
+ * it as authless.
  */
 async function probeUnauthenticated(
   options: ClaudeDiscoveryOptions,
@@ -119,6 +123,9 @@ async function discoverProtectedResourceMetadata(
  * Probing every entry would grade a client that falls back. Claude does not,
  * so a runner that looked past entry zero would report a connector as healthy
  * that Claude cannot use.
+ *
+ * The issuer is named by the server under test and may be any origin, so the
+ * request carries no caller headers (`fetchDiscoveryJson` adds none).
  */
 async function fetchFirstAuthorizationServer(
   options: ClaudeDiscoveryOptions,
@@ -186,6 +193,39 @@ export async function discoverClaudeAuthEvidence(
     unauthenticated?.wwwAuthenticate,
   ).resource_metadata;
 
+  const { prm, firstAuthorizationServer } = await discoverClaudeAuthMetadata(
+    options,
+    challengePointer,
+  );
+
+  return {
+    enteredUrl: options.enteredUrl,
+    unauthenticated,
+    prm,
+    firstAuthorizationServer,
+    ...extras,
+  };
+}
+
+/**
+ * Protected Resource Metadata, then `authorization_servers[0]`, from a given
+ * challenge pointer.
+ *
+ * Separate from {@link discoverClaudeAuthEvidence} because the pointer does
+ * not always come from the first request. A lazy-authentication server
+ * answers the unauthenticated `initialize`, so the challenge that names its
+ * metadata arrives only on a protected tool call — and a server that serves
+ * its metadata ONLY at that challenge's `resource_metadata` path is invisible
+ * to discovery run before the call. The gatherer re-runs this from the
+ * protected call's 401, which is exactly the request Claude would follow.
+ *
+ * `undefined` falls back to the well-known paths, which is the spec's own
+ * fallback for a 401 that names no pointer.
+ */
+export async function discoverClaudeAuthMetadata(
+  options: ClaudeDiscoveryOptions,
+  challengePointer: string | undefined,
+): Promise<Pick<ClaudeAuthEvidence, "prm" | "firstAuthorizationServer">> {
   const prm = await discoverProtectedResourceMetadata(
     options,
     challengePointer,
@@ -201,12 +241,5 @@ export async function discoverClaudeAuthEvidence(
     options,
     authorizationServers[0],
   );
-
-  return {
-    enteredUrl: options.enteredUrl,
-    unauthenticated,
-    prm,
-    firstAuthorizationServer,
-    ...extras,
-  };
+  return { prm, firstAuthorizationServer };
 }

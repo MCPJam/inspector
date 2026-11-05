@@ -671,7 +671,7 @@ describe("harnessToolApprovalRefusalReason", () => {
   // "allow-reads"), so attaching a server no longer makes the combination
   // unsound. This used to be the refusal case.
   it("allows Claude Code under approval once a server is attached", () => {
-    expect(claudeCode.mcpDelivery).toBe("native");
+    expect(claudeCode.mcpDelivery).toBe("harness");
     expect(claudeCode.supportsMcpToolApproval).toBe(true);
     expect(
       harnessToolApprovalRefusalReason({
@@ -711,7 +711,7 @@ describe("harnessToolApprovalRefusalReason", () => {
   // host-executed, so reading `supportsMcpToolApproval` (irrelevant here, and
   // now TRUE on the other adapter) would have looked like the right check.
   it("reads the capability for the surface each adapter's MCP tools run on", () => {
-    expect(codex.mcpDelivery).toBe("host-executed");
+    expect(codex.mcpDelivery).toBe("mcpjam");
     // The MCP flag is the WRONG one for host-executed delivery: claiming it
     // must not make up for a host-executed surface that cannot pause.
     const cannotGateHostTools = {

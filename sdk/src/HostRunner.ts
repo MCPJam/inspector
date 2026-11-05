@@ -95,6 +95,8 @@ import {
 interface HostRunnerBaseConfig {
   /** @internal Lease ownership inherited by iteration clones. */
   mcpjamLeaseScope?: McpjamModelLeaseScope;
+  /** @internal The eval run's server; see `CreateModelOptions.mcpjamBaseUrl`. */
+  mcpjamBaseUrl?: string;
   mcpjamProject?: string;
   /**
    * For `mcpjam/…` models: mint as a caller whose credential refreshes (a CLI
@@ -318,6 +320,7 @@ export class HostRunner implements HostExecutor {
   private readonly model: string;
   private readonly apiKey: string;
   private readonly mcpjamLeaseScope?: McpjamModelLeaseScope;
+  private readonly mcpjamBaseUrl?: string;
   private readonly mcpjamProject?: string;
   private readonly mcpjamAuth?: McpjamAuthContext;
   private readonly createLanguageModel?: HostRunnerBaseConfig["createLanguageModel"];
@@ -446,6 +449,7 @@ export class HostRunner implements HostExecutor {
     this.model = resolvedModel;
     this.apiKey = config.apiKey;
     this.mcpjamLeaseScope = config.mcpjamLeaseScope;
+    this.mcpjamBaseUrl = config.mcpjamBaseUrl;
     this.mcpjamProject = config.mcpjamProject;
     this.mcpjamAuth = config.mcpjamAuth;
     this.createLanguageModel = config.createLanguageModel;
@@ -902,6 +906,7 @@ export class HostRunner implements HostExecutor {
       const modelOptions: CreateModelOptions = {
         apiKey: this.apiKey,
         mcpjamLeaseScope: this.mcpjamLeaseScope,
+        ...(this.mcpjamBaseUrl ? { mcpjamBaseUrl: this.mcpjamBaseUrl } : {}),
         mcpjamProject: this.mcpjamProject,
         ...(this.mcpjamAuth ? { mcpjamAuth: this.mcpjamAuth } : {}),
         baseUrls: this.baseUrls,
@@ -1167,6 +1172,7 @@ export class HostRunner implements HostExecutor {
       tools: options.tools ?? this.rawTools,
       apiKey: options.apiKey ?? this.apiKey,
       mcpjamLeaseScope: options.mcpjamLeaseScope ?? this.mcpjamLeaseScope,
+      mcpjamBaseUrl: options.mcpjamBaseUrl ?? this.mcpjamBaseUrl,
       mcpjamProject: options.mcpjamProject ?? this.mcpjamProject,
       mcpjamAuth: options.mcpjamAuth ?? this.mcpjamAuth,
       createLanguageModel:

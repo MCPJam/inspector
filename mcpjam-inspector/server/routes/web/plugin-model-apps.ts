@@ -106,6 +106,7 @@ export function pluginModelAppRoutes(ports: {
           toolTitle: source.tool.title ?? source.tool.name,
           toolMetadata: source.tool._meta,
           appToolsEnabled: fresh.appToolsEnabled,
+          resourcesEnabled: fresh.resourcesEnabled,
           contextEnabled: fresh.contextEnabled,
           messageEnabled: fresh.messageEnabled,
           contextSnapshot: record.context.snapshot(
@@ -182,17 +183,22 @@ export function pluginModelAppRoutes(ports: {
             return c.json(record.context.snapshot(id, generation));
           if (action === "remove-all")
             return c.json(
-              record.context.removeAll(id, generation, {
+              modelApps.removeContext(body.instanceToken, actor, {
                 operationId: raw.operationId,
                 basis: raw.basis,
               }),
             );
-          const result = record.context.update(id, generation, {
-            operationId: raw.operationId,
-            sequence: raw.sequence,
-            params: raw.params,
-            ...(raw.attach === "user" ? { attach: "user" as const } : {}),
-          });
+          const result = modelApps.updateContext(
+            body.instanceToken,
+            actor,
+            {
+              operationId: raw.operationId,
+              sequence: raw.sequence,
+              params: raw.params,
+              ...(raw.attach === "user" ? { attach: "user" as const } : {}),
+            },
+            fresh.modelContextPolicy,
+          );
           return c.json({
             ...result,
             snapshot: record.context.snapshot(id, generation),
@@ -203,6 +209,43 @@ export function pluginModelAppRoutes(ports: {
       }),
     );
   }
+  router.post("/resources", (c) =>
+    ports.route(c, async () => {
+      const body = handle.extend({
+        operation: z.discriminatedUnion("method", [
+          z.strictObject({ method: z.literal("resources/read"), uri: z.string().min(1), _meta: z.record(z.string(), z.unknown()).optional() }),
+          z.strictObject({ method: z.enum(["resources/list", "resources/templates/list"]), cursor: z.string().optional() }),
+        ]),
+      }).parse(await c.req.json());
+      const { actor, bearer, admission } = await ports.admitted(c, body);
+      const record = modelApps.get(body.instanceToken, actor);
+      const runtime = createPluginRequestRuntime(c, admission, bearer,
+        { hostId: record.owner.hostId, serverId: record.owner.owner.serverId }, record.owner, { ownedForms: false });
+      const signal = AbortSignal.any([c.req.raw.signal, record.abort.signal]);
+      try {
+        const source = await runtime.resolve(record.toolName, signal);
+        if (source.revision !== record.revision || !source.resourcesEnabled) throw denied();
+        await admission.revalidate({ signal });
+        modelApps.get(body.instanceToken, actor);
+        signal.throwIfAborted();
+        const serverId = record.owner.owner.serverId;
+        const operation = body.operation;
+        const result = operation.method === "resources/read"
+          ? await source.manager.readResource(serverId, { uri: operation.uri, ...(operation._meta ? { _meta: operation._meta } : {}) }, { signal })
+          : operation.method === "resources/list"
+            ? await source.manager.listResources(serverId, operation.cursor !== undefined ? { cursor: operation.cursor } : undefined, { signal, cacheMode: "bypass" })
+            : await source.manager.listResourceTemplates(serverId, operation.cursor !== undefined ? { cursor: operation.cursor } : undefined, { signal, cacheMode: "bypass" });
+        const fresh = await runtime.resolve(record.toolName, signal);
+        if (fresh.revision !== record.revision || !fresh.resourcesEnabled) throw denied();
+        await admission.revalidate({ signal });
+        modelApps.get(body.instanceToken, actor);
+        signal.throwIfAborted();
+        return c.json(result);
+      } finally {
+        await runtime.release();
+      }
+    }),
+  );
   router.post("/call", (c) =>
     ports.route(c, async () => {
       const body = call.parse(await c.req.json());

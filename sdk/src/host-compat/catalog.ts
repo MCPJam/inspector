@@ -9,6 +9,7 @@ import {
 } from "./evaluator.js";
 import { hostConfigFieldsToImageSupport } from "./image-support.js";
 import type { HostCompatToolsInput } from "./server-requirements.js";
+import { withToolResultAuthChallengeFindings } from "./tool-auth-compatibility.js";
 import type {
   CompatProvenance,
   HostCompatProfile,
@@ -358,6 +359,9 @@ export interface EvaluateMarketHostsOptions extends EvaluateAllHostsOptions {
 /**
  * Convenience: evaluate a server against the market-host catalog. Pass
  * `options.catalog` to use a live-fetched backend catalog.
+ *
+ * Every caller (the platform operation, the client engine, `compat`) gets the
+ * tool-result sign-in finding, graded against the same catalog.
  */
 export function evaluateMarketHosts(
   toolsData: HostCompatToolsInput | null | undefined,
@@ -367,5 +371,19 @@ export function evaluateMarketHosts(
   const profiles = catalog
     ? buildHostProfilesFromCatalog(catalog)
     : buildMarketHostProfiles();
-  return evaluateAllHosts(toolsData, profiles, evaluateOptions);
+  const evaluation = evaluateAllHosts(toolsData, profiles, evaluateOptions);
+  // `toolsMetadata` wins over a tool's inline `_meta`, as it does for the
+  // widget scan.
+  const tools = (toolsData?.tools ?? []).map((tool) => {
+    const meta = toolsData?.toolsMetadata?.[tool.name];
+    return meta ? { ...tool, _meta: meta } : tool;
+  });
+  return {
+    ...evaluation,
+    reports: withToolResultAuthChallengeFindings(
+      evaluation.reports,
+      tools,
+      catalog ?? bundledHostCompatCatalog()
+    ),
+  };
 }

@@ -252,8 +252,11 @@ class GuestSessionRequestError extends Error {
     message: string,
     status?: number,
     upstreamFailure?: GuestSessionFailureDetails,
+    // What `fetch` threw when there is no status. Kept as `cause` so a report
+    // can name the browser's own error class instead of this wrapper's.
+    cause?: unknown,
   ) {
-    super(message);
+    super(message, cause === undefined ? undefined : { cause });
     this.name = "GuestSessionRequestError";
     this.status = status;
     this.upstreamFailure = upstreamFailure;
@@ -343,6 +346,9 @@ async function requestGuestSession(
   } catch (error) {
     throw new GuestSessionRequestError(
       error instanceof Error ? error.message : "network error",
+      undefined,
+      undefined,
+      error,
     );
   }
 

@@ -172,13 +172,6 @@ export function applyBuiltInToolPolicy(input: {
   return { ids, dropped };
 }
 
-function readStringArray(value: unknown): string[] | undefined {
-  return Array.isArray(value) &&
-    value.every((entry) => typeof entry === "string")
-    ? (value as string[])
-    : undefined;
-}
-
 /** A saved config's list: its string entries, or none when it has no list. */
 function configuredIdsOf(value: unknown): string[] {
   return Array.isArray(value)
@@ -193,72 +186,23 @@ function configuredIdsOf(value: unknown): string[] {
  */
 export async function resolveTurnBuiltInToolIds(args: {
   requested: readonly string[] | undefined;
-  targetKind: "adhoc" | "host" | "environment" | "scenario";
-  /** The host config this turn resolved, when it resolved one. */
-  hostRuntimeConfig: Record<string, unknown> | null;
-  isGuest: boolean;
-  /**
-   * The approval setting the turn itself resolved. It can raise the
-   * workspace approval setting, never lower it.
-   */
+  configuration: ProjectDefaultToolConfig | null;
+  configurationUnavailable?: boolean;
+  workspaceToolsBarred: boolean;
   requestedToolApproval?: boolean;
-  /**
-   * The project's default host config: the record, `null` when the project
-   * has no default config, or a throw when it cannot be read.
-   */
-  loadProjectDefaultConfig: () => Promise<ProjectDefaultToolConfig | null>;
-  /** `projects:getProjectCapabilities`; null when the caller has no access. */
   loadProjectAccess: () => Promise<WorkspaceToolAccess | null>;
 }): Promise<TurnBuiltInToolDecision> {
-  const requested = args.requested;
-  // The SAVED approval setting: the resolved host's on a host-bound or
-  // environment turn; on an ad-hoc turn the project default's, read below
-  // with the list it bounds. Nothing saved (and nothing readable) means on.
-  let savedToolApproval: unknown =
-    args.targetKind === "adhoc"
-      ? undefined
-      : args.hostRuntimeConfig?.requireToolApproval;
+  const { requested, workspaceToolsBarred } = args;
   const workspaceToolApproval = () =>
     resolveWorkspaceToolApproval({
-      saved: savedToolApproval,
+      saved: args.configuration?.requireToolApproval,
       requested: args.requestedToolApproval,
     });
-
-  if (requested === undefined || requested.length === 0) {
-    return {
-      ids: requested === undefined ? undefined : [],
-      dropped: [],
-      workspaceToolApproval: workspaceToolApproval(),
-    };
-  }
-  const known = requested.filter(isKnownBuiltInToolId);
-  // The registry never builds workspace tools for a guest or a shared
-  // scenario visitor; the policy says so up front instead of looking anything
-  // up for them.
-  const workspaceToolsBarred = args.isGuest || args.targetKind === "scenario";
-
-  let configured: readonly string[] | undefined;
-  let configUnavailable = false;
-  if (args.targetKind === "host") {
-    configured = readStringArray(args.hostRuntimeConfig?.builtInToolIds) ?? [];
-  } else if (
-    args.targetKind === "adhoc" &&
-    !workspaceToolsBarred &&
-    known.some((id) => !BUILT_IN_TOOL_BODY_OVERRIDES.includes(id))
-  ) {
-    try {
-      const projectDefault = await args.loadProjectDefaultConfig();
-      configured = projectDefault
-        ? configuredIdsOf(projectDefault.builtInToolIds)
-        : undefined;
-      savedToolApproval = projectDefault?.requireToolApproval;
-    } catch {
-      // Unreadable configuration bounds nothing, but it also establishes
-      // nothing: workspace tools then need access this turn cannot prove.
-      configUnavailable = true;
-    }
-  }
-
+  const configured = args.configuration?.builtInToolIds === undefined
+    ? undefined
+    : configuredIdsOf(args.configuration.builtInToolIds);
+  const configUnavailable = args.configurationUnavailable;
+  const known = requested?.filter(isKnownBuiltInToolId) ?? [];
   const needsAccess =
     !workspaceToolsBarred &&
     !configUnavailable &&

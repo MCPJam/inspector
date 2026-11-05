@@ -156,16 +156,39 @@ describe("owned resource request callback", () => {
     expect(legacy).not.toHaveBeenCalled();
   });
 
-  it("keeps the callback unavailable without server resource capability", () => {
+  it("answers reads with a clear error when the client disables server resources", async () => {
     const bridge = createHostAppBridge({
       hostInfo: { name: "test", version: "1" },
       hostCapabilities: {},
     });
+    const read = vi.fn();
     registerHostBridgeHandlers(bridge, {
       effectiveHostCapabilities: {},
-      callbacks: { onReadResourceV2: vi.fn() },
+      callbacks: { onReadResourceV2: read },
     });
-    expect(bridge.onreadresource).toBeUndefined();
+    const app = new App(
+      { name: "app", version: "1" },
+      {},
+      { autoResize: false }
+    );
+    const [hostTransport, guestTransport] =
+      InMemoryTransport.createLinkedPair();
+    await bridge.connect(hostTransport);
+    await app.connect(guestTransport);
+    try {
+      await expect(
+        app.readServerResource({ uri: "host-resource://file" })
+      ).rejects.toMatchObject({
+        code: -32601,
+        message: expect.stringContaining(
+          "This host does not allow resource reads."
+        ),
+      });
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+      await bridge.close();
+    }
   });
 });
 
@@ -195,6 +218,49 @@ describe("owned model context acknowledgement", () => {
     ).resolves.toEqual(acknowledgement);
     expect(update).toHaveBeenCalledOnce();
     expect(legacy).not.toHaveBeenCalled();
+  });
+});
+
+describe("owned model context refusal", () => {
+  // The inspector refuses an update it can't keep (a size, rate or memory
+  // budget) with this error, as ChatGPT does. The App must see -32000 and the
+  // host's message, not -32603: the code is what tells it the update was
+  // refused rather than lost.
+  it("reaches the App with its integer code and message", async () => {
+    const refusal = Object.assign(
+      new Error("The host could not persist the model context update"),
+      { code: -32000 }
+    );
+    const bridge = createHostAppBridge({
+      hostInfo: { name: "host", version: "1" },
+      hostCapabilities: { updateModelContext: {} },
+    });
+    registerHostBridgeHandlers(bridge, {
+      effectiveHostCapabilities: { updateModelContext: {} },
+      callbacks: { onUpdateModelContextV2: vi.fn().mockRejectedValue(refusal) },
+    });
+    const app = new App(
+      { name: "app", version: "1" },
+      {},
+      { autoResize: false }
+    );
+    const [hostTransport, guestTransport] =
+      InMemoryTransport.createLinkedPair();
+    await bridge.connect(hostTransport);
+    await app.connect(guestTransport);
+    try {
+      const error = await app
+        .updateModelContext({ content: [{ type: "text", text: "state" }] })
+        .catch((reason: unknown) => reason);
+      expect(error).toMatchObject({
+        code: -32000,
+        message:
+          "MCP error -32000: The host could not persist the model context update",
+      });
+    } finally {
+      await app.close();
+      await bridge.close();
+    }
   });
 });
 
@@ -291,3 +357,12 @@ it.each(["factory", "retained-official"])(
     }
   }
 );
+
+
+it("preserves all text blocks in the standard App follow-up handler", async () => {
+  const onSendFollowUp = vi.fn();
+  const bridge = createHostAppBridge({ hostInfo: { name: "Claude", version: "1" }, hostCapabilities: { message: { text: {} } } });
+  registerHostBridgeHandlers(bridge, { effectiveHostCapabilities: { message: { text: {} } }, callbacks: { onSendFollowUp } });
+  await bridge.onmessage!({ role: "user", content: [{ type: "text", text: "first" }, { type: "text", text: "second" }] }, {} as never);
+  expect(onSendFollowUp).toHaveBeenCalledExactlyOnceWith("first\nsecond");
+});

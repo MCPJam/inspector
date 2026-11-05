@@ -109,6 +109,8 @@ export interface ResolvedEnvironmentRuntime {
   /** Additive-compatibility DIAGNOSTIC only — never a substitute for the
    *  invariant checks in {@link resolveEnvironmentForRuntime}. */
   specVersion?: number;
+  serverConfigHashes?: Record<string, string>;
+  selectedSecretIds?: string[];
   environmentRef: {
     environmentId: string;
     name: string;
@@ -366,6 +368,7 @@ export async function resolveEnvironmentForRuntime(
     projectId: string;
     environmentId: string;
     overrides?: EnvironmentOverrides;
+    serverSelectionSource?: "client-default";
   }
 ): Promise<ResolvedEnvironmentRuntime> {
   const serverOverrideIds = args.overrides?.serverIds;
@@ -377,6 +380,9 @@ export async function resolveEnvironmentForRuntime(
       {
         projectId: args.projectId,
         environmentId: args.environmentId,
+        ...(args.serverSelectionSource
+          ? { serverSelectionSource: args.serverSelectionSource }
+          : {}),
         ...(serverOverrideIds !== undefined ? { serverOverrideIds } : {}),
         ...(runtimeVenue !== undefined ? { runtimeVenue } : {}),
       } as any

@@ -175,6 +175,10 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
 - Distinguish:
   - JSON-RPC request errors such as invalid params or unknown method
   - tool execution failures returned in the tool result
+- Mid-session sign-in challenges are classified, never acted on. The CLI does not start a sign-in:
+  - an HTTP 401 on the call fails the command with `AUTH_REQUIRED`; `error.details.challenge` is the parsed challenge and `error.details.hint` names the `oauth login --url <url> --credentials-out <file>` command, with `--scopes` when the challenge named a scope
+  - a 403 `insufficient_scope` fails with `INSUFFICIENT_SCOPE` and the same kind of hint
+  - an `isError` result carrying `_meta["mcp/www_authenticate"]` (the ChatGPT convention) is a completed call: the result is printed unchanged with `_authChallenge` (parsed challenge plus `hint`) added beside it
 
 ### `resources list`, `resources read`, `resources templates`
 
@@ -194,6 +198,7 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
 
 - `toolsMetadata` is local cache output, not an MCP field.
 - `tokenCount` is a local estimate from serialized tool JSON, not server output.
+- `_authChallenge` on a `tools call` result is a local parse of the result's `_meta["mcp/www_authenticate"]`, not a server field.
 - Several wrappers normalize missing arrays to `[]`.
 - Aggregated commands may merge connection errors with partial successes.
 - `--debug-out` artifacts redact secrets. Missing credential values in those files are often intentional masking, not proof that the server omitted them.

@@ -19,8 +19,7 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@/lib/app-navigation", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/lib/app-navigation")>();
+  const actual = await importOriginal<typeof import("@/lib/app-navigation")>();
   return {
     ...actual,
     useAppNavigate: () => navigateMock,
@@ -80,7 +79,7 @@ describe("ConformanceHistory", () => {
     // A Convex-id-shaped project: the run link carries the project in its
     // PATH now, and the builder refuses to put an unusable id there.
     const projectId = "k5700000000000000000000000a";
-    render(<ConformanceHistory projectId={projectId} serverId="srv_1" />);
+    render(<ConformanceHistory projectId={projectId} />);
 
     await user.click(screen.getByTestId("conformance-history-row"));
 
@@ -92,13 +91,60 @@ describe("ConformanceHistory", () => {
     expect(startRun).not.toHaveBeenCalled();
   });
 
+  it("shows each run's result as a ring of its checks", () => {
+    useQueryMock.mockReturnValue({
+      page: [
+        makeRun({
+          passed: 19,
+          failed: 2,
+          applicable: 21,
+          outcome: "failed",
+          score: 90.4,
+        }),
+      ],
+      isDone: true,
+      continueCursor: "",
+    });
+    render(<ConformanceHistory projectId="proj_1" />);
+
+    expect(
+      screen.getByRole("img", { name: "19 passed, 2 failed of 21" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("FAILED")).toBeNull();
+    const header = screen.getByText("SERVER").parentElement;
+    expect(header?.textContent).toBe(
+      "SERVERPROTOCOLSCORECHECKSRESULTDATESOURCE",
+    );
+  });
+
+  it("names a run that has not finished instead of drawing an empty ring", () => {
+    const unfinished = { applicable: 0, passed: 0, failed: 0, couldNotRun: 0 };
+    useQueryMock.mockReturnValue({
+      page: [
+        makeRun({ _id: "run_q", status: "queued", ...unfinished }),
+        makeRun({ _id: "run_c", status: "cancelled", ...unfinished }),
+        makeRun({ _id: "run_t", status: "timed_out", ...unfinished }),
+      ],
+      isDone: true,
+      continueCursor: "",
+    });
+    render(<ConformanceHistory projectId="proj_1" />);
+
+    expect(screen.getByText("RUNNING")).toBeInTheDocument();
+    expect(screen.getByText("CANCELLED")).toBeInTheDocument();
+    expect(screen.getByText("TIMED OUT")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("img", { name: "No applicable checks" }),
+    ).toBeNull();
+  });
+
   it("keeps the empty state compact so the suites below stay visible", () => {
     useQueryMock.mockReturnValue({
       page: [],
       isDone: true,
       continueCursor: "",
     });
-    render(<ConformanceHistory projectId="proj_1" serverId="srv_1" />);
+    render(<ConformanceHistory projectId="proj_1" />);
 
     // The history sits in a shrink-0 container above the suites; a
     // viewport-height empty state pushed them out of view.
@@ -107,5 +153,28 @@ describe("ConformanceHistory", () => {
       .closest(".flex.items-center.justify-center");
     expect(emptyState).not.toBeNull();
     expect(emptyState!.className).not.toMatch(/100vh/);
+  });
+
+  it("keeps loaded rows while the next page loads", async () => {
+    const user = userEvent.setup();
+    // Convex reads undefined again whenever the cursor changes. The first
+    // page is one object, as Convex returns it: a fresh one per render would
+    // re-fire the rows effect forever.
+    const firstPage = {
+      page: [makeRun()],
+      isDone: false,
+      continueCursor: "cursor_2",
+    };
+    useQueryMock.mockImplementation(
+      (_name: string, args: { paginationOpts: { cursor: string | null } }) =>
+        args.paginationOpts.cursor === null ? firstPage : undefined,
+    );
+    render(<ConformanceHistory projectId="proj_1" />);
+
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+
+    expect(screen.queryByText("Loading run history…")).toBeNull();
+    expect(screen.getAllByTestId("conformance-history-row")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Loading…" })).toBeDisabled();
   });
 });

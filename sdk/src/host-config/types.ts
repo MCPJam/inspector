@@ -26,6 +26,11 @@ import {
   isStatelessProtocolVersion,
   type McpProtocolVersion,
 } from "../mcp-client-manager/mcp-protocol-version.js";
+import type {
+  AuthChallengeAction,
+  ToolResultAuthChallengeTrigger,
+  UnauthorizedChallengeTrigger,
+} from "../mcp-client-manager/auth-challenge.js";
 
 import type { ModelSelection } from "./model-selection.js";
 
@@ -188,10 +193,13 @@ export const TOOL_PARAM_HEADER_MIRRORING_MODES = [
 //   server's integrity check; belongs to the conformance harness.
 // - Elicitation form/url support — already modeled, as
 //   `clientCapabilities.elicitation.{form,url}`. Do not duplicate it here.
-// - list_changed handling — a real divergence between hosts, but making
-//   MCPJam's own tool list go stale is an anti-feature for a debugger.
-//   It belongs in the host catalog as a fact to DISPLAY about a host, not
-//   as a behavior to simulate.
+//
+// list_changed handling used to sit on this list (a stale tool list looked
+// like an anti-feature for a debugger). It is now modeled after all, as
+// `toolListChanged` on the profile below: `listens: false` refuses the
+// standalone listen channel, and `refetches: false` drops
+// `notifications/tools/list_changed` so the cached `tools/list` stays stale —
+// the stale list IS what a server author needs to see from such a host.
 
 /**
  * How the simulated client walks paginated list results (`tools/list`,
@@ -247,6 +255,36 @@ export const MRTR_SUPPORT_MODES = [
   "none",
 ] as const satisfies readonly MrtrSupport[];
 
+// ── Mid-session sign-in ("lazy authentication") knobs ─────────────────
+//
+// Four sibling fields on the profile below say how the simulated client
+// reacts when a server refuses a call until the user signs in. The value
+// unions and their permitted-literal arrays live with the recognition code in
+// `../mcp-client-manager/auth-challenge.ts` (`AuthChallengeAction`,
+// `UnauthorizedChallengeTrigger`, `ToolResultAuthChallengeTrigger`), which
+// also owns the absent values (`AUTH_CHALLENGE_POLICY_DEFAULTS`) and the
+// reader (`authChallengePolicyFrom`). They are not redefined here.
+//
+// - `unauthorizedChallenge` / `unauthorizedChallengeTrigger` — an HTTP `401`
+//   on a request (MCP authorization spec). Absent = act on it (`"prompt"`)
+//   whatever the 401 carries (`"any"`), as the reference SDK client does.
+// - `toolResultAuthChallenge` / `toolResultAuthChallengeTrigger` — a `200`
+//   tool result with `isError: true` and `_meta["mcp/www_authenticate"]`
+//   (OpenAI's contract).
+//
+// ASYMMETRY, on purpose: for the `_meta` pair the absent action is the one
+// that does NOT act (`"passthrough"`), because the `_meta` challenge is not in
+// the MCP spec, so a spec-conforming client treats it as an ordinary error.
+// That keeps the shared rule above (absent = spec-conforming) true for all
+// four fields. A host that honors `_meta` writes `toolResultAuthChallenge`;
+// the absent trigger is then OpenAI's own rule.
+//
+// Each trigger only narrows its action: it is inert while that action is
+// `"passthrough"`. A 403 `insufficient_scope` is outside these knobs (every
+// host steps up on it). The `401` pair has no mechanism on stdio, so it is
+// inert there; the `_meta` pair rides the tool result and applies on any
+// transport.
+
 /**
  * Which cancellation leaf a connection on `version` is governed by.
  *
@@ -277,6 +315,11 @@ export const CONFORMANCE_PROFILE_KEYS = [
   "paginationTraversal",
   "mrtrSupport",
   "toolCallCancellation",
+  "toolListChanged",
+  "unauthorizedChallenge",
+  "unauthorizedChallengeTrigger",
+  "toolResultAuthChallenge",
+  "toolResultAuthChallengeTrigger",
 ] as const;
 
 /**
@@ -312,6 +355,21 @@ export type PluginExtensionCapabilityKey =
 export type HostConfigPluginExtensionsV1 = {
   enabled: boolean;
   capabilities?: Partial<Record<PluginExtensionCapabilityKey, boolean>>;
+};
+
+/**
+ * Per-client budgets for the context a plugin App pushes with
+ * `ui/update-model-context`. Every key is optional: absent means MCPJam's
+ * default (`MODEL_CONTEXT_POLICY_DEFAULTS`). No version field, because an
+ * eval pins the content-addressed `hostConfigId` instead.
+ */
+export type HostConfigModelContextPolicyV1 = {
+  /** UTF-8 bytes of one update's `{ content, structuredContent }`. */
+  updateMaxBytes?: number;
+  /** Content blocks in one update. */
+  maxBlocks?: number;
+  /** UTF-8 bytes of every App context one turn carries. */
+  turnMaxBytes?: number;
 };
 
 export type CspDomainSet = {
@@ -390,6 +448,35 @@ export type HostConfigMcpProfileV1 = {
     listens?: boolean;
     refetches?: boolean;
   };
+  // Mid-session sign-in knobs (see the "lazy authentication" block above the
+  // profile for the shared semantics). Absent is spec-conforming for all four,
+  // which for the `_meta` pair means NOT acting: that challenge is not in the
+  // MCP spec.
+  /**
+   * Action on a recognized HTTP `401` during a session. Absent = `"prompt"`
+   * (the spec reading, and the reference SDK client).
+   */
+  unauthorizedChallenge?: AuthChallengeAction;
+  /**
+   * What a `401` needs before the host treats it as a challenge. Absent =
+   * `"any"` (spec: the header is optional, with a well-known fallback).
+   * `"bearer-header"` requires `WWW-Authenticate: Bearer` (Claude);
+   * `"resource-metadata"` also requires its `resource_metadata` parameter.
+   */
+  unauthorizedChallengeTrigger?: UnauthorizedChallengeTrigger;
+  /**
+   * Action on a `200` `isError` tool result carrying
+   * `_meta["mcp/www_authenticate"]`. Absent = `"passthrough"`: the `_meta`
+   * challenge is not in the MCP spec, so here the absent value is the one
+   * that does not act.
+   */
+  toolResultAuthChallenge?: AuthChallengeAction;
+  /**
+   * What the `_meta` challenge needs. Absent = `"oauth2-scheme+error-params"`
+   * (OpenAI's "both halves" rule — the tool declares an `oauth2`
+   * `securitySchemes` entry — plus both `error` and `error_description`).
+   */
+  toolResultAuthChallengeTrigger?: ToolResultAuthChallengeTrigger;
   initialize?: {
     // Order is semantic. The first entry is sent in
     // `initialize.params.protocolVersion`; all entries form the
@@ -484,6 +571,8 @@ export type HostConfigMcpProfileV1 = {
     // OpenAI plugin extensions (sidebar Apps, file viewers, forms, …) this
     // client offers. Absent → the client style's default.
     pluginExtensions?: HostConfigPluginExtensionsV1;
+    // Budgets for plugin App context. Absent → MCPJam's defaults.
+    modelContextPolicy?: HostConfigModelContextPolicyV1;
   };
   extensions?: Record<string, unknown>;
 };
@@ -507,9 +596,49 @@ export type OpenAiAppsCapabilities = {
   requestClose?: boolean;
 };
 
-// Per-dimension surface controlled by `mcpProfile.apps.mcpAppsOverrides`.
-// Sparse — every field optional. `availableDisplayModes` is the only
-// non-boolean: an array of spec-defined mode strings, replacement semantics.
+/**
+ * Per-dimension MCP Apps (SEP-1865 `app.*` bridge) surface controlled by
+ * `mcpProfile.apps.mcpAppsOverrides`. Sparse: every field is optional and an
+ * override merges field by field over the host style's preset.
+ * `availableDisplayModes` is the only non-boolean, an array of spec-defined
+ * modes with replacement semantics. Independent from the `window.openai`
+ * shim matrix: toggling a row here never changes that one.
+ *
+ * Each row is one of three lever types:
+ *   - **advertise**: folded into the `HostCapabilities` blob the host returns
+ *     in `ui/initialize` (e.g. `serverResources`, `logging`).
+ *   - **emit**: whether the host sends a notification to the View at runtime
+ *     (e.g. `toolInputPartial`, `hostContextChanged`).
+ *   - **behavior**: how the host interprets resource `_meta.ui.*` or other
+ *     inbound data (e.g. `resourcePrefersBorder`).
+ *
+ * Row meanings:
+ *   - `availableDisplayModes`: modes advertised in
+ *     `HostContext.availableDisplayModes`. Host side only; the View declares
+ *     its own `appCapabilities.availableDisplayModes` in `ui/initialize`.
+ *   - `toolInputPartial` / `toolCancelled` / `hostContextChanged` /
+ *     `resourceTeardown`: whether the host emits the matching
+ *     `ui/notifications/*` (or the `ui/resource-teardown` request).
+ *   - `toolInfo`: the `HostContext.toolInfo` field.
+ *   - `openLinks` / `serverTools`: advertised like the keys below. Every
+ *     built-in preset turns them on, but keeping them in the matrix lets a
+ *     legacy `hostCapabilitiesOverride: {}` ("advertise nothing") migrate
+ *     without widening the surface, and lets minimal hosts leave them out.
+ *   - `serverResources` / `logging` / `updateModelContext` / `message`: the
+ *     matching `HostCapabilities` keys. Turning off `logging` also blocks
+ *     `app.sendLog()`, since the spec gates `notifications/message` on it.
+ *   - `downloadFile`: support for `ui/download-file`. When true the host wires
+ *     the handler and advertises `hostCapabilities.downloadFile`.
+ *   - `requestTeardown`: the host answers a view-initiated
+ *     `ui/notifications/request-teardown` with a graceful
+ *     `ui/resource-teardown` before unmounting. SEP-1865 doesn't gate that
+ *     notification; the row keeps each preset honest about it.
+ *   - `sandboxPermissions` / `cspFrameDomains` / `cspBaseUriDomains`: whether
+ *     the host honors the matching resource `_meta.ui` sandbox sub-fields
+ *     when it composes the iframe sandbox.
+ *   - `resourcePrefersBorder`: whether the host honors
+ *     `_meta.ui.prefersBorder` when it draws the iframe chrome.
+ */
 export type McpAppsCapabilities = {
   availableDisplayModes?: ("inline" | "fullscreen" | "pip")[];
   toolInputPartial?: boolean;
@@ -998,6 +1127,8 @@ export type HostConfigInputV2 = {
   systemPromptDefault?: SystemPromptDefault;
   temperature: number;
   requireToolApproval: boolean;
+  /** Refuse execution unless native discovery is qualified for this route. */
+  requireNativeToolDiscovery?: boolean;
   // Host-level opt-in for progressive MCP tool discovery. Optional + defaults
   // to undefined ("off") so pre-feature rows hash byte-identically.
   // JSON.stringify drops undefined, so `undefined` and `false` hash distinctly
@@ -1022,6 +1153,8 @@ export type HostConfigInputV2 = {
   // form (the key absent), so all emulated hosts dedupe together. The
   // canonicalizer rejects any value other than the known harness ids.
   harness?: Harness;
+  /** Run a vendor harness while preserving this host's MCPJam client. */
+  agentLoop?: Harness;
   // Optional during the rollout of project-scoped server config: named hosts
   // pass `undefined` (server set lives on `projects.serverIds`); scenario/eval
   // forks still pass real arrays. Normalized to `[]` BEFORE hashing so the
@@ -1107,6 +1240,7 @@ export type CanonicalHostConfigV2 = {
   systemPromptDefault?: SystemPromptDefault;
   temperature: number;
   requireToolApproval: boolean;
+  requireNativeToolDiscovery?: boolean;
   // Mirrors HostConfigInputV2.progressiveToolDiscovery. Optional so absent
   // rows hash byte-identically to pre-feature rows.
   progressiveToolDiscovery?: boolean;
@@ -1120,6 +1254,8 @@ export type CanonicalHostConfigV2 = {
   // Mirrors HostConfigInputV2.harness (validated pass-through). Optional so
   // absent rows hash byte-identically to pre-feature rows.
   harness?: Harness;
+  /** Run a vendor harness while preserving this host's MCPJam client. */
+  agentLoop?: Harness;
   serverIds: Array<ServerId>;
   optionalServerIds: Array<ServerId>;
   // Mirrors HostConfigInputV2.builtInToolIds. Optional + omitted when absent or

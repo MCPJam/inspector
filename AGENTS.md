@@ -55,3 +55,10 @@ Use `.github/pull_request_template.md`. User-visible changes to releasable
 packages need a changeset. Run `npm run slop:size` before opening a PR; base a
 stacked PR on the branch below it and add `-- --base <branch below>`.
 Read `.agents/skills/` workflows only when relevant to the task.
+
+## Releases and deploys
+
+Before a release or any production deploy, read the deploy playbook in the
+backend repo,
+[`docs/deploy-playbook.md`](https://github.com/MCPJam/mcpjam-backend/blob/main/docs/deploy-playbook.md):
+which path to use, deploy order across the two repos, and rollback.

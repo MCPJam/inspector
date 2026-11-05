@@ -75,6 +75,10 @@ flowchart LR
 
 <!-- The event, metric, log or alert that shows this works after deploy, or "None: not user-facing". -->
 
+## Automated decisions
+
+<!-- Does this add or change code that decides something about a user with no human involved: suspending or restricting an account, blocking a region, abuse or fraud gating, rate-limit bans, risk scoring, or eligibility? If yes, link the GDPR Art. 22 assessment update (Kestral GDPR-44) and name the human-review safeguard: who can review and overturn the decision, and how the user asks for that. Otherwise write "None: no automated decision about users". -->
+
 ## Checklist
 
 - [ ] I can explain every line of this diff without the agent that wrote it.

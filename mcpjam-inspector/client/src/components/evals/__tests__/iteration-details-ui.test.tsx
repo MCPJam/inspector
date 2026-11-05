@@ -347,6 +347,23 @@ describe("IterationDetails judge review gate", () => {
       screen.getByText(/The answer never named the file/),
     ).toBeInTheDocument();
   });
+
+  it("shows the verdict up front for a suite-run trial when review is off", () => {
+    // The case page leaves review off: the judge is never hidden behind a
+    // reveal, and no label control is offered.
+    render(
+      <IterationDetails
+        layoutMode="full"
+        iteration={{ ...iteration, suiteRunId: "run-1" }}
+        testCase={testCase}
+        judgeCase={judgeCase}
+      />,
+    );
+    expect(screen.queryByTestId("mock-trial-judge-review")).toBeNull();
+    expect(
+      screen.getByText(/The answer never named the file/),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("IterationDetails host presentation", () => {

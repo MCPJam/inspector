@@ -31,6 +31,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "mcp-tasks",
   "mcpjam-compatibility",
   "mcpjam-conformance",
+  "mcpjam-directory-readiness",
   "mcpjam-learning",
   "multi-account-connections-enabled",
   "platform-post-launch",
@@ -50,7 +51,6 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "tool-quality-enabled",
   "trace-destinations",
   "unified-sessions-enabled",
-  "unified-share-conformance",
   "unified-share-evals",
   "xaa",
 ] as const;

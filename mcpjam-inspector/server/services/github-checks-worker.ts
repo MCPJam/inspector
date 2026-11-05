@@ -42,6 +42,7 @@ import { WEB_CALL_TIMEOUT_MS } from "../config.js";
 import { logger } from "../utils/logger";
 import { getConvexBearerForDelegation } from "../utils/v1-convex-token.js";
 import { createAuthorizedManager } from "../routes/web/auth.js";
+import { WebRouteError } from "../routes/web/errors.js";
 import { prepareEvalRun, shouldSkipExecution } from "../routes/shared/evals.js";
 import { createConvexClient } from "./evals/route-helpers.js";
 import type { CheckRecipe } from "./github-checks/recipes.js";
@@ -539,8 +540,13 @@ export function describeCheckFailure(error: unknown): {
     return { failureReason: "billing_limit_reached" };
   }
   // Both canonical markers for the org spend budget: the `/stream` wire code
-  // and the launch mutation's ConvexError code.
-  if (/spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED/i.test(message)) {
+  // and the launch mutation's ConvexError code. The recorder's 403
+  // translation carries the code in `details.reason`.
+  if (
+    /spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED/i.test(message) ||
+    (error instanceof WebRouteError &&
+      error.details?.reason === "ORGANIZATION_SPEND_BUDGET_REACHED")
+  ) {
     return { failureReason: "spend_budget_reached" };
   }
   return { failureReason: message.slice(0, 200) };
