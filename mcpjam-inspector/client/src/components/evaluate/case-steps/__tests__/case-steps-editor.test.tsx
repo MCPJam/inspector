@@ -66,12 +66,16 @@ describe("CaseStepsEditor", () => {
     expect(
       within(cards[1]!).queryByText("Assertions at this point"),
     ).toBeNull();
-    // After-run assertions and Expected outcome follow the last step.
-    expect(screen.getByTestId("case-steps-after-run")).toHaveTextContent(
-      "After-run assertions",
-    );
-    expect(screen.getByLabelText("Step 3")).toBeInTheDocument();
-    expect(screen.getByLabelText("Step 4")).toBeInTheDocument();
+    // Expected outcome is the last step, then the after-run assertions (DD1).
+    const outcome = screen.getByTestId("case-steps-expected-outcome");
+    const afterRun = screen.getByTestId("case-steps-after-run");
+    expect(afterRun).toHaveTextContent("After-run assertions");
+    expect(within(outcome).getByLabelText("Step 3")).toBeInTheDocument();
+    expect(within(afterRun).getByLabelText("Step 4")).toBeInTheDocument();
+    expect(
+      outcome.compareDocumentPosition(afterRun) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("shows an empty state when the case has no after-run assertions", () => {
@@ -164,6 +168,15 @@ describe("execution preview", () => {
     expect(within(panel).getByText("1. User prompt")).toBeInTheDocument();
     expect(within(panel).getByText("Before step 1")).toBeInTheDocument();
     expect(within(panel).getByText("Two boxes")).toBeInTheDocument();
+    const [outcome, afterRun, suiteDefaults] = [
+      "Expected outcome",
+      "After-run assertions",
+      "Suite default evaluators",
+    ].map((title) => within(panel).getByText(title));
+    const follows = (a: Node, b: Node) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(follows(outcome!, afterRun!)).toBe(true);
+    expect(follows(afterRun!, suiteDefaults!)).toBe(true);
     fireEvent.click(
       screen.getByRole("button", { name: "Hide execution preview" }),
     );

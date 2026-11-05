@@ -120,10 +120,10 @@ export type ExecutionPreviewInput = {
 };
 
 export type ExecutionPreview = GroupedCaseSteps & {
-  /** Case-level assertions, graded once over the finished transcript. */
-  afterRunAssertions: { label: string; assertions: Predicate[] };
   /** Trimmed expected outcome, or `null` when the case has none. */
   expectedOutcome: string | null;
+  /** Case-level assertions, graded once over the finished transcript. */
+  afterRunAssertions: { label: string; assertions: Predicate[] };
   suiteDefaultEvaluators: {
     /** Suite defaults that run for this case, after suppression. */
     assertions: Predicate[];
@@ -134,8 +134,9 @@ export type ExecutionPreview = GroupedCaseSteps & {
 
 /**
  * Everything a run of this case will do, in the order the preview shows it:
- * numbered steps with their assertions, after-run assertions, the expected
- * outcome, then the suite's default evaluators.
+ * numbered steps with their assertions, the expected outcome, after-run
+ * assertions (DD1), then the suite's default evaluators. Surfaces render the
+ * fields in this order.
  *
  * The split between after-run assertions and suite defaults follows
  * `resolveCasePredicates`: `inherit` (or no envelope) runs only the suite's
@@ -157,11 +158,11 @@ export function buildExecutionPreview(
   const expectedOutcome = input.expectedOutput?.trim() ?? "";
   return {
     ...groupCaseSteps(input.steps),
+    expectedOutcome: expectedOutcome === "" ? null : expectedOutcome,
     afterRunAssertions: {
       label: AFTER_RUN_ASSERTIONS_LABEL,
       assertions: caseList,
     },
-    expectedOutcome: expectedOutcome === "" ? null : expectedOutcome,
     suiteDefaultEvaluators: {
       assertions: replaced ? [] : suiteDefaults,
       replacedCount: replaced ? suiteDefaults.length : 0,

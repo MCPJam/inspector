@@ -1,7 +1,7 @@
 /**
  * The steps editor (C8): numbered steps with their assertions nested under
- * them, assertions stored before step 1 above it, then the after-run
- * assertions (DD1) and the expected outcome.
+ * them, assertions stored before step 1 above it, then the expected outcome
+ * and the after-run assertions (DD1).
  *
  * Storage does not change (E6). Every edit writes the same flat `steps` list,
  * case `predicates` and `expectedOutput` the old editor wrote; the grouping is
@@ -258,7 +258,7 @@ export function CaseStepsEditor({
     );
   };
 
-  const afterRunOrdinal = grouped.steps.length + 1;
+  const outcomeOrdinal = grouped.steps.length + 1;
   return (
     <SpineDragProvider disabled items={[]} onReorder={() => {}}>
       <CheckDraftBoundary onValidityChange={onDraftValidityChange}>
@@ -286,9 +286,26 @@ export function CaseStepsEditor({
               {addDrawer(null, "Add actions or assertions")}
             </StepRail>
           )}
+          <ExpectedOutcomeSection
+            ref={outcomeRef}
+            ordinal={outcomeOrdinal}
+            value={draft.expectedOutput ?? ""}
+            judgeRow={card.judge}
+            readOnly={readOnly}
+            onChange={(expectedOutput) => onDraftChange({ expectedOutput })}
+            onOpenSuiteSettings={onOpenSuiteSettings}
+            onJudgeSkippedChange={(skipped) =>
+              onDraftChange({
+                judgeConfigOverride: withCaseJudgeSkipped(
+                  draft.judgeConfigOverride,
+                  skipped,
+                ),
+              })
+            }
+          />
           <AfterRunAssertions
             card={card}
-            ordinal={afterRunOrdinal}
+            ordinal={outcomeOrdinal + 1}
             availableTools={availableTools.map((tool) => tool.name)}
             readOnly={readOnly}
             checkPolicy={env.checkPolicy}
@@ -307,23 +324,6 @@ export function CaseStepsEditor({
             onChange={(index, next) =>
               onDraftChange({
                 predicates: editAfterRunAssertion(predicates, index, next),
-              })
-            }
-          />
-          <ExpectedOutcomeSection
-            ref={outcomeRef}
-            ordinal={afterRunOrdinal + 1}
-            value={draft.expectedOutput ?? ""}
-            judgeRow={card.judge}
-            readOnly={readOnly}
-            onChange={(expectedOutput) => onDraftChange({ expectedOutput })}
-            onOpenSuiteSettings={onOpenSuiteSettings}
-            onJudgeSkippedChange={(skipped) =>
-              onDraftChange({
-                judgeConfigOverride: withCaseJudgeSkipped(
-                  draft.judgeConfigOverride,
-                  skipped,
-                ),
               })
             }
           />

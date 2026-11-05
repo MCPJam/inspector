@@ -1,6 +1,6 @@
 /**
  * The execution preview (C13): everything a run of the case does, in order —
- * steps with their assertions, after-run assertions, the expected outcome,
+ * steps with their assertions, the expected outcome, after-run assertions,
  * then the suite's default evaluators. A pure view of `buildExecutionPreview`,
  * so the editor and the Test run page show the same list.
  */
@@ -97,15 +97,15 @@ export function ExecutionPreviewPanel({
             <AssertionList assertions={step.assertions} />
           </PreviewSection>
         ))}
+        <PreviewSection title="Expected outcome">
+          <p className="text-muted-foreground">{expectedOutcome ?? "None"}</p>
+        </PreviewSection>
         <PreviewSection title={afterRunAssertions.label}>
           <PredicateList
             predicates={afterRunAssertions.assertions}
             provenance="case"
             empty="None"
           />
-        </PreviewSection>
-        <PreviewSection title="Expected outcome">
-          <p className="text-muted-foreground">{expectedOutcome ?? "None"}</p>
         </PreviewSection>
         <PreviewSection title="Suite default evaluators">
           <PredicateList
