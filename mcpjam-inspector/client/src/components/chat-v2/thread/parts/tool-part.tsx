@@ -115,6 +115,7 @@ export function ToolPart({
   editVersion,
   minimalMode = false,
   serverId,
+  resourceServerId = serverId,
   mcpToolResultImageRendering,
   rawOutput,
   recordedWidgetDiagnostics,
@@ -167,6 +168,8 @@ export function ToolPart({
   editVersion?: number;
   minimalMode?: boolean;
   serverId?: string;
+  /** Saved server ID for resource ownership, independent of local connection aliases. */
+  resourceServerId?: string;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   rawOutput?: unknown;
   recordedWidgetDiagnostics?: RecordedWidgetPolicy;
@@ -1144,7 +1147,7 @@ export function ToolPart({
         </span>
       </div>
 
-      <ToolResourceAttachments result={rawResultData} serverId={serverId} />
+      <ToolResourceAttachments result={rawResultData} serverId={resourceServerId} />
       {webSearchRefusalCode ? (
         <WebSearchRefusalNotice code={webSearchRefusalCode} />
       ) : null}

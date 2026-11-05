@@ -1,5 +1,7 @@
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { createMemoryRouter, RouterProvider } from "react-router";
+import { ResourceChatHandoff } from "../resource-chat-handoff";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   EXTENSION_AUTH_HOLD_MS,
@@ -24,6 +26,7 @@ import { parsePluginDeepLink } from "@/shared/plugin-deep-link";
 
 const f = vi.hoisted(() => ({
   discover: vi.fn(),
+  discoverFile: vi.fn(),
   open: vi.fn(),
   invoke: vi.fn(),
   close: vi.fn(),
@@ -39,6 +42,7 @@ vi.mock("../thread-app-api", async (importOriginal) => ({
     f.scopes.push(scope);
     return {
       discover: (...args: unknown[]) => f.discover(scope, ...args),
+      discoverFile: (...args: unknown[]) => f.discoverFile(scope, ...args),
       discoverServer: async (...args: unknown[]) => ({
         entries: await f.discover(scope, ...args),
         mentions: { available: false },
@@ -168,6 +172,31 @@ describe("Playground extension owners", () => {
     cleanup();
     f.facts = {};
     await new Promise((resolve) => setTimeout(resolve, 10));
+  });
+
+  it("waits for actual parent registration before opening a resource in the chat owner", async () => {
+    const uri = "fixture-file://parts/triangle.stl";
+    f.discoverFile.mockResolvedValue([{ kind: "file", toolName: "open-file", title: "Viewer", resourceUri: uri }]);
+    function HandoffCenter() {
+      useExtensionRegistration(registration("chat-file"), {
+        sendMessage: async () => true, runOnboarding: async () => {},
+      });
+      const current = useExtensionOwners();
+      return <ResourceChatHandoff identity={identity} ready fileActions={current.chat?.fileActions ?? null} />;
+    }
+    const router = createMemoryRouter([{ path: "/playground", element: <ExtensionWorkspaceProvider><HandoffCenter /></ExtensionWorkspaceProvider> }], {
+      initialEntries: [{ pathname: "/playground", state: { pluginResourceFile: {
+        ...identity, serverId: server.serverId, resourceUri: uri, nonce: crypto.randomUUID(), createdAt: Date.now(),
+      } } }],
+    });
+    render(<RouterProvider router={router} />);
+    await waitFor(() => expect(f.discoverFile).toHaveBeenCalledOnce());
+    expect(f.discoverFile.mock.calls[0]).toEqual([
+      expect.objectContaining({ threadId: "chat-file" }), server.serverId, uri, expect.any(AbortSignal),
+    ]);
+    await waitFor(() => expect(f.open.mock.calls.some(call => call[0].threadId === "chat-file" && call[2] === "open-file")).toBe(true));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(router.state.location.state).toEqual({});
   });
 
   it("keeps included tool catalogs scoped to the current host and clears them on access loss", async () => {
