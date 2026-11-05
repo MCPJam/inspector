@@ -134,6 +134,7 @@ describe("Suite run header with evaluate-nav-enabled", () => {
     // Prompt to improve stays with the verdict hero in the body.
     expect(screen.getByText("kept in body")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Run again" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Back to suite" })).toBeTruthy();
 
     await userEvent
       .setup()
@@ -153,6 +154,7 @@ describe("Suite run header with evaluate-nav-enabled", () => {
     ).toBeTruthy();
     expect(screen.getByText("lifted")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Suite settings/ })).toBeNull();
+    expect(screen.queryByTestId("suite-run-back")).toBeNull();
   });
 });
 

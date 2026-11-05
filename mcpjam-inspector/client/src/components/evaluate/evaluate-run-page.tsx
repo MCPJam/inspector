@@ -46,6 +46,7 @@ import type {
 import { EvaluateRunCompare } from "./evaluate-run-compare";
 import { useEvaluateNavEnabled } from "./nav/use-evaluate-nav-enabled";
 import { SuiteSettingsButton } from "./nav/suite-settings-button";
+import { SuiteRunBackButton } from "./nav/suite-run-back-button";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { modelsFromRun } from "./run-launch-context";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
@@ -276,6 +277,7 @@ export function EvaluateRunPage({
                   Run again
                 </Button>
               ) : null}
+              {navEnabled ? <SuiteRunBackButton suiteId={run.suiteId} /> : null}
               {(headerActions?.onImprove ||
                 headerActions?.onOpenFailingTrace) && (
                 <DropdownMenu>
