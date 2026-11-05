@@ -2729,7 +2729,7 @@ export function useChatSession(
           chatSessionId: () => chatSessionIdRef.current,
           claim: (args) => convexClient.mutation(appToolInvocations.claim, args),
           complete: (args) => convexClient.mutation(appToolInvocations.complete, args),
-        }).catch(() => toast.error("The app tool response could not be delivered. Its action may have run."));
+        }).catch(() => toast.error("The app tool response could not be delivered. Check whether the action ran before trying again."));
         return;
       }
       if (isHarnessStartupPart(part)) {
