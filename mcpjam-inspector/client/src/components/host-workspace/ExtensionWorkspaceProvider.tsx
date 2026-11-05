@@ -59,6 +59,8 @@ export interface ExtensionRegistration {
   identity: ExtensionOwnerIdentity | null;
   chatId: string;
   servers: WorkspaceServer[];
+  /** Exact plugin contribution already resolved for this chat. Display only. */
+  includedPluginTools?: { environmentId: string; serverIds: string[]; includeAppOnly?: boolean };
   capabilities?: ExtensionCapabilities;
   /** Which client profile App launches are counted under (H9). */
   profile?: "chatgpt" | "codex";
@@ -88,12 +90,21 @@ export interface ExtensionPorts {
 
 export type ExtensionOwnerKind = "global" | "chat";
 
+export interface IncludedPluginToolScope {
+  projectId: string;
+  ownerKey: string;
+  environmentId: string;
+  serverIds: string[];
+  includeAppOnly?: boolean;
+}
+
 interface ExtensionStoreState {
   /** Extensions are on for the registered client. */
   enabled: boolean;
   global: ThreadAppWorkspace | null;
   chats: Record<string, ThreadAppWorkspace>;
   currentChatId: string | null;
+  includedPluginTools: IncludedPluginToolScope | null;
   /**
    * Where thread, file and quick-action Apps (and settings) are drawn: the
    * right rail's App area, mounted once and never moved.
@@ -122,6 +133,7 @@ function createExtensionStore() {
     global: null,
     chats: {},
     currentChatId: null,
+    includedPluginTools: null,
     railSlot: null,
     takeoverSlot: null,
     railRevealSeq: 0,
@@ -169,6 +181,7 @@ function registrationKey(registration: ExtensionRegistration): string {
     capabilitiesKey(registration.capabilities ?? ALL_EXTENSION_CAPABILITIES),
     registration.profile ?? "chatgpt",
     registration.hostRevision ?? null,
+    registration.includedPluginTools ?? null,
     registration.hold === true && registration.identity === null,
   ]);
 }
@@ -322,8 +335,14 @@ export function ExtensionWorkspaceProvider({
     });
   }, [identityKey, chatId, store, released]);
   useLayoutEffect(() => {
-    store.setState({ currentChatId: chatId, enabled: identity !== null });
-  }, [store, chatId, identity]);
+    store.setState({
+      currentChatId: chatId,
+      enabled: identity !== null,
+      includedPluginTools: identity && registration?.includedPluginTools
+        ? { ...registration.includedPluginTools, projectId: identity.projectId, ownerKey: identityKey! }
+        : null,
+    });
+  }, [store, chatId, identity, identityKey, registration?.includedPluginTools]);
   // Choosing another chat (Sessions, New chat) returns from a global App's
   // takeover to that chat; the App stays retained.
   const shownChat = useRef(chatId);

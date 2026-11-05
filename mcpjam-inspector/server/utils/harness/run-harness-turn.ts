@@ -1696,6 +1696,9 @@ export async function runHarnessTurn(
           ? await projectSelectedMcpServersAsHostTools({
               manager: mcpClientManager,
               selectedServerIds: selectedServers ?? [],
+              serverDisplayNames: Object.fromEntries(
+                (effectiveCapabilities?.servers ?? []).map((server) => [server.serverId, server.name]),
+              ),
               unavailableServerIds: options.unavailableServerIds,
               connectionsByServerId: accountGroups,
               ...(pluginServerOrigins
