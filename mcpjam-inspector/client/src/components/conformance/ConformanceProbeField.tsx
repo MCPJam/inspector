@@ -32,7 +32,7 @@ import {
   useServerToolsData,
   type ToolsDataStatus,
 } from "@/lib/host-compat/use-host-compat";
-import { ToolCallArgsEditor } from "@/components/evals/checks-section";
+import { ConformanceToolArgs } from "./ConformanceToolArgs";
 import { acceptsEmptyToolArguments } from "./conformance-tool-input";
 import {
   LOG_LEVEL_ADVICE,
@@ -460,12 +460,13 @@ export function ConformanceProbeField({
         </p>
       ) : null}
       {toolName !== NONE ? (
-        // Keyed by tool: the Raw JSON switch starts over for each one.
-        <ToolCallArgsEditor
+        // Keyed by tool: its form, or the Raw JSON switch, starts over.
+        <ConformanceToolArgs
           key={toolName}
+          inputSchema={selected?.inputSchema}
+          argProperties={selected?.argProperties}
           value={probe?.arguments ?? {}}
           onChange={changeArguments}
-          argProperties={selected?.argProperties}
           onInvalidChange={reportInvalid}
         />
       ) : null}
