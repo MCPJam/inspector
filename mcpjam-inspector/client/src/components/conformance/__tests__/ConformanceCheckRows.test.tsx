@@ -143,6 +143,22 @@ describe("CheckRow", () => {
     expect(screen.getByText(reason).closest("[inert]")).toBeNull();
   });
 
+  it.each([
+    [{ status: "passed" }, /Server Initialize, passed/],
+    [{ status: "failed" }, /Server Initialize, failed/],
+    [
+      { status: "skipped", skipReason: "could-not-run" },
+      /Server Initialize, could not run/,
+    ],
+    [
+      { status: "skipped", skipReason: "not-applicable" },
+      /Server Initialize, not applicable/,
+    ],
+  ] as const)("names the result for screen readers (%j)", (fields, name) => {
+    render(<CheckRow check={check(fields)} />);
+    expect(screen.getByRole("button")).toHaveAccessibleName(name);
+  });
+
   it("leaves the timeout tag off a check that ran", () => {
     render(<CheckRow check={check({})} />);
     expect(screen.queryByText("Timed out")).not.toBeInTheDocument();
@@ -181,6 +197,13 @@ describe("OAuthStepRow", () => {
       />,
     );
     expect(screen.queryByText("0ms")).not.toBeInTheDocument();
+  });
+
+  it("names a failed step's result for screen readers", () => {
+    render(<OAuthStepRow step={step({ status: "failed" })} />);
+    expect(screen.getByRole("button")).toHaveAccessibleName(
+      /Token request, failed/,
+    );
   });
 
   it("shows a failed step's text details when expanded", () => {

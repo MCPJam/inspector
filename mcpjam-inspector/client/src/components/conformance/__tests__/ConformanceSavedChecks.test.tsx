@@ -70,7 +70,7 @@ describe.each(["history", "shared"] as const)("%s check design", (page) => {
 
   it("reveals a not-applicable reason only when its check opens", async () => {
     await showCases();
-    const row = screen.getByRole("button", { name: "UI Tool Metadata Valid" });
+    const row = screen.getByRole("button", { name: /^UI Tool Metadata Valid/ });
     expect(within(row).queryByText(skipMessage)).toBeNull();
     expect(screen.getByText(skipMessage).closest("[inert]")).not.toBeNull();
     expect(screen.queryByText("0ms")).toBeNull();
@@ -79,7 +79,7 @@ describe.each(["history", "shared"] as const)("%s check design", (page) => {
 
     expect(screen.getByText(skipMessage).closest("[inert]")).toBeNull();
     expect(
-      screen.getByRole("button", { name: "Older saved check" }),
+      screen.getByRole("button", { name: /^Older saved check/ }),
     ).not.toHaveTextContent("undefinedms");
   });
 

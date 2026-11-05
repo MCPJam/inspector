@@ -103,6 +103,28 @@ export function pendingIdSet(
 }
 
 /** Says a result row opens: nothing else on it does. */
+/**
+ * The status icon has no text, and a shut row shows no message, so screen
+ * readers get the result from this hidden label on the row button.
+ */
+function RowStatusLabel({
+  status,
+  skipReason,
+}: {
+  status: string;
+  skipReason?: string;
+}) {
+  const label =
+    status === "passed"
+      ? "passed"
+      : status === "failed"
+        ? "failed"
+        : skipReason === "could-not-run"
+          ? "could not run"
+          : "not applicable";
+  return <span className="sr-only">{`, ${label}`}</span>;
+}
+
 function RowChevron({ expanded }: { expanded: boolean }) {
   return (
     <ChevronRight
@@ -246,6 +268,10 @@ export function CheckRow({
         >
           {check.title}
         </span>
+        {/* A missing-input row already says "Not run" in its tag. */}
+        {missingInput ? null : (
+          <RowStatusLabel status={check.status} skipReason={check.skipReason} />
+        )}
         {/* A skipped check never ran: its 0ms says nothing. */}
         {check.status !== "skipped" && check.durationMs !== undefined && (
           <span className="flex-shrink-0 pt-0.5 text-xs text-muted-foreground">
@@ -357,6 +383,7 @@ export function OAuthStepRow({
         </span>
         {pending ? <UnscoredTag /> : null}
         <span className="min-w-0 flex-1 text-sm">{step.title}</span>
+        <RowStatusLabel status={step.status} skipReason={step.skipReason} />
         {step.status !== "skipped" && (
           <span className="flex-shrink-0 pt-0.5 text-xs text-muted-foreground">
             {step.durationMs}ms
