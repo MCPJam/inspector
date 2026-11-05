@@ -604,6 +604,36 @@ describe("prepareChatV2", () => {
     expect(rewrittenTool._meta).toEqual(baselineTool._meta);
   });
 
+  describe("MCP tool names Anthropic rejects", () => {
+    const anthropicModel = {
+      id: "anthropic/claude-sonnet-4.5",
+      provider: "anthropic",
+    } as any;
+
+    it("prepares a direct or hosted turn, which aliases them on the wire", async () => {
+      const result = await prepareChatV2({
+        mcpClientManager: mockManager({ "cart.add": { _serverId: "shop" } }),
+        selectedServers: ["shop"],
+        modelDefinition: anthropicModel,
+        systemPrompt: "Base prompt.",
+      });
+
+      expect(Object.keys(result.allTools)).toContain("cart.add");
+    });
+
+    it("refuses a harness turn, which builds its own tool names", async () => {
+      await expect(
+        prepareChatV2({
+          mcpClientManager: mockManager({ "cart.add": { _serverId: "shop" } }),
+          selectedServers: ["shop"],
+          modelDefinition: anthropicModel,
+          systemPrompt: "Base prompt.",
+          harness: "claude-code",
+        }),
+      ).rejects.toThrow("Invalid tool name(s) for Anthropic: 'cart.add'");
+    });
+  });
+
   describe("progressive discovery", () => {
     function manyToolsManager(count: number) {
       const tools: Record<string, unknown> = {};
