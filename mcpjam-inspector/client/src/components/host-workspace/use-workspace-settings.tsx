@@ -3,6 +3,10 @@ import { useEffect, useState } from "react";
 import { ServerSettingsPanel } from "./ServerSettingsPanel";
 import { createServerSettingsApi } from "./server-settings-api";
 import type { ThreadAppScope } from "./thread-app-api";
+import {
+  serverDisplayName,
+  usePluginIconDirectory,
+} from "./plugin-icon-directory";
 
 /** Caller owns panel placement; this hook owns only settings discovery and selection. */
 export function useWorkspaceSettings(
@@ -10,6 +14,7 @@ export function useWorkspaceSettings(
   servers: readonly { serverId: string; name: string }[],
   launchProfile?: ExtensionLaunchProfile,
 ) {
+  const directory = usePluginIconDirectory();
   const key = JSON.stringify([
     scope?.projectId,
     scope?.hostId,
@@ -68,17 +73,19 @@ export function useWorkspaceSettings(
     scope && opened.key === key
       ? opened.ids.flatMap((id) => {
           const server = servers.find((item) => item.serverId === id);
+          const name = serverDisplayName(id, directory, servers);
           return server && ids.includes(id)
             ? [
                 {
                   ...server,
+                  name,
                   panel: (
                     <ServerSettingsPanel
                       key={`${key}:${id}`}
                       scope={scope}
                       serverId={id}
-                      serverName={server.name}
-                    launchProfile={launchProfile}
+                      serverName={name}
+                      launchProfile={launchProfile}
                     />
                   ),
                 },
