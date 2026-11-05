@@ -1600,8 +1600,11 @@ describe("ConformanceTab", () => {
 
     const card = screen.getByRole("list", { name: "Servers" });
     expect(card).toHaveTextContent("alpha");
-    expect(card).toHaveTextContent("Last run Oct 28, 2026 · Protocol Auto");
-    expect(card).toHaveTextContent("PASSED");
+    expect(card).toHaveTextContent("· Protocol Auto");
+    expect(card).not.toHaveTextContent("Last run");
+    expect(
+      within(card).getByRole("img", { name: "22 passed of 22" }),
+    ).toBeInTheDocument();
     expect(card).toHaveTextContent("100%");
     expect(card).toHaveTextContent("22/22");
 
