@@ -19,6 +19,10 @@ import { TutorialPossum } from "./tutorial-possum";
 import { TutorialSpine, TutorialTrail } from "./tutorial-spine";
 
 const LAST_STEP = TUTORIAL_STEPS.length - 1;
+const ARROW_STEP: Partial<Record<string, number>> = {
+  ArrowRight: 1,
+  ArrowLeft: -1,
+};
 
 export interface HowSuitesWorkDialogProps {
   open: boolean;
@@ -48,11 +52,12 @@ export function HowSuitesWorkDialog({
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "ArrowRight") {
-        setStep((s) => Math.min(LAST_STEP, s + 1));
-      } else if (event.key === "ArrowLeft") {
-        setStep((s) => Math.max(0, s - 1));
-      }
+      const delta = ARROW_STEP[event.key];
+      if (delta === undefined) return;
+      // The arrows only change step; the browser's own arrow scroll would
+      // shift the body sideways on narrow screens.
+      event.preventDefault();
+      setStep((s) => Math.min(LAST_STEP, Math.max(0, s + delta)));
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -73,11 +78,11 @@ export function HowSuitesWorkDialog({
         <DialogTitle className="sr-only">
           {TUTORIAL_COPY.dialogName}
         </DialogTitle>
-        <div className="flex max-h-[85vh] min-h-[min(620px,85vh)] flex-col overflow-y-auto">
-          <div className="border-b border-border px-6 pb-4 pt-6 pr-12">
+        <div className="flex min-w-0 max-h-[85vh] min-h-[min(620px,85vh)] flex-col">
+          <div className="shrink-0 border-b border-border px-6 pb-4 pt-6 pr-12">
             <TutorialSpine step={step} onJump={setStep} ease={ease} />
           </div>
-          <div className="grid min-h-0 flex-1 md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+          <div className="grid min-h-0 flex-1 overflow-y-auto overflow-x-hidden grid-cols-[minmax(0,1fr)] md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
             <div className="flex items-center bg-muted/40 p-6">
               <TutorialDiagram step={current} ease={ease} />
             </div>
@@ -104,7 +109,7 @@ export function HowSuitesWorkDialog({
               ) : null}
             </div>
           </div>
-          <div className="flex items-center gap-3 border-t border-border px-6 py-3">
+          <div className="flex shrink-0 items-center gap-3 border-t border-border px-6 py-3">
             <div
               className="flex items-center gap-1.5"
               role="tablist"

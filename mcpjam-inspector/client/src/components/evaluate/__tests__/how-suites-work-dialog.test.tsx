@@ -142,6 +142,10 @@ describe("HowSuitesWorkDialog navigation", () => {
     goTo(1);
     fireEvent.keyDown(document, { key: "ArrowLeft" });
     expect(heading()).toHaveTextContent("The whole flow");
+
+    // The arrows only change step, never scroll the dialog sideways.
+    expect(fireEvent.keyDown(document, { key: "ArrowRight" })).toBe(false);
+    expect(fireEvent.keyDown(document, { key: "ArrowDown" })).toBe(true);
   });
 
   it("offers Build a test case only with a handler, and calls it after closing", async () => {
