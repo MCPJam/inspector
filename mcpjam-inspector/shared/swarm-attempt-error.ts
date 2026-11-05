@@ -204,6 +204,16 @@ export function isHeldCreditsRefusal(
 const DECLINED_CARD_SENTENCE =
   /\bcard was declined, so auto-reload is paused\b/i;
 
+/**
+ * The backend's sentence as a text's own opening, not quoted later in it: how
+ * a plain-text error that is only the refusal's words is told apart from
+ * another error that cites one.
+ */
+export function opensWithDeclinedCardSentence(text: string): boolean {
+  const match = DECLINED_CARD_SENTENCE.exec(text);
+  return !!match && /^\s*(?:your\s+)?$/i.test(text.slice(0, match.index));
+}
+
 /** `auto_topup_declined`: the card that refills the credits was declined. */
 export function isDeclinedCardRefusal(
   refusalReason?: string | null,

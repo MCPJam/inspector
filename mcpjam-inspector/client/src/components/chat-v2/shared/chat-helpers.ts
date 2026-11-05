@@ -7,6 +7,10 @@ import {
 } from "@/lib/mcpjam-limit";
 import { isDeclinedCardLimit } from "@/shared/credit-exhaustion";
 import {
+  opensWithDeclinedCardSentence,
+  parseJsonEnvelope,
+} from "@/shared/swarm-attempt-error";
+import {
   formatOrgKeysRefusalEnvelope,
   formatPrefixedOrgKeysRefusal,
 } from "./org-keys-error";
@@ -587,8 +591,15 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
     // Return as-is
   }
 
-  // A stream error can carry the backend's sentence alone, or behind a prefix.
-  if (isDeclinedCardLimit(errorString)) return DECLINED_CARD_ERROR;
+  // A stream error carries the backend's refusal as JSON behind a prefix, or as
+  // its sentence alone. A sentence quoted inside another error is not its cause.
+  const envelope = parseJsonEnvelope(errorString);
+  if (
+    envelope
+      ? isDeclinedCardLimit(envelope)
+      : opensWithDeclinedCardSentence(errorString)
+  )
+    return DECLINED_CARD_ERROR;
 
   if (isMCPJamModelLimit(undefined, errorString)) {
     return formatMCPJamModelLimit(extractRetryPhrase(errorString));

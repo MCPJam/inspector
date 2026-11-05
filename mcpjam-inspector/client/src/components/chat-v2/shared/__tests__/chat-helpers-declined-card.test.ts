@@ -61,4 +61,9 @@ describe("formatErrorMessage — declined card", () => {
   ])("names the card from %s", (_, raw) => {
     expect(formatErrorMessage(raw)?.code).toBe(AUTO_TOPUP_DECLINED_CODE);
   });
+
+  it("keeps another error's own reading when it only quotes a decline", () => {
+    const raw = `Provider request failed after an earlier refusal: ${body.error}`;
+    expect(formatErrorMessage(raw)?.code).not.toBe(AUTO_TOPUP_DECLINED_CODE);
+  });
 });
