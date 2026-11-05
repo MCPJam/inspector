@@ -13,6 +13,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { FlaskConical } from "lucide-react";
 import { buildConformanceRunPath, useAppNavigate } from "@/lib/app-navigation";
 import { SharedArtifactPage } from "@/components/sharing/SharedArtifactPage";
+import { DetailPageHeader } from "@/components/shared/detail-page-header";
 import { useSharedArtifact } from "@/hooks/useSharedArtifact";
 import { useArtifactQuery } from "@/lib/artifact-urls";
 import {
@@ -341,17 +342,20 @@ export function ConformanceRunDetailPage({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="flex shrink-0 flex-col gap-2 border-b border-border px-8 pt-5 pb-4">
-        <div className="flex items-center gap-2 text-sm">
-          <button
-            type="button"
-            className="font-medium tracking-tight text-muted-foreground hover:text-foreground"
-            onClick={() => navigate("/conformance?view=history")}
+      {/* The same chrome as a run on screen, so a saved run reads like it. */}
+      <DetailPageHeader
+        backLabel="Conformance History"
+        onBack={() => navigate("/conformance?view=history")}
+        backTestId="conformance-saved-run-back"
+        title={
+          <h1
+            className="truncate text-xl font-bold tracking-tight text-foreground"
+            title={serverName}
           >
-            Conformance History
-          </button>
-          <span className="text-muted-foreground/70">/</span>
-          <span className="truncate font-semibold">{serverName}</span>
+            {serverName}
+          </h1>
+        }
+        actions={
           <SavedRunActions
             runId={detail._id}
             finished={finished}
@@ -360,12 +364,13 @@ export function ConformanceRunDetailPage({
             serversLoading={serversLoading}
             onOpenSettings={() => setSettingsOpen(true)}
           />
-        </div>
+        }
+      >
         <p className="text-sm text-muted-foreground">
           {detailDateFormat.format(detail.createdAt)} ·{" "}
           {HISTORY_SOURCE_LABEL[detail.source] ?? detail.source}
         </p>
-      </div>
+      </DetailPageHeader>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-8 pt-6 pb-8">
         <ConformanceVersionNotice refusal={conformanceVersionRefusal(versionCases, detail.protocolVersion)} serverName={serverName} />
@@ -392,7 +397,13 @@ export function ConformanceRunDetailPage({
             detail.status !== "cancelled"
           }
         />
-        {detail.incompleteReason ? (
+        {/* A suite's own row already says why it is incomplete; repeat the
+            run's reason here only when no suite carries it (e.g. a suite
+            that never reported). */}
+        {detail.incompleteReason &&
+        !detail.reports.some(
+          (report) => report.incompleteReason === detail.incompleteReason,
+        ) ? (
           <p className="mt-3 text-sm text-amber-700 dark:text-amber-400">
             {detail.incompleteReason}
           </p>

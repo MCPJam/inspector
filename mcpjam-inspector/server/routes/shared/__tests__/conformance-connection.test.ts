@@ -50,9 +50,14 @@ describe("temporary conformance connection", () => {
         accessToken: "saved-token",
         mcpProtocolVersion: "2026-07-28",
         supportedProtocolVersions: ["2026-07-28"],
-        baseFetch: guardedFetch,
+        baseFetch: expect.any(Function),
       }),
+      { signal: expect.any(AbortSignal) },
     );
+    const baseFetch = connect.mock.calls[0][1].baseFetch;
+    guardedFetch.mockResolvedValueOnce(new Response("ok"));
+    await baseFetch?.("https://bart.test/mcp");
+    expect(guardedFetch).toHaveBeenCalledWith("https://bart.test/mcp", expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(disconnect).toHaveBeenCalledTimes(1);
     expect(listTools).not.toHaveBeenCalled();
     expect(config).not.toHaveProperty("mcpProtocolVersion");
@@ -80,8 +85,9 @@ describe("temporary conformance connection", () => {
       expect.objectContaining({
         mcpProtocolVersion: undefined,
         supportedProtocolVersions: undefined,
-        baseFetch: guardedFetch,
+        baseFetch: expect.any(Function),
       }),
+      { signal: expect.any(AbortSignal) },
     );
   });
 

@@ -166,8 +166,10 @@ export function ConformanceAdvice({ groups }: { groups: AdviceGroup[] }) {
               <span className="flex min-w-0 flex-col gap-0.5 text-sm">
                 <span>
                   <span className="font-medium text-info">
+                    {/* A deprecation asks for a change, like SHOULD, but the
+                        spec states no SHOULD for it, so no strength is shown. */}
                     {isDeprecation(item)
-                      ? "Deprecation notice"
+                      ? "Suggested"
                       : `${isOptional(item) ? "Optional" : "Suggested"} (${item.specStrength})`}
                   </span>{" "}
                   <span className="text-muted-foreground">{item.suite}</span>{" "}

@@ -271,4 +271,14 @@ describe("useConformanceServerData", () => {
     );
     expect(result.current.inputsByServer.constructor).toEqual(inputs);
   });
+  it("reads and saves timeout separately from check selection", async () => {
+    client.query.mockResolvedValue({ ...row, runTimeoutSeconds: 300 });
+    const { result } = renderHook(() => useConformanceServerData(props));
+    await act(async () => { await result.current.loadDefaults("alpha"); });
+    expect(result.current.timeoutsByServer).toEqual({ alpha: 300 });
+    await result.current.saveTimeout?.("alpha", 1);
+    expect(save).toHaveBeenLastCalledWith({ projectId: "proj_1", serverId: "srv_1", runTimeoutSeconds: 1 });
+    await result.current.saveTimeout?.("alpha", null);
+    expect(save).toHaveBeenLastCalledWith({ projectId: "proj_1", serverId: "srv_1", runTimeoutSeconds: null });
+  });
 });

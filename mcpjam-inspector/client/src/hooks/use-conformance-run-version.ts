@@ -1,3 +1,4 @@
+import type { ConformanceRunBudget } from "@/lib/apis/mcp-conformance-api";
 import { useCallback, useRef } from "react";
 import {
   isKnownProtocolVersion,
@@ -28,7 +29,8 @@ export function useConformanceRunVersion(
 ) {
   const initial = useRef({ server, requested, resolved });
   return useCallback(
-    async (target: ServerWithName, version: ProtocolVersionPin) => {
+    async (target: ServerWithName, version: ProtocolVersionPin, budget?: ConformanceRunBudget) => {
+      budget?.signal?.throwIfAborted();
       if (!target.config || !("url" in target.config)) return undefined;
       const checked = initial.current;
       initial.current = {
@@ -47,7 +49,7 @@ export function useConformanceRunVersion(
       ) {
         return checked.resolved;
       }
-      const result = await checkConformanceConnection(target.name, version);
+      const result = await checkConformanceConnection(target.name, version, ...(budget?.signal ? [budget] : []));
       if (result.status === "ready") {
         if (!isKnownProtocolVersion(result.protocolVersion))
           throw new Error(
