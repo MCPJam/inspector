@@ -483,6 +483,7 @@ describe("useEvalHandlers", () => {
           status: "started",
           runIds: ["run-1"],
           failedCount: 0,
+          toastId: expect.anything(),
         });
       });
       expect(mockNavigateApp).not.toHaveBeenCalled();

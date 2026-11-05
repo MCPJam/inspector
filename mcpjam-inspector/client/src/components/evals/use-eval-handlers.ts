@@ -79,6 +79,8 @@ export type EvalRerunLaunch = {
   status: "started" | "partially_started";
   runIds: string[];
   failedCount: number;
+  /** The launch toast, so a caller can add an action to it. */
+  toastId: string | number;
 };
 
 type EvalsNavigationContext = "evals" | "ci-evals" | "evaluate";
@@ -1245,6 +1247,7 @@ export function useEvalHandlers({
             return typeof runId === "string" && runId.length > 0 ? [runId] : [];
           }),
           failedCount: failures.length,
+          toastId: runStartedToastId,
         };
         return launch;
       } catch (error) {

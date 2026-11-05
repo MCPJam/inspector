@@ -6,7 +6,7 @@
  */
 
 import { useState } from "react";
-import { ListChecks, Loader2 } from "lucide-react";
+import { ListChecks, Loader2, Play } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -24,6 +24,7 @@ import {
 } from "./execution-preview";
 import { useCaseEditorDraft } from "./use-case-editor-draft";
 import { useCaseTools } from "./use-case-tools";
+import { useCaseRun } from "./use-case-run";
 import {
   caseBackTarget,
   caseIdOf,
@@ -35,7 +36,7 @@ import {
 export function CaseEditorPage({ route }: { route: CaseEditorRoute }) {
   const { suiteId } = route;
   const caseId = caseIdOf(route);
-  const { convexProjectId } = useAppRouteContext();
+  const { convexProjectId, ensureServersReady } = useAppRouteContext();
   const projectId: string | null = convexProjectId ?? null;
   const { isAuthenticated } = useConvexAuth();
   const canQuery = useActorCanQuery();
@@ -50,12 +51,27 @@ export function CaseEditorPage({ route }: { route: CaseEditorRoute }) {
   const { capabilities } = useSuiteCapabilities(suiteId);
   const preview = useExecutionPreviewToggle("editor");
   const [hasInvalidField, setHasInvalidField] = useState(false);
+  const caseRun = useCaseRun({
+    suite,
+    caseId,
+    projectId,
+    ensureServersReady,
+    onOpenTestRun: (testRun) => go(testRun, "link"),
+  });
 
   const save = async () => {
     const savedId = await state.save();
     const next = savedId ? routeAfterSave(route, savedId) : null;
     if (next) go(next, "link", { replace: true });
     return savedId;
+  };
+  /** Runs the saved case, so unsaved edits are saved first (O4: stay here). */
+  const runCase = async () => {
+    if (!caseId || hasInvalidField) return;
+    if (state.isDirty && !(await state.save())) return;
+    await caseRun.run({
+      skipJudge: draft?.judgeConfigOverride?.goalCompletion?.enabled === false,
+    });
   };
   const openEvaluators = async () => {
     if (!caseId) return;
@@ -69,7 +85,7 @@ export function CaseEditorPage({ route }: { route: CaseEditorRoute }) {
         <EmptyState
           icon={ListChecks}
           title="Test case not found"
-          description="It may have been deleted, or it belongs to another suite."
+          description="This suite has no test case at this address. Go back to pick one."
         >
           <Button
             type="button"
@@ -137,6 +153,22 @@ export function CaseEditorPage({ route }: { route: CaseEditorRoute }) {
               ) : null}
               {caseId ? "Save" : "Create test case"}
             </Button>
+            {caseId ? (
+              <Button
+                type="button"
+                size="sm"
+                disabled={!draft || caseRun.isStarting || hasInvalidField}
+                title={caseRun.disabledReason ?? undefined}
+                onClick={() => void runCase()}
+              >
+                {caseRun.isStarting ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Play className="size-4" aria-hidden="true" />
+                )}
+                Run
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -149,7 +181,7 @@ export function CaseEditorPage({ route }: { route: CaseEditorRoute }) {
                 onDraftChange={state.update}
                 suiteDefaultPredicates={suiteDefaultPredicates}
                 suppressedSuiteStandardCheckIds={
-                  state.testCase?.suppressedSuiteStandardCheckIds
+                  draft.suppressedSuiteStandardCheckIds
                 }
                 suiteJudgeConfig={suite?.judgeConfig}
                 capabilities={capabilities}
@@ -181,7 +213,7 @@ export function CaseEditorPage({ route }: { route: CaseEditorRoute }) {
               expectedOutput: draft.expectedOutput,
               suiteDefaultPredicates,
               suppressedSuiteStandardCheckIds:
-                state.testCase?.suppressedSuiteStandardCheckIds,
+                draft.suppressedSuiteStandardCheckIds,
             }}
             onClose={preview.close}
           />

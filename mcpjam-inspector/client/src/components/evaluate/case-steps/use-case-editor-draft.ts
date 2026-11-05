@@ -80,6 +80,7 @@ function draftFromCase(testCase: EvalCase): CaseEditorDraft {
     predicates: testCase.predicates,
     expectedOutput: testCase.expectedOutput,
     judgeConfigOverride: testCase.judgeConfigOverride,
+    suppressedSuiteStandardCheckIds: testCase.suppressedSuiteStandardCheckIds,
     isNegativeTest: testCase.isNegativeTest,
   };
 }
@@ -152,7 +153,7 @@ export function useCaseEditorDraft(suiteId: string, caseId: string | null) {
           num_steps: draft.steps.length,
         });
         setBaseline(JSON.stringify(draft));
-        toast.success("Test case created");
+        toast.success("Test case created.");
         return newId;
       }
       if (!testCase) return null;
@@ -168,7 +169,7 @@ export function useCaseEditorDraft(suiteId: string, caseId: string | null) {
         has_predicates: payload.predicates != null,
       });
       setBaseline(JSON.stringify(draft));
-      toast.success("Changes saved");
+      toast.success("Changes saved.");
       return testCase._id;
     } catch (error) {
       toast.error(

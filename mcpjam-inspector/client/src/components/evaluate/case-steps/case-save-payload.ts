@@ -22,6 +22,8 @@ export type CaseEditorDraft = {
   predicates?: CasePredicates;
   expectedOutput?: string;
   judgeConfigOverride?: EvalJudgeConfigOverride;
+  /** Suite defaults this case turns off (Test Case Evaluators). */
+  suppressedSuiteStandardCheckIds?: string[];
   /** As stored; the editor has no control for it. */
   isNegativeTest?: boolean;
 };
@@ -53,6 +55,8 @@ function sharedFields(draft: CaseEditorDraft) {
     steps: draft.steps,
     expectedOutput: draft.expectedOutput?.trim() ?? "",
     isNegativeTest: resolveIsNegativeTest(draft),
+    suppressedSuiteStandardCheckIds:
+      draft.suppressedSuiteStandardCheckIds ?? [],
   };
 }
 
