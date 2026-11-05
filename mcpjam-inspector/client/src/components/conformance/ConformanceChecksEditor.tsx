@@ -97,6 +97,21 @@ export function ConformanceChecksEditor({
       ? "missing"
       : probeInputStatus(checkId, usedProbes);
   };
+  // With no output schema declared, the output check has nothing to grade, so
+  // it does not apply. A cut-off list cannot show that: a later tool may
+  // declare one.
+  const noOutputSchemas =
+    probeTools.status === "ready" &&
+    !probeTools.truncated &&
+    !probeTools.tools.some((tool) => tool.hasOutputSchema);
+  // A saved output tool still gets called, so its field stays shown until the
+  // user clears it.
+  const outputCheckNotApplicable = (suite: string, checkId: string) =>
+    suite === "protocol" &&
+    protocolProbes &&
+    noOutputSchemas &&
+    !probes.toolCallProbe &&
+    probeKeyFor(checkId) === "toolCallProbe";
   const valid = !Object.entries(probeValid).some(
     ([part, valid]) =>
       !valid && taskProbePartIsSelected(part, probes, selection.tasks),
@@ -139,7 +154,9 @@ export function ConformanceChecksEditor({
                     setProbeValid((prev) => ({ ...prev, [part]: valid }))
                   }
                 />
-              ) : suite === "protocol" && protocolProbes ? (
+              ) : suite === "protocol" &&
+                protocolProbes &&
+                !outputCheckNotApplicable(suite, checkId) ? (
                 <ProbeCheckExtra
                   checkId={checkId}
                   checkTitle={checkTitle}
@@ -159,13 +176,7 @@ export function ConformanceChecksEditor({
       }
       checkInputStatus={(suite, checkId) => {
         if (suite === "protocol" && protocolProbes) {
-          // The output check needs a tool only when one declares
-          // an output schema; otherwise it does not apply.
-          const noOutputSchemas =
-            probeTools.status === "ready" &&
-            !probeTools.truncated &&
-            !probeTools.tools.some((tool) => tool.hasOutputSchema);
-          return probeKeyFor(checkId) === "toolCallProbe" && noOutputSchemas
+          return outputCheckNotApplicable(suite, checkId)
             ? undefined
             : inputStatusFor(checkId);
         }
@@ -185,6 +196,11 @@ export function ConformanceChecksEditor({
         }
         return undefined;
       }}
+      checkNotApplicable={(suite, checkId) =>
+        outputCheckNotApplicable(suite, checkId)
+          ? "No tool on this server declares an output schema, so this check does not apply."
+          : undefined
+      }
     />
   );
 }
