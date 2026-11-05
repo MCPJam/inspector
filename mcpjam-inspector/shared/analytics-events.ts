@@ -297,10 +297,6 @@ export const ANALYTICS_EVENTS = {
   eval_tutorial_dismissed: { source: "client" },
   eval_tutorial_shown: { source: "client" },
   eval_tests_generated_from_sidebar: { source: "client" },
-  // "How suites work" tutorial (evaluate/how-suites-work/); props: trigger, step.
-  eval_tutorial_completed: { source: "client" },
-  eval_tutorial_dismissed: { source: "client" },
-  eval_tutorial_shown: { source: "client" },
   evals_cross_host_viewed: { source: "client" },
   evaluate_tab_viewed: { source: "client" },
   export_server_clicked: { source: "client" },

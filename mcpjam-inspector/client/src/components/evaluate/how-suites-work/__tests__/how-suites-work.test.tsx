@@ -96,6 +96,7 @@ describe("HowSuitesWorkDialog", () => {
     const onClose = vi.fn();
     render(<HowSuitesWorkDialog trigger="first_visit" onClose={onClose} />);
     expect(trackMock).toHaveBeenCalledWith("eval_tutorial_shown", {
+      location: "evaluate_nav",
       trigger: "first_visit",
       step: 1,
     });
@@ -112,6 +113,7 @@ describe("HowSuitesWorkDialog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Got it" }));
     expect(trackMock).toHaveBeenLastCalledWith("eval_tutorial_completed", {
+      location: "evaluate_nav",
       trigger: "first_visit",
       step: HOW_SUITES_WORK_STEPS.length,
     });
@@ -140,6 +142,7 @@ describe("HowSuitesWorkDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Walk me through it" }));
     fireEvent.click(screen.getByRole("button", { name: "Skip" }));
     expect(trackMock).toHaveBeenLastCalledWith("eval_tutorial_dismissed", {
+      location: "evaluate_nav",
       trigger: "first_suite",
       step: 2,
     });

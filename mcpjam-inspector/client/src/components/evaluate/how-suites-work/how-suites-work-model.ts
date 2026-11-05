@@ -77,16 +77,6 @@ export function clampStep(step: number): number {
   return Math.min(HOW_SUITES_WORK_LAST_STEP, Math.max(0, step));
 }
 
-/**
- * Event names, kept local until lane 1B's shared Evaluate nav event constants
- * (`evaluate/nav/`) land; unify on merge.
- */
-export const HOW_SUITES_WORK_EVENTS = {
-  shown: "eval_tutorial_shown",
-  completed: "eval_tutorial_completed",
-  dismissed: "eval_tutorial_dismissed",
-} as const;
-
 /** Menu opens always show; automatic triggers show only until seen. */
 export function shouldShowHowSuitesWork(
   trigger: HowSuitesWorkTrigger,

@@ -8,11 +8,10 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { Button } from "@mcpjam/design-system/button";
 import possumUrl from "@/assets/evals/possum.svg";
-import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
+import { trackEvalNav } from "../nav/evaluate-nav-events";
 import {
   clampStep,
-  HOW_SUITES_WORK_EVENTS,
   HOW_SUITES_WORK_LAST_STEP,
   HOW_SUITES_WORK_LAYERS,
   HOW_SUITES_WORK_STEPS,
@@ -38,7 +37,7 @@ export function HowSuitesWorkDialog({
   useEffect(() => {
     if (!trigger) return;
     setStep(0);
-    track(HOW_SUITES_WORK_EVENTS.shown, { trigger, step: 1 });
+    trackEvalNav("eval_tutorial_shown", { trigger, step: 1 });
   }, [trigger]);
 
   if (!trigger) return null;
@@ -48,10 +47,13 @@ export function HowSuitesWorkDialog({
   const go = (next: number) => setStep(clampStep(next));
 
   const finish = () => {
-    const event = isLast
-      ? HOW_SUITES_WORK_EVENTS.completed
-      : HOW_SUITES_WORK_EVENTS.dismissed;
-    track(event, { trigger, step: step + 1 });
+    trackEvalNav(
+      isLast ? "eval_tutorial_completed" : "eval_tutorial_dismissed",
+      {
+        trigger,
+        step: step + 1,
+      },
+    );
     setStep(0);
     onClose();
   };
