@@ -127,8 +127,14 @@ vi.mock("@/state/mcp-api", () => ({
   getInitializationInfo: getInitializationInfoMock,
 }));
 
+const hasAuthChallengeAwaitingCallbackMock = vi.hoisted(() =>
+  vi.fn((_serverName: string) => false),
+);
 vi.mock("@/state/oauth-orchestrator", () => ({
   ensureAuthorizedForReconnect: vi.fn(),
+  // The OAuth callback settles the sign-in ledger.
+  markAuthChallengeSignedIn: vi.fn(() => 0),
+  hasAuthChallengeAwaitingCallback: hasAuthChallengeAwaitingCallbackMock,
 }));
 
 vi.mock("@/lib/oauth/mcp-oauth", async (importOriginal) => {
@@ -2180,6 +2186,23 @@ describe("useServerState OAuth callback failures", () => {
     expect(window.location.pathname).toBe("/servers");
     expect(window.location.search).toBe("");
     expect(window.location.hash).toBe("");
+  });
+
+  it("still leaves a denied callback when settling it fails", async () => {
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    window.history.replaceState(
+      {},
+      "",
+      "/oauth/callback?error=access_denied&error_description=User%20denied%20access",
+    );
+    hasAuthChallengeAwaitingCallbackMock.mockImplementationOnce(() => {
+      throw new Error("ledger unavailable");
+    });
+
+    renderUseServerState(vi.fn());
+
+    await waitFor(() => expect(window.location.pathname).toBe("/servers"));
+    expect(window.location.search).toBe("");
   });
 
   it("marks the pending server as failed when token exchange fails after redirect", async () => {

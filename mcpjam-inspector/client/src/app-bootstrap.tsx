@@ -82,6 +82,7 @@ import {
   updateThemePreset,
 } from "./lib/theme-utils";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
+import { useAppLoadStallReport } from "./lib/app-load-stall";
 import { DbUserReadyProvider } from "./contexts/db-user-ready-context";
 import { LegalAcceptanceGate } from "./components/legal/LegalAcceptanceGate";
 import {
@@ -120,6 +121,7 @@ if (sandboxOriginFault) {
 
 function AuthBootstrap({ children }: { children: ReactNode }) {
   const { isEnsuringUser, isUserReady } = useEnsureDbUser();
+  useAppLoadStallReport(isUserReady);
   useEffect(() => {
     authRefusalDiagnostics.update({ ready: isUserReady });
     return () => authRefusalDiagnostics.update({ ready: false });

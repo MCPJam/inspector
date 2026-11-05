@@ -1,5 +1,8 @@
 import type { PlatformReadinessStartBody } from "./readiness-start-types.js";
-export type { PlatformReadinessStartBody, PlatformReadinessLazyAuthProbe } from "./readiness-start-types.js";
+export type {
+  PlatformReadinessStartBody,
+  PlatformReadinessLazyAuthProbe,
+} from "./readiness-start-types.js";
 import type {
   SwarmJourneyFinding,
   SwarmJourneyFindings,

@@ -1,6 +1,6 @@
 import {
   fireEvent,
-  render,
+  render as renderComponent,
   screen,
   waitFor,
   within,
@@ -12,6 +12,13 @@ import type {
   OrgAiConfig,
 } from "@/hooks/useOrgAiConfig";
 import { OrganizationOrgKeysPolicyCard } from "../OrganizationOrgKeysPolicyCard";
+
+function render(...args: Parameters<typeof renderComponent>) {
+  const result = renderComponent(...args);
+  const coverage = screen.queryByRole("button", { name: "Feature coverage" });
+  if (coverage) fireEvent.click(coverage);
+  return result;
+}
 
 const mockSetRequireOrgKeys = vi.fn();
 
@@ -191,13 +198,12 @@ describe("OrganizationOrgKeysPolicyCard", () => {
     });
     expect(toggle).not.toBeChecked();
     expect(toggle).toBeEnabled();
-    expect(
-      screen.getByText(
-        /AI requests must use an approved organization provider\. MCPJam-provided models are disabled\. Features without a compatible provider are unavailable\./,
-      ),
-    ).toBeInTheDocument();
+    // Off, the description is conditional so it can't contradict the switch.
+    expect(screen.getByTestId("org-ai-keys-description")).toHaveTextContent(
+      "When on, AI requests must use an approved organization provider and MCPJam-provided models are disabled.",
+    );
     expect(screen.getByTestId("org-ai-keys-off-summary")).toHaveTextContent(
-      "MCPJam-provided models are used where you haven't chosen an organization model.",
+      "Now off: MCPJam-provided models are used where you haven't chosen an organization model.",
     );
     // Coverage is about the policy; off, it would only list "MCPJam-provided".
     expect(screen.queryByText("Feature coverage")).not.toBeInTheDocument();
@@ -359,6 +365,9 @@ describe("OrganizationOrgKeysPolicyCard", () => {
     hookState.config = makeConfig({ requireOrgKeys: true });
     render(<OrganizationOrgKeysPolicyCard organizationId="org-1" isAdmin />);
 
+    expect(screen.getByTestId("org-ai-keys-description")).toHaveTextContent(
+      "AI requests must use an approved organization provider. MCPJam-provided models are disabled. Features without a compatible provider are unavailable.",
+    );
     expect(screen.getByTestId("org-ai-keys-billing")).toHaveTextContent(
       "Model tokens are billed by your providers. MCPJam product fees and usage limits still apply.",
     );
@@ -559,7 +568,7 @@ describe("OrganizationOrgKeysPolicyCard", () => {
 
       expect(
         within(screen.getByTestId("org-ai-feature-insights")).getByText(
-          "Add a direct cloud provider below. Then choose the organization's default AI model.",
+          "Add a direct cloud provider in Providers. Then choose the organization's default AI model.",
         ),
       ).toBeInTheDocument();
     });
@@ -575,7 +584,7 @@ describe("OrganizationOrgKeysPolicyCard", () => {
 
     const chat = screen.getByTestId("org-ai-feature-chat");
     expect(
-      within(chat).getByText("Add a direct cloud provider below."),
+      within(chat).getByText("Add a direct cloud provider in Providers."),
     ).toBeInTheDocument();
     // Chat is never blocked by itself.
     expect(within(chat).queryByText(/Blocked by/)).not.toBeInTheDocument();
@@ -583,7 +592,7 @@ describe("OrganizationOrgKeysPolicyCard", () => {
     const evals = screen.getByTestId("org-ai-feature-evals");
     expect(
       within(evals).getByText(
-        "Add a direct cloud provider below. Then choose a judge model from it for each suite.",
+        "Add a direct cloud provider in Providers. Then choose a judge model from it for each suite.",
       ),
     ).toBeInTheDocument();
     expect(
@@ -679,4 +688,14 @@ describe("OrganizationOrgKeysPolicyCard", () => {
       "Use your keys for all AI features is available on Enterprise plans.",
     );
   });
+});
+
+it("keeps feature details collapsed until requested", () => {
+  hookState.config = makeConfig({ requireOrgKeys: true });
+  renderComponent(<OrganizationOrgKeysPolicyCard organizationId="org-1" isAdmin />);
+  const trigger = screen.getByRole("button", { name: "Feature coverage" });
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByTestId("org-ai-feature-chat")).not.toBeInTheDocument();
+  fireEvent.click(trigger);
+  expect(screen.getByTestId("org-ai-feature-chat")).toBeInTheDocument();
 });

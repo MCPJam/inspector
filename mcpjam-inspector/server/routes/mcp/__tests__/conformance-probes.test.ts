@@ -77,10 +77,34 @@ describe("POST /api/mcp/conformance/protocol probe tools", () => {
     );
   });
 
+  it("forwards the log level filtering advice's own tool", async () => {
+    const res = await postProtocol({
+      logProbe: { toolName: "emit-logs" },
+      logLevelFilteringProbe: {
+        toolName: "other-logs",
+        arguments: { loud: true },
+        level: "error",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(runProtocolConformanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        logProbe: { toolName: "emit-logs" },
+        logLevelFilteringProbe: {
+          toolName: "other-logs",
+          arguments: { loud: true },
+          level: "error",
+        },
+      }),
+    );
+  });
+
   it("runs without probes when none are named", async () => {
     await postProtocol({});
     const input = runProtocolConformanceMock.mock.calls[0]![0];
     expect(input.logProbe).toBeUndefined();
+    expect(input.logLevelFilteringProbe).toBeUndefined();
     expect(input.inputRequiredProbe).toBeUndefined();
     expect(input.toolCallProbe).toBeUndefined();
   });
@@ -91,6 +115,10 @@ describe("POST /api/mcp/conformance/protocol probe tools", () => {
     [
       "an unknown log level",
       { logProbe: { toolName: "emit-logs", level: "loud" } },
+    ],
+    [
+      "an unknown level on the advice's own tool",
+      { logLevelFilteringProbe: { toolName: "other-logs", level: "loud" } },
     ],
     [
       "a log level on the input probe",
@@ -191,6 +219,29 @@ describe("POST /api/mcp/conformance/tasks task tool", () => {
   beforeEach(() => {
     runTasksConformanceMock.mockReset();
     runTasksConformanceMock.mockResolvedValue({ result: { checks: [] } });
+  });
+
+  it("forwards complete per-check overrides", async () => {
+    const checkOverrides = {
+      "tasks-inline-result": {
+        toolName: "finish",
+        toolArguments: { fast: true },
+      },
+    };
+    expect(
+      (await postTasks({ toolName: "default", checkOverrides })).status,
+    ).toBe(200);
+    expect(runTasksConformanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ checkOverrides }),
+    );
+  });
+  it.each([
+    { unknown: { toolName: "job" } },
+    { "tasks-wire-resolvable": { toolName: "job" } },
+    { "tasks-inline-result": { toolName: "job", toolArguments: [] } },
+  ])("rejects malformed task overrides", async (checkOverrides) => {
+    expect((await postTasks({ checkOverrides })).status).toBe(400);
+    expect(runTasksConformanceMock).not.toHaveBeenCalled();
   });
 
   it("forwards the tool, its arguments and the input answers", async () => {

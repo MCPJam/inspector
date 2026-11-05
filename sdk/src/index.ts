@@ -824,7 +824,11 @@ export {
 } from "./conformance-outcome.js";
 export { isAuthorizationRequiredCheck } from "./conformance-authorization.js";
 export { isTimedOutCheck } from "./conformance-timeout.js";
-export { isMissingInputCheck, missingInputMessage } from "./conformance-input.js";
+export {
+  isMissingInputCheck,
+  missingInputMessage,
+  noTaskCreatedMessage,
+} from "./conformance-input.js";
 export type {
   ConformanceRunOutcome,
   ConformanceSkipReason,
@@ -1172,6 +1176,9 @@ export type {
 // native one). Also on `@mcpjam/sdk/model-factory`.
 export {
   ANTHROPIC_NATIVE_MODEL_IDS,
+  OPENAI_NATIVE_MODEL_IDS,
+  GOOGLE_NATIVE_MODEL_IDS,
+  nativeModelIdFor,
   anthropicNativeModelId,
 } from "./model-native-ids.js";
 export type { NativeModelIdMapping } from "./model-native-ids.js";
@@ -1229,8 +1236,11 @@ export {
 export type { OAuthProxyRequest, OAuthProxyResponse } from "./oauth-proxy.js";
 export {
   isTlsTrustFailure,
+  isUnreachableTargetFailure,
   TLS_TRUST_FAILURE,
   tlsTrustFailure,
+  UNREACHABLE_TARGET_FAILURE,
+  unreachableTargetFailure,
 } from "./oauth-proxy-error.js";
 
 // Skill reference (SKILL.md content for agent brief generation)
@@ -2117,3 +2127,18 @@ export {
   DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS,
   resolveModelVisibleMcpToolResults,
 } from "./host-config/host-policy.js";
+export {
+  MCP_TASKS_TOOL_CHECK_IDS,
+  isTasksToolCheck,
+  planTasksConformance,
+  validateTaskOverrides,
+  mergeTasksConformanceResults,
+  taskGroupFailure,
+} from "./tasks-conformance/index.js";
+export type {
+  MCPTasksToolCheckId,
+  MCPTasksToolSetup,
+  MCPTasksCheckOverrides,
+  MCPTasksRunOptions,
+  MCPTasksRunGroup,
+} from "./tasks-conformance/index.js";

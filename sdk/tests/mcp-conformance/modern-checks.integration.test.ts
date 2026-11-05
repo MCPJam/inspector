@@ -405,6 +405,7 @@ describe("modern logging conformance", () => {
     });
     expect(check.error?.message).toMatch(/No logProbe configured/);
     expect(calls).not.toContain("tools/call");
+    // The only selected check needs input, so nothing established a verdict.
     expect(result.outcome).toBe("incomplete");
     expect(filteringAdvice(result)).toBeUndefined();
   });

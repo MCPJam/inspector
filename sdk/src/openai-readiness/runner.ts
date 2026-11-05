@@ -632,10 +632,12 @@ function observedLazyAuthentication(
   runtimeChallenge: OpenAIReadinessFinding["status"] | undefined
 ): boolean | undefined {
   if (!probe?.attempted) return undefined;
-  // Refused before any call: the server signs users in at connect time. A
-  // supported shape, and not this one.
-  if (probe.initialize && !probe.initialize.ok && !probe.initialize.unreachable) {
-    return false;
+  // Refused with 401 or 403 before any call: the server signs users in at
+  // connect time. A supported shape, and not this one. Any other failure
+  // says nothing about sign-in.
+  if (probe.initialize && !probe.initialize.ok) {
+    const status = probe.initialize.status;
+    return status === 401 || status === 403 ? false : undefined;
   }
   const publicOutcome = probe.publicCall?.outcome;
   // A public call that failed only on the probe's empty arguments shows

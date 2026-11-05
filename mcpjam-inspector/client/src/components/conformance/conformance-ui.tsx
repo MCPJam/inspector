@@ -268,6 +268,13 @@ export type ScoreSummary = Pick<
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+/** A sentence after the verdict: "11 could not run and 15 not applicable." */
+function exceptionSentence(parts: string[]): string {
+  if (parts.length <= 1) return `${parts[0] ?? ""}.`;
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}.`;
+  return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}.`;
+}
+
 /**
  * The run's headline: pooled score, what it was judged against, the verdict
  * in words, every count by kind, and a bar splitting the applicable checks by
@@ -315,9 +322,6 @@ export function OverallScoreCard({
   // result the run has not reached. The card shows progress until it ends.
   const scored =
     !isRunning && score && score.score !== null ? score : undefined;
-  // Checks that could not run stay in the denominator, so the number is only
-  // a partial picture.
-  const partial = Boolean(scored && scored.couldNotRun > 0);
   const missingInputs = score
     ? Math.max(0, score.passed + score.failed + score.couldNotRun - score.applicable)
     : 0;
@@ -336,7 +340,6 @@ export function OverallScoreCard({
       return [
         `Incomplete. ${plural(signInBlocked, "check")} could not run because sign-in failed.`,
         otherUnrun > 0 ? `${otherUnrun} more could not run.` : null,
-        score.failed > 0 ? `${plural(score.failed, "check")} failed.` : null,
         "Reconnect the server and run again.",
       ]
         .filter(Boolean)
@@ -361,7 +364,7 @@ export function OverallScoreCard({
         : "Nothing applicable to score on this server.";
     }
     if (scored.outcome === "failed") {
-      return `Not conformant. ${plural(scored.failed, "check")} failed.`;
+      return "Not conformant.";
     }
     if (scored.outcome === "incomplete") {
       const otherUnrun = scored.couldNotRun - missingInputs;
@@ -386,24 +389,27 @@ export function OverallScoreCard({
     // advice from one without; read the advice itself.
     const advised =
       (scored.advisories?.length ?? scored.advisoryCount ?? 0) > 0;
-    return advised
+    // Checks that need input don't hold the verdict back, but the run did not
+    // check everything, so it is not "fully" conformant.
+    const conformant = advised
       ? "Conformant, with guidance."
-      : "Fully conformant.";
+      : inputSentence
+        ? "Conformant."
+        : "Fully conformant.";
+    return [conformant, inputSentence].filter(Boolean).join(" ");
   })();
 
-  // Every kind of count on its own, so "10/62" never has to stand in for
-  // what failed, what could not run, and what was left out of the score.
+  // The fraction already says how many passed. This line is only the checks
+  // the fraction leaves out.
   const counts =
     score && !isRunning
       ? [
-          scored ? `${score.passed} passed` : null,
-          score.failed ? `${score.failed} failed` : null,
           score.couldNotRun > missingInputs ? `${score.couldNotRun - missingInputs} could not run` : null,
           missingInputs ? `${missingInputs} not run (missing input)` : null,
           score.pending ? `${score.pending} unscored` : null,
           score.notApplicable ? `${score.notApplicable} not applicable` : null,
           oauthNotScored ? "OAuth not scored (no auth)" : null,
-        ].filter(Boolean)
+        ].filter((part): part is string => part !== null)
       : [];
 
   return (
@@ -412,20 +418,17 @@ export function OverallScoreCard({
         OVERALL SCORE · PROTOCOL {version.toUpperCase()}
       </div>
       <div className="flex items-center justify-between gap-6">
-        <div className="flex items-end gap-2.5">
+        <div className="flex items-baseline gap-2.5">
           {scored ? (
             <>
-              <div className="flex items-end gap-px">
-                <span className="text-7xl leading-16 font-medium tracking-[-0.04em] tabular-nums">
+              <div className="flex items-baseline gap-px">
+                <span className="text-6xl leading-none font-medium tracking-[-0.04em] tabular-nums">
                   {scored.score!}
                 </span>
-                <span className="pb-1 text-[28px] leading-8 font-medium">
-                  %
-                </span>
+                <span className="text-3xl leading-none font-medium">%</span>
               </div>
-              <span className="pb-2 text-sm font-medium text-muted-foreground tabular-nums">
+              <span className="text-2xl font-medium text-muted-foreground tabular-nums">
                 {scored.passed}/{scored.applicable}
-                {partial ? " · partial" : ""}
               </span>
             </>
           ) : isRunning ? (
@@ -438,7 +441,7 @@ export function OverallScoreCard({
               ) : null}
             </span>
           ) : (
-            <span className="text-7xl leading-16 font-medium text-muted-foreground/40">
+            <span className="text-6xl leading-none font-medium text-muted-foreground/40">
               —
             </span>
           )}
@@ -449,11 +452,11 @@ export function OverallScoreCard({
         </div>
       </div>
       <div className="flex items-center justify-between gap-4">
-        <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
           <div className="text-base font-medium">{verdict}</div>
           {counts.length > 0 && (
             <div className="text-sm text-muted-foreground tabular-nums">
-              {counts.join(" · ")}
+              {exceptionSentence(counts)}
             </div>
           )}
         </div>
