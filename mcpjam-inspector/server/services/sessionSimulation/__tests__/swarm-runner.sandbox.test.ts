@@ -166,6 +166,19 @@ vi.mock("../../../utils/computers/control-plane-client.js", async () => {
   };
 });
 
+// Whether this replica could advertise a hosted browser: the backend's
+// exposure verdict, which the desktop trigger asks before booking a box.
+const hostedBrowserAdvertisableMock = vi.hoisted(() => vi.fn(() => true));
+vi.mock("../../../utils/computers/runtime-config.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/computers/runtime-config.js")
+  >("../../../utils/computers/runtime-config.js");
+  return {
+    ...actual,
+    hostedBrowserAdvertisable: () => hostedBrowserAdvertisableMock(),
+  };
+});
+
 // Spy on the tool resolver so we can inspect the ctx the shared core builds —
 // specifically, whether the trusted binding arrived.
 vi.mock("../../../utils/built-in-tools/registry.js", async () => {
@@ -330,11 +343,9 @@ function terminalReports(): Array<Record<string, unknown>> {
 
 beforeEach(() => {
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex.site");
-  // A deployment that CAN run hosted browsers. The desktop trigger asks the
-  // same two gates `resolveHostTools` does, so without this every browser
-  // target below would correctly decline to book a box — see the
-  // "declines to book a desktop" case for the other side of it.
-  vi.stubEnv("HOSTED_BROWSER_TOOLS_ENABLED", "1");
+  // A deployment that CAN run hosted browsers — see the "declines to book a
+  // desktop" case for the other side of it.
+  hostedBrowserAdvertisableMock.mockReset().mockReturnValue(true);
   let seq = 0;
   provisionJourneySandboxMock.mockReset().mockImplementation(async (...args) => {
     seq += 1;
@@ -565,10 +576,11 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
 
   it("declines to book a desktop when this replica cannot advertise a browser", async () => {
     // The box is booked before the tool resolver runs, so without this gate a
-    // replica with the rollout flag off would hold a paid desktop for the
-    // whole attempt and then suppress every tool it exists for. The backend
-    // refuses its own half of this, but cannot see an inspector-side env flag.
-    vi.stubEnv("HOSTED_BROWSER_TOOLS_ENABLED", "");
+    // replica whose verdict says the browser is not exposable would hold a
+    // paid desktop for the whole attempt and then suppress every tool it
+    // exists for. The backend refuses its own half of this, but does not
+    // refuse a reservation on `exposable: false`.
+    hostedBrowserAdvertisableMock.mockReturnValue(false);
 
     await startJourneyRun(
       baseOpts({

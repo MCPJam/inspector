@@ -1,3 +1,4 @@
+import { attachRunningSandbox } from "./attach-sandbox.js";
 /**
  * Shared exec core for Project Computers — one command, end to end:
  * reserve/wake (user bearer) → sandbox-info (shared secret) → vendor exec →
@@ -12,7 +13,7 @@
  * Soft failures return `{ error }` instead of throwing so the chat model can
  * relay them conversationally; the exec route returns the same shape.
  */
-import { Sandbox, CommandExitError, TimeoutError } from "e2b";
+import { CommandExitError, TimeoutError } from "e2b";
 import {
   computerUnavailableError,
   ensureComputerReady,
@@ -104,7 +105,7 @@ export const e2bRunner: BashRunner = async ({
   envs,
   onEnvsDispatched,
 }) => {
-  const sandbox = await Sandbox.connect(sandboxId);
+  const sandbox = await attachRunningSandbox(sandboxId);
   try {
     // Create-on-first-use (COMP-16): a freshly-configured workdir may not exist
     // yet; `commands.run` with a missing cwd errors. `makeDir` is idempotent and

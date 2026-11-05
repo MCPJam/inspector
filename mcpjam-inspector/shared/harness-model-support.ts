@@ -29,6 +29,24 @@ import evidenceTable from "./harness-model-support-evidence.json" with { type: "
 
 export type HarnessModelSupportStatus = "supported" | "unsupported" | "unknown";
 
+export type HarnessDiscoveryRoute = {
+  runtimeVersion: string;
+  adapterVersion: string;
+  protocolVersion: string;
+  modelId: string;
+  delivery: "forwarded-native" | "forwarded-bridge" | "native-proxy" | "host-tools";
+  venue: "hosted" | "local";
+  surface: "chat" | "eval" | "swarm";
+  funding: "platform" | "organization";
+  upstreamProfile: HarnessUpstreamProfile;
+};
+
+export type HarnessDiscoveryEvidence = HarnessDiscoveryRoute & {
+  status: HarnessModelSupportStatus;
+  evidence: string;
+  observedAt: string;
+};
+
 /** One evidence row, exactly as it appears in the JSON table. */
 export type HarnessModelSupportRow = {
   harness: string;
@@ -40,7 +58,34 @@ export type HarnessModelSupportRow = {
   evidence: string;
   /** ISO date the evidence was observed. */
   observedAt: string;
+  nativeDiscovery?: readonly HarnessDiscoveryEvidence[];
 };
+
+/** Model compatibility alone is not proof of native discovery on a route. */
+export function harnessNativeDiscoverySupport(args: {
+  harnessId: string;
+  route: HarnessDiscoveryRoute;
+  rows?: readonly HarnessModelSupportRow[];
+}): { status: HarnessModelSupportStatus; reason: string } {
+  const modelSupport = harnessModelSupport({ harnessId: args.harnessId, modelId: args.route.modelId, runtimeVersion: args.route.runtimeVersion, rows: args.rows });
+  if (modelSupport.status !== "supported") return modelSupport;
+  const modelId = normalizeHarnessModelId(args.route.modelId);
+  for (const row of args.rows ?? HARNESS_MODEL_SUPPORT_ROWS) {
+    if (row.harness !== args.harnessId) continue;
+    for (const proof of row.nativeDiscovery ?? []) {
+      if (
+        normalizeHarnessModelId(proof.modelId) === modelId &&
+        proof.runtimeVersion === args.route.runtimeVersion &&
+        proof.adapterVersion === args.route.adapterVersion &&
+        proof.protocolVersion === args.route.protocolVersion &&
+        proof.delivery === args.route.delivery && proof.venue === args.route.venue &&
+        proof.surface === args.route.surface && proof.funding === args.route.funding &&
+        proof.upstreamProfile === args.route.upstreamProfile
+      ) return { status: proof.status, reason: proof.evidence };
+    }
+  }
+  return { status: "unknown", reason: "Native tool discovery is not qualified for this client, model and execution route." };
+}
 
 export type HarnessModelSupportVerdict = {
   status: HarnessModelSupportStatus;

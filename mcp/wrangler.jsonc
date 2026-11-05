@@ -138,6 +138,7 @@
       ],
       "vars": {
         "AUTHKIT_DOMAIN": "login.mcpjam.com",
+        "OPENAI_APPS_CHALLENGE": "IH6HDbY3QIAS1YoAoQItxHGb80lAxWiKmgkKen4_pDo",
         "WORKOS_CLIENT_ID": "client_01K4C1TVPBE7JTBFQJF9SDW9P9",
         "PLATFORM_API_URL": "https://app.mcpjam.com/api/v1",
         // Where a HUMAN opens a permalink this worker returns. Separate from

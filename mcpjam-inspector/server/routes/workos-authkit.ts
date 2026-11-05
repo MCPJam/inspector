@@ -10,7 +10,14 @@ import { getOrCreateLocalSecret } from "../utils/local-secret-store.js";
 import { resolveWorkosApiBaseUrl } from "../services/workos-api-base.js";
 import { resolveWorkosClientId } from "../services/authkit-jwt.js";
 import { revokeAuthKitSession } from "../services/auth-session-revocation.js";
+import { HOSTED_MODE } from "../config.js";
 import { logger } from "../utils/logger.js";
+import {
+  getFetchErrorCause,
+  isFetchConnectionFailure,
+  isFetchTimeout,
+} from "../utils/fetch-error-cause.js";
+import { reportRouteFailure } from "../utils/route-error-report.js";
 import {
   applyScopedCookieWrites,
   currentNamespace,
@@ -296,6 +303,12 @@ async function postToWorkos(
 const LOGOUT_REVOCATION_REFRESH_TIMEOUT_MS = 3_000;
 
 /**
+ * Bound on `/authenticate`. A refresh runs under AuthKit's cross-tab lock, and
+ * another tab gives up waiting for it after 10 s, so this answers first.
+ */
+const AUTHENTICATE_TIMEOUT_MS = 8_000;
+
+/**
  * Revoke, in Convex, the session this browser is signing out of (MJ-011).
  *
  * A logout also revokes the session in Convex, so the access tokens it issued
@@ -359,9 +372,9 @@ async function revokeStoredSessionBeforeLogout(c: Context): Promise<void> {
  * local instance that clears THIS namespace's cookie only; the host-wide
  * `workos-has-session` hint stays, because another instance may be signed in.
  *
- * A `fetch` rejection (offline, DNS, connection reset) never reaches here: it
- * throws before any cookie is touched, which lands on the same side of this
- * line by construction.
+ * A `fetch` rejection (offline, DNS, connection reset, timeout) never reaches
+ * here: `/authenticate` answers it with a 503 before any cookie is touched,
+ * which lands on the same side of this line by construction.
  */
 function isTransientWorkosFailure(status: number): boolean {
   return status === 408 || status === 429 || status >= 500;
@@ -425,8 +438,43 @@ workosAuthkitRoutes.post("/authenticate", async (c) => {
     upstreamBody.refresh_token = stored.refreshToken;
   }
 
-  const response = await postToWorkos(upstreamBody);
-  const responseText = await response.text();
+  let response: Response;
+  let responseText: string;
+  try {
+    response = await postToWorkos(upstreamBody, {
+      signal: AbortSignal.timeout(AUTHENTICATE_TIMEOUT_MS),
+    });
+    responseText = await response.text();
+  } catch (error) {
+    // Anything that is not the network (a malformed WorkOS base URL, a bug
+    // here) goes on to `app.onError`: answering it 503 would have AuthKit
+    // retry a failure that can never recover, blamed on the user's network.
+    if (!isFetchConnectionFailure(error) && !isFetchTimeout(error)) throw error;
+    // This server could not reach WorkOS: offline, DNS, a proxy, or a
+    // timeout. Hosted, that network is ours and every sign-in is down, so it
+    // pages. Self-hosted, it is the user's machine, and AuthKit retries a
+    // failed refresh every second, so a page per attempt is pure noise. 503
+    // keeps it transient for AuthKit either way: the stored session survives
+    // and the next refresh can recover.
+    const context = {
+      event: "auth.workos_authenticate_unreachable",
+      grantType: body.grant_type,
+      networkCode: getFetchErrorCause(error),
+    };
+    if (HOSTED_MODE) {
+      reportRouteFailure("Could not reach WorkOS to authenticate", error, {
+        source: "workos.authenticate",
+        hop: "mcpjam_internal",
+        context,
+      });
+    } else {
+      logger.warn("Could not reach WorkOS to authenticate", {
+        ...context,
+        reason: error instanceof Error ? error.name : "unknown",
+      });
+    }
+    return c.json({ error_description: "Could not reach WorkOS" }, 503);
+  }
   let responseJson: WorkosAuthResponse;
   try {
     responseJson = JSON.parse(responseText) as WorkosAuthResponse;

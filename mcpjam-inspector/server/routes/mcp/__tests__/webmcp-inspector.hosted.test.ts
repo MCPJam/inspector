@@ -7,21 +7,11 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-const configState = vi.hoisted(() => ({
-  enabled: true,
-  hostedBrowser: false,
-  webmcpHosted: true,
-}));
+const configState = vi.hoisted(() => ({ enabled: true }));
 vi.mock("../../../config", () => ({
   get WEBMCP_INSPECTOR_ENABLED() {
     return configState.enabled;
   },
-  hostedBrowserEnabled: () => configState.hostedBrowser,
-  webmcpInspectorHostedEnabled: () => configState.webmcpHosted,
-  // Composed exactly as `config.ts` composes it, for HOSTED_MODE true: BOTH
-  // the kill switch and the hosted gate have to be on.
-  webmcpInspectorReachable: () =>
-    configState.enabled && configState.webmcpHosted,
   HOSTED_MODE: true,
 }));
 
@@ -129,16 +119,14 @@ const START = { url: "https://a.test", projectId: "p1" };
 describe("hosted WebMCP inspector — reachability", () => {
   beforeEach(() => {
     configState.enabled = true;
-    configState.webmcpHosted = true;
-    configState.hostedBrowser = false;
     gateState.provisionable = true;
     hostedState.ensureCalls.length = 0;
     hostedState.failWith = null;
   });
 
-  it("is 404 — not 403 — when the hosted gate is off", async () => {
+  it("is 404 — not 403 — when the kill switch is off", async () => {
     // Off means undiscoverable. A 403 tells a prober the route is there.
-    configState.webmcpHosted = false;
+    configState.enabled = false;
     const { status, body } = await post(
       appWith(VERIFIED),
       "/api/web/webmcp/sessions",
@@ -148,21 +136,17 @@ describe("hosted WebMCP inspector — reachability", () => {
     expect(body.code).toBe("webmcp-inspector-disabled");
   });
 
-  it("is 404 when the global kill switch is off, hosted gate or not", async () => {
-    configState.enabled = false;
-    const { status } = await post(
-      appWith(VERIFIED),
-      "/api/web/webmcp/sessions",
-      START,
-    );
-    expect(status).toBe(404);
+  it("needs no deployment switch: a verified member reaches the reservation", async () => {
+    // Who may launch is the backend's `hosted-browser` gate, which the
+    // reservation enforces; this replica only checks the deployment is ready.
+    await post(appWith(VERIFIED), "/api/web/webmcp/sessions", START);
+    expect(hostedState.ensureCalls).toHaveLength(1);
   });
 });
 
 describe("hosted WebMCP inspector — who may drive a browser", () => {
   beforeEach(() => {
     configState.enabled = true;
-    configState.webmcpHosted = true;
     gateState.provisionable = true;
     hostedState.ensureCalls.length = 0;
     hostedState.failWith = null;
@@ -208,7 +192,6 @@ describe("hosted WebMCP inspector — who may drive a browser", () => {
 describe("hosted WebMCP inspector — a local browser is not on offer", () => {
   beforeEach(() => {
     configState.enabled = true;
-    configState.webmcpHosted = true;
     gateState.provisionable = true;
     hostedState.ensureCalls.length = 0;
   });
@@ -255,7 +238,6 @@ describe("hosted WebMCP inspector — a local browser is not on offer", () => {
 describe("hosted WebMCP inspector — the backend's desktop verdict", () => {
   beforeEach(() => {
     configState.enabled = true;
-    configState.webmcpHosted = true;
     hostedState.ensureCalls.length = 0;
   });
 
@@ -294,7 +276,6 @@ describe("hosted WebMCP inspector — the backend's desktop verdict", () => {
 describe("hosted WebMCP inspector — control-plane refusals are answers, not crashes", () => {
   beforeEach(() => {
     configState.enabled = true;
-    configState.webmcpHosted = true;
     gateState.provisionable = true;
     hostedState.ensureCalls.length = 0;
     hostedState.handle = null;

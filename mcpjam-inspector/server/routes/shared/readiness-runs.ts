@@ -22,7 +22,11 @@
  */
 
 import type { ConvexHttpClient } from "convex/browser";
-import type { OpenAISubmissionMode } from "@mcpjam/sdk";
+import type {
+  DirectoryFeatureClaim,
+  DirectoryLazyAuthProbeConfig,
+  OpenAISubmissionMode,
+} from "@mcpjam/sdk";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { createStreamingPinnedFetch } from "../../utils/pinned-fetch.js";
 import { executeHostedReadinessRun } from "../../services/readiness/worker.js";
@@ -73,6 +77,15 @@ export interface StartHostedReadinessRunInput {
   idempotencyKey?: string;
   /** The one field that can SPEND. Defaults off at every call site. */
   includeLlmObservations: boolean;
+  /**
+   * Arm the lazy-auth probe: at most two calls to read-only tools, made with
+   * NO credentials. Separate from intrusive probes, which hosted runs refuse:
+   * this one holds no credential and spends nothing. Absent means no tool is
+   * called at all.
+   */
+  lazyAuthProbe?: DirectoryLazyAuthProbeConfig;
+  /** Features the submitter claims. Reported as claimed, never as verified. */
+  claimedFeatures?: DirectoryFeatureClaim[];
   /** The output of the surface's own authorize exchange. */
   authorized: AuthorizedReadinessServer;
   /**
@@ -162,6 +175,16 @@ export async function startHostedReadinessRun(
           : {}),
         includeLlmObservations: input.includeLlmObservations,
         authMode: config.useOAuth ? "provided-token" : "headless",
+        // ONLY WHEN PROVIDED. The mutation validates its args strictly, so a
+        // start that asked for neither sends exactly the args it always has,
+        // and a version-skewed deployment never sees a key it cannot accept.
+        ...(input.lazyAuthProbe !== undefined
+          ? { lazyAuthProbe: input.lazyAuthProbe }
+          : {}),
+        ...(input.claimedFeatures !== undefined &&
+        input.claimedFeatures.length > 0
+          ? { claimedFeatures: input.claimedFeatures }
+          : {}),
       },
     );
   } catch (error) {
@@ -199,7 +222,10 @@ export async function startHostedReadinessRun(
       publisher: input.publisher,
       target,
       submissionMode: input.submissionMode,
-      headers: Object.keys(headers).length > 0 ? headers : undefined,
+      // The saved credential goes only on MCP requests to the endpoint. The
+      // SDK keeps it off discovery, including authorization-server metadata
+      // on an origin the server chooses.
+      mcpHeaders: Object.keys(headers).length > 0 ? headers : undefined,
       // The DNS-pinned transport: resolve once, refuse the disallowed answers,
       // pin the surviving addresses into the socket, re-run it on every hop.
       // A readiness run follows redirects by design, so a check performed only
@@ -211,6 +237,15 @@ export async function startHostedReadinessRun(
         maxResponseBytes: 32 * 1024 * 1024,
       }),
       includeLlmObservations: input.includeLlmObservations,
+      // The probe is built from the target and the pinned transport alone; it
+      // never receives `mcpHeaders`, so the saved credential stays on the
+      // authenticated dial.
+      ...(input.lazyAuthProbe !== undefined
+        ? { lazyAuthProbe: input.lazyAuthProbe }
+        : {}),
+      ...(input.claimedFeatures !== undefined
+        ? { claimedFeatures: input.claimedFeatures }
+        : {}),
       analyticsActor: input.analyticsActor,
     }).catch((error) => {
       // `executeHostedReadinessRun` never throws — every exit lands the run

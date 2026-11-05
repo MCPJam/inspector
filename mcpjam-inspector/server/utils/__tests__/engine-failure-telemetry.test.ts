@@ -320,6 +320,36 @@ describe("engine failure telemetry", () => {
     expect(originOf(calls[0].normalized)).toBe("user_config");
   });
 
+  it("does not own a 413 that refuses an oversized guest request", async () => {
+    // INSPECTOR-HONO-M: the code is a listed user-owned denial, but that list
+    // only applies at 200, so the 413 paged as `internal/unknown`.
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          code: "guest_input_too_large",
+          limit: 32000,
+          estimatedInputTokens: 57002,
+          error:
+            "Guest input is estimated at 57002 tokens, above the 32000 token limit. Disconnect servers, shorten the conversation, or sign in.",
+        }),
+        { status: 413, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const { reporter, calls } = makeReporter();
+
+    await runTurn({ failureReporter: reporter });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].errorCode).toBe("guest_input_too_large");
+    expect(calls[0].normalized?.slug).toBe("account/guest_input_too_large");
+    expect(originOf(calls[0].normalized)).toBe("user_config");
+    // The hop and policy the capture test in error-origin-capture.test.ts
+    // decides on: the slug's origin alone has to keep this off Sentry.
+    expect(calls[0].hop).toBe("mcpjam_internal");
+    expect(calls[0].capture).toBeUndefined();
+  });
+
   it("fails the turn on a mid-stream error chunk instead of succeeding", async () => {
     // The second delivery path, and the one HTTP status can never see. The
     // backend's `toUIMessageStreamResponse({onError})` categorizes the failure
@@ -414,6 +444,49 @@ describe("engine failure telemetry", () => {
       statusCode: 403,
       isRetryable: false,
       details,
+    });
+  });
+
+  it("files an empty step the provider generated nothing for on the user hop", async () => {
+    // The provider's own usage says 0 output tokens: there was no content for
+    // our rail to lose, so the empty reply must not promote to an MCPJam page.
+    global.fetch = vi.fn().mockResolvedValue(sseResponse([
+      {
+        type: "finish",
+        finishReason: "other",
+        totalUsage: { inputTokens: 270482, outputTokens: 0, totalTokens: 270482 },
+      },
+    ]));
+    const { reporter, calls } = makeReporter();
+
+    await runTurn({ failureReporter: reporter });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      source: "mcp.chat-v2.engine-step",
+      hop: "user_server_hop",
+      context: { outputTokens: 0, ownedByMcpjam: false },
+    });
+    expect(originOf(calls[0].normalized)).toBe("ambiguous");
+  });
+
+  it("keeps an empty step on the internal hop when the provider generated tokens we never received", async () => {
+    global.fetch = vi.fn().mockResolvedValue(sseResponse([
+      {
+        type: "finish",
+        finishReason: "stop",
+        totalUsage: { inputTokens: 7, outputTokens: 50, totalTokens: 57 },
+      },
+    ]));
+    const { reporter, calls } = makeReporter();
+
+    await runTurn({ failureReporter: reporter });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      source: "mcp.chat-v2.engine-step",
+      hop: "mcpjam_internal",
+      context: { outputTokens: 50, ownedByMcpjam: true },
     });
   });
 

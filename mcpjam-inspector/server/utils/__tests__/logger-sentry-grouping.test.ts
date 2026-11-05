@@ -5,6 +5,8 @@ import { telemetryRecord } from "@mcpjam/sdk/internal/telemetry";
 import { withSentryBoundary } from "../../../shared/strict-sentry.js";
 import { strictServerSentryOptions } from "../strict-sentry-options.js";
 import { logger } from "../logger.js";
+import { runWithSentryIdentity } from "../sentry-request-identity.js";
+import { reportServiceCredentialAtBoot } from "../../services/service-credential-boot.js";
 
 afterEach(async () => {
   await Sentry.close(1000);
@@ -55,4 +57,45 @@ it("groups real logger captures by approved messages while denying runtime prose
       /"filename":"server\/utils\/logger.ts","in_app":true,"lineno":\d+/,
     );
   expect(JSON.stringify(events)).not.toContain("PRIVATE_SENTINEL");
+});
+
+it("keeps the caller's frame when a request identity scopes the capture", async () => {
+  vi.stubEnv("AXIOM_TOKEN", "");
+  vi.stubEnv("DO_NOT_TRACK", "");
+  vi.stubEnv("NODE_ENV", "production");
+  vi.stubEnv("ENVIRONMENT", "test");
+  vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+  vi.stubEnv("MCPJAM_REQUIRE_SERVICE_CREDENTIAL", "");
+  const events: Record<string, unknown>[] = [];
+  Sentry.init({
+    dsn: "https://public@example.invalid/1",
+    defaultIntegrations: false,
+    transport: () =>
+      withSentryBoundary(
+        {
+          send: async (envelope: Envelope) => {
+            for (const [header, payload] of envelope[1])
+              if (header.type === "event")
+                events.push(telemetryRecord(payload));
+            return { statusCode: 200 };
+          },
+          flush: async () => true,
+        },
+        strictServerSentryOptions,
+        () => false,
+      ),
+  });
+  // A real cataloged caller whose message is a template literal, so the
+  // boundary drops the message and only the caller frame can name the site.
+  runWithSentryIdentity(
+    () => ({ id: "user_01", kind: "signedIn" }),
+    () => reportServiceCredentialAtBoot(true),
+  );
+  await Sentry.flush(1000);
+
+  expect(events).toHaveLength(1);
+  expect(events[0].message).toBeUndefined();
+  expect(JSON.stringify(events[0].exception)).toMatch(
+    /"filename":"server\/services\/service-credential-boot.ts","in_app":true,"lineno":\d+/,
+  );
 });

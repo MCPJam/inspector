@@ -1,0 +1,5 @@
+---
+"@mcpjam/sdk": patch
+---
+
+Conformance: 11 checks that were reported but unscored now count toward the score, because each one tests a spec MUST. Protocol (`mcp-protocol` profile `2026-11-01.1`): `wire-schema-valid`, `modern-cache-hint-coverage`, `modern-cache-hint-values-valid`, `modern-cache-scope-stable-across-pages`, `modern-missing-method-header-rejected`, `modern-header-names-case-insensitive` and `modern-resource-read-no-empty-contents`. Tasks (`mcp-tasks` profile `2026-11-01.2`): `tasks-invalid-task-id-rejected`, `tasks-status-payload-shape`, `tasks-cancel-ack-shape` and `tasks-undeclared-capability-names-requirements`. A server that breaks one of them now fails the run instead of only seeing it marked unscored. `modern-tool-output-schema-conformant` and `modern-log-level-filtering` stay unscored: the first can't run without tool-call fixtures, and the second asks for more than the spec does. `modern-cache-hint-coverage` no longer reads as could-not-run when a server advertises resources but lists none: `resources/read` is not applicable there, since there is nothing to read.
