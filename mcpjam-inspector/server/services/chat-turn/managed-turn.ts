@@ -1,3 +1,4 @@
+import { managedTurnFailureResponse } from "./managed-turn-error.js";
 import { TurnResources } from "./resources.js";
 import { stripForwardingRequestBody } from "@/shared/forwarding-approval";
 import { preparePluginMessageTurn } from "../plugin-host/message.js";
@@ -5,7 +6,6 @@ import {
   readOwnedTurnContext,
   pluginContextReferencesSchema,
 } from "../plugin-host/turn-context.js";
-import { pluginChatRefusal } from "../../routes/web/chat-v2-plugin-refusal.js";
 import {
   globalOwnerAdmission,
   withGlobalOwnerFallback,
@@ -15,7 +15,6 @@ import { pluginModelContextMessage } from "../../../shared/plugin-model-context.
 import { toResumeExecutionTarget } from "@/shared/execution-target";
 import { toMintedPageToolRecords } from "@/shared/declared-tools";
 import { type Context } from "hono";
-import { isMCPAuthError } from "@mcpjam/sdk";
 import { HOSTED_MODE } from "../../config.js";
 import { advertisedPageToolsOnly } from "../../utils/chat-v2-orchestration.js";
 import { buildDirectHostConfig } from "../../utils/chat-ingestion.js";
@@ -24,11 +23,6 @@ import { captureServerEvent } from "../../utils/analytics.js";
 import {
   assertBearerToken,
   readJsonBody,
-  ErrorCode,
-  webError,
-  webErrorFromRoute,
-  mapTargetServerError,
-  projectRouteFailure,
 } from "../../routes/web/auth.js";
 import { createHostedRpcLogCollector } from "../../routes/web/hosted-rpc-logs.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
@@ -729,66 +723,7 @@ export async function handleManagedChatTurn(
     }
   } catch (error) {
     await resources.dispose();
-    // Enrich MCPAuthError with OAuth server URL so the client can initiate OAuth
-    if (isMCPAuthError(error) && Object.keys(oauthServerUrls).length > 0) {
-      const firstUrl = Object.values(oauthServerUrls)[0];
-      const msg = error instanceof Error ? error.message : String(error);
-      return webError(
-        c,
-        401,
-        ErrorCode.UNAUTHORIZED,
-        msg,
-        {
-          oauthRequired: true,
-          serverUrl: firstUrl,
-        },
-        rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
-      );
-    }
-    const pluginRefusal = pluginChatRefusal(error);
-    if (pluginRefusal)
-      return webError(
-        c,
-        pluginRefusal.status,
-        pluginRefusal.code,
-        pluginRefusal.message,
-        pluginRefusal.details,
-      );
-    // `webErrorFromRoute`, not `webError` — this call dropped
-    // `routeError.normalized`, so the envelope carried no `origin` and no
-    // `x-mcpjam-error-origin` header. This is the ORG-AWARE hosted chat path,
-    // the one the client actually selects, and the client's reporter has
-    // nothing but the status by the time it runs: without the verdict it
-    // guesses `mcpjam` from the 500 and pages us for the user's own MCP
-    // server.
-    //
-    // `mapTargetServerError`, because that header is exactly what a 5xx loses:
-    // Cloudflare swaps an origin 5xx for its own error page, so a connection
-    // failure to the user's MCP server arrived at the browser as a bare 502
-    // and was reported as an MCPJam outage anyway.
-    //
-    // Declared HERE and not in the shared mapper because a chat turn's
-    // outbound connections are to the user's own servers — that is what the
-    // route exists to do, and it is the path the misattribution was measured
-    // on. Not a proof: this catch also spans the turn's Convex work, so an
-    // MCPJam-side failure inside it is downgraded too. That residue is
-    // accepted deliberately — it is one route rather than every `/api/web/*`
-    // route (including `server-secrets`, which reaches nothing but Convex, and
-    // the router-wide `onError`, where the hop is unknown), so a real Convex
-    // outage still pages us from everywhere else.
-    //
-    // An `UPSTREAM_HTTP_ERROR` is no longer masked as a hosted 500, and its
-    // message quotes the server's response body, so it is reported like every
-    // other MCP route's failure: by its status line (MJ-001). Other failures
-    // here span the model provider and Convex, and keep their own wording.
-    const routeError = mapTargetServerError(error);
-    const envelope = rpcCollector?.buildEnvelope() as
-      Record<string, unknown> | undefined;
-    const projected =
-      routeError.code === ErrorCode.UPSTREAM_HTTP_ERROR
-        ? projectRouteFailure(routeError, error, envelope)
-        : { routeError, logs: envelope };
-    return webErrorFromRoute(c, projected.routeError, projected.logs);
+    return managedTurnFailureResponse(c, error, oauthServerUrls, rpcCollector);
   } finally {
     if (!streamOwnsResources) await resources.dispose();
   }
