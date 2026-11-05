@@ -27,8 +27,9 @@ const sectionLabel =
 
 /**
  * How this case runs, in order (C13): numbered steps with the assertions
- * that grade them, then after-run assertions, the expected outcome and the
- * suite's default evaluators. A step opens the case editor at that step.
+ * that grade them, then the expected outcome (step N+1), the after-run
+ * assertions (step N+2) and the suite's default evaluators. A step opens
+ * the case editor at that step.
  */
 export function ExecutionPreviewPanel({
   preview,
@@ -88,6 +89,9 @@ function PreviewBody({
   onOpenStep: (stepIndex: number) => void;
 }) {
   const suiteDefaults = preview.suiteDefaultEvaluators;
+  // Same numbering as the steps editor: the expected outcome is the last
+  // step, then the after-run assertions.
+  const outcomeOrdinal = preview.steps.length + 1;
   return (
     <>
       {preview.leadingAssertions.length > 0 && (
@@ -141,21 +145,23 @@ function PreviewBody({
           })}
         </ol>
       )}
-      {preview.afterRunAssertions.assertions.length > 0 && (
-        <div className="space-y-1">
-          <div className={sectionLabel}>{preview.afterRunAssertions.label}</div>
-          <p className="text-xs">
-            {describePredicates(preview.afterRunAssertions.assertions)}
-          </p>
-        </div>
-      )}
       {preview.expectedOutcome && (
         <div className="space-y-1">
           <div className={`${sectionLabel} flex items-center gap-1`}>
             <Flag aria-hidden="true" className="size-3" />
-            Expected outcome
+            Step {outcomeOrdinal} · Expected outcome
           </div>
           <p className="text-xs">{preview.expectedOutcome}</p>
+        </div>
+      )}
+      {preview.afterRunAssertions.assertions.length > 0 && (
+        <div className="space-y-1">
+          <div className={sectionLabel}>
+            Step {outcomeOrdinal + 1} · {preview.afterRunAssertions.label}
+          </div>
+          <p className="text-xs">
+            {describePredicates(preview.afterRunAssertions.assertions)}
+          </p>
         </div>
       )}
       <div className="space-y-1 border-t border-border pt-3">
