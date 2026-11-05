@@ -831,7 +831,15 @@ export async function streamChatTurn(
 
   const malformedHistory = findMalformedHistory(uiMessagesForTurn as unknown[]);
   if (malformedHistory) {
-    logger.warn("[web-chat-turn] client-sent history has a shape conversion cannot read", { ...malformedHistory });
+    // Ids only, never content, so the next occurrence joins to its 400
+    // request and to the chat that keeps sending this history.
+    logger.warn("[web-chat-turn] client-sent history has a shape conversion cannot read", {
+      ...malformedHistory,
+      requestId: c.var.requestLogContext?.requestId,
+      route: c.var.requestLogContext?.route,
+      projectId: persist.projectId,
+      chatSessionId: persist.chatSessionId,
+    });
     throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "This chat's history has a message the server can't read. Start a new chat to continue.", { ...malformedHistory });
   }
 

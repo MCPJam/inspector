@@ -45,8 +45,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-// `convertToModelMessages` parses `url` for these unless a file part carries a
-// provider reference instead; a reasoning file is always parsed.
+// The part types whose `url` each role's branch of `convertToModelMessages`
+// parses. The system branch keeps only text parts, so it is absent.
+const urlPartTypesByRole = new Map<unknown, ReadonlySet<string>>([
+  ["user", new Set(["file"])],
+  ["assistant", new Set(["file", "reasoning-file"])],
+]);
+
+// A file part carrying a provider reference is not parsed; a reasoning file
+// always is.
 function hasParseableFileUrl(part: Record<string, unknown>): boolean {
   if (part.type === "file" && part.providerReference != null) return true;
   return typeof part.url === "string" && URL.canParse(part.url);
@@ -79,11 +86,15 @@ export function findMalformedHistory(
       if (!isRecord(part)) {
         return { messageIndex, partIndex, problem: "part_not_object" };
       }
+      // Every role's parts are read for `type`: conversion first filters all
+      // messages for tool parts once a user message follows the first.
       if (typeof part.type !== "string") {
         return { messageIndex, partIndex, problem: "part_type_missing" };
       }
+      // The system branch then keeps only text parts and reads nothing else.
+      if (message.role === "system") continue;
       if (
-        (part.type === "file" || part.type === "reasoning-file") &&
+        urlPartTypesByRole.get(message.role)?.has(part.type) &&
         !hasParseableFileUrl(part)
       ) {
         return { messageIndex, partIndex, problem: "file_url_invalid" };

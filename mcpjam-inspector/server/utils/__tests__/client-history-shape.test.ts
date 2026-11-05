@@ -42,11 +42,29 @@ describe("findMalformedHistory", () => {
       expected: { messageIndex: 0, partIndex: 1, problem: "part_type_missing" },
     },
     {
+      name: "a system part without a type, before a later user message",
+      messages: [
+        { id: "s", role: "system", parts: [{ text: "hi" }] },
+        user([text]),
+        assistant([text]),
+        user([text]),
+      ],
+      expected: { messageIndex: 0, partIndex: 0, problem: "part_type_missing" },
+    },
+    {
       name: "a file part with a relative url",
       messages: [
         user([{ type: "file", mediaType: "image/png", url: "/a.png" }]),
       ],
       expected: { messageIndex: 0, partIndex: 0, problem: "file_url_invalid" },
+    },
+    {
+      name: "an assistant file part with a relative url",
+      messages: [
+        user([text]),
+        assistant([{ type: "file", mediaType: "image/png", url: "/a.png" }]),
+      ],
+      expected: { messageIndex: 1, partIndex: 0, problem: "file_url_invalid" },
     },
     {
       name: "a file part with no url",
@@ -116,6 +134,16 @@ describe("findMalformedHistory", () => {
 
   it("accepts a history conversion can read", async () => {
     const messages = [
+      // The system branch keeps only text parts and reads nothing else of them.
+      {
+        id: "s",
+        role: "system",
+        parts: [
+          text,
+          { type: "file", mediaType: "image/png", url: "/a.png" },
+          { type: "data-plugin-mention" },
+        ],
+      },
       user([text, { type: "file", mediaType: "image/png", url: png }]),
       assistant([
         text,
@@ -134,6 +162,8 @@ describe("findMalformedHistory", () => {
         text,
         mention,
         pluginText,
+        // The user branch does not read reasoning files.
+        { type: "reasoning-file", mediaType: "image/png", url: "iVBORw0K" },
         {
           type: "file",
           mediaType: "application/pdf",
