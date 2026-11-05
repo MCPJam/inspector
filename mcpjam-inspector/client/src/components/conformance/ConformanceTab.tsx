@@ -447,21 +447,21 @@ export function ConformanceTab({
     const run = lastRuns?.[offered.name];
     return run ? [{ serverName: offered.name, run }] : [];
   });
+  const cardsDisabled =
+    !serverDefaultsLoaded || loadingDefaults || selectionIsReconnecting;
+  const runServer = (serverName: string) =>
+    onLoadServerDefaults
+      ? void requestDefaults(serverName, "auto")
+      : startRun(serverName, "auto", defaultsFor(serverName) ?? {});
   const home =
     recentServers.length > 0 && onViewRun ? (
       <ConformanceServerList
         runs={recentServers}
         serverIcons={serverIcons}
         onViewRun={onViewRun}
-        disabled={
-          !serverDefaultsLoaded || loadingDefaults || selectionIsReconnecting
-        }
+        disabled={cardsDisabled}
         disabledServerName={failedRequest?.name}
-        onRun={(serverName) =>
-          onLoadServerDefaults
-            ? void requestDefaults(serverName, "auto")
-            : startRun(serverName, "auto", defaultsFor(serverName) ?? {})
-        }
+        onRun={runServer}
       />
     ) : undefined;
   // Run always opens the setup steps, even with no servers yet: the server
