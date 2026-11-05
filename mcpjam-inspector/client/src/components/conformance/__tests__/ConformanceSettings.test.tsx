@@ -105,7 +105,7 @@ describe("Settings inputs", () => {
       expect(field).toHaveTextContent("output · read-only");
       expect(
         screen.getByText(
-          "This tool no longer declares an output schema, so this check cannot run. Pick another tool or clear it.",
+          "This tool no longer declares an output schema. It is still called, but its result cannot be checked. Pick another tool or clear it.",
         ),
       ).toBeInTheDocument();
       const box = screen.getByRole("checkbox", {
