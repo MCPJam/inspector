@@ -262,6 +262,7 @@ export function useThreadAppWorkspace(
   const settings = useWorkspaceSettings(
     options.settings === false || !capabilities.settings ? null : scope,
     servers,
+    options.launchProfile,
   );
   const onboardingOn = !!options.runOnboarding && capabilities.onboarding;
   const onboarding = usePluginOnboarding(
@@ -888,14 +889,14 @@ export function useThreadAppWorkspace(
           error instanceof ThreadAppError &&
           error.code === "APPROVAL_DENIED"
         )
-          (row.launch ?? lifetime.health.begin(
-            `open:${key}`,
+          (row.launch ??= lifetime.health.begin(
+            `open:${crypto.randomUUID()}`,
             declaration.kind,
             profileRef.current,
           )).exclude();
         else
-          (row.launch ?? lifetime.health.begin(
-            `open:${key}`,
+          (row.launch ??= lifetime.health.begin(
+            `open:${crypto.randomUUID()}`,
             declaration.kind,
             profileRef.current,
           )).fail(

@@ -1,3 +1,5 @@
+import { useSettingsLaunchObservation } from "@/lib/use-extension-launch-health";
+import type { ExtensionLaunchProfile } from "@/lib/extension-launch-health";
 import { ServerSettingsPanel } from "../host-workspace/ServerSettingsPanel";
 import { useServerSettingsAvailability } from "../host-workspace/use-server-settings";
 import type { ThreadAppScope } from "../host-workspace/thread-app-api";
@@ -89,6 +91,7 @@ interface ServerDetailModalProps {
   /** A project server; see {@link PluginServerDetailModalProps} for a plugin's. */
   plugin?: undefined;
   extensionSettingsScope?: ThreadAppScope | null;
+  extensionLaunchProfile?: ExtensionLaunchProfile;
   isOpen: boolean;
   onClose: () => void;
   server: ServerWithName;
@@ -149,6 +152,7 @@ interface PluginServerDetailModalProps {
   /** The Convex project id. */
   projectId?: string | null;
   extensionSettingsScope?: ThreadAppScope | null;
+  extensionLaunchProfile?: ExtensionLaunchProfile;
 }
 
 export function ServerDetailModal(
@@ -167,10 +171,17 @@ function PluginServerDetailModal({
   onClose,
   projectId = null,
   extensionSettingsScope = null,
+  extensionLaunchProfile,
 }: PluginServerDetailModalProps) {
   const settings = useServerSettingsAvailability(
     isOpen ? extensionSettingsScope : null,
     plugin.serverId
+  );
+  const settingsLaunch = useSettingsLaunchObservation(
+    JSON.stringify([extensionSettingsScope, plugin.serverId]),
+    extensionLaunchProfile ?? "chatgpt",
+    isOpen && !!extensionSettingsScope,
+    settings.failed,
   );
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -241,6 +252,8 @@ function PluginServerDetailModal({
                     scope={extensionSettingsScope}
                     serverId={plugin.serverId}
                     serverName={plugin.serverName}
+                    launchProfile={extensionLaunchProfile}
+                    launchObservation={settingsLaunch}
                   />
                 )}
               </div>
@@ -255,6 +268,7 @@ function PluginServerDetailModal({
 function ProjectServerDetailModal({
   isOpen,
   extensionSettingsScope = null,
+  extensionLaunchProfile,
   onClose,
   server,
   defaultTab = "overview",
@@ -278,6 +292,12 @@ function ProjectServerDetailModal({
     defaultTab === "settings"
   );
   const [activeTab, setActiveTab] = useState<ServerDetailTab>(defaultTab);
+  const settingsLaunch = useSettingsLaunchObservation(
+    JSON.stringify([extensionSettingsScope, hostedServerId]),
+    extensionLaunchProfile ?? "chatgpt",
+    isOpen && settingsVisited && !!extensionSettingsScope,
+    settings.failed,
+  );
   // Any HTTP server, matching the token section's own guard rather than
   // `useOAuth`: a server that has since had OAuth turned off can still hold
   // stored tokens, or unparseable ones, and "Saved auth data is invalid" has
@@ -988,6 +1008,8 @@ function ProjectServerDetailModal({
                         scope={extensionSettingsScope}
                         serverId={hostedServerId}
                         serverName={server.name}
+                        launchProfile={extensionLaunchProfile}
+                        launchObservation={settingsLaunch}
                       />
                     )}
                   </TabsContent>

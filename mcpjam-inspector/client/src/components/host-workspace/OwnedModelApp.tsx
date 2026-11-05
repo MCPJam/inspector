@@ -1,4 +1,6 @@
 import { useComposerForms } from "@/components/elicitation/composer-form-store";
+import { useExtensionLaunchHealth } from "@/lib/use-extension-launch-health";
+import type { ExtensionLaunchObservation, ExtensionLaunchProfile } from "@/lib/extension-launch-health";
 import { withModelAppResources } from "./model-app-resources";
 import { withLocalFileHost } from "./local-file-host";
 import { useWorkspaceFileActions } from "./file-actions";
@@ -86,6 +88,7 @@ export interface OwnedModelAppPorts {
   openAIDisplayModes?: boolean;
   /** Compare lanes publish context without accepting App-initiated messages. */
   messagesEnabled?: boolean;
+  observeLaunch?: (token: string) => ExtensionLaunchObservation | undefined;
 }
 const ModelAppPortsContext = createContext<OwnedModelAppPorts | null>(null);
 /** Root composer owns publication and dispatch; render leaves own no chat session. */
@@ -100,6 +103,7 @@ export function useOwnedModelAppWorkspace(
   contextEnabled = true,
   /** The client's Display modes toggle; read by each App when it opens. */
   openAIDisplayModes = false,
+  launchProfile: ExtensionLaunchProfile = "chatgpt",
 ) {
   // Rotate synchronously: old asynchronous publications cannot enter a new chat,
   // even before the previous leaf's passive cleanup has run.
@@ -111,6 +115,10 @@ export function useOwnedModelAppWorkspace(
         scope.workspaceId,
       ])
     : null;
+  const launchHealth = useExtensionLaunchHealth(identity);
+  const observeLaunch = useCallback((token: string) =>
+    identity ? launchHealth.begin(token, "thread", launchProfile) : undefined,
+    [identity, launchHealth, launchProfile]);
   const current = useRef({
     identity,
     epoch: 0,
@@ -228,8 +236,9 @@ export function useOwnedModelAppWorkspace(
       sendMessage: dispatch,
       registerMessageSource,
       openAIDisplayModes,
+      observeLaunch,
     }),
-    [publishContext, dispatch, registerMessageSource, openAIDisplayModes],
+    [publishContext, dispatch, registerMessageSource, openAIDisplayModes, observeLaunch],
   );
   const contexts =
     scope && contextEnabled && state.epoch === epoch ? state.contexts : {};
@@ -284,6 +293,7 @@ function ModelApp({
   const files = useWorkspaceFileActions();
   const currentFiles = useRef(files);
   currentFiles.current = files;
+  const launch = useMemo(() => ports?.observeLaunch?.(marker.instanceToken), [ports, marker.instanceToken]);
   const [handle, setHandle] = useState<ThreadAppHandle | null>(null);
   const [error, setError] = useState(false);
   const [approval, setApproval] = useState<{
@@ -310,6 +320,7 @@ function ModelApp({
   const api = useMemo(() => createThreadAppApi(scope, "model/", () => invokeGate.current?.() ?? true), [scope]);
   useEffect(() => {
     mounted.current = true;
+    launch?.awaitingReadiness();
     void authFetch("/api/web/apps/plugin-instances/model/open", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -321,8 +332,12 @@ function ModelApp({
       signal: lifetime.signal,
     })
       .then(async (response) => {
-        if (!response.ok) throw new Error("App unavailable");
         const value = await response.json();
+        if (!response.ok) {
+          if (value?.code === "APPROVAL_DENIED" || value?.code === "PLUGIN_EXTENSION_DISABLED")
+            launch?.exclude();
+          throw new Error("App unavailable");
+        }
         if (
           !value ||
           value.instanceToken !== marker.instanceToken ||
@@ -333,12 +348,16 @@ function ModelApp({
         if (mounted.current) setHandle({ ...value, serverId: marker.serverId });
       })
       .catch(() => {
-        if (mounted.current && !lifetime.signal.aborted) setError(true);
+        if (mounted.current && !lifetime.signal.aborted) {
+          launch?.fail("execution");
+          setError(true);
+        }
       });
     return () => {
       mounted.current = false;
       queueMicrotask(() => {
         if (!mounted.current) {
+          launch?.exclude();
           lifetime.abort();
           void api
             .close(
@@ -531,6 +550,11 @@ function ModelApp({
           serverName={serverName}
           resourceUri={handle.resourceUri}
           toolMetadata={handle.toolMetadata}
+          onInitialRenderOutcome={(outcome) => {
+            if (outcome === "ready") launch?.ready();
+            else launch?.fail("rendering");
+            renderProps.onInitialRenderOutcome?.(outcome);
+          }}
           onCallTool={(name, args, context) =>
             api.invoke(
               handle,
