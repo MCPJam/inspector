@@ -604,3 +604,22 @@ describe("Swarms and User Testing are flag-gated, not sign-in-gated (REEV-6)", (
     }
   });
 });
+
+describe("hosted WebMCP installation navigation", () => {
+  it.each([undefined, false, true])(
+    "keeps WebMCP visible and linked with browser flag %s",
+    (flag) => {
+      const sections = filterByFeatureFlags(
+        getHostedNavigationSections(navigationSections),
+        {
+          [WEBMCP_INSPECTOR_FEATURE_FLAG]: flag === true,
+        },
+      );
+      expect(
+        sections
+          .flatMap((section) => section.items)
+          .find((item) => item.title === "WebMCP"),
+      ).toMatchObject({ url: "/webmcp" });
+    },
+  );
+});
