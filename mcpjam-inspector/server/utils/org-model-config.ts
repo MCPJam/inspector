@@ -90,6 +90,8 @@ export { orgRequiresOwnKeys };
 
 export type ResolvedOrgModelConfig = {
   providers: ResolvedProviderConfig[];
+  /** Saved background model, checked by each consumer before routing. */
+  defaultModel?: unknown;
   /**
    * Absent on a backend that predates the policy, which reads as "off". When
    * `requireOrgKeys` is set, hosted (MCPJam-provided) and local selections are
@@ -328,6 +330,7 @@ export async function resolveOrgModelConfig(
       error?: string;
       providers?: unknown;
       aiKeyPolicy?: unknown;
+      defaultModel?: unknown;
     };
     if (!data?.ok) {
       throw new Error(
@@ -379,6 +382,9 @@ export async function resolveOrgModelConfig(
 
     const result: ResolvedOrgModelConfig = {
       providers,
+      ...(data.defaultModel !== undefined
+        ? { defaultModel: data.defaultModel }
+        : {}),
       ...(aiKeyPolicy ? { aiKeyPolicy } : {}),
     };
     const withholdsKeys =
