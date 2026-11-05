@@ -63,10 +63,11 @@ export function isInapplicableCheck(check: OutcomeCheckLike): boolean {
 /**
  * The run's verdict, plus the reason when it is `incomplete`.
  *
- * `passed` requires that every SELECTED check actually produced a verdict —
- * either it ran, or it was inapplicable to this server. A check that could not
- * run is neither a violation nor a pass, and collapsing it into "not failed"
- * is what let a two-of-eight run report success.
+ * `passed` requires that every SELECTED check either produced a verdict (it
+ * ran, or it was inapplicable to this server) or only needs a tool from setup,
+ * and that at least one check produced a verdict. A check that could not run
+ * is neither a violation nor a pass, and collapsing it into "not failed" is
+ * what let a two-of-eight run report success.
  */
 export function decideConformanceOutcome(checks: OutcomeCheckLike[]): {
   outcome: ConformanceRunOutcome;
@@ -82,13 +83,22 @@ export function decideConformanceOutcome(checks: OutcomeCheckLike[]): {
     (check) => isUnrunCheck(check) && !isMissingInputCheck(check),
   );
   if (unrun.length === 0) {
-    return checks.length === 0
-      ? {
-          outcome: "incomplete",
-          incompleteReason:
-            "no checks were selected, so this run establishes nothing",
-        }
-      : { outcome: "passed" };
+    if (checks.length === 0) {
+      return {
+        outcome: "incomplete",
+        incompleteReason:
+          "no checks were selected, so this run establishes nothing",
+      };
+    }
+    // Setup gaps alone don't block a verdict, but they can't make one either.
+    if (checks.every(isMissingInputCheck)) {
+      return {
+        outcome: "incomplete",
+        incompleteReason:
+          "every selected check needs input from setup, so this run establishes nothing",
+      };
+    }
+    return { outcome: "passed" };
   }
   const reasons = Array.from(
     new Set(unrun.map((check) => check.error?.message ?? "reason unavailable")),

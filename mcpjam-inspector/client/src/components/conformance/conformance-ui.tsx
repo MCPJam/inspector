@@ -354,8 +354,6 @@ export function OverallScoreCard({
       return `Incomplete. ${inputSentence}`;
     }
     if (!scored) {
-      // Every applicable check needs input: nothing to score, but not empty.
-      if (score?.outcome === "passed" && inputSentence) return inputSentence;
       // A run that ended before any check was scored, such as one that timed
       // out, is incomplete rather than empty.
       return score?.outcome === "incomplete"

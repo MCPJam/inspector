@@ -384,7 +384,7 @@ describe("modern logging conformance", () => {
     });
   });
 
-  it("cannot run without a logProbe, does not hold the verdict back, and calls no tool for advice", async () => {
+  it("cannot run without a logProbe, and calls no tool for advice", async () => {
     const serverUrl = await serve(createLoggingFixtureHandler());
     const calls: string[] = [];
     const fetchFn: typeof fetch = async (input, init) => {
@@ -405,7 +405,8 @@ describe("modern logging conformance", () => {
     });
     expect(check.error?.message).toMatch(/No logProbe configured/);
     expect(calls).not.toContain("tools/call");
-    expect(result.outcome).toBe("passed");
+    // The only selected check needs input, so nothing established a verdict.
+    expect(result.outcome).toBe("incomplete");
     expect(filteringAdvice(result)).toBeUndefined();
   });
 

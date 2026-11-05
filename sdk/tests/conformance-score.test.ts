@@ -103,7 +103,7 @@ describe("computeConformanceScore", () => {
     }
   );
 
-  it("has no score, and passes, when every selected check needs input", () => {
+  it("has no score, and is incomplete, when every selected check needs input", () => {
     const score = computeConformanceScore([
       {
         ...check("missing", "skipped", "could-not-run"),
@@ -114,7 +114,7 @@ describe("computeConformanceScore", () => {
       score: null,
       applicable: 0,
       couldNotRun: 1,
-      outcome: "passed",
+      outcome: "incomplete",
     });
   });
 

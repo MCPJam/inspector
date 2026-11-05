@@ -55,28 +55,6 @@ describe("OverallScoreCard", () => {
     expect(screen.queryByText("Fully conformant.")).toBeNull();
   });
 
-  it("names missing inputs on a passed run where every check needs input", () => {
-    render(
-      <OverallScoreCard
-        score={{
-          ...passedScore(100),
-          score: null,
-          passed: 0,
-          applicable: 0,
-          couldNotRun: 7,
-        }}
-        serverName="srv"
-        version="Auto"
-      />,
-    );
-    expect(
-      screen.getByText("7 checks need input. Select tools in setup and run again."),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText("Nothing applicable to score on this server."),
-    ).toBeNull();
-  });
-
   it.each([
     [
       3,

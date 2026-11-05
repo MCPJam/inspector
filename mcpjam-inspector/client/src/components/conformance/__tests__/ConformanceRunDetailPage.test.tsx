@@ -185,25 +185,6 @@ describe("ConformanceRunDetailPage", () => {
     expect(screen.getByRole("button", { name: "Run again" })).toBeDefined();
   });
 
-  it("leaves a completed run's incomplete reason to the score card and the suites", () => {
-    useArtifactQueryMock.mockReturnValue(
-      run(
-        [report({ outcome: "incomplete", score: 50, applicable: 2, couldNotRun: 1 })],
-        {
-          outcome: "incomplete",
-          incompleteReason: "1 applicable check(s) could not run (run-level-only)",
-          score: 50,
-          applicable: 2,
-          couldNotRun: 1,
-        },
-      ),
-    );
-    render(<ConformanceRunDetailPage runId="run_1" />);
-
-    expect(screen.getByText(/1 check could not run/)).toBeInTheDocument();
-    expect(screen.queryByText(/run-level-only/)).toBeNull();
-  });
-
   it("opens the share dialog for this run from Share", () => {
     useArtifactQueryMock.mockReturnValue(run([report()]));
     render(<ConformanceRunDetailPage runId="run_1" />);
