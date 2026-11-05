@@ -51,4 +51,14 @@ describe("formatErrorMessage — declined card", () => {
       )?.code,
     ).toBe(AUTO_TOPUP_DECLINED_CODE);
   });
+
+  it.each([
+    ["the sentence alone", `${body.error} ${body.details}`],
+    [
+      "a prefixed envelope",
+      `Backend stream error: 429 ${JSON.stringify(body)}`,
+    ],
+  ])("names the card from %s", (_, raw) => {
+    expect(formatErrorMessage(raw)?.code).toBe(AUTO_TOPUP_DECLINED_CODE);
+  });
 });

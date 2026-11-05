@@ -438,6 +438,13 @@ function summarizeEmptyModelResponse(message: unknown): FormattedError | null {
   };
 }
 
+const DECLINED_CARD_ERROR: FormattedError = {
+  code: AUTO_TOPUP_DECLINED_CODE,
+  message: AUTO_TOPUP_DECLINED_MESSAGE,
+  isRetryable: false,
+  isMCPJamPlatformError: true,
+};
+
 export function formatErrorMessage(error: unknown): FormattedError | null {
   if (!error) return null;
 
@@ -499,13 +506,7 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
       if (orgKeysRefusal) return orgKeysRefusal;
 
       // A declined card, not a spent allowance: the top-up dialog would hide it.
-      if (isDeclinedCardLimit(parsed))
-        return {
-          code: AUTO_TOPUP_DECLINED_CODE,
-          message: AUTO_TOPUP_DECLINED_MESSAGE,
-          isRetryable: false,
-          isMCPJamPlatformError: true,
-        };
+      if (isDeclinedCardLimit(parsed)) return DECLINED_CARD_ERROR;
 
       if (isMCPJamModelLimit(code, message, details)) {
         return formatMCPJamModelLimit(
@@ -585,6 +586,9 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
   } catch {
     // Return as-is
   }
+
+  // A stream error can carry the backend's sentence alone, or behind a prefix.
+  if (isDeclinedCardLimit(errorString)) return DECLINED_CARD_ERROR;
 
   if (isMCPJamModelLimit(undefined, errorString)) {
     return formatMCPJamModelLimit(extractRetryPhrase(errorString));
