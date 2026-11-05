@@ -333,8 +333,9 @@ describe("context replace queue", () => {
     });
     await expect(update({})).rejects.toThrow("unsupported");
     await update({});
-    await expect(update({})).rejects.toThrow("lost response");
-    await expect(update({})).rejects.toThrow("outcome unknown");
+    const next = (n: number) => ({ structuredContent: { n } });
+    await expect(update(next(2))).rejects.toThrow("lost response");
+    await expect(update(next(3))).rejects.toThrow("outcome unknown");
     expect(send.mock.calls.map(([request]) => request.sequence)).toEqual([
       1, 1, 2,
     ]);
@@ -411,8 +412,44 @@ describe("context replace queue", () => {
     );
     // Attached again, the App's own updates flow as before.
     using = false;
-    await update(view);
+    await update({ content: [{ type: "text", text: "moved" }] });
+    expect(send).toHaveBeenCalledTimes(2);
     expect(send.mock.lastCall![0]).not.toHaveProperty("attach");
+  });
+  it("acknowledges an App's identical re-send without another write", async () => {
+    let using = false;
+    const send = vi.fn(async (request) => ({
+      ...result(`u${request.sequence}`),
+      snapshot: {
+        revision: request.sequence * 10,
+        sequence: request.sequence,
+        state: { updateId: `u${request.sequence}`, content: [] },
+      },
+    }));
+    const update = createModelContextController({
+      requireLive: () => {},
+      send,
+      onSnapshot: () => {},
+      userAttaching: () => using,
+    });
+    const view = { content: [{ type: "text", text: "view" }] };
+    const first = await update(view);
+    // Bits & Bolts re-sends its view on every redraw.
+    expect(await update(view)).toEqual(first);
+    expect(send).toHaveBeenCalledOnce();
+    // A person using the App always sends.
+    using = true;
+    await update(view);
+    expect(send).toHaveBeenCalledTimes(2);
+    using = false;
+    // Once something else replaced that state, the same view goes again.
+    update.restore({
+      revision: 25,
+      sequence: 2,
+      state: { updateId: "elsewhere", content: [] },
+    });
+    await update(view);
+    expect(send).toHaveBeenCalledTimes(3);
   });
   it("learns a hold from the server after a remount", async () => {
     const send = vi

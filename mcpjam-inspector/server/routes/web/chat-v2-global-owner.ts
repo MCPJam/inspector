@@ -1,4 +1,3 @@
-import type { ModelMessage, UserModelMessage } from "ai";
 import { parsePluginWorkspaceDescriptor } from "@/shared/plugin-workspace";
 import type { PluginWorkspaceAdmission } from "../../services/plugin-host/admission.js";
 import { PluginInvocationError } from "../../services/plugin-host/invocation.js";
@@ -27,24 +26,6 @@ export function globalOwnerAdmission(
     revalidate: (options?: Parameters<PluginWorkspaceAdmission["revalidate"]>[0]) =>
       chat.revalidate(options),
   });
-}
-
-/** Both owners' context, as one ephemeral user message. */
-export function mergePluginContextMessages(
-  ...messages: (ModelMessage | undefined)[]
-): ModelMessage | undefined {
-  const present = messages.filter(
-    (message): message is UserModelMessage =>
-      !!message && message.role === "user" && Array.isArray(message.content),
-  );
-  if (present.length <= 1) return present[0];
-  const merged: UserModelMessage = {
-    role: "user",
-    content: present.flatMap((message) =>
-      Array.isArray(message.content) ? message.content : [],
-    ),
-  };
-  return merged;
 }
 
 /**

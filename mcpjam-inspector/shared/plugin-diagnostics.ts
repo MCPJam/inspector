@@ -112,9 +112,9 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
   INSTANCE_CONTEXT_RATE_LIMITED:
     "The App updated its context too often, so this update wasn't kept and its last accepted context stays. Send updates less often.",
   PLUGIN_CONTEXT_TOO_LARGE:
-    "This context update is larger than MCPJam accepts, so the App's last accepted context stays. Send less context.",
+    "This context update is over this client's App context budget (its modelContextPolicy), so the App's last accepted context stays. Send less context.",
   PLUGIN_CONTEXT_TURN_TOO_LARGE:
-    "The Apps in this chat hold more context than MCPJam sends in one turn. Remove an App's context from the composer, then send again.",
+    "The Apps in this chat hold more context than this client's modelContextPolicy sends in one turn. Remove an App's context from the composer, then send again.",
   PLUGIN_CONTEXT_MEMORY_LIMIT:
     "MCPJam is holding as much App context for you as it can, so this update wasn't kept. Close Apps you no longer need or remove their context, then try again.",
   INSTANCE_CONTEXT_HELD:
