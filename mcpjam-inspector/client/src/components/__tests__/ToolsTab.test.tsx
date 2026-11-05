@@ -463,6 +463,71 @@ describe("ToolsTab", () => {
         ).toBeInTheDocument();
       });
     });
+    it("drops a selected tool that left the list", async () => {
+      const serverConfig = createServerConfig();
+      mockListTools.mockResolvedValueOnce({
+        tools: [
+          {
+            name: "old-tool",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+      });
+      render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
+      fireEvent.click(await screen.findByText("old-tool"));
+      await waitFor(() =>
+        expect(screen.queryByText("No selection")).not.toBeInTheDocument(),
+      );
+
+      mockListTools.mockResolvedValueOnce({
+        tools: [
+          {
+            name: "new-tool",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+      });
+      fireEvent.click(screen.getByTitle("Refresh tools"));
+
+      await screen.findByText("new-tool");
+      expect(screen.getByText("No selection")).toBeInTheDocument();
+      expect(screen.queryByText("old-tool")).not.toBeInTheDocument();
+    });
+
+    it("keeps a selected tool that a paged list may hold on a later page", async () => {
+      const serverConfig = createServerConfig();
+      mockListTools.mockResolvedValueOnce({
+        tools: [
+          {
+            name: "old-tool",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+      });
+      render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
+      fireEvent.click(await screen.findByText("old-tool"));
+      await waitFor(() =>
+        expect(screen.queryByText("No selection")).not.toBeInTheDocument(),
+      );
+
+      mockListTools.mockResolvedValueOnce({
+        tools: [
+          {
+            name: "new-tool",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+        nextCursor: "page-2",
+      });
+      fireEvent.click(screen.getByTitle("Refresh tools"));
+
+      await waitFor(() => expect(mockListTools).toHaveBeenCalledTimes(2));
+      await waitFor(() =>
+        expect(screen.getByTitle("Refresh tools")).not.toBeDisabled(),
+      );
+      expect(screen.getByText("old-tool")).toBeInTheDocument();
+      expect(screen.queryByText("No selection")).not.toBeInTheDocument();
+    });
   });
 
   describe("search functionality", () => {

@@ -221,6 +221,9 @@ export function ToolsTab({
     parameters: Record<string, unknown>;
   } | null>(null);
   const [selectedTool, setSelectedTool] = useState<string>("");
+  // Read by a list fetch when it resolves, after the selection may have moved.
+  const selectedToolRef = useRef(selectedTool);
+  selectedToolRef.current = selectedTool;
   const [formFields, setFormFields] = useState<FormField[]>([]);
   const [result, setResult] = useState<CallToolResult | null>(null);
   const [structuredContentValid, setStructuredContentValid] = useState<
@@ -361,6 +364,18 @@ export function ToolsTab({
     ? "This tool requires task execution, and tasks are disabled by the host configuration."
     : undefined;
 
+  const clearSelectedTool = () => {
+    formSelectionRef.current = "";
+    restoringInputsRef.current = null;
+    setSelectedTool("");
+    setFormFields([]);
+    setResult(null);
+    setStructuredContentValid(undefined);
+    setError("");
+    setNormalizedError(null);
+    setResponseDurationMs(null);
+  };
+
   const resetLoadedToolState = ({
     invalidateRequests = true,
     stopLoading = true,
@@ -385,15 +400,7 @@ export function ToolsTab({
     }
     setTools({});
     if (clearSelection) {
-      formSelectionRef.current = "";
-      restoringInputsRef.current = null;
-      setSelectedTool("");
-      setFormFields([]);
-      setResult(null);
-      setStructuredContentValid(undefined);
-      setError("");
-      setNormalizedError(null);
-      setResponseDurationMs(null);
+      clearSelectedTool();
       setActiveElicitation(null);
     }
     if (clearTaskCapabilities) {
@@ -604,6 +611,17 @@ export function ToolsTab({
         toolArray.map((tool: Tool) => [tool.name, tool]),
       );
       setTools((prev) => (reset ? dictionary : { ...prev, ...dictionary }));
+      // A tool that left a complete list is no longer selectable. A paged
+      // list may hold it on a later page, so it stays.
+      const selected = selectedToolRef.current;
+      if (
+        reset &&
+        typeof data.nextCursor !== "string" &&
+        selected &&
+        !(selected in dictionary)
+      ) {
+        clearSelectedTool();
+      }
       // The response body is untyped, so a non-string `nextCursor` is not a
       // cursor and ends the listing. A repeated cursor is NOT an ending: the
       // value is opaque, and a server may legally reissue one constant
