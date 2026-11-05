@@ -145,6 +145,24 @@ describe("ToolsTab selection across a list refresh", () => {
     expect(mockExecuteToolApi).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a removed tool selected while its call waits on an elicitation", async () => {
+    mockExecuteToolApi.mockResolvedValue({
+      status: "elicitation_required",
+      executionId: "exec-1",
+      requestId: "req-1",
+      request: {
+        message: "Which account?",
+        requestedSchema: { type: "object", properties: {} },
+      },
+      timestamp: new Date().toISOString(),
+    });
+    await refreshWithoutSelectedTool({
+      beforeRefresh: () =>
+        fireEvent.click(screen.getByRole("button", { name: /^run/i })),
+    });
+    expect(screen.queryByText("No selection")).not.toBeInTheDocument();
+  });
+
   it("keeps a selected tool and its definition when the refresh fails", async () => {
     await refreshWithoutSelectedTool({ refreshFails: true });
     expect(screen.queryByText("No selection")).not.toBeInTheDocument();

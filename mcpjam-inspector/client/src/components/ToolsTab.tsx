@@ -3,13 +3,14 @@ import {
   recordChatAuthRecoveryFailure,
   traceChatAuthRecovery,
 } from "@/lib/chat-auth-recovery";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   CallToolResult,
-  ElicitRequest,
   ElicitResult,
   Tool,
 } from "@modelcontextprotocol/client";
+import type { ActiveElicitation } from "./tools/active-elicitation";
+import { useStateWithRef } from "@/hooks/use-state-with-ref";
 import { Wrench } from "lucide-react";
 import { ElicitationDialog } from "./ElicitationDialog";
 import { MrtrElicitationHost } from "./elicitation/MrtrElicitationHost";
@@ -117,20 +118,6 @@ function formatQualityLabel(code: ToolQualityCodeView): string {
   return parts.length ? `${code.label} (${parts.join(", ")})` : code.label;
 }
 
-type ActiveElicitation = {
-  executionId: string;
-  requestId: string;
-  request: ElicitRequest["params"];
-  timestamp: string;
-  /**
-   * The auth/org scope captured when the ORIGINATING execution started.
-   * Carried on this per-execution record — never a shared mutable ref — so a
-   * second execution started while this elicitation is pending cannot
-   * overwrite the scope the eventual resume files its task under.
-   */
-  scope?: string;
-};
-
 export type DialogElicitation = {
   requestId: string;
   message: string;
@@ -215,32 +202,23 @@ export function ToolsTab({
 }: ToolsTabProps) {
   const logger = useLogger("ToolsTab");
   const [tools, setTools] = useState<ToolMap>({});
-  // The server returned its last page since the list was last cleared. A
-  // cleared or failed list says nothing about whether a tool is listed.
+  // The last page arrived since the list was cleared; a failed fetch says none.
   const [toolListComplete, setToolListComplete] = useState(false);
   const formSelectionRef = useRef("");
   const restoringInputsRef = useRef<{
     toolName: string;
     parameters: Record<string, unknown>;
   } | null>(null);
-  const [selectedTool, setSelectedTool] = useState<string>("");
-  // Read by a list fetch when it resolves, after the selection may have moved.
-  const selectedToolRef = useRef(selectedTool);
-  useLayoutEffect(() => {
-    selectedToolRef.current = selectedTool;
-  }, [selectedTool]);
+  // A list fetch reads these refs after its `await`, a render ahead of state.
+  const [selectedTool, setSelectedTool, selectedToolRef] =
+    useStateWithRef<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
   const [result, setResult] = useState<CallToolResult | null>(null);
   const [structuredContentValid, setStructuredContentValid] = useState<
     boolean | undefined
   >(undefined);
-  const [loadingExecuteTool, setLoadingExecuteTool] = useState(false);
-  // A list fetch reads it when it resolves; the state may be a render behind.
-  const toolCallRunningRef = useRef(false);
-  const setToolCallRunning = (running: boolean) => {
-    toolCallRunningRef.current = running;
-    setLoadingExecuteTool(running);
-  };
+  const [loadingExecuteTool, setToolCallRunning, toolCallRunningRef] =
+    useStateWithRef(false);
   const [fetchingTools, setFetchingTools] = useState(false);
   const [error, setError] = useState<string>("");
   const [normalizedError, setNormalizedError] = useState<
@@ -255,8 +233,9 @@ export function ToolsTab({
   const [responseDurationMs, setResponseDurationMs] = useState<number | null>(
     null,
   );
-  const [activeElicitation, setActiveElicitation] =
-    useState<ActiveElicitation | null>(null);
+  // A call waiting on its elicitation still runs, as far as a refresh sees.
+  const [activeElicitation, setActiveElicitation, activeElicitationRef] =
+    useStateWithRef<ActiveElicitation | null>(null);
   const [elicitationLoading, setElicitationLoading] = useState(false);
   /**
    * Why a sign-in challenge did not become a Connect card (the host passes it
@@ -371,8 +350,7 @@ export function ToolsTab({
     tasksWire === "legacy" &&
     serverSupportsTaskToolCalls &&
     selectedToolTaskSupport === "required";
-  // Kept selected through a refresh that dropped it (its call was running):
-  // its result stays on screen, but it cannot run or be saved again.
+  // Kept for its running call's result, but it cannot run or be saved again.
   const selectedToolUnlisted =
     !!selectedTool && toolListComplete && !Object.hasOwn(tools, selectedTool);
   const executeDisabledReason = taskRequiredButTasksOff
@@ -611,8 +589,7 @@ export function ToolsTab({
     setListError(null);
     setFetchingTools(true);
     if (reset) {
-      // The current list stays until the new one arrives: a failed refresh
-      // must not cost the selected tool its definition (form, task policy).
+      // A failed refresh keeps the list, and the selected tool's definition.
       resetLoadedToolState({
         invalidateRequests: false,
         stopLoading: false,
@@ -636,16 +613,16 @@ export function ToolsTab({
         toolArray.map((tool: Tool) => [tool.name, tool]),
       );
       setTools((prev) => (reset ? dictionary : { ...prev, ...dictionary }));
-      // A tool that left a complete list is no longer selectable. A paged
-      // list may hold it on a later page, and a running call keeps its tool
-      // selected so its result shows under it; a later refresh drops it.
+      // A tool that left a complete list is no longer selectable; a paged list
+      // may hold it later, and a running call keeps it until a later refresh.
       const selected = selectedToolRef.current;
       if (
         reset &&
         typeof data.nextCursor !== "string" &&
         selected &&
         !Object.hasOwn(dictionary, selected) &&
-        !toolCallRunningRef.current
+        !toolCallRunningRef.current &&
+        !activeElicitationRef.current
       ) {
         clearSelectedTool();
       }
@@ -779,7 +756,10 @@ export function ToolsTab({
     toolName: string,
     scopeAtCall: string | undefined,
     replayDescriptor?: DirectScopeStepUpReplayDescriptor,
-    options?: { pendingReplay?: PendingDirectScopeStepUpReplay },
+    options?: {
+      pendingReplay?: PendingDirectScopeStepUpReplay;
+      outputSchema?: Tool["outputSchema"];
+    },
   ) => {
     const durationMs =
       "durationMs" in response && typeof response.durationMs === "number"
@@ -802,9 +782,11 @@ export function ToolsTab({
       }
 
       const rawResult = callResult as unknown as Record<string, unknown>;
-      const currentTool = tools[toolName];
       setStructuredContentValid(
-        validateToolOutput(rawResult, currentTool?.outputSchema),
+        validateToolOutput(
+          rawResult,
+          options?.outputSchema ?? tools[toolName]?.outputSchema,
+        ),
       );
 
       logger.info("Tool execution completed", {
@@ -821,6 +803,8 @@ export function ToolsTab({
         requestId: response.requestId,
         request: response.request,
         timestamp: response.timestamp,
+        toolName,
+        outputSchema: tools[toolName]?.outputSchema,
         // Rides on the record so the resume files any task_created under the
         // originating call's scope.
         ...(scopeAtCall !== undefined ? { scope: scopeAtCall } : {}),
@@ -1202,7 +1186,13 @@ export function ToolsTab({
       );
       // The resume reads the scope from ITS OWN execution's record, not from
       // any shared state a later execution could have overwritten.
-      handleExecutionResponse(response, selectedTool, activeElicitation.scope);
+      handleExecutionResponse(
+        response,
+        activeElicitation.toolName,
+        activeElicitation.scope,
+        undefined,
+        { outputSchema: activeElicitation.outputSchema },
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       logger.error("Error responding to elicitation", {
