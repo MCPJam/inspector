@@ -973,6 +973,11 @@ function addUsage(total, usage) {
     if (manifest) {
       expect(JSON.parse(manifest.content).pnpm).toBeUndefined();
     }
+    const lockfile = bootstrap?.files.find((file) =>
+      file.path.endsWith("/pnpm-lock.yaml"),
+    );
+    expect(lockfile?.content).toContain("proxy-addr@2.0.8:");
+    expect(lockfile?.content).not.toContain("proxy-addr@2.0.7");
     expect(
       bootstrap?.commands.some((command) =>
         command.command.includes("--frozen-lockfile"),
