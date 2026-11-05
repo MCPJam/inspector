@@ -82,7 +82,9 @@ import { LaunchedCaseJudge } from "./evaluate/case-scorecard/launched-case-judge
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { createSuiteFromPayload } from "./evals/create-suite-from-payload";
 import { useEnvironmentCapabilities } from "@/hooks/use-environment-capabilities";
-import { ConnectedSuitesOverview as SuitesOverview } from "./evaluate/suites-overview";
+import { ConnectedSuitesOverview } from "./evaluate/suites-overview";
+import { ConnectedSuiteCards } from "./evaluate/suite-cards";
+import * as landing from "./evaluate/evaluate-landing-nav";
 import { SuiteListRunReview } from "./evaluate/suite-list-run-review";
 import { ProjectRunsTable } from "./evals/project-runs-table";
 import { stripTimestampSuffix } from "./evals/suite-overview-presentation";
@@ -282,6 +284,14 @@ function EvaluateTabContent({
   // All suites are visible in Evaluate regardless of origin (ui or sdk/CI).
   // SDK-created suites get a CI badge in the switcher instead of being hidden.
   const visibleSuites = overviewQueries.sortedSuites;
+  const landingNav = landing.useEvaluateLandingNav({
+    enabled: evaluateNavEnabled,
+    addressRoute,
+    suiteCount: overviewQueries.isOverviewLoading ? null : visibleSuites.length,
+  });
+  const SuitesOverview = landingNav
+    ? ConnectedSuiteCards
+    : ConnectedSuitesOverview;
 
   const selectedSuiteEntry = useMemo(() => {
     if (!selectedSuiteId) {
@@ -640,6 +650,7 @@ function EvaluateTabContent({
   );
 
   const handleNavigateToEvalList = useCallback(() => {
+    landing.noteEvalNavArrival("crumb");
     navigatePlaygroundEvalsRoute({ type: "list" });
   }, []);
 
@@ -1489,7 +1500,10 @@ function EvaluateTabContent({
       return landingEmpty;
     }
 
-    if (isLandingList && landingView === "runs") {
+    if (
+      isLandingList &&
+      (landingNav?.header.landingView ?? landingView) === "runs"
+    ) {
       return projectId && shouldQueryProjectId(projectId) ? (
         <div
           className="flex min-h-0 flex-1 flex-col overflow-hidden"
@@ -1497,6 +1511,7 @@ function EvaluateTabContent({
         >
           <ProjectRunsTable
             evaluateLayout
+            hideSuiteHealth={landingNav !== null}
             historyMetricsEnabled
             projectId={projectId}
             onDeleteRun={canDeleteRuns ? handlers.directDeleteRun : undefined}
@@ -1707,6 +1722,7 @@ function EvaluateTabContent({
             }
             landingView={landingView}
             onLandingViewChange={setLandingView}
+            {...landingNav?.header}
             onEvaluateClick={handleNavigateToEvalList}
             {...navTrail}
           />
@@ -1792,6 +1808,7 @@ function EvaluateTabContent({
         projectId={projectId ?? null}
         organizationId={organizationId ?? null}
       >
+        {landingNav?.tutorial}
         {judgeRunIds.map((runId) => (
           <LaunchedCaseJudge key={runId} runId={runId} />
         ))}

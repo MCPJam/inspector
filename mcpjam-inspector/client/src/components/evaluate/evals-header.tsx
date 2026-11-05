@@ -1,5 +1,11 @@
 import type { ReactNode } from "react";
-import { ChevronDown, Play, Plus } from "lucide-react";
+import {
+  ChevronDown,
+  EllipsisVertical,
+  GraduationCap,
+  Play,
+  Plus,
+} from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Breadcrumb,
@@ -30,6 +36,12 @@ export const EVAL_LANDING_VIEW_OPTIONS = [
   { value: "suites", label: "Suites" },
 ] as const satisfies readonly ViewModeSelectorOption<"suites" | "runs">[];
 
+/** With the evaluate-nav flag: Suites first, and each tab has an address. */
+export const EVAL_NAV_LANDING_VIEW_OPTIONS = [
+  { value: "suites", label: "Suites" },
+  { value: "runs", label: "Runs" },
+] as const satisfies readonly ViewModeSelectorOption<"suites" | "runs">[];
+
 export type EvalLandingView =
   (typeof EVAL_LANDING_VIEW_OPTIONS)[number]["value"];
 
@@ -56,6 +68,7 @@ export function EvalsHeader({
   onLandingViewChange,
   onEvaluateClick,
   isDetail: isDetailProp,
+  onOpenTutorial,
 }: {
   onCreateSuite?: () => void;
   onSetupRun?: () => void;
@@ -71,6 +84,11 @@ export function EvalsHeader({
   onEvaluateClick?: () => void;
   /** When set, forces detail chrome even if the last crumb has not loaded. */
   isDetail?: boolean;
+  /**
+   * Set with the evaluate-nav flag on: the landing shows Suites | Runs, Create
+   * suite, and a ⋮ menu that holds Tutorial.
+   */
+  onOpenTutorial?: () => void;
 }) {
   const isDetail = isDetailProp ?? Boolean(children || parentCrumb);
   const detailCrumbs = detailCrumb
@@ -163,6 +181,55 @@ export function EvalsHeader({
   }
 
   const showLandingTabs = landingView != null && onLandingViewChange != null;
+
+  if (onOpenTutorial) {
+    return (
+      <LandingPageHeader
+        testId="evals-header"
+        title="Evaluate"
+        description={EVALUATE_HEADER_DESCRIPTION}
+        tabs={
+          showLandingTabs
+            ? {
+                value: landingView,
+                options: EVAL_NAV_LANDING_VIEW_OPTIONS,
+                onChange: onLandingViewChange,
+                ariaLabel: "Evaluate view",
+                indicatorId: "evals-landing",
+              }
+            : undefined
+        }
+        actions={
+          <div className="inline-flex shrink-0 items-center gap-1.5">
+            {onCreateSuite ? (
+              <Button size="sm" className="gap-1.5" onClick={onCreateSuite}>
+                <Plus className="h-4 w-4" aria-hidden />
+                Create suite
+              </Button>
+            ) : null}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="px-2"
+                  aria-label="More evaluate actions"
+                >
+                  <EllipsisVertical className="h-4 w-4" aria-hidden />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={onOpenTutorial}>
+                  <GraduationCap className="h-4 w-4" />
+                  Tutorial
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        }
+      />
+    );
+  }
 
   return (
     <LandingPageHeader

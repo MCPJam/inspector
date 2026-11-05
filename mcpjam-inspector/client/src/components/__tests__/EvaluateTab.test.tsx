@@ -275,6 +275,7 @@ vi.mock("../evals/use-eval-queries", () => ({
 }));
 
 import { EvaluateTab } from "../EvaluateTab";
+import { HOW_SUITES_WORK_SEEN_KEY } from "../evaluate/how-suites-work/how-suites-work-model";
 
 function makeSuiteEntry(
   serverNames: string[],
@@ -685,12 +686,10 @@ describe("EvaluateTab", () => {
       });
     });
 
-    it("is on for both surfaces once the flag is on", async () => {
+    it("is on for both surfaces once the flag is on", () => {
       mocks.evaluateFlag.enabled = true;
-      mocks.route.current = { type: "list" };
-      const user = userEvent.setup();
+      mocks.route.current = { type: "evaluate-runs" };
       render(<EvaluateTab projectId="ws-1" />);
-      await user.click(screen.getByRole("button", { name: /^overview$/i }));
 
       expect(mocks.projectRunsTable.mock.calls.at(-1)?.[0]).toMatchObject({
         projectId: "ws-1",
@@ -715,6 +714,45 @@ describe("EvaluateTab", () => {
       expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
         evaluateDecisionSummary: true,
       });
+    });
+  });
+
+  describe("landing with the evaluate-nav flag on", () => {
+    beforeEach(() => {
+      mocks.evaluateFlag.enabled = true;
+      localStorage.setItem(HOW_SUITES_WORK_SEEN_KEY, "1");
+    });
+
+    it("opens on Suites with suite cards, and Runs is an address", async () => {
+      mocks.route.current = { type: "list" };
+      const user = userEvent.setup();
+      render(<EvaluateTab projectId="ws-1" />);
+      expect(screen.getByTestId("evals-suite-cards")).toBeInTheDocument();
+      expect(screen.queryByTestId("evals-suites-overview")).toBeNull();
+      await user.click(screen.getByRole("button", { name: /^runs$/i }));
+      expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
+        type: "evaluate-runs",
+      });
+    });
+
+    it("shows the runs list without the health chart at /evaluate/runs", () => {
+      mocks.route.current = { type: "evaluate-runs" };
+      render(<EvaluateTab projectId="ws-1" />);
+      expect(screen.getByTestId("evals-runs-landing")).toBeInTheDocument();
+      expect(mocks.projectRunsTable.mock.calls.at(-1)?.[0]).toMatchObject({
+        hideSuiteHealth: true,
+      });
+    });
+
+    it("opens the tutorial from the ⋮ menu", async () => {
+      mocks.route.current = { type: "list" };
+      const user = userEvent.setup();
+      render(<EvaluateTab projectId="ws-1" />);
+      await user.click(
+        screen.getByRole("button", { name: "More evaluate actions" }),
+      );
+      await user.click(screen.getByRole("menuitem", { name: "Tutorial" }));
+      expect(await screen.findByTestId("how-suites-work")).toBeInTheDocument();
     });
   });
 

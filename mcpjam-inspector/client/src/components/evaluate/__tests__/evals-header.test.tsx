@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { EvalsHeader } from "../evals-header";
@@ -269,5 +269,41 @@ describe("EvalsHeader", () => {
     expect(
       screen.getByRole("link", { name: "Pay invoice", current: "page" }),
     ).toBeTruthy();
+  });
+  describe("with the evaluate-nav flag", () => {
+    it("opens on Suites, makes Create suite primary and keeps Tutorial in ⋮", async () => {
+      const user = userEvent.setup();
+      const create = vi.fn(),
+        tutorial = vi.fn(),
+        change = vi.fn();
+      render(
+        <EvalsHeader
+          landingView="suites"
+          onLandingViewChange={change}
+          onCreateSuite={create}
+          onSetupRun={vi.fn()}
+          onAddCase={vi.fn()}
+          onOpenTutorial={tutorial}
+        />,
+      );
+      const tabs = within(
+        screen.getByRole("navigation", { name: "Evaluate view" }),
+      ).getAllByRole("button");
+      expect(tabs.map((tab) => tab.textContent)).toEqual(["Suites", "Runs"]);
+      expect(tabs[0]).toHaveAttribute("aria-current", "page");
+      expect(screen.queryByRole("button", { name: "Setup Run" })).toBeNull();
+      await user.click(screen.getByRole("button", { name: "Create suite" }));
+      expect(create).toHaveBeenCalledOnce();
+      await user.click(
+        screen.getByRole("button", { name: "More evaluate actions" }),
+      );
+      expect(
+        screen.getAllByRole("menuitem").map((item) => item.textContent),
+      ).toEqual(["Tutorial"]);
+      await user.click(screen.getByRole("menuitem", { name: "Tutorial" }));
+      expect(tutorial).toHaveBeenCalledOnce();
+      await user.click(screen.getByRole("button", { name: "Runs" }));
+      expect(change).toHaveBeenCalledWith("runs");
+    });
   });
 });

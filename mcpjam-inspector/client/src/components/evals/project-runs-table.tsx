@@ -249,6 +249,7 @@ export function ProjectRunsTable({
   embedded = false,
   historyMetricsEnabled = false,
   evaluateLayout = false,
+  hideSuiteHealth = false,
   emptyState,
   onDeleteRun,
   canDeleteRun,
@@ -264,6 +265,8 @@ export function ProjectRunsTable({
   historyMetricsEnabled?: boolean;
   /** Ding Dong's flat launch table; legacy eval screens keep their grouping. */
   evaluateLayout?: boolean;
+  /** Evaluate's Runs tab: suite health lives on the Suites tab's cards. */
+  hideSuiteHealth?: boolean;
   /** Use the parent page scroll when shown below the suite cards. */
   embedded?: boolean;
   /**
@@ -893,7 +896,7 @@ export function ProjectRunsTable({
         !embedded && "h-full min-h-0 overflow-y-auto px-6 pb-6 pt-5",
       )}
     >
-      {evaluateLayout && (
+      {evaluateLayout && !hideSuiteHealth && (
         <SuiteHealth
           key={projectId}
           rows={rows}

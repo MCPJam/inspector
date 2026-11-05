@@ -64,10 +64,15 @@ const DATA_COLS =
   "grid min-w-0 flex-1 items-center gap-4 grid-cols-[minmax(0,1.6fr)_minmax(0,0.7fr)_minmax(0,1fr)_minmax(0,1fr)_5rem_7rem]";
 const ACTION_COL = "flex w-40 shrink-0 items-center justify-end gap-1";
 
-export function ConnectedSuitesOverview({
-  projectId,
-  ...props
-}: SuitesOverviewProps & { projectId?: string | null }) {
+/** Where a suite's client and model names come from. */
+export type SuiteLabelSources = Pick<
+  SuitesOverviewProps,
+  "environments" | "hostNamesById" | "hostModelsById"
+>;
+
+export function useSuiteLabelSources(
+  projectId?: string | null,
+): SuiteLabelSources {
   const { isAuthenticated } = useConvexAuth();
   const environments = useProjectEnvironments(projectId ?? null, {
     includeAdhoc: true,
@@ -77,14 +82,18 @@ export function ConnectedSuitesOverview({
     projectId: projectId ?? null,
     includePrivateBacking: true,
   });
-  return (
-    <SuitesOverview
-      {...props}
-      environments={environments}
-      hostNamesById={new Map(hosts.map((host) => [host.hostId, host.name]))}
-      hostModelsById={new Map(hosts.map((host) => [host.hostId, host.modelId]))}
-    />
-  );
+  return {
+    environments,
+    hostNamesById: new Map(hosts.map((host) => [host.hostId, host.name])),
+    hostModelsById: new Map(hosts.map((host) => [host.hostId, host.modelId])),
+  };
+}
+
+export function ConnectedSuitesOverview({
+  projectId,
+  ...props
+}: SuitesOverviewProps & { projectId?: string | null }) {
+  return <SuitesOverview {...props} {...useSuiteLabelSources(projectId)} />;
 }
 
 export function SuitesOverview(props: SuitesOverviewProps) {
@@ -131,56 +140,15 @@ function OverviewBody({
   const [modelFilter, setModelFilter] = useState(ALL_EVAL_FILTER_VALUES);
   // Resolved once per suite per data change, not four times per render: the
   // model pass alone is a scan of `environments` for every environment id.
-  const resolved = useMemo(() => {
-    const environmentsById = new Map(
-      environments.map((environment) => [
-        environment.environmentId,
-        environment,
-      ]),
-    );
-    const entries = overview.map(({ suite }) => {
-      const ids = suite.environmentIds?.length
-        ? suite.environmentIds
-            .map((id) => environmentsById.get(id)?.hostId)
-            .filter((hostId): hostId is string => Boolean(hostId))
-        : (suite.hostAttachments ?? []).map((host) => host.namedHostId);
-      // A host id is not a name. Until `useHostList` resolves, an unnamed id
-      // is UNKNOWN, not a label — printing the raw id put opaque Convex ids in
-      // the column and, worse, in the filter's option list.
-      const clients = [
-        ...new Set(
-          ids
-            .map(
-              (id) =>
-                hostNamesById.get(id)?.trim() ||
-                suite.hostAttachments
-                  ?.find((host) => host.namedHostId === id)
-                  ?.hostName?.trim() ||
-                null,
-            )
-            .filter((name): name is string => Boolean(name)),
-        ),
-      ];
-      // `null` where the model is not resolved YET, so the placeholder stays a
-      // display string and never becomes a value the Model filter offers.
-      const models = [
-        ...new Set(
-          suite.environmentIds?.length
-            ? suite.environmentIds.map((id) => {
-                const environment = environmentsById.get(id);
-                return environment
-                  ? environment.modelId ||
-                      hostModelsById.get(environment.hostId) ||
-                      null
-                  : null;
-              })
-            : [suite.defaultConfig?.modelId || null],
-        ),
-      ];
-      return [suite._id, { clients, models }] as const;
-    });
-    return new Map(entries);
-  }, [overview, environments, hostNamesById, hostModelsById]);
+  const resolved = useMemo(
+    () =>
+      resolveSuiteLabels(overview, {
+        environments,
+        hostNamesById,
+        hostModelsById,
+      }),
+    [overview, environments, hostNamesById, hostModelsById],
+  );
   const clientsForSuite = (suite: EvalSuite) =>
     resolved.get(suite._id)?.clients ?? [];
   const modelsForSuite = (suite: EvalSuite) =>
@@ -611,4 +579,60 @@ function ModelCell({ models }: { models: (string | null)[] }) {
       </span>
     </span>
   );
+}
+
+/** Each suite's client names and model ids, keyed by suite id. */
+export function resolveSuiteLabels(
+  overview: readonly EvalSuiteOverviewEntry[],
+  {
+    environments = [],
+    hostNamesById = new Map(),
+    hostModelsById = new Map(),
+  }: SuiteLabelSources,
+): Map<string, { clients: string[]; models: (string | null)[] }> {
+  const environmentsById = new Map(
+    environments.map((environment) => [environment.environmentId, environment]),
+  );
+  const entries = overview.map(({ suite }) => {
+    const ids = suite.environmentIds?.length
+      ? suite.environmentIds
+          .map((id) => environmentsById.get(id)?.hostId)
+          .filter((hostId): hostId is string => Boolean(hostId))
+      : (suite.hostAttachments ?? []).map((host) => host.namedHostId);
+    // A host id is not a name. Until `useHostList` resolves, an unnamed id
+    // is UNKNOWN, not a label — printing the raw id put opaque Convex ids in
+    // the column and, worse, in the filter's option list.
+    const clients = [
+      ...new Set(
+        ids
+          .map(
+            (id) =>
+              hostNamesById.get(id)?.trim() ||
+              suite.hostAttachments
+                ?.find((host) => host.namedHostId === id)
+                ?.hostName?.trim() ||
+              null,
+          )
+          .filter((name): name is string => Boolean(name)),
+      ),
+    ];
+    // `null` where the model is not resolved YET, so the placeholder stays a
+    // display string and never becomes a value the Model filter offers.
+    const models = [
+      ...new Set(
+        suite.environmentIds?.length
+          ? suite.environmentIds.map((id) => {
+              const environment = environmentsById.get(id);
+              return environment
+                ? environment.modelId ||
+                    hostModelsById.get(environment.hostId) ||
+                    null
+                : null;
+            })
+          : [suite.defaultConfig?.modelId || null],
+      ),
+    ];
+    return [suite._id, { clients, models }] as const;
+  });
+  return new Map(entries);
 }
