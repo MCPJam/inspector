@@ -1,7 +1,14 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryRouter, RouterProvider } from "react-router";
-import { EvaluateLegacyRedirect } from "../evaluate-legacy-redirect";
+import type { EvaluateLegacyRedirect as Redirect } from "../evaluate-legacy-redirect";
+
+/** Fresh module per test: whether the first load is over is module state. */
+let EvaluateLegacyRedirect: typeof Redirect;
+beforeEach(async () => {
+  vi.resetModules();
+  ({ EvaluateLegacyRedirect } = await import("../evaluate-legacy-redirect"));
+});
 
 const flag = vi.hoisted(() => ({ value: undefined as boolean | undefined }));
 const track = vi.hoisted(() => vi.fn());
@@ -103,6 +110,23 @@ describe("EvaluateLegacyRedirect", () => {
   it("renders the page untouched when nothing moves", () => {
     flag.value = true;
     const router = renderAt("/evaluate/suite/s_1/runs/r_1");
+    expect(screen.getByText("page")).toBeTruthy();
+    expect(track).not.toHaveBeenCalled();
+    router.dispose();
+  });
+
+  it("redirects an in-app link without recording it once the first load is over", async () => {
+    flag.value = true;
+    const router = renderAt("/evaluate/suite/s_1");
+    await act(() => router.navigate("/evaluate/suite/s_1/edit"));
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(
+        "/evaluate/suite/s_1/settings",
+      ),
+    );
+    await act(() =>
+      router.navigate("/evaluate/suite/s_1/history", { replace: true }),
+    );
     expect(screen.getByText("page")).toBeTruthy();
     expect(track).not.toHaveBeenCalled();
     router.dispose();
