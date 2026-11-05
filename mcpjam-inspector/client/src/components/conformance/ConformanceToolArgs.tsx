@@ -141,13 +141,13 @@ function SchemaArgsForm({
     onChange(args);
   };
   // A tool picked with nothing saved shows its schema defaults as set, so
-  // they are sent too: what the form shows is what Run sends.
+  // they are sent too: what the form shows is what Run sends. Once, for the
+  // arguments the field was opened with.
+  const opened = useRef({ value, fields, argsFrom, update });
   useEffect(() => {
+    const { value, fields, argsFrom, update } = opened.current;
     if (Object.keys(value).length > 0) return;
-    const args = argsFrom(fields);
-    if (Object.keys(args).length > 0) update(fields);
-    // Once, for the arguments the field was opened with.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (Object.keys(argsFrom(fields)).length > 0) update(fields);
   }, []);
 
   return (
