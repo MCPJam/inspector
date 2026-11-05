@@ -214,3 +214,22 @@ export function groupContextAttachments(attachments: ContextAttachment[]) {
   }
   return order;
 }
+
+/** Shared presentation; each attachment retains its existing owner actions. */
+export function ContextAttachmentList({
+  attachments,
+}: {
+  attachments: ContextAttachment[];
+}) {
+  return groupContextAttachments(attachments).map((entry) =>
+    entry.kind === "group" ? (
+      <ContextGroupChip
+        key={`group:${entry.group.id}`}
+        group={entry.group}
+        items={entry.items}
+      />
+    ) : (
+      <ContextAttachmentChip key={entry.attachment.id} {...entry.attachment} />
+    ),
+  );
+}

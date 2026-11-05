@@ -3,7 +3,8 @@ import { pluginBindingDigest } from "./bindings.js";
 import { createHash, randomBytes } from "node:crypto";
 import type { Context } from "hono";
 import type { UIMessageChunk } from "ai";
-import type { MrtrInputCollector } from "@mcpjam/sdk";
+import { OPENAI_ELICITATION_EXTENSION, type MrtrInputCollector } from "@mcpjam/sdk";
+import { ownedPluginFormSchema } from "./owned-mrtr.js";
 import { buildMrtrToolResultMessage } from "../../utils/mrtr-hosted-chat.js";
 import type { ModelToolExecutor } from "../../utils/model-tool-executor.js";
 import { MrtrSuspendedSignal } from "../../utils/mrtr-hosted-collector.js";
@@ -298,6 +299,14 @@ export function createModelMrtrAdapter(options: Options) {
     execute,
     attachStreamWriter(next: { write(chunk: UIMessageChunk): void }) {
       writer = next;
+    },
+    collectorOptionsForServer(serverId: string) {
+      if (!options.serverIds.includes(serverId)) return undefined;
+      return {
+        extensionClaims: [OPENAI_ELICITATION_EXTENSION],
+        selectFormSchema: (params: Parameters<typeof ownedPluginFormSchema>[0]) =>
+          ownedPluginFormSchema(params, serverId),
+      };
     },
     collectorForServer(serverId: string): MrtrInputCollector | undefined {
       if (!options.serverIds.includes(serverId)) return undefined;

@@ -1491,17 +1491,18 @@ export function AppRegistration({
       onAppSupportedDisplayModesChange: setSupportedModes,
       onInitialRenderOutcome: (outcome: "ready" | "error") =>
         presentationCallbacks.current.renderOutcome?.(row.key, outcome),
-      onCallTool: (name, args) =>
+      onCallTool: (name, args, context) =>
         api
           .invoke(
             handle,
-            liveSignal,
+            context ? AbortSignal.any([liveSignal, context.signal]) : liveSignal,
             (value, signal) =>
               presentationCallbacks.current.approve(
                 { ...value, serverName: row.server.name },
                 signal,
               ),
             { name, arguments: args },
+            context?.onInputPending,
           )
           .catch((error: unknown) => {
             if (

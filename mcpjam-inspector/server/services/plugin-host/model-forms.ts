@@ -1,3 +1,4 @@
+import { createInlineMrtrCollector } from "./inline-mrtr.js";
 import { modelApps } from "./model-apps.js";
 import {
   OPENAI_LEGACY_FORM_EXTENSION,
@@ -27,6 +28,11 @@ export function createModelFormDispatch(serverIds: readonly string[]) {
   }) => Promise<unknown>;
   const active = new Map<string, Handler>();
   const tails = new Map<string, Promise<void>>();
+  const answer = (serverId: string, request: { params?: Record<string, unknown> }) => {
+    const handler = active.get(serverId);
+    if (!handler) throw new PluginInvocationError("INSTANCE_DENIED");
+    return handler(request);
+  };
   const handlers = Object.fromEntries(
     serverIds.map((id) => [
       id,
@@ -38,9 +44,7 @@ export function createModelFormDispatch(serverIds: readonly string[]) {
           // Withheld again if this connection lands on a 2026 era.
           legacyClaim: OPENAI_LEGACY_FORM_EXTENSION,
           handler: (request: { params?: Record<string, unknown> }) => {
-            const handler = active.get(id);
-            if (!handler) throw new PluginInvocationError("INSTANCE_DENIED");
-            return handler(request);
+            return answer(id, request);
           },
         },
       ],
@@ -48,6 +52,10 @@ export function createModelFormDispatch(serverIds: readonly string[]) {
   ) as NonNullable<MCPClientManagerOptions["extensionRequestHandlers"]>;
   return {
     handlers,
+    inlineCollectorForServer(serverId: string) {
+      if (!serverIds.includes(serverId)) return undefined;
+      return createInlineMrtrCollector(serverId, (request) => answer(serverId, request));
+    },
     async run<T>(
       serverId: string,
       handler: Handler,
@@ -93,6 +101,7 @@ export function createModelFormExecutor(options: {
   /** Only independently qualified connection profiles enter this adapter. */
   eligibleServerIds: readonly string[];
   dispatch: ReturnType<typeof createModelFormDispatch>;
+  inlineMrtr?: boolean;
 }): ModelToolExecutor {
   return async (execution, run) => {
     if (!options.eligibleServerIds.includes(execution.serverKey)) return run();
@@ -158,6 +167,7 @@ export function createModelFormExecutor(options: {
       options.bearer,
       binding,
       model,
+      { inlineMrtr: options.inlineMrtr },
     );
     const invoker = new RequestOwnedToolInvoker(owner, () => {
       pluginInstances.getFormOwner(owner, options.identity);
@@ -200,10 +210,10 @@ export function createModelFormExecutor(options: {
           execute: (auth, _next, currentSignal) =>
             options.dispatch.run(
               execution.serverKey,
-              runtime.handleLegacyForm,
+              runtime.handleOwnedForm,
               currentSignal,
               () =>
-                runtime.runOwnedLegacy(
+                runtime.runOwnedForm(
                   auth,
                   execution.toolCallId,
                   currentSignal,
