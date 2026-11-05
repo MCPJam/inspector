@@ -1031,11 +1031,17 @@ export async function discoverOAuthServerInfo(
       },
       opts?.fetchFn,
     );
-    // A document that names no usable authorization server (JSON `null`, an
-    // empty or malformed list) is no metadata at all, the same as a failed
-    // fetch: it is not kept, and the origin is the authorization server.
-    authorizationServerUrl = firstAuthorizationServer(document);
-    if (authorizationServerUrl) resourceMetadata = document;
+    // JSON `null` or another non-object is no metadata, the same as a failed
+    // fetch. An object keeps its `resource` for the resource indicator; with
+    // no usable authorization server named, the origin is the server.
+    if (
+      typeof document === "object" &&
+      document !== null &&
+      !Array.isArray(document)
+    ) {
+      resourceMetadata = document;
+      authorizationServerUrl = firstAuthorizationServer(document);
+    }
   } catch (error) {
     // A rate limit or server error is not "no metadata": falling back to the
     // origin would cache an issuer the server never named. Anything else that

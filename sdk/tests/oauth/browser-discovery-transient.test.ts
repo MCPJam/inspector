@@ -84,7 +84,8 @@ describe("browser discovery transient failures", () => {
         { fetchFn }
       );
       expect(info.authorizationServerUrl).toBe("https://mcp.example.com/");
-      expect(info.resourceMetadata).toBeUndefined();
+      // A document keeps its `resource`; only a non-object is dropped.
+      expect(info.resourceMetadata).toEqual(document ?? undefined);
       expect(info.authorizationServerMetadata).toMatchObject({
         issuer: "https://mcp.example.com",
       });
