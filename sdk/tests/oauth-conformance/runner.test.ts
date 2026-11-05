@@ -1277,9 +1277,13 @@ describe("OAuthConformanceTest", () => {
       // the two well-known paths — and a 404 there is the answer "no OAuth",
       // never a failure. It goes no further than that.
       const prmRequests = requestedUrls.filter((url) =>
-        url.includes("oauth-protected-resource"),
+        url.includes("oauth-protected-resource")
       );
-      expect(prmRequests.every((url) => url.startsWith("https://public.example.com/.well-known/"))).toBe(true);
+      expect(
+        prmRequests.every((url) =>
+          url.startsWith("https://public.example.com/.well-known/")
+        )
+      ).toBe(true);
       expect(prmRequests.length).toBeLessThanOrEqual(2);
       expect(
         requestedUrls.some((url) => url.includes("oauth-authorization-server")),
@@ -1485,12 +1489,12 @@ describe("OAuthConformanceTest", () => {
     );
     // Only the question "is metadata published?", asked on its own origin.
     const prmRequests = requestedUrls.filter((url) =>
-      url.includes("oauth-protected-resource"),
+      url.includes("oauth-protected-resource")
     );
     expect(
       prmRequests.every((url) =>
-        url.startsWith("https://stateless.example.com/.well-known/"),
-      ),
+        url.startsWith("https://stateless.example.com/.well-known/")
+      )
     ).toBe(true);
     expect(prmRequests.length).toBeLessThanOrEqual(2);
   });
@@ -1503,7 +1507,10 @@ describe("OAuthConformanceTest", () => {
         authorization_servers: ["https://auth.example.com"],
       },
     ],
-    ["has no authorization servers", { resource: "https://gw.example.com/public/mcp" }],
+    [
+      "has no authorization servers",
+      { resource: "https://gw.example.com/public/mcp" },
+    ],
     ["is an empty object", {}],
   ])(
     "keeps an anonymous server not applicable when the published PRM %s",
@@ -1516,7 +1523,9 @@ describe("OAuthConformanceTest", () => {
         if (url === serverUrl) {
           return createMcpInitializeResponse("2025-11-25");
         }
-        if (url === "https://gw.example.com/.well-known/oauth-protected-resource") {
+        if (
+          url === "https://gw.example.com/.well-known/oauth-protected-resource"
+        ) {
           return jsonResponse(rootDocument);
         }
         return new Response(null, { status: 404 });
@@ -1531,7 +1540,7 @@ describe("OAuthConformanceTest", () => {
 
       expect(result.outcome).toBe("not-applicable");
       expect(result.steps.some((step) => step.status === "failed")).toBe(false);
-    },
+    }
   );
 
   it("grades a server that serves anonymously but publishes PRM, instead of calling it not applicable", async () => {
@@ -1575,7 +1584,7 @@ describe("OAuthConformanceTest", () => {
             redirect_uris: ["http://127.0.0.1:3333/callback"],
             token_endpoint_auth_method: "none",
           },
-          201,
+          201
         );
       }
       if (url === `${authServerUrl}/token`) {
@@ -1603,7 +1612,7 @@ describe("OAuthConformanceTest", () => {
         completeHeadlessAuthorization: jest.fn(async () => ({
           code: "auth-code",
         })),
-      },
+      }
     );
 
     const result = await test.run();
@@ -1618,13 +1627,17 @@ describe("OAuthConformanceTest", () => {
         "received_resource_metadata",
         "request_authorization_server_metadata",
         "received_authorization_server_metadata",
-      ]),
+      ])
     );
     expect(
       result.steps.find((step) => step.step === "received_resource_metadata")
-        ?.status,
+        ?.status
     ).toBe("passed");
-    expect(progress.some((line) => /Anonymous access is allowed and OAuth is available/.test(line))).toBe(true);
+    expect(
+      progress.some((line) =>
+        /Anonymous access is allowed and OAuth is available/.test(line)
+      )
+    ).toBe(true);
     expect(result.summary).not.toContain("not applicable");
   });
 

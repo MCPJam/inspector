@@ -943,10 +943,17 @@ function classifyAuthMode(
     };
   }
   if (servedWithoutAuth && challengedProtectedCall) {
+    // Claude starts sign-in only on HTTP 401 with a Bearer challenge. Any
+    // other refusal shows the server wants sign-in, not that Claude acts on it.
+    const call = evidence.lazyAuthProbe?.protectedCall;
+    const bearer401 =
+      call?.outcome === "unauthorized" &&
+      call.challenge?.facets.challengeHeader === "bearer";
     return {
-      detail:
-        "anonymous access allowed; a protected call asked for sign-in (lazy authentication)",
-      confident: true,
+      detail: bearer401
+        ? "anonymous access allowed; a protected call asked for sign-in (lazy authentication)"
+        : "anonymous access allowed; a protected call asked for sign-in, but not with the HTTP 401 Bearer challenge Claude acts on",
+      confident: bearer401,
     };
   }
   if (

@@ -170,6 +170,8 @@ The [public API](/reference/public-api#errors) reports the same challenges: `AUT
    mcpjam tools list --url https://your-server.com/mcp --format json
    ```
 
+   `mcpjam server probe` cannot probe a server that supports only MCP `2026-07-28`, which has no `initialize`, so such a server may report `reachable` rather than `ready`.
+
 2. Call a protected tool without credentials, and check that the challenge is the one you meant to send:
 
    ```bash

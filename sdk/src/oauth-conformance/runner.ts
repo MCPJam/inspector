@@ -276,10 +276,7 @@ function buildStepResult(
  * a violation.
  */
 type AuthorizationRequirement =
-  | "required"
-  | "optional"
-  | "not-required"
-  | "inconclusive";
+  "required" | "optional" | "not-required" | "inconclusive";
 
 async function probeAuthorizationRequirement(
   config: NormalizedOAuthConformanceConfig,
@@ -300,7 +297,7 @@ async function probeAuthorizationRequirement(
       // discovery is graded rather than reported not-applicable.
       const prmUrl = await findPublishedResourceMetadata(
         config,
-        trackedRequest,
+        trackedRequest
       );
       if (prmUrl) {
         return {
@@ -661,7 +658,7 @@ export class OAuthConformanceTest {
         // same 2xx and continues into proactive discovery, which is exactly
         // the path a client signing in to this server takes.
         this.config.onProgress(
-          `Anonymous access is allowed and OAuth is available — ${authRequirement.detail}. Grading discovery and the authorization flow.`,
+          `Anonymous access is allowed and OAuth is available — ${authRequirement.detail}. Grading discovery and the authorization flow.`
         );
       }
 
