@@ -16,6 +16,7 @@
 
 import {
   PLUGIN_MENTION_PART,
+  pluginMentionSelectionFits,
   pluginMentionSelectionSchema,
 } from "@/shared/plugin-mentions";
 import {
@@ -59,13 +60,20 @@ function hasParseableFileUrl(part: Record<string, unknown>): boolean {
   return typeof part.url === "string" && URL.canParse(part.url);
 }
 
-// A Map, so a part type such as "constructor" finds no schema.
-const pluginDataSchemas = new Map<
-  string,
-  { safeParse(value: unknown): { success: boolean } }
->([
-  [PLUGIN_MESSAGE_TEXT_PART, pluginMessageTextSchema],
-  [PLUGIN_MENTION_PART, pluginMentionSelectionSchema],
+// What conversion requires of each plugin part's `data`. A Map, so a part
+// type such as "constructor" finds no entry.
+const pluginDataReadable = new Map<string, (data: unknown) => boolean>([
+  [
+    PLUGIN_MESSAGE_TEXT_PART,
+    (data) => pluginMessageTextSchema.safeParse(data).success,
+  ],
+  [
+    PLUGIN_MENTION_PART,
+    (data) => {
+      const parsed = pluginMentionSelectionSchema.safeParse(data);
+      return parsed.success && pluginMentionSelectionFits(parsed.data);
+    },
+  ],
 ]);
 
 /** The first part of `messages` conversion cannot read, or null. */
@@ -99,8 +107,8 @@ export function findMalformedHistory(
       ) {
         return { messageIndex, partIndex, problem: "file_url_invalid" };
       }
-      const pluginDataSchema = pluginDataSchemas.get(part.type);
-      if (pluginDataSchema && !pluginDataSchema.safeParse(part.data).success) {
+      const readable = pluginDataReadable.get(part.type);
+      if (readable && !readable(part.data)) {
         return { messageIndex, partIndex, problem: "plugin_data_invalid" };
       }
     }

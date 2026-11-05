@@ -112,6 +112,25 @@ describe("findMalformedHistory", () => {
       },
     },
     {
+      name: "a plugin mention over the 256 KiB model-text limit",
+      messages: [
+        user([
+          {
+            ...mention,
+            data: {
+              ...mention.data,
+              item: { ...mention.data.item, description: "x".repeat(300_000) },
+            },
+          },
+        ]),
+      ],
+      expected: {
+        messageIndex: 0,
+        partIndex: 0,
+        problem: "plugin_data_invalid",
+      },
+    },
+    {
       name: "a plugin message text without a title",
       messages: [
         user([{ type: "data-plugin-message-text", data: { text: "hi" } }]),
