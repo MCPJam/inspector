@@ -288,6 +288,14 @@ export function TaskAnswersField({
   );
 }
 
+function toolSuffix(tool: { readOnly: boolean; destructive: boolean }) {
+  return tool.readOnly
+    ? " · read-only"
+    : tool.destructive
+      ? " · may modify data"
+      : "";
+}
+
 export function ConformanceProbeField({
   probeKey,
   tools: { tools: allTools, status, truncated },
@@ -314,16 +322,11 @@ export function ConformanceProbeField({
     probeKey === "toolCallProbe"
       ? allTools.filter((tool) => tool.hasOutputSchema)
       : allTools;
-  // With no output schema declared, the output check does not apply at all.
-  // A cut-off list cannot show that: a later tool may declare one.
+  // With no output schema declared at all, the editor shades the output check
+  // and shows no field, so this field never has to say it does not apply.
   const unsetHint =
-    probeKey === "toolCallProbe" &&
-    status === "ready" &&
-    !truncated &&
-    options.length === 0
-      ? "No tool on this server declares an output schema, so this check does not apply."
-      : (PROBE_COPY[probeKey].unsetHint ??
-        "Without a tool, this check reports that it could not run.");
+    PROBE_COPY[probeKey].unsetHint ??
+    "Without a tool, this check reports that it could not run.";
   // The editor reports validity from an effect keyed on this callback, so it
   // must keep one identity while the parent re-renders.
   const onValidChangeRef = useRef(onValidChange);
@@ -339,7 +342,9 @@ export function ConformanceProbeField({
   // A saved tool the server no longer lists stays selectable, so opening the
   // list never silently drops a choice.
   const listed = options.some((tool) => tool.name === toolName);
-  const selected = options.find((tool) => tool.name === toolName);
+  // Look in every tool, not just the offered ones: a saved tool that lost its
+  // output schema is still called, so it keeps its warning and arguments.
+  const selected = allTools.find((tool) => tool.name === toolName);
   const copy = PROBE_COPY[probeKey];
 
   const level = probe?.level ? { level: probe.level } : {};
@@ -384,23 +389,28 @@ export function ConformanceProbeField({
           <SelectItem value={NONE}>Not set</SelectItem>
           {!listed && toolName !== NONE ? (
             <SelectItem value={toolName}>
-              {toolName} (not listed by the server)
+              {toolName}
+              {selected ? toolSuffix(selected) : " (not listed by the server)"}
             </SelectItem>
           ) : null}
           {options.map((tool) => (
             <SelectItem key={tool.name} value={tool.name}>
               {tool.name}
-              {tool.readOnly
-                ? " · read-only"
-                : tool.destructive
-                  ? " · may modify data"
-                  : ""}
+              {toolSuffix(tool)}
             </SelectItem>
           ))}
         </SelectContent>
       </Select>
       <p className="text-xs text-muted-foreground">
-        {toolName === NONE ? unsetHint : copy.hint}
+        {toolName === NONE
+          ? unsetHint
+          : // The SDK still calls it, but with no schema there is nothing to
+            // grade, so the check reports that it could not run.
+            probeKey === "toolCallProbe" &&
+              selected &&
+              !selected.hasOutputSchema
+            ? "This tool no longer declares an output schema. It is still called, but its result cannot be checked. Pick another tool or clear it."
+            : copy.hint}
       </p>
       {status === "failed" ? (
         <p className="text-xs text-destructive">
