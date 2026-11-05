@@ -156,7 +156,7 @@ function accepted(response: Response, value: Record<string, unknown>) {
       },
     );
 }
-export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
+export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "", canInvoke: () => boolean = () => true) {
   const owner = {
     projectId: scope.projectId,
     pluginWorkspace: scope.pluginWorkspace,
@@ -534,6 +534,7 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
       call?: { name: string; arguments: Record<string, unknown> },
       onInputPending?: (pending: boolean) => void,
     ): Promise<ThreadAppToolResult> => {
+      if (!canInvoke()) throw new ThreadAppError("INSTANCE_UNAVAILABLE");
       const path = routePrefix + (call ? "call" : "activation/execute");
       const body = {
         ...owner,
