@@ -1,3 +1,4 @@
+import { conformanceDeadlineFields } from "../shared/conformance-deadline.js";
 import { Hono } from "hono";
 import { withTasksDeadline } from "./tasks-deadline.js";
 import { z } from "zod";
@@ -26,6 +27,7 @@ import {
   OAuthConformanceSessionNotFoundError,
   UnsupportedTransportError,
   completeOAuthConformance,
+  cancelOAuthConformance,
   runAppsConformance,
   runProtocolConformance,
   runTasksConformance,
@@ -52,6 +54,7 @@ import { reportRouteFailure } from "../../utils/route-error-report.js";
 import {
   awaitRendezvousResult,
   createRendezvous,
+  cancelRendezvous,
   isConformanceOAuthRendezvousEnabled,
   runRendezvousOnThisReplica,
   submitRendezvousCode,
@@ -257,6 +260,7 @@ function toWebError(error: unknown): WebRouteError {
 
 const connectionCheckSchema = z
   .object({
+    ...conformanceDeadlineFields,
     protocolVersion: z.enum(["auto", ...MCP_PROTOCOL_VERSIONS]),
   })
   .passthrough();
@@ -264,6 +268,7 @@ const connectionCheckSchema = z
 conformanceWeb.post("/connection-check", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
+    const requestStartedAt = Date.now();
     const body = await readJsonBody<Record<string, unknown>>(c);
     const parsed = parseWithSchema(connectionCheckSchema, body);
     const resolved = await resolveHostedHttpConfig(c, bearerToken, body, {
@@ -276,6 +281,7 @@ conformanceWeb.post("/connection-check", async (c) =>
         requestInit: { headers: resolved.customHeaders },
       },
       parsed.protocolVersion,
+      { requestStartedAt, signal: c.req.raw.signal, runTimeoutSeconds: parsed.runTimeoutSeconds, remainingRunTimeoutMs: parsed.remainingRunTimeoutMs },
     );
   }),
 );
@@ -302,6 +308,7 @@ function suiteDeadlineMessage(suite: string): string {
 
 const protocolSchema = z
   .object({
+    ...conformanceDeadlineFields,
     /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
     protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
     /** Run only these checks, as picked before Run; absent ⇒ all of them. */
@@ -316,6 +323,7 @@ const protocolSchema = z
 conformanceWeb.post("/protocol", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
+    const requestStartedAt = Date.now();
     const body = await readJsonBody<Record<string, unknown>>(c);
     const resolved = await resolveHostedHttpConfig(c, bearerToken, body, {
       withLogin: true,
@@ -326,12 +334,16 @@ conformanceWeb.post("/protocol", async (c) =>
     try {
       const { result } = await withHostedDeadline(
         runProtocolConformance({
+          requestStartedAt,
+          runTimeoutSeconds: parsed.runTimeoutSeconds,
+          remainingRunTimeoutMs: parsed.remainingRunTimeoutMs,
           ...resolved,
-          signal: controller.signal,
+          signal: AbortSignal.any([controller.signal, c.req.raw.signal]),
           protocolVersion: parsed.protocolVersion,
           checkIds: parsed.checkIds,
           readinessIds: parsed.readinessIds,
           logProbe: parsed.logProbe,
+          logLevelFilteringProbe: parsed.logLevelFilteringProbe,
           inputRequiredProbe: parsed.inputRequiredProbe,
           toolCallProbe: parsed.toolCallProbe,
           checkTimeout: HOSTED_CHECK_TIMEOUT_MS,
@@ -351,6 +363,7 @@ conformanceWeb.post("/protocol", async (c) =>
 
 const appsSchema = z
   .object({
+    ...conformanceDeadlineFields,
     protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
     /** Run only these checks, as picked before Run; absent ⇒ all of them. */
     checkIds: z.array(z.enum(MCP_APPS_CHECK_IDS)).min(1).optional(),
@@ -360,6 +373,7 @@ const appsSchema = z
 conformanceWeb.post("/apps", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
+    const requestStartedAt = Date.now();
     const body = await readJsonBody<Record<string, unknown>>(c);
     const config = await resolveHostedServerConfig(c, bearerToken, body);
     const parsed = parseWithSchema(appsSchema, body);
@@ -368,9 +382,12 @@ conformanceWeb.post("/apps", async (c) =>
     try {
       const { result } = await withHostedDeadline(
         runAppsConformance({
+          requestStartedAt,
+          runTimeoutSeconds: parsed.runTimeoutSeconds,
+          remainingRunTimeoutMs: parsed.remainingRunTimeoutMs,
           ...config,
           protocolVersion: parsed.protocolVersion,
-          signal: controller.signal,
+          signal: AbortSignal.any([controller.signal, c.req.raw.signal]),
           ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
         }),
         HOSTED_SUITE_DEADLINE_MS,
@@ -414,6 +431,7 @@ const HOSTED_TASKS_DEADLINE_MS = WEB_CALL_TIMEOUT_MS - 2_000;
 
 const tasksSchema = z
   .object({
+    ...conformanceDeadlineFields,
     protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
     /** Tool used to provoke a task; required on the extension wire, where
      *  tools carry no task metadata to pick from. */
@@ -432,6 +450,7 @@ const tasksSchema = z
 conformanceWeb.post("/tasks", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
+    const requestStartedAt = Date.now();
     const body = await readJsonBody<Record<string, unknown>>(c);
     const config = await resolveHostedServerConfig(c, bearerToken, body);
     const parsed = parseWithSchema(tasksSchema, body);
@@ -440,8 +459,11 @@ conformanceWeb.post("/tasks", async (c) =>
       const result = await withTasksDeadline(
         (signal) =>
           runTasksConformance({
-            signal,
             ...config,
+            requestStartedAt,
+            signal: AbortSignal.any([signal, c.req.raw.signal]),
+            runTimeoutSeconds: parsed.runTimeoutSeconds,
+            remainingRunTimeoutMs: parsed.remainingRunTimeoutMs,
             protocolVersion: parsed.protocolVersion,
             timeout: HOSTED_TASKS_CALL_TIMEOUT_MS,
             ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
@@ -477,6 +499,7 @@ conformanceWeb.post("/tasks", async (c) =>
 
 const oauthStartSchema = z
   .object({
+    ...conformanceDeadlineFields,
     oauthProfile: oauthConformanceProfileSchema.optional(),
     callbackOrigin: z.string().optional(),
     /** Report only this advice; absent ⇒ all of it, empty ⇒ none. */
@@ -487,6 +510,7 @@ const oauthStartSchema = z
 conformanceWeb.post("/oauth/start", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
+    const requestStartedAt = Date.now();
     const body = await readJsonBody<Record<string, unknown>>(c);
     // No login here: the OAuth suite grades the server from an
     // unauthenticated request and runs its own fresh authorization. Its probes
@@ -524,6 +548,9 @@ conformanceWeb.post("/oauth/start", async (c) =>
 
     try {
       const started = await startOAuthConformance({
+      requestStartedAt,
+      runTimeoutSeconds: parsed.runTimeoutSeconds,
+      remainingRunTimeoutMs: parsed.remainingRunTimeoutMs,
         defaultServerUrl: resolved.serverUrl,
         defaultCustomHeaders: resolved.customHeaders,
         redirectUrl: `${parsed.callbackOrigin.replace(
@@ -617,6 +644,22 @@ conformanceWeb.post("/oauth/authorize", async (c) =>
         ErrorCode.NOT_FOUND,
         OAUTH_SESSION_EXPIRED_MESSAGE
       );
+    }
+    return { success: true };
+  })
+);
+
+conformanceWeb.post("/oauth/cancel", async (c) =>
+  handleRoute(c, async () => {
+    assertBearerToken(c);
+    const body = await readJsonBody<Record<string, unknown>>(c);
+    const parsed = parseWithSchema(z.object({ sessionId: z.string().min(1) }), body);
+    try {
+      if (isConformanceOAuthRendezvousEnabled()) {
+        await cancelRendezvous(await getConvexBearerForRequest(c), parsed.sessionId);
+      }
+    } finally {
+      cancelOAuthConformance({ sessionId: parsed.sessionId, owner: principalKey(c) });
     }
     return { success: true };
   })

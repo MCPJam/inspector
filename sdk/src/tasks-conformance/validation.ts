@@ -78,8 +78,8 @@ export function normalizeMCPTasksConformanceConfig(
   }
 
   return {
-    serverConfig,
     signal,
+    serverConfig,
     target,
     timeout: serverConfig.timeout ?? 30_000,
     pollTimeoutMs: pollTimeoutMs ?? 30_000,

@@ -1,11 +1,11 @@
 import { useEffect } from "react";
-import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
   isTasksToolCheck,
   MCP_TASKS_TOOL_CHECK_IDS,
   type MCPTasksCheckId,
 } from "@mcpjam/sdk/browser";
 import {
+  CheckToolField,
   ConformanceProbeField,
   TaskAnswersField,
   type ProbeTools,
@@ -77,6 +77,7 @@ export function TasksSuiteDefaults({
 
 export function TasksCheckOverride({
   checkId,
+  checkTitle,
   picked,
   tools,
   probes,
@@ -84,6 +85,8 @@ export function TasksCheckOverride({
   onValidChange,
 }: SettingsProps & {
   checkId: string;
+  /** The row's title, so its dropdown has its own accessible name. */
+  checkTitle?: string;
   picked: boolean;
   onValidChange: (part: string, valid: boolean) => void;
 }) {
@@ -91,6 +94,7 @@ export function TasksCheckOverride({
   return (
     <SelectedTaskOverride
       checkId={checkId}
+      checkTitle={checkTitle}
       tools={tools}
       probes={probes}
       onChange={onChange}
@@ -100,12 +104,14 @@ export function TasksCheckOverride({
 }
 function SelectedTaskOverride({
   checkId,
+  checkTitle,
   tools,
   probes,
   onChange,
   onValidChange,
 }: SettingsProps & {
   checkId: (typeof MCP_TASKS_TOOL_CHECK_IDS)[number];
+  checkTitle?: string;
   onValidChange: (part: string, valid: boolean) => void;
 }) {
   const override = probes.tasksOverrides?.[checkId];
@@ -116,57 +122,24 @@ function SelectedTaskOverride({
     else delete tasksOverrides[checkId];
     onChange({ ...probes, tasksOverrides });
   };
-  useEffect(() => {
-    onValidChange(checkId, !override || Boolean(override.toolName));
-  }, [checkId, override?.toolName]);
   useEffect(
-    () => () => {
-      onValidChange(checkId, true);
-      onValidChange(`${checkId}:answers`, true);
-    },
+    () => () => onValidChange(`${checkId}:answers`, true),
     [checkId],
   );
   return (
     <div className="space-y-2">
-      <label className="flex items-center gap-2 text-xs">
-        <Checkbox
-          checked={!override}
-          onCheckedChange={(inherit) => {
-            if (inherit) setOverride();
-            else
-              setOverride({
-                toolName: effective?.toolName ?? "",
-                ...(effective?.arguments
-                  ? { arguments: effective.arguments }
-                  : {}),
-                ...(checkId === UPDATE && effective?.inputResponses
-                  ? { inputResponses: effective.inputResponses }
-                  : {}),
-              });
-          }}
-        />
-        Use suite default
-      </label>
-      {HINTS[checkId] ? (
-        <p className="text-xs text-muted-foreground">{HINTS[checkId]}</p>
-      ) : null}
-      {override ? (
-        <ConformanceProbeField
-          probeKey="tasksProbe"
-          tools={tools}
-          probe={override}
-          onChange={(probe) => setOverride(probe ?? { toolName: "" })}
-          onValidChange={(valid) =>
-            onValidChange(checkId, valid && Boolean(override.toolName))
-          }
-        />
-      ) : (
-        <p className="text-xs text-muted-foreground">
-          {effective?.toolName
-            ? `Using ${effective.toolName} and the suite arguments.`
-            : "No suite tool selected."}
-        </p>
-      )}
+      <CheckToolField
+        probeKey="tasksProbe"
+        tools={tools}
+        inherited={probes.tasksProbe}
+        override={override}
+        inheritLabel="Use suite default"
+        checkTitle={checkTitle}
+        hint={HINTS[checkId]}
+        keepAnswers={checkId === UPDATE}
+        onOverrideChange={setOverride}
+        onValidChange={(valid) => onValidChange(checkId, valid)}
+      />
       {checkId === UPDATE && effective?.toolName ? (
         <TaskAnswersField
           key={`${override ? "custom" : "default"}:${effective.toolName}`}

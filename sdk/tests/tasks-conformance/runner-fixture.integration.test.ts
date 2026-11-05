@@ -299,16 +299,17 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     expect(result.passed).toBe(false);
   });
 
-  it("reports INCOMPLETE, not success, when no toolName is given on the extension wire", async () => {
-    // The false green this suite exists to make impossible: auto-selection
-    // reads `execution.taskSupport`, which the 2026 ToolSchema strips, so
-    // without a `toolName` six task-dependent checks never run. Two of eight
-    // passing must never be reported as conformance.
+  it("leaves checks out of the verdict when no toolName is given on the extension wire", async () => {
+    // Auto-selection reads `execution.taskSupport`, which the 2026 ToolSchema
+    // strips, so without a `toolName` the task-dependent checks never run.
+    // That is a missing setup input, not the server's gap: those checks show
+    // as needing input and do not hold the verdict back.
     const fixture = await serve();
     const result = await runAgainst(fixture, { toolName: undefined });
 
-    expect(result.outcome).toBe("incomplete");
-    expect(result.passed).toBe(false);
+    expect(result.outcome).toBe("passed");
+    expect(result.passed).toBe(true);
+    expect(result.incompleteReason).toBeUndefined();
     expect(result.checks.some((entry) => entry.status === "failed")).toBe(false);
 
     // Only the checks that need no created task genuinely ran; nothing else
@@ -334,13 +335,15 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
       )
     ).toHaveLength(0);
 
-    // The reason has to tell the user what to do and why the runner could not
-    // do it for them.
-    expect(result.incompleteReason).toContain("could not run");
-    expect(result.incompleteReason).toContain("--tool-name");
-    expect(result.incompleteReason).toContain("execution.taskSupport");
-    expect(result.incompleteReason).toContain("2026-07-28");
-    expect(result.incompleteReason).toContain(TASK_TOOL_NAME);
+    // Each unrun check still tells the user what to do and why the runner
+    // could not do it for them.
+    const guidance = unrunChecks(result)
+      .map((entry) => entry.error?.message ?? "")
+      .join(" ");
+    expect(guidance).toContain("--tool-name");
+    expect(guidance).toContain("execution.taskSupport");
+    expect(guidance).toContain("2026-07-28");
+    expect(guidance).toContain(TASK_TOOL_NAME);
     // Every tasks check is scored since `mcp-tasks@2026-11-01.2`, so the
     // SUMMARY counts all 11 unrun checks and names nothing pending.
     expect(result.summary).toContain("11 could not run");

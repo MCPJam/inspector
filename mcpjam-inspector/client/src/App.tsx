@@ -1702,6 +1702,8 @@ export function ConformanceRoute() {
   const navigate = useAppNavigate();
   const {
     defaultsByServer,
+    timeoutsByServer,
+    saveTimeout,
     inputsByServer,
     loadDefaults,
     lastRunByServer,
@@ -1779,6 +1781,8 @@ export function ConformanceRoute() {
             />
           ) : undefined
         }
+        serverTimeouts={timeoutsByServer}
+        onSaveServerTimeout={saveTimeout}
         serverDefaults={defaultsByServer}
         serverInputs={inputsByServer}
         onLoadServerDefaults={loadDefaults}

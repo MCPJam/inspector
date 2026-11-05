@@ -96,12 +96,15 @@ describe("sidebar section grouping", () => {
     // new. The pill replaced a LOG IN / UPGRADE marker that described who the
     // reader was rather than what the tab is, which is the distinction this
     // set is guarding.
+    //
+    // Conformance joined in CQT-124, when its run pages took the same header
+    // as Swarms and User Testing.
     const badged = navigationSections
       .flatMap((section) => section.items)
       .filter((item) => item.badge === "New")
       .map((item) => item.title);
 
-    expect(badged).toEqual(["Swarms", "User Testing", "WebMCP"]);
+    expect(badged).toEqual(["Swarms", "User Testing", "Conformance", "WebMCP"]);
   });
 
   it("never lists the same title twice across sections", () => {

@@ -16,7 +16,10 @@ import {
 import type { MCPTasksCheckResult } from "../../src/tasks-conformance/index.js";
 import * as operations from "../../src/operations.js";
 import type { MCPServerConfig } from "../../src/mcp-client-manager/index.js";
-import { isMissingInputCheck } from "../../src/conformance-input.js";
+import {
+  isMissingInputCheck,
+  noTaskCreatedMessage,
+} from "../../src/conformance-input.js";
 import { scoreFromTasksResult } from "../../src/conformance-score.js";
 
 let activeFetch: typeof fetch | undefined;
@@ -1033,16 +1036,16 @@ describe("MCPTasksConformanceTest", () => {
     expect(statusMap(result)["tasks-inline-result"]).toBe("passed");
   });
 
-  it("reports INCOMPLETE when the extension wire has no probe tool to select", async () => {
+  it("leaves checks out of the verdict when the extension wire has no probe tool to select", async () => {
     // No toolName, and the 2026 ToolSchema strips `execution.taskSupport`, so
-    // nothing can be auto-selected. Six checks never run — and the run must
-    // say so instead of scoring 2/8 as a pass.
+    // nothing can be auto-selected. Those checks never run; they need a setup
+    // input, so they are reported as such and do not hold the verdict back.
     const result = await runAgainst(extensionManager(), {
       config: { pollTimeoutMs: 500 },
     });
 
-    expect(result.outcome).toBe("incomplete");
-    expect(result.passed).toBe(false);
+    expect(result.outcome).toBe("passed");
+    expect(result.passed).toBe(true);
     expect(result.checks.some((c) => c.status === "failed")).toBe(false);
     expect(
       result.checks.filter(
@@ -1054,10 +1057,15 @@ describe("MCPTasksConformanceTest", () => {
       // `tasks-update-ack-shape` (since `mcp-tasks@2026-11-01.1`) — and the
       // rest are pending.
     ).toHaveLength(11);
-    expect(result.incompleteReason).toContain("--tool-name");
-    expect(result.incompleteReason).toContain("long_job");
+    expect(result.incompleteReason).toBeUndefined();
+    const guidance = result.checks
+      .filter(isMissingInputCheck)
+      .map((c) => c.error?.message ?? "")
+      .join(" ");
+    expect(guidance).toContain("--tool-name");
+    expect(guidance).toContain("long_job");
     expect(result.checks.filter(isMissingInputCheck)).toHaveLength(11);
-    expect(scoreFromTasksResult(result)).toMatchObject({ score: 100, outcome: "incomplete", failed: 0 });
+    expect(scoreFromTasksResult(result)).toMatchObject({ score: 100, outcome: "passed", failed: 0 });
   });
 
   it("reports INCOMPLETE when the requested probe tool is not listed", async () => {
@@ -1089,7 +1097,35 @@ describe("MCPTasksConformanceTest", () => {
     expect(statusMap(result)["tasks-result-type-discipline"]).toBe("passed");
     expect(statusMap(result)["tasks-ttl-shape"]).toBe("skipped");
     expect(result.outcome).toBe("incomplete");
-    expect(result.incompleteReason).toContain("no task existed to inspect");
+    expect(result.incompleteReason).toContain(
+      '"long_job" returned a normal result instead of a task'
+    );
+    expect(result.incompleteReason).toContain("--tool-name");
+    // The app swaps the CLI flags for setup copy.
+    const ttl = result.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(noTaskCreatedMessage(ttl)).toBe(
+      '"long_job" did not create a task, so there was nothing to check. Select a tool that creates a task in setup, or change its arguments so it does, then run again.'
+    );
+  });
+
+  it("names a failed tool call instead of calling it a normal result", async () => {
+    const manager = extensionManager({
+      executeTool: async () => {
+        throw new Error("tool blew up");
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    const ttl = result.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(ttl.skipReason).toBe("could-not-run");
+    expect(ttl.error?.message).toContain(
+      'calling "long_job" failed, so there was no task to check: tool blew up'
+    );
+    // The app keeps the real error instead of the setup advice.
+    expect(noTaskCreatedMessage(ttl)).toBeUndefined();
   });
 
   it("skips the task checks when the connection has no tasks wire", async () => {
@@ -1443,4 +1479,15 @@ describe("undeclared task requests (-32021)", () => {
     expect(statusMap(result)["tasks-inline-result"]).toBe("passed");
     expect(statusMap(result)["tasks-mcp-name-routing"]).toBe("passed");
   });
+});
+
+
+it("propagates caller cancellation instead of reporting a connection failure", async () => {
+  const controller = new AbortController();
+  const reason = new Error("run deadline reached");
+  controller.abort(reason);
+  vi.spyOn(operations, "withEphemeralClient").mockRejectedValueOnce(reason);
+  await expect(new MCPTasksConformanceTest({
+    url: "https://example.test/mcp", signal: controller.signal,
+  }).run()).rejects.toBe(reason);
 });

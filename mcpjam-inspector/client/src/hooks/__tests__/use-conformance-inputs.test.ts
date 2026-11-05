@@ -7,6 +7,7 @@ it("keeps merged inputs stable and retains local Tasks choices after shared inpu
   const local: ConformanceProbes = {
     logProbe: { toolName: "draft-log" },
     tasksOverrides: { "tasks-inline-result": { toolName: "custom" } },
+    logLevelOverride: { toolName: "loud", level: "error" },
   };
   const localFor = () => local;
   const { result, rerender } = renderHook(

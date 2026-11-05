@@ -824,7 +824,11 @@ export {
 } from "./conformance-outcome.js";
 export { isAuthorizationRequiredCheck } from "./conformance-authorization.js";
 export { isTimedOutCheck } from "./conformance-timeout.js";
-export { isMissingInputCheck, missingInputMessage } from "./conformance-input.js";
+export {
+  isMissingInputCheck,
+  missingInputMessage,
+  noTaskCreatedMessage,
+} from "./conformance-input.js";
 export type {
   ConformanceRunOutcome,
   ConformanceSkipReason,
