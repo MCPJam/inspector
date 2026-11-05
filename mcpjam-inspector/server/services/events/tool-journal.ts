@@ -101,9 +101,10 @@ export function readOnlyToolNames(
 /**
  * Journal every tool call of one run (C6). Mutates and returns `tools`.
  *
- * `halt` is called — and an {@link EventRunHaltError} thrown — when the
- * journal says the run must stop: `tool_outcome_unknown` (park) or a lost
- * lease (someone else owns the run now).
+ * `halt` is called — and an {@link EventRunHaltError} thrown — when the run
+ * must stop: `tool_outcome_unknown` (park) when the journal reports an
+ * unfinished call or a write's outcome cannot be recorded, or a lost lease
+ * (someone else owns the run now).
  *
  * A call that is not replayable runs only once its intent is durable:
  * `ensureDurable` resolves when a checkpoint the backend acknowledged names
@@ -169,7 +170,21 @@ export function wrapToolsForEventRun(
         throw error;
       }
       if (begun.replay) return begun.result;
-      const result: unknown = await execute(input, callOptions);
+      // From here a write's effect may have happened. If its outcome cannot be
+      // recorded, the model would see an error and ask again under a new call
+      // id, which the journal cannot recognise as the same write, so the run
+      // parks instead. A read may simply fail and be asked again.
+      const unknownOutcome = (error: unknown): unknown => {
+        if (readOnly) return error;
+        options.halt("tool_outcome_unknown");
+        return new EventRunHaltError("tool_outcome_unknown");
+      };
+      let result: unknown;
+      try {
+        result = await execute(input, callOptions);
+      } catch (error) {
+        throw unknownOutcome(error);
+      }
       try {
         await options.journal.finishCall({
           runId: options.runId,
@@ -182,7 +197,7 @@ export function wrapToolsForEventRun(
           options.halt("lease_lost");
           throw new EventRunHaltError("lease_lost");
         }
-        throw error;
+        throw unknownOutcome(error);
       }
       return result;
     };

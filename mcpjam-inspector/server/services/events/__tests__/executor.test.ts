@@ -290,6 +290,95 @@ describe("tool journal", () => {
     expect(halt).toHaveBeenCalledWith("lease_lost");
   });
 
+  function haltTracker() {
+    let reason: EventRunHaltError["reason"] | undefined;
+    return {
+      halt: vi.fn((next: EventRunHaltError["reason"]) => {
+        reason ??= next;
+      }),
+      halted: () => reason,
+    };
+  }
+
+  it("parks a write whose result cannot be recorded, so a retry under a new id never repeats it", async () => {
+    const journal = {
+      beginCall: vi.fn(async () => ({ replay: false })),
+      finishCall: vi.fn(async () => {
+        throw new Error("runs/finish-call: 503");
+      }),
+    };
+    const { halt, halted } = haltTracker();
+    const { set, execute } = tools();
+    wrapToolsForEventRun(set, {
+      journal,
+      runId: "r",
+      token: "t",
+      approvalPolicy: "auto_deny",
+      halt,
+      halted,
+    });
+    await expect(
+      (set.reply_to_comment as any).execute({}, { toolCallId: "call_1" }),
+    ).rejects.toBeInstanceOf(EventRunHaltError);
+    expect(halt).toHaveBeenCalledWith("tool_outcome_unknown");
+    // The model asking again under a new id runs nothing.
+    await expect(
+      (set.reply_to_comment as any).execute({}, { toolCallId: "call_2" }),
+    ).rejects.toBeInstanceOf(EventRunHaltError);
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("parks a write whose execution fails, since its effect may still have happened", async () => {
+    const journal = {
+      beginCall: vi.fn(async () => ({ replay: false })),
+      finishCall: vi.fn(async () => {}),
+    };
+    const { halt, halted } = haltTracker();
+    const { set } = tools(
+      vi.fn(async () => {
+        throw new Error("socket hang up");
+      }),
+    );
+    wrapToolsForEventRun(set, {
+      journal,
+      runId: "r",
+      token: "t",
+      approvalPolicy: "auto_deny",
+      halt,
+      halted,
+    });
+    await expect(
+      (set.reply_to_comment as any).execute({}, { toolCallId: "call_1" }),
+    ).rejects.toBeInstanceOf(EventRunHaltError);
+    expect(halt).toHaveBeenCalledWith("tool_outcome_unknown");
+    expect(journal.finishCall).not.toHaveBeenCalled();
+  });
+
+  it("lets a failed read surface its error without parking the run", async () => {
+    const journal = {
+      beginCall: vi.fn(async () => ({ replay: false })),
+      finishCall: vi.fn(async () => {}),
+    };
+    const { halt, halted } = haltTracker();
+    const read = vi.fn(async () => {
+      throw new Error("timeout");
+    });
+    const set = { get_comment: { execute: read } } as unknown as ToolSet;
+    wrapToolsForEventRun(set, {
+      journal,
+      runId: "r",
+      token: "t",
+      approvalPolicy: "auto_deny",
+      readOnlyTools: new Set(["get_comment"]),
+      halt,
+      halted,
+    });
+    await expect(
+      (set.get_comment as any).execute({}, { toolCallId: "c" }),
+    ).rejects.toThrow("timeout");
+    expect(halt).not.toHaveBeenCalled();
+  });
+
   it("deny_writes refuses a tool that is not declared read-only, before any effect", async () => {
     const journal = { beginCall: vi.fn(), finishCall: vi.fn() };
     const { set, execute } = tools();
