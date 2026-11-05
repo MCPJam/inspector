@@ -146,7 +146,7 @@ export function describeDeclinedCard(message: string): NormalizedError {
     title: "Card declined",
     oneLine: AUTO_TOPUP_DECLINED_MESSAGE,
     likelyCauses: [
-      "Auto-reload tried to add credits and the card was declined.",
+      "Auto-reload could not add credits because your card was declined. Update your payment method and turn auto-reload back on, or add credits.",
     ],
     nextSteps: [
       "Update your payment method and turn auto-reload back on in Organization \u2192 Billing.",
