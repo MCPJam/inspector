@@ -157,7 +157,7 @@ const BASE_BODY = {
   selectedServerIds: ["body-server-9"],
   selectedServerNames: ["body-server"],
   chatSessionId: "chat-session-1",
-  messages: [{ role: "user", content: "hi" }],
+  messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
   model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
 };
 
