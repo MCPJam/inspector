@@ -49,6 +49,7 @@ export class PluginToolCallFailure extends PluginInvocationError {
 export async function invokePluginRequest(
   c: Context,
   input: {
+    receiptOnly?: boolean;
     actor: PluginInstanceIdentity;
     owner: import("./invocation.js").TrustedInvocationOwner;
     admission: PluginWorkspaceAdmission;
@@ -126,6 +127,7 @@ export async function invokePluginRequest(
     }
     if (
       initial.requiresApproval &&
+      !input.receiptOnly &&
       !input.approval &&
       !input.resume &&
       !saved
