@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startClaimLoop, type ClaimResult } from "../claim-loop";
+import { serverDrain } from "../../lifecycle/drain.js";
 
 type Job = { id: string };
 const JOB: Job = { id: "job-1" };
@@ -241,6 +242,27 @@ describe("startClaimLoop", () => {
     job.resolve();
     await settle();
     expect(stopped.done).toBe(true);
+  });
+
+  it("registers the job it runs with the shutdown drain", async () => {
+    const job = deferred<void>();
+    const claim = makeClaim().mockResolvedValueOnce(JOB);
+    const before = serverDrain.counts().claimed_job ?? 0;
+    const loop = startClaimLoop({
+      claimedByPrefix: "test-",
+      claim,
+      execute: vi.fn(() => job.promise),
+      log: makeLog(),
+    });
+
+    await settle();
+    expect(serverDrain.counts().claimed_job).toBe(before + 1);
+
+    job.resolve();
+    await settle();
+    expect(serverDrain.counts().claimed_job ?? 0).toBe(before);
+
+    await loop.stop();
   });
 
   it("can be stopped twice and logs start and stop once each", async () => {

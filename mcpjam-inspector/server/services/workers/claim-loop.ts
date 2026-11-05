@@ -12,6 +12,7 @@
  * claim is an atomic Convex mutation.
  */
 import { abortableSleep } from "../../utils/run-supervisor/backoff.js";
+import { serverDrain } from "../lifecycle/drain.js";
 
 const POLL_INTERVAL_MS = 15_000;
 /** Up to this much is added to each idle poll so replicas don't poll in step. */
@@ -82,7 +83,12 @@ export function startClaimLoop<Job extends object>(worker: {
         } else if (result === "drained") {
           waitMs = AFTER_DRAINED_MS;
         } else if (result) {
-          await worker.execute(result, claimedBy);
+          // Registered with the shutdown drain, so a deploy waits a bounded
+          // time for the job instead of tearing it down mid-run.
+          await serverDrain.track(
+            "claimed_job",
+            worker.execute(result, claimedBy),
+          );
           waitMs = AFTER_JOB_MS;
         }
       } catch (error) {

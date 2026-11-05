@@ -244,7 +244,8 @@ export function swarmTargetModelDefinition(
     });
   }
   const wireModelId = wireModelIdForSelection(selection);
-  const definition = buildSyntheticModelDefinition(wireModelId, {
+  // Native deployment names need not identify their provider. Classify the saved canonical id.
+  const definition = buildSyntheticModelDefinition(selection.modelId, {
     hosted: selection.source === "hosted",
   });
   const ref = selection.connectionRef;
@@ -258,7 +259,7 @@ export function swarmTargetModelDefinition(
         : {}),
     };
   }
-  return definition;
+  return { ...definition, id: wireModelId };
 }
 
 /**
