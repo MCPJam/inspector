@@ -824,6 +824,11 @@ export {
 } from "./conformance-outcome.js";
 export { isAuthorizationRequiredCheck } from "./conformance-authorization.js";
 export { isTimedOutCheck } from "./conformance-timeout.js";
+export {
+  isMissingInputCheck,
+  missingInputMessage,
+  noTaskCreatedMessage,
+} from "./conformance-input.js";
 export type {
   ConformanceRunOutcome,
   ConformanceSkipReason,
@@ -2116,3 +2121,18 @@ export {
   DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS,
   resolveModelVisibleMcpToolResults,
 } from "./host-config/host-policy.js";
+export {
+  MCP_TASKS_TOOL_CHECK_IDS,
+  isTasksToolCheck,
+  planTasksConformance,
+  validateTaskOverrides,
+  mergeTasksConformanceResults,
+  taskGroupFailure,
+} from "./tasks-conformance/index.js";
+export type {
+  MCPTasksToolCheckId,
+  MCPTasksToolSetup,
+  MCPTasksCheckOverrides,
+  MCPTasksRunOptions,
+  MCPTasksRunGroup,
+} from "./tasks-conformance/index.js";

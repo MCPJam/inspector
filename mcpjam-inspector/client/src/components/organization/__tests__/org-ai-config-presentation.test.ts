@@ -650,14 +650,14 @@ describe("orgAiModelRowText", () => {
       orgAiModelRowText("default", { kinds: ["default"], defaultSet: false })
         .runs,
     ).toBe(
-      "Insights and findings, generation, typed decisions and simulated users",
+      "Ask MCPJam, insights and findings, generation, typed decisions and simulated users",
     );
     expect(
       orgAiModelRowText("default", {
         kinds: ["default", "decision"],
         defaultSet: false,
       }).runs,
-    ).toBe("Insights and findings, generation and simulated users");
+    ).toBe("Ask MCPJam, insights and findings, generation and simulated users");
   });
 
   it("says the decision row uses the default model only when one is set", () => {

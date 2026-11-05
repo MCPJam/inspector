@@ -8,9 +8,10 @@ import {
 import { pluginChatRefusal } from "../../routes/web/chat-v2-plugin-refusal.js";
 import {
   globalOwnerAdmission,
-  mergePluginContextMessages,
   withGlobalOwnerFallback,
 } from "../../routes/web/chat-v2-global-owner.js";
+import { pluginModelContextPolicy } from "../plugin-host/context-profile.js";
+import { pluginModelContextMessage } from "../../../shared/plugin-model-context.js";
 import { toResumeExecutionTarget } from "@/shared/execution-target";
 import { toMintedPageToolRecords } from "@/shared/declared-tools";
 import { type Context } from "hono";
@@ -333,16 +334,20 @@ export async function handleManagedChatTurn(
             subject: modelPluginSubject!,
           },
         });
-      const pluginContext = mergePluginContextMessages(
-        contextReferences.length
-          ? await readTurnContext(contextReferences, modelPluginAdmission!)
-          : undefined,
-        globalContextReferences.length && globalPluginAdmission
-          ? await readTurnContext(
-              globalContextReferences,
-              globalPluginAdmission,
-            )
-          : undefined,
+      // One budget over both owners: the chat client's, read for this turn.
+      const pluginContext = pluginModelContextMessage(
+        [
+          ...(contextReferences.length
+            ? await readTurnContext(contextReferences, modelPluginAdmission!)
+            : []),
+          ...(globalContextReferences.length && globalPluginAdmission
+            ? await readTurnContext(
+                globalContextReferences,
+                globalPluginAdmission,
+              )
+            : []),
+        ],
+        pluginModelContextPolicy(hostRuntimeConfig).turnMaxBytes,
       );
       const appMessages = await withGlobalOwnerFallback(
         (admission) =>

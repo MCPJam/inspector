@@ -7,9 +7,17 @@ const api = vi.hoisted(() => ({
   startOAuthConformance: vi.fn(),
   submitOAuthConformanceCode: vi.fn(),
   completeOAuthConformance: vi.fn(),
+  cancelOAuthConformance: vi.fn(async () => ({ success: true })),
   runProtocolConformance: vi.fn(),
   runAppsConformance: vi.fn(),
   runTasksConformance: vi.fn(),
+}));
+
+vi.mock("@/lib/apis/conformance-connection-api", () => ({
+  checkConformanceConnection: vi.fn(async (_name: string, version: string) => ({
+    status: "ready",
+    protocolVersion: version === "auto" ? "2026-07-28" : version,
+  })),
 }));
 
 vi.mock("@/lib/apis/mcp-conformance-api", () => api);
@@ -77,8 +85,8 @@ describe("useConformanceRun OAuth protocol version", () => {
     expect(await sentOAuthVersion(makeServer("2026-07-28"))).toBe("2026-07-28");
   });
 
-  it("on Auto, falls back to 2025-11-25 when nothing was negotiated", async () => {
-    expect(await sentOAuthVersion(makeServer())).toBe("2025-11-25");
+  it("on Auto, resolves a fresh version even without main-connection metadata", async () => {
+    expect(await sentOAuthVersion(makeServer())).toBe("2026-07-28");
   });
 
   it("a pinned version beats the negotiated one", async () => {

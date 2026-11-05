@@ -201,7 +201,9 @@ export function ConformanceCheckPicker({
   defaultOpen = false,
   showAdvice = false,
   renderCheckExtra,
+  renderSuiteExtra,
   checkInputStatus,
+  checkNotApplicable,
 }: {
   versionPin: ProtocolVersionPin;
   selection: ConformanceSelection;
@@ -224,11 +226,20 @@ export function ConformanceCheckPicker({
     isPicked: (id: string) => boolean,
     checkTitle: (id: string) => string | undefined,
   ) => ReactNode;
+  renderSuiteExtra?: (suite: CheckSuite) => ReactNode;
   /** Whether a check that needs an input (a tool to call) has it. */
   checkInputStatus?: (
     suite: CheckSuite,
     checkId: string,
   ) => "missing" | "set" | undefined;
+  /**
+   * Why a check has nothing to test on this server, if so. The row is shaded
+   * with the reason as a tooltip; it stays picked, so it runs once it applies.
+   */
+  checkNotApplicable?: (
+    suite: CheckSuite,
+    checkId: string,
+  ) => string | undefined;
 }) {
   const catalogs = checkCatalogs(versionPin);
   const advice = adviceCatalogs(versionPin);
@@ -312,6 +323,9 @@ export function ConformanceCheckPicker({
             />
           ) : null;
         };
+        const notApplicableReason = checkNotApplicable
+          ? (entry: CatalogEntry) => checkNotApplicable(suite, entry.id)
+          : undefined;
         return (
           <SuiteChecks
             key={suite}
@@ -337,8 +351,10 @@ export function ConformanceCheckPicker({
             onCheckChange={(id, value) =>
               onChange(withPicked(selection, suite, catalog, [id], value))
             }
+            suiteExtra={renderSuiteExtra?.(suite)}
             renderExtra={renderExtra}
             renderTag={renderTag}
+            notApplicableReason={notApplicableReason}
             advice={suiteAdvice?.prop}
             needsInputCount={
               catalog.filter(
@@ -388,8 +404,10 @@ function SuiteChecks({
   isPicked,
   onCheckChange,
   listNote = ".",
+  suiteExtra,
   renderExtra,
   renderTag,
+  notApplicableReason,
   needsInputCount = 0,
   advice,
 }: {
@@ -403,9 +421,14 @@ function SuiteChecks({
   isPicked?: (id: string) => boolean;
   onCheckChange?: (id: string, picked: boolean) => void;
   listNote?: string;
+  suiteExtra?: ReactNode;
   renderExtra?: (entry: CatalogEntry) => ReactNode;
   renderTag?: (entry: CatalogEntry) => ReactNode;
-  /** Picked checks still missing an input, flagged on the closed header. */
+  notApplicableReason?: (entry: CatalogEntry) => string | undefined;
+  /**
+   * Picked checks still missing an input, flagged on the closed header as
+   * optional: the run goes ahead without them and they cost no points.
+   */
   needsInputCount?: number;
   /** The suite's advice, listed under its checks; the suite's box covers it. */
   advice?: {
@@ -442,9 +465,10 @@ function SuiteChecks({
               <span className="text-sm font-semibold">{title}</span>
               {needsInputCount > 0 ? (
                 <span className="rounded-sm border border-warning/50 bg-warning/10 px-1.5 py-px text-xs text-warning-foreground">
+                  {needsInputCount} <em>optional</em>{" "}
                   {needsInputCount === 1
-                    ? "1 check needs input"
-                    : `${needsInputCount} checks need input`}
+                    ? "check needs input"
+                    : "checks need input"}
                 </span>
               ) : null}
             </span>
@@ -463,6 +487,7 @@ function SuiteChecks({
       </div>
       <Collapse open={open}>
         <div className="border-t border-border/60 px-4">
+          {suiteExtra}
           <CatalogList
             catalog={catalog}
             note={listNote}
@@ -470,6 +495,7 @@ function SuiteChecks({
             onSelectedChange={onCheckChange}
             renderExtra={renderExtra}
             renderTag={renderTag}
+            notApplicableReason={notApplicableReason}
           />
           {advice ? (
             <div className="border-t border-border/60">
@@ -482,6 +508,7 @@ function SuiteChecks({
                 onSelectedChange={advice.onChange}
                 renderExtra={renderExtra}
                 renderTag={renderTag}
+                notApplicableReason={notApplicableReason}
               />
             </div>
           ) : null}

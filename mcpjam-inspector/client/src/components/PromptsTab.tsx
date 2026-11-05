@@ -40,16 +40,21 @@ import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { clampText } from "@/lib/webmcp/groups/shared";
-import {
-  resetScopeStepUp,
-  runWithScopeStepUp,
-} from "@/lib/scope-step-up";
+import { resetScopeStepUp, runWithScopeStepUp } from "@/lib/scope-step-up";
 import {
   claimPendingDirectScopeStepUpReplay,
   clearPendingDirectScopeStepUpReplay,
   savePendingDirectScopeStepUpReplay,
 } from "@/lib/scope-step-up-replay";
 import type { GetPromptInspectorCommand } from "@/shared/inspector-command.js";
+import {
+  authorizationRequiredCommandError,
+  presentAuthChallenge,
+} from "@/lib/auth-challenge-lifecycle";
+import {
+  AuthChallengeCards,
+  authChallengeConnectMessage,
+} from "./auth-challenge/AuthChallengeCard";
 
 /** Cap the list of prompts a snapshot enumerates (names/titles only). */
 const PROMPT_SNAPSHOT_MAX_ITEMS = 30;
@@ -139,6 +144,16 @@ export function PromptsTab({
     ServedFromCache | undefined
   >(undefined);
   const [error, setError] = useState<string>("");
+  // A failed LIST, kept apart from a get's own error.
+  const [listError, setListError] = useState<string>("");
+  // The arguments of a call restored after sign-in, applied once its
+  // prompt's form is built.
+  const restoringArgsRef = useRef<{
+    promptName: string;
+    arguments: Record<string, string>;
+  } | null>(null);
+  /** Why a sign-in challenge did not become a Connect card. Text only. */
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   const promptsFetchVersionRef = useRef(0);
   const promptGetVersionRef = useRef(0);
@@ -168,6 +183,7 @@ export function PromptsTab({
     setFormFields([]);
     setPromptContent(null);
     setError("");
+    setListError("");
     // SEP-2549 provenance describes the currently displayed prompt list; clear
     // it whenever that list is emptied so the badge cannot outlive its data.
     setPromptsServedFromCache(undefined);
@@ -182,8 +198,14 @@ export function PromptsTab({
   }, [serverConfig, serverName, isServerConnected]);
 
   useEffect(() => {
+    const restoring = restoringArgsRef.current;
+    const restoredValues =
+      restoring && restoring.promptName === selectedPromptData?.name
+        ? restoring.arguments
+        : undefined;
+    if (restoredValues) restoringArgsRef.current = null;
     if (selectedPromptData?.arguments) {
-      generateFormFields(selectedPromptData.arguments);
+      generateFormFields(selectedPromptData.arguments, restoredValues);
     } else {
       setFormFields([]);
     }
@@ -197,7 +219,7 @@ export function PromptsTab({
     }
 
     setFetchingPrompts(true);
-    setError("");
+    setListError("");
     const fetchVersion = ++promptsFetchVersionRef.current;
 
     try {
@@ -220,7 +242,7 @@ export function PromptsTab({
       if (fetchVersion !== promptsFetchVersionRef.current) return;
       const message =
         err instanceof Error ? err.message : `Could not fetch prompts: ${err}`;
-      setError(message);
+      setListError(message);
     } finally {
       if (fetchVersion === promptsFetchVersionRef.current) {
         setFetchingPrompts(false);
@@ -228,7 +250,10 @@ export function PromptsTab({
     }
   };
 
-  const generateFormFields = (args: PromptArgument[]) => {
+  const generateFormFields = (
+    args: PromptArgument[],
+    values?: Record<string, string>,
+  ) => {
     if (!args || args.length === 0) {
       setFormFields([]);
       return;
@@ -239,7 +264,7 @@ export function PromptsTab({
       type: "string",
       description: arg.description,
       required: Boolean(arg.required),
-      value: "",
+      value: values?.[arg.name] ?? "",
     }));
 
     setFormFields(fields);
@@ -294,6 +319,7 @@ export function PromptsTab({
 
       setLoading(true);
       setError("");
+      setAuthNotice(null);
       const getVersion = ++promptGetVersionRef.current;
 
       try {
@@ -323,6 +349,31 @@ export function PromptsTab({
                   arguments: resolvedParams,
                 },
               }),
+            // A sign-in challenge on the on-screen render: a Connect card, or
+            // the reason there is none. A prompt render reads, so it runs
+            // again after sign-in.
+            onAuthChallenge: (signal) => {
+              void presentAuthChallenge({
+                server,
+                signal,
+                surface: "prompts",
+                operation: { method: "prompts/get", operation: targetPrompt },
+                readOnly: true,
+                replay: {
+                  kind: "prompt",
+                  surface: "prompts",
+                  serverName,
+                  promptName: targetPrompt,
+                  arguments: resolvedParams,
+                },
+              }).then((presentation) => {
+                // A later render owns the notice area by now.
+                if (getVersion !== promptGetVersionRef.current) return;
+                if (presentation.kind === "notice") {
+                  setAuthNotice(presentation.message);
+                }
+              });
+            },
           },
         );
         if (getVersion !== promptGetVersionRef.current) return;
@@ -338,13 +389,7 @@ export function PromptsTab({
         }
       }
     },
-    [
-      selectedPrompt,
-      serverName,
-      isServerConnected,
-      buildParameters,
-      server,
-    ],
+    [selectedPrompt, serverName, isServerConnected, buildParameters, server],
   );
 
   useEffect(() => {
@@ -355,6 +400,10 @@ export function PromptsTab({
     });
     if (!pending || pending.descriptor.kind !== "prompt") return;
     const descriptor = pending.descriptor;
+    restoringArgsRef.current = {
+      promptName: descriptor.promptName,
+      arguments: descriptor.arguments,
+    };
     setSelectedPrompt(descriptor.promptName);
     setLoading(true);
     setError("");
@@ -365,10 +414,14 @@ export function PromptsTab({
     )
       .then((data) => {
         setPromptContent(data.content);
-        resetScopeStepUp(server, {
-          method: "prompts/get",
-          operation: descriptor.promptName,
-        });
+        resetScopeStepUp(
+          server,
+          {
+            method: "prompts/get",
+            operation: descriptor.promptName,
+          },
+          descriptor.authAttempt,
+        );
       })
       .catch((error) => {
         setError(
@@ -379,7 +432,7 @@ export function PromptsTab({
       })
       .finally(() => {
         setLoading(false);
-        clearPendingDirectScopeStepUpReplay();
+        clearPendingDirectScopeStepUpReplay(pending);
       });
   }, [isServerConnected, server, serverName]);
 
@@ -516,9 +569,13 @@ export function PromptsTab({
               : undefined,
           };
         } catch (e) {
-          throw createInspectorCommandClientError(
-            "execution_failed",
-            e instanceof Error ? e.message : "Failed to render the prompt.",
+          // A sign-in challenge is reported as such; a command never signs in.
+          throw (
+            authorizationRequiredCommandError(e, serverName) ??
+            createInspectorCommandClientError(
+              "execution_failed",
+              e instanceof Error ? e.message : "Failed to render the prompt.",
+            )
           );
         }
       },
@@ -826,11 +883,27 @@ export function PromptsTab({
 
   const centerContent = (
     <div className="h-full flex flex-col bg-background">
+      <AuthChallengeCards
+        surface="prompts"
+        server={server}
+        className="p-4 pb-0"
+        onResult={(result) =>
+          setAuthNotice(authChallengeConnectMessage(result) ?? null)
+        }
+      />
+      {authNotice ? (
+        <p
+          className="px-4 pt-2 text-xs text-muted-foreground"
+          data-testid="auth-challenge-notice"
+        >
+          {authNotice}
+        </p>
+      ) : null}
       <div className="flex-1 min-h-0 flex flex-col">
-        {error ? (
+        {error || listError ? (
           <div className="p-4">
             <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-              {error}
+              {error || listError}
             </div>
           </div>
         ) : promptContent !== null && promptContent !== undefined ? (

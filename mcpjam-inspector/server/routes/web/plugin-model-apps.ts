@@ -183,17 +183,22 @@ export function pluginModelAppRoutes(ports: {
             return c.json(record.context.snapshot(id, generation));
           if (action === "remove-all")
             return c.json(
-              record.context.removeAll(id, generation, {
+              modelApps.removeContext(body.instanceToken, actor, {
                 operationId: raw.operationId,
                 basis: raw.basis,
               }),
             );
-          const result = record.context.update(id, generation, {
-            operationId: raw.operationId,
-            sequence: raw.sequence,
-            params: raw.params,
-            ...(raw.attach === "user" ? { attach: "user" as const } : {}),
-          });
+          const result = modelApps.updateContext(
+            body.instanceToken,
+            actor,
+            {
+              operationId: raw.operationId,
+              sequence: raw.sequence,
+              params: raw.params,
+              ...(raw.attach === "user" ? { attach: "user" as const } : {}),
+            },
+            fresh.modelContextPolicy,
+          );
           return c.json({
             ...result,
             snapshot: record.context.snapshot(id, generation),

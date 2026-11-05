@@ -1,3 +1,4 @@
+import { DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS } from "@/shared/conformance-timeout";
 /**
  * Persist a hosted UI conformance execution as a durable Convex run.
  *
@@ -267,6 +268,7 @@ export function PersistConformanceRun({
       projectId: persist.projectId,
       target,
       source: "ui",
+      runTimeoutSeconds: snapshot.runTimeoutSeconds ?? DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS,
       requestedSuites: suites,
       actorLabel: "Inspector UI",
     })

@@ -3,7 +3,12 @@
  * this sanitizer is what keeps anything but closed values off the wire.
  */
 import { describe, expect, it } from "vitest";
-import { sanitizeGuestSessionFailureDetails } from "../guest-session-failure";
+import {
+  GUEST_SESSION_FAILURE_CODES,
+  GUEST_SESSION_FAILURE_REASONS,
+  guestSessionFailureCode,
+  sanitizeGuestSessionFailureDetails,
+} from "../guest-session-failure";
 
 describe("sanitizeGuestSessionFailureDetails", () => {
   it("passes a valid object through", () => {
@@ -57,5 +62,50 @@ describe("sanitizeGuestSessionFailureDetails", () => {
         url: "https://app.mcpjam.com/api/web/guest-session",
       }),
     ).toEqual({ reason: "network" });
+  });
+});
+
+describe("guestSessionFailureCode", () => {
+  it("names a TLS failure on the server's upstream hop by its Node code", () => {
+    expect(
+      guestSessionFailureCode({
+        httpStatus: 503,
+        details: { reason: "network", networkCode: "SELF_SIGNED_CERT_IN_CHAIN" },
+      }),
+    ).toBe("guest_session/network/SELF_SIGNED_CERT_IN_CHAIN");
+  });
+
+  it("falls back to the reason for an unlisted network code", () => {
+    expect(
+      guestSessionFailureCode({
+        httpStatus: 503,
+        details: { reason: "network", networkCode: "ESOMETHINGNEW" },
+      }),
+    ).toBe("guest_session/network");
+    expect(
+      guestSessionFailureCode({ httpStatus: 503, details: { reason: "network" } }),
+    ).toBe("guest_session/network");
+  });
+
+  it("gives every upstream reason a listed code", () => {
+    for (const reason of GUEST_SESSION_FAILURE_REASONS) {
+      expect(GUEST_SESSION_FAILURE_CODES).toContain(
+        guestSessionFailureCode({ httpStatus: 503, details: { reason } }),
+      );
+    }
+  });
+
+  it("names failures that carry no upstream details", () => {
+    expect(guestSessionFailureCode(undefined)).toBe("guest_session/exhausted");
+    expect(guestSessionFailureCode({})).toBe("guest_session/unreachable");
+    expect(guestSessionFailureCode({ httpStatus: 200 })).toBe(
+      "guest_session/bad_response",
+    );
+    expect(guestSessionFailureCode({ httpStatus: 403 })).toBe(
+      "guest_session/http_4xx",
+    );
+    expect(guestSessionFailureCode({ httpStatus: 502 })).toBe(
+      "guest_session/http_5xx",
+    );
   });
 });

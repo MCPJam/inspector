@@ -155,9 +155,23 @@ describe("client readiness advice", () => {
       (item) => item.id === "readiness-deprecated-feature-use"
     );
 
-    expect(deprecated?.specStrength).toBe("SHOULD");
+    expect(deprecated?.specStrength).toBe("Deprecation Notice");
     expect(deprecated?.message).toMatch(/logging\/setLevel/);
     expect(deprecated?.message).toMatch(/subscriptions\/listen/);
+  });
+
+  it("labels a superseded legacy revision as a deprecation notice", async () => {
+    const warnings = await collectClientReadiness(
+      clientContext({ protocolVersion: "2025-06-18" }),
+      surface()
+    );
+    expect(warnings).toContainEqual(
+      expect.objectContaining({
+        id: "readiness-deprecated-feature-use",
+        specStrength: "Deprecation Notice",
+        message: expect.stringContaining("2025-06-18 is superseded"),
+      })
+    );
   });
 
   it("advises on tool names that break the naming conventions, without costing points", async () => {
@@ -405,7 +419,8 @@ describe("log level filtering advice", () => {
   function logContext(
     fetchFn: typeof fetch,
     logProbe?: NormalizedMCPConformanceConfig["logProbe"],
-    era: "legacy" | "modern" = "modern"
+    era: "legacy" | "modern" = "modern",
+    logLevelFilteringProbe?: NormalizedMCPConformanceConfig["logLevelFilteringProbe"]
   ): RawHttpCheckContext {
     const config = normalizeMCPConformanceConfig({
       serverUrl: SERVER_URL,
@@ -413,6 +428,7 @@ describe("log level filtering advice", () => {
       protocolVersion: era === "modern" ? "2026-07-28" : undefined,
       checkTimeout: 500,
       logProbe,
+      ...(logLevelFilteringProbe ? { logLevelFilteringProbe } : {}),
     });
     return { config, serverUrl: SERVER_URL, fetchFn: config.fetchFn };
   }
@@ -539,6 +555,51 @@ describe("log level filtering advice", () => {
         },
       })
     ).toThrow(/logProbe.level must be one of debug, info/);
+  });
+
+  it("calls its own tool, arguments and level when one is set", async () => {
+    const server = logServer(["error"]);
+    await advice(
+      logContext(
+        server.fetchFn,
+        { toolName: "emit-log", arguments: { count: 2 }, level: "debug" },
+        "modern",
+        { toolName: "other-log", arguments: { loud: true }, level: "error" }
+      )
+    );
+    expect(server.toolCalls).toHaveLength(1);
+    expect(server.toolCalls[0]?.params).toMatchObject({
+      name: "other-log",
+      arguments: { loud: true },
+      _meta: { "io.modelcontextprotocol/logLevel": "error" },
+    });
+  });
+
+  it("runs on its own tool without a logProbe", async () => {
+    const server = logServer([]);
+    const found = await advice(
+      logContext(server.fetchFn, undefined, "modern", {
+        toolName: "other-log",
+      })
+    );
+    expect(found?.details).toMatchObject({
+      probedTool: "other-log",
+      requestedLogLevel: "warning",
+    });
+  });
+
+  it("rejects an unknown level on its own tool", () => {
+    expect(() =>
+      normalizeMCPConformanceConfig({
+        serverUrl: SERVER_URL,
+        logLevelFilteringProbe: {
+          toolName: "other-log",
+          level: "loud" as NonNullable<
+            NormalizedMCPConformanceConfig["logProbe"]
+          >["level"],
+        },
+      })
+    ).toThrow(/logLevelFilteringProbe.level must be one of debug, info/);
   });
 });
 

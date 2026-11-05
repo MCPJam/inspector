@@ -1362,7 +1362,8 @@ async function runUndeclaredCapabilityCheck(
   if (!probe) {
     return couldNotRunResult(
       meta,
-      "No inputRequiredProbe configured: set inputRequiredProbe.toolName to a tool that requests input so the check can prove the -32021 rejection"
+      "No inputRequiredProbe configured: set inputRequiredProbe.toolName to a tool that requests input so the check can prove the -32021 rejection",
+      { missingInput: "inputRequiredProbe" },
     );
   }
 
@@ -1625,7 +1626,10 @@ async function runToolOutputSchemaCheck(
           declared.size === 0
             ? "The tools/list walk did not finish, so it could not show that no tool declares an outputSchema, and no tools/call fixture was configured"
             : `${declared.size} tool(s) declare an outputSchema, but no tools/call fixture was configured: set fixtures.toolCalls to a tool that is safe to execute so its result can be checked against the schema`,
-          { declaredOutputSchemas: [...declared.keys()] }
+          {
+            declaredOutputSchemas: [...declared.keys()],
+            ...(declared.size > 0 ? { missingInput: "toolCallProbe" } : {}),
+          }
         );
   }
   const validator = new DialectAwareJsonSchemaValidator({
@@ -2136,7 +2140,7 @@ async function runLogLevelCheck(
     return couldNotRunResult(
       meta,
       "No logProbe configured, so the run had no request the server is known to log about. Configure a safe tool that produces logs when requested.",
-      { logNotificationCount: 0 }
+      { logNotificationCount: 0, missingInput: "logProbe" }
     );
   }
   const silentUnavailable = unavailableLogProbe(

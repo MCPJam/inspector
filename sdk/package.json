@@ -181,7 +181,7 @@
   "license": "MIT",
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@modelcontextprotocol/node": "2.0.0",
+    "@modelcontextprotocol/node": "2.1.2",
     "@modelcontextprotocol/sdk": "^1.31.0",
     "@modelcontextprotocol/server": "2.3.1",
     "@modelcontextprotocol/server-everything": "^2026.8.31",

@@ -8,7 +8,9 @@
  * profile upload route streams an archive of up to 256 MB and enforces that
  * cap itself (`routes/web/browser-profile-upload.ts`); audio transcription
  * carries larger JSON payloads with base64-encoded audio. The two upload
- * carve-outs are POST-only because each route's own cap is on POST.
+ * carve-outs are POST-only because each route's own cap is on POST. The two
+ * plugin App context updates take one App update up to the model-context
+ * policy ceiling, refused with a typed 413 the App's client recovers from.
  *
  * Skill supporting files (v2) do NOT need a carve-out here: the blob bytes are
  * POSTed by the browser to the backend's upload route, never through
@@ -17,6 +19,8 @@
  */
 import { bodyLimit } from "hono/body-limit";
 import type { Context, Next } from "hono";
+import { MODEL_CONTEXT_POLICY_CEILINGS } from "@mcpjam/sdk/host-config/internal";
+import { describePluginError } from "../../shared/plugin-diagnostics.js";
 
 export const DEFAULT_WEB_BODY_LIMIT = 1024 * 1024; // 1MB
 
@@ -52,6 +56,18 @@ export const DEFAULT_WEB_BODY_LIMIT = 1024 * 1024; // 1MB
 // than a truncated transcript. Resize from this table, not by taste.
 export const AUDIO_WEB_BODY_LIMIT = 10 * 1024 * 1024; // 10MB
 
+/**
+ * The update routes for retained and model App context. Their body is one
+ * App update (at most the policy ceiling) plus the request envelope, and is
+ * read in full before the MCP operation rate limiter parses it.
+ */
+export const PLUGIN_CONTEXT_UPDATE_PATHS: ReadonlySet<string> = new Set([
+  "/api/web/apps/plugin-instances/context",
+  "/api/web/apps/plugin-instances/model/context",
+]);
+export const PLUGIN_CONTEXT_WEB_BODY_LIMIT =
+  MODEL_CONTEXT_POLICY_CEILINGS.updateMaxBytes + 64 * 1024;
+
 /** Routes that carry a large body and enforce their own cap on POST. */
 const SELF_LIMITED_UPLOAD_PATHS = new Set([
   "/api/web/computers/upload",
@@ -62,6 +78,22 @@ export function webBodyLimit() {
   return (c: Context, next: Next) => {
     if (c.req.method === "POST" && SELF_LIMITED_UPLOAD_PATHS.has(c.req.path)) {
       return next();
+    }
+    if (
+      c.req.method === "POST" &&
+      PLUGIN_CONTEXT_UPDATE_PATHS.has(c.req.path)
+    ) {
+      return bodyLimit({
+        maxSize: PLUGIN_CONTEXT_WEB_BODY_LIMIT,
+        onError: (ctx) =>
+          ctx.json(
+            {
+              code: "PLUGIN_CONTEXT_TOO_LARGE",
+              description: describePluginError("PLUGIN_CONTEXT_TOO_LARGE"),
+            },
+            413,
+          ),
+      })(c, next);
     }
     if (c.req.path.startsWith("/api/web/audio/")) {
       return bodyLimit({

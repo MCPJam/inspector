@@ -1,4 +1,6 @@
+import { conformanceDeadlineFields } from "../shared/conformance-deadline.js";
 import { Hono } from "hono";
+import { withTasksDeadline } from "./tasks-deadline.js";
 import { z } from "zod";
 import {
   MCP_APPS_CHECK_IDS,
@@ -25,6 +27,7 @@ import {
   OAuthConformanceSessionNotFoundError,
   UnsupportedTransportError,
   completeOAuthConformance,
+  cancelOAuthConformance,
   runAppsConformance,
   runProtocolConformance,
   runTasksConformance,
@@ -33,6 +36,7 @@ import {
 } from "../shared/conformance";
 import {
   conformanceInputResponsesSchema,
+  conformanceTaskOverridesSchema,
   conformanceProbeFields,
 } from "../shared/conformance-probes";
 import { authorizeServer, toHttpConfig } from "./auth.js";
@@ -44,6 +48,17 @@ import {
 } from "../../utils/hosted-egress-guard.js";
 import { principalKey } from "../../utils/request-principal.js";
 import { toBrowserOAuthResult } from "../../utils/oauth-conformance-browser-result.js";
+import { checkConformanceConnection } from "../shared/conformance-connection.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
+import {
+  awaitRendezvousResult,
+  createRendezvous,
+  cancelRendezvous,
+  isConformanceOAuthRendezvousEnabled,
+  runRendezvousOnThisReplica,
+  submitRendezvousCode,
+} from "../../services/conformance-oauth-rendezvous.js";
 
 const conformanceWeb = new Hono();
 
@@ -243,6 +258,34 @@ function toWebError(error: unknown): WebRouteError {
   );
 }
 
+const connectionCheckSchema = z
+  .object({
+    ...conformanceDeadlineFields,
+    protocolVersion: z.enum(["auto", ...MCP_PROTOCOL_VERSIONS]),
+  })
+  .passthrough();
+
+conformanceWeb.post("/connection-check", async (c) =>
+  handleRoute(c, async () => {
+    const bearerToken = assertBearerToken(c);
+    const requestStartedAt = Date.now();
+    const body = await readJsonBody<Record<string, unknown>>(c);
+    const parsed = parseWithSchema(connectionCheckSchema, body);
+    const resolved = await resolveHostedHttpConfig(c, bearerToken, body, {
+      withLogin: true,
+    });
+    return checkConformanceConnection(
+      {
+        url: resolved.serverUrl,
+        accessToken: resolved.accessToken,
+        requestInit: { headers: resolved.customHeaders },
+      },
+      parsed.protocolVersion,
+      { requestStartedAt, signal: c.req.raw.signal, runTimeoutSeconds: parsed.runTimeoutSeconds, remainingRunTimeoutMs: parsed.remainingRunTimeoutMs },
+    );
+  }),
+);
+
 // ── POST /protocol ──────────────────────────────────────────────────────
 
 /**
@@ -265,6 +308,7 @@ function suiteDeadlineMessage(suite: string): string {
 
 const protocolSchema = z
   .object({
+    ...conformanceDeadlineFields,
     /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
     protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
     /** Run only these checks, as picked before Run; absent ⇒ all of them. */
@@ -279,6 +323,7 @@ const protocolSchema = z
 conformanceWeb.post("/protocol", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
+    const requestStartedAt = Date.now();
     const body = await readJsonBody<Record<string, unknown>>(c);
     const resolved = await resolveHostedHttpConfig(c, bearerToken, body, {
       withLogin: true,
@@ -289,12 +334,16 @@ conformanceWeb.post("/protocol", async (c) =>
     try {
       const { result } = await withHostedDeadline(
         runProtocolConformance({
+          requestStartedAt,
+          runTimeoutSeconds: parsed.runTimeoutSeconds,
+          remainingRunTimeoutMs: parsed.remainingRunTimeoutMs,
           ...resolved,
-          signal: controller.signal,
+          signal: AbortSignal.any([controller.signal, c.req.raw.signal]),
           protocolVersion: parsed.protocolVersion,
           checkIds: parsed.checkIds,
           readinessIds: parsed.readinessIds,
           logProbe: parsed.logProbe,
+          logLevelFilteringProbe: parsed.logLevelFilteringProbe,
           inputRequiredProbe: parsed.inputRequiredProbe,
           toolCallProbe: parsed.toolCallProbe,
           checkTimeout: HOSTED_CHECK_TIMEOUT_MS,
@@ -314,6 +363,8 @@ conformanceWeb.post("/protocol", async (c) =>
 
 const appsSchema = z
   .object({
+    ...conformanceDeadlineFields,
+    protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
     /** Run only these checks, as picked before Run; absent ⇒ all of them. */
     checkIds: z.array(z.enum(MCP_APPS_CHECK_IDS)).min(1).optional(),
   })
@@ -322,6 +373,7 @@ const appsSchema = z
 conformanceWeb.post("/apps", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
+    const requestStartedAt = Date.now();
     const body = await readJsonBody<Record<string, unknown>>(c);
     const config = await resolveHostedServerConfig(c, bearerToken, body);
     const parsed = parseWithSchema(appsSchema, body);
@@ -330,13 +382,17 @@ conformanceWeb.post("/apps", async (c) =>
     try {
       const { result } = await withHostedDeadline(
         runAppsConformance({
+          requestStartedAt,
+          runTimeoutSeconds: parsed.runTimeoutSeconds,
+          remainingRunTimeoutMs: parsed.remainingRunTimeoutMs,
           ...config,
-          signal: controller.signal,
+          protocolVersion: parsed.protocolVersion,
+          signal: AbortSignal.any([controller.signal, c.req.raw.signal]),
           ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
         }),
         HOSTED_SUITE_DEADLINE_MS,
         suiteDeadlineMessage("Apps"),
-        controller
+        controller,
       );
       return { success: true, result };
     } catch (error) {
@@ -364,9 +420,8 @@ conformanceWeb.post("/apps", async (c) =>
  *   the caller asks for.
  * - `HOSTED_TASKS_DEADLINE_MS` bounds the *whole* run, so however the legs
  *   compose, the route answers with a 504 instead of hanging past the budget.
- *   The abandoned run still unwinds on its own — every leg inside it is
- *   bounded by the per-call timeout — so its ephemeral client is closed by
- *   `withEphemeralClient`'s own teardown shortly after.
+ *   Cancellation aborts active requests and polling, and the SDK closes its
+ *   ephemeral client before the route returns and the next group can start.
  */
 const HOSTED_TASKS_POLL_TIMEOUT_MS = 20_000;
 /** Per-MCP-call ceiling inside a hosted tasks run (connect, list, call). */
@@ -376,11 +431,14 @@ const HOSTED_TASKS_DEADLINE_MS = WEB_CALL_TIMEOUT_MS - 2_000;
 
 const tasksSchema = z
   .object({
+    ...conformanceDeadlineFields,
+    protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
     /** Tool used to provoke a task; required on the extension wire, where
      *  tools carry no task metadata to pick from. */
     toolName: z.string().min(1).optional(),
     toolArguments: z.record(z.string(), z.unknown()).optional(),
     inputResponses: conformanceInputResponsesSchema,
+    checkOverrides: conformanceTaskOverridesSchema,
     pollTimeoutMs: z.number().int().positive().max(120_000).optional(),
     /** Run only these checks, as picked before Run; absent ⇒ all of them. */
     checkIds: z.array(z.enum(MCP_TASKS_CHECK_IDS)).min(1).optional(),
@@ -392,31 +450,43 @@ const tasksSchema = z
 conformanceWeb.post("/tasks", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
+    const requestStartedAt = Date.now();
     const body = await readJsonBody<Record<string, unknown>>(c);
     const config = await resolveHostedServerConfig(c, bearerToken, body);
     const parsed = parseWithSchema(tasksSchema, body);
 
     try {
-      const result = await withHostedDeadline(
-        runTasksConformance({
-          ...config,
-          timeout: HOSTED_TASKS_CALL_TIMEOUT_MS,
-          ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
-          ...(parsed.readinessIds ? { readinessIds: parsed.readinessIds } : {}),
-          ...(parsed.toolName ? { toolName: parsed.toolName } : {}),
-          ...(parsed.toolArguments
-            ? { toolArguments: parsed.toolArguments }
-            : {}),
-          ...(parsed.inputResponses
-            ? { inputResponses: parsed.inputResponses }
-            : {}),
-          pollTimeoutMs: Math.min(
-            parsed.pollTimeoutMs ?? HOSTED_TASKS_POLL_TIMEOUT_MS,
-            HOSTED_TASKS_POLL_TIMEOUT_MS
-          ),
-        }),
+      const result = await withTasksDeadline(
+        (signal) =>
+          runTasksConformance({
+            ...config,
+            requestStartedAt,
+            signal: AbortSignal.any([signal, c.req.raw.signal]),
+            runTimeoutSeconds: parsed.runTimeoutSeconds,
+            remainingRunTimeoutMs: parsed.remainingRunTimeoutMs,
+            protocolVersion: parsed.protocolVersion,
+            timeout: HOSTED_TASKS_CALL_TIMEOUT_MS,
+            ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
+            ...(parsed.readinessIds
+              ? { readinessIds: parsed.readinessIds }
+              : {}),
+            ...(parsed.checkOverrides
+              ? { checkOverrides: parsed.checkOverrides }
+              : {}),
+            ...(parsed.toolName ? { toolName: parsed.toolName } : {}),
+            ...(parsed.toolArguments
+              ? { toolArguments: parsed.toolArguments }
+              : {}),
+            ...(parsed.inputResponses
+              ? { inputResponses: parsed.inputResponses }
+              : {}),
+            pollTimeoutMs: Math.min(
+              parsed.pollTimeoutMs ?? HOSTED_TASKS_POLL_TIMEOUT_MS,
+              HOSTED_TASKS_POLL_TIMEOUT_MS,
+            ),
+          }),
         HOSTED_TASKS_DEADLINE_MS,
-        `Tasks conformance exceeded the hosted request budget (${HOSTED_TASKS_DEADLINE_MS}ms); run it from the local inspector for a longer poll window`
+        `Tasks conformance exceeded the hosted request budget (${HOSTED_TASKS_DEADLINE_MS}ms); run it from the local inspector for a longer poll window`,
       ).then((r) => r.result);
       return { success: true, result };
     } catch (error) {
@@ -429,6 +499,7 @@ conformanceWeb.post("/tasks", async (c) =>
 
 const oauthStartSchema = z
   .object({
+    ...conformanceDeadlineFields,
     oauthProfile: oauthConformanceProfileSchema.optional(),
     callbackOrigin: z.string().optional(),
     /** Report only this advice; absent ⇒ all of it, empty ⇒ none. */
@@ -439,6 +510,7 @@ const oauthStartSchema = z
 conformanceWeb.post("/oauth/start", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
+    const requestStartedAt = Date.now();
     const body = await readJsonBody<Record<string, unknown>>(c);
     // No login here: the OAuth suite grades the server from an
     // unauthenticated request and runs its own fresh authorization. Its probes
@@ -467,8 +539,18 @@ conformanceWeb.post("/oauth/start", async (c) =>
       );
     }
 
+    // Prod runs several replicas with no sticky sessions: the run stays here,
+    // but the code and the result cross over through Convex (see
+    // services/conformance-oauth-rendezvous.ts).
+    const convexBearer = isConformanceOAuthRendezvousEnabled()
+      ? await getConvexBearerForRequest(c)
+      : undefined;
+
     try {
       const started = await startOAuthConformance({
+      requestStartedAt,
+      runTimeoutSeconds: parsed.runTimeoutSeconds,
+      remainingRunTimeoutMs: parsed.remainingRunTimeoutMs,
         defaultServerUrl: resolved.serverUrl,
         defaultCustomHeaders: resolved.customHeaders,
         redirectUrl: `${parsed.callbackOrigin.replace(
@@ -478,6 +560,30 @@ conformanceWeb.post("/oauth/start", async (c) =>
         oauthProfile: parsed.oauthProfile,
         readinessIds: parsed.readinessIds,
         owner: principalKey(c),
+        ...(convexBearer
+          ? {
+              onAuthorizationNeeded: async (session) => {
+                try {
+                  await createRendezvous(convexBearer, session.id);
+                } catch (error) {
+                  reportRouteFailure(
+                    "conformance OAuth rendezvous not created",
+                    error,
+                    {
+                      source: "web.conformance.oauth.start.rendezvous",
+                      hop: "mcpjam_internal",
+                    }
+                  );
+                  throw new WebRouteError(
+                    503,
+                    ErrorCode.INTERNAL_ERROR,
+                    "Couldn't start the OAuth checks. Run the checks again."
+                  );
+                }
+                runRendezvousOnThisReplica(session);
+              },
+            }
+          : {}),
       });
       return started.phase === "complete"
         ? { ...started, result: toBrowserOAuthResult(started.result) }
@@ -501,6 +607,33 @@ conformanceWeb.post("/oauth/authorize", async (c) =>
     const body = await readJsonBody<Record<string, unknown>>(c);
     const parsed = parseWithSchema(oauthAuthorizeSchema, body);
 
+    if (isConformanceOAuthRendezvousEnabled()) {
+      // The run may live on another replica: leave the code in Convex for it.
+      const bearer = await getConvexBearerForRequest(c);
+      let outcome: "accepted" | "gone";
+      try {
+        outcome = await submitRendezvousCode(bearer, parsed);
+      } catch (error) {
+        reportRouteFailure("conformance OAuth code not submitted", error, {
+          source: "web.conformance.oauth.authorize.rendezvous",
+          hop: "mcpjam_internal",
+        });
+        throw new WebRouteError(
+          503,
+          ErrorCode.INTERNAL_ERROR,
+          "Couldn't send the sign-in code to the OAuth checks. Run the checks again."
+        );
+      }
+      if (outcome === "gone") {
+        throw new WebRouteError(
+          404,
+          ErrorCode.NOT_FOUND,
+          OAUTH_SESSION_EXPIRED_MESSAGE
+        );
+      }
+      return { success: true };
+    }
+
     const delivered = submitOAuthConformanceCode({
       ...parsed,
       owner: principalKey(c),
@@ -516,6 +649,22 @@ conformanceWeb.post("/oauth/authorize", async (c) =>
   })
 );
 
+conformanceWeb.post("/oauth/cancel", async (c) =>
+  handleRoute(c, async () => {
+    assertBearerToken(c);
+    const body = await readJsonBody<Record<string, unknown>>(c);
+    const parsed = parseWithSchema(z.object({ sessionId: z.string().min(1) }), body);
+    try {
+      if (isConformanceOAuthRendezvousEnabled()) {
+        await cancelRendezvous(await getConvexBearerForRequest(c), parsed.sessionId);
+      }
+    } finally {
+      cancelOAuthConformance({ sessionId: parsed.sessionId, owner: principalKey(c) });
+    }
+    return { success: true };
+  })
+);
+
 // ── POST /oauth/complete ────────────────────────────────────────────────
 
 const oauthCompleteSchema = z.object({
@@ -526,6 +675,30 @@ conformanceWeb.post("/oauth/complete", async (c) =>
   handleRoute(c, async () => {
     const body = await readJsonBody<Record<string, unknown>>(c);
     const parsed = parseWithSchema(oauthCompleteSchema, body);
+
+    if (isConformanceOAuthRendezvousEnabled()) {
+      // Written by whichever replica ran the checks, already shaped for the
+      // browser.
+      const outcome = await awaitRendezvousResult(
+        await getConvexBearerForRequest(c),
+        parsed.sessionId
+      );
+      switch (outcome.phase) {
+        case "complete":
+          return { phase: "complete" as const, result: outcome.result };
+        case "pending":
+          return { phase: "pending" as const, completedSteps: [] };
+        case "failed":
+          throw new WebRouteError(500, ErrorCode.INTERNAL_ERROR, outcome.error);
+        case "gone":
+          throw new WebRouteError(
+            404,
+            ErrorCode.NOT_FOUND,
+            OAUTH_SESSION_EXPIRED_MESSAGE
+          );
+      }
+    }
+
     try {
       const completed = await completeOAuthConformance({
         ...parsed,

@@ -1,3 +1,4 @@
+import { validateTaskOverrides } from "@mcpjam/sdk";
 import { MCP_LOG_LEVELS, type MCPConformanceConfig } from "@mcpjam/sdk";
 import { z } from "zod";
 
@@ -31,6 +32,8 @@ const conformanceLogProbeSchema = conformanceProbeSchema
 
 export const conformanceProbeFields = {
   logProbe: conformanceLogProbeSchema.optional(),
+  /** The log level filtering advice's own tool; absent ⇒ it uses `logProbe`. */
+  logLevelFilteringProbe: conformanceLogProbeSchema.optional(),
   inputRequiredProbe: conformanceProbeSchema.optional(),
   toolCallProbe: conformanceProbeSchema.optional(),
 };
@@ -51,7 +54,24 @@ export const conformanceInputResponsesSchema = z
 
 export type ConformanceProbes = Pick<
   MCPConformanceConfig,
-  "logProbe" | "inputRequiredProbe"
+  "logProbe" | "logLevelFilteringProbe" | "inputRequiredProbe"
 > & {
   toolCallProbe?: MCPConformanceConfig["inputRequiredProbe"];
 };
+
+export const conformanceTaskOverridesSchema = z
+  .unknown()
+  .optional()
+  .transform((value, ctx) => {
+    if (value === undefined) return undefined;
+    try {
+      return validateTaskOverrides(value);
+    } catch (error) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          error instanceof Error ? error.message : "Invalid task overrides",
+      });
+      return z.NEVER;
+    }
+  });

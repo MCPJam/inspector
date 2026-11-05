@@ -166,6 +166,7 @@ describe("PersistConformanceRun", () => {
       expect.objectContaining({
         projectId: "proj_1",
         source: "ui",
+        runTimeoutSeconds: 300,
         actorLabel: "Inspector UI",
       }),
     );

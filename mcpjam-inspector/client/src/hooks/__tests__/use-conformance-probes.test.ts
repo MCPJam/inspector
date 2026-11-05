@@ -2,11 +2,15 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { MCP_TASKS_CHECK_IDS } from "@mcpjam/sdk/browser";
 import {
+  LOG_LEVEL_ADVICE,
+  readStoredProbes,
+  probeInputStatus,
   probeKeyFor,
   probesAfterRun,
   probesApply,
   probesForRun,
-  readStoredProbes,
+  protocolProbesFor,
+  protocolRunOptions,
   tasksProbeRuns,
   tasksRunOptions,
   useConformanceProbeStore,
@@ -132,70 +136,30 @@ describe("probesAfterRun", () => {
 
 describe("useConformanceProbeStore", () => {
   beforeEach(() => window.localStorage.clear());
-
-  it("keeps each server's tools across a reload", () => {
-    const { result } = renderHook(() => useConformanceProbeStore());
-    act(() => result.current.setProbes("alpha", { logProbe }));
-
-    expect(result.current.probesFor("alpha")).toEqual({ logProbe });
-    expect(result.current.probesFor("beta")).toEqual({});
-    expect(readStoredProbes("alpha")).toEqual({ logProbe });
-  });
-
-  it("keeps the output-check tool across a reload, alone", () => {
-    const { result } = renderHook(() => useConformanceProbeStore());
-    act(() => result.current.setProbes("alpha", { toolCallProbe }));
-    expect(readStoredProbes("alpha")).toEqual({ toolCallProbe });
-  });
-
-  it("reads storage once per server", () => {
+  it("keeps protocol drafts in session and persists Tasks settings", () => {
     window.localStorage.setItem(
       "mcpjam.conformance.probes.v1:alpha",
       JSON.stringify({ logProbe }),
     );
-    const { result } = renderHook(() => useConformanceProbeStore());
-    const first = result.current.probesFor("alpha");
-    // Same object on every read, until a write.
-    expect(result.current.probesFor("alpha")).toBe(first);
-    expect(first).toEqual({ logProbe });
+    const { result, unmount } = renderHook(() => useConformanceProbeStore());
+    expect(result.current.probesFor("alpha")).toEqual({});
+    act(() => result.current.setProbes("alpha", { tasksProbe }));
+    expect(result.current.probesFor("alpha")).toEqual({ tasksProbe });
+    expect(result.current.probesFor("beta")).toEqual({});
+    expect(
+      JSON.parse(
+        window.localStorage.getItem("mcpjam.conformance.probes.v1:alpha")!,
+      ),
+    ).toEqual({ tasksProbe });
+    unmount();
+    const next = renderHook(() => useConformanceProbeStore());
+    expect(next.result.current.probesFor("alpha")).toEqual({ tasksProbe });
   });
-
-  it("keeps a server named like an object property apart", () => {
+  it("isolates names inherited from Object", () => {
     const { result } = renderHook(() => useConformanceProbeStore());
-    for (const name of ["constructor", "toString", "__proto__"]) {
-      expect(result.current.probesFor(name)).toEqual({});
-    }
     act(() => result.current.setProbes("constructor", { logProbe }));
     expect(result.current.probesFor("constructor")).toEqual({ logProbe });
     expect(result.current.probesFor("__proto__")).toEqual({});
-  });
-
-  it("keeps the log probe's level and drops one it cannot send", () => {
-    window.localStorage.setItem(
-      "mcpjam.conformance.probes.v1:alpha",
-      JSON.stringify({
-        logProbe: { ...logProbe, level: "info" },
-        inputRequiredProbe: { ...inputRequiredProbe, level: "info" },
-      }),
-    );
-    expect(readStoredProbes("alpha")).toEqual({
-      logProbe: { ...logProbe, level: "info" },
-      inputRequiredProbe,
-    });
-
-    window.localStorage.setItem(
-      "mcpjam.conformance.probes.v1:alpha",
-      JSON.stringify({ logProbe: { ...logProbe, level: "loud" } }),
-    );
-    expect(readStoredProbes("alpha")).toEqual({ logProbe });
-  });
-
-  it("ignores a stored entry that is not a probe", () => {
-    window.localStorage.setItem(
-      "mcpjam.conformance.probes.v1:alpha",
-      JSON.stringify({ logProbe: { toolName: "" }, inputRequiredProbe }),
-    );
-    expect(readStoredProbes("alpha")).toEqual({ inputRequiredProbe });
   });
 });
 
@@ -270,24 +234,137 @@ describe("Tasks probe", () => {
     ).toEqual({ checkIds: ["tasks-wire-resolvable"] });
   });
 
-  it("keeps its answers across a reload, and only on the Tasks probe", () => {
-    window.localStorage.setItem(
-      "mcpjam.conformance.probes.v1:alpha",
-      JSON.stringify({
-        tasksProbe,
-        logProbe: { ...logProbe, inputResponses: { confirm: true } },
-      }),
+});
+
+describe("Tasks per-check settings", () => {
+  it("sends only selected overrides and uses the update override answers", () => {
+    const probes = {
+      tasksProbe,
+      tasksOverrides: {
+        "tasks-inline-result": {
+          toolName: "finish",
+          arguments: { fast: true },
+        },
+        "tasks-update-ack-shape": {
+          toolName: "ask",
+          inputResponses: { name: "Ada" },
+        },
+      },
+    };
+    expect(tasksRunOptions(probes, { tasks: ["tasks-inline-result"] })).toEqual(
+      {
+        checkIds: ["tasks-inline-result"],
+        toolName: tasksProbe.toolName,
+        toolArguments: tasksProbe.arguments,
+        checkOverrides: {
+          "tasks-inline-result": {
+            toolName: "finish",
+            toolArguments: { fast: true },
+          },
+        },
+      },
     );
-    expect(readStoredProbes("alpha")).toEqual({ tasksProbe, logProbe });
+    expect(
+      tasksRunOptions(probes, { tasks: ["tasks-update-ack-shape"] })
+        .inputResponses,
+    ).toEqual({ name: "Ada" });
+    expect(
+      tasksRunOptions(
+        {
+          tasksProbe,
+          tasksOverrides: { "tasks-update-ack-shape": { toolName: "ask" } },
+        },
+        {},
+      ).inputResponses,
+    ).toBeUndefined();
+  });
+  it("keeps unselected overrides through storage and reads old defaults with their answers", () => {
+    const probes = {
+      tasksProbe,
+      tasksOverrides: {
+        "tasks-inline-result": { toolName: "finish" },
+        "tasks-update-ack-shape": { toolName: "" },
+      },
+    };
+    const store = renderHook(() => useConformanceProbeStore());
+    act(() =>
+      store.result.current.setProbes(
+        "overrides-test",
+        probesAfterRun(
+          {},
+          probes,
+          { tasks: ["tasks-wire-resolvable"] },
+          "auto",
+        ),
+      ),
+    );
+    expect(readStoredProbes("overrides-test").tasksOverrides).toEqual(
+      probes.tasksOverrides,
+    );
+    window.localStorage.setItem(
+      "mcpjam.conformance.probes.v1:old-test",
+      JSON.stringify({ tasksProbe }),
+    );
+    expect(readStoredProbes("old-test")).toEqual({ tasksProbe });
+  });
+});
+
+describe("the log level filtering advice's own tool", () => {
+  const logLevelOverride = { toolName: "loud", level: "error" as const };
+  const pick = (protocol?: string[], protocolAdvice?: string[]) =>
+    ({ protocol, protocolAdvice }) as Parameters<typeof protocolRunOptions>[1];
+
+  it("is sent with the run while the logging check and the advice run", () => {
+    expect(
+      protocolRunOptions(
+        { logProbe, logLevelOverride },
+        undefined,
+        "2026-07-28",
+      ).probes,
+    ).toEqual({ logProbe, logLevelOverride });
   });
 
-  it("drops answers that are not an object", () => {
-    window.localStorage.setItem(
-      "mcpjam.conformance.probes.v1:alpha",
-      JSON.stringify({ tasksProbe: { ...tasksProbe, inputResponses: [1] } }),
+  it("is not sent when the advice is left out", () => {
+    expect(
+      protocolRunOptions(
+        { logProbe, logLevelOverride },
+        pick(undefined, []),
+        "2026-07-28",
+      ).probes,
+    ).toEqual({ logProbe });
+  });
+
+  it("is ignored while the logging check is left out: the advice uses the shared tool", () => {
+    const probes = { logProbe, logLevelOverride };
+    expect(
+      protocolRunOptions(probes, pick(["tools-list"]), "2026-07-28").probes,
+    ).toEqual({ logProbe });
+    expect(protocolProbesFor(probes, ["tools-list"])).toEqual({ logProbe });
+    expect(
+      probeInputStatus(
+        LOG_LEVEL_ADVICE,
+        protocolProbesFor({ logLevelOverride }, ["tools-list"]),
+      ),
+    ).toBe("missing");
+  });
+
+  it("keeps the advice out of the run while its own tool is not chosen", () => {
+    const probes = { logProbe, logLevelOverride: { toolName: "" } };
+    const options = protocolRunOptions(probes, undefined, "2026-07-28");
+    expect(options.probes).toEqual({ logProbe });
+    expect(options.readinessIds).toBeDefined();
+    expect(options.readinessIds).not.toContain(LOG_LEVEL_ADVICE);
+    expect(options.readinessIds).toContain(
+      "readiness-tool-order-deterministic",
     );
-    expect(readStoredProbes("alpha")).toEqual({
-      tasksProbe: { toolName: "long-job", arguments: { seconds: 2 } },
-    });
+    expect(probeInputStatus(LOG_LEVEL_ADVICE, probes)).toBe("missing");
+  });
+
+  it("is kept after a run and through storage, with its level", () => {
+    const after = probesAfterRun({}, { logLevelOverride }, undefined, "auto");
+    expect(after).toEqual({ logLevelOverride });
+    const store = renderHook(() => useConformanceProbeStore());
+    act(() => store.result.current.setProbes("log-override-test", after));
+    expect(readStoredProbes("log-override-test")).toEqual({ logLevelOverride });
   });
 });
