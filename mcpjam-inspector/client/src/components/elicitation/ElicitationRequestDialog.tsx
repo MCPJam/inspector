@@ -90,6 +90,8 @@ export function ElicitationRequestDialog({
   onRespond,
   loading,
   pluginForm,
+  focusWorkspaceId,
+  canRestoreFocus,
 }: {
   request: HostedElicitationRequestEvent | null;
   onRespond: (answer: {
@@ -98,6 +100,8 @@ export function ElicitationRequestDialog({
     content?: Record<string, unknown>;
   }) => void | Promise<void>;
   loading?: boolean;
+  focusWorkspaceId?: string;
+  canRestoreFocus?: () => boolean;
   pluginForm?: React.ComponentProps<typeof ElicitationDialog>["pluginForm"];
 }) {
   // OwnedPluginFormHost must hydrate a private schema before this editor mounts.
@@ -123,6 +127,8 @@ export function ElicitationRequestDialog({
 
   return (
     <ElicitationDialog
+      focusWorkspaceId={focusWorkspaceId}
+      canRestoreFocus={canRestoreFocus}
       elicitationRequest={{
         // The dialog keys off requestId; the rendezvousId is what the answer
         // travels on, so it's the identity that matters here.

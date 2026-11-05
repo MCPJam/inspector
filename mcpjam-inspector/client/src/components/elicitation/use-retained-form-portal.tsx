@@ -1,4 +1,5 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useFormDialogFocus } from "./use-form-dialog-focus";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   Dialog,
@@ -12,10 +13,28 @@ import {
 export function useRetainedFormPortal(
   slot: HTMLElement | null,
   visible = true,
+  workspaceId?: string,
+  canRestoreFocus?: () => boolean,
+  terminal = false,
 ) {
   const [target] = useState(() => document.createElement("div"));
   const [hasSlot, setHasSlot] = useState(!!slot);
   const [fallbackSlot, setFallbackSlot] = useState<HTMLDivElement | null>(null);
+  const returnFocus = useFormDialogFocus(
+    workspaceId, workspaceId, hasSlot && !slot && visible, canRestoreFocus,
+  );
+  const restore = useRef(returnFocus);
+  restore.current = returnFocus;
+  useEffect(() => {
+    if (terminal) queueMicrotask(() => {
+      if (!target.isConnected || !target.hasChildNodes()) restore.current();
+    });
+  }, [target, terminal]);
+  useEffect(() => () => {
+    queueMicrotask(() => {
+      if (!target.isConnected || !target.hasChildNodes()) restore.current();
+    });
+  }, [target]);
   const destination = visible ? (slot ?? fallbackSlot) : null;
   const focus = useRef<{
     element: HTMLElement;
@@ -70,6 +89,7 @@ export function useRetainedFormPortal(
     hasSlot && !slot && visible ? (
       <Dialog open>
         <DialogContent
+          onCloseAutoFocus={returnFocus}
           showCloseButton={false}
           className="max-h-[90vh] overflow-y-auto sm:max-w-2xl"
         >
@@ -85,6 +105,7 @@ export function useRetainedFormPortal(
     ) : null;
   return {
     target,
+    onCloseAutoFocus: returnFocus,
     ready: !!slot || hasSlot,
     render: (children: ReactNode) => (
       <>

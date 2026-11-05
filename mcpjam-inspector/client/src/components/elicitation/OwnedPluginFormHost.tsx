@@ -142,6 +142,9 @@ export function OwnedPluginFormHost({
     "elicitations:listPendingElicitations" as any,
     owner ? { projectId, pluginWorkspaceId: workspaceId } : "skip",
   ) as Omit<HostedElicitationRequestEvent, "kind">[] | undefined;
+  const scopeKey = JSON.stringify([projectId, workspaceId]);
+  const focusOwner = useRef({ ownerId: owner?._id, scopeKey });
+  focusOwner.current = { ownerId: owner?._id, scopeKey };
   const requests =
     rows?.filter(
       (row) =>
@@ -165,6 +168,10 @@ export function OwnedPluginFormHost({
           projectId={projectId}
           workspaceId={workspaceId}
           active={active}
+          canRestoreFocus={() =>
+            focusOwner.current.ownerId === owner._id &&
+            focusOwner.current.scopeKey === scopeKey
+          }
           presentServices={presentServices}
           request={{ ...request, kind: "request" }}
         />
@@ -178,8 +185,10 @@ function OwnedRequest({
   projectId,
   workspaceId,
   active,
+  canRestoreFocus,
   presentServices,
 }: {
+  canRestoreFocus: () => boolean;
   presentServices?: OwnedPluginFormPresenter;
   request: HostedElicitationRequestEvent;
   projectId: string;
@@ -328,7 +337,9 @@ function OwnedRequest({
         },
   );
   const slot = useComposerSlot(workspaceId);
-  const portal = useRetainedFormPortal(slot, queue.active && active);
+  const portal = useRetainedFormPortal(
+    slot, queue.active && active, workspaceId, canRestoreFocus, resolved,
+  );
   if (resolved) return null;
   // Later requests for this chat wait until the earlier ones are answered.
   if ((!queue.active || !active) && !portal.ready) return null;
@@ -381,7 +392,7 @@ function OwnedRequest({
           if (!open && !cancelling) void cancel();
         }}
       >
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={portal.onCloseAutoFocus}>
           <DialogHeader>
             <DialogTitle>
               {schemaFailed ? "Form unavailable" : "Loading form"}
@@ -443,6 +454,8 @@ function OwnedRequest({
     ) : (
       <ElicitationRequestDialog
         request={hydratedRequest}
+        focusWorkspaceId={workspaceId}
+        canRestoreFocus={canRestoreFocus}
         pluginForm={services}
         loading={submitting}
         onRespond={respond}
