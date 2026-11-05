@@ -20,14 +20,14 @@ async function deliver<T>(
       return await withPluginDeadline(
         new AbortController().signal,
         Math.min(5000, expiresAt - Date.now()),
-        () => new Error("App response timed out"),
+        () => new Error("The app response timed out. Check whether the action ran before trying again."),
         send,
       );
     } catch (error) {
       lastError = error;
     }
   }
-  throw lastError ?? new Error("App request expired");
+  throw lastError ?? new Error("The app request expired. Check whether the action ran before trying again.");
 }
 
 /** Claim before dispatch. A duplicate event never repeats an accepted action. */
@@ -84,12 +84,12 @@ export async function fulfillHarnessAppTool(
       entry.rawName !== row.rawName ||
       entry.instance.parentToolCallId !== row.parentToolCallId
     ) {
-      throw new Error("App instance unavailable");
+      throw new Error("The app is unavailable. Reopen it before trying again.");
     }
     registry.registerPendingCall(row.bridgeId, controller);
     const input: unknown = JSON.parse(row.inputJson);
     if (!input || typeof input !== "object" || Array.isArray(input))
-      throw new Error("Invalid app tool input");
+      throw new Error("The app tool input is invalid. Check the input and try again.");
     result = scrubAppToolResultForModel(
       await dispatchAppToolCall(entry, input as Record<string, unknown>, {
         signal: controller.signal,
@@ -113,7 +113,7 @@ export async function fulfillHarnessAppTool(
   if (new TextEncoder().encode(resultJson).length > 128 * 1024) {
     resultJson = JSON.stringify({
       content: [
-        { type: "text", text: "The app tool result exceeded the size limit." },
+        { type: "text", text: "The app tool result is too large. Ask the app for a smaller result." },
       ],
       isError: true,
     });
