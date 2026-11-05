@@ -104,6 +104,9 @@ export function RunResultRing({
   /** Draw the slices in clockwise on mount. The small rings stay still. */
   animate?: boolean;
 }) {
+  // Before the early return: a run goes from queued to completed while this
+  // ring stays mounted, so the hook count must not depend on the status.
+  const progress = useDrawProgress(animate);
   if (run.status !== "completed") {
     return <RunStatusLabel status={run.status} />;
   }
@@ -112,7 +115,6 @@ export function RunResultRing({
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
   const center = size / 2;
-  const progress = useDrawProgress(animate);
   let drawn = 0;
   const breakdown = runResultRingLabel(run);
 
