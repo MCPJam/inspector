@@ -113,6 +113,27 @@ describe("ConformanceHistory", () => {
     expect(screen.queryByText("FAILED")).toBeNull();
   });
 
+  it("names a run that has not finished instead of drawing an empty ring", () => {
+    const unfinished = { applicable: 0, passed: 0, failed: 0, couldNotRun: 0 };
+    useQueryMock.mockReturnValue({
+      page: [
+        makeRun({ _id: "run_q", status: "queued", ...unfinished }),
+        makeRun({ _id: "run_c", status: "cancelled", ...unfinished }),
+        makeRun({ _id: "run_t", status: "timed_out", ...unfinished }),
+      ],
+      isDone: true,
+      continueCursor: "",
+    });
+    render(<ConformanceHistory projectId="proj_1" />);
+
+    expect(screen.getByText("RUNNING")).toBeInTheDocument();
+    expect(screen.getByText("CANCELLED")).toBeInTheDocument();
+    expect(screen.getByText("TIMED OUT")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("img", { name: "No applicable checks" }),
+    ).toBeNull();
+  });
+
   it("keeps the empty state compact so the suites below stay visible", () => {
     useQueryMock.mockReturnValue({
       page: [],

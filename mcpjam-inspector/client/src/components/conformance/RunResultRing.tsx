@@ -39,7 +39,33 @@ export function runResultRingLabel(run: ConformanceRunListItem): string {
   return `${parts.join(", ")} of ${run.applicable}`;
 }
 
+/**
+ * A run that has not finished has no counts yet (or only some), so a ring
+ * would read like a server with nothing to check. Name the state instead.
+ */
+function RunStatusLabel({ status }: { status: string }) {
+  const base =
+    "inline-flex h-5.5 shrink-0 items-center rounded-sm px-2 text-[11px] font-semibold tracking-[0.06em]";
+  if (status === "timed_out") {
+    return (
+      <span
+        className={`${base} bg-amber-400/25 text-amber-700 dark:text-amber-400`}
+      >
+        TIMED OUT
+      </span>
+    );
+  }
+  return (
+    <span className={`${base} bg-muted text-muted-foreground`}>
+      {status === "cancelled" ? "CANCELLED" : "RUNNING"}
+    </span>
+  );
+}
+
 export function RunResultRing({ run }: { run: ConformanceRunListItem }) {
+  if (run.status !== "completed") {
+    return <RunStatusLabel status={run.status} />;
+  }
   const parts = slices(run);
   const center = SIZE / 2;
   let drawn = 0;

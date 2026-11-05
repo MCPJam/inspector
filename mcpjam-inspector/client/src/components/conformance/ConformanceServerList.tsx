@@ -51,7 +51,7 @@ export function ConformanceServerList({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-4">
-            <span className="flex w-6 justify-center">
+            <span className="flex min-w-6 justify-center">
               <RunResultRing run={run} />
             </span>
             <span className="w-16 text-right text-xl font-semibold tabular-nums">
