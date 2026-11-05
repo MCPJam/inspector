@@ -95,6 +95,7 @@ export type HarnessClaimResult =
       state: HarnessResumePayload | null;
       stateVersion: number;
       fingerprintChanged: boolean;
+      supportsApprovalFence?: true;
       laneId?: string;
     }
   | { ok: false; status: number; error: string };
@@ -210,6 +211,7 @@ async function postSessionState(
 }
 
 export async function claimHarnessSessionState(args: {
+  approvalIds?: string[];
   owner: HarnessOwnerRef;
   runtimeFingerprint: string;
   /** Project-skills fingerprint; OMIT on a transient skills-fetch failure so the
@@ -226,6 +228,7 @@ export async function claimHarnessSessionState(args: {
     args.bearer,
     {
       ...args.owner,
+      ...(args.approvalIds !== undefined ? { approvalIds: args.approvalIds } : {}),
       runtimeFingerprint: args.runtimeFingerprint,
       ...(args.skillsHash !== undefined ? { skillsHash: args.skillsHash } : {}),
       leaseId: args.leaseId,
@@ -240,6 +243,7 @@ export async function claimHarnessSessionState(args: {
     state: res.payload.state ?? null,
     stateVersion: Number(res.payload.stateVersion ?? 0),
     fingerprintChanged: Boolean(res.payload.fingerprintChanged),
+    ...(res.payload.supportsApprovalFence === true ? { supportsApprovalFence: true } : {}),
     ...(typeof res.payload.laneId === "string" ? { laneId: res.payload.laneId } : {}),
   };
 }
@@ -339,6 +343,7 @@ export async function releaseUncommittedHarnessLane(args: {
 }
 
 export async function commitHarnessSessionState(args: {
+  guardedApprovalIds?: string[];
   owner: HarnessOwnerRef;
   leaseId: string;
   expectedStateVersion: number;
@@ -366,6 +371,7 @@ export async function commitHarnessSessionState(args: {
       runtimeFingerprint: args.runtimeFingerprint,
       ...(args.skillsHash !== undefined ? { skillsHash: args.skillsHash } : {}),
       ...(args.awaitingApproval ? { awaitingApproval: true } : {}),
+      ...(args.guardedApprovalIds ? { guardedApprovalIds: args.guardedApprovalIds } : {}),
     },
     args.signal
   );
