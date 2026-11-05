@@ -694,14 +694,14 @@ describe("fresh request runtime admission", () => {
         ),
       ).resolves.toBe("modern-result");
       await expect(
-        live.runOwnedLegacy(
+        live.runOwnedForm(
           authorization,
           "operation",
           new AbortController().signal,
           run,
         ),
       ).rejects.toMatchObject({ code: "INSTANCE_DENIED" });
-      expect(() => live.handleLegacyForm({})).toThrow("INSTANCE_DENIED");
+      expect(() => live.handleOwnedForm({})).toThrow("INSTANCE_DENIED");
       await live.release();
     });
 
@@ -715,7 +715,7 @@ describe("fresh request runtime admission", () => {
       });
       const run = vi.fn(async () => "original");
       await expect(
-        live.runOwnedLegacy(
+        live.runOwnedForm(
           authorization,
           "operation",
           new AbortController().signal,
@@ -732,7 +732,7 @@ describe("fresh request runtime admission", () => {
         ),
       ).toThrow("CONTINUATION_PROTOCOL_DENIED");
       expect(f.fakeMrtr!.execute).not.toHaveBeenCalled();
-      await expect(live.handleLegacyForm({})).resolves.toMatchObject({
+      await expect(live.handleOwnedForm({})).resolves.toMatchObject({
         tag: expect.stringMatching(/^forms-/),
       });
       await live.release();

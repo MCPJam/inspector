@@ -464,6 +464,19 @@ describe("owned plugin MRTR rounds in the composer", () => {
       </>,
     );
     await waitFor(() => expect(screen.queryByLabelText(/Note/)).toBeNull());
+    const otherSubmit = vi.fn(async () => {});
+    const original = useHostedMrtrStore.getState().rounds[0]!;
+    act(() => useHostedMrtrStore.getState().enqueue({
+      ...original,
+      key: "other:1",
+      continuationId: "other",
+      pluginFormServiceScope: { projectId: "project", workspaceId: "chat-b" },
+      requests: [{ key: "other", mode: "form", message: "Question other", requestedSchema: {
+        type: "object", properties: { other: { type: "string", title: "Other answer" } },
+      } }],
+    }, { submit: otherSubmit }));
+    fireEvent.change(await screen.findByLabelText(/Other answer/), { target: { value: "other draft" } });
+    expect(screen.queryByLabelText(/Note/)).toBeNull();
     view.rerender(
       <>
         <Composer workspaceId="chat-a" />
@@ -471,7 +484,13 @@ describe("owned plugin MRTR rounds in the composer", () => {
       </>,
     );
     expect(await screen.findByLabelText(/Note/)).toHaveValue("kept");
+    expect(screen.queryByLabelText(/Other answer/)).toBeNull();
     expect(submit).not.toHaveBeenCalled();
+    expect(otherSubmit).not.toHaveBeenCalled();
+    act(() => useHostedMrtrStore.getState().resolveContinuation("other"));
+    view.rerender(<><span /><HostedMrtrHost /></>);
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByLabelText(/Note/)).toHaveValue("kept");
   });
 });
 

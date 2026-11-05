@@ -1592,6 +1592,10 @@ export async function createAuthorizedManager(
       serverId: string,
       organizationId?: string | null,
     ) => MrtrInputCollector | undefined;
+    /** Claims and schema selection owned by the collector installed above. */
+    mrtrInputOptionsForServer?: (
+      serverId: string,
+    ) => Parameters<MCPClientManager["setMrtrInputCollector"]>[2];
     /**
      * The turn's execution scope, forwarded to the computer reservation that
      * hosts a plugin's stdio component (`resolvePluginStdioHttpTarget`). Only
@@ -2714,7 +2718,11 @@ export async function createAuthorizedManager(
         batch.organizationId,
       );
       if (collector) {
-        manager.setMrtrInputCollector(serverId, collector);
+        manager.setMrtrInputCollector(
+          serverId,
+          collector,
+          options.mrtrInputOptionsForServer?.(baseServerId),
+        );
       }
     }
   }

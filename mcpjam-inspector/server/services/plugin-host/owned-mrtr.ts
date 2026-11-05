@@ -102,9 +102,15 @@ export function ownedPluginFormSchema(
 export function ownedMrtrFormCapabilities(
   base: Record<string, unknown>,
 ): Record<string, unknown> {
+  const elicitation = base.elicitation;
   return {
     ...base,
-    elicitation: { form: {} },
+    elicitation: {
+      ...(elicitation && typeof elicitation === "object" && !Array.isArray(elicitation)
+        ? elicitation
+        : {}),
+      form: {},
+    },
     extensions: {
       ...(base.extensions as Record<string, unknown> | undefined),
       [OPENAI_ELICITATION_EXTENSION]: { form: {} },
@@ -125,6 +131,7 @@ export function createOwnedPluginMrtr(deps: {
   bearer: string;
   projectId: string;
   serverId: string;
+  serverName?: () => string | undefined;
   manager: () => MCPClientManager | undefined;
   assertCurrent: () => Promise<unknown>;
   sourceBinding: { hostId: string; hostRevision: string };
@@ -252,6 +259,7 @@ export function createOwnedPluginMrtr(deps: {
       bearer: deps.bearer,
       projectId: deps.projectId,
       serverId: deps.serverId,
+      serverName: deps.serverName?.(),
       negotiatedEra,
       bindingFingerprint: fingerprint(current, op),
       schemaDisplayMaxBytes: PLUGIN_FORM_SCHEMA_MAX_BYTES,
@@ -522,6 +530,7 @@ export function createOwnedPluginMrtr(deps: {
               continuationId: submission.continuationId,
               round: result.round,
               serverId: deps.serverId,
+              serverName: deps.serverName?.(),
               method: "tools/call",
               operationLabel: params.name,
               inputRequests: result.displays,

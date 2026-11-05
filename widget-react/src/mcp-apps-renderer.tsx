@@ -53,6 +53,7 @@ import {
   extractMethod,
   stableStringifyJson,
   type AppToolInvocationUpdate,
+  type AppToolRequestContext,
 } from "@mcpjam/sdk/widget-runtime";
 import { McpAppsModal } from "./mcp-apps-modal";
 import {
@@ -351,7 +352,8 @@ export interface MCPAppsRendererProps {
   onSendFollowUp?: (text: string) => void;
   onCallTool?: (
     toolName: string,
-    params: Record<string, unknown>
+    params: Record<string, unknown>,
+    context?: AppToolRequestContext
   ) => Promise<unknown>;
   onAppToolInvocationChange?: (invocation: AppToolInvocationUpdate) => void;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
@@ -3416,7 +3418,7 @@ export function MCPAppsRendererSurface({
           onOpenLink: (url) => {
             window.open(url, "_blank", "noopener,noreferrer");
           },
-          onCallTool: async (name, invocationInput) => {
+          onCallTool: async (name, invocationInput, context) => {
             if (!onCallToolRef.current) {
               throw new Error("Tool calls not supported");
             }
@@ -3425,7 +3427,8 @@ export function MCPAppsRendererSurface({
             // type (ext-apps v1-sdk peer). Erase across the version boundary.
             return (await onCallToolRef.current(
               name,
-              invocationInput
+              invocationInput,
+              context
             )) as never;
           },
           onAppToolInvocation: (update) => {
@@ -4635,16 +4638,16 @@ export function MCPAppsRendererSurface({
       {!hostManagedPresentation &&
         isFullscreen &&
         !isContainedFullscreenMode && (
-          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-40 shrink-0">
-            <div />
-            <div className="font-medium text-sm text-muted-foreground min-w-0 max-w-[40vw] truncate">
+          <div className={`grid items-center gap-3 px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-40 shrink-0 ${placedFullscreen ? "grid-cols-[minmax(0,1fr)_auto]" : "grid-cols-[1fr_auto_1fr]"}`}>
+            {!placedFullscreen && <div />}
+            <div className={`font-medium text-sm text-muted-foreground min-w-0 truncate ${placedFullscreen ? "" : "max-w-[40vw]"}`}>
               {openInAppLabel}
             </div>
             <div className="flex items-center justify-end gap-2 min-w-0">
               {showOpenInAppButton && (
                 <button
                   onClick={handleOpenInApp}
-                  className="inline-flex items-center justify-center gap-1.5 h-8 max-w-[16rem] rounded-full border border-border/60 px-2 sm:px-3 text-xs font-medium text-foreground hover:bg-muted transition-colors"
+                  className="inline-flex min-w-0 items-center justify-center gap-1.5 h-8 max-w-[16rem] rounded-full border border-border/60 px-2 sm:px-3 text-xs font-medium text-foreground hover:bg-muted transition-colors"
                   aria-label={`Open in ${openInAppLabel}`}
                   title={`Open in ${openInAppLabel}`}
                 >
@@ -4665,7 +4668,7 @@ export function MCPAppsRendererSurface({
                 }}
                 className={
                   placedFullscreen && fullscreenPlacement?.exitLabel
-                    ? "rounded-lg px-2 py-1 text-sm font-medium text-foreground hover:bg-muted transition-colors"
+                    ? "shrink-0 whitespace-nowrap rounded-lg px-2 py-1 text-sm font-medium text-foreground hover:bg-muted transition-colors"
                     : "p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                 }
                 aria-label="Exit fullscreen"

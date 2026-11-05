@@ -11,8 +11,8 @@ vi.mock("../receipt-store.js", () => ({
 vi.mock("../request-runtime.js", () => ({
   createPluginRequestRuntime: () => ({
     resolve: state.resolve,
-    runOwnedLegacy: state.execute,
-    handleLegacyForm: async () => ({ action: "accept" }),
+    runOwnedForm: state.execute,
+    handleOwnedForm: async () => ({ action: "accept" }),
     release: state.release,
   }),
 }));
