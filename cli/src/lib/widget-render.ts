@@ -1,3 +1,4 @@
+import type { InspectorProjectTarget } from "./inspector-project-target.js";
 import type { MCPServerConfig } from "@mcpjam/sdk";
 import { InspectorApiClient } from "./inspector-api.js";
 import { operationalError, usageError } from "./output.js";
@@ -46,7 +47,8 @@ export type WidgetRenderClient = Pick<
 
 export interface RunWidgetRenderOptions {
   baseUrl?: string;
-  config: MCPServerConfig;
+  config?: MCPServerConfig;
+  target?: InspectorProjectTarget;
   serverName: string;
   toolName: string;
   parameters: Record<string, unknown>;
@@ -92,6 +94,7 @@ export async function runWidgetRender(
 
   await client.connectServer(options.serverName, options.config, {
     timeoutMs: options.timeoutMs,
+    ...(options.target ? { target: options.target } : {}),
   });
 
   const response = await client.request("/api/mcp/widget-render", {
