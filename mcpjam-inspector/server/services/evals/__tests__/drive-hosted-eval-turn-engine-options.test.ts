@@ -146,6 +146,9 @@ const COMMON = {
   persistMode: "caller",
   approvalMode: "auto-deny",
   abortSignal: expect.any(AbortSignal),
+  // A busy model-step admission reads the turn's remaining budget so it can
+  // refuse instead of sleeping past the turn's deadline.
+  remainingTurnMs: expect.any(Function),
   maxSteps: 5,
   onToolCall: expect.any(Function),
   onToolResult: expect.any(Function),
