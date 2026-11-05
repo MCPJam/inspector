@@ -3804,6 +3804,48 @@ describe("ConformanceTab", () => {
     openSpy.mockRestore();
   });
 
+  it("asks for sign-in at the top of the run, not in the OAuth suite at its end", async () => {
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockReturnValue({} as unknown as Window);
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "session-1",
+      authorizationUrl: "https://auth.example.com/authorize",
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    await clickRun();
+
+    // Below the fold, a run waiting on sign-in looked like one that never
+    // stops loading (CQT-97).
+    const prompt = (
+      await screen.findByText("Waiting for browser authorization...")
+    ).closest('[role="status"]') as HTMLElement;
+    expect(prompt).not.toBeNull();
+    expect(
+      prompt.compareDocumentPosition(suiteHeader("protocol")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      within(prompt).getByRole("button", { name: "Open sign-in page" }),
+    ).toBeDefined();
+    expect(
+      within(prompt).getByRole("button", { name: "Skip OAuth" }),
+    ).toBeDefined();
+    // One prompt: the OAuth suite points at it rather than repeating it.
+    expect(
+      screen.getAllByRole("button", { name: "Skip OAuth" }),
+    ).toHaveLength(1);
+    expect(
+      screen.getByText(
+        "Waiting for sign-in. Use the prompt at the top of the run.",
+      ),
+    ).toBeDefined();
+    openSpy.mockRestore();
+  });
+
   it("offers the authorization page and a skip when the browser blocks the popup", async () => {
     const openSpy = vi
       .spyOn(window, "open")
