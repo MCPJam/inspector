@@ -218,6 +218,8 @@ export interface WebChatTurnPersistContext {
   executionBindingVersion?: 1;
   /** Required to enable persistence; without it, no ingest. */
   chatSessionId: string | undefined;
+  retryOwner?: { subject: string; projectId: string };
+  getAuthorization?: () => Promise<string>;
   projectId: string;
   /** Closed union per `chatIngestion/common.ts`. */
   sourceType: "scenario" | "direct";
@@ -1403,6 +1405,7 @@ export async function streamChatTurn(
       // rather than inferring it from a version poll.
       return await persistChatSessionToConvex({
         chatSessionId: hostedChatSessionId,
+        retryOwner: persist.retryOwner,
         // Applied to the SERIALIZED ingest body, so it covers every payload
         // this call can carry — session messages, the tool snapshot, assistant
         // text, a nested JSON string a tool returned — without a per-field list
@@ -1425,7 +1428,7 @@ export async function streamChatTurn(
           ? { surface: persist.surface }
           : {}),
         scenarioId: persist.scenarioId,
-        authHeader: runtime.authHeader,
+        authHeader: persist.getAuthorization ? await persist.getAuthorization() : runtime.authHeader,
         // WHAT WAS SENT, for the Raw view and `get_chat_session` — distinct
         // from `resumeConfig.systemPrompt` below, which is what a RESUMED turn
         // replays.

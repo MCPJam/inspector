@@ -1,3 +1,4 @@
+import { createPersistReceiptRecovery } from "@/lib/persist-receipt-recovery";
 import { appToolInvocationEvent, appToolInvocations } from "@/shared/app-tool-rendezvous";
 import { fulfillHarnessAppTool } from "@/components/playground/fulfill-harness-app-tool";
 import { isCurrentHarnessStartup, isHarnessStartupPart, type HarnessStartupPhase } from "@/shared/harness-startup";
@@ -2283,6 +2284,7 @@ export function useChatSession(
    * noise.
    */
   const persistReceiptRef = useRef<PersistReceiptData | null>(null);
+  const recoverPersistReceipt = useRef(createPersistReceiptRecovery(authFetch)).current;
   /** Session + turn the in-flight turn belongs to; set at `turn_start`. */
   const receiptTurnIdentityRef = useRef<{
     chatSessionId: string;
@@ -2998,37 +3000,30 @@ export function useChatSession(
           // which point a reset, fork, or thread switch may already have moved
           // this surface somewhere else. Applying a stale receipt would sync a
           // version baseline onto a thread it does not belong to.
-          const receipt = part.data;
-          const expectedTurn = receiptTurnIdentityRef.current;
-          const sameSession =
-            receipt.chatSessionId === chatSessionIdRef.current;
-          // The turn check is against the identity captured at `turn_start`,
-          // NOT `activeTurnId` — that is cleared by `turn_finish`, which always
-          // arrives BEFORE the receipt.
-          const sameTurn =
-            !receipt.turnId ||
-            !expectedTurn?.turnId ||
-            receipt.turnId === expectedTurn.turnId;
-          if (sameSession && sameTurn) {
+          const accept = (receipt: PersistReceiptData) => {
+            const expectedTurn = receiptTurnIdentityRef.current;
+            if (receipt.chatSessionId !== chatSessionIdRef.current ||
+                (receipt.turnId && expectedTurn?.turnId && receipt.turnId !== expectedTurn.turnId)) return false;
+            const prior = persistReceiptRef.current;
+            if (receipt.outcome === "failed" && prior?.chatSessionId === receipt.chatSessionId &&
+                prior.turnId === receipt.turnId && (prior.outcome === "saved" || prior.outcome === "duplicate")) return false;
             persistReceiptRef.current = receipt;
-            // The SDK can start a client-tool continuation before React effects.
-            // Preserve unversioned surfaces; only advance an existing cursor.
-            if (
-              (receipt.outcome === "saved" ||
-                receipt.outcome === "duplicate") &&
-              typeof receipt.version === "number" &&
-              resumedVersionRef.current?.sessionId === receipt.chatSessionId &&
-              resumedVersionRef.current.version !== null
-            ) {
-              const next = nextResumedVersion({
-                previous: resumedVersionRef.current,
-                currentSessionId: chatSessionIdRef.current,
-                sessionId: receipt.chatSessionId,
-                version: receipt.version,
-              });
+            if ((receipt.outcome === "saved" || receipt.outcome === "duplicate") &&
+                typeof receipt.version === "number" &&
+                resumedVersionRef.current?.sessionId === receipt.chatSessionId &&
+                resumedVersionRef.current.version !== null) {
+              const next = nextResumedVersion({ previous: resumedVersionRef.current,
+                currentSessionId: chatSessionIdRef.current, sessionId: receipt.chatSessionId,
+                version: receipt.version });
               resumedVersionRef.current = next;
               setResumedVersion(next);
             }
+            return true;
+          };
+          const currentReceipt = accept(part.data);
+          if (currentReceipt && part.data.retryHandle && part.data.chatSessionId === chatSessionIdRef.current &&
+              part.data.retryProjectId === hostedProjectId) {
+            void recoverPersistReceipt(part.data).then(accept);
           }
         } else if (isHarnessSessionDataPart(part)) {
           // Cache the harness workdir so the Playground Shell can open a

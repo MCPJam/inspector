@@ -292,6 +292,7 @@ export function getConvexBearerThunkForRequest(
 export async function getBackgroundRunBearerForRequest(
   c: Context,
   projectId: string,
+  options: { requireFreshSessionOnUse?: boolean } = {},
 ): Promise<() => Promise<string>> {
   if (usesDelegatedToken(c) || c.get("guestId")) {
     return getConvexBearerThunkForRequest(c);
@@ -350,8 +351,12 @@ export async function getBackgroundRunBearerForRequest(
   }
   const organizationId = project.organizationId;
   const attribution = stableAgentAttribution(c);
-  const getBearer = () =>
-    getConvexBearerForDelegation(session.sub, organizationId, attribution);
+  const path = c.req.path;
+  const getBearer = async () => {
+    if (options.requireFreshSessionOnUse)
+      assertSessionServable(session.sid, { requireFresh: true, path });
+    return getConvexBearerForDelegation(session.sub, organizationId, attribution);
+  };
   // Fail before creating a durable run if delegation is unavailable. The
   // backend rechecks membership on each mint; the token stays server-side.
   await getBearer();

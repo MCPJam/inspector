@@ -451,6 +451,7 @@ function isHostedAuthAllowedOrigin(parsed: URL): boolean {
  * with an extra path component can slip through.
  */
 const HOSTED_AUTH_PATH_PATTERNS = [
+  /^\/api\/mcp\/chat-persistence\/?$/,
   // Reading command terms re-authorizes the server under the signed-in member.
   /^\/api\/mcp\/servers\/command-approval\/?$/,
   // The /conformance page starting, polling, cancelling and reading a
@@ -530,7 +531,7 @@ function isSignInRenewablePath(input: RequestInfo | URL): boolean {
     : typeof input === "string"
       ? input.split("?")[0]
       : "";
-  return SIGN_IN_RENEWABLE_PREFIXES.some((prefix) =>
+  return /^\/api\/(web|mcp)\/chat-persistence\/?$/.test(pathname) || SIGN_IN_RENEWABLE_PREFIXES.some((prefix) =>
     pathname.startsWith(prefix),
   );
 }
