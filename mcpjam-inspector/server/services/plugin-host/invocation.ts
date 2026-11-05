@@ -71,6 +71,8 @@ export type ResolvedInvocationContext = AuthorizedInvocation & {
   origin: PluginInvocationOrigin;
 };
 export interface PluginInvocationPorts {
+  /** Recover a terminal receipt without creating or dispatching an operation. */
+  readonly receiptOnly?: boolean;
   /** Inspector-owned durable receipts; never a caller-authored JSON snapshot. */
   receipts?: PluginInvocationReceiptPort;
   /** Fresh request ports for one owned continuation leg; never retained by a receipt. */
@@ -173,6 +175,7 @@ export class PluginInvocationSuspension {
 }
 
 interface InvocationReceipt {
+  terminal?: boolean;
   fingerprint: string;
   result: Promise<unknown>;
   revision?: string;
@@ -515,6 +518,7 @@ export class AuthorizedToolInvoker {
           : new PluginInvocationError("INVALID_INVOCATION"),
       );
     }
+    if (this.ports.receiptOnly) return this.recoverReadOnly(origin, invocationId, snapshot, fingerprint, signal);
     const existing = this.receipts.get(invocationId);
     const continuation = this.ports.continuation;
     if (existing) {
@@ -630,14 +634,31 @@ export class AuthorizedToolInvoker {
     receipt.result = result;
     this.receipts.set(invocationId, receipt);
     result.then(
-      (value) => this.retainSettled(invocationId, receipt, value),
+      (value) => { receipt.terminal = !(value instanceof PluginInvocationSuspension); this.retainSettled(invocationId, receipt, value); },
       () => {
+        receipt.terminal = true;
         // Nothing ran: a retry with this ID asks again (approval included).
         if (receipt.retryable && this.receipts.get(invocationId) === receipt)
           this.receipts.delete(invocationId);
       },
     );
     return result;
+  }
+
+  private async recoverReadOnly(origin: PluginInvocationOrigin, id: string,
+    params: PluginToolCallParams, fingerprint: string, signal?: AbortSignal) {
+    let receipt = this.receipts.get(id);
+    if (receipt && receipt.fingerprint !== fingerprint) fail("INVOCATION_ID_REUSED");
+    if (!receipt?.terminal || receipt.evicted) {
+      const active = signal ?? new AbortController().signal;
+      const saved = this.ports.receipts ? await awaitOwned(active, () => this.ports.receipts!.read(id, active)) : null;
+      const state = saved?.legs.at(-1)?.state;
+      if (!saved || !state || !["completed", "failed", "unknown", "unavailable"].includes(state))
+        fail("INVOCATION_OUTCOME_UNKNOWN", true);
+      receipt = { fingerprint, result: undefined!, continuations: new Map(), terminal: true };
+      this.restore(receipt, saved!);
+    }
+    return this.replay(origin, params, receipt, receipt.result, signal);
   }
 
   /** Account a settled value against the per-actor memory budget. */
@@ -884,6 +905,8 @@ export class AuthorizedToolInvoker {
       });
     receipt.result = result;
     receipt.continuations.set(submission.round, { fingerprint, result });
+    void result.then((value) => { receipt.terminal = !(value instanceof PluginInvocationSuspension); },
+      (error) => { receipt.terminal = !(error instanceof PluginContinuationRefused); });
     return result;
   }
 

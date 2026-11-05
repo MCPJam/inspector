@@ -29,6 +29,7 @@ export class RequestOwnedToolInvoker {
     this.invoker = new AuthorizedToolInvoker(
       owner,
       {
+        get receiptOnly() { return ports().receiptOnly; },
         get receipts() {
           return ports().receipts;
         },

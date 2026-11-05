@@ -97,3 +97,30 @@ it("waits for the first renewal when a turn starts near JWT expiry without retur
   expect(await pending).toBe(`Bearer ${fresh}`);
   expect((decodeJwt(original).exp ?? Infinity) * 1000).toBeLessThan(Date.now());
 });
+
+it("expires an unclaimed App preflight even when its timer has not fired", async () => {
+  const store = registry(); const original = await token();
+  const operation = { projectId: "project", requestId: scope.requestId, pluginOperation: {
+    workspaceId: "workspace", instanceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", generation: 1,
+    hostId: "host", serverId: "server", invocationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", bindingHash: "f".repeat(64),
+  } };
+  const lease = store.prepareOperation(owner, operation, original, new AbortController().signal); leases.push(lease);
+  expect(store.prepareOperation(owner, operation, original, new AbortController().signal).data.handle).toBe(lease.data.handle);
+  expect(() => store.prepareOperation(owner, { ...operation, pluginOperation: { ...operation.pluginOperation, serverId: "foreign" } }, original, new AbortController().signal)).toThrow();
+  vi.setSystemTime(Date.now() + 61_000);
+  expect(store.claimOperation(lease.data, owner, new AbortController().signal)).toBeUndefined();
+  await expect(store.renew(lease.data, owner, original)).rejects.toThrow();
+});
+it("binds and cancels an App preflight without consuming another principal's handle", async () => {
+  const store = registry(); const original = await token();
+  const operation = { projectId: "project", requestId: scope.requestId, pluginOperation: {
+    workspaceId: "workspace", instanceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", generation: 1,
+    hostId: "host", serverId: "server", invocationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", bindingHash: "f".repeat(64),
+  } };
+  const lease = store.prepareOperation(owner, operation, original, new AbortController().signal); leases.push(lease);
+  expect(() => store.cancelOperation(lease.data, { ...owner, subject: "foreign" })).toThrow();
+  const abort = new AbortController(); const claim = store.claimOperation(lease.data, owner, abort.signal)!;
+  expect(await claim.getAuthorization()).toBe(`Bearer ${original}`);
+  expect(store.claimOperation(lease.data, owner, abort.signal)).toBeUndefined();
+  abort.abort(); await expect(claim.getAuthorization()).rejects.toThrow();
+});
