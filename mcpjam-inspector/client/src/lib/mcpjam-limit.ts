@@ -80,6 +80,12 @@ type MCPJamLimitErrorInput = {
   surface?: MCPJamLimitSurface;
   /** A button the user pressed to see the dialog; see `MCPJamLimitNotifyInput`. */
   userInitiated?: boolean;
+  /**
+   * The caller shows a declined card itself (chat's Card declined banner), so
+   * the dialog, which does not name the card, stays shut for one. Elsewhere
+   * the dialog is the only billing prompt and still opens.
+   */
+  showsDeclinedCard?: boolean;
 };
 
 const getStringProperty = (value: unknown, key: string): string | undefined => {
@@ -302,8 +308,11 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
     useFrontierSignInDialogStore.getState().open();
     return true;
   }
-  // A declined card names its own fix where it is shown; this dialog would not.
-  if (!isMCPJamModelLimitError(args) || isDeclinedCardLimit(args)) return false;
+  if (
+    !isMCPJamModelLimitError(args) ||
+    (args.showsDeclinedCard && isDeclinedCardLimit(args))
+  )
+    return false;
   const period = findMCPJamLimitPeriod(args.message);
   const shortfall = findMCPJamCreditShortfall(args);
   useMCPJamLimitDialogStore.getState().notifyLimitHit({
@@ -510,6 +519,7 @@ export function describeMCPJamLimitMessage(
 export async function notifyMCPJamLimitErrorFromResponse(
   response: Response,
   surface?: MCPJamLimitSurface,
+  options: Pick<MCPJamLimitErrorInput, "showsDeclinedCard"> = {},
 ): Promise<boolean> {
   let details: unknown;
   let message: string | null = null;
@@ -543,5 +553,6 @@ export async function notifyMCPJamLimitErrorFromResponse(
         ? limitKind
         : undefined,
     ...(surface ? { surface } : {}),
+    ...options,
   });
 }

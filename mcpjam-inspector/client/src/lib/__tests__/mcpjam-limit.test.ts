@@ -351,7 +351,7 @@ describe("isMCPJamModelLimitError", () => {
     await expect(response.text()).resolves.toContain("mcpjam_rate_limit");
   });
 
-  it("opens no credits dialog for a declined card, which names its own fix", async () => {
+  it("leaves a declined card to a caller that shows it, and opens the dialog elsewhere", async () => {
     useMCPJamLimitDialogStore.setState({
       authStatus: "signedIn",
       hasPendingLimit: false,
@@ -366,15 +366,28 @@ describe("isMCPJamModelLimitError", () => {
       error:
         "Your card was declined, so auto-reload is paused and this organization is out of MCPJam credits.",
     };
+    const respond = () =>
+      new Response(JSON.stringify(declined), { status: 429 });
 
+    // Chat shows its Card declined banner instead.
     await expect(
-      notifyMCPJamLimitErrorFromResponse(
-        new Response(JSON.stringify(declined), { status: 429 }),
-      ),
+      notifyMCPJamLimitErrorFromResponse(respond(), undefined, {
+        showsDeclinedCard: true,
+      }),
     ).resolves.toBe(false);
-    // A stored row keeps only the sentence.
-    expect(notifyMCPJamLimitError({ message: declined.error })).toBe(false);
+    expect(
+      notifyMCPJamLimitError({
+        message: declined.error,
+        showsDeclinedCard: true,
+      }),
+    ).toBe(false);
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+
+    // Evals and the agent panel have no such UI: the dialog is their prompt.
+    await expect(notifyMCPJamLimitErrorFromResponse(respond())).resolves.toBe(
+      true,
+    );
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
   });
 
   it("forwards limitKind from response payload so concurrency is suppressed", async () => {

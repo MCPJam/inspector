@@ -3558,6 +3558,7 @@ export function useChatSession(
         await notifyMCPJamLimitErrorFromResponse(
           response,
           hostedScenarioId ? "scenario" : undefined,
+          { showsDeclinedCard: true },
         );
         if (isHostedTransport) {
           await ingestHostedRpcLogsFromResponse(response);
@@ -3607,6 +3608,7 @@ export function useChatSession(
         message: chatError.message,
         limitKind,
         ...(hostedScenarioId ? { surface: "scenario" as const } : {}),
+        showsDeclinedCard: true,
       });
       if (hostedProjectId) {
         void askStdioCommandApprovalForChatError(
