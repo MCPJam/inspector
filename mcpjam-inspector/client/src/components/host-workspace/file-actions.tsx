@@ -142,13 +142,21 @@ function useFileOpen(
   const [failed, setFailed] = useState(false);
   const request = useRef<AbortController | null>(null);
   const binding = JSON.stringify([reference?.serverId, reference?.resourceUri]);
+  const live = useRef({ actions, reference });
+  live.current = { actions, reference };
+  const isCurrent = () =>
+    live.current.actions?.api === actions?.api &&
+    live.current.actions?.workspaceId === actions?.workspaceId &&
+    live.current.reference?.serverId === reference?.serverId &&
+    live.current.reference?.resourceUri === reference?.resourceUri &&
+    usableActions(live.current.actions, live.current.reference);
   useEffect(() => {
     setMenu({ state: "closed" });
     setFailed(false);
     return () => request.current?.abort();
   }, [binding, actions?.api]);
   const open = async (entry: ThreadAppDeclaration) => {
-    if (!usableActions(actions, reference)) return;
+    if (!usableActions(actions, reference) || !isCurrent()) return;
     setMenu({ state: "closed" });
     setFailed(false);
     try {
@@ -158,7 +166,7 @@ function useFileOpen(
     }
   };
   const activate = async () => {
-    if (!usableActions(actions, reference)) return;
+    if (!usableActions(actions, reference) || !isCurrent()) return;
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
@@ -170,7 +178,7 @@ function useFileOpen(
         reference.resourceUri,
         controller.signal,
       );
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || !isCurrent()) return;
       if (entries.length === 1) {
         await open(entries[0]);
         return;
@@ -185,7 +193,7 @@ function useFileOpen(
         });
       setMenu({ state: "ready", entries });
     } catch {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || !isCurrent()) return;
       setMenu({ state: "error" });
       logExtensionEvent({
         serverId: reference.serverId,
@@ -290,11 +298,33 @@ export function FileLink({
 /** Reference metadata requests discovery; only the server may grant file access. */
 export function FileOpenWith({
   reference,
+  fileActions,
+  autoOpenKey,
+  onAutoOpenStart,
 }: {
   reference?: FileResourceReference | null;
+  fileActions?: WorkspaceFileActions | null;
+  autoOpenKey?: string;
+  onAutoOpenStart?: () => void;
 }) {
-  const actions = useContext(FileActionsContext);
+  const contextualActions = useContext(FileActionsContext);
+  const actions = fileActions === undefined ? contextualActions : fileActions;
   const file = useFileOpen(actions, reference);
+  const started = useRef<string | null>(null);
+  useEffect(() => {
+    if (!autoOpenKey || started.current === autoOpenKey ||
+        !usableActions(actions, reference)) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      started.current = autoOpenKey;
+      onAutoOpenStart?.();
+      void file.activate();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [autoOpenKey, actions, reference, file.activate, onAutoOpenStart]);
   if (!usableActions(actions, reference)) return null;
   return (
     <span onClick={(event) => event.stopPropagation()}>
