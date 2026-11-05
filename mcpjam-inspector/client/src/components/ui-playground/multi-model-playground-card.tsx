@@ -398,6 +398,11 @@ export function MultiModelPlaygroundCard({
     useState<Record<string, ToolRenderOverride>>({});
   const lastBroadcastRequestIdRef = useRef<number | null>(null);
   const lastExecutionRequestIdRef = useRef<number | null>(null);
+  // Read when a restore fails, after the props it closed over may have moved.
+  const broadcastRequestIdRef = useRef(broadcastRequest?.id);
+  broadcastRequestIdRef.current = broadcastRequest?.id;
+  const executionRequestIdRef = useRef(deterministicExecutionRequest?.id);
+  executionRequestIdRef.current = deterministicExecutionRequest?.id;
   const onSummaryChangeRef = useRef(onSummaryChange);
   const onHasMessagesChangeRef = useRef(onHasMessagesChange);
   const lastAddColumnVersionRef = useRef(0);
@@ -703,6 +708,12 @@ export function MultiModelPlaygroundCard({
       })
       .catch(() => {
         if (cancelled) return;
+        // The turns that arrived while restoring are dropped with the alert;
+        // the next one starts this column fresh.
+        lastBroadcastRequestIdRef.current =
+          broadcastRequestIdRef.current ?? null;
+        lastExecutionRequestIdRef.current =
+          executionRequestIdRef.current ?? null;
         setRecoveryStatus("failed");
         recordChatAuthRecoveryFailure("comparison_restore_failed", {
           chatSessionId: recoveryColumn.chatSessionId,
@@ -935,7 +946,7 @@ export function MultiModelPlaygroundCard({
   }, [modelContextQueue]);
 
   useEffect(() => {
-    if (recoveryStatus !== "ready") return;
+    if (recoveryStatus === "loading") return;
     if (!isSessionBootstrapComplete) return;
 
     if (!broadcastRequest) {
@@ -948,6 +959,8 @@ export function MultiModelPlaygroundCard({
 
     lastBroadcastRequestIdRef.current = broadcastRequest.id;
     if (broadcastRequest.id === restoredBroadcastId) return;
+    // A column whose restore failed runs the next turn as a fresh column.
+    if (recoveryStatus === "failed") setRecoveryStatus("ready");
 
     if (broadcastRequest.prependMessages.length > 0) {
       setMessages((previous) => [
@@ -978,7 +991,7 @@ export function MultiModelPlaygroundCard({
   ]);
 
   useEffect(() => {
-    if (recoveryStatus !== "ready" || !deterministicExecutionRequest) {
+    if (recoveryStatus === "loading" || !deterministicExecutionRequest) {
       return;
     }
 
@@ -990,6 +1003,7 @@ export function MultiModelPlaygroundCard({
 
     lastExecutionRequestIdRef.current = deterministicExecutionRequest.id;
     if (deterministicExecutionRequest.id === restoredExecutionRequestId) return;
+    if (recoveryStatus === "failed") setRecoveryStatus("ready");
 
     const deterministicOptions =
       deterministicExecutionRequest.state === "output-error"
