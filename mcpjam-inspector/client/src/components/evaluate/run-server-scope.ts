@@ -17,38 +17,49 @@ export interface RunServerScopeEntry {
   /** `null`: the run recorded no group, or groups are hidden. */
   group: RunServerGroup | null;
   servers: string[];
-  /** Clients that used this group; filled only when the launch used several. */
+  /** Clients that used this entry; filled only when the launch has several. */
   clients: string[];
 }
 
 type ScopeRun = Pick<EvalSuiteRun, "configSnapshot">;
 
+/**
+ * One entry per group a launch used. A target with no group to show (none
+ * recorded, or groups hidden) groups by its server set instead, so a launch
+ * whose targets ran against different servers still says which client used
+ * which, even without a name to give them.
+ */
 export function runServerScope<T extends ScopeRun>(
   targets: readonly T[],
   /** `undefined` while the group list loads: no group may read as deleted. */
   groupNamesById: ReadonlyMap<string, string> | undefined,
   options: { showGroups: boolean; clientLabel: (run: T) => string | null },
 ): RunServerScopeEntry[] {
-  const byGroup = new Map<
-    string | null,
-    { servers: string[]; clients: string[] }
+  const entries = new Map<
+    string,
+    { groupId: string | null; servers: string[]; clients: string[] }
   >();
   for (const run of targets) {
+    const servers = run.configSnapshot?.environment?.servers ?? [];
     const groupId = options.showGroups
       ? run.configSnapshot?.environmentServerAttachmentId ?? null
       : null;
-    const entry = byGroup.get(groupId) ?? { servers: [], clients: [] };
-    byGroup.set(groupId, entry);
-    for (const server of run.configSnapshot?.environment?.servers ?? []) {
+    const key =
+      groupId !== null
+        ? `group:${groupId}`
+        : `servers:${JSON.stringify([...new Set(servers)].sort())}`;
+    const entry = entries.get(key) ?? { groupId, servers: [], clients: [] };
+    entries.set(key, entry);
+    for (const server of servers) {
       if (!entry.servers.includes(server)) entry.servers.push(server);
     }
     const client = options.clientLabel(run);
     if (client && !entry.clients.includes(client)) entry.clients.push(client);
   }
 
-  const mixed = byGroup.size > 1;
-  return [...byGroup].map(([id, { servers, clients }]) => ({
-    group: id === null ? null : resolveGroup(id, groupNamesById),
+  const mixed = entries.size > 1;
+  return [...entries.values()].map(({ groupId, servers, clients }) => ({
+    group: groupId === null ? null : resolveGroup(groupId, groupNamesById),
     servers,
     clients: mixed ? clients : [],
   }));

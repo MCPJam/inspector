@@ -86,7 +86,7 @@ describe("runServerScope", () => {
     ).toEqual({ id: "g-uat", pending: true });
   });
 
-  it("drops groups when they are hidden, keeping the servers", () => {
+  it("hides group names but still says which client used which servers", () => {
     expect(
       runServerScope(
         [
@@ -97,8 +97,44 @@ describe("runServerScope", () => {
         { ...options, showGroups: false },
       ),
     ).toEqual([
-      { group: null, servers: ["CTRL UAT", "CTRL SimNext"], clients: [] },
+      { group: null, servers: ["CTRL UAT"], clients: ["Claude"] },
+      { group: null, servers: ["CTRL SimNext"], clients: ["Codex"] },
     ]);
+  });
+
+  it("merges hidden groups that connected the same servers", () => {
+    expect(
+      runServerScope(
+        [
+          run("Claude", ["A", "B"], "g-uat"),
+          run("Codex", ["B", "A"], "g-all"),
+        ],
+        groups,
+        { ...options, showGroups: false },
+      ),
+    ).toEqual([{ group: null, servers: ["A", "B"], clients: [] }]);
+  });
+
+  it("splits targets without a group by the servers they ran against", () => {
+    const entries = runServerScope(
+      [run("Claude", ["DMS DEV"]), run("Codex", ["DMS QA"])],
+      groups,
+      options,
+    );
+    expect(entries.map((e) => [e.group, e.servers, e.clients])).toEqual([
+      [null, ["DMS DEV"], ["Claude"]],
+      [null, ["DMS QA"], ["Codex"]],
+    ]);
+  });
+
+  it("lists a server once, in first-seen order", () => {
+    expect(
+      runServerScope(
+        [run("Claude", ["B", "A", "B"], "g-uat"), run("Codex", ["A", "C"], "g-uat")],
+        groups,
+        options,
+      )[0].servers,
+    ).toEqual(["B", "A", "C"]);
   });
 
   it("returns nothing for no targets", () => {
