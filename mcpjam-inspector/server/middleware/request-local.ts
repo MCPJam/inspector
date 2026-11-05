@@ -15,6 +15,8 @@ import type { Context } from "hono";
  * stays immediate.
  */
 export interface RequestLocalMap {
+  /** Server-owned same-identity resolver for an active long-running turn. */
+  turnAuthorizationBearer: () => Promise<string>;
   workosApiKeyValidation: unknown;
   /**
    * Memoized result of the org-binding lookup for an `sk_…` key. Like the

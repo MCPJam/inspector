@@ -1,3 +1,4 @@
+import type { TurnAuthorization } from "../services/turn-authorization.js";
 import { HOSTED_MODE } from "../config.js";
 import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { buildLocalScopeStepUpResume, buildLocalScopeStepUpCancellation, readProtectedResourceUrl } from "../services/chat-turn/local-interactions.js";
@@ -571,6 +572,7 @@ export interface WebChatTurnPrepareInputs {
 
 /** Runtime knobs (auth, abort, rpc collector, Hono context for cleanup). */
 export interface WebChatTurnRuntime {
+  turnAuthorization?: TurnAuthorization;
   localScopeStepUp?: {
     bindingKey: string;
     resumeRequest?: ScopeStepUpResumeRequest;
@@ -1595,6 +1597,7 @@ export async function streamChatTurn(
     // suspended inserts its answer here, and the saved history must carry it.
     const directHistory = scrubMessages(modelMessages);
     return streamDirectChatWithLiveTrace({
+      turnAuthorization: runtime.turnAuthorization,
       llmModel: provider.model,
       provider: prepare.modelDefinition.provider,
       maxSteps: runtime.maxSteps ?? DEFAULT_TURN_MAX_STEPS,
@@ -1743,6 +1746,7 @@ export async function streamChatTurn(
         );
       }
       return handleLocalOrgChatModel({
+        turnAuthorization: runtime.turnAuthorization,
         maxSteps: orgMaxSteps,
         provider: orgRuntime.provider,
         admission: orgRuntime.admission,
@@ -1797,6 +1801,7 @@ export async function streamChatTurn(
     }
 
     return handleHostedOrgChatModel({
+      turnAuthorization: runtime.turnAuthorization,
       maxSteps: orgMaxSteps,
       projectId: persist.projectId,
       failureReporter,
@@ -1947,6 +1952,7 @@ export async function streamChatTurn(
     requireNativeToolDiscovery: persist.requireNativeToolDiscovery,
     harnessHostCapabilities: prepare.harnessHostCapabilities,
     harnessStartupRequestId: prepare.harnessStartupRequestId,
+    turnAuthorization: runtime.turnAuthorization,
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     // The browser sent this history (MJ-008): its unresolved calls run only
     // under a verified approval.

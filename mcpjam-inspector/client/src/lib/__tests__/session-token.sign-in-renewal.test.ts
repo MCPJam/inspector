@@ -152,7 +152,7 @@ describe("authFetch — expired sign-in on plugin App routes", () => {
 });
 
 
-it.each(["/api/web/chat-persistence", "/api/mcp/chat-persistence"])("renews only the completed save request on %s", async (url) => {
+it.each(["/api/web/chat-persistence", "/api/mcp/chat-persistence", "/api/mcp/turn-authorization"])("renews only the completed save request on %s", async (url) => {
   resetSessionRevokedForTests();
   vi.mocked(getApiAuthorizationHeader).mockResolvedValue("Bearer expired-cached");
   vi.mocked(renewSessionBearer).mockResolvedValue("current-token");

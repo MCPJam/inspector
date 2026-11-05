@@ -1,3 +1,4 @@
+import turnAuthorization from "../web/turn-authorization.js";
 import chatPersistence from "../web/chat-persistence.js";
 import { Hono } from "hono";
 import connect from "./connect";
@@ -51,6 +52,7 @@ mcp.get("/health", (c) => {
 // Chat v2 endpoint
 mcp.route("/chat-v2", chatV2);
 mcp.route("/chat-persistence", chatPersistence);
+mcp.route("/turn-authorization", turnAuthorization);
 
 // Local computer engine — consent capability (grant/verify/revoke)
 mcp.route("/computers", computers);

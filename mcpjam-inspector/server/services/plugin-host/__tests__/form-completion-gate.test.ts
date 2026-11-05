@@ -195,10 +195,11 @@ describe("modern MRTR gate", () => {
       getInitializationInfo: () => ({ protocolVersion: "2026-07-28" }),
       getServerConfig: () => ({ url: "https://disposable.invalid" }),
     }) as never;
-  const service = (current = manager()) =>
+  const service = (current = manager(), getAuthorization?: () => Promise<string>) =>
     createOwnedPluginMrtr({
       c: {} as never,
       bearer: "disposable",
+      getAuthorization,
       projectId: "project",
       serverId: "server",
       sourceBinding: { hostId: "host", hostRevision: "host-revision" },
@@ -285,6 +286,20 @@ describe("modern MRTR gate", () => {
     await expect(resume(2)).resolves.toEqual({
       content: [{ type: "text", text: "done" }],
     });
+  });
+
+  it("resolves authorization for the new continuation leg and refuses before dispatch when revoked", async () => {
+    bindRound(2, "size");
+    answer(2, "size", { action: "accept", content: { size: "M5" } });
+    const getAuthorization = vi.fn(async () => "renewed-token");
+    await expect(service(manager(), getAuthorization).resume(authorization, "operation", { name: "tool" },
+      { continuationId: "continuation", round: 2, responsesBlobId: "r2" }, new AbortController().signal)).resolves.toMatchObject({ content: [{ text: "done" }] });
+    expect(seams.resume.mock.calls[0][0].bearer).toBe("renewed-token");
+    seams.resume.mockClear();
+    getAuthorization.mockRejectedValueOnce(new Error("Authorization revoked"));
+    await expect(service(manager(), getAuthorization).resume(authorization, "operation", { name: "tool" },
+      { continuationId: "continuation", round: 2, responsesBlobId: "r2" }, new AbortController().signal)).rejects.toThrow("Authorization revoked");
+    expect(seams.resume).not.toHaveBeenCalled();
   });
 
   it("refuses an accept that does not satisfy the schema before the wire", async () => {

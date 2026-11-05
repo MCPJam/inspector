@@ -1,3 +1,4 @@
+import { createTurnAuthorizationRenewal } from "@/lib/turn-authorization-renewal";
 import { createPersistReceiptRecovery } from "@/lib/persist-receipt-recovery";
 import { appToolInvocationEvent, appToolInvocations } from "@/shared/app-tool-rendezvous";
 import { fulfillHarnessAppTool } from "@/components/playground/fulfill-harness-app-tool";
@@ -2595,6 +2596,11 @@ export function useChatSession(
   );
 
   const harnessStartupRequestRef = useRef<string | null>(null);
+  const [turnAuthorizationRenewal] = useState(() => createTurnAuthorizationRenewal(() => ({
+    chatSessionId: chatSessionIdRef.current,
+    requestId: harnessStartupRequestRef.current,
+  })));
+  useEffect(() => () => turnAuthorizationRenewal.stop(), [turnAuthorizationRenewal]);
   const [harnessStartupPhase, setHarnessStartupPhase] = useState<HarnessStartupPhase | null>(null);
 
   // Mid-session sign-in: show the Connect card for a `data-auth-required`
@@ -2724,6 +2730,7 @@ export function useChatSession(
   const paidFallbackNotices = useRef(new Set<string>());
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
+      if (turnAuthorizationRenewal.accept(part)) return;
       const appToolEvent = appToolInvocationEvent(part);
       if (appToolEvent) {
         void fulfillHarnessAppTool(appToolEvent, {
@@ -3803,6 +3810,7 @@ export function useChatSession(
 
   const handleChatError = useCallback(
     (chatError: Error) => {
+      turnAuthorizationRenewal.stop();
       harnessStartupRequestRef.current = null;
       setHarnessStartupPhase(null);
       // Every chat failure used to end here and go no further: this handler
@@ -4128,6 +4136,7 @@ export function useChatSession(
         // to request approval for, or defers one nothing will ever ask about
         // — and that second one stalls the turn.
         turnRequireToolApprovalRef.current = requireToolApprovalRef.current;
+        turnAuthorizationRenewal.stop();
         harnessStartupRequestRef.current = crypto.randomUUID();
         setHarnessStartupPhase(null);
         const taskOwnerScope = getOwnedTaskScope();
@@ -4413,13 +4422,14 @@ export function useChatSession(
     experimental_throttle: 50,
     transport: proxyTransport,
     onData: handleStreamDataPart,
-    onError: handleChatError,
+    onError: (error) => { turnAuthorizationRenewal.stop(); handleChatError(error); },
     // Records whether the turn was aborted, for `consumeTurnAborted`. Runs in
     // the SDK's `finally` — after `setStatus({ status: "ready" })` but before
     // React renders that status — so a post-stream effect reading it on the
     // ready transition sees the final request's answer. Client-tool continuations
     // can start before that effect; receipts advance the cursor in onData.
     onFinish: ({ isAbort, message, finishReason }) => {
+      turnAuthorizationRenewal.stop();
       turnAbortedRef.current = isAbort;
       lastFinishRef.current = {
         chatSessionId: chatSessionIdRef.current,
@@ -6806,7 +6816,8 @@ export function useChatSession(
    * a suspended operation's stream always ends while its round is pending.)
    */
   const stopChat = useCallback(() => {
-    harnessStartupRequestRef.current = null;
+    turnAuthorizationRenewal.stop();
+      harnessStartupRequestRef.current = null;
     setHarnessStartupPhase(null);
     savedClientSendGuard.cancel();
     sendPreparationGuard.cancel();
@@ -6837,12 +6848,14 @@ export function useChatSession(
   useEffect(() => {
     if (status !== "submitted" && status !== "streaming") {
       setHarnessStartupPhase(null);
+      turnAuthorizationRenewal.stop();
       harnessStartupRequestRef.current = null;
     }
   }, [status]);
   useEffect(() => {
     setHarnessStartupPhase(null);
-    harnessStartupRequestRef.current = null;
+    turnAuthorizationRenewal.stop();
+      harnessStartupRequestRef.current = null;
   }, [chatSessionId]);
 
   return {

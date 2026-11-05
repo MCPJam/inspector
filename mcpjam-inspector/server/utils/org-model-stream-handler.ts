@@ -1,3 +1,4 @@
+import type { TurnAuthorization } from "../services/turn-authorization.js";
 import { streamDirectChatWithLiveTrace } from "../services/chat-turn/direct-stream.js";
 import { buildLocalExecutionRecord, type LocalExecutionAttempt } from "./local-execution-record.js";
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
@@ -90,6 +91,7 @@ import type { MrtrEngineResume } from "./mrtr-hosted-chat.js";
 import type { SettleSuspendedToolCall } from "./direct-chat-scope-step-up.js";
 
 export interface OrgModelHandlerOptions {
+  turnAuthorization?: TurnAuthorization;
   projectId: string;
   providerKey: string;
   /** Progressive discovery — forwarded into handleMCPJamFreeChatModel. */
@@ -304,6 +306,7 @@ export function formatLocalStreamError(error: unknown): string {
 // ---------------------------------------------------------------------------
 
 export interface OrgLocalModelHandlerOptions {
+  turnAuthorization?: TurnAuthorization;
   /** The resolved local provider config (from /stream/org/resolve). */
   provider: OrgProviderResolvedConfig;
   /**
@@ -667,6 +670,7 @@ export function handleLocalOrgChatModel(
 
   let streamErrored = false;
   return streamDirectChatWithLiveTrace({
+    turnAuthorization: options.turnAuthorization,
     llmModel,
     modelId,
     messageHistory: messages,
@@ -926,6 +930,7 @@ export async function handleHostedOrgChatModel(
   }
 
   return handleMCPJamFreeChatModel({
+    turnAuthorization: options.turnAuthorization,
     messages: options.messages,
     modelId: options.modelId,
     modelSelection: options.modelSelection,

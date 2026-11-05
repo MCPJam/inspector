@@ -195,10 +195,13 @@ export async function assertPluginInstanceBindingCurrent(input: {
   signal: AbortSignal;
 }) {
   const { admission, bearer, instance, signal } = input;
+  const currentBearer = admission.getAuthorization
+    ? await admission.getAuthorization()
+    : bearer;
   const current = await readPluginExecutionContext({
     projectId: admission.projectId,
     expectedActorId: admission.actorId,
-    bearer,
+    bearer: currentBearer,
     serverIds: [instance.owner.serverId],
     hostId: instance.hostId,
     signal,
@@ -241,6 +244,7 @@ export function createPluginRequestRuntime(
     extension?: keyof PluginExtensionCapabilities;
   } = {},
 ) {
+  const currentBearer = () => admission.getAuthorization?.() ?? Promise.resolve(bearer);
   const governing =
     options.extension ?? (expected ? pluginInstanceExtension(expected) : undefined);
   type Lease = PooledPluginConnection<
@@ -318,11 +322,11 @@ export function createPluginRequestRuntime(
       serverBindings,
       serverNamesById,
     } = await read(() =>
-      timedPluginStep("backend-admission-read", () =>
+      timedPluginStep("backend-admission-read", async () =>
         readPluginExecutionContext({
           projectId: admission.projectId,
           expectedActorId: admission.actorId,
-          bearer,
+          bearer: await currentBearer(),
           serverIds: [binding.serverId],
           hostId: binding.hostId,
           signal,
@@ -390,7 +394,7 @@ export function createPluginRequestRuntime(
       const fresh = await readPluginExecutionContext({
         projectId: admission.projectId,
         expectedActorId: admission.actorId,
-        bearer,
+        bearer: await currentBearer(),
         serverIds: [binding.serverId],
         hostId: binding.hostId,
         signal,
@@ -462,6 +466,7 @@ export function createPluginRequestRuntime(
         (legacyForms || (modernForms && options.inlineMrtr))
           ? createOwnedPluginLegacyForms({
               bearer,
+              getAuthorization: currentBearer,
               projectId: admission.projectId,
               workspaceId: expected.owner.workspaceId,
               hostId: binding.hostId,
@@ -579,6 +584,7 @@ export function createPluginRequestRuntime(
           ? createOwnedPluginMrtr({
               c,
               bearer,
+              getAuthorization: currentBearer,
               projectId: admission.projectId,
               serverId: binding.serverId,
               serverName: () => admittedServerName,
@@ -900,11 +906,11 @@ export function createPluginRequestRuntime(
     signal.throwIfAborted();
     if (disposed) throw new PluginInvocationError("INSTANCE_REQUEST_CLOSED");
     const { hostConfig, serverBindings } = await read(() =>
-      timedPluginStep("backend-admission-read", () =>
+      timedPluginStep("backend-admission-read", async () =>
         readPluginExecutionContext({
           projectId: admission.projectId,
           expectedActorId: admission.actorId,
-          bearer,
+          bearer: await currentBearer(),
           serverIds: [binding.serverId],
           hostId: binding.hostId,
           signal,
@@ -1152,7 +1158,7 @@ export function createPluginRequestRuntime(
         pluginFormFileGrants.closeOperation(authorization.owner, invocationId);
       return result;
     },
-    resumeMrtr: (
+    resumeMrtr: async (
       authorization: ResolvedInvocationContext,
       invocationId: string,
       params: PluginToolCallParams,
@@ -1165,7 +1171,7 @@ export function createPluginRequestRuntime(
         // no form service, and the pending form ends as cancelled.
         if (expected && mrtrWire && !formsEnabled())
           return endPluginMrtrFormsDisabled({
-            bearer,
+            bearer: await currentBearer(),
             owner: authorization.owner,
             invocationId,
             continuationId: submission.continuationId,

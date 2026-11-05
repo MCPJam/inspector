@@ -13,6 +13,8 @@ import { HOSTED_MRTR_DATA_PART_TYPE } from "@/shared/mrtr-continuation";
 
 const mockState = vi.hoisted(() => ({
   chatOnData: null as ((part: unknown) => void) | null,
+  chatBody: null as (() => Record<string, unknown>) | null,
+  chatOnFinish: null as ((data: { isAbort: boolean; message: { id: string }; finishReason: string }) => void) | null,
   chatStatus: "ready" as string,
   messages: [] as unknown[],
   convexMutation: vi.fn(async () => ({ ok: true })),
@@ -190,8 +192,9 @@ vi.mock("convex/react", async () =>
 }));
 
 vi.mock("@ai-sdk/react", () => ({
-  useChat: vi.fn((options: { onData?: (part: unknown) => void }) => {
+  useChat: vi.fn((options: { onData?: (part: unknown) => void; onFinish?: typeof mockState.chatOnFinish }) => {
     mockState.chatOnData = options.onData ?? null;
+    mockState.chatOnFinish = options.onFinish ?? null;
     return {
       messages: mockState.messages,
       sendMessage: mockState.sendMessage,
@@ -206,7 +209,7 @@ vi.mock("@ai-sdk/react", () => ({
 
 vi.mock("ai", () => ({
   DefaultChatTransport: class MockTransport {
-    constructor(_options: unknown) {}
+    constructor(options: { body?: () => Record<string, unknown> }) { mockState.chatBody = options.body ?? null; }
   },
   generateId: vi.fn(() => nextSessionId()),
   lastAssistantMessageIsCompleteWithApprovalResponses: vi.fn(),
@@ -434,4 +437,32 @@ it("recovers only persistence from a failed receipt, deduplicates chunks and pre
   act(() => mockState.chatOnData?.({ ...part, data: { ...part.data, chatSessionId: "foreign" } }));
   expect(vi.mocked(authFetch)).toHaveBeenCalledOnce();
   rendered.unmount();
+});
+
+
+it.each(["finish", "unmount"])("owns renewal by actual request generation and stops on %s", async (end) => {
+  const rendered = renderHook(() => useChatSession({ selectedServers: [], hostedContext: { projectId: "project" } }));
+  await waitFor(() => expect(rendered.result.current.isSessionBootstrapComplete).toBe(true));
+  let body: Record<string, unknown> | undefined;
+  act(() => { body = mockState.chatBody?.(); });
+  expect(body?.harnessStartupRequestId).toEqual(expect.any(String));
+  vi.mocked(authFetch).mockReset().mockResolvedValue(Response.json({ renewed: true, tokenExpiresAt: Date.now() + 300_000 }));
+  vi.useFakeTimers();
+  const event = { type: "data-turn-authorization", data: {
+    handle: "f56e90a1-dc58-443e-85b0-14677744b9b4", projectId: "project",
+    chatSessionId: rendered.result.current.chatSessionId, turnId: "turn", requestId: body?.harnessStartupRequestId,
+    expiresAt: Date.now() + 120_000, tokenExpiresAt: Date.now() + 300_000,
+  } };
+  try {
+    await act(async () => { mockState.chatOnData?.(event); mockState.chatOnData?.(event); await Promise.resolve(); });
+    expect(authFetch).toHaveBeenCalledOnce();
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
+    const signal = vi.mocked(authFetch).mock.calls[0]?.[1]?.signal;
+    if (end === "finish") act(() => mockState.chatOnFinish?.({ isAbort: false, message: { id: "reply" }, finishReason: "stop" }));
+    else rendered.unmount();
+    expect(signal?.aborted).toBe(true);
+    act(() => mockState.chatOnData?.(event));
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(authFetch).toHaveBeenCalledOnce();
+  } finally { if (end !== "unmount") rendered.unmount(); vi.useRealTimers(); }
 });

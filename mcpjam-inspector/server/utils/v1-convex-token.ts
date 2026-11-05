@@ -1,3 +1,4 @@
+import { getRequestLocal } from "../middleware/request-local.js";
 import { HOSTED_MODE } from "../config.js";
 /**
  * Convex bearer resolution for the public /api/v1 surface.
@@ -236,6 +237,8 @@ export function getDelegatedOrganizationId(c: Context): string | undefined {
  * TTL (hours) comfortably covers a capped eval run.
  */
 export async function getConvexBearerForRequest(c: Context): Promise<string> {
+  const activeTurn = getRequestLocal(c, "turnAuthorizationBearer");
+  if (activeTurn) return activeTurn();
   // Both non-JWT auth methods need a minted token. Dispatching on
   // `authMethod` rather than on the presence of the delegation context vars
   // is deliberate: a JWT caller can carry those vars too, and minting for
