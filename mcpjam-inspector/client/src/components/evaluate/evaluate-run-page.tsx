@@ -51,6 +51,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
+import { useEvaluateNavEnabled } from "./nav/use-evaluate-nav-enabled";
+import { SuiteRunNavHeader } from "./suite-pages/suite-run-header";
+import { useEvalNavPageViewed } from "./suite-pages/eval-nav-link";
+import { suiteRunLabel } from "./suite-pages/suite-run-test-runs";
 
 /** Hidden until we are ready to expose report export on this page. */
 const SHOW_EXPORT_REPORT = false;
@@ -160,6 +164,60 @@ export function EvaluateRunPage({
     useState<EvaluateRunPageHeaderActions | null>(null);
   const [, setHeaderVerdict] = useState<HeaderVerdict | null>(null);
   const canCompare = otherRuns.length >= 1;
+  const navEnabled = useEvaluateNavEnabled() === true;
+  useEvalNavPageViewed("suite-run", navEnabled);
+  const runTitle = targets[0].runNumber
+    ? `Run #${targets[0].runNumber}`
+    : `Run ${formatRunId(targets[0]._id)}`;
+  const compareButton = (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      disabled={!canCompare}
+      title={canCompare ? "Compare two runs" : "Need at least two runs"}
+      onClick={() =>
+        onOpenComparison ? onOpenComparison() : setComparing(true)
+      }
+      data-testid="evaluate-run-compare-open"
+    >
+      <TrendingUp className="size-3.5" aria-hidden />
+      Compare runs
+    </Button>
+  );
+  const primaryButton = canCancel ? (
+    // The primary slot, not a button beside it: while the run is going,
+    // stopping it is the only action of that weight — and "Run again" next to
+    // a run that is still going reads as an invitation to launch a second one.
+    <Button
+      type="button"
+      variant="secondary"
+      size="sm"
+      data-testid="evaluate-run-page-cancel"
+      aria-label="Cancel run"
+      disabled={cancellingRunId !== null}
+      onClick={() => onCancelRun!(cancellableIds)}
+    >
+      {isCancelling ? (
+        <Loader2 className="size-3.5 animate-spin" aria-hidden />
+      ) : (
+        <Square className="size-3.5" aria-hidden />
+      )}
+      Cancel run
+    </Button>
+  ) : launchReview ? (
+    <Button
+      type="button"
+      variant="default"
+      size="sm"
+      disabled={Boolean(launchReview.disabledReason)}
+      title={launchReview.disabledReason ?? undefined}
+      onClick={() => setReviewing(true)}
+    >
+      <Play className="size-3.5" aria-hidden />
+      Run again
+    </Button>
+  ) : null;
 
   return (
     <HeaderActionsContext.Provider value={setHeaderActions}>
@@ -168,130 +226,97 @@ export function EvaluateRunPage({
           className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
           data-testid="evaluate-run-page"
         >
-          <header
-            className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 px-5 py-4"
-            data-testid="evaluate-run-header"
-          >
-            <div className="flex min-w-0 flex-col gap-1.5">
-              <div className="flex min-w-0 items-center gap-3">
-                <h2 className="min-w-0 truncate text-2xl font-bold leading-8 tracking-tight text-foreground">
-                  {targets[0].runNumber
-                    ? `Run #${targets[0].runNumber}`
-                    : `Run ${formatRunId(targets[0]._id)}`}
-                  {suiteName ? ` of ${suiteName}` : ""}
-                </h2>
-                <RunPairingDecisions
-                  targets={targets}
-                  hostNamesById={hostNamesById}
-                  iterations={iterations}
-                />
+          {navEnabled ? (
+            <SuiteRunNavHeader
+              title={`Suite ${runTitle}`}
+              runLabel={suiteRunLabel(targets[0])}
+              suiteId={run.suiteId}
+              suiteName={suiteName}
+              scope={scope}
+              canEditSuite={Boolean(launchReview?.onEditSettings)}
+              actions={
+                <>
+                  {compareButton}
+                  {primaryButton}
+                </>
+              }
+            />
+          ) : (
+            <header
+              className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 px-5 py-4"
+              data-testid="evaluate-run-header"
+            >
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <div className="flex min-w-0 items-center gap-3">
+                  <h2 className="min-w-0 truncate text-2xl font-bold leading-8 tracking-tight text-foreground">
+                    {runTitle}
+                    {suiteName ? ` of ${suiteName}` : ""}
+                  </h2>
+                  <RunPairingDecisions
+                    targets={targets}
+                    hostNamesById={hostNamesById}
+                    iterations={iterations}
+                  />
+                </div>
+                {scope ? (
+                  <p
+                    className="text-[12.5px] text-muted-foreground"
+                    data-testid="evaluate-run-scope"
+                  >
+                    {scope}
+                  </p>
+                ) : null}
               </div>
-              {scope ? (
-                <p
-                  className="text-[12.5px] text-muted-foreground"
-                  data-testid="evaluate-run-scope"
-                >
-                  {scope}
-                </p>
-              ) : null}
-            </div>
-            <div className="flex min-w-0 flex-wrap items-center gap-1">
-              {SHOW_EXPORT_REPORT && onExport && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={onExport}
-                >
-                  <Download className="size-3.5" aria-hidden />
-                  Export report
-                </Button>
-              )}
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={!canCompare}
-                title={
-                  canCompare ? "Compare two runs" : "Need at least two runs"
-                }
-                onClick={() =>
-                  onOpenComparison ? onOpenComparison() : setComparing(true)
-                }
-                data-testid="evaluate-run-compare-open"
-              >
-                <TrendingUp className="size-3.5" aria-hidden />
-                Compare runs
-              </Button>
-              {canCancel ? (
-                // The primary slot, not a button beside it: while the run is
-                // going, stopping it is the only action of that weight — and
-                // "Run again" next to a run that is still going reads as an
-                // invitation to launch a second one.
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  data-testid="evaluate-run-page-cancel"
-                  aria-label="Cancel run"
-                  disabled={cancellingRunId !== null}
-                  onClick={() => onCancelRun!(cancellableIds)}
-                >
-                  {isCancelling ? (
-                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                  ) : (
-                    <Square className="size-3.5" aria-hidden />
-                  )}
-                  Cancel run
-                </Button>
-              ) : launchReview ? (
-                <Button
-                  type="button"
-                  variant="default"
-                  size="sm"
-                  disabled={Boolean(launchReview.disabledReason)}
-                  title={launchReview.disabledReason ?? undefined}
-                  onClick={() => setReviewing(true)}
-                >
-                  <Play className="size-3.5" aria-hidden />
-                  Run again
-                </Button>
-              ) : null}
-              {(headerActions?.onImprove ||
-                headerActions?.onOpenFailingTrace) && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="size-8"
-                      aria-label="Run actions"
-                    >
-                      <MoreHorizontal className="size-4" aria-hidden />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    {headerActions.onImprove && (
-                      <DropdownMenuItem
-                        onSelect={headerActions.onImprove}
-                        data-testid="run-verdict-improve"
+              <div className="flex min-w-0 flex-wrap items-center gap-1">
+                {SHOW_EXPORT_REPORT && onExport && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={onExport}
+                  >
+                    <Download className="size-3.5" aria-hidden />
+                    Export report
+                  </Button>
+                )}
+                {compareButton}
+                {primaryButton}
+                {(headerActions?.onImprove ||
+                  headerActions?.onOpenFailingTrace) && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        aria-label="Run actions"
                       >
-                        <Copy aria-hidden /> Prompt to improve
-                      </DropdownMenuItem>
-                    )}
-                    {headerActions.onOpenFailingTrace && (
-                      <DropdownMenuItem
-                        onSelect={headerActions.onOpenFailingTrace}
-                        data-testid="run-verdict-open-trace"
-                      >
-                        <ArrowUpRight aria-hidden /> Open failing trace
-                      </DropdownMenuItem>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-            </div>
-          </header>
+                        <MoreHorizontal className="size-4" aria-hidden />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      {headerActions.onImprove && (
+                        <DropdownMenuItem
+                          onSelect={headerActions.onImprove}
+                          data-testid="run-verdict-improve"
+                        >
+                          <Copy aria-hidden /> Prompt to improve
+                        </DropdownMenuItem>
+                      )}
+                      {headerActions.onOpenFailingTrace && (
+                        <DropdownMenuItem
+                          onSelect={headerActions.onOpenFailingTrace}
+                          data-testid="run-verdict-open-trace"
+                        >
+                          <ArrowUpRight aria-hidden /> Open failing trace
+                        </DropdownMenuItem>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+              </div>
+            </header>
+          )}
 
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-card">
             {comparing ? (

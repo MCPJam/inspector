@@ -58,6 +58,9 @@ import { CombinedRunContent } from "./combined-run-content";
 import { launchRuns } from "./run-results-matrix-model";
 import { useRunErrorBreakdownToast } from "./run-error-breakdown";
 import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
+import { useEvaluateNavEnabled } from "./nav/use-evaluate-nav-enabled";
+import { SuiteRunTestRuns } from "./suite-pages/suite-run-test-runs";
+import { SuiteRunComparisonLine } from "./suite-pages/suite-run-model-filter";
 
 export function EvaluateRunContent(
   props: Parameters<typeof SingleRunContent>[0],
@@ -370,6 +373,7 @@ export function SingleRunContent({
     [onOpenIteration, iterations],
   );
 
+  const navEnabled = useEvaluateNavEnabled() === true;
   const inRunPageHeader = useEvaluateRunPageHeaderActions(
     canOpenFailingTrace || improvePrompt
       ? {
@@ -435,30 +439,42 @@ export function SingleRunContent({
           {describeRunChanges(changeSummary).join(" · ") ||
             "no case changed state"}
         </p>
+      ) : navEnabled ? (
+        <SuiteRunComparisonLine baseRunNumber={previousLaunch[0]?.runNumber} />
       ) : null}
 
       <div className="border-t border-border/40">
-        <RunResultsMatrix
-          onEditCase={onEditCase}
-          onEditEvaluator={onEditEvaluator}
-          key={run._id}
-          run={run}
-          suiteName={suiteName}
-          runs={siblingRuns}
-          diagnostics={detail.diagnostics}
-          chains={chains.chains}
-          iterations={
-            allIterations
-              ? [
-                  ...allIterations.filter(
-                    (item) => item.suiteRunId !== run._id,
-                  ),
-                  ...iterations,
-                ]
-              : iterations
-          }
-          hostNamesById={hostNamesById}
-        />
+        {navEnabled ? (
+          <SuiteRunTestRuns
+            run={run}
+            runs={siblingRuns}
+            iterations={iterations}
+            hostNamesById={hostNamesById}
+            canEdit={Boolean(onEditCase)}
+          />
+        ) : (
+          <RunResultsMatrix
+            onEditCase={onEditCase}
+            onEditEvaluator={onEditEvaluator}
+            key={run._id}
+            run={run}
+            suiteName={suiteName}
+            runs={siblingRuns}
+            diagnostics={detail.diagnostics}
+            chains={chains.chains}
+            iterations={
+              allIterations
+                ? [
+                    ...allIterations.filter(
+                      (item) => item.suiteRunId !== run._id,
+                    ),
+                    ...iterations,
+                  ]
+                : iterations
+            }
+            hostNamesById={hostNamesById}
+          />
+        )}
       </div>
 
       {descriptionExperimentEnabled && descriptionExperiment.experiment ? (

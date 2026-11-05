@@ -13,8 +13,20 @@
  * decision against a threshold nobody here has seen.
  */
 import { useEffect, useRef, useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { ArrowUpRight, ChevronRight, Pencil, Search } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
 import { cn } from "@/lib/utils";
+import {
+  EvalListFilter,
+  ALL_EVAL_FILTER_VALUES,
+} from "../evals/eval-list-filter";
+import { runHistoryFilterClass } from "../evals/run-history-table";
+import {
+  cellResult,
+  resultCounts,
+  type RunResultsMatrixData,
+} from "./run-results-matrix-model";
 
 import {
   USER_VALUE_STAGES,
@@ -437,5 +449,250 @@ export function RunCaseRows({
         );
       })}
     </div>
+  );
+}
+
+type TestRunRow = RunResultsMatrixData["rows"][number];
+type TestRunTarget = RunResultsMatrixData["targets"][number];
+type TestRunOutcome = NonNullable<ReturnType<typeof cellResult>>;
+
+const OUTCOME_WORD: Record<TestRunOutcome, string> = {
+  passed: "Pass",
+  failed: "Fail",
+  pending: "Running",
+  cancelled: "Cancelled",
+};
+
+const OUTCOME_TONE: Record<TestRunOutcome, string> = {
+  passed: "text-success",
+  failed: "text-destructive",
+  pending: "text-pending",
+  cancelled: "text-muted-foreground",
+};
+
+const STATUS_FILTER_LABEL: Record<TestRunOutcome, string> = {
+  failed: "Failed",
+  passed: "Passed",
+  pending: "Running",
+  cancelled: "Cancelled",
+};
+
+/** A column heading: the model, plus the client when the run used several. */
+export function testRunTargetLabel(
+  target: TestRunTarget,
+  targets: readonly TestRunTarget[],
+): string {
+  const clients = new Set(targets.map((candidate) => candidate.client));
+  return clients.size > 1 ? `${target.client} · ${target.model}` : target.model;
+}
+
+function TestRunCell({ items }: { items: TestRunTarget["iterations"] }) {
+  const result = cellResult(items);
+  if (!result) {
+    return <span className="text-[12.5px] text-muted-foreground">—</span>;
+  }
+  const counts = resultCounts(items);
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[12.5px] tabular-nums">
+      <span
+        aria-hidden="true"
+        className={cn(
+          "size-1.5 shrink-0 rounded-full bg-current",
+          OUTCOME_TONE[result],
+        )}
+      />
+      <span className={cn("font-semibold", OUTCOME_TONE[result])}>
+        {OUTCOME_WORD[result]}
+      </span>
+      <span
+        className="text-muted-foreground"
+        aria-label={`${counts.passed} of ${items.length} iterations passed`}
+      >
+        {counts.passed}/{items.length}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * The Suite run page's Test runs list: one row per case, one column per
+ * client and model, each row opening its Test run page.
+ *
+ * The same rows the expandable list above reads, drawn as links instead of
+ * drawers: a test run is a page with its own address now, so the row only
+ * says how it went and where to go.
+ */
+export function RunTestRunRows({
+  data,
+  onOpen,
+  onEdit,
+}: {
+  data: RunResultsMatrixData;
+  onOpen: (row: TestRunRow & { testCaseId: string }) => void;
+  /** Absent when the reader cannot edit the suite's cases. */
+  onEdit?: (row: TestRunRow & { testCaseId: string }) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState(ALL_EVAL_FILTER_VALUES);
+  const query = search.trim().toLowerCase();
+  const rowOutcomes = (row: TestRunRow) =>
+    data.targets.map((target) => cellResult(target.cells.get(row.key) ?? []));
+  const statusOptions = (
+    ["failed", "passed", "pending", "cancelled"] as const
+  ).filter((value) =>
+    data.rows.some((row) => rowOutcomes(row).includes(value)),
+  );
+  const activeStatus = (statusOptions as readonly string[]).includes(status)
+    ? status
+    : ALL_EVAL_FILTER_VALUES;
+  const rows = data.rows.filter(
+    (row) =>
+      row.title.toLowerCase().includes(query) &&
+      (activeStatus === ALL_EVAL_FILTER_VALUES ||
+        rowOutcomes(row).includes(activeStatus as TestRunOutcome)),
+  );
+  const columns = `minmax(12rem,1fr) repeat(${data.targets.length}, minmax(7.5rem,10rem)) 4.75rem`;
+
+  return (
+    <section
+      className="space-y-3 px-5 py-5"
+      aria-labelledby="run-test-runs-heading"
+      data-testid="run-test-runs"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <h3
+          id="run-test-runs-heading"
+          className="flex items-baseline gap-2 text-[15px] font-semibold text-foreground"
+        >
+          Test runs
+          <span className="text-[12.5px] font-normal tabular-nums text-muted-foreground">
+            {data.rows.length}
+          </span>
+        </h3>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-56 max-w-full">
+            <Search
+              aria-hidden
+              className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              className={cn(
+                runHistoryFilterClass,
+                "w-full max-w-none pl-8 md:text-[11px] dark:bg-card",
+              )}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Find a test run…"
+              aria-label="Find a test run"
+            />
+          </div>
+          <EvalListFilter
+            label="Status"
+            className="w-32"
+            value={activeStatus}
+            options={[...statusOptions]}
+            formatOption={(value) =>
+              STATUS_FILTER_LABEL[value as TestRunOutcome] ?? value
+            }
+            onChange={setStatus}
+          />
+        </div>
+      </div>
+      <div className="overflow-x-auto rounded-lg border border-border/60 bg-card">
+        <div role="table" aria-label="Test runs" className="min-w-max">
+          <div
+            role="row"
+            className="grid items-center gap-3 border-b border-border/60 bg-muted/40 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+            style={{ gridTemplateColumns: columns }}
+          >
+            <span role="columnheader">Test run</span>
+            {data.targets.map((target) => (
+              <span
+                role="columnheader"
+                key={target.key}
+                className="truncate normal-case tracking-normal"
+              >
+                {testRunTargetLabel(target, data.targets)}
+              </span>
+            ))}
+            <span role="columnheader" className="sr-only">
+              Actions
+            </span>
+          </div>
+          {rows.length === 0 ? (
+            <p className="px-4 py-6 text-[13px] text-muted-foreground">
+              {data.rows.length === 0
+                ? "This run has no test runs yet."
+                : "No test runs match these filters."}
+            </p>
+          ) : (
+            rows.map((row) => {
+              const linked = row.testCaseId
+                ? { ...row, testCaseId: row.testCaseId }
+                : null;
+              return (
+                <div
+                  role="row"
+                  key={row.key}
+                  data-testid={`run-test-run-row-${row.key}`}
+                  className={cn(
+                    "grid items-center gap-3 border-b border-border/40 px-4 py-2.5 last:border-b-0",
+                    linked && "cursor-pointer hover:bg-muted/50",
+                  )}
+                  style={{ gridTemplateColumns: columns }}
+                  onClick={linked ? () => onOpen(linked) : undefined}
+                >
+                  <span
+                    role="cell"
+                    className="truncate text-[14px] text-foreground"
+                  >
+                    {row.title}
+                  </span>
+                  {data.targets.map((target) => (
+                    <span role="cell" key={target.key}>
+                      <TestRunCell items={target.cells.get(row.key) ?? []} />
+                    </span>
+                  ))}
+                  <span
+                    role="cell"
+                    className="flex justify-end gap-1"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    {linked ? (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="size-7"
+                          aria-label={`Open test run: ${row.title}`}
+                          title="Open test run"
+                          onClick={() => onOpen(linked)}
+                        >
+                          <ArrowUpRight className="size-3.5" aria-hidden />
+                        </Button>
+                        {onEdit ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="size-7"
+                            aria-label={`Edit test case: ${row.title}`}
+                            title="Edit test case"
+                            onClick={() => onEdit(linked)}
+                          >
+                            <Pencil className="size-3.5" aria-hidden />
+                          </Button>
+                        ) : null}
+                      </>
+                    ) : null}
+                  </span>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </section>
   );
 }

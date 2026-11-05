@@ -47,6 +47,12 @@ import { UnifiedFindingsSection } from "./unified-findings-section";
 import { useRunErrorBreakdownToast } from "./run-error-breakdown";
 import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
 import type { SingleRunContent } from "./evaluate-run-content";
+import { useEvaluateNavEnabled } from "./nav/use-evaluate-nav-enabled";
+import {
+  SuiteRunComparisonLine,
+  SuiteRunModelFilter,
+} from "./suite-pages/suite-run-model-filter";
+import { SuiteRunTestRuns } from "./suite-pages/suite-run-test-runs";
 
 type MemberReport = {
   pending: boolean;
@@ -76,6 +82,7 @@ export function CombinedRunContent({
   onEditEvaluator,
   onOpenIteration,
 }: Parameters<typeof SingleRunContent>[0] & { runs: EvalSuiteRunListItem[] }) {
+  const navEnabled = useEvaluateNavEnabled() === true;
   const [findingsRunId, setFindingsRunId] = useState(routeRun._id);
   const history = useProjectRunHistory(
     projectId ?? "",
@@ -291,13 +298,34 @@ export function CombinedRunContent({
         </div>
       ) : (
         <>
+          {navEnabled ? (
+            <SuiteRunModelFilter
+              targets={matrix.targets}
+              selectedKey={
+                isFiltered && targets.length === 1 ? targets[0].key : null
+              }
+              onSelect={(target) => {
+                setClient(target?.client ?? ALL_EVAL_FILTER_VALUES);
+                setModel(target?.targetKey ?? ALL_EVAL_FILTER_VALUES);
+              }}
+            />
+          ) : null}
           <RunVerdictHero
             view={view}
             headerVerdict={fullVerdict}
             explanation={null}
           />
+          {navEnabled ? (
+            <SuiteRunComparisonLine
+              baseRunNumber={previousLaunch?.[0]?.runNumber}
+            />
+          ) : null}
           {findingsRun ? (
-            <div data-testid="combined-run-findings">
+            <div
+              data-testid="combined-run-findings"
+              // The page's gutter; today's page leaves this block flush.
+              className={navEnabled ? "px-5" : undefined}
+            >
               <SelectedRunFindings
                 scopeControl={
                   <Select
@@ -333,22 +361,39 @@ export function CombinedRunContent({
             </div>
           ) : null}
           <div className="border-t border-border/40">
-            <RunResultsMatrix
-              onEditCase={onEditCase}
-              onEditEvaluator={onEditEvaluator}
-              run={selectedRuns[0]}
-              suiteName={suiteName}
-              runs={selectedRuns}
-              iterations={selectedIterations}
-              hostNamesById={hostNamesById}
-              diagnostics={diagnostics}
-              chains={chains}
-              modelIds={model === ALL_EVAL_FILTER_VALUES ? undefined : [model]}
-              toolbarExtra={<PairingFilters {...pairingFilterProps} />}
-              extraFiltersActive={isFiltered}
-              onClearExtraFilters={clearPairingFilters}
-              onFilterChange={setMatrixFilters}
-            />
+            {navEnabled ? (
+              <SuiteRunTestRuns
+                run={routeRun}
+                runs={hydratedRuns}
+                iterations={iterations}
+                hostNamesById={hostNamesById}
+                targetKeys={
+                  isFiltered
+                    ? new Set(targets.map((target) => target.key))
+                    : undefined
+                }
+                canEdit={Boolean(onEditCase)}
+              />
+            ) : (
+              <RunResultsMatrix
+                onEditCase={onEditCase}
+                onEditEvaluator={onEditEvaluator}
+                run={selectedRuns[0]}
+                suiteName={suiteName}
+                runs={selectedRuns}
+                iterations={selectedIterations}
+                hostNamesById={hostNamesById}
+                diagnostics={diagnostics}
+                chains={chains}
+                modelIds={
+                  model === ALL_EVAL_FILTER_VALUES ? undefined : [model]
+                }
+                toolbarExtra={<PairingFilters {...pairingFilterProps} />}
+                extraFiltersActive={isFiltered}
+                onClearExtraFilters={clearPairingFilters}
+                onFilterChange={setMatrixFilters}
+              />
+            )}
           </div>
         </>
       )}

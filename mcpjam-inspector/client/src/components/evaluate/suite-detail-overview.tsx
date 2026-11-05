@@ -96,6 +96,13 @@ import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
 import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
 import { CI_OWNED_REASON_COPY } from "@/lib/evals/is-ci-owned-suite";
 import { targetKeyLabel } from "@/lib/eval-target-key";
+import {
+  SuitePageNavButtons,
+  SuitePageNoRuns,
+  SuitePagePills,
+  SuitePageRunButton,
+  useSuitePageNav,
+} from "./suite-pages/suite-page-header";
 
 export const SUITE_EMPTY_CASES_TITLE = "No cases yet";
 export const SUITE_EMPTY_CASES_DESCRIPTION =
@@ -265,6 +272,8 @@ export function SuiteDetailOverview({
     listedRuns,
   );
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
+  // The page-per-layer Suite page: results only, editing in Suite settings.
+  const { navEnabled, openRun } = useSuitePageNav(suite._id);
   const [clientFilter, setClientFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [modelFilter, setModelFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [showAllRuns, setShowAllRuns] = useState(false);
@@ -456,6 +465,13 @@ export function SuiteDetailOverview({
     evalRunsDisabledReason,
   });
   const runDisabled = Boolean(runBlockedReason);
+  const navRunButton = navEnabled ? (
+    <SuitePageRunButton
+      disabled={runDisabled}
+      busy={isRerunning}
+      onClick={() => setReviewRun(true)}
+    />
+  ) : null;
   const hasCases = cases.length > 0;
   const canDeleteCases = Boolean(
     onDeleteTestCasesBatch && !readOnlyConfig && !configLocked,
@@ -722,10 +738,13 @@ export function SuiteDetailOverview({
         className="flex min-w-0 flex-wrap items-start justify-between gap-3"
         data-testid="suite-detail-identity"
       >
-        <div className="min-w-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
           <h2 className="truncate text-xl font-semibold tracking-tight text-foreground">
             {suite.name}
           </h2>
+          {navEnabled ? (
+            <SuitePagePills row={historyRows[0]} />
+          ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {importedDrafts.length && !reviewingImport ? (
@@ -747,7 +766,14 @@ export function SuiteDetailOverview({
                 : `Review ${importedDrafts.length} draft cases`}
             </Button>
           ) : null}
-          {onSetupSdk && (
+          {navEnabled ? (
+            <SuitePageNavButtons
+              suiteId={suite._id}
+              onExportSdk={onSetupSdk}
+              canEditSuite={!readOnlyConfig && !configLocked}
+            />
+          ) : null}
+          {onSetupSdk && !navEnabled && (
             <Button
               type="button"
               variant="outline"
@@ -768,7 +794,7 @@ export function SuiteDetailOverview({
             >
               {CI_OWNED_REASON_COPY}
             </span>
-          ) : !readOnlyConfig ? (
+          ) : !readOnlyConfig && !navEnabled ? (
             <Button
               type="button"
               variant="outline"
@@ -795,7 +821,7 @@ export function SuiteDetailOverview({
           {runDisabled && runBlockedReason ? (
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className="inline-flex">{runButton}</span>
+                <span className="inline-flex">{navRunButton ?? runButton}</span>
               </TooltipTrigger>
               <TooltipContent
                 variant="muted"
@@ -806,7 +832,7 @@ export function SuiteDetailOverview({
               </TooltipContent>
             </Tooltip>
           ) : (
-            runButton
+            (navRunButton ?? runButton)
           )}
         </div>
       </div>
@@ -913,7 +939,11 @@ export function SuiteDetailOverview({
                               }
                             : undefined
                         }
-                        onOpen={() => onRunClick(representative._id)}
+                        onOpen={() =>
+                          (navEnabled ? openRun : onRunClick)(
+                            representative._id,
+                          )
+                        }
                       />
                     );
                   })}
@@ -948,7 +978,15 @@ export function SuiteDetailOverview({
         </section>
       ) : null}
 
-      {showEmptyCasesHero ? (
+      {navEnabled ? (
+        showRunHistory ? null : (
+          <SuitePageNoRuns
+            suiteId={suite._id}
+            hasCases={hasCases}
+            canEditSuite={!readOnlyConfig && !configLocked}
+          />
+        )
+      ) : showEmptyCasesHero ? (
         <SuiteEmptyCasesHero
           readOnly={readOnlyConfig || configLocked}
           onDescribe={onDescribeCases ?? onEditCases}
