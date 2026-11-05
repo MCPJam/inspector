@@ -8,10 +8,12 @@ import {
   type ProtocolVersionPin,
 } from "@/hooks/use-conformance-run";
 import {
+  LOG_LEVEL_ADVICE,
   probeInputStatus,
   PROBE_KEYS,
   probeKeyFor,
   probesApply,
+  protocolProbesFor,
   tasksProbeRuns,
   taskProbePartIsSelected,
   type ConformanceProbes,
@@ -65,23 +67,35 @@ export function ConformanceChecksEditor({
       ),
     [probes, probeTools.tools],
   );
+  // The advice's own log tool counts only while the logging check is picked.
+  const usedProbes = protocolProbesFor(probes, selection.protocol);
+  const overrideFor = (checkId: string) =>
+    isTasksToolCheck(checkId)
+      ? usedProbes.tasksOverrides?.[checkId]
+      : checkId === LOG_LEVEL_ADVICE
+        ? usedProbes.logLevelOverride
+        : undefined;
   const inputStatusFor = (checkId: string) => {
-    if (isTasksToolCheck(checkId) && probes.tasksOverrides?.[checkId]) {
-      const probe = probes.tasksOverrides[checkId];
+    const override = overrideFor(checkId);
+    if (override) {
       const tool = probeTools.tools.find(
-        (item) => item.name === probe.toolName,
+        (item) => item.name === override.toolName,
       );
       return probeValid[checkId] === false ||
         (tool?.inputSchema !== undefined &&
-          acceptsToolArguments(tool.inputSchema, probe.arguments ?? {}) ===
+          acceptsToolArguments(tool.inputSchema, override.arguments ?? {}) ===
             false)
         ? "missing"
-        : probeInputStatus(checkId, probes);
+        : probeInputStatus(checkId, usedProbes);
     }
     const key = probeKeyFor(checkId);
-    return key && (invalidProbeArguments.has(key) || probeValid[key] === false)
+    // A row's own field can hold an unparsed draft while it still inherits.
+    return key &&
+      (invalidProbeArguments.has(key) ||
+        probeValid[key] === false ||
+        probeValid[checkId] === false)
       ? "missing"
-      : probeInputStatus(checkId, probes);
+      : probeInputStatus(checkId, usedProbes);
   };
   const valid = !Object.entries(probeValid).some(
     ([part, valid]) =>
@@ -116,6 +130,7 @@ export function ConformanceChecksEditor({
               suite === "tasks" && tasksProbe ? (
                 <TasksCheckOverride
                   checkId={checkId}
+                  checkTitle={checkTitle(checkId)}
                   picked={isPicked(checkId)}
                   tools={probeTools}
                   probes={probes}

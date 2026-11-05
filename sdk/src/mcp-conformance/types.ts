@@ -362,6 +362,18 @@ export interface MCPConformanceConfig {
     level?: MCPLogLevel;
   };
   /**
+   * Tool the `readiness-log-level-filtering` advice calls instead of
+   * {@link MCPConformanceConfig.logProbe}, with its own arguments and level.
+   * Same shape and the same opt-in rules. Absent ⇒ the advice uses `logProbe`.
+   * The `modern-logs-require-log-level` check never reads it.
+   */
+  logLevelFilteringProbe?: {
+    toolName: string;
+    arguments?: Record<string, unknown>;
+    /** See {@link MCPConformanceConfig.logProbe}'s `level`. */
+    level?: MCPLogLevel;
+  };
+  /**
    * Operator-supplied primitives that are SAFE TO EXECUTE, generalizing the
    * opt-in pattern {@link MCPConformanceConfig.inputRequiredProbe} and
    * {@link MCPConformanceConfig.logProbe} already use.
@@ -422,6 +434,12 @@ export interface NormalizedMCPConformanceConfig {
   };
   /** See {@link MCPConformanceConfig.logProbe}. */
   logProbe?: {
+    toolName: string;
+    arguments?: Record<string, unknown>;
+    level?: MCPLogLevel;
+  };
+  /** See {@link MCPConformanceConfig.logLevelFilteringProbe}. */
+  logLevelFilteringProbe?: {
     toolName: string;
     arguments?: Record<string, unknown>;
     level?: MCPLogLevel;

@@ -32,6 +32,8 @@ const conformanceLogProbeSchema = conformanceProbeSchema
 
 export const conformanceProbeFields = {
   logProbe: conformanceLogProbeSchema.optional(),
+  /** The log level filtering advice's own tool; absent ⇒ it uses `logProbe`. */
+  logLevelFilteringProbe: conformanceLogProbeSchema.optional(),
   inputRequiredProbe: conformanceProbeSchema.optional(),
   toolCallProbe: conformanceProbeSchema.optional(),
 };
@@ -52,7 +54,7 @@ export const conformanceInputResponsesSchema = z
 
 export type ConformanceProbes = Pick<
   MCPConformanceConfig,
-  "logProbe" | "inputRequiredProbe"
+  "logProbe" | "logLevelFilteringProbe" | "inputRequiredProbe"
 > & {
   toolCallProbe?: MCPConformanceConfig["inputRequiredProbe"];
 };

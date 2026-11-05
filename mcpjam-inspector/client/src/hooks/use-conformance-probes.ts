@@ -4,8 +4,8 @@
  *
  * Three 2026-07-28 checks can only observe something on a tool call: the
  * logging check needs a tool that emits logs (the log level filtering advice
- * calls the same tool, at the operator's log level, and has its own row), the
- * undeclared-capability check needs one that asks for input, and the
+ * calls the same tool, at the operator's log level, unless it has its own),
+ * the undeclared-capability check needs one that asks for input, and the
  * output-schema check needs one whose result it can grade. The SDK never picks
  * a tool on its own,
  * because nothing a server advertises says whether calling a tool charges a
@@ -16,11 +16,13 @@
  * without one those checks could not run either.
  *
  * Protocol defaults for saved servers live in Convex; their drafts stay in
- * session. Tasks defaults and overrides also persist in browser storage.
+ * session. Tasks defaults and overrides, and the advice's own log tool, also
+ * persist in browser storage.
  */
 import { useCallback, useRef, useState } from "react";
 import {
   CHECK_ERAS,
+  MCP_READINESS_IDS,
   MCP_TASKS_TOOL_CHECK_IDS,
   isTasksToolCheck,
   type MCPTasksCheckOverrides,
@@ -43,7 +45,7 @@ import type {
 export type { ConformanceProbe, ConformanceProbes };
 export type ConformanceProbeKey = Exclude<
   keyof ConformanceProbes,
-  "tasksOverrides"
+  "tasksOverrides" | "logLevelOverride"
 >;
 
 export const PROBE_KEYS = [
@@ -91,12 +93,37 @@ export const TASK_ANSWERS_CHECK =
 /** The advice that asks for a log level, so its row shows the level field. */
 export const LOG_LEVEL_ADVICE: MCPReadinessId = "readiness-log-level-filtering";
 
+/** The logging check whose tool the log level filtering advice inherits. */
+export const LOGS_CHECK: MCPCheckId = "modern-logs-require-log-level";
+
 function isAdvice(id: string): id is MCPReadinessId {
   return Object.hasOwn(READINESS_ERAS, id);
 }
 
 function erasOf(id: MCPCheckId | MCPReadinessId): readonly string[] {
   return isAdvice(id) ? READINESS_ERAS[id] : CHECK_ERAS[id];
+}
+
+/**
+ * Whether the advice's own log tool counts: only while the logging check is
+ * picked too. Alone, the advice row sets the shared log tool itself, so that
+ * is the one it calls. `protocolCheckIds` absent means every check.
+ */
+export function logLevelOverrideApplies(
+  protocolCheckIds?: readonly string[],
+): boolean {
+  return protocolCheckIds === undefined || protocolCheckIds.includes(LOGS_CHECK);
+}
+
+/** The probes as the picked protocol checks use them. */
+export function protocolProbesFor(
+  probes: ConformanceProbes,
+  protocolCheckIds?: readonly string[],
+): ConformanceProbes {
+  if (!probes.logLevelOverride || logLevelOverrideApplies(protocolCheckIds))
+    return probes;
+  const { logLevelOverride: _unused, ...rest } = probes;
+  return rest;
 }
 
 /** The probe a check calls, if it calls one. */
@@ -119,14 +146,24 @@ function probeRuns(
   checkIds?: readonly string[],
   readinessIds?: readonly string[],
 ): boolean {
+  return PROTOCOL_PROBE_CHECKS[key].some((id) =>
+    runsWithPin(id, pin, checkIds, readinessIds),
+  );
+}
+
+/** Whether one protocol check or advice runs with this pin and these picks. */
+function runsWithPin(
+  id: MCPCheckId | MCPReadinessId,
+  pin: ProtocolVersionPin,
+  checkIds?: readonly string[],
+  readinessIds?: readonly string[],
+): boolean {
   if (pin === "auto") return false;
-  const era = PROTOCOL_VERSION_ERAS[pin];
-  return PROTOCOL_PROBE_CHECKS[key].some((id) => {
-    const picked = isAdvice(id) ? readinessIds : checkIds;
-    return (
-      erasOf(id).includes(era) && (picked === undefined || picked.includes(id))
-    );
-  });
+  const picked = isAdvice(id) ? readinessIds : checkIds;
+  return (
+    erasOf(id).includes(PROTOCOL_VERSION_ERAS[pin]) &&
+    (picked === undefined || picked.includes(id))
+  );
 }
 
 /**
@@ -160,7 +197,9 @@ export function probeInputStatus(
   if (!key) return undefined;
   const probe = isTasksToolCheck(checkId)
     ? (probes.tasksOverrides?.[checkId] ?? probes.tasksProbe)
-    : probes[key];
+    : checkId === LOG_LEVEL_ADVICE
+      ? (probes.logLevelOverride ?? probes.logProbe)
+      : probes[key];
   return probe?.toolName ? "set" : "missing";
 }
 
@@ -175,7 +214,7 @@ export function probesForRun(
   pin: ProtocolVersionPin,
   readinessIds?: readonly string[],
 ): ConformanceProbes {
-  return Object.fromEntries(
+  const sent = Object.fromEntries(
     PROBE_KEYS.filter(
       (key) =>
         isProtocolProbe(key) &&
@@ -183,6 +222,13 @@ export function probesForRun(
         probeRuns(key, pin, checkIds, readinessIds),
     ).map((key) => [key, probes[key]]),
   ) as ConformanceProbes;
+  const override = protocolProbesFor(probes, checkIds).logLevelOverride;
+  if (
+    override?.toolName.trim() &&
+    runsWithPin(LOG_LEVEL_ADVICE, pin, checkIds, readinessIds)
+  )
+    sent.logLevelOverride = override;
+  return sent;
 }
 
 /**
@@ -196,7 +242,15 @@ export function protocolRunOptions(
   pin: ProtocolVersionPin,
 ) {
   const checkIds = picked?.protocol;
-  const readinessIds = picked?.protocolAdvice;
+  // An unfinished choice of the advice's own tool must not fall back to the
+  // shared one, so the advice sits this run out.
+  const override = protocolProbesFor(probes, checkIds).logLevelOverride;
+  const readinessIds =
+    override && !override.toolName.trim()
+      ? (picked?.protocolAdvice ?? MCP_READINESS_IDS).filter(
+          (id) => id !== LOG_LEVEL_ADVICE,
+        )
+      : picked?.protocolAdvice;
   const sent = probesForRun(probes, checkIds, pin, readinessIds);
   return {
     protocolVersion: pin === "auto" ? undefined : pin,
@@ -249,7 +303,8 @@ export function tasksRunOptions(
 
 /**
  * Keep the default for each probe whose checks ran and preserve every Tasks
- * override. Execution filters unselected overrides without deleting settings.
+ * override and the advice's own log tool. Execution filters unselected
+ * overrides without deleting settings.
  * `picked` holds each suite's picks; a list absent means all of it.
  */
 export function probesAfterRun(
@@ -269,6 +324,9 @@ export function probesAfterRun(
       }),
     ),
     ...(draft.tasksOverrides ? { tasksOverrides: draft.tasksOverrides } : {}),
+    ...(draft.logLevelOverride
+      ? { logLevelOverride: draft.logLevelOverride }
+      : {}),
   } as ConformanceProbes;
 }
 
@@ -327,6 +385,9 @@ export function readStoredProbes(serverName: string): ConformanceProbes {
         if (isTasksToolCheck(id) && isProbe(value, true))
           tasksOverrides[id] = withOwnExtras(value, "tasksProbe");
       }
+    const logLevelOverride = isProbe(parsed.logLevelOverride, true)
+      ? withOwnExtras(parsed.logLevelOverride, "logProbe")
+      : undefined;
     return {
       ...Object.fromEntries(
         (["tasksProbe"] as const).flatMap((key) => {
@@ -335,6 +396,7 @@ export function readStoredProbes(serverName: string): ConformanceProbes {
         }),
       ),
       ...(Object.keys(tasksOverrides).length ? { tasksOverrides } : {}),
+      ...(logLevelOverride ? { logLevelOverride } : {}),
     } as ConformanceProbes;
   } catch {
     // Unreadable storage or a corrupt entry: as if nothing was chosen.
@@ -347,7 +409,8 @@ function writeStoredProbes(serverName: string, probes: ConformanceProbes) {
     const key = STORAGE_PREFIX + serverName;
     if (
       PROBE_KEYS.every((name) => !probes[name]) &&
-      !Object.keys(probes.tasksOverrides ?? {}).length
+      !Object.keys(probes.tasksOverrides ?? {}).length &&
+      !probes.logLevelOverride
     ) {
       window.localStorage.removeItem(key);
     } else {
@@ -356,6 +419,7 @@ function writeStoredProbes(serverName: string, probes: ConformanceProbes) {
         JSON.stringify({
           tasksProbe: probes.tasksProbe,
           tasksOverrides: probes.tasksOverrides,
+          logLevelOverride: probes.logLevelOverride,
         }),
       );
     }

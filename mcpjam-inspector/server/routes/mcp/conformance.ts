@@ -172,6 +172,7 @@ conformance.post("/protocol", async (c) => {
       checkIds: parsed.data.checkIds,
       readinessIds: parsed.data.readinessIds,
       logProbe: parsed.data.logProbe,
+      logLevelFilteringProbe: parsed.data.logLevelFilteringProbe,
       inputRequiredProbe: parsed.data.inputRequiredProbe,
       toolCallProbe: parsed.data.toolCallProbe,
     });
