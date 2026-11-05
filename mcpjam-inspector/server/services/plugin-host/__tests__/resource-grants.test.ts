@@ -62,6 +62,32 @@ function setup(
 }
 
 describe("instance-owned resource grants", () => {
+  it("advertises runtime CAS availability on each read and rechecks before write", async () => {
+    const { adapter } = managedAdapter();
+    const supports = vi.fn(async () => false);
+    adapter.supportsConditionalWrite = supports;
+    const { service, uri } = setup(adapter);
+    expect((await service.read(owner, { uri })).contents[0]._meta["openai/resource"].writable).toBe(false);
+    supports.mockResolvedValue(true);
+    expect((await service.read(owner, { uri })).contents[0]._meta["openai/resource"].writable).toBe(true);
+    supports.mockResolvedValue(false);
+    await expect(service.write(owner, { uri, text: "new", ifMatch: "v1" }))
+      .rejects.toMatchObject({ code: "RESOURCE_WRITE_UNAVAILABLE" });
+    expect(adapter.conditionalWrite).not.toHaveBeenCalled();
+  });
+
+  it("keeps an authorized read available when the runtime CAS probe fails", async () => {
+    const { adapter } = managedAdapter();
+    adapter.supportsConditionalWrite = async () => { throw new Error("helper unavailable"); };
+    const { service, uri } = setup(adapter);
+    const read = await service.read(owner, { uri });
+    expect(read.contents[0]).toMatchObject({ text: "original" });
+    expect(read.contents[0]._meta["openai/resource"].writable).toBe(false);
+    await expect(service.write(owner, { uri, text: "new" }))
+      .rejects.toMatchObject({ code: "RESOURCE_WRITE_UNAVAILABLE" });
+    expect(adapter.conditionalWrite).not.toHaveBeenCalled();
+  });
+
   it("requires an owned read advertising writes and atomically conflicts simultaneous writes", async () => {
     const { adapter } = managedAdapter();
     const { service, uri } = setup(adapter);
