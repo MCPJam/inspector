@@ -28,6 +28,7 @@ import {
   PLATFORM_WIDGET_RESOURCE_URIS,
 } from "../src/shared/platform-widgets.js";
 import type { PlatformToolContext } from "../src/server.js";
+import type { GuestMintFailure } from "../src/guestMint.js";
 import type { SessionToolRegistrar } from "../src/tools/sessionToolRegistrar.js";
 
 type ToolResult = {
@@ -95,6 +96,7 @@ function jsonBodyOf(result: ToolResult): Record<string, unknown> {
 function fakeToolContext(
   overrides: {
     bearerToken?: string;
+    bearerFailure?: GuestMintFailure;
     platformApiUrl?: string;
     appOrigin?: string;
     callerUserAgent?: string;
@@ -104,7 +106,13 @@ function fakeToolContext(
   return {
     // runPlatformOperation resolves the bearer via getBearerToken() (async, so
     // anonymous requests can mint lazily). The stub just returns the override.
-    getBearerToken: async () => overrides.bearerToken,
+    getBearerToken: async () =>
+      overrides.bearerToken
+        ? { ok: true, token: overrides.bearerToken }
+        : {
+            ok: false,
+            failure: overrides.bearerFailure ?? { reason: "not_configured" },
+          },
     runtimeEnv: {
       PLATFORM_API_URL:
         overrides.platformApiUrl ?? "https://staging.example.com/api/v1",
@@ -866,15 +874,28 @@ describe("plugin read tools", () => {
 });
 
 describe("runPlatformOperation", () => {
-  it("returns a tool error when the request has no bearer token", async () => {
+  it("names the guest mint failure instead of a missing bearer", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
     const result = (await runPlatformOperation(
-      fakeToolContext(),
+      fakeToolContext({ bearerFailure: { reason: "rejected", status: 401 } }),
       listProjectsOperation,
       {}
     )) as ToolResult;
 
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain("bearer token");
+    expect(result.content[0]?.text).toContain(
+      "rejected this server's guest credentials"
+    );
+    expect(result.content[0]?.text).not.toContain("bearer token");
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: "GUEST_SESSION_UNAVAILABLE",
+        reason: "rejected",
+        status: 401,
+      },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("caps the model-visible text while keeping structuredContent complete", async () => {

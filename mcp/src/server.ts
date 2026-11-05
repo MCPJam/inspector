@@ -27,6 +27,7 @@ import {
 import { registerShowServersTool } from "./tools/showServers.js";
 import { DEFAULT_MCPJAM_APP_ORIGIN } from "@mcpjam/sdk/platform";
 import { GUEST_ISSUER } from "./auth.js";
+import { mintGuestToken, type GuestMintFailure } from "./guestMint.js";
 
 const SERVER_INFO = {
   name: "MCPJam MCP",
@@ -58,7 +59,7 @@ const SERVER_INSTRUCTIONS = [
  */
 export interface PlatformToolContext {
   /** The bearer to authenticate Platform API calls with (see `getBearerToken`). */
-  getBearerToken(): Promise<string | undefined>;
+  getBearerToken(): Promise<BearerResult>;
   runtimeEnv: { PLATFORM_API_URL: string; MCPJAM_APP_ORIGIN: string };
   /**
    * WHICH AGENT IS CALLING, as its inbound `user-agent` names it.
@@ -108,9 +109,14 @@ const UNKNOWN_CLIENT_IP = "unknown";
 // evicted client a re-mint.
 const GUEST_CACHE_MAX_ENTRIES = 1_000;
 
+/** A bearer to call the Platform API with, or why an anonymous one could not be minted. */
+export type BearerResult =
+  | { ok: true; token: string }
+  | { ok: false; failure: GuestMintFailure };
+
 type GuestCacheEntry = {
   minted?: { token: string; expiresAt: number };
-  inFlight?: Promise<string | undefined>;
+  inFlight?: Promise<BearerResult>;
 };
 
 /**
@@ -129,15 +135,15 @@ const guestTokenCache = new Map<string, GuestCacheEntry>();
  * is a guest token minted lazily on first tool execution (NOT at
  * connect/`tools/list` — listing tools needs no Platform API, so an anonymous
  * preflight must not create a guest session) and re-minted before it expires.
- * Concurrent callers on the same IP share one mint; a mint failure surfaces as
- * a tool error (the caller checks for `undefined`) and is retried next call.
+ * Concurrent callers on the same IP share one mint; a mint failure comes back
+ * with its reason, surfaces as a tool error, and is retried next call.
  */
 export async function getBearerToken(
   env: Env,
   verifiedToken: string | undefined,
   clientIp: string | undefined
-): Promise<string | undefined> {
-  if (verifiedToken) return verifiedToken;
+): Promise<BearerResult> {
+  if (verifiedToken) return { ok: true, token: verifiedToken };
 
   const key = clientIp ?? UNKNOWN_CLIENT_IP;
   let entry = guestTokenCache.get(key);
@@ -152,7 +158,7 @@ export async function getBearerToken(
 
   const cached = entry.minted;
   if (cached && cached.expiresAt - Date.now() > GUEST_TOKEN_REFRESH_SLACK_MS) {
-    return cached.token;
+    return { ok: true, token: cached.token };
   }
 
   // Absent or within the refresh window → (re)mint once, shared across
@@ -160,11 +166,14 @@ export async function getBearerToken(
   const pending = entry;
   if (!pending.inFlight) {
     pending.inFlight = mintGuestToken(env, clientIp)
-      .then((minted) => {
-        pending.minted = minted;
-        return minted?.token;
+      .then((result): BearerResult => {
+        if (!result.ok) {
+          pending.minted = undefined;
+          return result;
+        }
+        pending.minted = { token: result.token, expiresAt: result.expiresAt };
+        return { ok: true, token: result.token };
       })
-      .catch(() => undefined)
       .finally(() => {
         pending.inFlight = undefined; // allow refresh/retry next call
       });
@@ -327,59 +336,4 @@ function resolveAppOrigin(env: Env): string {
   } catch {
     return DEFAULT_MCPJAM_APP_ORIGIN;
   }
-}
-
-/**
- * Mint a fresh guest token via the inspector's service-token-gated route
- * (`MCPJAM_GUEST_MINT_URL`). The route mints through the same Convex authority
- * that publishes the guest JWKS the worker verifies against, so the token is
- * accepted on the way back in. The client IP is forwarded in a custom header
- * (cf-connecting-ip would be overwritten by Cloudflare on the worker→inspector
- * hop) so the route can rate-limit per client. Returns the token and its
- * expiry (ms epoch) so the cache can refresh before it lapses; returns
- * undefined on any failure (the caller turns that into a tool error).
- */
-async function mintGuestToken(
-  env: Env,
-  clientIp: string | undefined
-): Promise<{ token: string; expiresAt: number } | undefined> {
-  const url = env.MCPJAM_GUEST_MINT_URL;
-  const serviceToken = env.MCPJAM_INSPECTOR_SERVICE_TOKEN;
-  if (!url || !serviceToken) return undefined;
-  try {
-    const headers: Record<string, string> = {
-      "content-type": "application/json",
-      "x-inspector-service-token": serviceToken,
-    };
-    if (clientIp) headers["x-mcpjam-client-ip"] = clientIp;
-    const response = await fetch(url, {
-      method: "POST",
-      headers,
-      body: "{}",
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) return undefined;
-    const data = (await response.json()) as {
-      token?: unknown;
-      expiresAt?: unknown;
-    };
-    if (typeof data.token !== "string") return undefined;
-    return { token: data.token, expiresAt: normalizeExpiry(data.expiresAt) };
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Normalize a mint `expiresAt` to ms epoch. The mint contract is ms (matches
- * `issueGuestToken`), but tolerate a seconds value defensively. A missing or
- * non-positive value falls back to a short TTL so the next call re-mints
- * rather than caching a never-expiring token forever.
- */
-function normalizeExpiry(raw: unknown): number {
-  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
-    return Date.now() + GUEST_TOKEN_REFRESH_SLACK_MS;
-  }
-  // Seconds-epoch timestamps are < 1e12; ms-epoch are ~1.7e12 today.
-  return raw < 1e12 ? raw * 1000 : raw;
 }

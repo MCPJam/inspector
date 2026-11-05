@@ -201,6 +201,10 @@ import {
 import type { PlatformToolContext } from "../server.js";
 import type { SessionToolRegistrar } from "./sessionToolRegistrar.js";
 import { isClosedWorldOperation } from "./closedWorldOperations.js";
+import {
+  describeGuestMintFailure,
+  guestMintErrorContent,
+} from "../guestMint.js";
 
 /**
  * Catalog tools HELD off this surface while their feature is in beta.
@@ -1117,10 +1121,14 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   // Resolve the bearer: the verified token for an authed session, or a
   // lazily-minted guest token for an anonymous one. Minting happens here (on
   // first tool execution), never at connect/list_tools.
-  const token = await context.getBearerToken();
-  if (!token) {
-    return toolError("No bearer token on the request.");
+  const bearer = await context.getBearerToken();
+  if (!bearer.ok) {
+    return toolError(
+      describeGuestMintFailure(bearer.failure),
+      guestMintErrorContent(bearer.failure)
+    );
   }
+  const token = bearer.token;
 
   const client = new PlatformApiClient({
     baseUrl: context.runtimeEnv.PLATFORM_API_URL,
