@@ -8,7 +8,7 @@ import type { PluginContextLimits } from "../../../shared/plugin-model-context.j
 import { randomBytes, randomUUID } from "node:crypto";
 import { PLUGIN_MODEL_APP_META } from "../../../shared/plugin-model-app.js";
 import { pluginInstances, type PluginFormOwner, type PluginInstanceIdentity } from "./instances.js";
-import { pluginBindingDigest, pluginResourceUri } from "./bindings.js";
+import { pluginResourceUri } from "./bindings.js";
 import { PluginInvocationError } from "./invocation.js";
 import { RequestOwnedToolInvoker } from "./request-invoker.js";
 const denied = () => new PluginInvocationError("MODEL_APP_UNAVAILABLE");
@@ -42,12 +42,12 @@ export class ModelAppRegistry {
       expiresAt: number;
     }
   >();
-  private readonly sources = new Map<string, string>();
   constructor(
     private readonly ttlMs = 30 * 60_000,
     private readonly memory = pluginContextMemory,
   ) {}
-  /** Trusted completion only: callers have already passed the original model approval. */
+  /** Publish inside the invocation's execute/resume callback only. Its receipt
+   * retains this token, so replay never publishes a replacement for a closed App. */
   publish(
     result: unknown,
     source: PluginFormOwner,
@@ -72,15 +72,13 @@ export class ModelAppRegistry {
     } catch {
       return result;
     }
-    const anchor = pluginBindingDigest([source, toolName, revision]);
-    let token = this.sources.get(anchor);
-    if (!token) {
-      if (this.sources.size >= 512)
+    {
+      if (this.entries.size >= 512)
         return {
           ...result,
           _meta: { [PLUGIN_MODEL_APP_META]: { unavailable: true } },
         };
-      token = randomBytes(32).toString("base64url");
+      const token = randomBytes(32).toString("base64url");
       const owner: PluginFormOwner = {
         ...structuredClone(source),
         owner: { ...source.owner, instanceId: randomUUID() },
@@ -120,8 +118,10 @@ export class ModelAppRegistry {
         expiry,
         expiresAt: Date.now() + this.ttlMs,
       });
-      this.sources.set(anchor, key);
+      return this.resultWithToken(result, source, token);
     }
+  }
+  private resultWithToken(result: object, source: PluginFormOwner, token: string) {
     const meta = (result as any)._meta;
     return {
       ...result,
@@ -220,7 +220,6 @@ export class ModelAppRegistry {
     entry.invoker.close();
     entry.context.close(entry.owner.owner.instanceId);
     this.memory.release(entry.owner.owner.instanceId);
-    // Retain source tombstones so replaying a completed tool never mints a new App.
   }
 }
 export const modelApps = new ModelAppRegistry();

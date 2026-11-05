@@ -3,6 +3,8 @@ import { ModelAppRegistry } from "../model-apps.js";
 import { PluginContextMemory } from "../context-memory.js";
 import { PLUGIN_MODEL_APP_META } from "../../../../shared/plugin-model-app.js";
 import { pluginInstances, type PluginFormOwner } from "../instances.js";
+import { RequestOwnedToolInvoker } from "../request-invoker.js";
+import { z } from "zod";
 const owner = {
   owner: {
     actorId: "a",
@@ -34,6 +36,24 @@ function publish(registry: ModelAppRegistry) {
     "tool-rev",
     meta,
   ) as any;
+}
+function publication(registry: ModelAppRegistry) {
+  const invoker = new RequestOwnedToolInvoker(owner.owner, () => {});
+  const resultSchema = z.object({
+    content: z.array(z.unknown()),
+    _meta: z.object({ [PLUGIN_MODEL_APP_META]: z.object({ instanceToken: z.string() }) }),
+  });
+  const invoke = async () => resultSchema.parse(await invoker.invoke({
+    authorize: async () => ({
+      owner: owner.owner, revision: "tool-rev", enabled: true,
+      tool: { name: "pickFile" }, allowedOrigins: ["model"], requiresApproval: false,
+    }),
+    approve: async () => false,
+    admit: async () => {},
+    execute: async () => publish(registry),
+    classifyFailure: () => "unknown",
+  }, "model", "original-call", { name: "pickFile" }));
+  return { invoke, close: () => invoker.close() };
 }
 describe("trusted completed model App ownership", () => {
   it("counts an open model App's context against this process's memory", () => {
@@ -169,10 +189,10 @@ describe("trusted completed model App ownership", () => {
       vi.useRealTimers();
     }
   });
-  it("preserves result and deduplicates original completion without executing a tool", () => {
+  it("preserves result and deduplicates original completion through its receipt", async () => {
     const registry = new ModelAppRegistry();
-    const first = publish(registry),
-      second = publish(registry);
+    const operation = publication(registry);
+    const first = await operation.invoke(), second = await operation.invoke();
     expect(first).toEqual(second);
     expect(first.content).toEqual([]);
     const handle = first._meta[PLUGIN_MODEL_APP_META];
@@ -180,6 +200,7 @@ describe("trusted completed model App ownership", () => {
     expect(entry.owner.owner.serverId).toBe("saved-id");
     expect(entry.owner.owner.instanceId).not.toBe("original");
     registry.close(handle.instanceToken, actor);
+    operation.close();
   });
   it.each(["actorId", "projectId", "workspaceId", "subject"] as const)(
     "rejects changed %s",
@@ -194,13 +215,30 @@ describe("trusted completed model App ownership", () => {
       registry.close(token, actor);
     },
   );
-  it("keeps a closed completion tombstone so transcript retries never revive it", () => {
+  it("replays a closed completion's receipt without reviving the App", async () => {
     const registry = new ModelAppRegistry();
-    const first = publish(registry);
+    const operation = publication(registry);
+    const first = await operation.invoke();
     const token = first._meta[PLUGIN_MODEL_APP_META].instanceToken;
     registry.close(token, actor);
-    expect(publish(registry)).toEqual(first);
+    expect(await operation.invoke()).toEqual(first);
     expect(() => registry.get(token, actor)).toThrow();
+    operation.close();
+  });
+  it("admits fresh Apps after more than 512 sequential closed publications", () => {
+    const registry = new ModelAppRegistry();
+    const tokens = new Set<string>();
+    for (let index = 0; index < 514; index++) {
+      const result = registry.publish({ content: [] }, owner, `tool-${index}`, "tool-rev", meta);
+      const token = z.object({ _meta: z.object({
+        [PLUGIN_MODEL_APP_META]: z.object({ instanceToken: z.string() }),
+      }) }).parse(result)._meta[PLUGIN_MODEL_APP_META].instanceToken;
+      expect(typeof token).toBe("string");
+      expect(tokens.has(token)).toBe(false);
+      tokens.add(token);
+      registry.close(token, actor);
+      expect(() => registry.get(token, actor)).toThrow();
+    }
   });
   it("does not publish errors or non-App output", () => {
     const registry = new ModelAppRegistry();
