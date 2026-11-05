@@ -339,6 +339,37 @@ describe("harness execution options reach the engine", () => {
 
     expect(options.extraHeaders).toBeUndefined();
   });
+
+  it("hands the engine the turn's remaining budget for admission waits", async () => {
+    vi.useFakeTimers();
+    try {
+      const options = await engineOptionsFor({ turnTimeoutMs: 90_000 });
+      const remainingTurnMs = options.remainingTurnMs as () => number;
+
+      expect(remainingTurnMs()).toBe(90_000);
+      vi.advanceTimersByTime(30_000);
+      expect(remainingTurnMs()).toBe(60_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("caps the admission budget at the iteration's deadline when it comes first", async () => {
+    vi.useFakeTimers();
+    try {
+      const options = await engineOptionsFor({
+        turnTimeoutMs: 90_000,
+        iterationDeadlineAt: Date.now() + 40_000,
+      });
+      const remainingTurnMs = options.remainingTurnMs as () => number;
+
+      expect(remainingTurnMs()).toBe(40_000);
+      vi.advanceTimersByTime(50_000);
+      expect(remainingTurnMs()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 it("carries hosted request payloads into the authored eval turn", async () => {
