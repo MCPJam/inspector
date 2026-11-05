@@ -7275,6 +7275,7 @@ const runHostedIterationWithBrowser = async (
   const hostedHandlers = buildHostedStepHandlers({
     // See the local path: one turn's slice of the run's frozen budget.
     turnTimeoutMs: budgets.turnTimeoutMs,
+    iterationDeadlineAt,
     browser,
     prepared,
     modelDefinition,

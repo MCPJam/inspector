@@ -17,11 +17,11 @@ class AdmissionResponseError extends Error {
     readonly response: Response,
     readonly refusal: SpendRefusal,
   ) {
-    super("Swarm model step is waiting for spending admission");
+    super("Model step is waiting for spending admission");
   }
 }
 
-export async function withSwarmStepAdmissionRetry(
+export async function withModelStepAdmissionRetry(
   request: () => Promise<Response>,
   options: {
     sourceType?: string;
@@ -31,11 +31,14 @@ export async function withSwarmStepAdmissionRetry(
     remainingTurnMs?: () => number;
   },
 ): Promise<Response> {
-  // The session runner retries empty turns. After a tool ran, only the
-  // refused model request may be replayed, never the turn's completed tools.
-  if (options.sourceType !== "swarm" || options.stepIndex === 0) {
-    return request();
-  }
+  // Only the refused model request is replayed, never the turn's completed
+  // tools. The swarm session runner already retries an empty turn, so swarms
+  // start here at step 1; a hosted eval turn has no outer retry and a busy
+  // refusal would fail the iteration, so evals retry from step 0.
+  const retriesHere =
+    options.sourceType === "eval" ||
+    (options.sourceType === "swarm" && options.stepIndex > 0);
+  if (!retriesHere) return request();
   let pendingRefusal: AdmissionResponseError | undefined;
   try {
     return await withAdmissionRetry(async () => {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AdmissionWaitBudget } from "../../services/sessionSimulation/admission-retry";
-import { withSwarmStepAdmissionRetry } from "../swarm-step-admission";
+import { withModelStepAdmissionRetry } from "../model-step-admission";
 
 const busy = () =>
   new Response(
@@ -22,7 +22,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("Swarm step admission retry", () => {
+describe("Model step admission retry", () => {
   it.each([
     { sourceType: "chat", stepIndex: 1 },
     { sourceType: "scenario", stepIndex: 1 },
@@ -32,7 +32,7 @@ describe("Swarm step admission retry", () => {
     const response = busy();
     const request = vi.fn().mockResolvedValue(response);
     expect(
-      await withSwarmStepAdmissionRetry(request, {
+      await withModelStepAdmissionRetry(request, {
         ...options(),
         ...context,
       }),
@@ -40,6 +40,26 @@ describe("Swarm step admission retry", () => {
     expect(request).toHaveBeenCalledTimes(1);
     expect(response.bodyUsed).toBe(false);
   });
+
+  it.each([0, 1])(
+    "retries a busy eval model step at step %i",
+    async (stepIndex) => {
+      vi.useFakeTimers();
+      const ok = new Response("ok");
+      const request = vi
+        .fn()
+        .mockResolvedValueOnce(busy())
+        .mockResolvedValueOnce(ok);
+      const result = withModelStepAdmissionRetry(request, {
+        ...options(),
+        sourceType: "eval",
+        stepIndex,
+      });
+      await vi.runAllTimersAsync();
+      expect(await result).toBe(ok);
+      expect(request).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it.each([
     new Response("upstream unavailable", { status: 503 }),
@@ -56,7 +76,7 @@ describe("Swarm step admission retry", () => {
     new Response('{"code":"spending_reservation_busy"}', { status: 200 }),
   ])("does not retry a different or terminal refusal", async (response) => {
     const request = vi.fn().mockResolvedValue(response);
-    expect(await withSwarmStepAdmissionRetry(request, options())).toBe(
+    expect(await withModelStepAdmissionRetry(request, options())).toBe(
       response,
     );
     expect(request).toHaveBeenCalledTimes(1);
@@ -80,7 +100,9 @@ describe("Swarm step admission retry", () => {
       }
       const request = vi.fn().mockResolvedValue(response);
 
-      expect(await withSwarmStepAdmissionRetry(request, options())).toBe(response);
+      expect(await withModelStepAdmissionRetry(request, options())).toBe(
+        response,
+      );
       expect(request).toHaveBeenCalledTimes(1);
       expect(response.bodyUsed).toBe(false);
       expect(response.headers.get("Retry-After")).toBe("2");
@@ -98,7 +120,7 @@ describe("Swarm step admission retry", () => {
       .fn()
       .mockResolvedValueOnce(response)
       .mockResolvedValue(new Response("ok"));
-    const result = withSwarmStepAdmissionRetry(request, {
+    const result = withModelStepAdmissionRetry(request, {
       ...options(),
       remainingTurnMs: () => 1000,
     });
@@ -115,7 +137,7 @@ describe("Swarm step admission retry", () => {
       .fn()
       .mockResolvedValueOnce(responses[0])
       .mockResolvedValueOnce(responses[1]);
-    const result = withSwarmStepAdmissionRetry(request, {
+    const result = withModelStepAdmissionRetry(request, {
       ...options(),
       budget: new AdmissionWaitBudget(300_000, 2),
     });
@@ -138,14 +160,14 @@ describe("Swarm step admission retry", () => {
       .fn()
       .mockResolvedValueOnce(busy())
       .mockResolvedValue(new Response("ok"));
-    const result = withSwarmStepAdmissionRetry(first, shared);
+    const result = withModelStepAdmissionRetry(first, shared);
     await vi.waitFor(() => expect(shared.budget.remainingMs).toBe(0));
     await vi.runAllTimersAsync();
     expect((await result).ok).toBe(true);
     const response = busy();
     const second = vi.fn().mockResolvedValue(response);
     expect(
-      await withSwarmStepAdmissionRetry(second, { ...shared, stepIndex: 2 }),
+      await withModelStepAdmissionRetry(second, { ...shared, stepIndex: 2 }),
     ).toBe(response);
     expect(second).toHaveBeenCalledTimes(1);
   });
@@ -156,7 +178,7 @@ describe("Swarm step admission retry", () => {
     const request = vi.fn().mockResolvedValue(busy());
     const context = options();
     const result = expect(
-      withSwarmStepAdmissionRetry(request, {
+      withModelStepAdmissionRetry(request, {
         ...context,
         signal: controller.signal,
       }),
