@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useConvex, useQuery } from "convex/react";
 import { track } from "@/lib/analytics";
 import { Circle, Loader2, Play, Plus, Puzzle, Sparkles, Trash2 } from "lucide-react";
@@ -156,6 +156,8 @@ interface TestCasesOverviewProps {
    * surface decides — see the same prop on `TestTemplateEditor`.
    */
   simpleCaseEditor?: boolean;
+  /** Extra controls at the end of each row, before delete (Copy to another suite). */
+  renderRowActions?: (testCase: EvalCase) => ReactNode;
   /**
    * `namedHostId` → display name for hosts with no suite attachment — the
    * resolved host of an environment-backed run, or a detached one. Owned by
@@ -207,6 +209,7 @@ export function TestCasesOverview({
   environments,
   quickRunIterationOverride,
   simpleCaseEditor = false,
+  renderRowActions,
 }: TestCasesOverviewProps) {
   const simpleCaseEditorEnabled = simpleCaseEditor;
   const convex = useConvex();
@@ -640,7 +643,11 @@ export function TestCasesOverview({
                   firstColumnLabel="Case name"
                   secondColumnLabel="Last run"
                   leadingGutter={batchDelete}
-                  trailingGutter={Number(showRunColumn) + Number(batchDelete)}
+                  trailingGutter={
+                    Number(showRunColumn) +
+                    Number(batchDelete) +
+                    Number(Boolean(renderRowActions))
+                  }
                 />
               )
             ) : null}
@@ -1145,6 +1152,7 @@ export function TestCasesOverview({
                         {clientRail}
                         {quickRunEstimateHint}
                         {runControl}
+                        {renderRowActions?.(testCase)}
                         {deleteControl}
                       </div>
                     );
@@ -1164,6 +1172,7 @@ export function TestCasesOverview({
                       {clientRail}
                       {quickRunEstimateHint}
                       {runControl}
+                      {renderRowActions?.(testCase)}
                       {deleteControl}
                     </div>
                   );

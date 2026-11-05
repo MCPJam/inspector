@@ -101,6 +101,14 @@ vi.mock("../../../evals/test-cases-overview", () => ({
     </button>
   ),
 }));
+vi.mock("../copy-case-to-suite", () => ({
+  useCopyCaseToSuite: () => ({
+    targets: [],
+    copyCase: vi.fn(),
+    copyingCaseId: null,
+  }),
+  CopyCaseMenu: () => null,
+}));
 vi.mock("../../import-dataset-dialog", () => ({
   ImportDatasetDialog: () => null,
 }));

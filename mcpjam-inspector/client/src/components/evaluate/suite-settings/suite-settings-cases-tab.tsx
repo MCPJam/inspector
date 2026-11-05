@@ -18,6 +18,7 @@ import type {
   EvalSuiteRunListItem,
 } from "../../evals/types";
 import { useCaseAuthoringTakeovers } from "../case-authoring-takeovers";
+import { CopyCaseMenu, useCopyCaseToSuite } from "./copy-case-to-suite";
 import { ImportDatasetDialog } from "../import-dataset-dialog";
 import type { SuiteGenerateState } from "./suite-generate-state";
 
@@ -38,6 +39,7 @@ export function SuiteSettingsCasesTab({
   connectedServerNames,
   onAddCase,
   onOpenCase,
+  onOpenCopy,
   onDeleteCases,
 }: {
   suite: EvalSuite;
@@ -50,6 +52,8 @@ export function SuiteSettingsCasesTab({
   connectedServerNames: Set<string>;
   onAddCase: () => void;
   onOpenCase: (caseId: string) => void;
+  /** Opens a copy this tab just made in another suite. */
+  onOpenCopy: (suiteId: string, caseId: string) => void;
   onDeleteCases: (caseIds: string[]) => Promise<void>;
 }) {
   const [importOpen, setImportOpen] = useState(false);
@@ -58,6 +62,11 @@ export function SuiteSettingsCasesTab({
     projectId,
     readOnlyConfig: editingDisabled,
     canGenerateTestCases: generateState?.canGenerate ?? false,
+  });
+  const copy = useCopyCaseToSuite({
+    projectId,
+    sourceSuiteId: suite._id,
+    onOpenCopy,
   });
   if (authoring.takeover) return authoring.takeover;
 
@@ -146,6 +155,14 @@ export function SuiteSettingsCasesTab({
         }
         canGenerateTestCases={!generateDisabled}
         generateTestCasesDisabledReason={generateState?.disabledReason}
+        renderRowActions={(testCase) => (
+          <CopyCaseMenu
+            testCase={testCase}
+            targets={copy.targets}
+            copying={copy.copyingCaseId === testCase._id}
+            onCopy={(source, target) => void copy.copyCase(source, target)}
+          />
+        )}
       />
     </div>
   );

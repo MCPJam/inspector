@@ -186,6 +186,9 @@ function LoadedSuiteSettingsPage({
             "link",
           )
         }
+        onOpenCopy={(suiteId, caseId) =>
+          followLink({ type: "case-settings", suiteId, caseId }, "link")
+        }
         onDeleteCases={data.deleteTestCases}
       />
     );
