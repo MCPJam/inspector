@@ -3808,21 +3808,29 @@ describe("ConformanceTab", () => {
     const openSpy = vi
       .spyOn(window, "open")
       .mockReturnValue({} as unknown as Window);
+    // Held back, so the run is on screen before sign-in is needed.
+    const oauthStart = createDeferred<{
+      phase: "authorization_needed";
+      sessionId: string;
+      authorizationUrl: string;
+    }>();
     setupSuccessfulRunMocks();
-    mockStartOAuth.mockResolvedValue({
-      phase: "authorization_needed",
-      sessionId: "session-1",
-      authorizationUrl: "https://auth.example.com/authorize",
-    });
+    mockStartOAuth.mockReturnValue(oauthStart.promise);
 
     render(<ConformanceTab server={createHttpServer()} />);
     await clickRun();
-    // The live region is there before sign-in is needed, so filling it is
-    // announced; inserted with its text, it may not be.
+    // The live region is there, empty, before sign-in is needed, so filling it
+    // is announced; inserted with its text, it may not be.
     const announcement = await screen.findByTestId(
       "conformance-oauth-announcement",
     );
     expect(announcement.getAttribute("role")).toBe("status");
+    expect(announcement.textContent).toBe("");
+    oauthStart.resolve({
+      phase: "authorization_needed",
+      sessionId: "session-1",
+      authorizationUrl: "https://auth.example.com/authorize",
+    });
 
     // Below the fold, a run waiting on sign-in looked like one that never
     // stops loading (CQT-97).
@@ -3876,6 +3884,11 @@ describe("ConformanceTab", () => {
     expect(
       screen.queryByText("Waiting for browser authorization..."),
     ).toBeNull();
+    // The OAuth suite warns too: a spinner there reads as a run that never
+    // finishes (CQT-97).
+    expect(
+      screen.getByTestId("conformance-oauth-suite-blocked"),
+    ).toBeDefined();
 
     // Opening it again from a click is what a popup blocker lets through. The
     // blocked-window dialog sits over the page, so its button is the one in

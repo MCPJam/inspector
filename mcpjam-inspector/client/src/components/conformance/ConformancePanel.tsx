@@ -724,8 +724,17 @@ export function ConformanceContent({
                   >
                     {oauth.waitingForAuth ? (
                       // The sign-in prompt itself sits at the top of the run.
+                      // A blocked popup is not loading: a spinner here would
+                      // read as a run that never finishes.
                       <div className="flex items-center gap-2 py-3 pl-7 text-sm text-muted-foreground">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        {oauth.popupBlocked ? (
+                          <AlertTriangle
+                            className="h-3.5 w-3.5 text-amber-500"
+                            data-testid="conformance-oauth-suite-blocked"
+                          />
+                        ) : (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        )}
                         Waiting for sign-in. Use the prompt at the top of the
                         run.
                       </div>
