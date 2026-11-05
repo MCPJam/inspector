@@ -2170,13 +2170,9 @@ describe("ConformanceTab", () => {
           within(header).getByText(inputBadge(missing)),
         ).toBeInTheDocument();
 
-        fireEvent.click(fieldOf(tool).getByRole("switch"));
-        const args = fieldOf(tool).getByRole("textbox", { name: "Arguments" });
-        fireEvent.change(args, { target: { value: '{"projectId":123}' } });
-        expect(checkRow).toHaveTextContent("Needs input");
-        fireEvent.change(args, {
-          target: { value: '{"projectId":"project-1"}' },
-        });
+        // Filled in through the form built from the tool's input schema.
+        const args = fieldOf(tool).getByPlaceholderText("Enter projectId");
+        fireEvent.change(args, { target: { value: "project-1" } });
         expect(checkRow).toHaveTextContent("Input set");
         if (ready)
           expect(
@@ -2184,7 +2180,8 @@ describe("ConformanceTab", () => {
           ).toBeInTheDocument();
         else expect(within(header).queryByText(/needs? input/)).toBeNull();
 
-        fireEvent.change(args, { target: { value: "{}" } });
+        // An emptied required box is not sent, so the check needs input again.
+        fireEvent.change(args, { target: { value: "" } });
         expect(checkRow).toHaveTextContent("Needs input");
         fireEvent.click(header);
         expect(header).toHaveAttribute("aria-expanded", "false");
@@ -2239,11 +2236,11 @@ describe("ConformanceTab", () => {
           screen.getByRole("option", { name: "echo · read-only" }),
         );
         expect(checkRow).toHaveTextContent("Input set");
-        fireEvent.click(fieldOf(tool).getByRole("switch"));
-        const args = fieldOf(tool).getByRole("textbox", { name: "Arguments" });
-        fireEvent.change(args, { target: { value: "[" } });
-        expect(checkRow).toHaveTextContent("Needs input");
-        fireEvent.change(args, { target: { value: '{"d":"2026-11"}' } });
+        // An optional argument: untick skip, then fill it in.
+        fireEvent.click(fieldOf(tool).getByRole("checkbox", { name: "skip" }));
+        fireEvent.change(fieldOf(tool).getByPlaceholderText("Enter d"), {
+          target: { value: "2026-11" },
+        });
         expect(checkRow).toHaveTextContent("Input set");
         fireEvent.click(header);
         if (suite === "Tasks")
@@ -2314,13 +2311,12 @@ describe("ConformanceTab", () => {
         screen.getByRole("option", { name: "echo · read-only" }),
       );
 
-      // The arguments editor Evals uses, here with its Raw JSON switch on.
-      fireEvent.click(fieldOf(logs).getByRole("switch"));
-      const args = fieldOf(logs).getByRole("textbox", { name: "Arguments" });
-      fireEvent.change(args, { target: { value: "[1]" } });
-      expect(screen.getByText("Expected a JSON object")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
-      fireEvent.change(args, { target: { value: '{"message": "hi"}' } });
+      // A form from the tool's input schema; message is optional, so it
+      // starts skipped.
+      fireEvent.click(fieldOf(logs).getByRole("checkbox", { name: "skip" }));
+      fireEvent.change(fieldOf(logs).getByPlaceholderText("Enter message"), {
+        target: { value: "hi" },
+      });
       expect(screen.getByRole("button", { name: RUN_LABEL })).toBeEnabled();
 
       // The level the log level advice asks for: the SDK's default until
@@ -2363,7 +2359,7 @@ describe("ConformanceTab", () => {
       );
     });
 
-    it("offers the tool's own argument names", async () => {
+    it("lists the tool's own arguments as fields", async () => {
       const user = userEvent.setup();
       await openProtocolChecks();
       const logs = screen.getByRole("combobox", {
@@ -2374,14 +2370,11 @@ describe("ConformanceTab", () => {
         screen.getByRole("option", { name: "echo · read-only" }),
       );
 
-      await user.click(
-        fieldOf(logs).getByRole("button", { name: "Add argument" }),
-      );
-      await user.click(fieldOf(logs).getByText("Select arg…"));
-
+      expect(fieldOf(logs).getByText("message")).toBeInTheDocument();
       expect(
-        await screen.findByRole("option", { name: /message/ }),
+        fieldOf(logs).getByPlaceholderText("Enter message"),
       ).toBeInTheDocument();
+      expect(fieldOf(logs).queryByRole("switch")).toBeNull();
     });
 
     it("flags the checks that need an input before the suite is opened", async () => {
