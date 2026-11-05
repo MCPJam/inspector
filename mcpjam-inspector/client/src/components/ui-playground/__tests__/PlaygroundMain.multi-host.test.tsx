@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { createMemoryRouter, RouterProvider } from "react-router";
 import type { UIMessage } from "ai";
 /** Saved-client comparison wiring and mode transitions. */
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -28,6 +29,7 @@ vi.mock("framer-motion", async (importOriginal) => {
 });
 
 const mockMultiModelPlaygroundCard = vi.fn();
+const mockLaneDispose = vi.fn();
 
 vi.mock("lucide-react", async (importOriginal) => ({
   // Spread the real icon set so a newly-rendered icon (e.g. Columns2) never
@@ -373,6 +375,8 @@ vi.mock("@/components/evals/trace-view-mode-tabs", () => ({
 // the right `compareId`, `hostSnapshot`, `executionConfig`, etc.
 vi.mock("@/components/ui-playground/multi-model-playground-card", () => ({
   MultiModelPlaygroundCard: (props: any) => {
+    const [draft, setDraft] = useState("");
+    useEffect(() => () => mockLaneDispose(props.compareId), []);
     useEffect(() => {
       props.onSendReadinessChange?.(
         `${props.compareKind}:${props.compareId}`,
@@ -389,6 +393,7 @@ vi.mock("@/components/ui-playground/multi-model-playground-card", () => ({
         data-host-style={props.hostStyle}
       >
         {props.compareLabel}
+        <input aria-label={`draft-${props.compareId}`} value={draft} onChange={(event) => setDraft(event.target.value)} />
       </div>
     );
   },
@@ -510,6 +515,7 @@ vi.mock("@/lib/utils", () => ({
 
 const multiHostFixture = {
   multiHostEnabled: true,
+  loading: false,
   selectedHostIds: [] as string[],
   hostList: [] as { hostId: string; name: string }[],
   hosts: {} as Record<string, HostDetail>,
@@ -592,11 +598,11 @@ vi.mock("@/hooks/use-playground-host-slots", () => ({
     ids: (string | null | undefined)[]
   ) => {
     const resolve = (id: string | null | undefined) =>
-      id ? multiHostFixture.hosts[id] ?? null : null;
+      !multiHostFixture.loading && id ? multiHostFixture.hosts[id] ?? null : null;
     return [
-      { host: resolve(ids[0]), isLoading: false },
-      { host: resolve(ids[1]), isLoading: false },
-      { host: resolve(ids[2]), isLoading: false },
+      { host: resolve(ids[0]), isLoading: multiHostFixture.loading },
+      { host: resolve(ids[1]), isLoading: multiHostFixture.loading },
+      { host: resolve(ids[2]), isLoading: multiHostFixture.loading },
     ];
   },
 }));
@@ -705,6 +711,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     localStorage.clear();
     // Reset fixture defaults — individual tests opt in to deviations.
     multiHostFixture.multiHostEnabled = true;
+    multiHostFixture.loading = false;
     multiHostFixture.selectedHostIds = [];
     multiHostFixture.hostList = [];
     multiHostFixture.hosts = {};
@@ -1589,6 +1596,50 @@ describe("PlaygroundMain — multi-host render path", () => {
     const compareIds = cards.map((c) => c.getAttribute("data-compare-id"));
     expect(new Set(compareIds).size).toBe(2);
     expect(compareIds.sort()).toEqual(["h-A", "h-B"]);
+  });
+
+  it("keeps running lane owners and drafts through a temporary host-query gap", () => {
+    const a = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const b = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }, { hostId: "h-B", name: "Host B" }];
+    multiHostFixture.hosts = { "h-A": a, "h-B": b };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    const view = render(<PlaygroundMain {...defaultProps} />);
+    fireEvent.change(screen.getByLabelText("draft-h-A"), { target: { value: "left false and zero" } });
+    fireEvent.change(screen.getByLabelText("draft-h-B"), { target: { value: "right true" } });
+    multiHostFixture.loading = true;
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getAllByTestId("multi-host-card")).toHaveLength(2);
+    expect(mockLaneDispose).not.toHaveBeenCalled();
+    expect(mockChatInput.mock.calls.at(-1)?.[0].submitDisabled).toBe(true);
+    expect(screen.getByLabelText("draft-h-A")).toHaveValue("left false and zero");
+    expect(screen.getByLabelText("draft-h-B")).toHaveValue("right true");
+    multiHostFixture.loading = false;
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getByLabelText("draft-h-A")).toHaveValue("left false and zero");
+    expect(mockLaneDispose).not.toHaveBeenCalled();
+  });
+
+  it("disposes retained lanes for changed configuration, confirmed removal and selection removal", () => {
+    const a = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const b = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }, { hostId: "h-B", name: "Host B" }];
+    multiHostFixture.hosts = { "h-A": a, "h-B": b };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    const view = render(<PlaygroundMain {...defaultProps} />);
+    fireEvent.change(screen.getByLabelText("draft-h-A"), { target: { value: "old owner draft" } });
+    multiHostFixture.hosts["h-A"] = { ...a, config: { ...a.config, systemPrompt: "New configuration" } };
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    expect(mockLaneDispose).toHaveBeenCalledWith("h-A");
+    expect(screen.getByLabelText("draft-h-A")).toHaveValue("");
+    delete multiHostFixture.hosts["h-B"];
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    expect(mockLaneDispose).toHaveBeenCalledWith("h-B");
+    expect(screen.queryByLabelText("draft-h-B")).not.toBeInTheDocument();
+    mockLaneDispose.mockClear();
+    multiHostFixture.selectedHostIds = [];
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    expect(mockLaneDispose).toHaveBeenCalledWith("h-A");
   });
 
   it("shows both unavailable clients when neither configuration resolves", () => {

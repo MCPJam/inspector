@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
@@ -273,6 +273,7 @@ export function PluginFormFields({
   only?: string;
   onChange: (name: string, value: unknown) => void;
 }) {
+  const fieldIdPrefix = useId();
   const visible = plan.fields
     .map((entry, index) => ({ ...entry, index }))
     .filter((entry) => only === undefined || entry.name === only);
@@ -284,7 +285,7 @@ export function PluginFormFields({
           name={name}
           field={field}
           required={required}
-          id={`plugin-form-field-${index}`}
+          id={`plugin-form-field-${fieldIdPrefix}-${index}`}
           value={values[name]}
           error={errors[name]}
           disabled={disabled}

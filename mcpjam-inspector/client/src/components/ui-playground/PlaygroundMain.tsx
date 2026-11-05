@@ -5,6 +5,7 @@ import {
   registerComparisonLayout,
   clearComparisonAuthRecovery,
 } from "@/lib/comparison-auth-recovery";
+import { useRetainedCompareClients } from "@/hooks/use-retained-compare-clients";
 import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
 import { WorkspaceFileActionsProvider } from "@/components/host-workspace/file-actions";
 import type { RunPluginOnboarding } from "@/components/host-workspace/use-plugin-onboarding";
@@ -330,6 +331,11 @@ import {
   hostStyleSupportsModelVisibleMcpToolImages,
   type PreludeTraceExecution,
 } from "@/components/ui-playground/live-trace-prelude";
+import {
+  createCompareBroadcast,
+  compareBroadcastRecipient,
+  type CompareBroadcastDelivery,
+} from "./compare-broadcast";
 import { type BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
 import { type MultiModelCardSummary } from "@/components/chat-v2/model-compare-card-header";
 import {
@@ -666,7 +672,7 @@ export function PlaygroundMain({
   recorder,
   syncConversationToUrl = false,
 }: PlaygroundMainProps) {
-  const { signUp } = useInspectorAuth();
+  const { signUp, user: compareAuthUser } = useInspectorAuth();
   const clearLogs = useTrafficLogStore((s) => s.clear);
 
   // Chat-history coordination — Playground equivalent of ChatTabV2's history
@@ -780,7 +786,8 @@ export function PlaygroundMain({
     PreludeTraceExecution[]
   >([]);
   const [broadcastRequest, setBroadcastRequest] =
-    useState<BroadcastChatTurnRequest | null>(null);
+    useState<CompareBroadcastDelivery | null>(null);
+  const broadcastSequence = useRef(0);
   const [deterministicExecutionRequest, setDeterministicExecutionRequest] =
     useState<PlaygroundDeterministicExecutionRequest | null>(null);
   const [stopBroadcastRequestId, setStopBroadcastRequestId] = useState(0);
@@ -2385,7 +2392,7 @@ export function PlaygroundMain({
 
   const isMultiHostMode = isComparingHosts && !viewingHistoryReplay;
   const leadHost = hostSlots[0].host;
-  const clientResolutions = useMemo(
+  const currentClientResolutions = useMemo(
     () =>
       !isMultiHostMode
         ? []
@@ -2412,9 +2419,18 @@ export function PlaygroundMain({
       hostSlots[2].isLoading,
     ],
   );
+  const clientResolutions = useRetainedCompareClients({
+    scope: multiHostProjectId && (compareAuthUser?.id || currentUserForSender?._id)
+      ? JSON.stringify([compareAuthUser?.id ?? currentUserForSender?._id, multiHostProjectId, multiModelSessionGeneration]) : null,
+    resolutions: currentClientResolutions, slots: hostSlots,
+    running: new Set(Object.entries(compareSummaries).filter(([, value]) => value.status === "running").map(([id]) => id)),
+    paused: !isConvexAuthenticated || !isSessionBootstrapComplete,
+    canConfirmMissing: isConvexAuthenticated && isSessionBootstrapComplete,
+  });
   const multiHostColumns = clientResolutions.flatMap((result) =>
     result.status === "ready" ? [result.column] : [],
   );
+  const retainedClientsPaused = clientResolutions.some((client) => client.status === "ready" && !!client.pausedReason);
   const unavailableClients = clientResolutions.filter(
     (result) => result.status !== "ready",
   );
@@ -2456,7 +2472,7 @@ export function PlaygroundMain({
   // key in local mode has no server-side check to refuse it.
   const submitBlocked =
     baseSubmitBlocked ||
-    (isMultiHostMode && unavailableClients.length > 0) ||
+    (isMultiHostMode && (unavailableClients.length > 0 || retainedClientsPaused)) ||
     (isMultiModelMode &&
       modelCompareCards.some((entry) => isOrgKeysDisallowedRow(entry.model)));
   // Unified "the compare grid is live" flag. Submit/stop/deterministic-
@@ -2550,6 +2566,7 @@ export function PlaygroundMain({
     [multiModelSessionGeneration],
   );
   const ensureCompareReady = () => {
+    if (retainedClientsPaused) return false;
     const states = compareLanes.map(({ id }) =>
       compareReadiness.current.get(`${multiModelSessionGeneration}:${id}`),
     );
@@ -5097,26 +5114,34 @@ export function PlaygroundMain({
     ],
   );
 
-  // Compare mode ONLY. `broadcastRequest` has no consumer in single-model
-  // mode, but freshly mounted compare cards replay whatever request is stored
-  // here — so a single-model send that wrote this state would be re-sent to
-  // every column when the user later enables compare. Single-model paths call
-  // `trackSendMessage` directly instead.
-  const queueBroadcastRequest = useCallback(
-    (
-      request: Omit<BroadcastChatTurnRequest, "id">,
-      captureProps?: Record<string, unknown>,
-    ) => {
-      if (!ensureCompareReady()) return false;
-      trackSendMessage(captureProps);
-      setBroadcastRequest({
-        ...request,
-        id: Date.now(),
-      });
-      return true;
-    },
-    [trackSendMessage, ensureCompareReady],
-  );
+  const broadcastRecipient = (kind: "host" | "model", compareId: string) =>
+    compareBroadcastRecipient({
+      actorId: currentUserForSender?._id ?? null,
+      projectId: convexProjectId ?? activeProjectId ?? null,
+      chatSessionId,
+      generation: multiModelSessionGeneration,
+      kind,
+      hostId: kind === "host" ? compareId : previewedHostId ?? null,
+      compareId,
+    });
+  const queueBroadcastRequest = (
+    request: Omit<BroadcastChatTurnRequest, "id">,
+    captureProps?: Record<string, unknown>,
+  ) => {
+    if (!isCompareMode || !ensureCompareReady()) return false;
+    trackSendMessage(captureProps);
+    const kind = isMultiHostMode ? "host" : "model";
+    const recipients = compareLanes.map(({ id }) =>
+      broadcastRecipient(kind, id.slice(kind.length + 1)),
+    );
+    setBroadcastRequest(
+      createCompareBroadcast(
+        { ...request, id: ++broadcastSequence.current },
+        recipients,
+      ),
+    );
+    return true;
+  };
 
   const mergedToolRenderOverrides = useMemo(
     () => ({
@@ -7009,6 +7034,7 @@ export function PlaygroundMain({
                         return (
                         <MultiModelPlaygroundCard
                           className={compareLaneHidden(`host:${column.compareId}`)}
+                          active={!singleCompareLane || activeCompareLaneId === `host:${column.compareId}`}
                           extensionBinding={compareLaneBinding(
                             column.compareId,
                             {
@@ -7028,7 +7054,8 @@ export function PlaygroundMain({
                           // swap between multi-model and multi-host can't
                           // accidentally reuse a card instance keyed by a
                           // hostId that happens to equal a modelId string.
-                          key={`${multiModelSessionGeneration}:host:${column.compareId}`}
+                          key={resolution.ownerKey}
+                          readinessNotice={resolution.pausedReason}
                           onSendReadinessChange={reportCompareReadiness}
                           compareId={column.compareId}
                           compareLabel={column.compareLabel}
@@ -7038,7 +7065,13 @@ export function PlaygroundMain({
                           selection={column.hostConfig.modelSelection}
                           comparisonSummaries={Object.values(compareSummaries)}
                           selectedServers={selectedServers}
-                          broadcastRequest={broadcastRequest}
+                          broadcastRequest={broadcastRequest?.request ?? null}
+                          claimBroadcastDelivery={(request) =>
+                            broadcastRequest?.claim(
+                              request,
+                              broadcastRecipient("host", column.compareId),
+                            ) ?? false
+                          }
                           deterministicExecutionRequest={
                             deterministicExecutionRequest
                           }
@@ -7120,6 +7153,7 @@ export function PlaygroundMain({
                         return (
                           <MultiModelPlaygroundCard
                             className={compareLaneHidden(`model:${compareId}`)}
+                            active={!singleCompareLane || activeCompareLaneId === `model:${compareId}`}
                             extensionBinding={compareLaneBinding(
                               previewedHostId,
                               previewedHost?.config
@@ -7173,7 +7207,13 @@ export function PlaygroundMain({
                               compareSummaries,
                             )}
                             selectedServers={selectedServers}
-                            broadcastRequest={broadcastRequest}
+                            broadcastRequest={broadcastRequest?.request ?? null}
+                            claimBroadcastDelivery={(request) =>
+                              broadcastRequest?.claim(
+                                request,
+                                broadcastRecipient("model", compareId),
+                              ) ?? false
+                            }
                             deterministicExecutionRequest={
                               deterministicExecutionRequest
                             }
