@@ -5,10 +5,14 @@ export function fetchScenarioExecutionConfig(
   url: string,
   init: RequestInit,
 ): Promise<Response> {
+  const headers: Record<string, string> = {};
+  new Headers(init.headers).forEach((value, key) => {
+    headers[key] = value;
+  });
   return fetch(url, {
     ...init,
     headers: {
-      ...Object.fromEntries(new Headers(init.headers)),
+      ...headers,
       ...serviceCredentialHeaders(),
     },
     // A custom service header must never follow a redirect to another origin.
