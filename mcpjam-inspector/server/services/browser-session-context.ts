@@ -2,6 +2,7 @@ import type { ViewToolCallRecord } from "../utils/mcp-app-view-tools.js";
 import { buildWidgetToolVerbs, WIDGET_TOOL_VERBS } from "./widget-tool-verbs.js";
 import { pluginModelContextMessage } from "../../shared/plugin-model-context.js";
 import type { HarnessPresentation } from "../../shared/unattended-workspace";
+import { currentAppToolVisibility } from "../utils/browser-harness/current-tool";
 /**
  * browser-session-context.ts — per-session browser-rendered MCP App context for
  * any runner that mocks a user session (eval iterations, synthetic scenario
@@ -83,26 +84,6 @@ import {
   type LiveBrowserFrame,
 } from "@/shared/browser-live-frame";
 import { logger } from "../utils/logger";
-
-/**
- * Extract the SEP-1865 `_meta.ui.visibility` array from a tool's metadata entry
- * (as returned by `MCPClientManager.getAllToolsMetadata(serverId)[name]`).
- * Returns the typed array when present and well-formed, else `undefined` —
- * which downstream is treated as the spec default `["model", "app"]`
- * (model-visible). Kept narrow and pure; the app-only routing decision reuses
- * the SDK's `isAppOnlyTool` predicate rather than re-deriving the rule here.
- */
-function resolveToolVisibilityFromMeta(
-  meta: Record<string, unknown> | undefined,
-): Array<"model" | "app"> | undefined {
-  const visibility = (meta as { ui?: { visibility?: unknown } } | undefined)?.ui
-    ?.visibility;
-  if (!Array.isArray(visibility)) return undefined;
-  const vals = visibility.filter(
-    (v): v is "model" | "app" => v === "model" || v === "app",
-  );
-  return vals.length ? vals : undefined;
-}
 
 /** Cap on the number of `ui/message` follow-ups recorded as a per-step artifact
  *  (the *driven* count is bounded separately by `MAX_WIDGET_FOLLOWUP_TURNS`). */
@@ -518,9 +499,7 @@ export async function createBrowserSessionContext(
         callTool: (sid, name, args) =>
           widgetToolCall ? widgetToolCall(sid, name, args) : mcpClientManager.executeTool(sid, name, args),
         resolveToolVisibility: (sid, name) =>
-          resolveToolVisibilityFromMeta(
-            mcpClientManager.getAllToolsMetadata(sid)?.[name],
-          ),
+          currentAppToolVisibility(mcpClientManager, sid, name),
         viewport: DEFAULT_VIEWPORT,
         // Honor a pinned turn's per-render budget override (mirrors the legacy
         // probe harness construction). Harness default applies when absent.
