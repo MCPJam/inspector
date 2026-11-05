@@ -1,8 +1,9 @@
+import { MCP_APPS_SANDBOX_PROXY_HTML } from "../routes/apps/SandboxProxyHtml.bundled";
 /**
  * Sandbox Proxy buildCSP merge-rule tests.
  *
- * `buildCSP` lives inline in `sandbox-proxy.html` (it runs in the proxy
- * iframe, not Node). To unit-test the merge rule (domain-derived tokens
+ * `buildCSP` is materialized into the proxy bundle from the shared policy
+ * module. To unit-test the merge rule (domain-derived tokens
  * unioned with `cspDirectives` overrides, with `'none'` dropped when any
  * other token is present), we read the HTML, extract the function source,
  * and evaluate it in a sandbox via the `Function` constructor.
@@ -11,23 +12,9 @@
  * browser) while still letting us assert on the merge contract.
  */
 import { describe, it, expect, vi } from "vitest";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 import { JSDOM } from "jsdom";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const html = fs.readFileSync(
-  path.resolve(
-    __dirname,
-    "..",
-    "routes",
-    "apps",
-    "mcp-apps",
-    "sandbox-proxy.html"
-  ),
-  "utf8"
-);
+const html = MCP_APPS_SANDBOX_PROXY_HTML;
 
 // Extract sanitizeDomain + buildCSP source from the inline <script>.
 // Locates the function signature with a forgiving regex, then walks the
