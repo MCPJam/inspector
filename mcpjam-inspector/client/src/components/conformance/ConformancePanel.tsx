@@ -121,11 +121,8 @@ function SuiteSection({
   score?: ConformanceScore;
   children?: React.ReactNode;
 }) {
-  // `null` follows the suite: a finished suite that did not pass opens itself
-  // so the failures are visible; a passing or running one stays shut. OAuth
-  // waiting on the browser opens too, so its prompt is not hidden. Clicking
-  // pins an explicit choice until the next run remounts. A suite that does not
-  // apply stays shut but still opens on click, to its list of checks.
+  // Without an explicit choice, show failures and pending OAuth prompts.
+  // Clicks pin the choice until the next run remounts.
   const [override, setOverride] = useState<boolean | null>(null);
   const running = state.status === "running";
   const unavailable = state.status === "unavailable";
@@ -231,6 +228,7 @@ export function ConformanceContent({
   initialVersionPin,
   initialResolvedProtocolVersion,
   selection,
+  runTimeoutSeconds,
   probes,
 }: {
   server: ServerWithName;
@@ -254,10 +252,7 @@ export function ConformanceContent({
   onOpenSettings?: () => void;
   /** The server's logo, when the project or the server provides one. */
   serverIconUrl?: string;
-  /**
-   * Overview's tab after a finished run: back to the page's home (the server
-   * list) instead of the run, which History still holds.
-   */
+  /** Return to the server list; the completed run remains in History. */
   onShowHome: () => void;
   /** The saved defaults Settings edits have not loaded yet. */
   settingsLoading?: boolean;
@@ -268,17 +263,17 @@ export function ConformanceContent({
   initialResolvedProtocolVersion?: McpProtocolVersion;
   /** What to run, as picked in the setup steps. */
   selection?: ConformanceSelection;
+  runTimeoutSeconds?: number;
   /** The tools the checks that must call one may use. */
   probes?: ConformanceProbes;
 }) {
-  // Run state, per-suite scores and the pooled headline all live in the shared
-  // hook — score.mcpjam.com runs the same four suites and must pool them the
-  // same way. Rendering stays here.
+  // The public score page shares this run state and score calculation.
   const snapshot = useConformanceRun({
     server,
     initialVersionPin,
     initialResolvedProtocolVersion,
     selection,
+    runTimeoutSeconds,
     probes,
   });
   const {

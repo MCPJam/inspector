@@ -546,7 +546,19 @@ export async function withEphemeralClient<T>(
     if (signal) await manager.connectToServer(serverId, config, { signal });
     else await manager.connectToServer(serverId, config);
     signal?.throwIfAborted();
-    return fn(manager, serverId);
+    // A callback may catch an aborted request. Block subsequent operations
+    // so it cannot reconnect or send more work after its deadline.
+    const guardedManager = signal ? new Proxy(manager, {
+      get(target, key) {
+        const value = Reflect.get(target, key);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => {
+          signal.throwIfAborted();
+          return Reflect.apply(value, target, args);
+        };
+      },
+    }) : manager;
+    return fn(guardedManager, serverId);
   };
   try {
     return await awaitWithSignal(run(), signal);

@@ -5,7 +5,15 @@
  */
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { ChevronLeft } from "lucide-react";
+import { ConformanceTimeout } from "./ConformanceTimeout";
+import {
+  Breadcrumb,
+  BreadcrumbList,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@mcpjam/design-system/breadcrumb";
 import { Button } from "@mcpjam/design-system/button";
 import type { McpProtocolVersion } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -50,6 +58,8 @@ export function ConformanceSetup({
   initialVersionPin,
   initialSelection,
   defaultsFor,
+  timeoutFor,
+  onSaveTimeout,
   defaultsLoaded = true,
   onConnectServer,
   onEditServer,
@@ -76,6 +86,8 @@ export function ConformanceSetup({
   defaultsFor?: (serverName: string) => ConformanceSelection | undefined;
   /** False while the saved defaults are still loading: step 2 waits. */
   defaultsLoaded?: boolean;
+  timeoutFor?: (serverName: string) => number | undefined;
+  onSaveTimeout?: (serverName: string, seconds: number | null) => Promise<void>;
   /** Connects a server from the picker; the steps go on once it is. */
   onConnectServer?: ConformanceConnectServer;
   /** Opens a server's connection settings, offered when a connect fails. */
@@ -296,15 +308,31 @@ export function ConformanceSetup({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
       <div className="mx-auto w-full max-w-2xl px-8 py-6">
-        <Button
-          variant="link"
-          size="sm"
-          onClick={onCancel}
-          className="h-auto gap-1 px-0 text-sm has-[>svg]:px-0"
-        >
-          <ChevronLeft className="size-3.5" />
-          Conformance
-        </Button>
+        <Breadcrumb>
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              <BreadcrumbLink asChild>
+                <button type="button" onClick={onCancel}>Conformance</button>
+              </BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              {step === 0 ? (
+                <BreadcrumbPage>Choose server and protocol</BreadcrumbPage>
+              ) : (
+                <BreadcrumbLink asChild>
+                  <button type="button" onClick={() => setStep(0)}>
+                    Choose server and protocol
+                  </button>
+                </BreadcrumbLink>
+              )}
+            </BreadcrumbItem>
+            {step === 1 && <>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem><BreadcrumbPage>Select what to test</BreadcrumbPage></BreadcrumbItem>
+            </>}
+          </BreadcrumbList>
+        </Breadcrumb>
 
         <ProgressStepper
           steps={STEPS}
@@ -404,9 +432,18 @@ export function ConformanceSetup({
         ) : (
           <>
             {protocolNotice}
-            <h2 className="mt-3 text-2xl font-semibold tracking-[-0.02em]">
-              Set what you'd like to test
-            </h2>
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <h2 className="text-2xl font-semibold tracking-[-0.02em]">
+                Set what you'd like to test
+              </h2>
+              {serverName && onSaveTimeout && (
+                <ConformanceTimeout
+                  key={serverName}
+                  seconds={timeoutFor?.(serverName)}
+                  onSave={(seconds) => onSaveTimeout(serverName, seconds)}
+                />
+              )}
+            </div>
             <p className="mt-1.5 text-sm leading-relaxed font-medium">
               Pick the suites and checks this run covers.
             </p>

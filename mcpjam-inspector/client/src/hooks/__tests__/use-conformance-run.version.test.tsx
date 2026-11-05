@@ -23,6 +23,7 @@ vi.mock("@/lib/apis/mcp-conformance-api", () => ({
   runTasksConformance: tasks,
   startOAuthConformance: oauth,
   completeOAuthConformance: vi.fn(),
+  cancelOAuthConformance: vi.fn(async () => ({ success: true })),
   submitOAuthConformanceCode: vi.fn(),
 }));
 vi.mock("@/components/oauth/utils", () => ({

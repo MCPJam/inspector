@@ -1,3 +1,4 @@
+import { DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS } from "@/shared/conformance-timeout";
 import type {
   MCPConformanceResult,
   MCPAppsCheckId,
@@ -21,6 +22,25 @@ import { localPost } from "@/lib/apis/local-post";
 
 // ── Types ───────────────────────────────────────────────────────────────
 
+export interface ConformanceRunBudget {
+  runTimeoutSeconds?: number;
+  remainingRunTimeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+export function conformanceBudgetFields(budget?: ConformanceRunBudget) {
+  if (
+    budget?.runTimeoutSeconds === undefined &&
+    budget?.remainingRunTimeoutMs === undefined
+  )
+    return {};
+  return {
+    runTimeoutSeconds:
+      budget?.runTimeoutSeconds ?? DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS,
+    remainingRunTimeoutMs: budget.remainingRunTimeoutMs,
+  };
+}
+
 export interface OAuthConformanceStartResult {
   phase: "authorization_needed" | "complete";
   sessionId?: string;
@@ -35,7 +55,7 @@ export interface OAuthConformanceCompleteResult {
   result?: OAuthConformanceResult;
 }
 
-export interface OAuthStartInput {
+export interface OAuthStartInput extends ConformanceRunBudget {
   serverNameOrId: string;
   oauthProfile?: {
     serverUrl?: string;
@@ -86,7 +106,7 @@ export interface ConformanceProbes {
 
 export async function runProtocolConformance(
   serverNameOrId: string,
-  options?: {
+  options?: ConformanceRunBudget & {
     protocolVersion?: McpProtocolVersion;
     checkIds?: MCPCheckId[];
     /** The advice to run; absent runs all of it, empty runs none. */
@@ -95,6 +115,7 @@ export async function runProtocolConformance(
   },
 ): Promise<{ success: boolean; result: MCPConformanceResult }> {
   const versionFields = {
+    ...conformanceBudgetFields(options),
     ...(options?.protocolVersion
       ? { protocolVersion: options.protocolVersion }
       : {}),
@@ -113,25 +134,26 @@ export async function runProtocolConformance(
       localPost("/api/mcp/conformance/protocol", {
         serverId: serverNameOrId,
         ...versionFields,
-      }),
+      }, ...(options?.signal ? [{ signal: options.signal }] : [])),
     hosted: () => {
       const request = buildServerRequest(serverNameOrId);
       return webPost("/api/web/conformance/protocol", {
         ...request,
         ...versionFields,
-      });
+      }, ...(options?.signal ? [{ signal: options.signal }] : []));
     },
   });
 }
 
 export async function runAppsConformance(
   serverNameOrId: string,
-  options?: {
+  options?: ConformanceRunBudget & {
     checkIds?: MCPAppsCheckId[];
     protocolVersion?: McpProtocolVersion;
   },
 ): Promise<{ success: boolean; result: MCPAppsConformanceResult }> {
   const checkFields = {
+    ...conformanceBudgetFields(options),
     ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
     ...(options?.protocolVersion
       ? { protocolVersion: options.protocolVersion }
@@ -142,13 +164,13 @@ export async function runAppsConformance(
       localPost("/api/mcp/conformance/apps", {
         serverId: serverNameOrId,
         ...checkFields,
-      }),
+      }, ...(options?.signal ? [{ signal: options.signal }] : [])),
     hosted: () => {
       const request = buildServerRequest(serverNameOrId);
       return webPost("/api/web/conformance/apps", {
         ...request,
         ...checkFields,
-      });
+      }, ...(options?.signal ? [{ signal: options.signal }] : []));
     },
   });
 }
@@ -160,7 +182,7 @@ export async function runAppsConformance(
  */
 export async function runTasksConformance(
   serverNameOrId: string,
-  options?: {
+  options?: ConformanceRunBudget & {
     protocolVersion?: McpProtocolVersion;
     checkOverrides?: MCPTasksCheckOverrides;
     toolName?: string;
@@ -172,6 +194,7 @@ export async function runTasksConformance(
   },
 ): Promise<{ success: boolean; result: MCPTasksConformanceResult }> {
   const optionFields = {
+    ...conformanceBudgetFields(options),
     ...(options?.protocolVersion
       ? { protocolVersion: options.protocolVersion }
       : {}),
@@ -191,13 +214,13 @@ export async function runTasksConformance(
       localPost("/api/mcp/conformance/tasks", {
         serverId: serverNameOrId,
         ...optionFields,
-      }),
+      }, ...(options?.signal ? [{ signal: options.signal }] : [])),
     hosted: () => {
       const request = buildServerRequest(serverNameOrId);
       return webPost("/api/web/conformance/tasks", {
         ...request,
         ...optionFields,
-      });
+      }, ...(options?.signal ? [{ signal: options.signal }] : []));
     },
   });
 }
@@ -209,18 +232,20 @@ export async function startOAuthConformance(
     local: () =>
       localPost("/api/mcp/conformance/oauth/start", {
         serverId: input.serverNameOrId,
+        ...conformanceBudgetFields(input),
         oauthProfile: input.oauthProfile,
         callbackOrigin: input.callbackOrigin,
         ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
-      }),
+      }, ...(input.signal ? [{ signal: input.signal }] : [])),
     hosted: () => {
       const request = buildServerRequest(input.serverNameOrId);
       return webPost("/api/web/conformance/oauth/start", {
         ...request,
+        ...conformanceBudgetFields(input),
         oauthProfile: input.oauthProfile,
         callbackOrigin: input.callbackOrigin,
         ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
-      });
+      }, ...(input.signal ? [{ signal: input.signal }] : []));
     },
   });
 }
@@ -229,26 +254,34 @@ export async function submitOAuthConformanceCode(input: {
   sessionId: string;
   code: string;
   state?: string;
-}): Promise<{ success: boolean }> {
+}, options?: { signal?: AbortSignal }): Promise<{ success: boolean }> {
   const path = isHostedMode()
     ? "/api/web/conformance/oauth/authorize"
     : "/api/mcp/conformance/oauth/authorize";
 
   if (isHostedMode()) {
-    return webPost(path, input);
+    return webPost(path, input, options);
   }
-  return localPost(path, input);
+  return localPost(path, input, options);
 }
 
 export async function completeOAuthConformance(
   sessionId: string,
+  options?: { signal?: AbortSignal },
 ): Promise<OAuthConformanceCompleteResult> {
   const path = isHostedMode()
     ? "/api/web/conformance/oauth/complete"
     : "/api/mcp/conformance/oauth/complete";
 
   if (isHostedMode()) {
-    return webPost(path, { sessionId });
+    return webPost(path, { sessionId }, options);
   }
-  return localPost(path, { sessionId });
+  return localPost(path, { sessionId }, options);
+}
+
+export async function cancelOAuthConformance(sessionId: string): Promise<{ success: boolean }> {
+  return runByMode({
+    local: () => localPost("/api/mcp/conformance/oauth/cancel", { sessionId }),
+    hosted: () => webPost("/api/web/conformance/oauth/cancel", { sessionId }),
+  });
 }
