@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { ThinkingIndicator } from "../shared/thinking-indicator";
 import type { ModelDefinition } from "@/shared/types";
@@ -48,27 +48,23 @@ describe("ThinkingIndicator", () => {
       </PreferencesStoreProvider>,
     );
 
-  it("delays startup phases and clears them when startup ends", () => {
-    vi.useFakeTimers();
-    try {
-      const view = renderThinkingIndicator(
-        <ThinkingIndicator model={openaiModel} startupPhase="computer" />,
-      );
-      expect(screen.queryByText("Starting your computer…")).not.toBeInTheDocument();
-      act(() => vi.advanceTimersByTime(499));
-      expect(screen.queryByText("Starting your computer…")).not.toBeInTheDocument();
-      act(() => vi.advanceTimersByTime(1));
-      expect(screen.getByText("Starting your computer…")).toBeInTheDocument();
-      view.rerender(
-        <PreferencesStoreProvider themeMode="light" themePreset="default">
-          <ThinkingIndicator model={openaiModel} startupPhase={null} />
-        </PreferencesStoreProvider>,
-      );
-      expect(screen.queryByText("Starting your computer…")).not.toBeInTheDocument();
-      view.unmount();
-    } finally {
-      vi.useRealTimers();
-    }
+  it("shows preparation immediately and keeps startup visible between phases", () => {
+    const wrap = (phase: "preparing" | "computer" | "agent" | "ready") => (
+      <PreferencesStoreProvider themeMode="light" themePreset="default">
+        <ThinkingIndicator model={openaiModel} startupPhase={phase} />
+      </PreferencesStoreProvider>
+    );
+    const view = renderThinkingIndicator(
+      <ThinkingIndicator model={openaiModel} startupPhase="preparing" />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Preparing agent…");
+    expect(screen.getByRole("status")).toHaveClass("reasoning-shimmer-text");
+    view.rerender(wrap("computer"));
+    expect(screen.getByRole("status")).toHaveTextContent("Starting your computer…");
+    view.rerender(wrap("agent"));
+    expect(screen.getByRole("status")).toHaveTextContent("Starting your agent…");
+    view.rerender(wrap("ready"));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("renders a leading assistant avatar outside host-style contexts", () => {

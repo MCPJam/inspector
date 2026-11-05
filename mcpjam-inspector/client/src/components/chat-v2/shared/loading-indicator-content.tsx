@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import "../thread/parts/reasoning-part.css";
 import type { HarnessStartupPhase } from "@/shared/harness-startup";
 import {
   useScenarioChatUiOverride,
@@ -80,15 +80,8 @@ export function LoadingIndicatorContent({
   modelProvider?: string | null;
   startupPhase?: HarnessStartupPhase | null;
 }) {
-  const [visiblePhase, setVisiblePhase] = useState<HarnessStartupPhase | null>(null);
-  useEffect(() => {
-    setVisiblePhase(null);
-    if (!startupPhase || startupPhase === "ready") return;
-    const timer = setTimeout(() => setVisiblePhase(startupPhase), 500);
-    return () => clearTimeout(timer);
-  }, [startupPhase]);
   const startupLabels = {
-    preparing: "Preparing your chat…",
+    preparing: "Preparing agent…",
     computer: "Starting your computer…",
     authorization: "Preparing secure access…",
     agent: "Starting your agent…",
@@ -97,8 +90,12 @@ export function LoadingIndicatorContent({
   const hostStyle = useResolvedHostStyleForIndicator(modelProvider);
   const chatUiOverride = useScenarioChatUiOverride();
 
-  if (visiblePhase && visiblePhase === startupPhase) {
-    return <span role="status" className={className}>{startupLabels[visiblePhase]}</span>;
+  if (startupPhase && startupPhase !== "ready") {
+    return (
+      <span role="status" className={cn("reasoning-shimmer-text", className)}>
+        {startupLabels[startupPhase]}
+      </span>
+    );
   }
 
   if (hostStyle) {

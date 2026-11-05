@@ -172,9 +172,9 @@ vi.mock("ai", () => ({
   convertToModelMessages: vi.fn(async () => []),
 }));
 
-async function renderChatSession() {
+async function renderChatSession(harnessId?: string) {
   const rendered = renderHook(() =>
-    useChatSession({ selectedServers: ["server-1"] })
+    useChatSession({ selectedServers: ["server-1"], harnessModelTarget: harnessId ? { harnessId } : null })
   );
   await waitFor(() => {
     expect(mockState.chatOnData).not.toBeNull();
@@ -207,6 +207,28 @@ describe("useChatSession task-created scope capture", () => {
     mockState.chatStatus = "ready";
     mockState.idCounter = 0;
     mockState.messages = [];
+  });
+
+  it("starts harness turns in preparation before any server event", async () => {
+    const { result, rerender } = await renderChatSession("codex");
+    expect(result.current.harnessStartupPhase).toBeNull();
+    mockState.chatStatus = "submitted";
+    rerender();
+    expect(result.current.harnessStartupPhase).toBe("preparing");
+    let body: unknown;
+    act(() => { body = mockState.transportOptions.at(-1)?.body?.(); });
+    if (!body || typeof body !== "object" || !("harnessStartupRequestId" in body)) {
+      throw new Error("Missing request ID");
+    }
+    const requestId = body.harnessStartupRequestId;
+    mockState.chatStatus = "streaming";
+    rerender();
+    expect(result.current.harnessStartupPhase).toBe("preparing");
+    act(() => mockState.chatOnData?.({
+      type: "data-harness-startup", transient: true,
+      data: { phase: "ready", requestId, chatSessionId: result.current.chatSessionId },
+    }));
+    expect(result.current.harnessStartupPhase).toBeNull();
   });
 
   it("clears startup status on Stop, error and chat switch and rejects stale requests", async () => {
