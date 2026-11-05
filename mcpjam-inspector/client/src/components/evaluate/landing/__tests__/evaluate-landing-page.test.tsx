@@ -12,6 +12,20 @@ const overview = vi.hoisted(() => ({
   isLoading: false,
 }));
 const request = vi.hoisted(() => vi.fn(() => true));
+const openCreate = vi.hoisted(() => vi.fn());
+const actions = vi.hoisted(() => ({
+  run: {
+    rerun: vi.fn(),
+    disabledReason: null as string | null,
+    judgeRunIds: [] as string[],
+  },
+  rerunningSuiteId: null as string | null,
+  deleteRun: vi.fn() as ((runId: string) => Promise<void>) | undefined,
+  canDeleteArtifact: () => true,
+  quickstart: { run: vi.fn(), isRunning: false, available: true },
+  heroServers: [{ id: "srv_1", name: "Asana" }],
+  serversLoading: false,
+}));
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 vi.mock("convex/react", () => ({
@@ -26,6 +40,25 @@ vi.mock("@/lib/app-route-context", () => ({
 }));
 vi.mock("../../create-suite-navigation", () => ({
   navigatePlaygroundEvalsRoute: navigate,
+}));
+vi.mock("../../create-suite-prefill-store", () => ({
+  openCreateSuite: openCreate,
+}));
+vi.mock("../use-evaluate-landing-actions", () => ({
+  useEvaluateLandingActions: () => actions,
+}));
+vi.mock("../../suite-list-run-review", () => ({
+  SuiteListRunReview: ({
+    suite,
+    onStart,
+  }: {
+    suite: { name: string };
+    onStart: (suite: unknown, options: object) => void;
+  }) => (
+    <button type="button" onClick={() => onStart(suite, {})}>
+      Start {suite.name}
+    </button>
+  ),
 }));
 vi.mock("../use-evaluate-suite-overview", () => ({
   useEvaluateSuiteOverview: () => overview,
@@ -45,8 +78,16 @@ vi.mock("../../../evals/EvalTabGate", () => ({
   ),
 }));
 vi.mock("../../../evals/project-runs-table", () => ({
-  ProjectRunsTable: ({ projectId }: { projectId: string }) => (
-    <p>runs of {projectId}</p>
+  ProjectRunsTable: ({
+    projectId,
+    onDeleteRun,
+  }: {
+    projectId: string;
+    onDeleteRun?: (runId: string) => void;
+  }) => (
+    <button type="button" onClick={() => onDeleteRun?.("run_9")}>
+      runs of {projectId}
+    </button>
   ),
 }));
 vi.mock("../../how-suites-work/use-how-suites-work", () => ({
@@ -73,12 +114,18 @@ function entry(
     createdAt: Date.now() - 60_000,
   } satisfies Partial<EvalSuiteOverviewEntry["recentRuns"][number]>;
   return {
-    suite: { _id: id, name },
+    suite: { _id: id, name, environment: { servers: ["excalidraw"] } },
     latestRun: null,
     recentRuns: [run],
     passRateTrend: [passRate],
     totals: { passed: 0, failed: 0, runs: 1 },
   } as unknown as EvalSuiteOverviewEntry;
+}
+
+function cardNames(): string[] {
+  return screen
+    .getAllByTestId("evaluate-suite-card")
+    .map((card) => card.querySelector(".truncate")?.textContent ?? "");
 }
 
 function renderLanding(
@@ -94,8 +141,7 @@ function renderLanding(
 
 describe("EvaluateLandingPage", () => {
   beforeEach(() => {
-    navigate.mockClear();
-    request.mockClear();
+    vi.clearAllMocks();
     overview.suites = [entry("s_1", "Excalidraw basics", 1)];
     overview.isLoading = false;
   });
@@ -122,7 +168,7 @@ describe("EvaluateLandingPage", () => {
   it("opens Create suite and the tutorial from the ⋮ menu", async () => {
     renderLanding();
     await userEvent.click(screen.getByRole("button", { name: /Create suite/ }));
-    expect(navigate).toHaveBeenCalledWith({ type: "create" });
+    expect(openCreate).toHaveBeenCalledWith();
     await userEvent.click(screen.getByRole("button", { name: "More options" }));
     await userEvent.click(
       await screen.findByRole("menuitem", { name: /Tutorial/ }),
@@ -148,10 +194,56 @@ describe("EvaluateLandingPage", () => {
     });
   });
 
-  it("offers Create suite when the project has no suites", () => {
+  it("offers the sample suite and the project's servers when there are no suites", async () => {
     overview.suites = [];
     renderLanding();
     expect(screen.getByTestId("evals-empty-hero")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: /Asana/ }));
+    expect(openCreate).toHaveBeenCalledWith({
+      name: "Asana",
+      serverId: "srv_1",
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: /sample suite/i }),
+    );
+    expect(actions.quickstart.run).toHaveBeenCalled();
+  });
+
+  it("starts a suite run from the card's review", async () => {
+    renderLanding();
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Start Excalidraw basics" }),
+    );
+    expect(actions.run.rerun).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: "s_1" }),
+      {},
+    );
+  });
+
+  it("searches and sorts the suites", async () => {
+    overview.suites = [
+      entry("s_1", "Zeta", 1),
+      entry("s_2", "Alpha", 0.5),
+      entry("s_3", "Mid", 0.9),
+    ];
+    renderLanding();
+    await userEvent.type(screen.getByLabelText("Search suites"), "a");
+    expect(cardNames()).toEqual(["Zeta", "Alpha"]);
+    await userEvent.clear(screen.getByLabelText("Search suites"));
+    await userEvent.click(screen.getByRole("button", { name: /Sort suites/ }));
+    await userEvent.click(
+      await screen.findByRole("menuitemradio", { name: "Name" }),
+    );
+    expect(cardNames()).toEqual(["Alpha", "Mid", "Zeta"]);
+    await userEvent.type(screen.getByLabelText("Search suites"), "nothing");
+    expect(screen.getByText("No suites match “nothing”.")).toBeTruthy();
+  });
+
+  it("deletes runs from the Runs tab", async () => {
+    renderLanding("evaluate-runs");
+    await userEvent.click(screen.getByRole("button", { name: "runs of p_1" }));
+    expect(actions.deleteRun).toHaveBeenCalledWith("run_9");
   });
 
   it("does not ask for the tutorial with the nav rework off", () => {

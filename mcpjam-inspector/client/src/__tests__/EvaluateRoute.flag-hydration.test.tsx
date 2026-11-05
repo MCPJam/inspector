@@ -35,6 +35,11 @@ vi.mock("react-router", async (importOriginal) => {
   };
 });
 
+// The nav rework's own flag is off here, so /evaluate renders today's tab.
+vi.mock("../components/evaluate/nav/use-evaluate-nav-enabled", () => ({
+  useEvaluateNavEnabled: () => false,
+}));
+
 vi.mock("../components/EvaluateTab", () => ({
   EvaluateTab: () => <div data-testid="evaluate-tab" />,
 }));

@@ -1,17 +1,22 @@
-import { useMemo } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Settings2 } from "lucide-react";
+import { Loader2, Play, Settings2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
+import { suiteHasRunnableServers } from "../../evals/helpers";
+import { isActiveRun } from "../../evals/run-metrics";
 import type { EvalSuiteOverviewEntry } from "../../evals/types";
-import {
-  buildSuiteRunSlice,
-  type SuiteSlicePoint,
-  type SuiteTrend,
+import type {
+  SuiteRunSlice,
+  SuiteSlicePoint,
+  SuiteTrend,
 } from "./suite-run-slice";
 
 interface SuiteCardProps {
   entry: EvalSuiteOverviewEntry;
+  slice: SuiteRunSlice;
+  /** A run this page started is being prepared. */
+  running: boolean;
+  onRun: () => void;
   onOpenSuite: (suiteId: string) => void;
   onOpenRun: (target: { suiteId: string; runId: string }) => void;
   onOpenSettings: (suiteId: string) => void;
@@ -20,12 +25,17 @@ interface SuiteCardProps {
 /** One suite on the Suites tab: average pass rate, trend and last five runs (C14). */
 export function SuiteCard({
   entry,
+  slice,
+  running,
+  onRun,
   onOpenSuite,
   onOpenRun,
   onOpenSettings,
 }: SuiteCardProps) {
   const { suite } = entry;
-  const slice = useMemo(() => buildSuiteRunSlice(entry), [entry]);
+  const inFlight =
+    running || (entry.latestRun ? isActiveRun(entry.latestRun) : false);
+  const runnable = suiteHasRunnableServers(suite);
   const { latest, average, points } = slice;
   const name = suite.name || "Untitled suite";
   const openRun = (point: SuiteSlicePoint) =>
@@ -121,15 +131,37 @@ export function SuiteCard({
           ) : (
             <span />
           )}
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 gap-1.5 px-2.5"
-            onClick={() => onOpenSettings(suite._id)}
+          <div
+            className="flex shrink-0 items-center"
+            role="group"
+            aria-label={`Run or set up ${name}`}
           >
-            <Settings2 className="size-3.5" aria-hidden />
-            Suite settings
-          </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 rounded-r-none px-2.5"
+              disabled={!runnable || inFlight}
+              title={runnable ? undefined : "No servers configured"}
+              onClick={onRun}
+            >
+              {inFlight ? (
+                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+              ) : (
+                <Play className="size-3.5" aria-hidden />
+              )}
+              {inFlight ? "Running" : "Run"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="-ml-px h-7 rounded-l-none px-2"
+              aria-label="Suite settings"
+              title="Suite settings"
+              onClick={() => onOpenSettings(suite._id)}
+            >
+              <Settings2 className="size-3.5" aria-hidden />
+            </Button>
+          </div>
         </div>
       </div>
     </li>

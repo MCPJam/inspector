@@ -30,28 +30,29 @@ import {
   isModuleLoadError,
   MODULE_LOAD_ERROR_COPY,
 } from "@/lib/module-load-error";
-import { EvalsEmptyHero } from "./evaluate/evals-empty-hero";
+import {
+  EvalsEmptyHero,
+  openCreateSuiteForServer,
+  toEmptyHeroServers,
+} from "./evaluate/evals-empty-hero";
+import {
+  clearCreateSuitePrefill,
+  openCreateSuite,
+  useCreateSuitePrefill,
+} from "./evaluate/create-suite-prefill-store";
 import { PreparedEvalServerPage } from "./evaluate/prepared-eval-server-page";
 import { savePreparedEvalSuites } from "./evaluate/launch-prepared-evals";
 import { previewCaseTitleFromDraft } from "./evaluate/eval-server-case-edit-page";
-import {
-  runExcalidrawQuickstart,
-  EXCALIDRAW_QUICKSTART_SUITE_NAME,
-} from "@/lib/evals/excalidraw-quickstart";
 import {
   loadGenerateConfig,
   toGenerationOptions,
   totalCases,
 } from "@/lib/evals/eval-generation-config";
-import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
-import { isQuickstartSuite } from "./evals/constants";
 import type { ServerFormData } from "@/shared/types.js";
 import { useProjectServers } from "@/hooks/useViews";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
-import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useEvaluateCurrentRoute } from "./evaluate/nav/evaluate-nav-host";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
-import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
 import {
   environmentTargetLabel,
@@ -72,6 +73,8 @@ import { ConfirmationDialogs } from "./evals/ConfirmationDialogs";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
+import { useQuotaGuardedRerun } from "./evaluate/use-quota-guarded-rerun";
+import { useExcalidrawQuickstart } from "./evaluate/use-excalidraw-quickstart";
 import { LaunchedCaseJudge } from "./evaluate/case-scorecard/launched-case-judge";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { createSuiteFromPayload } from "./evals/create-suite-from-payload";
@@ -85,8 +88,6 @@ import {
   CreateSuitePage,
   type CreateSuitePayload,
 } from "./evaluate/create-suite-page";
-import { getEvalIterationQuotaDisabledReason } from "@/lib/eval-iteration-quota";
-import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
 import { track } from "@/lib/analytics";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
@@ -197,7 +198,6 @@ function EvaluateTabContent({
   const decisionSummaryEnabled = true;
   const route = useEvaluateCurrentRoute();
   const isDirectGuest = useIsDirectGuest({ projectId });
-  const [previewedHostId] = usePreviewedHostId(projectId ?? null);
   const {
     organizationId,
     connectedServerNames,
@@ -213,14 +213,6 @@ function EvaluateTabContent({
     projectId: projectId ?? null,
     isDirectGuest,
   });
-  const { quota: evalIterationQuota } = useEvalIterationQuota({
-    organizationId,
-    enabled: Boolean(organizationId),
-  });
-  const evalRunsDisabledReason = useMemo(
-    () => getEvalIterationQuotaDisabledReason(evalIterationQuota),
-    [evalIterationQuota],
-  );
   const { servers: projectServers = [], isLoading: isProjectServersLoading } =
     useProjectServers({
       isAuthenticated,
@@ -228,13 +220,6 @@ function EvaluateTabContent({
     });
   const mutations = useEvalMutations({ isDirectGuest });
   const convex = useConvex();
-  const createServerAttachmentMutation = useMutation(
-    "serverAttachments:createServerAttachment" as any,
-  ) as unknown as (args: {
-    projectId: string;
-    name: string;
-    serverIds: string[];
-  }) => Promise<{ _id: string }>;
   const setSuiteEnvironments = useMutation(
     "testSuites:setSuiteEnvironments" as any,
   ) as unknown as (args: {
@@ -320,63 +305,14 @@ function EvaluateTabContent({
     directDeleteTestCase,
   } = handlers;
 
-  const guardEvalIterationQuota = useCallback(() => {
-    if (!evalRunsDisabledReason) {
-      return true;
-    }
-    // The user just clicked Run — highest-intent moment there is. Give them a
-    // decision surface instead of a dismissible error. Falls back to the
-    // toast when we can't resolve the org (nothing to upgrade).
-    if (organizationId && evalIterationQuota) {
-      usePlanLimitDialogStore.getState().open({
-        kind: "evalIterations",
-        organizationId,
-        used: evalIterationQuota.used,
-        allowed: evalIterationQuota.allowed,
-        resetsAt: evalIterationQuota.resetsAt,
-        windowKind: evalIterationQuota.windowKind,
-        origin: "evals",
-      });
-      return false;
-    }
-    toast.error(evalRunsDisabledReason);
-    return false;
-  }, [evalIterationQuota, evalRunsDisabledReason, organizationId]);
-
-  const [judgeRunIds, setJudgeRunIds] = useState<string[]>([]);
-  const handleRerunWithQuota = useCallback(
-    async (...args: Parameters<typeof handlers.handleRerun>) => {
-      if (!guardEvalIterationQuota()) {
-        if (args[1]?.throwOnFailure)
-          throw new Error(
-            evalRunsDisabledReason ?? "Eval iteration limit reached.",
-          );
-        return;
-      }
-      const launch = await handlers.handleRerun(...args);
-      if (
-        args[1]?.caseIds?.length &&
-        !args[1]?.skipJudge &&
-        launch?.runIds.length
-      ) {
-        setJudgeRunIds((current) => [
-          ...new Set([...current, ...launch.runIds]),
-        ]);
-      }
-      return launch;
-    },
-    [guardEvalIterationQuota, handlers, evalRunsDisabledReason],
-  );
-
-  const handleRunTestCaseWithQuota = useCallback(
-    (...args: Parameters<typeof handlers.handleRunTestCase>) => {
-      if (!guardEvalIterationQuota()) {
-        return Promise.resolve(null);
-      }
-      return handlers.handleRunTestCase(...args);
-    },
-    [guardEvalIterationQuota, handlers],
-  );
+  const {
+    quota: evalIterationQuota,
+    disabledReason: evalRunsDisabledReason,
+    guard: guardEvalIterationQuota,
+    rerun: handleRerunWithQuota,
+    runTestCase: handleRunTestCaseWithQuota,
+    judgeRunIds,
+  } = useQuotaGuardedRerun({ organizationId, handlers });
 
   const queries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(projectId),
@@ -466,101 +402,32 @@ function EvaluateTabContent({
     });
   }, [isLoading, selectedSuiteId, route.type, projectId]);
 
-  // Prefill for the create-suite page: name from the agent command
-  // (`ui_open_eval_suite_form`) or name + server from the empty-hero cards.
-  // Prefill-over-commit — the user still reviews and submits.
-  const [createSuitePrefillName, setCreateSuitePrefillName] = useState<
-    string | null
-  >(null);
-  const [createSuitePrefillServerId, setCreateSuitePrefillServerId] = useState<
-    string | null
-  >(null);
+  const { name: createSuitePrefillName, serverId: createSuitePrefillServerId } =
+    useCreateSuitePrefill();
   const existingSuiteNames = useMemo(
     () => visibleSuites.map((entry) => entry.suite.name),
     [visibleSuites],
   );
 
   const emptyHeroServers = useMemo(
-    () =>
-      projectServers
-        .filter((server) => server.name.trim().length > 0)
-        .map((server) => ({ id: server._id, name: server.name })),
+    () => toEmptyHeroServers(projectServers),
     [projectServers],
   );
 
-  const handleOpenCreateSuite = useCallback(() => {
-    setCreateSuitePrefillName(null);
-    setCreateSuitePrefillServerId(null);
-    navigatePlaygroundEvalsRoute({ type: "create" });
-  }, []);
+  const handleOpenCreateSuite = useCallback(() => openCreateSuite(), []);
 
-  const handleEvalServer = useCallback(
-    (server: { id: string; name: string }) => {
-      setCreateSuitePrefillName(server.name);
-      setCreateSuitePrefillServerId(server.id);
-      navigatePlaygroundEvalsRoute({ type: "create" });
-    },
-    [],
-  );
-
-  const [isQuickstartRunning, setIsQuickstartRunning] = useState(false);
   const [landingView, setLandingView] = useState<EvalLandingView>("runs");
 
-  const existingQuickstartSuiteId = useMemo(() => {
-    const match = visibleSuites.find(
-      (entry) =>
-        isQuickstartSuite(entry.suite) ||
-        entry.suite.name === EXCALIDRAW_QUICKSTART_SUITE_NAME,
-    );
-    return match?.suite._id ?? null;
-  }, [visibleSuites]);
-
-  const handleExcalidrawQuickstart = useCallback(async () => {
-    if (!handleConnect || isQuickstartRunning) return;
-    if (!projectId) {
-      toast.error("Select or create a project before running the quickstart.");
-      return;
-    }
-    setIsQuickstartRunning(true);
-    try {
-      await runExcalidrawQuickstart({
-        projectId,
-        convex,
-        createTestSuite: mutations.createTestSuiteMutation,
-        createTestCase: mutations.createTestCaseMutation,
-        createServerAttachment: createServerAttachmentMutation,
-        handleConnect,
-        isExcalidrawConnected: connectedServerNames.has(EXCALIDRAW_SERVER_NAME),
-        existingQuickstartSuiteId,
-        previewedHostId,
-        environmentSuites:
-          environmentCapabilities?.createSuiteWithEnvironments === true,
-        // Stay in Evaluate. The default lands on `/evals/...`, which dropped
-        // the reader into the shipped tab's copy of the suite they just made.
-        navigate: navigatePlaygroundEvalsRoute,
-      });
-    } finally {
-      setIsQuickstartRunning(false);
-    }
-  }, [
+  const quickstart = useExcalidrawQuickstart({
     projectId,
-    convex,
     handleConnect,
-    isQuickstartRunning,
-    mutations.createTestSuiteMutation,
-    mutations.createTestCaseMutation,
-    createServerAttachmentMutation,
+    suites: visibleSuites,
     connectedServerNames,
-    existingQuickstartSuiteId,
-    previewedHostId,
-    environmentCapabilities,
-  ]);
-
-  const showQuickstart = Boolean(handleConnect);
+    mutations,
+  });
 
   const handleCancelCreateSuite = useCallback(() => {
-    setCreateSuitePrefillName(null);
-    setCreateSuitePrefillServerId(null);
+    clearCreateSuitePrefill();
     navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
   }, []);
 
@@ -580,6 +447,7 @@ function EvaluateTabContent({
             environmentCapabilities?.createSuiteWithEnvironments === true,
         });
 
+        clearCreateSuitePrefill();
         toast.success("Suite created");
         navigatePlaygroundEvalsRoute({
           type: "suite-overview",
@@ -993,9 +861,7 @@ function EvaluateTabContent({
         }
         const name =
           typeof payload?.name === "string" ? payload.name.trim() : "";
-        setCreateSuitePrefillName(name.length > 0 ? name : null);
-        setCreateSuitePrefillServerId(null);
-        navigatePlaygroundEvalsRoute({ type: "create" });
+        openCreateSuite({ name: name.length > 0 ? name : null });
         return {
           status: "form_opened",
           ...(name.length > 0 ? { prefilledName: name } : {}),
@@ -1446,10 +1312,10 @@ function EvaluateTabContent({
     const landingEmpty = (
       <EvalsEmptyHero
         onCreateSuite={handleOpenCreateSuite}
-        onEvalServer={handleEvalServer}
-        onQuickstart={() => void handleExcalidrawQuickstart()}
-        isQuickstartRunning={isQuickstartRunning}
-        showQuickstart={showQuickstart}
+        onEvalServer={openCreateSuiteForServer}
+        onQuickstart={() => void quickstart.run()}
+        isQuickstartRunning={quickstart.isRunning}
+        showQuickstart={quickstart.available}
         servers={emptyHeroServers}
         serversLoading={isProjectServersLoading}
       />

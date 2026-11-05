@@ -2,6 +2,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import evalSuiteEmptySrc from "../../assets/evals/eval-suite-empty.png";
+import { openCreateSuite } from "./create-suite-prefill-store";
 
 const FIRST_SUITE_EMPTY_DESCRIPTION =
   "We generate cases from a server you already use, then keep running them in CI.";
@@ -17,6 +18,20 @@ export type EvalsEmptyHeroServer = {
   id: string;
   name: string;
 };
+
+/** Server cards for the hero: every project server with a name. */
+export function toEmptyHeroServers(
+  servers: ReadonlyArray<{ _id: string; name: string }>,
+): EvalsEmptyHeroServer[] {
+  return servers
+    .filter((server) => server.name.trim().length > 0)
+    .map((server) => ({ id: server._id, name: server.name }));
+}
+
+/** "Eval my server": the create-suite page with the server and its name filled in. */
+export function openCreateSuiteForServer(server: EvalsEmptyHeroServer) {
+  openCreateSuite({ name: server.name, serverId: server.id });
+}
 
 interface EvalsEmptyHeroProps {
   onCreateSuite: () => void;
