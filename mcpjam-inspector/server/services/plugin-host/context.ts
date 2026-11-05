@@ -97,6 +97,11 @@ export class PluginContextWorkspace {
     this.state = createPluginSession(workspaceId);
   }
 
+  /** Whether `operationId` is the update this App's context last applied. */
+  isRetry(instanceId: string, operationId: string) {
+    return this.cursors.get(instanceId)?.operationId === operationId;
+  }
+
   attach(
     instanceId: string,
     generation: number,
