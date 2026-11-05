@@ -27,7 +27,9 @@ export type ResourceWriteOutcome =
 /** Trusted adapter keys and authorization never cross the browser boundary. */
 export interface BoundResourceAdapter {
   read(key: string, signal: AbortSignal): Promise<ResourceVersion>;
-  /** Present only for an adapter with verified atomic compare-and-replace. */
+  /** A runtime-backed writer is advertised only after its atomic primitive qualifies. */
+  supportsConditionalWrite?(signal: AbortSignal): Promise<boolean>;
+  /** Verified compare-and-replace under the adapter's exclusive-writer contract. */
   conditionalWrite?: (
     key: string,
     bytes: Uint8Array,
@@ -69,7 +71,8 @@ export class ResourceGrantError extends Error {
       | "RESOURCE_INVALID"
       | "RESOURCE_NOT_TEXT"
       | "RESOURCE_OUTCOME_UNKNOWN"
-      | "RESOURCE_READ_REQUIRED",
+      | "RESOURCE_READ_REQUIRED"
+      | "RESOURCE_WRITE_UNAVAILABLE",
   ) {
     super(code);
     this.name = "ResourceGrantError";
@@ -83,6 +86,17 @@ export class ResourceGrantError extends Error {
  */
 export class ResourceGrantService {
   private readonly grants = new Map<string, Grant>();
+  private async writeSupported(grant: Grant, signal: AbortSignal): Promise<boolean> {
+    if (!grant.adapter.conditionalWrite) return false;
+    if (!grant.adapter.supportsConditionalWrite) return true;
+    try {
+      return await grant.adapter.supportsConditionalWrite(signal);
+    } catch {
+      signal.throwIfAborted();
+      // An unavailable capability probe removes write access without blocking an authorized read.
+      return false;
+    }
+  }
   constructor(
     private readonly options: {
       authorize: (
@@ -262,7 +276,10 @@ export class ResourceGrantService {
           throw new ResourceGrantError("RESOURCE_NOT_TEXT");
       }
     }
-    grant.writableRead = !!grant.adapter.conditionalWrite;
+    grant.writableRead = await this.writeSupported(grant, activeSignal);
+    activeSignal.throwIfAborted();
+    if (grant.adapter.supportsConditionalWrite)
+      await this.authorize(owner, params.uri, "read");
     return {
       contents: [
         {
@@ -290,6 +307,16 @@ export class ResourceGrantService {
     const grant = await this.authorize(owner, params.uri, "write");
     if (!grant.adapter.conditionalWrite)
       throw new ResourceGrantError("RESOURCE_DENIED");
+    const activeSignal = signal
+      ? AbortSignal.any([signal, grant.controller.signal])
+      : grant.controller.signal;
+    activeSignal.throwIfAborted();
+    if (!(await this.writeSupported(grant, activeSignal))) {
+      grant.writableRead = false;
+      throw new ResourceGrantError("RESOURCE_WRITE_UNAVAILABLE");
+    }
+    if (grant.adapter.supportsConditionalWrite)
+      await this.authorize(owner, params.uri, "write");
     // A write follows a read that reported the file writable. A grant issued
     // again says so plainly: the App's unsaved state is its own, and the
     // read gives it the current version (and ETag) to save against.
@@ -320,10 +347,6 @@ export class ResourceGrantService {
       params.text !== undefined
         ? new TextEncoder().encode(params.text)
         : Buffer.from(params.blob!, "base64");
-    const activeSignal = signal
-      ? AbortSignal.any([signal, grant.controller.signal])
-      : grant.controller.signal;
-    activeSignal.throwIfAborted();
     // After dispatch a lost acknowledgement cannot justify an automatic retry.
     let result: Exclude<ResourceWriteOutcome, { outcome: "too-large" }>;
     try {
