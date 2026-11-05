@@ -3980,7 +3980,7 @@ async function processOneStep(ctx: StepContext): Promise<{
 
   const beforeStepLength = messageHistory.length;
   const stepStartAbs = Date.now();
-  const llmStartAbs = stepStartAbs;
+  let llmStartAbs = stepStartAbs;
   const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
 
   // Keep current-turn reasoning while cleaning only the outgoing provider copy.
@@ -4087,35 +4087,41 @@ async function processOneStep(ctx: StepContext): Promise<{
   // back: a provider that rejects the request outright still failed as the
   // model, while a throw in the preparation above genuinely is ours.
   onModelHandover?.();
+  let admissionAttempts = 0;
   res = await withModelStepAdmissionRetry(
-    () => fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
-      method: "POST",
-      headers: convexHeaders,
-      body: JSON.stringify({
-        mode: "stream",
-        // Persist only once at the end of the full agentic loop via
-        // onConversationComplete to avoid storing partial per-step traces.
-        skipChatIngestion: true,
-        messages: JSON.stringify(scrubbedMessages),
-        model: modelId,
-        systemPrompt: providerSystemPrompt,
-        ...(temperature !== undefined ? { temperature } : {}),
-        tools: activeToolDefs,
-        ...(scenarioId ? { scenarioId } : {}),
-        ...(scenarioId && Number.isFinite(accessVersion)
-          ? { accessVersion }
-          : {}),
-        ...(projectId ? { projectId } : {}),
-        ...(chatSessionId ? { chatSessionId } : {}),
-        ...(sourceType ? { sourceType } : {}),
-        turnId: traceTurn.turnId,
-        promptIndex: traceTurn.promptIndex,
-        stepIndex,
-        ...(toolChoice ? { toolChoice } : {}),
-        ...(extraBodyFields ?? {}),
-      }),
-      ...(abortSignal ? { signal: abortSignal } : {}),
-    }),
+    () => {
+      // A resend after a busy refusal restarts the model's clock, so time
+      // spent waiting for spending admission stays out of its latency.
+      if (admissionAttempts++ > 0) llmStartAbs = Date.now();
+      return fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
+        method: "POST",
+        headers: convexHeaders,
+        body: JSON.stringify({
+          mode: "stream",
+          // Persist only once at the end of the full agentic loop via
+          // onConversationComplete to avoid storing partial per-step traces.
+          skipChatIngestion: true,
+          messages: JSON.stringify(scrubbedMessages),
+          model: modelId,
+          systemPrompt: providerSystemPrompt,
+          ...(temperature !== undefined ? { temperature } : {}),
+          tools: activeToolDefs,
+          ...(scenarioId ? { scenarioId } : {}),
+          ...(scenarioId && Number.isFinite(accessVersion)
+            ? { accessVersion }
+            : {}),
+          ...(projectId ? { projectId } : {}),
+          ...(chatSessionId ? { chatSessionId } : {}),
+          ...(sourceType ? { sourceType } : {}),
+          turnId: traceTurn.turnId,
+          promptIndex: traceTurn.promptIndex,
+          stepIndex,
+          ...(toolChoice ? { toolChoice } : {}),
+          ...(extraBodyFields ?? {}),
+        }),
+        ...(abortSignal ? { signal: abortSignal } : {}),
+      });
+    },
     {
       sourceType,
       stepIndex,

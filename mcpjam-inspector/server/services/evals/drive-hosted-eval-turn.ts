@@ -350,6 +350,8 @@ export interface DriveHostedEvalTurnParams {
    * iteration's own clock still bounds the sum of them.
    */
   turnTimeoutMs: number;
+  /** When the enclosing iteration's deadline fires (epoch ms). */
+  iterationDeadlineAt?: number;
   maxSteps: number;
   runStartedAt: number;
   isAborted: () => boolean;
@@ -771,6 +773,7 @@ export async function driveHostedEvalTurn(
   // turn holds the iteration until the ITERATION's budget expires — the whole
   // remaining allowance spent on a turn that was never coming back.
   turnDeadline = withDeadline(abortSignal, turnTimeoutMs, "turn");
+  const activeTurnDeadline = turnDeadline;
 
   let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
   try {
@@ -896,8 +899,15 @@ export async function driveHostedEvalTurn(
       ...(params.extraHeaders ? { extraHeaders: params.extraHeaders } : {}),
       abortSignal: turnDeadline.signal,
       // A busy-admission wait that would outlast the turn returns the refusal
-      // instead of sleeping into the turn's abort.
-      remainingTurnMs: turnDeadline.remainingMs,
+      // instead of sleeping into the turn's abort. The turn's signal also
+      // fires on the iteration's deadline, which a later turn can reach first.
+      remainingTurnMs: () =>
+        Math.min(
+          activeTurnDeadline.remainingMs(),
+          params.iterationDeadlineAt === undefined
+            ? Infinity
+            : Math.max(0, params.iterationDeadlineAt - Date.now()),
+        ),
       maxSteps: params.maxSteps,
       progressivePlan: prepared.progressivePlan,
       discoveryState: prepared.discoveryState,

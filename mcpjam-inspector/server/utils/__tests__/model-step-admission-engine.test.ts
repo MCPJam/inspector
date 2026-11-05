@@ -162,6 +162,18 @@ describe("engine resend of a model step refused as busy", () => {
     expect(JSON.stringify(onConversationComplete.mock.calls[0]![0])).toContain(
       "Hello world.",
     );
+    // The admission waits belong to the step, not to the model's latency.
+    const spans = onConversationComplete.mock.calls[0]![1].spans as Array<{
+      category: string;
+      startMs: number;
+      endMs: number;
+    }>;
+    const duration = (category: string) => {
+      const span = spans.find((s) => s.category === category)!;
+      return span.endMs - span.startMs;
+    };
+    expect(duration("step")).toBeGreaterThan(1_000);
+    expect(duration("llm")).toBeLessThan(1_000);
   });
 
   it("surfaces the busy refusal at once on an interactive chat step", async () => {
