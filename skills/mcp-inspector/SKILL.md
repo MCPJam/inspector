@@ -1,6 +1,6 @@
 ---
 name: mcp-inspector
-description: Interpret and use `mcpjam` probe, doctor, OAuth, XAA (Cross-App Access / ID-JAG), apps conformance, tools, resources, and prompts output conservatively against MCP 2025-11-25. Use when interacting with MCP servers, executing tools, triaging findings, performing security reviews, debugging enterprise-managed authorization, deciding whether a CLI finding is real or overstated, or turning inspection output into an engineer-facing report with severity and confidence.
+description: Run the local `mcpjam` CLI against an MCP server and interpret its output conservatively against MCP 2025-11-25. Covers probe, doctor, tools/resources/prompts, OAuth, XAA (Cross-App Access / ID-JAG), protocol/apps/tasks conformance, host compatibility (`compat`, "will my server work in ChatGPT or Claude"), directory readiness, local evals (`mcpjam test`), MCP Tasks, subscriptions, server-served skills, snapshot diffs, and the local Inspector. Use when connecting to or exercising an MCP server, triaging findings, security reviews, debugging enterprise-managed authorization, or turning CLI output into an engineer-facing report with severity and confidence. For `mcpjam cloud` (account, projects, hosted evals, tunnels, goals, studies), use the `mcpjam-cloud` skill.
 ---
 
 # MCPJam CLI Investigation
@@ -11,6 +11,40 @@ Use this skill when analyzing MCP server behavior from `mcpjam` or MCP Inspector
 - interoperability warnings
 - implementation polish
 - mcpjam or SDK artifacts
+
+## Setup
+
+- Install: `npm i -g @mcpjam/cli` gives you `mcpjam`. Without installing, prefix every command with `npx -y @mcpjam/cli@latest` instead of `mcpjam`. Run `mcpjam --version` before relying on a flag this skill names; `mcpjam <command> --help` is the authoritative flag list.
+- Top-level commands are **local**: they connect from this machine to the server you name and need no MCPJam account. Everything under `mcpjam cloud` uses your MCPJam account; see the `mcpjam-cloud` skill. Two local commands also touch the account:
+  - `mcpjam test` needs an MCPJam login or `sk_` key for every run, BYOK included, and records the run start against that identity. Results stay local.
+  - `mcpjam conformance run` uploads its results whenever `MCPJAM_API_KEY` is set. The single-suite conformance commands upload only with `--upload`.
+- Two logins that are easy to mix up:
+  - `mcpjam oauth login --url <server>` signs in to **the MCP server under test** and can save its tokens with `--credentials-out <path>`.
+  - `mcpjam cloud login` signs in to **your MCPJam account**. It never authenticates you to a third-party MCP server.
+- Pick a target with `--url <url>` (Streamable HTTP or SSE) or `--command <cmd> --args <arg...>` (stdio, with `--cwd` and `-e KEY=VALUE`). `oauth`, `protocol`, and `xaa` are HTTP-only. Add `--header "Name: value"`, `--access-token`, or `--credentials-file` for auth.
+- On `tools`, `resources`, `prompts`, `skills`, and `subscriptions`, `--host <id>` (`claude`, `chatgpt`, `cursor`, …) connects as that AI client: its `clientInfo`, capabilities, protocol version, and tool visibility.
+- For agent use, pass `--quiet --format json`. JSON is the default when stdout is piped, and it is the source of truth; human format is lossy.
+- Exit codes: `0` success, `1` the command ran and reported a failure (unhealthy server, failed check), `2` usage or configuration error. The conformance commands exit `3` when the outcome is `incomplete`: some checks could not run, so the run is neither a pass nor a spec violation. `tasks watch` and `test` use more codes; read their `--help`.
+
+## Pick the command
+
+| The user asks… | Start with |
+|---|---|
+| "Is my server up / what's wrong with it?" | `server doctor --url <url>` (breadth), `server probe` (transport and auth discovery only) |
+| "What tools does it expose? Call one." | `tools list`, then `tools call --tool-name <name> --tool-args <json>` |
+| "Will my server work in ChatGPT / Claude / Cursor?" | `compat --url <url>`, optionally `--host chatgpt --host claude` |
+| "Is it ready for Anthropic's / OpenAI's / Meta's directory?" | `readiness check claude <url>`, `readiness check openai <url> --submission-mode <mode>`, `readiness check muse <url>` |
+| "Is it spec-conformant?" | `protocol conformance`, `apps conformance`, `tasks conformance`. `conformance run` runs all three, but uploads the results when `MCPJAM_API_KEY` is set; prefer the single suites unless the user wants the results in MCPJam |
+| "Does OAuth work?" | `oauth login`, then `oauth conformance` / `oauth conformance-suite` |
+| "Run my eval suite file locally" | `test <file>` |
+| "Did my tool surface change?" | `server export` to save a snapshot, then `server diff --baseline <file>` |
+| "Show me the widget" | `tools call --ui` (in Inspector) or `apps render` (headless screenshot and verdict) |
+| "Watch for notifications / list changes" | `subscriptions listen --list-changed --duration-ms <ms>` |
+| "Drive a long-running task" | `tools call --task`, then `tasks get` / `tasks watch` |
+| "What skills does the server serve?" | `skills list`, `skills get --skill-uri <uri>` |
+| "Open the Inspector UI" | `inspector open` |
+
+Prefix each with `mcpjam` (or the `npx` form).
 
 ## Interactive use
 
@@ -141,7 +175,18 @@ Use `pending` instead of manufacturing a `medium` or `high` security severity fr
 - `xaa run`: headless Cross-App Access (ID-JAG) flow against an authorization server and MCP server — mint, redeem via JWT bearer grant, and authenticated MCP initialize. Use when the task involves enterprise-managed authorization or ID-JAG trust debugging. Requires `--issuer-base-url` to point at an origin publishing the CLI's local signing key (typically `mcpjam inspector start`); read `references/xaa-id-jag-interpretation.md` before triaging its output. These are targeted checks for the current ID-JAG draft, not a conformance suite; the negative-test scorecard (tampered ID-JAGs) lives in the Inspector UI, not the CLI.
 - `apps conformance`: server-side MCP Apps checks for `_meta.ui.resourceUri`, `ui://` resources, `resources/read`, HTML MIME and payload shape, and `_meta.ui` metadata. Use this for MCP Apps surface triage.
 - `server info`, `server capabilities`, `server validate`, `server ping`, `server export`: connected behavior after initialization and auth.
-- `tools list` and `tools call`, `resources list/read/templates`, `prompts list/get/list-multi`: direct post-connect capability checks. With `--ui`, `tools call` renders the completed tool result in Inspector and reports `inspectorRender` as UI command/render evidence.
+- `server diff`: compare a saved `server export` snapshot with a live server (`--baseline <file>`) or two snapshot files (`--left`, `--right`). `--fail-on breaking|any|none` sets the exit code, so this is the CI guard for tool-surface changes.
+- `tools list` and `tools call`, `resources list/read/templates`, `prompts list/get`: direct post-connect capability checks. With `--ui`, `tools call` renders the completed tool result in Inspector and reports `inspectorRender` as UI command/render evidence.
+- `compat`: per-host verdicts (`works`, `degraded`, `blocked`, `unknown`) with the findings behind each, from a catalog of host behavior. `--offline` uses the bundled catalog and makes no MCPJam network call. A verdict is a prediction from that catalog, not a run inside the real client.
+- `readiness check claude|openai|muse <url>`: grade a server against a publisher's directory rules, locally and without an account. These take the server URL as a positional argument and accept only `--access-token`, `--credentials-file`, `--header`, `--timeout`, and `--reporter` from the connection flags. `openai` requires `--submission-mode` and can grade a plugin package with `--package` instead of a URL. `muse` stays `incomplete` without `--submission-profile`. The hosted `readiness start` / `status` / `report` commands need an MCPJam API key.
+- `protocol conformance`, `tasks conformance`, `conformance run`: protocol, Tasks, and the combined suite (protocol, apps, and tasks by default; OAuth only with `--suite oauth`). Read `outcome` and each check's `skipReason`: `could-not-run` checks make the run `incomplete`, and each one's `error.message` says what it needed. Most need a probe the CLI cannot guess safely, such as a tool that is safe to call, one that requests input, or one that logs; supply them with `--fixture-tool <name>` or `--fixtures-file <path>` on `protocol conformance`, or `--tool-name` on `tasks conformance`. Some, such as a server-initiated subscription close, cannot be provoked by a client at all. Report an incomplete run with those reasons, not as a server failure. `apps conformance` against a server with no MCP Apps tools fails `ui-tools-present`; that says the server has no Apps surface, not that it is broken.
+- `test <file>`: run one eval suite file locally against BYOK models or MCPJam-hosted inference (`--inference auto|byok|mcpjam`). Results are never uploaded, but every run needs an MCPJam login (`mcpjam cloud login`) or an `sk_` key in `MCPJAM_API_KEY`. With the default `--inference auto`, a `provider/model` whose provider key is unset runs on MCPJam-hosted inference and spends the organization's credits; pass `--inference byok` when the user expects their own key to be billed. Bind servers with `--server name=url`, `--mcp-config <path>`, or the connection flags for a single-server suite. Every iteration is a model call, so tell the user before running a large suite.
+- `tasks`: `tasks capabilities` first (it always exits `0` and reports which tasks wire the server uses), then `tools call --task`, `tasks get`, `tasks update` to answer input, `tasks watch` to poll to completion, `tasks cancel`. `tasks list` and `tasks result` exist only on the legacy 2025-11-25 wire.
+- `subscriptions listen`: holds a connection open and streams notifications as NDJSON. Name at least one interest (`--list-changed` for all three list-change notifications, `--tools-list-changed`, `--prompts-list-changed`, `--resources-list-changed`, or `--resource-uri <uri>`), or it exits `2`. In agent runs also pass `--duration-ms` or `--max-notifications`, or the command does not return.
+- `skills list`, `skills get`, `skills read`: the Agent Skills (SEP-2640) a server serves, verified against their manifest and digests. These are the server's skills; `mcpjam cloud skills` lists your project's Cloud Skills. A server that does not declare the `io.modelcontextprotocol/skills` extension makes `skills list` exit `1` with a message saying so; report that as "serves no skills".
+- `apps render`: render one MCP App tool result headlessly through the local Inspector and return a screenshot and a render verdict. `apps session start|step|action|snapshot|close` keep a widget mounted and drive it step by step.
+- `inspector open|start|stop`: `open` starts or attaches to the local Inspector and opens the UI; `start` starts the backend without a browser; `stop` stops it.
+- `mcpjam mcp`: runs this CLI as a stdio MCP server, so an MCP client without a shell can use the same testing engine and keep connections open across calls. Do not run it from a shell to test a server; it waits for an MCP client on stdin.
 - Prefer `--quiet --format json`. Add `--rpc` when available if you need request and response evidence rather than a summary. Add `--debug-out` when you need a failure-safe artifact, not as a replacement for raw evidence.
 - Use `--reporter junit-xml` or `--reporter json-summary` for CI report artifacts on conformance and diff commands. `server validate` does not accept `--reporter`; use `--debug-out` for validation artifacts. Do not use `--format junit-xml`; `--format` is only for raw `json` or `human` output.
 - For JSON-valued options, prefer `@path` or `-` stdin over shell-escaped inline JSON when payloads are generated or contain quotes. For example: `mcpjam tools call --url <target> --tool-name <name> --tool-args @params.json --quiet --format json`.
@@ -175,7 +220,8 @@ For each claimed security-review finding, return:
 ## Hard rules
 
 - Never call `toolsMetadata` an MCP server field.
-- Never use removed app/widget commands for UI rendering. Use `tools call --ui`; use `resources read --resource-uri ui://...` for raw resource HTML.
+- Render UI with `tools call --ui` (in Inspector) or `apps render` (headless). Use `resources read --resource-uri ui://...` for raw resource HTML.
+- Never run `mcpjam cloud …` commands to inspect a server the user gave you by URL. Local commands reach it directly; Cloud commands act on the user's MCPJam projects.
 - Never manually orchestrate Inspector API calls when `tools call --ui` can drive the render.
 - Never skip `tools list` discovery when the user names a server but not a specific tool.
 - Never infer prompt support from an empty prompts list unless you have raw RPC evidence that `prompts/list` was actually sent and answered by the server.
