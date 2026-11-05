@@ -100,6 +100,7 @@ describe("HowSuitesWorkDialog", () => {
       step: 1,
     });
     expect(heading()).toBe(HOW_SUITES_WORK_STEPS[0].title);
+    expect(screen.getByTestId("how-suites-work-possum")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Walk me through it" }));
     for (let i = 1; i < HOW_SUITES_WORK_STEPS.length - 1; i++) {

@@ -1,5 +1,4 @@
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
-import { Layers } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -8,6 +7,7 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { Button } from "@mcpjam/design-system/button";
+import possumUrl from "@/assets/evals/possum.svg";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 import {
@@ -104,13 +104,12 @@ export function HowSuitesWorkDialog({
         <div className="grid min-h-[22rem] md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
           <LayerDiagram focusIndex={layerIndex(current.focus)} />
           <div className="flex flex-col justify-center gap-4 p-6">
-            {/* Neutral stand-in until final mascot art exists (spec Q2). */}
-            <div
-              aria-hidden="true"
-              className="flex size-16 items-center justify-center rounded-full bg-primary/10"
-            >
-              <Layers className="size-8 text-primary" />
-            </div>
+            <img
+              src={possumUrl}
+              alt=""
+              className="h-auto w-36 shrink-0"
+              data-testid="how-suites-work-possum"
+            />
             <div>
               <DialogTitle className="text-2xl">{current.title}</DialogTitle>
               <DialogDescription className="mt-2 text-base" aria-live="polite">
