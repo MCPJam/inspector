@@ -5,17 +5,9 @@
  */
 
 import { Button } from "@mcpjam/design-system/button";
-import {
-  RunResultBadge,
-  type ConformanceRunListItem,
-} from "./ConformanceHistory";
+import { type ConformanceRunListItem } from "./ConformanceHistory";
+import { RunResultRing } from "./RunResultRing";
 import { ServerAvatar } from "./conformance-ui";
-
-const lastRunDateFormat = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-});
 
 export function ConformanceServerList({
   runs,
@@ -41,7 +33,7 @@ export function ConformanceServerList({
       {runs.map(({ serverName, run }) => (
         <li
           key={serverName}
-          className="flex items-center justify-between gap-6 rounded-lg border border-border bg-card px-6 py-4"
+          className="flex items-center justify-between gap-6 rounded-lg bg-popover px-6 py-4 text-popover-foreground shadow-sm"
         >
           <div className="flex min-w-0 grow items-center gap-3">
             <ServerAvatar
@@ -49,23 +41,24 @@ export function ConformanceServerList({
               iconUrl={serverIcons?.[serverName]}
               className="size-9"
             />
-            <div className="flex min-w-0 flex-col gap-0.5">
+            <div className="flex min-w-0 items-baseline gap-2">
               <span className="truncate text-[15px] font-semibold">
                 {serverName}
               </span>
-              <span className="text-sm text-muted-foreground">
-                Last run {lastRunDateFormat.format(run.createdAt)} · Protocol{" "}
-                {run.protocolVersion ?? "Auto"}
+              <span className="shrink-0 text-sm text-muted-foreground">
+                · Protocol {run.protocolVersion ?? "Auto"}
               </span>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-4">
-            <RunResultBadge run={run} />
-            <span className="text-base font-semibold tabular-nums">
-              {run.score == null ? "—" : `${Math.round(run.score)}%`}
+            <span className="flex min-w-6 justify-center">
+              <RunResultRing run={run} />
             </span>
-            <span className="text-base tabular-nums">
+            <span className="w-16 text-right text-xl font-semibold tabular-nums">
               {run.passed}/{run.applicable}
+            </span>
+            <span className="w-10 text-right text-sm tabular-nums text-muted-foreground">
+              {run.score == null ? "—" : `${Math.round(run.score)}%`}
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-2">

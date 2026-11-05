@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { MCPCheckResult, MCPTasksCheckResult, OAuthConformanceStepResult } from "@mcpjam/sdk";
-import { CheckRow, OAuthStepRow } from "../ConformanceCheckRows";
+import { CatalogRow, CheckRow, OAuthStepRow } from "../ConformanceCheckRows";
 
 function check(overrides: Partial<MCPCheckResult>): MCPCheckResult {
   return {
@@ -248,5 +248,46 @@ describe.each(["check", "OAuth step"] as const)("%s expansion", (kind) => {
     expect(description.closest("[inert]")).not.toBeNull();
     expect(error.closest("[inert]")).not.toBeNull();
     expect(within(button).getByText(message)).toBeInTheDocument();
+  });
+});
+
+describe("CatalogRow", () => {
+  it("shades a check that does not apply but keeps its checkbox working", () => {
+    const changes: boolean[] = [];
+    render(
+      <CatalogRow
+        entry={{ id: "c", title: "Some Check", description: "What it does." }}
+        selected
+        onSelectedChange={(value) => changes.push(value)}
+        notApplicable="Nothing to check here."
+      />,
+    );
+    const box = screen.getByRole("checkbox", { name: "Run Some Check" });
+    expect(box.closest("label")!.parentElement).toHaveClass("opacity-50");
+    fireEvent.click(box);
+    expect(changes).toEqual([false]);
+  });
+
+  it("lets keyboard users reach the reason even without a description", async () => {
+    render(
+      <CatalogRow
+        entry={{ id: "c", title: "Some Check" }}
+        selected
+        notApplicable="Nothing to check here."
+      />,
+    );
+    const title = screen.getByRole("button", { name: /Some Check/ });
+    expect(title).toBeEnabled();
+    fireEvent.focus(title);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Nothing to check here.",
+    );
+    expect(title).toHaveAttribute("aria-describedby");
+  });
+
+  it("does not shade a check that applies", () => {
+    render(<CatalogRow entry={{ id: "c", title: "Some Check" }} selected />);
+    const box = screen.getByRole("checkbox", { name: "Run Some Check" });
+    expect(box.closest("label")!.parentElement).not.toHaveClass("opacity-50");
   });
 });

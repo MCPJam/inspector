@@ -1600,8 +1600,11 @@ describe("ConformanceTab", () => {
 
     const card = screen.getByRole("list", { name: "Servers" });
     expect(card).toHaveTextContent("alpha");
-    expect(card).toHaveTextContent("Last run Oct 28, 2026 · Protocol Auto");
-    expect(card).toHaveTextContent("PASSED");
+    expect(card).toHaveTextContent("· Protocol Auto");
+    expect(card).not.toHaveTextContent("Last run");
+    expect(
+      within(card).getByRole("img", { name: "22 passed of 22" }),
+    ).toBeInTheDocument();
     expect(card).toHaveTextContent("100%");
     expect(card).toHaveTextContent("22/22");
 
@@ -2412,7 +2415,8 @@ describe("ConformanceTab", () => {
       ).toBeInTheDocument();
     });
 
-    it("does not ask for the output tool when no tool declares an output schema", async () => {
+    it("shades the output check when no tool declares an output schema", async () => {
+      const user = userEvent.setup();
       mockListTools.mockResolvedValue({
         tools: [{ name: "echo", annotations: { readOnlyHint: true } }],
       });
@@ -2421,13 +2425,27 @@ describe("ConformanceTab", () => {
         name: /^Protocol.*checks selected$/,
       });
       fireEvent.click(header);
+      await waitFor(() =>
+        expect(
+          screen.getByRole("combobox", { name: "Tool that emits logs" }),
+        ).toBeEnabled(),
+      );
 
-      // Nothing to grade, so the check does not apply: no tag, no count.
+      // Nothing to grade, so the check does not apply: no field, no tag, no
+      // count. It stays picked, so it runs once a tool declares a schema.
       expect(
-        await screen.findByText(
-          "No tool on this server declares an output schema, so this check does not apply.",
-        ),
-      ).toBeInTheDocument();
+        screen.queryByRole("combobox", { name: "Tool to check output" }),
+      ).toBeNull();
+      const box = screen.getByRole("checkbox", {
+        name: "Run Tool Output Schema Honored",
+      });
+      expect(box).toBeChecked();
+      const row = box.closest("label")!.parentElement!;
+      expect(row).toHaveClass("opacity-50");
+      await user.hover(within(row).getByText("Tool Output Schema Honored"));
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(
+        "No tool on this server declares an output schema, so this check does not apply.",
+      );
       expect(
         within(header).getByText(inputBadge("2 optional checks need input")),
       ).toBeInTheDocument();
