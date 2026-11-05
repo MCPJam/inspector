@@ -467,6 +467,7 @@ export async function prepareManagedConnections(args: {
       descriptor: pluginWorkspace,
       projectId: hostedBody.projectId,
       bearer: modelPluginBearer,
+      getAuthorization: () => getConvexBearerForRequest(c),
       signal: c.req.raw.signal,
     });
     const hostId = hostRuntimeConfig.hostId;

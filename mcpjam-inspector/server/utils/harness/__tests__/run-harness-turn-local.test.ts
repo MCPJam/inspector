@@ -1,3 +1,8 @@
+import type { UIMessageChunk } from "ai";
+import { generateKeyPair, SignJWT } from "jose";
+import { verifyAuthKitToken } from "../../../services/authkit-jwt.js";
+import { TurnAuthorizationRegistry } from "../../../services/turn-authorization.js";
+import { RevokedSessionCache, setRevokedSessionCacheForTests } from "../../../services/revoked-session-cache.js";
 import { completedTurnPersistence } from "../../../services/completed-turn-persistence.js";
 const localProjection = vi.hoisted(() => vi.fn(async () => ({ tools: {}, keyToServerId: {} })));
 vi.mock("../host-executed-mcp-tools.js", () => ({ projectSelectedMcpServersAsHostTools: localProjection }));
@@ -19,6 +24,10 @@ const harnessState = vi.hoisted(() => ({
   agentOptions: {} as any,
   createRuntime: vi.fn(() => ({ harnessId: "claude-code" })),
   streamError: null as Error | null,
+  exitOnAbort: null as "throw" | "finish" | "close" | null,
+  streamStarted: vi.fn(),
+  holdAbort: null as Promise<void> | null,
+  holdStream: null as Promise<void> | null,
   create: vi.fn(),
   continuations: [] as unknown[],
   teardown: vi.fn(async () => {}),
@@ -50,8 +59,19 @@ vi.mock("@ai-sdk/harness/agent", () => ({
       return harnessState.session;
     };
     continueStream = async () => this.stream();
-    stream = vi.fn(async () => ({
+    stream = vi.fn(async (options?: { abortSignal?: AbortSignal }) => ({
       fullStream: (async function* () {
+        harnessState.streamStarted();
+        if (harnessState.holdStream) await harnessState.holdStream;
+        if (harnessState.exitOnAbort && options?.abortSignal) {
+          const signal = options.abortSignal;
+          yield { type: "text-delta", text: "Working" };
+          if (!signal.aborted) await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
+          if (harnessState.holdAbort) await harnessState.holdAbort;
+          if (harnessState.exitOnAbort === "throw") throw new DOMException("Stopped", "AbortError");
+          if (harnessState.exitOnAbort === "finish") yield { type: "finish", finishReason: "stop" };
+          return;
+        }
         if (harnessState.streamError) throw harnessState.streamError;
         for (const part of harnessState.streamParts) {
           yield part;
@@ -164,7 +184,7 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
 import {
   runHarnessTurn,
 } from "../run-harness-turn";
-import { claimHarnessSessionState, commitHarnessSessionState, releaseHarnessSessionState } from "../harness-session-state.js";
+import { claimHarnessSessionState, commitHarnessSessionState, heartbeatHarnessSessionState, releaseHarnessSessionState } from "../harness-session-state.js";
 import { markServerVerifiedApproval } from "../../tool-approval-token.js";
 import { prepareLocalHarnessTurn } from "../local/local-turn.js";
 import { reserveHarnessBox, renewHarnessBoxReservation, startHarnessModelBroker } from "../harness-model-broker.js";
@@ -174,6 +194,7 @@ vi.mock("../local/local-turn.js", () => ({
     ok: true,
     prepared: {
       plan: { runtime: { runtimeId: "runtime-1" } },
+      timings: { localRuntimeVerifyMs: 0, localGatewayReadyMs: 0 },
       sandbox: {}, auth: {}, sandboxWorkDir: "project",
       skillsBaseDir: "/private/local/home/.claude/skills",
       permissionMode: "allow-reads",
@@ -273,6 +294,9 @@ describe("runHarnessTurn local continuity", () => {
     harnessState.invokeSandboxCallback = false;
     harnessState.supportsSkills = false;
     harnessState.streamError = null;
+    harnessState.exitOnAbort = null;
+    harnessState.holdAbort = null;
+    harnessState.holdStream = null;
     harnessState.liveApprovalRuntime = false;
     harnessState.adapterOverrides = {};
     harnessState.park.mockReset().mockReturnValue(true);
@@ -292,7 +316,7 @@ describe("runHarnessTurn local continuity", () => {
       fingerprintChanged: false,
     } as any);
   });
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
 
   function resume(awaitingApproval = false) {
     vi.mocked(claimHarnessSessionState).mockResolvedValue({
@@ -578,6 +602,124 @@ describe("runHarnessTurn local continuity", () => {
     expect(harnessState.create).toHaveBeenCalledOnce();
     expect(onConversationComplete).toHaveBeenCalledOnce();
     expect(harnessState.discardState).not.toHaveBeenCalled();
+  });
+
+  it("retains one running harness turn across signed JWT expiry and uses the fresh token on each lease beat", async () => {
+    vi.useFakeTimers();
+    const keys = await generateKeyPair("RS256");
+    const issuer = "https://login.mcpjam.com";
+    const clientId = "client_01K4C1TVPBE7JTBFQJF9SDW9P9";
+    const verify = (value: string) => verifyAuthKitToken(value, { clientId,
+      resolveKey: (candidate) => candidate === issuer ? keys.publicKey : null });
+    const sign = () => new SignJWT({ sid: "session", org_id: "org" })
+      .setProtectedHeader({ alg: "RS256" }).setIssuer(issuer).setAudience(clientId)
+      .setSubject("actor").setIssuedAt().setExpirationTime("5m").sign(keys.privateKey);
+    const cache = new RevokedSessionCache({ fetchPage: async () => ({ sessions: [], cursor: null, isDone: true, watermark: Date.now() }) });
+    await cache.scan(); setRevokedSessionCacheForTests(cache);
+    const original = await sign();
+    const store = new TurnAuthorizationRegistry((value) => verify(value));
+    let lease: ReturnType<typeof store.create> | undefined;
+    let release!: () => void;
+    harnessState.holdStream = new Promise<void>((resolve) => { release = resolve; });
+    const onConversationComplete = vi.fn(async () => ({ outcome: "saved" as const }));
+    const onEngineError = vi.fn();
+    const result = await runHarnessTurn(baseOptions({ authHeader: `Bearer ${original}`,
+      onConversationComplete, onEngineError,
+      turnAuthorization: {
+        start: (turnId: string, writer: { write(chunk: UIMessageChunk): void }) => { lease = store.create({ subject: "actor", sessionId: "session", organizationId: "org" }, {
+          projectId: "project-1", chatSessionId: "chat-1", turnId, requestId: "f56e90a1-dc58-443e-85b0-14677744b9b3",
+        }, original); writer.write({ type: "data-turn-authorization", transient: true, data: lease.data }); },
+        getAuthorization: () => lease!.getAuthorization(),
+        getCleanupAuthorization: () => lease!.getCleanupAuthorization(),
+        dispose: () => lease?.dispose(),
+      },
+    }) as never, "ui");
+    const body = result.response!.text();
+    try {
+      await vi.waitFor(() => expect(harnessState.streamStarted).toHaveBeenCalledOnce());
+      for (let minute = 0; minute < 4; minute++) { await vi.advanceTimersByTimeAsync(60_000); await cache.scan(); }
+      const fresh = await sign();
+      await store.renew(lease!.data, { subject: "actor", sessionId: "session", organizationId: "org" }, fresh);
+      for (let minute = 0; minute < 2; minute++) { await vi.advanceTimersByTimeAsync(60_000); await cache.scan(); }
+      await expect(verify(original)).rejects.toThrow();
+      expect(vi.mocked(heartbeatHarnessSessionState).mock.lastCall?.[0].bearer).toBe(`Bearer ${fresh}`);
+      release(); const text = await body;
+      expect(text).not.toContain('"type":"error"');
+      expect(onEngineError).not.toHaveBeenCalled();
+      expect(onConversationComplete).toHaveBeenCalledOnce();
+      const cleanup = vi.mocked(prepareLocalHarnessTurn).mock.calls[0]?.[0].getCleanupAuthorization;
+      expect(cleanup).toBeDefined();
+      expect(await cleanup?.()).toBe(`Bearer ${fresh}`);
+      expect(JSON.stringify(onConversationComplete.mock.calls)).not.toContain("data-turn-authorization");
+      expect(text).not.toContain(original);
+      expect(text).not.toContain(fresh);
+      expect(harnessState.create).toHaveBeenCalledOnce();
+      expect(harnessState.streamStarted).toHaveBeenCalledOnce();
+    } finally { release(); lease?.dispose(); setRevokedSessionCacheForTests(null); }
+  });
+
+  it("continues all local cleanup when terminal authorization is revoked", async () => {
+    const onStreamComplete = vi.fn();
+    const refused = async () => { throw new Error("Session revoked"); };
+    const result = await runHarnessTurn(baseOptions({
+      onStreamComplete,
+      turnAuthorization: { start() {}, getAuthorization: async () => "Bearer current", getCleanupAuthorization: refused, dispose() {} },
+    }) as never, "ui");
+    await result.response!.text();
+    expect(harnessState.teardown).toHaveBeenCalledOnce();
+    expect(onStreamComplete).toHaveBeenCalledOnce();
+    expect(harnessState.create).toHaveBeenCalledOnce();
+  });
+
+  it.each(["throw", "finish", "close"] as const)("reports an internal lease loss when the runtime ends with %s", async (exit) => {
+    vi.useFakeTimers();
+    harnessState.exitOnAbort = exit;
+    vi.mocked(heartbeatHarnessSessionState).mockResolvedValueOnce("lost");
+    const onEngineError = vi.fn();
+    const result = await runHarnessTurn(baseOptions({ onEngineError }) as never, "ui");
+    const body = result.response!.text();
+    await vi.waitFor(() => expect(harnessState.streamStarted).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(90_000);
+    const text = await body;
+    expect(text).toContain("This turn lost access to its runtime. Check any tool results before trying again.");
+    expect(text).toContain('"type":"turn_finish"');
+    expect(text).not.toContain('"finishReason":"stop"');
+    expect(onEngineError).toHaveBeenCalledOnce();
+    expect(onEngineError).toHaveBeenCalledWith(expect.objectContaining({ phase: "stream" }));
+    expect(harnessState.streamStarted).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an explicit user Stop quiet", async () => {
+    harnessState.exitOnAbort = "throw";
+    const stop = new AbortController();
+    const onEngineError = vi.fn();
+    const result = await runHarnessTurn(baseOptions({ abortSignal: stop.signal, onEngineError }) as never, "ui");
+    const body = result.response!.text();
+    await vi.waitFor(() => expect(harnessState.streamStarted).toHaveBeenCalledOnce());
+    stop.abort(new DOMException("Stopped", "AbortError"));
+    const text = await body;
+    expect(text).not.toContain('"type":"error"');
+    expect(onEngineError).not.toHaveBeenCalled();
+    expect(harnessState.streamStarted).toHaveBeenCalledOnce();
+  });
+
+  it("does not relabel a user Stop when lease loss arrives during teardown", async () => {
+    vi.useFakeTimers();
+    harnessState.exitOnAbort = "throw";
+    let release!: () => void;
+    harnessState.holdAbort = new Promise<void>(resolve => { release = resolve; });
+    vi.mocked(heartbeatHarnessSessionState).mockResolvedValueOnce("lost");
+    const stop = new AbortController();
+    const onEngineError = vi.fn();
+    const result = await runHarnessTurn(baseOptions({ abortSignal: stop.signal, onEngineError }) as never, "ui");
+    const body = result.response!.text();
+    await vi.waitFor(() => expect(harnessState.streamStarted).toHaveBeenCalledOnce());
+    stop.abort(new DOMException("Stopped", "AbortError"));
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(heartbeatHarnessSessionState).toHaveBeenCalledOnce();
+    release();
+    expect(await body).not.toContain('"type":"error"');
+    expect(onEngineError).not.toHaveBeenCalled();
   });
 
   it("discards state when the completed turn could not be persisted", async () => {
