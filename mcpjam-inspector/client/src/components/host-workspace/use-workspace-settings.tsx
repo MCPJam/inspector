@@ -1,3 +1,4 @@
+import type { ExtensionLaunchProfile } from "@/lib/extension-launch-health";
 import { useEffect, useState } from "react";
 import { ServerSettingsPanel } from "./ServerSettingsPanel";
 import { createServerSettingsApi } from "./server-settings-api";
@@ -7,6 +8,7 @@ import type { ThreadAppScope } from "./thread-app-api";
 export function useWorkspaceSettings(
   scope: ThreadAppScope | null,
   servers: readonly { serverId: string; name: string }[],
+  launchProfile?: ExtensionLaunchProfile,
 ) {
   const key = JSON.stringify([
     scope?.projectId,
@@ -76,6 +78,7 @@ export function useWorkspaceSettings(
                       scope={scope}
                       serverId={id}
                       serverName={server.name}
+                    launchProfile={launchProfile}
                     />
                   ),
                 },

@@ -640,6 +640,7 @@ export function MultiModelPlaygroundCard({
   const modelApps = useCompareLaneModelApps(
     laneScope,
     extensionBinding?.capabilities,
+    extensionBinding?.profile,
     canInvoke,
   );
   laneContextRefs.current = laneScope

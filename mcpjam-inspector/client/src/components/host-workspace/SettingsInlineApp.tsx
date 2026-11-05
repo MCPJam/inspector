@@ -78,7 +78,14 @@ export function SettingsInlineApp({
           toolResponseMetadata={app.result._meta}
           hostManagedPresentation
           displayMode="inline"
-          onCallTool={(name, args) => app.call(name, args, signal)}
+          onCallTool={(name, args, context) =>
+            app.call(
+              name,
+              args,
+              context ? AbortSignal.any([signal, context.signal]) : signal,
+              context?.onInputPending,
+            )
+          }
         />
       </WidgetHostProvider>
     </div>

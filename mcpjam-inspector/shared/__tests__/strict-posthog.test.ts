@@ -31,6 +31,63 @@ const product = {
 };
 
 describe("strict PostHog reconstruction", () => {
+  it.each(["hosted", "self_hosted"])("retains closed launch-health outcomes through the strict relay for %s", (deployment) => {
+    const event = {
+      ...product,
+      event: "extension_launch_completed",
+      properties: {
+        ...product.properties,
+        location: "host_workspace",
+        launch_kind: "settings",
+        host_profile: "codex",
+        outcome: "failure",
+        failure_stage: "execution",
+        deployment,
+        source: "client",
+        operationId: secret,
+        serverId: secret,
+        error: secret,
+      },
+    };
+    const result = applyEventPolicy(event, CONSERVATIVE_TELEMETRY_POLICY, null);
+    expect(result).toEqual({
+      event: "extension_launch_completed",
+      timestamp: expect.any(String),
+      uuid: expect.any(String),
+      properties: {
+        token: expect.stringMatching(/^phc_/),
+        app_version: expect.stringMatching(/^\d+\.\d+\.\d+/),
+        distinct_id: "strict",
+        $process_person_profile: false,
+        $geoip_disable: true,
+        location: "host_workspace",
+        launch_kind: "settings",
+        host_profile: "codex",
+        outcome: "failure",
+        failure_stage: "execution",
+        deployment,
+        source: "client",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("SENTINEL");
+  });
+
+  it("rejects free-form, unknown or missing launch-health values", () => {
+    const result = rebuildStrictPostHogEvent({
+      event: "extension_launch_completed",
+      properties: {
+        location: secret, launch_kind: "invented", host_profile: secret,
+        outcome: "invented", failure_stage: secret, deployment: secret,
+        source: "server", error: secret,
+      },
+    });
+    expect(result).toBeNull();
+    expect(rebuildStrictPostHogEvent({
+      event: "extension_launch_completed",
+      properties: { location: "host_workspace", deployment: "hosted" },
+    })).toBeNull();
+  });
+
   it("retains an approved product signal and drops unknown envelope and SDK fields", () => {
     const result = rebuildStrictPostHogEvent(product);
     expect(result).toEqual({

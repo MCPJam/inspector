@@ -1,3 +1,5 @@
+import type { ExtensionLaunchProfile, ExtensionLaunchObservation } from "@/lib/extension-launch-health";
+import { useExtensionLaunchHealth } from "@/lib/use-extension-launch-health";
 import { useEffect, useState, useRef } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { NativeSettingsEditor } from "../plugin-workspace/NativeSettingsEditor";
@@ -23,13 +25,20 @@ export function ServerSettingsView({
   serverName,
   approve,
   host,
+  launchProfile = "chatgpt",
+  launchObservation,
 }: {
   scope: ThreadAppScope;
   serverId: string;
   serverName: string;
   approve: ApproveAppTool;
   host?: WidgetHost;
+  launchProfile?: ExtensionLaunchProfile;
+  launchObservation?: ExtensionLaunchObservation;
 }) {
+  const launchOwner = JSON.stringify([scope.projectId, scope.hostId, scope.pluginWorkspace.workspaceId, serverId]);
+  const launchHealth = useExtensionLaunchHealth(launchOwner);
+  const launch = launchObservation ?? launchHealth.begin("settings", "settings", launchProfile);
   const approveRef = useRef(approve);
   approveRef.current = approve;
   const [app, setApp] = useState<{ value: ServerSettingsApp; name: string }>();
@@ -81,6 +90,8 @@ export function ServerSettingsView({
       .catch((cause) => {
         if (abort.signal.aborted) return;
         const code = pluginSettingsErrorCode(cause);
+        if (code === "APPROVAL_DENIED" || code === "PLUGIN_EXTENSION_DISABLED") launch.exclude();
+        else launch.fail("execution");
         setError({ code });
         reportFailureRef.current(code, "open");
       });
@@ -99,6 +110,9 @@ export function ServerSettingsView({
     serverId,
     attempt,
   ]);
+  useEffect(() => {
+    if (session) launch.ready();
+  }, [session, launch]);
   return (
     <section
       data-plugin-private="settings"
@@ -136,10 +150,7 @@ export function ServerSettingsView({
             setPending(name);
             setResult(undefined);
             const owner = lifetime.current!;
-            const active = AbortSignal.any([
-              owner.signal,
-              AbortSignal.timeout(60000),
-            ]);
+            const active = owner.signal;
             if (
               session.actions.some(
                 (action) => action.name === name && action.kind === "app",

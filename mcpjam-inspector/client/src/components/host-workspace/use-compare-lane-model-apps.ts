@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import type { ExtensionLaunchProfile } from "@/lib/extension-launch-health";
 import type { ExtensionCapabilities } from "./extension-owners";
 import type { ThreadAppScope } from "./thread-app-api";
 import { useOwnedModelAppWorkspace } from "./OwnedModelApp";
@@ -9,6 +10,7 @@ const rejectAppMessage = async () => false;
 export function useCompareLaneModelApps(
   scope: ThreadAppScope | null,
   capabilities?: ExtensionCapabilities,
+  profile?: ExtensionLaunchProfile,
   canInvoke?: () => boolean,
 ) {
   const modelScope = useMemo(
@@ -28,6 +30,7 @@ export function useCompareLaneModelApps(
     modelScope,
     capabilities?.modelContext !== false,
     capabilities?.displayModes === true,
+    profile,
   );
   const value = useMemo(
     () => ({ ...workspace.value, messagesEnabled: false, canInvoke }),
