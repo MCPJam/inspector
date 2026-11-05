@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parsePluginModelContext as parseWith,
+  PLUGIN_CONTEXT_META_MAX_BYTES,
   pluginContextSnapshotSchema,
   pluginModelContextBytes,
   pluginModelContextMessage,
@@ -352,6 +353,42 @@ describe("admission limits and ceilings", () => {
         _meta: { big: "x".repeat(9000) },
       } as never),
     ).toBe(pluginModelContextBytes(update));
+  });
+
+  it("admits a full update beside its _meta, which has its own cap", () => {
+    // `{"pad":""}` is 10 bytes.
+    const meta = (bytes: number) => ({ pad: "m".repeat(bytes - 10) });
+    const full = {
+      content: [
+        {
+          type: "text",
+          text: "x".repeat(MODEL_CONTEXT_POLICY_DEFAULTS.updateMaxBytes - 50),
+        },
+      ],
+    };
+    expect(
+      parsePluginModelContext({
+        ...full,
+        _meta: meta(PLUGIN_CONTEXT_META_MAX_BYTES),
+      })._meta,
+    ).toEqual(meta(PLUGIN_CONTEXT_META_MAX_BYTES));
+    let refusal: unknown;
+    try {
+      parseWith(
+        { content: [], _meta: meta(PLUGIN_CONTEXT_META_MAX_BYTES + 1) },
+        MODEL_CONTEXT_POLICY_CEILINGS,
+      );
+    } catch (error) {
+      refusal = error;
+    }
+    expect(refusal).toMatchObject({
+      message: "PLUGIN_CONTEXT_TOO_LARGE",
+      excess: {
+        budget: "metaMaxBytes",
+        actual: PLUGIN_CONTEXT_META_MAX_BYTES + 1,
+        allowed: PLUGIN_CONTEXT_META_MAX_BYTES,
+      },
+    });
   });
 });
 

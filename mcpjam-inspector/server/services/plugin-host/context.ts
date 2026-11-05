@@ -97,6 +97,11 @@ export class PluginContextWorkspace {
     this.state = createPluginSession(workspaceId);
   }
 
+  /** Whether `operationId` is the update this App's context last applied. */
+  isRetry(instanceId: string, operationId: string) {
+    return this.cursors.get(instanceId)?.operationId === operationId;
+  }
+
   attach(
     instanceId: string,
     generation: number,
@@ -176,11 +181,12 @@ export class PluginContextWorkspace {
     )
       throw new PluginInvocationError("INSTANCE_CONTEXT_INVALID");
     if (saved.context) {
-      // Admitted when it was stored, under whatever policy held then.
-      const params = parsePluginModelContext(
-        saved.context.params,
-        MODEL_CONTEXT_POLICY_CEILINGS,
-      );
+      // Admitted when it was stored, under whatever policy and `_meta` cap
+      // held then.
+      const params = parsePluginModelContext(saved.context.params, {
+        ...MODEL_CONTEXT_POLICY_CEILINGS,
+        metaMaxBytes: MODEL_CONTEXT_POLICY_CEILINGS.updateMaxBytes,
+      });
       const next = reducePluginSession(this.state, {
         type: "context",
         instanceId,

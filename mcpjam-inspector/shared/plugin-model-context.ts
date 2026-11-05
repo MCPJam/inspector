@@ -23,7 +23,12 @@ const byteSize = (value: unknown) =>
 export type PluginContextLimits = Pick<
   ResolvedModelContextPolicy,
   "updateMaxBytes" | "maxBlocks"
->;
+> & {
+  /** Params-level `_meta`, which `updateMaxBytes` doesn't count. */
+  metaMaxBytes?: number;
+};
+/** The `_meta` a new update may carry, whatever the client's policy. */
+export const PLUGIN_CONTEXT_META_MAX_BYTES = 16 * 1024;
 /**
  * UTF-8 bytes of an update's model-visible half, `{ content,
  * structuredContent }`: what a budget counts. Params-level `_meta` is not
@@ -255,12 +260,20 @@ export function parsePluginModelContext(
 ): PluginModelContextParams {
   assertPluginResourceRepresentations(value, limits.maxBlocks);
   const params = pluginModelContextParamsSchema.parse(value);
-  const size = byteSize(params);
+  const size = pluginModelContextBytes(params);
   if (size > limits.updateMaxBytes)
     throw new PluginModelContextError("PLUGIN_CONTEXT_TOO_LARGE", {
       budget: "updateMaxBytes",
       actual: size,
       allowed: limits.updateMaxBytes,
+    });
+  const meta = params._meta ? byteSize(params._meta) : 0;
+  const metaMax = limits.metaMaxBytes ?? PLUGIN_CONTEXT_META_MAX_BYTES;
+  if (meta > metaMax)
+    throw new PluginModelContextError("PLUGIN_CONTEXT_TOO_LARGE", {
+      budget: "metaMaxBytes",
+      actual: meta,
+      allowed: metaMax,
     });
   for (const block of params.content ?? []) {
     pluginInlineContentBlock(block);
