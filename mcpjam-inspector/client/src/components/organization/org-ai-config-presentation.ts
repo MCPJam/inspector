@@ -407,7 +407,7 @@ export const ORG_AI_MODEL_PRESENTATION: Record<
   default: {
     label: "Default AI model",
     noun: "default AI model",
-    runs: "Insights and findings, generation and simulated users",
+    runs: "Ask MCPJam, insights and findings, generation and simulated users",
   },
   search: {
     label: "Search model",
@@ -444,7 +444,7 @@ export function orgAiModelRowText(
   const { runs, whenUnset } = ORG_AI_MODEL_PRESENTATION[kind];
   if (kind === "default" && !card.kinds.includes("decision"))
     return {
-      runs: "Insights and findings, generation, typed decisions and simulated users",
+      runs: "Ask MCPJam, insights and findings, generation, typed decisions and simulated users",
     };
   if (kind === "decision" && !card.defaultSet) return { runs };
   return whenUnset ? { runs, whenUnset } : { runs };

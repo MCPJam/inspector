@@ -3,6 +3,7 @@ import {
   createPluginInstanceControlPort,
   pluginInstanceIdentityHash,
 } from "../instance-store.js";
+import { PLUGIN_INSTANCE_CONTEXT_BYTES } from "../../../../shared/plugin-invocation-receipts.js";
 const identity = {
   actorId: "fixture-actor",
   projectId: "fixture-project",
@@ -42,6 +43,65 @@ describe("private instance store port", () => {
       expect(
         pluginInstanceIdentityHash({ ...identity, [key]: "changed" }),
       ).not.toBe(pluginInstanceIdentityHash(identity));
+  });
+  it("names the context version it holds on reads and renewals, and the one it writes", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(init!.body as string));
+      return Response.json({ control: { snapshotJson: "{}", expiresAt: 1 } });
+    });
+    const port = createPluginInstanceControlPort(identity, {
+      env: {
+        INSPECTOR_SERVICE_TOKEN: "synthetic-service-token",
+        CONVEX_HTTP_URL: "https://example.invalid",
+      },
+      fetchImpl,
+    })!;
+    const signal = AbortSignal.timeout(1000);
+    await port.read("handle", signal, 3);
+    await port.read("handle", signal);
+    await port.renew!(
+      "handle",
+      { expiresAt: 5, knownContextVersion: 3 },
+      signal,
+    );
+    await port.writeContext!(
+      "handle",
+      { expectedVersion: 3, contextJson: "{}" },
+      signal,
+    );
+    expect(
+      bodies.map(({ action, knownContextVersion }) => [
+        action,
+        knownContextVersion,
+      ]),
+    ).toEqual([
+      ["read", 3],
+      ["read", undefined],
+      ["renew", 3],
+      ["context", 4],
+    ]);
+    // An older backend sees no field it doesn't know on a plain read.
+    expect(bodies[1]).not.toHaveProperty("knownContextVersion");
+  });
+  it("accepts a reply carrying a full context envelope, every byte escaped", async () => {
+    // Each `"` in the envelope is escaped once in it and again in the reply.
+    const contextJson = JSON.stringify({
+      v: '"'.repeat((PLUGIN_INSTANCE_CONTEXT_BYTES - 8) / 2),
+    });
+    const port = createPluginInstanceControlPort(identity, {
+      env: {
+        INSPECTOR_SERVICE_TOKEN: "synthetic-service-token",
+        CONVEX_HTTP_URL: "https://example.invalid",
+      },
+      fetchImpl: async () =>
+        Response.json({
+          control: { snapshotJson: "{}", expiresAt: 1, contextJson },
+        }),
+    })!;
+    await expect(
+      port.read("handle", AbortSignal.timeout(5000)),
+    ).resolves.toMatchObject({ contextJson });
   });
   it("requires service credentials when hosted and observes refusal", async () => {
     expect(

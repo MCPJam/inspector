@@ -2,6 +2,7 @@ import type { LaunchEngagement } from "../../shared/launch-engagement.js";
 import type { ErrorOrigin } from "@mcpjam/sdk";
 import type { RouteFailureHop } from "./route-error-report.js";
 import type { LogConvexId } from "./log-convex-id.js";
+import type { PluginContextRefusedEvent } from "./context-refused-event.js";
 
 export type Environment =
   | "prod"
@@ -433,6 +434,8 @@ export type RequestEventMap = {
     totalMs: number;
     spans: Record<string, { count: number; totalMs: number; maxMs: number }>;
   };
+  /** An App context update refused before anything was stored. */
+  "plugin.instance.context.refused": PluginContextRefusedEvent;
   /**
    * One plugin onboarding turn (the Playground's Run onboarding or Set up),
    * from its request to its terminal result. `phases` holds the ms since the

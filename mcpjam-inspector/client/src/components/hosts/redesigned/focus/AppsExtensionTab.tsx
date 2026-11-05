@@ -47,6 +47,7 @@ import {
   setPluginExtensionsEnabledOnDraft,
 } from "@/lib/client-config-v2-plugin-extensions";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
+import { parseModelContextPolicyDoc } from "@/lib/client-config-v2-model-context-policy";
 
 interface AppsExtensionTabProps {
   draft: HostConfigInputV2;
@@ -235,6 +236,13 @@ type AppsDoc = {
    */
   pluginExtensions?: NonNullable<
     NonNullable<HostConfigMcpProfileV1["apps"]>["pluginExtensions"]
+  >;
+  /**
+   * Round-trips with `mcpProfile.apps.modelContextPolicy`, the client's
+   * plugin App context budgets. Present only when the client saved one.
+   */
+  modelContextPolicy?: NonNullable<
+    NonNullable<HostConfigMcpProfileV1["apps"]>["modelContextPolicy"]
   >;
 };
 
@@ -526,6 +534,10 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
   const pluginExtensions = draft.mcpProfile?.apps?.pluginExtensions;
   if (pluginExtensions !== undefined) {
     doc.pluginExtensions = pluginExtensions;
+  }
+  const modelContextPolicy = draft.mcpProfile?.apps?.modelContextPolicy;
+  if (modelContextPolicy !== undefined) {
+    doc.modelContextPolicy = modelContextPolicy;
   }
 
   return doc;
@@ -955,6 +967,12 @@ export function applyJsonToDraft(
   );
   if (nextPluginExtensions !== undefined) {
     appsBlock.pluginExtensions = nextPluginExtensions;
+  }
+  const nextModelContextPolicy = parseModelContextPolicyDoc(
+    parsed.modelContextPolicy,
+  );
+  if (nextModelContextPolicy !== undefined) {
+    appsBlock.modelContextPolicy = nextModelContextPolicy;
   }
   const hasApps = Object.keys(appsBlock).length > 0;
 
