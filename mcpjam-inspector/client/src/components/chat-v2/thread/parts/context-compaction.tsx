@@ -57,8 +57,8 @@ export function TruncatedResultNotice({ entry }: { entry: ShortenedResult }) {
           {compact.format(entry.originalTokens)} tokens from this result
         </p>
         <p className="text-xs leading-5 text-muted-foreground">
-          The model saw the start and the end. Return less from this tool, or a
-          link instead of file contents, so the whole result reaches the model.
+          Return less from this tool, or return a link instead of file contents,
+          so the model gets the whole result.
         </p>
       </div>
     </div>

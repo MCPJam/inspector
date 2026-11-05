@@ -54,7 +54,7 @@ describe("context compaction parts", () => {
       "The model got 25K of 683K tokens from this result",
     );
     expect(notice).toHaveTextContent(
-      "Return less from this tool, or a link instead of file contents",
+      "Return less from this tool, or return a link instead of file contents, so the model gets the whole result.",
     );
   });
 
