@@ -143,3 +143,30 @@ it("reports malformed JSON in the free-form editor", () => {
   });
   expect(invalid).toHaveBeenLastCalledWith(true);
 });
+
+it("sends the schema defaults the form shows when a tool is picked", () => {
+  render(
+    <Editor
+      inputSchema={{
+        type: "object",
+        properties: { level: { type: "string", default: "warning" } },
+      }}
+    />,
+  );
+  expect(screen.getByDisplayValue("warning")).toBeInTheDocument();
+  expect(sent()).toEqual({ level: "warning" });
+});
+
+it("keeps an editor when the schema requires arguments it does not list", () => {
+  render(<Editor inputSchema={{ type: "object", required: ["id"] }} />);
+  expect(screen.getByRole("button", { name: "Add argument" })).toBeInTheDocument();
+});
+
+it("shows nothing for a tool that takes no arguments", () => {
+  const { container } = render(
+    <Editor inputSchema={{ type: "object", properties: {} }} />,
+  );
+  expect(container.querySelector("[data-slot]")).toBeNull();
+  expect(screen.queryByRole("switch")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Add argument" })).toBeNull();
+});

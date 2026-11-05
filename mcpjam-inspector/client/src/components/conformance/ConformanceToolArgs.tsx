@@ -57,8 +57,18 @@ export function ConformanceToolArgs({
 }) {
   const listed = listedArguments(inputSchema);
   const saved = Object.keys(value);
-  // A tool whose schema takes no arguments gets nothing to fill in.
-  if (inputSchema && listed.length === 0 && saved.length === 0) return null;
+  // A tool whose schema takes no arguments gets nothing to fill in. One that
+  // requires arguments without listing them still needs the editor.
+  const required = Array.isArray(inputSchema?.required)
+    ? inputSchema.required
+    : [];
+  if (
+    inputSchema &&
+    listed.length === 0 &&
+    required.length === 0 &&
+    saved.length === 0
+  )
+    return null;
   // Saved arguments the form has no field for would still be sent, so the
   // free-form editor stays until they are renamed or removed.
   if (listed.length === 0 || saved.some((key) => !listed.includes(key))) {
@@ -118,17 +128,27 @@ function SchemaArgsForm({
   }, [invalid]);
   useEffect(() => () => onInvalidChangeRef.current(false), []);
 
-  const update = (next: FormField[]) => {
-    // An empty box is not an answer: a required one left empty stays out, so
-    // the check keeps saying it needs input instead of sending "". A box that
-    // does not parse stays out too, rather than going out as raw text.
-    const filled = next.filter(
-      (field) => field.value !== "" && !unparsable(field),
+  // An empty box is not an answer: a required one left empty stays out, so
+  // the check keeps saying it needs input instead of sending "". A box that
+  // does not parse stays out too, rather than going out as raw text.
+  const argsFrom = (next: FormField[]) =>
+    buildParametersFromFields(
+      next.filter((field) => field.value !== "" && !unparsable(field)),
     );
-    const args = buildParametersFromFields(filled);
+  const update = (next: FormField[]) => {
+    const args = argsFrom(next);
     setDraft({ fields: next, forValue: JSON.stringify(args) });
     onChange(args);
   };
+  // A tool picked with nothing saved shows its schema defaults as set, so
+  // they are sent too: what the form shows is what Run sends.
+  useEffect(() => {
+    if (Object.keys(value).length > 0) return;
+    const args = argsFrom(fields);
+    if (Object.keys(args).length > 0) update(fields);
+    // Once, for the arguments the field was opened with.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <ParametersForm
