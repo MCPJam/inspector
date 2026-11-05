@@ -74,6 +74,44 @@ describe("trusted completed model App ownership", () => {
     registry.close(second, actor);
     update(first, 2, "x".repeat(40_000));
   });
+  it("acknowledges a retried update after removal without checking or charging memory", () => {
+    const registry = new ModelAppRegistry(
+      60_000,
+      new PluginContextMemory(64 * 1024, 1024 * 1024),
+    );
+    const open = (toolName: string) =>
+      (
+        registry.publish(
+          { content: [] },
+          owner,
+          toolName,
+          "tool-rev",
+          meta,
+        ) as any
+      )._meta[PLUGIN_MODEL_APP_META].instanceToken as string;
+    const first = open("first");
+    const second = open("second");
+    const request = {
+      operationId: "op-1",
+      sequence: 1,
+      params: { content: [{ type: "text" as const, text: "x".repeat(40_000) }] },
+    };
+    const applied = registry.updateContext(first, actor, request);
+    registry.removeContext(first, actor, { operationId: "remove", basis: 0 });
+    // The retry gets the original update back, and the context stays removed.
+    expect(registry.updateContext(first, actor, request)).toEqual(applied);
+    const { context, owner: source } = registry.get(first, actor);
+    expect(context.snapshot(source.owner.instanceId, 1).state).toBeNull();
+    // It charged nothing, so the second App still has the whole budget...
+    registry.updateContext(second, actor, {
+      operationId: "second-1",
+      sequence: 1,
+      params: { content: [{ type: "text", text: "y".repeat(60_000) }] },
+    });
+    // ...and with that budget spent, the retry is still not refused.
+    expect(registry.updateContext(first, actor, request)).toEqual(applied);
+  });
+
   it("renews a retained model App past its original lifetime", () => {
     vi.useFakeTimers();
     try {

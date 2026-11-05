@@ -181,14 +181,14 @@ export class ModelAppRegistry {
     limits?: PluginContextLimits,
   ) {
     const { context, owner } = this.get(token, actor);
+    const { instanceId, generation } = owner.owner;
+    // A retry of the update already applied changes nothing, even after the
+    // context was removed, so it is neither refused for memory nor charged.
+    if (context.isRetry(instanceId, request.operationId))
+      return context.update(instanceId, generation, request, limits);
     const bytes = Buffer.byteLength(JSON.stringify(request.params ?? null));
     this.memory.check(owner, bytes);
-    const result = context.update(
-      owner.owner.instanceId,
-      owner.owner.generation,
-      request,
-      limits,
-    );
+    const result = context.update(instanceId, generation, request, limits);
     this.memory.hold(owner, bytes);
     return result;
   }
