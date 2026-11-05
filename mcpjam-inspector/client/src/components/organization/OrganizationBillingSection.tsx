@@ -59,7 +59,10 @@ import type {
 } from "@/hooks/useOrganizationBilling";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import { guardCheckoutIntentAgainstBillingStatus } from "@/lib/billing-checkout-intent-guard";
-import { getAnnualDiscountPercent } from "@/lib/billing-entitlements";
+import {
+  canShowSubscriptionNotices,
+  getAnnualDiscountPercent,
+} from "@/lib/billing-entitlements";
 import { consumeUrlFlag } from "@/lib/url-flag";
 import { track } from "@/lib/analytics";
 import { navigateToSupport } from "@/lib/support-navigation";
@@ -1368,7 +1371,9 @@ export function OrganizationBillingSection({
                                 billingStatus?.stripeCurrentPeriodEnd ??
                                 null;
                               const scheduledCancellationDate =
-                                billingStatus?.stripeCancelAtPeriodEnd
+                                billingStatus &&
+                                canShowSubscriptionNotices(billingStatus) &&
+                                billingStatus.stripeCancelAtPeriodEnd
                                   ? cancellationDateMs != null
                                     ? formatBillingDate(cancellationDateMs)
                                     : ""
