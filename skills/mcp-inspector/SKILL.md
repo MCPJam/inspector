@@ -20,10 +20,10 @@ When the user wants to connect to a server and use it:
   - Use the probe to learn auth posture, resource metadata, authorization-server metadata, and registration strategies before assuming the connected surface is public.
 2. If the probe shows `oauth_required`, authenticate with `oauth login --credentials-out <path>` or run `oauth conformance --credentials-out <path>` when the task is specifically to test the OAuth flow.
   - A `ready` probe does not mean every tool is public. A server can allow the connection and ask for sign-in only when a protected tool is called (lazy authentication). If a later call fails with `AUTH_REQUIRED`, run the `oauth login` command in `error.details.hint`, then retry with `--credentials-file <path>`.
-3. Discover tools: `tools list --url <url> --credentials-file <path> --quiet --format json`.
+3. Discover tools: `tools list --url <url> --quiet --format json`, adding `--credentials-file <path>` once you have signed in.
   - Tools with `_meta.ui.resourceUri`, deprecated `_meta["ui/resourceUri"]`, or `openai/outputTemplate` in `toolsMetadata` have interactive UI.
   - For a specific tool, check `toolsMetadata.<toolName>._meta.ui.resourceUri`, `toolsMetadata.<toolName>._meta["ui/resourceUri"]`, or `toolsMetadata.<toolName>["openai/outputTemplate"]`.
-4. Execute a tool: `tools call --url <url> --tool-name <name> --tool-args <json> --credentials-file <path>`.
+4. Execute a tool: `tools call --url <url> --tool-name <name> --tool-args <json>`, with `--credentials-file <path>` once you have signed in.
 5. Execute with UI: `tools call --url <url> --tool-name <name> --tool-args <json> --credentials-file <path> --ui`.
   - `--ui` starts or attaches to the local Inspector backend and renders the completed result in App Builder.
   - In non-TTY, agent, and CI runs, `--ui` does not open a browser by default. Pass `--open` when the CLI should open App Builder itself.
@@ -180,7 +180,7 @@ For each claimed security-review finding, return:
 - Never skip `tools list` discovery when the user names a server but not a specific tool.
 - Never infer prompt support from an empty prompts list unless you have raw RPC evidence that `prompts/list` was actually sent and answered by the server.
 - Never stop at `oauth_required` when the user asked to inspect the authenticated server surface and the CLI can complete login. Authenticate and continue with post-login commands when feasible.
-- Never report `AUTH_REQUIRED` on one tool call as a broken server or a bad MCPJam key. It means the server allowed the connection and asked for sign-in on that call. `UNAUTHORIZED` is the code for a bad MCPJam API key.
+- Never report `AUTH_REQUIRED` on one tool call as a broken server or a bad MCPJam key. It means the MCP server asked for sign-in, when connecting or on that call. `UNAUTHORIZED` is the code for a bad MCPJam API key.
 - Never treat `_authChallenge` as server output. The CLI adds it beside a result that carries `_meta["mcp/www_authenticate"]`; the server's result is unchanged.
 - Never treat a passing `apps conformance` result as full SEP-1865 conformance. The current command is server-side only and does not prove host lifecycle, sandbox proxy, or postMessage bridge behavior.
 - Never treat missing optional metadata such as `outputSchema`, content annotations, `scopes_supported`, or `scope` hints as a hard failure without a `MUST`.

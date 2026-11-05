@@ -649,7 +649,14 @@ export function MultiModelPlaygroundCard({
   const recoveryLoaderRef = useRef(loadChatSession);
   recoveryLoaderRef.current = loadChatSession;
   useEffect(() => {
-    if (!recoveryColumn || !isSessionBootstrapComplete) return;
+    // Once the column has settled, a later bootstrap or project change must
+    // not load the saved transcript over the messages that came after it.
+    if (
+      !recoveryColumn ||
+      recoveryStatus !== "loading" ||
+      !isSessionBootstrapComplete
+    )
+      return;
     let cancelled = false;
     const history = recoveryColumn.hasMessages
       ? getCachedChatHistoryDetail({
@@ -712,7 +719,12 @@ export function MultiModelPlaygroundCard({
     return () => {
       cancelled = true;
     };
-  }, [recoveryColumn, isSessionBootstrapComplete, hostedContext?.projectId]);
+  }, [
+    recoveryColumn,
+    recoveryStatus,
+    isSessionBootstrapComplete,
+    hostedContext?.projectId,
+  ]);
 
   useComparisonBrowser(
     browserWorkspace && hostedContext?.projectId

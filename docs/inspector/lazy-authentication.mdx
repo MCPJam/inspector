@@ -180,7 +180,7 @@ The [public API](/reference/public-api#errors) reports the same challenges: `AUT
    - For a 401 challenge, expect `AUTH_REQUIRED` with `details.challenge`.
    - For a `_meta` challenge, expect the `isError` result with `_authChallenge` next to it.
 
-3. Sign in, then call the tool again with the saved credentials:
+3. Sign in, then call the tool again with the saved credentials. If the challenge names a scope, add it with `--scopes`; the `details.hint` command already does:
 
    ```bash
    mcpjam oauth login --url https://your-server.com/mcp --credentials-out creds.json

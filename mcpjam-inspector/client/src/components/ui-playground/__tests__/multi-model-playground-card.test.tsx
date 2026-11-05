@@ -52,7 +52,6 @@ vi.mock("@/components/chat-v2/history/chat-history-prefetch", () => ({
   getCachedChatHistoryDetail: historyDetail,
 }));
 const mockUseChatSession = {
-  isSessionBootstrapComplete: true,
   loadChatSession: vi.fn().mockResolvedValue(undefined),
   // Elicitation surface (hosted). These suites never elicit, but the shape
   // must match the hook's contract or the dialog crashes on undefined.
@@ -953,6 +952,31 @@ describe("comparison redirect restoration", () => {
       expect(screen.queryByRole("status")).not.toBeInTheDocument(),
     );
     expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("restores a column once, even when its session bootstraps again", async () => {
+    historyDetail.mockResolvedValue({
+      session: {
+        chatSessionId: "original-chat",
+        messagesBlobUrl: "https://example.test/history",
+        version: 1,
+      },
+    });
+    const view = render(<Harness />);
+    await waitFor(() =>
+      expect(mockUseChatSession.loadChatSession).toHaveBeenCalledTimes(1),
+    );
+    try {
+      mockUseChatSession.isSessionBootstrapComplete = false;
+      view.rerender(<Harness />);
+      mockUseChatSession.isSessionBootstrapComplete = true;
+      view.rerender(<Harness />);
+      await act(async () => {});
+    } finally {
+      mockUseChatSession.isSessionBootstrapComplete = true;
+    }
+    expect(historyDetail).toHaveBeenCalledTimes(1);
+    expect(mockUseChatSession.loadChatSession).toHaveBeenCalledTimes(1);
   });
 
   it("shows a terminal column error when history fails", async () => {
