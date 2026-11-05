@@ -38,8 +38,8 @@ vi.mock("@/hooks/use-is-direct-guest", () => ({
 vi.mock("@/lib/app-route-context", () => ({
   useAppRouteContext: () => ({ convexProjectId: "p_1" }),
 }));
-vi.mock("../../create-suite-navigation", () => ({
-  navigatePlaygroundEvalsRoute: navigate,
+vi.mock("../../nav/use-evaluate-nav-navigate", () => ({
+  useEvaluateNavNavigate: () => navigate,
 }));
 vi.mock("../../create-suite-prefill-store", () => ({
   openCreateSuite: openCreate,
@@ -157,7 +157,7 @@ describe("EvaluateLandingPage", () => {
   it("switches tabs by address", async () => {
     renderLanding();
     await userEvent.click(screen.getByRole("button", { name: "Runs" }));
-    expect(navigate).toHaveBeenCalledWith({ type: "evaluate-runs" });
+    expect(navigate).toHaveBeenCalledWith({ type: "evaluate-runs" }, "link");
   });
 
   it("shows the project's runs on the Runs tab", () => {
@@ -179,19 +179,19 @@ describe("EvaluateLandingPage", () => {
   it("opens a suite's run and its settings from the card", async () => {
     renderLanding();
     await userEvent.click(screen.getByRole("button", { name: "Run #3" }));
-    expect(navigate).toHaveBeenCalledWith({
-      type: "run-detail",
-      suiteId: "s_1",
-      runId: "run_s_1",
-    });
+    // The suite run's Back then returns to the Suites tab.
+    expect(navigate).toHaveBeenCalledWith(
+      { type: "run-detail", suiteId: "s_1", runId: "run_s_1" },
+      "link",
+      { backPlace: "suites" },
+    );
     await userEvent.click(
       screen.getByRole("button", { name: /Suite settings/ }),
     );
-    expect(navigate).toHaveBeenCalledWith({
-      type: "suite-settings",
-      suiteId: "s_1",
-      tab: "settings",
-    });
+    expect(navigate).toHaveBeenCalledWith(
+      { type: "suite-settings", suiteId: "s_1", tab: "settings" },
+      "link",
+    );
   });
 
   it("offers the sample suite and the project's servers when there are no suites", async () => {

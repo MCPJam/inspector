@@ -4,16 +4,7 @@
  * editor and its evaluators page.
  */
 
-import { useCallback, useContext } from "react";
-import { UNSAFE_LocationContext, UNSAFE_NavigationContext } from "react-router";
 import type { EvalRoute, EvaluateNavRoute } from "@/lib/eval-route-types";
-import {
-  buildEvaluatePath,
-  navigateApp,
-  scopeNavigationTarget,
-} from "@/lib/app-navigation";
-import type { EvalNavArrival } from "../nav/evaluate-nav-events";
-import { EVAL_NAV_ARRIVAL_STATE_KEY } from "../nav/evaluate-nav-host";
 
 /** The route kinds the case editor serves. */
 export type CaseEditorRoute = Extract<
@@ -75,27 +66,4 @@ export function routeAfterSave(
   return route.type === "case-new"
     ? { type: "case-settings", suiteId: route.suiteId, caseId: savedCaseId }
     : null;
-}
-
-/** Navigate to an Evaluate route and record how the user got there. */
-export function useEvaluateNavGo() {
-  const navigator = useContext(UNSAFE_NavigationContext)?.navigator;
-  const pathname = useContext(UNSAFE_LocationContext)?.location.pathname;
-  return useCallback(
-    (
-      route: EvalRoute,
-      arrival: EvalNavArrival,
-      options: { replace?: boolean } = {},
-    ) => {
-      const target = scopeNavigationTarget(buildEvaluatePath(route), pathname);
-      const state = { [EVAL_NAV_ARRIVAL_STATE_KEY]: arrival };
-      if (!navigator) {
-        navigateApp(target, options);
-        return;
-      }
-      if (options.replace) navigator.replace(target, state);
-      else navigator.push(target, state);
-    },
-    [navigator, pathname],
-  );
 }

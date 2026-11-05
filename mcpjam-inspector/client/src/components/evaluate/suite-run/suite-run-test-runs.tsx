@@ -14,8 +14,8 @@ import {
   type EvaluateCaseRow,
 } from "../evaluate-case-row-model";
 import { RunCaseRows } from "../run-case-rows";
-import { navigatePlaygroundEvalsRoute } from "../create-suite-navigation";
 import { trackEvalNav } from "../nav/evaluate-nav-events";
+import { useEvaluateNavNavigate } from "../nav/use-evaluate-nav-navigate";
 import {
   EvalListFilter,
   ALL_EVAL_FILTER_VALUES,
@@ -28,24 +28,34 @@ export interface TestRunLinkTarget {
   target?: string;
 }
 
-export function openTestRun(link: TestRunLinkTarget, caseId: string): void {
-  navigatePlaygroundEvalsRoute({
-    type: "test-run",
-    suiteId: link.suiteId,
-    runId: link.runId,
-    caseId,
-    ...(link.target ? { target: link.target } : {}),
-  });
-}
-
-export function editFromTestRun(link: TestRunLinkTarget, caseId: string) {
-  trackEvalNav("eval_edit_from_test_run", { surface: "list" });
-  navigatePlaygroundEvalsRoute({
-    type: "test-run-edit",
-    suiteId: link.suiteId,
-    runId: link.runId,
-    caseId,
-  });
+/** Where a row leads: its test run, or the case editor from that test run. */
+function useTestRunLinks(link: TestRunLinkTarget) {
+  const navigate = useEvaluateNavNavigate();
+  return {
+    open: (caseId: string) =>
+      navigate(
+        {
+          type: "test-run",
+          suiteId: link.suiteId,
+          runId: link.runId,
+          caseId,
+          ...(link.target ? { target: link.target } : {}),
+        },
+        "link",
+      ),
+    edit: (caseId: string) => {
+      trackEvalNav("eval_edit_from_test_run", { surface: "list" });
+      navigate(
+        {
+          type: "test-run-edit",
+          suiteId: link.suiteId,
+          runId: link.runId,
+          caseId,
+        },
+        "link",
+      );
+    },
+  };
 }
 
 export function SuiteRunTestRuns({
@@ -62,6 +72,7 @@ export function SuiteRunTestRuns({
 }) {
   const { summary, diagnostics, chains, chainsLoaded, decisionStatus } =
     decision;
+  const links = useTestRunLinks(link);
   const rows = useMemo(
     () =>
       buildEvaluateCaseRows({
@@ -89,19 +100,19 @@ export function SuiteRunTestRuns({
         rows={rows}
         defaultOpenKey={null}
         onOpenRow={(row) => {
-          if (row.testCaseId) openTestRun(link, row.testCaseId);
+          if (row.testCaseId) links.open(row.testCaseId);
         }}
-        renderActions={(row) => <TestRunActions link={link} row={row} />}
+        renderActions={(row) => <TestRunActions links={links} row={row} />}
       />
     </section>
   );
 }
 
 function TestRunActions({
-  link,
+  links,
   row,
 }: {
-  link: TestRunLinkTarget;
+  links: ReturnType<typeof useTestRunLinks>;
   row: EvaluateCaseRow;
 }) {
   const caseId = row.testCaseId;
@@ -115,7 +126,7 @@ function TestRunActions({
         className="size-8"
         aria-label={`Open test run: ${row.title}`}
         data-testid={`test-run-open-${caseId}`}
-        onClick={() => openTestRun(link, caseId)}
+        onClick={() => links.open(caseId)}
       >
         <ArrowUpRight className="size-3.5" aria-hidden />
       </Button>
@@ -126,7 +137,7 @@ function TestRunActions({
         className="size-8"
         aria-label={`Edit test case: ${row.title}`}
         data-testid={`test-run-edit-${caseId}`}
-        onClick={() => editFromTestRun(link, caseId)}
+        onClick={() => links.edit(caseId)}
       >
         <Pencil className="size-3.5" aria-hidden />
       </Button>

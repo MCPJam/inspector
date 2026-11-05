@@ -12,17 +12,14 @@ import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import { resolveMatchOptions, type Predicate } from "@/shared/eval-matching";
 import { CaseChecksPage } from "../case-workspace/case-checks-page";
 import { withCaseJudgeSkipped } from "../case-scorecard/case-scorecard-model";
+import { useEvaluateNavNavigate } from "../nav/use-evaluate-nav-navigate";
 import { CasePageHeader } from "./case-page-header";
 import { useCaseEditorDraft } from "./use-case-editor-draft";
-import {
-  caseBackTarget,
-  useEvaluateNavGo,
-  type CaseEvaluatorsRoute,
-} from "./case-editor-nav";
+import { caseBackTarget, type CaseEvaluatorsRoute } from "./case-editor-nav";
 
 export function CaseEvaluatorsPage({ route }: { route: CaseEvaluatorsRoute }) {
   const { suiteId, caseId } = route;
-  const go = useEvaluateNavGo();
+  const go = useEvaluateNavNavigate();
   const state = useCaseEditorDraft(suiteId, caseId);
   const { draft, suite, testCase } = state;
   const { capabilities } = useSuiteCapabilities(suiteId);
@@ -57,7 +54,6 @@ export function CaseEvaluatorsPage({ route }: { route: CaseEvaluatorsRoute }) {
         route={route}
         names={{ suiteName: suite?.name, caseName: draft?.title }}
         back={back}
-        onNavigate={go}
         title={
           <h1 className="truncate text-lg font-semibold">
             {draft?.title ?? "Test case"}

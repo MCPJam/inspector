@@ -40,4 +40,10 @@ describe("suiteGenerateState", () => {
       true,
     );
   });
+
+  it("names the page's own place to attach a client when there is no suite", () => {
+    expect(
+      suiteGenerateState(null, new Set(), true, "Attach a client here."),
+    ).toEqual({ canGenerate: false, disabledReason: "Attach a client here." });
+  });
 });

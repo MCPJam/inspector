@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Diamond, Loader2, Pencil } from "lucide-react";
+import { useMemo } from "react";
+import { Loader2, Pencil } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@mcpjam/design-system/cn";
 import {
@@ -9,14 +9,16 @@ import {
 import type { EvalRunDecisionChain } from "@mcpjam/sdk/contract";
 import type { EvaluateNavRoute } from "@/lib/eval-route-types";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
-import { buildEvaluateNavCrumbs } from "../nav/evaluate-nav-breadcrumbs";
 import { trackEvalNav } from "../nav/evaluate-nav-events";
-import { buildExecutionPreview } from "../case-steps/case-steps-model";
+import {
+  ExecutionPreviewPanel,
+  useExecutionPreviewToggle,
+} from "../case-steps/execution-preview";
+import { EvaluateNavCrumbBar } from "../nav/evaluate-nav-crumb-bar";
+import { useEvaluateNavNavigate } from "../nav/use-evaluate-nav-navigate";
 import { IterationReportScorecard } from "../case-scorecard/iteration-report-subscriber";
 import { resultCounts, cellResult } from "../run-results-matrix-model";
 import { CaseIterations } from "./case-iterations";
-import { EvaluateNavCrumbBar } from "./evaluate-nav-crumb-bar";
-import { ExecutionPreviewPanel } from "./execution-preview-panel";
 import { iterationAuthored } from "./iteration-evidence";
 import { outcomeTextTone } from "./iteration-outcome";
 import { TestRunFindings } from "./test-run-findings";
@@ -25,7 +27,6 @@ import {
   pickTarget,
   representativeIteration,
 } from "./test-run-model";
-import { useEvaluateNavNavigate } from "./use-evaluate-nav-navigate";
 import { useTestRunData } from "./use-test-run-data";
 
 type TestRunRoute = Extract<EvaluateNavRoute, { type: "test-run" }>;
@@ -41,8 +42,8 @@ const VERDICT_WORD = {
 export function TestRunPage({ route }: { route: TestRunRoute }) {
   const { suiteId, runId, caseId } = route;
   const navigate = useEvaluateNavNavigate();
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const data = useTestRunData(route, { loadCase: previewOpen });
+  const preview = useExecutionPreviewToggle();
+  const data = useTestRunData(route, { loadCase: preview.open });
   const { run, targets, iterations } = data;
   const target = pickTarget(targets, route.target);
   const targetItems = target?.cells.get(caseId) ?? [];
@@ -51,34 +52,20 @@ export function TestRunPage({ route }: { route: TestRunRoute }) {
     () => buildTestRunFindings(data.diagnostics, caseId, iterations.length),
     [data.diagnostics, caseId, iterations.length],
   );
-  const preview = useMemo(() => {
-    const testCase = data.testCase;
-    if (!testCase) return testCase;
-    return buildExecutionPreview({
-      steps: testCase.steps ?? [],
-      predicates: testCase.predicates,
-      expectedOutput: testCase.expectedOutput,
-      suiteDefaultPredicates: data.suite?.defaultPredicates ?? [],
-      suppressedSuiteStandardCheckIds: testCase.suppressedSuiteStandardCheckIds,
-    });
-  }, [data.testCase, data.suite]);
-
-  const crumbs = buildEvaluateNavCrumbs(route, {
-    suiteName: data.suite?.name,
-    caseName: data.caseTitle,
-    runNumber: run?.runNumber,
-  });
+  const testCase = data.testCase;
+  const previewInput = testCase && {
+    steps: testCase.steps ?? [],
+    predicates: testCase.predicates,
+    expectedOutput: testCase.expectedOutput,
+    suiteDefaultPredicates: data.suite?.defaultPredicates ?? [],
+    suppressedSuiteStandardCheckIds: testCase.suppressedSuiteStandardCheckIds,
+  };
   const editRoute = { type: "test-run-edit", suiteId, runId, caseId } as const;
   const openIteration = (iterationId: string) =>
     navigate(
       { type: "iteration", suiteId, runId, caseId, iterationId },
       "link",
     );
-  const togglePreview = () => {
-    if (!previewOpen)
-      trackEvalNav("eval_execution_preview_opened", { surface: "test_run" });
-    setPreviewOpen(!previewOpen);
-  };
 
   const counts = resultCounts(iterations);
   const verdict = cellResult(iterations);
@@ -89,8 +76,12 @@ export function TestRunPage({ route }: { route: TestRunRoute }) {
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="test-run-page">
       <EvaluateNavCrumbBar
-        crumbs={crumbs}
-        onNavigate={(next) => navigate(next, "crumb")}
+        route={route}
+        names={{
+          suiteName: data.suite?.name,
+          caseName: data.caseTitle,
+          runNumber: run?.runNumber,
+        }}
       />
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-6xl space-y-6 px-5 py-5">
@@ -103,20 +94,7 @@ export function TestRunPage({ route }: { route: TestRunRoute }) {
                 <h1 className="truncate text-xl font-semibold tracking-tight">
                   {data.caseTitle ?? "Test case"}
                 </h1>
-                <Button
-                  variant={previewOpen ? "secondary" : "outline"}
-                  size="icon"
-                  className="size-7"
-                  aria-pressed={previewOpen}
-                  aria-label={
-                    previewOpen
-                      ? "Hide execution preview"
-                      : "Show execution preview"
-                  }
-                  onClick={togglePreview}
-                >
-                  <Diamond className="size-3.5" />
-                </Button>
+                {preview.button}
               </div>
               {verdict && (
                 <p className="text-sm">
@@ -144,14 +122,16 @@ export function TestRunPage({ route }: { route: TestRunRoute }) {
           <div
             className={cn(
               "grid gap-6",
-              previewOpen && "lg:grid-cols-[minmax(260px,340px)_minmax(0,1fr)]",
+              preview.open &&
+                "lg:grid-cols-[minmax(260px,340px)_minmax(0,1fr)]",
             )}
           >
-            {previewOpen && (
+            {preview.open && (
               <ExecutionPreviewPanel
-                preview={preview}
-                onClose={() => setPreviewOpen(false)}
-                onOpenStep={(stepIndex) => {
+                surface="test_run"
+                input={previewInput}
+                onClose={preview.close}
+                onSelectStep={(stepIndex) => {
                   trackEvalNav("eval_edit_from_test_run", {
                     surface: "preview_step",
                   });

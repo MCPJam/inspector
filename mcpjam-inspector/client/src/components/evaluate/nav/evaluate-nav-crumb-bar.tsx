@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -12,23 +12,24 @@ import type { EvalRoute } from "@/lib/eval-route-types";
 import {
   buildEvaluateNavCrumbs,
   type EvaluateNavCrumbNames,
-} from "../nav/evaluate-nav-breadcrumbs";
+} from "./evaluate-nav-breadcrumbs";
+import { useEvaluateNavNavigate } from "./use-evaluate-nav-navigate";
 
 /**
- * The page's breadcrumb, built from the route alone (E2), with the page's
- * actions on the right of the same bar.
+ * An Evaluate page's breadcrumb, built from the route alone (E2), with the
+ * page's actions on the right of the same bar. Every crumb but the last is a
+ * link, followed as a `crumb` arrival.
  */
 export function EvaluateNavCrumbBar({
   route,
   names,
-  onCrumbClick,
   actions,
 }: {
   route: EvalRoute;
   names: EvaluateNavCrumbNames;
-  onCrumbClick: (route: EvalRoute) => void;
   actions?: ReactNode;
 }) {
+  const navigate = useEvaluateNavNavigate();
   const crumbs = buildEvaluateNavCrumbs(route, names);
   return (
     <div
@@ -40,7 +41,7 @@ export function EvaluateNavCrumbBar({
           {crumbs.map((crumb, index) => {
             const isCurrent = index === crumbs.length - 1;
             return (
-              <span key={crumb.kind} className="contents">
+              <Fragment key={`${crumb.kind}:${index}`}>
                 {index > 0 ? (
                   <BreadcrumbSeparator className="text-muted-foreground">
                     /
@@ -55,7 +56,7 @@ export function EvaluateNavCrumbBar({
                     <BreadcrumbLink asChild>
                       <button
                         type="button"
-                        onClick={() => onCrumbClick(crumb.route)}
+                        onClick={() => navigate(crumb.route, "crumb")}
                         className="inline-flex min-w-0 border-0 bg-transparent p-0 font-normal text-muted-foreground hover:text-foreground"
                       >
                         <span className="truncate">{crumb.label}</span>
@@ -63,7 +64,7 @@ export function EvaluateNavCrumbBar({
                     </BreadcrumbLink>
                   )}
                 </BreadcrumbItem>
-              </span>
+              </Fragment>
             );
           })}
         </BreadcrumbList>

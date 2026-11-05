@@ -12,32 +12,31 @@ export interface SuiteGenerateState {
 
 /**
  * Whether a suite can generate cases from its servers, and the reason to show
- * beside Generate. The same rules as the suite page's Generate button.
+ * beside Generate. Suite settings and the suite page's Generate button both
+ * use it; each names where its own page attaches a client.
  */
 export function suiteGenerateState(
-  suite: EvalSuite,
+  suite: EvalSuite | null | undefined,
   connectedServerNames: ReadonlySet<string>,
   canConnectServers: boolean,
+  noServersReason = "Add a client in Settings before generating cases.",
 ): SuiteGenerateState {
   // Environment suites: servers resolve server-side from the environment,
   // so neither the legacy list nor the browser's connections gate this.
-  const environmentTarget = generationEnvironmentTarget(suite);
-  if (environmentTarget.kind === "none") {
+  const environmentTarget = suite ? generationEnvironmentTarget(suite) : null;
+  if (environmentTarget?.kind === "none") {
     return { canGenerate: false, disabledReason: environmentTarget.reason };
   }
-  if (environmentTarget.kind !== "legacy") {
+  if (environmentTarget && environmentTarget.kind !== "legacy") {
     return {
       canGenerate: true,
       disabledReason:
         "Generate suggested cases from this suite’s environment servers. Open a case to run it when you are ready.",
     };
   }
-  const suiteServers = getEffectiveSuiteServers(suite);
+  const suiteServers = suite ? getEffectiveSuiteServers(suite) : [];
   if (suiteServers.length === 0) {
-    return {
-      canGenerate: false,
-      disabledReason: "Add a client in Settings before generating cases.",
-    };
+    return { canGenerate: false, disabledReason: noServersReason };
   }
   const missingServers = suiteServers.filter(
     (serverName) => !connectedServerNames.has(serverName),

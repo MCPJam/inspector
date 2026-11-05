@@ -9,13 +9,13 @@ import type { EvalRoute } from "@/lib/eval-route-types";
 import { EvalTabGate } from "../../evals/EvalTabGate";
 import { ProjectRunsTable } from "../../evals/project-runs-table";
 import { LaunchedCaseJudge } from "../case-scorecard/launched-case-judge";
-import { navigatePlaygroundEvalsRoute } from "../create-suite-navigation";
 import { openCreateSuite } from "../create-suite-prefill-store";
 import { EvalsEmptyHero, openCreateSuiteForServer } from "../evals-empty-hero";
 import {
   EvaluateNavLandingHeader,
   type EvalLandingView,
 } from "../evals-header";
+import { useEvaluateNavNavigate } from "../nav/use-evaluate-nav-navigate";
 import { useEvaluateTutorial } from "./evaluate-tutorial";
 import { SuiteList } from "./suite-list";
 import { useEvaluateLandingActions } from "./use-evaluate-landing-actions";
@@ -33,16 +33,22 @@ const LANDING_ROUTES: Record<EvalLandingView, EvaluateLandingRoute> = {
 };
 
 const openBlankCreateSuite = () => openCreateSuite();
-const openSuite = (suiteId: string) =>
-  navigatePlaygroundEvalsRoute({ type: "suite-overview", suiteId });
-const openRun = ({ suiteId, runId }: { suiteId: string; runId: string }) =>
-  navigatePlaygroundEvalsRoute({ type: "run-detail", suiteId, runId });
-const openSuiteSettings = (suiteId: string) =>
-  navigatePlaygroundEvalsRoute({
-    type: "suite-settings",
-    suiteId,
-    tab: "settings",
-  });
+
+/** The landing's links; a run opened here makes this tab its Back target. */
+function useLandingLinks(view: EvalLandingView) {
+  const navigate = useEvaluateNavNavigate();
+  return {
+    openView: (next: EvalLandingView) => navigate(LANDING_ROUTES[next], "link"),
+    openSuite: (suiteId: string) =>
+      navigate({ type: "suite-overview", suiteId }, "link"),
+    openRun: ({ suiteId, runId }: { suiteId: string; runId: string }) =>
+      navigate({ type: "run-detail", suiteId, runId }, "link", {
+        backPlace: view,
+      }),
+    openSuiteSettings: (suiteId: string) =>
+      navigate({ type: "suite-settings", suiteId, tab: "settings" }, "link"),
+  };
+}
 
 /**
  * Evaluate's landing with the nav rework on (C1, C14, D12): Suites and Runs
@@ -81,6 +87,7 @@ function LandingContent({
   const { suites, isLoading: suitesLoading } =
     useEvaluateSuiteOverview(projectId);
   const actions = useEvaluateLandingActions(projectId, suites);
+  const links = useLandingLinks(view);
 
   // Once per landing mount; switching tabs keeps the page mounted.
   const askedFirstVisit = useRef(false);
@@ -101,9 +108,7 @@ function LandingContent({
       header={
         <EvaluateNavLandingHeader
           view={view}
-          onViewChange={(next) =>
-            navigatePlaygroundEvalsRoute(LANDING_ROUTES[next])
-          }
+          onViewChange={links.openView}
           onCreateSuite={openBlankCreateSuite}
           onTutorial={() => requestTutorial?.("menu")}
         />
@@ -138,7 +143,7 @@ function LandingContent({
               historyMetricsEnabled
               decisionSummaryEnabled
               projectId={projectId}
-              onSelectRun={openRun}
+              onSelectRun={links.openRun}
               onDeleteRun={actions.deleteRun}
               canDeleteRun={(run) => actions.canDeleteArtifact(run.createdBy)}
             />
@@ -152,9 +157,9 @@ function LandingContent({
           suites={suites}
           run={actions.run}
           rerunningSuiteId={actions.rerunningSuiteId}
-          onOpenSuite={openSuite}
-          onOpenRun={openRun}
-          onOpenSettings={openSuiteSettings}
+          onOpenSuite={links.openSuite}
+          onOpenRun={links.openRun}
+          onOpenSettings={links.openSuiteSettings}
         />
       )}
     </EvalTabGate>

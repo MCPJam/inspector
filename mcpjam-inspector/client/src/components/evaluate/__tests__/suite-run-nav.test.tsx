@@ -18,11 +18,14 @@ const track = vi.hoisted(() => vi.fn());
 vi.mock("../nav/use-evaluate-nav-enabled", () => ({
   useEvaluateNavEnabled: () => flag.value,
 }));
-vi.mock("../create-suite-navigation", async (original) => ({
+vi.mock("../nav/use-evaluate-nav-navigate", async (original) => ({
   ...(await original<object>()),
-  navigatePlaygroundEvalsRoute: navigate,
+  useEvaluateNavNavigate: () => navigate,
 }));
-vi.mock("../nav/evaluate-nav-events", () => ({ trackEvalNav: track }));
+vi.mock("../nav/evaluate-nav-events", async (original) => ({
+  ...(await original<object>()),
+  trackEvalNav: track,
+}));
 
 function makeRun(
   overrides: Partial<EvalSuiteRun> & { _id: string },
@@ -139,11 +142,14 @@ describe("Suite run header with evaluate-nav-enabled", () => {
     await userEvent
       .setup()
       .click(screen.getByRole("button", { name: /Suite settings/ }));
-    expect(navigate).toHaveBeenCalledWith({
-      type: "suite-settings",
-      suiteId: "suite-1",
-      tab: "settings",
-    });
+    expect(navigate).toHaveBeenCalledWith(
+      {
+        type: "suite-settings",
+        suiteId: "suite-1",
+        tab: "settings",
+      },
+      "link",
+    );
   });
 
   it("keeps today's header when the flag is off", () => {
@@ -173,24 +179,30 @@ describe("Test runs list", () => {
     );
 
     await user.click(screen.getByText("Draw a rectangle"));
-    expect(navigate).toHaveBeenLastCalledWith({
-      type: "test-run",
-      suiteId: "suite-1",
-      runId: "run-4",
-      caseId: "case-a",
-    });
+    expect(navigate).toHaveBeenLastCalledWith(
+      {
+        type: "test-run",
+        suiteId: "suite-1",
+        runId: "run-4",
+        caseId: "case-a",
+      },
+      "link",
+    );
 
     await user.click(
       screen.getByRole("button", {
         name: "Open test run: Sketch a two-node flow",
       }),
     );
-    expect(navigate).toHaveBeenLastCalledWith({
-      type: "test-run",
-      suiteId: "suite-1",
-      runId: "run-4",
-      caseId: "case-b",
-    });
+    expect(navigate).toHaveBeenLastCalledWith(
+      {
+        type: "test-run",
+        suiteId: "suite-1",
+        runId: "run-4",
+        caseId: "case-b",
+      },
+      "link",
+    );
     expect(track).not.toHaveBeenCalled();
   });
 
@@ -210,12 +222,15 @@ describe("Test runs list", () => {
     expect(track).toHaveBeenCalledWith("eval_edit_from_test_run", {
       surface: "list",
     });
-    expect(navigate).toHaveBeenCalledWith({
-      type: "test-run-edit",
-      suiteId: "suite-1",
-      runId: "run-4",
-      caseId: "case-a",
-    });
+    expect(navigate).toHaveBeenCalledWith(
+      {
+        type: "test-run-edit",
+        suiteId: "suite-1",
+        runId: "run-4",
+        caseId: "case-a",
+      },
+      "link",
+    );
   });
 
   it("shows a model filter only when the run used several models", () => {

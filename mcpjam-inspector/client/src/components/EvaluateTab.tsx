@@ -106,6 +106,7 @@ import {
   isCiOwnedSuite,
 } from "@/lib/evals/is-ci-owned-suite";
 import { agentRunIterations } from "./evaluate/suite-run-iterations";
+import { suiteGenerateState } from "./evaluate/suite-settings/suite-generate-state";
 
 /** Cap the agent snapshot's suite list — state overview, not a data dump. */
 const AGENT_SNAPSHOT_MAX_SUITES = 30;
@@ -653,58 +654,16 @@ function EvaluateTabContent({
     [generateTestsForSuite, selectedSuite],
   );
 
-  const generateState = useMemo(() => {
-    // Environment suites: servers resolve server-side from the environment,
-    // so neither the legacy list nor the browser's connections gate this.
-    const environmentTarget = selectedSuite
-      ? generationEnvironmentTarget(selectedSuite)
-      : null;
-    if (environmentTarget?.kind === "none") {
-      return { canGenerate: false, disabledReason: environmentTarget.reason };
-    }
-    if (environmentTarget && environmentTarget.kind !== "legacy") {
-      return {
-        canGenerate: true,
-        disabledReason:
-          "Generate suggested cases from this suite’s environment servers. Open a case to run it when you are ready.",
-      };
-    }
-    const suiteServers = selectedSuite
-      ? getEffectiveSuiteServers(selectedSuite)
-      : [];
-    if (suiteServers.length === 0) {
-      return {
-        canGenerate: false,
-        disabledReason:
-          "Attach a client in the suite header before generating cases.",
-      };
-    }
-
-    const missingServers = suiteServers.filter(
-      (serverName) => !connectedServerNames.has(serverName),
-    );
-    if (missingServers.length > 0) {
-      if (ensureServersReady) {
-        return {
-          canGenerate: true,
-          disabledReason:
-            "Connects the suite’s MCP servers if needed, then creates suggested test cases.",
-        };
-      }
-      return {
-        canGenerate: false,
-        disabledReason: `Connect ${missingServers.join(
-          ", ",
-        )} to generate cases for this suite.`,
-      };
-    }
-
-    return {
-      canGenerate: true,
-      disabledReason:
-        "Generate suggested cases from this suite’s servers. Open a case to run it when you are ready.",
-    };
-  }, [connectedServerNames, ensureServersReady, selectedSuite]);
+  const generateState = useMemo(
+    () =>
+      suiteGenerateState(
+        selectedSuite,
+        connectedServerNames,
+        Boolean(ensureServersReady),
+        "Attach a client in the suite header before generating cases.",
+      ),
+    [connectedServerNames, ensureServersReady, selectedSuite],
+  );
 
   // ── Agent bridge ────────────────────────────────────────────────────────
   // The evals tool group + this screen's command handlers and snapshot.

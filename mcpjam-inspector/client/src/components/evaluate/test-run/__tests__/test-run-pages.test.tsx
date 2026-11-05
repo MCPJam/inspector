@@ -130,6 +130,27 @@ describe("Test run and Iteration pages", () => {
     expect(location?.search).toBe("?target=claude-haiku-4.5");
   });
 
+  it("opens on the model a combined run's link names, and on the first without one", () => {
+    // A combined run's Test runs list links to the member run that ran the
+    // filtered model, plus `?target=`; a single run links without a target.
+    fixtures.iterations = [
+      iteration("i_1", "gpt-5-mini", "failed"),
+      iteration("i_3", "claude-haiku-4.5"),
+    ];
+    const picked = () =>
+      screen
+        .getAllByRole("radio")
+        .filter((radio) => radio.getAttribute("aria-checked") === "true")
+        .map((radio) => radio.textContent);
+    const { unmount } = renderPage(
+      <TestRunPage route={{ ...testRunRoute, target: "claude-haiku-4.5" }} />,
+    );
+    expect(picked()).toEqual(["claude-haiku-4.5 1/1"]);
+    unmount();
+    renderPage(<TestRunPage route={testRunRoute} />);
+    expect(picked()).toEqual(["gpt-5-mini 0/1"]);
+  });
+
   it("opens the editor from the page and from a preview step", async () => {
     fixtures.cases = [
       {

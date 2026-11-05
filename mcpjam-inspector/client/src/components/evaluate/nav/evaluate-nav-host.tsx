@@ -7,11 +7,12 @@ import {
   toCurrentEvalRoute,
   type CurrentEvalRoute,
 } from "./evaluate-nav-pages";
-import { trackEvalNav, type EvalNavArrival } from "./evaluate-nav-events";
+import {
+  EVAL_NAV_ARRIVAL_STATE_KEY,
+  trackEvalNav,
+  type EvalNavArrival,
+} from "./evaluate-nav-events";
 import { useEvaluateNavEnabled } from "./use-evaluate-nav-enabled";
-
-/** Router state key a link sets to say how it was followed. */
-export const EVAL_NAV_ARRIVAL_STATE_KEY = "evalNavArrival";
 
 /**
  * Renders the new page for the current route when the flag is on and that

@@ -4,11 +4,10 @@ import { cn } from "@mcpjam/design-system/cn";
 import type { EvaluateNavRoute } from "@/lib/eval-route-types";
 import { formatRelativeTime } from "../../evals/helpers";
 import { computeIterationResult } from "../../evals/pass-criteria";
-import { buildEvaluateNavCrumbs } from "../nav/evaluate-nav-breadcrumbs";
-import { EvaluateNavCrumbBar } from "./evaluate-nav-crumb-bar";
+import { EvaluateNavCrumbBar } from "../nav/evaluate-nav-crumb-bar";
+import { useEvaluateNavNavigate } from "../nav/use-evaluate-nav-navigate";
 import { IterationEvidence } from "./iteration-evidence";
 import { outcomeLabel, outcomeTextTone } from "./iteration-outcome";
-import { useEvaluateNavNavigate } from "./use-evaluate-nav-navigate";
 import { useTestRunData } from "./use-test-run-data";
 
 type IterationRoute = Extract<EvaluateNavRoute, { type: "iteration" }>;
@@ -37,12 +36,6 @@ export function IterationPage({ route }: { route: IterationRoute }) {
     caseId,
     ...(target && data.targets.length > 1 ? { target: target.targetKey } : {}),
   } as const;
-  const crumbs = buildEvaluateNavCrumbs(route, {
-    suiteName: data.suite?.name,
-    caseName: data.caseTitle,
-    runNumber: data.run?.runNumber,
-    iterationNumber,
-  });
   const result = iteration ? computeIterationResult(iteration) : null;
   const chain = data.diagnostics.find(
     (item) => item.iterationId === iterationId,
@@ -51,8 +44,13 @@ export function IterationPage({ route }: { route: IterationRoute }) {
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="iteration-page">
       <EvaluateNavCrumbBar
-        crumbs={crumbs}
-        onNavigate={(next) => navigate(next, "crumb")}
+        route={route}
+        names={{
+          suiteName: data.suite?.name,
+          caseName: data.caseTitle,
+          runNumber: data.run?.runNumber,
+          iterationNumber,
+        }}
       />
       <div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-3">
         <Button

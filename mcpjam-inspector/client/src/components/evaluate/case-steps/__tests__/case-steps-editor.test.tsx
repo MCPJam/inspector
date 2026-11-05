@@ -136,15 +136,28 @@ describe("CaseStepsEditor", () => {
   });
 });
 
-function PreviewHarness() {
-  const preview = useExecutionPreviewToggle("editor");
+function PreviewHarness({
+  onSelectStep,
+}: {
+  onSelectStep?: (stepIndex: number) => void;
+}) {
+  const preview = useExecutionPreviewToggle();
   return (
     <>
       {preview.button}
       {preview.open ? (
         <ExecutionPreviewPanel
-          input={{ steps, expectedOutput: " Two boxes " }}
+          surface={onSelectStep ? "test_run" : "editor"}
+          input={{
+            steps,
+            expectedOutput: " Two boxes ",
+            predicates: {
+              mode: "extend",
+              list: [{ type: "responseContains", text: "done" }],
+            },
+          }}
           onClose={preview.close}
+          onSelectStep={onSelectStep}
         />
       ) : null}
     </>
@@ -168,18 +181,43 @@ describe("execution preview", () => {
     expect(within(panel).getByText("1. User prompt")).toBeInTheDocument();
     expect(within(panel).getByText("Before step 1")).toBeInTheDocument();
     expect(within(panel).getByText("Two boxes")).toBeInTheDocument();
-    const [outcome, afterRun, suiteDefaults] = [
-      "Expected outcome",
-      "After-run assertions",
+    // Numbered like the editor: the expected outcome is step N+1 and the
+    // after-run assertions step N+2, then the suite's defaults.
+    const order = [
+      "1. User prompt",
+      "2. User prompt",
+      "3. Expected outcome",
+      "4. After-run assertions",
       "Suite default evaluators",
     ].map((title) => within(panel).getByText(title));
     const follows = (a: Node, b: Node) =>
       Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(follows(outcome!, afterRun!)).toBe(true);
-    expect(follows(afterRun!, suiteDefaults!)).toBe(true);
+    for (let i = 1; i < order.length; i += 1) {
+      expect(follows(order[i - 1]!, order[i]!)).toBe(true);
+    }
+    expect(
+      within(panel).queryByRole("button", { name: /Open step/ }),
+    ).toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: "Hide execution preview" }),
     );
     expect(track).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens a step by its stored index on the test run surface", () => {
+    const onSelectStep = vi.fn();
+    render(<PreviewHarness onSelectStep={onSelectStep} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show execution preview" }),
+    );
+    expect(track).toHaveBeenCalledWith("eval_execution_preview_opened", {
+      location: "evaluate_nav",
+      surface: "test_run",
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open step 2 in the test case" }),
+    );
+    // "Now label it" is stored fourth, after the leading and nested assertions.
+    expect(onSelectStep).toHaveBeenCalledWith(3);
   });
 });

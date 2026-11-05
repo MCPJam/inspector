@@ -4,7 +4,7 @@
  * assertions nested underneath) or a single summary line when collapsed.
  */
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@mcpjam/design-system/cn";
@@ -44,6 +44,7 @@ export function StepCard({
   step,
   assertionCount,
   serverNamesById,
+  focused = false,
   children,
 }: {
   ordinal: number;
@@ -51,10 +52,18 @@ export function StepCard({
   step: Parameters<typeof summarizeStep>[0];
   assertionCount: number;
   serverNamesById?: Map<string, string>;
+  /** The step a link asked to open at: shown expanded and scrolled to. */
+  focused?: boolean;
   /** The expanded body: the step row and its nested assertions. */
   children: ReactNode;
 }) {
   const [collapsed, setCollapsed] = useState(false);
+  const sectionRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!focused) return;
+    setCollapsed(false);
+    sectionRef.current?.scrollIntoView?.({ block: "center" });
+  }, [focused]);
   const Toggle = collapsed ? ChevronRight : ChevronDown;
   return (
     <StepRail
@@ -63,6 +72,7 @@ export function StepCard({
       testId="case-steps-step"
     >
       <section
+        ref={sectionRef}
         className={cn(
           "relative rounded-xl border border-border bg-card",
           collapsed ? "px-4 py-2.5" : "px-5 pb-4 pt-4",

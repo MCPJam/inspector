@@ -22,9 +22,9 @@ import {
   useSuiteSettingsEditor,
   type SuiteSettingsEditor,
 } from "../../evals/suite-settings-sheet/use-suite-settings-editor";
-import { EvaluateNavCrumbBar } from "./suite-settings-crumb-bar";
+import { EvaluateNavCrumbBar } from "../nav/evaluate-nav-crumb-bar";
+import { useEvaluateNavNavigate } from "../nav/use-evaluate-nav-navigate";
 import { SuiteSettingsCasesTab } from "./suite-settings-cases-tab";
-import { useEvaluateNavLink } from "./use-evaluate-nav-link";
 import {
   useSuiteSettingsPageData,
   type SuiteSettingsPageData,
@@ -118,7 +118,7 @@ function LoadedSuiteSettingsPage({
     editingDisabled: configLocked,
     keepsDraft,
   });
-  const followLink = useEvaluateNavLink();
+  const followLink = useEvaluateNavNavigate();
   const scrollRef = useRef<HTMLDivElement>(null);
   const latestCompletedRun = useMemo(
     () =>
@@ -263,7 +263,6 @@ function LoadedSuiteSettingsPage({
       <EvaluateNavCrumbBar
         route={route}
         names={{ suiteName: suite.name }}
-        onCrumbClick={(crumbRoute) => followLink(crumbRoute, "crumb")}
         actions={actions}
       />
       <Tabs

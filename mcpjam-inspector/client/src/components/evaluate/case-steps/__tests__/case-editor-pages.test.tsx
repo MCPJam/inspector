@@ -1,5 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
+import { EVAL_NAV_FOCUS_STEP_STATE_KEY } from "../../nav/evaluate-nav-events";
 import type { CaseEditorDraft } from "../case-save-payload";
 import { CaseEditorPage } from "../case-editor-page";
 import { CaseEvaluatorsPage } from "../case-evaluators-page";
@@ -111,6 +113,35 @@ describe("case editor pages", () => {
     expect(
       screen.getByRole("button", { name: /Test Case Evaluators/ }),
     ).toBeEnabled();
+  });
+
+  it("opens scrolled to and expanded at the step a test run's preview named", () => {
+    const original = Element.prototype.scrollIntoView;
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: "/evaluate/suite/suite-1/runs/run-6/cases/case-1/edit",
+            state: { [EVAL_NAV_FOCUS_STEP_STATE_KEY]: 0 },
+          },
+        ]}
+      >
+        <CaseEditorPage
+          route={{
+            type: "test-run-edit",
+            suiteId: "suite-1",
+            runId: "run-6",
+            caseId: "case-1",
+          }}
+        />
+      </MemoryRouter>,
+    );
+    const step = screen.getByRole("region", { name: /^Step 1:/ });
+    expect(scrollIntoView.mock.contexts).toEqual([step]);
+    expect(step).not.toHaveAttribute("data-collapsed");
+    Element.prototype.scrollIntoView = original;
   });
 
   it("saves unsaved edits before Run and stays on the page", async () => {

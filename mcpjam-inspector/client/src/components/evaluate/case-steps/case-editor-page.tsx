@@ -17,6 +17,10 @@ import { useProjectServers } from "@/hooks/useProjects";
 import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import type { Predicate } from "@/shared/eval-matching";
 import { CaseStepsEditor } from "./case-steps-editor";
+import {
+  useEvalNavFocusStep,
+  useEvaluateNavNavigate,
+} from "../nav/use-evaluate-nav-navigate";
 import { CasePageHeader } from "./case-page-header";
 import {
   ExecutionPreviewPanel,
@@ -29,7 +33,6 @@ import {
   caseBackTarget,
   caseIdOf,
   routeAfterSave,
-  useEvaluateNavGo,
   type CaseEditorRoute,
 } from "./case-editor-nav";
 
@@ -40,7 +43,8 @@ export function CaseEditorPage({ route }: { route: CaseEditorRoute }) {
   const projectId: string | null = convexProjectId ?? null;
   const { isAuthenticated } = useConvexAuth();
   const canQuery = useActorCanQuery();
-  const go = useEvaluateNavGo();
+  const go = useEvaluateNavNavigate();
+  const focusStepIndex = useEvalNavFocusStep();
   const state = useCaseEditorDraft(suiteId, caseId);
   const { draft, suite } = state;
   const tools = useCaseTools({ suite, projectId, canQuery });
@@ -49,7 +53,7 @@ export function CaseEditorPage({ route }: { route: CaseEditorRoute }) {
     projectId,
   });
   const { capabilities } = useSuiteCapabilities(suiteId);
-  const preview = useExecutionPreviewToggle("editor");
+  const preview = useExecutionPreviewToggle();
   const [hasInvalidField, setHasInvalidField] = useState(false);
   const caseRun = useCaseRun({
     suite,
@@ -110,7 +114,6 @@ export function CaseEditorPage({ route }: { route: CaseEditorRoute }) {
         route={route}
         names={{ suiteName: suite?.name, caseName: draft?.title }}
         back={caseBackTarget(route)}
-        onNavigate={go}
         title={
           <>
             <Input
@@ -179,6 +182,7 @@ export function CaseEditorPage({ route }: { route: CaseEditorRoute }) {
               <CaseStepsEditor
                 draft={draft}
                 onDraftChange={state.update}
+                focusStepIndex={focusStepIndex}
                 suiteDefaultPredicates={suiteDefaultPredicates}
                 suppressedSuiteStandardCheckIds={
                   draft.suppressedSuiteStandardCheckIds
@@ -207,6 +211,7 @@ export function CaseEditorPage({ route }: { route: CaseEditorRoute }) {
         </main>
         {preview.open && draft ? (
           <ExecutionPreviewPanel
+            surface="editor"
             input={{
               steps: draft.steps,
               predicates: draft.predicates,

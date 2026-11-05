@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router";
+import { SuiteRunBackButton } from "../suite-run-back-button";
 import {
-  SuiteRunBackButton,
-  evalNavBackState,
   readBackTarget,
-} from "../suite-run-back-button";
+  useEvaluateNavNavigate,
+} from "../use-evaluate-nav-navigate";
 
 const RUN_URL = "/evaluate/suite/s_1/runs/r_1";
 
@@ -19,12 +19,30 @@ function Where() {
   );
 }
 
-function renderAt(state?: unknown) {
+function renderAt(state?: unknown, pathname = RUN_URL) {
   return render(
-    <MemoryRouter initialEntries={[{ pathname: RUN_URL, state }]}>
+    <MemoryRouter initialEntries={[{ pathname, state }]}>
       <SuiteRunBackButton suiteId="s_1" />
+      <OpenRunLink />
       <Where />
     </MemoryRouter>,
+  );
+}
+
+/** A Runs-tab row: opens the suite run and names Runs as Back's target. */
+function OpenRunLink() {
+  const navigate = useEvaluateNavNavigate();
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        navigate({ type: "run-detail", suiteId: "s_1", runId: "r_1" }, "link", {
+          backPlace: "runs",
+        })
+      }
+    >
+      Open run
+    </button>
   );
 }
 
@@ -39,9 +57,12 @@ describe("SuiteRunBackButton", () => {
   });
 
   it("returns to the page the user came from", async () => {
-    renderAt(evalNavBackState({ type: "evaluate-runs" }, "Runs"));
-    const back = screen.getByRole("button", { name: "Back to Runs" });
-    await userEvent.setup().click(back);
+    const user = userEvent.setup();
+    renderAt(undefined, "/evaluate/runs");
+    await user.click(screen.getByRole("button", { name: "Open run" }));
+    expect(screen.getByTestId("where")).toHaveTextContent(RUN_URL);
+    const back = screen.getByRole("button", { name: "Back to runs" });
+    await user.click(back);
     expect(screen.getByTestId("where")).toHaveTextContent(
       '/evaluate/runs {"evalNavArrival":"back"}',
     );

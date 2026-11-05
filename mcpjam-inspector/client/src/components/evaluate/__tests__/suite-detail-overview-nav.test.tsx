@@ -10,9 +10,9 @@ const navigate = vi.hoisted(() => vi.fn());
 vi.mock("../nav/use-evaluate-nav-enabled", () => ({
   useEvaluateNavEnabled: () => flag.value,
 }));
-vi.mock("../create-suite-navigation", async (original) => ({
+vi.mock("../nav/use-evaluate-nav-navigate", async (original) => ({
   ...(await original<object>()),
-  navigatePlaygroundEvalsRoute: navigate,
+  useEvaluateNavNavigate: () => navigate,
 }));
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => false,
@@ -79,11 +79,14 @@ describe("SuiteDetailOverview with evaluate-nav-enabled", () => {
     await userEvent
       .setup()
       .click(screen.getByRole("button", { name: /Suite settings/ }));
-    expect(navigate).toHaveBeenCalledWith({
-      type: "suite-settings",
-      suiteId: "suite-1",
-      tab: "settings",
-    });
+    expect(navigate).toHaveBeenCalledWith(
+      {
+        type: "suite-settings",
+        suiteId: "suite-1",
+        tab: "settings",
+      },
+      "link",
+    );
   });
 
   it("offers no Suite settings on a read-only suite", () => {

@@ -78,6 +78,8 @@ export type CaseStepsEditorProps = {
   readOnly?: boolean;
   onDraftValidityChange?: (invalid: boolean) => void;
   onOpenSuiteSettings?: () => void;
+  /** Stored index of a step, or of one of its assertions, to open at. */
+  focusStepIndex?: number | null;
 };
 
 export function CaseStepsEditor({
@@ -95,6 +97,7 @@ export function CaseStepsEditor({
   readOnly = false,
   onDraftValidityChange,
   onOpenSuiteSettings,
+  focusStepIndex,
 }: CaseStepsEditorProps) {
   const { steps, predicates } = draft;
   const [addedKey, setAddedKey] = useState<string | null>(null);
@@ -221,6 +224,10 @@ export function CaseStepsEditor({
         step={editorStep.step}
         assertionCount={editorStep.assertions.length}
         serverNamesById={serverNamesById}
+        focused={
+          focusStepIndex === editorStep.index ||
+          editorStep.assertions.some(({ index }) => index === focusStepIndex)
+        }
       >
         <ul>
           <ActionRow
