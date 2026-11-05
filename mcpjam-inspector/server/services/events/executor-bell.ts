@@ -3,9 +3,8 @@
  * it (`/api/internal/events/enqueue` and `/dispatch`) do not import the whole
  * turn engine just to wake a loop.
  *
- * A replica that does not run the executor (`EVENTS_EXECUTOR_ENABLED` unset)
- * has no bell registered and a ring is a no-op: the replica that does run it
- * claims the work on its next poll.
+ * An unconfigured replica has no executor bell registered. A ring there is
+ * a no-op; a configured replica claims the work on its next poll.
  */
 
 let bell: (() => void) | undefined;

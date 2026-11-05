@@ -262,6 +262,6 @@ As of 2026-09-30. This spans two PRs: MCPJam/inspector (SDK, CLI, inspector serv
 
 **Before first deploy:**
 - Set the Worker secrets and confirm `INSPECTOR_INTERNAL_ORIGIN` in `events-inbox/wrangler.jsonc` (the backend PR's rollout notes list the steps).
-- Set the inspector env: `EVENTS_INBOX_ADMIN_TOKEN`, `EVENTS_INBOX_DISPATCH_TOKEN`, `EVENTS_INBOX_VIEWER_KEY`, `EVENTS_KEEPER_ENABLED=1`, `EVENTS_EXECUTOR_ENABLED=1`.
+- Set the inspector env: `EVENTS_INBOX_ADMIN_TOKEN`, `EVENTS_INBOX_DISPATCH_TOKEN`, `EVENTS_INBOX_VIEWER_KEY`.
 - Confirm the policy numbers in open questions 1 and 2.
 - Raise the [working-group notes](./mcp-events-working-group-notes.md) upstream.

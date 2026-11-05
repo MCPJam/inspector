@@ -25,7 +25,6 @@ describe("events worker stop", () => {
       claimSubscriptions: never,
     } as unknown as EventsBackendClient;
     const keeper = startEventsKeeper({
-      force: true,
       claimedBy: "test",
       deps: { backend },
     });
@@ -37,7 +36,6 @@ describe("events worker stop", () => {
   it("the executor stops within the grace while a run is in flight", async () => {
     const backend = { claimRun: never } as unknown as EventsBackendClient;
     const executor = startEventsExecutor({
-      force: true,
       claimedBy: "test",
       deps: { backend },
     });

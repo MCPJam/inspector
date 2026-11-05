@@ -25,7 +25,7 @@
  * Secrets (slot secrets, bearers) never reach a log line: failures are logged
  * by kind and the subscription's logical id only.
  *
- * Env-gated: `EVENTS_KEEPER_ENABLED === "1"`, started from `server/index.ts`.
+ * Started from `server/index.ts` when the hosted backend is configured.
  */
 
 import {
@@ -49,7 +49,7 @@ import {
   type SubscriptionClaimItem,
   type SubscriptionCommitRequest,
 } from "./backend-client.js";
-import { defaultEventsHolder, isEventsKeeperEnabled } from "./config.js";
+import { defaultEventsHolder } from "./config.js";
 import { HttpInboxClient } from "./inbox-client.js";
 import { asAuthorizationLost, pinnedConnectionIds } from "./owner-connection.js";
 import { EVENTS_STOP_GRACE_MS, settleWithin } from "./stop-grace.js";
@@ -467,17 +467,12 @@ export function kickEventsKeeper(): void {
 export function startEventsKeeper(options?: {
   claimedBy?: string;
   deps?: KeeperDeps;
-  /** Test seam: skip the env gate. */
-  force?: boolean;
   intervalMs?: number;
 }): EventsKeeperHandle {
-  if (!options?.force && !isEventsKeeperEnabled()) {
-    return { stop: async () => {}, kick: () => {} };
-  }
   const holder = options?.claimedBy ?? defaultEventsHolder("inspector-events-keeper");
   if (!options?.deps && !isEventsBackendConfigured()) {
-    logger.warn(
-      "[events-keeper] enabled but CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing; not starting",
+    logger.debug(
+      "[events-keeper] CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing; not starting",
     );
     return { stop: async () => {}, kick: () => {} };
   }
