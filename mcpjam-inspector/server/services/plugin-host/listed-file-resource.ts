@@ -11,12 +11,11 @@ export async function resolveListedFileResource(
   signal: AbortSignal,
 ) {
   let cursor: string | undefined;
-  const seen = new Set<string>();
   for (let page = 0; page < 64; page++) {
     signal.throwIfAborted();
     const listed = await manager.listResources(
       serverId,
-      cursor ? { cursor } : undefined,
+      cursor !== undefined ? { cursor } : undefined,
       { signal, cacheMode: "bypass" },
     );
     signal.throwIfAborted();
@@ -34,10 +33,9 @@ export async function resolveListedFileResource(
         throw new ResourceGrantError("RESOURCE_INVALID");
       return { uri, name };
     }
-    if (!listed.nextCursor) break;
-    if (seen.has(listed.nextCursor))
-      throw new ResourceGrantError("RESOURCE_INVALID");
-    seen.add(listed.nextCursor);
+    // Cursors are opaque: empty and repeated tokens can still advance a page.
+    // The page budget bounds a server that never finishes listing.
+    if (typeof listed.nextCursor !== "string") break;
     cursor = listed.nextCursor;
   }
   throw new ResourceGrantError("RESOURCE_DENIED");
