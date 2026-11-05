@@ -75,6 +75,10 @@ import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-t
 import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-tool-result-image-preview-grid";
 import { webSearchRefusalCodeOf } from "@/lib/web-search-refusal";
 import { WebSearchRefusalNotice } from "./web-search-refusal-notice";
+import {
+  TruncatedResultNotice,
+  type ShortenedResult,
+} from "./context-compaction";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
 
@@ -114,6 +118,7 @@ export function ToolPart({
   mcpToolResultImageRendering,
   rawOutput,
   recordedWidgetDiagnostics,
+  shortenedResult,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   chatSessionId?: string;
@@ -166,6 +171,8 @@ export function ToolPart({
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   rawOutput?: unknown;
   recordedWidgetDiagnostics?: RecordedWidgetPolicy;
+  /** Set when the model got only part of this result (PLB-300). */
+  shortenedResult?: ShortenedResult;
 }) {
   const hasTrackedSkillLoad = useRef(false);
 
@@ -1012,7 +1019,10 @@ export function ToolPart({
   }
 
   return (
-    <div className="@container rounded-lg border text-xs border-border/50 bg-background/70">
+    <div
+      data-tool-call-id={toolCallId}
+      className="@container rounded-lg border text-xs border-border/50 bg-background/70"
+    >
       <div
         role="button"
         tabIndex={hideDiagnosticsUI ? -1 : 0}
@@ -1125,6 +1135,9 @@ export function ToolPart({
       <ToolResourceAttachments result={rawResultData} serverId={serverId} />
       {webSearchRefusalCode ? (
         <WebSearchRefusalNotice code={webSearchRefusalCode} />
+      ) : null}
+      {shortenedResult ? (
+        <TruncatedResultNotice entry={shortenedResult} />
       ) : null}
       {harnessStep &&
         (state === "input-streaming" || state === "input-available") && (

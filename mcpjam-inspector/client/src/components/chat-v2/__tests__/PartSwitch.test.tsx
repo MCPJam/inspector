@@ -541,9 +541,67 @@ describe("PartSwitch", () => {
 
       expect(screen.getByTestId("json-part")).toBeInTheDocument();
     });
+
+    it("shows a compaction part as the Context compacted line, not JSON", () => {
+      const compaction = (cleared: unknown[]) =>
+        ({
+          type: "data-context-compaction",
+          id: "context-compaction-turn-1",
+          data: { shortened: [], cleared },
+        }) as any;
+      const { container, rerender } = render(
+        <PartSwitch {...defaultProps} part={compaction([])} />,
+      );
+      expect(container.textContent).toBe("");
+      rerender(
+        <PartSwitch
+          {...defaultProps}
+          part={compaction([
+            { toolCallId: "call-0", toolName: "get_events", tokens: 9_000 },
+          ])}
+        />,
+      );
+      expect(screen.getByTestId("context-compacted-line")).toHaveTextContent(
+        "1 older tool result cleared",
+      );
+      expect(screen.queryByTestId("json-part")).not.toBeInTheDocument();
+    });
   });
 
   describe("tool parts", () => {
+    it("tells the tool card how much of its result the model got", () => {
+      const part = {
+        type: "tool-invocation",
+        toolName: "download_quote_document",
+        toolCallId: "call-1",
+        state: "output-available",
+        input: {},
+        output: { content: [] },
+      };
+      const shortened = {
+        toolCallId: "call-1",
+        toolName: "download_quote_document",
+        originalTokens: 683_162,
+        keptTokens: 24_728,
+      };
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={part as any}
+          messageParts={[
+            part as any,
+            {
+              type: "data-context-compaction",
+              data: { shortened: [shortened], cleared: [] },
+            } as any,
+          ]}
+        />,
+      );
+      expect(mockToolPart).toHaveBeenLastCalledWith(
+        expect.objectContaining({ shortenedResult: shortened }),
+      );
+    });
+
     it("renders ToolPart for tool-invocation type", () => {
       const part = {
         type: "tool-invocation",

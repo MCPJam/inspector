@@ -20,6 +20,11 @@ import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 
 import { ToolPart } from "./parts/tool-part";
+import {
+  ContextCompactedLine,
+  contextCompactionReportOf,
+  shortenedResultFor,
+} from "./parts/context-compaction";
 import { AskUserPart } from "./parts/ask-user-part";
 import { HarnessPlanPart } from "./parts/harness-plan-part";
 import { isHarnessPlanDataPart } from "@/shared/harness-session";
@@ -266,7 +271,6 @@ function LivePartSwitch({
   const [appSupportedDisplayModes, setAppSupportedDisplayModes] = useState<
     DisplayMode[] | undefined
   >();
-  void messageParts;
 
   const appState = useSharedAppState();
   const widgetContext =
@@ -299,6 +303,7 @@ function LivePartSwitch({
     isToolPart(part) || isDynamicTool(part)
       ? ((part as any).toolCallId as string | undefined)
       : undefined;
+  const shortenedResult = shortenedResultFor(messageParts, toolCallId);
 
   // --- Inline live-edit of tool input/output (no persistence) ---
   // Override state lives here so it feeds BOTH the ToolPart data editors and the
@@ -665,6 +670,7 @@ function LivePartSwitch({
             serverId={serverId}
             mcpToolResultImageRendering={mcpToolResultImageRendering}
             rawOutput={rawToolOutput}
+            shortenedResult={shortenedResult}
           />
           <WidgetPlaceholder toolName={toolInfo.toolName} />
         </>
@@ -727,6 +733,7 @@ function LivePartSwitch({
             serverId={serverId}
             mcpToolResultImageRendering={mcpToolResultImageRendering}
             rawOutput={rawToolOutput}
+            shortenedResult={shortenedResult}
             recordedWidgetDiagnostics={
               isFrozenWidget
                 ? {
@@ -897,6 +904,7 @@ function LivePartSwitch({
         serverId={serverId}
         mcpToolResultImageRendering={mcpToolResultImageRendering}
         rawOutput={rawToolOutput}
+        shortenedResult={shortenedResult}
         {...approvalProps}
       />
     );
@@ -940,6 +948,12 @@ function LivePartSwitch({
   // The agent's own plan (Codex `update_plan`), as a checklist.
   if (isHarnessPlanDataPart(part)) {
     return <HarnessPlanPart plan={part.data} />;
+  }
+  const compaction = contextCompactionReportOf(part);
+  if (compaction) {
+    return compaction.cleared.length > 0 ? (
+      <ContextCompactedLine cleared={compaction.cleared} />
+    ) : null;
   }
   if (isDataPart(part)) {
     return (
