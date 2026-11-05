@@ -598,6 +598,32 @@ describe("ChatTabV2 history sync", () => {
     expect(onReconnectServer).not.toHaveBeenCalled();
   });
 
+  it("routes a server OAuth challenge to the tester's authorization handler", async () => {
+    const onOAuthRequired = vi.fn();
+    const details = {
+      oauthRequired: true,
+      serverId: "server-1",
+      serverName: "server-1",
+      serverUrl: "https://server-1.example.com/mcp",
+    };
+    mockUseChatSession.error = new Error(
+      JSON.stringify({
+        code: "UNAUTHORIZED",
+        message: 'Server "server-1" requires authorization.',
+        details,
+      }),
+    );
+
+    render(<ChatTabV2 {...defaultProps} onOAuthRequired={onOAuthRequired} />);
+    await flushMicrotasks();
+
+    expect(onOAuthRequired).toHaveBeenCalledWith({
+      serverId: details.serverId,
+      serverName: details.serverName,
+      serverUrl: details.serverUrl,
+    });
+  });
+
   it("asks before discarding a draft when switching threads", async () => {
     render(<ChatTabV2 {...defaultProps} />);
 

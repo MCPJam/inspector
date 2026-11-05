@@ -2,6 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { MCP_TASKS_CHECK_IDS } from "@mcpjam/sdk/browser";
 import {
+  readStoredProbes,
   probeKeyFor,
   probesAfterRun,
   probesApply,
@@ -131,7 +132,7 @@ describe("probesAfterRun", () => {
 
 describe("useConformanceProbeStore", () => {
   beforeEach(() => window.localStorage.clear());
-  it("keeps only session drafts and ignores old browser inputs", () => {
+  it("keeps protocol drafts in session and persists Tasks settings", () => {
     window.localStorage.setItem(
       "mcpjam.conformance.probes.v1:alpha",
       JSON.stringify({ logProbe }),
@@ -145,10 +146,10 @@ describe("useConformanceProbeStore", () => {
       JSON.parse(
         window.localStorage.getItem("mcpjam.conformance.probes.v1:alpha")!,
       ),
-    ).toEqual({ logProbe });
+    ).toEqual({ tasksProbe });
     unmount();
     const next = renderHook(() => useConformanceProbeStore());
-    expect(next.result.current.probesFor("alpha")).toEqual({});
+    expect(next.result.current.probesFor("alpha")).toEqual({ tasksProbe });
   });
   it("isolates names inherited from Object", () => {
     const { result } = renderHook(() => useConformanceProbeStore());
@@ -229,4 +230,77 @@ describe("Tasks probe", () => {
     ).toEqual({ checkIds: ["tasks-wire-resolvable"] });
   });
 
+});
+
+describe("Tasks per-check settings", () => {
+  it("sends only selected overrides and uses the update override answers", () => {
+    const probes = {
+      tasksProbe,
+      tasksOverrides: {
+        "tasks-inline-result": {
+          toolName: "finish",
+          arguments: { fast: true },
+        },
+        "tasks-update-ack-shape": {
+          toolName: "ask",
+          inputResponses: { name: "Ada" },
+        },
+      },
+    };
+    expect(tasksRunOptions(probes, { tasks: ["tasks-inline-result"] })).toEqual(
+      {
+        checkIds: ["tasks-inline-result"],
+        toolName: tasksProbe.toolName,
+        toolArguments: tasksProbe.arguments,
+        checkOverrides: {
+          "tasks-inline-result": {
+            toolName: "finish",
+            toolArguments: { fast: true },
+          },
+        },
+      },
+    );
+    expect(
+      tasksRunOptions(probes, { tasks: ["tasks-update-ack-shape"] })
+        .inputResponses,
+    ).toEqual({ name: "Ada" });
+    expect(
+      tasksRunOptions(
+        {
+          tasksProbe,
+          tasksOverrides: { "tasks-update-ack-shape": { toolName: "ask" } },
+        },
+        {},
+      ).inputResponses,
+    ).toBeUndefined();
+  });
+  it("keeps unselected overrides through storage and reads old defaults with their answers", () => {
+    const probes = {
+      tasksProbe,
+      tasksOverrides: {
+        "tasks-inline-result": { toolName: "finish" },
+        "tasks-update-ack-shape": { toolName: "" },
+      },
+    };
+    const store = renderHook(() => useConformanceProbeStore());
+    act(() =>
+      store.result.current.setProbes(
+        "overrides-test",
+        probesAfterRun(
+          {},
+          probes,
+          { tasks: ["tasks-wire-resolvable"] },
+          "auto",
+        ),
+      ),
+    );
+    expect(readStoredProbes("overrides-test").tasksOverrides).toEqual(
+      probes.tasksOverrides,
+    );
+    window.localStorage.setItem(
+      "mcpjam.conformance.probes.v1:old-test",
+      JSON.stringify({ tasksProbe }),
+    );
+    expect(readStoredProbes("old-test")).toEqual({ tasksProbe });
+  });
 });

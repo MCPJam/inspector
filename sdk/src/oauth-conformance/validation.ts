@@ -1,3 +1,4 @@
+import { withAbortSignalFetch } from "../abort-signal.js";
 import { DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL } from "../oauth/client-identity.js";
 import { getSupportedRegistrationStrategies } from "../oauth/state-machines/factory.js";
 import {
@@ -116,7 +117,8 @@ export function normalizeOAuthConformanceConfig(
     scopes: config.scopes?.trim() || undefined,
     customHeaders: config.customHeaders,
     redirectUrl: config.redirectUrl,
-    fetchFn: config.fetchFn ?? fetch,
+    signal: config.signal,
+    fetchFn: withAbortSignalFetch(config.fetchFn ?? fetch, config.signal),
     allowPrivateNetwork: config.allowPrivateNetwork ?? false,
     stepTimeout: config.stepTimeout ?? 30_000,
     verification: {

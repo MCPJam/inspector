@@ -35,8 +35,8 @@ vi.mock("@mcpjam/sdk", async (importOriginal) => {
   return { ...actual, OAuthConformanceTest: SlowDiscoveryOAuthConformanceTest };
 });
 
-import { startOAuthConformance } from "../conformance.js";
-import { clearAllSessions } from "../../../services/conformance-oauth-sessions.js";
+import { startOAuthConformance, completeOAuthConformance, cancelOAuthConformance } from "../conformance.js";
+import { clearAllSessions, getSession } from "../../../services/conformance-oauth-sessions.js";
 
 describe("startOAuthConformance", () => {
   beforeEach(() => {
@@ -63,4 +63,36 @@ describe("startOAuthConformance", () => {
       authorizationUrl: AUTHORIZATION_URL,
     });
   });
+  it("keeps the same deadline while waiting for authorization", async () => {
+    const started = startOAuthConformance({
+      defaultServerUrl: "https://mcp.example/mcp",
+      redirectUrl: "https://inspector.example/oauth/callback/debug",
+      runTimeoutSeconds: 10,
+    });
+    await vi.advanceTimersByTimeAsync(DISCOVERY_MS + 1);
+    const result = await started;
+    expect(result.phase).toBe("authorization_needed");
+    if (result.phase !== "authorization_needed") throw new Error("Expected auth wait");
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(completeOAuthConformance({ sessionId: result.sessionId })).rejects.toThrow("Run timed out after 10 seconds");
+    expect(getSession(result.sessionId)?.cancelRunner).toBeUndefined();
+  });
+
+  it("only lets the owning caller cancel the session", async () => {
+    const started = startOAuthConformance({
+      defaultServerUrl: "https://mcp.example/mcp",
+      redirectUrl: "https://inspector.example/oauth/callback/debug",
+      runTimeoutSeconds: 10,
+      owner: "user:a",
+    });
+    await vi.advanceTimersByTimeAsync(DISCOVERY_MS + 1);
+    const result = await started;
+    if (result.phase !== "authorization_needed") throw new Error("Expected auth wait");
+    cancelOAuthConformance({ sessionId: result.sessionId, owner: "user:b" });
+    expect(getSession(result.sessionId, "user:a")).toBeDefined();
+    cancelOAuthConformance({ sessionId: result.sessionId, owner: "user:a" });
+    expect(getSession(result.sessionId, "user:a")).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
 });

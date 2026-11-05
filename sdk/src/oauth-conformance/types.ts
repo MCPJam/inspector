@@ -191,6 +191,8 @@ export interface MCPOAuthReadinessWarning extends Omit<
 }
 
 export interface OAuthConformanceConfig {
+  /** Cancels the whole run, including pending requests. */
+  signal?: AbortSignal;
   serverUrl: string;
   protocolVersion: OAuthProtocolVersion;
   registrationStrategy: OAuthRegistrationStrategy;
@@ -308,6 +310,8 @@ export interface OAuthConformanceCredentials {
 }
 
 export interface NormalizedOAuthConformanceConfig {
+  /** Cancels the whole run, including pending requests. */
+  signal?: AbortSignal;
   serverUrl: string;
   serverName: string;
   protocolVersion: OAuthProtocolVersion;

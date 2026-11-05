@@ -1,3 +1,4 @@
+import { runWithinConformanceDeadline, deadlineFetch, type ConformanceDeadlineInput } from "./conformance-deadline.js";
 import {
   describeError,
   isMCPAuthError,
@@ -19,9 +20,10 @@ import { isProtocolVersionPinFailure } from "../../../shared/protocol-version-pi
 export async function checkConformanceConnection(
   config: HttpServerConfig,
   protocolVersion: ConformanceProtocolSelection,
+  budget: ConformanceDeadlineInput = {},
 ): Promise<ConformanceConnectionResult> {
   try {
-    return await withEphemeralClient(
+    return await runWithinConformanceDeadline(budget, async (signal) => withEphemeralClient(
       {
         ...config,
         mcpProtocolVersion:
@@ -29,7 +31,7 @@ export async function checkConformanceConnection(
         supportedProtocolVersions:
           protocolVersion === "auto" ? undefined : [protocolVersion],
         timeout: WEB_CONNECT_TIMEOUT_MS,
-        baseFetch: createConformanceFetch("MCP server"),
+        baseFetch: deadlineFetch(createConformanceFetch("MCP server"), signal),
       },
       async (manager, serverId): Promise<ConformanceConnectionResult> => {
         const negotiated = manager.getNegotiatedProtocolVersion(serverId);
@@ -49,8 +51,8 @@ export async function checkConformanceConnection(
         }
         return { status: "ready", protocolVersion: negotiated };
       },
-      { timeout: WEB_CONNECT_TIMEOUT_MS },
-    );
+      { timeout: WEB_CONNECT_TIMEOUT_MS, signal },
+    ));
   } catch (error) {
     const normalized = describeError(error);
     const refusal = readProtocolVersionRefusal(
