@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { HowSuitesWorkDialog } from "./how-suites-work";
 import { ChevronDown, Play, Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -181,62 +182,88 @@ export function EvalsHeader({
           : undefined
       }
       actions={
-        landingView != null && onSetupRun && onCreateSuite ? (
-          <div className="inline-flex shrink-0 items-center">
+        <div className="flex items-center gap-2">
+          <HowSuitesWorkButton />
+          {landingView != null && onSetupRun && onCreateSuite ? (
+            <div className="inline-flex shrink-0 items-center">
+              <Button
+                size="sm"
+                className="gap-1.5 rounded-r-none"
+                onClick={landingView === "runs" ? onSetupRun : onCreateSuite}
+              >
+                {landingView === "runs" ? (
+                  <Play className="h-4 w-4" aria-hidden />
+                ) : (
+                  <Plus className="h-4 w-4" aria-hidden />
+                )}
+                {landingView === "runs" ? "Setup Run" : "Create suite"}
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    className="rounded-l-none border-l border-primary-foreground/30 px-2"
+                    aria-label="More evaluate actions"
+                  >
+                    <ChevronDown className="h-4 w-4" aria-hidden />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {landingView === "runs" && onCreateSuite && (
+                    <DropdownMenuItem onSelect={onCreateSuite}>
+                      <Plus className="h-4 w-4" />
+                      Create suite
+                    </DropdownMenuItem>
+                  )}
+                  {/* Each landing offers ONE alternative to its primary
+                      action, and it is the other landing's subject. Runs
+                      does not offer a case: a case belongs to a suite, and
+                      the runs list never names one. */}
+                  {landingView === "suites" && onAddCase && (
+                    <DropdownMenuItem onSelect={onAddCase}>
+                      <Plus className="h-4 w-4" />
+                      Add test case
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          ) : onCreateSuite ? (
             <Button
+              type="button"
               size="sm"
-              className="gap-1.5 rounded-r-none"
-              onClick={landingView === "runs" ? onSetupRun : onCreateSuite}
+              className="shrink-0 gap-1.5"
+              onClick={onCreateSuite}
             >
-              {landingView === "runs" ? (
-                <Play className="h-4 w-4" aria-hidden />
-              ) : (
-                <Plus className="h-4 w-4" aria-hidden />
-              )}
-              {landingView === "runs" ? "Setup Run" : "Create suite"}
+              <Plus className="h-4 w-4" aria-hidden />
+              Create suite
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  size="sm"
-                  className="rounded-l-none border-l border-primary-foreground/30 px-2"
-                  aria-label="More evaluate actions"
-                >
-                  <ChevronDown className="h-4 w-4" aria-hidden />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {landingView === "runs" && onCreateSuite && (
-                  <DropdownMenuItem onSelect={onCreateSuite}>
-                    <Plus className="h-4 w-4" />
-                    Create suite
-                  </DropdownMenuItem>
-                )}
-                {/* Each landing offers ONE alternative to its primary
-                    action, and it is the other landing's subject. Runs
-                    does not offer a case: a case belongs to a suite, and
-                    the runs list never names one. */}
-                {landingView === "suites" && onAddCase && (
-                  <DropdownMenuItem onSelect={onAddCase}>
-                    <Plus className="h-4 w-4" />
-                    Add test case
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        ) : onCreateSuite ? (
-          <Button
-            type="button"
-            size="sm"
-            className="shrink-0 gap-1.5"
-            onClick={onCreateSuite}
-          >
-            <Plus className="h-4 w-4" aria-hidden />
-            Create suite
-          </Button>
-        ) : null
+          ) : null}
+        </div>
       }
     />
+  );
+}
+
+/** Experiment only: opens the How suites work tutorial from the header. */
+function HowSuitesWorkButton() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={() => setOpen(true)}
+      >
+        Tutorial
+      </Button>
+      <HowSuitesWorkDialog
+        open={open}
+        onOpenChange={setOpen}
+        trigger="menu"
+        onBuildCase={() => {}}
+      />
+    </>
   );
 }
