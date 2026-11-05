@@ -30,6 +30,7 @@ import type { InsightsView } from "@/hooks/useInsightsFlowController";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { ScenarioDeleteConfirmDialog } from "@/components/scenarios/ScenarioDeleteConfirmDialog";
 import { EditableTitle } from "@/components/evals/EditableTitle";
+import { ScenarioModelEditor } from "./ScenarioModelEditor";
 import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
 import {
   composerStateFromEnvironments,
@@ -885,6 +886,14 @@ export function UserTestingScenarioDetail({
                         className="resize-none text-sm"
                       />
                     </section>
+
+                    {!environmentError ? (
+                      <ScenarioModelEditor
+                        key={scenario.scenarioId}
+                        scenarioId={scenario.scenarioId}
+                        projectId={scenario.projectId}
+                      />
+                    ) : null}
 
                     {environmentError ? (
                       <div
