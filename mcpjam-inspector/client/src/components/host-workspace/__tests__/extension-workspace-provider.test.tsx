@@ -8,6 +8,7 @@ import {
   useExtensionOwners,
   useExtensionRegistration,
   useExtensionStore,
+  useExtensionWorkspaceState,
   usePublishPluginIcons,
   type ExtensionRegistration,
 } from "../ExtensionWorkspaceProvider";
@@ -98,6 +99,7 @@ function handleFor(scope: ThreadAppScope, toolName: string) {
 
 type Owners = ReturnType<typeof useExtensionOwners>;
 let owners: Owners = { global: null, chat: null };
+let includedTools: unknown = null;
 let releaseChat: (chatId: string) => void = () => {};
 function Center({ registration }: { registration: ExtensionRegistration | null }) {
   useExtensionRegistration(registration, {
@@ -105,6 +107,7 @@ function Center({ registration }: { registration: ExtensionRegistration | null }
     runOnboarding: async () => {},
   });
   owners = useExtensionOwners();
+  includedTools = useExtensionWorkspaceState((state) => state.includedPluginTools);
   releaseChat = useExtensionChatRelease();
   return null;
 }
@@ -165,6 +168,20 @@ describe("Playground extension owners", () => {
     cleanup();
     f.facts = {};
     await new Promise((resolve) => setTimeout(resolve, 10));
+  });
+
+  it("keeps included tool catalogs scoped to the current host and clears them on access loss", async () => {
+    const view = renderCenter(registration("chat-a", {
+      includedPluginTools: { environmentId: "env-a", serverIds: ["plugin-a"] },
+    }));
+    await waitFor(() => expect(includedTools).toEqual({ projectId: "project", ownerKey: JSON.stringify(["user", "project", "client"]), environmentId: "env-a", serverIds: ["plugin-a"] }));
+    view.update(registration("chat-b", {
+      identity: { ...identity, hostId: "other-client" },
+      includedPluginTools: { environmentId: "env-b", serverIds: ["plugin-b"], includeAppOnly: true },
+    }));
+    await waitFor(() => expect(includedTools).toEqual({ projectId: "project", ownerKey: JSON.stringify(["user", "project", "other-client"]), environmentId: "env-b", serverIds: ["plugin-b"], includeAppOnly: true }));
+    view.update(null);
+    await waitFor(() => expect(includedTools).toBeNull());
   });
 
   it("joins a plugin-owned server to its plugin's icons for every surface", async () => {

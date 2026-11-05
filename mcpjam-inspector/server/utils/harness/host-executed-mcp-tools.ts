@@ -93,6 +93,19 @@ export function harnessMcpToolName(serverKey: string, toolName: string): string 
   return `mcp__${serverKey}__${toolName}`;
 }
 
+/** Display-only labels from the resolved runtime; routing keeps canonical server IDs. */
+function withServerSource(tool: unknown, sourceName: string | undefined): unknown {
+  const label = sourceName?.replace(/\s+/g, " ").trim().slice(0, 200);
+  if (!label || !tool || typeof tool !== "object" || Array.isArray(tool)) return tool;
+  const description = "description" in tool && typeof tool.description === "string"
+    ? tool.description
+    : "";
+  return {
+    ...tool,
+    description: `MCP server: ${JSON.stringify(label)}.${description ? `\n${description}` : ""}`,
+  };
+}
+
 export interface HostExecutedMcpProjection {
   /** Name-keyed AI SDK tools to merge into the agent's host-executed `tools`. */
   tools: Record<string, unknown>;
@@ -114,6 +127,8 @@ export interface HostExecutedMcpProjection {
 export async function projectSelectedMcpServersAsHostTools(args: {
   manager: MCPJamHandlerOptions["mcpClientManager"];
   selectedServerIds: string[];
+  /** Backend-resolved display names. Omitted labels preserve the original catalog. */
+  serverDisplayNames?: Readonly<Record<string, string>>;
   unavailableServerIds?: readonly string[];
   connectionsByServerId?: ConnectionsByServerId;
   /** Plugin origin per server id (INS-7): a plugin-contributed server with no
@@ -293,7 +308,10 @@ export async function projectSelectedMcpServersAsHostTools(args: {
       if (snapshot) {
         projected = withToolPolicyGate({ tool: projected, toolName, snapshot });
       }
-      tools[harnessMcpToolName(key, toolName)] = projected;
+      tools[harnessMcpToolName(key, toolName)] = withServerSource(
+        projected,
+        args.serverDisplayNames?.[serverId],
+      );
     }
   }
   return { tools, keyToServerId };
