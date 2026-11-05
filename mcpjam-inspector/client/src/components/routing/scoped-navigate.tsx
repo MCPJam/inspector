@@ -27,9 +27,12 @@ import {
 export function ScopedNavigate({
   to,
   replace,
+  state,
 }: {
   to: string;
   replace?: boolean;
+  /** Router location state; dropped on the no-Router path, which has none. */
+  state?: unknown;
 }) {
   const pathname = useCurrentPathname();
   const navigate = useAppNavigate();
@@ -42,5 +45,5 @@ export function ScopedNavigate({
   }, [hasRouter, navigate, target, replace]);
 
   if (!hasRouter) return null;
-  return <Navigate to={target} replace={replace} />;
+  return <Navigate to={target} replace={replace} state={state} />;
 }

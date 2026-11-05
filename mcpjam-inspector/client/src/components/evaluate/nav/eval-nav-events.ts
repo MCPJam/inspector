@@ -5,6 +5,13 @@ import type { EvalNavPageId } from "./eval-nav-pages";
 /** How the user reached a page. */
 export type EvalNavArrival = "link" | "crumb" | "back" | "redirect" | "direct";
 
+/** Router location state key that tells a page how the user arrived. */
+export const EVAL_NAV_ARRIVAL_STATE_KEY = "evalNavArrival";
+
+export type EvalNavArrivalState = {
+  [EVAL_NAV_ARRIVAL_STATE_KEY]: EvalNavArrival;
+};
+
 export type EvalTutorialTrigger = "first_visit" | "first_suite" | "menu";
 
 /** Properties of each navigation event; the names are registered in `shared/analytics-events.ts`. */
