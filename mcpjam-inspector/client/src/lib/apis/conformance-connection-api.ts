@@ -1,3 +1,4 @@
+import { conformanceBudgetFields, type ConformanceRunBudget } from "./mcp-conformance-api";
 import type {
   ConformanceConnectionResult,
   ConformanceProtocolSelection,
@@ -10,17 +11,20 @@ import { buildServerRequest } from "./web/context";
 export function checkConformanceConnection(
   serverName: string,
   protocolVersion: ConformanceProtocolSelection,
+  budget?: ConformanceRunBudget,
 ): Promise<ConformanceConnectionResult> {
   return runByMode({
     local: () =>
       localPost("/api/mcp/conformance/connection-check", {
         serverId: serverName,
         protocolVersion,
-      }),
+        ...conformanceBudgetFields(budget),
+      }, ...(budget?.signal ? [{ signal: budget.signal }] : [])),
     hosted: () =>
       webPost("/api/web/conformance/connection-check", {
         ...buildServerRequest(serverName),
         protocolVersion,
-      }),
+        ...conformanceBudgetFields(budget),
+      }, ...(budget?.signal ? [{ signal: budget.signal }] : [])),
   });
 }

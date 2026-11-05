@@ -6,6 +6,7 @@
  * execution state for chat injection.
  */
 
+import type { AuthChallengeAttempt } from "@/state/oauth-orchestrator";
 import { useCallback, useEffect, useState } from "react";
 import type { FormField } from "@/lib/tool-form";
 import { buildParametersFromFields } from "@/lib/tool-form";
@@ -23,11 +24,8 @@ import {
   isActionableStepUpChallenge,
   parseInsufficientScopeChallenge,
 } from "@/lib/apis/insufficient-scope";
-import {
-  claimPendingDirectScopeStepUpReplay,
-  clearPendingDirectScopeStepUpReplay,
-  savePendingDirectScopeStepUpReplay,
-} from "@/lib/scope-step-up-replay";
+import { savePendingDirectScopeStepUpReplay } from "@/lib/scope-step-up-replay";
+import { clearAuthChallengeCards } from "@/lib/auth-challenge-lifecycle";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
 import {
   mcpCallToolResultToModelOutput,
@@ -35,6 +33,8 @@ import {
   type McpModelVisibleToolResultPolicy,
 } from "@mcpjam/sdk/browser";
 import { track } from "@/lib/analytics";
+import { useToolAuthChallengePresentation } from "./useToolAuthChallengeReplay";
+
 // Result metadata type for tool responses
 interface ToolResponseMeta {
   [key: string]: unknown;
@@ -60,16 +60,21 @@ export interface UseToolExecutionOptions {
   setToolOutput: (output: unknown) => void;
   setToolResponseMetadata: (meta: Record<string, unknown> | null) => void;
   modelVisibleMcpToolResults?: McpModelVisibleToolResultPolicy["modelVisibleMcpToolResults"];
+  /**
+   * The listed tools, read for `readOnlyHint`, which the sign-in card
+   * reports. Reads and writes both run again after a mid-session sign-in.
+   */
+  tools?: Record<string, { annotations?: unknown }>;
 }
 
 export interface UseToolExecutionReturn {
   pendingExecution: PendingExecution | null;
   clearPendingExecution: () => void;
   executeTool: (
-    options?: ExecuteToolInvocationOptions
+    options?: ExecuteToolInvocationOptions,
   ) => Promise<ExecuteToolInvocationResult>;
   injectToolResult: (
-    options: InjectToolResultOptions
+    options: InjectToolResultOptions,
   ) => Promise<CompletedToolInvocationResult>;
 }
 
@@ -85,6 +90,12 @@ export interface ExecuteToolInvocationOptions {
   serverName?: string;
   /** Internal: the one post-OAuth replay must never start another redirect. */
   scopeStepUpReplay?: boolean;
+  authAttempt?: AuthChallengeAttempt;
+  /**
+   * The call comes from an inspector command or an agent, not a click. It
+   * never offers sign-in: a challenge is reported to the caller instead.
+   */
+  fromCommand?: boolean;
 }
 
 export interface InjectToolResultOptions {
@@ -129,7 +140,7 @@ function extractMetadata(result: unknown): ToolResponseMeta | undefined {
 
 function resolveDirectModelOutputForToolResult(
   result: unknown,
-  policy: McpModelVisibleToolResultPolicy
+  policy: McpModelVisibleToolResultPolicy,
 ): unknown | undefined {
   try {
     return mcpCallToolResultToModelOutput(result as never, policy);
@@ -141,7 +152,7 @@ function resolveDirectModelOutputForToolResult(
 async function resolveModelOutputForToolResult(
   result: unknown,
   serverId: string | undefined,
-  policy: McpModelVisibleToolResultPolicy
+  policy: McpModelVisibleToolResultPolicy,
 ): Promise<unknown | undefined> {
   if (serverId) {
     let linkedReadFailed = false;
@@ -159,7 +170,7 @@ async function resolveModelOutputForToolResult(
                 throw error;
               }
             },
-          }
+          },
         );
       return linkedReadFailed
         ? resolveDirectModelOutputForToolResult(result, policy)
@@ -182,6 +193,7 @@ export function useToolExecution({
   setToolOutput,
   setToolResponseMetadata,
   modelVisibleMcpToolResults,
+  tools,
 }: UseToolExecutionOptions): UseToolExecutionReturn {
   // Pending execution to inject into chat thread
   const [pendingExecution, setPendingExecution] =
@@ -197,13 +209,29 @@ export function useToolExecution({
   // its stored issuer + originally-granted scopes on a `403 insufficient_scope`.
   const sharedAppState = useOptionalSharedAppState();
   const resetStepUpOnSuccess = useCallback(
-    (name: string | undefined, toolName: string) => {
-      resetScopeStepUp(name ? sharedAppState?.servers[name] : undefined, {
-        method: "tools/call",
-        operation: toolName,
-      });
+    (
+      name: string | undefined,
+      toolName: string,
+      attempt?: AuthChallengeAttempt,
+    ) => {
+      const liveServer = name ? sharedAppState?.servers[name] : undefined;
+      resetScopeStepUp(
+        liveServer,
+        {
+          method: "tools/call",
+          operation: toolName,
+        },
+        attempt,
+      );
+      if (liveServer) clearAuthChallengeCards(liveServer.name, attempt);
     },
     [sharedAppState],
+  );
+
+  const presentAuthChallengeFromResponse = useToolAuthChallengePresentation(
+    sharedAppState,
+    tools,
+    setExecutionError,
   );
 
   const driveStepUpFromResponse = useCallback(
@@ -253,7 +281,7 @@ export function useToolExecution({
       result: unknown,
       toolCallId?: string,
       serverId?: string,
-      modelOutput?: unknown
+      modelOutput?: unknown,
     ) => {
       // Store raw output for inspector
       setToolOutput(result);
@@ -282,12 +310,12 @@ export function useToolExecution({
         ...(toolCallId ? { toolCallId } : {}),
       });
     },
-    [setToolOutput, setToolResponseMetadata, toolsMetadata]
+    [setToolOutput, setToolResponseMetadata, toolsMetadata],
   );
 
   const executeTool = useCallback(
     async (
-      options?: ExecuteToolInvocationOptions
+      options?: ExecuteToolInvocationOptions,
     ): Promise<ExecuteToolInvocationResult> => {
       const effectiveToolName = options?.toolName ?? selectedTool;
       const effectiveFormFields = options?.formFields ?? formFields;
@@ -309,6 +337,13 @@ export function useToolExecution({
         };
       }
 
+      const liveServer = sharedAppState?.servers[effectiveServerName];
+      if (liveServer && liveServer.connectionStatus !== "connected") {
+        const error = "Reconnect the server before running this tool.";
+        setExecutionError(error);
+        return { ok: false, error };
+      }
+
       setIsExecuting(true);
       setExecutionError(null);
 
@@ -316,7 +351,7 @@ export function useToolExecution({
         const response = await executeToolApi(
           effectiveServerName,
           effectiveToolName,
-          params
+          params,
         );
 
         if ("error" in response) {
@@ -334,6 +369,14 @@ export function useToolExecution({
           // step-up re-authorization for this server.
           if (!options?.scopeStepUpReplay) {
             driveStepUpFromResponse(
+              effectiveServerName,
+              effectiveToolName,
+              params,
+              response,
+            );
+          }
+          if (!options?.scopeStepUpReplay && !options?.fromCommand) {
+            presentAuthChallengeFromResponse(
               effectiveServerName,
               effectiveToolName,
               params,
@@ -379,7 +422,7 @@ export function useToolExecution({
         const modelOutput = await resolveModelOutputForToolResult(
           result,
           effectiveServerName,
-          { modelVisibleMcpToolResults }
+          { modelVisibleMcpToolResults },
         );
         storeCompletedToolResult(
           effectiveToolName,
@@ -387,7 +430,7 @@ export function useToolExecution({
           result,
           undefined,
           effectiveServerName,
-          modelOutput
+          modelOutput,
         );
 
         // Log successful tool execution
@@ -398,8 +441,25 @@ export function useToolExecution({
           success: true,
         });
 
-        // SEP-2350: a successful call clears the bounded step-up counter.
-        resetStepUpOnSuccess(effectiveServerName, effectiveToolName);
+        // SEP-2350: a successful call clears the bounded step-up counter. A
+        // result carrying a sign-in challenge is a refusal, not a success,
+        // and the one post-sign-in replay never prompts again.
+        if (response.authChallenge) {
+          if (!options?.scopeStepUpReplay && !options?.fromCommand) {
+            presentAuthChallengeFromResponse(
+              effectiveServerName,
+              effectiveToolName,
+              params,
+              response,
+            );
+          }
+        } else {
+          resetStepUpOnSuccess(
+            effectiveServerName,
+            effectiveToolName,
+            options?.authAttempt,
+          );
+        }
 
         return {
           ok: true,
@@ -445,29 +505,10 @@ export function useToolExecution({
       storeCompletedToolResult,
       modelVisibleMcpToolResults,
       driveStepUpFromResponse,
+      presentAuthChallengeFromResponse,
       resetStepUpOnSuccess,
-    ]
+    ],
   );
-
-  useEffect(() => {
-    if (!serverName) return;
-    const liveServer = sharedAppState?.servers[serverName];
-    if (liveServer?.connectionStatus !== "connected") return;
-    const pending = claimPendingDirectScopeStepUpReplay({
-      serverName,
-      surface: "playground",
-    });
-    if (!pending || pending.descriptor.kind !== "tool") return;
-    const descriptor = pending.descriptor;
-    void executeTool({
-      serverName: descriptor.serverName,
-      toolName: descriptor.toolName,
-      parameters: descriptor.parameters,
-      scopeStepUpReplay: true,
-    }).finally(() => {
-      clearPendingDirectScopeStepUpReplay();
-    });
-  }, [executeTool, serverName, sharedAppState]);
 
   const injectToolResult = useCallback(
     async ({
@@ -480,7 +521,7 @@ export function useToolExecution({
       const modelOutput = await resolveModelOutputForToolResult(
         result,
         undefined,
-        { modelVisibleMcpToolResults }
+        { modelVisibleMcpToolResults },
       );
       storeCompletedToolResult(
         toolName,
@@ -488,7 +529,7 @@ export function useToolExecution({
         result,
         toolCallId,
         undefined,
-        modelOutput
+        modelOutput,
       );
 
       return {
@@ -499,11 +540,7 @@ export function useToolExecution({
         response: { status: "completed", result },
       };
     },
-    [
-      setExecutionError,
-      storeCompletedToolResult,
-      modelVisibleMcpToolResults,
-    ]
+    [setExecutionError, storeCompletedToolResult, modelVisibleMcpToolResults],
   );
 
   // Keyboard shortcut for execute (Cmd/Ctrl + Enter)

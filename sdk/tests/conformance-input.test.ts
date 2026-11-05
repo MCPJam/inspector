@@ -3,6 +3,7 @@ import {
   isMissingInputCheck,
   missingInputForCheck,
   missingInputMessage,
+  noTaskCreatedMessage,
 } from "../src/conformance-input.js";
 
 describe("missing conformance inputs", () => {
@@ -59,5 +60,56 @@ describe("missing conformance inputs", () => {
     expect(
       isMissingInputCheck({ ...skipped, details: { missingInput: "unknown" } })
     ).toBe(false);
+  });
+});
+
+describe("a tasks tool that returned no task", () => {
+  const skipped = {
+    id: "tasks-ttl-shape",
+    status: "skipped",
+    skipReason: "could-not-run",
+  };
+  const appText =
+    '"hello-task" did not create a task, so there was nothing to check. Select a tool that creates a task in setup, or change its arguments so it does, then run again.';
+
+  it("replaces the CLI text, and the older saved text, with setup copy", () => {
+    expect(
+      noTaskCreatedMessage({
+        ...skipped,
+        error: {
+          message:
+            '"hello-task" returned a normal result instead of a task, so there was nothing to check; pass --tool-name (SDK: toolName) with a tool that creates a task, or --tool-args (SDK: toolArguments) that make this one create a task',
+        },
+      })
+    ).toBe(appText);
+    expect(
+      noTaskCreatedMessage({
+        ...skipped,
+        error:
+          'the probed tool "hello-task" returned a normal result, so no task existed to inspect; name a task-creating tool with --tool-name (SDK: toolName) or supply --tool-args (SDK: toolArguments) that provoke one',
+      })
+    ).toBe(appText);
+  });
+
+  it("is not a missing input, so it still holds the run back", () => {
+    const check = {
+      ...skipped,
+      error: '"hello-task" returned a normal result instead of a task',
+    };
+    expect(isMissingInputCheck(check)).toBe(false);
+    expect(missingInputMessage(check)).toBeUndefined();
+  });
+
+  it("leaves other checks and other reasons alone", () => {
+    const error = '"hello-task" returned a normal result instead of a task';
+    expect(
+      noTaskCreatedMessage({ ...skipped, status: "failed", error })
+    ).toBeUndefined();
+    expect(
+      noTaskCreatedMessage({ ...skipped, id: "modern-ping", error })
+    ).toBeUndefined();
+    expect(
+      noTaskCreatedMessage({ ...skipped, error: "polling task task-1 failed" })
+    ).toBeUndefined();
   });
 });

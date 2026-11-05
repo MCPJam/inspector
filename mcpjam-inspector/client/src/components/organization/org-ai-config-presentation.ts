@@ -29,10 +29,8 @@ import type {
   OrgAiModelKind,
 } from "@/hooks/useOrgAiConfig";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
-import {
-  canonicalPrefix,
-  canonicalSelectionModelId,
-} from "@/components/chat-v2/shared/model-selection";
+import { canonicalSelectionModelId } from "@/components/chat-v2/shared/model-selection";
+import { canonicalPrefix } from "@/shared/canonical-model-id";
 import type { ModelDefinition } from "@/shared/types";
 
 // ---------------------------------------------------------------------------
@@ -146,7 +144,7 @@ function harnessGuidance(
     case "unconfigured":
     case "unsupported": {
       const fix = canManage
-        ? "Add a direct Anthropic provider for Claude Code or an OpenAI provider for Codex below."
+        ? "Add a direct Anthropic provider for Claude Code or an OpenAI provider for Codex in Providers."
         : "Ask an organization admin to add a direct Anthropic provider for Claude Code or an OpenAI provider for Codex.";
       return `${fix} ${HARNESS_NOT_SUPPORTED_GUIDANCE}`;
     }
@@ -254,7 +252,7 @@ export function featureGuidance(
       }
       const fix = noEligibleProvider
         ? canManage
-          ? "Add a direct cloud provider below."
+          ? "Add a direct cloud provider in Providers."
           : "Ask an organization admin to add a direct cloud provider."
         : canManage
           ? "None of the organization's providers can serve this feature. Add a direct cloud provider that can."
@@ -268,7 +266,7 @@ export function featureGuidance(
     }
     case "invalid_credentials":
       return canManage
-        ? "The provider rejected its stored credentials. Update the key below."
+        ? "The provider rejected its stored credentials. Update the key in Providers."
         : "The provider rejected its stored credentials. Ask an organization admin to update the key.";
     case "temporarily_unavailable":
       return "The provider is rate-limited or failing. Try again shortly.";
@@ -407,12 +405,13 @@ export const ORG_AI_MODEL_PRESENTATION: Record<
   default: {
     label: "Default AI model",
     noun: "default AI model",
-    runs: "Insights and findings, generation and simulated users",
+    runs: "Ask MCPJam, insights and findings, generation and simulated users",
   },
   search: {
     label: "Search model",
     noun: "search model",
-    runs: "Web search",
+    runs: "Web search in chat needs an Anthropic or OpenAI model.",
+    whenUnset: "Not set, so web search is off",
   },
   decision: {
     label: "Decision model",
@@ -444,7 +443,7 @@ export function orgAiModelRowText(
   const { runs, whenUnset } = ORG_AI_MODEL_PRESENTATION[kind];
   if (kind === "default" && !card.kinds.includes("decision"))
     return {
-      runs: "Insights and findings, generation, typed decisions and simulated users",
+      runs: "Ask MCPJam, insights and findings, generation, typed decisions and simulated users",
     };
   if (kind === "decision" && !card.defaultSet) return { runs };
   return whenUnset ? { runs, whenUnset } : { runs };

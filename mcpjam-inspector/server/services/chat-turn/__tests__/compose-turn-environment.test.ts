@@ -94,3 +94,38 @@ describe("chat composition", () => {
     },
   );
 });
+
+
+it("uses the prepared external account config without fetching it again", async () => {
+  const client = new ConvexHttpClient("https://test.convex.cloud");
+  vi.mocked(fetchHostRuntimeConfig).mockClear();
+  vi.mocked(shouldUseLocalHarness).mockResolvedValue(false);
+  vi.mocked(resolvePlaygroundCredentialEnvironment).mockResolvedValue({
+    ok: true,
+    environmentId: "credential-env",
+  });
+  const result = await composeTurnEnvironment({
+    client,
+    projectId: "project",
+    hostId: "cursor",
+    bearer: "token",
+    preparedHost: {
+      hostId: "cursor",
+      config: {
+        hostId: "cursor",
+        modelId: "cursor-auto",
+        systemPrompt: "",
+        temperature: 0,
+        requireToolApproval: true,
+        hostStyle: "cursor",
+        harness: "cursor",
+      },
+    },
+  });
+  expect(result).toEqual({
+    environmentId: "credential-env",
+    harness: "cursor",
+  });
+  expect(fetchHostRuntimeConfig).not.toHaveBeenCalled();
+  expect(resolvePlaygroundCredentialEnvironment).toHaveBeenCalledOnce();
+});

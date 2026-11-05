@@ -143,6 +143,7 @@ describe("caniuse capability catalog", () => {
     expect(ids).not.toContain("modelId");
     expect(ids).not.toContain("temperature");
     expect(ids).not.toContain("systemPrompt");
+    expect(ids).not.toContain("requireToolApproval");
     expect(ids).not.toContain("clientInfo.name");
     expect(ids).not.toContain("connectionDefaults.headers");
     expect(ids).not.toContain("connectionDefaults.requestTimeout");

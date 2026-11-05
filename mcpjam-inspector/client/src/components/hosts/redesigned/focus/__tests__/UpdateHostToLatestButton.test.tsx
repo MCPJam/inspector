@@ -66,6 +66,7 @@ function renderButton(args: {
   ) => Promise<boolean>;
   hostLoaded?: boolean;
   saveInFlight?: boolean;
+  keepModel?: boolean;
 }) {
   const draftRef: { current: HostConfigInputV2 } = {
     current: args.initialDraft,
@@ -106,6 +107,7 @@ function renderButton(args: {
         onSaveLatest={onSaveLatest}
         hostLoaded={args.hostLoaded ?? true}
         saveInFlight={args.saveInFlight ?? false}
+        keepModel={args.keepModel}
       />
     );
   }
@@ -129,6 +131,66 @@ function renderButton(args: {
 }
 
 describe("UpdateHostToLatestButton", () => {
+  describe("under the organization key policy", () => {
+    const orgSelection = {
+      modelId: "openai/gpt-5.6-luna",
+      source: "org",
+      connectionRef: { kind: "orgProvider", id: "orgprov_openai" },
+      nativeModelId: "gpt-5.6-luna",
+      fallback: { provider: "none", model: "none" },
+    } as const;
+
+    it("keeps the client's org model when it applies a newer template", async () => {
+      const user = userEvent.setup();
+      const initial = {
+        ...emptyHostConfigInputV2({
+          hostStyle: "mistral",
+          modelId: orgSelection.modelId,
+        }),
+        modelSelection: orgSelection,
+      };
+      const { draftRef, onSaveLatest } = renderButton({
+        initialDraft: initial,
+        initialName: "Old Mistral",
+        keepModel: true,
+      });
+
+      await user.click(
+        screen.getByRole("button", { name: /update to latest/i })
+      );
+
+      const expected = {
+        ...catalogDraftFor("mistral"),
+        modelId: orgSelection.modelId,
+        modelSelection: orgSelection,
+      };
+      expect(draftRef.current).toEqual(expected);
+      expect(onSaveLatest).toHaveBeenCalledWith(
+        catalogLabelFor("mistral"),
+        expected
+      );
+    });
+
+    it("does not offer an update for the model alone", () => {
+      const current = {
+        ...catalogDraftFor("chatgpt"),
+        modelId: orgSelection.modelId,
+        modelSelection: orgSelection,
+      };
+      renderButton({
+        initialDraft: current,
+        initialName: catalogLabelFor("chatgpt"),
+        savedDraft: current,
+        savedName: catalogLabelFor("chatgpt"),
+        keepModel: true,
+      });
+      expect(toast.info).not.toHaveBeenCalled();
+      expect(
+        screen.getByRole("button", { name: /update to latest/i })
+      ).toBeDisabled();
+    });
+  });
+
   it("offers the latest client configuration in a toast", async () => {
     const initial = emptyHostConfigInputV2({
       hostStyle: "mistral",

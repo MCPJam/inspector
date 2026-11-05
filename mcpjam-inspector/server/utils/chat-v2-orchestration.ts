@@ -73,6 +73,11 @@ import {
 } from "@/shared/client-fulfilled-tools";
 import { needsApprovalFor } from "@/shared/tool-approval";
 import {
+  WIDGET_MODEL_CONTEXT_MAX_CONTENT_BLOCKS,
+  WIDGET_MODEL_CONTEXT_MAX_ENTRIES,
+  WIDGET_MODEL_CONTEXT_MAX_JSON_BYTES,
+} from "@/shared/widget-model-context-limits";
+import {
   WEBMCP_TOOL_DESCRIPTION_MAX_CHARS,
   WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES,
   WEBMCP_TOOL_MAX_ENTRIES,
@@ -137,9 +142,6 @@ const APP_TOOL_MAX_INPUT_SCHEMA_BYTES = 8 * 1024;
 const UI_TOOL_MAX_ENTRIES = 64;
 const UI_TOOL_MAX_DESCRIPTION_CHARS = 512;
 const UI_TOOL_MAX_INPUT_SCHEMA_BYTES = 8 * 1024;
-const WIDGET_MODEL_CONTEXT_MAX_ENTRIES = 32;
-const WIDGET_MODEL_CONTEXT_MAX_CONTENT_BLOCKS = 32;
-const WIDGET_MODEL_CONTEXT_MAX_JSON_BYTES = 64 * 1024;
 // WebMCP Inspector page-tool caps. Same shape as the app-tool caps above, and
 // deliberately no more generous: the entries describe tools a third-party page
 // registered, so every field here is attacker-influenced text.

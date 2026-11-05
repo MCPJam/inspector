@@ -242,6 +242,20 @@ export const FALLBACK_HINT =
   "Configure a pre-registered client or enable DCR on the authorization server.";
 
 /**
+ * Whether a debugger step error is the authorization server answering the
+ * registration POST with a non-2xx status, with or without the fallback hint.
+ *
+ * The debug proxy hands back whatever the server under test answered, and its
+ * own failures throw instead, which become "Client registration failed: …"
+ * below. So this message only follows the server's real answer, and consumers
+ * can keep it visible without filing it as an MCPJam defect. A status that is
+ * not three digits (`undefined`, `0`) means the proxy lost it, so it is ours.
+ */
+export function isDynamicClientRegistrationHttpError(error: string): boolean {
+  return /^Dynamic Client Registration failed \(\d{3}\)\./.test(error);
+}
+
+/**
  * Executes an RFC 7591 registration POST via the caller's executor, back-fills
  * a cloned last history entry with the redacted response, and classifies the
  * result. Never calls updateState — state transitions stay caller-owned.

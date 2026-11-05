@@ -95,7 +95,8 @@ export function ConformanceSettings({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-border/40 px-8 py-2.5">
+      {/* The same padding as a run's header, which Settings opens from. */}
+      <div className="shrink-0 border-b border-border/40 px-8 pt-5 pb-4">
         <div className="flex min-w-0 items-center gap-3">
           <Button
             variant="link"

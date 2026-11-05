@@ -228,3 +228,13 @@ for (const [suite, run] of [
     );
   });
 }
+
+it("defaults the selected limit while preserving remaining budget and cancellation in local mode", async () => {
+  fetchMock.mockResolvedValue({ ok: true, json: async () => ({ success: true }) });
+  const controller = new AbortController();
+  await runProtocolConformance("my-server", { remainingRunTimeoutMs: 1200, signal: controller.signal });
+  expect(fetchMock).toHaveBeenCalledWith("/api/mcp/conformance/protocol", expect.objectContaining({
+    signal: controller.signal,
+    body: JSON.stringify({ serverId: "my-server", runTimeoutSeconds: 300, remainingRunTimeoutMs: 1200 }),
+  }));
+});

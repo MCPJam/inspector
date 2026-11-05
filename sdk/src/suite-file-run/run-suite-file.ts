@@ -305,7 +305,6 @@ async function executeSuiteFile(
   let executed: Awaited<ReturnType<typeof executeCases>> | undefined;
   let failure: unknown;
   let snapshot: ToolPolicySnapshot | undefined;
-  let toolServers: ReadonlyMap<string, string> = new Map();
   try {
     // ── 4. credentials, then connect and discover ────────────────────────────
     progress({ type: "setup", stage: "credentials" });
@@ -461,7 +460,7 @@ async function executeSuiteFile(
     }
     const frozenTools = Object.freeze({ ...merged }) as ToolSet;
     const toolNames = Object.keys(frozenTools);
-    toolServers = new Map(ownerOf);
+    const toolServers: ReadonlyMap<string, string> = new Map(ownerOf);
 
     if (plan.toolPolicy) {
       try {

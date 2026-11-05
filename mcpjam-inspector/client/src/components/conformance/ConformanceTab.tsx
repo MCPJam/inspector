@@ -5,6 +5,10 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  mergeConformanceInputs,
+  useConformanceInputs,
+} from "@/hooks/use-conformance-inputs";
 import { Button } from "@mcpjam/design-system/button";
 import type { McpProtocolVersion } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -18,6 +22,12 @@ import {
   useAppNavigate,
   useCurrentLocationParts,
 } from "@/lib/app-navigation";
+import {
+  readLocalTimeout,
+  saveLocalTimeout,
+  readSessionTimeout,
+  saveSessionTimeout,
+} from "./conformance-local-timeout";
 import { toast } from "@/lib/toast";
 import type { ConformancePersistConfig } from "@/components/conformance/PersistConformanceRun";
 import {
@@ -74,6 +84,8 @@ export function ConformanceTab({
   serverInputs,
   onLoadServerDefaults,
   isSavedServer,
+  serverTimeouts,
+  onSaveServerTimeout,
   serverDefaultsLoaded = true,
   onSaveServerDefaults,
   lastRuns,
@@ -101,6 +113,8 @@ export function ConformanceTab({
   serverInputs?: Record<string, ConformanceProbes>;
   isSavedServer?: (name: string) => boolean;
   onLoadServerDefaults?: (serverName: string) => Promise<ConformanceDefaults>;
+  serverTimeouts?: Record<string, number>;
+  onSaveServerTimeout?: (serverName: string, seconds: number | null) => Promise<void>;
   /** False while `serverDefaults` is still loading: nothing runs on a guess. */
   serverDefaultsLoaded?: boolean;
   /** Saves a server's default checks. Omit to hide Settings. */
@@ -166,10 +180,7 @@ export function ConformanceTab({
   // The tools each server's checks may call: set in step 2, and
   // used by every later run of that server, Run again included.
   const { probesFor: sessionProbesFor, setProbes } = useConformanceProbeStore();
-  const probesFor = (name: string) =>
-    serverInputs && Object.hasOwn(serverInputs, name)
-      ? serverInputs[name]!
-      : sessionProbesFor(name);
+  const probesFor = useConformanceInputs(serverInputs, sessionProbesFor);
   // Defaults changed here while their save is in flight: Run again right
   // after a change in Settings must already run the new checks. Each entry
   // goes once its save settles, so the saved rows (a teammate's changes
@@ -177,6 +188,64 @@ export function ConformanceTab({
   const [changedDefaults, setChangedDefaults] = useState<
     Record<string, ConformanceSelection>
   >({});
+  const savedTimeoutFor = (name: string) =>
+    serverTimeouts && Object.hasOwn(serverTimeouts, name)
+      ? serverTimeouts[name]
+      : undefined;
+  const timeoutKeyFor = (name: string) =>
+    JSON.stringify([persist?.projectId ?? null, name]);
+  const [changedTimeouts, setChangedTimeouts] = useState<Record<string, {
+    projectId: string | null;
+    serverName: string;
+    seconds: number | null;
+  }>>({});
+  useEffect(() => {
+    setChangedTimeouts((previous) => {
+      const pending = Object.fromEntries(
+        Object.entries(previous).filter(([, entry]) => {
+          if (entry.projectId !== (persist?.projectId ?? null)) return false;
+          const saved = serverTimeouts && Object.hasOwn(serverTimeouts, entry.serverName)
+            ? serverTimeouts[entry.serverName]
+            : null;
+          return entry.seconds !== saved;
+        }),
+      );
+      return Object.keys(pending).length === Object.keys(previous).length
+        ? previous
+        : pending;
+    });
+  }, [serverTimeouts, persist?.projectId]);
+  const [, refreshSessionTimeout] = useState(0);
+  const isSessionTimeout = (name: string) =>
+    Boolean(
+      persist && isSavedServer && !isSavedServer(name) && !projectServersLoading,
+    );
+  const timeoutFor = (name: string) => {
+    if (persist && isSessionTimeout(name)) {
+      return readSessionTimeout(persist.projectId, name);
+    }
+    const changed = changedTimeouts[timeoutKeyFor(name)];
+    if (changed) return changed.seconds ?? undefined;
+    return savedTimeoutFor(name) ?? (!persist ? readLocalTimeout(name) : undefined);
+  };
+  const saveTimeout = async (name: string, seconds: number | null) => {
+    if (persist && isSessionTimeout(name)) {
+      saveSessionTimeout(persist.projectId, name, seconds);
+      refreshSessionTimeout((version) => version + 1);
+      return;
+    }
+    if (onSaveServerTimeout) await onSaveServerTimeout(name, seconds);
+    else if (!persist) saveLocalTimeout(name, seconds);
+    else throw new Error("Server timeout settings are unavailable. Reload the page and try again.");
+    setChangedTimeouts((previous) => ({
+      ...previous,
+      [timeoutKeyFor(name)]: {
+        projectId: persist?.projectId ?? null,
+        serverName: name,
+        seconds,
+      },
+    }));
+  };
   const defaultsFor = (serverName: string) =>
     Object.hasOwn(changedDefaults, serverName)
       ? changedDefaults[serverName]
@@ -189,6 +258,12 @@ export function ConformanceTab({
         selection: ConformanceSelection,
         inputs?: ConformanceProbes,
       ) => {
+        if (inputs) setProbes(serverName, inputs);
+        const {
+          tasksOverrides: _localOverrides,
+          logLevelOverride: _localLogTool,
+          ...sharedInputs
+        } = inputs ?? {};
         setChangedDefaults((prev) => ({ ...prev, [serverName]: selection }));
         const settle = () =>
           setChangedDefaults((prev) => {
@@ -200,7 +275,11 @@ export function ConformanceTab({
         return (
           isSavedServer && !isSavedServer(serverName)
             ? Promise.resolve()
-            : onSaveServerDefaults(serverName, selection, inputs)
+            : onSaveServerDefaults(
+                serverName,
+                selection,
+                inputs ? sharedInputs : undefined,
+              )
         ).then(settle, (error: unknown) => {
           settle();
           throw error;
@@ -271,7 +350,13 @@ export function ConformanceTab({
   const readDefaults = (name: string): Promise<ConformanceDefaults> =>
     onLoadServerDefaults &&
     !(isSavedServer && !isSavedServer(name) && !projectServersLoading)
-      ? onLoadServerDefaults(name)
+      ? onLoadServerDefaults(name).then((defaults) => ({
+          ...defaults,
+          inputs: mergeConformanceInputs(
+            defaults.inputs,
+            sessionProbesFor(name),
+          ),
+        }))
       : Promise.resolve({
           selection:
             defaultsFor(name) ??
@@ -362,21 +447,21 @@ export function ConformanceTab({
     const run = lastRuns?.[offered.name];
     return run ? [{ serverName: offered.name, run }] : [];
   });
+  const cardsDisabled =
+    !serverDefaultsLoaded || loadingDefaults || selectionIsReconnecting;
+  const runServer = (serverName: string) =>
+    onLoadServerDefaults
+      ? void requestDefaults(serverName, "auto")
+      : startRun(serverName, "auto", defaultsFor(serverName) ?? {});
   const home =
     recentServers.length > 0 && onViewRun ? (
       <ConformanceServerList
         runs={recentServers}
         serverIcons={serverIcons}
         onViewRun={onViewRun}
-        disabled={
-          !serverDefaultsLoaded || loadingDefaults || selectionIsReconnecting
-        }
+        disabled={cardsDisabled}
         disabledServerName={failedRequest?.name}
-        onRun={(serverName) =>
-          onLoadServerDefaults
-            ? void requestDefaults(serverName, "auto")
-            : startRun(serverName, "auto", defaultsFor(serverName) ?? {})
-        }
+        onRun={runServer}
       />
     ) : undefined;
   // Run always opens the setup steps, even with no servers yet: the server
@@ -403,6 +488,8 @@ export function ConformanceTab({
             ? start.selection
             : undefined
         }
+        timeoutFor={timeoutFor}
+        onSaveTimeout={saveTimeout}
         defaultsFor={defaultsFor}
         defaultsLoaded={serverDefaultsLoaded}
         onLoadDefaults={onLoadServerDefaults ? readDefaults : undefined}
@@ -549,6 +636,7 @@ export function ConformanceTab({
           ? (start?.inputs ?? probesFor(server.name))
           : probesFor(server.name)
       }
+      runTimeoutSeconds={timeoutFor(server.name)}
     />
   );
   // Also closed while the defaults reload, e.g. after a project switch: it
