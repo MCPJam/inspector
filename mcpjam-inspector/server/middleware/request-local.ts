@@ -51,7 +51,7 @@ export function getRequestLocal<K extends keyof RequestLocalMap>(
 export function setRequestLocal<K extends keyof RequestLocalMap>(
   c: Context,
   key: K,
-  value: RequestLocalMap[K]
+  value: RequestLocalMap[K] | undefined
 ): void {
   c.set(key as string, value);
 }

@@ -150,3 +150,15 @@ describe("authFetch — expired sign-in on plugin App routes", () => {
     expect(global.fetch).toHaveBeenCalledTimes(3);
   });
 });
+
+
+it.each(["/api/web/chat-persistence", "/api/mcp/chat-persistence"])("renews only the completed save request on %s", async (url) => {
+  resetSessionRevokedForTests();
+  vi.mocked(getApiAuthorizationHeader).mockResolvedValue("Bearer expired-cached");
+  vi.mocked(renewSessionBearer).mockResolvedValue("current-token");
+  vi.mocked(global.fetch).mockReset().mockResolvedValueOnce(expired()).mockResolvedValueOnce(ok());
+  const body = JSON.stringify({ retryHandle: "handle", projectId: "project", chatSessionId: "chat", turnId: "turn" });
+  expect((await authFetch(url, { method: "POST", body })).status).toBe(200);
+  expect(sentBearers()).toEqual(["Bearer expired-cached", "Bearer current-token"]);
+  expect(vi.mocked(global.fetch).mock.calls.every(([target, init]) => target === url && init?.body === body)).toBe(true);
+});

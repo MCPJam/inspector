@@ -60,6 +60,9 @@ export interface PersistReceiptData {
   currentVersion?: number;
   /** Why the save failed. Present for `failed`. */
   failureKind?: PersistReceiptFailureKind;
+  /** Opaque, short-lived authority to retry only the server-held completed write. */
+  retryHandle?: string;
+  retryProjectId?: string;
 }
 
 export interface PersistReceiptDataPart {
@@ -89,7 +92,7 @@ export function isPersistReceiptDataPart(
   if (!data || typeof data !== "object") {
     return false;
   }
-  const { outcome, chatSessionId, version, currentVersion } = data as Record<
+  const { outcome, chatSessionId, version, currentVersion, retryHandle, retryProjectId, turnId } = data as Record<
     string,
     unknown
   >;
@@ -103,6 +106,7 @@ export function isPersistReceiptDataPart(
     PERSIST_RECEIPT_OUTCOMES.has(outcome as PersistReceiptOutcome) &&
     typeof chatSessionId === "string" &&
     chatSessionId.length > 0 &&
+    (retryHandle === undefined || (outcome === "failed" && typeof retryHandle === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(retryHandle) && typeof turnId === "string" && turnId.length > 0 && typeof retryProjectId === "string" && retryProjectId.length > 0)) &&
     (version === undefined || Number.isFinite(version)) &&
     (currentVersion === undefined || Number.isFinite(currentVersion))
   );

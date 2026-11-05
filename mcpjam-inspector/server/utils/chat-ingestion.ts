@@ -1,3 +1,4 @@
+import { completedTurnPersistence, type CompletedTurnOwner } from "../services/completed-turn-persistence.js";
 import type { SetupAtTurn } from "../services/chat-turn/setup-manifest.js";
 import type { PersistedRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
@@ -72,6 +73,8 @@ export type PersistChatOutcome =
       outcome: "failed";
       failureKind: PersistChatFailureKind;
       status?: number;
+      retryHandle?: string;
+      retryProjectId?: string;
     }
   | {
       outcome: "not-attempted";
@@ -351,6 +354,7 @@ interface PersistChatSessionOptions {
    */
   modelSource: "mcpjam" | "byok" | "local_byok" | "external-account";
   authHeader?: string;
+  retryOwner?: CompletedTurnOwner;
   projectId?: string;
   sourceType?: "scenario" | "direct" | "eval" | "swarm";
   origin: ChatOrigin;
@@ -736,11 +740,12 @@ function classifySuccessBody(body: unknown): PersistChatOutcome {
   return { outcome: "saved", version: parsed.version, ...sessionDocId };
 }
 
-async function attemptChatIngest(
+export async function attemptChatIngest(
   url: string,
   headers: Record<string, string>,
   body: string,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<IngestAttemptResult> {
   // A fresh controller per attempt. Reusing one across retries would poison
   // every later attempt: once aborted, an AbortSignal stays aborted, so retry 1
@@ -752,7 +757,7 @@ async function attemptChatIngest(
     const response = await fetch(url, {
       method: "POST",
       headers,
-      signal: controller.signal,
+      signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
       body,
     });
 
@@ -878,6 +883,12 @@ export async function persistChatSessionToConvex(
     ...options.forwardHeaders,
   };
   const body = buildIngestBody(options);
+  const retain = (outcome: PersistChatOutcome): PersistChatOutcome => {
+    if (outcome.outcome !== "failed" || !options.retryOwner || !options.turnTrace?.turnId ||
+        outcome.status === 400 || outcome.status === 403 || outcome.status === 404) return outcome;
+    const retryHandle = completedTurnPersistence.register(options.retryOwner, body, options.chatSessionId, options.turnTrace.turnId);
+    return retryHandle ? { ...outcome, retryHandle, retryProjectId: options.retryOwner.projectId } : outcome;
+  };
 
   const logFailure = (detail: {
     failureKind: PersistChatFailureKind | "version_conflict";
@@ -981,7 +992,7 @@ export async function persistChatSessionToConvex(
           );
         }
       }
-      return outcome;
+      return retain(outcome);
     }
 
     // Keep the first attempt's diagnostics when a later one has none — a
@@ -1005,11 +1016,11 @@ export async function persistChatSessionToConvex(
   }
 
   logFailure(lastFailure);
-  return {
+  return retain({
     outcome: "failed",
     failureKind: lastFailure.failureKind,
     ...(lastFailure.status !== undefined ? { status: lastFailure.status } : {}),
-  };
+  });
 }
 
 /**
@@ -1060,6 +1071,7 @@ export function buildPersistReceiptData(
         outcome: "failed",
         ...base,
         failureKind: outcome.failureKind,
+        ...(outcome.retryHandle ? { retryHandle: outcome.retryHandle, retryProjectId: outcome.retryProjectId } : {}),
       };
   }
 }

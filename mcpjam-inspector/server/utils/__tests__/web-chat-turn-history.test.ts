@@ -283,6 +283,7 @@ async function runTurn(
     onChunk?: (chunk: any) => void;
     model?: Record<string, unknown>;
     chatSessionId?: string;
+    getAuthorization?: () => Promise<string>;
   } = {},
 ): Promise<any[]> {
   const response = await streamWebChatTurn({
@@ -304,6 +305,7 @@ async function runTurn(
       originalMessages: uiMessages,
       selectedServerIds: [],
       captureToolSnapshot: false,
+      getAuthorization: options.getAuthorization,
     },
     runtime: {
       authHeader: "Bearer test-token",
@@ -1095,4 +1097,17 @@ describe("App message presentation persistence", () => {
     expect(modelRequests.at(-1)!.raw).toContain("Underlying model instruction");
     expect(modelRequests.at(-1)!.raw).not.toContain("Visible App item");
   });
+});
+
+
+it("resolves authorization at final persistence without rerunning the completed model turn", async () => {
+  const getAuthorization = vi.fn(async () => {
+    expect(modelRequests).toHaveLength(1);
+    return "Bearer renewed-at-completion";
+  });
+  await runTurn([user("u1", "one reply")], { getAuthorization });
+  expect(getAuthorization).toHaveBeenCalledOnce();
+  expect(modelRequests).toHaveLength(1);
+  const { persistChatSessionToConvex } = await import("../chat-ingestion.js");
+  expect(vi.mocked(persistChatSessionToConvex)).toHaveBeenLastCalledWith(expect.objectContaining({ authHeader: "Bearer renewed-at-completion" }));
 });
