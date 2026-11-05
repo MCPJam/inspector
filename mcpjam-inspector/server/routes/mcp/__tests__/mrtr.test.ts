@@ -4,7 +4,7 @@ import type {
   MrtrInputCollector,
   MrtrOperationState,
 } from "@mcpjam/sdk";
-import {
+import mrtr, {
   projectInputRequests,
   registerLocalMrtrCollector,
   submitMrtrResponses,
@@ -254,6 +254,7 @@ describe("collector round-trip", () => {
     const unknown = submitMrtrResponses("nope", { q: { action: "accept", content: {} } });
     expect(unknown.ok).toBe(false);
     if (!unknown.ok) expect(unknown.status).toBe(404);
+    expect(submitMrtrResponses("op-val", { needed: { action: "cancel" } }).ok).toBe(true);
   });
 });
 
@@ -331,4 +332,50 @@ describe("advertised elicitation capability", () => {
       url: {},
     });
   });
+});
+
+
+describe("pending round replay", () => {
+  it("recovers an unanswered round on late subscription and reconnect without another tool call", async () => {
+    const { manager, getCollector } = fakeManager();
+    registerLocalMrtrCollector(manager, "late-server");
+    const collect = getCollector()!;
+    const result = collect({ state: state("late-op", 1), inputRequests: elicitRequest("Late form") });
+    const open = async () => {
+      const response = await mrtr.request("/stream");
+      const reader = response.body!.getReader();
+      expect(new TextDecoder().decode((await reader.read()).value)).toContain("retry:");
+      return reader;
+    };
+    const first = await open();
+    const event = new TextDecoder().decode((await first.read()).value);
+    expect(event).toContain('"roundKey":"late-op:1"');
+    expect(event).toContain("Late form");
+    await first.cancel();
+    const second = await open();
+    expect(new TextDecoder().decode((await second.read()).value)).toBe(event);
+    expect(submitMrtrResponses("late-op", { q: { action: "accept", content: { answer: "ok", zero: 0, no: false } } }).ok).toBe(true);
+    await expect(result).resolves.toMatchObject({ q: { action: "accept", content: { zero: 0, no: false } } });
+    expect(new TextDecoder().decode((await second.read()).value)).toContain("mrtr_input_complete");
+    await second.cancel();
+    const afterCompletion = await open();
+    const next = afterCompletion.read();
+    await afterCompletion.cancel();
+    expect((await next).done).toBe(true);
+    expect(submitMrtrResponses("late-op", { q: { action: "cancel" } }).ok).toBe(false);
+  });
+});
+
+
+it("refuses unsupported upload fields before publishing an extended form", () => {
+  expect(() => projectInputRequests({ review: {
+    method: "elicitation/create", params: {
+      message: "Choose a file",
+      requestedSchema: { type: "object", properties: {} },
+      _meta: { "openai/elicitation": { requestedSchema: {
+        type: "object", properties: { file: { type: "array", items: { type: "string", format: "uri" },
+          "x-openai-input": { type: "resource", options: [], selection: "implicit" } } },
+      } } },
+    },
+  } })).toThrow(/upload|resource|file/i);
 });
