@@ -970,7 +970,9 @@ export async function discoverAuthorizationServerMetadata(
     if (!response.ok) {
       await response.text().catch(() => {});
       if (
-        response.status >= 400 && response.status < 500 && response.status !== 429
+        response.status >= 400 &&
+        response.status < 500 &&
+        response.status !== 429
       ) {
         continue;
       }
@@ -987,9 +989,30 @@ export async function discoverAuthorizationServerMetadata(
   return undefined;
 }
 
+function firstAuthorizationServer(document: unknown): string | undefined {
+  if (
+    typeof document !== "object" ||
+    document === null ||
+    !("authorization_servers" in document) ||
+    !Array.isArray(document.authorization_servers)
+  ) {
+    return undefined;
+  }
+  const first: unknown = document.authorization_servers[0];
+  if (typeof first !== "string") return undefined;
+  try {
+    new URL(first);
+  } catch {
+    return undefined;
+  }
+  return first;
+}
+
 function isTransientMetadataFailure(error: unknown): boolean {
   const status =
-    error instanceof Error ? /^HTTP (\d{3}) /.exec(error.message)?.[1] : undefined;
+    error instanceof Error
+      ? /^HTTP (\d{3}) /.exec(error.message)?.[1]
+      : undefined;
   return status !== undefined && (status === "429" || status.startsWith("5"));
 }
 
@@ -1001,17 +1024,18 @@ export async function discoverOAuthServerInfo(
   let authorizationServerUrl: string | URL | undefined;
 
   try {
-    resourceMetadata = await discoverOAuthProtectedResourceMetadata(
+    const document = await discoverOAuthProtectedResourceMetadata(
       serverUrl,
       {
         resourceMetadataUrl: opts?.resourceMetadataUrl,
       },
       opts?.fetchFn,
     );
-
-    if (resourceMetadata.authorization_servers?.length) {
-      authorizationServerUrl = resourceMetadata.authorization_servers[0];
-    }
+    // A document that names no usable authorization server (JSON `null`, an
+    // empty or malformed list) is no metadata at all, the same as a failed
+    // fetch: it is not kept, and the origin is the authorization server.
+    authorizationServerUrl = firstAuthorizationServer(document);
+    if (authorizationServerUrl) resourceMetadata = document;
   } catch (error) {
     // A rate limit or server error is not "no metadata": falling back to the
     // origin would cache an issuer the server never named. Anything else that
