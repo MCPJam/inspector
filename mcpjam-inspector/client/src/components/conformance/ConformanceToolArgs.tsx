@@ -3,8 +3,8 @@
  * input schema lists its arguments, they are filled in as a form, one field
  * per argument, like the Playground and the Tools tab; nobody has to know the
  * names or write JSON. A tool whose schema takes no arguments shows nothing;
- * one with no schema at all (a saved tool the server no longer lists) keeps
- * the free-form editor.
+ * one with no schema at all (a saved tool the server no longer lists), or
+ * saved arguments the schema does not list, keep the free-form editor.
  */
 import { useEffect, useRef, useState } from "react";
 import { ParametersForm } from "@/components/ui-playground/ParametersForm";
@@ -16,20 +16,20 @@ import {
   type FormField,
 } from "@/lib/tool-form";
 
-function hasListedArguments(schema: Record<string, unknown> | undefined) {
+function listedArguments(schema: Record<string, unknown> | undefined) {
   const properties = schema?.properties;
-  return (
-    !!properties &&
-    typeof properties === "object" &&
-    Object.keys(properties).length > 0
-  );
+  return properties && typeof properties === "object"
+    ? Object.keys(properties)
+    : [];
 }
 
 /** A field whose text cannot become its type: not sent, so the run must wait. */
 function unparsable(field: FormField): boolean {
   if (!field.required && !field.isSet) return false;
+  // An empty box is left out, not parsed; a required one then needs input.
+  if (field.value === "") return false;
   if (field.type === "number" || field.type === "integer")
-    return field.value !== "" && Number.isNaN(Number(field.value));
+    return Number.isNaN(Number(field.value));
   if (field.type === "array" || field.type === "object") {
     if (typeof field.value !== "string") return false;
     try {
@@ -55,11 +55,13 @@ export function ConformanceToolArgs({
   onChange: (next: Record<string, unknown>) => void;
   onInvalidChange: (invalid: boolean) => void;
 }) {
-  const listed = hasListedArguments(inputSchema);
-  // A tool whose schema takes no arguments gets nothing to fill in. Arguments
-  // already saved for it would still be sent, so they stay visible to remove.
-  if (inputSchema && !listed && Object.keys(value).length === 0) return null;
-  if (!listed) {
+  const listed = listedArguments(inputSchema);
+  const saved = Object.keys(value);
+  // A tool whose schema takes no arguments gets nothing to fill in.
+  if (inputSchema && listed.length === 0 && saved.length === 0) return null;
+  // Saved arguments the form has no field for would still be sent, so the
+  // free-form editor stays until they are renamed or removed.
+  if (listed.length === 0 || saved.some((key) => !listed.includes(key))) {
     return (
       <ToolCallArgsEditor
         value={value}
@@ -106,12 +108,6 @@ function SchemaArgsForm({
     setDraft({ fields: fromValue(), forValue: valueKey });
   }
   const fields = draft.forValue === valueKey ? draft.fields : fromValue();
-  // Saved arguments the schema does not list are kept, not silently dropped.
-  const listed = new Set(fields.map((field) => field.name));
-  const extras = Object.fromEntries(
-    Object.entries(value).filter(([key]) => !listed.has(key)),
-  );
-
   const onInvalidChangeRef = useRef(onInvalidChange);
   useEffect(() => {
     onInvalidChangeRef.current = onInvalidChange;
@@ -129,7 +125,7 @@ function SchemaArgsForm({
     const filled = next.filter(
       (field) => field.value !== "" && !unparsable(field),
     );
-    const args = { ...extras, ...buildParametersFromFields(filled) };
+    const args = buildParametersFromFields(filled);
     setDraft({ fields: next, forValue: JSON.stringify(args) });
     onChange(args);
   };
