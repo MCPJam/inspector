@@ -14,7 +14,10 @@ import {
   isDeclinedCardRefusal,
   isHeldCreditsRefusal,
 } from "@/shared/swarm-attempt-error";
-import { AUTO_TOPUP_DECLINED_MESSAGE } from "@/lib/mcpjam-limit";
+import {
+  AUTO_TOPUP_DECLINED_MESSAGE,
+  AUTO_TOPUP_DECLINED_TITLE,
+} from "@/lib/mcpjam-limit";
 import {
   describeError,
   mcpjamLimitSlugForMessage,
@@ -143,7 +146,7 @@ export function describeHeldCredits(message: string): NormalizedError {
 export function describeDeclinedCard(message: string): NormalizedError {
   return {
     ...describeAsSlug("provider/mcpjam_limit"),
-    title: "Update your declined card",
+    title: AUTO_TOPUP_DECLINED_TITLE,
     oneLine: AUTO_TOPUP_DECLINED_MESSAGE,
     likelyCauses: [
       "Auto-reload could not add credits because your card was declined. Update your payment method and turn auto-reload back on, or add credits.",

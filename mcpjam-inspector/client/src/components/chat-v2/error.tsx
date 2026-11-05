@@ -17,6 +17,7 @@ import { JsonEditor } from "@/components/ui/json-editor";
 import {
   AUTO_TOPUP_DECLINED_CODE,
   AUTO_TOPUP_DECLINED_MESSAGE,
+  AUTO_TOPUP_DECLINED_TITLE,
   isMCPJamModelLimitError,
   isSpendBudgetReachedCode,
   SPEND_BUDGET_REACHED_MESSAGE,
@@ -408,7 +409,7 @@ export function ErrorBox({
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium leading-6">
               {isDeclinedCard
-                ? "Update your declined card"
+                ? AUTO_TOPUP_DECLINED_TITLE
                 : "Spend budget reached"}
             </p>
             <p className="text-sm leading-6 opacity-90">

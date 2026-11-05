@@ -43,7 +43,10 @@ export const SPEND_BUDGET_REACHED_MESSAGE =
 /** The code chat gives a refusal after a declined card paused auto-reload. */
 export const AUTO_TOPUP_DECLINED_CODE = "auto_topup_declined";
 
-/** What every surface says for it: the card, not a limit, is what to fix. */
+/** The title every surface gives it: the card, not a limit, is what to fix. */
+export const AUTO_TOPUP_DECLINED_TITLE = "Update your declined card";
+
+/** What every surface says for it, under that title. */
 export const AUTO_TOPUP_DECLINED_MESSAGE =
   "Your card was declined, so auto-reload is paused. Update your payment method and turn auto-reload back on in Organization \u2192 Billing, or add credits to keep going.";
 export type MCPJamLimitKind = "total" | "concurrency";
