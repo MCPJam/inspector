@@ -32,6 +32,11 @@ import {
 } from "./use-saved-run-reports";
 import { ConformanceVersionNotice } from "./ConformanceVersionNotice";
 import { RunResultRing } from "./RunResultRing";
+import {
+  ConformanceHistoryFilters,
+  searchAndSortHistory,
+  type HistorySort,
+} from "./ConformanceHistoryFilters";
 import { conformanceVersionRefusal } from "./conformance-version-refusal";
 import { suiteCatalog } from "./conformance-catalogs";
 import {
@@ -96,9 +101,19 @@ export const historyDateFormat = new Intl.DateTimeFormat("en-US", {
   minute: "2-digit",
 });
 
+/** Runs per page while History shows the newest first. */
+const HISTORY_PAGE_SIZE = 20;
+/**
+ * Runs per page while History reads every run. The backend matches runs by
+ * server only and orders them by date only, so search and the name sort work
+ * on the whole history, not on the pages loaded so far.
+ */
+const HISTORY_READ_ALL_PAGE_SIZE = 100;
+
 /**
  * Every conformance run in the project, newest first, as one table. A row
- * opens the run's detail page.
+ * opens the run's detail page. Above it, a search box, a server filter and a
+ * sort, laid out like the Swarms sessions filters.
  */
 export function ConformanceHistory({
   projectId,
@@ -110,12 +125,32 @@ export function ConformanceHistory({
 }) {
   const [cursor, setCursor] = useState<string | null>(null);
   const [rows, setRows] = useState<ConformanceRunListItem[]>([]);
+  /** A saved server's id, or null for every server. */
+  const [serverFilter, setServerFilter] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<HistorySort>("newest");
   const navigate = useAppNavigate();
+
+  const query = search.trim().toLowerCase();
+  const readsEveryRun = query.length > 0 || sort === "server";
+  // Once History reads every run it keeps the large page, so clearing the
+  // search does not page again through runs it already has.
+  const [readAll, setReadAll] = useState(false);
+  if (readsEveryRun && !readAll) setReadAll(true);
 
   const page = useQuery(
     "conformanceRuns:listRuns" as any,
     projectId
-      ? ({ projectId, paginationOpts: { numItems: 20, cursor } } as any)
+      ? ({
+          projectId,
+          // The backend filters by server on its index, so a filtered list
+          // pages through that server's runs alone.
+          ...(serverFilter ? { targetKey: `server:${serverFilter}` } : {}),
+          paginationOpts: {
+            numItems: readAll ? HISTORY_READ_ALL_PAGE_SIZE : HISTORY_PAGE_SIZE,
+            cursor,
+          },
+        } as any)
       : "skip",
   ) as
     | {
@@ -134,96 +169,168 @@ export function ConformanceHistory({
     });
   }, [cursor, page]);
 
+  // Search and the name sort keep loading pages until the history is complete.
+  useEffect(() => {
+    if (readsEveryRun && page && !page.isDone) setCursor(page.continueCursor);
+  }, [readsEveryRun, page]);
+
   const serverLabel = (run: ConformanceRunListItem) =>
     (run.serverId ? serverNames?.get(run.serverId) : undefined) ??
     run.targetKey.replace(/^server:/, "");
 
+  const changeServerFilter = (next: string | null) => {
+    if (next === serverFilter) return;
+    // Another server is another list: start it from its first page.
+    setServerFilter(next);
+    setCursor(null);
+    setRows([]);
+    setReadAll(readsEveryRun);
+  };
+
   // "Load more" changes the query's cursor, and the query reads undefined
   // again while that page loads: only the first page may replace the table.
-  if (page === undefined && rows.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground" role="status">
-        Loading run history…
-      </p>
-    );
+  // A server filter keeps the toolbar up, so it can be cleared.
+  if (serverFilter === null) {
+    if (page === undefined && rows.length === 0) {
+      return (
+        <p className="text-sm text-muted-foreground" role="status">
+          Loading run history…
+        </p>
+      );
+    }
+
+    if (rows.length === 0) {
+      return (
+        <EmptyState
+          icon={FlaskConical}
+          title="No conformance runs yet"
+          className="h-auto py-10"
+          description="Runs from the Inspector, the CLI, GitHub, and the API land here."
+        />
+      );
+    }
   }
 
-  if (rows.length === 0) {
-    return (
-      <EmptyState
-        icon={FlaskConical}
-        title="No conformance runs yet"
-        className="h-auto py-10"
-        description="Runs from the Inspector, the CLI, GitHub, and the API land here."
-      />
-    );
-  }
+  const visibleRows = searchAndSortHistory(rows, {
+    query,
+    sort,
+    texts: (run) => [
+      serverLabel(run),
+      run.protocolVersion ?? "Auto",
+      HISTORY_SOURCE_LABEL[run.source] ?? run.source,
+    ],
+    serverName: serverLabel,
+  });
+  const readingEveryRun = readsEveryRun && (!page || !page.isDone);
+  const filteredServerName = serverFilter
+    ? (serverNames?.get(serverFilter) ?? serverFilter)
+    : null;
 
   const header = "text-[11px] font-semibold tracking-[0.06em] text-foreground";
   const columns =
     "grid w-full grid-cols-[minmax(0,1.8fr)_repeat(6,minmax(0,1fr))] items-center gap-x-4";
   const cell = "min-w-0 truncate";
 
+  const notice = (text: string, status = false) => (
+    <p
+      className="px-1 text-sm text-muted-foreground"
+      role={status ? "status" : undefined}
+    >
+      {text}
+    </p>
+  );
+
   return (
     <section className="space-y-3" aria-label="Run history">
-      <div className="overflow-hidden rounded-lg border border-border bg-card">
-        <div className={`${columns} bg-muted/60 px-4.5 py-2`}>
-          <span className={`${cell} ${header}`}>SERVER</span>
-          <span className={`${cell} ${header}`}>PROTOCOL</span>
-          <span className={`${cell} ${header}`}>SCORE</span>
-          <span className={`${cell} ${header}`}>CHECKS</span>
-          <span className={`${cell} ${header}`}>RESULT</span>
-          <span className={`${cell} ${header}`}>DATE</span>
-          <span className={`${cell} ${header}`}>SOURCE</span>
-        </div>
-        <ul>
-          {rows.map((run) => (
-            <li
-              key={run._id}
-              className="border-t border-border/60 first:border-t-0"
-            >
-              <button
-                type="button"
-                className={`${columns} bg-popover px-4.5 py-3.5 text-left text-popover-foreground transition-colors hover:bg-muted/30`}
-                data-testid="conformance-history-row"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  navigate(buildConformanceRunPath(run._id, projectId));
-                }}
-              >
-                <span className={`${cell} text-sm font-semibold`}>
-                  {serverLabel(run)}
-                </span>
-                <span className={`${cell} text-[13px] text-muted-foreground`}>
-                  {run.protocolVersion ?? "Auto"}
-                </span>
-                <span
-                  className={`${cell} text-sm tabular-nums ${
-                    run.score == null ? "text-muted-foreground" : ""
-                  }`}
-                >
-                  {run.score == null ? "—" : `${run.score}%`}
-                </span>
-                <span className={`${cell} text-sm font-semibold tabular-nums`}>
-                  {run.passed}/{run.applicable}
-                </span>
-                <span className="flex min-w-0 items-center">
-                  <RunResultRing run={run} />
-                </span>
-                <span className="whitespace-nowrap text-[13px] text-muted-foreground">
-                  {historyDateFormat.format(run.createdAt)}
-                </span>
-                <span className={`${cell} text-[13px] text-muted-foreground`}>
-                  {HISTORY_SOURCE_LABEL[run.source] ?? run.source}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </div>
+      <ConformanceHistoryFilters
+        search={search}
+        onSearchChange={setSearch}
+        serverFilter={serverFilter}
+        onServerFilterChange={changeServerFilter}
+        serverNames={serverNames}
+        sort={sort}
+        onSortChange={setSort}
+      />
 
-      {page === undefined ? (
+      {readingEveryRun && rows.length > 0
+        ? notice("Loading every run…", true)
+        : null}
+
+      {page === undefined && rows.length === 0 ? (
+        notice("Loading run history…", true)
+      ) : rows.length === 0 ? (
+        notice(`No runs for ${filteredServerName} yet.`)
+      ) : visibleRows.length === 0 ? (
+        readingEveryRun ? null : (
+          <p
+            className="px-1 text-sm text-muted-foreground"
+            data-testid="conformance-history-no-match"
+          >
+            No runs match &ldquo;{search.trim()}&rdquo;.
+          </p>
+        )
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
+          <div className={`${columns} bg-muted/60 px-4.5 py-2`}>
+            <span className={`${cell} ${header}`}>SERVER</span>
+            <span className={`${cell} ${header}`}>PROTOCOL</span>
+            <span className={`${cell} ${header}`}>SCORE</span>
+            <span className={`${cell} ${header}`}>CHECKS</span>
+            <span className={`${cell} ${header}`}>RESULT</span>
+            <span className={`${cell} ${header}`}>DATE</span>
+            <span className={`${cell} ${header}`}>SOURCE</span>
+          </div>
+          <ul>
+            {visibleRows.map((run) => (
+              <li
+                key={run._id}
+                className="border-t border-border/60 first:border-t-0"
+              >
+                <button
+                  type="button"
+                  className={`${columns} bg-popover px-4.5 py-3.5 text-left text-popover-foreground transition-colors hover:bg-muted/30`}
+                  data-testid="conformance-history-row"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    navigate(buildConformanceRunPath(run._id, projectId));
+                  }}
+                >
+                  <span className={`${cell} text-sm font-semibold`}>
+                    {serverLabel(run)}
+                  </span>
+                  <span className={`${cell} text-[13px] text-muted-foreground`}>
+                    {run.protocolVersion ?? "Auto"}
+                  </span>
+                  <span
+                    className={`${cell} text-sm tabular-nums ${
+                      run.score == null ? "text-muted-foreground" : ""
+                    }`}
+                  >
+                    {run.score == null ? "—" : `${run.score}%`}
+                  </span>
+                  <span
+                    className={`${cell} text-sm font-semibold tabular-nums`}
+                  >
+                    {run.passed}/{run.applicable}
+                  </span>
+                  <span className="flex min-w-0 items-center">
+                    <RunResultRing run={run} />
+                  </span>
+                  <span className="whitespace-nowrap text-[13px] text-muted-foreground">
+                    {historyDateFormat.format(run.createdAt)}
+                  </span>
+                  <span className={`${cell} text-[13px] text-muted-foreground`}>
+                    {HISTORY_SOURCE_LABEL[run.source] ?? run.source}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {readsEveryRun || visibleRows.length === 0 ? null : page === undefined ? (
         <Button variant="outline" size="sm" disabled>
           Loading…
         </Button>
