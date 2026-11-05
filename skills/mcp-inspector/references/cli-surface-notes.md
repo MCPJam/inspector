@@ -185,13 +185,11 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
 - `resources list` and `read` are direct connected checks.
 - In doctor output, `resources/templates` may be reported as skipped when the server does not support that method. That is not a protocol failure by itself.
 
-### `prompts list`, `prompts get`, `prompts list-multi`
+### `prompts list`, `prompts get`
 
 - Empty prompt arrays are easy to overread.
-- In this branch, `manager.listPrompts(serverId)` returns `{ prompts: [] }` when:
-  - the server does not advertise the `prompts` capability
-  - the underlying call hits `prompts/list` method-unavailable handling
-- `prompts list-multi` also merges connection errors into `errors` while leaving that server's prompts entry as `[]`.
+- `prompts list` returns `{ prompts: [] }` without sending `prompts/list` when the server does not advertise the `prompts` capability, and also when `prompts/list` comes back method-unavailable.
+- Add `--rpc` to see whether `prompts/list` was sent at all.
 - Do not claim "the server supports prompts and returns an empty list" unless you have raw evidence that `prompts/list` was actually sent and answered.
 
 ## Known local enrichments and normalizations
