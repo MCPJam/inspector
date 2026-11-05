@@ -2,11 +2,105 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createModelContextController,
   PluginContextHeld,
+  PluginContextNotPersisted,
   PluginContextUpdateRejected,
 } from "../model-context-controller";
 const result = (id: string) => ({
   _meta: { "openai/modelContext": { updateId: id } },
 });
+describe("context refused before it was stored", () => {
+  it("lets the next, smaller update go at once", async () => {
+    const send = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new PluginContextNotPersisted("INSTANCE_CONTEXT_RATE_LIMITED"),
+      )
+      .mockResolvedValueOnce(result("second"));
+    const update = createModelContextController({
+      requireLive: () => {},
+      send,
+    });
+    const refused = await update({ content: [] }).catch((error) => error);
+    expect(refused).toBeInstanceOf(PluginContextUpdateRejected);
+    expect(refused).toMatchObject({
+      code: -32000,
+      message: "The host could not persist the model context update",
+    });
+    await expect(update({ content: [] })).resolves.toEqual(result("second"));
+    // The refused update never advanced the sequence.
+    expect(send.mock.calls.map(([request]) => request.sequence)).toEqual([
+      1, 1,
+    ]);
+  });
+
+  it("refuses an update no policy admits without sending it", async () => {
+    const send = vi.fn().mockResolvedValue(result("small"));
+    const onRefused = vi.fn();
+    const update = createModelContextController({
+      requireLive: () => {},
+      send,
+      onRefused,
+    });
+    const text = "x".repeat(4 * 1024 * 1024);
+    expect(() => update({ content: [{ type: "text", text }] })).toThrow(
+      PluginContextNotPersisted,
+    );
+    expect(send).not.toHaveBeenCalled();
+    expect(onRefused.mock.calls[0][0]).toMatchObject({
+      code: -32000,
+      reason: "PLUGIN_CONTEXT_TOO_LARGE",
+      excess: { budget: "updateMaxBytes", allowed: 4 * 1024 * 1024 },
+    });
+    await expect(update({ content: [] })).resolves.toEqual(result("small"));
+  });
+
+  it("leaves an update over the default budget to the server's policy", async () => {
+    const send = vi.fn().mockResolvedValue(result("large"));
+    const update = createModelContextController({
+      requireLive: () => {},
+      send,
+    });
+    const text = "x".repeat(300_000);
+    await expect(
+      update({ content: [{ type: "text", text }] }),
+    ).resolves.toEqual(result("large"));
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it("remounts on a stored snapshot larger than the default budgets", () => {
+    const onSnapshot = vi.fn();
+    const update = createModelContextController({
+      requireLive: () => {},
+      send: vi.fn(),
+      onSnapshot,
+    });
+    // 256 images, about 2.5 MB, as a ChatGPT-sized policy admits.
+    const content = Array.from({ length: 256 }, () => ({
+      type: "image",
+      mimeType: "image/png",
+      data: "A".repeat(10_000),
+    }));
+    expect(
+      update.restore({
+        revision: 1,
+        sequence: 1,
+        state: { updateId: "stored", content },
+      }),
+    ).toBe(true);
+    expect(onSnapshot.mock.calls[0][0].state.content).toHaveLength(256);
+  });
+
+  it("still holds updates whose outcome is unknown", async () => {
+    const send = vi.fn().mockRejectedValueOnce(new Error("network"));
+    const update = createModelContextController({
+      requireLive: () => {},
+      send,
+    });
+    await expect(update({ content: [] })).rejects.toThrow("network");
+    await expect(update({ content: [] })).rejects.toThrow("outcome unknown");
+  });
+});
+
 describe("context replace queue", () => {
   it("settles an unknown remove-all only by re-sending the same operation", async () => {
     const onSnapshot = vi.fn();
@@ -239,8 +333,9 @@ describe("context replace queue", () => {
     });
     await expect(update({})).rejects.toThrow("unsupported");
     await update({});
-    await expect(update({})).rejects.toThrow("lost response");
-    await expect(update({})).rejects.toThrow("outcome unknown");
+    const next = (n: number) => ({ structuredContent: { n } });
+    await expect(update(next(2))).rejects.toThrow("lost response");
+    await expect(update(next(3))).rejects.toThrow("outcome unknown");
     expect(send.mock.calls.map(([request]) => request.sequence)).toEqual([
       1, 1, 2,
     ]);
@@ -317,8 +412,44 @@ describe("context replace queue", () => {
     );
     // Attached again, the App's own updates flow as before.
     using = false;
-    await update(view);
+    await update({ content: [{ type: "text", text: "moved" }] });
+    expect(send).toHaveBeenCalledTimes(2);
     expect(send.mock.lastCall![0]).not.toHaveProperty("attach");
+  });
+  it("acknowledges an App's identical re-send without another write", async () => {
+    let using = false;
+    const send = vi.fn(async (request) => ({
+      ...result(`u${request.sequence}`),
+      snapshot: {
+        revision: request.sequence * 10,
+        sequence: request.sequence,
+        state: { updateId: `u${request.sequence}`, content: [] },
+      },
+    }));
+    const update = createModelContextController({
+      requireLive: () => {},
+      send,
+      onSnapshot: () => {},
+      userAttaching: () => using,
+    });
+    const view = { content: [{ type: "text", text: "view" }] };
+    const first = await update(view);
+    // Bits & Bolts re-sends its view on every redraw.
+    expect(await update(view)).toEqual(first);
+    expect(send).toHaveBeenCalledOnce();
+    // A person using the App always sends.
+    using = true;
+    await update(view);
+    expect(send).toHaveBeenCalledTimes(2);
+    using = false;
+    // Once something else replaced that state, the same view goes again.
+    update.restore({
+      revision: 25,
+      sequence: 2,
+      state: { updateId: "elsewhere", content: [] },
+    });
+    await update(view);
+    expect(send).toHaveBeenCalledTimes(3);
   });
   it("learns a hold from the server after a remount", async () => {
     const send = vi

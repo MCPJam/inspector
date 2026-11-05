@@ -11,6 +11,7 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
 // pass regardless of what the turn actually did.
 
 const harnessState = vi.hoisted(() => ({
+  started: vi.fn(),
   session: {
     sessionId: "session-1",
     stop: vi.fn(async () => ({})),
@@ -20,7 +21,7 @@ const harnessState = vi.hoisted(() => ({
 
 vi.mock("@ai-sdk/harness/agent", () => ({
   HarnessAgent: class {
-    createSession = vi.fn(async () => harnessState.session);
+    createSession = vi.fn(async () => { harnessState.started(); return harnessState.session; });
     stream = vi.fn(async () => ({
       fullStream: (async function* () {
         yield { type: "finish", finishReason: "stop" };
@@ -177,6 +178,7 @@ afterEach(() => {
   vi.mocked(revokeHarnessModelBroker).mockClear();
   vi.mocked(resolveHarnessSandbox).mockClear();
   vi.mocked(createE2BHarnessSandboxProvider).mockClear();
+  harnessState.started.mockClear();
   vi.mocked(reserveHarnessBox).mockClear();
   vi.mocked(renewHarnessBoxReservation).mockClear();
   vi.mocked(releaseHarnessBoxReservation).mockClear();
@@ -312,109 +314,36 @@ describe("runHarnessTurn — a scenario harness never takes a persistent compute
   });
 });
 
-describe("runHarnessTurn — reserve, then start the baseline-preserving broker lease", () => {
-  it("claims the box and only then asks for a credential", async () => {
-    // Reserve → broker start → in-stream bootstrap. The lease keeps the box's
-    // own egress baseline, so the bootstrap can reach the registry after start.
-    // The claim still comes first so a second turn cannot interleave.
-    await runHarnessTurn(
-      baseOptions({ harnessSandboxBinding: BINDING }) as never,
-      "none"
-    );
-
-    const reserveOrder = vi.mocked(reserveHarnessBox).mock
-      .invocationCallOrder[0]!;
-    const providerOrder = vi.mocked(createE2BHarnessSandboxProvider).mock
-      .invocationCallOrder[0]!;
-    const brokerOrder = vi.mocked(startHarnessModelBroker).mock
-      .invocationCallOrder[0]!;
-    expect(reserveOrder).toBeLessThan(providerOrder);
-    expect(providerOrder).toBeLessThan(brokerOrder);
-  });
-
-  it("builds one provider for the turn before broker start", async () => {
-    await runHarnessTurn(
-      baseOptions({ harnessSandboxBinding: BINDING }) as never,
-      "none"
-    );
-
+describe("runHarnessTurn — broker lease owns preparation", () => {
+  it("starts the broker before bootstrapping without a separate reservation", async () => {
+    await runHarnessTurn(baseOptions({ harnessSandboxBinding: BINDING }) as never, "none");
+    expect(reserveHarnessBox).not.toHaveBeenCalled();
+    expect(releaseHarnessBoxReservation).not.toHaveBeenCalled();
     expect(createE2BHarnessSandboxProvider).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(startHarnessModelBroker).mock.invocationCallOrder[0])
+      .toBeLessThan(harnessState.started.mock.invocationCallOrder[0]!);
   });
-
-  it("shares one runId between the claim and the lease that consumes it", async () => {
-    await runHarnessTurn(
-      baseOptions({ harnessSandboxBinding: BINDING }) as never,
-      "none"
-    );
-
-    const reservedRunId = vi.mocked(reserveHarnessBox).mock.calls[0]![0].runId;
-    const leasedRunId = vi.mocked(startHarnessModelBroker).mock.calls[0]![0]
-      .runId;
-    expect(reservedRunId).toBe(leasedRunId);
-    expect(reservedRunId).toBeTruthy();
-  });
-
-  it("hands the box back when broker start fails", async () => {
+  it("revokes the attempted lease when its start response is lost", async () => {
     vi.mocked(startHarnessModelBroker).mockResolvedValueOnce({
-      ok: false,
-      status: 502,
-      error: "Failed to provision the harness network.",
+      ok: false, status: 502, error: "Failed to provision the harness network.",
     });
-
-    const result = await runHarnessTurn(
-      baseOptions({ harnessSandboxBinding: BINDING }) as never,
-      "none"
-    );
-
-    // The run id was recorded before the POST, so teardown still revokes in
-    // case the backend installed before a lost response — and the reservation
-    // is ours to give back so the next turn does not wait out its TTL.
-    expect(revokeHarnessModelBroker).toHaveBeenCalledTimes(1);
-    expect(releaseHarnessBoxReservation).toHaveBeenCalledTimes(1);
+    const result = await runHarnessTurn(baseOptions({ harnessSandboxBinding: BINDING }) as never, "none");
+    const runId = vi.mocked(startHarnessModelBroker).mock.calls[0]![0].runId;
+    expect(runId).toBeTruthy();
+    expect(revokeHarnessModelBroker).toHaveBeenCalledWith(expect.objectContaining({ runId }));
+    expect(releaseHarnessBoxReservation).not.toHaveBeenCalled();
+    expect(harnessState.started).not.toHaveBeenCalled();
     expect(result.aborted).toBe(false);
   });
-
-  it("refuses to prepare a box another run is already preparing", async () => {
-    vi.mocked(reserveHarnessBox).mockResolvedValueOnce({
-      ok: false,
-      status: 409,
-      error: "A harness run is already active on this computer.",
+  it.each([409, 404])("does not start the runtime when broker admission returns %s", async (status) => {
+    vi.mocked(startHarnessModelBroker).mockResolvedValueOnce({
+      ok: false, status, error: "The computer cannot admit this turn.",
     });
     const onEngineError = vi.fn();
-
-    await runHarnessTurn(
-      baseOptions({
-        harnessSandboxBinding: BINDING,
-        onEngineError,
-      }) as never,
-      "none"
-    );
-
-    // The caller is told the box is busy, in the same words a lease conflict
-    // would have produced.
+    await runHarnessTurn(baseOptions({ harnessSandboxBinding: BINDING, onEngineError }) as never, "none");
     expect(onEngineError).toHaveBeenCalledTimes(1);
-    expect(onEngineError.mock.calls[0]![0].message).toMatch(
-      /already active on this computer/i
-    );
-    // Refused before ANY work on the box — that is the point of claiming first.
-    expect(startHarnessModelBroker).not.toHaveBeenCalled();
-  });
-
-  it("fails closed when the backend has no reservation endpoint", async () => {
-    vi.mocked(reserveHarnessBox).mockResolvedValueOnce({
-      ok: false,
-      status: 404,
-      error: "Harness model-broker returned 404",
-    });
-    const onEngineError = vi.fn();
-
-    await runHarnessTurn(
-      baseOptions({ harnessSandboxBinding: BINDING, onEngineError }) as never,
-      "none"
-    );
-
-    expect(onEngineError).toHaveBeenCalledTimes(1);
-    expect(startHarnessModelBroker).not.toHaveBeenCalled();
+    expect(harnessState.started).not.toHaveBeenCalled();
+    expect(reserveHarnessBox).not.toHaveBeenCalled();
     expect(releaseHarnessBoxReservation).not.toHaveBeenCalled();
   });
 });

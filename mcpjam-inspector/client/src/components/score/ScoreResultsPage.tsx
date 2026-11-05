@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
-import { missingInputMessage } from "@mcpjam/sdk/browser";
+import { missingInputMessage, noTaskCreatedMessage } from "@mcpjam/sdk/browser";
 import { NotRunTag } from "../conformance/ConformanceCheckRows";
 import { Button } from "@mcpjam/design-system/button";
 import { Loader2, CheckCircle2, XCircle, MinusCircle } from "lucide-react";
@@ -311,7 +311,10 @@ export function ScoreResultsPage() {
                           </div>
                         ) : check.error?.message ? (
                           <div className="text-[11px] text-red-400">
-                            {check.error.message}
+                            {noTaskCreatedMessage({
+                              ...check,
+                              status: check.status ?? "",
+                            }) ?? check.error.message}
                           </div>
                         ) : check.skipReason ? (
                           <div className="text-[11px] text-muted-foreground">

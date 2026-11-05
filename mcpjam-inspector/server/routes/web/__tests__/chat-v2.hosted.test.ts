@@ -835,6 +835,41 @@ describe("web routes — chat-v2 hosted mode", () => {
       .toMatchObject({ status: "incomplete" });
   });
 
+  it("keeps saved per-server pins represented by the client's snapshot", async () => {
+    const setup = await import("../../../services/chat-turn/setup-manifest.js");
+    const capture = vi.spyOn(setup, "capturePreparedWebSetup");
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        serverConnectionOverrides: {
+          "server-1": { mcpProtocolVersion: "2025-11-25" },
+        },
+      },
+    });
+    const { app, token } = createWebTestApp();
+    try {
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          hostId: "host-1",
+          selectedServerIds: ["server-1"],
+          chatSessionId: "saved-pins",
+          messages: [{ role: "user", content: "hello" }],
+          model: { id: "openai/gpt-5-mini", provider: "openai" },
+        },
+        token,
+      );
+      expect(response.status).toBe(200);
+      expect(
+        capture.mock.lastCall?.[0].persist.setupConnectionPolicyIncomplete,
+      ).toBe(false);
+    } finally {
+      capture.mockRestore();
+    }
+  });
+
   it("FAILS CLOSED when the scenario runtime-config fetch fails — never runs the engine", async () => {
     const { app, token } = createWebTestApp();
     fetchScenarioRuntimeConfigMock.mockResolvedValue({

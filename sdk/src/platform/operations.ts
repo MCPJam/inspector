@@ -2022,7 +2022,10 @@ const startMuseReadinessInput = serverScopedInput.extend({
 function readinessProbeFields(input: {
   lazyAuthProbe?: z.infer<typeof readinessLazyAuthProbeInput>;
   claimedFeatures?: string[];
-}): { lazyAuthProbe?: z.infer<typeof readinessLazyAuthProbeInput>; claimedFeatures?: string[] } {
+}): {
+  lazyAuthProbe?: z.infer<typeof readinessLazyAuthProbeInput>;
+  claimedFeatures?: string[];
+} {
   return {
     ...(input.lazyAuthProbe !== undefined
       ? { lazyAuthProbe: input.lazyAuthProbe }

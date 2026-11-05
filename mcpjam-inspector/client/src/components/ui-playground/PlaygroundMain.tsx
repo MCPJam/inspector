@@ -1,3 +1,10 @@
+import {
+  hasComparisonAuthRecoveryRequest,
+  markComparisonColumnSettled,
+  readComparisonAuthRecovery,
+  registerComparisonLayout,
+  clearComparisonAuthRecovery,
+} from "@/lib/comparison-auth-recovery";
 import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
 import { WorkspaceFileActionsProvider } from "@/components/host-workspace/file-actions";
 import type { RunPluginOnboarding } from "@/components/host-workspace/use-plugin-onboarding";
@@ -135,7 +142,6 @@ import {
   AlertDialogTitle,
 } from "@mcpjam/design-system/alert-dialog";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
-import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { toast } from "sonner";
 import { ModelDefinition } from "@/shared/types";
@@ -359,8 +365,7 @@ import {
   isDynamicTool,
   getToolInfo,
 } from "@/components/chat-v2/thread/thread-helpers";
-import type { WidgetModelContextEntry } from "@/shared/chat-v2";
-import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { useWidgetModelContextQueue } from "@/hooks/use-widget-model-context-queue";
 import { artifactStableKey } from "@/lib/artifact-urls";
 import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 
@@ -754,9 +759,8 @@ export function PlaygroundMain({
   );
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
-  const [modelContextQueue, setModelContextQueue] = useState<
-    WidgetModelContextEntry[]
-  >([]);
+  const [modelContextQueue, setModelContextQueue, handleModelContextUpdate] =
+    useWidgetModelContextQueue();
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
@@ -853,6 +857,13 @@ export function PlaygroundMain({
 
   const appState = useSharedAppState();
   const servers = appState.servers;
+  const activeProject = appState.projects[appState.activeProjectId];
+  const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const [comparisonRecovery, setComparisonRecovery] = useState(() =>
+    readComparisonAuthRecovery(convexProjectId ?? "local"),
+  );
+  const [comparisonServersRestored, setComparisonServersRestored] =
+    useState(false);
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   // Multi-server: `playgroundServerSelectorProps.selectedMultipleServers` is
   // the source of truth for which servers the chat session sees in the
@@ -869,13 +880,23 @@ export function PlaygroundMain({
   }, [playgroundServerSelectorProps, servers]);
 
   const selectedServers = useMemo(() => {
+    // Reconnecting other saved servers must not rename the recovered tools
+    // or change the context of the suspended calls.
+    if (comparisonRecovery && !comparisonServersRestored)
+      return comparisonRecovery.selectedServers;
     if (multiSelectedServerNames.length > 0) {
       return multiSelectedServerNames;
     }
     return serverName && servers[serverName]?.connectionStatus === "connected"
       ? [serverName]
       : [];
-  }, [multiSelectedServerNames, serverName, servers]);
+  }, [
+    comparisonRecovery,
+    comparisonServersRestored,
+    multiSelectedServerNames,
+    serverName,
+    servers,
+  ]);
 
   const serverConnected = Boolean(
     serverName && servers[serverName]?.connectionStatus === "connected",
@@ -892,8 +913,6 @@ export function PlaygroundMain({
   );
 
   // Hosted mode context (projectId, serverIds, OAuth tokens)
-  const activeProject = appState.projects[appState.activeProjectId];
-  const convexProjectId = activeProject?.sharedProjectId ?? null;
 
   // Resolved Local⇄Cloud engine for this project's personal computer. Passed
   // into useChatSession so a direct turn runs this host's bash on the local
@@ -2313,6 +2332,45 @@ export function PlaygroundMain({
   // to fall out of sync in the first place, including across a remount.
   const isComparingHosts =
     !isSharedSession && !isEnvironmentMode && selectedHostIds.length > 1;
+  // Whether this page load came back from a comparison's sign-in. Read once:
+  // a Connect click on this page adds the request before it redirects.
+  const [comparisonRecoveryRequested, setComparisonRecoveryRequested] =
+    useState(hasComparisonAuthRecoveryRequest);
+  const comparisonRecoveryMissing =
+    comparisonRecoveryRequested && !comparisonRecovery;
+  const comparisonRecoveryGroupId = comparisonRecovery?.id ?? chatSessionId;
+  const comparisonLayoutRestoredRef = useRef(false);
+  useEffect(() => {
+    if (!comparisonRecovery || comparisonLayoutRestoredRef.current) return;
+    comparisonLayoutRestoredRef.current = true;
+    setMultiModelEnabled(comparisonRecovery.multiModelEnabled);
+    if (comparisonRecovery.modelSelections)
+      setCompareSelections(comparisonRecovery.modelSelections);
+    setSelectedHostIds(comparisonRecovery.hostIds);
+  }, [
+    comparisonRecovery,
+    setMultiModelEnabled,
+    setCompareSelections,
+    setSelectedHostIds,
+  ]);
+  useEffect(
+    () =>
+      registerComparisonLayout(comparisonRecoveryGroupId, {
+        projectId: convexProjectId ?? "local",
+        multiModelEnabled,
+        modelSelections: compareSelections,
+        hostIds: selectedHostIds,
+        selectedServers,
+      }),
+    [
+      comparisonRecoveryGroupId,
+      convexProjectId,
+      multiModelEnabled,
+      compareSelections,
+      selectedHostIds,
+      selectedServers,
+    ],
+  );
 
   const isMultiHostMode = isComparingHosts && !viewingHistoryReplay;
   const leadHost = hostSlots[0].host;
@@ -2349,6 +2407,29 @@ export function PlaygroundMain({
   const unavailableClients = clientResolutions.filter(
     (result) => result.status !== "ready",
   );
+  // A restored host column whose host no longer exists renders no card, so
+  // nothing else settles it. Only a definite answer counts: signed in, the
+  // list loaded, and the slot's query done without a host.
+  const absentRestoredHostIds =
+    comparisonRecovery && isConvexAuthenticated && !hostListLoading
+      ? clientResolutions.flatMap((resolution, index) =>
+          resolution.status === "unavailable" &&
+          !hostSlots[index].host &&
+          !hostSlots[index].isLoading
+            ? [resolution.compareId]
+            : [],
+        )
+      : [];
+  // A string, so the effect runs when the set changes, not on every render.
+  const absentRestoredHostKey = absentRestoredHostIds.join("\n");
+  useEffect(() => {
+    if (!absentRestoredHostKey) return;
+    for (const compareId of absentRestoredHostKey.split("\n"))
+      markComparisonColumnSettled(convexProjectId ?? "local", {
+        kind: "host",
+        compareId,
+      });
+  }, [absentRestoredHostKey, convexProjectId]);
 
   // When viewing a history session the transcript lives on the single chat
   // session; compare layout would override that render. Matches ChatTabV2.
@@ -2650,7 +2731,8 @@ export function PlaygroundMain({
   }, [isMultiModelMode, modelCompareCards]);
 
   const effectiveHasMessages = isMultiModelLayoutMode
-    ? Object.values(compareHasMessages).some(Boolean)
+    ? Object.values(compareHasMessages).some(Boolean) ||
+      Boolean(comparisonRecovery?.columns.some((column) => column.hasMessages))
     : !isThreadEmpty;
   const preludeTraceEnvelope = useMemo(
     () =>
@@ -3219,6 +3301,69 @@ export function PlaygroundMain({
     },
     [playgroundServerSelectorProps, serverName, servers, serversById],
   );
+
+  const comparisonSelectionShownRef = useRef(false);
+  useEffect(() => {
+    if (!comparisonRecovery || comparisonServersRestored) return;
+    const same = (names: readonly string[], expected: readonly string[]) =>
+      names.length === expected.length &&
+      expected.every((name) => names.includes(name));
+    const saved = comparisonRecovery.selectedServers;
+    const live =
+      multiSelectedServerNames.length > 0
+        ? multiSelectedServerNames
+        : serverName && servers[serverName]?.connectionStatus === "connected"
+          ? [serverName]
+          : [];
+    const restorable = resolveRestorableServerNames(
+      saved,
+      serversById,
+      Object.keys(servers),
+    );
+    // A saved server that was removed or renamed cannot come back, so the
+    // ones that still exist are the whole restore.
+    if (
+      same(live, saved) ||
+      (restorable.length > 0 && same(live, restorable))
+    ) {
+      setComparisonServersRestored(true);
+      return;
+    }
+    // Once the selector shows the saved servers, a different choice is the
+    // user's own. It wins even while a saved server never reconnects.
+    const multi = playgroundServerSelectorProps?.selectedMultipleServers;
+    const chosen =
+      Array.isArray(multi) && multi.length > 0
+        ? multi
+        : serverName
+          ? [serverName]
+          : [];
+    if (restorable.length > 0 && same(chosen, restorable)) {
+      comparisonSelectionShownRef.current = true;
+    } else if (comparisonSelectionShownRef.current) {
+      setComparisonServersRestored(true);
+    }
+  }, [
+    comparisonRecovery,
+    comparisonServersRestored,
+    multiSelectedServerNames,
+    playgroundServerSelectorProps,
+    serverName,
+    servers,
+    serversById,
+  ]);
+
+  const comparisonServersRestoredRef = useRef(false);
+  useEffect(() => {
+    if (
+      !comparisonRecovery ||
+      comparisonServersRestoredRef.current ||
+      Object.keys(servers).length === 0
+    )
+      return;
+    comparisonServersRestoredRef.current = true;
+    restoreHistoryServerSelection(comparisonRecovery.selectedServers);
+  }, [comparisonRecovery, servers, restoreHistoryServerSelection]);
 
   const loadHistorySession = useCallback(
     async (
@@ -3819,6 +3964,9 @@ export function PlaygroundMain({
   }, [availableModels, chatSessionId, selectedModel, setSelectedModel]);
 
   const resetMultiModelSessions = useCallback(() => {
+    clearComparisonAuthRecovery();
+    setComparisonRecovery(null);
+    setComparisonRecoveryRequested(false);
     clearMultiModelUiState();
     compareTranscriptsRef.current = {};
     setMultiModelSessionGeneration((previous) => previous + 1);
@@ -4391,7 +4539,11 @@ export function PlaygroundMain({
         try {
           return await localAutoApprove.ensure();
         } catch (error) {
-          toast.error(error instanceof Error ? error.message : `${localHarness.harnessName ?? "Claude Code"} is not ready. Retry setup from the client settings.`);
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : `${localHarness.harnessName ?? "Claude Code"} is not ready. Retry setup from the client settings.`,
+          );
           return false;
         }
       }
@@ -4410,13 +4562,27 @@ export function PlaygroundMain({
         );
         return await localAutoApprove.ensure();
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : `${localHarness.harnessName ?? "Claude Code"} is not ready. Retry setup from the client settings.`);
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : `${localHarness.harnessName ?? "Claude Code"} is not ready. Retry setup from the client settings.`,
+        );
         return false;
       } finally {
         localHarnessPreparingRef.current = false;
         setLocalHarnessPreparing(false);
       }
-    }, [localHarnessRequested, localHarnessInScope, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName, localAutoApprove.ensure]);
+    },
+    [
+      localHarnessRequested,
+      localHarnessInScope,
+      convexProjectId,
+      localHarness.phase,
+      localHarness.harnessId,
+      localHarness.harnessName,
+      localAutoApprove.ensure,
+    ],
+  );
 
   const extensionOwnerScope = JSON.stringify([
     currentUserForSender?._id,
@@ -4602,22 +4768,6 @@ export function PlaygroundMain({
     onStreamingChange?.(isRunBusy);
   }, [isRunBusy, onStreamingChange]);
 
-  // Handle model context updates from widgets (SEP-1865 ui/update-model-context)
-  const handleModelContextUpdate = useCallback(
-    (
-      toolCallId: string,
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      },
-    ) => {
-      setModelContextQueue((previous) =>
-        upsertWidgetModelContextEntry(previous, toolCallId, context),
-      );
-    },
-    [],
-  );
-
   const handleResetAllChats = useCallback(() => {
     composer.prepareForClearChat();
     // Clearing empties the transcript and mints a fresh `chatSessionId`, so the
@@ -4774,6 +4924,12 @@ export function PlaygroundMain({
       const next = setCompareCardEffort(compareCards, cardKey, effort);
       if (!next) return;
       compareSeedSourceRef.current[next.key] = cardKey;
+      // The replaced card unmounts, perhaps mid-restore; left unsettled, its
+      // saved column would bring the old effort back on the next reload.
+      markComparisonColumnSettled(convexProjectId ?? "local", {
+        kind: "model",
+        compareId: cardKey,
+      });
       setCompareSelections(next.selections);
       // A new effort is a new comparison key; the phone switcher follows
       // the card rather than falling back to the first one.
@@ -4781,7 +4937,7 @@ export function PlaygroundMain({
         current === `model:${cardKey}` ? `model:${next.key}` : current,
       );
     },
-    [compareCards, setCompareSelections],
+    [compareCards, convexProjectId, setCompareSelections],
   );
 
   // Efforts in the model menu: a model and its effort in one pick; in
@@ -6497,6 +6653,11 @@ export function PlaygroundMain({
     // synchronously on the first render, so the fetch-source key is
     // stable from mount #1.
     <WidgetSurfaceProvider value="playground">
+      {comparisonRecoveryMissing && (
+        <div role="alert" className="p-3 text-sm text-destructive">
+          MCPJam couldn’t restore this comparison. Please start a new chat.
+        </div>
+      )}
       {/* ONE dialog for the surface. Rendered here rather than by a composer
           because there are six composers and a compare view mounts several at
           once — each owning its own would race one approval. */}
@@ -6835,7 +6996,7 @@ export function PlaygroundMain({
                             },
                           )}
                           browserWorkspace={{
-                            id: chatSessionId,
+                            id: comparisonRecoveryGroupId,
                             order: columnIndex,
                             clientCount: multiHostColumns.length,
                           }}
@@ -6949,7 +7110,7 @@ export function PlaygroundMain({
                                 : null,
                             )}
                             browserWorkspace={{
-                              id: chatSessionId,
+                              id: comparisonRecoveryGroupId,
                               order: modelIndex,
                               clientCount: modelCompareCards.length,
                             }}

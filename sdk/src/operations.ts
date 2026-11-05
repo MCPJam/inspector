@@ -149,7 +149,10 @@ const MAX_PAGINATION_PAGES = 1000;
 export interface WithEphemeralClientOptions {
   /** Cancel connection setup and active work, then close the owned client. */
   signal?: AbortSignal;
-  /** Override the serverId (default: "__ephemeral__") */
+  /**
+   * Override the serverId. Default: the HTTP endpoint's host, or the stdio
+   * command's name (see {@link ephemeralServerId}).
+   */
   serverId?: string;
   /** Client name reported to the MCP server (default: "mcpjam-sdk") */
   clientName?: string;
@@ -495,12 +498,33 @@ export async function listAllServerSkills(
 
 // ── Lifecycle Helpers ───────────────────────────────────────────────
 
+/**
+ * The id a one-off connection goes by when the caller names none. Connection
+ * and protocol-version errors name the server by this id (`MCP server "<id>"
+ * …`), so it is the server's own address, not a placeholder: a run against
+ * `bart` that failed with `MCP server "__ephemeral__"` read as if some other
+ * server had been tested.
+ */
+export function ephemeralServerId(config: MCPServerConfig): string {
+  if (config.url) {
+    try {
+      return new URL(config.url).host || config.url;
+    } catch {
+      return config.url;
+    }
+  }
+  if (config.command) {
+    return config.command.split(/[\\/]/).pop() || config.command;
+  }
+  return "__ephemeral__";
+}
+
 export async function withEphemeralClient<T>(
   config: MCPServerConfig,
   fn: (manager: MCPClientManager, serverId: string) => Promise<T>,
   options?: WithEphemeralClientOptions
 ): Promise<T> {
-  const serverId = options?.serverId ?? "__ephemeral__";
+  const serverId = options?.serverId ?? ephemeralServerId(config);
   const manager = new MCPClientManager(
     {},
     {
@@ -522,7 +546,19 @@ export async function withEphemeralClient<T>(
     if (signal) await manager.connectToServer(serverId, config, { signal });
     else await manager.connectToServer(serverId, config);
     signal?.throwIfAborted();
-    return fn(manager, serverId);
+    // A callback may catch an aborted request. Block subsequent operations
+    // so it cannot reconnect or send more work after its deadline.
+    const guardedManager = signal ? new Proxy(manager, {
+      get(target, key) {
+        const value = Reflect.get(target, key);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => {
+          signal.throwIfAborted();
+          return Reflect.apply(value, target, args);
+        };
+      },
+    }) : manager;
+    return fn(guardedManager, serverId);
   };
   try {
     return await awaitWithSignal(run(), signal);

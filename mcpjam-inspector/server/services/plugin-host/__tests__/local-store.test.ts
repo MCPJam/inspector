@@ -151,6 +151,60 @@ describe("local installs keep App controls in-process", () => {
       request({ action: "read", identityHash, controlHash }, signal()),
     ).rejects.toThrow("INSTANCE_UNAVAILABLE");
   });
+  it("leaves out context the caller holds, as the backend does", async () => {
+    const store = new LocalPluginControlStore(() => 1_000_000);
+    const request = store.handler(PLUGIN_INSTANCE_CONTROL_PATH, "UNAVAILABLE");
+    const key = { identityHash: "a".repeat(64), controlHash: "b".repeat(64) };
+    const token = "t".repeat(43);
+    const sent = async (command: Record<string, unknown>) => {
+      try {
+        const { control } = await request({ ...key, ...command }, signal());
+        return "contextJson" in control;
+      } catch (error) {
+        return (error as Error).message;
+      }
+    };
+    const outcomes = [];
+    for (const command of [
+      {
+        action: "issue",
+        ownerHash: "c".repeat(64),
+        snapshotJson: JSON.stringify({ instance: { activation: {} } }),
+        expiresAt: 1_001_000,
+        contextToken: token,
+        activation: {
+          token,
+          anchorHash: "d".repeat(64),
+          bindingHash: "e".repeat(64),
+          renewable: true,
+        },
+      },
+      {
+        action: "context",
+        expectedVersion: 0,
+        contextJson: '{"a":1}',
+        knownContextVersion: 1,
+      },
+      { action: "read", knownContextVersion: 1 },
+      { action: "read", knownContextVersion: 0 },
+      { action: "read" },
+      { action: "renew", expiresAt: 1_002_000, knownContextVersion: 1 },
+      { action: "renew", expiresAt: 1_003_000 },
+      { action: "read", knownContextVersion: 1.5 },
+    ])
+      outcomes.push(await sent(command));
+    // The same answers as the backend's parity scenario.
+    expect(outcomes).toEqual([
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      "INVALID_INSTANCE_CONTROL",
+    ]);
+  });
   it("refuses to renew unattended runs and past host-selected file bytes", async () => {
     let now = 1_000_000;
     const store = new LocalPluginControlStore(() => now);

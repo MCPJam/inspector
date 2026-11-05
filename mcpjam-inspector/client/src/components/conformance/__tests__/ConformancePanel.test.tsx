@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   act,
   render,
+  renderHook,
   screen,
   fireEvent,
   waitFor,
@@ -25,6 +26,14 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (key: string) => enabledFlags.has(key),
 }));
 
+// Home cards subscribe to each run for suite scores. These tests render
+// the home without a Convex client, so the suite rows stay empty.
+vi.mock("convex/react", () => ({
+  useQuery: () => undefined,
+}));
+
+vi.mock("../PersistConformanceRun", () => ({ PersistConformanceRun: () => null }));
+
 const mockRunProtocol = vi.fn();
 const mockRunApps = vi.fn();
 const mockRunTasks = vi.fn();
@@ -42,12 +51,24 @@ vi.mock("@/lib/apis/conformance-connection-api", () => ({
 }));
 
 vi.mock("@/lib/apis/mcp-conformance-api", () => ({
+  cancelOAuthConformance: vi.fn(async () => ({ success: true })),
   runProtocolConformance: (...args: unknown[]) => mockRunProtocol(...args),
   runAppsConformance: (...args: unknown[]) => mockRunApps(...args),
   runTasksConformance: (...args: unknown[]) => mockRunTasks(...args),
   startOAuthConformance: (...args: unknown[]) => mockStartOAuth(...args),
   submitOAuthConformanceCode: (...args: unknown[]) => mockSubmitCode(...args),
   completeOAuthConformance: (...args: unknown[]) => mockCompleteOAuth(...args),
+}));
+
+// Group scheduling and aggregation are covered by run-task-conformance-groups.test.ts.
+// These panel tests supply the completed suite report.
+vi.mock("@/hooks/run-task-conformance-groups", () => ({
+  runTaskConformanceGroups: async (
+    server: string,
+    options: Record<string, unknown>,
+    _isActive: () => boolean,
+    remainingBudget: () => Record<string, unknown>,
+  ) => (await mockRunTasks(server, { ...options, ...remainingBudget() })).result,
 }));
 
 // Step 2 lists a server's tools for the checks that must call one.
@@ -68,6 +89,9 @@ vi.mock("@/components/oauth/utils", () => ({
   }),
 }));
 
+import { cancelOAuthConformance } from "@/lib/apis/mcp-conformance-api";
+import { useConformanceRun } from "@/hooks/use-conformance-run";
+import { checkConformanceConnection } from "@/lib/apis/conformance-connection-api";
 import { toast } from "@/lib/toast";
 import { OAUTH_CATALOG } from "../conformance-catalogs";
 import { ConformanceTab } from "../ConformanceTab";
@@ -77,6 +101,10 @@ import {
   RUN_LABEL,
 } from "../ConformancePageChrome";
 import { SUITE_COPY } from "../conformance-ui";
+
+/** A tool option: its name, then its safety badge. */
+const toolOption = (name: string, tag: string) =>
+  new RegExp(`^${name}\\s*·\\s*${tag}$`);
 
 function createProtocolResult(
   overrides: Partial<MCPConformanceResult> = {},
@@ -336,6 +364,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   enabledFlags.clear();
   window.localStorage.clear();
+  window.sessionStorage.clear();
 });
 
 describe("ConformanceTab", () => {
@@ -454,7 +483,7 @@ describe("ConformanceTab", () => {
     fireEvent.click(advice);
     const row = screen.getByText("Deprecated Feature Use").closest("li")!;
     expect(row).toHaveTextContent(
-      "Deprecation notice Protocol Deprecated Feature Use",
+      "Suggested Protocol Deprecated Feature Use",
     );
   });
 
@@ -584,9 +613,7 @@ describe("ConformanceTab", () => {
     await clickRun();
 
     // The run's own header, which leads back to History.
-    expect(
-      screen.getByRole("button", { name: "Conformance History" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "History" })).toBeInTheDocument();
     expect(screen.queryByText("History table")).toBeNull();
     await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
   });
@@ -609,10 +636,8 @@ describe("ConformanceTab", () => {
     await clickRun();
     expect(window.location.search).toBe("");
 
-    // The run header's breadcrumb goes back to History.
-    fireEvent.click(
-      screen.getByRole("button", { name: "Conformance History" }),
-    );
+    // The run header's History tab goes back to History.
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
     expect(window.location.search).toBe("?view=history");
     expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute(
       "aria-selected",
@@ -624,9 +649,7 @@ describe("ConformanceTab", () => {
       window.history.pushState({}, "", "/conformance");
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
-    expect(
-      screen.getByRole("button", { name: "Conformance History" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "History" })).toBeInTheDocument();
   });
 
   it("stays on History when Run has no server to run", async () => {
@@ -980,6 +1003,9 @@ describe("ConformanceTab", () => {
     // The whole protocol suite was picked, so it runs without a list.
     await waitFor(() =>
       expect(mockRunProtocol).toHaveBeenCalledWith("alpha", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
         protocolVersion: "2025-11-25",
       }),
     );
@@ -1051,6 +1077,9 @@ describe("ConformanceTab", () => {
     );
     await waitFor(() =>
       expect(mockRunProtocol).toHaveBeenCalledWith("beta", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
         protocolVersion: "2026-07-28",
       }),
     );
@@ -1167,6 +1196,9 @@ describe("ConformanceTab", () => {
     );
     await waitFor(() =>
       expect(mockRunTasks).toHaveBeenCalledWith("alpha", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
         checkIds: ["tasks-update-ack-shape"],
         protocolVersion: "2025-11-25",
         toolName: "job",
@@ -1240,6 +1272,9 @@ describe("ConformanceTab", () => {
       rerender(<ConformanceTab server={beta} {...props} />);
       await waitFor(() =>
         expect(mockRunTasks).toHaveBeenCalledWith("beta", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
           checkIds: ["tasks-update-ack-shape"],
           protocolVersion: "2025-11-25",
           toolName: "beta-job",
@@ -1575,10 +1610,13 @@ describe("ConformanceTab", () => {
 
     const card = screen.getByRole("list", { name: "Servers" });
     expect(card).toHaveTextContent("alpha");
-    expect(card).toHaveTextContent("Last run Oct 28, 2026 · Protocol Auto");
-    expect(card).toHaveTextContent("PASSED");
+    expect(card).toHaveTextContent("· Protocol Auto");
+    expect(card).toHaveTextContent(/Last run/);
+    expect(
+      within(card).getByRole("img", { name: "100%. 22 passed of 22" }),
+    ).toBeInTheDocument();
     expect(card).toHaveTextContent("100%");
-    expect(card).toHaveTextContent("22/22");
+    expect(card).not.toHaveTextContent("22/22");
 
     fireEvent.click(
       within(card).getByRole("button", { name: "View last run" }),
@@ -1718,7 +1756,7 @@ describe("ConformanceTab", () => {
       expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Conformance History" }));
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
     fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
 
     // The page's home, not the run it just left.
@@ -1960,7 +1998,7 @@ describe("ConformanceTab", () => {
     );
     await runToCompletion();
 
-    fireEvent.click(screen.getByRole("button", { name: "Conformance History" }));
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByText("History table")).toBeInTheDocument();
@@ -2068,6 +2106,10 @@ describe("ConformanceTab", () => {
       await continueSetup();
     }
 
+    /** The field a tool dropdown sits in, with its arguments and level. */
+    const fieldOf = (combobox: HTMLElement) =>
+      within(combobox.parentElement as HTMLElement);
+
     /** Setup to step 2 with the Protocol suite open. */
     async function openProtocolChecks() {
       await toStep2();
@@ -2122,7 +2164,7 @@ describe("ConformanceTab", () => {
         await waitFor(() => expect(tool).toBeEnabled());
         await user.click(tool);
         await user.click(
-          screen.getByRole("option", { name: "echo · read-only" }),
+          screen.getByRole("option", { name: toolOption("echo", "read-only") }),
         );
         const checkRow = screen.getByRole("button", {
           name: new RegExp(`^${row}`),
@@ -2132,13 +2174,9 @@ describe("ConformanceTab", () => {
           within(header).getByText(inputBadge(missing)),
         ).toBeInTheDocument();
 
-        fireEvent.click(screen.getByRole("switch"));
-        const args = screen.getByRole("textbox", { name: "Arguments" });
-        fireEvent.change(args, { target: { value: '{"projectId":123}' } });
-        expect(checkRow).toHaveTextContent("Needs input");
-        fireEvent.change(args, {
-          target: { value: '{"projectId":"project-1"}' },
-        });
+        // Filled in through the form built from the tool's input schema.
+        const args = fieldOf(tool).getByPlaceholderText("Enter projectId");
+        fireEvent.change(args, { target: { value: "project-1" } });
         expect(checkRow).toHaveTextContent("Input set");
         if (ready)
           expect(
@@ -2146,7 +2184,8 @@ describe("ConformanceTab", () => {
           ).toBeInTheDocument();
         else expect(within(header).queryByText(/needs? input/)).toBeNull();
 
-        fireEvent.change(args, { target: { value: "{}" } });
+        // An emptied required box is not sent, so the check needs input again.
+        fireEvent.change(args, { target: { value: "" } });
         expect(checkRow).toHaveTextContent("Needs input");
         fireEvent.click(header);
         expect(header).toHaveAttribute("aria-expanded", "false");
@@ -2198,14 +2237,14 @@ describe("ConformanceTab", () => {
         expect(checkRow).toHaveTextContent("Needs input");
         await user.click(tool);
         await user.click(
-          screen.getByRole("option", { name: "echo · read-only" }),
+          screen.getByRole("option", { name: toolOption("echo", "read-only") }),
         );
         expect(checkRow).toHaveTextContent("Input set");
-        fireEvent.click(screen.getByRole("switch"));
-        const args = screen.getByRole("textbox", { name: "Arguments" });
-        fireEvent.change(args, { target: { value: "[" } });
-        expect(checkRow).toHaveTextContent("Needs input");
-        fireEvent.change(args, { target: { value: '{"d":"2026-11"}' } });
+        // An optional argument: untick skip, then fill it in.
+        fireEvent.click(fieldOf(tool).getByRole("checkbox", { name: "skip" }));
+        fireEvent.change(fieldOf(tool).getByPlaceholderText("Enter d"), {
+          target: { value: "2026-11" },
+        });
         expect(checkRow).toHaveTextContent("Input set");
         fireEvent.click(header);
         if (suite === "Tasks")
@@ -2229,10 +2268,10 @@ describe("ConformanceTab", () => {
       );
       // Only tools that declare an output schema can be graded.
       expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(
-        ["Not set", "weather · read-only"],
+        ["Not set", "weather·read-only"],
       );
       await user.click(
-        screen.getByRole("option", { name: "weather · read-only" }),
+        screen.getByRole("option", { name: toolOption("weather", "read-only") }),
       );
 
       fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
@@ -2260,28 +2299,28 @@ describe("ConformanceTab", () => {
         screen.queryByRole("combobox", { name: "Log level to request" }),
       ).toBeNull();
 
-      await user.click(
-        screen.getByRole("combobox", { name: "Tool that emits logs" }),
-      );
+      const logs = screen.getByRole("combobox", {
+        name: "Tool that emits logs",
+      });
+      await user.click(logs);
       // Read-only tools first, and a warning on one that may modify data.
       const options = screen.getAllByRole("option").map((o) => o.textContent);
       expect(options).toEqual([
         "Not set",
-        "echo · read-only",
-        "weather · read-only",
-        "delete_row · may modify data",
+        "echo·read-only",
+        "weather·read-only",
+        "delete_row·may modify data",
       ]);
       await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
 
-      // The arguments editor Evals uses, here with its Raw JSON switch on.
-      fireEvent.click(screen.getByRole("switch"));
-      const args = screen.getByRole("textbox", { name: "Arguments" });
-      fireEvent.change(args, { target: { value: "[1]" } });
-      expect(screen.getByText("Expected a JSON object")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
-      fireEvent.change(args, { target: { value: '{"message": "hi"}' } });
+      // A form from the tool's input schema; message is optional, so it
+      // starts skipped.
+      fireEvent.click(fieldOf(logs).getByRole("checkbox", { name: "skip" }));
+      fireEvent.change(fieldOf(logs).getByPlaceholderText("Enter message"), {
+        target: { value: "hi" },
+      });
       expect(screen.getByRole("button", { name: RUN_LABEL })).toBeEnabled();
 
       // The level the log level advice asks for: the SDK's default until
@@ -2324,22 +2363,22 @@ describe("ConformanceTab", () => {
       );
     });
 
-    it("offers the tool's own argument names", async () => {
+    it("lists the tool's own arguments as fields", async () => {
       const user = userEvent.setup();
       await openProtocolChecks();
+      const logs = screen.getByRole("combobox", {
+        name: "Tool that emits logs",
+      });
+      await user.click(logs);
       await user.click(
-        screen.getByRole("combobox", { name: "Tool that emits logs" }),
-      );
-      await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
 
-      await user.click(screen.getByRole("button", { name: "Add argument" }));
-      await user.click(screen.getByText("Select arg…"));
-
+      expect(fieldOf(logs).getByText("message")).toBeInTheDocument();
       expect(
-        await screen.findByRole("option", { name: /message/ }),
+        fieldOf(logs).getByPlaceholderText("Enter message"),
       ).toBeInTheDocument();
+      expect(fieldOf(logs).queryByRole("switch")).toBeNull();
     });
 
     it("flags the checks that need an input before the suite is opened", async () => {
@@ -2369,7 +2408,7 @@ describe("ConformanceTab", () => {
         screen.getByRole("combobox", { name: "Tool that emits logs" }),
       );
       await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
 
       expect(screen.getAllByText("Input set")).toHaveLength(2);
@@ -2379,7 +2418,8 @@ describe("ConformanceTab", () => {
       ).toBeInTheDocument();
     });
 
-    it("does not ask for the output tool when no tool declares an output schema", async () => {
+    it("shades the output check when no tool declares an output schema", async () => {
+      const user = userEvent.setup();
       mockListTools.mockResolvedValue({
         tools: [{ name: "echo", annotations: { readOnlyHint: true } }],
       });
@@ -2388,13 +2428,27 @@ describe("ConformanceTab", () => {
         name: /^Protocol.*checks selected$/,
       });
       fireEvent.click(header);
+      await waitFor(() =>
+        expect(
+          screen.getByRole("combobox", { name: "Tool that emits logs" }),
+        ).toBeEnabled(),
+      );
 
-      // Nothing to grade, so the check does not apply: no tag, no count.
+      // Nothing to grade, so the check does not apply: no field, no tag, no
+      // count. It stays picked, so it runs once a tool declares a schema.
       expect(
-        await screen.findByText(
-          "No tool on this server declares an output schema, so this check does not apply.",
-        ),
-      ).toBeInTheDocument();
+        screen.queryByRole("combobox", { name: "Tool to check output" }),
+      ).toBeNull();
+      const box = screen.getByRole("checkbox", {
+        name: "Run Tool Output Schema Honored",
+      });
+      expect(box).toBeChecked();
+      const row = box.closest("label")!.parentElement!;
+      expect(row).toHaveClass("opacity-50");
+      await user.hover(within(row).getByText("Tool Output Schema Honored"));
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(
+        "No tool on this server declares an output schema, so this check does not apply.",
+      );
       expect(
         within(header).getByText(inputBadge("2 optional checks need input")),
       ).toBeInTheDocument();
@@ -2472,7 +2526,7 @@ describe("ConformanceTab", () => {
           screen.getByRole("combobox", { name: "Tool that creates a task" }),
         );
         await user.click(
-          screen.getByRole("option", { name: "echo · read-only" }),
+          screen.getByRole("option", { name: toolOption("echo", "read-only") }),
         );
         expect(within(header).queryByText(/needs? input/)).toBeNull();
         expect(taskRow).toHaveTextContent("Input set");
@@ -2529,7 +2583,7 @@ describe("ConformanceTab", () => {
 
         await user.click(tool);
         await user.click(
-          screen.getByRole("option", { name: "create_task · read-only" }),
+          screen.getByRole("option", { name: toolOption("create_task", "read-only") }),
         );
         expect(taskRow).toHaveTextContent("Input set");
         await user.click(tool);
@@ -2625,7 +2679,7 @@ describe("ConformanceTab", () => {
         screen.getAllByRole("combobox", { name: "Tool that creates a task" }),
       ).toHaveLength(1);
       expect(
-        screen.getAllByText(/^Calls the tool set under/).length,
+        screen.getAllByRole("checkbox", { name: "Use suite default" }).length,
       ).toBeGreaterThan(0);
       // The answers need a tool first.
       expect(
@@ -2635,7 +2689,7 @@ describe("ConformanceTab", () => {
       ).toBeNull();
 
       await user.click(tool);
-      await user.click(screen.getByRole("option", { name: "echo · read-only" }));
+      await user.click(screen.getByRole("option", { name: toolOption("echo", "read-only") }));
 
       const answers = screen.getByRole("textbox", {
         name: "Answers to the task's questions (optional)",
@@ -2658,6 +2712,9 @@ describe("ConformanceTab", () => {
       fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
       await waitFor(() =>
         expect(mockRunTasks).toHaveBeenCalledWith("alpha", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
           toolName: "echo",
           protocolVersion: "2025-11-25",
           inputResponses: { confirm: { action: "accept" } },
@@ -2682,7 +2739,7 @@ describe("ConformanceTab", () => {
         screen.getByRole("combobox", { name: "Tool that asks for input" }),
       );
       expect(
-        screen.getByRole("option", { name: "ask_user · read-only" }),
+        screen.getByRole("option", { name: toolOption("ask_user", "read-only") }),
       ).toBeInTheDocument();
       // Two fields, two pages: one call per page, not one per field.
       expect(mockListTools).toHaveBeenCalledTimes(2);
@@ -2714,7 +2771,7 @@ describe("ConformanceTab", () => {
         screen.getByRole("combobox", { name: "Tool that emits logs" }),
       );
       await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
 
       // The check and the advice that would call it are left out.
@@ -2748,12 +2805,20 @@ describe("ConformanceTab", () => {
         screen.getByRole("combobox", { name: "Tool that emits logs" }),
       );
       await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
-      // Under the advice row: a pointer to the check's tool, and the level.
+      // Under the advice row: its own dropdown, filled with the check's tool,
+      // and the level.
       expect(
-        screen.getByText("Calls the tool set under Logs Require A Log Level."),
-      ).toBeInTheDocument();
+        screen.getByRole("checkbox", {
+          name: "Use the tool from Logs Require A Log Level",
+        }),
+      ).toBeChecked();
+      expect(
+        screen.getByRole("combobox", {
+          name: "Tool that emits logs for Log Level Filtering",
+        }),
+      ).toHaveTextContent("echo");
       expect(
         screen.getByRole("combobox", { name: "Log level to request" }),
       ).toBeInTheDocument();
@@ -2779,6 +2844,42 @@ describe("ConformanceTab", () => {
       expect(sent.checkIds).not.toContain("modern-logs-require-log-level");
       expect(sent.readinessIds).toContain("readiness-log-level-filtering");
       expect(sent.readinessIds).not.toContain("readiness-session-termination");
+    });
+
+    it("lets the advice pick its own log tool, and sends it with the run", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await openProtocolChecks();
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      await user.click(
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
+      );
+
+      const inherit = screen.getByRole("checkbox", {
+        name: "Use the tool from Logs Require A Log Level",
+      });
+      const adviceTool = screen.getByRole("combobox", {
+        name: "Tool that emits logs for Log Level Filtering",
+      });
+      await user.click(adviceTool);
+      await user.click(
+        screen.getByRole("option", { name: toolOption("weather", "read-only") }),
+      );
+      expect(inherit).not.toBeChecked();
+      expect(adviceTool).toHaveTextContent("weather");
+      // The check keeps its own tool.
+      expect(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      ).toHaveTextContent("echo");
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+      expect(mockRunProtocol.mock.calls[0]![1].probes).toEqual({
+        logProbe: { toolName: "echo" },
+        logLevelOverride: { toolName: "weather" },
+      });
     });
 
     it("turns the advice off with the suite's box, and offers none with no check picked", async () => {
@@ -2858,7 +2959,7 @@ describe("ConformanceTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
     // From History, Run opens the setup steps again.
-    fireEvent.click(screen.getByRole("button", { name: "Conformance History" }));
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     await continueSetup();
 
@@ -2937,10 +3038,17 @@ describe("ConformanceTab", () => {
     );
     await runToCompletion();
 
-    // Breadcrumb, Run again and when it ran; no pickers in the run's header.
-    expect(
-      screen.getByRole("button", { name: "Conformance History" }),
-    ).toBeInTheDocument();
+    // Swarm's header: back, the server's name and the page's tabs, then
+    // Run again and when it ran; no pickers in the run's header.
+    expect(screen.getByTestId("conformance-run-back")).toHaveTextContent(
+      "Conformance",
+    );
+    expect(screen.getByRole("heading", { name: "alpha" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Overview" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("button", { name: "History" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled();
     expect(screen.getByText(/ · UI$/)).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
@@ -3089,6 +3197,7 @@ describe("ConformanceTab", () => {
     render(
       <ConformanceTab
         server={server}
+        serverTimeouts={{}}
         servers={[server]}
         onSelectServer={vi.fn()}
         onConnectServer={vi.fn(async () => "ready" as const)}
@@ -3098,6 +3207,9 @@ describe("ConformanceTab", () => {
 
     expect(screen.queryByRole("alert")).toBeNull();
     await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run timeout" }));
+    expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
   });
 
   it("keeps each server's connect failure when they settle out of order", async () => {
@@ -3465,6 +3577,9 @@ describe("ConformanceTab", () => {
 
     // The whole suite, and no tool, since none was set.
     expect(mockRunTasks).toHaveBeenCalledWith("http-server", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
       protocolVersion: "2025-11-25",
     });
     expect(within(suiteHeader("tasks")).getByText("PASSED")).toBeDefined();
@@ -3493,6 +3608,9 @@ describe("ConformanceTab", () => {
 
     await waitFor(() => {
       expect(mockRunProtocol).toHaveBeenCalledWith("http-server", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
         protocolVersion: "2025-11-25",
       });
     });
@@ -3530,6 +3648,9 @@ describe("ConformanceTab", () => {
 
     await waitFor(() => {
       expect(mockRunProtocol).toHaveBeenLastCalledWith("http-server", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
         protocolVersion: "2026-07-28",
       });
     });
@@ -3671,7 +3792,7 @@ describe("ConformanceTab", () => {
     );
 
     await waitFor(() => {
-      expect(mockCompleteOAuth).toHaveBeenCalledWith("session-1");
+      expect(mockCompleteOAuth).toHaveBeenCalledWith("session-1", { signal: expect.any(AbortSignal) });
     });
     expect(within(suiteHeader("oauth")).getByText("RUNNING")).toBeDefined();
     expect(screen.queryByText(/checks in this suite\. Not run yet/)).toBeNull();
@@ -4593,4 +4714,315 @@ describe("ConformanceTab blocked sign-in window", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
+  it("keeps local Tasks overrides when saved server inputs load and Settings saves", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const local = {
+      tasksProbe: { toolName: "default-job" },
+      tasksOverrides: {
+        "tasks-inline-result": {
+          toolName: "custom-job",
+          arguments: { fast: true },
+        },
+      },
+    };
+    window.localStorage.setItem(
+      "mcpjam.conformance.probes.v1:alpha",
+      JSON.stringify(local),
+    );
+    const selection = {
+      protocol: [],
+      apps: [],
+      tasks: ["tasks-inline-result"],
+      oauth: false,
+    } satisfies import("@/hooks/use-conformance-run").ConformanceSelection;
+    const save = vi.fn(
+      async (_name: string, _selection: unknown, _inputs?: unknown) => {},
+    );
+    window.history.replaceState(null, "", "/conformance?run=alpha");
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        serverInputs={{ alpha: { tasksProbe: { toolName: "shared-job" } } }}
+        serverDefaults={{ alpha: selection }}
+        onLoadServerDefaults={vi.fn(async () => ({
+          selection,
+          inputs: { tasksProbe: { toolName: "shared-job" } },
+        }))}
+        onSaveServerDefaults={save}
+      />,
+    );
+    await waitFor(() =>
+      expect(mockRunTasks).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({
+          toolName: "default-job",
+          checkOverrides: {
+            "tasks-inline-result": {
+              toolName: "custom-job",
+              toolArguments: { fast: true },
+            },
+          },
+        }),
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Run OAuth" }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls.at(-1)?.[2]).not.toHaveProperty("tasksOverrides");
+    expect(
+      JSON.parse(
+        window.localStorage.getItem("mcpjam.conformance.probes.v1:alpha")!,
+      ),
+    ).toEqual(local);
+  });
+
+});
+
+
+it("keeps completed suites and ignores late results after a shared timeout, including parked OAuth", async () => {
+  vi.useFakeTimers();
+  try {
+    setupSuccessfulRunMocks();
+    let finishApps: (value: unknown) => void = () => {};
+    mockRunApps.mockImplementation(() => new Promise((resolve) => { finishApps = resolve; }));
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "session-timeout",
+      authorizationUrl: "https://auth.example/authorize",
+    });
+    const server = createHttpServer();
+    const { result } = renderHook(() => useConformanceRun({
+      server, runTimeoutSeconds: 1, deferOAuthAuthorization: true,
+    }));
+    await act(async () => { void result.current.runAll(); });
+    expect(result.current.protocol.status).toBe("done");
+    expect(result.current.apps.status).toBe("running");
+    expect(result.current.oauth.status).toBe("needs-authorization");
+    await act(async () => { vi.advanceTimersByTime(1_000); });
+    expect(result.current.protocol.status).toBe("done");
+    expect(result.current.apps.status).toBe("error");
+    expect(result.current.oauth.status).toBe("unavailable");
+    expect(result.current.oauth.skipped).toBe(true);
+    await act(async () => { finishApps({ success: true, result: createAppsResult() }); });
+    expect(result.current.apps.status).toBe("error");
+    expect(result.current.apps.error).toBe("Run timed out after 1 seconds");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+
+it("does not dispatch later suites when the deadline expires after preflight", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(0);
+    setupSuccessfulRunMocks();
+    vi.mocked(checkConformanceConnection).mockImplementationOnce(async () => {
+      // Move the wall clock without firing the timer: dispatch must notice expiry.
+      vi.setSystemTime(1_000);
+      return { status: "ready", protocolVersion: "2025-11-25" };
+    });
+    const server = createHttpServer();
+    const { result } = renderHook(() => useConformanceRun({ server, runTimeoutSeconds: 1 }));
+    await act(async () => { await result.current.runAll(); });
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    expect(mockRunApps).not.toHaveBeenCalled();
+    expect(mockRunTasks).not.toHaveBeenCalled();
+    expect(mockStartOAuth).not.toHaveBeenCalled();
+    for (const suite of [result.current.protocol, result.current.apps, result.current.tasks, result.current.oauth]) {
+      expect(suite.status).toBe("error");
+      expect(suite.error).toBe("Run timed out after 1 seconds");
+    }
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+
+it("keeps an unsaved project server's timeout for the session without saving a missing server", async () => {
+  const server = createHttpServer({ name: "unsaved-server" });
+  const saveTimeout = vi.fn(async () => { throw new Error("No saved server exists"); });
+  render(<ConformanceTab
+    server={server}
+    servers={[server]}
+    persist={{ projectId: "project-1" }}
+    isSavedServer={() => false}
+    onSelectServer={vi.fn()}
+    onSaveServerTimeout={saveTimeout}
+  />);
+  fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+  fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run timeout" }));
+  fireEvent.change(screen.getByLabelText("Total run timeout (seconds)"), { target: { value: "90" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.queryByLabelText("Total run timeout (seconds)")).not.toBeInTheDocument());
+  expect(saveTimeout).not.toHaveBeenCalled();
+  expect(screen.getByText("90s")).toBeInTheDocument();
+  fireEvent.click(within(screen.getByRole("navigation", { name: "breadcrumb" })).getByRole("button", { name: "Choose server and protocol" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run timeout" }));
+  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(90);
+});
+
+
+it("restores unsaved timeouts after remount, isolates projects, and keeps a cleared value cleared", async () => {
+  const server = createHttpServer({ name: "unsaved-remount" });
+  const saveTimeout = vi.fn(async () => {});
+  const open = async (projectId: string, saved = false, loading = false) => {
+    const view = render(<ConformanceTab
+      server={server} servers={[server]} persist={{ projectId }}
+      isSavedServer={() => saved} projectServersLoading={loading}
+      serverTimeouts={{ [server.name]: 300 }}
+      onSelectServer={vi.fn()} onSaveServerTimeout={saveTimeout}
+    />);
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Run timeout" }));
+    return view;
+  };
+  const first = await open("project-a");
+  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
+  fireEvent.change(screen.getByLabelText("Total run timeout (seconds)"), { target: { value: "90" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.queryByLabelText("Total run timeout (seconds)")).not.toBeInTheDocument());
+  first.unmount();
+  const otherProject = await open("project-b");
+  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
+  otherProject.unmount();
+  const returned = await open("project-a");
+  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(90);
+  fireEvent.change(screen.getByLabelText("Total run timeout (seconds)"), { target: { value: "" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.queryByLabelText("Total run timeout (seconds)")).not.toBeInTheDocument());
+  returned.unmount();
+  const cleared = await open("project-a");
+  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
+  cleared.unmount();
+  const savedServer = await open("project-a", true);
+  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
+  savedServer.unmount();
+  const loadingServer = await open("project-a", false, true);
+  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
+  loadingServer.unmount();
+  expect(saveTimeout).not.toHaveBeenCalled();
+});
+
+
+it("does not carry an unsaved timeout into another project without unmounting", async () => {
+  const server = createHttpServer({ name: "same-server" });
+  const props = { server, servers: [server], isSavedServer: () => false, onSelectServer: vi.fn() };
+  const view = render(<ConformanceTab {...props} persist={{ projectId: "project-a" }} />);
+  fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+  fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run timeout" }));
+  fireEvent.change(screen.getByLabelText("Total run timeout (seconds)"), { target: { value: "90" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.queryByLabelText("Total run timeout (seconds)")).not.toBeInTheDocument());
+  view.rerender(<ConformanceTab {...props} persist={{ projectId: "project-b" }} />);
+  fireEvent.click(screen.getByRole("button", { name: "Run timeout" }));
+  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.queryByLabelText("Total run timeout (seconds)")).not.toBeInTheDocument());
+  view.rerender(<ConformanceTab {...props} persist={{ projectId: "project-a" }} />);
+  fireEvent.click(screen.getByRole("button", { name: "Run timeout" }));
+  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(90);
+});
+
+
+it("rejects a late suite response before a delayed deadline timer fires", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(0);
+    setupSuccessfulRunMocks();
+    let finishApps: (value: unknown) => void = () => {};
+    mockRunApps.mockImplementation(() => new Promise((resolve) => { finishApps = resolve; }));
+    const server = createHttpServer();
+    const { result } = renderHook(() => useConformanceRun({ server, runTimeoutSeconds: 1 }));
+    await act(async () => { void result.current.runAll(); });
+    expect(result.current.protocol.status).toBe("done");
+    await act(async () => {
+      vi.setSystemTime(1_001);
+      finishApps({ success: true, result: createAppsResult() });
+    });
+    expect(result.current.apps.status).toBe("error");
+    expect(result.current.apps.verdict).toBe("incomplete");
+    expect(result.current.pooledScore?.outcome).toBe("incomplete");
+    expect(result.current.protocol.status).toBe("done");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+
+it("leaves unstarted public-score OAuth unscored at the default deadline", async () => {
+  vi.useFakeTimers();
+  try {
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "deferred-score",
+      authorizationUrl: "https://auth.example/authorize",
+    });
+    const server = createHttpServer();
+    const { result } = renderHook(() =>
+      useConformanceRun({ server, deferOAuthAuthorization: true }),
+    );
+    await act(async () => {
+      await result.current.runAll();
+    });
+    const completedScore = result.current.pooledScore;
+    expect(result.current.oauth.status).toBe("needs-authorization");
+    await act(async () => {
+      vi.advanceTimersByTime(300_000);
+    });
+    expect(result.current.pooledScore).toEqual(completedScore);
+    expect(cancelOAuthConformance).toHaveBeenCalledWith("deferred-score");
+    expect(result.current.oauth).toMatchObject({
+      status: "unavailable",
+      skipped: true,
+    });
+    expect(result.current.oauth.authorizationUrl).toBeUndefined();
+    expect(result.current.oauth.unavailableReason).toContain(
+      "Run again to authorize",
+    );
+    await act(async () => {
+      result.current.authorizeOAuth();
+    });
+    expect(mockStartOAuth).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("still marks actively waiting OAuth incomplete when the run expires", async () => {
+  vi.useFakeTimers();
+  try {
+    setupSuccessfulRunMocks();
+    vi.spyOn(window, "open").mockReturnValue({} as Window);
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "active-auth",
+      authorizationUrl: "https://auth.example/authorize",
+    });
+    const server = createHttpServer();
+    const { result } = renderHook(() =>
+      useConformanceRun({ server, runTimeoutSeconds: 1 }),
+    );
+    await act(async () => {
+      await result.current.runAll();
+    });
+    expect(result.current.oauth.status).toBe("running");
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(result.current.oauth.verdict).toBe("incomplete");
+    expect(result.current.oauth.error).toBe("Run timed out after 1 seconds");
+  } finally {
+    vi.useRealTimers();
+  }
 });

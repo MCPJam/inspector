@@ -85,7 +85,11 @@ describe("redactConformanceReportForSharing", () => {
             status: "failed",
             error: { message: "Server replied with an unknown version" },
           },
-          { id: "skipped-one", status: "skipped", skipReason: "not-applicable" },
+          {
+            id: "skipped-one",
+            status: "skipped",
+            skipReason: "not-applicable",
+          },
         ],
       },
     }) as any;
@@ -176,13 +180,17 @@ describe("redactConformanceReportForSharing", () => {
 
 describe("redactSharedServerUrl", () => {
   it("strips an API key from the query while keeping the parameter name", () => {
-    const out = redactSharedServerUrl("https://mcp.example.com/mcp?api_key=sk_live_1");
+    const out = redactSharedServerUrl(
+      "https://mcp.example.com/mcp?api_key=sk_live_1"
+    );
     expect(out).toContain("api_key=");
     expect(out).not.toContain("sk_live_1");
   });
 
   it("strips URL userinfo", () => {
-    const out = redactSharedServerUrl("https://user:hunter2@mcp.example.com/mcp");
+    const out = redactSharedServerUrl(
+      "https://user:hunter2@mcp.example.com/mcp"
+    );
     expect(out).not.toContain("hunter2");
     expect(out).not.toContain("user:");
     expect(out).toContain("mcp.example.com");
@@ -213,6 +221,22 @@ describe("credentials that survived the first pass", () => {
     expect(out).toContain("access_token=");
   });
 
+  it.each([
+    "x-api-key",
+    "X-API-KEY",
+    "api-key",
+    "code-verifier",
+    "client-assertion",
+    "codeVerifier",
+    "clientAssertion",
+  ])("redacts a %s query parameter", (name) => {
+    const out = redactUrlSecrets(
+      `https://mcp.example.com/mcp?${name}=live-key-value`
+    );
+    expect(out).not.toContain("live-key-value");
+    expect(out).toContain(`${name}=`);
+  });
+
   it("leaves a plain anchor alone", () => {
     const url = "https://docs.example.com/guide#section-2";
     expect(redactUrlSecrets(url)).toBe(url);
@@ -222,7 +246,9 @@ describe("credentials that survived the first pass", () => {
     const out = redactConformanceReportForSharing({
       summary: "retry failed, sent Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
     });
-    expect(JSON.stringify(out)).not.toContain("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9");
+    expect(JSON.stringify(out)).not.toContain(
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+    );
   });
 
   it("redacts a Cookie header written into free text", () => {
@@ -234,7 +260,8 @@ describe("credentials that survived the first pass", () => {
 
   it("redacts a token inside a JSON blob quoted in an error string", () => {
     const out = redactConformanceReportForSharing({
-      error: 'token endpoint said {"access_token":"live-token-value","expires_in":3600}',
+      error:
+        'token endpoint said {"access_token":"live-token-value","expires_in":3600}',
     });
     const text = JSON.stringify(out);
     expect(text).not.toContain("live-token-value");
@@ -244,7 +271,8 @@ describe("credentials that survived the first pass", () => {
 
   it("redacts a form-encoded client_secret that never parsed as a URL", () => {
     const out = redactConformanceReportForSharing({
-      detail: "body was grant_type=authorization_code&client_secret=s3cr3t-value",
+      detail:
+        "body was grant_type=authorization_code&client_secret=s3cr3t-value",
     });
     const text = JSON.stringify(out);
     expect(text).not.toContain("s3cr3t-value");
@@ -318,7 +346,11 @@ describe("free-text credentials cubic flagged", () => {
   });
 
   it("still leaves ordinary prose alone", () => {
-    const clean = { protocol: { checks: [{ id: "c", summary: "Server returned 401 Unauthorized" }] } };
+    const clean = {
+      protocol: {
+        checks: [{ id: "c", summary: "Server returned 401 Unauthorized" }],
+      },
+    };
     expect(redactConformanceReportForSharing(clean)).toEqual(clean);
   });
 });
@@ -351,7 +383,9 @@ describe("one credential predicate, not two lists", () => {
     it(`redacts "${key}" in a form-encoded fragment`, () => {
       const out = redactConformanceReportForSharing({
         protocol: {
-          checks: [{ id: "c", summary: `posted ${key}=${secret}&grant_type=x` }],
+          checks: [
+            { id: "c", summary: `posted ${key}=${secret}&grant_type=x` },
+          ],
         },
       }) as any;
       const summary = out.protocol.checks[0].summary as string;
@@ -365,10 +399,142 @@ describe("one credential predicate, not two lists", () => {
     const clean = {
       protocol: {
         checks: [
-          { id: "c", summary: 'got {"grant_type": "authorization_code", "expires_in": "3600"}' },
+          {
+            id: "c",
+            summary:
+              'got {"grant_type": "authorization_code", "expires_in": "3600"}',
+          },
         ],
       },
     };
     expect(redactConformanceReportForSharing(clean)).toEqual(clean);
   });
+});
+
+describe("large URL parameter lists", () => {
+  it("redacts query and fragment values in one pass, including duplicates", () => {
+    const params = new URLSearchParams();
+    for (let n = 0; n < 8000; n++)
+      params.append(`x-api-key-${n}`, "live-secret");
+    params.append("x-api-key-0", "duplicate-secret");
+    params.append("safe", "keep");
+    for (const separator of ["?", "#"]) {
+      const result = redactUrlSecrets(
+        `https://example.com/${separator}${params}`
+      );
+      expect(result).not.toContain("live-secret");
+      expect(result).not.toContain("duplicate-secret");
+      expect(result).toContain("safe=keep");
+      const parsed = new URL(result);
+      const values =
+        separator === "?"
+          ? parsed.searchParams
+          : new URLSearchParams(parsed.hash.slice(1));
+      expect(values.getAll("x-api-key-0")).toEqual([
+        "[REDACTED]",
+        "[REDACTED]",
+      ]);
+    }
+  }, 2000);
+});
+
+it("preserves safe fragment encodings when redacting a credential", () => {
+  const result = redactUrlSecrets(
+    "https://example.com/#codeVerifier=secret&label=hello%20world&plus=a+b&encoded=%2f"
+  );
+  expect(result).toBe(
+    "https://example.com/#codeVerifier=%5BREDACTED%5D&label=hello%20world&plus=a+b&encoded=%2f"
+  );
+});
+
+it.each([
+  "x-api-key=live-key&flag",
+  "flag&x-api-key=live-key",
+  "x-api-key=live-key&",
+])(
+  "redacts fragment credentials alongside valueless fields: %s",
+  (fragment) => {
+    const result = redactSharedServerUrl(`https://example.com/#${fragment}`);
+    expect(result).not.toContain("live-key");
+    expect(result).toContain("REDACTED");
+    if (fragment.includes("flag")) expect(result).toContain("flag");
+  }
+);
+it("keeps plain anchors unchanged", () => {
+  expect(redactSharedServerUrl("https://example.com/#section-2")).toBe(
+    "https://example.com/#section-2"
+  );
+});
+
+it.each([
+  "/authors?sort=name&compact",
+  "!/authors?sort=name&compact",
+  "/books=profile",
+  "/settings?tab=x",
+])("preserves safe hash routes: %s", (fragment) => {
+  const url = `https://example.com/#${fragment}`;
+  expect(redactSharedServerUrl(url)).toBe(url);
+});
+it("treats a first route segment with `=` as a field, like the query", () => {
+  // `authors` matches the `auth` substring, as it already does in `?authors=`.
+  expect(redactSharedServerUrl("https://example.com/#/authors=profile")).toBe(
+    "https://example.com/#/authors=%5BREDACTED%5D"
+  );
+});
+it.each(["/authors?", "!/authors?", "/authors&", "!/authors&"])(
+  "redacts route query credentials while preserving %s",
+  (prefix) => {
+    expect(
+      redactSharedServerUrl(
+        `https://example.com/#${prefix}x-api-key=secret&label=hello%20world&compact`
+      )
+    ).toBe(
+      `https://example.com/#${prefix}x-api-key=%5BREDACTED%5D&label=hello%20world&compact`
+    );
+  }
+);
+it.each([
+  [
+    "/access_token=secret&token_type=bearer",
+    "/access_token=%5BREDACTED%5D&token_type=%5BREDACTED%5D",
+  ],
+  ["/access_token=secret", "/access_token=%5BREDACTED%5D"],
+  ["!/access_token=secret", "!/access_token=%5BREDACTED%5D"],
+  ["/access_token=secret?view=compact", "/access_token=%5BREDACTED%5D"],
+])(
+  "redacts a credential in the first field after a route marker: %s",
+  (fragment, expected) => {
+    expect(redactSharedServerUrl(`https://example.com/#${fragment}`)).toBe(
+      `https://example.com/#${expected}`
+    );
+  }
+);
+it("does not interpret a question mark in a token as a hash route", () => {
+  expect(
+    redactSharedServerUrl("https://example.com/#token=secret?value&flag")
+  ).toBe("https://example.com/#token=%5BREDACTED%5D&flag");
+});
+
+it("preserves safe route fields introduced by an ampersand", () => {
+  const url = "https://example.com/#/authors&sort=name&compact";
+  expect(redactSharedServerUrl(url)).toBe(url);
+});
+
+it.each([
+  "/search&view=compact?x-api-key=live",
+  "!/search&view=compact?x-api-key=live",
+  "/search&view=compact?sort=name?x-api-key=live",
+  "/search?x-api-key=live?secret-suffix&view=compact",
+  "/search&x-api-key=live?secret-suffix&view=compact",
+])("redacts mixed route delimiters: %s", (fragment) => {
+  const result = redactSharedServerUrl(`https://example.com/#${fragment}`);
+  expect(result).not.toContain("live");
+  expect(result).not.toContain("secret-suffix");
+  expect(result).toContain("view=compact");
+  expect(result).toContain("REDACTED");
+});
+it("preserves safe mixed route delimiters", () => {
+  const url =
+    "https://example.com/#/search&view=compact?sort=name&label=hello%20world";
+  expect(redactSharedServerUrl(url)).toBe(url);
 });

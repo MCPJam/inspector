@@ -586,9 +586,12 @@ export {
 // the debugger without sending it to their own exception tracker.
 export { isAuthenticatedRequestFailure } from "./oauth/state-machines/shared/response-error.js";
 // A proxy route's verdict that the server under test presented a certificate
-// Node.js would not accept: the debugger shows it as the server's and keeps it
-// out of the host's exception tracker.
-export { isTlsTrustFailure } from "./oauth-proxy-error.js";
+// Node.js would not accept, or could not be reached at all: the debugger shows
+// it as the server's and keeps it out of the host's exception tracker.
+export {
+  isTlsTrustFailure,
+  isUnreachableTargetFailure,
+} from "./oauth-proxy-error.js";
 export { stepFailureFindingKey } from "./oauth/state-machines/shared/step-failure-key.js";
 export {
   isResourceMetadataNotImplemented,
@@ -732,6 +735,7 @@ export {
 export {
   buildDynamicClientRegistrationRequest,
   executeDynamicClientRegistration,
+  isDynamicClientRegistrationHttpError,
 } from "./oauth/state-machines/shared/dynamic-client-registration.js";
 export type {
   DynamicClientRegistrationCredentials,
@@ -905,7 +909,11 @@ export {
 } from "./conformance-outcome.js";
 export { isAuthorizationRequiredCheck } from "./conformance-authorization.js";
 export { isTimedOutCheck } from "./conformance-timeout.js";
-export { isMissingInputCheck, missingInputMessage } from "./conformance-input.js";
+export {
+  isMissingInputCheck,
+  missingInputMessage,
+  noTaskCreatedMessage,
+} from "./conformance-input.js";
 export type {
   ConformanceRunOutcome,
   ConformanceSkipReason,
@@ -1104,6 +1112,12 @@ export type {
   MrtrSupport,
 } from "./host-config/index.js";
 
+// Reviewed canonical ↔ native model ids (also at `@mcpjam/sdk/model-factory`).
+// Pure and browser-safe: the Inspector client canonicalizes picker rows with
+// the same rows the SDK sends.
+export { ANTHROPIC_NATIVE_MODEL_IDS } from "./model-native-ids.js";
+export type { NativeModelIdMapping } from "./model-native-ids.js";
+
 // Saved model selection (also at `@mcpjam/sdk/host-config`). Pure and
 // browser-safe.
 export {
@@ -1291,3 +1305,23 @@ export { aiRequestHeaders } from "./ai-request-headers.js";
 
 /** Use the same validation before rendering embedded Task or MRTR input. */
 export { validateEmbeddedClientRequest } from "./mcp-client-manager/task-input-driver.js";
+export {
+  RENAMED_MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_TOOL_CHECK_IDS,
+  isTasksToolCheck,
+} from "./tasks-conformance/types.js";
+export type {
+  MCPTasksToolCheckId,
+  MCPTasksToolSetup,
+  MCPTasksCheckOverrides,
+  MCPTasksRunOptions,
+} from "./tasks-conformance/types.js";
+export {
+  planTasksConformance,
+  validateTaskOverrides,
+} from "./tasks-conformance/plan.js";
+export type { MCPTasksRunGroup } from "./tasks-conformance/plan.js";
+export {
+  mergeTasksConformanceResults,
+  taskGroupFailure,
+} from "./tasks-conformance/report.js";

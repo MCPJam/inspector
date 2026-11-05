@@ -252,7 +252,8 @@ import {
   driveChatScopeStepUp,
   resolveScopeStepUpServer,
 } from "./lib/scope-step-up";
-import { markPendingChatScopeStepUpCancelled } from "./lib/scope-step-up-pending";
+import { cancelPendingChatScopeStepUpForCallback } from "./lib/scope-step-up-pending";
+import { authorizationFlowDigest } from "./lib/oauth/flow-digest";
 import { HOSTED_MODE } from "./lib/config";
 import {
   createInspectorCommandClientError,
@@ -355,6 +356,8 @@ import {
   cloneHostTemplateInput,
   gateMcpToolResultImageRenderingByModelVisibility,
 } from "./lib/client-config-v2";
+import { useOrgBoundTemplateSeed } from "@/hooks/use-org-bound-template-seed";
+import { withModelChoiceNotice } from "@/lib/org-bound-template-seed";
 import type { ProjectServerConfigDto } from "./lib/project-server-config";
 import {
   shouldQueryHostId,
@@ -1190,6 +1193,7 @@ function useTemplateVerifyDeepLink({
     projectId,
   });
   const { createHost } = useHostMutations();
+  const orgSeed = useOrgBoundTemplateSeed(projectId);
   const { canManage: canCreateHost, isLoading: roleLoading } =
     useCanManageProjectClients({ isAuthenticated, projectId });
   const claudeCodeEnabled = useClaudeCodeHostEnabledState();
@@ -1288,21 +1292,36 @@ function useTemplateVerifyDeepLink({
       toast.error(PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE);
       return;
     }
+    // Until the organization's key policy has answered, the template's hosted
+    // model would be saved as is.
+    if (!orgSeed.ready) return;
 
     handledRef.current = true;
+    const prepared = orgSeed.prepare(
+      cloneHostTemplateInput(
+        seedFromHostTemplate(template.id, { theme: themeMode }),
+        { themeMode },
+      ),
+      template.label,
+    );
+    if (!prepared) {
+      navigate(routePaths.hosts, { replace: true });
+      return;
+    }
 
     void (async () => {
       try {
-        const seed = cloneHostTemplateInput(
-          seedFromHostTemplate(template.id, { theme: themeMode }),
-          { themeMode },
-        );
         const { hostId } = await createHost({
           projectId,
           name: template.label,
-          input: { ...seed, serverIds: [] },
+          input: { ...prepared.input, serverIds: [] },
           applyDefaultSystemPrompt: true,
         });
+        if (prepared.needsModelChoice) {
+          toast.success(
+            withModelChoiceNotice(`Created ${template.label} client.`, prepared.needsModelChoice),
+          );
+        }
         navigate(buildHostVerifyLandingPath(hostId, requestedFocusTab), {
           replace: true,
         });
@@ -1330,6 +1349,8 @@ function useTemplateVerifyDeepLink({
     flagWaitExpired,
     roleLoading,
     canCreateHost,
+    orgSeed.ready,
+    orgSeed.prepare,
     themeMode,
     createHost,
     navigate,
@@ -1677,7 +1698,7 @@ function EvaluateRouteContent() {
 
 export function ConformanceRoute() {
   const {
-    appState,
+    displayServerConfigs: serverConfigs,
     selectedServerEntry,
     setSelectedServer,
     convexProjectId,
@@ -1701,6 +1722,8 @@ export function ConformanceRoute() {
   const navigate = useAppNavigate();
   const {
     defaultsByServer,
+    timeoutsByServer,
+    saveTimeout,
     inputsByServer,
     loadDefaults,
     lastRunByServer,
@@ -1712,7 +1735,7 @@ export function ConformanceRoute() {
     serversLoading: projectServersLoading || projectServersBootstrapping,
   });
   // The name the edit form is open on, plus the server as it was then: a
-  // rename drops the old name from `appState.servers` before the new one
+  // rename drops the old name from the project's servers before the new one
   // lands, and without the snapshot the form would close mid-save.
   const [editing, setEditing] = useState<{
     name: string;
@@ -1721,9 +1744,9 @@ export function ConformanceRoute() {
   const savedServerId = selectedServerEntry?.name
     ? (serversByName.get(selectedServerEntry.name) ?? null)
     : null;
-  // The page picks its server from its own select, not the header tabs, and
-  // offers every server: Run connects one that is not connected.
-  const servers = Object.values<ServerWithName>(appState.servers);
+  // The display catalog keeps saved servers across refreshes and includes
+  // runtime-only connections when local mode has no active project.
+  const servers = Object.values<ServerWithName>(serverConfigs);
   // Each server's logo, as it announced it when it connected (the Servers
   // tab's cards use the same one). Servers without one show initials.
   const serverIcons: Record<string, string> = {};
@@ -1732,10 +1755,10 @@ export function ConformanceRoute() {
     if (src) serverIcons[server.name] = src;
   }
   const editingServer = editing
-    ? (appState.servers[editing.name] ?? editing.snapshot)
+    ? (serverConfigs[editing.name] ?? editing.snapshot)
     : undefined;
   const editServer = (name: string) => {
-    const server = appState.servers[name];
+    const server = serverConfigs[name];
     if (server) setEditing({ name, snapshot: server });
   };
   // Follows a rename the way the Servers tab's form does: the new name while
@@ -1778,6 +1801,8 @@ export function ConformanceRoute() {
             />
           ) : undefined
         }
+        serverTimeouts={timeoutsByServer}
+        onSaveServerTimeout={saveTimeout}
         serverDefaults={defaultsByServer}
         serverInputs={inputsByServer}
         onLoadServerDefaults={loadDefaults}
@@ -1813,7 +1838,7 @@ export function ConformanceRoute() {
           }}
           onDisconnect={handleDisconnect}
           onReconnect={handleReconnect}
-          existingServerNames={Object.keys(appState.servers)}
+          existingServerNames={Object.keys(serverConfigs)}
           projectId={convexProjectId ?? null}
           // Saving an auth change on a server with hidden headers reveals
           // them by row id.
@@ -3283,10 +3308,21 @@ export default function App() {
       )
         return;
       if (errorMessage && callbackContext.serverName) {
-        markPendingChatScopeStepUpCancelled(
-          callbackContext.serverName,
-          errorMessage,
-        );
+        void authorizationFlowDigest(state)
+          .then((digest) =>
+            cancelPendingChatScopeStepUpForCallback(
+              callbackContext.serverName,
+              errorMessage,
+              digest,
+              callbackContext.chatAuthContinuationId,
+            ),
+          )
+          .catch((error: unknown) => {
+            console.warn(
+              "Could not cancel the chat call waiting on this sign-in.",
+              error,
+            );
+          });
       }
       if (callbackContext.serverName) {
         writeHostedOAuthResumeMarker({
@@ -5800,7 +5836,7 @@ export default function App() {
     } else if (
       activeTab === "conformance" &&
       !isConformanceSharedRoute &&
-      conformanceEnabled !== true
+      conformanceEnabled === false
     ) {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (
@@ -6318,6 +6354,14 @@ export default function App() {
   }
 
   if (isLoading && !isHostedChatRoute && !isFirstRunOAuthReturnActive) {
+    return <LoadingScreen />;
+  }
+
+  if (
+    activeTab === "conformance" &&
+    !isConformanceSharedRoute &&
+    conformanceEnabled === undefined
+  ) {
     return <LoadingScreen />;
   }
 

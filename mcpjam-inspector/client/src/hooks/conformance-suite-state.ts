@@ -21,6 +21,7 @@ import {
   MCP_OAUTH_READINESS_IDS,
   MCP_READINESS_IDS,
   MCP_TASKS_CHECK_IDS,
+  RENAMED_MCP_TASKS_CHECK_IDS,
   MCP_TASKS_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
   READINESS_ERAS,
@@ -94,8 +95,8 @@ export interface OAuthSuiteState extends SuiteState {
    */
   popupBlocked?: boolean;
   /**
-   * The user chose Skip OAuth. The suite reads "unavailable" like a server
-   * that needs no auth, but its checks were never run, not ruled out.
+   * OAuth was skipped or its deferred authorization expired. The suite is
+   * unavailable and unscored because authorization-dependent checks never ran.
    */
   skipped?: boolean;
 }
@@ -247,7 +248,16 @@ export function runnableSelection(
     protocol: knownIds(selection.protocol, protocolIds),
     protocolAdvice: knownIds(selection.protocolAdvice, adviceIds),
     apps: knownIds(selection.apps, MCP_APPS_CHECK_IDS),
-    tasks: knownIds(selection.tasks, MCP_TASKS_CHECK_IDS),
+    tasks: knownIds(
+      selection.tasks?.map((id) =>
+        Object.hasOwn(RENAMED_MCP_TASKS_CHECK_IDS, id)
+          ? RENAMED_MCP_TASKS_CHECK_IDS[
+              id as keyof typeof RENAMED_MCP_TASKS_CHECK_IDS
+            ]
+          : id,
+      ),
+      MCP_TASKS_CHECK_IDS,
+    ),
     tasksAdvice: knownIds(selection.tasksAdvice, MCP_TASKS_READINESS_IDS),
     oauthAdvice: knownIds(selection.oauthAdvice, MCP_OAUTH_READINESS_IDS),
   };
@@ -266,4 +276,15 @@ export function suiteErrorMessage(err: unknown): string {
   return cutOff
     ? "These checks took too long to finish, so no results came back. Run them again, or pick fewer checks for this suite."
     : message;
+}
+
+
+/** An authorization the visitor never started is not a conformance verdict. */
+export function expiredDeferredOAuth(state: OAuthSuiteState): OAuthSuiteState | undefined {
+  if (state.status !== "needs-authorization") return undefined;
+  return {
+    status: "unavailable",
+    skipped: true,
+    unavailableReason: "OAuth was not authorized before the run ended, so it is not scored. Run again to authorize.",
+  };
 }

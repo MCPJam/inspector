@@ -3,6 +3,16 @@ import { render, screen } from "@testing-library/react";
 import React from "react";
 import { HostsTab } from "@/components/HostsTab";
 
+// The organization key policy binding has its own tests; here a template
+// seed is created as it is.
+vi.mock("@/hooks/use-org-bound-template-seed", () => ({
+  useOrgBoundTemplateSeed: () => ({
+    ready: true,
+    bind: (input: unknown) => ({ kind: "unchanged", input }),
+    prepare: (input: unknown) => ({ input }),
+  }),
+}));
+
 // HostsTab only consumes `useNavigate`; stubbing it dodges the workspace
 // React-version mismatch that pulls in a duplicate React when MemoryRouter
 // initializes its hooks under jsdom.
