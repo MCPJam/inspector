@@ -3,7 +3,7 @@ import {
   recordChatAuthRecoveryFailure,
   traceChatAuthRecovery,
 } from "@/lib/chat-auth-recovery";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   CallToolResult,
   ElicitRequest,
@@ -223,13 +223,21 @@ export function ToolsTab({
   const [selectedTool, setSelectedTool] = useState<string>("");
   // Read by a list fetch when it resolves, after the selection may have moved.
   const selectedToolRef = useRef(selectedTool);
-  selectedToolRef.current = selectedTool;
+  useLayoutEffect(() => {
+    selectedToolRef.current = selectedTool;
+  }, [selectedTool]);
   const [formFields, setFormFields] = useState<FormField[]>([]);
   const [result, setResult] = useState<CallToolResult | null>(null);
   const [structuredContentValid, setStructuredContentValid] = useState<
     boolean | undefined
   >(undefined);
   const [loadingExecuteTool, setLoadingExecuteTool] = useState(false);
+  // A list fetch reads it when it resolves; the state may be a render behind.
+  const toolCallRunningRef = useRef(false);
+  const setToolCallRunning = (running: boolean) => {
+    toolCallRunningRef.current = running;
+    setLoadingExecuteTool(running);
+  };
   const [fetchingTools, setFetchingTools] = useState(false);
   const [error, setError] = useState<string>("");
   const [normalizedError, setNormalizedError] = useState<
@@ -394,7 +402,7 @@ export function ToolsTab({
     if (stopLoading) {
       setFetchingTools(false);
       if (clearSelection) {
-        setLoadingExecuteTool(false);
+        setToolCallRunning(false);
         setElicitationLoading(false);
       }
     }
@@ -612,13 +620,15 @@ export function ToolsTab({
       );
       setTools((prev) => (reset ? dictionary : { ...prev, ...dictionary }));
       // A tool that left a complete list is no longer selectable. A paged
-      // list may hold it on a later page, so it stays.
+      // list may hold it on a later page, and a running call keeps its tool
+      // selected so its result shows under it; a later refresh drops it.
       const selected = selectedToolRef.current;
       if (
         reset &&
         typeof data.nextCursor !== "string" &&
         selected &&
-        !(selected in dictionary)
+        !Object.hasOwn(dictionary, selected) &&
+        !toolCallRunningRef.current
       ) {
         clearSelectedTool();
       }
@@ -963,7 +973,7 @@ export function ToolsTab({
     });
     const replayIdentity = selectionIdentity;
     restoreReplaySelection(descriptor);
-    setLoadingExecuteTool(true);
+    setToolCallRunning(true);
     setError("");
     void executeToolApi(
       descriptor.serverName,
@@ -993,7 +1003,7 @@ export function ToolsTab({
       })
       .finally(() => {
         if (selectionIdentityRef.current === replayIdentity)
-          setLoadingExecuteTool(false);
+          setToolCallRunning(false);
         clearPendingDirectScopeStepUpReplay(pending);
         traceChatAuthRecovery("direct_cleanup", {
           toolCallId: pending.callId,
@@ -1047,7 +1057,7 @@ export function ToolsTab({
       return;
     }
 
-    setLoadingExecuteTool(true);
+    setToolCallRunning(true);
     setError("");
     setNormalizedError(null);
     setAuthNotice(null);
@@ -1112,7 +1122,7 @@ export function ToolsTab({
       });
       setError(message);
     } finally {
-      setLoadingExecuteTool(false);
+      setToolCallRunning(false);
     }
   };
 
@@ -1451,6 +1461,11 @@ export function ToolsTab({
             return;
           }
 
+          // The tool can leave the list while the dialog is open.
+          if (!selectedTool) {
+            setIsSaveDialogOpen(false);
+            return;
+          }
           const params = buildParameters();
           const newRequest = saveRequest(serverKey, {
             title,

@@ -62,6 +62,10 @@ describe("browser discovery transient failures", () => {
       { authorization_servers: ["not a url"] },
     ],
     [
+      "a non-web authorization server",
+      { authorization_servers: ["mailto:auth@example.com"] },
+    ],
+    [
       "authorization_servers that is not a list",
       { authorization_servers: "https://auth.example.com" },
     ],

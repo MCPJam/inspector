@@ -998,12 +998,13 @@ function firstAuthorizationServer(document: object): string | undefined {
   }
   const first: unknown = document.authorization_servers[0];
   if (typeof first !== "string") return undefined;
+  // Discovery builds well-known URLs from its origin, so only a web URL works.
   try {
-    new URL(first);
+    const { protocol } = new URL(first);
+    return protocol === "http:" || protocol === "https:" ? first : undefined;
   } catch {
     return undefined;
   }
-  return first;
 }
 
 function isTransientMetadataFailure(error: unknown): boolean {

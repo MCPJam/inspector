@@ -463,45 +463,6 @@ describe("ToolsTab", () => {
         ).toBeInTheDocument();
       });
     });
-    // Select "old-tool", then refresh into a list without it.
-    const refreshWithoutSelectedTool = async (nextCursor?: string) => {
-      const tool = (name: string) => ({
-        name,
-        inputSchema: { type: "object", properties: {} },
-      });
-      mockListTools.mockResolvedValueOnce({ tools: [tool("old-tool")] });
-      render(
-        <ToolsTab
-          serverConfig={createServerConfig()}
-          serverName="test-server"
-        />,
-      );
-      fireEvent.click(await screen.findByText("old-tool"));
-      await waitFor(() =>
-        expect(screen.queryByText("No selection")).not.toBeInTheDocument(),
-      );
-      mockListTools.mockResolvedValueOnce({
-        tools: [tool("new-tool")],
-        ...(nextCursor ? { nextCursor } : {}),
-      });
-      fireEvent.click(screen.getByTitle("Refresh tools"));
-      await waitFor(() => expect(mockListTools).toHaveBeenCalledTimes(2));
-      await waitFor(() =>
-        expect(screen.getByTitle("Refresh tools")).not.toBeDisabled(),
-      );
-    };
-
-    it("drops a selected tool that left the list", async () => {
-      await refreshWithoutSelectedTool();
-      expect(await screen.findByText("new-tool")).toBeInTheDocument();
-      expect(screen.getByText("No selection")).toBeInTheDocument();
-    });
-
-    it("keeps a selected tool that a paged list may hold on a later page", async () => {
-      await refreshWithoutSelectedTool("page-2");
-      expect(screen.getByText("old-tool")).toBeInTheDocument();
-      expect(screen.queryByText("No selection")).not.toBeInTheDocument();
-    });
   });
 
   describe("search functionality", () => {

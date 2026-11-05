@@ -25,6 +25,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -399,10 +400,13 @@ export function MultiModelPlaygroundCard({
   const lastBroadcastRequestIdRef = useRef<number | null>(null);
   const lastExecutionRequestIdRef = useRef<number | null>(null);
   // Read when a restore fails, after the props it closed over may have moved.
+  // Set at commit, so a render React discards never counts as received.
   const broadcastRequestIdRef = useRef(broadcastRequest?.id);
-  broadcastRequestIdRef.current = broadcastRequest?.id;
   const executionRequestIdRef = useRef(deterministicExecutionRequest?.id);
-  executionRequestIdRef.current = deterministicExecutionRequest?.id;
+  useLayoutEffect(() => {
+    broadcastRequestIdRef.current = broadcastRequest?.id;
+    executionRequestIdRef.current = deterministicExecutionRequest?.id;
+  }, [broadcastRequest?.id, deterministicExecutionRequest?.id]);
   const onSummaryChangeRef = useRef(onSummaryChange);
   const onHasMessagesChangeRef = useRef(onHasMessagesChange);
   const lastAddColumnVersionRef = useRef(0);
