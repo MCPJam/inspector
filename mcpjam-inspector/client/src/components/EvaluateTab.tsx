@@ -49,7 +49,13 @@ import type { ServerFormData } from "@/shared/types.js";
 import { useProjectServers } from "@/hooks/useViews";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
-import { useEvaluateRouteFromUrl } from "@/lib/eval-route-url";
+import { useEvaluateNavPage } from "./evaluate/nav/eval-nav-pages";
+import { useEvaluateNavEnabled } from "./evaluate/nav/use-evaluate-nav-enabled";
+import {
+  buildEvalBreadcrumbs,
+  evalRouteTestCaseId,
+  evalsHeaderTrailProps,
+} from "./evaluate/nav/eval-breadcrumbs";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
@@ -195,7 +201,9 @@ function EvaluateTabContent({
   const hostsEnabled = isAuthenticated;
   // Decision summaries are part of the public Evaluate experience.
   const decisionSummaryEnabled = true;
-  const route = useEvaluateRouteFromUrl();
+  // `route` is the screen to render; a new-style address renders today's page.
+  const { route: addressRoute, pageRoute: route } = useEvaluateNavPage();
+  const evaluateNavEnabled = useEvaluateNavEnabled();
   const isDirectGuest = useIsDirectGuest({ projectId });
   const [previewedHostId] = usePreviewedHostId(projectId ?? null);
   const {
@@ -1364,6 +1372,24 @@ function EvaluateTabContent({
       })
     : null;
 
+  const addressCaseId = evalRouteTestCaseId(addressRoute);
+  // With the flag on, the trail comes from the address alone.
+  const navTrail =
+    evaluateNavEnabled === true && !generatingCases
+      ? evalsHeaderTrailProps(
+          buildEvalBreadcrumbs(addressRoute, {
+            suite: suiteBreadcrumbLabel,
+            runNumber: runBreadcrumbNumber,
+            testCase: addressCaseId
+              ? suiteDetails?.testCases.find(({ _id }) => _id === addressCaseId)
+                  ?.title
+              : null,
+            server: evalServer?.name ?? evalServerReturn?.name,
+          }),
+          (target) => navigatePlaygroundEvalsRoute(target),
+        )
+      : null;
+
   const handleBackToEvalServer = useCallback((serverId: string) => {
     navigatePlaygroundEvalsRoute({ type: "eval-server", serverId });
   }, []);
@@ -1672,7 +1698,19 @@ function EvaluateTabContent({
       projectId={projectId}
       isDirectGuest={isDirectGuest}
       header={
-        route.type === "create" ? undefined : (
+        route.type === "create" ? undefined : navTrail ? (
+          <EvalsHeader
+            onSetupRun={() => setSuiteAction("run")}
+            onAddCase={() => setSuiteAction("case")}
+            onCreateSuite={
+              route.type === "list" ? handleOpenCreateSuite : undefined
+            }
+            landingView={landingView}
+            onLandingViewChange={setLandingView}
+            onEvaluateClick={handleNavigateToEvalList}
+            {...navTrail}
+          />
+        ) : (
           <EvalsHeader
             onSetupRun={() => setSuiteAction("run")}
             onAddCase={() => setSuiteAction("case")}

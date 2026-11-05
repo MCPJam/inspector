@@ -23,6 +23,7 @@ import { UNSAFE_LocationContext, UNSAFE_NavigationContext } from "react-router";
 import { getAppRouter } from "../router-ref";
 import type { EvalRoute } from "./eval-route-types";
 import type { EvalRoutePrefix } from "./eval-route-url";
+import { buildEvalNavRoutePath } from "./eval-nav-route-paths";
 import { normalizeHostedHashTab } from "./hosted-tab-policy";
 import { isProjectScopedRoutePath } from "./app-routes";
 import {
@@ -617,6 +618,18 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
     }
     case "suite-edit":
       return `${prefix}/suite/${encodeURIComponent(route.suiteId)}/edit${route.fromCaseChecks ? `?fromCaseChecks=${encodeURIComponent(route.fromCaseChecks)}` : ""}`;
+    case "evaluate-runs":
+    case "suite-settings":
+    case "case-new":
+    case "case-settings":
+    case "case-evaluators":
+    case "test-run":
+    case "iteration":
+    case "test-run-edit":
+      // Page-per-layer routes exist under Evaluate only.
+      return prefix === routePaths.evaluate
+        ? buildEvalNavRoutePath(prefix, route)
+        : prefix;
     case "commit-detail": {
       // Commits are a Runs-mode lens: Suites mode has no cross-suite SHA view,
       // so a commit route built there degrades to that mode's list.

@@ -60,4 +60,44 @@ export type EvalRoute =
       commitSha: string;
       suite?: string;
       iteration?: string;
+    }
+  | EvalNavRoute;
+
+/** The three tabs of Suite settings, each its own address. */
+export type SuiteSettingsRouteTab = "settings" | "cases" | "evaluators";
+
+/**
+ * Evaluate's page-per-layer routes, parsed under `/evaluate` only. Settings
+ * live under `suite/:suite/settings`; a run's layers nest under
+ * `suite/:suite/runs/:run/cases/:case`.
+ */
+export type EvalNavRoute =
+  | { type: "evaluate-runs" }
+  | { type: "suite-settings"; suiteId: string; tab: SuiteSettingsRouteTab }
+  | { type: "case-new"; suiteId: string }
+  | { type: "case-settings"; suiteId: string; testCaseId: string }
+  | { type: "case-evaluators"; suiteId: string; testCaseId: string }
+  | {
+      type: "test-run";
+      suiteId: string;
+      runId: string;
+      testCaseId: string;
+      /** The model whose iterations the page shows, when the run used several. */
+      target?: string;
+    }
+  | {
+      type: "iteration";
+      suiteId: string;
+      runId: string;
+      testCaseId: string;
+      iterationId: string;
+    }
+  /** The case editor opened from a test run, so its trail leads back there. */
+  | {
+      type: "test-run-edit";
+      suiteId: string;
+      runId: string;
+      testCaseId: string;
     };
+
+export type EvalNavRouteKind = EvalNavRoute["type"];

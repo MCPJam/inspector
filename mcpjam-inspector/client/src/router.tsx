@@ -1,6 +1,7 @@
 import { PromoRedemptionPage } from "./components/promo/PromoRedemptionPage";
 import { LegacyEvalRedirect } from "./components/routing/legacy-eval-redirect";
 import { LegacyEvalCaseRedirect } from "./components/routing/legacy-eval-case-redirect";
+import { EVALUATE_NAV_ROUTE_PATHS } from "./lib/eval-nav-route-paths";
 import { ByokCreditsPage } from "./components/billing/ByokCreditsPage";
 import { CreditUsagePage } from "./components/billing/CreditUsagePage";
 import { createBrowserRouter, RouterProvider, redirect } from "react-router";
@@ -315,6 +316,12 @@ const ROUTE_ELEMENTS: Record<
     element: <EvaluateRoute />,
   },
   "evaluate/suite/:suiteId/edit": { element: <EvaluateRoute /> },
+  ...Object.fromEntries(
+    EVALUATE_NAV_ROUTE_PATHS.map((path) => [
+      path,
+      { element: <EvaluateRoute /> },
+    ]),
+  ),
   // Old CI links always land in public Evaluate, with fragments intact.
   "ci-evals": { element: <LegacyEvalRedirect /> },
   "ci-evals/*": { element: <LegacyEvalRedirect /> },

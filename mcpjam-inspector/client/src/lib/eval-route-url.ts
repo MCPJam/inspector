@@ -2,6 +2,10 @@ import { useContext, useMemo } from "react";
 import { UNSAFE_LocationContext } from "react-router";
 import type { EvalRoute, SuiteOverviewView } from "./eval-route-types";
 import { stripProjectFromPath } from "./project-route";
+import {
+  parseEvaluateRootNavRoute,
+  parseSuiteNavRoute,
+} from "./eval-nav-route-paths";
 
 /**
  * Both eval modes live under `/evals`; Runs is the `/evals/runs` sub-tree.
@@ -73,12 +77,23 @@ export function parseEvalRouteFromUrl(
     };
   }
 
+  const evaluateRoot =
+    prefix === "/evaluate" ? parseEvaluateRootNavRoute(tail) : null;
+  if (evaluateRoot) return evaluateRoot;
+
   if (tail[0] !== "suite" || !tail[1]) {
     return { type: "list" };
   }
 
   const suiteId = decodePathSegment(tail[1]);
   const rest = tail.slice(2);
+
+  // Page-per-layer routes are Evaluate's; `/evals` keeps its older shapes.
+  const navRoute =
+    prefix === "/evaluate"
+      ? parseSuiteNavRoute(suiteId, rest.map(decodePathSegment), params)
+      : null;
+  if (navRoute) return navRoute;
 
   if (rest.length === 0) {
     return {

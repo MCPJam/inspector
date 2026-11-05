@@ -271,6 +271,15 @@ export const ANALYTICS_EVENTS = {
   eval_generate_negative_tests_button_clicked: { source: "client" },
   eval_generate_tests_button_clicked: { source: "client" },
   eval_generate_tests_completed: { source: "client" },
+  // Evaluate's page-per-layer navigation; properties are typed in
+  // client/src/components/evaluate/nav/eval-nav-events.ts.
+  eval_nav_page_viewed: { source: "client" },
+  eval_nav_redirected: { source: "client" },
+  eval_tutorial_shown: { source: "client" },
+  eval_tutorial_completed: { source: "client" },
+  eval_tutorial_dismissed: { source: "client" },
+  eval_edit_from_test_run: { source: "client" },
+  eval_execution_preview_opened: { source: "client" },
   eval_run_insights_opened: { source: "client" },
   eval_setup_next_step_button_clicked: { source: "client" },
   eval_setup_start_eval_run_button_clicked: { source: "client" },

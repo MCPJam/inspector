@@ -1762,3 +1762,48 @@ describe("EvaluateTab — CI-managed suites", () => {
     expect(lastProps().configLocked).toBe(false);
   });
 });
+
+describe("EvaluateTab page-per-layer addresses", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.evaluateFlag.enabled = undefined;
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
+        makeQueryState(selectedSuiteId),
+    );
+  });
+
+  const TEST_RUN = {
+    type: "test-run" as const,
+    suiteId: "suite-a",
+    runId: "run-1",
+    testCaseId: "case-a",
+  };
+
+  it("renders today's run page for a test run address", () => {
+    Object.assign(mocks.route, { current: TEST_RUN });
+    render(<EvaluateTab projectId="ws-1" />);
+    expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0].route).toEqual({
+      type: "run-detail",
+      suiteId: "suite-a",
+      runId: "run-1",
+      testCaseId: "case-a",
+    });
+    expect(screen.getByTestId("evals-header")).toHaveTextContent("Run");
+    expect(screen.getByTestId("evals-header")).not.toHaveTextContent("Test case");
+  });
+
+  it("builds the trail from the address when the nav flag is on", async () => {
+    mocks.evaluateFlag.enabled = true;
+    Object.assign(mocks.route, { current: TEST_RUN });
+    render(<EvaluateTab projectId="ws-1" />);
+    const header = screen.getByTestId("evals-header");
+    expect(header).toHaveTextContent("Evaluate/Suite suite-a/Run/Test case");
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
+      type: "run-detail",
+      suiteId: "suite-a",
+      runId: "run-1",
+    });
+  });
+});
