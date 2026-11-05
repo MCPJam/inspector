@@ -115,10 +115,13 @@ export function OrganizationOrgKeysPolicyCard({
                 </Badge>
               ) : null}
             </div>
-            <p className="text-xs text-muted-foreground">
-              AI requests must use an approved organization provider.
-              MCPJam-provided models are disabled. Features without a compatible
-              provider are unavailable.
+            <p
+              className="text-xs text-muted-foreground"
+              data-testid="org-ai-keys-description"
+            >
+              {requireOrgKeys
+                ? "AI requests must use an approved organization provider. MCPJam-provided models are disabled. Features without a compatible provider are unavailable."
+                : "When on, AI requests must use an approved organization provider and MCPJam-provided models are disabled."}
             </p>
           </div>
           {configReady ? (
@@ -243,8 +246,8 @@ export function OrganizationOrgKeysPolicyCard({
             className="text-xs text-muted-foreground"
             data-testid="org-ai-keys-off-summary"
           >
-            MCPJam-provided models are used where you haven&apos;t chosen an
-            organization model.
+            Now off: MCPJam-provided models are used where you haven&apos;t
+            chosen an organization model.
           </p>
         ) : null}
 
