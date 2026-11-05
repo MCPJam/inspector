@@ -1,5 +1,9 @@
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
-import { isCreditExhaustion, isHoldRefusal } from "@/shared/credit-exhaustion";
+import {
+  isCreditExhaustion,
+  isDeclinedCardLimit,
+  isHoldRefusal,
+} from "@/shared/credit-exhaustion";
 import {
   AGENT_STEP_LIMIT_CODE,
   STEP_LIMIT_REFUSAL_MESSAGE,
@@ -41,7 +45,7 @@ export const AUTO_TOPUP_DECLINED_CODE = "auto_topup_declined";
 
 /** What every surface says for it: the card, not a limit, is what to fix. */
 export const AUTO_TOPUP_DECLINED_MESSAGE =
-  "Your card was declined, so auto-reload is paused. Update your payment method in Organization \u2192 Billing, or add credits to keep going.";
+  "Your card was declined, so auto-reload is paused. Update your payment method and turn auto-reload back on in Organization \u2192 Billing, or add credits to keep going.";
 export type MCPJamLimitKind = "total" | "concurrency";
 
 /** Which allowance ran out. Free orgs draw on a daily bucket, Team orgs on a
@@ -298,7 +302,8 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
     useFrontierSignInDialogStore.getState().open();
     return true;
   }
-  if (!isMCPJamModelLimitError(args)) return false;
+  // A declined card names its own fix where it is shown; this dialog would not.
+  if (!isMCPJamModelLimitError(args) || isDeclinedCardLimit(args)) return false;
   const period = findMCPJamLimitPeriod(args.message);
   const shortfall = findMCPJamCreditShortfall(args);
   useMCPJamLimitDialogStore.getState().notifyLimitHit({

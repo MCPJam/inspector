@@ -1,5 +1,6 @@
 import {
   EXHAUSTION_PHRASES,
+  isDeclinedCardRefusal,
   isHeldCreditsRefusal,
   namesAnotherRefusal,
   parseJsonEnvelope,
@@ -107,6 +108,22 @@ export const isHoldRefusal = (value: unknown, depth = 0): boolean => {
     );
   }
   return typeof value === "string" && isHeldCreditsRefusal(null, null, value);
+};
+
+/**
+ * A refusal after a declined card paused auto-reload: its structured reason at
+ * any depth, or the backend's sentence when a stored row lost the reason.
+ *
+ * It is still credit exhaustion (a run stops on it), but the out-of-credits
+ * dialog would hide what to fix, so surfaces show the card instead.
+ */
+export const isDeclinedCardLimit = (value: unknown): boolean => {
+  const reason = findRefusalReason(value);
+  if (reason) return isDeclinedCardRefusal(reason);
+  return someNested(
+    value,
+    (item) => typeof item === "string" && isDeclinedCardRefusal(null, item),
+  );
 };
 
 /** Account credit exhaustion, shared by notifications and run schedulers.

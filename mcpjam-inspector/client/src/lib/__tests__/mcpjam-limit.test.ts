@@ -351,6 +351,32 @@ describe("isMCPJamModelLimitError", () => {
     await expect(response.text()).resolves.toContain("mcpjam_rate_limit");
   });
 
+  it("opens no credits dialog for a declined card, which names its own fix", async () => {
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "signedIn",
+      hasPendingLimit: false,
+      isOpen: false,
+      intent: null,
+      pendingInput: null,
+    });
+    const declined = {
+      code: "user_rate_limit",
+      refusalReason: "auto_topup_declined",
+      limitKind: "total",
+      error:
+        "Your card was declined, so auto-reload is paused and this organization is out of MCPJam credits.",
+    };
+
+    await expect(
+      notifyMCPJamLimitErrorFromResponse(
+        new Response(JSON.stringify(declined), { status: 429 }),
+      ),
+    ).resolves.toBe(false);
+    // A stored row keeps only the sentence.
+    expect(notifyMCPJamLimitError({ message: declined.error })).toBe(false);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+
   it("forwards limitKind from response payload so concurrency is suppressed", async () => {
     useMCPJamLimitDialogStore.setState({
       authStatus: "signedIn",

@@ -149,7 +149,7 @@ export function describeDeclinedCard(message: string): NormalizedError {
       "Auto-reload tried to add credits and the card was declined.",
     ],
     nextSteps: [
-      "Update your payment method in Organization \u2192 Billing.",
+      "Update your payment method and turn auto-reload back on in Organization \u2192 Billing.",
       "Add credits to keep running sessions in the meantime.",
     ],
     rawMessage: message,
