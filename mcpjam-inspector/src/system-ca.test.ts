@@ -1,3 +1,4 @@
+import { X509Certificate } from "node:crypto";
 import tls from "node:tls";
 import { describe, expect, it, vi } from "vitest";
 import { trustSystemCertificates } from "./system-ca";
@@ -57,12 +58,17 @@ describe("trustSystemCertificates", () => {
   it.runIf(realApi)("puts the system roots into the default list this Node actually uses", () => {
     // The real API: every later TLS connection without its own `ca`, including
     // the server's `fetch`, verifies against this list.
+    // Compared by fingerprint: Node hands back its own PEM encoding of each
+    // certificate, which need not match the text that went in.
+    const fingerprint = (pem: string) => new X509Certificate(pem).fingerprint256;
     const before = tls.getCACertificates("default");
     try {
       expect(trustSystemCertificates(logger())).toBe(true);
-      const after = new Set(tls.getCACertificates("default"));
-      for (const cert of [...before, ...tls.getCACertificates("system")])
-        expect(after.has(cert)).toBe(true);
+      const after = new Set(tls.getCACertificates("default").map(fingerprint));
+      const expected = new Set(
+        [...before, ...tls.getCACertificates("system")].map(fingerprint),
+      );
+      expect([...expected].filter((cert) => !after.has(cert))).toEqual([]);
     } finally {
       tls.setDefaultCACertificates(before);
     }
