@@ -2078,6 +2078,157 @@ describe("PlaygroundMain", () => {
     // `LoadingIndicatorContent.test.tsx` and `Thread.test.tsx`.
   });
 
+  // PLB-456: a send waits on the pre-send history sync while the draft is
+  // still in the box. A second Enter (or a Send click) in that window must not
+  // start a second send.
+  describe("send in progress", () => {
+    const session = {
+      _id: "history-1",
+      chatSessionId: "chat-session-1",
+      firstMessagePreview: "Hello",
+      status: "active" as const,
+      directVisibility: "private" as const,
+      messageCount: 2,
+      version: 4,
+      startedAt: 1,
+      lastActivityAt: 1,
+      isPinned: false,
+      manualUnread: false,
+      isUnread: false,
+      messagesBlobUrl: "https://storage.test/blob",
+      resumeConfig: { selectedServers: ["test-server"] },
+    };
+    const detail = { ok: true, session, widgetSnapshots: [] };
+    let originalSendMessage: unknown;
+    let sendMessage: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      invalidateChatHistoryPrefetch();
+      originalSendMessage = mockUseChatSession.sendMessage;
+      // `undefined` reads as a refused send; these tests need sends that go out.
+      sendMessage = vi.fn().mockResolvedValue(true);
+      mockUseChatSession.sendMessage = sendMessage;
+      mockUseChatSession.messages = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+        { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
+      ];
+    });
+
+    afterEach(() => {
+      mockUseChatSession.sendMessage = originalSendMessage;
+      invalidateChatHistoryPrefetch();
+    });
+
+    const composerProps = () =>
+      mockChatInputProps.mock.calls.at(-1)?.[0] as {
+        value: string;
+        isSubmitting?: boolean;
+      };
+
+    async function openSavedThread() {
+      mockGetChatHistoryDetail.mockResolvedValueOnce(detail);
+      render(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null,
+        );
+      });
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(session));
+      });
+      fireEvent.click(
+        screen.getByTestId("conversation-target-notice-acknowledge"),
+      );
+    }
+
+    /** Every pre-send sync from here on waits on the same pending request. */
+    function holdPreSendSync() {
+      let resolve!: () => void;
+      const pending = new Promise((done) => {
+        resolve = () => done(detail);
+      });
+      mockGetChatHistoryDetail.mockReturnValue(pending);
+      return resolve;
+    }
+
+    it("sends once when a second submit lands while the pre-send sync is pending", async () => {
+      await openSavedThread();
+      const releaseSync = holdPreSendSync();
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "second message" },
+      });
+
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      expect(composerProps().isSubmitting).toBe(true);
+      expect(sendMessage).not.toHaveBeenCalled();
+      const rendersBeforeRelease = mockChatInputProps.mock.calls.length;
+
+      await act(async () => releaseSync());
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "second message" }),
+      );
+      expect(composerProps()).toMatchObject({ isSubmitting: false, value: "" });
+      // The lock is never released while the sent draft is still in the box,
+      // so Enter can't send it again in between.
+      for (const [props] of mockChatInputProps.mock.calls.slice(
+        rendersBeforeRelease,
+      )) {
+        expect(props.isSubmitting === false && props.value !== "").toBe(false);
+      }
+    });
+
+    it("keeps the draft and frees Send when the pre-send sync fails", async () => {
+      await openSavedThread();
+      mockGetChatHistoryDetail.mockRejectedValue(new Error("network down"));
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "another message" },
+      });
+
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(composerProps()).toMatchObject({
+        value: "another message",
+      });
+      expect(composerProps().isSubmitting).toBeFalsy();
+
+      mockGetChatHistoryDetail.mockResolvedValue(detail);
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("still sends the same text twice when the user repeats it on purpose", async () => {
+      await openSavedThread();
+      mockGetChatHistoryDetail.mockResolvedValue(detail);
+
+      for (let round = 0; round < 2; round += 1) {
+        fireEvent.change(screen.getByTestId("chat-input-field"), {
+          target: { value: "same prompt" },
+        });
+        await act(async () => {
+          fireEvent.submit(screen.getByTestId("chat-input"));
+        });
+        await waitFor(() =>
+          expect(sendMessage).toHaveBeenCalledTimes(round + 1),
+        );
+      }
+      expect(sendMessage.mock.calls.map(([options]) => options.text)).toEqual([
+        "same prompt",
+        "same prompt",
+      ]);
+    });
+  });
+
   describe("thread theme from host context", () => {
     it("scopes hostContext theme changes to the thread shell and composer surface", () => {
       render(<PlaygroundMain {...defaultProps} />);
