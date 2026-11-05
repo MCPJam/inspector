@@ -18,31 +18,7 @@ import { create } from "zustand";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 
-/** One embedded elicitation request within a round (mirror of the server DTO). */
-export interface MrtrBridgeInputRequest {
-  key: string;
-  mode: "form" | "url";
-  message: string;
-  requestedSchema?: Record<string, unknown>;
-  pluginForm?: boolean;
-  url?: string;
-}
-
-/** One round of a logical MRTR operation awaiting the user's responses. */
-export interface MrtrRound {
-  opId: string;
-  roundKey: string;
-  round: number;
-  serverId?: string;
-  requests: MrtrBridgeInputRequest[];
-  timestamp: string;
-}
-
-/** One user answer to a single keyed request. */
-export type MrtrKeyAnswer = {
-  action: "accept" | "decline" | "cancel";
-  content?: Record<string, unknown>;
-};
+import type { MrtrRound, MrtrKeyAnswer } from "@/shared/local-mrtr";
 
 /**
  * Per-round collection progress. Lives in the SINGLETON store (not in
