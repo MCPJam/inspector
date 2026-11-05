@@ -11,8 +11,14 @@ import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 
 const calls = vi.hoisted(() => ({
   authorize: vi.fn(),
+  authorizeLocal: vi.fn(),
   prepare: vi.fn(),
   dispose: vi.fn(),
+}));
+const runtimeMode = vi.hoisted(() => ({ hosted: false }));
+vi.mock("../../config.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../config.js")>()),
+  get HOSTED_MODE() { return runtimeMode.hosted; },
 }));
 vi.mock("../sandbox-view-registry.js", () => ({
   sandboxViews: { prepare: calls.prepare, dispose: calls.dispose },
@@ -20,6 +26,7 @@ vi.mock("../sandbox-view-registry.js", () => ({
 vi.mock("../../routes/web/auth.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../routes/web/auth.js")>()),
   authorizeServer: calls.authorize,
+  authorizeBatch: calls.authorizeLocal,
 }));
 import { sandboxViewAdmissionRoutes } from "../../routes/apps/mcp-apps/view-admissions.js";
 
@@ -62,9 +69,11 @@ function headers() {
   };
 }
 beforeEach(() => {
+  runtimeMode.hosted = false;
   token = generateSessionToken();
   actor = "fixture-user";
   calls.authorize.mockReset().mockResolvedValue({ authorized: true });
+  calls.authorizeLocal.mockReset().mockResolvedValue({ results: { server: { ok: true } } });
   calls.prepare.mockReset().mockResolvedValue({
     admissionId: "639f5fd0-f977-4813-b90f-d57cf2bf7c46",
     proxyUrl: "http://127.0.0.1:53000/api/apps/mcp-apps/sandbox-proxy",
@@ -82,7 +91,7 @@ describe("App document admission route authority", () => {
       body: JSON.stringify({ ...body(), projectId: "project", serverId: "server", html }),
     });
     expect(response.status).toBe(200);
-    expect(calls.authorize).toHaveBeenCalledOnce();
+    expect(calls.authorizeLocal).toHaveBeenCalledOnce();
     expect(calls.prepare.mock.calls[0][0].html).toBe(html);
   });
 
@@ -163,7 +172,7 @@ describe("App document admission route authority", () => {
       }),
     });
     expect(mismatch.status).toBe(403);
-    expect(calls.authorize).not.toHaveBeenCalled();
+    expect(calls.authorizeLocal).not.toHaveBeenCalled();
     for (const extra of [{}, { admissionId: body().viewInstanceId }]) {
       const response = await instance.request(url, {
         method: "POST",
@@ -177,12 +186,54 @@ describe("App document admission route authority", () => {
       });
       expect(response.status).toBe(200);
     }
-    expect(calls.authorize).toHaveBeenCalledTimes(2);
-    expect(calls.authorize.mock.calls[0].slice(1, 4)).toEqual([
+    expect(calls.authorizeLocal).toHaveBeenCalledTimes(2);
+    expect(calls.authorizeLocal.mock.calls[0].slice(1, 4)).toEqual([
       "fixture-user-token",
       "project",
-      "server",
+      ["server"],
     ]);
+    expect(calls.authorize).not.toHaveBeenCalled();
+  });
+
+  it("keeps the caller and selected connection scope on local authorization", async () => {
+    const response = await app(true).request("/api/web/apps/mcp-apps/view-admissions", {
+      method: "POST", headers: headers(),
+      body: JSON.stringify({ ...body(), projectId: "project", serverId: "server",
+        connectionId: "connection", scenarioId: "scenario", accessVersion: 4 }),
+    });
+    expect(response.status).toBe(200);
+    expect(calls.authorizeLocal.mock.calls[0][0]).toMatchObject({
+      authMethod: "authkit_jwt", workosUserId: actor,
+    });
+    expect(calls.authorizeLocal.mock.calls[0][4]).toEqual({
+      connectionId: "connection", scenarioId: "scenario", accessVersion: 4,
+    });
+  });
+
+  it.each([undefined, { ok: false, status: 403, code: "FORBIDDEN", message: "Access revoked" }])(
+    "refuses a missing or revoked local server before preparing a document",
+    async (result) => {
+      calls.authorizeLocal.mockResolvedValueOnce({ results: { server: result } });
+      const response = await app(true).request("/api/web/apps/mcp-apps/view-admissions", {
+        method: "POST", headers: headers(),
+        body: JSON.stringify({ ...body(), projectId: "project", serverId: "server" }),
+      });
+      expect(response.status).toBe(403);
+      expect(calls.prepare).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps hosted authorization on its hosted policy path", async () => {
+    runtimeMode.hosted = true;
+    calls.authorize.mockRejectedValueOnce(new WebRouteError(403, ErrorCode.FORBIDDEN, "Hosted refusal"));
+    const response = await app(true).request("/api/web/apps/mcp-apps/view-admissions", {
+      method: "POST", headers: headers(),
+      body: JSON.stringify({ ...body(), projectId: "project", serverId: "server" }),
+    });
+    expect(response.status).toBe(403);
+    expect(calls.authorize).toHaveBeenCalledOnce();
+    expect(calls.authorizeLocal).not.toHaveBeenCalled();
+    expect(calls.prepare).not.toHaveBeenCalled();
   });
 
   it("admits the synthetic platform resource only with a verified actor", async () => {
