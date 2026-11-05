@@ -1236,8 +1236,11 @@ export {
 export type { OAuthProxyRequest, OAuthProxyResponse } from "./oauth-proxy.js";
 export {
   isTlsTrustFailure,
+  isUnreachableTargetFailure,
   TLS_TRUST_FAILURE,
   tlsTrustFailure,
+  UNREACHABLE_TARGET_FAILURE,
+  unreachableTargetFailure,
 } from "./oauth-proxy-error.js";
 
 // Skill reference (SKILL.md content for agent brief generation)
