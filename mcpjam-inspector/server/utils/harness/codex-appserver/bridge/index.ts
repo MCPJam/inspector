@@ -343,6 +343,7 @@ async function main(): Promise<void> {
       // placeholder (or local capability) that satisfies Codex's auth check.
       baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
       apiKeyEnvVar: "CODEX_API_KEY",
+      closeModelConnections: process.env.MCPJAM_CLOSE_MODEL_CONNECTIONS === "1",
       hostToolsEntrypoint: join(args.layerDir, "host-tools-mcp.mjs"),
       relayUrl: relay.url,
       relayCredential: relay.credential,
