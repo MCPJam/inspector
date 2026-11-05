@@ -8,6 +8,8 @@ const flag = vi.hoisted(() => ({ value: undefined as boolean | undefined }));
 const track = vi.hoisted(() => vi.fn());
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => flag.value,
+  usePostHog: () => ({ featureFlags: { hasLoadedFlags: false } }),
+  useActiveFeatureFlags: () => [],
 }));
 vi.mock("@/lib/analytics", () => ({ track }));
 
