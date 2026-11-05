@@ -17,6 +17,7 @@ import { useSignOutStore } from "@/stores/sign-out-store";
 import { Button } from "@mcpjam/design-system/button";
 import { useWidgetHost } from "../chat-v2/thread/mcp-apps/use-widget-host";
 import { ServerSettingsView } from "./ServerSettingsView";
+import { useSettingsDialogPresentation } from "./settings-dialog-presentation";
 import type { ApproveAppTool, ThreadAppScope } from "./thread-app-api";
 
 type Request = {
@@ -38,6 +39,8 @@ export function ServerSettingsPanel({
   launchObservation?: ExtensionLaunchObservation;
 }) {
   const host = useWidgetHost();
+  const dialog = useSettingsDialogPresentation();
+  const [appActive, setAppActive] = useState(false);
   const panelScope = useMemo<ThreadAppScope>(
     () => ({
       ...scope,
@@ -115,7 +118,15 @@ export function ServerSettingsPanel({
   }, []);
   if (signingOut) return null;
   return (
-    <div className="min-h-0 overflow-auto" data-plugin-private="settings">
+    <div
+      className={
+        appActive
+          ? "flex h-full min-h-0 flex-col overflow-hidden"
+          : "min-h-0 overflow-auto"
+      }
+      data-settings-layout
+      data-plugin-private="settings"
+    >
       <div ref={setSlot} data-testid="settings-form-slot" />
       <OwnedPluginFormHost
         projectId={panelScope.projectId}
@@ -123,7 +134,11 @@ export function ServerSettingsPanel({
         retainWhileLoading
       />
       <HostedMrtrHost />
-      <div className={forms.length ? "hidden" : undefined}>
+      <div
+        hidden={forms.length > 0 && (!!dialog || !appActive)}
+        className={appActive ? "min-h-0 flex-1" : undefined}
+        data-settings-layout
+      >
         {request && (
           <section
             role="alert"
@@ -150,6 +165,7 @@ export function ServerSettingsPanel({
           </section>
         )}
         <ServerSettingsView
+          onAppActiveChange={setAppActive}
           scope={panelScope}
           serverId={serverId}
           serverName={serverName}

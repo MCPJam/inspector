@@ -98,7 +98,7 @@ it.each(["accept", "cancel"])(
     f.rows = [request()];
     view.rerender(ui());
     const button = await screen.findByRole("button", {
-      name: action === "accept" ? "Continue" : "Close",
+      name: action === "accept" ? "Continue" : "Cancel form",
       exact: true,
     });
     button.focus();
@@ -122,7 +122,7 @@ it("restores only the original parent's composer if its opener was removed", asy
   f.rows = [request()];
   view.rerender(ui(true));
   const close = await screen.findByRole("button", {
-    name: "Close",
+    name: "Cancel form",
     exact: true,
   });
   close.focus();
@@ -168,7 +168,7 @@ it("uses the original parent composer when the parent container held focus", asy
   f.rows = [request()];
   view.rerender(ui());
   const close = await screen.findByRole("button", {
-    name: "Close",
+    name: "Cancel form",
     exact: true,
   });
   close.focus();

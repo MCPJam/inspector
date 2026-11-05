@@ -32,7 +32,10 @@ vi.mock("../../chat-v2/thread/mcp-apps/use-widget-host", () => ({
     services: {},
     resolvers: {
       resolveEffectiveHostCapabilities: () => ({ serverTools: {} }),
-      resolveEffectiveMcpAppsCapabilities: () => ({ serverTools: true }),
+      resolveEffectiveMcpAppsCapabilities: () => ({
+        serverTools: true,
+        availableDisplayModes: ["inline", "fullscreen"],
+      }),
     },
   }),
 }));
@@ -168,11 +171,11 @@ it.each([false, true])(
       await screen.findByRole("button", { name: "Ask Settings form" }),
     );
     await waitFor(() =>
-      expect(screen.getByTestId("settings-form-slot")).toHaveTextContent(
+      expect(screen.getByTestId("settings-app-form-slot")).toHaveTextContent(
         "Confirm preferences",
       ),
     );
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
     if (close) {
       view.unmount();
       await waitFor(() =>

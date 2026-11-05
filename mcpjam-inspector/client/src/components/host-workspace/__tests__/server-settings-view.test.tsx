@@ -7,8 +7,12 @@ vi.mock("@/lib/analytics", () => ({ track: f.track }));
 vi.mock("../server-settings-api", () => ({
   createServerSettingsApi: () => ({ open: f.open }),
 }));
-vi.mock("../SettingsInlineApp", () => ({
-  SettingsInlineApp: () => <div>Inline settings App</div>,
+vi.mock("../SettingsApp", () => ({
+  SettingsApp: ({ onClose }: { onClose(): void }) => (
+    <div>
+      Inline settings App<button onClick={onClose}>Close App</button>
+    </div>
+  ),
 }));
 import { ServerSettingsView } from "../ServerSettingsView";
 const scope = {
