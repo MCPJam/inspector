@@ -47,7 +47,7 @@ import {
   type BashRunner,
 } from "../../utils/computers/run-command.js";
 import { handleRoute, parseWithSchema, readJsonBody } from "./auth.js";
-import { assertBearerToken } from "./errors.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 
 const execSchema = z.object({
   projectId: z.string().min(1),
@@ -147,7 +147,7 @@ export function createComputersRoutes(runner: BashRunner = e2bRunner): Hono {
 
   computers.post("/exec", async (c) =>
     handleRoute(c, async () => {
-      const bearerToken = assertBearerToken(c);
+      const bearerToken = await getConvexBearerForRequest(c);
       const body = parseWithSchema(execSchema, await readJsonBody(c));
       return runComputerCommand(
         {

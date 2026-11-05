@@ -48,6 +48,22 @@ describe("resolvePluginStdioHttpTarget", () => {
     });
   });
 
+  it("reauthorizes an API-key caller's delegated JWT before placing a plugin", async () => {
+    mocks.readAuthorizedStdioLaunchSpec.mockResolvedValue({ ...PLAIN_SPEC, pluginComponent: true });
+    // Old callers can carry this metadata; only the member-bound bearer is authority.
+    const delegated = { ...ARGS, bearerToken: "delegated-user-jwt", workosApiKeyActingAs: { workosUserId: "user", mcpjamOrganizationId: "org" } };
+    await expect(resolvePluginStdioHttpTarget(delegated)).resolves.toEqual(RUNTIME);
+    expect(mocks.readAuthorizedStdioLaunchSpec).toHaveBeenCalledWith(expect.objectContaining({ bearerToken: "delegated-user-jwt", projectId: ARGS.projectId, serverId: ARGS.serverId }));
+    expect(mocks.resolveColocatedPluginBox).toHaveBeenCalledWith(expect.objectContaining({ bearer: "delegated-user-jwt" }));
+  });
+
+  it("refuses invalid delegation before reserving a Computer", async () => {
+    mocks.readAuthorizedStdioLaunchSpec.mockRejectedValueOnce(new Error("Invalid token"));
+    await expect(resolvePluginStdioHttpTarget({ ...ARGS, bearerToken: "invalid-jwt" })).resolves.toBeNull();
+    expect(mocks.resolveColocatedPluginBox).not.toHaveBeenCalled();
+    expect(mocks.ensurePluginStdioRuntime).not.toHaveBeenCalled();
+  });
+
   it("places a component the backend marks as a plugin's, with no placeholder", async () => {
     mocks.readAuthorizedStdioLaunchSpec.mockResolvedValue({
       ...PLAIN_SPEC,

@@ -4409,6 +4409,7 @@ async function launchEvalRun(params: {
     undefined,
     params.hostConfig ? hostClientCapabilities(params.hostConfig) : undefined,
     {
+      pluginComputerRuntime: !!params.hostConfig?.computer,
       serverNames,
       // The issuer makes per-server XAA servers mint instead of failing with
       // 'Missing XAA issuer'. The enterprise policy now comes from the run's

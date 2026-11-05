@@ -532,6 +532,7 @@ evals.post("/stream-test-case", async (c) => {
     (caseHostConfig ? hostClientCapabilities(caseHostConfig) : undefined) ??
       (body.clientCapabilities as Record<string, unknown> | undefined),
     {
+      pluginComputerRuntime: !!caseHostConfig?.computer,
       accessScope: body.accessScope as "project_member" | "chat_v2" | undefined,
       scenarioId: evalScenarioId,
       accessVersion: body.accessVersion as number | undefined,
