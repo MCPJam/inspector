@@ -28,6 +28,7 @@ vi.mock("../thread-app-api", () => ({
   createThreadAppApi: () => ({ invoke: mocks.invoke, close: mocks.close }),
 }));
 vi.mock("@mcpjam/widget-react", () => ({
+  UIType: { MCP_APPS: "mcp-apps", OPENAI_SDK: "openai-sdk" },
   WidgetHostProvider: ({ children }: any) => children,
   MCPAppsRenderer: (props: any) => {
     mocks.renderer(props);
