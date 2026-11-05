@@ -29,10 +29,8 @@ import type {
   OrgAiModelKind,
 } from "@/hooks/useOrgAiConfig";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
-import {
-  canonicalPrefix,
-  canonicalSelectionModelId,
-} from "@/components/chat-v2/shared/model-selection";
+import { canonicalSelectionModelId } from "@/components/chat-v2/shared/model-selection";
+import { canonicalPrefix } from "@/shared/canonical-model-id";
 import type { ModelDefinition } from "@/shared/types";
 
 // ---------------------------------------------------------------------------
