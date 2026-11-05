@@ -165,11 +165,11 @@ describe("retained App composer context", () => {
       thumbnail: `data:image/png;base64,${png}`,
     });
     expect(new Set(rows.map((row) => row.group?.id))).toEqual(
-      new Set(["instance"]),
+      new Set([JSON.stringify(["instance", "Context"])]),
     );
     // The Context chip names the App's plugin with its icons.
     expect(rows[0]?.group).toMatchObject({
-      title: "Parts",
+      title: "Context",
       serverName: "Bits & Bolts",
       icons: { logo: chipLogo },
       serverIcons: chipServerIcons,
@@ -230,6 +230,36 @@ describe("retained App composer context", () => {
       expect(result.current.snapshot.state).toEqual(view("Smaller", "u2"));
     },
   );
+  it("keeps titled groups scoped to their App and falls back to Context", async () => {
+    const grouped = {
+      updateId: "grouped",
+      content: [
+        { type: "text", text: "cap", _meta: { "openai/group": { title: "Keycaps" } } },
+        { type: "text", text: "other cap", _meta: { "openai/group": { title: "Keycaps" } } },
+        { type: "text", text: "dial", _meta: { "openai/group": { title: "Controls" } } },
+        { type: "text", text: "plain", _meta: { "openai/group": { title: "  " } } },
+        { type: "text", text: "missing" },
+      ],
+    };
+    context.mockReset().mockResolvedValue(removed(2));
+    const first = renderHook(() => useAppContext(scope, opened(grouped)));
+    const second = renderHook(() => useAppContext(scope, {
+      ...opened(grouped), instanceId: "other", instanceToken: "other-token",
+    }));
+    const groups = first.result.current.attachments.map((row) => row.group!);
+    expect(groups.map((group) => group.title)).toEqual([
+      "Keycaps", "Keycaps", "Controls", "Context", "Context",
+    ]);
+    expect(groups[0].id).toBe(groups[1].id);
+    expect(new Set(groups.map((group) => group.id)).size).toBe(3);
+    expect(groups[0].id).not.toBe(second.result.current.attachments[0].group!.id);
+    expect(groups[0].removeAllLabel).toBe("Remove all Parts context");
+    const otherRows = second.result.current.attachments;
+    await act(async () => groups[0].removeAll!());
+    expect(first.result.current.attachments).toEqual([]);
+    expect(second.result.current.attachments).toBe(otherRows);
+    expect(context.mock.calls[0][0]).toBe("token");
+  });
 
   it("removes all after an earlier change failed, without a separate read", async () => {
     // An App update whose outcome is unknown refuses later updates, but a

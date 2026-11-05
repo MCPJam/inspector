@@ -85,7 +85,7 @@ describe("listed file resource admission", () => {
         { uri: "resource://a", text: "a" },
         { uri: "resource://a", text: "b" },
       ],
-      [{ uri: "resource://a", text: "a".repeat(1024 * 1024 + 1) }],
+      [{ uri: "resource://a", text: "a".repeat(8 * 1024 * 1024 + 1) }],
     ]) {
       expect(() => readListedFileBytes({ contents }, "resource://a")).toThrow();
     }

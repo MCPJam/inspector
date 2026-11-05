@@ -260,6 +260,22 @@ describe("seedHostTemplate", () => {
     );
   });
 
+  it("enables web mentions in the ChatGPT seed and bundled catalog without local files", () => {
+    const seeded = seedHostTemplate("chatgpt").mcpProfile?.apps?.pluginExtensions;
+    const bundled = BUNDLED_HOST_COMPAT_CATALOG.hostsById.chatgpt.mcpProfile.apps.pluginExtensions;
+    for (const extensions of [seeded, bundled]) {
+      expect(extensions).toMatchObject({
+        enabled: true,
+        capabilities: {
+          mentions: true,
+          fileResources: false,
+          fileViewers: false,
+          localFiles: false,
+        },
+      });
+    }
+  });
+
   it("keeps ChatGPT raw host capabilities faithful to the probe", () => {
     const config = seedHostTemplate("chatgpt", { theme: "dark" });
 

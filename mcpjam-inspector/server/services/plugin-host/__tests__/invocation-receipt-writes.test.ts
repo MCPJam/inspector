@@ -118,6 +118,33 @@ afterEach(() => {
 });
 
 describe("receipt writes on an App call's critical path", () => {
+  it("delivers a large App result once while recording that durable replay is unavailable", async () => {
+    const l = ledger();
+    const result = {
+      content: [],
+      structuredContent: { blob: "A".repeat(6_090_525) },
+    };
+    const execute = vi.fn(async () => result);
+    const f = fixture(l.port, { execute });
+    await expect(
+      f.invoker.invoke("app", "assembly", { name: "tool" }),
+    ).resolves.toBe(result);
+    await f.flush();
+    expect(l.rows.get("assembly")!.legs[0]).toMatchObject({
+      state: "unavailable",
+      errorCode: "RECEIPT_VALUE_UNAVAILABLE",
+    });
+    expect(l.rows.get("assembly")!.legs[0]!.valueJson).toBeUndefined();
+    await expect(
+      f.invoker.invoke("app", "assembly", { name: "tool" }),
+    ).resolves.toBe(result);
+    const restarted = fixture(l.port, { execute });
+    await expect(
+      restarted.invoker.invoke("app", "assembly", { name: "tool" }),
+    ).rejects.toMatchObject({ code: "RECEIPT_VALUE_UNAVAILABLE" });
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
   it("claims and marks dispatched in one write when nothing gated runs between them", async () => {
     const l = ledger();
     const f = fixture(l.port);

@@ -26,7 +26,7 @@ export interface ContextAttachment {
   description?: string;
   remove?: () => void;
   removing?: boolean;
-  /** App context groups into one "Context" chip per App instance. */
+  /** App context groups by the supplied title within each App instance. */
   group?: {
     id: string;
     title: string;
@@ -37,6 +37,7 @@ export interface ContextAttachment {
     serverIcons?: readonly unknown[];
     /** Removes all of this App's context, including blocks not shown here. */
     removeAll?: () => void;
+    removeAllLabel?: string;
   };
   block?: ContextAttachmentBlock;
 }
@@ -95,7 +96,7 @@ function Thumbnail({ src }: { src: string }) {
 }
 
 /**
- * One chip per App: its plugin icon and "Context". Opening it lists each
+ * One chip per titled group, with the App's plugin icon. Opening it lists each
  * block by type (text: title and text; resource link and embedded resource:
  * title and URI; image: title, format and thumbnail). An App's context is
  * removed as a group: × on the chip removes all of it, and rows have no ×.
@@ -108,6 +109,7 @@ export function ContextGroupChip({
   items: ContextAttachment[];
 }) {
   const removing = items.some((item) => item.removing);
+  const contextLabel = group.title === "Context" ? "Context" : `${group.title} context`;
   return (
     <Popover>
       <div
@@ -121,7 +123,7 @@ export function ContextGroupChip({
             size="sm"
             className="h-7 gap-1.5 px-1.5 text-xs font-medium"
             title={group.title}
-            aria-label={`${group.title} context, ${items.length} item${
+            aria-label={`${contextLabel}, ${items.length} item${
               items.length === 1 ? "" : "s"
             }`}
           >
@@ -130,7 +132,7 @@ export function ContextGroupChip({
               pluginIcons={group.icons}
               serverIcons={group.serverIcons}
             />
-            Context
+            <span className="max-w-48 truncate">{group.title}</span>
           </Button>
         </PopoverTrigger>
         {group.removeAll && (
@@ -140,7 +142,8 @@ export function ContextGroupChip({
             size="icon"
             className="size-5 shrink-0"
             disabled={removing}
-            aria-label={`Remove all ${group.title} context`}
+            aria-label={group.removeAllLabel ?? `Remove all ${group.title} context`}
+            title={group.removeAllLabel ?? `Remove all ${group.title} context`}
             onClick={group.removeAll}
           >
             <X className="size-3" />
@@ -156,7 +159,7 @@ export function ContextGroupChip({
         <p className="truncate px-2 pb-1 pt-1.5 text-xs text-muted-foreground">
           {group.title}
         </p>
-        <ul aria-label={`${group.title} context`} className="space-y-0.5">
+        <ul aria-label={contextLabel} className="space-y-0.5">
           {items.map((item) => {
             const block = item.block;
             const secondary =
@@ -187,7 +190,7 @@ export function ContextGroupChip({
   );
 }
 
-/** Group App context per App, keeping first-seen order; others stay single. */
+/** Group App context by its instance-scoped group ID, keeping first-seen order. */
 export function groupContextAttachments(attachments: ContextAttachment[]) {
   const order: (
     | { kind: "single"; attachment: ContextAttachment }

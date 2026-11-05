@@ -1,3 +1,4 @@
+import { PLUGIN_FILE_MAX_BYTES } from "../../../shared/plugin-file-transfer.js";
 import { attachRunningSandbox } from "../../utils/computers/attach-sandbox.js";
 import { createHash, randomUUID } from "node:crypto";
 import { posix } from "node:path";
@@ -221,7 +222,7 @@ export function computerFilePath(target: LocalFileTarget) {
 export function createComputerFileTargetAdapter(
   target: LocalFileTarget,
   files: (signal: AbortSignal) => Promise<ComputerFileSystem>,
-  maxBytes = 1024 * 1024,
+  maxBytes = PLUGIN_FILE_MAX_BYTES,
 ): BoundResourceAdapter & {
   check(signal: AbortSignal): Promise<void>;
 } {
@@ -267,8 +268,10 @@ export function createComputerFileTargetAdapter(
       return readWith(await files(signal), signal);
     },
     async conditionalWrite(key, bytes, ifMatch, signal) {
-      if (key !== target.uri || bytes.byteLength > maxBytes)
+      if (key !== target.uri)
         throw new ResourceGrantError("RESOURCE_DENIED");
+      if (bytes.byteLength > maxBytes)
+        throw new ResourceGrantError("RESOURCE_TOO_LARGE");
       const fs = await files(signal);
       return withPathLock(absolute, async () => {
         const previous = await readWith(fs, signal);

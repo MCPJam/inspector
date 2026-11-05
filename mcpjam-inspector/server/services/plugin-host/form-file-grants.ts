@@ -62,6 +62,7 @@ type Grant = {
   release?: () => Promise<void>;
   promoted: boolean;
   closed: boolean;
+  retryAfter?: number;
   ready: Promise<void>;
   expiry: ReturnType<typeof setTimeout>;
   detach: () => void;
@@ -124,7 +125,7 @@ const accepts = pluginFormFileAccepted;
  */
 export class PluginFormFileGrants {
   private readonly records = new Map<string, Grant>();
-  private readonly deleting = new Set<Promise<void>>();
+  private readonly deleting = new Map<string, Promise<void>>();
   private readonly journal: PluginFormFileJournal;
   private startup?: Promise<unknown>;
   private janitor?: ReturnType<typeof setInterval>;
@@ -149,10 +150,13 @@ export class PluginFormFileGrants {
       join: (...parts) => join(...parts),
     };
   }
-  start() {
-    this.startup ??= this.journal.sweep().then((result) => {
-      this.reportSweep(result);
+  private sweepLocal = false;
+  start(localJournal = true) {
+    this.sweepLocal ||= localJournal;
+    if (!this.janitor) {
       this.janitor = setInterval(() => {
+        this.retryCleanup();
+        if (!this.sweepLocal) return;
         void this.journal
           .sweep()
           .then((value) => this.reportSweep(value))
@@ -161,6 +165,10 @@ export class PluginFormFileGrants {
           });
       }, 60_000);
       this.janitor.unref();
+    }
+    if (!localJournal) return Promise.resolve();
+    this.startup ??= this.journal.sweep().then((result) => {
+      this.reportSweep(result);
       return result;
     });
     return this.startup;
@@ -421,7 +429,11 @@ export class PluginFormFileGrants {
   }
   private remove(key: string) {
     const grant = this.records.get(key);
-    if (!grant || grant.closed) return;
+    if (
+      !grant ||
+      this.deleting.has(key) ||
+      (grant.retryAfter ?? 0) > Date.now()
+    ) return;
     grant.closed = true;
     grant.detach();
     clearTimeout(grant.expiry);
@@ -429,24 +441,36 @@ export class PluginFormFileGrants {
       .catch(() => {})
       .then(async () => {
         if (grant.release) await grant.release();
+        if (this.records.get(key) === grant) this.records.delete(key);
       })
-      .catch(() => {
-        logger.warn("[plugin-forms] temporary file cleanup failed");
+      .catch((error: unknown) => {
+        grant.retryAfter = Date.now() + 60_000;
+        logger.warn("[plugin-forms] temporary file cleanup failed", {
+          errorName: error instanceof Error ? error.name : typeof error,
+          ...(error instanceof PluginInvocationError
+            ? { errorCode: error.code }
+            : {}),
+        });
       })
       .finally(() => {
-        if (this.records.get(key) === grant) this.records.delete(key);
-        this.deleting.delete(cleanup);
+        this.deleting.delete(key);
       });
-    this.deleting.add(cleanup);
+    this.deleting.set(key, cleanup);
+  }
+  private retryCleanup() {
+    // Failed closed grants still count against the existing upload bounds. Only
+    // their journal-verified release is retried; no invocation is resumed.
+    for (const [key, grant] of this.records)
+      if (grant.closed) this.remove(key);
   }
   async drain() {
-    await Promise.all([...this.deleting]);
+    await Promise.all([...this.deleting.values()]);
   }
 }
 export const pluginFormFileGrants = new PluginFormFileGrants();
 /** Called after environment loading in both local product server entrypoints. */
-export function startPluginFormFileJanitor() {
-  return pluginFormFileGrants.start().catch(() => {
+export function startPluginFormFileJanitor(localJournal = true) {
+  return pluginFormFileGrants.start(localJournal).catch(() => {
     logger.warn("[plugin-forms] upload journal startup failed");
   });
 }

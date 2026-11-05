@@ -1226,13 +1226,14 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           // This seed emulates ChatGPT on the web, so the extensions the
           // OpenAI extensions spec's Platform Support table marks "Not
           // supported" on Web start off: fileViewers, localFiles,
-          // fileResources and mentions. Mirrors the backend template.
+          // fileResources. Composer mentions are supported on Web.
+          // Mirrors the backend template.
           pluginExtensions: {
             capabilities: {
               fileResources: false,
               fileViewers: false,
               localFiles: false,
-              mentions: false,
+              mentions: true,
             },
             enabled: true,
           },
