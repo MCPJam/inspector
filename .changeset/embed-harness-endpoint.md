@@ -1,0 +1,5 @@
+---
+"@mcpjam/inspector": patch
+---
+
+Route harness bridge connections through the configured E2B sandbox endpoint, including the routing headers required by self-hosted Embed installations.
