@@ -294,3 +294,82 @@ test("buildTasksConformanceConfig rejects a bad --check-overrides as a usage err
     );
   }
 });
+
+test("buildTasksConformanceConfig pins mcpProtocolVersion when --protocol-version is a known version", () => {
+  const config = buildTasksConformanceConfig({
+    url: "https://example.com/mcp",
+    protocolVersion: "2026-07-28",
+  });
+
+  assert.equal(
+    (config as { mcpProtocolVersion?: string }).mcpProtocolVersion,
+    "2026-07-28"
+  );
+});
+
+test("buildTasksConformanceConfig omits mcpProtocolVersion when the flag is absent", () => {
+  const config = buildTasksConformanceConfig({
+    url: "https://example.com/mcp",
+  });
+
+  assert.equal("mcpProtocolVersion" in config, false);
+});
+
+test("buildTasksConformanceConfig rejects an unknown --protocol-version", () => {
+  assert.throws(
+    () =>
+      buildTasksConformanceConfig({
+        url: "https://example.com/mcp",
+        protocolVersion: "not-a-real-version",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Unknown --protocol-version")
+  );
+});
+
+test("buildTasksConformanceConfig rejects --protocol-version against a stdio target", () => {
+  assert.throws(
+    () =>
+      buildTasksConformanceConfig({
+        command: "node",
+        args: ["server.js"],
+        protocolVersion: "2026-07-28",
+      }),
+    (error) =>
+      error instanceof CliError && error.message.includes("HTTP target")
+  );
+});
+
+test("tasks conformance threads --protocol-version into mcpProtocolVersion", async () => {
+  const program = new Command();
+  program.exitOverride();
+  registerTasksCommands(program);
+  const conformance = program.commands
+    .find((c) => c.name() === "tasks")
+    ?.commands.find((c) => c.name() === "conformance");
+  assert.ok(conformance, "tasks conformance should be registered");
+  let captured: ReturnType<typeof buildTasksConformanceConfig> | undefined;
+  // Replace the network-running action so only option parsing is exercised.
+  conformance.action((options) => {
+    captured = buildTasksConformanceConfig(options);
+  });
+
+  await program.parseAsync(
+    [
+      "tasks",
+      "conformance",
+      "--url",
+      "https://example.com/mcp",
+      "--protocol-version",
+      "2025-11-25",
+    ],
+    { from: "user" }
+  );
+
+  assert.equal(
+    (captured as { mcpProtocolVersion?: string } | undefined)
+      ?.mcpProtocolVersion,
+    "2025-11-25"
+  );
+});
