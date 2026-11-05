@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ConformanceRunListItem } from "../ConformanceHistory";
 import { ConformanceServerList } from "../ConformanceServerList";
@@ -76,5 +76,26 @@ describe("ConformanceServerList", () => {
     expect(screen.getByRole("group", { name: "draw suites" })).toHaveClass(
       "min-h-[6.875rem]",
     );
+  });
+
+  it("keeps the last run time current while the card stays open", () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <ConformanceServerList
+          runs={[{ serverName: "draw", run: run() }]}
+          onViewRun={vi.fn()}
+          onRun={vi.fn()}
+        />,
+      );
+      expect(screen.getByText("Last run just now")).toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(3 * 60_000);
+      });
+      expect(screen.getByText("Last run 3m ago")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

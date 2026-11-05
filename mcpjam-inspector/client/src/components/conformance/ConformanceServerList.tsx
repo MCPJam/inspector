@@ -36,8 +36,8 @@ function suiteRan(
   );
 }
 
-function lastRunLabel(createdAt: number): string {
-  const minutes = Math.max(0, Math.round((Date.now() - createdAt) / 60_000));
+function lastRunLabel(createdAt: number, now: number): string {
+  const minutes = Math.max(0, Math.round((now - createdAt) / 60_000));
   if (minutes < 1) return "Last run just now";
   if (minutes < 60) return `Last run ${minutes}m ago`;
   const hours = Math.round(minutes / 60);
@@ -113,6 +113,13 @@ function ServerCard({
     return suiteRan(report) ? [report] : [];
   });
   const percent = run.score == null ? "—" : `${Math.round(run.score)}%`;
+  // Query updates do not tick with the clock, so "Last run 2m ago" would go
+  // stale on an open page without this.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   return (
     <li className="flex h-full flex-col gap-4 rounded-lg bg-popover px-5 py-4 text-popover-foreground shadow-sm">
@@ -143,7 +150,7 @@ function ServerCard({
       </div>
       <div className="mt-auto flex items-center justify-between gap-3">
         <span className="text-sm text-muted-foreground">
-          {lastRunLabel(run.createdAt)}
+          {lastRunLabel(run.createdAt, now)}
         </span>
         <div className="flex shrink-0 items-center gap-2">
           <Button
