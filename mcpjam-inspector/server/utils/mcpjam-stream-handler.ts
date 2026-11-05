@@ -46,10 +46,13 @@ import {
   type BackendStreamFailureContext,
 } from "./org-policy-stream-refusal.js";
 import {
+  createToolNameAliases,
   describeAsSlug,
   describeError,
   isNormalizedError,
   readModelOutputImage,
+  renameToolNamePart,
+  renameToolNamesInMessages,
   type NormalizedError,
 } from "@mcpjam/sdk";
 import {
@@ -2515,6 +2518,9 @@ async function processStream(
   // Who and where a pill minted here is bound to (MJ-008). Required: an
   // approval id minted without it could not be verified on resume.
   approvalBinding: ToolApprovalBinding,
+  // Undoes the request's provider-safe aliases, so a call to `cart_add` is
+  // handled as the server's `cart.add`.
+  toolNameFromWire: (name: string) => string,
   onLiveTextDelta?: (delta: string) => void,
   abortSignal?: AbortSignal,
   // PR 5b-pre: chunk-level callbacks. Optional; only fired when
@@ -2629,14 +2635,17 @@ async function processStream(
             );
       }
 
-      const chunk = value.value as UIMessageChunk & {
-        totalUsage?: {
-          inputTokens?: number;
-          outputTokens?: number;
-          totalTokens?: number;
-        };
-        [key: string]: unknown;
-      };
+      const chunk = renameToolNamePart(
+        value.value as UIMessageChunk & {
+          totalUsage?: {
+            inputTokens?: number;
+            outputTokens?: number;
+            totalTokens?: number;
+          };
+          [key: string]: unknown;
+        },
+        toolNameFromWire,
+      );
 
       if (firstChunkAt === undefined) {
         firstChunkAt = Date.now();
@@ -4081,6 +4090,12 @@ async function processOneStep(ctx: StepContext): Promise<{
   // paying, so a claim there is incoherent rather than merely misrouted.
   const dispatchPath =
     billingFeature !== undefined ? PLATFORM_STREAM_PATH : endpointPath;
+  // MCP allows tool names (`cart.add`) that the providers behind the backend
+  // reject, so the backend gets provider-safe aliases and `processStream`
+  // restores the originals.
+  const wireToolNames = createToolNameAliases(
+    activeToolDefs.map((def) => def.name),
+  );
   let res: Response;
   // Everything above this line is ours; everything at or below it is the
   // model's turn. Marked HERE, at the handover, not once a response comes
@@ -4101,11 +4116,16 @@ async function processOneStep(ctx: StepContext): Promise<{
           // Persist only once at the end of the full agentic loop via
           // onConversationComplete to avoid storing partial per-step traces.
           skipChatIngestion: true,
-          messages: JSON.stringify(scrubbedMessages),
+          messages: JSON.stringify(
+            renameToolNamesInMessages(scrubbedMessages, wireToolNames.toWire),
+          ),
           model: modelId,
           systemPrompt: providerSystemPrompt,
           ...(temperature !== undefined ? { temperature } : {}),
-          tools: activeToolDefs,
+          tools: activeToolDefs.map((def) => ({
+            ...def,
+            name: wireToolNames.toWire(def.name),
+          })),
           ...(scenarioId ? { scenarioId } : {}),
           ...(scenarioId && Number.isFinite(accessVersion)
             ? { accessVersion }
@@ -4116,8 +4136,24 @@ async function processOneStep(ctx: StepContext): Promise<{
           turnId: traceTurn.turnId,
           promptIndex: traceTurn.promptIndex,
           stepIndex,
-          ...(toolChoice ? { toolChoice } : {}),
+          ...(toolChoice
+            ? {
+                toolChoice: renameToolNamePart(
+                  toolChoice,
+                  wireToolNames.toWire,
+                ),
+              }
+            : {}),
           ...(extraBodyFields ?? {}),
+          // A hosted eval's own `toolChoice` rides in `extraBodyFields`.
+          ...(extraBodyFields?.toolChoice
+            ? {
+                toolChoice: renameToolNamePart(
+                  extraBodyFields.toolChoice,
+                  wireToolNames.toWire,
+                ),
+              }
+            : {}),
         }),
         ...(abortSignal ? { signal: abortSignal } : {}),
       });
@@ -4394,6 +4430,7 @@ async function processOneStep(ctx: StepContext): Promise<{
     approvalDecisions,
     messageHistory,
     approvalBinding,
+    wireToolNames.fromWire,
     onLiveTextDelta,
     abortSignal,
     onToolCall,
