@@ -209,3 +209,31 @@ export async function askStdioCommandApprovalForChatError(
   if (allowed)
     toast.success("Allowed on this device. Send your message again.");
 }
+
+/** Review current terms without connecting or retrying the skipped chat turn. */
+export async function reviewStdioCommandApproval(
+  projectId: string,
+  serverId: string,
+  serverName: string,
+): Promise<void> {
+  try {
+    const response = await authFetch("/api/mcp/servers/command-approval", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, serverId, serverName }),
+    });
+    const body: unknown = await response.json();
+    if (!response.ok) throw new Error("Command review failed");
+    const terms = readStdioCommandApprovalTerms(body);
+    if (terms) {
+      await askStdioCommandApprovalForChatError({
+        reason: STDIO_COMMAND_APPROVAL_REQUIRED_REASON, approval: terms, serverName,
+      }, projectId);
+    } else if (body && typeof body === "object" && "approved" in body && body.approved === true) {
+      toast.success("Already allowed on this device. Send your message again.");
+    } else throw new Error("Command review returned no terms");
+  } catch {
+    // Keep the command unapproved and leave the original turn untouched.
+    toast.error("The command could not be reviewed. Try again.");
+  }
+}
