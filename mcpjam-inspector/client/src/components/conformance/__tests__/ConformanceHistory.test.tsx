@@ -111,6 +111,10 @@ describe("ConformanceHistory", () => {
       screen.getByRole("img", { name: "19 passed, 2 failed of 21" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("FAILED")).toBeNull();
+    const header = screen.getByText("SERVER").parentElement;
+    expect(header?.textContent).toBe(
+      "SERVERPROTOCOLSCORECHECKSRESULTDATESOURCE",
+    );
   });
 
   it("names a run that has not finished instead of drawing an empty ring", () => {

@@ -9,15 +9,20 @@
  * over. The wire-level half — the service token going out with the claim — is
  * in `server/utils/__tests__/mcpjam-stream-handler.agent-billing.test.ts`.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
-const { streamWebChatTurnMock, disconnectAllServersMock, listToolsMock } =
-  vi.hoisted(() => ({
-    streamWebChatTurnMock: vi.fn(),
-    disconnectAllServersMock: vi.fn(),
-    listToolsMock: vi.fn(async () => ({ tools: [] })),
-  }));
+const {
+  streamWebChatTurnMock,
+  disconnectAllServersMock,
+  listToolsMock,
+  resolveConfigMock,
+} = vi.hoisted(() => ({
+  streamWebChatTurnMock: vi.fn(),
+  disconnectAllServersMock: vi.fn(),
+  listToolsMock: vi.fn(async () => ({ tools: [] })),
+  resolveConfigMock: vi.fn(),
+}));
 
 vi.mock("@mcpjam/sdk", async () => {
   const actual =
@@ -37,6 +42,12 @@ vi.mock("@mcpjam/sdk", async () => {
 vi.mock("../../../utils/web-chat-turn.js", () => ({
   streamWebChatTurn: streamWebChatTurnMock,
 }));
+vi.mock("../../../utils/org-model-config.js", async (original) => ({
+  ...(await original<typeof import("../../../utils/org-model-config.js")>()),
+  resolveOrgModelConfig: resolveConfigMock,
+}));
+
+afterEach(() => vi.unstubAllEnvs());
 
 vi.mock("../apps.js", () => ({ default: new Hono() }));
 
@@ -91,6 +102,8 @@ async function postTurn(options?: { guestId?: string }) {
 describe("web routes — Ask MCPJam billing claim", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv("CONVEX_HTTP_URL", "https://example.convex.site");
+    resolveConfigMock.mockResolvedValue({ providers: [] });
     streamWebChatTurnMock.mockResolvedValue(
       new Response("ok", { status: 200 }),
     );
@@ -102,6 +115,29 @@ describe("web routes — Ask MCPJam billing claim", () => {
     // The client asked for Sonnet. The backend would refuse to platform-pay
     // for it, so sending it would be a refused turn, not a better answer.
     expect(String(args.prepare.modelDefinition.id)).toBe(MCPJAM_AGENT_MODEL);
+  });
+
+  it("uses the organization's default model for a strict BYOK turn", async () => {
+    const selection = {
+      source: "org",
+      modelId: "openai/gpt-6-astra",
+      nativeModelId: "gpt-6-astra",
+      connectionRef: { kind: "orgProvider", id: "connection-1" },
+      fallback: { provider: "none", model: "none" },
+    };
+    resolveConfigMock.mockResolvedValue({
+      providers: [],
+      aiKeyPolicy: { requireOrgKeys: true },
+      defaultModel: selection,
+    });
+    const args = await postTurn();
+    expect(args.prepare.routingSelection).toEqual(selection);
+    expect(args.prepare.modelDefinition).toMatchObject({
+      id: selection.modelId,
+      hosted: false,
+    });
+    expect(args.runtime.billingFeature).toBeUndefined();
+    expect(args.runtime.maxSteps).toBe(AGENT_MAX_STEPS);
   });
 
   it("sends the billing claim and the step ceiling for a signed-in caller", async () => {

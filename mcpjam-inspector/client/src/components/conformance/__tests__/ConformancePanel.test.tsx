@@ -26,6 +26,12 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (key: string) => enabledFlags.has(key),
 }));
 
+// Home cards subscribe to each run for suite scores. These tests render
+// the home without a Convex client, so the suite rows stay empty.
+vi.mock("convex/react", () => ({
+  useQuery: () => undefined,
+}));
+
 vi.mock("../PersistConformanceRun", () => ({ PersistConformanceRun: () => null }));
 
 const mockRunProtocol = vi.fn();
@@ -95,6 +101,10 @@ import {
   RUN_LABEL,
 } from "../ConformancePageChrome";
 import { SUITE_COPY } from "../conformance-ui";
+
+/** A tool option: its name, then its safety badge. */
+const toolOption = (name: string, tag: string) =>
+  new RegExp(`^${name}\\s*·\\s*${tag}$`);
 
 function createProtocolResult(
   overrides: Partial<MCPConformanceResult> = {},
@@ -1601,12 +1611,12 @@ describe("ConformanceTab", () => {
     const card = screen.getByRole("list", { name: "Servers" });
     expect(card).toHaveTextContent("alpha");
     expect(card).toHaveTextContent("· Protocol Auto");
-    expect(card).not.toHaveTextContent("Last run");
+    expect(card).toHaveTextContent(/Last run/);
     expect(
-      within(card).getByRole("img", { name: "22 passed of 22" }),
+      within(card).getByRole("img", { name: "100%. 22 passed of 22" }),
     ).toBeInTheDocument();
     expect(card).toHaveTextContent("100%");
-    expect(card).toHaveTextContent("22/22");
+    expect(card).not.toHaveTextContent("22/22");
 
     fireEvent.click(
       within(card).getByRole("button", { name: "View last run" }),
@@ -2154,7 +2164,7 @@ describe("ConformanceTab", () => {
         await waitFor(() => expect(tool).toBeEnabled());
         await user.click(tool);
         await user.click(
-          screen.getByRole("option", { name: "echo · read-only" }),
+          screen.getByRole("option", { name: toolOption("echo", "read-only") }),
         );
         const checkRow = screen.getByRole("button", {
           name: new RegExp(`^${row}`),
@@ -2164,13 +2174,9 @@ describe("ConformanceTab", () => {
           within(header).getByText(inputBadge(missing)),
         ).toBeInTheDocument();
 
-        fireEvent.click(fieldOf(tool).getByRole("switch"));
-        const args = fieldOf(tool).getByRole("textbox", { name: "Arguments" });
-        fireEvent.change(args, { target: { value: '{"projectId":123}' } });
-        expect(checkRow).toHaveTextContent("Needs input");
-        fireEvent.change(args, {
-          target: { value: '{"projectId":"project-1"}' },
-        });
+        // Filled in through the form built from the tool's input schema.
+        const args = fieldOf(tool).getByPlaceholderText("Enter projectId");
+        fireEvent.change(args, { target: { value: "project-1" } });
         expect(checkRow).toHaveTextContent("Input set");
         if (ready)
           expect(
@@ -2178,7 +2184,8 @@ describe("ConformanceTab", () => {
           ).toBeInTheDocument();
         else expect(within(header).queryByText(/needs? input/)).toBeNull();
 
-        fireEvent.change(args, { target: { value: "{}" } });
+        // An emptied required box is not sent, so the check needs input again.
+        fireEvent.change(args, { target: { value: "" } });
         expect(checkRow).toHaveTextContent("Needs input");
         fireEvent.click(header);
         expect(header).toHaveAttribute("aria-expanded", "false");
@@ -2230,14 +2237,14 @@ describe("ConformanceTab", () => {
         expect(checkRow).toHaveTextContent("Needs input");
         await user.click(tool);
         await user.click(
-          screen.getByRole("option", { name: "echo · read-only" }),
+          screen.getByRole("option", { name: toolOption("echo", "read-only") }),
         );
         expect(checkRow).toHaveTextContent("Input set");
-        fireEvent.click(fieldOf(tool).getByRole("switch"));
-        const args = fieldOf(tool).getByRole("textbox", { name: "Arguments" });
-        fireEvent.change(args, { target: { value: "[" } });
-        expect(checkRow).toHaveTextContent("Needs input");
-        fireEvent.change(args, { target: { value: '{"d":"2026-11"}' } });
+        // An optional argument: untick skip, then fill it in.
+        fireEvent.click(fieldOf(tool).getByRole("checkbox", { name: "skip" }));
+        fireEvent.change(fieldOf(tool).getByPlaceholderText("Enter d"), {
+          target: { value: "2026-11" },
+        });
         expect(checkRow).toHaveTextContent("Input set");
         fireEvent.click(header);
         if (suite === "Tasks")
@@ -2261,10 +2268,10 @@ describe("ConformanceTab", () => {
       );
       // Only tools that declare an output schema can be graded.
       expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(
-        ["Not set", "weather · read-only"],
+        ["Not set", "weather·read-only"],
       );
       await user.click(
-        screen.getByRole("option", { name: "weather · read-only" }),
+        screen.getByRole("option", { name: toolOption("weather", "read-only") }),
       );
 
       fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
@@ -2300,21 +2307,20 @@ describe("ConformanceTab", () => {
       const options = screen.getAllByRole("option").map((o) => o.textContent);
       expect(options).toEqual([
         "Not set",
-        "echo · read-only",
-        "weather · read-only",
-        "delete_row · may modify data",
+        "echo·read-only",
+        "weather·read-only",
+        "delete_row·may modify data",
       ]);
       await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
 
-      // The arguments editor Evals uses, here with its Raw JSON switch on.
-      fireEvent.click(fieldOf(logs).getByRole("switch"));
-      const args = fieldOf(logs).getByRole("textbox", { name: "Arguments" });
-      fireEvent.change(args, { target: { value: "[1]" } });
-      expect(screen.getByText("Expected a JSON object")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
-      fireEvent.change(args, { target: { value: '{"message": "hi"}' } });
+      // A form from the tool's input schema; message is optional, so it
+      // starts skipped.
+      fireEvent.click(fieldOf(logs).getByRole("checkbox", { name: "skip" }));
+      fireEvent.change(fieldOf(logs).getByPlaceholderText("Enter message"), {
+        target: { value: "hi" },
+      });
       expect(screen.getByRole("button", { name: RUN_LABEL })).toBeEnabled();
 
       // The level the log level advice asks for: the SDK's default until
@@ -2357,7 +2363,7 @@ describe("ConformanceTab", () => {
       );
     });
 
-    it("offers the tool's own argument names", async () => {
+    it("lists the tool's own arguments as fields", async () => {
       const user = userEvent.setup();
       await openProtocolChecks();
       const logs = screen.getByRole("combobox", {
@@ -2365,17 +2371,14 @@ describe("ConformanceTab", () => {
       });
       await user.click(logs);
       await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
 
-      await user.click(
-        fieldOf(logs).getByRole("button", { name: "Add argument" }),
-      );
-      await user.click(fieldOf(logs).getByText("Select arg…"));
-
+      expect(fieldOf(logs).getByText("message")).toBeInTheDocument();
       expect(
-        await screen.findByRole("option", { name: /message/ }),
+        fieldOf(logs).getByPlaceholderText("Enter message"),
       ).toBeInTheDocument();
+      expect(fieldOf(logs).queryByRole("switch")).toBeNull();
     });
 
     it("flags the checks that need an input before the suite is opened", async () => {
@@ -2405,7 +2408,7 @@ describe("ConformanceTab", () => {
         screen.getByRole("combobox", { name: "Tool that emits logs" }),
       );
       await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
 
       expect(screen.getAllByText("Input set")).toHaveLength(2);
@@ -2523,7 +2526,7 @@ describe("ConformanceTab", () => {
           screen.getByRole("combobox", { name: "Tool that creates a task" }),
         );
         await user.click(
-          screen.getByRole("option", { name: "echo · read-only" }),
+          screen.getByRole("option", { name: toolOption("echo", "read-only") }),
         );
         expect(within(header).queryByText(/needs? input/)).toBeNull();
         expect(taskRow).toHaveTextContent("Input set");
@@ -2580,7 +2583,7 @@ describe("ConformanceTab", () => {
 
         await user.click(tool);
         await user.click(
-          screen.getByRole("option", { name: "create_task · read-only" }),
+          screen.getByRole("option", { name: toolOption("create_task", "read-only") }),
         );
         expect(taskRow).toHaveTextContent("Input set");
         await user.click(tool);
@@ -2686,7 +2689,7 @@ describe("ConformanceTab", () => {
       ).toBeNull();
 
       await user.click(tool);
-      await user.click(screen.getByRole("option", { name: "echo · read-only" }));
+      await user.click(screen.getByRole("option", { name: toolOption("echo", "read-only") }));
 
       const answers = screen.getByRole("textbox", {
         name: "Answers to the task's questions (optional)",
@@ -2736,7 +2739,7 @@ describe("ConformanceTab", () => {
         screen.getByRole("combobox", { name: "Tool that asks for input" }),
       );
       expect(
-        screen.getByRole("option", { name: "ask_user · read-only" }),
+        screen.getByRole("option", { name: toolOption("ask_user", "read-only") }),
       ).toBeInTheDocument();
       // Two fields, two pages: one call per page, not one per field.
       expect(mockListTools).toHaveBeenCalledTimes(2);
@@ -2768,7 +2771,7 @@ describe("ConformanceTab", () => {
         screen.getByRole("combobox", { name: "Tool that emits logs" }),
       );
       await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
 
       // The check and the advice that would call it are left out.
@@ -2802,7 +2805,7 @@ describe("ConformanceTab", () => {
         screen.getByRole("combobox", { name: "Tool that emits logs" }),
       );
       await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
       // Under the advice row: its own dropdown, filled with the check's tool,
       // and the level.
@@ -2851,7 +2854,7 @@ describe("ConformanceTab", () => {
         screen.getByRole("combobox", { name: "Tool that emits logs" }),
       );
       await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
 
       const inherit = screen.getByRole("checkbox", {
@@ -2862,7 +2865,7 @@ describe("ConformanceTab", () => {
       });
       await user.click(adviceTool);
       await user.click(
-        screen.getByRole("option", { name: "weather · read-only" }),
+        screen.getByRole("option", { name: toolOption("weather", "read-only") }),
       );
       expect(inherit).not.toBeChecked();
       expect(adviceTool).toHaveTextContent("weather");

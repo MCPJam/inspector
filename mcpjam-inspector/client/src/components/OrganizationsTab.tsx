@@ -1,3 +1,4 @@
+import { useUnlimitedCredits } from "@/hooks/useCreditBalance";
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import {
   DataManagementSettings,
@@ -722,6 +723,7 @@ function OrganizationPage({
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
     "billing-entitlements-ui",
   );
+  const unlimitedCredits = useUnlimitedCredits();
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const slackAgentSettingsEnabled = useSlackAgentSettingsEnabled();
   const discordAgentEnabled = useDiscordAgentEnabled();
@@ -1796,7 +1798,7 @@ function OrganizationPage({
                 ? "Compare plans and manage your subscription."
                 : "Review usage, manage credits, and update your billing details."}
             </SettingsPageDescription>
-            {activeSection === "billing" && (
+            {activeSection === "billing" && !unlimitedCredits && (
               <a
                 href={`/organizations/${organization._id}/billing/byok`}
                 className="inline-block text-sm text-primary underline-offset-4 hover:underline"

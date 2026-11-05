@@ -206,6 +206,18 @@ export function translateEnvironmentRuntimeError(
   const structuredMessage =
     typeof data?.message === "string" ? data.message : undefined;
 
+  if (code === "HOST_UNRESOLVED") {
+    return new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      structuredMessage ??
+        "Client not found. Select another client and try again.",
+      {
+        reason: "HOST_UNRESOLVED",
+        ...(data?.details?.hostId ? { hostId: data.details.hostId } : {}),
+      },
+    );
+  }
   if (code && code.startsWith("ENV_")) {
     if (RUNTIME_NOT_FOUND_CODES.has(code)) {
       return new WebRouteError(
@@ -294,12 +306,14 @@ export function resolveRuntimeVenue(): RuntimeVenue | undefined {
  * connectable names, server provenance) are deliberately NOT checked — those are
  * the deploy-skew surface.
  */
-function assertRuntimeInvariants(raw: unknown): ResolvedEnvironmentRuntime {
+export function assertRuntimeInvariants(
+  raw: unknown,
+): ResolvedEnvironmentRuntime {
   const fail = (detail: string): never => {
     throw new WebRouteError(
       502,
       ErrorCode.INTERNAL_ERROR,
-      `This environment resolved to an unusable runtime specification (${detail}). The turn was stopped rather than run with an unknown configuration.`
+      `This environment resolved to an unusable runtime specification (${detail}). The turn was stopped rather than run with an unknown configuration.`,
     );
   };
   if (!isRecord(raw)) return fail("empty response");

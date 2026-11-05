@@ -273,3 +273,19 @@ describe("swarmTargetReasoningEffort", () => {
     ).toBeUndefined();
   });
 });
+
+it("keeps the canonical provider when an org selection has a native model id", () => {
+  const definition = swarmTargetModelDefinition({
+    modelId: "anthropic/claude-haiku-4.5",
+    resolvedSelection: {
+      modelId: "anthropic/claude-haiku-4.5",
+      nativeModelId: "claude-haiku-4-5-20251001",
+      source: "org",
+      connectionRef: { kind: "orgProvider", id: "orgprov_native" },
+      fallback: none,
+    },
+  });
+  expect(definition.provider).toBe("anthropic");
+  expect(definition.id).toBe("claude-haiku-4-5-20251001");
+  expect(definition.hosted).toBe(false);
+});
