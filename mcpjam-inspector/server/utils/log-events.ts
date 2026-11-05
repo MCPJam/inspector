@@ -1,7 +1,7 @@
 import type { LaunchEngagement } from "../../shared/launch-engagement.js";
 import type { ErrorOrigin } from "@mcpjam/sdk";
 import type { RouteFailureHop } from "./route-error-report.js";
-import type { ChatOrigin } from "./chat-ingestion.js";
+import type { ChatOrigin } from "./chat-origin.js";
 import type { LogConvexId } from "./log-convex-id.js";
 import type { PluginContextRefusedEvent } from "./context-refused-event.js";
 
