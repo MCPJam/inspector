@@ -31,7 +31,9 @@ import { findCurrentTool } from "./browser-harness/current-tool";
 export const CHROMIUM_INSTALL_HINT = "npx playwright install chromium";
 
 export interface RenderWidgetForRequestParams {
-  mcpClientManager: MCPClientManager;
+  mcpClientManager: Pick<MCPClientManager, "listTools" | "readResource"> & {
+    executeTool(serverId: string, name: string, args: Record<string, unknown>): ReturnType<MCPClientManager["executeTool"]>;
+  };
   serverId: string;
   toolName: string;
   parameters: Record<string, unknown>;

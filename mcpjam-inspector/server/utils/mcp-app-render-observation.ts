@@ -34,7 +34,7 @@ export interface RenderMcpAppToolResultParams {
   output?: unknown;
   /** The tool-call input (delivered to the widget as toolInput), if known. */
   toolInput?: Record<string, unknown>;
-  mcpClientManager: MCPClientManager;
+  mcpClientManager: Pick<MCPClientManager, "readResource">;
   /** Inject the OpenAI Apps SDK `window.openai` shim (host-config resolved). */
   injectOpenAiCompat?: boolean;
   harness: McpAppBrowserHarness;
