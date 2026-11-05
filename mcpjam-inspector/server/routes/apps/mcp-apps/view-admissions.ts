@@ -28,6 +28,7 @@ import {
   webErrorFromRoute,
 } from "../../web/errors.js";
 import { MCPJAM_PLATFORM_SERVER_ID } from "../../../../shared/mcpjam-agent-widgets.js";
+import { SANDBOX_VIEW_REQUEST_MAX_BYTES } from "../../../../shared/sandbox-view-limits.js";
 
 const admissionProjectSchema = projectServerSchema.extend({
   connectionId: z.string().min(1).optional(),
@@ -85,7 +86,7 @@ export function sandboxViewAdmissionRoutes(): Hono {
   };
   routes.use("/view-admissions", localAuthority);
   routes.use("/view-admissions/*", localAuthority);
-  const boundedBody = bodyLimit({ maxSize: 16 * 1024 * 1024 });
+  const boundedBody = bodyLimit({ maxSize: SANDBOX_VIEW_REQUEST_MAX_BYTES });
   routes.use("/view-admissions", boundedBody);
   routes.use("/view-admissions/*", boundedBody);
   routes.use("/view-admissions*", async (c, next) => {

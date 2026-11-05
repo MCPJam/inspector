@@ -5,6 +5,9 @@ import { MCPClientManager } from "@mcpjam/sdk";
 import { generateSessionToken } from "../session-token.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { MCPJAM_PLATFORM_SERVER_ID } from "../../../shared/mcpjam-agent-widgets.js";
+import { SANDBOX_VIEW_REQUEST_MAX_BYTES } from "../../../shared/sandbox-view-limits.js";
+import { webBodyLimit } from "../../middleware/web-body-limit.js";
+import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 
 const calls = vi.hoisted(() => ({
   authorize: vi.fn(),
@@ -32,6 +35,7 @@ const body = () => ({
 });
 function app(web = false) {
   const instance = new Hono();
+  instance.use("/api/web/*", webBodyLimit());
   const manager = new MCPClientManager({
     server: { url: "https://server.example/mcp" },
   });
@@ -71,6 +75,47 @@ beforeEach(() => {
 });
 
 describe("App document admission route authority", () => {
+  it("admits an App larger than 1MiB through the outer web limit and route", async () => {
+    const html = "x".repeat(1_150_721);
+    const response = await app(true).request("/api/web/apps/mcp-apps/view-admissions", {
+      method: "POST", headers: headers(),
+      body: JSON.stringify({ ...body(), projectId: "project", serverId: "server", html }),
+    });
+    expect(response.status).toBe(200);
+    expect(calls.authorize).toHaveBeenCalledOnce();
+    expect(calls.prepare.mock.calls[0][0].html).toBe(html);
+  });
+
+  it("accepts exactly the route's 16MiB envelope and refuses one more byte", async () => {
+    const json = JSON.stringify({ ...body(), projectId: "project", serverId: "server" });
+    const envelope = json + " ".repeat(SANDBOX_VIEW_REQUEST_MAX_BYTES - Buffer.byteLength(json));
+    const instance = app(true);
+    for (const [value, status] of [[envelope, 200], [envelope + " ", 413]] as const) {
+      const response = await instance.request("/api/web/apps/mcp-apps/view-admissions", {
+        method: "POST", headers: { ...headers(), "Content-Length": String(Buffer.byteLength(value)) }, body: value,
+      });
+      expect(response.status).toBe(status);
+    }
+    expect(calls.prepare).toHaveBeenCalledOnce();
+  });
+
+  it("rejects an unauthenticated web admission before reading a large body", async () => {
+    const instance = new Hono();
+    instance.use("/api/web/*", webBodyLimit());
+    instance.use("/api/web/apps/mcp-apps/view-admissions", bearerAuthMiddleware);
+    instance.route("/api/web/apps/mcp-apps", sandboxViewAdmissionRoutes());
+    const request = new Request("http://localhost:6274/api/web/apps/mcp-apps/view-admissions", {
+      method: "POST", headers: { "Content-Type": "application/json", "Content-Length": String(SANDBOX_VIEW_REQUEST_MAX_BYTES + 1) },
+      body: JSON.stringify(body()),
+    });
+    const reader = vi.fn(request.body!.getReader.bind(request.body));
+    Object.defineProperty(request.body, "getReader", { value: reader });
+    const response = await instance.fetch(request);
+    expect(response.status).toBe(401);
+    expect(reader).not.toHaveBeenCalled();
+    expect(calls.prepare).not.toHaveBeenCalled();
+  });
+
   it.each([undefined, "Bearer invalid"])(
     "rejects local auth %s before reading the request body",
     async (authorization) => {
