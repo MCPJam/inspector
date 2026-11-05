@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 const m = vi.hoisted(() => ({
   hostedSetup: vi.fn(),
+  authorize: vi.fn(),
+  builtInPolicy: vi.fn(),
   ensure: vi.fn(),
   useLocalHarness: vi.fn(),
   localSkills: vi.fn(),
@@ -11,10 +13,10 @@ vi.mock("../resolve-hosted-chat-setup.js", () => ({
 }));
 vi.mock("../../../routes/web/auth.js", async (original) => ({
   ...(await original<typeof import("../../../routes/web/auth.js")>()),
-  authorizeProject: async () => ({ chatEnvironments: false }),
+  authorizeProject: m.authorize,
 }));
 vi.mock("../../../utils/built-in-tools/built-in-tool-policy.js", () => ({
-  resolveTurnBuiltInToolIds: async () => ({ ids: [], dropped: [] }),
+  resolveTurnBuiltInToolIds: m.builtInPolicy,
 }));
 vi.mock("../../../utils/harness/local/run-resources.js", async (original) => ({
   ...(await original<
@@ -94,6 +96,11 @@ async function resolveSetup(rawBody: Record<string, unknown>) {
 describe("managed setup local runtime policy", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    m.authorize.mockResolvedValue({
+      chatEnvironments: false,
+      chatPreparation: false,
+    });
+    m.builtInPolicy.mockResolvedValue({ ids: [], dropped: [] });
     m.useLocalHarness.mockResolvedValue(false);
     m.localSkills.mockResolvedValue([
       { ref: "machine-skill", skillId: "local:machine-skill" },
@@ -137,5 +144,37 @@ describe("managed setup local runtime policy", () => {
     expect(setup.value?.liveProjectCapabilities?.localSkills ?? []).toEqual(
       [],
     );
+  });
+});
+
+
+describe("request-scoped project access", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    m.useLocalHarness.mockResolvedValue(false);
+    m.localSkills.mockResolvedValue([]);
+    m.builtInPolicy.mockResolvedValue({ ids: [], dropped: [] });
+  });
+  it("passes advertised preparation support and reuses the authorized role", async () => {
+    m.authorize.mockResolvedValue({
+      chatEnvironments: true,
+      chatPreparation: true,
+      projectAccess: { projectRole: "editor" },
+    });
+    m.hostedSetup.mockResolvedValue(hostedSetup("interactive"));
+    let access;
+    m.builtInPolicy.mockImplementationOnce(async (args) => {
+      access = await args.loadProjectAccess();
+      return { ids: [], dropped: [] };
+    });
+    await resolveSetup({});
+    expect(access).toEqual({ projectRole: "editor" });
+    expect(m.hostedSetup).toHaveBeenLastCalledWith(
+      expect.objectContaining({ prepareChatTurn: true }),
+    );
+    m.authorize.mockRejectedValueOnce(new Error("Membership removed"));
+    await resolveSetup({});
+    expect(m.authorize).toHaveBeenCalledTimes(2);
+    expect(m.hostedSetup).toHaveBeenCalledTimes(1);
   });
 });

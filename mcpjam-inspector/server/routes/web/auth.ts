@@ -985,7 +985,11 @@ export async function authorizeProject(
   caller: ManagerCallerContext,
   bearerToken: string,
   projectId: string,
-): Promise<{ chatEnvironments: boolean }> {
+): Promise<{
+  chatEnvironments: boolean;
+  chatPreparation: boolean;
+  projectAccess?: { projectRole: "admin" | "editor" };
+}> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     throw new WebRouteError(
@@ -1016,9 +1020,21 @@ export async function authorizeProject(
       payload = await response.json();
     } catch {
       // Older successful authorization responses need not advertise features.
-      return { chatEnvironments: false };
+      return { chatEnvironments: false, chatPreparation: false };
     }
+    const projectRole =
+      payload && typeof payload === "object" && "projectRole" in payload
+        ? payload.projectRole
+        : undefined;
     return {
+      chatPreparation:
+        !!payload &&
+        typeof payload === "object" &&
+        "chatPreparationVersion" in payload &&
+        payload.chatPreparationVersion === 1,
+      ...(projectRole === "admin" || projectRole === "editor"
+        ? { projectAccess: { projectRole } }
+        : {}),
       chatEnvironments:
         !!payload &&
         typeof payload === "object" &&
