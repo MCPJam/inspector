@@ -30,6 +30,7 @@ export type MalformedHistoryProblem =
   | "parts_missing"
   | "part_not_object"
   | "part_type_missing"
+  | "text_invalid"
   | "file_url_invalid"
   | "plugin_data_invalid";
 
@@ -101,6 +102,11 @@ export function findMalformedHistory(
       }
       // The system branch then keeps only text parts and reads nothing else.
       if (message.role === "system") continue;
+      // Conversion copies a text part's `text` through unchecked, so a
+      // missing or non-string one would reach the model request as is.
+      if (part.type === "text" && typeof part.text !== "string") {
+        return { messageIndex, partIndex, problem: "text_invalid" };
+      }
       if (
         urlPartTypesByRole.get(message.role)?.has(part.type) &&
         !hasParseableFileUrl(part)

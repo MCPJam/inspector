@@ -151,6 +151,31 @@ describe("findMalformedHistory", () => {
     },
   );
 
+  it.each([
+    { name: "a user text part without text", part: { type: "text" } },
+    {
+      name: "an assistant text part with a number",
+      part: { type: "text", text: 42 },
+      role: "assistant",
+    },
+  ])(
+    "names $name, which conversion would forward to the model",
+    async ({ part, role }) => {
+      const messages = [
+        user([text]),
+        { id: "m", role: role ?? "user", parts: [part] },
+      ];
+      expect(findMalformedHistory(messages)).toEqual({
+        messageIndex: 1,
+        partIndex: 0,
+        problem: "text_invalid",
+      });
+      expect(
+        JSON.stringify(await convertToMcpjamModelMessages(messages as never)),
+      ).toContain(JSON.stringify(part));
+    },
+  );
+
   it("accepts a history conversion can read", async () => {
     const messages = [
       // The system branch keeps only text parts and reads nothing else of them.
