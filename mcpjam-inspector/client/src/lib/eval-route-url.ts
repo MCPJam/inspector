@@ -230,11 +230,13 @@ function parseEvalNavTail(
 
   if (rest[0] === "settings") {
     const [, section, caseSegment, leaf] = rest;
+    const importJob = params.get("importJob");
+    const settingsQuery = importJob ? { importJob } : {};
     if (rest.length === 1) {
-      return { type: "suite-settings", suiteId, tab: "settings" };
+      return { type: "suite-settings", suiteId, tab: "settings", ...settingsQuery };
     }
     if (rest.length === 2 && (section === "cases" || section === "evaluators")) {
-      return { type: "suite-settings", suiteId, tab: section };
+      return { type: "suite-settings", suiteId, tab: section, ...settingsQuery };
     }
     if (section !== "cases" || !caseSegment) return { type: "list" };
     // `new` is the create page, never a case whose id happens to be "new".

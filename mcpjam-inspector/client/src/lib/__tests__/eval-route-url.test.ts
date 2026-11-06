@@ -524,6 +524,29 @@ describe("per-layer Evaluate routes", () => {
     ).not.toHaveProperty("target");
   });
 
+  it.each([
+    ["/evaluate/suite/s1/settings", "settings"],
+    ["/evaluate/suite/s1/settings/cases", "cases"],
+    ["/evaluate/suite/s1/settings/evaluators", "evaluators"],
+  ] as const)("carries ?importJob= on %s in both directions", (path, tab) => {
+    const route: EvalNavRoute = {
+      type: "suite-settings",
+      suiteId: "s1",
+      tab,
+      importJob: "j1",
+    };
+    expect(parseEvalRouteFromUrl("/evaluate", path, "?importJob=j1")).toEqual(
+      route,
+    );
+    expect(buildEvaluatePath(route)).toBe(`${path}?importJob=j1`);
+    expect(parseEvalRouteFromUrl("/evaluate", path)).not.toHaveProperty(
+      "importJob",
+    );
+    expect(
+      parseEvalRouteFromUrl("/evaluate", path, "?importJob="),
+    ).not.toHaveProperty("importJob");
+  });
+
   it("ignores other query params on the new kinds", () => {
     expect(
       parseEvalRouteFromUrl(

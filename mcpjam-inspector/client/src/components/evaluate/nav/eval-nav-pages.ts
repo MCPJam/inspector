@@ -17,6 +17,7 @@ import { SuiteNavPage } from "../nav-suite/suite-nav-page";
 import { SuiteRunNavPage } from "../nav-run/suite-run-nav-page";
 import { TestRunPage } from "../test-run/test-run-page";
 import { IterationPage } from "../test-run/iteration-page";
+import { SuiteSettingsPage } from "../suite-settings/suite-settings-page";
 
 /** Route kinds a new page will own: the per-layer kinds plus the three existing pages being rebuilt. */
 export type EvalNavPageRouteType =
@@ -46,7 +47,7 @@ export const EVAL_NAV_PAGES: EvalNavPages = {
   list: { analyticsPage: "suites", Page: EvaluateLandingPage },
   "evaluate-runs": { analyticsPage: "runs", Page: EvaluateLandingPage },
   "suite-overview": { analyticsPage: "suite", Page: SuiteNavPage },
-  "suite-settings": { analyticsPage: "suite_settings", Page: null },
+  "suite-settings": { analyticsPage: "suite_settings", Page: SuiteSettingsPage },
   "case-new": { analyticsPage: "new_test_case", Page: null },
   "case-settings": { analyticsPage: "test_case", Page: null },
   "case-evaluators": { analyticsPage: "test_case_evaluators", Page: null },
