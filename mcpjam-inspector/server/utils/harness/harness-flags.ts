@@ -18,10 +18,13 @@ export function harnessBrokerDeliveryEnabled(): boolean {
   return process.env.MCPJAM_HARNESS_BROKER_DELIVERY !== "false";
 }
 
-/** Only the organization resolved by hosted authorization may enter the pilot. */
+/** Hosted reuse defaults on; operators can disable it or restrict organizations. */
 export function hostedWarmAgentEnabled(organizationId: string | undefined): boolean {
-  return process.env.MCPJAM_HOSTED_WARM_AGENT === "1" && !!organizationId &&
-    (process.env.MCPJAM_HOSTED_WARM_AGENT_ORG_IDS ?? "")
-      .split(",")
-      .some((id) => id.trim() === organizationId);
+  const enabled = process.env.MCPJAM_HOSTED_WARM_AGENT?.trim().toLowerCase();
+  if (!organizationId || enabled === "0" || enabled === "false") return false;
+  const organizations = (process.env.MCPJAM_HOSTED_WARM_AGENT_ORG_IDS ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+  return organizations.length === 0 || organizations.includes(organizationId);
 }
