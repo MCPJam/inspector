@@ -63,10 +63,8 @@ export function EventsHostSupportSection({
         <div className="min-w-0">
           <span className="text-[12px] font-medium">{field.label}</span>
           <p className="text-[11px] leading-snug text-muted-foreground">
-            The MCP Events delivery modes this client receives. Subscriptions
-            made as this client can use only these. Without a saved choice,
-            ChatGPT receives webhooks, MCPJam receives every mode, and other
-            clients receive none.
+            Choose the MCP Events delivery modes this client receives.
+            Subscriptions made as this client can use only these modes.
           </p>
           {setting.kind === "invalid" ? (
             <p className="text-[11px] leading-snug text-destructive">
