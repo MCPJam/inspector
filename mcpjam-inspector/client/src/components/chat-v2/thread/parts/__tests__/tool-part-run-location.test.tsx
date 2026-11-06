@@ -203,3 +203,14 @@ describe("ToolPart run-location pill", () => {
     );
   });
 });
+
+
+it("identifies the real tool card only while its arguments are ready and its result is pending", () => {
+  toolNameState.name = "read_account";
+  const active = { type: "dynamic-tool", toolCallId: "fixture-call", toolName: "read_account", state: "input-available", input: {} } as const;
+  const { container, rerender } = render(<ToolPart part={active} />);
+  const started = '[data-tool-name="read_account"][data-tool-state="input-available"]';
+  expect(container.querySelector(started)).toBeTruthy();
+  rerender(<ToolPart part={{ ...active, state: "output-available", output: "OK" }} />);
+  expect(container.querySelector(started)).toBeNull();
+});

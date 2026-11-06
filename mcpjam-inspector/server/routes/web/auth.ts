@@ -1,3 +1,4 @@
+import { withNegotiationTiming, type McpSetupTiming } from "../../utils/mcp-setup-timing.js";
 import { bindWarmApprovalConnection } from "../../utils/harness/warm-approval-binding";
 import { hostedWarmAgentEnabled } from "../../utils/harness/harness-flags";
 import { setManagerResourceSnapshots, setManagerResourceHostConfig, type ManagerResourceSnapshot } from "../../utils/mcp-connections";
@@ -1443,6 +1444,7 @@ export async function createAuthorizedManager(
   options?: {
     /** Authorize fully, but let a request owner decide when to connect. */
     lazyConnect?: boolean;
+    onSetupTiming?: McpSetupTiming;
     multiConnection?: boolean;
     /** Build transports only for the explicitly pinned accounts. */
     onlySelectedConnections?: boolean;
@@ -1656,6 +1658,7 @@ export async function createAuthorizedManager(
 
   const oauthServerUrls: Record<string, string> = {};
   let authorizedUserId: string | null = null;
+  options?.onSetupTiming?.("authorization-start");
   const batch = await authorizeBatch(
     {
       ...caller,
@@ -1675,7 +1678,7 @@ export async function createAuthorizedManager(
       scenarioId: options?.scenarioId,
       accessVersion: options?.accessVersion,
     },
-  );
+  ).finally(() => options?.onSetupTiming?.("authorization-end"));
   const connectionsByServerId: Record<string, McpToolConnection[]> = {};
   for (const [serverId, auth] of Object.entries(batch.results)) {
     const storedName = auth.ok ? auth.serverConfig.name : auth.serverName;
@@ -2702,7 +2705,7 @@ export async function createAuthorizedManager(
       ? { defaultCapabilities: withSkillsExtensionCapability({}) }
       : {}),
     // Auto-negotiation outcome telemetry (always-on negotiation).
-    negotiationOutcomeLogger: negotiationTelemetryLogger("hosted-direct"),
+    negotiationOutcomeLogger: withNegotiationTiming(negotiationTelemetryLogger("hosted-direct"), options?.onSetupTiming),
     ...(options?.elicitationTimeoutExtensionMs !== undefined
       ? { elicitationTimeoutExtensionMs: options.elicitationTimeoutExtensionMs }
       : {}),

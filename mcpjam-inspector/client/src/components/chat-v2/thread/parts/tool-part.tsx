@@ -914,7 +914,7 @@ export function ToolPart({
 
   if (needsApproval) {
     return (
-      <div className="text-xs">
+      <div className="text-xs" data-tool-name={label} data-tool-state={state}>
         <div className="flex flex-col gap-2 w-full">
           <div
             className={cn(
@@ -1034,7 +1034,7 @@ export function ToolPart({
   }
 
   return (
-    <div className="@container rounded-lg border text-xs border-border/50 bg-background/70">
+    <div className="@container rounded-lg border text-xs border-border/50 bg-background/70" data-tool-name={label} data-tool-state={state}>
       <div
         role="button"
         tabIndex={hideDiagnosticsUI ? -1 : 0}

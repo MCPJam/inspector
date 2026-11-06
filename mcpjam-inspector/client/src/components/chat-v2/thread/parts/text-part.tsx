@@ -15,6 +15,7 @@ export function TextPart({
   return (
     <MemoizedMarkdown
       content={text}
+      messageRole={role}
       className={`max-w-full break-words overflow-auto ${textColorClass} ${alignmentClass}`}
     />
   );
