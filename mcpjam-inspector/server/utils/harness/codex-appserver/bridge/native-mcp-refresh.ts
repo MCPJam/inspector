@@ -1,5 +1,5 @@
 import { prepareCodexHome, type CodexHomeInput } from "./codex-home.js";
-import { refreshNativeMcpServers } from "../shared/native-mcp.js";
+import { refreshNativeMcpServers, needsNativeMcpReload } from "../shared/native-mcp.js";
 import { waitForNativeMcpServers } from "./native-mcp-ready.js";
 
 export type NativeMcpRuntime = {
@@ -32,6 +32,7 @@ export function createNativeMcpRefresher(options: {
           candidate,
         );
         const next = { ...state.home, nativeMcpServers: servers };
+        if (!needsNativeMcpReload(state.home.nativeMcpServers, servers)) return;
         try {
           prepareCodexHome(next);
           await waitForNativeMcpServers({
