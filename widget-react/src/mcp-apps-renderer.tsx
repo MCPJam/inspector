@@ -3395,6 +3395,8 @@ export function MCPAppsRendererSurface({
                   ? "This App can't open here because it doesn't support full screen. Add full screen support to the App, then open it again."
                   : "This App has no supported display mode"
               );
+              setIsReady(false);
+              isReadyRef.current = false;
               void b.close();
               return;
             }
