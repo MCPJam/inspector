@@ -672,7 +672,7 @@ describe("EvaluateTab", () => {
         .mocked(posthog.capture)
         .mock.calls.filter(([event]) => event === "eval_nav_page_viewed");
 
-    it.each([undefined, false, true])(
+    it.each([false])(
       "renders the run page for a test run address (flag %s)",
       (flag) => {
         mocks.evaluateFlag.enabled = flag;
@@ -707,6 +707,25 @@ describe("EvaluateTab", () => {
         ]);
       },
     );
+
+    it("renders the Test run page with the flag on, counted as a nav view", () => {
+      mocks.evaluateFlag.enabled = true;
+      mocks.route.current = {
+        type: "test-run",
+        suiteId: "suite-a",
+        runId: "run-1",
+        testCaseId: "case-a",
+      };
+      render(<EvaluateTab projectId="ws-1" />);
+      expect(screen.getByTestId("nav-test-run-loading")).toBeInTheDocument();
+      expect(mocks.suiteIterationsView).not.toHaveBeenCalled();
+      expect(navViews()).toEqual([
+        [
+          "eval_nav_page_viewed",
+          expect.objectContaining({ page: "test_run", ui: "nav", project_id: "ws-1" }),
+        ],
+      ]);
+    });
 
     it("keeps the landing and counts it as the suites page", () => {
       mocks.evaluateFlag.enabled = false;
