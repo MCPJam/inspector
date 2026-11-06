@@ -272,7 +272,7 @@ export class GuestSessionRefusedError extends GuestSessionRequestError {
   readonly retryAfterMs: number;
   readonly reason: GuestSessionRefusalReason;
   constructor(retryAfterMs: number, reason: GuestSessionRefusalReason) {
-    super(`guest-session creation refused (${reason})`);
+    super("Couldn't start a guest session. Sign in to continue.");
     this.name = "GuestSessionRefusedError";
     this.retryAfterMs = retryAfterMs;
     this.reason = reason;
