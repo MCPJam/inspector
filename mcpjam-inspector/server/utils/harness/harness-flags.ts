@@ -28,3 +28,8 @@ export function hostedWarmAgentEnabled(organizationId: string | undefined): bool
     .filter(Boolean);
   return organizations.length === 0 || organizations.includes(organizationId);
 }
+
+/** Hosted native MCP forwarding; read per call so operators can turn it off. */
+export function nativeForwardingEnabled(): boolean {
+  return process.env.HARNESS_NATIVE_FORWARDING === "true";
+}

@@ -39,6 +39,13 @@ describe("harnessRuntimeFingerprint", () => {
     expect(harnessRuntimeFingerprint({ ...base, forwardingConfigurationVersion: "unused" })).toBe(harnessRuntimeFingerprint(base));
   });
 
+  it("keeps profiled and pass-through forwarding in separate lanes", () => {
+    expect(harnessRuntimeFingerprint({ ...base, nativeForwarding: "bridge-v1" }))
+      .not.toBe(harnessRuntimeFingerprint({ ...base, nativeForwarding: "v2" }));
+    expect(harnessRuntimeFingerprint({ ...base, nativeForwarding: "bridge-v1" }))
+      .not.toBe(harnessRuntimeFingerprint(base));
+  });
+
   it("versions required discovery on a retained client without changing eager clients", () => {
     const required = { ...base, requireNativeToolDiscovery: true };
     expect(harnessRuntimeFingerprint({ ...required, forwardingConfigurationVersion: "tool-search-auto-v1" }))

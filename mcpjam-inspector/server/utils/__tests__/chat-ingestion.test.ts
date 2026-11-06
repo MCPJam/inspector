@@ -964,6 +964,48 @@ describe("chat-ingestion", () => {
     );
   });
 
+  it("carries the harness route receipt inside the turn trace only", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, version: 2 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    ) as typeof fetch;
+    const harnessMcpAtTurn = {
+      version: 1 as const,
+      upstream: "harness" as const,
+      delivery: "mcp-endpoint" as const,
+      forwarding: { kind: "pass-through" as const },
+      gaps: [],
+      reasons: [],
+      pinnedRuntimeVersion: "2.1.245",
+      plannerVersion: "harness-mcp-plan-v1",
+    };
+    await persistChatSessionToConvex({
+      chatSessionId: "receipt-session",
+      modelId: "anthropic/claude-haiku-4.5",
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      origin: "playground",
+      startedAt: 1,
+      turnTrace: {
+        turnId: "turn-receipt",
+        promptIndex: 0,
+        startedAt: 1,
+        endedAt: 2,
+        spans: [],
+        modelId: "anthropic/claude-haiku-4.5",
+        harnessMcpAtTurn,
+      },
+    });
+    const body = JSON.parse(
+      (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1]
+        .body as string
+    );
+    expect(body.turnTrace.harnessMcpAtTurn).toEqual(harnessMcpAtTurn);
+    expect(body).not.toHaveProperty("harnessMcpAtTurn");
+  });
+
   it("omits turnId for a traceless payload so the legacy path is unchanged", async () => {
     // Its own fetch mock: reading `mock.calls[0]` off an inherited one makes the
     // assertion depend on suite order rather than on this request.
