@@ -167,7 +167,10 @@ export function useCaseStepsDraft({
         return { ok: true, testCaseId: newId };
       } catch (error) {
         toast.error(
-          getBillingErrorMessage(error, "Failed to create test case"),
+          getBillingErrorMessage(
+            error,
+            "Could not create the test case. Try again.",
+          ),
         );
         return { ok: false };
       }

@@ -125,4 +125,31 @@ describe("the case's checks page", () => {
       expect.stringContaining("Arguments (Exact)"),
     ]);
   });
+
+  it("labels the suite button with the caller's label, else the legacy one", () => {
+    const props = {
+      title: "Example",
+      suitePredicates: [],
+      onChecksChange: vi.fn(),
+      judgeSkipped: false,
+      onJudgeSkippedChange: vi.fn(),
+      onConfigureSuite: vi.fn(),
+    };
+    const { rerender } = render(<CaseChecksPage {...props} />);
+    expect(
+      screen.getByRole("button", { name: "Configure suite assertions" }),
+    ).toBeInTheDocument();
+    rerender(
+      <CaseChecksPage
+        {...props}
+        configureSuiteLabel="Edit default evaluators"
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Edit default evaluators" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Configure suite assertions" }),
+    ).not.toBeInTheDocument();
+  });
 });

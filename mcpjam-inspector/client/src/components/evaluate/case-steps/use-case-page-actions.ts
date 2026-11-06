@@ -99,7 +99,7 @@ export function useCasePageActions({
       );
     } catch {
       // The batch delete logs the failure; the toast says what to retry.
-      toast.error("Failed to delete test case");
+      toast.error("Could not delete the test case. Try again.");
     } finally {
       setDeleting(false);
     }

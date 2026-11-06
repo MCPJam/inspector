@@ -55,6 +55,8 @@ function BudgetSettingRow({
   accessory?: ReactNode;
 }) {
   const toUnit = (ms: number) => ms / unitMs;
+  // The Suite settings page shows a chip; the stacked sheet keeps the sentence.
+  const compact = useContext(SuiteSettingsCompactContext);
   return (
     <SuiteSettingsRow
       settingKey={settingKey}
@@ -92,9 +94,18 @@ function BudgetSettingRow({
         />
         <span className="text-muted-foreground text-xs">{unit}</span>
         {value === undefined ? (
-          <span className="text-muted-foreground text-xs">
-            inheriting the platform default
-          </span>
+          compact ? (
+            <span
+              className="inline-flex items-center rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+              title="Leave empty to keep the platform default"
+            >
+              Platform default
+            </span>
+          ) : (
+            <span className="text-muted-foreground text-xs">
+              inheriting the platform default
+            </span>
+          )
         ) : null}
       </div>
     </SuiteSettingsRow>
@@ -197,7 +208,10 @@ export function SuiteSettingsLockFrame({
 export function SuiteBudgetSettingsRows({
   sheet,
 }: {
-  sheet: SuiteSettingsSheet;
+  sheet: Pick<
+    SuiteSettingsSheet,
+    "draft" | "dispatchDraft" | "rowIsDirty" | "rowIsConflict"
+  >;
 }) {
   const { draft, dispatchDraft, rowIsDirty, rowIsConflict } = sheet;
   const chips = (key: EvalSuiteSettingKey) => (
@@ -301,7 +315,12 @@ export function useSuiteAttachmentUpdaters(suiteId: string) {
         attachments.length === 0 ? "Clients cleared" : "Clients updated",
       );
     } catch (error) {
-      toast.error(getBillingErrorMessage(error, "Failed to update clients"));
+      toast.error(
+        getBillingErrorMessage(
+          error,
+          "Could not update the clients. Try again.",
+        ),
+      );
       console.error("Failed to update host attachments:", error);
       throw error;
     }
@@ -318,7 +337,10 @@ export function useSuiteAttachmentUpdaters(suiteId: string) {
       toast.success("Server group updated");
     } catch (error) {
       toast.error(
-        getBillingErrorMessage(error, "Failed to update server group"),
+        getBillingErrorMessage(
+          error,
+          "Could not update the server group. Try again.",
+        ),
       );
     }
   };

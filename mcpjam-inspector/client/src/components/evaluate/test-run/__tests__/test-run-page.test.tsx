@@ -186,9 +186,12 @@ describe("TestRunPage", () => {
   it.each([
     [
       "runNotFound",
-      "This run is not in this suite's history. It may have been deleted, or the link is wrong.",
+      "This run is not in this suite's history. Check the link, or open the suite to see its runs.",
     ],
-    ["caseNotInRun", "This test case did not run in Run #4."],
+    [
+      "caseNotInRun",
+      "This test case did not run in Run #4. Go back to Run #4 to pick another test run.",
+    ],
   ] as const)("says %s", (status, text) => {
     mocks.data = { ...ready, status };
     render(<TestRunPage route={route} projectId="p1" />);
