@@ -353,10 +353,11 @@ export function useEnsureDbUser() {
           let guestId: string | null = null;
           try {
             guestId = await getExistingGuestId();
-            // The server confirmed there is no guest cookie, so the marker
-            // can never match one; drop it so later sign-ins skip the lookup.
-            // A failed lookup throws instead and keeps the marker.
-            if (guestId === null) clearGuestActivation(markedGuestId);
+            // The cookie is gone or belongs to another guest, so the marked
+            // guest can never be promoted from this browser; drop its marker
+            // so later sign-ins skip the lookup. A failed lookup throws
+            // instead and keeps the marker.
+            if (guestId !== markedGuestId) clearGuestActivation(markedGuestId);
           } catch {
             guestId = null;
           }

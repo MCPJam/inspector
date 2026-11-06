@@ -571,7 +571,38 @@ describe("useEnsureDbUser", () => {
     });
     expect(mockState.getGuestPromotionProof).not.toHaveBeenCalled();
     expect(mockState.ensureUser).toHaveBeenCalledExactlyOnceWith({});
-    expect(mockState.clearGuestActivation).not.toHaveBeenCalled();
+    // Guest-other's cookie is gone, so its marker can never be used again.
+    expect(mockState.clearGuestActivation).toHaveBeenCalledExactlyOnceWith(
+      "guest-other",
+    );
+  });
+
+  it("clears the marker read before the lookup, not one written while it was pending", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.getActivatedGuestId.mockReturnValue("guest-gone");
+    let resolveLookup: ((guestId: string | null) => void) | undefined;
+    mockState.getExistingGuestId.mockImplementationOnce(
+      () =>
+        new Promise<string | null>((resolve) => {
+          resolveLookup = resolve;
+        }),
+    );
+
+    const { result } = renderHook(() => useEnsureDbUser());
+    await waitFor(() => expect(resolveLookup).toBeDefined());
+
+    // Another tab activates a new guest while the lookup is in flight.
+    mockState.getActivatedGuestId.mockReturnValue("guest-new");
+    await act(async () => {
+      resolveLookup?.(null);
+    });
+
+    await waitFor(() => expect(result.current.isUserReady).toBe(true));
+    expect(mockState.clearGuestActivation).toHaveBeenCalledWith("guest-gone");
+    expect(mockState.clearGuestActivation).not.toHaveBeenCalledWith(
+      "guest-new",
+    );
   });
 
   it("does not request a promotion proof or revoke when no guest cookie exists", async () => {
