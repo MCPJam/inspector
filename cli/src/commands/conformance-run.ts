@@ -104,7 +104,7 @@ export function registerConformanceRunCommand(program: Command): void {
     );
     const suites = normalizeConformanceRunSuites(options.suite);
     const server = parseServerConfig({
-      ...options,
+      ...serverTargetOptions(options, suites),
       timeout: globalOptions.timeout,
     });
     if (!("url" in server) || typeof server.url !== "string") {
@@ -180,6 +180,20 @@ export function normalizeConformanceRunSuites(
     }
   }
   return out;
+}
+
+/**
+ * The options `parseServerConfig` should see. With `--suite oauth` and no
+ * `--refresh-token`, `--client-id` and `--client-secret` are the OAuth suite's
+ * client_credentials client, not a refresh-token login, so they stay out of
+ * the server config, which would otherwise reject them.
+ */
+export function serverTargetOptions(
+  options: CompositeConformanceOptions,
+  suites: ConformanceSuiteKind[],
+): CompositeConformanceOptions {
+  if (!suites.includes("oauth") || options.refreshToken) return options;
+  return { ...options, clientId: undefined, clientSecret: undefined };
 }
 
 export function buildOAuthConfig(
