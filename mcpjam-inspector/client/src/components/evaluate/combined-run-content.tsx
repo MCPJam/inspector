@@ -46,6 +46,7 @@ import { useRunErrorBreakdownToast } from "./run-error-breakdown";
 import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
 import type { SingleRunContent } from "./evaluate-run-content";
 import { NavRunLayout } from "./nav-run/nav-run-layout";
+import { LaunchFindings } from "./nav-run/launch-findings";
 import type { NavRunOptions } from "./nav-run/use-nav-run-links";
 
 type MemberReport = {
@@ -291,24 +292,40 @@ export function CombinedRunContent({
           </p>
         </div>
       ) : nav ? (
-        // Findings follow the picked model's run, or the route's run for all models.
+        // A picked model shows its run's findings; All models merges every run's.
         <NavRunLayout
           matrix={matrix}
           pairings={pairings}
           passThreshold={nav.passThreshold}
           findings={(picked) => {
-            const run =
-              hydratedRuns.find((item) => item._id === picked?.run._id) ??
-              hydratedRuns.find((item) => item._id === routeRun._id) ??
-              routeRun;
+            const runFindings = (runId: string, compact: boolean) => {
+              const run =
+                hydratedRuns.find((item) => item._id === runId) ?? routeRun;
+              return (
+                <SelectedRunFindings
+                  key={run._id}
+                  run={run}
+                  view={reports.get(run._id)?.view}
+                  iterations={history.details.get(run._id)?.iterations ?? []}
+                  onOpenIteration={onOpenIteration}
+                  nav={{
+                    ...nav,
+                    scopeLabel: `for ${findingRunLabel(run._id)}`,
+                    compact,
+                  }}
+                />
+              );
+            };
+            if (picked) return runFindings(picked.run._id, true);
             return (
-              <SelectedRunFindings
-                key={run._id}
-                run={run}
-                view={reports.get(run._id)?.view}
-                iterations={history.details.get(run._id)?.iterations ?? []}
-                onOpenIteration={onOpenIteration}
-                nav={{ ...nav, scopeLabel: `for ${findingRunLabel(run._id)}` }}
+              <LaunchFindings
+                runs={hydratedRuns.map((run) => ({
+                  runId: run._id,
+                  iterations: history.details.get(run._id)?.iterations ?? [],
+                }))}
+                scope={`across ${matrix.targets.length} models`}
+                onOpenIteration={nav.openIteration}
+                fallback={(runId) => runFindings(runId, false)}
               />
             );
           }}
@@ -395,8 +412,8 @@ function SelectedRunFindings({
   view?: RunVerdictHeroView;
   iterations: readonly EvalIteration[];
   onOpenIteration: Parameters<typeof SingleRunContent>[0]["onOpenIteration"];
-  /** The compact list, its scope note, and iteration links by row. */
-  nav?: NavRunOptions & { scopeLabel: string };
+  /** Iteration links by row; `compact` shows the compact list once built. */
+  nav?: NavRunOptions & { scopeLabel: string; compact: boolean };
 }) {
   const generation = useServerQuality(run, { autoRequest: false });
   const openEvidence = (iterationId: string) => {
@@ -431,7 +448,7 @@ function SelectedRunFindings({
         requestInsight: generation.requestServerQuality,
       }}
       {...(onOpenIteration || nav ? { onOpenIteration: openEvidence } : {})}
-      variant={nav ? "compact" : "panel"}
+      variant={nav?.compact ? "compact" : "panel"}
       scopeLabel={nav?.scopeLabel}
     />
   );
