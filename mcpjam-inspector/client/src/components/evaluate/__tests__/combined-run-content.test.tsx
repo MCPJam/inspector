@@ -42,7 +42,31 @@ vi.mock("../../evals/use-server-quality", () => ({
     };
   },
 }));
-vi.mock("../unified-findings-section", () => ({
+const findingsState = vi.hoisted(() => {
+  const state: { byRun: Map<string, Record<string, unknown>> } = {
+    byRun: new Map(),
+  };
+  return state;
+});
+vi.mock(
+  "@/components/shared/actionable-insights/use-insights-envelope",
+  () => ({
+    useInsightsEnvelope: () => undefined,
+  }),
+);
+vi.mock("@/components/shared/actionable-insights/use-unified-findings", () => ({
+  useUnifiedFindings: ({ suiteRunId }: { suiteRunId: string }) => ({
+    experiment: undefined,
+    findings: [],
+    provenance: [],
+    analyze: { pending: false, error: null },
+    build: { pending: false, error: null },
+    backendUnavailableNote: null,
+    ...findingsState.byRun.get(suiteRunId),
+  }),
+}));
+vi.mock("../unified-findings-section", async (original) => ({
+  ...(await original<object>()),
   UnifiedFindingsSection: ({
     suiteRunId,
     iterations = [],
@@ -718,5 +742,138 @@ describe("whole launch error toast", () => {
     });
     view.rerender(<CombinedRunContent {...props} />);
     expect(last()).toMatchObject({ errored: 1, finished: 3 });
+  });
+});
+
+describe("combined run report — nav layout", () => {
+  function nav() {
+    return {
+      openTestRun: vi.fn(),
+      editTestCase: vi.fn(),
+      openIteration: vi.fn(),
+      passThreshold: 0.7,
+    };
+  }
+
+  it("replaces the hero and matrix with the nav layout", () => {
+    render(<CombinedRunContent {...props} nav={nav()} />);
+    expect(screen.getByTestId("nav-run-content")).toBeTruthy();
+    expect(screen.queryByTestId("run-verdict-hero")).toBeNull();
+    expect(screen.queryByTestId("run-results-matrix")).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Findings for" })).toBeNull();
+  });
+
+  function builtFindings(
+    runId: string,
+    iterationId: string,
+    stage: string,
+    reason: string,
+  ) {
+    findingsState.byRun.set(runId, {
+      experiment: { snapshot: { deterministicFindings: [] } },
+      findings: [
+        {
+          id: `rf_${runId}`,
+          signalFingerprint: `fp_${runId}`,
+          title: "Selection",
+          category: "agent_behavior",
+          attribution: "unknown",
+          actionTarget: "investigate",
+          actionability: "investigate",
+          severity: "medium",
+          confidence: "low",
+          observed: `1 of 1 iteration broke at ${stage}.`,
+          recommendation: "Open the exemplar sessions.",
+          acceptanceCriteria: [],
+          affected: { count: 1, total: 1, unit: "iterations" },
+          evidence: [{ iterationId, kind: "transcript", excerpt: "…" }],
+        },
+      ],
+      provenance: [
+        {
+          candidateId: `rf_${runId}`,
+          groupKind: "stage_break",
+          basis: "measured",
+          mechanismBasis: "complete",
+          affectedIterationIds: [iterationId],
+          stage,
+          reason,
+        },
+      ],
+    });
+  }
+
+  beforeEach(() => findingsState.byRun.clear());
+
+  it("with All models, shows today's panel until every run's findings are built", () => {
+    builtFindings("1", "a", "selection", "missingToolCall");
+    render(<CombinedRunContent {...props} nav={nav()} />);
+    // Run 2 is the first still waiting, so its panel shows.
+    expect(screen.getByTestId("findings-section")).toHaveAttribute(
+      "data-run-id",
+      "2",
+    );
+    expect(screen.queryByTestId("nav-findings")).toBeNull();
+  });
+
+  it("with All models, merges every run's findings by stage and reason", async () => {
+    builtFindings("1", "a", "selection", "missingToolCall");
+    builtFindings("2", "b", "call", "toolErrored");
+    builtFindings("3", "c", "selection", "missingToolCall");
+    const links = nav();
+    render(<CombinedRunContent {...props} nav={links} />);
+    const findings = await screen.findByTestId("nav-findings");
+    expect(findings).toHaveTextContent("2 across 3 models");
+    const rows = within(findings).getAllByTestId("nav-finding");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("2 of 3 iterations broke at selection.");
+    await userEvent
+      .setup()
+      .click(within(rows[0]).getByRole("button", { name: "Open iteration" }));
+    expect(links.openIteration).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: "a", suiteRunId: "1" }),
+    );
+  });
+
+  it("shows the picked model's run alone", async () => {
+    const user = userEvent.setup();
+    const links = nav();
+    render(<CombinedRunContent {...props} nav={links} />);
+    const showing = within(
+      screen.getByRole("group", {
+        name: "Filter this run by client and model",
+      }),
+    );
+    await user.click(showing.getByRole("button", { name: /^Cursor · sonnet/ }));
+    expect(screen.getByTestId("findings-section")).toHaveAttribute(
+      "data-run-id",
+      "1",
+    );
+    await user.click(screen.getByRole("button", { name: "Open evidence A" }));
+    expect(links.openIteration).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: "a", suiteRunId: "1" }),
+    );
+  });
+
+  it("opens a test run with ?target= only when one of several models is picked", async () => {
+    const user = userEvent.setup();
+    const links = nav();
+    render(<CombinedRunContent {...props} nav={links} />);
+    await user.click(
+      screen.getByRole("button", { name: "Open test run: Read a record" }),
+    );
+    const showing = within(
+      screen.getByRole("group", {
+        name: "Filter this run by client and model",
+      }),
+    );
+    await user.click(showing.getByRole("button", { name: /^ChatGPT/ }));
+    await user.click(
+      screen.getByRole("button", { name: "Open test run: Read a record" }),
+    );
+    expect(links.openTestRun.mock.calls).toEqual([
+      ["case", null],
+      ["case", "gpt-5.1"],
+    ]);
   });
 });

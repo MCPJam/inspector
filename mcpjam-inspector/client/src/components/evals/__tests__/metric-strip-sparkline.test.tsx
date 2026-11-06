@@ -274,3 +274,33 @@ it("can omit the suite summary cost block and use four columns", () => {
     "sm:grid-cols-[1.4fr_1fr_1fr_1fr]",
   );
 });
+
+describe("MetricStrip without the pass section", () => {
+  it("drops the pass cell and keeps the other sections", () => {
+    render(<MetricStrip data={sampleData} context="history" hidePassRate />);
+    expect(screen.queryByTestId("metric-strip-pass-rate")).toBeNull();
+    expect(screen.getByTestId("metric-strip-latency")).not.toHaveClass(
+      "border-l",
+    );
+    expect(screen.getByText("Tokens")).toBeTruthy();
+    expect(screen.getByText("Tool calls")).toBeTruthy();
+  });
+
+  it("puts an ⓘ beside each hinted label, and none without hints", () => {
+    const { rerender } = render(
+      <MetricStrip
+        data={sampleData}
+        context="history"
+        hints={{ latency: "Wall-clock.", tokens: "Per iteration." }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "About Latency" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "About Tokens" })).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "About Tool calls" }),
+    ).toBeNull();
+    rerender(<MetricStrip data={sampleData} context="history" />);
+    expect(screen.queryByRole("button", { name: /^About / })).toBeNull();
+    expect(screen.getByTestId("metric-strip-pass-rate")).toBeTruthy();
+  });
+});

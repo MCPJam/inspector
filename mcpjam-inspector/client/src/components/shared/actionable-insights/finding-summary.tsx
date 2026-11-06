@@ -10,6 +10,7 @@ import {
   SheetDescription,
 } from "@mcpjam/design-system/sheet";
 import { copyToClipboard } from "@/lib/clipboard";
+import { cn } from "@/lib/utils";
 import {
   isServerReady,
   type ActionableFinding,
@@ -39,9 +40,11 @@ import {
 export function CopyFindingPrompt({
   finding,
   context,
+  className,
 }: {
   finding: ActionableFinding;
   context?: FindingPromptContext;
+  className?: string;
 }) {
   const [copied, setCopied] = useState(false);
   if (!findingOffersPrompt(finding)) return null;
@@ -49,7 +52,7 @@ export function CopyFindingPrompt({
     <Button
       variant="outline"
       size="sm"
-      className="h-9 shadow-none"
+      className={cn("h-9 shadow-none", className)}
       title={findingPromptLabel(finding)}
       data-testid="finding-copy-prompt"
       data-server-fix={isServerReady(finding) ? "true" : "false"}

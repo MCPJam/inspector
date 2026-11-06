@@ -15,6 +15,7 @@ import { authoringRequest } from "@/lib/apis/eval-authoring-api";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { SuiteDetailOverview } from "../suite-detail-overview";
+import type { SuiteDetailNav } from "../nav-suite/suite-page-header";
 import { metricsByRunFromIterations } from "../../evals/run-metrics";
 import type {
   EvalCase,
@@ -1432,5 +1433,199 @@ describe("SuiteDetailOverview run delete", () => {
   it("shows no delete column without a delete handler", () => {
     renderSuite();
     expect(screen.queryByRole("button", { name: /Delete run/ })).toBeNull();
+  });
+});
+
+describe("SuiteDetailOverview — nav layout", () => {
+  function navProps(overrides: Partial<SuiteDetailNav> = {}): SuiteDetailNav {
+    return {
+      onOpenRun: vi.fn(),
+      onOpenSettings: vi.fn(),
+      onBuildCase: vi.fn(),
+      onForwardImportJob: vi.fn(),
+      pills: <span data-testid="suite-pills">pills</span>,
+      threshold: 70,
+      ...overrides,
+    };
+  }
+  const passedRun = makeRun({ _id: "run-1", runNumber: 1 });
+  const passedRows = [
+    makeIteration({
+      _id: "it-1",
+      suiteRunId: "run-1",
+      resultSource: "reported",
+    }),
+  ];
+  function renderNav(
+    nav: SuiteDetailNav,
+    overrides: Partial<Parameters<typeof SuiteDetailOverview>[0]> = {},
+  ) {
+    return renderWithProviders(
+      <SuiteDetailOverview
+        projectId="project-1"
+        suite={makeSuite()}
+        cases={[makeCase({ _id: "case-1" })]}
+        runs={[passedRun]}
+        runsLoading={false}
+        metricsByRun={metricsByRunFromIterations(passedRows)}
+        hostNamesById={hostNamesById}
+        onRerun={vi.fn()}
+        onEditSuite={vi.fn()}
+        onSetupSdk={vi.fn()}
+        onEditCases={vi.fn()}
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        onImportCases={vi.fn()}
+        onDeleteTestCasesBatch={vi.fn()}
+        onRunClick={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        rerunningSuiteId={null}
+        nav={nav}
+        {...overrides}
+      />,
+    );
+  }
+  const headerButtons = () =>
+    within(screen.getByTestId("suite-page-header"))
+      .getAllByRole("button")
+      .map((button) => button.textContent?.trim());
+
+  it("shows Export as SDK, Suite settings and Run, in that order, and the pills", () => {
+    renderNav(navProps());
+    expect(headerButtons()).toEqual(["Export as SDK", "Suite settings", "Run"]);
+    expect(screen.getByTestId("suite-pills")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Run" })).toHaveAttribute(
+      "title",
+      "Pick clients, models and iterations, then run",
+    );
+  });
+
+  it("renders none of the case authoring, even with an import running", () => {
+    useEvalGeneration.setState({
+      suites: {
+        [evalSuiteKey({ projectId: "project-1", suiteId: "suite-1" })]: {
+          status: "running",
+          authoringSource: "import",
+          drafts: [],
+        },
+      },
+    });
+    renderNav(navProps());
+    for (const text of [
+      "Test Cases",
+      "Add case",
+      "Configure suite evaluators",
+      "Setup SDK",
+      "Setup Run",
+      /Review .* draft case/,
+    ]) {
+      expect(screen.queryByText(text)).toBeNull();
+    }
+    expect(screen.queryByTestId("suite-import-review")).toBeNull();
+    expect(screen.queryByTestId("suite-detail-test-cases")).toBeNull();
+    expect(screen.queryByTestId("suite-detail-empty-cases")).toBeNull();
+    useEvalGeneration.setState({ suites: {} });
+  });
+
+  it("opens Suite settings, and hides it when the reader cannot edit", async () => {
+    const nav = navProps();
+    const { unmount } = renderNav(nav);
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Suite settings" }));
+    expect(nav.onOpenSettings).toHaveBeenCalled();
+    unmount();
+    renderNav(navProps({ onOpenSettings: undefined }));
+    expect(headerButtons()).toEqual(["Export as SDK", "Run"]);
+  });
+
+  it("hides Export as SDK without onSetupSdk", () => {
+    renderNav(navProps(), { onSetupSdk: undefined });
+    expect(headerButtons()).toEqual(["Suite settings", "Run"]);
+  });
+
+  it("keeps the CI copy and Duplicate to edit before Export as SDK on a CI-locked suite", () => {
+    renderNav(navProps(), { configLocked: true, onDuplicateSuite: vi.fn() });
+    expect(screen.getByTestId("suite-detail-ci-owned")).toBeVisible();
+    expect(headerButtons()).toEqual([
+      "Duplicate to edit",
+      "Export as SDK",
+      "Suite settings",
+      "Run",
+    ]);
+  });
+
+  it("explains a blocked Run with the nav copy", async () => {
+    renderNav(navProps(), { cases: [], runs: [] });
+    const run = screen.getByRole("button", { name: "Run" });
+    expect(run).toBeDisabled();
+    await userEvent.setup().hover(run.parentElement!);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Add a test case in Suite settings first.",
+    );
+  });
+
+  it("offers Build a test case and Suite settings on a suite with no cases", async () => {
+    const nav = navProps();
+    renderNav(nav, { cases: [], runs: [] });
+    expect(screen.getByText("No test cases yet")).toBeVisible();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Build a test case" }));
+    await user.click(
+      screen.getByRole("button", { name: "or open Suite settings" }),
+    );
+    expect(nav.onBuildCase).toHaveBeenCalled();
+    expect(nav.onOpenSettings).toHaveBeenCalled();
+  });
+
+  it("keeps only the settings link on a CI-locked suite with no cases", () => {
+    renderNav(navProps(), { cases: [], runs: [], configLocked: true });
+    expect(
+      screen.queryByRole("button", { name: "Build a test case" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "or open Suite settings" }),
+    ).toBeVisible();
+  });
+
+  it("shows the no-runs panel in place of the Runs card", () => {
+    renderNav(navProps(), { runs: [] });
+    expect(screen.getByText("No runs yet")).toBeVisible();
+    expect(
+      screen.getByText("Run the suite once to start a trend."),
+    ).toBeVisible();
+    expect(screen.queryByTestId("suite-detail-run-history")).toBeNull();
+  });
+
+  it("puts the health above a strip without its pass cell, with hints, and opens runs", async () => {
+    const nav = navProps();
+    renderNav(nav);
+    expect(screen.getByTestId("nav-suite-health")).toHaveTextContent(
+      "average across the last run",
+    );
+    expect(screen.queryByTestId("metric-strip-pass-rate")).toBeNull();
+    // The strip's labels and the table's headers each carry their own ⓘ.
+    for (const [name, count] of [
+      ["About Latency", 2],
+      ["About Tokens", 2],
+      ["About Tool calls", 1],
+      ["About Calls", 1],
+    ] as const) {
+      expect(screen.getAllByRole("button", { name })).toHaveLength(count);
+    }
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", { name: "Open run #1", exact: true }),
+    );
+    expect(nav.onOpenRun).toHaveBeenCalledWith("run-1");
+  });
+
+  it("hands ?importJob= on instead of following it", () => {
+    vi.mocked(followAuthoringJob).mockClear();
+    const nav = navProps();
+    renderNav(nav, { importJobId: "job_9" });
+    expect(nav.onForwardImportJob).toHaveBeenCalledWith("job_9");
+    expect(followAuthoringJob).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("suite-detail-overview")).toBeNull();
   });
 });

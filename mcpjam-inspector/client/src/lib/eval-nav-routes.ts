@@ -56,7 +56,10 @@ export function buildEvalNavPath(route: EvalNavRoute): string {
       return `${EVALUATE_PREFIX}/runs`;
     case "suite-settings": {
       const base = `${suitePath(route.suiteId)}/settings`;
-      return route.tab === "settings" ? base : `${base}/${route.tab}`;
+      const path = route.tab === "settings" ? base : `${base}/${route.tab}`;
+      return route.importJob
+        ? `${path}?${new URLSearchParams({ importJob: route.importJob })}`
+        : path;
     }
     case "case-new":
       return `${suitePath(route.suiteId)}/settings/cases/new`;
@@ -93,7 +96,12 @@ export function legacyEvalRouteFor(route: EvalNavRoute): LegacyEvalRoute {
       return { type: "list" };
     case "suite-settings":
       return route.tab === "cases"
-        ? { type: "suite-overview", suiteId: route.suiteId, view: "test-cases" }
+        ? {
+            type: "suite-overview",
+            suiteId: route.suiteId,
+            view: "test-cases",
+            ...(route.importJob ? { importJob: route.importJob } : {}),
+          }
         : { type: "suite-edit", suiteId: route.suiteId };
     case "case-new":
       return {

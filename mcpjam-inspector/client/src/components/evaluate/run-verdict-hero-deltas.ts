@@ -76,6 +76,8 @@ export type HeroPairingPass = {
   passRateDelta: HeroStatDelta | null;
   stats: HeroPairingStats;
   statDeltas: HeroPairingStatDeltas;
+  /** The run the deltas compare with; null when there is no baseline. */
+  previousRunNumber: number | null;
 };
 
 export type HeroPairingSource = {
@@ -287,12 +289,13 @@ export function buildHeroPairings({
   return targets.map((target) => {
     // Measured counts: an infra row is in neither the pass rate nor its delta.
     const counts = measuredResultCounts(target.iterations);
-    const previousRows = previousRowsFor(
+    const previous = previousRowsFor(
       target,
       previousLaunch,
       previousIterations,
       targets.length,
     );
+    const previousRows = previous?.rows ?? null;
     const previousCounts = previousRows
       ? measuredResultCounts(previousRows)
       : null;
@@ -343,17 +346,21 @@ export function buildHeroPairings({
           true,
         ),
       },
+      previousRunNumber: previous?.runNumber ?? null,
     };
   });
 }
 
-/** The previous run's iteration rows for this same client/model, or null. */
+/**
+ * The previous run's iteration rows for this same client/model, and that
+ * run's number when it is known, or null.
+ */
 function previousRowsFor(
   target: HeroPairingSource,
   previousLaunch: readonly EvalSuiteRunListItem[] | null,
   previousIterations: readonly EvalIteration[] | null,
   targetCount: number,
-): EvalIteration[] | null {
+): { rows: EvalIteration[]; runNumber: number | null } | null {
   if (!previousIterations || previousIterations.length === 0) return null;
   if (previousLaunch && previousLaunch.length > 0) {
     const key = pairingKey(target.run, target.targetKey ?? target.modelId);
@@ -362,12 +369,14 @@ function previousRowsFor(
     const rows = previousIterations.filter(
       (iteration) => iteration.suiteRunId === twin._id,
     );
-    return rows.length === 0 ? null : rows;
+    return rows.length === 0
+      ? null
+      : { rows, runNumber: twin.runNumber ?? null };
   }
   // Single-run page: previous rows are already scoped to that pairing.
   // Never roll a multi-pairing launch into every row.
   if (targetCount !== 1) return null;
-  return [...previousIterations];
+  return { rows: [...previousIterations], runNumber: null };
 }
 
 /**

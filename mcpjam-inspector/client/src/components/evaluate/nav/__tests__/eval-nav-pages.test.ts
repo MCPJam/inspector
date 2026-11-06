@@ -6,13 +6,15 @@ import {
   resolveEvalNavPage,
   type EvalNavPages,
 } from "../eval-nav-pages";
+import { SuiteNavPage } from "../../nav-suite/suite-nav-page";
+import { SuiteRunNavPage } from "../../nav-run/suite-run-nav-page";
 
 function StubPage() {
   return null;
 }
 
-/** The map with a stub page on the kinds these tests open. */
-const withPages = (Page: typeof StubPage): EvalNavPages => ({
+/** The map with `Page` on the kinds these tests open. */
+const withPages = (Page: typeof StubPage | null): EvalNavPages => ({
   ...EVAL_NAV_PAGES,
   "test-run": { ...EVAL_NAV_PAGES["test-run"], Page },
   "suite-overview": { ...EVAL_NAV_PAGES["suite-overview"], Page },
@@ -20,16 +22,16 @@ const withPages = (Page: typeof StubPage): EvalNavPages => ({
 });
 
 describe("EVAL_NAV_PAGES", () => {
-  it("has one entry per page kind, none with a page yet", () => {
+  it("has one entry per page kind", () => {
     expect(EVAL_NAV_PAGES).toEqual({
       list: { analyticsPage: "suites", Page: expect.any(Function) },
       "evaluate-runs": { analyticsPage: "runs", Page: expect.any(Function) },
-      "suite-overview": { analyticsPage: "suite", Page: null },
+      "suite-overview": { analyticsPage: "suite", Page: SuiteNavPage },
       "suite-settings": { analyticsPage: "suite_settings", Page: null },
       "case-new": { analyticsPage: "new_test_case", Page: null },
       "case-settings": { analyticsPage: "test_case", Page: null },
       "case-evaluators": { analyticsPage: "test_case_evaluators", Page: null },
-      "run-detail": { analyticsPage: "suite_run", Page: null },
+      "run-detail": { analyticsPage: "suite_run", Page: SuiteRunNavPage },
       "test-run": { analyticsPage: "test_run", Page: null },
       iteration: { analyticsPage: "iteration", Page: null },
       "test-run-edit": { analyticsPage: "test_run_edit", Page: null },
@@ -49,11 +51,12 @@ describe("resolveEvalNavPage", () => {
   it.each([true, false, undefined])(
     "renders today's page with no Page (flag %s)",
     (flag) => {
-      expect(resolveEvalNavPage(newKind, flag)).toEqual({
+      const pages = withPages(null);
+      expect(resolveEvalNavPage(newKind, flag, pages)).toEqual({
         kind: "legacy",
         route: legacyEvalRouteFor(newKind),
       });
-      expect(resolveEvalNavPage(legacyKind, flag)).toEqual({
+      expect(resolveEvalNavPage(legacyKind, flag, pages)).toEqual({
         kind: "legacy",
         route: legacyKind,
       });
@@ -88,6 +91,41 @@ describe("resolveEvalNavPage", () => {
     };
     expect(resolveEvalNavPage(route, true, withPages(StubPage))).toEqual({
       kind: "legacy",
+      route,
+    });
+  });
+
+  const run = { type: "run-detail", suiteId: "s", runId: "r" } as const;
+  const suite = { type: "suite-overview", suiteId: "s" } as const;
+
+  it.each<[string, EvalRoute]>([
+    ["comparison", { ...run, comparison: true }],
+    ["compareToRunId", { ...run, compareToRunId: "base" }],
+    ["testCaseId", { ...run, testCaseId: "c" }],
+    ["iteration", { ...run, iteration: "i" }],
+    ["view test-cases", { ...suite, view: "test-cases" }],
+    ["view executions", { ...suite, view: "executions" }],
+    ["view cross-host", { ...suite, view: "cross-host" }],
+  ])("keeps %s on today's page for every flag value", (_, route) => {
+    for (const flag of [true, false, undefined]) {
+      expect(resolveEvalNavPage(route, flag, withPages(StubPage))).toEqual({
+        kind: "legacy",
+        route,
+      });
+    }
+  });
+
+  it.each<[string, EvalRoute]>([
+    ["the run", run],
+    ["the run with insightsFocus", { ...run, insightsFocus: true }],
+    ["the suite", suite],
+    ["the suite's runs view", { ...suite, view: "runs" }],
+    ["the suite with fromCommit", { ...suite, fromCommit: "abc" }],
+    ["the suite with importJob", { ...suite, importJob: "job" }],
+  ])("gives %s the new page", (_, route) => {
+    expect(resolveEvalNavPage(route, true, withPages(StubPage))).toEqual({
+      kind: "page",
+      Page: StubPage,
       route,
     });
   });
