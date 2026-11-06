@@ -30,8 +30,8 @@ export function resolveConfiguredXaaIssuer(
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
   const configured = configuredInspectorPublicUrl(env);
-  // A configured URL is authoritative: one that does not parse yields no
-  // issuer rather than a fallback, so a typo cannot pick another origin.
+  // A configured URL is authoritative: one that is not an http(s) URL yields
+  // no issuer rather than a fallback, so a typo cannot pick another origin.
   const origin =
     configured !== undefined
       ? originOf(configured)
@@ -42,7 +42,15 @@ export function resolveConfiguredXaaIssuer(
   return getXAAIssuerUrl(`${origin}${hostedMode ? "/api/web" : "/api/mcp"}`);
 }
 
-/** Scheme, host and port only, as `getIssuerForRequest` reads a request URL. */
+/**
+ * Scheme, host and port only, as `getIssuerForRequest` reads a request URL.
+ * Anything but http(s) is refused: `app.example.com:443` parses with
+ * `app.example.com:` as its scheme, and its origin is the string "null".
+ */
 function originOf(url: string): string | undefined {
-  return URL.canParse(url) ? new URL(url).origin : undefined;
+  if (!URL.canParse(url)) return undefined;
+  const parsed = new URL(url);
+  return parsed.protocol === "http:" || parsed.protocol === "https:"
+    ? parsed.origin
+    : undefined;
 }

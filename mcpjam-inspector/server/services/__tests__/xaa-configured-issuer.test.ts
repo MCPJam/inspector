@@ -86,6 +86,20 @@ describe("resolveConfiguredXaaIssuer, hosted", () => {
       }),
     ).toBeUndefined();
   });
+
+  it("names no issuer for a URL that is not http(s)", () => {
+    // A host and port with no scheme parses, with the host read as the scheme
+    // and an origin of "null"; it must not become `null/api/web/xaa`.
+    for (const url of [
+      "app.example.com:443",
+      "localhost:6274",
+      "ftp://app.example.com",
+    ]) {
+      expect(
+        resolveConfiguredXaaIssuer(true, { MCPJAM_INSPECTOR_PUBLIC_URL: url }),
+      ).toBeUndefined();
+    }
+  });
 });
 
 describe("resolveConfiguredXaaIssuer, off-hosted", () => {
