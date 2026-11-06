@@ -1137,6 +1137,108 @@ describe("web auth manager batching", () => {
     ).toEqual([a, b]);
   });
 
+  describe("a member's only login", () => {
+    const credential = "c".repeat(32);
+    const single = (overrides: Record<string, unknown> = {}) => ({
+      ok: true,
+      role: "member",
+      accessLevel: "project_member",
+      permissions: { chatOnly: false },
+      serverConfig: {
+        updatedAt: 123,
+        name: "Lazy bench",
+        transportType: "http",
+        url: "https://example.com/mcp",
+        headers: {},
+        authMethod: "auto",
+      },
+      oauthAccessToken: "token-only",
+      oauthCredentialId: credential,
+      oauthCredentialAuthorizedAt: 11,
+      ...overrides,
+    });
+    const run = async (
+      result: Record<string, unknown>,
+      options: Record<string, unknown> = { multiConnection: true },
+    ) => {
+      const requests: Array<{ url: string; body: any }> = [];
+      global.fetch = vi.fn(async (input, init) => {
+        const url = fetchUrl(input);
+        requests.push({ url, body: JSON.parse(String(init?.body)) });
+        if (url.endsWith("/force-refresh"))
+          return Response.json({ success: true, accessToken: "fresh" });
+        return Response.json({ results: { "server-1": result } });
+      }) as typeof fetch;
+      const created = await createAuthorizedManager(
+        callerContextFromHono(mockContext),
+        "bearer-token",
+        "project-1",
+        ["server-1"],
+        10_000,
+        undefined,
+        undefined,
+        options,
+      );
+      return { created, requests };
+    };
+
+    it("is grouped as the implicit default under the bare server key", async () => {
+      const { created, requests } = await run(single());
+      expect(created.connectionsByServerId?.["server-1"]).toEqual([
+        {
+          serverId: "server-1",
+          connectionId: credential,
+          key: "server-1",
+          label: "Lazy bench",
+          profile: undefined,
+          isDefault: true,
+          implicit: true,
+        },
+      ]);
+      const configs = mcpClientManagerMock.mock.calls[0][0];
+      expect(Object.keys(configs)).toEqual(["server-1"]);
+      expect(
+        new Headers(configs["server-1"].requestInit.headers).get(
+          "authorization",
+        ),
+      ).toBe("Bearer token-only");
+      setManagerResourceHostConfig(created.manager, "host-config", "host");
+      expect(
+        getManagerResourceSnapshot(created.manager, "server-1")
+          ?.credentialAuthorizedAt,
+      ).toBe(11);
+      // A 401 refreshes the same credential the call was attributed to.
+      await configs["server-1"].onUnauthorized({});
+      expect(
+        requests.find((r) => r.url.endsWith("/force-refresh"))?.body
+          .connectionId,
+      ).toBe(credential);
+    });
+
+    it.each([
+      ["no account list was requested", single(), {}],
+      ["the caller is a shared-chat visitor", single({ accessLevel: "shared_chat" }), undefined],
+      ["the backend sent no credential id", single({ oauthCredentialId: undefined }), undefined],
+      ["there is no live token", single({ oauthAccessToken: null }), undefined],
+      [
+        "the server authenticates with a bearer header",
+        single({
+          serverConfig: {
+            name: "Lazy bench",
+            transportType: "http",
+            url: "https://example.com/mcp",
+            headers: {},
+            authMethod: "bearer",
+          },
+        }),
+        undefined,
+      ],
+    ])("is not grouped when %s", async (_case, result, options) => {
+      const { created } = await run(result, options);
+      expect(created.connectionsByServerId).toBeUndefined();
+    });
+  });
+
   it("uses the request oauth token when the batch response does not include one", async () => {
     global.fetch = vi.fn(async () => {
       return new Response(

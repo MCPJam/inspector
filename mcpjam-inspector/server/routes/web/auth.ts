@@ -1688,6 +1688,25 @@ export async function createAuthorizedManager(
         if (selectedId && !auth.oauthConnections && auth.oauthCredentialId === selectedId && auth.oauthAccessToken) {
           auth.oauthConnections = [{connectionId: selectedId, accessToken: auth.oauthAccessToken, credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt, isDefault: false}];
         }
+        // A member's only login on a server arrives as the default credential,
+        // not as an account list (the backend lists two or more). Without a
+        // group its calls carry no connection, so a sign-in continuation binds
+        // to nothing and its resume cannot prove the credential it replays on.
+        // Same rails as the stored-token path below: OAuth or discover only,
+        // never XAA or a bearer header, whose tokens the group would override.
+        if (
+          !selectedId &&
+          options.multiConnection &&
+          !auth.oauthConnections &&
+          auth.oauthCredentialId &&
+          auth.oauthAccessToken &&
+          auth.accessLevel === "project_member" &&
+          ["oauth", "discover"].includes(
+            resolveEffectiveAuthMethod(auth.serverConfig, options?.xaaPolicy),
+          )
+        ) {
+          auth.oauthConnections = [{connectionId: auth.oauthCredentialId, accessToken: auth.oauthAccessToken, credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt, isDefault: true, implicit: true}];
+        }
         const live = (auth.oauthConnections ?? []).filter(
           (c) =>
             c.accessToken &&
@@ -1717,9 +1736,14 @@ export async function createAuthorizedManager(
           serverId: id,
           connectionId: c.connectionId,
           key: connectionKey(id, c.connectionId, c.isDefault),
-          label: groupLabels[index],
+          // An implicit login is the server itself to the user; its sign-in
+          // errors name the server, exactly as the ungrouped path does.
+          label: c.implicit
+            ? displayNameForServer(id, serverNamesById, auth.serverConfig)
+            : groupLabels[index],
           profile: c.profile,
           isDefault: c.isDefault,
+          ...(c.implicit ? { implicit: true } : {}),
         }));
       }
     }
@@ -2736,7 +2760,7 @@ export async function createAuthorizedManager(
     if (!auth?.ok || auth.serverConfig.updatedAt === undefined || auth.serverConfig.httpVariant === "sse") continue;
     const account = connection ? auth.oauthConnections?.find(c => c.connectionId === connection.connectionId) : undefined;
     const credentialAuthorizedAt = account ? account.credentialAuthorizedAt ?? account.authorizedAt : auth.oauthCredentialAuthorizedAt ?? null;
-    if (connection && credentialAuthorizedAt === undefined) continue;
+    if (connection && !connection.implicit && credentialAuthorizedAt === undefined) continue;
     resourceSnapshots.set(key, {serverUpdatedAt: auth.serverConfig.updatedAt, credentialAuthorizedAt: credentialAuthorizedAt ?? null, credentialId: connection?.connectionId ?? auth.oauthCredentialId ?? undefined, headersReconstructible: !!connection || reconstructibleHeaderServers.has(serverId)});
   }
   setManagerResourceSnapshots(manager, resourceSnapshots);
