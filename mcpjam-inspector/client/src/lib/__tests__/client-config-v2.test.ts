@@ -949,7 +949,7 @@ describe("mergeProjectConnectionHeaders (#3453)", () => {
       undefined,
     );
 
-    expect(Object.keys(merged)).toHaveLength(1);
+    expect(merged).toEqual({ "X-Header": "upper" });
     expect(new Headers(merged).get("x-header")).toBe("upper");
   });
 });
