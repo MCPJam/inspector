@@ -17,7 +17,10 @@ import { Button } from "@mcpjam/design-system/button";
 import { useInsightsEnvelope } from "@/components/shared/actionable-insights/use-insights-envelope";
 import { UnifiedFindingsPanel } from "@/components/shared/actionable-insights/unified-findings-panel";
 import { useUnifiedFindings } from "@/components/shared/actionable-insights/use-unified-findings";
-import type { BorrowedGenerationController } from "@/components/shared/actionable-insights/use-unified-findings";
+import type {
+  BorrowedGenerationController,
+  UnifiedFindingsState,
+} from "@/components/shared/actionable-insights/use-unified-findings";
 import type { FindingEvidenceLocator } from "@/components/shared/actionable-insights/finding-evidence";
 import type { EvalIteration } from "../evals/types";
 import { affectedRowsById } from "./affected-iteration-rows";
@@ -42,6 +45,18 @@ export type UnifiedFindingsSectionProps = {
   scopeLabel?: string;
 };
 
+/** Findings are built and settled: no build, analysis or backend note pending. */
+export function findingsBuilt(state: UnifiedFindingsState): boolean {
+  return (
+    Boolean(state.experiment?.snapshot) &&
+    !state.analyze.pending &&
+    !state.analyze.error &&
+    !state.build.pending &&
+    !state.build.error &&
+    !state.backendUnavailableNote
+  );
+}
+
 function UnifiedFindingsBody({
   suiteRunId,
   iterations = [],
@@ -65,14 +80,7 @@ function UnifiedFindingsBody({
       }
     : undefined;
 
-  const built =
-    Boolean(state.experiment?.snapshot) &&
-    !state.analyze.pending &&
-    !state.analyze.error &&
-    !state.build.pending &&
-    !state.build.error &&
-    !state.backendUnavailableNote;
-  if (variant === "compact" && built) {
+  if (variant === "compact" && findingsBuilt(state)) {
     return (
       <FindingsCompactList
         findings={sortFindingsForDisplay(state.findings)}
