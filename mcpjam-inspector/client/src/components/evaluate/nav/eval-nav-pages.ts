@@ -13,6 +13,8 @@ import type {
 import { isEvalNavRoute, legacyEvalRouteFor } from "@/lib/eval-nav-routes";
 import type { EvalNavPageName } from "./eval-nav-analytics";
 import { EvaluateLandingPage } from "../landing/evaluate-landing-page";
+import { SuiteNavPage } from "../nav-suite/suite-nav-page";
+import { SuiteRunNavPage } from "../nav-run/suite-run-nav-page";
 
 /** Route kinds a new page will own: the per-layer kinds plus the three existing pages being rebuilt. */
 export type EvalNavPageRouteType =
@@ -41,12 +43,12 @@ export type EvalNavPages = Record<EvalNavPageRouteType, EvalNavPageEntry>;
 export const EVAL_NAV_PAGES: EvalNavPages = {
   list: { analyticsPage: "suites", Page: EvaluateLandingPage },
   "evaluate-runs": { analyticsPage: "runs", Page: EvaluateLandingPage },
-  "suite-overview": { analyticsPage: "suite", Page: null },
+  "suite-overview": { analyticsPage: "suite", Page: SuiteNavPage },
   "suite-settings": { analyticsPage: "suite_settings", Page: null },
   "case-new": { analyticsPage: "new_test_case", Page: null },
   "case-settings": { analyticsPage: "test_case", Page: null },
   "case-evaluators": { analyticsPage: "test_case_evaluators", Page: null },
-  "run-detail": { analyticsPage: "suite_run", Page: null },
+  "run-detail": { analyticsPage: "suite_run", Page: SuiteRunNavPage },
   "test-run": { analyticsPage: "test_run", Page: null },
   iteration: { analyticsPage: "iteration", Page: null },
   "test-run-edit": { analyticsPage: "test_run_edit", Page: null },
@@ -68,6 +70,27 @@ function isEvalNavPageRoute(route: EvalRoute): route is EvalNavPageRoute {
   return route.type in EVAL_NAV_PAGES;
 }
 
+/**
+ * Forms today's pages keep for every flag value: the comparison page and the
+ * pairwise diff (`?compareTo=`), the old `?case=` / `?iteration=` run forms
+ * (2F redirects them to the new pages), and the suite page's non-runs views.
+ */
+function legacyOnly(route: EvalRoute): boolean {
+  if (route.type === "run-detail") {
+    return Boolean(
+      route.comparison ||
+      route.compareToRunId ||
+      route.testCaseId ||
+      route.iteration,
+    );
+  }
+  return (
+    route.type === "suite-overview" &&
+    route.view !== undefined &&
+    route.view !== "runs"
+  );
+}
+
 function legacyResolution(route: EvalRoute): EvalNavResolution {
   return {
     kind: "legacy",
@@ -79,16 +102,14 @@ function legacyResolution(route: EvalRoute): EvalNavResolution {
  * page    when the entry has a Page and navEnabled === true
  * pending when the entry has a Page and navEnabled === undefined
  * legacy  otherwise: the route itself for legacy kinds, legacyEvalRouteFor(route) for new kinds.
- * run-detail with comparison: true is always legacy (the compare page stays).
+ * Routes {@link legacyOnly} names are always legacy.
  */
 export function resolveEvalNavPage(
   route: EvalRoute,
   navEnabled: boolean | undefined,
   pages: EvalNavPages = EVAL_NAV_PAGES,
 ): EvalNavResolution {
-  if (route.type === "run-detail" && route.comparison) {
-    return legacyResolution(route);
-  }
+  if (legacyOnly(route)) return legacyResolution(route);
   if (!isEvalNavPageRoute(route)) return legacyResolution(route);
   const { Page } = pages[route.type];
   if (!Page || navEnabled === false) return legacyResolution(route);

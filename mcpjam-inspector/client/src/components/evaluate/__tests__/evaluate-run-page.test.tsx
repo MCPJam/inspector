@@ -633,3 +633,104 @@ describe("EvaluateRunPage cancel", () => {
     expect(screen.queryByTestId("evaluate-run-page-cancel")).toBeNull();
   });
 });
+
+describe("EvaluateRunPage — nav header", () => {
+  const suite: EvalSuite = {
+    _id: "suite-1",
+    createdBy: "u1",
+    name: "Excalidraw quickstart",
+    description: "",
+    configRevision: "1",
+    environment: { servers: [] },
+    createdAt: 1,
+    updatedAt: 1,
+    source: "ui",
+  };
+  function renderNav(
+    overrides: Partial<Parameters<typeof EvaluateRunPage>[0]> = {},
+    nav: Partial<
+      NonNullable<Parameters<typeof EvaluateRunPage>[0]["nav"]>
+    > = {},
+  ) {
+    const onOpenSettings = vi.fn();
+    const onOpenComparison = vi.fn();
+    function Lifter() {
+      // A body that lifts header actions must not bring back the ⋮ menu.
+      useEvaluateRunPageHeaderActions({ onImprove: vi.fn() });
+      return <div>run body</div>;
+    }
+    render(
+      <EvaluateRunPage
+        run={makeRun({ _id: "run-4", runNumber: 4 })}
+        hostNamesById={hostNamesById}
+        otherRuns={[makeRun({ _id: "run-3", runNumber: 3 })]}
+        defaultCompareRunId="run-3"
+        onCompareWithRun={vi.fn()}
+        onOpenComparison={onOpenComparison}
+        iterations={[]}
+        launchReview={{ suite, cases: [], hostNamesById, onStart: vi.fn() }}
+        nav={{
+          suiteName: "Excalidraw quickstart",
+          onOpenSettings,
+          changeTease: "vs run #3 · 1 newly failing",
+          ...nav,
+        }}
+        {...overrides}
+      >
+        <Lifter />
+      </EvaluateRunPage>,
+    );
+    return { onOpenSettings, onOpenComparison };
+  }
+
+  it("titles the run with its suite pill, and has no scope line or ⋮", () => {
+    renderNav();
+    const header = screen.getByTestId("evaluate-run-header");
+    expect(
+      within(header).getByRole("heading", { name: "Suite Run #4" }),
+    ).toHaveClass("text-2xl");
+    expect(within(header).getByTitle("Suite")).toHaveTextContent(
+      "Suite: Excalidraw quickstart",
+    );
+    expect(screen.queryByTestId("evaluate-run-scope")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Run actions" })).toBeNull();
+    expect(
+      within(header)
+        .getAllByRole("button")
+        .map((button) =>
+          button.textContent?.replace("vs run #3 · 1 newly failing", "").trim(),
+        ),
+    ).toEqual(["Suite settings", "Compare runs", "Run again"]);
+  });
+
+  it("puts the change summary on Compare runs and opens the comparison", async () => {
+    const user = userEvent.setup();
+    const { onOpenSettings, onOpenComparison } = renderNav();
+    expect(screen.getByTestId("run-change-summary")).toHaveTextContent(
+      "vs run #3 · 1 newly failing",
+    );
+    await user.click(screen.getByTestId("evaluate-run-compare-open"));
+    await user.click(screen.getByRole("button", { name: "Suite settings" }));
+    expect(onOpenComparison).toHaveBeenCalled();
+    expect(onOpenSettings).toHaveBeenCalled();
+  });
+
+  it("shows no tease without a change summary", () => {
+    renderNav({}, { changeTease: null });
+    expect(screen.queryByTestId("run-change-summary")).toBeNull();
+  });
+
+  it("puts Cancel run in Run again's place while the launch runs", () => {
+    renderNav({
+      run: makeRun({
+        _id: "run-4",
+        runNumber: 4,
+        status: "running",
+        result: "pending",
+      }),
+      onCancelRun: vi.fn(),
+    });
+    expect(screen.getByRole("button", { name: "Cancel run" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
+  });
+});
