@@ -214,6 +214,9 @@ export function buildOAuthConfig(
     // The SDK reads a preregistered client from here, not from `auth`, and
     // rejects the config without it.
     client: { preregistered: { clientId, clientSecret } },
+    // Same as `oauth conformance`: the CLI runs on the user's machine, where
+    // the server under test is routinely on loopback or a LAN address.
+    allowPrivateNetwork: true,
     // On by default, as in `oauth conformance`. The redirect checks skip as
     // not applicable to client_credentials.
     oauthConformanceChecks: true,
