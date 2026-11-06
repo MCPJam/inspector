@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { sha256Hex } from "@mcpjam/sdk/contract";
 
 const handlers = vi.hoisted(() => ({ managed: vi.fn() }));
 vi.mock("../../web/chat-v2.js", async () => {
@@ -12,7 +13,6 @@ vi.mock("../../../services/chat-turn/local-request.js", async (original) => ({
 }));
 
 import mcp from "../index.js";
-import { logger } from "../../../utils/logger.js";
 import { requestLogContextMiddleware } from "../../../middleware/request-log-context.js";
 import {
   markOnboardingPhase,
@@ -21,6 +21,9 @@ import {
 
 const FIRST = "11111111-1111-4111-8111-111111111111";
 const RETRY = "22222222-2222-4222-8222-222222222222";
+const VERSION = "rn7gvrtpgmb9ygrtxfw99b18jh8hjegv";
+const attemptHash = (id: string) => sha256Hex(`plugin.onboarding.attempt:${id}`);
+const versionHash = sha256Hex(`plugin.onboarding.version:${VERSION}`);
 const stream = 'data: {"type":"start-step"}\n\ndata: {"type":"finish"}\n\n';
 const logged = vi.fn();
 
@@ -42,7 +45,7 @@ function post(attemptId?: string, signal?: AbortSignal) {
         role: "user",
         parts: [{ type: "text", text: "Run onboarding" }],
         ...(attemptId ? { metadata: {
-          pluginOnboarding: { pluginVersionId: "version", attemptId },
+          pluginOnboarding: { pluginVersionId: VERSION, attemptId },
         } } : {}),
       }],
     }),
@@ -50,19 +53,23 @@ function post(attemptId?: string, signal?: AbortSignal) {
 }
 
 function traceEvents() {
-  return logged.mock.calls.filter(([name]) => name.startsWith("plugin.onboarding."));
+  return logged.mock.calls
+    .filter(([name]) => typeof name === "string" && name.startsWith("[event] plugin.onboarding."))
+    .map(([, row]) => row);
 }
 
 describe("local onboarding trace route", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.spyOn(logger, "event").mockImplementation(logged);
+    vi.stubEnv("DO_NOT_TRACK", "1");
+    vi.spyOn(console, "log").mockImplementation(logged);
     logged.mockClear();
     handlers.managed.mockReset();
   });
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("records a held local attempt and its distinct successful retry", async () => {
@@ -80,21 +87,27 @@ describe("local onboarding trace route", () => {
     const first = post(FIRST, controller.signal);
     await started;
     await vi.advanceTimersByTimeAsync(ONBOARDING_TURN_WATCHDOG_MS);
-    expect(traceEvents()).toEqual([["plugin.onboarding.turn.stalled",
-      expect.objectContaining({ component: "plugin-host.onboarding-trace" }),
-      expect.objectContaining({ attemptId: FIRST, lastPhase: "connection" }),
-      undefined,
-    ]]);
+    expect(traceEvents()).toEqual([expect.objectContaining({
+      event: "plugin.onboarding.turn.stalled",
+      onboardingAttemptHash: attemptHash(FIRST),
+      onboardingVersionHash: versionHash,
+      lastPhase: "connection",
+      phases: {
+        admission: expect.any(Number),
+        authorization: expect.any(Number),
+        connection: expect.any(Number),
+      },
+    })]);
 
     controller.abort();
     if (!release) throw new Error("Local route did not begin");
     release(new Response(null, { status: 499 }));
     expect((await first).status).toBe(499);
-    expect(traceEvents().filter(([name]) => name === "plugin.onboarding.turn"))
-      .toEqual([["plugin.onboarding.turn", expect.anything(),
-        expect.objectContaining({ attemptId: FIRST, outcome: "cancelled", statusCode: 499 }),
-        undefined,
-      ]]);
+    expect(traceEvents().filter((row) => row.event === "plugin.onboarding.turn"))
+      .toEqual([expect.objectContaining({
+        onboardingAttemptHash: attemptHash(FIRST), onboardingVersionHash: versionHash,
+        outcome: "cancelled", statusCode: 499,
+      })]);
 
     handlers.managed.mockImplementationOnce(async () => {
       markOnboardingPhase("admission");
@@ -103,13 +116,20 @@ describe("local onboarding trace route", () => {
     });
     const retry = await post(RETRY);
     expect(await retry.text()).toBe(stream);
-    expect(traceEvents().filter(([name]) => name === "plugin.onboarding.turn"))
+    expect(traceEvents().filter((row) => row.event === "plugin.onboarding.turn"))
       .toEqual([
-        ["plugin.onboarding.turn", expect.anything(),
-          expect.objectContaining({ attemptId: FIRST, outcome: "cancelled" }), undefined],
-        ["plugin.onboarding.turn", expect.anything(),
-          expect.objectContaining({ attemptId: RETRY, outcome: "success", statusCode: 200 }), undefined],
+        expect.objectContaining({ onboardingAttemptHash: attemptHash(FIRST), outcome: "cancelled" }),
+        expect.objectContaining({
+          onboardingAttemptHash: attemptHash(RETRY), onboardingVersionHash: versionHash,
+          outcome: "success", statusCode: 200,
+          phases: expect.objectContaining({
+            admission: expect.any(Number), tools: expect.any(Number),
+            model: expect.any(Number), terminal: expect.any(Number),
+          }),
+        }),
       ]);
+    for (const id of [FIRST, RETRY, VERSION])
+      expect(JSON.stringify(traceEvents())).not.toContain(id);
     expect(handlers.managed).toHaveBeenCalledTimes(2);
   });
 

@@ -2,4 +2,4 @@
 "@mcpjam/inspector": patch
 ---
 
-Record onboarding attempt progress and stalled-turn diagnostics for local chat requests.
+Record local onboarding attempts with bounded phase timings and hashed correlation identifiers.
