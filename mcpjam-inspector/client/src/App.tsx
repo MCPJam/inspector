@@ -374,6 +374,7 @@ import { useUnifiedSessionsEnabledState } from "@/hooks/useUnifiedSessionsEnable
 import { useEvaluateEnabled } from "@/hooks/useEvaluateEnabled";
 import { useEventsEnabledState } from "@/hooks/useEventsEnabled";
 import { LegacyEvalRedirect } from "./components/routing/legacy-eval-redirect";
+import { EvaluateLegacyRedirectGate } from "./components/routing/evaluate-legacy-redirect";
 import {
   HOST_TEMPLATES,
   seedFromHostTemplate,
@@ -1674,7 +1675,9 @@ function EvalsRouteContent({ mode }: { mode?: EvalsMode } = {}) {
 export function EvaluateRoute() {
   return (
     <PricingFeatureSignInGate feature="Evals">
-      <EvaluateRouteContent />
+      <EvaluateLegacyRedirectGate>
+        <EvaluateRouteContent />
+      </EvaluateLegacyRedirectGate>
     </PricingFeatureSignInGate>
   );
 }
