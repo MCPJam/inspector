@@ -539,6 +539,33 @@ Use `--format json|human` for raw output and `--reporter json-summary|junit-xml`
 
 ---
 
+## `conformance` commands
+
+### `conformance run`
+
+Runs Protocol, Apps and Tasks (the default) together and gives one score. OAuth runs only with `--suite oauth`. Uses the shared connection flags with an HTTP `--url`, plus:
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--suite <suite>` | No | `protocol`, `apps`, `tasks` | Suite to run: `protocol`, `apps`, `tasks` or `oauth`. Repeatable |
+| `--protocol-version <version>` | No | negotiated | One MCP protocol version for every suite in the run, like the app |
+| `--check-id <id>` | No | all | Check to run. Repeatable. Each ID goes to the suite that owns it, and a suite with no ID runs all its checks |
+| `--advice-id <id>` | No | all | Advice to run. Repeatable. Each ID goes to the `protocol`, `tasks` or `oauth` suite that owns it |
+| `--check-timeout <ms>` | No | `30000` | Per-check timeout for the protocol suite |
+| `--oauth-strategy <strategy>` | With `--suite oauth` | | `client_credentials`, with `--client-id` and `--client-secret` |
+| `--upload` | No | | Upload results to MCPJam run history |
+| `--require-upload` | No | | Fail if reporting is configured but the result cannot be uploaded |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
+
+It also takes the tool flags of the single-suite commands, with the same meaning:
+
+- Protocol: `--fixtures-file`, `--fixture-tool`, `--fixture-prompt`, `--log-probe-tool` / `-args` / `-level`, `--log-filter-tool` / `-args` / `-level` and `--input-required-tool` / `-args`. See [`protocol conformance`](#protocol-conformance).
+- Tasks: `--tool-name`, `--tool-args`, `--check-overrides`, `--input-responses` and `--poll-timeout`. See [Tasks conformance](/cli/tasks-conformance).
+
+An unknown ID, or an ID or flag for a suite the run leaves out, is a usage error (exit code `2`) before anything runs.
+
+---
+
 ## `test` command
 
 Run a suite file locally — see [Local evals](/cli/local-evals). Results are never uploaded.
