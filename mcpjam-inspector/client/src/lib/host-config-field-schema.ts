@@ -1191,12 +1191,13 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     section: "protocol",
     subsection: "Host policy",
     label: "Event delivery",
-    path: `mcpProfile.extensions.${MCPJAM_EVENTS_EXTENSION_ID} (effective)`,
+    path: `mcpProfile.extensions.${MCPJAM_EVENTS_EXTENSION_ID}`,
     description:
       "The MCP Events delivery modes this client accepts. Without a saved choice, its client style decides.",
     kind: { kind: "mode-set", modes: EVENT_DELIVERY_MODES },
-    // Effective, like the display-mode rows: a host with no saved setting
-    // shows its style's default, which is what subscriptions are checked by.
+    // Effective, like the display-mode rows ("(effective)" is left off the
+    // path so the copy check doesn't read it as prose): a host with no saved
+    // setting shows its style's default, which subscriptions are checked by.
     read: (cfg) => resolveHostEventDeliveryModes(cfg),
   },
 
