@@ -1175,6 +1175,7 @@ async function abandonPreparedRun(
   prepared: Awaited<ReturnType<typeof prepareEvalRun>>,
   ctx: { triggerId: string; reason: string; what: string },
 ): Promise<void> {
+  if (prepared.deduped === true) return;
   const notes = ctx.reason.slice(0, 500);
   await client
     .mutation("testSuites:markSetupPendingIterationsFailed" as any, {
