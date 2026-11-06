@@ -29,6 +29,8 @@ const mockState = vi.hoisted(() => ({
   revokeGuestSessionAndCookie: vi.fn().mockResolvedValue(false),
   getExistingGuestId: vi.fn().mockResolvedValue(null as string | null),
   isGuestActivated: vi.fn().mockReturnValue(false),
+  hasGuestActivationMarker: vi.fn().mockReturnValue(false),
+  clearGuestActivation: vi.fn(),
   sentrySetUser: vi.fn(),
   sentrySetTag: vi.fn(),
   posthog: null as {
@@ -59,6 +61,8 @@ vi.mock("@/lib/guest-session", () => ({
   revokeGuestSessionAndCookie: mockState.revokeGuestSessionAndCookie,
   getExistingGuestId: mockState.getExistingGuestId,
   isGuestActivated: mockState.isGuestActivated,
+  hasGuestActivationMarker: mockState.hasGuestActivationMarker,
+  clearGuestActivation: mockState.clearGuestActivation,
 }));
 
 // `@/lib/sentry-identity` is deliberately NOT mocked: it is the module under
@@ -92,6 +96,7 @@ describe("useEnsureDbUser", () => {
     mockState.revokeGuestSessionAndCookie.mockResolvedValue(false);
     mockState.getExistingGuestId.mockResolvedValue(null);
     mockState.isGuestActivated.mockReturnValue(false);
+    mockState.hasGuestActivationMarker.mockReturnValue(false);
     mockState.actorKey = "guest-1";
     mockState.auth.user = null;
     mockState.convexAuth.isAuthenticated = true;
@@ -108,6 +113,7 @@ describe("useEnsureDbUser", () => {
     mockState.auth.user = { id: "workos-1" };
     mockState.actorKey = "workos-1";
     mockState.getExistingGuestId.mockResolvedValue("guest-1");
+    mockState.hasGuestActivationMarker.mockReturnValue(true);
     mockState.isGuestActivated.mockReturnValue(true);
     mockState.getGuestPromotionProof.mockResolvedValue("proof");
     const finish = vi.fn();
@@ -477,6 +483,7 @@ describe("useEnsureDbUser", () => {
     mockState.auth.user = { id: "workos-user-1" };
     mockState.actorKey = "workos-user-1";
     mockState.getExistingGuestId.mockResolvedValue("guest-activated");
+    mockState.hasGuestActivationMarker.mockReturnValue(true);
     mockState.isGuestActivated.mockReturnValue(true);
     mockState.getGuestPromotionProof.mockResolvedValue("proof-jwt");
 
@@ -495,6 +502,25 @@ describe("useEnsureDbUser", () => {
     await waitFor(() => {
       expect(mockState.revokeGuestSessionAndCookie).toHaveBeenCalledTimes(1);
     });
+    // The marker goes with the cookie, so the next sign-in skips the lookup.
+    expect(mockState.clearGuestActivation).toHaveBeenCalledTimes(1);
+  });
+
+  it("revokes an unactivated cookie after ensureUser when the marker names another guest", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.hasGuestActivationMarker.mockReturnValue(true);
+    mockState.getExistingGuestId.mockResolvedValue("guest-incidental");
+    mockState.isGuestActivated.mockReturnValue(false);
+
+    renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.revokeGuestSessionAndCookie).toHaveBeenCalledTimes(1);
+    });
+    expect(mockState.getGuestPromotionProof).not.toHaveBeenCalled();
+    expect(mockState.ensureUser).toHaveBeenCalledExactlyOnceWith({});
+    expect(mockState.clearGuestActivation).not.toHaveBeenCalled();
   });
 
   it("does not request a promotion proof or revoke when no guest cookie exists", async () => {
@@ -511,6 +537,34 @@ describe("useEnsureDbUser", () => {
     expect(mockState.getGuestPromotionProof).not.toHaveBeenCalled();
     expect(mockState.revokeGuestSessionAndCookie).not.toHaveBeenCalled();
     expect(mockState.ensureUser).toHaveBeenCalledWith({});
+  });
+
+  // INSPECTOR-CLIENT-2TM: on self-hosted Inspectors the guest lookup is a
+  // proxied round trip that can take 10s or more, and it used to run before
+  // ensureUser for every signed-in load.
+  it("ensures a signed-in user without waiting on the guest lookup when no guest was activated", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    let resolveLookup: ((guestId: string | null) => void) | undefined;
+    mockState.getExistingGuestId.mockImplementation(
+      () =>
+        new Promise<string | null>((resolve) => {
+          resolveLookup = resolve;
+        }),
+    );
+
+    const { result } = renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => expect(result.current.isUserReady).toBe(true));
+    expect(mockState.ensureUser).toHaveBeenCalledWith({});
+    expect(mockState.getGuestPromotionProof).not.toHaveBeenCalled();
+    expect(mockState.revokeGuestSessionAndCookie).not.toHaveBeenCalled();
+
+    // The incidental cookie the lookup finds is still revoked, afterwards.
+    await act(async () => {
+      resolveLookup?.("guest-incidental");
+    });
+    expect(mockState.revokeGuestSessionAndCookie).toHaveBeenCalledTimes(1);
   });
 
   it("sends posthogAnonDistinctId ($device_id) for WorkOS auth", async () => {

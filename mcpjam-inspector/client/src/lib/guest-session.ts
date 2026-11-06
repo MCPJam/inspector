@@ -166,6 +166,31 @@ export function isGuestActivated(guestId: string | null | undefined): boolean {
 }
 
 /**
+ * Forget the activation marker once its guest has been promoted and its
+ * cookie retired, so later sign-ins take the no-marker path.
+ */
+export function clearGuestActivation(): void {
+  try {
+    localStorage.removeItem(GUEST_ACTIVATED_STORAGE_KEY);
+  } catch {
+    // ignore (private mode / storage disabled)
+  }
+}
+
+/**
+ * Returns true when any guest in this browser was ever activated. Without a
+ * marker no guest cookie can pass `isGuestActivated`, so sign-in can skip the
+ * guest lookup that would only tell it there is nothing to promote.
+ */
+export function hasGuestActivationMarker(): boolean {
+  try {
+    return localStorage.getItem(GUEST_ACTIVATED_STORAGE_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Read the server-injected `window.__MCP_GUEST_BOOTSTRAP__` blob once at
  * module load (before the first React render), validate it, and seed the
  * in-memory cache so the lazy `useState` initializers in

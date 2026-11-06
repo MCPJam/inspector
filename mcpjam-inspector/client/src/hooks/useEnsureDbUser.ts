@@ -5,8 +5,10 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { usePostHog } from "posthog-js/react";
 import { setSentryActor } from "@/lib/sentry-identity";
 import {
+  clearGuestActivation,
   getExistingGuestId,
   getGuestPromotionProof,
+  hasGuestActivationMarker,
   isGuestActivated,
   revokeGuestSessionAndCookie,
 } from "@/lib/guest-session";
@@ -89,6 +91,27 @@ function delay(ms: number) {
   return new Promise<void>((resolve) => {
     window.setTimeout(resolve, ms);
   });
+}
+
+/**
+ * Revoke a guest cookie that was never activated. The server-rendered guest
+ * bootstrap can leave one on a browser whose user then signs in; it must not
+ * be promoted, and is revoked so it cannot be replayed after a later sign-out.
+ * Runs once the user is ready: on self-hosted Inspectors the lookup and the
+ * revoke are each a proxied round trip to MCPJam.
+ */
+async function revokeIncidentalGuestCookie(shouldContinue: () => boolean) {
+  try {
+    const guestId = await getExistingGuestId();
+    // An activated guest is a promotion candidate, not an incidental cookie.
+    // A cancelled run (e.g. a sign-out that fell back to a guest) must not
+    // revoke the guest the user is now on.
+    if (!guestId || isGuestActivated(guestId) || !shouldContinue()) return;
+    await revokeGuestSessionAndCookie();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[auth] incidental guest cookie revoke failed", err);
+  }
 }
 
 function retryDelayMs(retryIndex: number) {
@@ -322,35 +345,26 @@ export function useEnsureDbUser() {
         // guest cookie on a browser whose user then signs in; that guest was
         // never used as a guest and must not be absorbed into the account.
         // Only mint a promotion proof when the cookie-backed guest carries an
-        // activation marker; otherwise revoke the incidental cookie and
-        // proceed without a proof.
-        let guestId: string | null = null;
-        try {
-          guestId = await getExistingGuestId();
-        } catch {
-          guestId = null;
-        }
-
-        if (guestId && isGuestActivated(guestId)) {
-          promotionGuestId = guestId;
+        // activation marker; an incidental cookie is revoked once the user is
+        // ready. With no marker at all there is nothing to promote, so skip
+        // the lookup rather than hold ensureUser behind it.
+        if (hasGuestActivationMarker()) {
+          let guestId: string | null = null;
           try {
-            guestProofJwt = await getGuestPromotionProof();
+            guestId = await getExistingGuestId();
           } catch {
-            // Network/transient failure minting the promotion proof is not
-            // fatal — the user can still create a fresh org-owned account.
-            guestProofJwt = null;
+            guestId = null;
           }
-        } else if (guestId) {
-          // Incidental, unactivated guest cookie: clean it up so it can't
-          // later be replayed, and do NOT promote it.
-          try {
-            await revokeGuestSessionAndCookie();
-          } catch (err) {
-            // eslint-disable-next-line no-console
-            console.error(
-              "[auth] incidental guest cookie revoke failed",
-              err
-            );
+
+          if (guestId && isGuestActivated(guestId)) {
+            promotionGuestId = guestId;
+            try {
+              guestProofJwt = await getGuestPromotionProof();
+            } catch {
+              // Network/transient failure minting the promotion proof is not
+              // fatal — the user can still create a fresh org-owned account.
+              guestProofJwt = null;
+            }
           }
         }
       }
@@ -419,10 +433,17 @@ export function useEnsureDbUser() {
       if (isWorkOsAuth && guestProofJwt) {
         try {
           await revokeGuestSessionAndCookie();
+          // The marker never expires on its own; left set, every later
+          // sign-in would wait on the guest lookup again.
+          clearGuestActivation();
         } catch (err) {
           // eslint-disable-next-line no-console
           console.error("[auth] guest session revoke failed", err);
         }
+      } else if (isWorkOsAuth) {
+        void revokeIncidentalGuestCookie(
+          () => !cancelled && activeEnsureIdentityRef.current === identityKey,
+        );
       }
 
       finishTransition?.(true);
@@ -453,5 +474,7 @@ export function useEnsureDbUser() {
     ensureRecoveryToken,
   ]);
 
-  return { isEnsuringUser, isUserReady };
+  // `hasIdentity` lets the load-stall report tell an actor that never
+  // resolved from a user record that is still being set up.
+  return { isEnsuringUser, isUserReady, hasIdentity: identityKey !== null };
 }
