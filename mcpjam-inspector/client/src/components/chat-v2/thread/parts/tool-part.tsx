@@ -131,7 +131,7 @@ export function ToolPart({
   onExitFullscreen?: (toolCallId: string) => void;
   onRequestPip?: (toolCallId: string) => void;
   onExitPip?: (toolCallId: string) => void;
-  /** Display modes the app declared support for. If undefined, all modes are available. */
+  /** Negotiated App display modes. If undefined, only the host restricts modes. */
   appSupportedDisplayModes?: DisplayMode[];
   approvalId?: string;
   onApprove?: (id: string) => void;

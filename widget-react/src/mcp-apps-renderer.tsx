@@ -412,7 +412,7 @@ export interface MCPAppsRendererProps {
       structuredContent?: Record<string, unknown>;
     }
   ) => void;
-  /** Callback when app declares its supported display modes during ui/initialize */
+  /** Modes allowed by the host, resource and initialized App for presentation controls. */
   onAppSupportedDisplayModesChange?: (modes: DisplayMode[] | undefined) => void;
   /**
    * Called when the widget sends `ui/notifications/request-teardown`
@@ -1199,6 +1199,10 @@ export function MCPAppsRendererSurface({
   );
   const advertisedAvailableDisplayModes = effectiveAvailableDisplayModes;
 
+  useEffect(() => {
+    onAppSupportedDisplayModesChange?.(effectiveAvailableDisplayModes);
+  }, [effectiveAvailableDisplayModes, onAppSupportedDisplayModesChange]);
+
   // Get device capabilities from playground store (SEP-1865)
   const playgroundCapabilities = environment.playgroundCapabilities;
   const configuredCapabilities =
@@ -1785,9 +1789,6 @@ export function MCPAppsRendererSurface({
   const ownsPipDisplayModeRef = useRef(ownsPipDisplayMode);
   const toolsMetadataRef = useRef(toolsMetadata);
   const onModelContextUpdateRef = useRef(onModelContextUpdate);
-  const onAppSupportedDisplayModesChangeRef = useRef(
-    onAppSupportedDisplayModesChange
-  );
 
   // Refs for values consumed inside the async fetchWidgetHtml function.
   // These change reference on every streaming chunk (AI SDK recreates part objects),
@@ -3322,8 +3323,6 @@ export function MCPAppsRendererSurface({
     ownsPipDisplayModeRef.current = ownsPipDisplayMode;
     toolsMetadataRef.current = toolsMetadata;
     onModelContextUpdateRef.current = onModelContextUpdate;
-    onAppSupportedDisplayModesChangeRef.current =
-      onAppSupportedDisplayModesChange;
     onRequestTeardownRef.current = onRequestTeardown;
     onConfirmDownloadRef.current = onConfirmDownload;
   }, [
@@ -3344,7 +3343,6 @@ export function MCPAppsRendererSurface({
     ownsPipDisplayMode,
     toolsMetadata,
     onModelContextUpdate,
-    onAppSupportedDisplayModesChange,
     onRequestTeardown,
     onConfirmDownload,
   ]);
@@ -3379,7 +3377,6 @@ export function MCPAppsRendererSurface({
             const declaredAppModes = appCaps?.availableDisplayModes as
               | DisplayMode[]
               | undefined;
-            onAppSupportedDisplayModesChangeRef.current?.(declaredAppModes);
             // SEP-1865: clamp the advertised + runtime mode set against the
             // app's declaration. The next render of `hostContext` will pick
             // up the new intersection and the post-init `setHostContext`
@@ -3390,6 +3387,7 @@ export function MCPAppsRendererSurface({
               resourceDisplayHintsRef.current,
               declaredAppModes
             );
+            setAppSupportedDisplayModes(declaredAppModes);
             if (negotiated.length === 0) {
               const fixed = fixedDisplayModeRef.current;
               setLoadError(
@@ -3400,7 +3398,6 @@ export function MCPAppsRendererSurface({
               void b.close();
               return;
             }
-            setAppSupportedDisplayModes(declaredAppModes);
             // OpenAI rules: an App that can't stay in its starting mode moves
             // to the mode it would have started in among what it allows.
             if (
