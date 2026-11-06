@@ -308,6 +308,17 @@ describe("translateConvexReadError", () => {
     expect(context).not.toHaveProperty("httpStatus");
   });
 
+  // A client without `convexReadFetch` throws the bare body, which the
+  // describer would file under the caller's LLM quota or credential.
+  it.each(["Too Many Requests", "401 Unauthorized"])(
+    "reports no slug for a body that only names a status: %s",
+    (body) => {
+      translate(body);
+      const context = errorMock.mock.calls[0]![2] as Record<string, unknown>;
+      expect(context).not.toHaveProperty("slug");
+    },
+  );
+
   it("still answers 401 to a credential refusal that carries a status", () => {
     const err = translateConvexReadError(
       new ConvexHttpStatusError(401, '{"code":"Unauthenticated"}'),

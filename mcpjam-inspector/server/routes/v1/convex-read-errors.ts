@@ -340,15 +340,19 @@ export function translateConvexReadError(
   }
   // The REDACTED error, not the original — see `redactedErrorForCapture`.
   // Sentry's boundary drops the message and keeps only catalogued facts, so
-  // the status or slug is what says which failure this was. A status gets no
-  // slug: the describer reads a bare 401 or 429 as an MCP server or LLM
-  // provider failure, and this one came from Convex.
+  // the status or slug is what says which failure this was. Only a transport
+  // slug is reported: the describer reads a 401 or 429, by status or by body
+  // text such as "Too Many Requests", as an MCP server or LLM provider
+  // failure, and this one came from Convex.
   const redacted = redactedErrorForCapture(error);
+  const { slug } = describeError(error);
   logger.error(`[${options.scope}] upstream read failed`, redacted, {
     message: redacted.message,
     ...(error instanceof ConvexHttpStatusError
       ? { httpStatus: error.convexStatus }
-      : { slug: describeError(error).slug }),
+      : slug.startsWith("transport/")
+        ? { slug }
+        : {}),
   });
   return new WebRouteError(
     502,
