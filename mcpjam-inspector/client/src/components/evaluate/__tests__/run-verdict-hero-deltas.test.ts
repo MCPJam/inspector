@@ -277,6 +277,7 @@ describe("buildHeroPairings", () => {
       _id: "prev-cursor",
       namedHostId: "cursor",
       effectiveModelId: "gpt-5.1",
+      runNumber: 3,
     });
     const prevChatgpt = run({
       _id: "prev-chatgpt",
@@ -320,6 +321,7 @@ describe("buildHeroPairings", () => {
       failed: 1,
       total: 3,
       delta: { label: "+1", direction: "up", tone: "progress" },
+      previousRunNumber: 3,
     });
     expect(pairings[1]).toMatchObject({
       client: "ChatGPT",
@@ -360,7 +362,11 @@ describe("buildHeroPairings", () => {
       ],
     });
     expect(pairings[0].delta).toBeNull();
-    expect(pairings[0]).toMatchObject({ passed: 1, total: 1 });
+    expect(pairings[0]).toMatchObject({
+      passed: 1,
+      total: 1,
+      previousRunNumber: null,
+    });
   });
 
   it("does not invent a first-launch zero", () => {
@@ -384,6 +390,7 @@ describe("buildHeroPairings", () => {
       previousIterations: null,
     });
     expect(pairings[0].delta).toBeNull();
+    expect(pairings[0].previousRunNumber).toBeNull();
   });
 });
 

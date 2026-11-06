@@ -53,7 +53,9 @@ import {
   previousCompletedRunOf,
 } from "./run-verdict-hero-deltas";
 import { CombinedRunContent } from "./combined-run-content";
-import { launchRuns } from "./run-results-matrix-model";
+import { buildRunResultsMatrix, launchRuns } from "./run-results-matrix-model";
+import { NavRunLayout } from "./nav-run/nav-run-layout";
+import type { NavRunOptions } from "./nav-run/use-nav-run-links";
 import { useRunErrorBreakdownToast } from "./run-error-breakdown";
 import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
 
@@ -86,6 +88,7 @@ export function SingleRunContent({
   onOpenIteration,
   onEditCase,
   onEditEvaluator,
+  nav,
 }: {
   projectId: string | null | undefined;
   run: EvalSuiteRun;
@@ -105,6 +108,8 @@ export function SingleRunContent({
   onEditCase?: (testCaseId: string) => void;
   onEditEvaluator?: (testCaseId: string) => void;
   fallbackBody?: ReactNode;
+  /** The new Suite run page: Stats, Findings and Test runs in place of the hero and matrix. */
+  nav?: NavRunOptions;
 }) {
   // Terminal only, matching `RunDecisionSummarySection`: a running row has no
   // decision to read, and asking anyway spends a request per poll to be told so.
@@ -243,11 +248,12 @@ export function SingleRunContent({
   // What changed since the previous run. One read, no store: the answer is not
   // shared with another surface and a cache would be more machinery than it is
   // worth.
+  // The nav page reads the comparison itself, for its header's Compare tease.
   const compare = useEvalRunCompare({
     projectId,
     run,
     ...(previousRunId ? { baseRunId: previousRunId } : {}),
-    enabled: active,
+    enabled: active && !nav,
   });
 
   const changeSummary = useMemo(
@@ -368,6 +374,52 @@ export function SingleRunContent({
     [onOpenIteration, iterations],
   );
 
+  const navLayout = Boolean(nav);
+  const navMatrix = useMemo(
+    () =>
+      navLayout
+        ? buildRunResultsMatrix<EvalSuiteRunListItem>({
+            run,
+            runs: siblingRuns,
+            iterations,
+            hostNamesById: hostNamesById ?? new Map(),
+          })
+        : null,
+    [navLayout, run, siblingRuns, iterations, hostNamesById],
+  );
+  const navPairings = useMemo(
+    () =>
+      navMatrix
+        ? buildHeroPairings({
+            targets: navMatrix.targets,
+            previousLaunch: previousLaunch.length > 0 ? previousLaunch : null,
+            previousIterations,
+          })
+        : [],
+    [navMatrix, previousLaunch, previousIterations],
+  );
+  const findingsGeneration = {
+    pending: serverQuality.pending,
+    failedGeneration: serverQuality.failedGeneration,
+    error: serverQuality.error,
+    unavailable: serverQuality.unavailable,
+    canRequest: serverQuality.canRequest,
+    requestInsight: serverQuality.requestServerQuality,
+  };
+  const experimentCard =
+    descriptionExperimentEnabled && descriptionExperiment.experiment ? (
+      <RunDescriptionExperimentCard
+        experiment={descriptionExperiment.experiment}
+        onStart={() => {
+          void descriptionExperiment.start();
+        }}
+        starting={
+          descriptionExperiment.status === "loading" &&
+          descriptionExperiment.experiment.status === "proposed"
+        }
+      />
+    ) : null;
+
   const inRunPageHeader = useEvaluateRunPageHeaderActions(
     canOpenFailingTrace || improvePrompt
       ? {
@@ -378,6 +430,40 @@ export function SingleRunContent({
         }
       : null,
   );
+
+  if (nav && navMatrix) {
+    const targetCount = navMatrix.targets.length;
+    return (
+      <div
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+        data-testid="evaluate-run-content"
+      >
+        <NavRunLayout
+          matrix={navMatrix}
+          pairings={navPairings}
+          passThreshold={nav.passThreshold}
+          findings={() => (
+            <UnifiedFindingsSection
+              variant="compact"
+              scopeLabel={targetCount > 1 ? `across ${targetCount} models` : ""}
+              suiteRunId={String(run._id)}
+              iterations={iterations}
+              clientLabel={navPairings[0]?.client ?? null}
+              fallback={<HeroExplanation view={view} />}
+              generation={findingsGeneration}
+              onOpenIteration={(iterationId) => {
+                const row = iterations.find((item) => item._id === iterationId);
+                if (row) nav.openIteration(row);
+              }}
+            />
+          )}
+          onOpenTestRun={nav.openTestRun}
+          onEditTestCase={nav.editTestCase}
+        />
+        {experimentCard}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -392,14 +478,7 @@ export function SingleRunContent({
             iterations={iterations}
             clientLabel={view.pairings?.[0]?.client ?? null}
             fallback={<HeroExplanation view={view} />}
-            generation={{
-              pending: serverQuality.pending,
-              failedGeneration: serverQuality.failedGeneration,
-              error: serverQuality.error,
-              unavailable: serverQuality.unavailable,
-              canRequest: serverQuality.canRequest,
-              requestInsight: serverQuality.requestServerQuality,
-            }}
+            generation={findingsGeneration}
             {...(onOpenIteration
               ? { onOpenIteration: openEvidenceIteration }
               : {})}
@@ -459,18 +538,7 @@ export function SingleRunContent({
         />
       </div>
 
-      {descriptionExperimentEnabled && descriptionExperiment.experiment ? (
-        <RunDescriptionExperimentCard
-          experiment={descriptionExperiment.experiment}
-          onStart={() => {
-            void descriptionExperiment.start();
-          }}
-          starting={
-            descriptionExperiment.status === "loading" &&
-            descriptionExperiment.experiment.status === "proposed"
-          }
-        />
-      ) : null}
+      {experimentCard}
     </div>
   );
 }

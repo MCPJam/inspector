@@ -21,6 +21,8 @@ import type { BorrowedGenerationController } from "@/components/shared/actionabl
 import type { FindingEvidenceLocator } from "@/components/shared/actionable-insights/finding-evidence";
 import type { EvalIteration } from "../evals/types";
 import { affectedRowsById } from "./affected-iteration-rows";
+import { sortFindingsForDisplay } from "@/lib/insights-envelope-api";
+import { FindingsCompactList } from "./nav-run/findings-compact";
 
 export type UnifiedFindingsSectionProps = {
   suiteRunId: string;
@@ -34,6 +36,10 @@ export type UnifiedFindingsSectionProps = {
   clientLabel?: string | null;
   /** Shown when no findings have been built, so the slot is never empty. */
   fallback?: React.ReactNode;
+  /** compact: one line per built finding (Suite run page); other states keep the panel. */
+  variant?: "panel" | "compact";
+  /** compact only: what the count covers, e.g. "across 2 models". */
+  scopeLabel?: string;
 };
 
 function UnifiedFindingsBody({
@@ -44,6 +50,8 @@ function UnifiedFindingsBody({
   onOpenIteration,
   clientLabel,
   fallback,
+  variant = "panel",
+  scopeLabel = "",
 }: UnifiedFindingsSectionProps) {
   const envelope = useInsightsEnvelope({ kind: "eval_run", suiteRunId });
   const state = useUnifiedFindings({ suiteRunId, envelope, generation });
@@ -56,6 +64,24 @@ function UnifiedFindingsBody({
         onOpenIteration(locator.id);
       }
     : undefined;
+
+  const built =
+    Boolean(state.experiment?.snapshot) &&
+    !state.analyze.pending &&
+    !state.analyze.error &&
+    !state.build.pending &&
+    !state.build.error &&
+    !state.backendUnavailableNote;
+  if (variant === "compact" && built) {
+    return (
+      <FindingsCompactList
+        findings={sortFindingsForDisplay(state.findings)}
+        scope={scopeLabel}
+        heldIterationIds={new Set(iterations.map((iteration) => iteration._id))}
+        {...(onOpenIteration ? { onOpenIteration } : {})}
+      />
+    );
+  }
 
   return (
     <section data-testid="unified-findings-section">

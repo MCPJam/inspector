@@ -216,6 +216,10 @@ vi.mock("../evaluate/create-suite-page", () => ({
   },
 }));
 
+vi.mock("../evaluate/nav-suite/suite-nav-page", () => ({
+  SuiteNavPage: () => <div data-testid="nav-suite-page" />,
+}));
+
 vi.mock("../evals/suite-iterations-view", () => ({
   SuiteIterationsView: (props: Record<string, unknown>) => {
     mocks.suiteIterationsView(props);
@@ -421,9 +425,9 @@ describe("EvaluateTab", () => {
     vi.clearAllMocks();
     mocks.isDirectGuest = false;
     mocks.isAuthenticated = true;
-    // Default OFF, matching `useFeatureFlagEnabled`'s own "still loading"
-    // value. Specs that care about the redesign flag opt in explicitly.
-    mocks.evaluateFlag.enabled = undefined;
+    // Default OFF. Specs that care about the redesign flag (or its "still
+    // loading" undefined, which holds pages that have a nav Page) opt in.
+    mocks.evaluateFlag.enabled = false;
     mocks.evalIterationQuota = undefined;
     mocks.getEffectiveSuiteServers.mockImplementation(() => []);
     mocks.useQuery.mockImplementation((name: unknown) => {
@@ -754,8 +758,7 @@ describe("EvaluateTab", () => {
       });
     });
 
-    it("threads the flag and the project id into the suite surface", () => {
-      mocks.evaluateFlag.enabled = true;
+    it("threads the project id into the suite surface", () => {
       render(<EvaluateTab projectId="ws-1" />);
 
       expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
@@ -763,6 +766,14 @@ describe("EvaluateTab", () => {
         projectId: "ws-1",
         evaluateDecisionSummary: true,
       });
+    });
+
+    it("renders the nav Suite page instead once the nav flag is on", () => {
+      mocks.evaluateFlag.enabled = true;
+      render(<EvaluateTab projectId="ws-1" />);
+
+      expect(screen.getByTestId("nav-suite-page")).toBeInTheDocument();
+      expect(mocks.suiteIterationsView).not.toHaveBeenCalled();
     });
 
     it("enables suite summaries even when the legacy flag is off", () => {
