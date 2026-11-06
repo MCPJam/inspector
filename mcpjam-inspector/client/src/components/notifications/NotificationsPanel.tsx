@@ -54,6 +54,8 @@ function getNotificationMessage(notification: Notification): string {
   const actor = actorName || "Someone";
 
   switch (type) {
+    case "organization_domain_default":
+      return `"${entityName}" was selected as your company’s default organization`;
     case "project_added":
       return `${actor} added you to project "${entityName}"`;
     case "project_removed":
@@ -106,7 +108,9 @@ function NotificationItem({
       <div
         className={cn(
           "flex items-center justify-center h-8 w-8 rounded-full shrink-0",
-          notification.type === "organization_seat_payment_required"
+          notification.type === "organization_domain_default"
+            ? "bg-info/10 text-foreground"
+            : notification.type === "organization_seat_payment_required"
             ? "bg-primary/10 text-primary"
             : notification.type.includes("added")
               ? "bg-success/10 text-success"
@@ -119,6 +123,14 @@ function NotificationItem({
         <p className="text-sm leading-tight">
           {getNotificationMessage(notification)}
         </p>
+        {notification.type === "organization_domain_default" && (
+          <a
+            className="text-sm underline"
+            href={`/organizations/${encodeURIComponent(notification.entityId)}/members`}
+          >
+            Review settings
+          </a>
+        )}
         <p className="text-xs text-muted-foreground mt-1">
           {formatTimeAgo(notification.createdAt)}
         </p>

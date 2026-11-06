@@ -125,4 +125,14 @@ describe("NotificationsPanelContent", () => {
     expect(container.querySelector(".bg-success\\/10")).not.toBeNull();
     expect(container.querySelector(".bg-destructive\\/10")).not.toBeNull();
   });
+  it("links the company-default notice to organization members and sharing", () => {
+    renderWith([
+      notification({ type: "organization_domain_default", entityId: "acme" }),
+    ]);
+    expect(screen.getByRole("link", { name: "Review settings" })).toHaveAttribute(
+      "href",
+      "/organizations/acme/members",
+    );
+  });
+
 });
