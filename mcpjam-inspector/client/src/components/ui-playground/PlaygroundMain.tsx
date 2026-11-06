@@ -4694,12 +4694,15 @@ export function PlaygroundMain({
           composer.setInput(text);
           return;
         }
-        sendMessage({
+        const sent = sendMessage({
           text,
           metadata: outgoingSenderMetadata,
           widgetModelContext: modelContextQueue,
         });
         setModelContextQueue([]);
+        // Settles once the message is dispatched, so Retry's lock covers the
+        // hosted preflight too.
+        await sent;
       })();
     },
     [

@@ -2354,6 +2354,34 @@ describe("PlaygroundMain", () => {
       );
     });
 
+    it("resends once when Retry is clicked again before the resend is dispatched", async () => {
+      mockUseChatSession.error = Object.assign(
+        new Error("The organization's AI provider is unavailable."),
+        { formatted: { code: "provider_unavailable" } },
+      );
+      await openSavedThread();
+      mockGetChatHistoryDetail.mockResolvedValue(detail);
+      // `sendMessage` resolves once the message reaches the AI SDK, after the
+      // hosted server-id and browser preflight; that is still pending here.
+      let dispatch!: (sent: boolean) => void;
+      sendMessage.mockReturnValueOnce(
+        new Promise<boolean>((done) => {
+          dispatch = done;
+        }),
+      );
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("error-box-retry"));
+      });
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("error-box-retry"));
+      });
+      await act(async () => dispatch(true));
+
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+    });
+
     it("still sends the same text twice when the user repeats it on purpose", async () => {
       await openSavedThread();
       mockGetChatHistoryDetail.mockResolvedValue(detail);
