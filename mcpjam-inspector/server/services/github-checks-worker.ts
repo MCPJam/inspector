@@ -44,6 +44,7 @@ import { getConvexBearerForDelegation } from "../utils/v1-convex-token.js";
 import { createAuthorizedManager } from "../routes/web/auth.js";
 import { WebRouteError } from "../routes/web/errors.js";
 import { prepareEvalRun, shouldSkipExecution } from "../routes/shared/evals.js";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 import { createConvexClient } from "./evals/route-helpers.js";
 import type { CheckRecipe } from "./github-checks/recipes.js";
 import {
@@ -965,18 +966,6 @@ async function defaultDeleteEphemeralServer(args: {
 }
 
 /**
- * Run statuses the eval runner treats as final. `timed_out` is included because
- * the runner stamps it before rethrowing — re-finalizing as `failed` would
- * overwrite a real timeout verdict.
- */
-const TERMINAL_RUN_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-]);
-
-/**
  * Whether the run already has a terminal record — with `unknown` kept distinct
  * from `non_terminal`.
  *
@@ -1011,7 +1000,7 @@ async function runTerminality(
     })) as { status?: string } | null;
     if (!run) return "unknown";
     if (run.status === "grading") return "grading";
-    return TERMINAL_RUN_STATUSES.has(String(run.status))
+    return isEvalRunTerminalStatus(run.status)
       ? "terminal"
       : "non_terminal";
   } catch {

@@ -164,9 +164,9 @@ import {
   hostClientCapabilities,
 } from "../../services/host-connection-pins.js";
 import {
-  TERMINAL_ITERATION_STATUSES,
-  TERMINAL_RUN_STATUSES,
-} from "../../services/evals/run-status.js";
+  isEvalIterationTerminalStatus,
+  isEvalRunTerminalStatus,
+} from "@mcpjam/sdk/contract";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import {
   createEvalCasesInBatches,
@@ -2062,7 +2062,7 @@ function toIterationDto(
   // with the trial, so its duration is measurable (a setup failure has a real
   // elapsed time) and withholding it would report `durationMs: null` for the
   // one class of failure an operator is trying to time.
-  const isTerminal = TERMINAL_ITERATION_STATUSES.has(iteration.status);
+  const isTerminal = isEvalIterationTerminalStatus(iteration.status);
   const durationMs =
     isTerminal && startedAt !== null && typeof iteration.updatedAt === "number"
       ? Math.max(iteration.updatedAt - startedAt, 0)
@@ -5924,7 +5924,7 @@ evals.post("/projects/:projectId/eval-runs/:runId/cancel", async (c) => {
     return v1Resource(c, toRunDto(run!));
   }
   // Completed/failed runs can't be cancelled — surface a clear 409.
-  if (TERMINAL_RUN_STATUSES.has(status)) {
+  if (isEvalRunTerminalStatus(status)) {
     throw new WebRouteError(
       409,
       ErrorCode.VALIDATION_ERROR,
