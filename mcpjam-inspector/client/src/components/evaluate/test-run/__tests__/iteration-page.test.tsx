@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { EvalIteration, EvalSuiteRun } from "../../../evals/types";
 import type { EvalCrumb, EvalBack } from "../../nav/eval-nav-crumbs";
@@ -6,6 +6,7 @@ import type { TestRunData } from "../use-test-run-data";
 import { IterationPage, iterationVerdict } from "../iteration-page";
 import { formatRunId } from "../../../evals/helpers";
 import {
+  NOW,
   CASE_ID,
   ITERATIONS,
   MATRIX,
@@ -187,6 +188,20 @@ describe("IterationPage", () => {
     expect(
       screen.getByText(
         "This iteration is not part of this test run. It may have been deleted, or the link is wrong.",
+      ),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("the Iteration description's age", () => {
+  afterEach(() => vi.useRealTimers());
+  it("counts whole days past a week, like the case run sheet", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW + 60_000);
+    render(<IterationPage route={route} projectId="p1" />);
+    expect(
+      screen.getByText(
+        `Run ${formatRunId("run-a")} · openai/gpt-5-mini · 13d ago`,
       ),
     ).toBeInTheDocument();
   });

@@ -4,10 +4,13 @@
  * beside its body; the editor docks it beside the case. Same list either way;
  * the test run's variant says where a click goes before going there.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { UNSAFE_LocationContext } from "react-router";
 import { ArrowRight, ChevronDown, Diamond, Flag, Info, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@mcpjam/design-system/cn";
+import { parseProjectPath } from "@/lib/project-route";
+import { trackEvalNav } from "../nav/eval-nav-analytics";
 import type { PreviewItem, PreviewMarker } from "./case-steps-model";
 
 export const EXECUTION_PREVIEW_OPEN_KEY = "mcpjam:eval-execution-preview-open";
@@ -34,16 +37,35 @@ function writeStoredOpen(open: boolean): boolean {
   }
 }
 
-/** Open state remembered in this browser across pages and reloads; starts closed. */
-export function useExecutionPreviewOpen(): [
-  open: boolean,
-  setOpen: (open: boolean) => void,
-] {
+/**
+ * Open state remembered in this browser across pages and reloads; starts
+ * closed. With a `surface`, opening it fires eval_execution_preview_opened
+ * for that surface; a panel restored open from storage is not counted.
+ */
+export function useExecutionPreviewOpen(
+  surface?: "editor" | "test_run",
+): [open: boolean, setOpen: (open: boolean) => void] {
   const [open, setOpenState] = useState(readStoredOpen);
-  const setOpen = useCallback((next: boolean) => {
-    setOpenState(next);
-    writeStoredOpen(next);
-  }, []);
+  const openRef = useRef(open);
+  const locationContext = useContext(UNSAFE_LocationContext);
+  const pathname =
+    locationContext?.location.pathname ??
+    (typeof window === "undefined" ? "" : window.location.pathname);
+  const projectId = parseProjectPath(pathname)?.projectId ?? null;
+  const setOpen = useCallback(
+    (next: boolean) => {
+      if (surface && next && !openRef.current) {
+        trackEvalNav("eval_execution_preview_opened", {
+          surface,
+          project_id: projectId,
+        });
+      }
+      openRef.current = next;
+      setOpenState(next);
+      writeStoredOpen(next);
+    },
+    [surface, projectId],
+  );
   return [open, setOpen];
 }
 
@@ -115,7 +137,10 @@ function Marker({
       return (
         <span
           aria-hidden="true"
-          className={cn(dot, "shrink-0 rounded-full border-2 border-info")}
+          className={cn(
+            dot,
+            "shrink-0 rounded-full border-2 border-muted-foreground/50",
+          )}
         />
       );
     case "check":

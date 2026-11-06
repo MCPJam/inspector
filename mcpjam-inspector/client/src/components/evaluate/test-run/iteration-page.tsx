@@ -12,7 +12,8 @@ import type { EvalRoute } from "@/lib/eval-route-types";
 import { runIterationTargetKey } from "@/lib/eval-target-key";
 import { EvalCrumbBar } from "@/components/evaluate/evals-header";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
-import { formatRelativeTime, formatRunId } from "../../evals/helpers";
+import { formatRunId } from "../../evals/helpers";
+import { age } from "../case-workspace/case-run-timeline";
 import { computeIterationResult } from "../../evals/pass-criteria";
 import { stripTimestampSuffix } from "../../evals/suite-overview-presentation";
 import { useSelectedRun } from "../../evals/use-selected-run";
@@ -200,7 +201,7 @@ function IterationPageBody({
         verdict={iterationVerdict(iteration)}
         description={`Run ${formatRunId(run._id)} · ${
           iteration.testCaseSnapshot?.model || "Unknown model"
-        } · ${formatRelativeTime(iteration.createdAt)}`}
+        } · ${age(iteration.createdAt)}`}
       >
         <IterationEvidence
           iteration={iteration}

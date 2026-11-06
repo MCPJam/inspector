@@ -137,7 +137,7 @@ function TestRunPageBody({
         : null,
     [data.testCase, data.suite],
   );
-  const [previewOpen, setPreviewOpen] = useExecutionPreviewOpen();
+  const [previewOpen, setPreviewOpen] = useExecutionPreviewOpen("test_run");
 
   const targets = useMemo(() => {
     const all = data.matrix?.targets ?? [];
@@ -201,15 +201,7 @@ function TestRunPageBody({
       },
     });
   };
-  const togglePreview = () => {
-    if (!previewOpen) {
-      trackEvalNav("eval_execution_preview_opened", {
-        surface: "test_run",
-        project_id: projectId,
-      });
-    }
-    setPreviewOpen(!previewOpen);
-  };
+  const togglePreview = () => setPreviewOpen(!previewOpen);
 
   let body;
   if (data.status === "runNotFound") {
