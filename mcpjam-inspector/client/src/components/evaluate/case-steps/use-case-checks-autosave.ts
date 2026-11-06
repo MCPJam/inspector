@@ -77,7 +77,10 @@ export function useCaseChecksAutosave({
           if (mine !== revision.current) return;
           setStatus("Changes could not be saved. Edit again or retry.");
           toast.error(
-            getBillingErrorMessage(error, "Failed to save evaluator changes"),
+            getBillingErrorMessage(
+              error,
+              "Could not save the evaluator changes.",
+            ),
             { action: { label: "Retry", onClick: () => enqueue(true) } },
           );
         });

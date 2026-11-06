@@ -433,7 +433,7 @@ export function SuiteRunReviewContent({
               }}
             >
               <Settings2 className="size-4" aria-hidden />
-              Configure suite evaluators
+              Open suite settings
             </Button>
           )}
         </div>

@@ -115,7 +115,7 @@ function SuiteRunNavPageBody({
   useEffect(() => {
     if (run?.runGroupId)
       void loadGroup(run.runGroupId).catch(() =>
-        toast.error("Could not load the complete run group"),
+        toast.error("Could not load the complete run group. Try again."),
       );
   }, [loadGroup, run?._id, run?.runGroupId]);
   const previous = useMemo(() => previousRunForRunPage(run, runs), [run, runs]);
@@ -181,9 +181,12 @@ function SuiteRunNavPageBody({
       />
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 pb-6 pt-6">
         {selected.isUnavailable ? (
-          <RunPageStatus label="Run unavailable." busy={false} />
+          <RunPageStatus
+            label="This run is not in this suite's history. Check the link, or open the suite to see its runs."
+            busy={false}
+          />
         ) : !run || !suite || rowsPending ? (
-          <RunPageStatus label="Loading run..." busy />
+          <RunPageStatus label="Loading run…" busy />
         ) : (
           <EvaluateRunPage
             suiteName={suite.name}

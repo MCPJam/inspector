@@ -14,10 +14,6 @@
  */
 import { checkRole } from "@mcpjam/sdk/predicates";
 import { describeLocator } from "@/components/evals/assert-pick-chooser";
-import {
-  formatCriterion,
-  INLINE_ASSERT_LABELS,
-} from "@/shared/predicate-kinds";
 import { isLocatorComplete } from "@/shared/scripted-steps";
 import {
   actionRows,
@@ -38,6 +34,7 @@ import {
   type CaseScorecardInput,
   type ScorecardRow,
 } from "../case-scorecard/case-scorecard-model";
+import { assertionSummary } from "./assertion-summary";
 
 /** Title and subtitle per step kind. The editor (2E) and the preview share them. */
 export const STEP_COPY: Record<
@@ -251,12 +248,14 @@ function assertionItem(step: AssertStep): PreviewItem {
       detail: "Checked in the live view. Blocking.",
     };
   }
+  // The editor row's own words: its label, then its operand in quotes.
+  const summary = assertionSummary(assertion, true);
   return {
     key,
     marker: "check",
-    title:
-      INLINE_ASSERT_LABELS[assertion.type] ??
-      formatCriterion({ predicate: assertion }),
+    title: summary.value
+      ? `${summary.label} ${quoted(summary.value)}`
+      : summary.label,
     detail:
       checkRole(assertion) === "advisory"
         ? "Non-blocking: a miss only warns."

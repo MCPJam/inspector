@@ -290,17 +290,21 @@ describe("SuiteRunNavPage", () => {
     });
   });
 
-  it("says Loading run... while the rows are on their way", () => {
+  it("says Loading run… while the rows are on their way", () => {
     data.rows = { byRun: new Map(), failedRunIds: new Set(), iterations: [] };
     renderPage();
-    expect(screen.getByText("Loading run...")).toBeVisible();
+    expect(screen.getByText("Loading run…")).toBeVisible();
     expect(screen.queryByTestId("run-content")).toBeNull();
   });
 
-  it("says Run unavailable. for a run this suite does not have", () => {
+  it("says the run is not in the history for a run this suite does not have", () => {
     data.selected = { run: null, isLoading: false, isUnavailable: true };
     renderPage();
-    expect(screen.getByText("Run unavailable.")).toBeVisible();
+    expect(
+      screen.getByText(
+        "This run is not in this suite's history. Check the link, or open the suite to see its runs.",
+      ),
+    ).toBeVisible();
   });
 
   it("opens the comparison page from Compare runs, with this run as Back", async () => {
