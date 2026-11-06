@@ -1143,7 +1143,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     // MCPJam-only tasks policy below: this key goes on the initialize
     // envelope, and declaring it commits the host to fetching, digest-
     // verifying, and refusing unlisted files. It is therefore under "Client
-    // capabilities supported" rather than "Host policy".
+    // capabilities supported" rather than "Client policy".
     id: "capabilities.skillsExtension",
     section: "protocol",
     subsection: "Client capabilities supported",
@@ -1161,7 +1161,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   },
 
   // ============================================================
-  // Protocol · Host policy
+  // Protocol · Client policy
   //
   // MCPJam's own product policy, NOT an MCP wire capability. It is stored
   // under `mcpProfile.extensions["com.mcpjam/tasks"]` and is never advertised
@@ -1172,7 +1172,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "tasksPolicy",
     section: "protocol",
-    subsection: "Host policy",
+    subsection: "Client policy",
     label: "Task execution",
     path: `mcpProfile.extensions.${MCPJAM_TASKS_POLICY_EXTENSION_ID}.enabled`,
     description:
@@ -1189,7 +1189,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "eventsDeliveryModes",
     section: "protocol",
-    subsection: "Host policy",
+    subsection: "Client policy",
     label: "Event delivery",
     path: `mcpProfile.extensions.${MCPJAM_EVENTS_EXTENSION_ID}`,
     description:
