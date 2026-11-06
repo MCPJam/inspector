@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -34,6 +35,27 @@ export type RunDecision = {
   chainsLoaded: boolean;
 };
 
+const sameItems = <T,>(a: readonly T[], b: readonly T[]) =>
+  a.length === b.length && a.every((item, index) => item === b[index]);
+
+/**
+ * The previous list while its items are the same objects. The decision read
+ * rebuilds its diagnostics array on every render from stable store entries,
+ * so the array's identity alone would report a change that never happened.
+ */
+function useStableItems<T>(items: T[]): T[] {
+  const last = useRef(items);
+  if (!sameItems(last.current, items)) last.current = items;
+  return last.current;
+}
+
+const sameDecision = (a: RunDecision, b: RunDecision) =>
+  a.status === b.status &&
+  a.summary === b.summary &&
+  a.chains === b.chains &&
+  a.chainsLoaded === b.chainsLoaded &&
+  sameItems(a.diagnostics, b.diagnostics);
+
 /**
  * Reads one run's decision and chains. A component rather than a hook call
  * because a launch has as many runs as it has models, and hooks cannot loop.
@@ -55,7 +77,8 @@ function RunDecisionReader({
     revision: evalRunDecisionRevision(run),
   });
   const chains = useEvalRunIterationChains({ projectId, run, enabled: active });
-  const { status, summary, diagnostics } = detail;
+  const { status, summary } = detail;
+  const diagnostics = useStableItems(detail.diagnostics);
   useEffect(() => {
     onRead(run._id, {
       status,
@@ -92,8 +115,14 @@ export function useTestRunDecisions(
   const [byRun, setByRun] = useState<ReadonlyMap<string, RunDecision>>(
     () => new Map(),
   );
+  // A report equal to the one held keeps the same map, so React skips the
+  // render instead of re-rendering every reader again.
   const onRead = useCallback((runId: string, decision: RunDecision) => {
-    setByRun((previous) => new Map(previous).set(runId, decision));
+    setByRun((previous) => {
+      const held = previous.get(runId);
+      if (held && sameDecision(held, decision)) return previous;
+      return new Map(previous).set(runId, decision);
+    });
   }, []);
   const readers = runs.map((run) => (
     <RunDecisionReader
