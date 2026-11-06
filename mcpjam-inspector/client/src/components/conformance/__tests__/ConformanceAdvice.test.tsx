@@ -55,7 +55,7 @@ describe("ConformanceAdvice", () => {
     for (const word of ["SHOULD", "MAY"]) {
       expect(screen.getByRole("link", { name: word })).toHaveAttribute(
         "href",
-        "https://datatracker.ietf.org/doc/html/bcp14",
+        "https://www.rfc-editor.org/info/rfc2119/#section-1",
       );
     }
 
