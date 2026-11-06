@@ -15,9 +15,9 @@ it("sends a retry header and a structured capacity refusal over HTTP", async () 
   const response = await app.request("/v1/eval-suites/suite/runs", { method: "POST" });
   expect(response.status).toBe(429);
   expect(response.headers.get("Retry-After")).toBe("1");
-  expect(await response.json()).toMatchObject({ error: {
+  expect(await response.json()).toMatchObject({
     code: "RATE_LIMITED", details: { code: "at_capacity", resource: "eval_runs" },
-  } });
+  });
 });
 
 it("leaves unrelated failures for the existing error handling", () => {
