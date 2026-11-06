@@ -22,3 +22,17 @@ it("resumes a Home conversation", () => {
   expect(screen.getByText("Home conversation")).toBeVisible();
   expect(screen.getByRole("button", { name: "Back to home" })).toBeVisible();
 });
+it.each(["/home", "/home?compose=1", "/home?session=general-1"])(
+  "offers no agent on %s when the server turns it off",
+  (url) => {
+    window.__MCP_RUNTIME_CONFIG__ = { platformAgentDisabled: true };
+    try {
+      render(<MemoryRouter initialEntries={[url]}><HomeTab projectId="p" organizationId="org" /></MemoryRouter>);
+      expect(screen.queryByText("Home composer")).toBeNull();
+      expect(screen.queryByText("Home conversation")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Back to home" })).toBeNull();
+    } finally {
+      delete window.__MCP_RUNTIME_CONFIG__;
+    }
+  },
+);

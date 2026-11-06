@@ -175,6 +175,7 @@ import {
   assertSandboxIsolation,
 } from "./middleware/sandbox-host-partition";
 import { assertHostedFirstPartyMcpUrls } from "./utils/hosted-mcp-base-fetch.js";
+import { loadPrivateEgressAllowlist } from "./utils/hosted-egress-guard.js";
 import webRoutes from "./routes/web/index";
 import internalServerConnections from "./routes/internal/server-connections.js";
 import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
@@ -204,6 +205,7 @@ import { createXaaWebRouter } from "./routes/web/xaa";
 import workosAuthkitRoutes from "./routes/workos-authkit";
 import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
 import { resolveTrustedClientIpHeader } from "./utils/client-ip.js";
+import { loadFeatureFlagFileAtBoot } from "./utils/feature-flag-source.js";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
@@ -498,6 +500,9 @@ if (HOSTED_MODE) {
   // mid-turn, one turn at a time, with the reason buried in a per-request
   // error. This says it once, names the variable, and stops.
   assertHostedFirstPartyMcpUrls();
+  // Parsed now rather than on the first private dial, so an invalid
+  // MCPJAM_PRIVATE_EGRESS_ALLOWLIST is reported at boot, not mid-request.
+  loadPrivateEgressAllowlist();
 }
 
 // 5. Session authentication (blocks unauthorized API requests)
@@ -676,6 +681,10 @@ resolveWorkosApiBaseUrl(process.env);
 // that is not one header name fails here, not in every request that asks for a
 // client address. Unset, this is a no-op.
 resolveTrustedClientIpHeader(process.env);
+// And `MCPJAM_FEATURE_FLAGS_FILE` (mirror of server/app.ts): a missing or
+// malformed file is reported on stderr now, not at the first flag evaluation.
+// Unset, this is a no-op.
+loadFeatureFlagFileAtBoot();
 
 // Mounted in EVERY runtime, hosted included. AuthKit's `initialize()` makes no
 // network call at all unless the page's own cookies carry `workos-has-session`
