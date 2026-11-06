@@ -650,6 +650,12 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   { path: "evaluate/suite/:suiteId/runs/:runId/cases/:testCaseId/edit", kind: "screen", surfaceId: "evaluate", scope: "project" },
   { path: "evaluate/suite/:suiteId/runs/:runId/cases/:testCaseId/iter/:iterationId", kind: "screen", surfaceId: "evaluate", scope: "project" },
   {
+    path: "evaluate/*",
+    kind: "special",
+    note: "Unknown Evaluate addresses reach the old-address redirect gate, which reports them as unmatched, instead of the generic not-found page.",
+    scope: "project",
+  },
+  {
     path: "ci-evals",
     kind: "redirect",
     note: "Legacy: redirects to public Evaluate.",
