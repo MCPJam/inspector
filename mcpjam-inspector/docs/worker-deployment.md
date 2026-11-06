@@ -50,13 +50,43 @@ needs no public domain; point its healthcheck at `/health`.
   worker seals harness proxy policies that the web tier unseals, so both must
   resolve the same `COMPUTERS_TERMINAL_TOKEN_SECRET`, which they do when it
   bootstraps from the same deployment.
-- `MCPJAM_INSPECTOR_PUBLIC_URL` set to the web tier's public origin.
+- `MCPJAM_INSPECTOR_PUBLIC_URL` set to the web tier's public origin. It also
+  names the XAA issuer a claimed job mints under; see below.
+- The same `XAA_IDP_PRIVATE_KEY` as the web service, if any project connects
+  servers with Cross-App Access (see below).
 - A drain long enough for the claimed jobs you want a deploy to finish:
   `MCPJAM_SHUTDOWN_DRAIN_MS`, clamped to `RAILWAY_DEPLOYMENT_DRAINING_SECONDS`
   less the teardown margins (`bin/shutdown-settings.mjs`).
 
 A worker missing `CONVEX_HTTP_URL` or `INSPECTOR_SERVICE_TOKEN` fails its boot
 with the names of what is missing.
+
+## Servers that use Cross-App Access
+
+A claimed job connects an XAA server the way an interactive run does: the
+inspector signs an ID-JAG as the MCPJam test IdP and exchanges it at the
+server's authorization server, with nobody present. A job has no request to
+read the issuer from, so it builds it from `MCPJAM_INSPECTOR_PUBLIC_URL` (else
+`BASE_URL`): `<origin>/api/web/xaa`, scoped to the run's organization as
+`/o/<org-id>`, or `/g/<org-id>` for a guest. That is the issuer an interactive
+run in the same organization names, so an authorization server that trusts one
+accepts the other. Hosted with neither variable set, the job refuses the server
+with `Missing XAA issuer` rather than signing under a guessed origin.
+
+The authorization server checks that ID-JAG against the JWKS the web tier
+serves under the issuer. A separate worker therefore has to sign with the web
+tier's key, `XAA_IDP_PRIVATE_KEY`; with a key of its own, every exchange is
+rejected.
+
+Under a host's enterprise-managed authorization policy, every `auto` server
+connects with XAA, and one with no client registration is refused instead of
+falling back to OAuth. Whether a loop applies that policy:
+
+| Loop | Host policy | Why |
+| --- | --- | --- |
+| Scheduled eval runs | Applied, from the host the run executes under: the pinned environment's host, else the suite's own | An API launch of the same suite applies it, and a monitor should take the auth path a real run takes. Without it, an unconfigured `auto` server would connect through the discover path instead, with the schedule creator's own OAuth grant if they have one. |
+| GitHub PR checks | Not applied | The one server is a throwaway row the check creates for the PR build, with no client registration. The policy could only refuse it, and registering it would hand a customer's client credentials to the PR's code. |
+| Connector Bench runs | Not applied | Cleanup connects after every cell, under no cell's host, and has to reach what the cells created, so every connection uses the measured server's own auth settings. |
 
 ## Rollout
 
