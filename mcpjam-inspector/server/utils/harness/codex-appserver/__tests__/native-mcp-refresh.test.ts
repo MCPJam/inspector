@@ -86,6 +86,17 @@ it("confirms the refreshed thread's inventory before acknowledging", async () =>
   expect(f.runtime.kill).not.toHaveBeenCalled();
 });
 
+it("does no native I/O for a host-only credential refresh", async () => {
+  const f = fixture("thread");
+  const state = f.state();
+  if (!state) throw Error("Missing test state");
+  state.home.nativeMcpServers = {};
+  await f.controller.refresh({});
+  expect(f.runtime.request).not.toHaveBeenCalled();
+  expect(prepareCodexHome).not.toHaveBeenCalled();
+  expect(f.runtime.kill).not.toHaveBeenCalled();
+});
+
 it("retires and releases the queue when the reload request never resolves", async () => {
   const f = fixture("thread");
   const deadline = new AbortController();

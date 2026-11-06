@@ -48,6 +48,7 @@ import {
   type NativeMcpRuntime,
 } from "./native-mcp-refresh.js";
 import { waitForMcpStartup, waitForNativeMcpServers } from "./native-mcp-ready.js";
+import { needsNativeMcpReload } from "../shared/native-mcp.js";
 import { createApprovalController } from "./approval-controller.js";
 import { foreignMcpServerOverrides } from "./mcp-isolation.js";
 import { setupWindowsSandbox } from "./windows-sandbox-setup.js";
@@ -343,6 +344,7 @@ async function main(): Promise<void> {
       // placeholder (or local capability) that satisfies Codex's auth check.
       baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
       apiKeyEnvVar: "CODEX_API_KEY",
+      closeModelConnections: process.env.MCPJAM_CLOSE_MODEL_CONNECTIONS === "1",
       hostToolsEntrypoint: join(args.layerDir, "host-tools-mcp.mjs"),
       relayUrl: relay.url,
       relayCredential: relay.credential,
@@ -462,13 +464,14 @@ async function main(): Promise<void> {
       const readinessTimeout = start.warmWorkDir && runtime === previousRuntime ? 1500 : undefined;
       const removed = Object.keys(nativeHome?.nativeMcpServers ?? {}).filter(name => !(name in (start.nativeMcpServers ?? {})));
       if (start.nativeMcpServers && nativeHome) {
+        const reload = needsNativeMcpReload(nativeHome.nativeMcpServers, start.nativeMcpServers);
         nativeHome = {
           ...nativeHome, nativeMcpServers: start.nativeMcpServers,
           ...(start.warmWorkDir ? { untrustedProjectPaths: untrustedProjectPathsFor(start.warmWorkDir) } : {}),
         };
         prepareCodexHome(nativeHome);
         try {
-          await waitForNativeMcpServers({
+          if (reload) await waitForNativeMcpServers({
             runtime, serverNames: [], reload: true, signal: turn.abortSignal, timeoutMs: readinessTimeout,
           });
         } catch (error) {
