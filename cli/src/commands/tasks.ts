@@ -12,6 +12,7 @@ import {
   isUnknownTaskError,
   type MCPClientManager,
   type McpProtocolVersion,
+  type MCPServerConfig,
   type MCPTasksCheckCategory,
   type MCPTasksCheckId,
   type MCPTasksCheckOverrides,
@@ -114,11 +115,14 @@ function collectInvalidEntries(
   return (values ?? []).filter((value) => !allowed.includes(value));
 }
 
+/**
+ * `serverConfig` is for a caller that already parsed the target, like
+ * `conformance run`, so it is not parsed twice.
+ */
 export function buildTasksConformanceConfig(
-  options: TasksConformanceOptions
+  options: TasksConformanceOptions,
+  serverConfig: MCPServerConfig = parseServerConfig(options)
 ): MCPTasksConformanceConfig {
-  const serverConfig = parseServerConfig(options);
-
   const categories = options.category?.filter(Boolean);
   const invalidCategories = collectInvalidEntries(
     categories,
@@ -782,6 +786,33 @@ function registerTaskWatch(tasks: Command): void {
   });
 }
 
+/**
+ * The tools a Tasks run may call. Shared with `conformance run`, so the two
+ * commands cannot drift apart on what a flag means.
+ */
+export function addTasksToolOptions(command: Command): Command {
+  return command
+    .option(
+      "--tool-name <tool>",
+      "Tool used to provoke a task. Required for servers whose tools carry no task metadata (the extension wire)."
+    )
+    .option("--tool-args <json>", "Tool arguments as a JSON object")
+    .option(
+      "--check-overrides <json>",
+      'A different tool for some checks, keyed by check id: {"tasks-cancel-ack-shape":{"toolName":"slow_job","toolArguments":{"seconds":5}}}. Checks left out use --tool-name and --tool-args.'
+    )
+    .option(
+      "--input-responses <json>",
+      'Responses to submit when the probed task reports input_required, keyed by inputRequests key: {"name":{"result":{"action":"accept","content":{"name":"Ada"}}}}. Without it the run stops as soon as the task parks on input_required, and the tasks/update acknowledgement check is not applicable.'
+    )
+    .option(
+      "--poll-timeout <ms>",
+      "How long to poll a created task for a terminal status",
+      (value: string) => parsePositiveInteger(value, "Poll timeout"),
+      30_000
+    );
+}
+
 export function registerTasksCommands(program: Command): void {
   const tasks = program
     .command("tasks")
@@ -793,47 +824,30 @@ export function registerTasksCommands(program: Command): void {
   registerTaskVerbs(tasks);
   registerTaskWatch(tasks);
 
+  const conformance = tasks
+    .command("conformance")
+    .description("Run MCP Tasks conformance checks")
+    .option(
+      "--category <category>",
+      "Check category to run. Repeat for multiple. Default: all.",
+      (value: string, previous: string[] = []) => [...previous, value],
+      []
+    )
+    .option(
+      "--check-id <id>",
+      "Specific check ID to run. Repeat for multiple. Default: all.",
+      (value: string, previous: string[] = []) => [...previous, value],
+      []
+    )
+    .option(
+      "--advice-id <id>",
+      "Specific advice ID to run. Repeat for multiple. Default: all.",
+      (value: string, previous: string[] = []) => [...previous, value],
+      []
+    );
+  addTasksToolOptions(conformance);
   addSharedServerOptions(
-    tasks
-      .command("conformance")
-      .description("Run MCP Tasks conformance checks")
-      .option(
-        "--category <category>",
-        "Check category to run. Repeat for multiple. Default: all.",
-        (value: string, previous: string[] = []) => [...previous, value],
-        []
-      )
-      .option(
-        "--check-id <id>",
-        "Specific check ID to run. Repeat for multiple. Default: all.",
-        (value: string, previous: string[] = []) => [...previous, value],
-        []
-      )
-      .option(
-        "--advice-id <id>",
-        "Specific advice ID to run. Repeat for multiple. Default: all.",
-        (value: string, previous: string[] = []) => [...previous, value],
-        []
-      )
-      .option(
-        "--tool-name <tool>",
-        "Tool used to provoke a task. Required for servers whose tools carry no task metadata (the extension wire)."
-      )
-      .option("--tool-args <json>", "Tool arguments as a JSON object")
-      .option(
-        "--check-overrides <json>",
-        'A different tool for some checks, keyed by check id: {"tasks-cancel-ack-shape":{"toolName":"slow_job","toolArguments":{"seconds":5}}}. Checks left out use --tool-name and --tool-args.'
-      )
-      .option(
-        "--input-responses <json>",
-        'Responses to submit when the probed task reports input_required, keyed by inputRequests key: {"name":{"result":{"action":"accept","content":{"name":"Ada"}}}}. Without it the run stops as soon as the task parks on input_required, and the tasks/update acknowledgement check is not applicable.'
-      )
-      .option(
-        "--poll-timeout <ms>",
-        "How long to poll a created task for a terminal status",
-        (value: string) => parsePositiveInteger(value, "Poll timeout"),
-        30_000
-      )
+    conformance
       .option(
         "--protocol-version <version>",
         "Pin the MCP protocol version for the conformance connection (e.g. 2026-07-28). HTTP targets only."
