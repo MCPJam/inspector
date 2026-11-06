@@ -169,8 +169,11 @@ function readExpectedMcpV2Versions(packages) {
 }
 
 function packWorkspace(pkg, packDir) {
+  // Scripts on, as `changeset publish` runs them: the SDK's prepack injects
+  // Sentry debug IDs, and the smoked tarball should match the published one.
   const output = capture("npm", [
     "pack",
+    "--ignore-scripts=false",
     "--json",
     "--pack-destination",
     packDir,

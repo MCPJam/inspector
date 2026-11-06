@@ -7,7 +7,7 @@
  *
  * They are build outputs, not committed files. Every entry point that reads
  * them (SDK build/test/typecheck, Inspector dev, build, test and typecheck,
- * Electron, Docker, `npm install`) runs this first, and dev loops run
+ * Electron, Docker, `npm run setup`) runs this first, and dev loops run
  * `--watch`, so nobody runs it by hand.
  *
  *   node scripts/generate-telemetry-catalogs.mjs           write what changed

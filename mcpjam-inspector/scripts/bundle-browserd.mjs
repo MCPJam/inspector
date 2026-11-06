@@ -10,7 +10,7 @@
 // the dynamic `import("playwright")` in chromium-launch.ts.
 //
 // `--check` writes nothing and fails if the source hash differs from the one
-// stamped in `dist/`; `pretest` runs it to catch a stale bundle early.
+// stamped in `dist/`; `test:prepare` runs it to catch a stale bundle early.
 import { build } from "esbuild";
 import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
@@ -29,7 +29,7 @@ const embedFile = resolve(distDir, "mcpjam-browserd-bundle.generated.ts");
 /**
  * A digest of the daemon SOURCES (not the build output), stamped into the
  * generated file so a unit test can prove the checked-in bundle was
- * regenerated after the last daemon edit. Nothing in `build`, `pretest`, CI,
+ * regenerated after the last daemon edit. Nothing in `build`, `test:prepare`, CI,
  * or the Dockerfile regenerates the bundle since #4486 — this hash is the only
  * automated guard against shipping a silently stale daemon.
  *

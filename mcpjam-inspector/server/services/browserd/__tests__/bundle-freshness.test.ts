@@ -1,6 +1,6 @@
 /**
  * The checked-in daemon bundle must be REGENERATED whenever daemon sources
- * change. Nothing in `build`, `pretest`, CI, or the Dockerfile runs
+ * change. Nothing in `build`, `test:prepare`, CI, or the Dockerfile runs
  * `bundle:browserd` (the #4485 wiring was deliberately reverted in #4486), so
  * without this test a daemon edit that forgets `npm run bundle:browserd`
  * ships a silently stale daemon: the server uploads the OLD embedded bytes

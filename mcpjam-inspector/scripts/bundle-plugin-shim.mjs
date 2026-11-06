@@ -3,7 +3,7 @@
 // .mjs — it is uploaded into a sandbox and executed there. Without this step the
 // bundler never walks to it and the published package would not contain it.
 // Mirrors the `bundle:sandbox-proxies` pattern (generated .ts consumed at
-// runtime, wired into `pretest` + `build`). Auto-generated output is gitignored.
+// runtime, wired into `test:prepare` + `build`). Auto-generated output is gitignored.
 //
 // The emitted version is the shim's own content hash, so the backend's
 // `shim_outdated` staleness check fires exactly when this file changes — there

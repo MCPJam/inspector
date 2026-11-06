@@ -719,16 +719,20 @@ jobs:
               || fail "mcpjam-inspector/dist/client is missing — publishing now would ship an inspector with no UI."
           fi
 
+      # The root .npmrc disables lifecycle scripts; publishing needs the
+      # packages' own prepublishOnly/prepack (SDK rebuild + Sentry inject).
       - name: Publish evaluator dependency first
         if: fromJSON(needs.preflight.outputs.publish_evaluators)
         run: node .github/scripts/publish-evaluators-first.mjs
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          npm_config_ignore_scripts: "false"
 
       - name: Publish package set
         run: npx changeset publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          npm_config_ignore_scripts: "false"
 
       - name: Upload SDK sourcemaps
         if: fromJSON(needs.preflight.outputs.publish_sdk)

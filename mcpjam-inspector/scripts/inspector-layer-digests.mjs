@@ -16,7 +16,7 @@ import { bundleLocalHarnessLayer } from "./bundle-local-harness-layer.mjs";
 export async function computeInspectorLayerDigests() {
   // The server modules read below import the Codex bridge bundle as well
   // (`codex-appserver/local-identity.ts`), so it is generated first, in the
-  // order `npm run pretest` and the Dockerfile use. A caller that had only run
+  // order `npm run test:prepare` and the Dockerfile use. A caller that had only run
   // `npm ci` — release.yml's contract job — failed with ERR_MODULE_NOT_FOUND
   // after every platform had already passed (release 3.14.0).
   await bundleCodexAppServerBridge();

@@ -1,7 +1,9 @@
 # AGENTS.md
 
 Run commands from the repo root. Use the Node version in `mcpjam-inspector/.nvmrc`
-and install dependencies with `npm install --legacy-peer-deps`.
+and install dependencies with `npm install --legacy-peer-deps`, then `npm run setup`
+once. The root `.npmrc` turns install scripts off; `setup` installs the git
+hooks and builds node-pty.
 
 ## Working here
 

@@ -77,7 +77,7 @@ spawn(${JSON.stringify(codexBin)}, process.argv.slice(2), { stdio: "inherit" })
     "dir",
   );
   // Loaded HERE, not imported at module scope. The bundle is gitignored and
-  // produced by `pretest`, while `describe.skipIf` runs only AFTER module
+  // produced by `test:prepare`, while `describe.skipIf` runs only AFTER module
   // evaluation — so a static import would fail collection on a direct vitest
   // run even though this suite is meant to skip.
   const { CODEX_APPSERVER_BRIDGE_SOURCE } =

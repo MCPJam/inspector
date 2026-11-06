@@ -13,7 +13,7 @@ const CLI_DIR = process.cwd().endsWith(`${path.sep}cli`)
  * in this suite that was most of the cli lane's wall clock, and the lane was
  * the critical path of the whole PR gate.
  *
- * `pretest:fast` in cli/package.json builds this before the suite runs. The
+ * `test:fast` in cli/package.json builds this before the suite runs. The
  * outer `tsx` in scripts/run-tests.mjs — the one that executes the .ts test
  * files themselves — is untouched; only the CLI the tests spawn changes.
  */

@@ -20,12 +20,12 @@
  *
  * It does NOT skip the CLI's own build. The subprocess tests spawn
  * `cli/dist/index.js` rather than running `src/index.ts` under tsx, so
- * `pretest:fast` builds the CLI first. Unlike the SDK's, that build is safe to
+ * `test:fast` builds the CLI first. Unlike the SDK's, that build is safe to
  * run from this lane: `cli/dist` is read only by these tests, so `clean: true`
  * in cli/tsup.config.ts cannot empty it under a sibling.
  *
  * Invoke this script through `npm run test:fast`, not directly — running
- * `node scripts/run-tests.mjs` bypasses `pretest:fast` and would test whatever
+ * `node scripts/run-tests.mjs` bypasses that build and would test whatever
  * `cli/dist` happens to hold. The guard below turns the absent case into a
  * named error; a STALE dist it cannot detect, which is the reason for this
  * paragraph.
@@ -84,7 +84,7 @@ function main() {
   if (!existsSync(path.join(root, "dist", "index.js"))) {
     process.stderr.write(
       "cli/dist/index.js is missing — the subprocess tests spawn the built CLI.\n" +
-        "Run `npm run test:fast -w @mcpjam/cli`, which builds it via pretest:fast,\n" +
+        "Run `npm run test:fast -w @mcpjam/cli`, which builds it first,\n" +
         "or `npm run build -w @mcpjam/cli` before invoking this script directly.\n"
     );
     process.exit(1);

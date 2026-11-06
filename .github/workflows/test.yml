@@ -175,7 +175,7 @@ jobs:
             node_modules
             */node_modules
             mcpjam-inspector/*/node_modules
-          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json', '.npmrc') }}
 
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'
@@ -241,7 +241,7 @@ jobs:
             node_modules
             */node_modules
             mcpjam-inspector/*/node_modules
-          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json', '.npmrc') }}
 
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'
@@ -317,7 +317,7 @@ jobs:
             node_modules
             */node_modules
             mcpjam-inspector/*/node_modules
-          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json', '.npmrc') }}
 
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'
@@ -331,8 +331,8 @@ jobs:
         run: npm run build -w @mcpjam/sdk
 
       - name: Run inspector tests (shard ${{ matrix.shard }}/6)
-        # `npm run test -w @mcpjam/inspector` also fires the workspace's
-        # `pretest` bundling step, which the suite needs; args after `--` reach
+        # `npm run test -w @mcpjam/inspector` also runs the workspace's
+        # `test:prepare` bundling step, which the suite needs; args after `--` reach
         # vitest. Shards split by test file, so no shard depends on another.
         run: npm run test -w @mcpjam/inspector -- --shard=${{ matrix.shard }}/6
 
@@ -387,7 +387,7 @@ jobs:
             node_modules
             */node_modules
             mcpjam-inspector/*/node_modules
-          key: nm-bare-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          key: nm-bare-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json', '.npmrc') }}
 
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'
@@ -486,7 +486,7 @@ jobs:
             node_modules
             */node_modules
             mcpjam-inspector/*/node_modules
-          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json', '.npmrc') }}
 
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'
@@ -556,7 +556,7 @@ jobs:
             node_modules
             */node_modules
             mcpjam-inspector/*/node_modules
-          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          key: nm-playwright-v1.63.0-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json', '.npmrc') }}
 
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'

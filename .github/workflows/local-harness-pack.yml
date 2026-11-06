@@ -323,7 +323,7 @@ jobs:
       # The installer is server code, and resolving a runtime writes the
       # Inspector layer from a generated module. Nothing of it reaches the pack.
       # The layer embeds the Codex bridge bundle, so that is generated first —
-      # the order the Dockerfile and `npm run pretest` use. Without it every
+      # the order the Dockerfile and `npm run test:prepare` use. Without it every
       # leg failed with ERR_MODULE_NOT_FOUND on the first automatic run.
       - name: Generate the Inspector layer module
         shell: bash

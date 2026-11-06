@@ -2,7 +2,7 @@
 // host-page.ts) into a self-contained browser IIFE, emitted as a generated TS
 // const that the Node harness injects into the Playwright page. Mirrors the
 // `bundle:sandbox-proxies` pattern (generated .ts consumed at runtime, wired
-// into `pretest` + `build`). Auto-generated output is gitignored.
+// into `test:prepare` + `build`). Auto-generated output is gitignored.
 import { build } from "esbuild";
 import { fileURLToPath } from "url";
 import { dirname, join, resolve } from "path";
