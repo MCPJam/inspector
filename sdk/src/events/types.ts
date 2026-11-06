@@ -52,7 +52,12 @@ export interface SubscriptionRecord {
   environmentId: string | null;
   bindingKey: string;
   serverId: string;
-  profile: EventsProfileId;
+  /**
+   * The conformance rulebook a subscription was created under. Optional: the
+   * host's saved config now decides what it may do (`events-support.ts`), and
+   * new subscriptions need not name one.
+   */
+  profile?: EventsProfileId;
   eventName: string;
   arguments: Record<string, unknown>;
   mode: SubscriptionMode;

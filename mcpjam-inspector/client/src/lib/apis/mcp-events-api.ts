@@ -466,7 +466,9 @@ export interface HostedEventSubscriptionRow {
   /** The user whose credentials the subscription uses; only they set up its triggers. */
   ownerUserId: string;
   locality?: "hosted" | "local";
-  profile: EventsProfileIdView;
+  /** The client it receives events as; absent is MCPJam (built-in). */
+  hostId?: string;
+  profile?: EventsProfileIdView;
   protocolVersion?: string;
   eventName: string;
   arguments?: Record<string, unknown>;
@@ -503,7 +505,8 @@ export type HostedCreateSubscriptionArgs = {
   eventName: string;
   arguments: Record<string, unknown>;
   mode: EventsDeliveryModeView;
-  profile: EventsProfileIdView;
+  /** The client to receive events as; `null` is MCPJam (built-in). */
+  hostId: string | null;
   protocolVersion?: string;
   descriptor?: HostedEventDescriptor;
   locality: "hosted";
@@ -545,6 +548,8 @@ export const EVENT_SUBSCRIPTIONS_API = {
 /** A Convex registry row, in the tab's one subscription shape. */
 export function hostedSubscriptionRowToView(
   row: HostedEventSubscriptionRow,
+  /** Client names by id, to label the client a subscription receives as. */
+  hostNames: ReadonlyMap<string, string> = new Map(),
 ): EventsSubscriptionView {
   return {
     id: String(row._id),
@@ -553,7 +558,10 @@ export function hostedSubscriptionRowToView(
     eventName: row.eventName,
     arguments: row.arguments ?? {},
     mode: row.mode,
-    profile: row.profile,
+    ...(row.profile ? { profile: row.profile } : {}),
+    host: row.hostId
+      ? { id: row.hostId, name: hostNames.get(row.hostId) ?? "Deleted client" }
+      : { id: null, name: "MCPJam (built-in)" },
     desiredState: row.desiredState,
     observedState: row.observedState,
     generation: row.generation,

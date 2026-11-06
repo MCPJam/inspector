@@ -50,6 +50,11 @@ import {
   type SubscriptionCommitRequest,
 } from "./backend-client.js";
 import { defaultEventsHolder } from "./config.js";
+import {
+  HostResolutionError,
+  hostManagerArgs,
+  loadSubscriptionHostConfig,
+} from "./host-connection.js";
 import { HttpInboxClient } from "./inbox-client.js";
 import { asAuthorizationLost, pinnedConnectionIds } from "./owner-connection.js";
 import { EVENTS_STOP_GRACE_MS, settleWithin } from "./stop-grace.js";
@@ -244,17 +249,22 @@ async function connectAsOwner(
     item.ownerExternalId,
     item.organizationId,
   );
+  const hostConfig = await keeperHostConfig(item, record, bearer);
+  const host = hostConfig ? hostManagerArgs(hostConfig) : undefined;
+  const pinned = pinnedConnectionIds(record.serverId, item.subscription.oauthConnectionId);
+  const options = { ...(pinned ?? {}), ...(host?.options ?? {}) };
   // The subscription's own connection (C2), never the owner's current
-  // default; a pinned connection that is gone parks the row for reauth.
+  // default; a pinned connection that is gone parks the row for reauth. It
+  // connects as the subscription's host, as the server would see that host.
   const { manager } = await createAuthorizedManager(
     {},
     bearer,
     record.projectId,
     [record.serverId],
-    WEB_CALL_TIMEOUT_MS,
+    host?.timeoutMs ?? WEB_CALL_TIMEOUT_MS,
     undefined,
-    undefined,
-    pinnedConnectionIds(record.serverId, item.subscription.oauthConnectionId),
+    host?.clientCapabilities,
+    Object.keys(options).length > 0 ? options : undefined,
   ).catch((error: unknown) => {
     throw asAuthorizationLost(error);
   });
@@ -278,6 +288,27 @@ async function connectAsOwner(
       }
     },
   };
+}
+
+/**
+ * The host config the keeper connects as, or null for MCPJam (built-in). A
+ * removal still unsubscribes when its host is gone, as built-in: the cleanup
+ * must not depend on a host nobody can load any more.
+ */
+async function keeperHostConfig(
+  item: SubscriptionClaimItem,
+  record: SubscriptionRecord,
+  bearer: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    return await loadSubscriptionHostConfig({
+      hostId: item.subscription.hostId ?? null,
+      bearer,
+    });
+  } catch (error) {
+    if (error instanceof HostResolutionError && record.desiredState === "removed") return null;
+    throw error;
+  }
 }
 
 /**

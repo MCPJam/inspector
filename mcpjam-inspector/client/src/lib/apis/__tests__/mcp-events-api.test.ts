@@ -259,6 +259,8 @@ describe("hosted registry helpers", () => {
       arguments: {},
       mode: "webhook",
       profile: "chatgpt@2026-09-30",
+      // No client recorded: MCPJam (built-in).
+      host: { id: null, name: "MCPJam (built-in)" },
       desiredState: "active",
       observedState: "paused_auth",
       generation: 3,
@@ -266,6 +268,28 @@ describe("hosted registry helpers", () => {
       consecutiveFailures: 0,
       locality: "hosted",
     });
+  });
+
+  it("labels a row with its client's name, and a deleted client as deleted", () => {
+    const row = {
+      _id: "sub_1",
+      logicalId: "esub_1",
+      projectId: "proj_1",
+      ownerUserId: "user_1",
+      binding: { serverId: "srv_1" },
+      eventName: "issue.created",
+      mode: "webhook" as const,
+      desiredState: "active" as const,
+      observedState: "active" as const,
+      generation: 1,
+    };
+    const names = new Map([["host_1", "ChatGPT"]]);
+    expect(
+      hostedSubscriptionRowToView({ ...row, hostId: "host_1" }, names).host,
+    ).toEqual({ id: "host_1", name: "ChatGPT" });
+    expect(
+      hostedSubscriptionRowToView({ ...row, hostId: "host_gone" }, names).host,
+    ).toEqual({ id: "host_gone", name: "Deleted client" });
   });
 
   it("serializes canonical JSON with sorted keys and no undefined", () => {

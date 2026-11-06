@@ -36,7 +36,33 @@ vi.mock("@/lib/apis/mcp-events-api", async (importOriginal) => ({
   }),
 }));
 
+const client = (
+  hostId: string,
+  name: string,
+  hostStyle: string,
+  eventDeliveryModes: Array<"poll" | "push" | "webhook">,
+) => ({
+  hostId,
+  name,
+  hostStyle,
+  eventDeliveryModes,
+  hostConfigId: `cfg_${hostId}`,
+  modelId: "openai/gpt-5",
+  serverCount: 1,
+  createdAt: 0,
+  updatedAt: 0,
+});
+const CLIENTS = [
+  client("host_chatgpt", "ChatGPT", "chatgpt", ["webhook"]),
+  client("host_claude", "Claude", "claude", []),
+];
+
+vi.mock("@/hooks/useClients", () => ({
+  useHostList: () => ({ hosts: CLIENTS, isLoading: false }),
+}));
+
 vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
   useQuery: (_ref: unknown, args: unknown) =>
     args === "skip" ? undefined : hostedRows,
   useMutation: (ref: unknown) => {
@@ -119,6 +145,7 @@ const hostedRow = {
   projectId: "proj_1",
   binding: { serverId: "srv_convex_1" },
   locality: "hosted",
+  hostId: "host_chatgpt",
   profile: "chatgpt@2026-09-30",
   eventName: "issue.created",
   arguments: {},
@@ -224,11 +251,11 @@ describe("EventsTab (hosted)", () => {
       />,
     );
 
-    // The registry row for this server renders.
+    // The registry row for this server renders, labelled with its client.
     const card = await screen.findByTestId("subscription-sub_convex_1");
-    expect(
-      within(card).getByText("ChatGPT (2026-09-30, historical)"),
-    ).toBeInTheDocument();
+    expect(within(card).getByTestId("subscription-host")).toHaveTextContent(
+      "ChatGPT",
+    );
 
     // Hosted webhooks need no acknowledgement: they use the public inbox.
     fireEvent.click(screen.getByRole("radio", { name: /Webhook/ }));
@@ -245,11 +272,62 @@ describe("EventsTab (hosted)", () => {
       eventName: "issue.created",
       arguments: {},
       mode: "webhook",
-      profile: "draft@28ec35e",
+      // No client is active, so it subscribes as MCPJam (built-in), named
+      // explicitly. No profile: the client decides what it may do.
+      hostId: null,
       locality: "hosted",
       descriptor: { hash: "descriptor-hash", delivery: ["poll", "webhook"] },
       protocolVersion: "2026-07-28",
     });
+  });
+
+  it("subscribes as the active client, offering only the modes it receives", async () => {
+    render(
+      <EventsTab
+        serverConfig={serverConfig()}
+        serverName="github"
+        projectId="proj_1"
+        activeHostId="host_chatgpt"
+        activeHost={{ hostStyle: "chatgpt" }}
+      />,
+    );
+
+    await screen.findByTestId("subscribe-form");
+    // ChatGPT receives webhooks only; the event's poll is struck through.
+    expect(screen.queryByRole("radio", { name: /Poll/ })).toBeNull();
+    expect(screen.getByRole("radio", { name: /Webhook/ })).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: /Subscribe/ }));
+
+    const create = mutations.get(EVENT_SUBSCRIPTIONS_API.create)!;
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({ hostId: "host_chatgpt", mode: "webhook" }),
+      ),
+    );
+    expect(create.mock.calls[0]![0]).not.toHaveProperty("profile");
+  });
+
+  it("keeps a client without Events support selected and explains why it can't subscribe", async () => {
+    render(
+      <EventsTab
+        serverConfig={serverConfig()}
+        serverName="github"
+        projectId="proj_1"
+        activeHostId="host_claude"
+        activeHost={{ hostStyle: "claude" }}
+      />,
+    );
+
+    // The server's events are still all there to inspect.
+    expect(
+      await screen.findByRole("button", { name: /issue\.created/ }),
+    ).toBeInTheDocument();
+    expect(await screen.findByTestId("subscribe-blocked")).toHaveTextContent(
+      "Claude doesn't receive events. Turn on a delivery mode in its Protocol settings, or pick another client.",
+    );
+    expect(screen.getByRole("button", { name: /Subscribe/ })).toBeDisabled();
+    // Not swapped for another client behind the user's back.
+    expect(screen.getByLabelText("Events client")).toHaveTextContent("Claude");
   });
 
   it("pauses through setDesiredState and loads slot rejections", async () => {

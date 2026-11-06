@@ -8,7 +8,12 @@ import {
 } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
-import type { MCPServerConfig } from "@mcpjam/sdk/browser";
+import {
+  describeNoSubscribableMode,
+  subscribableModes,
+  type EventsSupportHost,
+  type MCPServerConfig,
+} from "@mcpjam/sdk/browser";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
@@ -33,12 +38,10 @@ import {
   setLocalEventSubscriptionState,
   simulateEvent,
 } from "@/lib/apis/mcp-events-api";
-import { DRAFT_EVENTS_PROFILE_ID } from "@/lib/events-profiles";
 import { logEventsFeedEntries } from "@/lib/events-traffic";
 import type {
   EventDescriptorView,
   EventsFeedEntryView,
-  EventsProfileIdView,
   EventsRejectionView,
   EventsSimulateRequest,
   EventsSlotStateResponse,
@@ -59,6 +62,8 @@ import {
   Section,
 } from "./events/EventsTabSections";
 import { EventTypesSidebar } from "./events/EventTypesSidebar";
+import { EventsHostPicker } from "./events/EventsHostPicker";
+import { useEventsHost } from "./events/use-events-host";
 import { useEventsCatalog } from "./events/use-events-catalog";
 import { useEventsFeed } from "./events/use-events-feed";
 import { errorMessage, logicalIdOf } from "./events/event-utils";
@@ -71,6 +76,10 @@ interface EventsTabProps {
   connectionStatus?: string;
   /** The Convex project (hosted registry, viewer tokens, simulations). */
   projectId?: string | null;
+  /** The playground's active client; the default client to subscribe as. */
+  activeHostId?: string | null;
+  /** Its saved config, which decides the delivery modes it receives. */
+  activeHost?: EventsSupportHost | null;
 }
 
 export function EventsTab({
@@ -79,6 +88,8 @@ export function EventsTab({
   isActive = true,
   connectionStatus,
   projectId = null,
+  activeHostId = null,
+  activeHost = null,
 }: EventsTabProps) {
   const hosted = isHostedMode();
   const hasServer = Boolean(serverConfig && serverName);
@@ -89,9 +100,16 @@ export function EventsTab({
     track("events_tab_viewed", { location: "events_tab" });
   }, []);
 
-  const [profileId, setProfileId] = useState<EventsProfileIdView>(
-    DRAFT_EVENTS_PROFILE_ID,
-  );
+  // The client subscriptions are made as. It decides the delivery modes on
+  // offer; the catalog stays visible whatever it accepts.
+  const eventsHost = useEventsHost({
+    hosted,
+    projectId,
+    activeHostId,
+    activeHost,
+  });
+  const hostChoice = eventsHost.choice;
+  const hostName = hostChoice?.name ?? "This client";
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   const [subscribing, setSubscribing] = useState(false);
   const [busySubscriptionId, setBusySubscriptionId] = useState<string | null>(
@@ -175,12 +193,21 @@ export function EventsTab({
     };
   }, [hosted, serverName, declared, upsertLocal]);
 
+  const hostNames = useMemo(
+    () =>
+      new Map(
+        eventsHost.hosts.map((host) => [host.hostId, host.name] as const),
+      ),
+    [eventsHost.hosts],
+  );
   const allSubscriptions = useMemo<EventsSubscriptionView[]>(
     () =>
       hosted
-        ? (hostedRows ?? []).map(hostedSubscriptionRowToView)
+        ? (hostedRows ?? []).map((row) =>
+            hostedSubscriptionRowToView(row, hostNames),
+          )
         : [...localSubscriptions.values()],
-    [hosted, hostedRows, localSubscriptions],
+    [hosted, hostedRows, localSubscriptions, hostNames],
   );
   const serverKey = hosted ? hostedServerId : (serverName ?? null);
   const serverSubscriptions = useMemo(
@@ -286,9 +313,37 @@ export function EventsTab({
     [catalog, selectedEventName],
   );
 
+  // Where the client, the event and this runtime all agree. Undefined while
+  // the client list loads.
+  const availabilityFor = useCallback(
+    (event: EventDescriptorView) =>
+      hostChoice
+        ? subscribableModes({
+            host: null,
+            hostModes: hostChoice.modes,
+            eventModes: event.delivery,
+            runtime: hosted ? "hosted" : "local",
+          })
+        : undefined,
+    [hostChoice, hosted],
+  );
+  const selectedAvailability = selectedEvent
+    ? availabilityFor(selectedEvent)
+    : undefined;
+  const blockedReason = !hostChoice
+    ? "Loading clients…"
+    : hostChoice.missing
+      ? "The client you picked was deleted. Pick another client to subscribe."
+      : selectedAvailability
+        ? describeNoSubscribableMode(selectedAvailability, hostChoice.name)
+        : null;
+
   const handleSubscribe = async (value: SubscribeFormValue) => {
-    if (!serverName || !selectedEvent) return;
+    if (!serverName || !selectedEvent || !hostChoice || hostChoice.missing) {
+      return;
+    }
     const event = selectedEvent;
+    const host = hostChoice;
     setSubscribing(true);
     try {
       await runByMode({
@@ -306,7 +361,7 @@ export function EventsTab({
             eventName: event.name,
             arguments: value.arguments,
             mode: value.mode,
-            profile: profileId,
+            hostId: host.id,
             locality: "hosted",
             ...(descriptor ? { descriptor } : {}),
             ...(catalog?.protocolVersion
@@ -324,7 +379,14 @@ export function EventsTab({
             eventName: event.name,
             arguments: value.arguments,
             mode: value.mode,
-            profile: profileId,
+            host:
+              host.id === null
+                ? null
+                : {
+                    id: host.id,
+                    name: host.name,
+                    eventDeliveryModes: host.modes,
+                  },
             ...(value.maxAgeMs !== undefined
               ? { maxAgeMs: value.maxAgeMs }
               : {}),
@@ -476,7 +538,7 @@ export function EventsTab({
   if (!catalog.support.declared) {
     return (
       <div className="flex h-full flex-col overflow-auto">
-        <DraftHeader profileId={profileId} onProfileChange={setProfileId} />
+        <DraftHeader />
         <EmptyState
           icon={Radio}
           className="py-12"
@@ -493,7 +555,8 @@ export function EventsTab({
   const sidebarContent = (
     <EventTypesSidebar
       catalog={catalog}
-      profileId={profileId}
+      availabilityFor={availabilityFor}
+      hostName={hostName}
       selectedEventName={selectedEventName}
       loadingMore={loadingMore}
       onSelectEvent={setSelectedEventName}
@@ -513,7 +576,15 @@ export function EventsTab({
   const centerContent = (
     <ScrollArea className="h-full">
       <div className="pb-16">
-        <DraftHeader profileId={profileId} onProfileChange={setProfileId} />
+        <DraftHeader>
+          <EventsHostPicker
+            hosted={hosted}
+            hosts={eventsHost.hosts}
+            hostId={eventsHost.hostId}
+            choice={hostChoice}
+            onChange={eventsHost.setHostId}
+          />
+        </DraftHeader>
         {hostedRegistryNotice ? (
           <p className="mx-5 mt-4 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-foreground">
             {hostedRegistryNotice}
@@ -527,7 +598,8 @@ export function EventsTab({
           >
             <DeliveryChips
               delivery={selectedEvent.delivery}
-              profileId={profileId}
+              availability={selectedAvailability}
+              hostName={hostName}
             />
             <div className="space-y-1">
               <SchemaViewer
@@ -541,7 +613,8 @@ export function EventsTab({
             </div>
             <SubscribeForm
               event={selectedEvent}
-              profileId={profileId}
+              modes={selectedAvailability?.modes ?? []}
+              blockedReason={blockedReason}
               hosted={hosted}
               busy={subscribing}
               onSubscribe={handleSubscribe}

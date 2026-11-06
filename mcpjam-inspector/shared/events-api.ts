@@ -84,6 +84,21 @@ export type EventsObservedStateView =
  * registry row, same shape. `callbackUrl` is shown (it is routing, not a
  * credential, contract C3); the slot's secret never is.
  */
+/** The host a subscription receives events as. `id: null` is MCPJam (built-in). */
+export interface EventsHostView {
+  id: string | null;
+  name: string;
+}
+
+/**
+ * A host as a subscribe request names it, with the delivery modes its saved
+ * config accepts (`resolveHostEventDeliveryModes`), so the local API can
+ * refuse what the Subscribe button would.
+ */
+export interface EventsHostSelection extends EventsHostView {
+  eventDeliveryModes: EventsDeliveryModeView[];
+}
+
 export interface EventsSubscriptionView {
   id: string;
   /**
@@ -96,7 +111,10 @@ export interface EventsSubscriptionView {
   eventName: string;
   arguments: Record<string, unknown>;
   mode: EventsDeliveryModeView;
-  profile: EventsProfileIdView;
+  /** The conformance rulebook it was created under, when it names one. */
+  profile?: EventsProfileIdView;
+  /** The host it receives events as; absent on subscriptions that predate hosts. */
+  host?: EventsHostView;
   desiredState: "active" | "paused" | "removed";
   observedState: EventsObservedStateView;
   generation: number;
@@ -120,7 +138,13 @@ export interface EventsCreateSubscriptionRequest {
   eventName: string;
   arguments: Record<string, unknown>;
   mode: EventsDeliveryModeView;
-  profile: EventsProfileIdView;
+  /**
+   * The host to receive events as; `null` is MCPJam (built-in), which must be
+   * chosen explicitly. A missing host is refused, never defaulted.
+   */
+  host: EventsHostSelection | null;
+  /** Optional: the host decides what a subscription may do. */
+  profile?: EventsProfileIdView;
   maxAgeMs?: number;
   ttlMs?: number | null;
   /**

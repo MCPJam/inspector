@@ -13,6 +13,7 @@ import {
 import type {
   EventsFeedEntryView,
   EventsRejectionView,
+  EventsHostView,
   EventsSubscriptionView,
 } from "@/shared/events-api";
 
@@ -20,7 +21,11 @@ export type LocalOverride = "insecure-local-receiver";
 
 export function subscriptionView(
   record: SubscriptionRecord,
-  extras: { locality: "local" | "hosted"; overrides?: LocalOverride[] },
+  extras: {
+    locality: "local" | "hosted";
+    host?: EventsHostView;
+    overrides?: LocalOverride[];
+  },
 ): EventsSubscriptionView {
   return {
     id: record.id,
@@ -28,7 +33,8 @@ export function subscriptionView(
     eventName: record.eventName,
     arguments: record.arguments,
     mode: record.mode,
-    profile: record.profile,
+    ...(record.profile ? { profile: record.profile } : {}),
+    ...(extras.host ? { host: extras.host } : {}),
     desiredState: record.desiredState,
     observedState: record.observedState,
     generation: record.generation,

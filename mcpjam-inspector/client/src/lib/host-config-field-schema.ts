@@ -35,9 +35,12 @@ import {
 } from "@/lib/apps-capability-dimensions";
 import {
   AUTH_CHALLENGE_ACTIONS,
+  EVENT_DELIVERY_MODES,
+  MCPJAM_EVENTS_EXTENSION_ID,
   MCPJAM_TASKS_POLICY_EXTENSION_ID,
   MCP_SKILLS_EXTENSION_ID,
   readTasksPolicy,
+  resolveHostEventDeliveryModes,
   TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
   UNAUTHORIZED_CHALLENGE_TRIGGERS,
 } from "@mcpjam/sdk/browser";
@@ -1182,6 +1185,19 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       const policy = readTasksPolicy(cfg);
       return policy === "unset" ? undefined : policy;
     },
+  },
+  {
+    id: "eventsDeliveryModes",
+    section: "protocol",
+    subsection: "Host policy",
+    label: "Event delivery",
+    path: `mcpProfile.extensions.${MCPJAM_EVENTS_EXTENSION_ID} (effective)`,
+    description:
+      "The MCP Events delivery modes this client accepts. Without a saved choice, its client style decides.",
+    kind: { kind: "mode-set", modes: EVENT_DELIVERY_MODES },
+    // Effective, like the display-mode rows: a host with no saved setting
+    // shows its style's default, which is what subscriptions are checked by.
+    read: (cfg) => resolveHostEventDeliveryModes(cfg),
   },
 
   // ============================================================

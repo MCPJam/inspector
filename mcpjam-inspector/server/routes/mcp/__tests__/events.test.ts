@@ -144,7 +144,7 @@ describe("local events routes", () => {
       eventName: "build.failed",
       arguments: { branch: "main" },
       mode: "poll",
-      profile: "draft@28ec35e",
+      host: null,
     });
     expect(created.status).toBe(200);
     const id = created.body.subscription.id;
@@ -155,7 +155,7 @@ describe("local events routes", () => {
       eventName: "build.failed",
       arguments: { branch: "main" },
       mode: "poll",
-      profile: "draft@28ec35e",
+      host: null,
     });
     expect(again.body.subscription.id).toBe(id);
 
@@ -189,6 +189,7 @@ describe("local events routes", () => {
         eventName: "build.failed",
         arguments: { branch: profile },
         mode: "poll",
+        host: null,
         profile,
       });
       expect(created.status).toBe(200);
@@ -199,9 +200,95 @@ describe("local events routes", () => {
       eventName: "build.failed",
       arguments: { branch: "unknown" },
       mode: "poll",
+      host: null,
       profile: "chatgpt@1999-01-01",
     });
     expect(unknown.status).toBe(400);
+  });
+
+  it("refuses a subscription that names no client, never defaulting one", async () => {
+    const missing = await call("POST", "/subscriptions", {
+      serverId: SERVER_ID,
+      eventName: "build.failed",
+      arguments: {},
+      mode: "poll",
+    });
+    expect(missing.status).toBe(400);
+    expect(missing.body).toMatchObject({
+      code: "EVENTS_HOST_REQUIRED",
+      message: "Choose the client to subscribe as, or MCPJam (built-in).",
+    });
+    const unreadable = await call("POST", "/subscriptions", {
+      serverId: SERVER_ID,
+      eventName: "build.failed",
+      arguments: {},
+      mode: "poll",
+      host: { id: "host_1", name: "ChatGPT", eventDeliveryModes: ["sse"] },
+    });
+    expect(unreadable.status).toBe(400);
+    expect(unreadable.body.code).toBe("EVENTS_HOST_REQUIRED");
+  });
+
+  it("refuses a mode the client doesn't receive, as the Subscribe button would", async () => {
+    const chatgpt = {
+      id: "host_1",
+      name: "ChatGPT",
+      eventDeliveryModes: ["webhook"],
+    };
+    const refused = await call("POST", "/subscriptions", {
+      serverId: SERVER_ID,
+      eventName: "build.failed",
+      arguments: { branch: "refused" },
+      mode: "poll",
+      host: chatgpt,
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.body).toMatchObject({
+      code: "EVENTS_MODE_UNSUPPORTED",
+      message:
+        "ChatGPT doesn't receive events by poll. Turn it on in its Protocol settings, or pick another client.",
+    });
+    const none = await call("POST", "/subscriptions", {
+      serverId: SERVER_ID,
+      eventName: "build.failed",
+      arguments: { branch: "none" },
+      mode: "poll",
+      host: { id: "host_2", name: "Claude", eventDeliveryModes: [] },
+    });
+    expect(none.status).toBe(400);
+    expect(none.body.message).toBe(
+      "Claude doesn't receive events. Turn on a delivery mode in its Protocol settings, or pick another client.",
+    );
+  });
+
+  it("records the client, and refuses the same subscription under another one", async () => {
+    const mcpjam = {
+      id: "host_1",
+      name: "Team MCPJam",
+      eventDeliveryModes: ["poll", "push", "webhook"],
+    };
+    const created = await call("POST", "/subscriptions", {
+      serverId: SERVER_ID,
+      eventName: "build.failed",
+      arguments: { branch: "hosts" },
+      mode: "poll",
+      host: mcpjam,
+    });
+    expect(created.status).toBe(200);
+    expect(created.body.subscription.host).toEqual({
+      id: "host_1",
+      name: "Team MCPJam",
+    });
+    expect(created.body.subscription).not.toHaveProperty("profile");
+    const again = await call("POST", "/subscriptions", {
+      serverId: SERVER_ID,
+      eventName: "build.failed",
+      arguments: { branch: "hosts" },
+      mode: "poll",
+      host: null,
+    });
+    expect(again.status).toBe(409);
+    expect(again.body.code).toBe("EVENTS_CONFLICT");
   });
 
   it("simulates into the simulation namespace", async () => {
@@ -210,7 +297,7 @@ describe("local events routes", () => {
       eventName: "build.failed",
       arguments: { branch: "sim" },
       mode: "poll",
-      profile: "draft@28ec35e",
+      host: null,
     });
     const simulated = await call("POST", "/simulate", {
       subscriptionId: created.body.subscription.id,
@@ -237,7 +324,7 @@ describe("local events routes", () => {
       eventName: "comment.created",
       arguments: { document_id: "doc_x" },
       mode: "webhook",
-      profile: "draft@28ec35e",
+      host: null,
     });
     expect(refused.status).toBe(400);
     expect(refused.body.code).toBe("EVENTS_UNAVAILABLE");
@@ -249,7 +336,7 @@ describe("local events routes", () => {
       eventName: "comment.created",
       arguments: { document_id: "doc_w" },
       mode: "webhook",
-      profile: "draft@28ec35e",
+      host: null,
       overrides: ["insecure-local-receiver"],
     });
     expect(created.status).toBe(200);
@@ -318,7 +405,7 @@ describe("local events routes", () => {
       eventName: "comment.created",
       arguments: { document_id: "doc_p" },
       mode: "push",
-      profile: "draft@28ec35e",
+      host: null,
     });
     expect(created.status).toBe(200);
     const id = created.body.subscription.id;

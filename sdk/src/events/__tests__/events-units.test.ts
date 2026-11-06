@@ -21,7 +21,11 @@ import {
 } from "../profiles.js";
 import { MemoryEventInbox } from "../memory-inbox.js";
 import { buildWebhookHeaders } from "../standard-webhooks.js";
-import { computeRefreshAt, EventsCoordinator } from "../coordinator.js";
+import {
+  computeRefreshAt,
+  EventsCoordinator,
+  MCPJAM_REQUESTED_TTL_MS,
+} from "../coordinator.js";
 import { DRAFT_PROFILE_ID } from "../profiles.js";
 import type { EventsRpcPort } from "../types.js";
 
@@ -623,5 +627,56 @@ describe("ChatGPT probe observations (phase 0)", () => {
       },
     ]);
     expect(facts.requestedTtlMs?.value).toEqual({ unexpectedType: "string", json: '"600000"' });
+  });
+});
+
+describe("a subscription that names no profile", () => {
+  async function subscribeParams(
+    options: { defaultTtlMs?: number | null } = {}
+  ) {
+    let params: Record<string, unknown> = {};
+    const rpc = {
+      subscribe: async (sent: Record<string, unknown>) => {
+        params = sent;
+        throw new Error("stop after the request");
+      },
+    } as unknown as EventsRpcPort;
+    const inbox = new MemoryEventInbox({ publicOrigin: "https://h" });
+    const coordinator = new EventsCoordinator({
+      rpc: async () => rpc,
+      inbox: async () => inbox,
+      ...options,
+    });
+    const outcome = await coordinator.step({
+      id: "esub_noprofile",
+      projectId: "p",
+      environmentId: null,
+      bindingKey: "b",
+      serverId: "srv_1",
+      eventName: "thing.happened",
+      arguments: {},
+      mode: "webhook",
+      desiredState: "active",
+      observedState: "pending",
+      generation: 1,
+      nextActionAt: 0,
+      consecutiveFailures: 0,
+    });
+    return { outcome, params };
+  }
+
+  it("subscribes, requesting MCPJam's lifetime", async () => {
+    const { outcome, params } = await subscribeParams();
+    expect(outcome.patch.lastError?.message).toContain(
+      "stop after the request"
+    );
+    expect(params.ttlMs).toBe(MCPJAM_REQUESTED_TTL_MS);
+    expect(MCPJAM_REQUESTED_TTL_MS).toBe(DRAFT_PROFILE.requestedTtlMs.value);
+  });
+
+  it("requests the coordinator's own default when one is set", async () => {
+    expect(
+      (await subscribeParams({ defaultTtlMs: 600_000 })).params.ttlMs
+    ).toBe(600_000);
   });
 });

@@ -36,6 +36,7 @@ import {
   COORDINATOR_DEFAULTS,
   IDLE_NEXT_ACTION_AT,
   MAX_SLOT_REPLACEMENTS_PER_STEP,
+  MCPJAM_REQUESTED_TTL_MS,
   classifyStepFailure,
   computeBackoffMs,
   computePollBatchId,
@@ -51,7 +52,7 @@ import {
   stepRemoval,
   type CoordinatorStepContext,
 } from "./coordinator-removal.js";
-import { getEventsProfile } from "./profiles.js";
+import { getEventsProfile, isEventsProfileId } from "./profiles.js";
 import {
   InboxBackpressureError,
   type InboxAppendEntry,
@@ -62,6 +63,7 @@ import {
 
 export {
   IDLE_NEXT_ACTION_AT,
+  MCPJAM_REQUESTED_TTL_MS,
   applySubscriptionPatch,
   classifyStepFailure,
   computeBackoffMs,
@@ -376,11 +378,21 @@ export class EventsCoordinator {
     };
   }
 
+  /**
+   * A record that still names a profile keeps that profile's request, so a
+   * subscription created before the host config decided support behaves as
+   * it did. Every other record requests MCPJam's lifetime.
+   */
   private defaultTtlMs(record: SubscriptionRecord): number | null | undefined {
-    const requested = getEventsProfile(record.profile).requestedTtlMs.value;
-    return typeof requested === "number" || requested === null
-      ? requested
-      : undefined;
+    if (record.profile && isEventsProfileId(record.profile)) {
+      const requested = getEventsProfile(record.profile).requestedTtlMs.value;
+      return typeof requested === "number" || requested === null
+        ? requested
+        : undefined;
+    }
+    return this.options.defaultTtlMs === undefined
+      ? MCPJAM_REQUESTED_TTL_MS
+      : this.options.defaultTtlMs;
   }
 
   // -------------------------------------------------------------------------
@@ -390,10 +402,8 @@ export class EventsCoordinator {
   private async stepPoll(record: SubscriptionRecord): Promise<StepOutcome> {
     const rpc = await this.options.rpc(record);
     const inbox = await this.options.inbox(record);
-    const floor = Math.max(
-      DEFAULT_POLL_FLOOR_MS,
-      getEventsProfile(record.profile).pollFloorMs.value
-    );
+    // Every profile's floor is the draft's 1000 ms, which is this default.
+    const floor = DEFAULT_POLL_FLOOR_MS;
     let cursor: string | null = record.lastCursor ?? null;
     let appended = 0;
     let lastGapAt: number | undefined;

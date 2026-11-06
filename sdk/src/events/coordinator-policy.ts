@@ -47,7 +47,15 @@ export interface EventsCoordinatorOptions {
   maxChallengeFailures?: number;
   /** `maxEvents` sent on poll. Server default when omitted. */
   maxEventsPerPoll?: number;
+  /**
+   * `ttlMs` requested on subscribe when the record names none. MCPJam's own
+   * choice, not a host fact. Default {@link MCPJAM_REQUESTED_TTL_MS}.
+   */
+  defaultTtlMs?: number | null;
 }
+
+/** The subscription lifetime MCPJam requests; servers may clamp it. */
+export const MCPJAM_REQUESTED_TTL_MS = 60 * 60 * 1000;
 
 export interface StepOutcome {
   patch: SubscriptionPatch;
