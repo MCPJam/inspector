@@ -1,11 +1,12 @@
-import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
-  buildConformanceShareCard,
+  SHARE_CARD_FONT_FACES,
+  buildConformanceShareCardSvg,
   canDrawShareCard,
   formatShareCardScore,
+  shareCardAltText,
   shareCardChecksLine,
-  shareCardOutcome,
+  shareCardFontFaceCss,
   shareCardSuiteStatus,
   type ConformanceShareCardData,
 } from "../conformance-share-card";
@@ -22,6 +23,7 @@ function card(
     failed: 0,
     couldNotRun: 4,
     notApplicable: 2,
+    pending: 0,
     advisoryCount: 0,
     protocolVersion: "2025-11-25",
     suites: [
@@ -40,26 +42,20 @@ function card(
   };
 }
 
+function svgOf(data: ConformanceShareCardData): string {
+  return buildConformanceShareCardSvg(data, { fontFaceCss: "" });
+}
+
+/** The text of every <text> element, in document order. */
+function texts(svg: string): string[] {
+  return [...svg.matchAll(/<text[^>]*>([^<]*)/g)].map((match) => match[1]!);
+}
+
 describe("conformance share card", () => {
   it("shows at most one decimal and never a trailing .0", () => {
     expect(formatShareCardScore(85.71)).toBe("85.7");
     expect(formatShareCardScore(84)).toBe("84");
     expect(formatShareCardScore(99.96)).toBe("100");
-  });
-
-  it("names the verdict the way ScoreHeadline does", () => {
-    expect(
-      shareCardOutcome({ outcome: "failed", advisoryCount: 0 }).label,
-    ).toBe("Not conformant");
-    expect(
-      shareCardOutcome({ outcome: "incomplete", advisoryCount: 0 }).label,
-    ).toBe("Incomplete run");
-    expect(
-      shareCardOutcome({ outcome: "passed", advisoryCount: 2 }).label,
-    ).toBe("Conformant, with advice");
-    expect(
-      shareCardOutcome({ outcome: "passed", advisoryCount: 0 }).label,
-    ).toBe("Fully conformant");
   });
 
   it("says a suite with nothing applicable is not scored, never zero", () => {
@@ -80,26 +76,100 @@ describe("conformance share card", () => {
     );
   });
 
+  it("tells checks that need input from checks that could not run", () => {
+    // Two of the four unrun checks need an input, so they are not applicable:
+    // the same split describeConformanceScore makes.
+    expect(shareCardChecksLine(card({ applicable: 26 }))).toBe(
+      "24/26 checks passed · 2 need input · 2 could not run · 2 n/a",
+    );
+    expect(
+      shareCardChecksLine(card({ applicable: 27, couldNotRun: 4 })),
+    ).toContain("1 needs input · 3 could not run");
+  });
+
+  it("says how many checks the profile does not score yet", () => {
+    expect(shareCardChecksLine(card({ pending: 3 }))).toBe(
+      "24/28 checks passed · 4 could not run · 3 not scored yet · 2 n/a",
+    );
+  });
+
   it("draws no card when nothing was applicable", () => {
     expect(canDrawShareCard({ score: 100, applicable: 0 })).toBe(false);
     expect(canDrawShareCard({ score: 85.7, applicable: 28 })).toBe(true);
   });
 
   it("puts the score, the protocol version and every suite on the card", () => {
-    const html = renderToStaticMarkup(buildConformanceShareCard(card()));
-    expect(html).toContain("85.7");
-    expect(html).toContain("/100");
-    expect(html).toContain("amazon-test");
-    expect(html).toContain("MCP 2025-11-25 · app.mcpjam.com");
-    expect(html).toContain("Incomplete run");
-    expect(html).toContain("NOT SCORED");
-    expect(html).toContain("1/5");
+    const svg = svgOf(card());
+    expect(svg.startsWith("<svg")).toBe(true);
+    expect(svg).toContain('width="1200" height="630"');
+    expect(svg).toContain(">85.7<tspan");
+    expect(svg).toContain(">/100</tspan>");
+    expect(texts(svg)).toEqual(
+      expect.arrayContaining([
+        "amazon-test",
+        "Incomplete run",
+        "Protocol",
+        "PASSED",
+        "Tasks",
+        "INCOMPLETE",
+        "1/5",
+        "OAuth",
+        "NOT SCORED",
+        "n/a",
+        "24/28 checks passed · 4 could not run · 2 n/a",
+        "MCP 2025-11-25 · app.mcpjam.com",
+      ]),
+    );
   });
 
   it("leaves the server name off when it is not given", () => {
-    const html = renderToStaticMarkup(
-      buildConformanceShareCard(card({ serverName: null })),
+    expect(svgOf(card({ serverName: null }))).not.toContain("amazon-test");
+  });
+
+  it("escapes every string it draws", () => {
+    const svg = svgOf(card({ serverName: `<script>alert("x")</script> & co` }));
+    expect(svg).not.toContain("<script>");
+    expect(svg).toContain(
+      "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; co",
     );
-    expect(html).not.toContain("amazon-test");
+  });
+
+  it("cuts a long server name short", () => {
+    const svg = svgOf(card({ serverName: "x".repeat(80) }));
+    expect(texts(svg)).toContain(`${"x".repeat(39)}…`);
+  });
+
+  it("wraps the checks line before it runs into the footer", () => {
+    const busy = card({
+      applicable: 120,
+      passed: 100,
+      failed: 12,
+      couldNotRun: 14,
+      notApplicable: 9,
+      pending: 7,
+    });
+    const svg = svgOf(busy);
+    const lines = [...svg.matchAll(/<text x="72" y="(\d+)"[^>]*>([^<]*)/g)]
+      .filter((match) => Number(match[1]) >= 570)
+      .map((match) => match[2]!);
+    expect(lines.length).toBe(2);
+    expect(lines.join(" · ")).toBe(shareCardChecksLine(busy));
+    // The first line leaves room for "MCP 2025-11-25 · app.mcpjam.com".
+    expect(lines[0]!.length * 9).toBeLessThanOrEqual(1056 - 31 * 9 - 24);
+  });
+
+  it("names every face with its own inlined source", () => {
+    const css = shareCardFontFaceCss((file) => `data:test,${file}`);
+    for (const face of SHARE_CARD_FONT_FACES) {
+      expect(css).toContain(
+        `font-family:"${face.family}";font-style:normal;font-weight:${face.weight};src:url("data:test,${face.file}")`,
+      );
+    }
+  });
+
+  it("describes itself for screen readers", () => {
+    expect(shareCardAltText(card())).toBe(
+      "amazon-test scored 85.7/100 on MCP conformance. Incomplete run. 24/28 checks passed · 4 could not run · 2 n/a.",
+    );
   });
 });

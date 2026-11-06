@@ -7,10 +7,10 @@
  * is the credential, and the backend answers only for a link anyone may open,
  * with the score summary the card draws. Any other link is a plain 404.
  *
- * Callers get a budget of backend lookups (lookup-limit.ts); a card already
- * cached costs nothing. Past the budget the route answers 429. Nothing a
- * caller sends can widen the cache: the token is the only free part of the
- * key, and the footer's host comes from a fixed list.
+ * Callers get a budget of backend lookups (lookup-limit.ts); an answer still
+ * fresh (10 seconds) costs nothing. Past the budget the route answers 429.
+ * Nothing a caller sends can widen the cache: the token is the only free part
+ * of the key, and the footer's host comes from a fixed list.
  */
 import { Hono, type Context } from "hono";
 import { ALLOWED_HOSTS } from "../../config.js";
@@ -96,9 +96,10 @@ conformanceShareCard.get("/:file", async (c) => {
 
   return c.body(png as Uint8Array<ArrayBuffer>, 200, {
     "content-type": "image/png",
-    // Crawlers cache what they unfurl anyway. Keep ours short so a link that
-    // was narrowed or rotated stops showing its card soon after.
-    "cache-control": "public, max-age=300",
+    // Private, so no shared cache keeps serving a card after its link is
+    // narrowed, rotated or revoked. Crawlers keep what they already unfurled;
+    // that part is theirs.
+    "cache-control": "private, max-age=10",
     "x-robots-tag": "noindex",
   });
 });

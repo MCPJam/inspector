@@ -2,9 +2,11 @@ import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import conformanceShareCard from "../conformance-share-card.js";
 import {
+  SHARE_CARD_LINK_TTL_MS,
   cardDataFromPreview,
   clearConformanceShareCardCache,
 } from "../../../services/conformance-share-card/link-preview.js";
+import { renderConformanceShareCardPng } from "../../../services/conformance-share-card/render.js";
 import {
   SHARE_CARD_LOOKUP_LIMIT,
   resetShareCardLookupLimit,
@@ -21,7 +23,15 @@ function tokenFor(n: number): string {
 }
 
 const TOKEN = "V1StGXR8_Z5jdHi6B-myT";
+const SERVICE_TOKEN = "inspector-service-secret";
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47];
+
+// Drawing is Chromium's job (render.test.ts draws a real card); here the
+// route and its caches are under test.
+vi.mock("../../../services/conformance-share-card/render.js", () => ({
+  renderConformanceShareCardPng: vi.fn(),
+}));
+const render = vi.mocked(renderConformanceShareCardPng);
 
 const PREVIEW = {
   score: 85.7,
@@ -53,11 +63,15 @@ describe("GET /api/web/conformance-share-card/:token.png", () => {
     clearConformanceShareCardCache();
     resetShareCardLookupLimit();
     vi.stubEnv("CONVEX_HTTP_URL", "https://backend.example.test");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", SERVICE_TOKEN);
     vi.stubGlobal("fetch", fetchMock);
+    render.mockResolvedValue(new Uint8Array([...PNG_SIGNATURE, 0x0d, 0x0a]));
   });
 
   afterEach(() => {
     fetchMock.mockReset();
+    render.mockReset();
+    vi.useRealTimers();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
   });
@@ -74,16 +88,109 @@ describe("GET /api/web/conformance-share-card/:token.png", () => {
     expect(res.headers.get("content-type")).toBe("image/png");
     const bytes = new Uint8Array(await res.arrayBuffer());
     expect([...bytes.slice(0, 4)]).toEqual(PNG_SIGNATURE);
+    expect(render.mock.calls[0]![0]).toMatchObject({
+      score: 85.7,
+      serverName: null,
+    });
 
     const [url, init] = fetchMock.mock.calls[0]!;
-    expect(String(url)).toBe("https://backend.example.test/web/share/preview");
+    // The backend's internal route, with the service credential, like the
+    // score.mcpjam.com relay.
+    expect(String(url)).toBe(
+      "https://backend.example.test/internal/v1/shares/link-preview",
+    );
+    expect(init.headers["x-inspector-service-token"]).toBe(SERVICE_TOKEN);
     // The token rides in the body, never the URL.
     expect(String(url)).not.toContain(TOKEN);
     expect(JSON.parse(init.body)).toEqual({
       resourceType: "conformanceRun",
       token: TOKEN,
     });
-  }, 30_000);
+  });
+
+  it("is private, so no shared cache keeps a card after its link narrows", async () => {
+    fetchMock.mockResolvedValue(Response.json({ ok: true, preview: PREVIEW }));
+    const res = await app().request(
+      `/api/web/conformance-share-card/${TOKEN}.png`,
+    );
+    expect(res.headers.get("cache-control")).toBe("private, max-age=10");
+  });
+
+  it("asks again once the answer is 10 seconds old, so a narrowed link stops", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    fetchMock
+      .mockResolvedValueOnce(Response.json({ ok: true, preview: PREVIEW }))
+      .mockResolvedValueOnce(Response.json({ ok: false }, { status: 404 }));
+
+    const open = await app().request(
+      `/api/web/conformance-share-card/${TOKEN}.png`,
+    );
+    expect(open.status).toBe(200);
+
+    vi.advanceTimersByTime(SHARE_CARD_LINK_TTL_MS + 1);
+    const narrowed = await app().request(
+      `/api/web/conformance-share-card/${TOKEN}.png`,
+    );
+    expect(narrowed.status).toBe(404);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("draws a card once while its summary holds", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    fetchMock.mockImplementation(async () =>
+      Response.json({ ok: true, preview: PREVIEW }),
+    );
+    await app().request(`/api/web/conformance-share-card/${TOKEN}.png`);
+    vi.advanceTimersByTime(SHARE_CARD_LINK_TTL_MS + 1);
+    const again = await app().request(
+      `/api/web/conformance-share-card/${TOKEN}.png`,
+    );
+    expect(again.status).toBe(200);
+    // The link was checked twice; the card was drawn once.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(render).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares one draw between requests that arrive together", async () => {
+    fetchMock.mockImplementation(async () =>
+      Response.json({ ok: true, preview: PREVIEW }),
+    );
+    const [a, b] = await Promise.all([
+      app().request(`/api/web/conformance-share-card/${TOKEN}.png`),
+      app().request(`/api/web/conformance-share-card/${TOKEN}.png`),
+    ]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect(render).toHaveBeenCalledTimes(1);
+  });
+
+  it("has no card where Chromium cannot draw one", async () => {
+    fetchMock.mockResolvedValue(Response.json({ ok: true, preview: PREVIEW }));
+    render.mockResolvedValue(null);
+    const res = await app().request(
+      `/api/web/conformance-share-card/${TOKEN}.png`,
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("has no card, and asks nothing, without the service credential", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    const res = await app().request(
+      `/api/web/conformance-share-card/${TOKEN}.png`,
+    );
+    expect(res.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("treats a refused service credential as unavailable, not as no card", async () => {
+    fetchMock.mockResolvedValue(
+      Response.json({ ok: false, error: "Unauthorized" }, { status: 401 }),
+    );
+    const res = await app().request(
+      `/api/web/conformance-share-card/${TOKEN}.png`,
+    );
+    expect(res.status).toBe(503);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
 
   it("is a 404 for a link the backend will not preview", async () => {
     fetchMock.mockResolvedValue(Response.json({ ok: false }, { status: 404 }));
@@ -221,6 +328,12 @@ describe("GET /api/web/conformance-share-card/:token.png", () => {
 });
 
 describe("cardDataFromPreview", () => {
+  it("carries the pending count, so the card can say it", () => {
+    expect(cardDataFromPreview({ ...PREVIEW, pending: 3 }, null)?.pending).toBe(
+      3,
+    );
+  });
+
   it("never carries a server name into a public card", () => {
     expect(
       cardDataFromPreview(PREVIEW, "app.mcpjam.com")?.serverName,

@@ -85,9 +85,6 @@
     "external-editor": {
       "tmp": "^0.2.6"
     },
-    "satori": {
-      "fflate": "^0.7.5"
-    },
     "@openai/mcp-extensions": {
       "zod": "^4.6.5"
     },

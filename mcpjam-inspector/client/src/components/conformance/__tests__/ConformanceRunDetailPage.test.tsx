@@ -196,7 +196,7 @@ describe("ConformanceRunDetailPage", () => {
     );
   });
 
-  it("keeps a run's address off its share card when no saved server names it", () => {
+  it("keeps a run's address off its share card when no saved server names it", async () => {
     useArtifactQueryMock.mockReturnValue(
       run([report()], {
         targetKey: "url:https://internal.example/mcp",
@@ -206,11 +206,14 @@ describe("ConformanceRunDetailPage", () => {
     render(<ConformanceRunDetailPage runId="run_1" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
-    const card = screen.getByTestId("conformance-share-card");
-    expect(card).not.toHaveTextContent("internal.example");
+    const card = await screen.findByRole("img", { name: /^Scored / });
+    expect(card.getAttribute("alt")).not.toContain("internal.example");
+    expect(decodeURIComponent(card.getAttribute("src")!)).not.toContain(
+      "internal.example",
+    );
   });
 
-  it("names a saved server on its share card", () => {
+  it("names a saved server on its share card", async () => {
     useArtifactQueryMock.mockReturnValue(run([report()]));
     render(
       <ConformanceRunDetailPage
@@ -220,8 +223,9 @@ describe("ConformanceRunDetailPage", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
-    expect(screen.getByTestId("conformance-share-card")).toHaveTextContent(
-      "Weather",
+    const card = await screen.findByRole("img", { name: /^Weather scored / });
+    expect(decodeURIComponent(card.getAttribute("src")!)).toContain(
+      ">Weather</text>",
     );
   });
 

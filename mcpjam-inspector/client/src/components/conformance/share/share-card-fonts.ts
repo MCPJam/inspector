@@ -1,51 +1,31 @@
 /**
- * The share card's faces, for the browser. The preview names them in a
- * scoped @font-face block; "Download PNG" inlines them as data URLs, because
- * html-to-image draws through an SVG image that cannot fetch fonts itself.
- * The server loads the same faces (as WOFF, for satori) from the same
- * packages, so all three drawings use one set of files.
+ * The share card's faces, for the browser. The card is an SVG shown and saved
+ * as an image, and an image cannot fetch fonts, so each face is inlined as a
+ * data URL. The server inlines the same `@fontsource` files for the og:image.
  */
 
 import montserrat600 from "@fontsource/montserrat/files/montserrat-latin-600-normal.woff2?url";
 import montserrat800 from "@fontsource/montserrat/files/montserrat-latin-800-normal.woff2?url";
-import instrumentSans500 from "@fontsource/instrument-sans/files/instrument-sans-latin-500-normal.woff2?url";
 import instrumentSans600 from "@fontsource/instrument-sans/files/instrument-sans-latin-600-normal.woff2?url";
 import jetbrainsMono400 from "@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2?url";
-import jetbrainsMono500 from "@fontsource/jetbrains-mono/files/jetbrains-mono-latin-500-normal.woff2?url";
-import { SHARE_CARD_FONTS } from "@/shared/conformance-share-card";
+import {
+  SHARE_CARD_FONT_FACES,
+  shareCardFontFaceCss,
+} from "@/shared/conformance-share-card";
 
-const FACES = [
-  { family: SHARE_CARD_FONTS.display, weight: 600, url: montserrat600 },
-  { family: SHARE_CARD_FONTS.display, weight: 800, url: montserrat800 },
-  { family: SHARE_CARD_FONTS.sans, weight: 500, url: instrumentSans500 },
-  { family: SHARE_CARD_FONTS.sans, weight: 600, url: instrumentSans600 },
-  { family: SHARE_CARD_FONTS.mono, weight: 400, url: jetbrainsMono400 },
-  { family: SHARE_CARD_FONTS.mono, weight: 500, url: jetbrainsMono500 },
-] as const;
+/** Each face's bundled URL, keyed by its file in `SHARE_CARD_FONT_FACES`. */
+export const SHARE_CARD_FONT_URLS: Record<string, string> = {
+  "@fontsource/montserrat/files/montserrat-latin-600-normal.woff2":
+    montserrat600,
+  "@fontsource/montserrat/files/montserrat-latin-800-normal.woff2":
+    montserrat800,
+  "@fontsource/instrument-sans/files/instrument-sans-latin-600-normal.woff2":
+    instrumentSans600,
+  "@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2":
+    jetbrainsMono400,
+};
 
-function fontFaceCss(srcFor: (url: string) => string): string {
-  return FACES.map(
-    ({ family, weight, url }) =>
-      `@font-face{font-family:"${family}";font-style:normal;font-weight:${weight};font-display:block;src:url(${srcFor(url)}) format("woff2");}`,
-  ).join("\n");
-}
-
-/** @font-face rules pointing at the bundled files, for the live preview. */
-export const SHARE_CARD_FONT_FACE_CSS = fontFaceCss((url) =>
-  JSON.stringify(url),
-);
-
-/** Resolves once every face the card uses is ready to draw. */
-export async function loadShareCardFonts(): Promise<void> {
-  if (typeof document === "undefined" || !document.fonts) return;
-  await Promise.all(
-    FACES.map(({ family, weight }) =>
-      document.fonts.load(`${weight} 16px "${family}"`).catch(() => []),
-    ),
-  );
-}
-
-let embedCssPromise: Promise<string> | null = null;
+let fontFaceCssPromise: Promise<string> | null = null;
 
 function toDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -56,25 +36,26 @@ function toDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-/** The same rules with each file inlined, for html-to-image's export. */
-export function shareCardFontEmbedCss(): Promise<string> {
-  embedCssPromise ??= Promise.all(
-    FACES.map(async ({ url }) => {
+/** The card's `@font-face` rules with every face inlined. Loaded once. */
+export function loadShareCardFontFaceCss(): Promise<string> {
+  fontFaceCssPromise ??= Promise.all(
+    SHARE_CARD_FONT_FACES.map(async ({ file }) => {
+      const url = SHARE_CARD_FONT_URLS[file];
+      // Internal: the preview falls back to the browser's own faces.
+      if (!url) throw new Error(`No bundled URL for ${file}`);
       const response = await fetch(url);
-      // Internal: caught by the download, which shows its own message.
-      if (!response.ok) {
-        throw new Error("Could not load a card font. Try again.");
-      }
-      return [url, await toDataUrl(await response.blob())] as const;
+      if (!response.ok) throw new Error("Could not load a card font.");
+      return [file, await toDataUrl(await response.blob())] as const;
     }),
   )
     .then((entries) => {
-      const inlined = new Map(entries);
-      return fontFaceCss((url) => JSON.stringify(inlined.get(url) ?? url));
+      const inlined = new Map<string, string>(entries);
+      return shareCardFontFaceCss((file) => inlined.get(file) ?? "");
     })
     .catch((error: unknown) => {
-      embedCssPromise = null;
+      // A failed load must not stick: the next dialog tries again.
+      fontFaceCssPromise = null;
       throw error;
     });
-  return embedCssPromise;
+  return fontFaceCssPromise;
 }

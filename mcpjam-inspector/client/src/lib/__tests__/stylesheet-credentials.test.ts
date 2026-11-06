@@ -27,13 +27,6 @@ const DYNAMIC_URL_SITES = new Map<string, string>([
       "(SENTRY_UNMASKABLE_URL_ELEMENTS); both recorders scrub `style` " +
       "attributes on the way out.",
   ],
-  [
-    "mcpjam-inspector/client/src/components/conformance/share/share-card-fonts.ts",
-    "The share card's @font-face rules. Every url() is one of six font files " +
-      "imported from @fontsource with Vite's `?url` (a hashed path in this " +
-      "app's own bundle), or that same file as a data: URL. None is user " +
-      "input and none can carry a credential.",
-  ],
 ]);
 
 const SOURCE_ROOTS = [clientSrc, join(repoRoot, "chat-ui/src")];

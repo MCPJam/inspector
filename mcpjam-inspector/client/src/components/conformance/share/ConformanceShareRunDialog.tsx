@@ -8,7 +8,7 @@
  * link. Who may is the existing access dialog, one click away.
  */
 
-import { useRef, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useConvexAuth } from "convex/react";
 import { Download, Link2, Loader2 } from "lucide-react";
 import {
@@ -30,7 +30,11 @@ import {
   SHARE_CARD_HEIGHT,
   SHARE_CARD_WIDTH,
 } from "@/shared/conformance-share-card";
-import { ShareCardPreview, exportShareCardPng } from "./ShareCardPreview";
+import {
+  ShareCardPreview,
+  exportShareCardPng,
+  useShareCardSvg,
+} from "./ShareCardPreview";
 import {
   linkedInShareUrl,
   shareCardDataFromRun,
@@ -136,15 +140,19 @@ function ShareRunBody({
     resourceType: "conformanceRun",
     resourceId: runId,
   });
-  const cardRef = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
 
-  const data = run
-    ? shareCardDataFromRun(run, {
-        serverName,
-        siteLabel: window.location.hostname,
-      })
-    : null;
+  const data = useMemo(
+    () =>
+      run
+        ? shareCardDataFromRun(run, {
+            serverName,
+            siteLabel: window.location.hostname,
+          })
+        : null,
+    [run, serverName],
+  );
+  const svg = useShareCardSvg(data);
   const token = settings?.link?.token;
   const shareUrl = token
     ? `${window.location.origin}${buildConformanceSharePath(token)}`
@@ -152,14 +160,16 @@ function ShareRunBody({
   const note = shareUrl ? restrictedLinkNote(settings?.mode) : null;
 
   const download = async () => {
-    if (!cardRef.current || !data) return;
+    if (!svg || !data) return;
     setSaving(true);
     try {
-      const href = await exportShareCardPng(cardRef.current);
+      const href = URL.createObjectURL(await exportShareCardPng(svg));
       const anchor = document.createElement("a");
       anchor.href = href;
       anchor.download = shareCardFileName(data);
       anchor.click();
+      // Long enough for the download to start before the URL goes away.
+      setTimeout(() => URL.revokeObjectURL(href), 30_000);
     } catch {
       toast.error("Couldn't save the image. Try again.");
     } finally {
@@ -183,7 +193,7 @@ function ShareRunBody({
           aria-label="Loading the score card"
         />
       ) : data ? (
-        <ShareCardPreview ref={cardRef} data={data} />
+        <ShareCardPreview data={data} svg={svg} />
       ) : (
         <p className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
           {run === null
@@ -204,7 +214,7 @@ function ShareRunBody({
         title="Download PNG"
         subtitle="Save this card as an image."
         onClick={() => void download()}
-        disabled={!data || saving}
+        disabled={!svg || saving}
         testId="conformance-share-download"
       />
 

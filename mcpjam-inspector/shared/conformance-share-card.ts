@@ -1,18 +1,26 @@
 /**
  * The conformance share card: the 1200 × 630 image a shared run travels as.
  *
- * One element tree, drawn twice. The share dialog renders it with React and
- * saves it with html-to-image; the server hands the same tree to satori for
- * the link's og:image. So it uses only what satori lays out: flex boxes,
- * absolute positions, px units, solid fills and gradients, and an explicit
- * `display: flex` on every box with more than one child.
+ * One SVG, drawn by whatever shows it. The share dialog shows it as an image
+ * and saves it through a canvas ("Download PNG"); the server screenshots it in
+ * headless Chromium for the link's og:image. Both draw the same markup, so the
+ * download and the link preview cannot drift apart, and neither needs a
+ * library: the card is a fixed layout, so every position is written down.
+ *
+ * An SVG drawn as an image cannot fetch anything, so its fonts travel inside
+ * it as `@font-face` rules with each face inlined (`shareCardFontFaceCss`),
+ * and the wordmark as a data URL.
  *
  * The rules ScoreHeadline keeps hold here too: the denominator and protocol
- * version travel with the number, checks that do not apply are said rather
- * than folded in, and a run with nothing applicable has no card.
+ * version travel with the number; checks that do not apply, could not run,
+ * need input or are not scored yet are said rather than folded in; and a run
+ * with nothing applicable has no card.
  */
 
-import { createElement, type CSSProperties, type ReactElement } from "react";
+import {
+  conformanceVerdict,
+  type ConformanceVerdictTone,
+} from "./conformance-verdict";
 import {
   MCPJAM_WORDMARK_ASPECT,
   MCPJAM_WORDMARK_DARK_DATA_URI,
@@ -21,12 +29,52 @@ import {
 export const SHARE_CARD_WIDTH = 1200;
 export const SHARE_CARD_HEIGHT = 630;
 
-/** The faces the card names. Each renderer loads them under these names. */
+/** The faces the card names. */
 export const SHARE_CARD_FONTS = {
   display: "Montserrat",
   sans: "Instrument Sans",
   mono: "JetBrains Mono",
 } as const;
+
+/**
+ * Every face the card draws with, as a file of the `@fontsource` packages
+ * the inspector already depends on. The browser and the server inline the
+ * same files.
+ */
+export const SHARE_CARD_FONT_FACES = [
+  {
+    family: SHARE_CARD_FONTS.display,
+    weight: 600,
+    file: "@fontsource/montserrat/files/montserrat-latin-600-normal.woff2",
+  },
+  {
+    family: SHARE_CARD_FONTS.display,
+    weight: 800,
+    file: "@fontsource/montserrat/files/montserrat-latin-800-normal.woff2",
+  },
+  {
+    family: SHARE_CARD_FONTS.sans,
+    weight: 600,
+    file: "@fontsource/instrument-sans/files/instrument-sans-latin-600-normal.woff2",
+  },
+  {
+    family: SHARE_CARD_FONTS.mono,
+    weight: 400,
+    file: "@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2",
+  },
+] as const;
+
+/**
+ * The card's `@font-face` rules, with `srcFor` giving each face's URL. Pass
+ * data URLs: the card is drawn as an image, which cannot fetch a font.
+ */
+export function shareCardFontFaceCss(srcFor: (file: string) => string): string {
+  return SHARE_CARD_FONT_FACES.map(
+    ({ family, weight, file }) =>
+      `@font-face{font-family:"${family}";font-style:normal;font-weight:${weight};` +
+      `src:url(${JSON.stringify(srcFor(file))}) format("woff2");}`,
+  ).join("");
+}
 
 export type ShareCardSuite = {
   kind: string;
@@ -46,6 +94,8 @@ export type ConformanceShareCardData = {
   failed: number;
   couldNotRun: number;
   notApplicable: number;
+  /** Reported but not scored by the run's conformance profile. */
+  pending: number;
   advisoryCount: number;
   protocolVersion?: string | null;
   suites: ShareCardSuite[];
@@ -53,7 +103,7 @@ export type ConformanceShareCardData = {
   siteLabel?: string | null;
 };
 
-type Tone = "ok" | "bad" | "warn" | "muted";
+type Tone = ConformanceVerdictTone | "muted";
 
 const COLOR = {
   bg: "#000000",
@@ -65,15 +115,12 @@ const COLOR = {
   ok: "#3D8A5A",
   bad: "#C45A3A",
   warn: "#C49A4A",
-  okText: "#6FC290",
-  badText: "#E58466",
-  warnText: "#DDB25E",
 } as const;
 
 const TONE_TEXT: Record<Tone, string> = {
-  ok: COLOR.okText,
-  bad: COLOR.badText,
-  warn: COLOR.warnText,
+  ok: "#6FC290",
+  bad: "#E58466",
+  warn: "#DDB25E",
   muted: COLOR.muted,
 };
 
@@ -97,20 +144,6 @@ export function formatShareCardScore(score: number): string {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
-/** The verdict in ScoreHeadline's words, so the card and the app agree. */
-export function shareCardOutcome(
-  data: Pick<ConformanceShareCardData, "outcome" | "advisoryCount">,
-): { label: string; tone: Tone } {
-  if (data.outcome === "failed")
-    return { label: "Not conformant", tone: "bad" };
-  if (data.outcome === "incomplete") {
-    return { label: "Incomplete run", tone: "warn" };
-  }
-  return data.advisoryCount > 0
-    ? { label: "Conformant, with advice", tone: "ok" }
-    : { label: "Fully conformant", tone: "ok" };
-}
-
 export function shareCardSuiteStatus(suite: ShareCardSuite): {
   label: string;
   tone: Tone;
@@ -121,13 +154,31 @@ export function shareCardSuiteStatus(suite: ShareCardSuite): {
   return { label: "PASSED", tone: "ok" };
 }
 
-/** "24/28 checks passed · 4 could not run · 2 n/a" */
-export function shareCardChecksLine(data: ConformanceShareCardData): string {
+/**
+ * The parts of the checks line, each a count the score did not fold in.
+ * A check that needs an input counts toward `couldNotRun` but not toward
+ * `applicable`; this is the same split `describeConformanceScore` makes.
+ */
+export function shareCardChecksParts(data: ConformanceShareCardData): string[] {
+  const needsInput = Math.max(
+    0,
+    data.passed + data.failed + data.couldNotRun - data.applicable,
+  );
+  const otherUnrun = data.couldNotRun - needsInput;
   const parts = [`${data.passed}/${data.applicable} checks passed`];
   if (data.failed > 0) parts.push(`${data.failed} failed`);
-  if (data.couldNotRun > 0) parts.push(`${data.couldNotRun} could not run`);
+  if (needsInput > 0) {
+    parts.push(`${needsInput} ${needsInput === 1 ? "needs" : "need"} input`);
+  }
+  if (otherUnrun > 0) parts.push(`${otherUnrun} could not run`);
+  if (data.pending > 0) parts.push(`${data.pending} not scored yet`);
   if (data.notApplicable > 0) parts.push(`${data.notApplicable} n/a`);
-  return parts.join(" · ");
+  return parts;
+}
+
+/** "24/28 checks passed · 4 could not run · 2 n/a" */
+export function shareCardChecksLine(data: ConformanceShareCardData): string {
+  return shareCardChecksParts(data).join(" · ");
 }
 
 /** A run with no applicable checks has no score to show, so no card. */
@@ -137,143 +188,205 @@ export function canDrawShareCard(
   return Number.isFinite(data.score) && data.applicable > 0;
 }
 
-// --- element helpers -------------------------------------------------------
+/** The card in words, for the image's alt text. */
+export function shareCardAltText(data: ConformanceShareCardData): string {
+  const subject = data.serverName ? `${data.serverName} scored` : "Scored";
+  const verdict = conformanceVerdict(data.outcome, data.advisoryCount).label;
+  return `${subject} ${formatShareCardScore(data.score)}/100 on MCP conformance. ${verdict}. ${shareCardChecksLine(data)}.`;
+}
 
-type Child = ReactElement | string | null;
+// --- drawing -----------------------------------------------------------------
 
-function box(style: CSSProperties, ...children: Child[]): ReactElement {
-  return createElement(
-    "div",
-    { style: { display: "flex", ...style } },
-    ...children.filter((child) => child !== null),
+/** JetBrains Mono advances 600/1000 em per glyph, so a line's width is exact. */
+const MONO_FOOTER_SIZE = 15;
+const MONO_FOOTER_ADVANCE = MONO_FOOTER_SIZE * 0.6;
+const FOOTER_WIDTH = 1056;
+const FOOTER_LINE_HEIGHT = 24;
+const SERVER_NAME_MAX = 40;
+
+const FAMILY = {
+  display: `'${SHARE_CARD_FONTS.display}', sans-serif`,
+  sans: `'${SHARE_CARD_FONTS.sans}', sans-serif`,
+  mono: `'${SHARE_CARD_FONTS.mono}', monospace`,
+};
+
+function escapeXml(value: string): string {
+  return value.replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ]!,
   );
 }
 
-function at(
-  left: number,
-  top: number,
-  style: CSSProperties,
-  ...children: Child[]
-): ReactElement {
-  return box({ position: "absolute", left, top, ...style }, ...children);
-}
+type TextStyle = {
+  family: string;
+  size: number;
+  weight?: number;
+  fill?: string;
+  anchor?: "start" | "end";
+  spacing?: number;
+};
 
-function hLine(top: number): ReactElement {
-  return at(0, top, {
-    width: SHARE_CARD_WIDTH,
-    height: 1,
-    background: COLOR.grid,
-  });
-}
-
-function vLine(left: number): ReactElement {
-  return at(left, 0, {
-    width: 1,
-    height: SHARE_CARD_HEIGHT,
-    background: COLOR.grid,
-  });
-}
-
-/** The "+" Vercel-style marks where two frame lines cross. */
-function cross(x: number, y: number): ReactElement {
-  return at(
-    x - 9,
-    y - 9,
-    { width: 19, height: 19 },
-    at(9, 0, { width: 1, height: 19, background: COLOR.faint }),
-    at(0, 9, { width: 19, height: 1, background: COLOR.faint }),
+function text(x: number, y: number, value: string, style: TextStyle): string {
+  const spacing = style.spacing ? ` letter-spacing="${style.spacing}"` : "";
+  return (
+    `<text x="${x}" y="${y}" font-family="${style.family}" font-size="${style.size}"` +
+    ` font-weight="${style.weight ?? 400}" fill="${style.fill ?? COLOR.fg}"` +
+    ` text-anchor="${style.anchor ?? "start"}"${spacing}>${escapeXml(value)}</text>`
   );
 }
 
-function fill(count: number, color: string): ReactElement | null {
-  return count > 0
-    ? box({ flexGrow: count, flexBasis: 0, height: "100%", background: color })
-    : null;
+function rect(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  fill: string,
+  radius = 0,
+): string {
+  const rx = radius ? ` rx="${radius}"` : "";
+  return `<rect x="${x}" y="${y}" width="${width}" height="${height}"${rx} fill="${fill}"/>`;
 }
 
-function suiteBar(suite: ShareCardSuite, height: number): ReactElement {
-  if (suite.applicable <= 0) {
-    return box({
-      flexGrow: 1,
-      height,
-      borderRadius: 99,
-      background: COLOR.grid,
-    });
-  }
-  return box(
-    {
-      flexGrow: 1,
-      height,
-      borderRadius: 99,
-      overflow: "hidden",
-      background: COLOR.track,
-      gap: 2,
-    },
-    fill(suite.passed, COLOR.ok),
-    fill(suite.failed, COLOR.bad),
-    fill(suite.couldNotRun, COLOR.warn),
+/** Segments side by side across `width`, sized by count, `gap` px apart. */
+function segments(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  parts: Array<[number, string]>,
+  gap: number,
+  rounded: boolean,
+): string {
+  const live = parts.filter(([count]) => count > 0);
+  const total = live.reduce((sum, [count]) => sum + count, 0);
+  if (total === 0) return "";
+  const room = width - gap * (live.length - 1);
+  let at = x;
+  return live
+    .map(([count, fill]) => {
+      const segment = (room * count) / total;
+      const out = rect(
+        round(at),
+        y,
+        round(segment),
+        height,
+        fill,
+        rounded ? height / 2 : 0,
+      );
+      at += segment + gap;
+      return out;
+    })
+    .join("");
+}
+
+function round(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/** The "+" marks where two frame lines cross. */
+function cross(x: number, y: number): string {
+  return (
+    rect(x, y - 9, 1, 19, COLOR.faint) + rect(x - 9, y, 19, 1, COLOR.faint)
   );
 }
+
+const SUITE_TOP = 118;
+const SUITE_LEFT = 720;
+const SUITE_RIGHT = 1120;
+const SUITE_BAR_WIDTH = 330;
+/** Label line, 12 px gap, then the bar line: the block each row centers. */
+const SUITE_CONTENT_HEIGHT = 56;
 
 function suiteRow(
   suite: ShareCardSuite,
-  height: number,
+  index: number,
+  rowHeight: number,
   last: boolean,
-): ReactElement {
+): string {
+  const top = SUITE_TOP + index * rowHeight;
+  const contentTop = top + Math.max(0, (rowHeight - SUITE_CONTENT_HEIGHT) / 2);
   const status = shareCardSuiteStatus(suite);
-  return box(
-    {
-      flexDirection: "column",
-      justifyContent: "center",
-      height,
-      borderBottom: last ? "none" : `1px solid ${COLOR.grid}`,
-    },
-    box(
-      { justifyContent: "space-between", alignItems: "center" },
-      box(
-        {
-          fontFamily: SHARE_CARD_FONTS.sans,
-          fontSize: 22,
-          fontWeight: 600,
-          color: COLOR.fg,
-        },
-        shareCardSuiteLabel(suite.kind),
-      ),
-      box(
-        {
-          fontFamily: SHARE_CARD_FONTS.mono,
-          fontSize: 13,
-          letterSpacing: 1.6,
-          color: TONE_TEXT[status.tone],
-        },
-        status.label,
-      ),
+  const barY = round(contentTop + 44);
+  const clipId = `suite-bar-${index}`;
+  const bar =
+    suite.applicable <= 0
+      ? rect(SUITE_LEFT, barY, SUITE_BAR_WIDTH, 6, COLOR.grid, 3)
+      : `<clipPath id="${clipId}">${rect(SUITE_LEFT, barY, SUITE_BAR_WIDTH, 6, "#fff", 3)}</clipPath>` +
+        `<g clip-path="url(#${clipId})">` +
+        rect(SUITE_LEFT, barY, SUITE_BAR_WIDTH, 6, COLOR.track) +
+        segments(
+          SUITE_LEFT,
+          barY,
+          SUITE_BAR_WIDTH,
+          6,
+          [
+            [suite.passed, COLOR.ok],
+            [suite.failed, COLOR.bad],
+            [suite.couldNotRun, COLOR.warn],
+          ],
+          2,
+          false,
+        ) +
+        `</g>`;
+  return [
+    text(
+      SUITE_LEFT,
+      round(contentTop + 21),
+      shareCardSuiteLabel(suite.kind).slice(0, 24),
+      { family: FAMILY.sans, size: 22, weight: 600 },
     ),
-    box(
-      { alignItems: "center", marginTop: 12, gap: 14 },
-      suiteBar(suite, 6),
-      box(
-        {
-          width: 56,
-          justifyContent: "flex-end",
-          fontFamily: SHARE_CARD_FONTS.mono,
-          fontSize: 15,
-          color: COLOR.muted,
-        },
-        suite.applicable > 0 ? `${suite.passed}/${suite.applicable}` : "n/a",
-      ),
+    text(SUITE_RIGHT, round(contentTop + 18), status.label, {
+      family: FAMILY.mono,
+      size: 13,
+      fill: TONE_TEXT[status.tone],
+      anchor: "end",
+      spacing: 1.6,
+    }),
+    bar,
+    text(
+      SUITE_RIGHT,
+      round(contentTop + 52),
+      suite.applicable > 0 ? `${suite.passed}/${suite.applicable}` : "n/a",
+      { family: FAMILY.mono, size: 15, fill: COLOR.muted, anchor: "end" },
     ),
-  );
+    last ? "" : rect(SUITE_LEFT, top + rowHeight - 1, 400, 1, COLOR.grid),
+  ].join("");
 }
 
 /**
- * The card as an element tree at 1200 × 630. Callers check
- * `canDrawShareCard` first.
+ * The checks line, wrapped onto further lines when it would run into the
+ * footer's right-hand text. Monospace, so widths are counted in glyphs.
  */
-export function buildConformanceShareCard(
+function wrapChecks(parts: string[], firstLineRoom: number): string[] {
+  const lines: string[] = [];
+  let line = "";
+  for (const part of parts) {
+    const room = lines.length === 0 ? firstLineRoom : FOOTER_WIDTH;
+    const next = line ? `${line} · ${part}` : part;
+    if (line && next.length * MONO_FOOTER_ADVANCE > room) {
+      lines.push(line);
+      line = part;
+    } else {
+      line = next;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+/**
+ * The card for one run as an SVG document. Callers check `canDrawShareCard`
+ * first. `fontFaceCss` comes from `shareCardFontFaceCss`, with each face
+ * inlined.
+ */
+export function buildConformanceShareCardSvg(
   data: ConformanceShareCardData,
-): ReactElement {
-  const outcome = shareCardOutcome(data);
+  { fontFaceCss }: { fontFaceCss: string },
+): string {
+  const verdict = conformanceVerdict(data.outcome, data.advisoryCount);
   const suites = data.suites.slice(0, 6);
   const rowHeight =
     suites.length > 0 ? Math.min(86, Math.floor(344 / suites.length)) : 0;
@@ -283,167 +396,90 @@ export function buildConformanceShareCard(
   ]
     .filter(Boolean)
     .join(" · ");
+  const checksLines = wrapChecks(
+    shareCardChecksParts(data),
+    FOOTER_WIDTH - footerRight.length * MONO_FOOTER_ADVANCE - 24,
+  );
+  const serverName =
+    data.serverName && data.serverName.length > SERVER_NAME_MAX
+      ? `${data.serverName.slice(0, SERVER_NAME_MAX - 1)}…`
+      : data.serverName;
   const wordmarkHeight = 23;
+  const wordmarkWidth = Math.round(wordmarkHeight * MCPJAM_WORDMARK_ASPECT);
 
-  return box(
-    {
-      position: "relative",
-      width: SHARE_CARD_WIDTH,
-      height: SHARE_CARD_HEIGHT,
-      overflow: "hidden",
-      background: COLOR.bg,
-      color: COLOR.fg,
-      fontFamily: SHARE_CARD_FONTS.sans,
-    },
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${SHARE_CARD_WIDTH}" height="${SHARE_CARD_HEIGHT}" viewBox="0 0 ${SHARE_CARD_WIDTH} ${SHARE_CARD_HEIGHT}">`,
+    `<defs><style><![CDATA[${fontFaceCss}]]></style>`,
     // The warm glow under the number: the score site's atmosphere.
-    // It fades out well inside its box, so no edge shows.
-    at(-380, 240, {
-      width: 1200,
-      height: 760,
-      backgroundImage:
-        "radial-gradient(ellipse, rgba(232, 96, 56, 0.32) 0%, rgba(232, 96, 56, 0) 55%)",
+    `<radialGradient id="glow" gradientUnits="userSpaceOnUse" cx="220" cy="620" r="848"` +
+      ` gradientTransform="translate(220 620) scale(1 0.633) translate(-220 -620)">` +
+      `<stop offset="0" stop-color="rgb(232,96,56)" stop-opacity="0.32"/>` +
+      `<stop offset="0.55" stop-color="rgb(232,96,56)" stop-opacity="0"/>` +
+      `</radialGradient></defs>`,
+    rect(0, 0, SHARE_CARD_WIDTH, SHARE_CARD_HEIGHT, COLOR.bg),
+    rect(0, 0, SHARE_CARD_WIDTH, SHARE_CARD_HEIGHT, "url(#glow)"),
+    rect(0, 100, SHARE_CARD_WIDTH, 1, COLOR.grid),
+    rect(0, 480, SHARE_CARD_WIDTH, 1, COLOR.grid),
+    ...[40, 680, 1160].map((x) => rect(x, 0, 1, SHARE_CARD_HEIGHT, COLOR.grid)),
+    ...[40, 680, 1160].flatMap((x) => [cross(x, 100), cross(x, 480)]),
+    `<image href="${MCPJAM_WORDMARK_DARK_DATA_URI}" x="72" y="39" width="${wordmarkWidth}" height="${wordmarkHeight}"/>`,
+    text(1128, 55, "MCP CONFORMANCE REPORT", {
+      family: FAMILY.mono,
+      size: 13,
+      fill: COLOR.muted,
+      anchor: "end",
+      spacing: 1.8,
     }),
-    hLine(100),
-    hLine(480),
-    vLine(40),
-    vLine(680),
-    vLine(1160),
-    cross(40, 100),
-    cross(680, 100),
-    cross(1160, 100),
-    cross(40, 480),
-    cross(680, 480),
-    cross(1160, 480),
-    at(
-      72,
-      39,
-      {},
-      createElement("img", {
-        src: MCPJAM_WORDMARK_DARK_DATA_URI,
-        alt: "MCPJam",
-        width: Math.round(wordmarkHeight * MCPJAM_WORDMARK_ASPECT),
-        height: wordmarkHeight,
-        style: {
-          width: Math.round(wordmarkHeight * MCPJAM_WORDMARK_ASPECT),
-          height: wordmarkHeight,
-        },
-      }),
+    serverName
+      ? text(72, 158, serverName, {
+          family: FAMILY.sans,
+          size: 25,
+          weight: 600,
+        })
+      : "",
+    `<text x="60" y="367" font-family="${FAMILY.display}" font-size="206" font-weight="800"` +
+      ` letter-spacing="-11" fill="${COLOR.fg}">${escapeXml(formatShareCardScore(data.score))}` +
+      `<tspan dx="12" dy="-15" font-size="41" font-weight="600" letter-spacing="0"` +
+      ` fill="${COLOR.muted}">/100</tspan></text>`,
+    `<circle cx="77.5" cy="431" r="5.5" fill="${TONE_TEXT[verdict.tone]}"/>`,
+    text(95, 440, verdict.label, {
+      family: FAMILY.sans,
+      size: 25,
+      weight: 600,
+      fill: TONE_TEXT[verdict.tone],
+    }),
+    ...suites.map((suite, index) =>
+      suiteRow(suite, index, rowHeight, index === suites.length - 1),
     ),
-    at(
-      844,
-      42,
-      {
-        width: 284,
-        justifyContent: "flex-end",
-        fontFamily: SHARE_CARD_FONTS.mono,
-        fontSize: 13,
-        letterSpacing: 1.8,
-        color: COLOR.muted,
-      },
-      "MCP CONFORMANCE REPORT",
-    ),
-    data.serverName
-      ? at(
-          72,
-          132,
-          {
-            width: 590,
-            fontSize: 25,
-            fontWeight: 600,
-            color: COLOR.fg,
-            overflow: "hidden",
-            whiteSpace: "nowrap",
-            textOverflow: "ellipsis",
-          },
-          data.serverName,
-        )
-      : null,
-    at(
-      60,
-      190,
-      { alignItems: "flex-end" },
-      box(
-        {
-          fontFamily: SHARE_CARD_FONTS.display,
-          fontWeight: 800,
-          fontSize: 206,
-          lineHeight: 1,
-          letterSpacing: -11,
-          color: COLOR.fg,
-        },
-        formatShareCardScore(data.score),
-      ),
-      box(
-        {
-          fontFamily: SHARE_CARD_FONTS.display,
-          fontWeight: 600,
-          fontSize: 41,
-          color: COLOR.muted,
-          marginLeft: 12,
-          paddingBottom: 34,
-        },
-        "/100",
-      ),
-    ),
-    at(
-      72,
-      416,
-      {
-        alignItems: "center",
-        gap: 12,
-        fontSize: 25,
-        fontWeight: 600,
-        color: TONE_TEXT[outcome.tone],
-      },
-      box({
-        width: 11,
-        height: 11,
-        borderRadius: 99,
-        background: TONE_TEXT[outcome.tone],
-      }),
-      outcome.label,
-    ),
-    at(
-      720,
-      118,
-      { flexDirection: "column", width: 400 },
-      ...suites.map((suite, index) =>
-        suiteRow(suite, rowHeight, index === suites.length - 1),
-      ),
-    ),
-    at(
+    segments(
       72,
       522,
-      { width: 1056, height: 10, gap: 3 },
-      ...[
+      FOOTER_WIDTH,
+      10,
+      [
         [data.passed, COLOR.ok],
         [data.failed, COLOR.bad],
         [data.couldNotRun, COLOR.warn],
         [data.notApplicable, COLOR.track],
-      ]
-        .filter(([count]) => (count as number) > 0)
-        .map(([count, color]) =>
-          box({
-            flexGrow: count as number,
-            flexBasis: 0,
-            height: 10,
-            borderRadius: 99,
-            background: color as string,
-          }),
-        ),
+      ],
+      3,
+      true,
     ),
-    at(
-      72,
-      556,
-      {
-        width: 1056,
-        justifyContent: "space-between",
-        fontFamily: SHARE_CARD_FONTS.mono,
-        fontSize: 15,
-        color: COLOR.muted,
-      },
-      box({}, shareCardChecksLine(data)),
-      box({}, footerRight),
+    ...checksLines.map((line, index) =>
+      text(72, 570 + index * FOOTER_LINE_HEIGHT, line, {
+        family: FAMILY.mono,
+        size: MONO_FOOTER_SIZE,
+        fill: COLOR.muted,
+      }),
     ),
-  );
+    footerRight
+      ? text(1128, 570, footerRight, {
+          family: FAMILY.mono,
+          size: MONO_FOOTER_SIZE,
+          fill: COLOR.muted,
+          anchor: "end",
+        })
+      : "",
+    `</svg>`,
+  ].join("");
 }

@@ -1,125 +1,150 @@
 /**
  * Draws the conformance share card as a PNG on the server, for the og:image of
- * a shared run's link. satori lays the shared element tree out into an SVG
- * (text becomes paths), and resvg rasterises it. The browser draws the same
- * tree for "Download PNG", so the two images cannot drift apart.
+ * a shared run's link: a headless Chromium screenshot of the card's SVG, the
+ * same markup the share dialog shows and saves.
  *
- * resvg is the WebAssembly build: no native binary to ship with the npm
- * package or the desktop app. Both the wasm and the fonts load once, lazily,
- * from their packages in node_modules.
+ * No dependency of its own. The hosted image already installs Chromium for
+ * widget rendering (the Dockerfile's "Bake in Chromium" step, and
+ * `mcp-app-browser-harness.ts`), through the `playwright` package we ship.
+ * Where Chromium is not installed (npx and desktop installs, which a crawler
+ * cannot reach anyway) there is no card: this returns null and the link
+ * unfurls with its title alone. It never installs Chromium: a public route
+ * must not start a download.
+ *
+ * The page runs no JavaScript and every request it makes is aborted: the SVG
+ * carries its fonts and wordmark inline, and nothing else may load.
  */
 
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import satori from "satori";
-import { initWasm, Resvg } from "@resvg/resvg-wasm";
+import type { Browser } from "playwright";
 import {
-  SHARE_CARD_FONTS,
+  SHARE_CARD_FONT_FACES,
   SHARE_CARD_HEIGHT,
   SHARE_CARD_WIDTH,
-  buildConformanceShareCard,
+  buildConformanceShareCardSvg,
+  shareCardFontFaceCss,
   type ConformanceShareCardData,
 } from "@/shared/conformance-share-card";
+import { isChromiumInstalled } from "../../utils/browser-rendering-setup.js";
 
-type SatoriFont = {
-  name: string;
-  data: Buffer;
-  weight: 400 | 500 | 600 | 800;
-  style: "normal";
-};
+const RENDER_TIMEOUT_MS = 15_000;
+/** Cards are drawn rarely (each is cached), so the browser does not linger. */
+const BROWSER_IDLE_MS = 5 * 60_000;
 
-const FONT_FILES: Array<{
-  name: string;
-  weight: SatoriFont["weight"];
-  file: string;
-}> = [
-  {
-    name: SHARE_CARD_FONTS.display,
-    weight: 600,
-    file: "@fontsource/montserrat/files/montserrat-latin-600-normal.woff",
-  },
-  {
-    name: SHARE_CARD_FONTS.display,
-    weight: 800,
-    file: "@fontsource/montserrat/files/montserrat-latin-800-normal.woff",
-  },
-  {
-    name: SHARE_CARD_FONTS.sans,
-    weight: 500,
-    file: "@fontsource/instrument-sans/files/instrument-sans-latin-500-normal.woff",
-  },
-  {
-    name: SHARE_CARD_FONTS.sans,
-    weight: 600,
-    file: "@fontsource/instrument-sans/files/instrument-sans-latin-600-normal.woff",
-  },
-  {
-    name: SHARE_CARD_FONTS.mono,
-    weight: 400,
-    file: "@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff",
-  },
-  {
-    name: SHARE_CARD_FONTS.mono,
-    weight: 500,
-    file: "@fontsource/jetbrains-mono/files/jetbrains-mono-latin-500-normal.woff",
-  },
-];
+let fontFaceCssPromise: Promise<string> | null = null;
+let browserPromise: Promise<Browser | null> | null = null;
+let activeRenders = 0;
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
-let fontsPromise: Promise<SatoriFont[]> | null = null;
-let wasmPromise: Promise<void> | null = null;
-
-function packageFile(specifier: string): string {
-  return createRequire(import.meta.url).resolve(specifier);
-}
-
-function loadFonts(): Promise<SatoriFont[]> {
-  fontsPromise ??= Promise.all(
-    FONT_FILES.map(async ({ name, weight, file }) => ({
-      name,
-      weight,
-      style: "normal" as const,
-      data: await readFile(packageFile(file)),
-    })),
-  ).catch((error) => {
-    // A failed load must not stick: the next request tries again.
-    fontsPromise = null;
+/** The card's faces, inlined from their `@fontsource` packages. Read once. */
+function loadFontFaceCss(): Promise<string> {
+  fontFaceCssPromise ??= (async () => {
+    const require = createRequire(import.meta.url);
+    const inlined = new Map<string, string>();
+    for (const { file } of SHARE_CARD_FONT_FACES) {
+      const bytes = await readFile(require.resolve(file));
+      inlined.set(file, `data:font/woff2;base64,${bytes.toString("base64")}`);
+    }
+    return shareCardFontFaceCss((file) => inlined.get(file) ?? "");
+  })().catch((error: unknown) => {
+    // A failed read must not stick: the next request tries again.
+    fontFaceCssPromise = null;
     throw error;
   });
-  return fontsPromise;
+  return fontFaceCssPromise;
 }
 
-function loadResvg(): Promise<void> {
-  wasmPromise ??= readFile(packageFile("@resvg/resvg-wasm/index_bg.wasm"))
-    .then((wasm) => initWasm(wasm))
-    .catch((error: unknown) => {
-      // initWasm throws if a previous call already initialised the module.
-      if (
-        error instanceof Error &&
-        /already initialized/i.test(error.message)
-      ) {
-        return;
-      }
-      wasmPromise = null;
-      throw error;
+// Same resolution as the widget harness: the runtime `playwright` package,
+// else `playwright-core` (present transitively).
+async function loadChromium() {
+  try {
+    return (await import("playwright")).chromium;
+  } catch {
+    return (await import("playwright-core")).chromium;
+  }
+}
+
+/** One browser for the process, launched on demand; null without Chromium. */
+function getBrowser(): Promise<Browser | null> {
+  if (browserPromise) return browserPromise;
+  const launching = (async () => {
+    if (!(await isChromiumInstalled())) return null;
+    const chromium = await loadChromium();
+    // The same flags the widget harness launches with: containers run as
+    // root and have a small /dev/shm.
+    return chromium.launch({
+      headless: true,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+      ],
     });
-  return wasmPromise;
+  })();
+  browserPromise = launching;
+  // Forget this browser when it goes away, but only if it is still the
+  // current one: a closed browser must not drop its replacement.
+  const forget = () => {
+    if (browserPromise === launching) browserPromise = null;
+  };
+  launching.then((browser) => browser?.on("disconnected", forget), forget);
+  return launching;
 }
 
+/** The card as a 1200 × 630 PNG, or null where there is no Chromium to draw it. */
 export async function renderConformanceShareCardPng(
   data: ConformanceShareCardData,
-): Promise<Uint8Array> {
-  const [fonts] = await Promise.all([loadFonts(), loadResvg()]);
-  const svg = await satori(buildConformanceShareCard(data), {
-    width: SHARE_CARD_WIDTH,
-    height: SHARE_CARD_HEIGHT,
-    fonts,
-  });
-  const resvg = new Resvg(svg, {
-    fitTo: { mode: "width", value: SHARE_CARD_WIDTH },
-  });
+): Promise<Uint8Array | null> {
+  activeRenders += 1;
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = null;
   try {
-    return resvg.render().asPng();
+    const browser = await getBrowser();
+    if (!browser) return null;
+    const svg = buildConformanceShareCardSvg(data, {
+      fontFaceCss: await loadFontFaceCss(),
+    });
+    const context = await browser.newContext({
+      viewport: { width: SHARE_CARD_WIDTH, height: SHARE_CARD_HEIGHT },
+      javaScriptEnabled: false,
+    });
+    try {
+      await context.route("**/*", (route) => route.abort());
+      const page = await context.newPage();
+      await page.setContent(
+        `<!doctype html><body style="margin:0;background:#000">${svg}</body>`,
+        { timeout: RENDER_TIMEOUT_MS },
+      );
+      return await page.screenshot({ type: "png", timeout: RENDER_TIMEOUT_MS });
+    } finally {
+      await context.close();
+    }
   } finally {
-    resvg.free();
+    activeRenders -= 1;
+    if (activeRenders === 0) {
+      idleTimer = setTimeout(
+        () => void closeShareCardBrowser(),
+        BROWSER_IDLE_MS,
+      );
+      idleTimer.unref?.();
+    }
   }
+}
+
+/** Closes the browser this module launched, if any (idle, and tests). */
+export async function closeShareCardBrowser(): Promise<void> {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = null;
+  const pending = browserPromise;
+  browserPromise = null;
+  if (!pending) return;
+  let browser: Browser | null;
+  try {
+    browser = await pending;
+  } catch {
+    // The launch failed, and that render already reported it: nothing to close.
+    return;
+  }
+  await browser?.close();
 }

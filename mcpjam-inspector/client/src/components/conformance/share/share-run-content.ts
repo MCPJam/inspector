@@ -18,6 +18,8 @@ export type ShareableRunDetail = {
   failed: number;
   couldNotRun: number;
   notApplicable: number;
+  /** Reported but not scored by the run's conformance profile. */
+  pending?: number;
   advisoryCount?: number;
   protocolVersion?: string | null;
   reports: Array<{
@@ -47,6 +49,7 @@ export function shareCardDataFromRun(
     failed: run.failed,
     couldNotRun: run.couldNotRun,
     notApplicable: run.notApplicable,
+    pending: run.pending ?? 0,
     advisoryCount: run.advisoryCount ?? 0,
     protocolVersion: run.protocolVersion ?? null,
     suites: run.reports.map((report) => ({
