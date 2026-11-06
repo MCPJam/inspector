@@ -64,6 +64,8 @@ import {
   runEvalSuiteWithAiSdk,
 } from "../../evals-runner.js";
 import type { MCPJamEngineErrorEvent } from "../../../utils/mcpjam-stream-handler";
+import { APICallError, NoOutputGeneratedError } from "ai";
+import { logger } from "../../../utils/logger";
 import {
   codexProviderEvidenceFromNotification,
   harnessFailureEvidenceOf,
@@ -440,24 +442,34 @@ describe("local runner — the provider's own typed answer", () => {
   it("a provider 401 (a bad key) is an excluded auth failure, even when the result then rejects", async () => {
     // The SDK reports the provider's answer as the stream's error part, then
     // rejects the result promises with a generic "no output" error.
-    streamTextMock.mockReturnValueOnce({
-      ...streamThatFailedWith({
-        name: "AI_APICallError",
-        message: "Incorrect API key provided",
-        statusCode: 401,
-        isRetryable: false,
-      }),
-      response: Promise.reject(
-        Object.assign(new Error("No output generated."), {
-          name: "AI_NoOutputGeneratedError",
-        }),
-      ),
+    const providerError = new APICallError({
+      message: "Incorrect API key provided",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 401,
+      isRetryable: false,
     });
+    streamTextMock.mockReturnValueOnce({
+      ...streamThatFailedWith(providerError),
+      get response() {
+        return Promise.reject(new NoOutputGeneratedError());
+      },
+    });
+    const loggerError = vi.spyOn(logger, "error");
     const { rows } = await runSuite(1, "gpt-4-turbo");
     expect(rows[0]).toMatchObject({
       status: "failed",
       infraError: { class: "auth", layer: "model", retryable: false },
+      // The provider's sentence, not the SDK's "No output generated."
+      error: "Incorrect API key provided",
     });
+    // Sentry gets the provider's error class and its status.
+    expect(loggerError).toHaveBeenCalledWith(
+      "[evals] streaming iteration failed",
+      providerError,
+      { httpStatus: 401 },
+    );
+    loggerError.mockRestore();
   });
 
   it("a customer-controlled endpoint's 503 is a measured failure, never infra", async () => {
