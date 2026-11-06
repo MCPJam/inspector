@@ -34,13 +34,25 @@ describe("EVAL_NAV_PAGES", () => {
         analyticsPage: "suite_settings",
         Page: SuiteSettingsPage,
       },
-      "case-new": { analyticsPage: "new_test_case", Page: null },
-      "case-settings": { analyticsPage: "test_case", Page: null },
-      "case-evaluators": { analyticsPage: "test_case_evaluators", Page: null },
+      "case-new": {
+        analyticsPage: "new_test_case",
+        Page: expect.any(Function),
+      },
+      "case-settings": {
+        analyticsPage: "test_case",
+        Page: expect.any(Function),
+      },
+      "case-evaluators": {
+        analyticsPage: "test_case_evaluators",
+        Page: expect.any(Function),
+      },
       "run-detail": { analyticsPage: "suite_run", Page: SuiteRunNavPage },
       "test-run": { analyticsPage: "test_run", Page: TestRunPage },
       iteration: { analyticsPage: "iteration", Page: IterationPage },
-      "test-run-edit": { analyticsPage: "test_run_edit", Page: null },
+      "test-run-edit": {
+        analyticsPage: "test_run_edit",
+        Page: expect.any(Function),
+      },
     });
   });
 });
