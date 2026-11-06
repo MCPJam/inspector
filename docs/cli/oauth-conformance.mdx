@@ -51,7 +51,7 @@ Each conformance run walks through:
 6. **Authenticated request** — retries the MCP request with the token
 7. **Post-auth verification** (optional) — connects via MCP and lists tools / calls a tool
 
-When `--conformance-checks` is enabled, six additional negative checks run after the flow:
+After the flow, six negative checks always run:
 - **DCR redirect URI policy** — attempts dynamic client registration with a non-loopback `http://` redirect URI and expects rejection under the MCP authorization profile
 - **Invalid client** — confirms the auth server rejects an unknown client ID
 - **Invalid redirect at the authorization endpoint** — sends an authorization request with a mismatched `redirect_uri` and looks for rejection before the server redirects back to it
@@ -192,11 +192,10 @@ mcpjam oauth conformance \
   --url https://your-server.com/mcp \
   --protocol-version 2025-11-25 \
   --registration dcr \
-  --conformance-checks \
   --verify-tools
 ```
 
-This adds 6 checks after the main flow: DCR redirect URI policy, invalid client rejection, invalid redirect enforcement at the authorization endpoint, invalid bearer token rejection at the MCP server, invalid redirect enforcement at the token endpoint, and token format validation.
+These 6 checks run after the main flow by default, as they do in the Inspector UI: DCR redirect URI policy, invalid client rejection, invalid redirect enforcement at the authorization endpoint, invalid bearer token rejection at the MCP server, invalid redirect enforcement at the token endpoint, and token format validation.
 
 ## Registration strategies
 
@@ -335,7 +334,7 @@ oauth-conformance:
 | `--step-timeout <ms>` | No | `30000` | Per-step timeout |
 | `--verify-tools` | No | | After OAuth, connect and list tools |
 | `--verify-call-tool <name>` | No | | Also call the named tool (implies `--verify-tools`) |
-| `--conformance-checks` | No | | Run additional negative OAuth checks after the main flow |
+| `--conformance-checks` | No | | Deprecated. The negative OAuth checks now always run; this flag is accepted and ignored |
 | `--advice-id <id>` | No | all | Restrict advice to one or more advice IDs. An unknown ID is an error that lists the valid ones |
 | `--credentials-out <path>` | No | | Write OAuth credentials to file (mode 0600); stdout has secrets redacted |
 | `--print-url` | No | | Print consent URL to stderr instead of launching a browser |

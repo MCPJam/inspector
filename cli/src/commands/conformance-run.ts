@@ -182,7 +182,7 @@ export function normalizeConformanceRunSuites(
   return out;
 }
 
-function buildOAuthConfig(
+export function buildOAuthConfig(
   server: MCPServerConfig,
   options: CompositeConformanceOptions,
 ): OAuthConformanceConfig {
@@ -211,5 +211,8 @@ function buildOAuthConfig(
       clientId,
       clientSecret,
     },
+    // On by default, as in `oauth conformance`. The redirect checks skip as
+    // not applicable to client_credentials.
+    oauthConformanceChecks: true,
   };
 }

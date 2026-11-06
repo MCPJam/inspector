@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import test from "node:test";
 import { Command } from "commander";
 import {
+  buildOAuthConfig,
   normalizeConformanceRunSuites,
   registerConformanceRunCommand,
 } from "../src/commands/conformance-run.js";
@@ -65,6 +66,19 @@ test("conformance run rejects an unknown suite", () => {
     (error) =>
       error instanceof CliError && error.message.includes("Unknown suite"),
   );
+});
+
+test("conformance run --suite oauth runs the OAuth negative checks", () => {
+  const config = buildOAuthConfig(
+    { url: "https://example.com/mcp" },
+    {
+      oauthStrategy: "client_credentials",
+      clientId: "client",
+      clientSecret: "secret",
+    },
+  );
+
+  assert.equal(config.oauthConformanceChecks, true);
 });
 
 test("a single-suite command does not publish just because a key is exported", async () => {
