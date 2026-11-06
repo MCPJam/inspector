@@ -196,6 +196,7 @@ describe("GET /api/web/computers/config", () => {
         browserConsent: true,
         personalCloudAvailable: false,
         ephemeralCloudAvailable: false,
+        pluginComputerRuntime: false,
       },
       // A different axis from the engines: an engine decides where a bash call
       // runs, a harness target decides where the whole vendor agent runs. Off
@@ -219,6 +220,7 @@ describe("GET /api/web/computers/config", () => {
       browserConsent: true,
       personalCloudAvailable: true,
       ephemeralCloudAvailable: true,
+      pluginComputerRuntime: false,
     });
   });
 
@@ -238,6 +240,7 @@ describe("GET /api/web/computers/config", () => {
       browserConsent: true,
       personalCloudAvailable: true,
       ephemeralCloudAvailable: false,
+        pluginComputerRuntime: false,
     });
   });
 
@@ -246,6 +249,7 @@ describe("GET /api/web/computers/config", () => {
     stubLocalDataPlaneEnv();
     const response = await createApp().request("/api/web/computers/config");
     const body = (await response.json()) as Record<string, any>;
+    expect(body.capabilities.pluginComputerRuntime).toBe(true);
     expect(body.engines.local.available).toBe(false);
     expect(body.engines.local.workspaceDisplayRoot).toBeNull();
     expect(body.defaultEngine).toBe("cloud");

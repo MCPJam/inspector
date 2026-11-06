@@ -7,10 +7,12 @@ export function useCompareChatEnvironment({
   hostedContext,
   harnessId,
   hostResolved,
+  computerAttached,
 }: {
   hostedContext?: HostedRuntimeContext;
   harnessId?: string | null;
   hostResolved: boolean;
+  computerAttached?: boolean;
 }) {
   const hiddenEnvironment = usePlaygroundHiddenEnvironment({
     projectId: hostedContext?.projectId ?? null,
@@ -20,6 +22,7 @@ export function useCompareChatEnvironment({
       !hostedContext?.scenarioId,
     harnessId: harnessId,
     hostResolved: hostResolved,
+    computerAttached,
   });
   const columnHostedContext = useMemo(
     () => ({

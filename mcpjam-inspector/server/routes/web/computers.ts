@@ -29,6 +29,7 @@
  *                           misconfigured remote URL can't forward in a loop.
  */
 import { Hono } from "hono";
+import { canColocatePluginStdio } from "../../services/plugins/computer-stdio.js";
 import {
   HOSTED_MODE,
   LOCAL_BROWSER_ENABLED,
@@ -115,6 +116,7 @@ export function createComputersRoutes(runner: BashRunner = e2bRunner): Hono {
         browserConsent: true,
         personalCloudAvailable,
         ephemeralCloudAvailable: localConfigured,
+        pluginComputerRuntime: canColocatePluginStdio(),
       },
       // Harness EXECUTION targets, which are a different axis from the
       // computer engines above: an engine decides where a bash tool call runs,
