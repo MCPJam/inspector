@@ -2,6 +2,8 @@ import { Fragment, type ReactNode } from "react";
 import {
   ArrowLeft,
   ChevronDown,
+  EllipsisVertical,
+  GraduationCap,
   Play,
   Plus,
 } from "lucide-react";
@@ -374,13 +376,16 @@ export interface EvalNavLandingHeaderProps {
   tab: EvalNavLandingTab;
   onTabChange: (tab: EvalNavLandingTab) => void;
   onCreateSuite: () => void;
+  /** ⋮ › Tutorial. */
+  onOpenTutorial: () => void;
 }
 
-/** The Evaluate landing header with the flag on: Suites | Runs and Create suite. */
+/** The Evaluate landing header with the flag on: Suites | Runs, Create suite and ⋮ › Tutorial. */
 export function EvalNavLandingHeader({
   tab,
   onTabChange,
   onCreateSuite,
+  onOpenTutorial,
 }: EvalNavLandingHeaderProps) {
   return (
     <LandingPageHeader
@@ -405,6 +410,26 @@ export function EvalNavLandingHeader({
             <Plus className="h-4 w-4" aria-hidden />
             Create suite
           </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8 data-[state=open]:bg-chrome-hover"
+                aria-label="More options"
+                title="More options"
+              >
+                <EllipsisVertical className="size-4" aria-hidden />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={onOpenTutorial}>
+                <GraduationCap aria-hidden />
+                Tutorial
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       }
     />

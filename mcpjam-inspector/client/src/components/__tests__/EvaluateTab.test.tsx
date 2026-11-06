@@ -782,7 +782,7 @@ describe("EvaluateTab", () => {
         mocks.route.current = route;
         render(<EvaluateTab projectId="ws-1" />);
         expect(
-          screen.getByRole("button", { name: "Create suite" }),
+          screen.getByRole("button", { name: "More options" }),
         ).toBeInTheDocument();
         expect(screen.queryByTestId("evals-suites-overview")).toBeNull();
         expect(
@@ -802,7 +802,7 @@ describe("EvaluateTab", () => {
           screen.getByRole("button", { name: /^overview$/i }),
         ).toHaveAttribute("aria-current", "page");
         expect(
-          screen.queryByRole("button", { name: "Create suite" }),
+          screen.queryByRole("button", { name: "More options" }),
         ).toBeNull();
       },
     );

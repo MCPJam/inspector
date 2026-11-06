@@ -273,15 +273,17 @@ describe("EvalsHeader", () => {
 });
 
 describe("EvalNavLandingHeader", () => {
-  it("shows Suites then Runs and Create suite", async () => {
+  it("shows Suites then Runs, Create suite and a ⋮ menu with Tutorial", async () => {
     const user = userEvent.setup();
     const onTabChange = vi.fn();
     const onCreateSuite = vi.fn();
+    const onOpenTutorial = vi.fn();
     render(
       <EvalNavLandingHeader
         tab="suites"
         onTabChange={onTabChange}
         onCreateSuite={onCreateSuite}
+        onOpenTutorial={onOpenTutorial}
       />,
     );
     const tabs = within(screen.getByTestId("evals-header-tabs"));
@@ -295,5 +297,12 @@ describe("EvalNavLandingHeader", () => {
     expect(onTabChange).toHaveBeenCalledWith("runs");
     await user.click(screen.getByRole("button", { name: "Create suite" }));
     expect(onCreateSuite).toHaveBeenCalledOnce();
+    const more = screen.getByRole("button", { name: "More options" });
+    expect(more).toHaveAttribute("title", "More options");
+    await user.click(more);
+    const items = screen.getAllByRole("menuitem");
+    expect(items.map((item) => item.textContent)).toEqual(["Tutorial"]);
+    await user.click(items[0]);
+    expect(onOpenTutorial).toHaveBeenCalledOnce();
   });
 });
