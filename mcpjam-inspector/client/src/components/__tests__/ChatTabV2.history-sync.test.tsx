@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
 import { track } from "@/lib/analytics";
 import { ChatTabV2 } from "../ChatTabV2";
+import { PRE_SEND_SYNC_TIMEOUT_MS } from "@/components/chat-v2/history/pre-send-sync";
 import {
   NO_RECEIPT_RECONCILE_WINDOW_MS,
   RECEIPT_RECONCILE_WINDOW_MS,
@@ -1076,6 +1077,61 @@ describe("ChatTabV2 history sync", () => {
       "data-submitting",
       "false",
     );
+  });
+
+  it("gives up on a pre-send sync that never answers and frees Send", async () => {
+    const detailResponse = {
+      ok: true,
+      session: {
+        ...mockHistorySession,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["server-1"] },
+      },
+      widgetSnapshots: [],
+    };
+    mockGetChatHistoryDetail.mockResolvedValue(detailResponse);
+    render(<ChatTabV2 {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+
+    const timeout = new AbortController();
+    const timeoutSpy = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockReturnValue(timeout.signal);
+    try {
+      mockGetChatHistoryDetail.mockImplementation(
+        (_params: unknown, options?: { signal?: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            options?.signal?.addEventListener("abort", () =>
+              reject(options.signal?.reason),
+            );
+          }),
+      );
+      fireEvent.change(screen.getByTestId("chat-input"), {
+        target: { value: "stuck message" },
+      });
+      fireEvent.submit(screen.getByTestId("chat-input-form"));
+      await flushMicrotasks();
+      expect(screen.getByTestId("chat-input-form")).toHaveAttribute(
+        "data-submitting",
+        "true",
+      );
+      expect(timeoutSpy).toHaveBeenCalledWith(PRE_SEND_SYNC_TIMEOUT_MS);
+
+      timeout.abort(new DOMException("timed out", "TimeoutError"));
+      await flushMicrotasks();
+      await flushMicrotasks();
+
+      expect(screen.getByTestId("chat-input-form")).toHaveAttribute(
+        "data-submitting",
+        "false",
+      );
+      expect(screen.getByTestId("chat-input")).toHaveValue("stuck message");
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    } finally {
+      timeoutSpy.mockRestore();
+    }
   });
 
   it("switches new shared threads to project visibility without persisting a draft", async () => {

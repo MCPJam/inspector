@@ -127,6 +127,7 @@ import {
   type ChatHistoryTurnTrace,
   type ChatHistoryWidgetSnapshot,
 } from "@/lib/apis/web/chat-history-api";
+import { PRE_SEND_SYNC_TIMEOUT_MS } from "@/components/chat-v2/history/pre-send-sync";
 import { useProjectServers } from "@/hooks/useViews";
 import { useProjectMembers } from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
@@ -862,7 +863,11 @@ export function ChatTabV2({
   );
 
   const refreshCurrentHistorySession = useCallback(
-    async ({ retries = 0, markRead = false } = {}) => {
+    async ({
+      retries = 0,
+      markRead = false,
+      signal,
+    }: { retries?: number; markRead?: boolean; signal?: AbortSignal } = {}) => {
       if (!showHistoryRail) {
         return null;
       }
@@ -873,11 +878,14 @@ export function ChatTabV2({
 
       for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
-          const detail = await getChatHistoryDetail({
-            sessionId: activeHistorySessionId ?? undefined,
-            chatSessionId,
-            projectId: effectiveHostedProjectId ?? undefined,
-          });
+          const detail = await getChatHistoryDetail(
+            {
+              sessionId: activeHistorySessionId ?? undefined,
+              chatSessionId,
+              projectId: effectiveHostedProjectId ?? undefined,
+            },
+            { signal },
+          );
           setActiveHistorySessionId(detail.session._id);
           setLoadedThreadOwnerUserId(detail.session.userId ?? null);
           setPendingDirectVisibility(detail.session.directVisibility);
@@ -976,7 +984,10 @@ export function ChatTabV2({
   const ensureThreadReadyForSend = useCallback(async () => {
     let detail: ChatHistoryDetailSession | null = null;
     try {
-      detail = await refreshCurrentHistorySession();
+      // Bounded: the composer's send lock waits on this request.
+      detail = await refreshCurrentHistorySession({
+        signal: AbortSignal.timeout(PRE_SEND_SYNC_TIMEOUT_MS),
+      });
     } catch (error) {
       console.error(
         "[ChatTabV2] Failed to sync chat history before send",

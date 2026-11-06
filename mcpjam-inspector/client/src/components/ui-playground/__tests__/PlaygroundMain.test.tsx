@@ -17,6 +17,7 @@ import { useHostContextStore } from "@/stores/client-context-store";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { saveSelectedModelId } from "@/lib/selected-model-storage";
 import { invalidateChatHistoryPrefetch } from "@/components/chat-v2/history/chat-history-prefetch";
+import { PRE_SEND_SYNC_TIMEOUT_MS } from "@/components/chat-v2/history/pre-send-sync";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
 import {
   resetShownPluginNotices,
@@ -2206,6 +2207,43 @@ describe("PlaygroundMain", () => {
         fireEvent.submit(screen.getByTestId("chat-input"));
       });
       expect(sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("gives up on a pre-send sync that never answers, frees Send and keeps the draft", async () => {
+      await openSavedThread();
+      const timeout = new AbortController();
+      const timeoutSpy = vi
+        .spyOn(AbortSignal, "timeout")
+        .mockReturnValue(timeout.signal);
+      try {
+        // A history request that only ends when its signal aborts.
+        mockGetChatHistoryDetail.mockImplementation(
+          (_params: unknown, options?: { signal?: AbortSignal }) =>
+            new Promise((_resolve, reject) => {
+              options?.signal?.addEventListener("abort", () =>
+                reject(options.signal?.reason),
+              );
+            }),
+        );
+        fireEvent.change(screen.getByTestId("chat-input-field"), {
+          target: { value: "stuck message" },
+        });
+        await act(async () => {
+          fireEvent.submit(screen.getByTestId("chat-input"));
+        });
+        expect(composerProps().isSubmitting).toBe(true);
+        expect(timeoutSpy).toHaveBeenCalledWith(PRE_SEND_SYNC_TIMEOUT_MS);
+
+        await act(async () => {
+          timeout.abort(new DOMException("timed out", "TimeoutError"));
+        });
+
+        await waitFor(() => expect(composerProps().isSubmitting).toBe(false));
+        expect(composerProps().value).toBe("stuck message");
+        expect(sendMessage).not.toHaveBeenCalled();
+      } finally {
+        timeoutSpy.mockRestore();
+      }
     });
 
     it("sends once when the fullscreen composer submits twice during the pre-send sync", async () => {

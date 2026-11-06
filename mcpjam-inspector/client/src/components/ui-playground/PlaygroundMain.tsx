@@ -343,6 +343,7 @@ import {
   type ChatHistoryWidgetSnapshot,
   type ChatHistoryTurnTrace,
 } from "@/lib/apis/web/chat-history-api";
+import { PRE_SEND_SYNC_TIMEOUT_MS } from "@/components/chat-v2/history/pre-send-sync";
 import { resolveRestorableServerNames } from "@/components/chat-v2/history/session-restore";
 import {
   getCachedChatHistoryDetail,
@@ -3648,14 +3649,21 @@ export function PlaygroundMain({
   };
 
   const refreshCurrentHistorySession = useCallback(
-    async ({ retries = 0, markRead = false } = {}) => {
+    async ({
+      retries = 0,
+      markRead = false,
+      signal,
+    }: { retries?: number; markRead?: boolean; signal?: AbortSignal } = {}) => {
       if (!activeHistorySessionId && !chatSessionId) return null;
       for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
-          const detail = await getChatHistoryDetail({
-            chatSessionId,
-            projectId: convexProjectId ?? undefined,
-          });
+          const detail = await getChatHistoryDetail(
+            {
+              chatSessionId,
+              projectId: convexProjectId ?? undefined,
+            },
+            { signal },
+          );
           // A previous thread's request (or its still-rendered row id) must
           // never attach its persistence cursor to the newly opened chat.
           if (
@@ -3728,7 +3736,10 @@ export function PlaygroundMain({
 
     let detail: Awaited<ReturnType<typeof refreshCurrentHistorySession>> = null;
     try {
-      detail = await refreshCurrentHistorySession();
+      // Bounded: the composer's send lock waits on this request.
+      detail = await refreshCurrentHistorySession({
+        signal: AbortSignal.timeout(PRE_SEND_SYNC_TIMEOUT_MS),
+      });
     } catch (error) {
       console.error(
         "[PlaygroundMain] Failed to sync chat history before send",
