@@ -117,7 +117,9 @@ describe("no-verdict predicates", () => {
   it("names the terminal run statuses that carry no verdict", () => {
     // `completed` is the only terminal run status a gate may read a verdict from.
     expect(
-      EVAL_RUN_TERMINAL_STATUSES.filter((status) => !isEvalRunNonVerdictStatus(status))
+      EVAL_RUN_TERMINAL_STATUSES.filter(
+        (status) => !isEvalRunNonVerdictStatus(status)
+      )
     ).toEqual(["completed"]);
   });
 
