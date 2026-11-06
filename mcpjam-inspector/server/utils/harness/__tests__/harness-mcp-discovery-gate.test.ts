@@ -19,7 +19,10 @@ function manager(clientCapabilities: Record<string, unknown> = {}) {
 
 const APPS = { extensions: { "io.modelcontextprotocol/ui": {} } };
 
-function gate(overrides: Record<string, unknown> = {}) {
+type GateArgs = Parameters<typeof assertHarnessMcpDiscoveryGate>[0];
+
+/** The manager is a two-method stub, so the literal is cast once here. */
+function gate(overrides: Record<string, unknown> = {}): GateArgs {
   return {
     required: true,
     plan: { delivery: "mcp-endpoint", forwardingKind: "profiled", gaps: [] },
@@ -36,7 +39,7 @@ function gate(overrides: Record<string, unknown> = {}) {
     localExecution: false,
     brokeredEndpoint: "platform",
     ...overrides,
-  } as Parameters<typeof assertHarnessMcpDiscoveryGate>[0];
+  } as never;
 }
 
 beforeEach(() => discovery.assert.mockReset());

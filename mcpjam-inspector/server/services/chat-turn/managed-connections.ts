@@ -7,6 +7,8 @@ import {
 } from "../../utils/harness/input-host.js";
 import { isForwardingOrganization } from "../../utils/harness/forwarding/native-turn.js";
 import { qualifiedForwardingRuntime } from "../../utils/harness/forwarding/runtime-contract.js";
+import { nativeForwardingEnabled } from "../../utils/harness/harness-flags.js";
+import { hostedForwardingSurface } from "../../utils/harness/harness-mcp-plan.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
 import { chatTurnIsolatedServerIds } from "../../utils/plugin-server-isolation.js";
 import {
@@ -323,9 +325,10 @@ export async function prepareManagedConnections(args: {
     resolvedExecution.harness &&
     qualifiedForwardingRuntime(getHarnessAdapter(resolvedExecution.harness))?.ownedInput === true &&
     rawBody.hostedHarnessInputVersion === HOSTED_HARNESS_INPUT_VERSION &&
-    process.env.HARNESS_NATIVE_FORWARDING === "true" &&
+    nativeForwardingEnabled() &&
     (turnRail === "hosted" || turnRail === "org") &&
-    typeof inputHostId === "string" && inputHostId.length > 0 && !scenarioId && !rawBody.harnessExecutionTarget
+    typeof inputHostId === "string" &&
+    hostedForwardingSurface({ hostId: inputHostId, scenarioId, localExecution: !!rawBody.harnessExecutionTarget })
       ? createHarnessInputHost({
           allowedServerIds: new Set(effectiveServerIds),
           modes: harnessElicitationModes(effectiveClientCapabilities),

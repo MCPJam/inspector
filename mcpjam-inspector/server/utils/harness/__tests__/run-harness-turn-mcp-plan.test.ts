@@ -263,7 +263,11 @@ const ROUTES = {
 } as const;
 
 function admit(route: keyof typeof ROUTES) {
-  forwarding.admission.mockReturnValue({ ...ROUTES[route].admission });
+  const { admission } = ROUTES[route];
+  forwarding.admission.mockReturnValue({
+    ...admission,
+    gaps: [...admission.gaps],
+  });
   return enrolled(ROUTES[route].options);
 }
 
