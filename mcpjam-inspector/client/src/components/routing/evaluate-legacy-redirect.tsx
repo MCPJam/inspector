@@ -14,6 +14,7 @@ import {
   redirectForIteration,
   type IterationLocation,
   type LegacyEvaluateRedirect,
+  type LegacyIterationLookup,
 } from "@/lib/evaluate-legacy-paths";
 import { buildProjectPath, parseProjectPath } from "@/lib/project-route";
 import { ScopedNavigate } from "./scoped-navigate";
@@ -30,17 +31,14 @@ const iterationQuery = makeFunctionReference<
  * id the viewer cannot read falls back instead of reaching the error boundary.
  */
 function useIterationLocation(
-  iterationId: string | null,
+  iterationId: string,
 ): IterationLocation | null | undefined {
-  const queries = useMemo(() => {
-    const requests: Parameters<typeof useQueries>[0] = {};
-    if (iterationId) {
-      requests.iteration = { query: iterationQuery, args: { iterationId } };
-    }
-    return requests;
-  }, [iterationId]);
+  const queries = useMemo(
+    () => ({ iteration: { query: iterationQuery, args: { iterationId } } }),
+    [iterationId],
+  );
   const result: unknown = useQueries(queries).iteration;
-  if (!iterationId || result === undefined) return undefined;
+  if (result === undefined) return undefined;
   if (result instanceof Error || !isIterationLocation(result)) return null;
   return result;
 }
@@ -74,6 +72,57 @@ function redirectState(redirect: LegacyEvaluateRedirect): EvalNavLocationState {
   };
 }
 
+interface RedirectTarget {
+  projectId: string | null;
+  hash: string;
+}
+
+/** Replaces the address with the redirect's page and reports it once. */
+function LegacyRedirect({
+  redirect,
+  projectId,
+  hash,
+}: RedirectTarget & { redirect: LegacyEvaluateRedirect }) {
+  const state = useMemo(() => redirectState(redirect), [redirect]);
+  // A ref survives StrictMode's double effects, so the event fires once.
+  const fired = useRef(false);
+  useEffect(() => {
+    if (fired.current) return;
+    fired.current = true;
+    trackEvalNav("eval_nav_redirected", {
+      from_kind: redirect.fromKind,
+      to_kind: redirect.to.type,
+      matched: true,
+      project_id: projectId,
+    });
+  }, [projectId, redirect]);
+  const target = `${redirect.path}${hash}`;
+  return (
+    <ScopedNavigate
+      to={projectId ? buildProjectPath(projectId, target) : target}
+      replace
+      state={state}
+    />
+  );
+}
+
+/**
+ * Reads the iteration only once a lookup is actually needed, so the gate
+ * itself never depends on Convex. Renders nothing while it loads.
+ */
+function IterationLookupRedirect({
+  lookup,
+  ...target
+}: RedirectTarget & { lookup: LegacyIterationLookup }) {
+  const iteration = useIterationLocation(lookup.iterationId);
+  const redirect = useMemo(
+    () =>
+      iteration === undefined ? null : redirectForIteration(lookup, iteration),
+    [lookup, iteration],
+  );
+  return redirect ? <LegacyRedirect redirect={redirect} {...target} /> : null;
+}
+
 /**
  * With evaluate-nav-enabled on, replaces an old Evaluate address with its
  * per-layer page before today's page mounts, so an old editor or drawer never
@@ -94,63 +143,31 @@ export function EvaluateLegacyRedirectGate({
     () => matchLegacyEvaluatePath(logicalPath, search),
     [logicalPath, search],
   );
-  const lookup = match.kind === "lookup" ? match.lookup : null;
-  const iteration = useIterationLocation(
-    enabled === true && lookup ? lookup.iterationId : null,
-  );
 
-  const redirect = useMemo(() => {
-    if (enabled !== true) return null;
-    if (match.kind === "redirect") return match.redirect;
-    if (lookup && iteration !== undefined) {
-      return redirectForIteration(lookup, iteration);
-    }
-    return null;
-  }, [enabled, match, lookup, iteration]);
-  const state = useMemo(
-    () => (redirect ? redirectState(redirect) : null),
-    [redirect],
-  );
-
-  // Once per address, across re-renders and StrictMode's double effects.
-  const firedFor = useRef<string | null>(null);
+  // Once per unmatched address, across re-renders and StrictMode.
+  const reportedUnmatched = useRef<string | null>(null);
   const addressKey = `${pathname}${search}`;
   const unmatched = enabled === true && match.kind === "unmatched";
   useEffect(() => {
-    if (!redirect && !unmatched) return;
-    if (firedFor.current === addressKey) return;
-    firedFor.current = addressKey;
-    trackEvalNav(
-      "eval_nav_redirected",
-      redirect
-        ? {
-            from_kind: redirect.fromKind,
-            to_kind: redirect.to.type,
-            matched: true,
-            project_id: projectId,
-          }
-        : {
-            from_kind: "unknown",
-            to_kind: null,
-            matched: false,
-            project_id: projectId,
-          },
-    );
-  }, [addressKey, projectId, redirect, unmatched]);
+    if (!unmatched || reportedUnmatched.current === addressKey) return;
+    reportedUnmatched.current = addressKey;
+    trackEvalNav("eval_nav_redirected", {
+      from_kind: "unknown",
+      to_kind: null,
+      matched: false,
+      project_id: projectId,
+    });
+  }, [addressKey, projectId, unmatched]);
 
-  if (redirect && state) {
-    const target = `${redirect.path}${hash}`;
-    return (
-      <ScopedNavigate
-        to={scoped ? buildProjectPath(scoped.projectId, target) : target}
-        replace
-        state={state}
-      />
-    );
-  }
-  // Keep and unmatched addresses never wait. A redirect or lookup waits for
-  // the flag (and the lookup) rather than flashing today's page.
+  // Keep and unmatched addresses never wait.
   if (match.kind === "keep" || match.kind === "unmatched") return children;
   if (enabled === false) return children;
-  return null;
+  // A redirect or lookup waits for the flag rather than flashing today's page.
+  if (enabled !== true) return null;
+  const target = { projectId, hash };
+  return match.kind === "redirect" ? (
+    <LegacyRedirect redirect={match.redirect} {...target} />
+  ) : (
+    <IterationLookupRedirect lookup={match.lookup} {...target} />
+  );
 }
