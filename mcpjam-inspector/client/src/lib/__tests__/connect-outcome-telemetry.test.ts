@@ -4,6 +4,7 @@ const { trackMock } = vi.hoisted(() => ({ trackMock: vi.fn() }));
 vi.mock("@/lib/analytics", () => ({ track: trackMock }));
 vi.mock("@/lib/config", () => ({ HOSTED_MODE: true }));
 
+import { describeAsSlug } from "@mcpjam/sdk/browser";
 import { createConnectOutcomeTracker } from "../connect-outcome-telemetry";
 import { OAUTH_AUTHORIZATION_CANCELLED_MESSAGE } from "../hosted-oauth-resume";
 
@@ -52,7 +53,7 @@ describe("connect outcome telemetry", () => {
       type: "CONNECT_FAILURE",
       name: "srv",
       error: "The MCP server responded with HTTP 404 Not Found.",
-      normalized: { slug: "server/http_error", rawCode: 404 } as never,
+      normalized: { ...describeAsSlug("server/http_error"), rawCode: 404 },
     });
     expect(lastProps()).toMatchObject({
       outcome: "failure",
@@ -75,11 +76,26 @@ describe("connect outcome telemetry", () => {
       type: "CONNECT_FAILURE",
       name: "srv",
       error,
-      ...(slug ? { normalized: { slug } as never } : {}),
+      ...(slug ? { normalized: describeAsSlug(slug) } : {}),
     });
     expect(lastProps()).toMatchObject({
       outcome: "timeout",
       flow: "background",
+    });
+  });
+
+  it("derives the slug from the error text when the failure carries none", () => {
+    const { dispatch } = setup();
+    dispatch({ type: "RECONNECT_REQUEST", name: "srv", config });
+    dispatch({
+      type: "CONNECT_FAILURE",
+      name: "srv",
+      error: "Reauthenticate srv to continue.",
+    });
+    expect(lastProps()).toMatchObject({
+      outcome: "failure",
+      flow: "reconnect",
+      error_slug: "auth/consent_required",
     });
   });
 
