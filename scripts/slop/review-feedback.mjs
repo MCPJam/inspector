@@ -15,6 +15,7 @@ import { collectContext, ReviewBudgetError, runReview } from "./adversarial-revi
 import {
   githubClient, gitIn, isEntrypoint, paginate, readBlob, readState, requireEnv, runEntrypoint, writeState,
 } from "./review-common.mjs";
+import { designContext } from "./review-spec.mjs";
 
 const LOG_LINES = 400;
 const LOG_BYTES = 60_000;
@@ -109,11 +110,18 @@ export function gatherFiles(runGit, base, head, items) {
   return { files, notes };
 }
 
-export async function collectFeedback({ gate, request, runGit, call }) {
+export async function collectFeedback({ gate, request, runGit, call, readDesign }) {
   if (gate.phase === "review") {
-    const review = await runReview({ base: gate.mergeBase, head: gate.sha, runGit, call });
+    const design = (changedPaths) => designContext({
+      changedPaths, body: gate.body, repo: process.env.GITHUB_REPOSITORY ?? "",
+      readFile: (path) => readBlob(runGit, gate.sha, path)?.content ?? null, readDesign,
+    });
+    const review = await runReview({ base: gate.mergeBase, head: gate.sha, runGit, call, design });
     const items = review.findings.map((finding) => ({ source: "Adversarial review", ...finding }));
-    return { phase: gate.phase, verdict: review.verdict, summary: review.summary, notes: review.notes, items, files: review.files };
+    return {
+      phase: gate.phase, verdict: review.verdict, summary: review.summary, notes: review.notes,
+      decisions: review.decisions, items, files: review.files,
+    };
   }
   const items = await checkFeedback(request, gate.failedRuns);
   const { files, notes } = gatherFiles(runGit, gate.mergeBase, gate.sha, items);

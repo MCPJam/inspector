@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { applyEdit, autofixAllowedFor, locate, triage, validate } from "./review-triage.mjs";
+import { MAX_AUTOFIXES } from "./review-common.mjs";
 
 const FILE = "const a = 1;\nconst b = 2;\nconst a = 1;\nexport { a, b };\n";
 const files = { "src/x.ts": FILE, ".github/workflows/ci.yml": "run: test\n" };
@@ -51,10 +52,11 @@ test("autofixes that cannot run are posted as suggestions, with the reason", () 
   }
   const [suggestMode] = validate([item({})], { readFile, changed: CHANGED, autofix: false, autofixReason: "the pipeline is in suggest mode" });
   assert.deepEqual([suggestMode.category, suggestMode.downgraded], ["suggest", "the pipeline is in suggest mode"]);
-  const seven = Array.from({ length: 7 }, (_, index) => `line ${index}`).join("\n");
-  const many = validate(Array.from({ length: 7 }, (_, index) => item({ path: "src/many.ts", find: `line ${index}`, replace: `fixed ${index}` })),
-    { readFile: (path) => (path === "src/many.ts" ? seven : null), changed: CHANGED, autofix: true });
-  assert.equal(many.filter((entry) => entry.category === "autofix").length, 5);
+  const count = MAX_AUTOFIXES + 2;
+  const content = Array.from({ length: count }, (_, index) => `line ${index}`).join("\n");
+  const many = validate(Array.from({ length: count }, (_, index) => item({ path: "src/many.ts", find: `line ${index}`, replace: `fixed ${index}` })),
+    { readFile: (path) => (path === "src/many.ts" ? content : null), changed: CHANGED, autofix: true });
+  assert.equal(many.filter((entry) => entry.category === "autofix").length, MAX_AUTOFIXES);
 });
 
 test("an autofix overlapping an earlier accepted one is posted as a suggestion", () => {

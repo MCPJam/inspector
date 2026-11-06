@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { autofixRounds, decide, gate, pipelineMode, tipIsReviewFix } from "./review-gate.mjs";
-import { phaseMarker } from "./review-common.mjs";
+import { SUMMARY_MARKER, encodeState, phaseMarker } from "./review-common.mjs";
 
 const SHA = "a".repeat(40);
 const run = (file, conclusion, extra = {}) => ({
@@ -57,10 +57,10 @@ test("autofix rounds count only the bot commits at the tip", () => {
   assert.equal(autofixRounds([fix, commit("human change")]), 0);
 });
 
-function fakeGitHub({ pr = {}, runs = green, reviews = [], commits = [] } = {}) {
+function fakeGitHub({ pr = {}, runs = green, comments = [], commits = [] } = {}) {
   const pull = { number: 7, state: "open", draft: false, head: { sha: SHA, ref: "feature", repo: { full_name: "o/r" } }, base: { sha: "b".repeat(40) }, ...pr };
   return async (path) => {
-    if (path.startsWith("pulls/7/reviews")) return reviews;
+    if (path.startsWith("issues/7/comments")) return comments;
     if (path.startsWith("pulls/7/commits")) return commits;
     if (path.startsWith("pulls/7")) return pull;
     if (path.startsWith("actions/runs")) return { workflow_runs: runs };
@@ -80,25 +80,43 @@ test("the gate resolves the merge base and the failed runs of the phase it picke
   assert.deepEqual(result.failedRuns.map((entry) => entry.file), ["lint.yml"]);
 });
 
-test("the gate stops for drafts, forks, stale heads, waiting phases and phases already triaged", async (t) => {
+test("the gate works on drafts and stops for forks, stale heads and waiting phases", async (t) => {
   process.env.PR_NUMBER = "7";
   t.after(() => delete process.env.PR_NUMBER);
-  for (const pr of [{ draft: true }, { state: "closed" }, { head: { sha: "d".repeat(40), repo: { full_name: "o/r" } } },
+  const draft = await gate(fakeGitHub({ pr: { draft: true, body: "desc", user: { login: "dev" } } }), SHA, "o/r", "on");
+  assert.deepEqual([draft.proceed, draft.draft, draft.body, draft.author], [true, true, "desc", "dev"]);
+  for (const pr of [{ state: "closed" }, { head: { sha: "d".repeat(40), repo: { full_name: "o/r" } } },
     { head: { sha: SHA, ref: "x", repo: { full_name: "fork/r" } } }]) {
-    assert.equal((await gate(fakeGitHub({ pr }), SHA, "o/r", "on")).proceed, false);
+    const result = await gate(fakeGitHub({ pr }), SHA, "o/r", "on");
+    assert.deepEqual([result.proceed, result.handoff], [false, undefined]);
   }
-  assert.equal((await gate(fakeGitHub({ runs: replace(green, "test.yml", null) }), SHA, "o/r", "on")).proceed, false);
-  const reviews = [{ user: { type: "User" }, body: phaseMarker("review", SHA) }];
-  assert.equal((await gate(fakeGitHub({ reviews }), SHA, "o/r", "on")).proceed, true, "a person's copy of the marker does not count");
-  reviews.push({ user: { type: "Bot" }, body: phaseMarker("review", SHA) });
-  assert.equal((await gate(fakeGitHub({ reviews }), SHA, "o/r", "on")).proceed, false);
+  const waiting = await gate(fakeGitHub({ runs: replace(green, "test.yml", null) }), SHA, "o/r", "on");
+  assert.deepEqual([waiting.proceed, waiting.handoff], [false, undefined]);
+});
+
+test("a phase already triaged for the head, per the bot's summary comment, hands the PR over", async (t) => {
+  process.env.PR_NUMBER = "7";
+  t.after(() => delete process.env.PR_NUMBER);
+  const body = `${SUMMARY_MARKER}\n${encodeState({ triaged: [phaseMarker("review", SHA)] })}`;
+  const person = await gate(fakeGitHub({ comments: [{ user: { type: "User" }, body }] }), SHA, "o/r", "on");
+  assert.equal(person.proceed, true, "a person's copy of the summary does not count");
+  const done = await gate(fakeGitHub({ comments: [{ user: { type: "Bot" }, body }] }), SHA, "o/r", "on");
+  assert.deepEqual([done.proceed, done.handoff, done.status], [false, true, "done"]);
+});
+
+test("the review's own autofix with green checks hands the PR over", async (t) => {
+  process.env.PR_NUMBER = "7";
+  t.after(() => delete process.env.PR_NUMBER);
+  const fix = { commit: { message: "Fix\n\nReview-Pipeline-Autofix: review" } };
+  const result = await gate(fakeGitHub({ commits: [fix] }), SHA, "o/r", "on");
+  assert.deepEqual([result.proceed, result.handoff, result.status], [false, true, "skip"]);
 });
 
 test("after the autofix limit the gate still triages, but without autofix", async (t) => {
   process.env.PR_NUMBER = "7";
   t.after(() => delete process.env.PR_NUMBER);
   const fix = { commit: { message: "Fix\n\nReview-Pipeline-Autofix: ci" } };
-  const result = await gate(fakeGitHub({ runs: replace(green, "test.yml", "failure"), commits: [fix, fix] }), SHA, "o/r", "on");
+  const result = await gate(fakeGitHub({ runs: replace(green, "test.yml", "failure"), commits: [fix, fix, fix] }), SHA, "o/r", "on");
   assert.equal(result.proceed, true);
   assert.equal(result.autofix, false);
 });

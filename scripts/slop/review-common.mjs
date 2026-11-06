@@ -1,13 +1,14 @@
 /**
  * Shared pieces of the PR review pipeline (`.github/workflows/adversarial-review.yml`).
  *
- * A PR moves through PHASES in order. The first phase that fails, or the
- * adversarial review once everything passes, is triaged: each piece of
- * feedback becomes an autofix commit, a suggestion, or a comment for a person
- * to decide. The steps hand their results to each other as JSON in STATE_DIR.
+ * A PR opens as a draft and moves through PHASES in order. The first phase
+ * that fails, or the adversarial review once everything passes, is triaged:
+ * each piece of feedback becomes an autofix commit, or an entry for a person to
+ * decide in the pipeline's one summary comment. When the bot has nothing left
+ * to fix, it marks the PR ready, which requests the code owners, and assigns
+ * one of them. The steps hand their results to each other as JSON in STATE_DIR.
  */
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -18,13 +19,55 @@ export const PHASES = [
   { id: "review", name: "Adversarial review", workflows: [] },
 ];
 export const AUTOFIX_TRAILER = "Review-Pipeline-Autofix";
-/** Bot commits in a row at the PR tip before the bot stops pushing and only suggests. */
-export const MAX_AUTOFIX_ROUNDS = 2;
-export const MAX_AUTOFIXES = 5;
+/** Bot commits in a row at the PR tip before the bot stops pushing and hands over. */
+export const MAX_AUTOFIX_ROUNDS = 3;
+export const MAX_AUTOFIXES = 10;
+/** A PR with this label is reviewed and fixed but never marked ready or assigned. */
+export const HOLD_LABEL = "wip";
+
+/** Starts the pipeline's one comment on a PR. Only the bot's own copy counts. */
+export const SUMMARY_MARKER = "<!-- review-pipeline-summary -->";
+const STATE_PATTERN = /<!-- review-pipeline-state:([A-Za-z0-9+/=]*) -->/;
+
+/** The state block a summary comment carries, so the next run can rebuild the comment. */
+export function encodeState(state) {
+  return `<!-- review-pipeline-state:${Buffer.from(JSON.stringify(state)).toString("base64")} -->`;
+}
+
+export function decodeState(body) {
+  const match = STATE_PATTERN.exec(body ?? "");
+  if (!match) return null;
+  try {
+    return JSON.parse(Buffer.from(match[1], "base64").toString("utf8"));
+  } catch {
+    // A corrupt block starts the comment over; it never blocks the pipeline.
+    return null;
+  }
+}
+
+/** The bot's summary comment among a PR's issue comments, or undefined. */
+export function findSummary(comments, login) {
+  return comments.find((comment) => comment.body?.startsWith(SUMMARY_MARKER) &&
+    (login ? comment.user?.login === login : comment.user?.type === "Bot"));
+}
+
+/** A GitHub GraphQL call with the same token as the REST client. */
+export function graphqlClient(token = process.env.GITHUB_TOKEN) {
+  return async (query, variables) => {
+    const response = await fetch("https://api.github.com/graphql", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ query, variables }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) throw new Error(`GitHub GraphQL: HTTP ${response.status}`);
+    const result = await response.json();
+    if (result.errors?.length) throw new Error(`GitHub GraphQL: ${result.errors[0].message}`);
+    return result.data;
+  };
+}
 
 export const phaseMarker = (phase, sha) => `<!-- review-pipeline:${phase}:${sha} -->`;
-export const itemMarker = (item) => `<!-- review-pipeline-item:${createHash("sha256")
-  .update(JSON.stringify([item.category, item.path, item.find])).digest("hex").slice(0, 16)} -->`;
 
 export function requireEnv(names) {
   for (const name of names) {

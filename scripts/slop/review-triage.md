@@ -25,10 +25,14 @@ for the index of the entry the item comes from.
   obvious fix, a formatting slip, a test expectation that has to follow a
   behavior change the PR clearly intended. An autofix must not change runtime
   behavior, public interfaces, error handling, security checks or data
-  handling. When in doubt, use `suggest`.
+  handling. When in doubt, use `suggest`. A design-system finding with one
+  exact answer (a raw color with a matching role token, a hand-rolled button
+  where the review names the design-system component and its props) is a fair
+  autofix; a spec gap (a missing state or behavior) never is: it is `discuss`.
 - `suggest`: you are fairly confident in a concrete change, but a person should
   see it first because it changes logic, has a risk, or could be wrong about
-  intent. It is posted as a one-click GitHub suggestion.
+  intent. It is listed as a diff in the PR's summary comment, under the items
+  the reviewer has to decide.
 - `discuss`: the problem needs a decision, the fix spans several places, or
   there is more than one reasonable way to handle it. Explain the issue and its
   risks, and give two or three concrete options.

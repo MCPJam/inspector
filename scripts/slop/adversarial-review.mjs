@@ -15,6 +15,15 @@ const FORMAT = {
     verdict: { type: "string", enum: ["BLOCK", "CONCERNS", "CLEAN"] },
     summary: text,
     notes: { type: "array", items: text },
+    decisions: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { decision: text, why: text, alternative: text, risk: text },
+        required: ["decision", "why", "alternative", "risk"],
+        additionalProperties: false,
+      },
+    },
     items: {
       type: "array",
       items: {
@@ -29,7 +38,7 @@ const FORMAT = {
       },
     },
   },
-  required: ["verdict", "summary", "notes", "items"],
+  required: ["verdict", "summary", "notes", "decisions", "items"],
   additionalProperties: false,
 };
 
@@ -79,14 +88,17 @@ export function collectContext(base, head, runGit) {
  * budget comes back as a SKIPPED verdict with no findings rather than an error:
  * nothing is wrong with the PR, it is only too large to review in one call.
  */
-export async function runReview({ base, head, runGit, call = callClaude }) {
+export async function runReview({ base, head, runGit, call = callClaude, design = () => null }) {
   let files;
   try {
     files = collectContext(base, head, runGit);
   } catch (error) {
     if (!(error instanceof ReviewBudgetError)) throw error;
-    return { verdict: "SKIPPED", summary: error.message, notes: [], findings: [], files: [] };
+    return { verdict: "SKIPPED", summary: error.message, notes: [], decisions: [], findings: [], files: [] };
   }
+  // The PR's UI is checked against the design system and its spec only when it
+  // changes a UI file; `design` builds that context from the changed paths.
+  const ui = design(files.map((file) => file.path));
   const diffOnly = files.filter((file) => file.diffOnly).map((file) => file.path);
   const { result } = await call({
     model: MODELS.rewrite,
@@ -96,13 +108,17 @@ export async function runReview({ base, head, runGit, call = callClaude }) {
       files,
       limitations: "Only changed files are supplied; binary and non-regular blobs are marked as omitted. " +
         "Files marked diffOnly carry only their diff, because their whole contents did not fit the review budget.",
+      ...(ui ? { ui: { uiFiles: ui.uiFiles, designSystem: ui.design, spec: ui.spec } } : {}),
     }),
     format: FORMAT,
   });
   if (!result || typeof result.summary !== "string" || !Array.isArray(result.items)) {
     throw new Error("Claude returned an invalid review.");
   }
-  const notes = [...result.notes];
+  const notes = [...(ui?.notes ?? []), ...result.notes];
   if (diffOnly.length) notes.push(`Reviewed from the diff only, because the whole file did not fit the review budget: ${diffOnly.map((path) => `\`${path}\``).join(", ")}`);
-  return { verdict: result.verdict, summary: result.summary, notes, findings: result.items, files };
+  return {
+    verdict: result.verdict, summary: result.summary, notes, decisions: result.decisions ?? [],
+    findings: result.items, files,
+  };
 }

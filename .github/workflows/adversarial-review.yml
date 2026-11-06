@@ -1,31 +1,41 @@
 name: Adversarial Review
 
-# The PR review pipeline. Phases run in order, and a phase is acted on only
-# once every phase before it passed:
+# The PR review pipeline. A PR opens as a draft (the draft job converts one
+# opened ready for review), so nobody is asked to review it while the bot
+# works. Phases run in order, and a phase is acted on only once every phase
+# before it passed:
 #
-#   1. ci       Tests, Build and Test
+#   1. ci       Tests (unit and regression), Build and Test (typecheck, build)
 #   2. quality  PR Size, UI Copy Review, Slop Ratchet
-#   3. review   Claude's adversarial review (scripts/slop/adversarial-review.md)
+#   3. review   Claude's adversarial review (scripts/slop/adversarial-review.md),
+#               which also checks UI changes against DESIGN.md and the spec the
+#               PR description names, and lists the PR's key decisions
 #
 # The first failing phase, or the review once all checks pass, is triaged.
 # Each piece of feedback becomes one of:
-#   - autofix: a trivial fix; all of a run's fixes go in one bot commit
-#   - suggest: a one-click GitHub suggestion for a person to accept or dismiss
-#   - discuss: an inline comment with the issue, its risks and options
+#   - autofix: a safe fix; all of a run's fixes go in one bot commit
+#   - suggest / discuss: listed for a person under "Needs your call"
+#
+# The bot posts one comment per PR and rewrites it on every run: key
+# decisions, what needs a person, what it fixed (scripts/slop/review-summary.mjs).
+# Nothing is posted inline.
 #
 # Autofix commits are pushed with the MCPJam bot's app token, so CI runs on
 # them and the pipeline starts over. The review does not run again on its own
-# autofix commit, and after two bot commits in a row the bot only suggests.
+# autofix commit, and after three bot commits in a row the bot stops pushing.
+# Once a run has nothing left to push, the bot marks the PR ready, which makes
+# GitHub request the code owners, and assigns one of them
+# (scripts/slop/review-handoff.mjs). The `wip` label keeps a PR in draft.
 #
 # Switched by the REVIEW_PIPELINE repository variable: unset or "off" does
-# nothing, "suggest" posts reviews but never pushes, "on" runs everything.
-# The review-pipeline label turns it fully on for one PR; adding the label
-# re-runs the quality checks, which starts the pipeline.
+# nothing, "suggest" updates the comment but never pushes, converts or hands
+# over, "on" runs everything. The review-pipeline label turns it fully on for
+# one PR; adding the label re-runs the quality checks, which starts the
+# pipeline.
 #
 # Every step that holds a secret runs scripts/slop from the default branch.
 # The PR's own files are only read from git, never executed or checked out
 # into a path that is written.
-
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -49,6 +59,51 @@ jobs:
         with:
           node-version: "24.22.1"
       - run: node --test scripts/slop/adversarial-review.test.mjs scripts/slop/review-*.test.mjs
+
+  draft:
+    # Only on open: a person who marks a PR ready by hand is not overruled.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'opened' &&
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      (vars.REVIEW_PIPELINE == 'on' || contains(github.event.pull_request.labels.*.name, 'review-pipeline'))
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the pipeline from the default branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: |
+            scripts/slop
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.22.1"
+      - name: Get a bot token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.MCPJAM_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.MCPJAM_BOT_PRIVATE_KEY }}
+          permission-pull-requests: write
+          permission-issues: write
+      - name: Convert to draft until the bot is done
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REVIEW_PIPELINE: ${{ vars.REVIEW_PIPELINE }}
+        run: |
+          if [ ! -f scripts/slop/review-draft.mjs ]; then
+            echo "::notice::Draft-first must merge into the default branch before it can run."
+            exit 0
+          fi
+          node scripts/slop/review-draft.mjs
 
   pipeline:
     # workflow_run: a phase workflow finished for a PR from this repository.
@@ -77,6 +132,7 @@ jobs:
       contents: read
       actions: read # job logs of the failed phase
       checks: read # check-run annotations
+      issues: read # the summary comment's state
       pull-requests: read
     env:
       HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}
@@ -91,8 +147,13 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           path: .reviewer
+          # DESIGN.md is what UI changes are checked against; CODEOWNERS is
+          # the hand-off's fallback when GitHub requested nobody.
           sparse-checkout: |
             scripts/slop
+            DESIGN.md
+            .github/CODEOWNERS
+          sparse-checkout-cone-mode: false
           persist-credentials: false
 
       - uses: actions/setup-node@v7
@@ -145,17 +206,34 @@ jobs:
       # only after triage, in a step that never sees the API key.
       - name: Get a bot token
         id: app-token
-        if: steps.gate.outputs.proceed == 'true' && steps.feedback.outputs.stale != 'true'
+        if: >-
+          steps.gate.outputs.handoff == 'true' ||
+          (steps.gate.outputs.proceed == 'true' && steps.feedback.outputs.stale != 'true')
         uses: actions/create-github-app-token@v3
         with:
           client-id: ${{ vars.MCPJAM_BOT_CLIENT_ID }}
           private-key: ${{ secrets.MCPJAM_BOT_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
+          permission-issues: write
 
-      - name: Push autofixes and post the review
+      - name: Push autofixes and update the summary comment
+        id: publish
         if: steps.gate.outputs.proceed == 'true' && steps.feedback.outputs.stale != 'true'
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
         run: node .reviewer/scripts/slop/review-publish.mjs
+
+      # The bot is done when this run pushed nothing (a push restarts CI and the
+      # pipeline), or when the gate found the head is its own review fix with
+      # green checks. The script itself does nothing outside "on" mode.
+      - name: Hand the PR to a reviewer
+        if: >-
+          steps.gate.outputs.handoff == 'true' ||
+          (steps.publish.outcome == 'success' && steps.publish.outputs.pushed == 'false')
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          CODEOWNERS_PATH: .reviewer/.github/CODEOWNERS
+        run: node .reviewer/scripts/slop/review-handoff.mjs

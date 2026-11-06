@@ -56,6 +56,17 @@ packages need a changeset. Run `npm run slop:size` before opening a PR; base a
 stacked PR on the branch below it and add `-- --base <branch below>`.
 Read `.agents/skills/` workflows only when relevant to the task.
 
+Open PRs as drafts (`gh pr create --draft`). While the review pipeline is on,
+the bot runs the checks, fixes what it safely can, and keeps one summary
+comment on the PR: key decisions, what needs a person, what it fixed. When it
+has nothing left to fix it marks the PR ready, which requests the code
+owners, and assigns one of them. Don't request reviewers by hand before that.
+A PR opened ready goes back to draft. The `wip` label keeps it in draft. If
+the spec is a file in this repo, put its path on the `Spec:` line: the bot
+checks UI changes against it and `DESIGN.md`. It can't read a Kestral or
+other external link, so it falls back to the user story and acceptance
+criteria.
+
 ## Releases and deploys
 
 Before a release or any production deploy, read the deploy playbook in the

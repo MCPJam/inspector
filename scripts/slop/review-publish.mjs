@@ -1,88 +1,21 @@
-#!/usr/bin/env node
 /**
  * Publish the triage: commit all autofixes to the PR branch as one commit,
- * push it, then post one COMMENT review on the new head with the suggestions and
- * the items that need a decision inline, and everything else in the body.
+ * push it, then fold the run into the pipeline's one summary comment. Nothing
+ * else is posted: items for a person go in that comment, not inline.
  *
  * Edits go through git plumbing (blob, index, commit), never the working tree,
  * so a path the PR made a symlink cannot redirect a write.
  *
  * Env: GITHUB_TOKEN (the bot's app token), GITHUB_REPOSITORY, APP_SLUG,
- * STATE_DIR, REPO_DIR. Reads `gate.json` and `triage.json`.
+ * STATE_DIR, REPO_DIR. Reads `gate.json` and `triage.json`; writes the
+ * `pushed` step output.
  */
 import { appendFileSync } from "node:fs";
 import {
-  AUTOFIX_TRAILER, PHASES, githubClient, gitIn, isEntrypoint, itemMarker, paginate, phaseMarker,
-  readBlob, readState, requireEnv, runEntrypoint,
+  AUTOFIX_TRAILER, PHASES, githubClient, gitIn, isEntrypoint, readBlob, readState, requireEnv, runEntrypoint,
 } from "./review-common.mjs";
-import { applyEdit, locate } from "./review-triage.mjs";
-
-const MAX_BODY = 60_000;
-
-/** RIGHT-side line ranges GitHub shows for a file in the PR diff, where comments may go. */
-export function hunkRanges(diff) {
-  return [...diff.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)]
-    .map(([, start, count = "1"]) => ({ start: Number(start), end: Number(start) + Number(count) - 1 }))
-    .filter((range) => range.end >= range.start);
-}
-
-const fence = (body) => "`".repeat(Math.max(3, ...[...body.matchAll(/`+/g)].map(([run]) => run.length + 1)));
-
-function itemLines(item) {
-  const heading = item.category === "suggest" ? "Suggested change" : "Needs a decision";
-  const lines = [`**${heading}: ${item.title}**`, "", item.why];
-  if (item.downgraded) lines.push("", `_Not committed automatically: ${item.downgraded}._`);
-  if (item.category === "discuss" && item.options.length) {
-    lines.push("", "**Options**", ...item.options.map((option, index) => `${index + 1}. ${option}`));
-  }
-  return lines;
-}
-
-export function commentBody(item) {
-  const lines = itemLines(item);
-  if (item.category === "suggest") {
-    const marks = fence(item.replace);
-    lines.push("", `${marks}suggestion`, ...(item.replace === "" ? [] : [item.replace]), marks);
-  }
-  return [...lines, "", itemMarker(item)].join("\n");
-}
-
-function bodyEntry(item) {
-  const lines = [`#### ${item.path ? `\`${item.path}\`` : "General"}`, ...itemLines(item)];
-  if (item.find || item.replace) {
-    const change = item.category === "suggest"
-      ? [...item.find.split("\n").map((line) => `-${line}`), ...(item.replace ? item.replace.split("\n").map((line) => `+${line}`) : [])]
-      : item.find.split("\n");
-    const marks = fence(change.join("\n"));
-    lines.push("", `${marks}${item.category === "suggest" ? "diff" : ""}`, ...change, marks);
-  }
-  return [...lines, itemMarker(item)].join("\n");
-}
-
-export function reviewBody({ gate, triage, autofixed, inline, unplaced, commitUrl }) {
-  const phase = PHASES.find((entry) => entry.id === gate.phase);
-  const parts = [`## Review pipeline: ${phase.name}`, "", triage.summary];
-  if (triage.verdict && triage.verdict !== "FAILED") parts.push("", `Verdict: **${triage.verdict}**`);
-  if (autofixed.length) {
-    const { sha } = autofixed[0];
-    parts.push("", `**Autofixed** ${autofixed.length} item${autofixed.length === 1 ? "" : "s"} in ` +
-      `[\`${sha.slice(0, 7)}\`](${commitUrl(sha)}) on this branch:`,
-      ...autofixed.map((item) => `- ${item.commit}: ${item.why}`));
-  }
-  const suggestions = inline.filter((item) => item.category === "suggest").length;
-  const decisions = inline.length - suggestions;
-  if (inline.length) {
-    parts.push("", `Inline: ${suggestions} suggestion${suggestions === 1 ? "" : "s"} to accept or dismiss, ` +
-      `${decisions} item${decisions === 1 ? "" : "s"} that need${decisions === 1 ? "s" : ""} a decision.`);
-  }
-  if (unplaced.length) parts.push("", "### Not on a changed line", "", ...unplaced.map(bodyEntry));
-  if (triage.notes?.length) {
-    parts.push("", "<details><summary>Notes and assumptions</summary>", "", ...triage.notes.map((note) => `- ${note}`), "", "</details>");
-  }
-  let body = parts.join("\n");
-  if (body.length > MAX_BODY) body = `${body.slice(0, MAX_BODY)}\n\n_Truncated: see the workflow run summary._`;
-  return `${body}\n\nReviewed commit: ${gate.sha}\n\n${phaseMarker(gate.phase, gate.sha)}`;
-}
+import { recordPhase, updateSummary } from "./review-summary.mjs";
+import { applyEdit } from "./review-triage.mjs";
 
 /**
  * Stage every autofix and commit them together on top of HEAD, so a run pushes
@@ -115,32 +48,15 @@ export function commitAutofixes(items, { runGit, phase, identity }) {
   return result.map(({ applied: done, ...item }) => (done ? { ...item, sha } : item));
 }
 
-/** Split comment items into inline comments and body entries, dropping ones posted before. */
-export function placeItems(items, { runGit, base, head, posted }) {
-  const inline = [];
-  const unplaced = [];
-  for (const item of items) {
-    if (item.category === "autofix" || posted.has(itemMarker(item))) continue;
-    const content = item.path ? readBlob(runGit, head, item.path)?.content : null;
-    const range = content ? locate(content, item.find) : null;
-    const hunks = range ? hunkRanges(runGit(["diff", "--no-ext-diff", "--no-renames", base, head, "--", `:(literal)${item.path}`])) : [];
-    const hunk = range && hunks.find((entry) => entry.start <= range.start && range.end <= entry.end);
-    (hunk ? inline : unplaced).push(hunk ? { ...item, range } : item);
+/** The status line for a run: still working when it pushed, otherwise ready to hand over. */
+export function runStatus({ gate, autofixed, open }) {
+  const phase = PHASES.find((entry) => entry.id === gate.phase).name;
+  if (autofixed.length) {
+    return `**Working.** Pushed ${autofixed.length} fix${autofixed.length === 1 ? "" : "es"} for ${phase} in ` +
+      `\`${autofixed[0].sha.slice(0, 7)}\`; the checks run again on it.`;
   }
-  return { inline, unplaced };
-}
-
-const toComment = (item) => ({
-  path: item.path, side: "RIGHT", line: item.range.end, body: commentBody(item),
-  ...(item.range.start < item.range.end ? { start_line: item.range.start, start_side: "RIGHT" } : {}),
-});
-
-async function postedMarkers(request, pr) {
-  const [reviews, comments] = await Promise.all([
-    paginate(request, `pulls/${pr}/reviews`), paginate(request, `pulls/${pr}/comments`),
-  ]);
-  const bodies = [...reviews, ...comments].filter((entry) => entry.user?.type === "Bot").map((entry) => entry.body ?? "");
-  return new Set(bodies.flatMap((body) => body.match(/<!-- review-pipeline-item:[0-9a-f]+ -->/g) ?? []));
+  const left = open ? ` ${open} item${open === 1 ? "" : "s"} below need${open === 1 ? "s" : ""} a person.` : "";
+  return `**Done with \`${gate.sha.slice(0, 7)}\`.** The bot has nothing more it can fix.${left}`;
 }
 
 export async function publish({ gate, triage, request, runGit, push, identity, commitUrl }) {
@@ -151,21 +67,12 @@ export async function publish({ gate, triage, request, runGit, push, identity, c
   const items = commitAutofixes(triage.items, { runGit, phase: gate.phase, identity });
   const autofixed = items.filter((item) => item.sha);
   if (autofixed.length) push(gate.headRef);
-  const head = runGit(["rev-parse", "HEAD"]).trim();
-  const posted = await postedMarkers(request, gate.pr);
-  const { inline, unplaced } = placeItems(items, { runGit, base: gate.mergeBase, head, posted });
-  const body = reviewBody({ gate, triage, autofixed, inline, unplaced, commitUrl });
-  const review = { commit_id: head, event: "COMMENT", body, comments: inline.map(toComment) };
-  try {
-    await request(`pulls/${gate.pr}/reviews`, { method: "POST", body: review });
-  } catch (error) {
-    // GitHub rejects the whole review when one comment's lines fall outside
-    // its diff view. Post every item in the body instead of losing them.
-    if (!/HTTP 422/.test(error.message)) throw error;
-    const fallback = reviewBody({ gate, triage, autofixed, inline: [], unplaced: [...inline, ...unplaced], commitUrl });
-    await request(`pulls/${gate.pr}/reviews`, { method: "POST", body: { commit_id: head, event: "COMMENT", body: fallback } });
-  }
-  return { body, autofixed: autofixed.length, inline: inline.length, unplaced: unplaced.length };
+  const state = await updateSummary(request, gate.pr, identity.name, (previous) => {
+    const next = recordPhase(previous, { gate, triage: { ...triage, items }, autofixed, commitUrl });
+    const open = Object.values(next.open).flat().length;
+    return { ...next, status: runStatus({ gate, autofixed, open }) };
+  });
+  return { pushed: autofixed.length > 0, autofixed: autofixed.length, open: Object.values(state.open).flat().length };
 }
 
 async function botIdentity(slug) {
@@ -195,8 +102,9 @@ export async function main() {
     console.log(`::notice::${result.skipped}`);
     return;
   }
-  console.log(`Posted: ${result.autofixed} autofixes, ${result.inline} inline, ${result.unplaced} in the body.`);
-  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, result.body);
+  console.log(`Summary updated: ${result.autofixed} autofixes pushed, ${result.open} items for a person.`);
+  // Only a run that pushed nothing may hand the PR over: a push restarts CI.
+  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `pushed=${result.pushed}\n`);
 }
 
 if (isEntrypoint(import.meta.url)) runEntrypoint(main);

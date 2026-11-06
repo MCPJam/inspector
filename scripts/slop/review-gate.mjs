@@ -8,14 +8,19 @@
  * triaged before the quality checks, and the adversarial review only runs on
  * a PR whose checks are green.
  *
+ * Drafts are gated like any other PR: the pipeline works on a draft and marks
+ * it ready when it is done. When there is nothing left to do for the head (its
+ * phase was already triaged, or it is the review's own autofix and the checks
+ * on it passed), the gate asks for the hand-off instead.
+ *
  * Env: GITHUB_TOKEN, GITHUB_REPOSITORY, HEAD_SHA, STATE_DIR; PR_NUMBER when the
- * event carries it; REVIEW_PIPELINE (off, suggest or on). Writes `gate.json` and the `proceed`, `phase` and `base`
- * step outputs.
+ * event carries it; REVIEW_PIPELINE (off, suggest or on). Writes `gate.json` and
+ * the `proceed`, `handoff`, `phase` and `base` step outputs.
  */
 import { appendFileSync } from "node:fs";
 import {
-  AUTOFIX_TRAILER, MAX_AUTOFIX_ROUNDS, PHASES, githubClient, isEntrypoint, paginate,
-  phaseMarker, requireEnv, runEntrypoint, writeState,
+  AUTOFIX_TRAILER, MAX_AUTOFIX_ROUNDS, PHASES, decodeState, findSummary, githubClient, isEntrypoint,
+  paginate, phaseMarker, requireEnv, runEntrypoint, writeState,
 } from "./review-common.mjs";
 
 const PASSED = new Set(["success", "neutral", "skipped"]);
@@ -105,7 +110,7 @@ async function findPr(request, sha) {
 export async function gate(request, sha, repo, setting = process.env.REVIEW_PIPELINE) {
   const pr = await findPr(request, sha);
   if (!pr) return { proceed: false, reason: "No open PR has this commit as its head." };
-  if (pr.state !== "open" || pr.draft) return { proceed: false, reason: "The PR is closed or a draft." };
+  if (pr.state !== "open") return { proceed: false, reason: "The PR is closed." };
   if (pr.head.sha !== sha) return { proceed: false, reason: "The PR has a newer head; its own runs will be gated." };
   if (pr.head.repo?.full_name !== repo) return { proceed: false, reason: "Fork PRs are not reviewed." };
   const mode = pipelineMode(setting, pr.labels ?? []);
@@ -113,19 +118,30 @@ export async function gate(request, sha, repo, setting = process.env.REVIEW_PIPE
     return { proceed: false, reason: `The review pipeline is off: set REVIEW_PIPELINE or add the ${OPT_IN_LABEL} label.` };
   }
 
-  const [runs, commits, reviews] = await Promise.all([
+  const [runs, commits, comments] = await Promise.all([
     paginate(request, `actions/runs?head_sha=${sha}&event=pull_request`, (page) => page.workflow_runs),
     paginate(request, `pulls/${pr.number}/commits`, undefined, 3),
-    paginate(request, `pulls/${pr.number}/reviews`),
+    paginate(request, `issues/${pr.number}/comments`),
   ]);
-  const reviewed = new Set(PHASES.map((phase) => phase.id).filter((id) => reviews.some((review) =>
-    review.user?.type === "Bot" && review.body?.includes(phaseMarker(id, sha)))));
+  const triaged = decodeState(findSummary(comments)?.body)?.triaged ?? [];
+  const reviewed = new Set(PHASES.map((phase) => phase.id).filter((id) => triaged.includes(phaseMarker(id, sha))));
   const rounds = autofixRounds(commits);
   const { phase, status } = decide({ runs, reviewFix: tipIsReviewFix(commits), reviewed });
-  const base = { pr: pr.number, sha, headRef: pr.head.ref, phase, status, rounds, mode };
+  const base = {
+    pr: pr.number, sha, headRef: pr.head.ref, phase, status, rounds, mode, draft: Boolean(pr.draft),
+    author: pr.user?.login ?? "", labels: (pr.labels ?? []).map((label) => label.name), body: pr.body ?? "",
+  };
   if (status === "wait") return { ...base, proceed: false, reason: `Waiting for the ${phase} phase to finish.` };
-  if (status === "done") return { ...base, proceed: false, reason: `The ${phase} phase was already triaged for this commit.` };
-  if (status === "skip") return { ...base, proceed: false, reason: "The head is the review's own autofix; the review ran on the commit before it." };
+  // Both mean the bot has nothing left to push for this head: a triaged phase
+  // that had pushed a fix would have moved the head, and the review's own fix
+  // passed its checks. The hand-off step does nothing if it already ran.
+  if (status === "done") {
+    return { ...base, proceed: false, handoff: true, reason: `The ${phase} phase was already triaged for this commit.` };
+  }
+  if (status === "skip") {
+    return { ...base, proceed: false, handoff: true,
+      reason: "The head is the review's own autofix and its checks passed; handing the PR to a person." };
+  }
 
   const compare = await request(`compare/${pr.base.sha}...${sha}`);
   return {
@@ -149,7 +165,8 @@ export async function main(request = githubClient()) {
   console.log(result.proceed ? `Acting on the ${result.phase} phase of PR #${result.pr}.` : result.reason);
   if (process.env.GITHUB_OUTPUT) {
     appendFileSync(process.env.GITHUB_OUTPUT,
-      `proceed=${result.proceed}\nphase=${result.phase ?? ""}\nbase=${result.mergeBase ?? ""}\n`);
+      `proceed=${result.proceed}\nhandoff=${result.handoff === true}\nphase=${result.phase ?? ""}\n` +
+      `base=${result.mergeBase ?? ""}\n`);
   }
 }
 

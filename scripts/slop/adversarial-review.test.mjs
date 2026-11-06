@@ -50,6 +50,8 @@ const oneFile = ([command, ...args]) => {
   return "contents";
 };
 
+const decision = { decision: "Retries live in the client", why: "Not stated", alternative: "Retry on the server", risk: "Double retries" };
+
 test("the review returns structured findings and sends the PR as data", async () => {
   const finding = { severity: "warning", title: "Unbounded retry", path: "file.js", snippet: "contents",
     problem: "p", fix: "f", test: "t", personas: ["Saboteur"] };
@@ -59,13 +61,15 @@ test("the review returns structured findings and sends the PR as data", async ()
       assert.equal(input.model.id, "claude-sonnet-5-5");
       assert.equal(input.effort, "high");
       assert.match(input.system, /Saboteur/);
-      assert.deepEqual(input.format.required, ["verdict", "summary", "notes", "items"]);
+      assert.deepEqual(input.format.required, ["verdict", "summary", "notes", "decisions", "items"]);
       assert.equal(JSON.parse(input.user).files[0].path, "file.js");
-      return { result: { verdict: "CONCERNS", summary: "One retry bug.", notes: ["n"], items: [finding] } };
+      assert.equal(JSON.parse(input.user).ui, undefined, "no UI context without a UI file");
+      return { result: { verdict: "CONCERNS", summary: "One retry bug.", notes: ["n"], decisions: [decision], items: [finding] } };
     },
   });
   assert.equal(review.verdict, "CONCERNS");
   assert.deepEqual(review.findings, [finding]);
+  assert.deepEqual(review.decisions, [decision]);
   assert.deepEqual(review.notes, ["n"]);
   assert.equal(review.files.length, 1);
 });
@@ -98,4 +102,18 @@ test("files reviewed from the diff only are named in the notes", async () => {
   const review = await runReview({ base: "b", head: "h", runGit,
     call: async () => ({ result: { verdict: "CLEAN", summary: "s", notes: [], items: [] } }) });
   assert.match(review.notes.at(-1), /diff only.*`large\.js`/);
+});
+
+test("a UI change is reviewed against the design system and the spec, and its notes come first", async () => {
+  const review = await runReview({
+    base: "base", head: "head", runGit: oneFile,
+    design: (paths) => ({ uiFiles: paths, design: "DESIGN", spec: { spec: "s", userStory: "", acceptance: "", documents: [] }, notes: ["spec behind a link"] }),
+    call: async (input) => {
+      assert.match(input.system, /Design Reviewer/);
+      const { ui } = JSON.parse(input.user);
+      assert.deepEqual([ui.uiFiles, ui.designSystem, ui.spec.spec], [["file.js"], "DESIGN", "s"]);
+      return { result: { verdict: "CLEAN", summary: "s", notes: ["n"], decisions: [], items: [] } };
+    },
+  });
+  assert.deepEqual(review.notes, ["spec behind a link", "n"]);
 });

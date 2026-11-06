@@ -4,8 +4,8 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gitIn, itemMarker, phaseMarker } from "./review-common.mjs";
-import { commentBody, hunkRanges, publish } from "./review-publish.mjs";
+import { SUMMARY_MARKER, decodeState, gitIn, phaseMarker } from "./review-common.mjs";
+import { publish } from "./review-publish.mjs";
 
 const identity = { name: "bot[bot]", email: "1+bot[bot]@users.noreply.github.com" };
 const lines = (count, label = "line") => Array.from({ length: count }, (_, index) => `${label} ${index + 1}`).join("\n") + "\n";
@@ -31,23 +31,27 @@ function repo(t) {
   return { git, base, head, remote: gitIn(join(dir, "remote.git")), work };
 }
 
-function fakeGitHub({ head, postError, prior = [] }) {
-  const posts = [];
+/** A PR's issue comments, as the bot's REST calls see and change them. */
+export function fakeGitHub({ head, comments = [] }) {
+  const writes = [];
   const request = async (path, options = {}) => {
-    if (options.method === "POST") {
-      if (postError && posts.length === 0) {
-        posts.push({ rejected: options.body });
-        throw new Error(postError);
-      }
-      posts.push(options.body);
-      return {};
+    if (options.method === "POST" && path === "issues/7/comments") {
+      const comment = { id: comments.length + 1, user: { login: identity.name, type: "Bot" }, body: options.body.body };
+      comments.push(comment);
+      writes.push(comment.body);
+      return comment;
     }
-    if (path.startsWith("pulls/7/reviews")) return prior;
-    if (path.startsWith("pulls/7/comments")) return [];
+    if (options.method === "PATCH") {
+      const comment = comments.find((entry) => `issues/comments/${entry.id}` === path);
+      comment.body = options.body.body;
+      writes.push(comment.body);
+      return comment;
+    }
+    if (path.startsWith("issues/7/comments")) return comments;
     if (path === "pulls/7") return { state: "open", head: { sha: head } };
-    throw new Error(`unexpected ${path}`);
+    throw new Error(`unexpected ${options.method ?? "GET"} ${path}`);
   };
-  return { request, posts };
+  return { request, comments, writes };
 }
 
 const item = (fields) => ({
@@ -55,102 +59,87 @@ const item = (fields) => ({
   options: [], commit: "", downgraded: "", ...fields,
 });
 
-function run(t, { items, postError, prior, headOverride } = {}) {
+const decision = { decision: "Store retries on the run", why: "Not stated", alternative: "A separate table", risk: "A migration later" };
+
+function run(t, { items, comments, headOverride, phase = "review" } = {}) {
   const ctx = repo(t);
-  const gate = { pr: 7, sha: ctx.head, headRef: "feature", phase: "review", mergeBase: ctx.base };
-  const github = fakeGitHub({ head: headOverride ?? ctx.head, postError, prior });
+  const gate = { pr: 7, sha: ctx.head, headRef: "feature", phase, mergeBase: ctx.base };
+  const github = fakeGitHub({ head: headOverride ?? ctx.head, comments });
   const pushes = [];
   const push = (ref) => { pushes.push(ref); ctx.git(["push", "-q", "origin", `HEAD:refs/heads/${ref}`]); };
   const result = publish({
-    gate, triage: { summary: "Summary.", verdict: "CONCERNS", notes: ["an assumption"], items },
+    gate, triage: { summary: "Summary.", verdict: "CONCERNS", notes: ["an assumption"], decisions: [decision], items },
     request: github.request, runGit: ctx.git, push, identity, commitUrl: (sha) => `https://x/${sha}`,
   });
   return { ctx, gate, github, pushes, result };
 }
 
-test("hunk ranges cover the right-hand lines GitHub shows, context included", () => {
-  assert.deepEqual(hunkRanges("@@ -17,8 +17,9 @@ x\n@@ -50 +51,0 @@\n@@ -60 +60 @@"), [{ start: 17, end: 25 }, { start: 60, end: 60 }]);
-});
-
-test("all autofixes go into one bot commit, pushed once, and the review lands on the new head", async (t) => {
+test("all autofixes go into one bot commit, pushed once, and the rest go in the one summary comment", async (t) => {
   const items = [
     item({ category: "autofix", find: "changed 21", replace: "fixed 21", commit: "Fix line 21" }),
     item({ category: "autofix", find: "line 2", replace: "line two", commit: "Fix line 2" }),
     item({ category: "suggest", find: "changed 20", replace: "better 20" }),
-    item({ category: "discuss", find: "line 35", replace: "", options: ["A", "B"] }),
+    item({ category: "discuss", title: "Pick a limit", find: "line 35", replace: "", options: ["A", "B"] }),
   ];
   const { ctx, github, pushes, result } = run(t, { items });
   const outcome = await result;
   assert.deepEqual(pushes, ["feature"]);
+  assert.equal(outcome.pushed, true);
   const log = ctx.remote(["log", "--format=%an|%B%x00", `${ctx.head}..feature`]).split("\0").map((entry) => entry.trim()).filter(Boolean);
   assert.equal(log.length, 1);
   assert.match(log[0], /^bot\[bot\]\|Apply 2 review autofixes\n\n- Fix line 21\n- Fix line 2\n\nReview-Pipeline-Autofix: review$/);
   assert.match(ctx.remote(["show", "feature:a.ts"]), /line two\n[\s\S]*fixed 21/);
 
-  const [review] = github.posts;
-  assert.equal(review.commit_id, ctx.git(["rev-parse", "HEAD"]).trim());
-  assert.equal(review.event, "COMMENT");
-  assert.equal(review.comments.length, 1, "only the suggestion is on a changed line");
-  assert.deepEqual([review.comments[0].line, review.comments[0].side], [20, "RIGHT"]);
-  assert.match(review.comments[0].body, /```suggestion\nbetter 20\n```/);
-  assert.match(review.body, /Autofixed\*\* 2 items in \[`[0-9a-f]{7}`\]/);
-  assert.match(review.body, /Not on a changed line[\s\S]*Needs a decision[\s\S]*1\. A\n2\. B/);
-  assert.match(review.body, /an assumption/);
-  assert.ok(review.body.endsWith(phaseMarker("review", ctx.head)));
-  assert.equal(outcome.autofixed, 2);
+  assert.equal(github.comments.length, 1, "one comment, nothing inline");
+  const [{ body }] = github.comments;
+  assert.ok(body.startsWith(SUMMARY_MARKER));
+  assert.match(body, /\*\*Working\.\*\* Pushed 2 fixes for Adversarial review/);
+  assert.match(body, /Key decisions in this PR[\s\S]*Store retries on the run[\s\S]*Risk if wrong: A migration later/);
+  assert.match(body, /Needs your call \(2\)[\s\S]*```diff\n-changed 20\n\+better 20\n```[\s\S]*Pick a limit[\s\S]*1\. A\n2\. B/);
+  assert.match(body, /Fixed by the bot \(2\)/);
+  assert.match(body, /an assumption/);
+  assert.deepEqual(decodeState(body).triaged, [phaseMarker("review", ctx.head)]);
 });
 
-test("multi-line suggestions span start_line to line; nothing is pushed without autofixes", async (t) => {
-  const { github, pushes, result } = run(t, { items: [item({ find: "changed 20\nchanged 21", replace: "one line" })] });
-  await result;
-  assert.deepEqual(pushes, []);
-  const [comment] = github.posts[0].comments;
-  assert.deepEqual([comment.start_line, comment.line], [20, 21]);
+test("a run that pushes nothing says the bot is done, and the next run edits the same comment", async (t) => {
+  const first = run(t, { items: [item({})] });
+  const outcome = await first.result;
+  assert.equal(outcome.pushed, false);
+  assert.match(first.github.comments[0].body, /\*\*Done with `[0-9a-f]{7}`\.\*\*[\s\S]*1 item below needs a person/);
+
+  const again = run(t, { items: [], comments: first.github.comments });
+  await again.result;
+  assert.equal(again.github.comments.length, 1);
+  assert.doesNotMatch(again.github.comments[0].body, /Needs your call/, "the review's items are replaced by its next run");
 });
 
-test("two autofixes to the same file both land, and a single fix keeps its own subject", async (t) => {
-  const pair = run(t, { items: [
-    item({ category: "autofix", find: "changed 20", replace: "fixed 20", commit: "Fix 20" }),
-    item({ category: "autofix", find: "changed 21", replace: "fixed 21", commit: "Fix 21" }),
-  ] });
-  await pair.result;
-  assert.match(pair.ctx.remote(["show", "feature:a.ts"]), /fixed 20\nfixed 21/);
-  const single = run(t, { items: [item({ category: "autofix", commit: "Fix 20" })] });
-  await single.result;
-  assert.equal(single.ctx.remote(["log", "-1", "--format=%s", "feature"]).trim(), "Fix 20");
+test("triaging a later phase clears the earlier phase's items; a person's copy of the marker is ignored", async (t) => {
+  const ci = run(t, { items: [item({ title: "Flaky test" })], phase: "ci" });
+  await ci.result;
+  assert.match(ci.github.comments[0].body, /Flaky test/);
+  ci.github.comments.unshift({ id: 99, user: { login: "someone", type: "User" }, body: `${SUMMARY_MARKER}\nfake` });
+  const review = run(t, { items: [], comments: ci.github.comments });
+  await review.result;
+  const mine = review.github.comments.find((comment) => comment.user.login === identity.name);
+  assert.doesNotMatch(mine.body, /Flaky test/);
+  assert.equal(review.github.comments.find((comment) => comment.id === 99).body, `${SUMMARY_MARKER}\nfake`);
 });
 
-test("an autofix that no longer applies after an earlier one is posted as a suggestion", async (t) => {
+test("an autofix that no longer applies after an earlier one is listed for a person", async (t) => {
   const items = [
     item({ category: "autofix", find: "changed 20\nchanged 21", replace: "merged", commit: "Merge lines" }),
     item({ category: "autofix", find: "changed 21", replace: "x", commit: "Fix 21" }),
   ];
   const { github, result } = run(t, { items });
   assert.equal((await result).autofixed, 1);
-  assert.match(github.posts[0].body, /earlier fix changed these lines/);
+  assert.match(github.comments[0].body, /earlier fix changed these lines/);
 });
 
-test("items already posted by the bot on an earlier push are not repeated", async (t) => {
-  const repeated = item({});
-  const prior = [{ user: { type: "Bot" }, body: itemMarker(repeated) }];
-  const { github, result } = run(t, { items: [repeated], prior });
-  await result;
-  assert.equal(github.posts[0].comments.length, 0);
-});
-
-test("a 422 on inline comments posts every item in the body instead", async (t) => {
-  const { github, result } = run(t, { items: [item({})], postError: "GitHub POST pulls/7/reviews: HTTP 422" });
-  await result;
-  assert.equal(github.posts.length, 2);
-  assert.equal(github.posts[1].comments, undefined);
-  assert.match(github.posts[1].body, /```diff\n-changed 20\n\+fixed 20\n```/);
-});
-
-test("a PR that moved during the run gets no commits and no review", async (t) => {
+test("a PR that moved during the run gets no commits and no comment", async (t) => {
   const { github, pushes, result } = run(t, { items: [item({ category: "autofix", commit: "x" })], headOverride: "f".repeat(40) });
   assert.match((await result).skipped, /changed during the run/);
   assert.deepEqual(pushes, []);
-  assert.equal(github.posts.length, 0);
+  assert.equal(github.comments.length, 0);
 });
 
 test("autofix edits go through git objects, so a symlink in the PR cannot redirect a write", async (t) => {
@@ -171,6 +160,3 @@ test("autofix edits go through git objects, so a symlink in the PR cannot redire
   assert.equal(readFileSync(outside, "utf8"), "secret\n");
 });
 
-test("suggestion fences grow past backticks in the replacement", () => {
-  assert.match(commentBody(item({ replace: "const s = ```;" })), /````suggestion\nconst s = ```;\n````/);
-});
