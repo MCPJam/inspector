@@ -107,11 +107,6 @@ export function resolvePickerSelection(
   };
 }
 
-/** The tab holding the selection. Dangling goes to Servers — it is fixable there. */
-export function initialPickerTab(selection: PickerSelection | null): PickerTab {
-  return selection?.kind === "group" ? "groups" : "servers";
-}
-
 export type RuntimeServerMap = Record<string, { connectionStatus: string }>;
 
 /**
