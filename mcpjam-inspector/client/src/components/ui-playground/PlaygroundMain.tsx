@@ -5262,7 +5262,7 @@ export function PlaygroundMain({
       return false;
     }
     // The composer is disabled in this state, so this is the belt to that
-    // brace: Enter-to-send, starter chips and eval Quick Run all land here.
+    // brace: Enter-to-send and the fullscreen overlays' Send land here.
     if (conversationSendBlockedRef.current) {
       return false;
     }

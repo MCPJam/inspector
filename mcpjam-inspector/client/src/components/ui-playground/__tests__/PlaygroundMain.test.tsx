@@ -2291,17 +2291,19 @@ describe("PlaygroundMain", () => {
       mockSharedAppState.servers["test-server"] = {
         connectionStatus: "disconnected",
       };
-      let ready!: () => void;
+      const readies: Array<() => void> = [];
+      const ready = () => readies.forEach((r) => r());
       const ensureServersReady = vi.fn(
         () =>
           new Promise((done) => {
-            ready = () =>
+            readies.push(() =>
               done({
                 readyServerNames: ["test-server"],
                 missingServerNames: [],
                 failedServerNames: [],
                 reauthServerNames: [],
-              });
+              }),
+            );
           }),
       );
       render(
@@ -2312,13 +2314,19 @@ describe("PlaygroundMain", () => {
       );
 
       const chip = screen.getByRole("button", { name: "Starter chip" });
+      // Separate events, as two real clicks are: the first one's re-render
+      // lands in between.
       await act(async () => {
         fireEvent.click(chip);
+      });
+      await act(async () => {
         fireEvent.click(chip);
       });
       await act(async () => ready());
 
       await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      // The second click never started a send of its own.
+      expect(ensureServersReady).toHaveBeenCalledTimes(1);
       expect(sendMessage).toHaveBeenCalledWith(
         expect.objectContaining({ text: "Starter chip prompt" }),
       );

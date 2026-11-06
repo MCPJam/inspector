@@ -1077,6 +1077,9 @@ describe("ChatTabV2 history sync", () => {
       "data-submitting",
       "false",
     );
+    // `clearAllMocks` keeps implementations; don't hand the next test this
+    // test's history response.
+    mockGetChatHistoryDetail.mockReset();
   });
 
   it("gives up on a pre-send sync that never answers and frees Send", async () => {
@@ -1131,6 +1134,9 @@ describe("ChatTabV2 history sync", () => {
       expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
     } finally {
       timeoutSpy.mockRestore();
+      // `clearAllMocks` keeps implementations; don't hand the next test a
+      // history request that never answers.
+      mockGetChatHistoryDetail.mockReset();
     }
   });
 
