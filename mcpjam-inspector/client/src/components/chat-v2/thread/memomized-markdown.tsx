@@ -113,18 +113,22 @@ const MemoizedMarkdownBlock = memo(
 MemoizedMarkdownBlock.displayName = "MemoizedMarkdownBlock";
 
 export const MemoizedMarkdown = memo(
-  ({ content, className }: { content: string; className?: string }) => {
+  ({ content, className, messageRole }: {
+    content: string;
+    className?: string;
+    messageRole?: "assistant" | "user" | "system";
+  }) => {
     const blocks = useMemo(() => parseMarkdownIntoBlocks(content), [content]);
 
     return blocks.map((block, index) => (
-      <div className={className} key={`markdown-block_${index}`}>
+      <div className={className} key={`markdown-block_${index}`} data-message-text={messageRole}>
         <MemoizedMarkdownBlock content={block} />
       </div>
     ));
   },
   (prevProps, nextProps) => {
     if (prevProps.content !== nextProps.content) return false;
-    if (prevProps.className !== nextProps.className) return false;
+    if (prevProps.className !== nextProps.className || prevProps.messageRole !== nextProps.messageRole) return false;
     return true;
   },
 );

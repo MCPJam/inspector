@@ -1,3 +1,4 @@
+import { createMcpSetupTiming } from "../../utils/mcp-setup-timing.js";
 import { admitWarmChatManager } from "../../utils/harness/warm-approval-binding";
 import { setManagerResourceHostConfig } from "../../utils/mcp-connections";
 import { TurnResources } from "./resources.js";
@@ -578,6 +579,7 @@ export async function prepareManagedConnections(args: {
     ),
     {
       multiConnection: true,
+      onSetupTiming: createMcpSetupTiming(c.var.requestLogContext?.requestId),
       tolerateServerRefusals: isolatedServerIds,
       ...(modelFormDispatch
         ? { extensionRequestHandlers: modelFormDispatch.handlers }
