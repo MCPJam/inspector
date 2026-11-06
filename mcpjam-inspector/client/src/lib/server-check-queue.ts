@@ -118,6 +118,9 @@ export class ServerCheckQueue {
     this.orders.set(projectId, names);
     this.drainSoon();
   }
+  getOrder(projectId: string): readonly string[] | undefined {
+    return this.orders.get(projectId);
+  }
   setScope(projectId: string, scope: string) {
     const old = this.scopes.get(projectId);
     if (old !== undefined && old !== scope)
@@ -396,27 +399,60 @@ export function useServerCheckQueueState(projectId: string, name: string) {
   );
 }
 
-export function loadServerOrder(projectId: string): string[] | undefined {
+const serverOrders = new Map<string, string[] | undefined>();
+const orderListeners = new Set<() => void>();
+function readStoredOrders(): Record<string, unknown> {
+  const raw = localStorage.getItem("mcp-server-order");
+  let stored: unknown;
   try {
-    const order = JSON.parse(localStorage.getItem("mcp-server-order") ?? "{}")[
-      projectId
-    ];
-    return Array.isArray(order)
+    stored = JSON.parse(raw ?? "{}");
+  } catch {
+    // Malformed preferences can be replaced by the next accepted catalog.
+    return {};
+  }
+  return stored && typeof stored === "object" && !Array.isArray(stored)
+    ? Object.fromEntries(Object.entries(stored))
+    : {};
+}
+
+export function subscribeServerOrder(listener: () => void) {
+  orderListeners.add(listener);
+  return () => {
+    orderListeners.delete(listener);
+  };
+}
+
+export function loadServerOrder(projectId: string): string[] | undefined {
+  if (serverOrders.has(projectId)) return serverOrders.get(projectId);
+  let names: string[] | undefined;
+  try {
+    const order = readStoredOrders()[projectId];
+    names = Array.isArray(order)
       ? order.filter((n) => typeof n === "string")
       : undefined;
   } catch {
-    return undefined;
+    // Keep a session snapshot when browser storage cannot be read.
   }
+  serverOrders.set(projectId, names);
+  return names;
 }
 export function saveServerOrder(projectId: string, names: string[]) {
+  const previous = serverOrders.get(projectId);
+  const changed =
+    !previous || previous.length !== names.length ||
+    previous.some((name, index) => name !== names[index]);
+  if (changed) serverOrders.set(projectId, [...names]);
   try {
-    const all = JSON.parse(localStorage.getItem("mcp-server-order") ?? "{}");
-    all[projectId] = names;
-    localStorage.setItem("mcp-server-order", JSON.stringify(all));
+    const all = readStoredOrders();
+    localStorage.setItem(
+      "mcp-server-order",
+      JSON.stringify({ ...all, [projectId]: names }),
+    );
   } catch {
-    /* Storage may be disabled. */
+    // Session order and queue priority still work when persistence is unavailable.
   }
-  serverCheckQueue.setOrder(projectId, names);
+  serverCheckQueue.setOrder(projectId, [...names]);
+  if (changed) for (const listener of orderListeners) listener();
 }
 
 /**
