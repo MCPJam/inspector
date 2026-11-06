@@ -2127,7 +2127,7 @@ describe("PlaygroundMain", () => {
 
     async function openSavedThread() {
       mockGetChatHistoryDetail.mockResolvedValueOnce(detail);
-      render(<PlaygroundMain {...defaultProps} />);
+      const view = render(<PlaygroundMain {...defaultProps} />);
       await waitFor(() => {
         expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
           null,
@@ -2140,6 +2140,7 @@ describe("PlaygroundMain", () => {
       fireEvent.click(
         screen.getByTestId("conversation-target-notice-acknowledge"),
       );
+      return view;
     }
 
     /** Every pre-send sync from here on waits on the same pending request. */
@@ -2205,6 +2206,84 @@ describe("PlaygroundMain", () => {
         fireEvent.submit(screen.getByTestId("chat-input"));
       });
       expect(sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("sends once when the fullscreen composer submits twice during the pre-send sync", async () => {
+      const deviceType = mockUIPlaygroundStore.deviceType;
+      mockUIPlaygroundStore.deviceType = "fill";
+      useHostContextStore.setState({
+        draftHostContext: { displayMode: "fullscreen" },
+      });
+      try {
+        const { rerender } = await openSavedThread();
+        // A widget going fullscreen swaps the docked composer for the overlay.
+        await act(async () => {
+          rerender(<PlaygroundMain {...defaultProps} />);
+        });
+        await act(async () => {
+          mockThread.mock.calls.at(-1)?.[0].onFullscreenChange(true);
+        });
+        expect(screen.getByTestId("fullscreen-overlay")).toBeInTheDocument();
+        const overlay = () =>
+          mockFullscreenChatOverlay.mock.calls.at(-1)?.[0] as {
+            onSend: () => void;
+            isSubmitting?: boolean;
+          };
+
+        const releaseSync = holdPreSendSync();
+        fireEvent.change(screen.getByTestId("fullscreen-overlay-input"), {
+          target: { value: "from fullscreen" },
+        });
+        await act(async () => {
+          overlay().onSend();
+          overlay().onSend();
+        });
+        expect(overlay().isSubmitting).toBe(true);
+
+        await act(async () => releaseSync());
+        await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+        expect(overlay().isSubmitting).toBe(false);
+      } finally {
+        mockUIPlaygroundStore.deviceType = deviceType;
+      }
+    });
+
+    it("sends a starter prompt once when it is clicked twice while the server connects", async () => {
+      mockUseChatSession.messages = [];
+      mockSharedAppState.servers["test-server"] = {
+        connectionStatus: "disconnected",
+      };
+      let ready!: () => void;
+      const ensureServersReady = vi.fn(
+        () =>
+          new Promise((done) => {
+            ready = () =>
+              done({
+                readyServerNames: ["test-server"],
+                missingServerNames: [],
+                failedServerNames: [],
+                reauthServerNames: [],
+              });
+          }),
+      );
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          ensureServersReady={ensureServersReady}
+        />,
+      );
+
+      const chip = screen.getByRole("button", { name: "Starter chip" });
+      await act(async () => {
+        fireEvent.click(chip);
+        fireEvent.click(chip);
+      });
+      await act(async () => ready());
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "Starter chip prompt" }),
+      );
     });
 
     it("still sends the same text twice when the user repeats it on purpose", async () => {

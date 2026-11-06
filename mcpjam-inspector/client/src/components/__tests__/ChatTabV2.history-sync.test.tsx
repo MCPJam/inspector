@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, FormEvent, ReactNode } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
@@ -263,19 +263,29 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
   ChatInput: ({
     value,
     onChange,
+    onSubmit,
+    isSubmitting,
     enableMultiModel,
   }: {
     value: string;
     onChange: (value: string) => void;
+    onSubmit?: (event: FormEvent<HTMLFormElement>) => void;
+    isSubmitting?: boolean;
     enableMultiModel?: boolean;
   }) => (
-    <input
-      aria-label="Chat input"
-      data-testid="chat-input"
-      data-enable-multi-model={enableMultiModel ? "true" : "false"}
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-    />
+    <form
+      data-testid="chat-input-form"
+      data-submitting={isSubmitting ? "true" : "false"}
+      onSubmit={(event) => onSubmit?.(event)}
+    >
+      <input
+        aria-label="Chat input"
+        data-testid="chat-input"
+        data-enable-multi-model={enableMultiModel ? "true" : "false"}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </form>
   ),
 }));
 
@@ -1020,6 +1030,52 @@ describe("ChatTabV2 history sync", () => {
       null
     );
     expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  // PLB-456: a send waits on the pre-send history sync with the draft still in
+  // the box; a second submit in that window must not send it again.
+  it("sends once when a second submit lands while the pre-send sync is pending", async () => {
+    const detailResponse = {
+      ok: true,
+      session: {
+        ...mockHistorySession,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["server-1"] },
+      },
+      widgetSnapshots: [],
+    };
+    mockGetChatHistoryDetail.mockResolvedValue(detailResponse);
+    render(<ChatTabV2 {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+
+    const sync = createDeferred<typeof detailResponse>();
+    mockGetChatHistoryDetail.mockReturnValue(sync.promise);
+    fireEvent.change(screen.getByTestId("chat-input"), {
+      target: { value: "second message" },
+    });
+    fireEvent.submit(screen.getByTestId("chat-input-form"));
+    fireEvent.submit(screen.getByTestId("chat-input-form"));
+    await flushMicrotasks();
+    expect(screen.getByTestId("chat-input-form")).toHaveAttribute(
+      "data-submitting",
+      "true",
+    );
+
+    sync.resolve(detailResponse);
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "second message" }),
+    );
+    expect(screen.getByTestId("chat-input")).toHaveValue("");
+    expect(screen.getByTestId("chat-input-form")).toHaveAttribute(
+      "data-submitting",
+      "false",
+    );
   });
 
   it("switches new shared threads to project visibility without persisting a draft", async () => {

@@ -4,6 +4,7 @@ import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { modelRowKey } from "@/components/chat-v2/shared/model-selection";
 import { useCompareSelections } from "@/hooks/use-compare-selections";
 import { useModelPickerEfforts } from "@/hooks/use-model-picker-efforts";
+import { useSingleFlight } from "@/hooks/use-single-flight";
 import {
   compareSelectionForRow,
   mergePickedRows,
@@ -2245,8 +2246,7 @@ export function ChatTabV2({
     signUp();
   };
 
-  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const submitComposer = async () => {
     const hasContent =
       input.trim() ||
       mcpPromptResults.length > 0 ||
@@ -2317,6 +2317,15 @@ export function ChatTabV2({
     }
   };
 
+  // One submit at a time (PLB-456): the history sync above runs with the draft
+  // still in the box, and a second Enter there used to send it twice.
+  // `preventDefault` stays first so a refused submit never reaches the browser.
+  const composerSend = useSingleFlight();
+  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await composerSend.run(submitComposer);
+  };
+
   const handleStarterPrompt = async (prompt: string) => {
     track("chat_starter_prompt_clicked", { prompt, location: "chat_tab" });
     if (composerDisabled || sendBlocked) {
@@ -2376,6 +2385,7 @@ export function ChatTabV2({
     stop: stopActiveChat,
     disabled: composerDisabled,
     isLoading: isStreamingActive,
+    isSubmitting: composerSend.pending,
     placeholder,
     currentModel: selectedModel,
     availableModels,

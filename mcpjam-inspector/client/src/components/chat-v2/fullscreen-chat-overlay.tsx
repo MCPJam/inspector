@@ -5,7 +5,7 @@ import type { CSSProperties } from "react";
 
 import type { UIMessage } from "@ai-sdk/react";
 import type { DynamicToolUIPart, ToolUIPart, UITools } from "ai";
-import { ArrowUp, ChevronDown, ChevronUp, Square } from "lucide-react";
+import { ArrowUp, ChevronDown, ChevronUp, Loader2, Square } from "lucide-react";
 
 import {
   useScenarioHostStyle,
@@ -510,6 +510,7 @@ function Composer({
   disabled,
   canSend,
   isThinking,
+  isSubmitting,
   onSubmit,
   onStop,
   composerClassName,
@@ -523,6 +524,7 @@ function Composer({
   disabled: boolean;
   canSend: boolean;
   isThinking: boolean;
+  isSubmitting: boolean;
   onSubmit: () => void;
   onStop?: () => void;
   composerClassName: string;
@@ -532,7 +534,7 @@ function Composer({
 }) {
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (isThinking || !canSend) return;
+    if (isThinking || isSubmitting || !canSend) return;
     onSubmit();
   };
 
@@ -543,7 +545,7 @@ function Composer({
       !event.nativeEvent.isComposing
     ) {
       event.preventDefault();
-      if (isThinking || !canSend) return;
+      if (isThinking || isSubmitting || !canSend) return;
       onSubmit();
     }
   };
@@ -588,6 +590,19 @@ function Composer({
           >
             <Square className="h-4 w-4" />
           </Button>
+        ) : isSubmitting ? (
+          <Button
+            type="button"
+            size="icon"
+            aria-label="Sending message"
+            className={cn(
+              "size-8 rounded-full shrink-0 transition-all",
+              activeSubmitButtonClassName,
+            )}
+            disabled
+          >
+            <Loader2 className="h-4 w-4 animate-spin" />
+          </Button>
         ) : (
           <Button
             type="submit"
@@ -622,6 +637,8 @@ type FullscreenChatOverlayProps = {
   disabled: boolean;
   canSend: boolean;
   isThinking: boolean;
+  /** A send is being prepared: Enter is refused and Send shows a spinner. */
+  isSubmitting?: boolean;
   onStop?: () => void;
   onSend: () => void;
   /**
@@ -656,6 +673,7 @@ export function FullscreenChatOverlay({
   disabled,
   canSend,
   isThinking,
+  isSubmitting = false,
   onStop,
   onSend,
   notice,
@@ -715,6 +733,7 @@ export function FullscreenChatOverlay({
             disabled={disabled}
             canSend={canSend}
             isThinking={isThinking}
+            isSubmitting={isSubmitting}
             composerClassName={appearance.composerClassName}
             composerStyle={surfaceStyle}
             activeSubmitButtonClassName={appearance.activeSubmitButtonClassName}

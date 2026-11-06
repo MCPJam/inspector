@@ -2463,7 +2463,7 @@ export function ChatInput({
                     size="icon"
                     className={cn(
                       "size-[34px] rounded-full transition-colors shadow-none",
-                      inactiveSubmitButtonClasses,
+                      activeSubmitButtonClasses,
                     )}
                     aria-label="Sending message"
                     disabled
