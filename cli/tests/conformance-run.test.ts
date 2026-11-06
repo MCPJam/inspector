@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import test from "node:test";
+import { OAuthConformanceTest } from "@mcpjam/sdk";
 import { Command } from "commander";
 import {
   buildOAuthConfig,
@@ -79,6 +80,9 @@ test("conformance run --suite oauth runs the OAuth negative checks", () => {
   );
 
   assert.equal(config.oauthConformanceChecks, true);
+  // The SDK validates in the constructor: a config it rejects never reaches
+  // a single check, and the run reports no OAuth result at all.
+  assert.doesNotThrow(() => new OAuthConformanceTest(config));
 });
 
 test("a single-suite command does not publish just because a key is exported", async () => {

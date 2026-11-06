@@ -211,6 +211,9 @@ export function buildOAuthConfig(
       clientId,
       clientSecret,
     },
+    // The SDK reads a preregistered client from here, not from `auth`, and
+    // rejects the config without it.
+    client: { preregistered: { clientId, clientSecret } },
     // On by default, as in `oauth conformance`. The redirect checks skip as
     // not applicable to client_credentials.
     oauthConformanceChecks: true,
