@@ -187,7 +187,7 @@ describe("IterationPage", () => {
     render(<IterationPage route={route} projectId="p1" />);
     expect(
       screen.getByText(
-        "This iteration is not part of this test run. It may have been deleted, or the link is wrong.",
+        "This iteration is not part of this test run. Check the link, or go back to the test run.",
       ),
     ).toBeInTheDocument();
   });

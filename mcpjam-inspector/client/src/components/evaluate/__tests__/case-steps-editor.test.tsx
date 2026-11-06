@@ -303,7 +303,7 @@ describe("After-run assertions", () => {
     );
     expect(
       screen.getByText(
-        /Suite evaluators replaced for this case: 3 are not applied\./,
+        /Suite evaluators are replaced for this case, so 3 are not applied\./,
       ),
     ).toBeTruthy();
     await user.click(

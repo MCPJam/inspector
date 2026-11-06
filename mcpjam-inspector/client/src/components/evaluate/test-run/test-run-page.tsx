@@ -54,9 +54,9 @@ export function TestRunPage({ route, projectId }: EvalNavPageProps) {
 
 async function copyFixPrompt(text: string) {
   if (await copyToClipboard(text)) {
-    toast.success("Fix prompt copied. Paste it into your coding agent");
+    toast.success("Fix prompt copied. Paste it into your coding agent.");
   } else {
-    toast.error("Copy failed");
+    toast.error("Could not copy the fix prompt. Try again.");
   }
 }
 
@@ -207,8 +207,8 @@ function TestRunPageBody({
   if (data.status === "runNotFound") {
     body = (
       <p className="text-sm text-muted-foreground">
-        This run is not in this suite's history. It may have been deleted, or
-        the link is wrong.
+        This run is not in this suite's history. Check the link, or open the
+        suite to see its runs.
       </p>
     );
   } else if (data.status === "loading" || !data.run) {
@@ -216,7 +216,8 @@ function TestRunPageBody({
   } else if (data.status === "caseNotInRun") {
     body = (
       <p className="text-sm text-muted-foreground">
-        This test case did not run in Run #{data.run.runNumber}.
+        This test case did not run in Run #{data.run.runNumber}. Go back to Run
+        #{data.run.runNumber} to pick another test run.
       </p>
     );
   } else {

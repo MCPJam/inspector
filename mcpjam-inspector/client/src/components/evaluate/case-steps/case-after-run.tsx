@@ -95,7 +95,7 @@ export function CaseAfterRun({
         {draft.predicates?.mode === "replace" ? (
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
             <span>
-              {`Suite evaluators replaced for this case: ${replaced === 1 ? "1 is not applied" : `${replaced} are not applied`}.`}
+              {`Suite evaluators are replaced for this case, so ${replaced === 1 ? "1 is not applied" : `${replaced} are not applied`}.`}
             </span>
             {readOnly ? null : (
               <Button
