@@ -1,3 +1,5 @@
+import { ConvexHttpClient } from "convex/browser";
+import { ConvexError } from "convex/values";
 import { describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "ai";
 import { logger } from "../../../utils/logger";
@@ -1156,4 +1158,20 @@ describe("createSuiteRunRecorder", () => {
     expect(query.mock.calls.length).toBe(queryCallsBefore);
     expect(mutation.mock.calls.length).toBe(mutationCallsBefore);
   });
+});
+
+
+it("answers a capacity refusal without retrying admission or starting work", async () => {
+  const client = new ConvexHttpClient("https://capacity.test");
+  const mutation = vi.spyOn(client, "mutation").mockRejectedValue(new ConvexError({
+    kind: "at_capacity", resource: "eval_runs", message: "Eval capacity reached. Try again after another eval finishes.",
+  }));
+  const action = vi.spyOn(client, "action");
+  await expect(startSuiteRunWithRecorder({ convexClient: client, suiteId: "suite-1" })).rejects.toMatchObject({
+    status: 429, code: "RATE_LIMITED",
+    headers: { "Retry-After": "1" },
+    details: { code: "at_capacity", resource: "eval_runs", retryAfterMs: 1000 },
+  });
+  expect(mutation).toHaveBeenCalledTimes(1);
+  expect(action).not.toHaveBeenCalled();
 });

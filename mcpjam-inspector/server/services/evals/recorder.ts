@@ -1,3 +1,4 @@
+import { asCapacityRouteError } from "../../utils/capacity-route-error.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { ModelMessage } from "ai";
@@ -845,6 +846,8 @@ export const startSuiteRunWithRecorder = async ({
     // The eval-iteration cap is checked fail-fast inside startTestSuiteRun
     // (before any run row is created), so an out-of-quota launch rejects here
     // with the billing ConvexError and NO pending run group is stranded.
+    const capacity = asCapacityRouteError(error);
+    if (capacity) throw capacity;
     const billing = asBillingRouteError(error);
     if (billing) {
       throw billing;
