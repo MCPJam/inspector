@@ -208,12 +208,12 @@ export class ConvexHttpStatusError extends Error {
 }
 
 /**
- * The `fetch` for a `ConvexHttpClient` whose failures go through
- * `translateConvexReadError`. The client turns a non-2xx answer into
- * `new Error(body)` and drops the status, and Sentry keeps neither the body
- * nor the log message, so the only record of the failure was the word
- * "Error" (INSPECTOR-HONO-17). Throwing here, before the client reads the
- * response, keeps the status for the upstream report.
+ * The `fetch` for the Convex clients that `createConvexClient`,
+ * `createConvexClients` and the evals read client build. The client turns a
+ * non-2xx answer into `new Error(body)` and drops the status, and Sentry keeps
+ * neither the body nor the log message, so the only record of the failure was
+ * the word "Error" (INSPECTOR-HONO-17). Throwing here, before the client reads
+ * the response, keeps the status for the upstream report.
  */
 export const convexReadFetch: typeof fetch = async (input, init) => {
   const response = await fetch(input, init);
@@ -243,13 +243,25 @@ export type ConvexReadFailure =
   | { kind: "redacted" }
   | { kind: "upstream" };
 
+/**
+ * A known HTTP status outranks the body text where the two disagree. Convex
+ * answers a rejected credential with 401 whatever the body says, and that is
+ * a 401 for the caller, not a retryable 502. And a status error never reads
+ * as `redacted`: the function did not run, while a redacted refusal comes back
+ * as a 560 the client reads itself, so a proxy's "500 Internal Server Error"
+ * is an outage and must not answer 404 at a preflight.
+ */
 export function classifyConvexReadError(error: unknown): ConvexReadFailure {
   const message = error instanceof Error ? error.message : String(error);
+  const convexStatus =
+    error instanceof ConvexHttpStatusError ? error.convexStatus : undefined;
   if (MEMBERSHIP_REFUSAL.test(message)) return { kind: "membership" };
-  if (AUTHENTICATION_FAILURE.test(message)) return { kind: "authentication" };
+  if (convexStatus === 401 || AUTHENTICATION_FAILURE.test(message))
+    return { kind: "authentication" };
   if (ARGUMENT_VALIDATION_FAILURE.test(message))
     return { kind: "invalid-argument" };
-  if (REDACTED_SERVER_ERROR.test(message)) return { kind: "redacted" };
+  if (convexStatus === undefined && REDACTED_SERVER_ERROR.test(message))
+    return { kind: "redacted" };
   return { kind: "upstream" };
 }
 
