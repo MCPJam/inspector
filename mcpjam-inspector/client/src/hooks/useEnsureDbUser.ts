@@ -353,6 +353,10 @@ export function useEnsureDbUser() {
           let guestId: string | null = null;
           try {
             guestId = await getExistingGuestId();
+            // A stale run's answer may predate a restored cookie.
+            if (cancelled || activeEnsureIdentityRef.current !== identityKey) {
+              return;
+            }
             // The cookie is gone or belongs to another guest, so the marked
             // guest can never be promoted from this browser; drop its marker
             // so later sign-ins skip the lookup. A failed lookup throws

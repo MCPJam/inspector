@@ -577,6 +577,30 @@ describe("useEnsureDbUser", () => {
     );
   });
 
+  it("leaves the marker alone when the run is cancelled during the lookup", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.getActivatedGuestId.mockReturnValue("guest-marked");
+    let resolveLookup: ((guestId: string | null) => void) | undefined;
+    mockState.getExistingGuestId.mockImplementationOnce(
+      () =>
+        new Promise<string | null>((resolve) => {
+          resolveLookup = resolve;
+        }),
+    );
+
+    const { unmount } = renderHook(() => useEnsureDbUser());
+    await waitFor(() => expect(resolveLookup).toBeDefined());
+
+    unmount();
+    await act(async () => {
+      resolveLookup?.(null);
+    });
+
+    expect(mockState.clearGuestActivation).not.toHaveBeenCalled();
+    expect(mockState.ensureUser).not.toHaveBeenCalled();
+  });
+
   it("clears the marker read before the lookup, not one written while it was pending", async () => {
     mockState.auth.user = { id: "workos-user-1" };
     mockState.actorKey = "workos-user-1";
