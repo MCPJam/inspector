@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { EvalNavRoute, EvalRoute } from "@/lib/eval-route-types";
 import { legacyEvalRouteFor } from "@/lib/eval-nav-routes";
+import { IterationPage } from "../../test-run/iteration-page";
+import { TestRunPage } from "../../test-run/test-run-page";
 import {
   EVAL_NAV_PAGES,
   resolveEvalNavPage,
@@ -32,10 +34,23 @@ describe("EVAL_NAV_PAGES", () => {
       "case-settings": { analyticsPage: "test_case", Page: null },
       "case-evaluators": { analyticsPage: "test_case_evaluators", Page: null },
       "run-detail": { analyticsPage: "suite_run", Page: SuiteRunNavPage },
-      "test-run": { analyticsPage: "test_run", Page: null },
-      iteration: { analyticsPage: "iteration", Page: null },
+      "test-run": { analyticsPage: "test_run", Page: TestRunPage },
+      iteration: { analyticsPage: "iteration", Page: IterationPage },
       "test-run-edit": { analyticsPage: "test_run_edit", Page: null },
     });
+  });
+});
+
+describe("the Test run and Iteration pages", () => {
+  const testRun: EvalNavRoute = { type: "test-run", suiteId: "s", runId: "r", testCaseId: "c" };
+  const iteration: EvalNavRoute = { ...testRun, type: "iteration", iterationId: "i" };
+  it.each([
+    [testRun, TestRunPage],
+    [iteration, IterationPage],
+  ])("resolve to their page with the flag on, today's page off, pending unknown (%o)", (route, Page) => {
+    expect(resolveEvalNavPage(route, true)).toEqual({ kind: "page", Page, route });
+    expect(resolveEvalNavPage(route, false)).toEqual({ kind: "legacy", route: legacyEvalRouteFor(route) });
+    expect(resolveEvalNavPage(route, undefined)).toEqual({ kind: "pending" });
   });
 });
 
