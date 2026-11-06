@@ -5,7 +5,8 @@ import { nativeForwardingSelection, prepareNativeForwarding, hasForwardingOrgani
   nativeToolMetadata,
 } from "./forwarding/native-turn.js";
 import { forwardingAdmission } from "./forwarding/enhanced-admission.js";
-import { resolveHarnessMcpPlan } from "./harness-mcp-plan.js";
+import { resolveHarnessMcpPlan, type HarnessMcpPlan } from "./harness-mcp-plan.js";
+import { buildHarnessMcpAtTurn } from "./harness-mcp-receipt.js";
 import { assertHarnessMcpDiscoveryGate } from "./harness-mcp-discovery-gate.js";
 import {
   presentNativeTranscript,
@@ -1148,6 +1149,8 @@ export async function runHarnessTurn(
   // PersistedTurnTrace / abort). Constructed at STREAM start once `traceBaseMs`
   // is finalized; read by `onFinishEngine` (a sibling closure) for the trace.
   let driver: StreamTurnDriver | undefined;
+  // The route decided after servers connect, recorded on the turn trace.
+  let turnMcpPlan: HarnessMcpPlan | undefined;
   /**
    * Whether the model request was HANDED OVER — the boundary between our own
    * preparation and the provider's turn.
@@ -1639,6 +1642,7 @@ export async function runHarnessTurn(
           ownedTasksAvailable: options.harnessOwnedTasks === true && tasks?.mode === "expose",
         }),
       });
+      turnMcpPlan = mcpPlan;
       const enhancedApps = mcpPlan.forwardingKind === "profiled";
       const useNativeForwarding = mcpPlan.forwardingKind !== undefined;
       assertHarnessMcpDiscoveryGate({
@@ -3691,6 +3695,19 @@ export async function runHarnessTurn(
           traceBaseMs,
           spans: capturedSpans,
           onStepFinish,
+          harnessMcpAtTurn: turnMcpPlan && buildHarnessMcpAtTurn({
+            plan: turnMcpPlan,
+            // The plane the proxy config was built on, read after the local plane bound.
+            connection: {
+              plane: (localMcpPlane?.strategy ?? harnessMcpProxy ?? { plane: "local-mcp" }).plane,
+              serverCount: selectedServers?.length ?? 0,
+              profileDigest: () => harnessConnectionFingerprint(mcpClientManager, selectedServers ?? [], modelVisibleMcpToolResults),
+            },
+            pinnedRuntimeVersion: harnessAdapter.pinnedRuntimeVersion,
+            observedRuntimeVersion: installedRuntimeVersion,
+            adapterVersion: qualifiedForwardingRuntime(harnessAdapter)?.configurationVersion,
+            requireNativeToolDiscovery: options.requireNativeToolDiscovery === true,
+          }),
         });
         driver = activeDriver;
         activeDriver.emitTurnStart(writer);

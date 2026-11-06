@@ -459,3 +459,58 @@ describe("account routing", () => {
     });
   });
 });
+
+describe("the route receipt on the persisted turn trace", () => {
+  async function persisted(options: Record<string, unknown>) {
+    const onConversationComplete = vi.fn(async () => ({ outcome: "saved" }));
+    await runHarnessTurn(
+      { ...options, onConversationComplete } as never,
+      "none",
+    );
+    expect(onConversationComplete).toHaveBeenCalledOnce();
+    const calls = onConversationComplete.mock.calls as unknown as Array<
+      [unknown, { harnessMcpAtTurn?: Record<string, unknown> }]
+    >;
+    return calls[0]![1].harnessMcpAtTurn;
+  }
+
+  it("records a host-tools turn on MCPJam's client with the client profile", async () => {
+    vi.stubEnv("HARNESS_NATIVE_FORWARDING", "false");
+    const receipt = await persisted(enrolled({ agentLoop: "claude-code" }));
+    expect(receipt).toMatchObject({
+      version: 1,
+      upstream: "mcpjam",
+      delivery: "host-tools",
+      profile: "client",
+      reasons: ["forwarding flag off"],
+      pinnedRuntimeVersion: "2.1.245",
+      adapterVersion: "config-v1",
+      plannerVersion: "harness-mcp-plan-v1",
+      qualification: { status: "not-required" },
+    });
+    expect(receipt?.profileDigest).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("records why forwarding was not admitted on a retained route", async () => {
+    forwarding.admission.mockReturnValue({ gaps: ["unqualified-protocol"] });
+    const receipt = await persisted(enrolled());
+    expect(receipt).toMatchObject({
+      upstream: "mcpjam",
+      delivery: "mcp-endpoint",
+      profile: "client",
+      gaps: ["unqualified-protocol"],
+      reasons: ["forwarding not admitted; configured route retained"],
+    });
+    expect(receipt).not.toHaveProperty("forwarding");
+  });
+
+  it("records pass-through forwarding with no profile of MCPJam's", async () => {
+    const receipt = await persisted(admit("forwarded-native"));
+    expect(receipt).toMatchObject({
+      upstream: "harness",
+      delivery: "mcp-endpoint",
+      forwarding: { kind: "pass-through" },
+    });
+    expect(receipt).not.toHaveProperty("profile");
+  });
+});
