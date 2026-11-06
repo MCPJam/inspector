@@ -11,6 +11,7 @@ import {
   type FingerprintableEvent,
   groupDomMutationConflicts,
   groupOAuthDebuggerStepFailures,
+  oauthDebuggerStepFingerprint,
   isSentryBuildSurface,
   resolveClientBuildSurface,
   type ScrubbableBreadcrumb,
@@ -821,6 +822,14 @@ describe("groupOAuthDebuggerStepFailures", () => {
       "oauth-debugger-step",
       "unknown",
       "boom",
+      "prod",
+    ]);
+  });
+
+  it("builds its key from oauthDebuggerStepFingerprint", () => {
+    const event = stepEvent("boom", { step: "token_request" });
+    expect(fingerprint(event)).toEqual([
+      ...oauthDebuggerStepFingerprint("token_request", "boom"),
       "prod",
     ]);
   });

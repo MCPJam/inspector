@@ -41,7 +41,10 @@ export interface ReportOptions {
    * site. Sentry only.
    */
   tags?: Record<string, string>;
-  /** Sentry grouping override, for a call site whose stacks are all alike. */
+  /**
+   * Grouping override, for a call site whose stacks are all alike. Sentry's
+   * `fingerprint`, and PostHog's `$exception_fingerprint` joined with `:`.
+   */
   fingerprint?: string[];
 }
 
@@ -245,6 +248,9 @@ export function reportCaught(error: unknown, options: ReportOptions): void {
         ...(queryTags
           ? { ...queryTags, page_location: page }
           : (options.extra ?? {})),
+        ...(options.fingerprint
+          ? { $exception_fingerprint: options.fingerprint.join(":") }
+          : {}),
       });
     }
   } catch {

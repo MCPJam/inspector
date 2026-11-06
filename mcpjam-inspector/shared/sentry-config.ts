@@ -319,15 +319,27 @@ export function groupOAuthDebuggerStepFailures<T extends FingerprintableEvent>(
     typeof reported === "string" && reported !== ""
       ? reported
       : (event.exception?.values?.[0]?.value ?? "").slice(0, 160);
-  const step = event.extra?.step;
-
   event.fingerprint = [
-    "oauth-debugger-step",
-    typeof step === "string" && step !== "" ? step : "unknown",
-    finding,
+    ...oauthDebuggerStepFingerprint(event.extra?.step, finding),
     event.environment ?? "unknown",
   ];
   return event;
+}
+
+/**
+ * The step and finding part of {@link groupOAuthDebuggerStepFailures}'s key.
+ * The reporting adapter passes it as `fingerprint` too, so PostHog groups these
+ * reports the same way Sentry does.
+ */
+export function oauthDebuggerStepFingerprint(
+  step: unknown,
+  finding: string,
+): string[] {
+  return [
+    "oauth-debugger-step",
+    typeof step === "string" && step !== "" ? step : "unknown",
+    finding,
+  ];
 }
 
 /**

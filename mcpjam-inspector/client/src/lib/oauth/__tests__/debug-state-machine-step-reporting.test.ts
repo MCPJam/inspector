@@ -198,6 +198,22 @@ describe("OAuth debugger step-failure reporting", () => {
     expect(options.extra.finding).toBe("Token request failed: 400: invalid_grant");
   });
 
+  // PostHog groups on `fingerprint` alone; it never sees `extra.finding`.
+  it("gives one discovery failure the same fingerprint on every server", () => {
+    const discoveryFailure = (host: string) =>
+      `Could not discover authorization server metadata. https://${host}/.well-known/oauth-authorization-server returned HTTP 404; https://${host}/.well-known/openid-configuration returned HTTP 404.`;
+    const fingerprints = ["a.example", "b.example"].map((host) => {
+      reportCaught.mockClear();
+      const { wrapped } = wrappedUpdateState(vi.fn(), "metadata");
+      wrapped({ error: discoveryFailure(host) });
+      return reportCaught.mock.calls[0][1].fingerprint;
+    });
+
+    expect(fingerprints[0]).toEqual(fingerprints[1]);
+    expect(fingerprints[0][0]).toBe("oauth-debugger-step");
+    expect(JSON.stringify(fingerprints)).not.toMatch(/a\.example|b\.example/);
+  });
+
   it("keys on the sanitized message, never the raw one", () => {
     // A secret the sanitizer removes must not survive into the grouping key.
     // Short and digit-free on purpose: a long token with a digit would be

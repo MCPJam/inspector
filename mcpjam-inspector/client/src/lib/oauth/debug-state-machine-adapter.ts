@@ -26,6 +26,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 import { sanitizeStepError } from "./trace-redaction";
+import { oauthDebuggerStepFingerprint } from "@/shared/sentry-config";
 
 /**
  * Re-exported so the debugger's existing callers (and its tests) keep importing
@@ -424,20 +425,22 @@ function withStepFailureReporting(
     ) {
       lastReportedError = error;
       const sanitized = sanitizeStepError(error);
+      // What error reporting groups on — see `groupOAuthDebuggerStepFailures`.
+      // From the sanitized text, never the raw one, and computed by the SDK
+      // that writes these messages, next to their writers.
+      const finding = stepFailureFindingKey(sanitized);
+      // Prefer the step this update is moving TO. An update that both
+      // advances the step and carries an error would otherwise be
+      // attributed to the PREVIOUS step, making the dimension misleading.
+      const step =
+        (updates as { currentStep?: string }).currentStep ?? context.getStep();
       reportCaught(new Error(sanitized), {
         source: "oauth_debugger_step",
         level: "warning",
+        fingerprint: oauthDebuggerStepFingerprint(step, finding),
         extra: {
-          // What error reporting groups on — see `groupOAuthDebuggerStepFailures`.
-          // From the sanitized text, never the raw one, and computed by the SDK
-          // that writes these messages, next to their writers.
-          finding: stepFailureFindingKey(sanitized),
-          // Prefer the step this update is moving TO. An update that both
-          // advances the step and carries an error would otherwise be
-          // attributed to the PREVIOUS step, making the dimension misleading.
-          step:
-            (updates as { currentStep?: string }).currentStep ??
-            context.getStep(),
+          finding,
+          step,
           protocolVersion: context.protocolVersion,
           ...proxyFailure,
         },

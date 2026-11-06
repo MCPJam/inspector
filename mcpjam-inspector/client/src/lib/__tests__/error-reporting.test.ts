@@ -157,6 +157,29 @@ describe("reportCaught", () => {
     );
   });
 
+  it("sends a fingerprint to PostHog as $exception_fingerprint", () => {
+    reportCaught(new Error("boom"), {
+      source: "unit",
+      fingerprint: ["unit", "finding"],
+    });
+
+    expect(captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ fingerprint: ["unit", "finding"] }),
+    );
+    expect(posthogCaptureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ $exception_fingerprint: "unit:finding" }),
+    );
+  });
+
+  it("leaves PostHog grouping alone without a fingerprint", () => {
+    reportCaught(new Error("boom"), { source: "unit" });
+
+    const [, properties] = posthogCaptureException.mock.calls[0];
+    expect(properties).not.toHaveProperty("$exception_fingerprint");
+  });
+
   it("normalizes non-Error throws into an Error", () => {
     reportCaught("just a string", { source: "unit" });
     const [captured] = captureException.mock.calls[0];
