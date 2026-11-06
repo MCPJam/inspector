@@ -52,6 +52,21 @@ describe("OverallScoreCard", () => {
     expect(screen.queryByText(/partial/)).toBeNull();
   });
 
+  it("keeps guidance ahead of the input hint when a passed run has both", () => {
+    render(
+      <OverallScoreCard
+        score={{ ...passedScore(100), couldNotRun: 2, advisoryCount: 1 }}
+        serverName="srv"
+        version="2025-11-25"
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Conformant, with guidance. 2 checks need input. Select tools in setup and run again.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it.each([
     [
       3,
