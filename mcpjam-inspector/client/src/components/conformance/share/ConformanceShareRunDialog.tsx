@@ -170,7 +170,7 @@ function ShareRunBody({
   const copyLink = async () => {
     if (!shareUrl) return;
     if (await copyToClipboard(shareUrl)) toast.success("Link copied");
-    else toast.error("Couldn't copy the link");
+    else toast.error("Couldn't copy the link. Try again.");
   };
 
   return (

@@ -61,7 +61,10 @@ export function shareCardFontEmbedCss(): Promise<string> {
   embedCssPromise ??= Promise.all(
     FACES.map(async ({ url }) => {
       const response = await fetch(url);
-      if (!response.ok) throw new Error(`Font ${url}: ${response.status}`);
+      // Internal: caught by the download, which shows its own message.
+      if (!response.ok) {
+        throw new Error(`Could not load a card font (HTTP ${response.status})`);
+      }
       return [url, await toDataUrl(await response.blob())] as const;
     }),
   )
