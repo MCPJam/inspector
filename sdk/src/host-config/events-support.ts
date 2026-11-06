@@ -135,7 +135,10 @@ export function setEventsHostSetting<T extends EventsSupportHost>(
   host: T,
   modes: readonly EventDeliveryMode[]
 ): T {
-  const profile = isRecord(host.mcpProfile) ? host.mcpProfile : {};
+  // A new profile needs its version, or the canonicalizer refuses it.
+  const profile = isRecord(host.mcpProfile)
+    ? host.mcpProfile
+    : { profileVersion: 1 };
   const extensions = isRecord(profile.extensions) ? profile.extensions : {};
   const entry: Partial<Record<EventDeliveryMode, true>> = {};
   for (const mode of EVENT_DELIVERY_MODES) {
@@ -174,7 +177,9 @@ export function clearEventsHostSetting<T extends EventsSupportHost>(
     Object.keys(extensions).length > 0
       ? { ...profileRest, extensions }
       : profileRest;
-  if (Object.keys(nextProfile).length > 0) {
+  // `{ profileVersion: 1 }` alone hashes differently from no profile.
+  const { profileVersion: _version, ...content } = nextProfile;
+  if (Object.keys(content).length > 0) {
     return { ...host, mcpProfile: nextProfile };
   }
   const { mcpProfile: _removedProfile, ...rest } = host;

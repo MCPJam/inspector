@@ -111,6 +111,11 @@ describe("setEventsHostSetting / clearEventsHostSetting", () => {
 
   it("clears back to the style default without leaving empty containers", () => {
     const host = { hostStyle: "chatgpt" };
+    // A profile it creates carries its version, so it canonicalizes.
+    expect(setEventsHostSetting(host, []).mcpProfile).toEqual({
+      profileVersion: 1,
+      extensions: { [MCPJAM_EVENTS_EXTENSION_ID]: {} },
+    });
     expect(clearEventsHostSetting(setEventsHostSetting(host, []))).toEqual(
       host
     );
@@ -200,6 +205,18 @@ describe("hashes and parity", () => {
       hostContext: {},
       ...(mcpProfile ? { mcpProfile } : {}),
     }) as HostConfigInputV2;
+
+  it("canonicalizes a setting saved on a host with no profile", async () => {
+    const set = setEventsHostSetting(base(), ["webhook"]);
+    expect(
+      canonicalizeHostConfigV2(set).mcpProfile?.extensions?.[
+        MCPJAM_EVENTS_EXTENSION_ID
+      ]
+    ).toEqual({ webhook: true });
+    expect(await computeHostConfigHashV2(clearEventsHostSetting(set))).toBe(
+      await computeHostConfigHashV2(base())
+    );
+  });
 
   it("keeps an explicit {} distinct from absent, and absent hashes as before", async () => {
     const none = base({
