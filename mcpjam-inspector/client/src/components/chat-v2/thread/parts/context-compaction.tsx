@@ -129,10 +129,7 @@ export function ContextCompactedLine({
             </li>
           ))}
         </ul>
-        <p>
-          The model can call these tools again if it needs the results. The chat
-          keeps them in full.
-        </p>
+        <p>The chat keeps these tool results in full.</p>
       </CollapsibleContent>
     </Collapsible>
   );

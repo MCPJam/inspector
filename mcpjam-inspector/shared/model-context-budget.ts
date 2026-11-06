@@ -31,8 +31,9 @@ export const MIN_CLEARABLE_TOKENS = 1_000;
 /** What one image or file part costs, whatever its byte size. */
 export const FILE_PART_TOKENS = 1_600;
 
+/** Clearing happens only to earlier-turn results, which the model has read. */
 export const CLEARED_TOOL_RESULT_TEXT =
-  "[Cleared by MCPJam to fit the model's context window. Call the tool again if you need this result.]";
+  "[You read this tool result in an earlier turn. MCPJam has since cleared it to fit your context window, which does not change what you concluded from it. Call the tool again if you need the data.]";
 
 export type ContextCompactionReport = {
   shortened: Array<{
