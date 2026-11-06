@@ -11,7 +11,13 @@ import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FlaskConical } from "lucide-react";
-import { buildConformanceRunPath, useAppNavigate } from "@/lib/app-navigation";
+import {
+  buildConformanceRunPath,
+  conformanceRunOriginState,
+  readConformanceRunOrigin,
+  useAppNavigate,
+  useCurrentLocationState,
+} from "@/lib/app-navigation";
 import { SharedArtifactPage } from "@/components/sharing/SharedArtifactPage";
 import { DetailPageHeader } from "@/components/shared/detail-page-header";
 import { useSharedArtifact } from "@/hooks/useSharedArtifact";
@@ -312,7 +318,9 @@ export function ConformanceHistory({
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    navigate(buildConformanceRunPath(run._id, projectId));
+                    navigate(buildConformanceRunPath(run._id, projectId), {
+                      state: conformanceRunOriginState("history"),
+                    });
                   }}
                 >
                   <span className={`${cell} text-sm font-semibold`}>
@@ -381,6 +389,7 @@ export function ConformanceRunDetailPage({
   serversLoading?: boolean;
 }) {
   const navigate = useAppNavigate();
+  const origin = readConformanceRunOrigin(useCurrentLocationState());
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Each report carries a short-lived artifact link.
   const detail = useArtifactQuery<
@@ -446,8 +455,16 @@ export function ConformanceRunDetailPage({
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       {/* The same chrome as a run on screen, so a saved run reads like it. */}
       <DetailPageHeader
-        backLabel="Conformance History"
-        onBack={() => navigate("/conformance?view=history")}
+        backLabel={
+          origin === "overview" ? "Conformance" : "Conformance History"
+        }
+        onBack={() =>
+          navigate(
+            origin === "overview"
+              ? "/conformance"
+              : "/conformance?view=history",
+          )
+        }
         backTestId="conformance-saved-run-back"
         title={
           <h1

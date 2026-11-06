@@ -289,6 +289,37 @@ describe("ConformanceRunDetailPage", () => {
     expect(screen.getByRole("button", { name: "Run again" })).toBeDefined();
   });
 
+  it.each([
+    { from: "overview", label: "Conformance", path: "/conformance" },
+    {
+      from: "history",
+      label: "Conformance History",
+      path: "/conformance?view=history",
+    },
+    {
+      from: undefined,
+      label: "Conformance History",
+      path: "/conformance?view=history",
+    },
+  ])(
+    "sends Back to the tab the run was opened from ($from)",
+    ({ from, label, path }) => {
+      navigateMock.mockReset();
+      window.history.replaceState(
+        from ? { conformanceRunFrom: from } : {},
+        "",
+        "/conformance/runs/run_1",
+      );
+      useArtifactQueryMock.mockReturnValue(run([report()]));
+      render(<ConformanceRunDetailPage runId="run_1" />);
+
+      const back = screen.getByTestId("conformance-saved-run-back");
+      expect(back).toHaveTextContent(label);
+      fireEvent.click(back);
+      expect(navigateMock).toHaveBeenCalledWith(path);
+    },
+  );
+
   it("waits for server lookup before Run again, including a deleted server", () => {
     navigateMock.mockReset();
     useArtifactQueryMock.mockReturnValue(run([report()]));

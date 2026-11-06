@@ -392,6 +392,7 @@ import {
 import type { HostFocusTabId } from "./components/hosts/redesigned/types";
 import {
   buildConformanceRunPath,
+  conformanceRunOriginState,
   buildHostsPath,
   buildOrganizationPath,
   buildOrganizationSwitchTarget,
@@ -1826,7 +1827,9 @@ export function ConformanceRoute() {
         onViewRun={
           convexProjectId
             ? (runId) =>
-                navigate(buildConformanceRunPath(runId, convexProjectId))
+                navigate(buildConformanceRunPath(runId, convexProjectId), {
+                  state: conformanceRunOriginState("overview"),
+                })
             : undefined
         }
       />
