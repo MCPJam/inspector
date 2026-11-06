@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -72,6 +72,7 @@ import {
   EvalNavPageServicesProvider,
   type EvalNavPageServices,
 } from "../../nav/eval-nav-page-services";
+import { HOW_SUITES_WORK_SEEN_KEY } from "../../how-suites-work";
 import { EvaluateLandingPage } from "../evaluate-landing-page";
 
 const PROJECT = "proj000000000001";
@@ -145,6 +146,7 @@ const pageViews = () =>
 
 describe("EvaluateLandingPage", () => {
   beforeEach(() => {
+    localStorage.setItem(HOW_SUITES_WORK_SEEN_KEY, "1");
     vi.mocked(track).mockClear();
     state.loading = false;
     state.suites = [
@@ -239,6 +241,39 @@ describe("EvaluateLandingPage", () => {
     expect(vi.mocked(services.cancelRun).mock.calls[1][0]).toEqual(
       expect.arrayContaining([g1._id, g2._id]),
     );
+  });
+
+  it("opens the tutorial from ⋮", async () => {
+    const user = userEvent.setup();
+    renderLanding();
+    expect(
+      screen.queryByRole("dialog", { name: "How suites work" }),
+    ).toBeNull();
+    await user.click(screen.getByRole("button", { name: "More options" }));
+    await user.click(screen.getByRole("menuitem", { name: "Tutorial" }));
+    expect(
+      await screen.findByRole("dialog", { name: "How suites work" }),
+    ).toBeInTheDocument();
+  });
+
+  it("opens the tutorial once on the first visit and not on tab switches", async () => {
+    localStorage.removeItem(HOW_SUITES_WORK_SEEN_KEY);
+    const user = userEvent.setup();
+    renderLanding();
+    expect(
+      await screen.findByRole("dialog", { name: "How suites work" }),
+    ).toBeInTheDocument();
+    expect(localStorage.getItem(HOW_SUITES_WORK_SEEN_KEY)).toBe("1");
+    await user.keyboard("{Escape}");
+    expect(
+      screen.queryByRole("dialog", { name: "How suites work" }),
+    ).toBeNull();
+    await act(async () => {
+      fireEvent.click(tab("Runs"));
+    });
+    expect(
+      screen.queryByRole("dialog", { name: "How suites work" }),
+    ).toBeNull();
   });
 
   it("shows the empty hero, wired to the services", async () => {

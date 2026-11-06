@@ -405,6 +405,44 @@
   }
 }
 
+/* "How suites work" tutorial possum: a slow bob, and a tail wave. */
+@keyframes tut-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes tut-wave {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+
+  50% {
+    transform: rotate(-16deg);
+  }
+}
+
+.tut-bob {
+  animation: tut-bob 2.6s ease-in-out infinite;
+}
+
+.tut-wave {
+  animation: tut-wave 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tut-bob,
+  .tut-wave {
+    animation: none;
+  }
+}
+
 /*
  * Swarm empty-state hero — the golems jump on a loop so the page reads as
  * alive rather than unfinished (BB-120).

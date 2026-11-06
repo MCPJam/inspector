@@ -11,6 +11,7 @@ import type { EvalSuite } from "../../evals/types";
 import { useEvalQueries } from "../../evals/use-eval-queries";
 import { EvalNavLandingHeader, type EvalNavLandingTab } from "../evals-header";
 import { EvalsEmptyHero } from "../evals-empty-hero";
+import { HowSuitesWorkDialog, useHowSuitesWork } from "../how-suites-work";
 import { useEvalNavPageView } from "../nav/eval-nav-analytics";
 import { useEvalNavPageServices } from "../nav/eval-nav-page-services";
 import type { EvalNavPageProps } from "../nav/eval-nav-pages";
@@ -74,6 +75,7 @@ export function EvaluateLandingPage({ route, projectId }: EvalNavPageProps) {
   const reviewSuite = sortedSuites.find(
     (entry) => entry.suite._id === reviewSuiteId,
   )?.suite;
+  const tutorial = useHowSuitesWork({ autoOpen: true });
 
   useEvalNavPageView(route, { projectId, ui: "nav", enabled: true });
 
@@ -169,6 +171,7 @@ export function EvaluateLandingPage({ route, projectId }: EvalNavPageProps) {
           if (next !== tab) navigate(TAB_ROUTES[next], { via: "link" });
         }}
         onCreateSuite={() => services.openCreateSuite()}
+        onOpenTutorial={tutorial.openFromMenu}
       />
       {body}
       {reviewSuite ? (
@@ -185,6 +188,7 @@ export function EvaluateLandingPage({ route, projectId }: EvalNavPageProps) {
           disabledReason={services.evalRunsDisabledReason}
         />
       ) : null}
+      <HowSuitesWorkDialog {...tutorial.dialogProps} />
     </div>
   );
 }
