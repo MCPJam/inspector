@@ -2317,9 +2317,9 @@ export function ChatTabV2({
     }
   };
 
-  // One submit at a time (PLB-456): the history sync above runs with the draft
-  // still in the box, and a second Enter there used to send it twice.
-  // `preventDefault` stays first so a refused submit never reaches the browser.
+  // One submit at a time: the history sync above runs with the draft still in
+  // the box, where a second Enter would send it again. `preventDefault` stays
+  // first so a refused submit never falls through to a native form submit.
   const composerSend = useSingleFlight();
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

@@ -5402,9 +5402,9 @@ export function PlaygroundMain({
     computerAttachmentUpload,
   ]);
   // An App draft is refused for the whole submit, which captures the composer
-  // first and clears it last. One submit at a time (PLB-456): the gates above
-  // await the network with the draft still in the box, and a second Enter
-  // there used to send the message twice.
+  // first and clears it last. One submit at a time: the gates above await the
+  // network with the draft still in the box, where a second Enter would send
+  // it again. The lock is released after the draft is cleared.
   const composerSend = useSingleFlight();
   const performComposerSubmit = useCallback(
     async (): Promise<boolean> =>
