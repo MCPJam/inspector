@@ -471,12 +471,10 @@ export async function executeToolCallsFromMessages(
           ...(signal ? { abortSignal: signal } : {}),
         });
         throwIfAborted(signal);
-        // SDK-converted MCP tools intentionally return `undefined` from
-        // toModelOutput for ordinary text/JSON results: the mapper is an
-        // image-specialization hook, not a replacement for the normal
-        // serialization path. Falling through preserves the CallToolResult
-        // instead of emitting an output-less tool result (which becomes `{}`
-        // on the wire and can leave the resumed model turn with no answer).
+        // A toModelOutput that returns `undefined` falls through to the
+        // serialization path below, so the tool result is never output-less
+        // (which becomes `{}` on the wire and can leave the resumed model turn
+        // with no answer). SDK-converted MCP tools always return an output.
         if (mappedOutput !== undefined) {
           // MCP App tools scrub structuredContent from the model-facing copy
           // (`mappedOutput`), but their widgets read structuredContent from

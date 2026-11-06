@@ -66,6 +66,7 @@ import type {
 import {
   ensureJsonSchemaObject,
   isAppOnlyTool,
+  mcpCallToolResultToModelJson,
 } from "./mcp-client-manager/tool-converters.js";
 import { mcpCallToolResultToModelOutput } from "./mcp-client-manager/model-output.js";
 import { assertCallToolResult } from "./mcp-client-manager/result-guards.js";
@@ -233,10 +234,7 @@ function convertToToolSet(
       toModelOutput: ({ output }) =>
         (mcpCallToolResultToModelOutput(output as CallToolResult, {
           modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
-        }) ?? {
-          type: "json" as const,
-          value: output as any,
-        }) as any,
+        }) ?? mcpCallToolResultToModelJson(output as CallToolResult)) as any,
     });
 
     // Preserve _serverId like getToolsForAiSdk() does

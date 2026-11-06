@@ -219,47 +219,81 @@ export function scrubMetaAndStructuredContentFromToolResult(
   return scrubMetaFromToolResult(scrubStructuredContentFromToolResult(result));
 }
 
+/**
+ * The JSON model output for a CallToolResult with no images. `_meta` is for
+ * the client, not the model. `structuredContent` is dropped when `content`
+ * already has text, because servers put a serialized copy of it there and
+ * sending both duplicates the payload. With no usable text it is the only
+ * data the model gets, so it stays.
+ */
+export function mcpCallToolResultToModelJson(result: CallToolResult) {
+  const hasText =
+    Array.isArray(result?.content) &&
+    result.content.some(
+      (block) =>
+        block?.type === "text" &&
+        typeof block.text === "string" &&
+        block.text.trim().length > 0
+    );
+  const visible = scrubMetaFromToolResult(result);
+  return {
+    type: "json" as const,
+    value: hasText ? scrubStructuredContentFromToolResult(visible) : visible,
+  };
+}
+
+type McpToolResultModelOptions = McpModelVisibleToolResultPolicy & {
+  readResource?: McpLinkedResourceReader;
+  abortSignal?: AbortSignal;
+};
+
 function mcpToolResultToModelOutput(
   result: CallToolResult,
-  options: McpModelVisibleToolResultPolicy & {
-    readResource?: McpLinkedResourceReader;
-    abortSignal?: AbortSignal;
-  }
+  options: McpToolResultModelOptions,
+  toJson: (result: CallToolResult) => unknown
 ): any {
   if (options.readResource) {
     return mcpCallToolResultToModelOutputWithLinkedResources(result, {
       modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
       readResource: options.readResource,
       abortSignal: options.abortSignal,
-    }).then(
-      (output) =>
-        output ?? {
-          type: "json" as const,
-          value: result as any,
-        }
-    );
+    }).then((output) => output ?? toJson(result));
   }
 
   return (
     mcpCallToolResultToModelOutput(result, {
       modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
-    }) ?? {
-      type: "json" as const,
-      value: result as any,
-    }
+    }) ?? toJson(result)
   );
 }
 
-/** Use the same App privacy and content policy outside an AI SDK agent loop. */
+function scrubToolResultForApp(
+  result: CallToolResult,
+  toolMeta: Parameters<typeof isMcpAppTool>[0]
+): CallToolResult {
+  return isMcpAppTool(toolMeta)
+    ? scrubMetaAndStructuredContentFromToolResult(result)
+    : isChatGPTAppTool(toolMeta)
+      ? scrubStructuredContentFromToolResult(result)
+      : result;
+}
+
+/**
+ * Use the same App privacy and image policy outside an AI SDK agent loop.
+ * Plain tools keep structuredContent here: the harness forwards this result to
+ * a CLI's MCP client, which rejects a tool with an outputSchema whose result
+ * has no structuredContent.
+ */
 export function projectMcpToolResultForModel(
   result: CallToolResult,
   toolMeta: Parameters<typeof isMcpAppTool>[0],
-  options: McpModelVisibleToolResultPolicy & { readResource?: McpLinkedResourceReader; abortSignal?: AbortSignal } = {}
+  options: McpToolResultModelOptions = {}
 ) {
-  const visible = isMcpAppTool(toolMeta)
-    ? scrubMetaAndStructuredContentFromToolResult(result)
-    : isChatGPTAppTool(toolMeta) ? scrubStructuredContentFromToolResult(result) : result;
-  return mcpToolResultToModelOutput(visible, options);
+  return mcpToolResultToModelOutput(
+    scrubToolResultForApp(result, toolMeta),
+    options,
+    (value) => ({ type: "json" as const, value })
+  );
 }
 
 /**
@@ -340,11 +374,15 @@ export async function convertMCPToolsToVercelTools(
       output: unknown;
       abortSignal?: AbortSignal;
     }) =>
-      projectMcpToolResultForModel(opts.output as CallToolResult, toolMeta, {
-        modelVisibleMcpToolResults,
-        readResource,
-        abortSignal: opts.abortSignal,
-      });
+      mcpToolResultToModelOutput(
+        scrubToolResultForApp(opts.output as CallToolResult, toolMeta),
+        {
+          modelVisibleMcpToolResults,
+          readResource,
+          abortSignal: opts.abortSignal,
+        },
+        mcpCallToolResultToModelJson
+      );
 
     let vercelTool: Tool;
 

@@ -1890,6 +1890,34 @@ describe("HostRunner", () => {
         value: [{ type: "file", mediaType: "image/png", data: { type: "data", data: "aGVsbG8=" } }],
       });
     });
+
+    it("drops _meta and the structuredContent copy from text results for raw Tool[] conversion", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new HostRunner({
+        tools: [createMockTool("textTool")],
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      await agent.run("Test");
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      const content = [{ type: "text", text: '{"ok":true}' }];
+      expect(
+        callArgs.tools.textTool.toModelOutput({
+          output: {
+            content,
+            structuredContent: { ok: true },
+            _meta: { private: "x" },
+          },
+        })
+      ).toEqual({ type: "json", value: { content } });
+    });
   });
 
   describe("tool description overrides", () => {

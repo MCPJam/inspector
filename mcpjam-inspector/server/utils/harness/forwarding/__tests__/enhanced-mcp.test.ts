@@ -186,3 +186,30 @@ it("does not expose private metadata from legacy ChatGPT App tool metadata", asy
   });
   expect(settle.mock.calls[0][0].resultJson).toContain("private-sentinel");
 });
+it("keeps structuredContent for a plain tool with an outputSchema", async () => {
+  const m = manager();
+  const plain = {
+    name: "weather",
+    inputSchema: { type: "object" },
+    outputSchema: { type: "object" },
+  };
+  m.listTools.mockResolvedValue({ tools: [plain] } as never);
+  const original = {
+    content: [{ type: "text", text: '{"tempC":19}' }],
+    structuredContent: { tempC: 19 },
+    _meta: { private: "private-sentinel" },
+  };
+  m.executeTool.mockResolvedValue(original);
+  const response = await enhancedMcpResponse({
+    ...args(m),
+    message: message("tools/call", { name: "weather" }),
+  });
+  expect(await response.json()).toEqual({
+    jsonrpc: "2.0",
+    id: "request",
+    result: {
+      content: original.content,
+      structuredContent: original.structuredContent,
+    },
+  });
+});

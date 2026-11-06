@@ -333,6 +333,76 @@ describe("convertMCPToolsToVercelTools — SEP-1865 visibility filtering", () =>
       value: output,
     });
   });
+
+  it("drops _meta and the structuredContent copy from text MCP results", async () => {
+    const tools = await convertMCPToolsToVercelTools(listToolsFixture, {
+      callTool,
+    });
+    const output = {
+      content: [{ type: "text", text: '{"city":"Lima","tempC":19}' }],
+      structuredContent: { city: "Lima", tempC: 19 },
+      _meta: { "com.example/trace": "abc" },
+      isError: false,
+    };
+
+    expect(
+      (tools.default_visibility as any).toModelOutput({
+        toolCallId: "call-1",
+        input: {},
+        output,
+      })
+    ).toEqual({
+      type: "json",
+      value: { content: output.content, isError: false },
+    });
+    expect(output.structuredContent).toEqual({ city: "Lima", tempC: 19 });
+    expect(output._meta).toEqual({ "com.example/trace": "abc" });
+  });
+
+  it("keeps structuredContent when content has no text for the model", async () => {
+    const tools = await convertMCPToolsToVercelTools(listToolsFixture, {
+      callTool,
+    });
+    const output = {
+      content: [{ type: "text", text: "  " }],
+      structuredContent: { city: "Lima" },
+      _meta: { "com.example/trace": "abc" },
+    };
+
+    expect(
+      (tools.default_visibility as any).toModelOutput({
+        toolCallId: "call-1",
+        input: {},
+        output,
+      })
+    ).toEqual({
+      type: "json",
+      value: { content: output.content, structuredContent: { city: "Lima" } },
+    });
+  });
+
+  it("projects text MCP results the same way when a resource reader is set", async () => {
+    const tools = await convertMCPToolsToVercelTools(listToolsFixture, {
+      callTool,
+      readResource: vi.fn(),
+    });
+    const output = {
+      content: [{ type: "text", text: "ok" }],
+      structuredContent: { ok: true },
+      _meta: { private: "x" },
+    };
+
+    await expect(
+      (tools.default_visibility as any).toModelOutput({
+        toolCallId: "call-1",
+        input: {},
+        output,
+      })
+    ).resolves.toEqual({
+      type: "json",
+      value: { content: output.content },
+    });
+  });
 });
 
 describe("convertMCPToolsToVercelTools — description overrides", () => {
