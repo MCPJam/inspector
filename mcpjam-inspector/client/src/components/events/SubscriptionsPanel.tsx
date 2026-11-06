@@ -12,7 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { copyToClipboard } from "@/lib/clipboard";
-import { getEventsProfile } from "@/lib/events-profiles";
+import { BUILT_IN_EVENTS_HOST_NAME } from "./use-events-host";
 import type {
   EventsSlotStateResponse,
   EventsSubscriptionView,
@@ -97,8 +97,13 @@ function SubscriptionCard({
         <Badge variant="outline" className="font-mono text-[10px]">
           {subscription.mode}
         </Badge>
-        <Badge variant="outline" className="text-[10px]">
-          {getEventsProfile(subscription.profile).label}
+        <Badge
+          variant="outline"
+          className="text-[10px]"
+          title="The client this subscription receives events as"
+          data-testid="subscription-host"
+        >
+          {subscription.host?.name ?? BUILT_IN_EVENTS_HOST_NAME}
         </Badge>
         <span
           className={cn(

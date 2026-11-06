@@ -69,6 +69,7 @@ import {
   type EventExecutorDeps,
   type EventRunConnection,
 } from "./executor-deps.js";
+import { HostResolutionError } from "./host-connection.js";
 import { isOwnerAuthorizationRefusal, pinnedConnectionIds } from "./owner-connection.js";
 import { createRunCheckpointer } from "./run-checkpointer.js";
 import { eventTriggerChatSessionId, persistEventRunTranscript } from "./run-transcript.js";
@@ -202,6 +203,7 @@ export async function executeClaimedEventRun(
         serverIds: servers.serverIds,
         ...(servers.serverNames ? { serverNames: servers.serverNames } : {}),
         ...(pinned ?? {}),
+        ...(servers.hostConfig ? { hostConfig: servers.hostConfig } : {}),
       });
     } catch (error) {
       // Only the subscription's own server parks the subscription; a refusal
@@ -239,6 +241,12 @@ export async function executeClaimedEventRun(
       systemPrompt: built.systemPrompt,
       requireToolApproval: false,
       skillsSource: { kind: "none" },
+      // The host's tool-visibility policy, as a chat with it would apply.
+      // Approval stays the trigger's (unattended runs auto-deny), and Tasks
+      // stay off: no event run opts into them.
+      ...(typeof servers.hostConfig?.respectToolVisibility === "boolean"
+        ? { respectToolVisibility: servers.hostConfig.respectToolVisibility }
+        : {}),
     });
     // Resume from the checkpoint when there is one; its unresolved tool calls
     // (if the last attempt died between the model and the tools) are finished
@@ -444,6 +452,12 @@ export async function executeClaimedEventRun(
   } catch (error) {
     if (error instanceof StaleLeaseError) halt("lease_lost");
     if (halted) return finish(haltedOutcome(halted));
+    // The run cannot act as its subscription's host (deleted, or the
+    // environment now pins another): it fails with that reason, unattempted.
+    if (error instanceof HostResolutionError) {
+      logger.warn("[events-executor] host unavailable", { ...logContext, reason: error.reason });
+      return finish({ status: "failed", error: error.reason });
+    }
     logger.warn("[events-executor] run failed", { ...logContext, error: shortError(error) });
     return finish({ status: "failed", error: shortError(error) });
   } finally {

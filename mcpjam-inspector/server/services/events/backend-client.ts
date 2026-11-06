@@ -74,8 +74,11 @@ export interface EventSubscriptionRow {
   bindingKey: string;
   /** The hosted OAuth connection the binding acts with, pinned at creation. */
   oauthConnectionId?: string;
+  /** The host it receives events as; absent is MCPJam (built-in). */
+  hostId?: string;
   locality: "hosted" | "local";
-  profile: "draft@28ec35e" | "chatgpt@2026-11-05" | "chatgpt@2026-09-30";
+  /** Optional: rows created without a rulebook name none. */
+  profile?: "draft@28ec35e" | "chatgpt@2026-11-05" | "chatgpt@2026-09-30";
   protocolVersion?: string;
   eventName: string;
   arguments: Record<string, unknown>;
@@ -184,7 +187,6 @@ export interface EventRunInput {
     instructions: string;
     modelId?: string | null;
     approvalPolicy: "deny_writes" | "auto_deny";
-    hostProfile?: unknown;
     maxSteps: number;
     environmentId?: string | null;
   };
@@ -208,6 +210,11 @@ export interface EventRunInput {
     environmentId?: string | null;
     eventName?: string;
     profile?: string;
+    /**
+     * The host the run acts as; null is MCPJam (built-in). Absent on runs
+     * scheduled before the backend recorded it, which act as built-in.
+     */
+    hostId?: string | null;
     /** Connect to `serverId` with this OAuth connection, never the default. */
     oauthConnectionId?: string | null;
   };

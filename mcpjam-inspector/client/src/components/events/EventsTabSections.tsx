@@ -2,13 +2,14 @@ import { cn } from "@mcpjam/design-system/cn";
 import { Radio } from "lucide-react";
 import { JsonEditor } from "@/components/ui/json-editor";
 import {
+  describeModeRefusal,
+  isEventDeliveryMode,
+  type SubscribableModes,
+} from "@mcpjam/sdk/browser";
+import {
   EVENTS_DRAFT_DATE,
   EVENTS_DRAFT_SOURCE_URL,
-  EVENTS_PROFILES,
-  getEventsProfile,
-  usableDeliveryModes,
 } from "@/lib/events-profiles";
-import type { EventsProfileIdView } from "@/shared/events-api";
 
 export function Section({
   title,
@@ -39,17 +40,10 @@ export function Section({
 
 /**
  * "Draft" is a label, not a gate (per the events plan): the extension is a
- * working-group draft pinned at one commit, and every result is judged by a
- * named profile.
+ * working-group draft pinned at one commit. The right side holds the client
+ * the tab subscribes as, which decides the delivery modes on offer.
  */
-export function DraftHeader({
-  profileId,
-  onProfileChange,
-}: {
-  profileId: EventsProfileIdView;
-  onProfileChange: (profileId: EventsProfileIdView) => void;
-}) {
-  const profile = getEventsProfile(profileId);
+export function DraftHeader({ children }: { children?: React.ReactNode }) {
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
       <Radio className="h-4 w-4 text-muted-foreground" />
@@ -64,62 +58,51 @@ export function DraftHeader({
       >
         Draft · {EVENTS_DRAFT_DATE}
       </a>
-      <div className="ml-auto flex items-center gap-2">
-        <label
-          htmlFor="events-profile"
-          className="text-[11px] text-muted-foreground"
-        >
-          Profile
-        </label>
-        <select
-          id="events-profile"
-          aria-label="Events profile"
-          value={profileId}
-          onChange={(e) =>
-            onProfileChange(e.target.value as EventsProfileIdView)
-          }
-          className="h-7 rounded-md border border-border bg-background px-2 text-xs text-foreground"
-          title={profile.description}
-        >
-          {EVENTS_PROFILES.map((option) => (
-            <option key={option.id} value={option.id}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </div>
+      {children ? (
+        <div className="ml-auto flex items-center gap-2">{children}</div>
+      ) : null}
     </div>
   );
 }
 
+/**
+ * The delivery modes an event advertises, struck through where this client
+ * or runtime can't use them, with the reason on hover.
+ */
 export function DeliveryChips({
   delivery,
-  profileId,
+  availability,
+  hostName,
 }: {
   delivery: string[];
-  profileId: EventsProfileIdView;
+  availability?: SubscribableModes;
+  hostName: string;
 }) {
-  const usable = new Set<string>(usableDeliveryModes(delivery, profileId));
   return (
     <div className="flex flex-wrap gap-1">
-      {delivery.map((mode) => (
-        <span
-          key={mode}
-          className={cn(
-            "rounded-sm border px-1.5 py-0.5 font-mono text-[10px]",
-            usable.has(mode)
-              ? "border-border bg-secondary text-secondary-foreground"
-              : "border-border text-muted-foreground line-through",
-          )}
-          title={
-            usable.has(mode)
-              ? undefined
-              : `Not used by the ${getEventsProfile(profileId).label} profile`
-          }
-        >
-          {mode}
-        </span>
-      ))}
+      {delivery.map((mode) => {
+        const reason =
+          availability && isEventDeliveryMode(mode)
+            ? describeModeRefusal(mode, availability, hostName)
+            : null;
+        const usable =
+          availability === undefined ||
+          (isEventDeliveryMode(mode) && availability.modes.includes(mode));
+        return (
+          <span
+            key={mode}
+            className={cn(
+              "rounded-sm border px-1.5 py-0.5 font-mono text-[10px]",
+              usable
+                ? "border-border bg-secondary text-secondary-foreground"
+                : "border-border text-muted-foreground line-through",
+            )}
+            title={usable ? undefined : (reason ?? undefined)}
+          >
+            {mode}
+          </span>
+        );
+      })}
     </div>
   );
 }

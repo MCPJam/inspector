@@ -1,6 +1,6 @@
 /**
  * The Events tab (MCP Events draft extension) in LOCAL mode: the catalog,
- * the subscribe form, profiles, the local webhook acknowledgement, and the
+ * the subscribe form, the client it subscribes as, the local webhook acknowledgement, and the
  * SSE feed (`/api/mcp/events/stream` frames), including untrusted event data.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -42,7 +42,27 @@ vi.mock("@/lib/apis/mcp-events-api", async (importOriginal) => ({
     `/api/mcp/events/stream?after=${after}`,
 }));
 
+vi.mock("@/hooks/useClients", () => ({
+  useHostList: () => ({
+    hosts: [
+      {
+        hostId: "host_chatgpt",
+        name: "ChatGPT",
+        hostStyle: "chatgpt",
+        eventDeliveryModes: ["webhook"],
+        hostConfigId: "cfg_1",
+        modelId: "openai/gpt-5",
+        serverCount: 1,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ],
+    isLoading: false,
+  }),
+}));
+
 vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
   useQuery: () => undefined,
   useMutation: () => vi.fn(),
 }));
@@ -258,7 +278,8 @@ describe("EventsTab (local)", () => {
       eventName: "issue.created",
       arguments: { repo: "octo/hello" },
       mode: "poll",
-      profile: "draft@28ec35e",
+      // No client is active: MCPJam (built-in), named explicitly.
+      host: null,
       maxAgeMs: 60000,
       ttlMs: null,
     });
@@ -285,22 +306,74 @@ describe("EventsTab (local)", () => {
     );
   });
 
-  it("offers only webhook under the ChatGPT profile", async () => {
+  it("subscribes as the active client, offering only the modes it receives", async () => {
     mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated]));
-    renderTab();
+    mockCreateLocal.mockResolvedValue(
+      subscriptionView({ host: { id: "host_chatgpt", name: "ChatGPT" } }),
+    );
+    render(
+      <EventsTab
+        serverConfig={serverConfig()}
+        serverName={SERVER}
+        activeHostId="host_chatgpt"
+        activeHost={{ hostStyle: "chatgpt" }}
+      />,
+    );
 
-    expect(
-      await screen.findByRole("radio", { name: /Poll/ }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /Push/ })).toBeInTheDocument();
-
-    fireEvent.change(screen.getByLabelText("Events profile"), {
-      target: { value: "chatgpt@2026-11-05" },
-    });
-
+    expect(await screen.findByTestId("events-host-label")).toHaveTextContent(
+      "Receiving as ChatGPT",
+    );
     expect(screen.queryByRole("radio", { name: /Poll/ })).toBeNull();
     expect(screen.queryByRole("radio", { name: /Push/ })).toBeNull();
     expect(screen.getByRole("radio", { name: /Webhook/ })).toBeChecked();
+
+    fireEvent.change(screen.getByPlaceholderText("Enter repo"), {
+      target: { value: "octo/hello" },
+    });
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /Use local development receiver/,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Subscribe/ }));
+    await waitFor(() =>
+      expect(mockCreateLocal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mode: "webhook",
+          host: {
+            id: "host_chatgpt",
+            name: "ChatGPT",
+            eventDeliveryModes: ["webhook"],
+          },
+        }),
+      ),
+    );
+    const card = await screen.findByTestId("subscription-esub_1");
+    expect(within(card).getByTestId("subscription-host")).toHaveTextContent(
+      "ChatGPT",
+    );
+  });
+
+  it("shows every event for a client without Events support but disables Subscribe with the reason", async () => {
+    mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated]));
+    render(
+      <EventsTab
+        serverConfig={serverConfig()}
+        serverName={SERVER}
+        activeHostId="host_claude"
+        activeHost={{
+          hostStyle: "chatgpt",
+          mcpProfile: { extensions: { "com.mcpjam/events": {} } },
+        }}
+      />,
+    );
+
+    const list = await screen.findByTestId("event-types");
+    expect(within(list).getByText("issue.created")).toBeInTheDocument();
+    expect(await screen.findByTestId("subscribe-blocked")).toHaveTextContent(
+      "doesn't receive events. Turn on a delivery mode in its Protocol settings, or pick another client.",
+    );
+    expect(screen.getByRole("button", { name: /Subscribe/ })).toBeDisabled();
   });
 
   it("requires the development-receiver acknowledgement for a local webhook", async () => {

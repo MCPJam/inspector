@@ -2577,8 +2577,13 @@ export function TasksRoute() {
 }
 
 export function EventsRoute() {
-  const { selectedMCPConfig, appState, convexProjectId } =
-    useAppRouteContext();
+  const {
+    selectedMCPConfig,
+    appState,
+    convexProjectId,
+    activeHost,
+    activeHostId,
+  } = useAppRouteContext();
   const eventsEnabled = useEventsEnabledState();
   if (eventsEnabled === false) {
     return <ScopedNavigate to={routePaths.servers} replace />;
@@ -2594,6 +2599,8 @@ export function EventsRoute() {
           appState.servers[appState.selectedServer]?.connectionStatus
         }
         projectId={convexProjectId ?? null}
+        activeHostId={activeHostId ?? null}
+        activeHost={activeHost ?? null}
       />
     </div>
   );

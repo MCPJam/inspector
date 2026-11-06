@@ -27,9 +27,11 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { MCPClientManager } from "@mcpjam/sdk";
+import { describeModeRefusal, isEventDeliveryMode, subscribableModes } from "@mcpjam/sdk";
 import { isEventsProfileId } from "@mcpjam/sdk/events";
 import type {
   EventsCreateSubscriptionRequest,
+  EventsHostSelection,
   EventsListResponse,
   EventsPollResponse,
   EventsSupportView,
@@ -107,6 +109,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** How the built-in host is named in messages. */
+const BUILT_IN_HOST_NAME = "MCPJam (built-in)";
+
+/**
+ * A subscribe request's `host`: `null` for MCPJam (built-in), the named host
+ * with the modes its saved config accepts, or `undefined` when it is missing
+ * or unreadable (refused, never defaulted).
+ */
+function parseHostSelection(value: unknown): EventsHostSelection | null | undefined {
+  if (value === null) return null;
+  if (!isRecord(value)) return undefined;
+  if (typeof value.id !== "string" || !value.id || typeof value.name !== "string") return undefined;
+  if (!Array.isArray(value.eventDeliveryModes)) return undefined;
+  if (!value.eventDeliveryModes.every(isEventDeliveryMode)) return undefined;
+  return { id: value.id, name: value.name, eventDeliveryModes: value.eventDeliveryModes };
+}
+
 async function readBody(c: Context): Promise<Record<string, unknown>> {
   try {
     const body = await c.req.json();
@@ -118,7 +137,7 @@ async function readBody(c: Context): Promise<Record<string, unknown>> {
 
 function eventsError(
   c: Context,
-  status: 400 | 404 | 500 | 502,
+  status: 400 | 404 | 409 | 500 | 502,
   code: string,
   message: string,
   details?: Record<string, unknown>,
@@ -254,13 +273,39 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
       typeof body.eventName !== "string" ||
       !body.eventName ||
       (mode !== "poll" && mode !== "push" && mode !== "webhook") ||
-      !isEventsProfileId(body.profile)
+      (body.profile !== undefined && !isEventsProfileId(body.profile))
     ) {
       return eventsError(
         c,
         400,
         "EVENTS_UNAVAILABLE",
-        "serverId, eventName, mode (poll|push|webhook) and a known profile are required",
+        "serverId, eventName and mode (poll|push|webhook) are required, and a profile must be a known one",
+      );
+    }
+    // The host decides which modes this subscription may use, exactly as the
+    // Subscribe button does. MCPJam (built-in) is an explicit `null`: a
+    // missing or unreadable host is refused, never defaulted.
+    const host = parseHostSelection(body.host);
+    if (host === undefined) {
+      return eventsError(
+        c,
+        400,
+        "EVENTS_HOST_REQUIRED",
+        "Choose the client to subscribe as, or MCPJam (built-in).",
+      );
+    }
+    const allowed = subscribableModes({
+      host: null,
+      ...(host ? { hostModes: host.eventDeliveryModes } : {}),
+      runtime: "local",
+    });
+    if (!allowed.modes.includes(mode)) {
+      return eventsError(
+        c,
+        400,
+        "EVENTS_MODE_UNSUPPORTED",
+        describeModeRefusal(mode, allowed, host?.name ?? BUILT_IN_HOST_NAME) ??
+          `This client doesn't receive events by ${mode}. Pick another mode or client.`,
       );
     }
     const request: EventsCreateSubscriptionRequest = {
@@ -268,7 +313,8 @@ export function createLocalEventsRouter(options: LocalEventsRouterOptions = {}):
       eventName: body.eventName,
       arguments: isRecord(body.arguments) ? body.arguments : {},
       mode,
-      profile: body.profile,
+      host,
+      ...(isEventsProfileId(body.profile) ? { profile: body.profile } : {}),
       ...(typeof body.maxAgeMs === "number" ? { maxAgeMs: body.maxAgeMs } : {}),
       ...(typeof body.ttlMs === "number" || body.ttlMs === null
         ? { ttlMs: body.ttlMs as number | null }

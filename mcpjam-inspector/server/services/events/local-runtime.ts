@@ -51,6 +51,7 @@ import type {
   EventsFeedEntryView,
   EventsSimulateRequest,
   EventsStreamFrame,
+  EventsHostView,
   EventsSubscriptionView,
 } from "@/shared/events-api";
 import { logger } from "../../utils/logger.js";
@@ -70,8 +71,9 @@ const MAX_TIMER_MS = 2_147_483_647;
 
 export class LocalEventsError extends Error {
   constructor(
-    readonly status: 400 | 404,
-    readonly code: "EVENTS_NOT_FOUND" | "EVENTS_UNAVAILABLE",
+    readonly status: 400 | 404 | 409,
+    readonly code:
+      "EVENTS_NOT_FOUND" | "EVENTS_UNAVAILABLE" | "EVENTS_CONFLICT",
     message: string,
   ) {
     super(message);
@@ -81,6 +83,8 @@ export class LocalEventsError extends Error {
 
 interface LocalSubscription {
   record: SubscriptionRecord;
+  /** The host it receives events as; `id: null` is MCPJam (built-in). */
+  host: EventsHostView;
   overrides: LocalOverride[];
   argumentsHash: string;
   push?: PushStreamHandle;
@@ -201,6 +205,7 @@ export class LocalEventsRuntime {
   private view(local: LocalSubscription): EventsSubscriptionView {
     return subscriptionView(local.record, {
       locality: "local",
+      host: local.host,
       overrides: local.overrides,
     });
   }
@@ -268,6 +273,9 @@ export class LocalEventsRuntime {
       );
     }
     const argumentsHash = computeArgumentsHash(request.arguments);
+    const host: EventsHostView = request.host
+      ? { id: request.host.id, name: request.host.name }
+      : { id: null, name: "MCPJam (built-in)" };
     for (const existing of this.subscriptions.values()) {
       if (
         existing.record.desiredState !== "removed" &&
@@ -276,6 +284,15 @@ export class LocalEventsRuntime {
         existing.record.mode === request.mode &&
         existing.argumentsHash === argumentsHash
       ) {
+        // The same subscription under another host is a different test:
+        // returning it would quietly change the host.
+        if (existing.host.id !== host.id) {
+          throw new LocalEventsError(
+            409,
+            "EVENTS_CONFLICT",
+            "This event is already subscribed under another client. Remove that subscription first.",
+          );
+        }
         return this.view(existing);
       }
     }
@@ -290,7 +307,7 @@ export class LocalEventsRuntime {
         credentialFingerprint: null,
       }),
       serverId: request.serverId,
-      profile: request.profile,
+      ...(request.profile ? { profile: request.profile } : {}),
       eventName: request.eventName,
       arguments: request.arguments,
       mode: request.mode,
@@ -304,6 +321,7 @@ export class LocalEventsRuntime {
     };
     const local: LocalSubscription = {
       record,
+      host,
       overrides: request.mode === "webhook" ? overrides : [],
       argumentsHash,
     };
