@@ -131,7 +131,7 @@ function SuiteNavPageBody({
           : null;
       setExportCases(pickSuiteExportCases(cases, full ? [full] : []));
     } catch {
-      toast.error("Could not load suite export");
+      toast.error("Could not prepare the SDK export. Try Export as SDK again.");
     }
   }, [cases, runs, convex]);
 

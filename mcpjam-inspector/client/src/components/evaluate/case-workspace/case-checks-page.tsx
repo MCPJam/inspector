@@ -37,6 +37,7 @@ export function CaseChecksPage({
   judgeSkipped,
   onJudgeSkippedChange,
   onConfigureSuite,
+  configureSuiteLabel = "Configure suite assertions",
   saveStatus,
 }: {
   title: string;
@@ -56,6 +57,8 @@ export function CaseChecksPage({
   judgeSkipped: boolean;
   onJudgeSkippedChange: (skipped: boolean) => void;
   onConfigureSuite?: () => void;
+  /** Label of the onConfigureSuite button. The legacy editor keeps the default. */
+  configureSuiteLabel?: string;
   saveStatus?: string | null;
 }) {
   const draft = { predicates, suppressedSuiteStandardCheckIds };
@@ -82,7 +85,7 @@ export function CaseChecksPage({
           headerActions={
             onConfigureSuite ? (
               <Button variant="outline" size="sm" onClick={onConfigureSuite}>
-                Configure suite assertions
+                {configureSuiteLabel}
               </Button>
             ) : null
           }

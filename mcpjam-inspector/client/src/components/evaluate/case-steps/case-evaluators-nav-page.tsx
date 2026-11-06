@@ -93,6 +93,7 @@ function CaseEvaluatorsPage({
               data.saveChecks({ judgeConfigOverride });
             }}
             onConfigureSuite={() => openSettings("evaluators")}
+            configureSuiteLabel="Edit default evaluators"
           />
         </div>
       ) : null}

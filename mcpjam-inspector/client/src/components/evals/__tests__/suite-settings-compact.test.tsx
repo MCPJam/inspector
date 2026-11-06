@@ -4,7 +4,14 @@ import { SuiteScorerTable } from "../suite-scorer-table";
 import { PASS_OR_FAIL_HINT, JUDGE_HINT } from "../suite-pass-or-fail-section";
 import { SuiteSettingsRow } from "../suite-settings-row";
 import { SuiteSettingsCompactContext } from "../suite-settings-compact";
-import { SuiteSettingsLockFrame } from "../suite-settings-row-parts";
+import {
+  SuiteBudgetSettingsRows,
+  SuiteSettingsLockFrame,
+} from "../suite-settings-row-parts";
+import {
+  initSuiteSettingsDraft,
+  readSuiteSettingsValues,
+} from "../suite-settings-draft";
 
 vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
   ProviderLogo: () => <span aria-hidden="true" />,
@@ -18,6 +25,29 @@ function compact(node: React.ReactNode) {
     </SuiteSettingsCompactContext.Provider>,
   );
 }
+
+/** Per-turn timeout authored; every other budget left to the platform. */
+function budgetRows() {
+  const draft = initSuiteSettingsDraft({
+    suiteId: "s1",
+    values: readSuiteSettingsValues({
+      executionBudgets: { turnTimeoutMs: 360_000 },
+    }),
+  });
+  return (
+    <SuiteBudgetSettingsRows
+      sheet={{
+        draft,
+        dispatchDraft: vi.fn(),
+        rowIsDirty: () => false,
+        rowIsConflict: () => false,
+      }}
+    />
+  );
+}
+
+const rowOf = (container: HTMLElement, key: string) =>
+  container.querySelector(`[data-setting-key="${key}"]`) as HTMLElement;
 
 function scorerTable() {
   return (
@@ -84,6 +114,29 @@ describe("compact settings rows (V-5)", () => {
     expect(stacked.container.querySelector("fieldset")?.className).toContain(
       "space-y-8",
     );
+  });
+
+  it("marks an un-authored budget with a Platform default chip", () => {
+    const { container } = compact(budgetRows());
+    const toolCall = within(rowOf(container, "toolCallTimeoutMs"));
+    const chip = toolCall.getByText("Platform default");
+    expect(chip.getAttribute("title")).toBe(
+      "Leave empty to keep the platform default",
+    );
+    expect(chip.className).toContain("rounded-full");
+    expect(toolCall.queryByText("inheriting the platform default")).toBeNull();
+    const turn = within(rowOf(container, "turnTimeoutMs"));
+    expect(turn.queryByText("Platform default")).toBeNull();
+    expect(turn.queryByText("inheriting the platform default")).toBeNull();
+  });
+
+  it("keeps the sheet's sentence for an un-authored budget outside the page", () => {
+    const { container } = render(budgetRows());
+    const toolCall = within(rowOf(container, "toolCallTimeoutMs"));
+    expect(toolCall.getByText("inheriting the platform default")).toBeTruthy();
+    expect(toolCall.queryByText("Platform default")).toBeNull();
+    const turn = within(rowOf(container, "turnTimeoutMs"));
+    expect(turn.queryByText("inheriting the platform default")).toBeNull();
   });
 
   it("keeps the stacked layout without the context", () => {

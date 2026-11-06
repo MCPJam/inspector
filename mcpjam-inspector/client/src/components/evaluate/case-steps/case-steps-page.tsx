@@ -69,7 +69,7 @@ export function MissingCase({ onOpen }: { onOpen: () => void }) {
         className="h-auto px-0"
         onClick={onOpen}
       >
-        Open Suite settings
+        Open suite settings
       </Button>
     </div>
   );

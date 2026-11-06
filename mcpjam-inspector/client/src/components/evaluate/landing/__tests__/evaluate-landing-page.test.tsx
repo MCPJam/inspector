@@ -308,7 +308,7 @@ describe("EvaluateLandingPage", () => {
   it("shows the loading spinner while the overview loads", () => {
     state.loading = true;
     renderLanding();
-    expect(screen.getByText("Loading suites...")).toBeInTheDocument();
+    expect(screen.getByText("Loading suites…")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Evaluate" })).toBeVisible();
   });
 });

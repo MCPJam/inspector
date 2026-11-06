@@ -154,7 +154,9 @@ describe("SuiteCasesCard (C-1 to C-10)", () => {
     await act(async () => {
       fireEvent.click(screen.getByTestId("suite-settings-case-delete-confirm"));
     });
-    expect(mocks.error).toHaveBeenCalledWith("Failed to delete test case");
+    expect(mocks.error).toHaveBeenCalledWith(
+      "Could not delete the test case. Try again.",
+    );
   });
 });
 

@@ -178,8 +178,8 @@ function IterationPageBody({
   if (notFound) {
     body = (
       <p className="text-sm text-muted-foreground">
-        This iteration is not part of this test run. It may have been deleted,
-        or the link is wrong.
+        This iteration is not part of this test run. Check the link, or go back
+        to the test run.
       </p>
     );
   } else if (!iteration || !run) {

@@ -123,9 +123,16 @@ vi.mock("../case-workspace/case-checks-page", () => ({
   CaseChecksPage: (props: {
     title: string;
     onChecksChange: (next: object) => void;
+    onConfigureSuite?: () => void;
+    configureSuiteLabel?: string;
   }) => (
     <div>
       <p>{`Overrides for ${props.title}.`}</p>
+      {props.onConfigureSuite ? (
+        <button type="button" onClick={props.onConfigureSuite}>
+          {props.configureSuiteLabel ?? "Configure suite assertions"}
+        </button>
+      ) : null}
       <button
         type="button"
         onClick={() =>
@@ -382,7 +389,7 @@ describe("Test case (case-settings)", () => {
     renderPage({ ...caseRoute, testCaseId: "gone" });
     expect(screen.getByText("This test case no longer exists.")).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: "Open Suite settings" }),
+      screen.getByRole("button", { name: "Open suite settings" }),
     ).toBeTruthy();
   });
 });
@@ -565,5 +572,19 @@ describe("Test Case Evaluators (case-evaluators)", () => {
       page: "test_case_evaluators",
       ui: "nav",
     });
+  });
+
+  it("Edit default evaluators opens Suite settings › Default evaluators", async () => {
+    renderPage(route, { Page: CaseEvaluatorsNavPage });
+    expect(
+      screen.queryByRole("button", { name: "Configure suite assertions" }),
+    ).toBeNull();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Edit default evaluators" }),
+    );
+    expect(h.navigate).toHaveBeenLastCalledWith(
+      { type: "suite-settings", suiteId: "s1", tab: "evaluators" },
+      { via: "link", from: { route, names: expect.any(Object) } },
+    );
   });
 });

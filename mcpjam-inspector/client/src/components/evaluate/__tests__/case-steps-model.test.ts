@@ -343,7 +343,7 @@ describe("buildExecutionPreview: order and keys", () => {
       {
         key: "check:a2",
         marker: "check",
-        title: 'Response contains "rectangle"',
+        title: "Response contains “rectangle”",
         detail: "Blocking: a miss fails the run and skips later steps.",
       },
       {
@@ -564,14 +564,24 @@ describe("buildExecutionPreview: strings", () => {
     [
       "required",
       { type: "responseContains", needle: "x" },
-      'Response contains "x"',
+      "Response contains “x”",
       "Blocking: a miss fails the run and skips later steps.",
     ],
     [
       "advisory",
       { type: "responseContains", needle: "x", role: "advisory" },
-      'Response contains "x"',
+      "Response contains “x”",
       "Non-blocking: a miss only warns.",
+    ],
+    [
+      "ellipsis label quotes its operand",
+      {
+        type: "toolCalledWith",
+        toolName: "read_me",
+        args: { args: {} },
+      },
+      "Tool was called with “read_me”",
+      "Blocking: a miss fails the run and skips later steps.",
     ],
     [
       "inline label",

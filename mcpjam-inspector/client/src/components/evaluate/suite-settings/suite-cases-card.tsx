@@ -93,7 +93,7 @@ export function SuiteCasesCard({
       setCaseToDelete(null);
     } catch (error) {
       console.error("Failed to delete test case:", error);
-      toast.error("Failed to delete test case");
+      toast.error("Could not delete the test case. Try again.");
     } finally {
       setIsDeleting(false);
     }

@@ -264,7 +264,7 @@ export function useSuiteSettingsSheet(args: {
       // colleague saved first is the outcome the precondition exists to
       // prevent, not one to implement on its refusal.
       toast.error(
-        "This suite changed since you opened it. Your edits are still here — review them against the new values and save again.",
+        "This suite changed since you opened it. Your edits are still here. Review them against the new values and save again.",
       );
       // No rebase here on purpose. `suite` is still the document we already
       // had — the one the server just told us is stale — so rebasing onto it

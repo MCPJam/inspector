@@ -358,7 +358,7 @@ export function SuiteSettingsFields({
               <CloudUnreachableNotice
                 data-testid="suite-eval-cloud-unreachable"
                 message={EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE}
-                detail="Runs started here would fail their computer setup — Run all is disabled until cloud sandboxes are reachable."
+                detail="Runs started here would fail their computer setup, so Run all is off until cloud sandboxes are reachable."
               />
             </div>
           ) : null}
