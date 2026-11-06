@@ -30,7 +30,8 @@ vi.mock("../../../utils/computers/attach-computer.js", () => ({
   attachComputerSandbox: vi.fn(),
 }));
 
-vi.mock("../../../utils/route-error-report.js", () => ({
+vi.mock("../../../utils/route-error-report.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../utils/route-error-report.js")>()),
   reportRouteFailure: vi.fn(),
 }));
 
@@ -283,8 +284,16 @@ describe("GET /api/web/computers/terminal", () => {
     );
   });
 
-  it.each(["complete", "reject", "close"] as const)(
-    "serializes stdin and stops queued input when the first write will %s",
+  it.each([
+    "complete",
+    "reject",
+    "close",
+    "byte overflow",
+    "frame overflow",
+    "byte capacity recovers",
+    "frame capacity recovers",
+  ] as const)(
+    "keeps terminal stdin bounded and ordered: %s",
     async (outcome) => {
       stubConfiguredEnv();
       installSandboxInfoStub("sbx_42");
@@ -316,6 +325,61 @@ describe("GET /api/web/computers/terminal", () => {
       await waitForMessage(ws); // "ready"
 
       try {
+        if (outcome.includes("overflow") || outcome.includes("capacity")) {
+          const byteLimit = 1024 * 1024;
+          const frameLimit = 4096;
+          const byteCase = outcome.startsWith("byte");
+          const overflow = outcome.endsWith("overflow");
+          const frames = byteCase
+            ? [Buffer.alloc(byteLimit - (overflow ? 0 : 1)), Buffer.from("b")]
+            : Array.from(
+                { length: frameLimit + (overflow ? 1 : 0) },
+                () => Buffer.from("a"),
+              );
+          const firstPong = waitForMessage(ws);
+          ws.send(frames[0]);
+          ws.send(JSON.stringify({ type: "ping" }));
+          expect(await firstPong).toEqual({ type: "pong" });
+          expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(1);
+          const message = waitForMessage(ws);
+          const closed = overflow ? waitForClose(ws) : undefined;
+          for (const frame of frames.slice(1)) ws.send(frame);
+          if (overflow) {
+            await vi.waitFor(() => expect(ws.readyState).toBe(WebSocket.CLOSED));
+            expect(await message).toEqual({
+              type: "error",
+              message: "Couldn't send input to the terminal. Reconnect to continue.",
+            });
+            expect((await closed)?.code).toBe(4503);
+            expect(fakeSandbox.pty.sendInput.mock.calls[0][2]).toEqual({
+              signal: expect.objectContaining({ aborted: true }),
+            });
+            expect(reportRouteFailure).toHaveBeenCalledTimes(1);
+            finish();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(1);
+          } else {
+            ws.send(JSON.stringify({ type: "ping" }));
+            expect(await message).toEqual({ type: "pong" });
+            expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(1);
+            finish();
+            await vi.waitFor(() =>
+              expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(frames.length),
+            );
+            // Acknowledged input releases capacity for subsequent frames.
+            const pong = waitForMessage(ws);
+            ws.send(Buffer.from("z"));
+            ws.send(JSON.stringify({ type: "ping" }));
+            expect(await pong).toEqual({ type: "pong" });
+            await vi.waitFor(() =>
+              expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(
+                frames.length + 1,
+              ),
+            );
+            expect(reportRouteFailure).not.toHaveBeenCalled();
+          }
+          return;
+        }
         // A pong proves all earlier frames reached the route while write one
         // is unresolved. Later input, including Enter, must not overtake it.
         const pong = waitForMessage(ws);

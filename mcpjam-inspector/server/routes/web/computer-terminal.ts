@@ -36,7 +36,7 @@ import { attachComputerSandbox } from "../../utils/computers/attach-computer.js"
  * the open also writes the `computer.terminal.opened` audit row backend-side.
  */
 import { randomUUID } from "node:crypto";
-import type { UpgradeWebSocket } from "hono/ws";
+import type { UpgradeWebSocket, WSContext } from "hono/ws";
 import type { MiddlewareHandler } from "hono";
 import type { Sandbox, CommandHandle } from "e2b";
 import { verifyComputerTerminalToken } from "../../utils/computers/terminal-token.js";
@@ -55,7 +55,10 @@ import {
 import { logger } from "../../utils/logger.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
 import { classifyError } from "../../utils/error-classify.js";
-import { reportRouteFailure } from "../../utils/route-error-report.js";
+import {
+  ClientInputError,
+  reportRouteFailure,
+} from "../../utils/route-error-report.js";
 
 // PTY process TTL inside the sandbox. The E2B default is 60s, which would
 // kill an idle terminal almost immediately; match the sandbox's own 1h
@@ -64,6 +67,9 @@ import { reportRouteFailure } from "../../utils/route-error-report.js";
 const PTY_TIMEOUT_MS = 60 * 60 * 1000;
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
+// Bound retained paste bytes and per-frame promise overhead while an RPC stalls.
+const MAX_PENDING_INPUT_BYTES = 1024 * 1024;
+const MAX_PENDING_INPUT_FRAMES = 4096;
 
 // Throttle for the activity touch sent back to the control plane on PTY I/O.
 // Bumps the computer's `lastActiveAt` so the 30-min idle sweep treats an
@@ -164,6 +170,8 @@ export function createComputerTerminalWsHandler(
     let sandbox: Sandbox | null = null;
     let closed = false;
     let inputTail: Promise<void> = Promise.resolve();
+    let pendingInputBytes = 0;
+    let pendingInputFrames = 0;
     // Throttle gate for the activity touch (see ACTIVITY_TOUCH_THROTTLE_MS).
     let lastActivityTouchAt = 0;
     const maybeTouchActivity = () => {
@@ -173,6 +181,28 @@ export function createComputerTerminalWsHandler(
       lastActivityTouchAt = now;
       // Fire-and-forget: a failed touch only risks an earlier idle hibernate.
       void touchComputerActivity({ computerId });
+    };
+
+    const failInput = (error: unknown, ws: WSContext) => {
+      // Closing aborts an in-flight write and discards queued input.
+      if (closed) return;
+      closed = true;
+      attachAbort.abort();
+      reportRouteFailure("[computer-terminal] input failed", error, {
+        source: "routes.web.computer-terminal.input",
+        hop: "mcpjam_internal",
+      });
+      requestLogger.event("computer.terminal.input_failed", {
+        errorCode: classifyError(error),
+      });
+      ws.send(
+        JSON.stringify({
+          type: "error",
+          message: "Couldn't send input to the terminal. Reconnect to continue.",
+        }),
+      );
+      // An unacknowledged write may have arrived. Never replay it.
+      ws.close(CLOSE_UNAVAILABLE, "PTY input failed");
     };
 
     return {
@@ -287,42 +317,38 @@ export function createComputerTerminalWsHandler(
         // Binary frames are stdin.
         const bytes = toUint8Array(data);
         if (bytes && pty && sandbox && !closed) {
+          if (
+            bytes.byteLength > MAX_PENDING_INPUT_BYTES - pendingInputBytes ||
+            pendingInputFrames >= MAX_PENDING_INPUT_FRAMES
+          ) {
+            failInput(
+              new ClientInputError("Terminal input capacity exceeded"),
+              ws,
+            );
+            return;
+          }
           // Keystrokes are true user activity — refresh the idle timer.
           maybeTouchActivity();
           const box = sandbox;
           const handle = pty;
           const input = bytes.slice();
+          pendingInputBytes += input.byteLength;
+          pendingInputFrames++;
           // Each SDK write is a separate RPC; wait for its acknowledgement
           // before dispatching the next frame, including Enter.
           inputTail = inputTail
             .then(async () => {
-              if (closed) return;
-              await box.pty.sendInput(handle.pid, input, {
-                signal: attachAbort.signal,
-              });
+              try {
+                if (closed) return;
+                await box.pty.sendInput(handle.pid, input, {
+                  signal: attachAbort.signal,
+                });
+              } finally {
+                pendingInputBytes -= input.byteLength;
+                pendingInputFrames--;
+              }
             })
-            .catch((error) => {
-              // Closing aborts an in-flight write and discards queued input.
-              if (closed) return;
-              closed = true;
-              attachAbort.abort();
-              reportRouteFailure("[computer-terminal] input failed", error, {
-                source: "routes.web.computer-terminal.input",
-                hop: "mcpjam_internal",
-              });
-              requestLogger.event("computer.terminal.input_failed", {
-                errorCode: classifyError(error),
-              });
-              ws.send(
-                JSON.stringify({
-                  type: "error",
-                  message:
-                    "Couldn't send input to the terminal. Reconnect to continue.",
-                }),
-              );
-              // An unacknowledged write may have arrived. Never replay it.
-              ws.close(CLOSE_UNAVAILABLE, "PTY input failed");
-            });
+            .catch((error) => failInput(error, ws));
         }
       },
 
