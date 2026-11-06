@@ -23,6 +23,7 @@ import {
   saveSelectedHostIds,
 } from "@/lib/selected-host-storage";
 import { savePreviewedHostId } from "@/lib/previewed-client-storage";
+import { usePluginOnboardingIntentStore } from "@/lib/plugin-onboarding-intent";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -682,6 +683,28 @@ describe("PlaygroundMain — multi-host render path", () => {
     onExecutionInjected: vi.fn(),
   };
 
+  it("refuses imported plugin setup in Compare without selecting or sending to a lane", async () => {
+    mockSharedAppState.projects = { ...mockSharedAppState.projects, default: { ...mockSharedAppState.projects.default, sharedProjectId: "project" } };
+    const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }, { hostId: "h-B", name: "Host B" }];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    usePluginOnboardingIntentStore.getState().request({
+      projectId: "project", serverIds: ["saved-server"],
+      pluginId: "plugin", pluginName: "Fixture", conversation: "new",
+    });
+    render(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getByTestId("playground-multi-host-compare-section")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Setup did not start in Compare.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Switch to a single chat");
+    expect(usePluginOnboardingIntentStore.getState().intent).toBeNull();
+    expect(mockSetMultiHostEnabled).not.toHaveBeenCalled();
+    expect(mockUseChatSession.setMultiModelEnabled).not.toHaveBeenCalled();
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    expect(mockUseChatSession.startChatWithMessages).not.toHaveBeenCalled();
+  });
+
   it("consumes a resource handoff in the actual Compare branch without choosing a lane", async () => {
     const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
     const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
@@ -705,6 +728,7 @@ describe("PlaygroundMain — multi-host render path", () => {
   });
 
   beforeEach(() => {
+    usePluginOnboardingIntentStore.getState().clear();
     mobileFixture.isMobile = false;
     previewedHostFixture.resolve = false;
     extensionFormFixture.enabled = false;

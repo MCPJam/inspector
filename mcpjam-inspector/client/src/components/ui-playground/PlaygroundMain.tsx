@@ -8,6 +8,7 @@ import {
 import { useRetainedCompareClients } from "@/hooks/use-retained-compare-clients";
 import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
 import { ResourceChatHandoff } from "@/components/host-workspace/resource-chat-handoff";
+import { PluginOnboardingHandoff } from "@/components/host-workspace/plugin-onboarding-handoff";
 import { WorkspaceFileActionsProvider } from "@/components/host-workspace/file-actions";
 import type { RunPluginOnboarding } from "@/components/host-workspace/use-plugin-onboarding";
 import {
@@ -6750,6 +6751,7 @@ export function PlaygroundMain({
             : "bg-muted/20",
         )}
       >
+        <PluginOnboardingHandoff projectId={convexProjectId} compareActive={isMultiModelLayoutMode} />
         <ResourceChatHandoff
           identity={extensionIdentity}
           fileActions={threadApps.fileActions}
