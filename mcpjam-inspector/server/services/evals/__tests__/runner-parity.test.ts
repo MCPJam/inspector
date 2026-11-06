@@ -43,6 +43,9 @@ vi.mock("../../browser-session-context", () => ({
     computerUseSupported: browserState.computerUseSupported,
     computerUseVersion: null,
     computerWidgetTools: {},
+    viewTools: {},
+    viewToolCalls: [],
+    setWidgetToolCallPolicy: () => {},
     get widgetRenderObservations() {
       return browserState.renderObservations;
     },

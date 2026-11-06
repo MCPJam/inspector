@@ -1,3 +1,10 @@
+import { readUiResources } from "./resource-reads.js";
+import { withAbortSignalFetch } from "../abort-signal.js";
+import {
+  AUTHORIZATION_REQUIRED_MESSAGE,
+  authorizationRequiredDetails,
+  isAuthorizationRefusal,
+} from "../conformance-authorization.js";
 import {
   buildOutcomeSummary,
   decideConformanceOutcome,
@@ -9,7 +16,6 @@ import {
   type ListToolsResult,
   type MCPReadResourceResult,
   type MCPResource,
-  type MCPServerConfig,
 } from "../mcp-client-manager/index.js";
 import { deepJsonSafe } from "../json-safe.js";
 import { withEphemeralClient } from "../operations.js";
@@ -21,6 +27,7 @@ import {
   type MCPAppsSkipReason,
   type MCPAppsConformanceConfig,
   type MCPAppsConformanceResult,
+  type MCPAppsReadinessWarning,
   type MCPAppsResourceReadOutcome,
   type NormalizedMCPAppsConformanceConfig,
 } from "./types.js";
@@ -353,44 +360,6 @@ function validateUiMeta(
   return violations;
 }
 
-async function readUiResources(
-  manager: {
-    readResource: (
-      serverId: string,
-      params: { uri: string },
-    ) => Promise<MCPReadResourceResult>;
-  },
-  serverId: string,
-  resourceUris: string[],
-  uiTools: UIToolReference[],
-  listedUiResourceUris: Set<string>,
-): Promise<MCPAppsResourceReadOutcome[]> {
-  return Promise.all(
-    resourceUris.map(async (uri) => {
-      try {
-        const result = await manager.readResource(serverId, { uri });
-        return {
-          uri,
-          referencedByTools: uiTools
-            .filter((tool) => tool.resourceUri === uri)
-            .map((tool) => tool.name),
-          listed: listedUiResourceUris.has(uri),
-          result,
-        };
-      } catch (error) {
-        return {
-          uri,
-          referencedByTools: uiTools
-            .filter((tool) => tool.resourceUri === uri)
-            .map((tool) => tool.name),
-          listed: listedUiResourceUris.has(uri),
-          error,
-        };
-      }
-    }),
-  );
-}
-
 function buildConnectionFailureResult(
   config: NormalizedMCPAppsConformanceConfig,
   error: unknown,
@@ -401,9 +370,20 @@ function buildConnectionFailureResult(
     ? "ui-tools-present"
     : selectedCheckIds.values().next().value;
   const checks: MCPAppsCheckResult[] = [];
+  // Refused for credentials: no check reached the server, so none failed.
+  const authorizationRefused = isAuthorizationRefusal(error);
 
   for (const checkId of selectedCheckIds) {
-    if (checkId === failureCheckId) {
+    if (authorizationRefused) {
+      checks.push(
+        skippedResult(
+          checkId,
+          "could-not-run",
+          AUTHORIZATION_REQUIRED_MESSAGE,
+          authorizationRequiredDetails(error),
+        ),
+      );
+    } else if (checkId === failureCheckId) {
       checks.push(
         failedResult(
           checkId,
@@ -426,7 +406,8 @@ function buildConnectionFailureResult(
 
   // One check carries the connection failure and the rest are skipped, so the
   // shared verdict lands on "failed" — same as the hardcoded value it replaces,
-  // but derived rather than asserted.
+  // but derived rather than asserted. An authorization refusal leaves every
+  // check unrun, so the same derivation lands on "incomplete".
   const verdict = decideConformanceOutcome(checks);
 
   return {
@@ -458,33 +439,57 @@ export class MCPAppsConformanceTest {
   }
 
   async run(): Promise<MCPAppsConformanceResult> {
+    const signal = this.config.signal;
+    signal?.throwIfAborted();
+    const serverConfig = this.config.serverConfig;
+    const runConfig =
+      signal && "url" in serverConfig
+        ? {
+            ...serverConfig,
+            baseFetch: withAbortSignalFetch(
+              serverConfig.baseFetch ?? fetch,
+              signal
+            ),
+          }
+        : serverConfig;
     const startedAt = Date.now();
     const selectedCheckIds = buildCheckSelection(this.config);
 
     try {
       return await withEphemeralClient(
-        this.config.serverConfig as MCPServerConfig,
+        runConfig,
         async (manager, serverId) => {
+          signal?.throwIfAborted();
           const checks: MCPAppsCheckResult[] = [];
+          // Advice reported beside the verdict rather than as check warnings.
+          const readiness: MCPAppsReadinessWarning[] = [];
           let tools: MCPListedTool[] = [];
           let resources: MCPResource[] = [];
           let toolsError: unknown;
           let resourcesError: unknown;
 
           try {
-            const result = await manager.listTools(serverId);
+            const result = await manager.listTools(serverId, undefined, {
+              signal,
+            });
             tools = result.tools ?? [];
           } catch (error) {
+            signal?.throwIfAborted();
             toolsError = error;
           }
 
+          signal?.throwIfAborted();
           try {
-            const result = await manager.listResources(serverId);
+            const result = await manager.listResources(serverId, undefined, {
+              signal,
+            });
             resources = result.resources ?? [];
           } catch (error) {
+            signal?.throwIfAborted();
             resourcesError = error;
           }
 
+          signal?.throwIfAborted();
           const uiTools = tools
             .map((tool) => extractUiToolReference(tool))
             .filter((tool): tool is UIToolReference => tool !== undefined);
@@ -514,9 +519,11 @@ export class MCPAppsConformanceTest {
               resourceUrisToRead,
               uiTools,
               listedUiResourceUris,
+              signal
             );
           }
 
+          signal?.throwIfAborted();
           if (selectedCheckIds.has("ui-tools-present")) {
             const stepStartedAt = Date.now();
             if (toolsError) {
@@ -528,6 +535,22 @@ export class MCPAppsConformanceTest {
                   undefined,
                   toolsError,
                 ),
+              );
+            } else if (
+              uiTools.length === 0 &&
+              listedUiResources.length === 0 &&
+              !resourcesError &&
+              !tools.some((tool) => {
+                const meta = isPlainObject(tool._meta) ? tool._meta : {};
+                return "ui" in meta || "ui/resourceUri" in meta;
+              })
+            ) {
+              checks.push(
+                skippedResult(
+                  "ui-tools-present",
+                  "not-applicable",
+                  "Not applicable"
+                )
               );
             } else if (uiTools.length === 0) {
               checks.push(
@@ -573,7 +596,7 @@ export class MCPAppsConformanceTest {
               );
             } else {
               const violations: string[] = [];
-              const warnings: string[] = [];
+              const legacyFieldTools: string[] = [];
 
               for (const tool of uiTools) {
                 const sourceTool = tools.find((entry) => entry.name === tool.name);
@@ -628,32 +651,27 @@ export class MCPAppsConformanceTest {
                 }
 
                 if (tool.usesLegacyField) {
-                  warnings.push(
-                    `Tool ${tool.name} uses deprecated _meta["ui/resourceUri"]; prefer _meta.ui.resourceUri`,
-                  );
-                }
-
-                if (tool.name.length < 1 || tool.name.length > 128) {
-                  warnings.push(
-                    `Tool ${tool.name} name SHOULD be between 1 and 128 characters (has ${tool.name.length})`,
-                  );
-                }
-                if (!/^[A-Za-z0-9_\-.]+$/.test(tool.name)) {
-                  warnings.push(
-                    `Tool ${tool.name} name SHOULD only contain A-Z, a-z, 0-9, underscore, hyphen, or dot`,
-                  );
+                  legacyFieldTools.push(tool.name);
                 }
               }
 
-              const seenNames = new Set<string>();
-              for (const tool of uiTools) {
-                if (seenNames.has(tool.name)) {
-                  warnings.push(
-                    `Tool name "${tool.name}" appears more than once; names SHOULD be unique within a server`,
-                  );
-                }
-                seenNames.add(tool.name);
+              // apps.mdx: the flat field "is deprecated" and "will be removed
+              // before GA". No SHOULD or MAY, so it is a deprecation notice.
+              if (legacyFieldTools.length > 0) {
+                readiness.push({
+                  id: "apps-readiness-deprecated-resource-uri",
+                  checkId: "ui-tool-metadata-valid",
+                  title: "Deprecated ui/resourceUri Field",
+                  severity: "warning",
+                  specStrength: "Deprecation Notice",
+                  message: `${legacyFieldTools.join(", ")} still use _meta["ui/resourceUri"], which will be removed before GA; use _meta.ui.resourceUri instead.`,
+                  details: { tools: legacyFieldTools },
+                  informational: true,
+                });
               }
+
+              // Tool-name conventions are core MCP rules, so they are advised
+              // on every tool by the protocol suite, not here.
 
               if (violations.length > 0) {
                 checks.push(
@@ -665,8 +683,6 @@ export class MCPAppsConformanceTest {
                       violations,
                       uiToolNames: uiTools.map((tool) => tool.name),
                     },
-                    undefined,
-                    warnings,
                   ),
                 );
               } else {
@@ -678,7 +694,6 @@ export class MCPAppsConformanceTest {
                       uiToolCount: uiTools.length,
                       uiToolNames: uiTools.map((tool) => tool.name),
                     },
-                    warnings,
                   ),
                 );
               }
@@ -1034,6 +1049,7 @@ export class MCPAppsConformanceTest {
               ? { protocolVersion: negotiatedProtocolVersion }
               : {}),
             checks,
+            ...(readiness.length > 0 ? { readiness } : {}),
             summary: buildSummary(checks),
             durationMs: Date.now() - startedAt,
             categorySummary: summarizeChecks(checks),
@@ -1050,10 +1066,12 @@ export class MCPAppsConformanceTest {
           serverId: "__apps_conformance__",
           clientName: "mcpjam-sdk-apps-conformance",
           timeout: this.config.timeout,
+          signal,
           rpcLogger: this.config.serverConfig.rpcLogger,
         },
       );
     } catch (error) {
+      signal?.throwIfAborted();
       return buildConnectionFailureResult(this.config, error, startedAt);
     }
   }

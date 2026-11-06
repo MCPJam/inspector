@@ -1,3 +1,4 @@
+import { guardEvalViewTools } from "./view-tool-policy.js";
 import { appendPluginModelContext } from "../../../shared/plugin-model-context.js";
 import { createConvexEvidenceReadTransport } from "../../utils/harness/harness-evidence-reader.js";
 import { expandPersistedRequestPayloads } from "@/shared/live-chat-trace";
@@ -349,6 +350,8 @@ export interface DriveHostedEvalTurnParams {
    * iteration's own clock still bounds the sum of them.
    */
   turnTimeoutMs: number;
+  /** When the enclosing iteration's deadline fires (epoch ms). */
+  iterationDeadlineAt?: number;
   maxSteps: number;
   runStartedAt: number;
   isAborted: () => boolean;
@@ -527,6 +530,7 @@ export async function driveHostedEvalTurn(
   const mergedTools = {
     ...prepared.allTools,
     ...browser.computerWidgetTools,
+    ...guardEvalViewTools(browser.viewTools ?? {}, params.toolPolicyGate),
   };
   const tracedTools = wrapToolSetForEvalTrace(
     params.toolPolicyGate
@@ -544,7 +548,7 @@ export async function driveHostedEvalTurn(
   acc.messageHistory.push({ role: "user", content: params.prompt });
   acc.traceMessageHistory.push({ role: "user", content: params.prompt });
   const messageCountBeforeTurn = acc.messageHistory.length;
-  const appContext = browser.getModelContext?.();
+  let appContext: ReturnType<BrowserSessionContext["getModelContext"]>;
   const inputMessages: ModelMessage[] = [...acc.messageHistory];
 
   const baselineUsage = {
@@ -716,6 +720,7 @@ export async function driveHostedEvalTurn(
   // iteration-abort path (CodeRabbit, PR 2610).
   try {
     await browser.dismissCarriedWidget();
+    appContext = browser.getModelContext?.();
     sinks =
       params.buildSinks?.({
         promptIndex,
@@ -768,6 +773,7 @@ export async function driveHostedEvalTurn(
   // turn holds the iteration until the ITERATION's budget expires — the whole
   // remaining allowance spent on a turn that was never coming back.
   turnDeadline = withDeadline(abortSignal, turnTimeoutMs, "turn");
+  const activeTurnDeadline = turnDeadline;
 
   let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
   try {
@@ -892,6 +898,16 @@ export async function driveHostedEvalTurn(
       extraBodyFields: mergedExtraBodyFields,
       ...(params.extraHeaders ? { extraHeaders: params.extraHeaders } : {}),
       abortSignal: turnDeadline.signal,
+      // A busy-admission wait that would outlast the turn returns the refusal
+      // instead of sleeping into the turn's abort. The turn's signal also
+      // fires on the iteration's deadline, which a later turn can reach first.
+      remainingTurnMs: () =>
+        Math.min(
+          activeTurnDeadline.remainingMs(),
+          params.iterationDeadlineAt === undefined
+            ? Infinity
+            : Math.max(0, params.iterationDeadlineAt - Date.now()),
+        ),
       maxSteps: params.maxSteps,
       progressivePlan: prepared.progressivePlan,
       discoveryState: prepared.discoveryState,
@@ -1074,7 +1090,15 @@ export async function driveHostedEvalTurn(
           iterationErrorDetails: lastEngineError.rawText,
         }
       : { iterationError: fallbackError };
-    logger.error(logLine);
+    // `logger.error` with no error object always captures. An empty step was
+    // already reported once by the engine, which decided whether it is ours
+    // (`isMcpjamOwnedEmptyStep`); capturing it again here, untagged, would
+    // page on the provider-owned ones that verdict declines.
+    if (lastEngineError?.code === "provider_empty_response") {
+      logger.warn(logLine);
+    } else {
+      logger.error(logLine);
+    }
     sinks.onTurnFailure?.(failure);
     // WHICH LAYER, from the engine's own report rather than from this call
     // site's position.

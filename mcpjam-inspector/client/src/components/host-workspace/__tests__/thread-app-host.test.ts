@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { withModelAppResources } from "../model-app-resources";
+import { describe, expect, it, vi } from "vitest";
 import type { WidgetHost } from "@mcpjam/widget-react";
 import type { ThreadAppHandle } from "../thread-app-api";
 import { createThreadAppHost } from "../thread-app-host";
@@ -204,4 +205,18 @@ describe("window.openai in extension Apps", () => {
       ).toEqual({ injected });
     }
   });
+});
+
+
+it("uses the owned resource service and refuses other servers and expired instances", async () => {
+  const source = { ...handle, resourcesEnabled: true };
+  const controller = new AbortController();
+  const resource = vi.fn(async () => ({ contents: [] }));
+  const owned = withModelAppResources(createThreadAppHost(host, source, "original", "model"), host, source, "original", { resource }, controller.signal);
+  await expect(owned.services.readResource("original", "test://item")).resolves.toEqual({ content: { contents: [] } });
+  expect(resource).toHaveBeenCalledWith(source, { method: "resources/read", uri: "test://item" }, controller.signal);
+  await expect(owned.services.readResource("other", "test://item")).rejects.toThrow("App resource unavailable");
+  controller.abort();
+  await expect(owned.services.readResource("original", "test://item")).rejects.toThrow();
+  expect(resource).toHaveBeenCalledOnce();
 });

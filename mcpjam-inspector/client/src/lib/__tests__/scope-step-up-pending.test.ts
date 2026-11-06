@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { SCOPE_STEP_UP_LIVE_TTL_MS } from "@/shared/scope-step-up";
 import {
   cancelPendingChatScopeStepUp,
   claimCancelledChatScopeStepUp,
   claimPendingChatScopeStepUp,
+  listPendingChatScopeStepUps,
   markPendingChatScopeStepUpCancelled,
   markPendingChatScopeStepUpReady,
   readPendingChatScopeStepUp,
@@ -10,6 +12,7 @@ import {
 } from "../scope-step-up-pending";
 import {
   claimPendingDirectScopeStepUpReplay,
+  setPendingDirectScopeStepUpReplayFlowDigest,
   markPendingDirectScopeStepUpReplayReady,
   savePendingDirectScopeStepUpReplay,
 } from "../scope-step-up-replay";
@@ -50,6 +53,60 @@ describe("scope step-up browser resume markers", () => {
     expect(claimPendingChatScopeStepUp("chat-1")).toBeUndefined();
   });
 
+  it("settles the newest call for a server when an earlier sign-in was abandoned", () => {
+    savePendingChatScopeStepUp({
+      event,
+      serverName: "Auth Bench",
+      chatSessionId: "chat-1",
+    });
+    savePendingChatScopeStepUp({
+      event: { ...event, continuationId: "opaque-2", toolCallId: "call-2" },
+      serverName: "Auth Bench",
+      chatSessionId: "chat-1",
+    });
+    expect(readPendingChatScopeStepUp()?.event.continuationId).toBe("opaque-2");
+
+    expect(markPendingChatScopeStepUpReady("Auth Bench")).toBe(true);
+    expect(claimPendingChatScopeStepUp("chat-1")?.event.continuationId).toBe(
+      "opaque-2"
+    );
+    expect(
+      readPendingChatScopeStepUp({ continuationId: "opaque-1" })?.phase
+    ).toBe("awaiting_oauth");
+    // The callback for the next sign-in finds the call still waiting on it.
+    expect(markPendingChatScopeStepUpCancelled("Auth Bench", "denied")).toBe(
+      true
+    );
+    expect(
+      readPendingChatScopeStepUp({ continuationId: "opaque-1" })?.phase
+    ).toBe("cancelled");
+  });
+
+  it("drops long-expired calls and caps the store when it writes", () => {
+    savePendingChatScopeStepUp({
+      event: {
+        ...event,
+        continuationId: "expired",
+        expiresAt: Date.now() - 2 * SCOPE_STEP_UP_LIVE_TTL_MS,
+      },
+      serverName: "Auth Bench",
+      chatSessionId: "chat-1",
+    });
+    for (let index = 0; index < 25; index += 1) {
+      savePendingChatScopeStepUp({
+        event: { ...event, continuationId: `live-${index}` },
+        serverName: "Auth Bench",
+        chatSessionId: "chat-1",
+      });
+    }
+    const ids = listPendingChatScopeStepUps().map(
+      (pending) => pending.event.continuationId
+    );
+    expect(ids).toHaveLength(20);
+    expect(ids).not.toContain("expired");
+    expect(ids[ids.length - 1]).toBe("live-24");
+  });
+
   it("does not let a different server cancel a pending chat continuation", () => {
     savePendingChatScopeStepUp({
       event,
@@ -76,6 +133,15 @@ describe("scope step-up browser resume markers", () => {
     expect(claimCancelledChatScopeStepUp("chat-1")).toBeUndefined();
   });
 
+  it("never dispatches cancellation again after a reload or stale transition", () => {
+    savePendingChatScopeStepUp({ event, serverName: "Auth Bench", chatSessionId: "chat-1" });
+    markPendingChatScopeStepUpCancelled("Auth Bench", "failed");
+    expect(claimCancelledChatScopeStepUp("chat-1")).toBeDefined();
+    expect(readPendingChatScopeStepUp()?.phase).toBe("cancelling");
+    markPendingChatScopeStepUpCancelled("Auth Bench", "interrupted");
+    expect(claimCancelledChatScopeStepUp("chat-1")).toBeUndefined();
+  });
+
   it("claims a direct replay only on its original surface and server", () => {
     savePendingDirectScopeStepUpReplay({
       operation: {
@@ -91,7 +157,8 @@ describe("scope step-up browser resume markers", () => {
         parameters: { value: 7 },
       },
     });
-    markPendingDirectScopeStepUpReplayReady("Auth Bench");
+    setPendingDirectScopeStepUpReplayFlowDigest("Auth Bench", "flow");
+    markPendingDirectScopeStepUpReplayReady("Auth Bench", "flow");
     expect(
       claimPendingDirectScopeStepUpReplay({
         serverName: "Auth Bench",

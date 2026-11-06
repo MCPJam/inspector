@@ -11,8 +11,12 @@ import {
   scoreFromProtocolResult,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_LOG_LEVELS,
   MCP_PROTOCOL_VERSIONS,
+  MCP_READINESS_IDS,
+  RETIRED_MCP_CHECK_IDS,
   type MCPConformanceConfig,
+  type MCPLogLevel,
   MCPConformanceSuite,
   MCPConformanceTest,
 } from "@mcpjam/sdk";
@@ -31,6 +35,7 @@ import { maybeUploadSingleSuite } from "../lib/conformance-upload.js";
 import { parseReporterFormat } from "../lib/reporting.js";
 import {
   parseHeadersOption,
+  parseJsonRecord,
   parsePositiveInteger,
 } from "../lib/server-config.js";
 import {
@@ -50,10 +55,19 @@ export interface ProtocolConformanceOptions {
   checkTimeout?: number;
   category?: string[];
   checkId?: string[];
+  adviceId?: string[];
   protocolVersion?: string;
   fixturesFile?: string;
   fixtureTool?: string[];
   fixturePrompt?: string[];
+  logProbeTool?: string;
+  logProbeArgs?: string;
+  logProbeLevel?: string;
+  logFilterTool?: string;
+  logFilterArgs?: string;
+  logFilterLevel?: string;
+  inputRequiredTool?: string;
+  inputRequiredArgs?: string;
 }
 
 export function registerProtocolCommands(program: Command): void {
@@ -95,6 +109,12 @@ export function registerProtocolCommands(program: Command): void {
       [],
     )
     .option(
+      "--advice-id <id>",
+      "Specific advice ID to run. Repeat for multiple. Default: all.",
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option(
       "--protocol-version <version>",
       "Pin the MCP protocol version to conform against. Default: legacy (2025-era) behavior.",
     )
@@ -113,6 +133,38 @@ export function registerProtocolCommands(program: Command): void {
       "Name of a prompt that is safe to render with no arguments. Repeat for multiple. For prompts that need arguments, use --fixtures-file.",
       (value: string, previous: string[] = []) => [...previous, value],
       [],
+    )
+    .option(
+      "--log-probe-tool <name>",
+      "Name of a tool that writes logs and is safe to call a few times. Lets the 2026-07-28 logging check and log level advice run. Nothing is called without this.",
+    )
+    .option(
+      "--log-probe-args <json>",
+      "Arguments for --log-probe-tool, as a JSON object. Default: {}.",
+    )
+    .option(
+      "--log-probe-level <level>",
+      `Log level the advice asks --log-probe-tool for: ${MCP_LOG_LEVELS.join(", ")}. Default: warning.`,
+    )
+    .option(
+      "--log-filter-tool <name>",
+      "Name of a tool the log level advice calls instead of --log-probe-tool. Same rules: it writes logs and is safe to call. Default: --log-probe-tool.",
+    )
+    .option(
+      "--log-filter-args <json>",
+      "Arguments for --log-filter-tool, as a JSON object. Default: {}.",
+    )
+    .option(
+      "--log-filter-level <level>",
+      `Log level the advice asks --log-filter-tool for: ${MCP_LOG_LEVELS.join(", ")}. Default: warning.`,
+    )
+    .option(
+      "--input-required-tool <name>",
+      "Name of a tool that asks the client for input and is safe to call. Lets the 2026-07-28 undeclared capability check run. Nothing is called without this.",
+    )
+    .option(
+      "--input-required-args <json>",
+      "Arguments for --input-required-tool, as a JSON object. Default: {}.",
     )
     .option(
       "--reporter <reporter>",
@@ -243,6 +295,88 @@ function resolveFixtures(
   return { toolCalls, promptGets };
 }
 
+/**
+ * A tool a check or advice may call, named by `--<prefix>-tool`.
+ * `--<prefix>-args` and, for the log tools, `--<prefix>-level` only describe
+ * that call, so either one without a tool is a usage error instead of a flag
+ * that is silently ignored.
+ */
+function resolveToolProbe(
+  prefix: "log-probe" | "log-filter" | "input-required",
+  flags: { tool?: string; args?: string; level?: string },
+  argsLabel: string,
+): MCPConformanceConfig["logProbe"] | undefined {
+  const hasLevel = prefix !== "input-required";
+  const toolName = flags.tool?.trim();
+  // A blank name is a mistake, not an omitted flag: without this the probe
+  // would be dropped and the check that calls it could not run.
+  if (flags.tool !== undefined && !toolName) {
+    throw usageError(`--${prefix}-tool needs a tool name.`);
+  }
+  if (!toolName) {
+    if (flags.args !== undefined || flags.level !== undefined) {
+      throw usageError(
+        hasLevel
+          ? `--${prefix}-args and --${prefix}-level need --${prefix}-tool.`
+          : `--${prefix}-args needs --${prefix}-tool.`,
+      );
+    }
+    return undefined;
+  }
+
+  const level = flags.level?.trim();
+  if (
+    level !== undefined &&
+    !(MCP_LOG_LEVELS as readonly string[]).includes(level)
+  ) {
+    throw usageError(
+      `Unknown log level: ${level}. Known: ${MCP_LOG_LEVELS.join(", ")}`,
+    );
+  }
+  const args = parseJsonRecord(flags.args, argsLabel);
+
+  return {
+    toolName,
+    ...(args ? { arguments: args } : {}),
+    ...(level ? { level: level as MCPLogLevel } : {}),
+  };
+}
+
+/**
+ * The tools the logging check and the log level advice may call. The advice
+ * calls `--log-filter-tool` when it is set and never reads `--log-probe-level`
+ * then, so that pair is a usage error too.
+ */
+function resolveLogProbes(options: ProtocolConformanceOptions): {
+  logProbe?: MCPConformanceConfig["logProbe"];
+  logLevelFilteringProbe?: MCPConformanceConfig["logLevelFilteringProbe"];
+} {
+  const logProbe = resolveToolProbe(
+    "log-probe",
+    {
+      tool: options.logProbeTool,
+      args: options.logProbeArgs,
+      level: options.logProbeLevel,
+    },
+    "Log probe arguments",
+  );
+  const logLevelFilteringProbe = resolveToolProbe(
+    "log-filter",
+    {
+      tool: options.logFilterTool,
+      args: options.logFilterArgs,
+      level: options.logFilterLevel,
+    },
+    "Log filter arguments",
+  );
+  if (logLevelFilteringProbe && options.logProbeLevel !== undefined) {
+    throw usageError(
+      "--log-probe-level is not used when --log-filter-tool is set. Use --log-filter-level.",
+    );
+  }
+  return { logProbe, logLevelFilteringProbe };
+}
+
 function readFixturesFile(
   path: string,
 ): NonNullable<MCPConformanceConfig["fixtures"]> {
@@ -330,14 +464,47 @@ export function buildConfig(
   }
 
   const checkIds = options.checkId?.filter(Boolean);
-  const invalidCheckIds = collectInvalidEntries(checkIds, MCP_CHECK_IDS);
+  const invalidCheckIds = collectInvalidEntries(checkIds, [
+    ...MCP_CHECK_IDS,
+    ...Object.keys(RETIRED_MCP_CHECK_IDS),
+  ]);
   if (invalidCheckIds.length > 0) {
     throw usageError(
       `Unknown check id${invalidCheckIds.length === 1 ? "" : "s"}: ${invalidCheckIds.join(", ")}`,
     );
   }
+  // A retired id still runs (the SDK swaps in its advice); say what changed.
+  for (const id of checkIds ?? []) {
+    if (Object.hasOwn(RETIRED_MCP_CHECK_IDS, id)) {
+      process.stderr.write(
+        `Note: check ${id} is now the ${RETIRED_MCP_CHECK_IDS[id as keyof typeof RETIRED_MCP_CHECK_IDS]} advice. Running that instead.\n`,
+      );
+    }
+  }
+
+  // A blank id is a mistake, not an omitted flag: dropping it would run every
+  // advice instead of the one asked for.
+  if (options.adviceId?.some((id) => !id.trim())) {
+    throw usageError("--advice-id needs an advice id.");
+  }
+  const readinessIds = options.adviceId;
+  const invalidReadinessIds = collectInvalidEntries(
+    readinessIds,
+    MCP_READINESS_IDS,
+  );
+  if (invalidReadinessIds.length > 0) {
+    throw usageError(
+      `Unknown advice id${invalidReadinessIds.length === 1 ? "" : "s"}: ${invalidReadinessIds.join(", ")}. Valid advice ids: ${MCP_READINESS_IDS.join(", ")}`,
+    );
+  }
 
   const fixtures = resolveFixtures(options);
+  const { logProbe, logLevelFilteringProbe } = resolveLogProbes(options);
+  const inputRequiredProbe = resolveToolProbe(
+    "input-required",
+    { tool: options.inputRequiredTool, args: options.inputRequiredArgs },
+    "Input required arguments",
+  );
 
   const protocolVersion = options.protocolVersion?.trim();
   if (
@@ -360,9 +527,18 @@ export function buildConfig(
     ...(checkIds && checkIds.length > 0
       ? { checkIds: checkIds as MCPConformanceConfig["checkIds"] }
       : {}),
+    ...(readinessIds && readinessIds.length > 0
+      ? {
+          readinessIds:
+            readinessIds as MCPConformanceConfig["readinessIds"],
+        }
+      : {}),
     ...(protocolVersion
       ? { protocolVersion: protocolVersion as MCPConformanceConfig["protocolVersion"] }
       : {}),
     ...(fixtures ? { fixtures } : {}),
+    ...(logProbe ? { logProbe } : {}),
+    ...(logLevelFilteringProbe ? { logLevelFilteringProbe } : {}),
+    ...(inputRequiredProbe ? { inputRequiredProbe } : {}),
   };
 }

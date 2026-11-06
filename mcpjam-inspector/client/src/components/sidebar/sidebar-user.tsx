@@ -1,5 +1,4 @@
 import { useRef, useState } from "react";
-import { showSignOutScreen } from "@/stores/sign-out-store";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
@@ -21,12 +20,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import {
-  markSignOutInProgress,
-  SIGN_OUT_REQUEST_TIMEOUT_MS,
-} from "@/lib/auth/sign-out-latch";
-import { pauseQueriesBeforeAuthClear } from "@/lib/auth/pause-queries-before-auth-clear";
-import { startSessionRevocation } from "@/lib/auth/revoke-session";
+import { useSignOut } from "@/hooks/use-sign-out";
 import { getInitials } from "@/lib/utils";
 import {
   Bell,
@@ -44,18 +38,9 @@ import { useNotifications } from "@/hooks/useNotifications";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { useAppNavigate } from "@/lib/app-navigation";
 
-interface SidebarUserProps {
-  onBeforeSignOut?: () => void | Promise<void>;
-}
-
-export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
+export function SidebarUser() {
   const { isLoading, isAuthenticated } = useConvexAuth();
-  const {
-    user,
-    signOut,
-    getAccessToken,
-    isLoading: isWorkOsAuthLoading,
-  } = useAuth();
+  const { user, isLoading: isWorkOsAuthLoading } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
   const convexUser = useQuery("users:getCurrentUser" as any);
   const { isMobile } = useSidebar();
@@ -75,63 +60,11 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
   const email = user?.email ?? "";
   const initials = getInitials(displayName);
 
-  const finishSignOut = () => {
-    // Before `signOut()`, never after: authkit's refresh timer can fire on the
-    // next tick, and an unlatched failure would redirect this tab to the login
-    // page on top of the logout navigation below. See `sign-out-latch`.
-    markSignOutInProgress();
-    // And the gate: `signOut()` empties the WorkOS user and Convex drops its
-    // identity on that render, re-running anything still subscribed without
-    // one. See `pause-queries-before-auth-clear`.
-    pauseQueriesBeforeAuthClear();
-    // Revoke the session server-side with the token about to be discarded,
-    // so it stops working everywhere now rather than when it expires. Bounded
-    // and never rejects; see `revoke-session`.
-    const leave = () => signOutOfWorkOs();
-    void startSessionRevocation(getAccessToken).then(leave, leave);
-  };
-
-  const signOutOfWorkOs = () => {
-    const returnTo = window.location.origin;
-    // Keep our branded screen visible while WorkOS clears its cookies.
-    // Bound the request so a failed or missing token cannot strand this tab.
-    let timeout: ReturnType<typeof setTimeout>;
-    void Promise.race([
-      Promise.resolve().then(() => signOut({ returnTo, navigate: false })),
-      new Promise((resolve) => {
-        timeout = setTimeout(resolve, SIGN_OUT_REQUEST_TIMEOUT_MS);
-      }),
-    ])
-      .catch(() => undefined)
-      .finally(() => {
-        clearTimeout(timeout);
-        window.location.assign(returnTo);
-      });
-  };
+  const signOut = useSignOut();
 
   const handleSignOut = () => {
     setMenuOpen(false);
-    showSignOutScreen();
-
-    let cleanupResult: void | Promise<void>;
-    try {
-      cleanupResult = onBeforeSignOut?.();
-    } catch {
-      finishSignOut();
-      return;
-    }
-
-    if (
-      cleanupResult &&
-      typeof (cleanupResult as Promise<void>).finally === "function"
-    ) {
-      void (cleanupResult as Promise<void>)
-        .catch(() => undefined)
-        .finally(finishSignOut);
-      return;
-    }
-
-    finishSignOut();
+    signOut();
   };
 
   const avatarUrl = profilePictureUrl;

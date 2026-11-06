@@ -82,6 +82,29 @@ const resolvedImagePolicyMatcher = (image: boolean) =>
     }),
   });
 
+vi.mock("convex/browser", async () => {
+  const { getFunctionName } = await import("convex/server");
+  return { ConvexHttpClient: class {
+    setAuth() {}
+    async mutation() {
+      return { hostId: "chat-host", environment: { environmentId: "chat-environment" } };
+    }
+    async query(ref: Parameters<typeof getFunctionName>[0], args: { environmentId?: string; serverOverrideIds?: string[] }) {
+      const name = getFunctionName(ref);
+      if (name === "hostConfigsV2:getProjectDefault") return null;
+      if (name === "projects:getProjectCapabilities") return { projectRole: "admin" };
+      const runtime = await fetchHostRuntimeConfigMock.mock.results.at(-1)?.value;
+      return {
+        specVersion: 1, environmentOrigin: "adhoc",
+        environmentRef: { environmentId: args.environmentId ?? "chat-environment", name: "Chat", revision: 1 },
+        host: { hostId: "chat-host", runtimeConfig: runtime?.config ?? {} },
+        servers: { effectiveServerIds: args.serverOverrideIds ?? [] },
+        skills: [], pluginVersions: [], selectedSecretIds: [], serverConfigHashes: {},
+      };
+    }
+  }};
+});
+
 vi.mock("ai", async () => {
   const actual = await vi.importActual<typeof import("ai")>("ai");
   return {
@@ -230,6 +253,7 @@ vi.mock("../../../utils/computers/cloud-skill-tools.js", async () => {
   };
 });
 
+import { convertToModelMessages } from "ai";
 import { createWebTestApp, postJson } from "./helpers/test-app.js";
 import {
   acquirePlaygroundHarnessBox,
@@ -246,7 +270,7 @@ describe("web routes — chat-v2 hosted mode", () => {
   it("rejects local Browser selection before constructing hosted tools", async () => {
     const { app, token } = createWebTestApp();
     const response = await postJson(app, "/api/web/chat-v2", {
-      projectId: "project-1", selectedServerIds: [], messages: [{ role: "user", content: "hi" }],
+      projectId: "project-1", selectedServerIds: [], messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
       model: { id: "openai/gpt-5-mini", provider: "openai" }, browserEngine: "local",
     }, token);
     expect(response.status).toBe(409);
@@ -256,6 +280,7 @@ describe("web routes — chat-v2 hosted mode", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+    vi.stubEnv("CONVEX_URL", "https://example.convex.cloud");
 
     checkHarnessRuntimeAvailableMock.mockReturnValue({ ok: true });
     prepareChatV2Mock.mockResolvedValue({
@@ -298,8 +323,11 @@ describe("web routes — chat-v2 hosted mode", () => {
     });
 
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
       if (String(input).endsWith("/web/authorize-project")) {
-        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        return new Response(JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }), { status: 200 });
       }
       if (String(input).endsWith("/web/authorize-batch")) {
         const payload = JSON.parse(String(init?.body ?? "{}"));
@@ -498,7 +526,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         accessVersion: 1,
         surface: "preview",
         chatSessionId: "chat-session-1",
-        messages: [{ role: "user", content: "preview request" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -509,6 +537,9 @@ describe("web routes — chat-v2 hosted mode", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(vi.mocked(global.fetch).mock.calls.some(([url]) =>
+      String(url).endsWith("/agent-browser/assert_web_writable")
+    )).toBe(false);
     expect(await response.text()).toBe("ok");
     expect(prepareChatV2Mock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -557,7 +588,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
         chatSessionId: "chat-session-1",
-        messages: [{ role: "user", content: "hi" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -584,7 +615,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       projectId: "project-1",
       selectedServerIds: ["server-1"],
       chatSessionId: "chat-session-1",
-      messages: [{ role: "user", content: "hi" }],
+      messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
       model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
       uiTools,
     };
@@ -625,7 +656,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         selectedServerIds: ["server-1"],
         hostId: "host-1",
         chatSessionId: "chat-host-1",
-        messages: [{ role: "user", content: "preview request" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
         model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
       },
       token
@@ -636,6 +667,57 @@ describe("web routes — chat-v2 hosted mode", () => {
       expect.objectContaining({ hostId: "host-1" })
     );
     expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("enforces a direct conversation's saved discovery requirement after a client edit", async () => {
+    const { app, token } = createWebTestApp();
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true, requireNativeToolDiscovery: true });
+      }
+      return originalFetch(input, init);
+    });
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: { selectedServerIds: ["server-1"], requireNativeToolDiscovery: false },
+    });
+    const response = await postJson(app, "/api/web/chat-v2", {
+      projectId: "project-1", hostId: "host-1", chatSessionId: "required-chat",
+      selectedServerIds: ["server-1"],
+      messages: [{ role: "user", parts: [{ type: "text", text: "continue" }] }],
+      model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
+    }, token);
+    expect(response.status).toBe(409);
+    expect(await response.text()).toContain("Native tool discovery");
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("carries the saved effective App declaration into harness admission", async () => {
+    const { app, token } = createWebTestApp();
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        harness: "claude-code", hostStyle: "claude", selectedServerIds: ["server-1"],
+        hostCapabilitiesOverride: { message: { audio: {} } },
+      },
+    });
+    const response = await postJson(app, "/api/web/chat-v2", {
+      projectId: "project-1", hostId: "host-1", chatSessionId: "host-capabilities-chat",
+      harnessStartupRequestId: "b19b8e67-f9a8-4d1f-9fce-7b6da581c041",
+      selectedServerIds: ["server-1"], hostCapabilitiesOverride: {},
+      messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
+      model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
+    }, token);
+    expect(response.status).toBe(200);
+    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(expect.objectContaining({
+      harnessStartupRequestId: "b19b8e67-f9a8-4d1f-9fce-7b6da581c041",
+      chatSessionId: "host-capabilities-chat",
+      harnessHostCapabilities: {
+        capabilities: { message: { audio: {} } },
+        gaps: ["host-capability:message.audio"],
+      },
+    }));
   });
 
   it("FAILS CLOSED when the host runtime-config fetch fails — never runs the engine", async () => {
@@ -654,7 +736,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         selectedServerIds: ["server-1"],
         hostId: "host-1",
         chatSessionId: "chat-host-2",
-        messages: [{ role: "user", content: "preview request" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
         model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
       },
       token
@@ -687,7 +769,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         selectedServerIds: ["server-1"],
         hostId: "host-1",
         chatSessionId: "chat-host-policy",
-        messages: [{ role: "user", content: "preview request" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
         model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
         // The body says nothing about the policy — the stored host config is
         // authoritative, so the unsupported idp fails the turn closed.
@@ -717,7 +799,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
         chatSessionId: "chat-adhoc-policy",
-        messages: [{ role: "user", content: "preview request" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
         model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
         xaaPolicy: { idp: "okta" },
       },
@@ -734,6 +816,58 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(body.message).toContain("Unsupported enterprise-managed");
     expect(body.details?.reason).toBe("xaa_policy_invalid");
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("does not claim complete provenance for ad-hoc connection overrides", async () => {
+    const setup = await import("../../../services/chat-turn/setup-manifest.js");
+    const capture = vi.spyOn(setup, "capturePreparedWebSetup");
+    const { app, token } = createWebTestApp();
+    const response = await postJson(app, "/api/web/chat-v2", {
+      projectId: "project-1", selectedServerIds: ["server-1"],
+      chatSessionId: "chat-policy", messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
+      model: { id: "openai/gpt-5-mini", provider: "openai" },
+      mirrorToolParamHeaders: false,
+    }, token);
+    expect(response.status).toBe(200);
+    expect(capture.mock.lastCall?.[0].persist.setupConnectionPolicyIncomplete).toBe(true);
+    capture.mockRestore();
+    expect(persistChatSessionToConvexMock.mock.lastCall?.[0].turnTrace?.setupAtTurn)
+      .toMatchObject({ status: "incomplete" });
+  });
+
+  it("keeps saved per-server pins represented by the client's snapshot", async () => {
+    const setup = await import("../../../services/chat-turn/setup-manifest.js");
+    const capture = vi.spyOn(setup, "capturePreparedWebSetup");
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        serverConnectionOverrides: {
+          "server-1": { mcpProtocolVersion: "2025-11-25" },
+        },
+      },
+    });
+    const { app, token } = createWebTestApp();
+    try {
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          projectId: "project-1",
+          hostId: "host-1",
+          selectedServerIds: ["server-1"],
+          chatSessionId: "saved-pins",
+          messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
+          model: { id: "openai/gpt-5-mini", provider: "openai" },
+        },
+        token,
+      );
+      expect(response.status).toBe(200);
+      expect(
+        capture.mock.lastCall?.[0].persist.setupConnectionPolicyIncomplete,
+      ).toBe(false);
+    } finally {
+      capture.mockRestore();
+    }
   });
 
   it("FAILS CLOSED when the scenario runtime-config fetch fails — never runs the engine", async () => {
@@ -753,7 +887,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         scenarioId: "cbx_1",
         accessVersion: 1,
         chatSessionId: "chat-cb-fail",
-        messages: [{ role: "user", content: "preview request" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
         model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
       },
       token
@@ -793,7 +927,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         scenarioId: "cbx_1",
         accessVersion: 1,
         chatSessionId: "chat-cb-denied",
-        messages: [{ role: "user", content: "preview request" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
         model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
       },
       token
@@ -824,7 +958,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         scenarioId: "cbx_1",
         accessVersion: 7,
         chatSessionId: "chat-cb-version",
-        messages: [{ role: "user", content: "hi" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
         model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
       },
       token
@@ -853,7 +987,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         scenarioId: "cbx_1",
         accessVersion: 1,
         chatSessionId: "chat-cb-stale",
-        messages: [{ role: "user", content: "hi" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
         model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
       },
       token
@@ -880,7 +1014,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         accessVersion: 1,
         hostId: "host-1",
         chatSessionId: "chat-cb-1",
-        messages: [{ role: "user", content: "preview request" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
         model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
       },
       token
@@ -904,7 +1038,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         reasoningEffort: "low",
         surface: "share_link",
         chatSessionId: "chat-session-shared",
-        messages: [{ role: "user", content: "hello from guest" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello from guest" }] }],
         model: {
           id: "anthropic/claude-opus-4.6",
           provider: "anthropic",
@@ -935,7 +1069,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         projectId: "project-1",
         selectedServerIds: ["server-1", "server-2", "server-1"],
         chatSessionId: "chat-session-batch",
-        messages: [{ role: "user", content: "hello" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -991,7 +1125,7 @@ describe("web routes — chat-v2 hosted mode", () => {
           "server-1": "2026-07-28",
         },
         chatSessionId: "chat-session-stateless",
-        messages: [{ role: "user", content: "hello" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -1032,7 +1166,7 @@ describe("web routes — chat-v2 hosted mode", () => {
           "server-stateless": "2026-07-28",
         },
         chatSessionId: "chat-session-mixed",
-        messages: [{ role: "user", content: "hello" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -1072,7 +1206,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         selectedServerNames: ["Asana"],
         chatSessionId: "chat-session-direct",
         directVisibility: "project",
-        messages: [{ role: "user", content: "hello" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -1096,7 +1230,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         sourceType: "direct",
         directVisibility: "project",
         resumeConfig: expect.objectContaining({
-          selectedServers: ["Asana"],
+          selectedServers: ["server-1"],
           executionTarget: { kind: "adhoc" },
         }),
         hostConfig: expect.objectContaining({
@@ -1129,7 +1263,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         chatSessionId: "chat-session-direct-images-off",
         directVisibility: "project",
         modelVisibleMcpToolResults: imagePolicy(false),
-        messages: [{ role: "user", content: "hello" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -1159,6 +1293,12 @@ describe("web routes — chat-v2 hosted mode", () => {
   });
 
   it("does not resolve linked image resources from browser-replayed history", async () => {
+    // The replayed history has to reach the image mapping as real model
+    // messages, so this test converts it instead of using the file's identity.
+    const actual = await vi.importActual<typeof import("ai")>("ai");
+    vi.mocked(convertToModelMessages).mockImplementationOnce(
+      actual.convertToModelMessages as never,
+    );
     const { app, token } = createWebTestApp();
     managerListToolsMock.mockResolvedValue({
       tools: [{ name: "qa_return_linked_image_resource" }],
@@ -1184,39 +1324,27 @@ describe("web routes — chat-v2 hosted mode", () => {
         messages: [
           {
             role: "assistant",
-            content: [
+            parts: [
               {
-                type: "tool-call",
+                type: "dynamic-tool",
                 toolCallId: "call-linked-image",
                 toolName: "qa_return_linked_image_resource",
+                state: "output-available",
                 input: {},
-              },
-            ],
-          },
-          {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "call-linked-image",
-                toolName: "qa_return_linked_image_resource",
                 output: {
-                  type: "json",
-                  value: {
-                    content: [
-                      {
-                        type: "resource_link",
-                        uri: "example://linked-image.png",
-                        name: "Linked PNG resource",
-                        mimeType: "image/png",
-                      },
-                    ],
-                  },
+                  content: [
+                    {
+                      type: "resource_link",
+                      uri: "example://linked-image.png",
+                      name: "Linked PNG resource",
+                      mimeType: "image/png",
+                    },
+                  ],
                 },
               },
             ],
           },
-          { role: "user", content: "what can you tell me about the image" },
+          { role: "user", parts: [{ type: "text", text: "what can you tell me about the image" }] },
         ],
         model: {
           id: "openai/gpt-5-mini",
@@ -1277,7 +1405,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         selectedServerIds: ["server-1"],
         chatSessionId: "chat-session-gpt5",
         temperature: 0.3,
-        messages: [{ role: "user", content: "hello" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -1307,7 +1435,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         messages: [
           {
             role: "user",
-            content: "hello from alice",
+            parts: [{ type: "text", text: "hello from alice" }],
             metadata: { senderUserId: "u-alice" },
           },
         ],
@@ -1345,7 +1473,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         messages: [
           {
             role: "user",
-            content: "hello from alice",
+            parts: [{ type: "text", text: "hello from alice" }],
             metadata: { senderUserId: "u-bob" },
           },
         ],
@@ -1368,12 +1496,15 @@ describe("web routes — chat-v2 hosted mode", () => {
     ]);
   });
 
-  it("returns server names in hosted oauth-required chat errors", async () => {
+  it("continues hosted chat when a named server needs sign-in", async () => {
     const { app, token } = createWebTestApp();
 
     global.fetch = vi.fn(async (input, init) => {
+      if (String(input).endsWith("/agent-browser/assert_web_writable")) {
+        return Response.json({ writable: true });
+      }
       if (String(input).endsWith("/web/authorize-project")) {
-        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        return new Response(JSON.stringify({ ok: true, chatEnvironmentVersion: 1 }), { status: 200 });
       }
       if (String(input).endsWith("/web/authorize-batch")) {
         const payload = JSON.parse(String(init?.body ?? "{}"));
@@ -1417,7 +1548,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
         selectedServerNames: ["Asana"],
-        messages: [{ role: "user", content: "hello" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -1427,19 +1558,13 @@ describe("web routes — chat-v2 hosted mode", () => {
       token
     );
 
-    expect(response.status).toBe(401);
-    expect(await response.json()).toEqual(
-      expect.objectContaining({
-        code: "UNAUTHORIZED",
-        message:
-          'Server "Asana" requires OAuth authentication. Please complete the OAuth flow first.',
-        details: expect.objectContaining({
-          oauthRequired: true,
-          serverId: "server-1",
-          serverName: "Asana",
-          serverUrl: "https://server-1.example.com/mcp",
-        }),
-      })
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("ok");
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ isolatedServers: ["server-1"] }),
+    );
+    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+      expect.objectContaining({ unavailableServerIds: ["server-1"] }),
     );
   });
 
@@ -1466,7 +1591,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
         selectedServerNames: ["Notion"],
-        messages: [{ role: "user", content: "hello" }],
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
         model: {
           id: "openai/gpt-5-mini",
           provider: "openai",
@@ -1506,7 +1631,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       projectId: "project-1",
       selectedServerIds: ["server-1"],
       chatSessionId: "chat-session-1",
-      messages: [{ role: "user", content: "hi" }],
+      messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
       model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
     };
 
@@ -1578,11 +1703,13 @@ describe("web routes — chat-v2 hosted mode", () => {
       // Losing the skills must not lose the turn.
       expect(response.status).toBe(200);
 
-      // No source at all is the LIVE shape: the orchestrator still composes the
-      // connected servers' skills, which never failed. Collapsing to
-      // `{ kind: "none" }` here would take those down with the project's.
+      // The shared setup retains the connected server set even if project
+      // skills are unavailable.
       const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-      expect(args.skillsSource).toBeUndefined();
+      expect(args.skillsSource).toMatchObject({
+        kind: "resolved",
+        capabilities: { standaloneSkills: [], effectiveServerIds: ["server-1"] },
+      });
     });
   });
 
@@ -1620,7 +1747,7 @@ describe("web routes — chat-v2 hosted mode", () => {
           selectedServerIds: ["server-1"],
           hostId: "host-cursor",
           chatSessionId: "chat-cursor-1",
-          messages: [{ role: "user", content: "preview request" }],
+          messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
           // What the picker actually holds on a Cursor host: an unrelated
           // model, because the sentinel is not a selectable entry.
           model: {
@@ -1654,7 +1781,7 @@ describe("web routes — chat-v2 hosted mode", () => {
           selectedServerIds: ["server-1"],
           hostId: "host-cursor",
           chatSessionId: "chat-cursor-2",
-          messages: [{ role: "user", content: "preview request" }],
+          messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
           model: {
             id: "anthropic/claude-haiku-4.5",
             provider: "anthropic",
@@ -1696,7 +1823,7 @@ describe("web routes — chat-v2 hosted mode", () => {
           selectedServerIds: ["server-1"],
           hostId: "host-plain",
           chatSessionId: "chat-plain-1",
-          messages: [{ role: "user", content: "preview request" }],
+          messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
           model: {
             id: "anthropic/claude-haiku-4.5",
             provider: "anthropic",
@@ -1741,7 +1868,7 @@ describe("web routes — chat-v2 hosted mode", () => {
             selectedServerIds: ["server-1"],
             hostId: "host-cursor",
             chatSessionId: `chat-cursor-invalid-${label}`,
-            messages: [{ role: "user", content: "preview request" }],
+            messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
             model,
           },
           token
@@ -1786,7 +1913,7 @@ describe("web routes — chat-v2 hosted mode", () => {
           selectedServerIds: ["server-1"],
           hostId: "host-cursor-misconfigured",
           chatSessionId: "chat-cursor-4",
-          messages: [{ role: "user", content: "preview request" }],
+          messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
           model: {
             id: "anthropic/claude-haiku-4.5",
             provider: "anthropic",
@@ -1829,7 +1956,7 @@ describe("web routes — chat-v2 hosted mode", () => {
           selectedServerIds: ["server-1"],
           hostId: "host-cursor-misconfigured",
           chatSessionId: "chat-cursor-5",
-          messages: [{ role: "user", content: "preview request" }],
+          messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
           model: { id: "cursor/auto", provider: "cursor", name: "Cursor Auto" },
         },
         token
@@ -1858,7 +1985,7 @@ describe("web routes — chat-v2 hosted mode", () => {
           selectedServerIds: ["server-1"],
           hostId: "host-cursor",
           chatSessionId: "chat-cursor-6",
-          messages: [{ role: "user", content: "preview request" }],
+          messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
           model: {
             id: "anthropic/claude-haiku-4.5",
             provider: "anthropic",
@@ -1903,7 +2030,7 @@ describe("web routes — chat-v2 hosted mode", () => {
           selectedServerIds: ["server-1"],
           hostId: "host-1",
           chatSessionId: "chat-pg-1",
-          messages: [{ role: "user", content: "go" }],
+          messages: [{ role: "user", parts: [{ type: "text", text: "go" }] }],
           model: {
             id: "anthropic/claude-haiku-4.5",
             provider: "anthropic",

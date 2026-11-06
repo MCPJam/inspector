@@ -1,3 +1,7 @@
+import {
+  installTaskAccounts,
+  TASK_ACCOUNT_KEY,
+} from "../../../utils/__tests__/task-account-fixture.js";
 import { describe, it, expect, vi } from "vitest";
 import {
   createTestApp,
@@ -270,4 +274,61 @@ describe("POST /api/mcp/tasks", () => {
       expect(res.status).toBe(400);
     });
   });
+  it.each([
+    ["get", "getTaskExt", {}],
+    [
+      "update",
+      "updateTask",
+      { inputResponses: { choice: { action: "accept" } } },
+    ],
+    ["cancel", "cancelTaskExt", {}],
+  ] as const)(
+    "dispatches local %s to its saved account",
+    async (path, method, extra) => {
+      const execute = vi
+        .fn()
+        .mockResolvedValue({ taskId: "same-id", status: "working" });
+      const { app, manager } = appFor(extensionSupport, { [method]: execute });
+      installTaskAccounts(
+        manager as unknown as Parameters<typeof installTaskAccounts>[0],
+      );
+      const response = await postJson(app, `/api/mcp/tasks/${path}`, {
+        serverId: "s1",
+        taskId: "same-id",
+        connectionId: "account-b",
+        wire: "extension",
+        ...extra,
+      });
+      expect(response.status).toBe(200);
+      expect(execute.mock.calls[0][0]).toBe(TASK_ACCOUNT_KEY);
+    },
+  );
+
+  it("refuses local account removal without using the default", async () => {
+    const getTaskExt = vi.fn();
+    const { app, manager } = appFor(extensionSupport, { getTaskExt });
+    installTaskAccounts(
+      manager as unknown as Parameters<typeof installTaskAccounts>[0],
+    );
+    const response = await postJson(app, "/api/mcp/tasks/get", {
+      serverId: "s1",
+      taskId: "same-id",
+      connectionId: "removed",
+    });
+    expect(response.status).toBe(403);
+    expect(getTaskExt).not.toHaveBeenCalled();
+  });
+
+  it("refuses local wire changes without reading the task", async () => {
+    const getTaskExt = vi.fn();
+    const { app } = appFor(extensionSupport, { getTaskExt });
+    const response = await postJson(app, "/api/mcp/tasks/get", {
+      serverId: "s1",
+      taskId: "same-id",
+      wire: "legacy",
+    });
+    expect(response.status).toBe(409);
+    expect(getTaskExt).not.toHaveBeenCalled();
+  });
+
 });

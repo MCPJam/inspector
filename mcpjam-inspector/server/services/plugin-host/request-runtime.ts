@@ -1,3 +1,4 @@
+import { appResourcesEnabled } from "@/shared/app-resource-capability";
 import { usesMcpjamClient } from "@/shared/harness-descriptors";
 import type { ElicitResult } from "@modelcontextprotocol/client";
 import { pluginLocalFormFilesOptInSchema } from "../../../shared/plugin-form-services.js";
@@ -24,6 +25,7 @@ import type {
 } from "./invocation.js";
 import {
   pluginModelContextEnabled,
+  pluginModelContextPolicy,
   pluginMessageEnabled,
 } from "./context-profile.js";
 import { pluginComputerUploadsAvailable } from "./computer-file-target.js";
@@ -866,9 +868,11 @@ export function createPluginRequestRuntime(
       },
       requiresApproval: config.requireToolApproval === true,
       appToolsEnabled: pluginAppToolsEnabled(config),
+      resourcesEnabled: appResourcesEnabled(config),
       contextEnabled:
         pluginModelContextEnabled(config) &&
         extensions.capabilities.modelContext,
+      modelContextPolicy: pluginModelContextPolicy(config),
       messageEnabled:
         pluginMessageEnabled(config) && extensions.capabilities.messages,
       extensions,

@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "10.0.0",
+  "version": "10.3.0",
   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
   "type": "module",
   "main": "dist/index.js",
@@ -16,6 +16,16 @@
       "types": "./dist/internal/telemetry.d.ts",
       "import": "./dist/internal/telemetry.js",
       "default": "./dist/internal/telemetry.js"
+    },
+    "./internal/deployment": {
+      "types": "./dist/internal/deployment.d.ts",
+      "import": "./dist/internal/deployment.js",
+      "default": "./dist/internal/deployment.js"
+    },
+    "./internal/network-proxy": {
+      "types": "./dist/internal/network-proxy.d.ts",
+      "import": "./dist/internal/network-proxy.js",
+      "default": "./dist/internal/network-proxy.js"
     },
     ".": {
       "types": "./dist/index.d.ts",
@@ -41,6 +51,11 @@
       "types": "./dist/skill-reference.d.ts",
       "import": "./dist/skill-reference.js",
       "default": "./dist/skill-reference.js"
+    },
+    "./model-native-ids": {
+      "types": "./dist/model-native-ids.d.ts",
+      "import": "./dist/model-native-ids.js",
+      "default": "./dist/model-native-ids.js"
     },
     "./model-factory": {
       "types": "./dist/model-factory.d.ts",
@@ -171,7 +186,7 @@
   "license": "MIT",
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@modelcontextprotocol/node": "2.0.0",
+    "@modelcontextprotocol/node": "2.1.2",
     "@modelcontextprotocol/sdk": "^1.31.0",
     "@modelcontextprotocol/server": "2.3.1",
     "@modelcontextprotocol/server-everything": "^2026.8.31",
@@ -204,7 +219,7 @@
     "@ai-sdk/openai": "4.0.91",
     "@ai-sdk/xai": "5.0.20",
     "@cfworker/json-schema": "^4.1.1",
-    "@mcpjam/evaluators": "^0.5.1",
+    "@mcpjam/evaluators": "^0.6.0",
     "@modelcontextprotocol/client": "2.3.1",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@noble/hashes": "^2.4.0",

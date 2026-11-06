@@ -1,5 +1,9 @@
 import { ToolResourceAttachments } from "@/components/host-workspace/file-actions";
 import {
+  CHAT_AUTH_RECOVERY_MESSAGE,
+  useChatAuthRecoveryFailures,
+} from "@/lib/chat-auth-recovery";
+import {
   useEffect,
   useMemo,
   useRef,
@@ -67,7 +71,7 @@ import {
   harnessToolTarget,
   isHarnessActivityToolName,
 } from "../harness-tool-steps";
-import { useHostContextStore } from "@/stores/client-context-store";
+import { useEffectiveHostContext } from "@/contexts/saved-client-context";
 import { useOpenBrowserOnBrowsing } from "@/hooks/useOpenBrowserOnBrowsing";
 import { extractHostDisplayModes } from "@/lib/client-config";
 import { useScenarioHostTheme } from "@/contexts/scenario-client-style-context";
@@ -188,7 +192,22 @@ export function ToolPart({
     pageToolAttribution?.rawName ?? appToolAttribution?.rawName ?? label;
 
   const toolCallId = (part as any).toolCallId as string | undefined;
-  const state = part.state as ToolState | undefined;
+  const recoveryFailures = useChatAuthRecoveryFailures();
+  const recoveryFailed =
+    toolCallId !== undefined &&
+    recoveryFailures.some(
+      (item) =>
+        item.toolCallId === toolCallId &&
+        (!chatSessionId || item.chatSessionId === chatSessionId),
+    );
+  const state = (
+    recoveryFailed &&
+    !["output-available", "output-error", "output-denied"].includes(
+      part.state ?? "",
+    )
+      ? "output-error"
+      : part.state
+  ) as ToolState | undefined;
   // The agent started browsing, so the browser gets its panel. Here because
   // this card is the one place in the client that already knows a browser tool
   // is running; it fires only while the call is LIVE, so scrolling back
@@ -297,7 +316,10 @@ export function ToolPart({
   const editInputValue = inputValue !== undefined ? inputValue : inputData;
   const editOutputValue = resultDisplayData;
   const editorKeyVersion = editVersion ?? 0;
-  const errorText = (part as any).errorText ?? (part as any).error;
+  const errorText =
+    (part as any).errorText ??
+    (part as any).error ??
+    (recoveryFailed ? CHAT_AUTH_RECOVERY_MESSAGE : undefined);
   // Through the package's shared reader rather than a local copy of the same
   // field test. This channel had three hand-rolled readers with three
   // different gates — this one required a recognised mode, `PartSwitch`
@@ -329,7 +351,7 @@ export function ToolPart({
   const widgetDebugInfo = recordedWidgetDiagnostics
     ? undefined
     : storedWidgetDebugInfo;
-  const hostContext = useHostContextStore((s) => s.draftHostContext);
+  const hostContext = useEffectiveHostContext();
   const hostAvailableDisplayModes = useMemo(
     () => extractHostDisplayModes(hostContext),
     [hostContext],

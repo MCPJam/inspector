@@ -10,7 +10,11 @@ import {
   type JudgeCase,
 } from "./goal-completion-presentation";
 import { TrialJudgeReviewPanel } from "./trial-judge-review";
-import { evaluateToolCalls } from "@/shared/eval-matching";
+import {
+  evaluateToolCalls,
+  extractToolErrors,
+  markFailedToolCalls,
+} from "@/shared/eval-matching";
 import { ToolCallDiff } from "./tool-call-diff";
 import {
   registerArtifactUrls,
@@ -774,12 +778,20 @@ export function IterationDetails({
    */
   const toolCallDiffResult = useMemo(
     () =>
-      evaluateToolCalls(expectedToolCalls, actualToolCalls, {
-        isNegativeTest: iteration.testCaseSnapshot?.isNegativeTest,
-      }),
+      evaluateToolCalls(
+        expectedToolCalls,
+        // The trace's failure records, so a retried attempt reads as part of
+        // its retry the way the verdict graded it.
+        markFailedToolCalls(
+          actualToolCalls,
+          extractToolErrors(blob ?? undefined),
+        ),
+        { isNegativeTest: iteration.testCaseSnapshot?.isNegativeTest },
+      ),
     [
       expectedToolCalls,
       actualToolCalls,
+      blob,
       iteration.testCaseSnapshot?.isNegativeTest,
     ],
   );

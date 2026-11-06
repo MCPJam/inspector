@@ -21,6 +21,11 @@ import {
   type McpProtocolVersion,
 } from "../mcp-client-manager/mcp-protocol-version.js";
 import {
+  AUTH_CHALLENGE_ACTIONS,
+  TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
+  UNAUTHORIZED_CHALLENGE_TRIGGERS,
+} from "../mcp-client-manager/auth-challenge.js";
+import {
   HARNESS_IDS,
   HOST_CONFIG_SCHEMA_VERSION_V2,
   isHarness,
@@ -40,6 +45,7 @@ import {
   type HostConfigComputer,
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
+  type HostConfigModelContextPolicyV1,
   type HostConfigOAuthProfile,
   type HostConfigOAuthProfileV1,
   type HostConfigOAuthProfileV2,
@@ -62,6 +68,12 @@ import {
   assertModelSelection,
   type ModelSelection,
 } from "./model-selection.js";
+import {
+  isModelContextBudget,
+  MODEL_CONTEXT_POLICY_CEILINGS,
+  MODEL_CONTEXT_POLICY_KEYS,
+  type ModelContextPolicyKey,
+} from "./model-context-policy.js";
 
 // Allowed keys on `openaiAppsOverrides`. Centralized so the canonicalizer's
 // typo-rejection stays in sync with the type — if you add a method to
@@ -917,9 +929,19 @@ function canonicalizeMcpProfile(
   // omit-when-absent discipline: absent → spec-conforming, hashes stable.
   // One validation loop; the top-level re-key below sorts every emitted
   // field into canonical position.
+  //
+  // The four sign-in knobs follow the same rule even though, for the `_meta`
+  // pair, absent means "do not act" (see the types.ts block): what is absent
+  // is omitted, and the literal equal to the absent value is stored as given
+  // and hashes distinctly. No cross-field check: a trigger stored beside a
+  // `"passthrough"` action is inert at runtime, not invalid.
   const conformanceKnobs = [
     ["paginationTraversal", PAGINATION_TRAVERSAL_MODES],
     ["mrtrSupport", MRTR_SUPPORT_MODES],
+    ["unauthorizedChallenge", AUTH_CHALLENGE_ACTIONS],
+    ["unauthorizedChallengeTrigger", UNAUTHORIZED_CHALLENGE_TRIGGERS],
+    ["toolResultAuthChallenge", AUTH_CHALLENGE_ACTIONS],
+    ["toolResultAuthChallengeTrigger", TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS],
   ] as const;
   for (const [key, modes] of conformanceKnobs) {
     const value = input[key];
@@ -1526,6 +1548,12 @@ function canonicalizeMcpProfile(
         (input.apps as { pluginExtensions?: unknown }).pluginExtensions
       );
     }
+    const modelContextPolicy = (input.apps as { modelContextPolicy?: unknown })
+      .modelContextPolicy;
+    if (modelContextPolicy !== undefined) {
+      const policy = canonicalizeModelContextPolicy(modelContextPolicy);
+      if (policy) appsOut.modelContextPolicy = policy;
+    }
     if (Object.keys(appsOut).length > 0) {
       const sortedApps = {} as typeof appsOut;
       for (const k of Object.keys(appsOut).sort()) {
@@ -1621,6 +1649,45 @@ function canonicalizePluginExtensions(
     }
   }
   return out;
+}
+
+const MODEL_CONTEXT_POLICY_KEY_SET: ReadonlySet<string> = new Set(
+  MODEL_CONTEXT_POLICY_KEYS
+);
+
+/**
+ * `mcpProfile.apps.modelContextPolicy` — per-client App context budgets.
+ * Every key is optional and must be a positive integer no larger than its
+ * ceiling, the most storage and the server can hold. Unknown keys are
+ * rejected so a typo can't read back as the default. Keys are sorted, and an
+ * empty policy collapses to absent so it hashes like a client that never
+ * saved one.
+ */
+function canonicalizeModelContextPolicy(
+  value: unknown
+): HostConfigModelContextPolicyV1 | undefined {
+  if (!isPlainObject(value)) {
+    throw new Error(
+      "hostConfigV2: mcpProfile.apps.modelContextPolicy must be a plain object"
+    );
+  }
+  const out: HostConfigModelContextPolicyV1 = {};
+  for (const key of Object.keys(value).sort()) {
+    if (!MODEL_CONTEXT_POLICY_KEY_SET.has(key)) {
+      throw new Error(
+        `hostConfigV2: mcpProfile.apps.modelContextPolicy has unknown key "${key}"`
+      );
+    }
+    const policyKey = key as ModelContextPolicyKey;
+    const budget = value[key];
+    if (!isModelContextBudget(policyKey, budget)) {
+      throw new Error(
+        `hostConfigV2: mcpProfile.apps.modelContextPolicy.${key} must be a positive integer no larger than ${MODEL_CONTEXT_POLICY_CEILINGS[policyKey]}`
+      );
+    }
+    out[policyKey] = budget;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 // Normalize per-server connection overrides for stable hashing.
@@ -2625,6 +2692,9 @@ export function canonicalizeHostConfigV2(
       throw new Error("hostConfigV2: agentLoop requires a computer attachment");
     }
   }
+  if (input.requireNativeToolDiscovery !== undefined && typeof input.requireNativeToolDiscovery !== "boolean") {
+    throw new Error("hostConfigV2: requireNativeToolDiscovery must be a boolean");
+  }
   const serverIds = sortUniqueServerIds(input.serverIds);
   const optionalServerIds = sortUniqueServerIds(input.optionalServerIds);
   const hostContext = requireRecord(input.hostContext, "hostContext");
@@ -2649,6 +2719,7 @@ export function canonicalizeHostConfigV2(
     systemPrompt: input.systemPrompt,
     temperature: input.temperature,
     requireToolApproval: input.requireToolApproval,
+    ...(input.requireNativeToolDiscovery !== undefined ? { requireNativeToolDiscovery: input.requireNativeToolDiscovery } : {}),
     // Preserve undefined-vs-set: absent hashes byte-identically to a
     // pre-feature row; explicit `false` writes a key and hashes distinctly.
     progressiveToolDiscovery: input.progressiveToolDiscovery,
