@@ -12,15 +12,10 @@ const prepareEvalRun = vi.fn();
 const createAuthorizedManager = vi.fn();
 const createConvexClient = vi.fn();
 
-vi.mock("../../routes/shared/evals.js", async () => {
-  const { isEvalRunPastExecution } = await import("@mcpjam/sdk/contract");
-  return {
-    prepareEvalRun: (...args: unknown[]) => prepareEvalRun(...args),
-    // The real rule: only a replayed run with nothing left to execute skips.
-    shouldSkipExecution: (prepared: { deduped?: boolean; status?: string }) =>
-      prepared.deduped === true && isEvalRunPastExecution(prepared.status),
-  };
-});
+vi.mock("../../routes/shared/evals.js", () => ({
+  prepareEvalRun: (...args: unknown[]) => prepareEvalRun(...args),
+  shouldSkipExecution: (prepared: { deduped?: boolean }) => prepared.deduped === true,
+}));
 vi.mock("../../routes/web/auth.js", () => ({
   createAuthorizedManager: (...args: unknown[]) =>
     createAuthorizedManager(...args),
@@ -88,6 +83,21 @@ describe("defaultRunEvalSuite provenance", () => {
     expect(request.suiteRerun).toBe(true);
     expect(request).not.toHaveProperty("refreshSnapshot");
     expect(result.result).toBe("passed");
+  });
+
+  it("does not fail an adopted run when snapshot verification is unavailable", async () => {
+    const execute = vi.fn();
+    const finalize = vi.fn();
+    const mutation = vi.fn();
+    prepareEvalRun.mockResolvedValueOnce({ runId: "existing-run", deduped: true, status: "running", recorder: { finalize }, execute });
+    createConvexClient.mockReturnValue({ query: vi.fn().mockRejectedValue(new Error("snapshot unavailable")), mutation });
+    await expect(defaultRunEvalSuiteForTests()({
+      claimed: { triggerId: "trig-src", repoFullName: "mcpjam/mcp-check-fixture", prNumber: 1, headSha: "a".repeat(40), organizationId: "org-1", projectId: "proj-1", createdByExternalId: "user_x", suiteId: "suite-1", repoPrivate: false, credentialPolicyVersion: 2, isFork: false, githubCredentialPolicy: "same_repository", allowedBuiltInToolIds: [] },
+      bearer: "bearer-token", serverId: "srv-1", serverName: "gh-check-trig-src",
+    })).rejects.toThrow();
+    expect(execute).not.toHaveBeenCalled();
+    expect(finalize).not.toHaveBeenCalled();
+    expect(mutation).not.toHaveBeenCalled();
   });
 
   it("does not strand the run when BINDING it throws", async () => {

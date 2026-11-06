@@ -18,13 +18,11 @@ describe("shouldSkipExecution", () => {
     );
   });
 
-  it("still executes a replay of a run genuinely in flight", () => {
-    expect(shouldSkipExecution({ deduped: true, status: "running" })).toBe(
-      false,
-    );
-    expect(shouldSkipExecution({ deduped: true, status: "pending" })).toBe(
-      false,
-    );
+  it.each([
+    "pending", "running", "grading", "completed", "failed", "cancelled",
+    "timed_out", undefined,
+  ])("adopts a replay without another executor when its status is %s", (status) => {
+    expect(shouldSkipExecution({ deduped: true, status })).toBe(true);
   });
 
   it("never skips a fresh start, whatever its status", () => {
