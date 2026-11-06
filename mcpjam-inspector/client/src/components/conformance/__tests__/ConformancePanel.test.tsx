@@ -1085,11 +1085,6 @@ describe("ConformanceTab", () => {
         remainingRunTimeoutMs: expect.any(Number),
         signal: expect.any(AbortSignal),
         protocolVersion: "2026-07-28",
-        // No tool is set, so the checks that call one sit the run out.
-        checkIds: expect.not.arrayContaining(["modern-logs-require-log-level"]),
-        readinessIds: expect.not.arrayContaining([
-          "readiness-log-level-filtering",
-        ]),
       }),
     );
     expect(mockRunProtocol).toHaveBeenCalledTimes(1);
@@ -1904,8 +1899,8 @@ describe("ConformanceTab", () => {
       expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
     );
 
-    // The checks that sat the run out for want of a tool stay picked in the
-    // defaults, so they run once a tool is set.
+    // The checks that still need a tool stay picked in the defaults, so they
+    // run once a tool is set.
     expect(onSaveServerDefaults.mock.calls[0]![1].protocol).toBeUndefined();
 
     // The saved row has not come back yet: Settings shows the run's picks.
@@ -2440,7 +2435,7 @@ describe("ConformanceTab", () => {
       ).toBeInTheDocument();
     });
 
-    it("leaves checks that need input unchecked, and runs without them", async () => {
+    it("shows checks that need input unchecked until they have it", async () => {
       const user = userEvent.setup();
       setupSuccessfulRunMocks();
       await toStep2();
@@ -2489,14 +2484,14 @@ describe("ConformanceTab", () => {
       );
       expect(suiteBox).toHaveAttribute("data-state", "unchecked");
 
+      // The run still sends the checks without a tool, so the result reports
+      // them as not run for want of input, like Run again does.
       fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
       await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
       const { checkIds } = mockRunProtocol.mock.calls[0]![1] as {
         checkIds?: string[];
       };
-      expect(checkIds).toContain("modern-logs-require-log-level");
-      expect(checkIds).not.toContain("modern-undeclared-capability-error");
-      expect(checkIds).not.toContain("modern-tool-output-schema-conformant");
+      expect(checkIds).toBeUndefined();
     });
 
     it("shades the output check when no tool declares an output schema", async () => {
@@ -3744,11 +3739,6 @@ describe("ConformanceTab", () => {
         remainingRunTimeoutMs: expect.any(Number),
         signal: expect.any(AbortSignal),
         protocolVersion: "2026-07-28",
-        // No tool is set, so the checks that call one sit the run out.
-        checkIds: expect.not.arrayContaining(["modern-logs-require-log-level"]),
-        readinessIds: expect.not.arrayContaining([
-          "readiness-log-level-filtering",
-        ]),
       });
     });
     await waitFor(() => {

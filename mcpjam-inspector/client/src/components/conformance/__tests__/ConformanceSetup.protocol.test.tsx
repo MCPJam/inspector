@@ -73,7 +73,6 @@ describe("setup protocol connection gate", () => {
       expect.anything(),
       expect.anything(),
       "2025-06-18",
-      expect.anything(),
     );
   });
 
@@ -116,7 +115,6 @@ describe("setup protocol connection gate", () => {
       expect.anything(),
       expect.anything(),
       "2026-07-28",
-      expect.anything(),
     );
   });
 

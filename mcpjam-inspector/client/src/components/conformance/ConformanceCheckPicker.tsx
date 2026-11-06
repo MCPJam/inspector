@@ -7,9 +7,10 @@
  * flow, so its checks follow the suite's checkbox. The protocol suite's
  * advice (no points) can be listed under its checks and picked the same way.
  *
- * A check still missing its input sits the run out: its box shows unchecked,
- * locked while picked, and the pick is kept, so it runs once the input is
- * set. A suite's box is checked only with every check picked.
+ * A check still missing its input shows unchecked, locked while picked. The
+ * pick is kept: the run still sends it, so the result says it was not run for
+ * want of input, and it runs once the input is set. A suite's box is checked
+ * only with every check picked.
  */
 
 import { useState, type ReactNode } from "react";
@@ -130,43 +131,6 @@ export function pickedCount(
   catalog: CatalogEntry[],
 ): number {
   return pickedIds(selection, suite, catalog).size;
-}
-
-/**
- * What a run sends: the selection without the checks and advice still missing
- * their input. The saved picks keep them, so they run once the input is set.
- */
-export function withoutMissingInputs(
-  selection: ConformanceSelection,
-  versionPin: ProtocolVersionPin,
-  inputStatus: (
-    suite: CheckSuite,
-    checkId: string,
-  ) => "missing" | "set" | undefined,
-): ConformanceSelection {
-  const catalogs = checkCatalogs(versionPin);
-  const advice = adviceCatalogs(versionPin);
-  const missingIn = (suite: CheckSuite, catalog: CatalogEntry[]) =>
-    catalog
-      .filter((entry) => inputStatus(suite, entry.id) === "missing")
-      .map((entry) => entry.id);
-  let next = selection;
-  for (const suite of CHECK_SUITES) {
-    const missing = missingIn(suite, catalogs[suite]);
-    if (missing.length > 0)
-      next = withPicked(next, suite, catalogs[suite], missing, false);
-    if (suite === "apps") continue;
-    const missingAdvice = missingIn(suite, advice[suite]);
-    if (missingAdvice.length > 0)
-      next = withPicked(
-        next,
-        ADVICE_LISTS[suite],
-        advice[suite],
-        missingAdvice,
-        false,
-      );
-  }
-  return next;
 }
 
 /** Nothing would run: every suite left out. */
@@ -452,7 +416,7 @@ function SuiteChecks({
   defaultOpen: boolean;
   onSuiteChange: (picked: boolean) => void;
   isPicked?: (id: string) => boolean;
-  /** A check or advice still missing its input: it sits the run out. */
+  /** A check or advice still missing its input, so it will not run. */
   needsInput?: (id: string) => boolean;
   onCheckChange?: (id: string, picked: boolean) => void;
   listNote?: string;

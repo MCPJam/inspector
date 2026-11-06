@@ -168,12 +168,6 @@ export function ConformanceTab({
     versionPin: ProtocolVersionPin;
     resolvedProtocolVersion?: McpProtocolVersion;
     selection: ConformanceSelection;
-    /**
-     * What this start runs, when it differs from `selection`: the checks
-     * still missing their input sit it out. `selection` stays the user's
-     * picks, which setup and Settings reopen on.
-     */
-    runSelection?: ConformanceSelection;
     inputs?: ConformanceProbes;
   } | null>(null);
   // Which start already ran: switching servers and back must not run again.
@@ -327,7 +321,6 @@ export function ConformanceTab({
     selection: ConformanceSelection,
     inputs?: ConformanceProbes,
     resolvedProtocolVersion?: McpProtocolVersion,
-    runSelection?: ConformanceSelection,
   ) => {
     onSelectServer?.(serverName);
     setStart((prev) => ({
@@ -336,7 +329,6 @@ export function ConformanceTab({
       versionPin,
       resolvedProtocolVersion,
       selection,
-      runSelection,
       inputs,
     }));
   };
@@ -346,16 +338,8 @@ export function ConformanceTab({
     selection: ConformanceSelection,
     inputs?: ConformanceProbes,
     resolvedProtocolVersion?: McpProtocolVersion,
-    runSelection?: ConformanceSelection,
   ) => {
-    beginRun(
-      serverName,
-      versionPin,
-      selection,
-      inputs,
-      resolvedProtocolVersion,
-      runSelection,
-    );
+    beginRun(serverName, versionPin, selection, inputs, resolvedProtocolVersion);
     changeView("overview");
   };
   const [loadingDefaults, setLoadingDefaults] = useState(false);
@@ -519,7 +503,6 @@ export function ConformanceTab({
           selection,
           probes,
           resolvedProtocolVersion,
-          runSelection,
         ) => {
           const effectiveVersion = resolvedProtocolVersion ?? versionPin;
           setSetupOpen(false);
@@ -531,14 +514,7 @@ export function ConformanceTab({
             effectiveVersion,
           );
           setProbes(serverName, savedInputs);
-          startRun(
-            serverName,
-            versionPin,
-            selection,
-            probes,
-            resolvedProtocolVersion,
-            runSelection,
-          );
+          startRun(serverName, versionPin, selection, probes, resolvedProtocolVersion);
           // The checks picked here become the server's defaults: Settings
           // opens on them and the server list's Run reuses them. A failed
           // save leaves the old defaults; the run goes ahead either way.
@@ -651,7 +627,7 @@ export function ConformanceTab({
       // defaults, Settings changes included.
       selection={
         startsHere && startedIdRef.current !== start?.id
-          ? (start?.runSelection ?? start?.selection)
+          ? start?.selection
           : (defaultsFor(server.name) ??
             (startsHere ? start?.selection : undefined))
       }

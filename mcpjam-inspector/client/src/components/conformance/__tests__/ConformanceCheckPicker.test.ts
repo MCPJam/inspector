@@ -6,7 +6,6 @@ import {
   withOAuthStep,
   withOAuthSuite,
   withPicked,
-  withoutMissingInputs,
 } from "../ConformanceCheckPicker";
 import {
   OAUTH_ADVICE_CATALOG,
@@ -36,43 +35,6 @@ describe("withPicked", () => {
     expect(
       withPicked(without, "protocol", pinned, ["ping"], true).protocol,
     ).toBeUndefined();
-  });
-});
-
-describe("withoutMissingInputs", () => {
-  const missing =
-    (ids: string[]) =>
-    (_suite: string, checkId: string): "missing" | undefined =>
-      ids.includes(checkId) ? "missing" : undefined;
-
-  it("leaves the selection as it is when nothing needs input", () => {
-    const selection = { tasks: [] };
-    expect(withoutMissingInputs(selection, "auto", missing([]))).toBe(
-      selection,
-    );
-  });
-
-  it("drops the checks missing their input and keeps the pin's hidden ones", () => {
-    const next = withoutMissingInputs({}, "2025-11-25", missing(["ping"]));
-
-    expect(next.protocol).not.toContain("ping");
-    for (const id of modernOnly) expect(next.protocol).toContain(id);
-    expect(next.apps).toBeUndefined();
-    expect(next.tasks).toBeUndefined();
-  });
-
-  it("drops advice missing its input, and leaves an unpicked check out", () => {
-    const tasksCheck = checkCatalogs("auto").tasks[0]!.id;
-    const tasksAdvice = TASKS_ADVICE_CATALOG[0]!.id;
-    const next = withoutMissingInputs(
-      { tasks: [] },
-      "auto",
-      missing([tasksCheck, tasksAdvice]),
-    );
-
-    expect(next.tasks).toEqual([]);
-    expect(next.tasksAdvice).not.toContain(tasksAdvice);
-    expect(next.tasksAdvice).toHaveLength(TASKS_ADVICE_CATALOG.length - 1);
   });
 });
 
