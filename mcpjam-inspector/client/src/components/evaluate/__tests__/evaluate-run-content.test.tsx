@@ -9,6 +9,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import {
   evalCaseAggregationKey,
   evalRunDecisionDiagnosticSchema,
@@ -582,5 +583,65 @@ describe("EvaluateRunContent", () => {
     const card = screen.getByTestId("description-experiment-card");
     expect(card).toBeInTheDocument();
     expect(screen.queryByTestId("run-advisory-section")).toBeNull();
+  });
+});
+
+describe("EvaluateRunContent — nav layout", () => {
+  const navIterations = ITERATIONS.map((iteration) => ({
+    ...iteration,
+    suiteRunId: "run_1",
+  }));
+  function nav() {
+    return {
+      openTestRun: vi.fn(),
+      editTestCase: vi.fn(),
+      openIteration: vi.fn(),
+      passThreshold: 0.7,
+    };
+  }
+
+  it("shows Stats, Findings and Test runs instead of the hero and matrix", () => {
+    renderContent({ iterations: navIterations, nav: nav() });
+    expect(screen.getByTestId("nav-run-content")).toBeTruthy();
+    expect(screen.getByTestId("nav-run-stats")).toBeTruthy();
+    expect(screen.getByTestId("unified-findings-section")).toHaveAttribute(
+      "data-run-id",
+      "run_1",
+    );
+    expect(screen.queryByTestId("run-verdict-hero")).toBeNull();
+    expect(screen.queryByTestId("run-results-matrix")).toBeNull();
+    expect(screen.queryByTestId("run-change-summary")).toBeNull();
+  });
+
+  it("opens a test run by its matrix key and edits by its case id", async () => {
+    const links = nav();
+    renderContent({ iterations: navIterations, nav: links });
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", { name: "Open test run: Draw a rectangle" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Edit Test Case: Draw a rectangle" }),
+    );
+    expect(links.openTestRun).toHaveBeenCalledWith("case_2", null);
+    expect(links.editTestCase).toHaveBeenCalledWith("case_2");
+  });
+
+  it("keeps the description experiment card", () => {
+    descriptionExperimentFlag.current = true;
+    descriptionExperiment.current = {
+      ...descriptionExperiment.current,
+      status: "ready",
+      experiment: {
+        id: "exp_1",
+        suiteId: "suite_1",
+        sourceRunId: "run_1",
+        toolName: "get_user",
+        status: "proposed",
+      },
+    };
+    renderContent({ iterations: navIterations, nav: nav() });
+    expect(screen.getByTestId("nav-run-content")).toBeTruthy();
+    expect(screen.getByTestId("description-experiment-card")).toBeTruthy();
   });
 });

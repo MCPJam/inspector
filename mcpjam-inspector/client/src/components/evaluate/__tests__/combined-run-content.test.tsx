@@ -720,3 +720,68 @@ describe("whole launch error toast", () => {
     expect(last()).toMatchObject({ errored: 1, finished: 3 });
   });
 });
+
+describe("combined run report — nav layout", () => {
+  function nav() {
+    return {
+      openTestRun: vi.fn(),
+      editTestCase: vi.fn(),
+      openIteration: vi.fn(),
+      passThreshold: 0.7,
+    };
+  }
+
+  it("replaces the hero and matrix with the nav layout", () => {
+    render(<CombinedRunContent {...props} nav={nav()} />);
+    expect(screen.getByTestId("nav-run-content")).toBeTruthy();
+    expect(screen.queryByTestId("run-verdict-hero")).toBeNull();
+    expect(screen.queryByTestId("run-results-matrix")).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Findings for" })).toBeNull();
+  });
+
+  it("shows the route run's findings, then the picked model's run", async () => {
+    const user = userEvent.setup();
+    const links = nav();
+    render(<CombinedRunContent {...props} nav={links} />);
+    expect(screen.getByTestId("findings-section")).toHaveAttribute(
+      "data-run-id",
+      "3",
+    );
+    const showing = within(
+      screen.getByRole("group", {
+        name: "Filter this run by client and model",
+      }),
+    );
+    await user.click(showing.getByRole("button", { name: /^Cursor · sonnet/ }));
+    expect(screen.getByTestId("findings-section")).toHaveAttribute(
+      "data-run-id",
+      "1",
+    );
+    await user.click(screen.getByRole("button", { name: "Open evidence A" }));
+    expect(links.openIteration).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: "a", suiteRunId: "1" }),
+    );
+  });
+
+  it("opens a test run with ?target= only when one of several models is picked", async () => {
+    const user = userEvent.setup();
+    const links = nav();
+    render(<CombinedRunContent {...props} nav={links} />);
+    await user.click(
+      screen.getByRole("button", { name: "Open test run: Read a record" }),
+    );
+    const showing = within(
+      screen.getByRole("group", {
+        name: "Filter this run by client and model",
+      }),
+    );
+    await user.click(showing.getByRole("button", { name: /^ChatGPT/ }));
+    await user.click(
+      screen.getByRole("button", { name: "Open test run: Read a record" }),
+    );
+    expect(links.openTestRun.mock.calls).toEqual([
+      ["case", null],
+      ["case", "gpt-5.1"],
+    ]);
+  });
+});

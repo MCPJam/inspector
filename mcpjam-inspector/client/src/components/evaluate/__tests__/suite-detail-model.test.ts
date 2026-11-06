@@ -524,6 +524,19 @@ describe("suiteRunBlockedReason", () => {
     expect(suiteRunBlockedReason({ ...options, caseCount: 1 })).toBeNull();
   });
 
+  it("points at Suite settings on the new pages", () => {
+    const options = {
+      caseCount: 0, hasServersConfigured: true, isEnvironmentSuite: false,
+      isRerunning: false, isReplaying: false, runningTestCase: false, nav: true,
+    };
+    expect(suiteRunBlockedReason(options)).toBe(
+      "Add a test case in Suite settings first.",
+    );
+    expect(suiteRunBlockedReason({ ...options, draftCount: 1 })).toBe(
+      "1 generated draft is waiting to be added. Use “Add all to suite” in Suite settings › Test cases before running.",
+    );
+  });
+
   it("does not require local servers for environment suites", () => {
     expect(
       suiteRunBlockedReason({

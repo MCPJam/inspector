@@ -26,6 +26,7 @@ import {
   Square,
   Download,
   MoreHorizontal,
+  Settings2,
   TrendingUp,
 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -43,6 +44,7 @@ import type {
   EvalSuiteRunListItem,
 } from "../evals/types";
 import { EvaluateRunCompare } from "./evaluate-run-compare";
+import { NavCompareButton, NavRunTitle } from "./nav-run/nav-run-header";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { modelsFromRun } from "./run-launch-context";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
@@ -116,6 +118,7 @@ export function EvaluateRunPage({
   iterations,
   launchReview,
   suiteName,
+  nav,
   children,
 }: {
   run: EvalSuiteRun;
@@ -138,6 +141,15 @@ export function EvaluateRunPage({
   launchReview?: Omit<SuiteRunReviewProps, "onClose">;
   /** Names the run in the heading. Omitted where the suite is not in scope. */
   suiteName?: string;
+  /**
+   * The new Suite run page's header: "Suite Run #N" with a suite pill, Suite
+   * settings, and the change summary on Compare runs; no scope line or ⋮.
+   */
+  nav?: {
+    suiteName: string;
+    onOpenSettings: () => void;
+    changeTease: string | null;
+  };
   children: ReactNode;
 }) {
   const [comparing, setComparing] = useState(false);
@@ -174,19 +186,32 @@ export function EvaluateRunPage({
           >
             <div className="flex min-w-0 flex-col gap-1.5">
               <div className="flex min-w-0 items-center gap-3">
-                <h2 className="min-w-0 truncate text-2xl font-bold leading-8 tracking-tight text-foreground">
-                  {targets[0].runNumber
-                    ? `Run #${targets[0].runNumber}`
-                    : `Run ${formatRunId(targets[0]._id)}`}
-                  {suiteName ? ` of ${suiteName}` : ""}
-                </h2>
-                <RunPairingDecisions
-                  targets={targets}
-                  hostNamesById={hostNamesById}
-                  iterations={iterations}
-                />
+                {nav ? (
+                  <NavRunTitle
+                    runLabel={
+                      targets[0].runNumber
+                        ? `Suite Run #${targets[0].runNumber}`
+                        : `Run ${formatRunId(targets[0]._id)}`
+                    }
+                    suiteName={nav.suiteName}
+                  />
+                ) : (
+                  <>
+                    <h2 className="min-w-0 truncate text-2xl font-bold leading-8 tracking-tight text-foreground">
+                      {targets[0].runNumber
+                        ? `Run #${targets[0].runNumber}`
+                        : `Run ${formatRunId(targets[0]._id)}`}
+                      {suiteName ? ` of ${suiteName}` : ""}
+                    </h2>
+                    <RunPairingDecisions
+                      targets={targets}
+                      hostNamesById={hostNamesById}
+                      iterations={iterations}
+                    />
+                  </>
+                )}
               </div>
-              {scope ? (
+              {scope && !nav ? (
                 <p
                   className="text-[12.5px] text-muted-foreground"
                   data-testid="evaluate-run-scope"
@@ -196,6 +221,17 @@ export function EvaluateRunPage({
               ) : null}
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-1">
+              {nav ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={nav.onOpenSettings}
+                >
+                  <Settings2 className="size-3.5" aria-hidden />
+                  Suite settings
+                </Button>
+              ) : null}
               {SHOW_EXPORT_REPORT && onExport && (
                 <Button
                   type="button"
@@ -207,22 +243,32 @@ export function EvaluateRunPage({
                   Export report
                 </Button>
               )}
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={!canCompare}
-                title={
-                  canCompare ? "Compare two runs" : "Need at least two runs"
-                }
-                onClick={() =>
-                  onOpenComparison ? onOpenComparison() : setComparing(true)
-                }
-                data-testid="evaluate-run-compare-open"
-              >
-                <TrendingUp className="size-3.5" aria-hidden />
-                Compare runs
-              </Button>
+              {nav ? (
+                <NavCompareButton
+                  canCompare={canCompare}
+                  tease={nav.changeTease}
+                  onClick={() =>
+                    onOpenComparison ? onOpenComparison() : setComparing(true)
+                  }
+                />
+              ) : (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={!canCompare}
+                  title={
+                    canCompare ? "Compare two runs" : "Need at least two runs"
+                  }
+                  onClick={() =>
+                    onOpenComparison ? onOpenComparison() : setComparing(true)
+                  }
+                  data-testid="evaluate-run-compare-open"
+                >
+                  <TrendingUp className="size-3.5" aria-hidden />
+                  Compare runs
+                </Button>
+              )}
               {canCancel ? (
                 // The primary slot, not a button beside it: while the run is
                 // going, stopping it is the only action of that weight — and
@@ -257,39 +303,40 @@ export function EvaluateRunPage({
                   Run again
                 </Button>
               ) : null}
-              {(headerActions?.onImprove ||
-                headerActions?.onOpenFailingTrace) && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="size-8"
-                      aria-label="Run actions"
-                    >
-                      <MoreHorizontal className="size-4" aria-hidden />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    {headerActions.onImprove && (
-                      <DropdownMenuItem
-                        onSelect={headerActions.onImprove}
-                        data-testid="run-verdict-improve"
+              {!nav &&
+                (headerActions?.onImprove ||
+                  headerActions?.onOpenFailingTrace) && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        aria-label="Run actions"
                       >
-                        <Copy aria-hidden /> Prompt to improve
-                      </DropdownMenuItem>
-                    )}
-                    {headerActions.onOpenFailingTrace && (
-                      <DropdownMenuItem
-                        onSelect={headerActions.onOpenFailingTrace}
-                        data-testid="run-verdict-open-trace"
-                      >
-                        <ArrowUpRight aria-hidden /> Open failing trace
-                      </DropdownMenuItem>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
+                        <MoreHorizontal className="size-4" aria-hidden />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      {headerActions.onImprove && (
+                        <DropdownMenuItem
+                          onSelect={headerActions.onImprove}
+                          data-testid="run-verdict-improve"
+                        >
+                          <Copy aria-hidden /> Prompt to improve
+                        </DropdownMenuItem>
+                      )}
+                      {headerActions.onOpenFailingTrace && (
+                        <DropdownMenuItem
+                          onSelect={headerActions.onOpenFailingTrace}
+                          data-testid="run-verdict-open-trace"
+                        >
+                          <ArrowUpRight aria-hidden /> Open failing trace
+                        </DropdownMenuItem>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
             </div>
           </header>
 
