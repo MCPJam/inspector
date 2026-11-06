@@ -389,13 +389,12 @@ export function OverallScoreCard({
     // advice from one without; read the advice itself.
     const advised =
       (scored.advisories?.length ?? scored.advisoryCount ?? 0) > 0;
-    // Checks that need input don't hold the verdict back, but the run did not
-    // check everything, so it is not "fully" conformant.
+    // Checks that need input are optional and out of the score, like checks
+    // that are not applicable, so they don't stop a run being fully
+    // conformant. The input sentence still says how to run them.
     const conformant = advised
       ? "Conformant, with guidance."
-      : inputSentence
-        ? "Conformant."
-        : "Fully conformant.";
+      : "Fully conformant.";
     return [conformant, inputSentence].filter(Boolean).join(" ");
   })();
 
