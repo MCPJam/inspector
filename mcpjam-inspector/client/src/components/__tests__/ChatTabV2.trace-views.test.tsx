@@ -67,10 +67,6 @@ vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
 }));
 
-vi.mock("@/lib/oauth/oauth-tokens", () => ({
-  buildOAuthTokensByServerId: vi.fn(() => ({})),
-}));
-
 vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => ({
     servers: {

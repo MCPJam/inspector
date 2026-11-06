@@ -4,6 +4,7 @@ import {
   createLocalBrowserSecurityPolicy,
   type LocalBrowserSecurityPolicy,
 } from "./security-policy.js";
+import { describeLaunchFailure } from "./launch-failure.js";
 /**
  * The browser on THIS machine — the npm engine's half of the agent browser.
  *
@@ -393,6 +394,8 @@ export class LocalBrowserUnavailableError extends Error {
   constructor(
     readonly code:
       | "chromium_not_installed"
+      | "chromium_sandbox_unavailable"
+      | "launch_failed"
       | "profile_in_use"
       | "disabled"
       | "owner_key_required",
@@ -606,7 +609,11 @@ async function startSession(
           });
     } catch (error) {
       securityPolicy?.dispose?.();
-      throw error;
+      // The refusal keeps only the first line. Debug prints the whole error
+      // under `--verbose` and sends Axiom only its shape, so no local paths.
+      logger.debug("Local Browser launch failed", error);
+      const refusal = describeLaunchFailure(error);
+      throw new LocalBrowserUnavailableError(refusal.code, refusal.message);
     }
   })();
 

@@ -1,23 +1,22 @@
-import { useState, useMemo, type ReactNode } from "react";
+import { useEffect, useRef, useState, useMemo, type ReactNode } from "react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { DirectoryReadinessSection } from "@/components/conformance/directory-readiness/DirectoryReadinessSection";
+import { OAuthPopupBlockedDialog } from "@/components/conformance/OAuthPopupBlockedDialog";
+import { ConformanceAdvice, suiteAdviceGroups } from "./ConformanceAdvice";
+import { ConformanceVersionNotice } from "./ConformanceVersionNotice";
+import { liveConformanceVersionRefusal } from "./conformance-version-refusal";
 import { Loader2, AlertTriangle } from "lucide-react";
+import { UncheckedAdvice } from "@/components/conformance/UncheckedAdvice";
 import type { ServerWithName } from "@/hooks/use-app-state";
 // Import from the browser-safe SDK entry — the top-level `@mcpjam/sdk` pulls
 // Node-only transitive deps (MCP client SDK uses `node:stream`, etc.) which
 // break the Vite browser bundle.
 import {
-  APPS_CHECK_CATALOG,
-  CHECK_ERAS,
-  CONFORMANCE_CHECK_METADATA,
-  MCP_APPS_CHECK_IDS,
-  MCP_CHECK_IDS,
-  MCP_TASKS_CHECK_IDS,
-  PROTOCOL_CHECK_CATALOG,
-  PROTOCOL_VERSION_ERAS,
-  TASKS_CHECK_CATALOG,
+  isAuthorizationRequiredCheck,
+  isTimedOutCheck,
   type ConformanceScore,
-  type OAuthConformanceCheckId,
+  type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import {
   OverallScoreCard,
@@ -26,83 +25,64 @@ import {
   VerdictBadge,
 } from "./conformance-ui";
 import {
-  CatalogRow,
+  CatalogList,
   CheckRow,
   OAuthStepRow,
   pendingIdSet,
   type CatalogEntry,
 } from "./ConformanceCheckRows";
 import {
+  APPS_CATALOG,
+  OAUTH_CATALOG,
+  TASKS_CATALOG,
+  protocolCatalog,
+} from "./conformance-catalogs";
+import {
+  ConformanceConnectError,
   ConformanceHeader,
   ConformancePreRun,
-  ConformanceServerPicker,
   ConformanceTabPanel,
-  ProtocolVersionSelect,
+  NO_SERVERS_MESSAGE,
   RUN_LABEL,
   type ConformanceView,
 } from "./ConformancePageChrome";
 import { toast } from "@/lib/toast";
+import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
 import {
   useConformanceRun,
+  type ConformanceSelection,
   type ProtocolVersionPin,
   type SuiteState,
 } from "@/hooks/use-conformance-run";
+import { ConformanceRunHeader } from "./ConformanceRunHeader";
 import {
   PersistConformanceRun,
   type ConformancePersistConfig,
 } from "@/components/conformance/PersistConformanceRun";
 
-/**
- * The protocol suite is era-gated: a pinned version runs only its own era's
- * checks. With a pin we filter to exactly what will run; on "auto" the era is
- * unknown until the connection negotiates, so we list everything and tag the
- * checks that are era-restricted rather than implying they all apply.
- */
-function protocolCatalog(pin: ProtocolVersionPin): CatalogEntry[] {
-  const pinnedEra = pin === "auto" ? undefined : PROTOCOL_VERSION_ERAS[pin];
-  return MCP_CHECK_IDS.filter((id) => {
-    const eras = CHECK_ERAS[id] as readonly string[];
-    return pinnedEra === undefined || eras.includes(pinnedEra);
-  }).map((id) => {
-    const eras = CHECK_ERAS[id] as readonly string[];
-    return {
-      id,
-      ...PROTOCOL_CHECK_CATALOG[id],
-      note:
-        pinnedEra === undefined && eras.length === 1
-          ? `${eras[0]} only`
-          : undefined,
-    };
-  });
-}
+import type { ConformanceConnectServer } from "./connect-conformance-server";
+export type {
+  ConformanceConnectOutcome,
+  ConformanceConnectServer,
+} from "./connect-conformance-server";
 
-const APPS_CATALOG: CatalogEntry[] = MCP_APPS_CHECK_IDS.map((id) => ({
-  id,
-  ...APPS_CHECK_CATALOG[id],
-}));
-
-const TASKS_CATALOG: CatalogEntry[] = MCP_TASKS_CHECK_IDS.map((id) => ({
-  id,
-  ...TASKS_CHECK_CATALOG[id],
-}));
-
-// Only the post-flow checks have static identities. The authorization flow
-// steps themselves depend on the server's registration strategy and protocol
-// version, so they are discovered during the run rather than listed here.
-const OAUTH_CATALOG: CatalogEntry[] = (
-  Object.keys(CONFORMANCE_CHECK_METADATA) as OAuthConformanceCheckId[]
-).map((id) => ({
-  id,
-  title: CONFORMANCE_CHECK_METADATA[id].title,
-  description: CONFORMANCE_CHECK_METADATA[id].summary,
-}));
-
-function SuiteBadge({ state }: { state: SuiteState }) {
+function SuiteBadge({
+  state,
+  notApplicable = false,
+}: {
+  state: SuiteState;
+  notApplicable?: boolean;
+}) {
   if (state.status === "running") {
     return <VerdictBadge label="RUNNING" tone="neutral" spinning />;
   }
-  if (state.status === "unavailable") {
-    return <VerdictBadge label="NOT APPLICABLE" tone="neutral" />;
+  if (state.status === "unavailable" || notApplicable) {
+    return (
+      <VerdictBadge
+        label={state.notSelected ? "NOT SELECTED" : "NOT APPLICABLE"}
+        tone="neutral"
+      />
+    );
   }
   if (state.status === "error") {
     return <VerdictBadge label="ERROR" tone="danger" />;
@@ -141,31 +121,40 @@ function SuiteSection({
   score?: ConformanceScore;
   children?: React.ReactNode;
 }) {
-  // `null` follows the suite: a finished suite that did not pass opens itself
-  // so the failures are visible; a passing or running one stays shut. OAuth
-  // waiting on the browser opens too, so its prompt is not hidden. Clicking
-  // pins an explicit choice until the next run remounts.
+  // Without an explicit choice, show failures and pending OAuth prompts.
+  // Clicks pin the choice until the next run remounts.
   const [override, setOverride] = useState<boolean | null>(null);
   const running = state.status === "running";
-  const collapsible = state.status !== "unavailable";
+  const unavailable = state.status === "unavailable";
   const waitingForAuth = Boolean(
     (state as { waitingForAuth?: boolean }).waitingForAuth,
   );
+  const skipped = Boolean((state as { skipped?: boolean }).skipped);
   const autoOpen =
     waitingForAuth ||
     state.status === "error" ||
     (state.status === "done" && state.verdict !== "passed");
-  const expanded = collapsible && (override ?? autoOpen);
+  const expanded = override ?? autoOpen;
 
   return (
     <SuiteRow
       title={title}
       subtitle={
-        state.status === "unavailable" && state.unavailableReason
+        unavailable && state.unavailableReason
           ? state.unavailableReason
           : description
       }
-      badge={<SuiteBadge state={state} />}
+      badge={
+        <SuiteBadge
+          state={state}
+          notApplicable={
+            state.status === "done" &&
+            state.verdict === "passed" &&
+            score?.applicable === 0 &&
+            score.notApplicable > 0
+          }
+        />
+      }
       score={
         score && score.score !== null
           ? {
@@ -176,48 +165,71 @@ function SuiteSection({
           : null
       }
       expanded={expanded}
-      collapsible={collapsible}
+      collapsible
       onToggle={() => setOverride(!expanded)}
       notice={
         state.status === "error" && state.error ? (
-          <div className="px-4 pb-3 pl-11 text-[13px] text-red-600 dark:text-red-400">
-            {state.error}
+          <div className="px-4 pb-3 pl-11">
+            <div className="rounded-sm border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-sm text-red-600 dark:text-red-400 whitespace-pre-wrap break-words">
+              {state.error}
+            </div>
           </div>
         ) : null
       }
     >
-      {hasResult ? (
+      {unavailable ? (
+        <CatalogList
+          catalog={catalog}
+          note={
+            skipped || state.notSelected
+              ? ". Not run."
+              : ". None apply to this server."
+          }
+        />
+      ) : hasResult ? (
         children
       ) : running ? (
         // Mid-run with nothing to show yet: the catalog would read as
         // "not run yet", which is exactly wrong while the run is live.
-        <div className="flex items-center gap-2 py-3 pl-7 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 py-3 pl-7 text-sm text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
           Running {catalog.length} checks...
         </div>
       ) : (
-        <div className="pl-7">
-          <div className="py-1 text-[11px] text-muted-foreground">
-            {catalog.length} checks in this suite — not run yet.
-            {catalogNote ? ` ${catalogNote}` : ""}
-          </div>
-          {catalog.map((entry) => (
-            <CatalogRow key={entry.id} entry={entry} />
-          ))}
-        </div>
+        <CatalogList
+          catalog={catalog}
+          note={`. Not run yet.${catalogNote ? ` ${catalogNote}` : ""}`}
+        />
       )}
     </SuiteRow>
   );
 }
 
-function ConformanceContent({
+export function ConformanceContent({
   server,
   persist,
   view,
   onViewChange,
   showHistory,
   history,
-  serverPicker,
+  home,
+  canRun,
+  runDisabled = false,
+  onConnectServer,
+  onEditServer,
+  onRequestRun,
+  onRunAgain,
+  onOpenSettings,
+  settingsLoading = false,
+  onShowHome,
+  serverIconUrl,
+  autoStart = false,
+  onAutoStart,
+  initialVersionPin,
+  initialResolvedProtocolVersion,
+  selection,
+  runTimeoutSeconds,
+  probes,
 }: {
   server: ServerWithName;
   persist?: ConformancePersistConfig;
@@ -225,19 +237,51 @@ function ConformanceContent({
   onViewChange: (view: ConformanceView) => void;
   showHistory: boolean;
   history?: ReactNode;
-  serverPicker: ReactNode;
+  /** Shown before the first run instead of the first-run prompt. */
+  home?: ReactNode;
+  /** False when the selection is not one of the page's servers. */
+  canRun: boolean;
+  /** Defaults must load successfully before a new run can start. */
+  runDisabled?: boolean;
+  onConnectServer?: ConformanceConnectServer;
+  onEditServer?: (name: string) => void;
+  /** Set when Run opens the setup steps instead of running here. */
+  onRequestRun?: () => void;
+  onRunAgain?: (pin: ProtocolVersionPin) => void;
+  /** Opens this server's Conformance Settings. */
+  onOpenSettings?: () => void;
+  /** The server's logo, when the project or the server provides one. */
+  serverIconUrl?: string;
+  /** Return to the server list; the completed run remains in History. */
+  onShowHome: () => void;
+  /** The saved defaults Settings edits have not loaded yet. */
+  settingsLoading?: boolean;
+  /** Run once on mount: the setup steps just chose this server. */
+  autoStart?: boolean;
+  onAutoStart?: () => void;
+  initialVersionPin?: ProtocolVersionPin;
+  initialResolvedProtocolVersion?: McpProtocolVersion;
+  /** What to run, as picked in the setup steps. */
+  selection?: ConformanceSelection;
+  runTimeoutSeconds?: number;
+  /** The tools the checks that must call one may use. */
+  probes?: ConformanceProbes;
 }) {
-  // Run state, per-suite scores and the pooled headline all live in the shared
-  // hook — score.mcpjam.com runs the same four suites and must pool them the
-  // same way. Rendering stays here.
-  const snapshot = useConformanceRun({ server });
+  // The public score page shares this run state and score calculation.
+  const snapshot = useConformanceRun({
+    server,
+    initialVersionPin,
+    initialResolvedProtocolVersion,
+    selection,
+    runTimeoutSeconds,
+    probes,
+  });
   const {
     protocol,
     apps,
     tasks,
     oauth,
     versionPin,
-    setVersionPin,
     runVersion,
     runAll,
     protocolScore,
@@ -246,29 +290,157 @@ function ConformanceContent({
     oauthScore,
     pooledScore,
     oauthNotScored,
+    oauthUnscored,
     isRunning,
+    openAuthorizationWindow,
+    skipOAuth,
   } = snapshot;
 
   const protocolChecks = useMemo(
-    () => protocolCatalog(versionPin),
-    [versionPin],
+    () => protocolCatalog(snapshot.resolvedProtocolVersion ?? versionPin),
+    [snapshot.resolvedProtocolVersion, versionPin],
   );
   const protocolPendingIds = pendingIdSet(protocol.result);
+  const versionRefusal = liveConformanceVersionRefusal(
+    protocol,
+    oauth,
+    versionPin,
+  );
   const tasksPendingIds = pendingIdSet(tasks.result);
+  // Checks the server refused for credentials. They could not run, so each
+  // suite reads INCOMPLETE; one notice above the suites names the next step
+  // instead of leaving a 401 in every section.
+  const waitingOnAuthorization = [protocol, apps, tasks].reduce(
+    (count, suite) =>
+      count +
+      (suite.result?.checks.filter(isAuthorizationRequiredCheck).length ?? 0),
+    0,
+  );
+  // The verdict compares these to the score's `couldNotRun`, which leaves out
+  // unscored checks, so they count only scored checks. Otherwise the headline
+  // could blame sign-in or time for checks that stopped for another reason.
+  const scoredSuites: Array<
+    [Array<{ id: string; details?: unknown }> | undefined, Set<string>]
+  > = [
+    [protocol.result?.checks, protocolPendingIds],
+    [apps.result?.checks, new Set()],
+    [tasks.result?.checks, tasksPendingIds],
+  ];
+  const countScored = (matches: (check: { details?: unknown }) => boolean) =>
+    scoredSuites.reduce(
+      (count, [checks, pendingIds]) =>
+        count +
+        (checks?.filter((check) => matches(check) && !pendingIds.has(check.id))
+          .length ?? 0),
+      0,
+    );
+  const blockedBySignIn = countScored(isAuthorizationRequiredCheck);
+  const timedOut = countScored(isTimedOutCheck);
 
   // The page opens on the "run your first check" state and only swaps to the
   // suites once a run has begun. Keyed by server, so a server switch resets it.
   const [started, setStarted] = useState(false);
-  const handleRun = () => {
+  // When the shown run started, for the run header.
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  // The run `PersistConformanceRun` saved last, which Share shares.
+  const [savedRunId, setSavedRunId] = useState<string | null>(null);
+  // Run on a server that is not connected connects it first, in the
+  // background. The run starts from the effect below, once the connected
+  // server has rendered: the suites read the server from this render.
+  const [connect, setConnect] = useState<
+    | { status: "idle" | "connecting" | "ready" }
+    | { status: "failed"; needsSignIn: boolean }
+  >({ status: "idle" });
+  const connectAndRun = async (signIn = false) => {
+    if (!onConnectServer) return;
+    setConnect({ status: "connecting" });
+    let outcome: Awaited<ReturnType<ConformanceConnectServer>>;
+    try {
+      outcome = await onConnectServer(server.name, { signIn });
+    } catch {
+      outcome = "failed";
+    }
+    setConnect(
+      outcome === "ready"
+        ? { status: "ready" }
+        : { status: "failed", needsSignIn: outcome === "reauth" },
+    );
+  };
+  const isConnected = server.connectionStatus === "connected";
+  // A server reconnected another way (Edit connection, the server menu) ends
+  // the failure, so a later disconnect does not bring the old alert back.
+  useEffect(() => {
+    if (connect.status === "failed" && isConnected) {
+      setConnect({ status: "idle" });
+    }
+  }, [connect.status, isConnected]);
+  useEffect(() => {
+    if (connect.status !== "ready" || !isConnected) return;
+    setConnect({ status: "idle" });
     setStarted(true);
+    setStartedAt(Date.now());
+    runAll();
+  }, [connect.status, isConnected, runAll]);
+  const handleRun = () => {
+    if (!canRun) {
+      toast.info(NO_SERVERS_MESSAGE);
+      return;
+    }
+    if (!isConnected && onConnectServer) {
+      void connectAndRun();
+      return;
+    }
+    setConnect({ status: "idle" });
+    setStarted(true);
+    setStartedAt(Date.now());
+    // Run sits in the header on both tabs. From History, the new run would
+    // otherwise go unseen until the user switched back by hand.
+    onViewChange("overview");
     runAll();
   };
+  // Once per mount: the key changes for each start from the setup steps or
+  // the server list. Deferred so a mount React undoes at once (StrictMode
+  // mounts twice in development) starts nothing: its unmount would cancel the
+  // run and reset the suites, leaving a started page with every suite idle.
+  // The latest start, so the effect below keys on `autoStart` alone.
+  const autoStartRun = useRef(() => {});
+  useEffect(() => {
+    autoStartRun.current = () => {
+      onAutoStart?.();
+      handleRun();
+    };
+  });
+  useEffect(() => {
+    if (!autoStart) return;
+    const timer = setTimeout(() => autoStartRun.current());
+    return () => clearTimeout(timer);
+  }, [autoStart]);
+  const isConnecting =
+    connect.status === "connecting" || connect.status === "ready";
   const hasStarted =
     started ||
     isRunning ||
     [protocol, apps, tasks, oauth].some(
       (suite) => suite.status === "done" || suite.status === "error",
     );
+
+  // Suites finished so far, for the headline while the run is going. One
+  // that cannot run on this server counts as finished; one left out of the
+  // run is neither done nor to do.
+  const runSuites = [protocol, apps, tasks, oauth].filter(
+    (suite) => !suite.notSelected,
+  );
+  const runProgress = {
+    done: runSuites.filter(
+      (suite) =>
+        suite.status !== "idle" &&
+        suite.status !== "running" &&
+        suite.status !== "needs-authorization",
+    ).length,
+    total: runSuites.length,
+  };
+  // The Overview of a started run shows the run's own header, not the tabs.
+  const liveRun = hasStarted && view === "overview";
 
   // DELIBERATELY OUTSIDE `runAll` AND THE POOLED SCORE. A hosted readiness
   // run takes minutes, so joining the shared `isRunning` would hold the Run
@@ -277,26 +449,48 @@ function ConformanceContent({
   // so there is no number to pool. Each section owns its own run control and
   // recovers a run still in flight when it mounts, so it shows before the
   // suites have run, too.
-  const readiness = (
+  //
+  // Behind `mcpjam-directory-readiness` again while directory submissions are
+  // a later phase: the page ships protocol conformance first. `=== true`, so
+  // a missing flag (or one PostHog has not hydrated yet) keeps them hidden
+  // rather than flashing them for users the flag excludes.
+  const directoryReadinessEnabled =
+    useFeatureFlagEnabled("mcpjam-directory-readiness") === true;
+  const readiness = directoryReadinessEnabled ? (
     <div className="space-y-4">
       <DirectoryReadinessSection publisher="claude" server={server} />
       <DirectoryReadinessSection publisher="openai" server={server} />
       <DirectoryReadinessSection publisher="muse" server={server} />
     </div>
-  );
+  ) : null;
 
   const runButton = (
-    <Button size="sm" onClick={handleRun} disabled={isRunning}>
-      {isRunning ? (
+    <Button
+      size="sm"
+      onClick={onRequestRun ?? handleRun}
+      disabled={isRunning || isConnecting || runDisabled}
+    >
+      {isRunning || isConnecting ? (
         <>
           <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-          Running...
+          {isConnecting ? "Connecting..." : "Running..."}
         </>
       ) : (
         RUN_LABEL
       )}
     </Button>
   );
+  // `!isConnected` hides the alert in the render before the effect above
+  // resets the failure.
+  const connectError =
+    connect.status === "failed" && !isConnected ? (
+      <ConformanceConnectError
+        server={server}
+        needsSignIn={connect.needsSignIn}
+        onRetry={() => void connectAndRun(connect.needsSignIn)}
+        onEdit={onEditServer ? () => onEditServer(server.name) : undefined}
+      />
+    ) : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -305,21 +499,38 @@ function ConformanceContent({
           persist={persist}
           server={server}
           snapshot={snapshot}
+          onSavedRun={setSavedRunId}
         />
       ) : null}
-      <ConformanceHeader
-        view={view}
-        onViewChange={onViewChange}
-        showHistory={showHistory}
-      >
-        {serverPicker}
-        <ProtocolVersionSelect
-          value={versionPin}
-          onChange={setVersionPin}
-          disabled={isRunning}
+      {liveRun ? (
+        <ConformanceRunHeader
+          serverName={server.name}
+          startedAt={startedAt}
+          onBack={onShowHome}
+          busy={isRunning || isConnecting}
+          isConnecting={isConnecting}
+          showHistory={showHistory}
+          onShowHistory={() => onViewChange("history")}
+          onOpenSettings={onOpenSettings}
+          settingsLoading={settingsLoading}
+          showShare={Boolean(persist)}
+          savedRunId={savedRunId}
+          onRunAgain={onRunAgain ? () => onRunAgain(versionPin) : handleRun}
+          runDisabled={runDisabled}
         />
-        {runButton}
-      </ConformanceHeader>
+      ) : (
+        <ConformanceHeader
+          view={view}
+          onViewChange={(next) =>
+            next === "overview" && hasStarted && !isRunning && !isConnecting
+              ? onShowHome()
+              : onViewChange(next)
+          }
+          showHistory={showHistory}
+        >
+          {runButton}
+        </ConformanceHeader>
+      )}
 
       <ConformanceTabPanel view={view}>
         {view === "history" ? (
@@ -328,22 +539,55 @@ function ConformanceContent({
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 pt-6 pb-8">
+            {connectError}
             {!hasStarted ? (
-              <ConformancePreRun runButton={runButton} />
+              (home ?? <ConformancePreRun runButton={runButton} />)
             ) : (
               <div>
+                <ConformanceVersionNotice
+                  refusal={versionRefusal}
+                  serverName={server.name}
+                />
                 <OverallScoreCard
                   score={pooledScore}
                   serverName={server.name}
                   version={
                     pooledScore?.protocolVersion ??
+                    snapshot.resolvedProtocolVersion ??
                     (versionPin === "auto" ? "Auto" : versionPin)
                   }
                   isRunning={isRunning}
+                  progress={runProgress}
+                  serverIconUrl={serverIconUrl}
                   oauthNotScored={oauthNotScored}
+                  blockedBySignIn={blockedBySignIn}
+                  timedOut={timedOut}
                 />
 
-                <div className="mt-3 overflow-hidden rounded-lg border border-border bg-card">
+                {waitingOnAuthorization > 0 && (
+                  <div className="mt-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm leading-relaxed">
+                    This server requires sign-in, and this run had no valid
+                    session, so the checks that need it could not run. Reconnect
+                    the server with OAuth from the server menu, or update its
+                    access token, then run again.
+                  </div>
+                )}
+
+                {timedOut > 0 && (
+                  <div className="mt-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm leading-relaxed">
+                    The server did not answer some checks in time. A timeout
+                    does not count as a failure, but those checks are untested,
+                    so the score is incomplete. Run the checks again once the
+                    server is responding.
+                  </div>
+                )}
+
+                <ConformanceAdvice
+                  key={`${runVersion}-advice`}
+                  groups={suiteAdviceGroups({ protocol, apps, tasks, oauth })}
+                />
+
+                <div className="mt-3 overflow-hidden rounded-lg border border-border bg-popover">
                   <SuiteSection
                     key={`${runVersion}-protocol`}
                     title={SUITE_COPY.protocol.title}
@@ -360,29 +604,6 @@ function ConformanceContent({
                   >
                     {protocol.result ? (
                       <div>
-                        {(protocol.result.readiness ?? []).length > 0 && (
-                          <div className="my-2 space-y-1 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2">
-                            {(protocol.result.readiness ?? []).map(
-                              (warning) => (
-                                <div
-                                  key={warning.id}
-                                  className="flex items-start gap-1.5 text-[11px]"
-                                >
-                                  <AlertTriangle className="mt-0.5 h-3 w-3 flex-shrink-0 text-amber-500" />
-                                  <span className="min-w-0">
-                                    <span className="font-medium">
-                                      {warning.title}
-                                    </span>{" "}
-                                    <span className="text-muted-foreground">
-                                      ({warning.specStrength})
-                                    </span>{" "}
-                                    — {warning.message}
-                                  </span>
-                                </div>
-                              ),
-                            )}
-                          </div>
-                        )}
                         {protocol.result.checks.map((check) => (
                           <CheckRow
                             key={`${runVersion}-${check.id}`}
@@ -426,6 +647,9 @@ function ConformanceContent({
                   >
                     {tasks.result ? (
                       <div>
+                        <UncheckedAdvice
+                          unchecked={tasks.result.uncheckedAdvice}
+                        />
                         {tasks.result.checks.map((check) => (
                           <CheckRow
                             key={`${runVersion}-${check.id}`}
@@ -450,9 +674,35 @@ function ConformanceContent({
                     }
                   >
                     {oauth.waitingForAuth ? (
-                      <div className="flex items-center gap-2 px-1 py-3 text-xs text-muted-foreground">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        Waiting for browser authorization...
+                      // Always offer a way forward: a blocked popup used to
+                      // leave this spinner alone until the session expired.
+                      <div className="space-y-2 px-1 py-3 text-sm">
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          {oauth.popupBlocked ? (
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                          ) : (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          )}
+                          {oauth.popupBlocked
+                            ? "Your browser blocked the sign-in window. Allow pop-ups for this site, or open the sign-in page."
+                            : "Waiting for browser authorization..."}
+                        </div>
+                        <div className="flex gap-2">
+                          {oauth.authorizationUrl ? (
+                            <Button
+                              size="sm"
+                              variant={
+                                oauth.popupBlocked ? "default" : "outline"
+                              }
+                              onClick={openAuthorizationWindow}
+                            >
+                              Open sign-in page
+                            </Button>
+                          ) : null}
+                          <Button size="sm" variant="ghost" onClick={skipOAuth}>
+                            Skip OAuth
+                          </Button>
+                        </div>
                       </div>
                     ) : oauth.result ? (
                       <div>
@@ -460,6 +710,7 @@ function ConformanceContent({
                           <OAuthStepRow
                             key={`${runVersion}-${step.step}`}
                             step={step}
+                            pending={oauthUnscored.includes(step.step)}
                           />
                         ))}
                       </div>
@@ -471,102 +722,16 @@ function ConformanceContent({
 
             {/* The same slot before and after the first run, so starting it
                 keeps the sections mounted and their selections intact. */}
-            <div className="mt-6">{readiness}</div>
+            {readiness ? <div className="mt-6">{readiness}</div> : null}
           </div>
         )}
       </ConformanceTabPanel>
-    </div>
-  );
-}
-
-export function ConformanceTab({
-  server,
-  persist,
-  servers,
-  onSelectServer,
-  history,
-}: {
-  server?: ServerWithName | null;
-  persist?: ConformancePersistConfig;
-  /** Servers offered in the page's picker. Omit to hide the picker. */
-  servers?: ServerWithName[];
-  onSelectServer?: (name: string) => void;
-  /** The History tab's content. Omit to hide the tab. */
-  history?: ReactNode;
-}) {
-  // A run's detail page links back with `?view=history`.
-  const [view, setView] = useState<ConformanceView>(() =>
-    typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).get("view") === "history"
-      ? "history"
-      : "overview",
-  );
-  const showHistory = history !== undefined;
-  // `?view=history` can outlive the History tab, e.g. a run link opened where
-  // no history is passed. With the tabs hidden there would be no way back.
-  const activeView: ConformanceView = showHistory ? view : "overview";
-  const serverPicker =
-    servers && onSelectServer ? (
-      <ConformanceServerPicker
-        servers={servers}
-        selectedName={server?.name ?? null}
-        onSelect={onSelectServer}
+      <OAuthPopupBlockedDialog
+        open={Boolean(oauth.waitingForAuth && oauth.popupBlocked)}
+        serverName={server.name}
+        onOpen={openAuthorizationWindow}
+        onSkip={skipOAuth}
       />
-    ) : null;
-
-  // In hosted mode `selectedMCPConfig` can arrive as a stub with falsy name
-  // and/or missing config while the project is still hydrating — treat any
-  // non-connected shape as "no server selected" so the panel never runs
-  // against `undefined` (which would surface as "Hosted server not found
-  // for 'undefined'" when Apps conformance calls the hosted resolver).
-  if (!server || !server.name || server.name === "none" || !server.config) {
-    // Same pre-run page as with a server; running just asks for one first.
-    const noServerRunButton = (
-      <Button
-        size="sm"
-        onClick={() =>
-          toast.info("Connect an MCP server to run conformance checks.")
-        }
-      >
-        {RUN_LABEL}
-      </Button>
-    );
-    return (
-      <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <ConformanceHeader
-          view={activeView}
-          onViewChange={setView}
-          showHistory={showHistory}
-        >
-          {serverPicker}
-          <ProtocolVersionSelect value="auto" disabled />
-          {noServerRunButton}
-        </ConformanceHeader>
-        <ConformanceTabPanel view={activeView}>
-          {activeView === "history" ? (
-            <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
-              {history}
-            </div>
-          ) : (
-            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 pt-6 pb-8">
-              <ConformancePreRun runButton={noServerRunButton} />
-            </div>
-          )}
-        </ConformanceTabPanel>
-      </div>
-    );
-  }
-
-  return (
-    <ConformanceContent
-      key={server.name}
-      server={server}
-      persist={persist}
-      view={activeView}
-      onViewChange={setView}
-      showHistory={showHistory}
-      history={history}
-      serverPicker={serverPicker}
-    />
+    </div>
   );
 }

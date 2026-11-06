@@ -57,6 +57,21 @@ function getScheduledChangeDateMs(
   return billingStatus.stripeScheduledEffectiveAt;
 }
 
+/**
+ * An Enterprise organization with no Stripe customer: invoiced or
+ * courtesy-funded by agreement, so "No active subscription" and the Stripe
+ * portal don't apply.
+ */
+export function isEnterpriseBilledOffline(
+  billingStatus: OrganizationBillingStatus,
+): boolean {
+  return (
+    billingStatus.plan === "enterprise" &&
+    billingStatus.source === "subscription" &&
+    !billingStatus.hasCustomer
+  );
+}
+
 export function getCurrentPlanRenewalLine(
   billingStatus: OrganizationBillingStatus,
   formattedPeriodEnd: string,
@@ -78,6 +93,9 @@ export function getCurrentPlanRenewalLine(
   }
   if (billingStatus.paymentState === "past_due") {
     return "Payment failed";
+  }
+  if (isEnterpriseBilledOffline(billingStatus)) {
+    return "Managed by MCPJam";
   }
   if (billingStatus.stripeCurrentPeriodEnd != null) {
     if (billingStatus.subscriptionStatus === "trialing") {
@@ -170,6 +188,9 @@ function formatCurrentPlanBillingDetailLine(
     return "Simulation active · billing changes are not applied";
   }
 
+  if (isEnterpriseBilledOffline(billingStatus)) {
+    return "Billing follows your agreement with MCPJam";
+  }
   const plan = billingStatus.plan ?? "free";
   const interval = billingStatus.billingInterval ?? "monthly";
   const entry = planCatalog.plans[plan];
@@ -246,7 +267,7 @@ export function OrganizationCurrentPlanPanel({
       ? billingStatus.effectivePlan
       : currentPlan;
   const billingConfigured = billingStatus.billingConfigured ?? false;
-  const canManageBilling = billingStatus.canManageBilling ?? false;
+  const canManageBilling = (billingStatus.canManageBilling ?? false) && billingStatus.hasCustomer === true;
   const formattedPeriodEnd = formatBillingDate(
     billingStatus.stripeCurrentPeriodEnd,
   );
@@ -261,7 +282,9 @@ export function OrganizationCurrentPlanPanel({
   const effectiveBillingInterval = billingStatus.billingInterval ?? "monthly";
   const targetBillingInterval: BillingInterval =
     effectiveBillingInterval === "annual" ? "monthly" : "annual";
-  const billingDetailLine = planCatalog
+  const billingDetailLine = (billingStatus.unlimitedCreditsUntil ?? 0) > Date.now()
+    ? `Contract through ${formatBillingDate(billingStatus.unlimitedCreditsUntil ?? null)}`
+    : planCatalog
     ? formatCurrentPlanBillingDetailLine(billingStatus, planCatalog)
     : null;
   const scheduledCancellationDetailLine = getScheduledCancellationDetailLine(
@@ -446,7 +469,9 @@ export function OrganizationCurrentPlanPanel({
           </div>
         </div>
 
-        {currentPlan !== "free" && canManageBilling ? (
+        {currentPlan !== "free" &&
+        canManageBilling &&
+        !isEnterpriseBilledOffline(billingStatus) ? (
           <Button
             variant="ghost"
             size="sm"

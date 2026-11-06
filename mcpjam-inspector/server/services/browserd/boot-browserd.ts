@@ -57,9 +57,9 @@ export interface BootBrowserdOptions {
   headless?: boolean;
   readyTimeoutMs?: number;
   /**
-   * `ephemeral` boots the daemon with NO persistent profile, so an eval or
-   * swarm iteration cannot inherit the previous one's cookies. Defaults to
-   * the persistent profile a playground login depends on.
+   * `ephemeral` never carries state between runs: the daemon starts blank, or
+   * from a saved-profile archive copied in for this run, and never exports it
+   * back. Defaults to the persistent profile a playground login depends on.
    */
   contextMode?: "persistent" | "ephemeral";
   /** The X display browserd's Chromium draws on. Defaults to `:0`. */

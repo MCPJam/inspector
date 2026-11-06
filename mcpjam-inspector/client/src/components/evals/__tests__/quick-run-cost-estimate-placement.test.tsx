@@ -1,6 +1,11 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/hooks/useCreditBalance", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/hooks/useCreditBalance")>(),
+  useUnlimitedCredits: vi.fn(() => false),
+}));
+
 /**
  * CONTRACT: the per-case credit estimate must appear beside a quick-run control
  * ONLY where that control will actually launch a run. Quick-run refuses to run

@@ -35,7 +35,6 @@ import {
   OrgAiRefusalHandoffProvider,
   orgAiRefusalHandoff,
 } from "@/contexts/org-ai-refusal-context";
-import type { ContentBlock } from "@modelcontextprotocol/client";
 import { toast } from "@/lib/toast";
 import { ModelDefinition } from "@/shared/types";
 import { LoggerView } from "./logger-view";
@@ -132,7 +131,6 @@ import { useProjectMembers } from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { HOSTED_MODE } from "@/lib/config";
-import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
@@ -159,8 +157,7 @@ import {
   useChatStopControls,
 } from "@/hooks/use-chat-stop-controls";
 import type { ScenarioHostStyle } from "@/lib/scenario-client-style";
-import type { WidgetModelContextEntry } from "@/shared/chat-v2";
-import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { useWidgetModelContextQueue } from "@/hooks/use-widget-model-context-queue";
 import { buildAssistantPromptIndex } from "@/components/chat-v2/turn-ordinals";
 
 interface ChatTabProps {
@@ -277,9 +274,8 @@ export function ChatTabV2({
   const [widgetStateQueue, setWidgetStateQueue] = useState<
     { toolCallId: string; state: unknown }[]
   >([]);
-  const [modelContextQueue, setModelContextQueue] = useState<
-    WidgetModelContextEntry[]
-  >([]);
+  const [modelContextQueue, setModelContextQueue, handleModelContextUpdate] =
+    useWidgetModelContextQueue();
   const [elicitationQueue, setElicitationQueue] = useState<DialogElicitation[]>(
     []
   );
@@ -424,20 +420,8 @@ export function ChatTabV2({
         .filter((serverId): serverId is string => !!serverId),
     [selectedConnectedServerNames, serversByName]
   );
-  const hostedOAuthTokens = useMemo(
-    () =>
-      buildOAuthTokensByServerId(
-        selectedConnectedServerNames,
-        (name) => serversByName.get(name),
-        (name) => appState.servers[name]?.oauthTokens?.access_token
-      ),
-    [selectedConnectedServerNames, serversByName, appState.servers]
-  );
   const effectiveHostedSelectedServerIds =
     hostedContext?.selectedServerIds ?? hostedSelectedServerIds;
-  const effectiveHostedOAuthTokens = hostedScenarioId
-    ? undefined
-    : hostedContext?.oauthTokens ?? hostedOAuthTokens;
   const isHostedDirectGuest =
     HOSTED_MODE &&
     !isConvexAuthenticated &&
@@ -507,6 +491,7 @@ export function ChatTabV2({
     urlElicitationRequired,
     dismissUrlElicitationRequired,
     autoResumeNotice,
+    harnessStartupPhase,
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
     // A scenario / share-link turn runs the host's own config; the visitor's
@@ -519,7 +504,6 @@ export function ChatTabV2({
       ...hostedContext,
       projectId: effectiveHostedProjectId,
       selectedServerIds: effectiveHostedSelectedServerIds,
-      oauthTokens: effectiveHostedOAuthTokens,
     },
     executionConfig,
     // Phase 3: forward the resolved chat-tab host style so direct
@@ -1707,21 +1691,6 @@ export function ChatTabV2({
     setWidgetStateQueue([]);
   }, [status, widgetStateQueue, setMessages]);
 
-  const handleModelContextUpdate = useCallback(
-    (
-      toolCallId: string,
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      }
-    ) => {
-      setModelContextQueue((previous) =>
-        upsertWidgetModelContextEntry(previous, toolCallId, context)
-      );
-    },
-    []
-  );
-
   const activeElicitation = elicitationQueue[0] ?? null;
 
   // Elicitation SSE listener
@@ -2809,7 +2778,6 @@ export function ChatTabV2({
                             ...hostedContext,
                             projectId: effectiveHostedProjectId,
                             selectedServerIds: effectiveHostedSelectedServerIds,
-                            oauthTokens: effectiveHostedOAuthTokens,
                           }}
                           onOAuthRequired={handleOAuthRequired}
                           onSummaryChange={handleMultiModelSummaryChange}
@@ -2960,6 +2928,7 @@ export function ChatTabV2({
                     <div className="relative flex-1 min-h-0">
                       <StickToBottom.Content className="flex flex-col min-h-0">
                         <Thread
+                          harnessStartupPhase={harnessStartupPhase}
                           chatSessionId={chatSessionId}
                           messages={messages}
                           sendFollowUpMessage={(text: string) => {

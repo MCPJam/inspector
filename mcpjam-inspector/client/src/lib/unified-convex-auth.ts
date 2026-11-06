@@ -21,7 +21,10 @@ import {
   subscribeGuestSessionChanges,
 } from "@/lib/guest-session";
 import { shouldSkipGuestSession } from "@/lib/vanity-landing-hosts";
-import { sanitizeGuestSessionFailureDetails } from "@/shared/guest-session-failure";
+import {
+  guestSessionFailureCode,
+  sanitizeGuestSessionFailureDetails,
+} from "@/shared/guest-session-failure";
 import { useGuestSessionRecovery } from "./use-guest-session-recovery";
 
 /** Stable token getters for Convex's public custom-auth provider. */
@@ -185,6 +188,16 @@ function guestFailureExtra(error: unknown): Record<string, string | number> {
   const extra: Record<string, string | number> = {};
   if (typeof status === "number") extra.httpStatus = status;
   const failure = sanitizeGuestSessionFailureDetails(upstreamFailure);
+  // The only part of this report the strict Sentry boundary keeps as text: it
+  // becomes the issue title, so each cause groups and alerts on its own.
+  extra.code = guestSessionFailureCode(
+    error === undefined
+      ? undefined
+      : {
+          httpStatus: typeof status === "number" ? status : undefined,
+          details: failure,
+        },
+  );
   if (failure) {
     extra.upstreamReason = failure.reason;
     if (failure.upstreamStatus !== undefined) {

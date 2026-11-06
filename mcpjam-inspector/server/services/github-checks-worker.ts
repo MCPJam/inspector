@@ -42,6 +42,7 @@ import { WEB_CALL_TIMEOUT_MS } from "../config.js";
 import { logger } from "../utils/logger";
 import { getConvexBearerForDelegation } from "../utils/v1-convex-token.js";
 import { createAuthorizedManager } from "../routes/web/auth.js";
+import { WebRouteError } from "../routes/web/errors.js";
 import { prepareEvalRun, shouldSkipExecution } from "../routes/shared/evals.js";
 import { createConvexClient } from "./evals/route-helpers.js";
 import type { CheckRecipe } from "./github-checks/recipes.js";
@@ -71,6 +72,7 @@ import {
 } from "./github-checks/service-route.js";
 import { executePersistedConformanceRun } from "./conformance-run-executor.js";
 import { createConformanceFetch } from "../routes/shared/conformance.js";
+import { serverDrain } from "./lifecycle/drain.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
@@ -549,8 +551,13 @@ export function describeCheckFailure(error: unknown): {
     return { failureReason: "billing_limit_reached" };
   }
   // Both canonical markers for the org spend budget: the `/stream` wire code
-  // and the launch mutation's ConvexError code.
-  if (/spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED/i.test(message)) {
+  // and the launch mutation's ConvexError code. The recorder's 403
+  // translation carries the code in `details.reason`.
+  if (
+    /spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED/i.test(message) ||
+    (error instanceof WebRouteError &&
+      error.details?.reason === "ORGANIZATION_SPEND_BUDGET_REACHED")
+  ) {
     return { failureReason: "spend_budget_reached" };
   }
   return { failureReason: message.slice(0, 200) };
@@ -2278,10 +2285,7 @@ export function startGithubChecksWorker(options?: {
     options?.claimedBy ??
     `inspector-gh-${process.env.RAILWAY_REPLICA_ID ?? process.pid}`;
   const claim = options?.claim ?? claimNext;
-  const execute =
-    options?.execute ??
-    ((claimed: ClaimedGithubCheck, by: string) =>
-      executeClaimedCheck(claimed, by));
+  const execute = options?.execute ?? executeClaimedCheck;
 
   if (!requiredEnv()) {
     logger.warn(
@@ -2325,7 +2329,7 @@ export function startGithubChecksWorker(options?: {
         if (claimed === "disabled") {
           waitMs = ERROR_BACKOFF_MS;
         } else if (claimed) {
-          await execute(claimed, claimedBy);
+          await serverDrain.track("claimed_job", execute(claimed, claimedBy));
           // Drain mode: another PR's check may be queued behind this one.
           waitMs = 1_000;
         }

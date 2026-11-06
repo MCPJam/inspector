@@ -18,6 +18,7 @@ import {
 import type {
   SkillEntry,
   SkillsDirectoryReadResult,
+  SkillsExtGetResult,
   SkillsExtListResult,
 } from "./skills-ext-types.js";
 
@@ -232,25 +233,36 @@ export function assertSkillEntry(
 }
 
 /**
- * Validates a `skills/get` RESULT and unwraps it.
+ * Validates a `skills/get` RESULT, preserving its SEP-2549 cache attributes.
  *
- * The result is `{ skill: SkillEntry }`. Validating the envelope as though it
- * were the entry looks for `uri` at the top level, where a conforming server
- * never puts it — so every conforming server fails and only a server that
- * flattens the envelope passes. Unwrapping here keeps that shape knowledge in
- * the one place that mirrors the wire.
+ * The result is `{ skill: SkillEntry, ttlMs, cacheScope }`. Validating the
+ * envelope as though it were the entry looks for `uri` at the top level, where
+ * a conforming server never puts it — so every conforming server fails and
+ * only a server that flattens the envelope passes. The shape knowledge lives
+ * here, in the one place that mirrors the wire.
  */
-export function assertSkillsGetResult(
+export function assertSkillsGetEnvelope(
   value: unknown,
   context = "skills/get result"
-): SkillEntry {
+): SkillsExtGetResult {
   const parsed = skillsGetResultSchema.safeParse(value);
   if (!parsed.success) {
     throw new InvalidSkillsPayloadError(context, issuesOf(parsed.error), {
       method: "skills/get",
     });
   }
-  return parsed.data.skill as SkillEntry;
+  return parsed.data as SkillsExtGetResult;
+}
+
+/**
+ * {@link assertSkillsGetEnvelope}, unwrapped to the entry. Kept for callers
+ * that only need the entry; the cache attributes are on the envelope.
+ */
+export function assertSkillsGetResult(
+  value: unknown,
+  context = "skills/get result"
+): SkillEntry {
+  return assertSkillsGetEnvelope(value, context).skill;
 }
 
 /** Validates a `resources/directory/read` result. */

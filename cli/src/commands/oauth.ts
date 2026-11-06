@@ -1,9 +1,12 @@
 import {
   reportIncomplete,
+  reportReadiness,
   reportScore,
 } from "../lib/conformance-exit-code.js";
 import {
+  MCP_OAUTH_READINESS_IDS,
   type OAuthConformanceConfig,
+  type OAuthConformanceSuiteConfig,
   type OAuthConformanceSuiteResult,
   type OAuthLoginConfig,
   type OAuthVerificationConfig,
@@ -142,6 +145,7 @@ export interface OAuthCommandOptions {
   verifyTools?: boolean;
   verifyCallTool?: string;
   conformanceChecks?: boolean;
+  adviceId?: string[];
   printUrl?: boolean;
   credentialsOut?: string;
 }
@@ -371,7 +375,13 @@ export function registerOAuthCommands(program: Command): void {
     )
     .option(
       "--conformance-checks",
-      "Run additional OAuth negative checks (invalid client, invalid redirect, token format) after the main flow",
+      "Deprecated: the OAuth negative checks now always run. Accepted and ignored.",
+    )
+    .option(
+      "--advice-id <id>",
+      "Specific advice ID to run. Repeat for multiple. Default: all.",
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
     )
     .option(
       "--credentials-out <path>",
@@ -427,6 +437,7 @@ export function registerOAuthCommands(program: Command): void {
       // incomplete run gets the same third exit code as every other suite —
       // "we never established anything" is a different failure from "the
       // server violated the spec", and a human must not have to dig for why.
+      reportReadiness(result, command);
       reportIncomplete(result, command);
       await maybeUploadSingleSuite({
         suiteKind: "oauth",
@@ -470,7 +481,9 @@ export function registerOAuthCommands(program: Command): void {
     .action(async (options, command) => {
       const reporter = parseReporterFormat(options.reporter as string | undefined);
       const format = getOAuthConformanceFormat(command, reporter);
-      const config = loadOAuthSuiteConfig(options.config as string);
+      const config = withDefaultOAuthConformanceChecks(
+        loadOAuthSuiteConfig(options.config as string),
+      );
 
       if (options.verifyTools || options.verifyCallTool) {
         const cliVerification: OAuthVerificationConfig = {
@@ -522,6 +535,7 @@ export function registerOAuthCommands(program: Command): void {
       }
       for (const run of result.results) {
         reportScore(scoreFromOAuthResult(run), command, run.label);
+        reportReadiness(run, command);
         reportIncomplete(run, command);
       }
       // Worst-of the flows, matching the shared ordering: a violation (1)
@@ -678,6 +692,21 @@ export function buildOAuthConformanceConfig(
     assertValidUrl(redirectUrl, "redirect URL");
   }
 
+  // A blank id is a mistake, not an omitted flag: dropping it would run every
+  // advice instead of the one asked for.
+  if (options.adviceId?.some((id) => !id.trim())) {
+    throw usageError("--advice-id needs an advice id.");
+  }
+  const readinessIds = options.adviceId;
+  const invalidReadinessIds = (readinessIds ?? []).filter(
+    (id) => !(MCP_OAUTH_READINESS_IDS as readonly string[]).includes(id),
+  );
+  if (invalidReadinessIds.length > 0) {
+    throw usageError(
+      `Unknown advice id${invalidReadinessIds.length === 1 ? "" : "s"}: ${invalidReadinessIds.join(", ")}. Valid advice ids: ${MCP_OAUTH_READINESS_IDS.join(", ")}`,
+    );
+  }
+
   const customHeaders = parseHeadersOption(options.header);
   const client: NonNullable<OAuthConformanceConfig["client"]> = {};
 
@@ -725,7 +754,33 @@ export function buildOAuthConformanceConfig(
     redirectUrl,
     stepTimeout: options.stepTimeout ?? 30_000,
     verification,
-    oauthConformanceChecks: options.conformanceChecks ?? false,
+    // Always on, like the UI's OAuth run: checking that the server rejects
+    // bad input is half of OAuth conformance. `--conformance-checks` is kept
+    // only so existing scripts still parse.
+    oauthConformanceChecks: true,
+    ...(readinessIds && readinessIds.length > 0
+      ? {
+          readinessIds:
+            readinessIds as OAuthConformanceConfig["readinessIds"],
+        }
+      : {}),
+  };
+}
+
+/**
+ * Turn the negative checks on for every flow the suite file says nothing
+ * about, matching `oauth conformance`. A file that sets
+ * `oauthConformanceChecks: false` in `defaults` or on a flow keeps it.
+ */
+export function withDefaultOAuthConformanceChecks(
+  config: OAuthConformanceSuiteConfig,
+): OAuthConformanceSuiteConfig {
+  return {
+    ...config,
+    defaults: {
+      ...config.defaults,
+      oauthConformanceChecks: config.defaults?.oauthConformanceChecks ?? true,
+    },
   };
 }
 

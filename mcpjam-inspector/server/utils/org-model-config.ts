@@ -90,6 +90,8 @@ export { orgRequiresOwnKeys };
 
 export type ResolvedOrgModelConfig = {
   providers: ResolvedProviderConfig[];
+  /** Saved background model, checked by each consumer before routing. */
+  defaultModel?: unknown;
   /**
    * Absent on a backend that predates the policy, which reads as "off". When
    * `requireOrgKeys` is set, hosted (MCPJam-provided) and local selections are
@@ -204,7 +206,13 @@ const resolveCache = new Map<
   { result: ResolvedOrgModelConfig; expiresAt: number }
 >();
 
-function buildCacheKey(
+/**
+ * The authorization scope of one org-model-config read: target, normalized
+ * bearer, guest scenario/access version and server ids. Also keys the chat
+ * turns' shared policy answers (`own-key-turn-policy.ts`), so both caches
+ * agree on what counts as the same caller.
+ */
+export function buildCacheKey(
   params: ResolveOrgModelConfigTarget,
   auth: ResolveOrgModelConfigAuth | undefined,
 ): string {
@@ -215,6 +223,7 @@ function buildCacheKey(
   const authHash = createHash("sha256")
     .update(
       JSON.stringify({
+        install: process.env.CONVEX_HTTP_URL ?? "",
         authorization: normalizeAuthHeader(auth) ?? "",
         scenarioId: auth?.scenarioId?.trim() ?? "",
         accessVersion:
@@ -321,6 +330,7 @@ export async function resolveOrgModelConfig(
       error?: string;
       providers?: unknown;
       aiKeyPolicy?: unknown;
+      defaultModel?: unknown;
     };
     if (!data?.ok) {
       throw new Error(
@@ -372,6 +382,9 @@ export async function resolveOrgModelConfig(
 
     const result: ResolvedOrgModelConfig = {
       providers,
+      ...(data.defaultModel !== undefined
+        ? { defaultModel: data.defaultModel }
+        : {}),
       ...(aiKeyPolicy ? { aiKeyPolicy } : {}),
     };
     const withholdsKeys =

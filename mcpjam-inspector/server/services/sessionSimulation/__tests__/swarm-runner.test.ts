@@ -161,6 +161,48 @@ describe("swarm single-host runner — attempt ordering", () => {
     ]);
   });
 
+  it("applies the pinned host style under sparse MCP Apps overrides", async () => {
+    await startJourneyRun(
+      baseOpts({
+        sessionsPerTarget: 1,
+        hosts: [
+          {
+            ...HOST,
+            hostStyle: "chatgpt",
+            mcpProfile: { apps: { mcpAppsOverrides: { serverResources: true } } },
+          },
+        ],
+      }),
+    );
+
+    const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
+    // ChatGPT's preset plus the override, not only the override's own keys.
+    expect(adapter.runtime.hostCapabilities).toMatchObject({
+      openLinks: {},
+      serverTools: {},
+      serverResources: {},
+    });
+    expect(adapter.runtime.hostCapabilities).not.toHaveProperty("downloadFile");
+  });
+
+  it("advertises only the override's own keys while the snapshot has no host style", async () => {
+    // Runs created before the backend pins hostStyle onto swarm targets.
+    await startJourneyRun(
+      baseOpts({
+        sessionsPerTarget: 1,
+        hosts: [
+          {
+            ...HOST,
+            mcpProfile: { apps: { mcpAppsOverrides: { serverResources: true } } },
+          },
+        ],
+      }),
+    );
+
+    const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
+    expect(adapter.runtime.hostCapabilities).toEqual({ serverResources: {} });
+  });
+
   it("passes the pinned host runtime + swarm persist attribution into the shared core", async () => {
     await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
 
@@ -1885,6 +1927,20 @@ describe("classifyRateLimit — a halt needs a real spend signal", () => {
     ).toBe("org_spend_cap");
   });
 
+  // A declined card refuses every call until the card or the balance changes,
+  // so it halts the run like any exhaustion. The runner gets the backend's
+  // sentences without the code, so the words alone must say so.
+  it("halts the run on a declined card", () => {
+    const declined =
+      "Your card was declined, so auto-reload is paused and this organization is out of MCPJam credits. Update your payment method in billing and turn auto-reload back on, or top up to keep going.";
+    expect(
+      classifyRateLimit(declined, {
+        code: "user_rate_limit",
+        refusalReason: "auto_topup_declined",
+      }),
+    ).toBe("org_spend_cap");
+  });
+
   // What a stored row or a flattened error keeps: the backend's sentence, with
   // no JSON, no structured reason and no hint. Blaming the user's provider for
   // it (or halting the whole run as a spend cap) would both be wrong.
@@ -2076,6 +2132,37 @@ describe("target setup before claims", () => {
       }),
     );
     expect(runSyntheticHostSessionMock).toHaveBeenCalledOnce();
+  });
+  it("stores why a failed setup stopped the target instead of a bare prerequisites code", async () => {
+    const { SwarmSetupError } = await import("../swarm-setup-turn");
+    setupTurnMock.mockImplementation(async ({ target }) => {
+      if (target.targetId !== "bad") return record;
+      throw new SwarmSetupError(
+        { ...record, status: "failed", readiness: "unavailable", reason: "timeout" },
+        undefined,
+        new Error("aborted"),
+      );
+    });
+    await startJourneyRun(
+      baseOpts({
+        hosts: [
+          { ...HOST, targetId: "bad" },
+          { ...HOST_2, targetId: "good" },
+        ],
+        setupWrites: true,
+        sessionsPerTarget: 1,
+      }),
+    );
+    const bad = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.targetId === "bad" && a.status !== "running");
+    expect(bad).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        errorCode: "prerequisites_unavailable",
+        errorMessage: expect.stringContaining("Setup ran out of time"),
+      }),
+    ]);
   });
   it("stores a setup that could not sign in to the server as that sign-in failure, and does not retry it", async () => {
     const { SwarmSetupError } = await import("../swarm-setup-turn");

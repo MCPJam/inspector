@@ -60,6 +60,7 @@ export function JudgeModelPicker({
   inModal = false,
   requireOrgKeys = false,
   onManageOrgProviders,
+  onAddProvider,
   variant = "outline",
   selectionsSupported = true,
 }: {
@@ -80,6 +81,11 @@ export function JudgeModelPicker({
    * "Add a provider" instead of "Ask an organization admin".
    */
   onManageOrgProviders?: () => void;
+  /**
+   * The same from a model search with no match, under any key policy, or
+   * `null` when the organization offers this viewer none.
+   */
+  onAddProvider: (() => void) | null;
   selectionsSupported?: boolean;
   availableModels: readonly ModelDefinition[];
   managedDefaultModelId: string;
@@ -125,6 +131,7 @@ export function JudgeModelPicker({
       disabled={disabled}
       requireOrgKeys={requireOrgKeys}
       onManageOrgProviders={onManageOrgProviders}
+      onAddProvider={onAddProvider}
       analyticsLocation="eval_judge"
       rowTag={(model) =>
         currentIneligible &&

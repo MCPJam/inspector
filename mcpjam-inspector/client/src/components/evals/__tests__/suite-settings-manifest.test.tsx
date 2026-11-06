@@ -187,7 +187,6 @@ describe("eval suite settings manifest — render parity", () => {
           "claude-code-harness": { enabled: true },
           "codex-harness": { enabled: true },
           "cursor-harness": { enabled: true },
-          "grading-engine-mode": { enabled: true },
           scheduledEvals: { enabled: true },
         },
         verdictPolicyV2: {
@@ -196,7 +195,6 @@ describe("eval suite settings manifest — render parity", () => {
           canUpgrade: true,
         },
         judge: {
-          gating: { enabled: false, reason: "not_enabled_on_deployment" },
           role: "advisory",
           hasRubric: false,
           agreement: {
@@ -204,12 +202,7 @@ describe("eval suite settings manifest — render parity", () => {
             agreements: 0,
             rate: null,
             lowerBound: null,
-            threshold: 0.8,
-            minReviews: 20,
-            eligible: false,
-            reasons: ["insufficient_reviews"],
           },
-          acknowledgement: null,
         },
         revisionNumber: 1,
         ...patch,

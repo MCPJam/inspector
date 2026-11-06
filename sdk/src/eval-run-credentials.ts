@@ -1,9 +1,9 @@
 import type { EvalRunContext } from "./eval-run-start.js";
+import { resolveDeployment } from "./deployment/resolve.js";
 import { SdkError } from "./errors.js";
 import type { McpjamAuthContext } from "./mcpjam-model-lease.js";
 import {
   assertSecureCallbackOrigin,
-  resolveMcpjamBaseUrl,
   resolveMcpjamProject,
 } from "./mcpjam-model-lease.js";
 import {
@@ -47,7 +47,8 @@ export async function resolveEvalRunCredential(
     options.apiKey ??
     (options.mcpjamAuth ? undefined : process.env.MCPJAM_API_KEY?.trim() || undefined);
   let auth: McpjamAuthContext;
-  let savedBase: string | undefined;
+  // Set only when the saved login is the credential in use.
+  let savedLoginPath: string | undefined;
   if (key !== undefined) {
     if (!key.trim())
       throw new EvalRunStartError(EVAL_LOGIN_REQUIRED, "CREDENTIALS_MISSING");
@@ -62,10 +63,9 @@ export async function resolveEvalRunCredential(
     auth = options.mcpjamAuth;
   } else {
     const authFilePath = getAuthFilePath();
-    const saved = readStoredAuth(authFilePath);
-    if (!saved)
+    if (!readStoredAuth(authFilePath))
       throw new EvalRunStartError(EVAL_LOGIN_REQUIRED, "CREDENTIALS_MISSING");
-    savedBase = saved.apiUrl?.replace(/\/api\/v1\/?$/, "");
+    savedLoginPath = authFilePath;
     auth = {
       getAuth: async () => {
         try {
@@ -83,7 +83,16 @@ export async function resolveEvalRunCredential(
       },
     };
   }
-  const baseUrl = resolveMcpjamBaseUrl(options.baseUrl ?? process.env.MCPJAM_BASE_URL ?? savedBase);
+  // A caller's own `mcpjamAuth` counts as a key: the saved login is not in use.
+  const { baseUrl } = resolveDeployment(
+    savedLoginPath
+      ? {
+          baseUrl: options.baseUrl,
+          credential: "oauth",
+          authFilePath: savedLoginPath,
+        }
+      : { baseUrl: options.baseUrl, credential: "api-key" }
+  );
   if (key === undefined) assertSecureCallbackOrigin(baseUrl);
   return {
     auth,

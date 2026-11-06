@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import type { HarnessStartupPhase } from "@/shared/harness-startup";
 import {
   useScenarioChatUiOverride,
   useScenarioHostStyle,
@@ -71,13 +73,33 @@ export function usesMcpjamInlineStreamingFooter(
 export function LoadingIndicatorContent({
   className,
   modelProvider,
+  startupPhase,
 }: {
   className?: string;
   /** Optional provider hint for surfaces without a scenario host context. */
   modelProvider?: string | null;
+  startupPhase?: HarnessStartupPhase | null;
 }) {
+  const [visiblePhase, setVisiblePhase] = useState<HarnessStartupPhase | null>(null);
+  useEffect(() => {
+    setVisiblePhase(null);
+    if (!startupPhase || startupPhase === "ready") return;
+    const timer = setTimeout(() => setVisiblePhase(startupPhase), 500);
+    return () => clearTimeout(timer);
+  }, [startupPhase]);
+  const startupLabels = {
+    preparing: "Preparing your chat…",
+    computer: "Starting your computer…",
+    authorization: "Preparing secure access…",
+    agent: "Starting your agent…",
+    ready: "",
+  };
   const hostStyle = useResolvedHostStyleForIndicator(modelProvider);
   const chatUiOverride = useScenarioChatUiOverride();
+
+  if (visiblePhase && visiblePhase === startupPhase) {
+    return <span role="status" className={className}>{startupLabels[visiblePhase]}</span>;
+  }
 
   if (hostStyle) {
     const Indicator = getLoadingIndicatorForStyle(hostStyle, chatUiOverride);

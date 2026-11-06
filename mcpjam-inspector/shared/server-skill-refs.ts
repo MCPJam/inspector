@@ -180,6 +180,32 @@ export async function skillUriHash8(uri: string): Promise<string> {
   return (await skillUriHashHex(uri)).slice(0, 8);
 }
 
+/**
+ * The digest-set hash of a skill's manifest: 12 hex characters over every
+ * `{uri, digest}` pair, sorted by `uri`.
+ *
+ * This is what a load binds to and what the origin banner records, so the
+ * chat wrapper and the playground popover must compute it identically. The
+ * serialization matches the SDK's `canonicalSkillJson` for this shape (keys
+ * sorted, so `digest` before `uri`), and it is written out here rather than
+ * imported so the browser bundle does not pull the SDK in for one hash.
+ */
+export async function manifestDigestSetHash(
+  resources: ReadonlyArray<{ uri: string; digest: string }>
+): Promise<string> {
+  const sorted = [...resources]
+    .map((resource) => ({ digest: resource.digest, uri: resource.uri }))
+    .sort((a, b) => (a.uri < b.uri ? -1 : a.uri > b.uri ? 1 : 0));
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(JSON.stringify(sorted))
+  );
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 12);
+}
+
 export interface SkillRefAssignment<T> {
   skill: T;
   ref: string;

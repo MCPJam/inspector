@@ -112,6 +112,42 @@ describe("groupHostConfigFields", () => {
   });
 });
 
+describe("mid-session sign-in fields", () => {
+  it("groups the four knobs in one protocol subsection, actions before triggers", () => {
+    const protocol = groupHostConfigFields().find(
+      (g) => g.section.id === "protocol"
+    )!;
+    const signIn = protocol.subsections.find(
+      (s) => s.label === "Mid-session sign-in"
+    );
+    expect(signIn?.fields.map((f) => f.id)).toEqual([
+      "unauthorizedChallenge",
+      "unauthorizedChallengeTrigger",
+      "toolResultAuthChallenge",
+      "toolResultAuthChallengeTrigger",
+    ]);
+  });
+
+  it("reads the stored value and leaves an absent knob undefined", () => {
+    // The matrix shows what the row stores; the SDK owns the absent defaults.
+    const set = makeConfig({
+      mcpProfile: {
+        profileVersion: 1,
+        unauthorizedChallengeTrigger: "bearer-header",
+        toolResultAuthChallenge: "prompt",
+      },
+    });
+    expect(fieldById("unauthorizedChallengeTrigger").read(set)).toBe(
+      "bearer-header"
+    );
+    expect(fieldById("toolResultAuthChallenge").read(set)).toBe("prompt");
+    expect(fieldById("unauthorizedChallenge").read(set)).toBeUndefined();
+    expect(
+      fieldById("toolResultAuthChallengeTrigger").read(makeConfig())
+    ).toBeUndefined();
+  });
+});
+
 describe("MCP image policy fields", () => {
   it("default to enabled and read explicit image opt-outs", () => {
     const direct = fieldById("modelVisibleMcpToolResults.directContent.image");

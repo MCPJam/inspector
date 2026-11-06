@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useCreditBalance, useOutOfCredits } from "@/hooks/useCreditBalance";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
@@ -94,6 +94,7 @@ describe("useCreditBalance", () => {
 
     expect(mocks.useQuery).toHaveBeenCalledWith("billing:getCreditBalance", {});
     expect(result.current.balance).toEqual({
+      unlimitedCreditsUntil: null,
       platformPaidFallback: false,
       platformFreeBudgetExhausted: false,
       platformFreeBudgetResetAt: null,
@@ -346,5 +347,26 @@ describe("useCreditBalance", () => {
       outOfCreditsDismissed: true,
       balanceOutByOrganization: { "org-1": true, "org-2": false },
     });
+  });
+});
+
+
+describe("contract credit expiry", () => {
+  it("clears a local limit and expires in an open tab", () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.convexAuth.isLoading = false;
+    mocks.workosAuth.user = { id: "contract-owner" };
+    mocks.workosAuth.isLoading = false;
+    mocks.queryResult = { unlimitedCreditsUntil: now + 1000, paidCreditsRemaining: 0,
+      freeDailyCreditsRemaining: 0, billingModel: "monthly_per_seat" };
+    mocks.useQuery.mockImplementation(() => mocks.queryResult);
+    const { result, unmount } = renderHook(() => useOutOfCredits("contract-org"));
+    expect(result.current).toBe(false);
+    act(() => { vi.advanceTimersByTime(1001); });
+    expect(result.current).toBe(true);
+    unmount();
+    vi.useRealTimers();
   });
 });

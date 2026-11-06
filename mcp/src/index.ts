@@ -149,6 +149,16 @@ export default {
     const url = new URL(request.url);
     const origin = url.origin;
 
+    if (
+      request.method === "GET" &&
+      url.pathname === "/.well-known/openai-apps-challenge" &&
+      env.OPENAI_APPS_CHALLENGE
+    ) {
+      return new Response(env.OPENAI_APPS_CHALLENGE, {
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
+
     const issuer = normalizeIssuer(env.AUTHKIT_DOMAIN);
     if (!issuer) {
       return new Response("Server misconfigured: AUTHKIT_DOMAIN is not set", {

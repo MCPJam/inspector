@@ -36,7 +36,6 @@ describe("config.toml", () => {
       # it is rewritten on every session start.
 
       model_provider = "mcpjam"
-      preferred_auth_method = "apikey"
       model_reasoning_summary = "detailed"
       web_search = "live"
 
@@ -100,10 +99,48 @@ describe("config.toml", () => {
     expect(renderCodexConfigToml(base)).toMatch(/\[features\]\nplugins = false/);
   });
 
-  it("keeps Codex on API-key auth over plain HTTP", () => {
+  it("keeps Codex on the provider's env_key over plain HTTP", () => {
+    // A provider without `requires_openai_auth` reads its key from `env_key`
+    // and never starts a login, so no auth setting is needed. Codex 0.163.0
+    // has no `preferred_auth_method` and warns on every start when it's set.
     const toml = renderCodexConfigToml(base);
-    expect(toml).toContain('preferred_auth_method = "apikey"');
+    expect(toml).toContain('env_key = "CODEX_API_KEY"');
+    expect(toml).not.toMatch(/preferred_auth_method|requires_openai_auth/);
     expect(toml).toContain("supports_websockets = false");
+  });
+
+  it("writes only top-level settings Codex reads", () => {
+    // Codex ignores, and warns about, any key its config schema lacks. Each of
+    // these is in `codex-rs/core/config.schema.json` at PINNED_CODEX_VERSION;
+    // check a new key there before adding it to this list.
+    const toml = renderCodexConfigToml({
+      ...base,
+      hostToolsEntrypoint: "/b/host-tools-mcp.mjs",
+      relayUrl: "http://127.0.0.1:1",
+      relayCredential: "c",
+      untrustedProjectPaths: ["/work/repo"],
+    });
+    const keys = new Set<string>();
+    let inTable = false;
+    for (const line of toml.split("\n")) {
+      const table = /^\[([a-z_]+)/.exec(line);
+      if (table) {
+        inTable = true;
+        keys.add(table[1]!);
+      } else if (!inTable) {
+        const key = /^([a-z_]+) =/.exec(line);
+        if (key) keys.add(key[1]!);
+      }
+    }
+    expect([...keys].sort()).toEqual([
+      "features",
+      "mcp_servers",
+      "model_provider",
+      "model_providers",
+      "model_reasoning_summary",
+      "projects",
+      "web_search",
+    ]);
   });
 
   it("disables Codex's own web search unless the host asked for it", () => {

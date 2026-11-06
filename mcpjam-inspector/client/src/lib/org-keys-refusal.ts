@@ -74,6 +74,47 @@ export function isRetryableOrgKeysRefusal(code: unknown): boolean {
   return key !== undefined && AI_RETRYABLE_REFUSAL_CODES.has(key);
 }
 
+/** A JSON envelope's `code`, when `text` is one. */
+function envelopeCode(text: string | null | undefined): unknown {
+  const trimmed = text?.trim();
+  if (!trimmed?.startsWith("{")) return undefined;
+  try {
+    return (JSON.parse(trimmed) as { code?: unknown })?.code;
+  } catch {
+    // Not JSON: safe to ignore, the text simply states no envelope code.
+    // The text itself is not logged; it can carry a provider's message.
+    console.debug("[org-keys-refusal] Error text is not JSON");
+    return undefined;
+  }
+}
+
+/**
+ * The codes a raw error states, in reading order: a `{ code }` object's own
+ * and its `data`'s, then for text a JSON envelope's and a `"<code>:"` lead.
+ */
+function statedCodes(error: unknown): unknown[] {
+  if (!error) return [];
+  const codes: unknown[] = [];
+  // Errors included: one can carry the code with a generic message.
+  if (typeof error === "object") {
+    codes.push((error as { code?: unknown }).code);
+    const data = (error as { data?: unknown }).data;
+    if (data && typeof data === "object") {
+      codes.push((data as { code?: unknown }).code);
+    }
+  }
+  const text =
+    typeof error === "string"
+      ? error
+      : error instanceof Error
+        ? error.message
+        : undefined;
+  if (text) {
+    codes.push(envelopeCode(text), /^([a-z_]+)\s*:/i.exec(text.trim())?.[1]);
+  }
+  return codes;
+}
+
 /**
  * The org-key refusal code a raw error carries: a `{ code }` object, a JSON
  * envelope (`{ ok: false, code, error, … }` or a stream error chunk
@@ -83,44 +124,22 @@ export function isRetryableOrgKeysRefusal(code: unknown): boolean {
 export function orgKeysRefusalCodeFromError(
   error: unknown,
 ): string | undefined {
-  if (!error) return undefined;
-  // Errors included: one can carry the code with a generic message.
-  if (typeof error === "object") {
-    const direct = orgKeysRefusalCodeOf((error as { code?: unknown }).code);
-    if (direct) return direct;
-    const data = (error as { data?: unknown }).data;
-    if (data && typeof data === "object") {
-      const fromData = orgKeysRefusalCodeOf((data as { code?: unknown }).code);
-      if (fromData) return fromData;
-    }
+  for (const code of statedCodes(error)) {
+    const key = orgKeysRefusalCodeOf(code);
+    if (key) return key;
   }
-  const text =
-    typeof error === "string"
-      ? error
-      : error instanceof Error
-        ? error.message
-        : undefined;
-  if (!text) return undefined;
-  const trimmed = text.trim();
-  if (trimmed.startsWith("{")) {
-    try {
-      const parsed = JSON.parse(trimmed) as { code?: unknown };
-      const fromJson = orgKeysRefusalCodeOf(parsed?.code);
-      if (fromJson) return fromJson;
-    } catch {
-      // Not JSON: safe to ignore, the prefix form below still reads the code.
-      // The text itself is not logged; it can carry a provider's message.
-      console.debug("[org-keys-refusal] Error text is not JSON");
-    }
-  }
-  const prefix = /^([a-z_]+)\s*:/i.exec(trimmed)?.[1];
-  return orgKeysRefusalCodeOf(prefix);
+  return undefined;
 }
+
+/** The eval runner's refused-selection row (`describeModelRefusalForIteration`). */
+const MODEL_SELECTION_REFUSED_ROW =
+  /^Model selection refused\s*—\s*([a-z_]+)\s*:/i;
 
 /**
  * The org-key refusal code anywhere in a stored failure: its own code field,
- * a `"<code>: …"` prefix, or a policy code named inside the text (a run row
- * such as "Model selection refused — org_keys_required: …").
+ * a `"<code>: …"` prefix, the code leading a run row such as
+ * "Model selection refused — credential_missing: …", or a policy code named
+ * inside the text.
  */
 export function orgKeysRefusalCodeInText(
   ...texts: Array<string | null | undefined>
@@ -128,10 +147,61 @@ export function orgKeysRefusalCodeInText(
   for (const text of texts) {
     if (!text) continue;
     const code =
-      orgKeysRefusalCodeFromError(text) ?? findOrgKeyPolicyRefusalCode(text);
+      orgKeysRefusalCodeFromError(text) ??
+      orgKeysRefusalCodeOf(
+        MODEL_SELECTION_REFUSED_ROW.exec(text.trim())?.[1],
+      ) ??
+      findOrgKeyPolicyRefusalCode(text);
     if (code) return code;
   }
   return undefined;
+}
+
+/**
+ * An org-key refusal a run recorded: `code` picks the copy, `stated` is the
+ * code as recorded, so what a viewer reads matches the logs.
+ */
+export type RunRefusal = { code: string; stated: string };
+
+/**
+ * The org-key refusal a run's stored failure records. What MCPJam writes
+ * settles it: the infra error's code, the diagnostics envelope's `code` and
+ * the runner's refused-selection row. The failure's own text (a `"<code>:"`
+ * lead, then a code named in prose) counts only with `readText`, once
+ * something else puts the stop on the model's provider or on setup: an MCP
+ * server's error can read the same.
+ *
+ * A stated `provider_not_configured` (`/stream/org`, the org resolver) is the
+ * same missing org provider as `credential_missing`, with the same fix, so it
+ * takes that copy. Chat still shows it as the backend's own sentence.
+ */
+export function runRefusal(
+  failure: {
+    error?: string | null;
+    errorDetails?: string | null;
+    infraErrorCode?: string | null;
+  },
+  readText: boolean,
+): RunRefusal | undefined {
+  const { error, errorDetails, infraErrorCode } = failure;
+  const stated = [
+    infraErrorCode,
+    envelopeCode(errorDetails),
+    MODEL_SELECTION_REFUSED_ROW.exec(error?.trim() ?? "")?.[1],
+    ...(readText ? [...statedCodes(error), ...statedCodes(errorDetails)] : []),
+  ];
+  for (const raw of stated) {
+    const key = normalizeCode(raw);
+    if (key === "provider_not_configured") {
+      return { code: "credential_missing", stated: key };
+    }
+    const code = orgKeysRefusalCodeOf(key);
+    if (code) return { code, stated: code };
+  }
+  const named = readText
+    ? orgKeysRefusalCodeInText(error, errorDetails)
+    : undefined;
+  return named ? { code: named, stated: named } : undefined;
 }
 
 /**
