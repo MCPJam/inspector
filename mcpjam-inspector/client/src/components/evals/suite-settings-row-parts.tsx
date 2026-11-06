@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useContext, type ReactNode } from "react";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
 import { EXECUTION_BUDGET_DEFAULTS } from "@mcpjam/sdk/contract";
@@ -12,6 +12,7 @@ import {
   type ExecutionBudgetBounds,
 } from "./suite-settings-draft";
 import { SuiteSettingsRow } from "./suite-settings-row";
+import { SuiteSettingsCompactContext } from "./suite-settings-compact";
 import type { SuiteSettingsSheet } from "./use-suite-settings-sheet";
 
 /**
@@ -164,10 +165,12 @@ export function SuiteSettingsLockFrame({
   onDuplicateSuite,
   children,
 }: {
-  sheet: SuiteSettingsSheet;
+  sheet: Pick<SuiteSettingsSheet, "configLocked" | "editingDisabled">;
   onDuplicateSuite?: () => void;
   children: ReactNode;
 }) {
+  // Compact rows carry their own padding and dividers.
+  const compact = useContext(SuiteSettingsCompactContext);
   return (
     <>
       {sheet.configLocked ? (
@@ -175,7 +178,11 @@ export function SuiteSettingsLockFrame({
       ) : null}
       <fieldset
         disabled={sheet.editingDisabled}
-        className="m-0 min-w-0 space-y-8 border-0 p-0"
+        className={
+          compact
+            ? "m-0 min-w-0 border-0 p-0"
+            : "m-0 min-w-0 space-y-8 border-0 p-0"
+        }
         data-testid={
           sheet.editingDisabled ? "suite-settings-locked" : undefined
         }

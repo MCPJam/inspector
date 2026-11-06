@@ -4,6 +4,7 @@ import { SuiteScorerTable } from "../suite-scorer-table";
 import { PASS_OR_FAIL_HINT, JUDGE_HINT } from "../suite-pass-or-fail-section";
 import { SuiteSettingsRow } from "../suite-settings-row";
 import { SuiteSettingsCompactContext } from "../suite-settings-compact";
+import { SuiteSettingsLockFrame } from "../suite-settings-row-parts";
 
 vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
   ProviderLogo: () => <span aria-hidden="true" />,
@@ -62,6 +63,27 @@ describe("compact settings rows (V-5)", () => {
     expect(pill.getAttribute("tabindex")).toBe("0");
     expect(screen.queryByText("How many times each case runs.")).toBeNull();
     expect(screen.getByText("control")).toBeTruthy();
+  });
+
+  it("drops the sheet's row gap so compact rows sit on their dividers", () => {
+    const sheet = { configLocked: false, editingDisabled: false };
+    const { container, unmount } = compact(
+      <SuiteSettingsLockFrame sheet={sheet}>
+        <span>rows</span>
+      </SuiteSettingsLockFrame>,
+    );
+    expect(container.querySelector("fieldset")?.className).not.toContain(
+      "space-y-8",
+    );
+    unmount();
+    const stacked = render(
+      <SuiteSettingsLockFrame sheet={sheet}>
+        <span>rows</span>
+      </SuiteSettingsLockFrame>,
+    );
+    expect(stacked.container.querySelector("fieldset")?.className).toContain(
+      "space-y-8",
+    );
   });
 
   it("keeps the stacked layout without the context", () => {
