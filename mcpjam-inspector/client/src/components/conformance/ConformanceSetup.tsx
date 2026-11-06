@@ -102,6 +102,8 @@ export function ConformanceSetup({
     selection: ConformanceSelection,
     probes: ConformanceProbes,
     resolvedProtocolVersion?: McpProtocolVersion,
+    /** `selection` without the checks still missing their input. */
+    runSelection?: ConformanceSelection,
   ) => void;
 }) {
   // The tools the checks that must call one may use, set in step 2's list,
@@ -125,6 +127,9 @@ export function ConformanceSetup({
   // Built on the first Continue, not here: the saved defaults may still be
   // loading when the steps open.
   const [selection, setSelection] = useState<ConformanceSelection>({});
+  // What Run sends, from step 2's list: the checks still missing their input
+  // sit the run out, while `selection` keeps them for the saved defaults.
+  const [runSelection, setRunSelection] = useState<ConformanceSelection>({});
   const [selectionFor, setSelectionFor] = useState<string | null>(null);
   const serverLabelId = useId();
   const versionLabelId = useId();
@@ -458,6 +463,7 @@ export function ConformanceSetup({
                 probes={probes}
                 onProbesChange={setProbes}
                 onValidChange={setInputsValid}
+                onRunSelectionChange={setRunSelection}
               />
             </div>
 
@@ -468,7 +474,10 @@ export function ConformanceSetup({
               <Button
                 disabled={
                   !canContinue ||
-                  nothingPicked(selection, checkCatalogs(effectiveVersion)) ||
+                  nothingPicked(
+                    runSelection,
+                    checkCatalogs(effectiveVersion),
+                  ) ||
                   !inputsValid
                 }
                 onClick={() => {
@@ -479,6 +488,7 @@ export function ConformanceSetup({
                       selection,
                       probes,
                       resolvedVersion,
+                      runSelection,
                     );
                 }}
               >

@@ -18,7 +18,11 @@ import {
   taskProbePartIsSelected,
   type ConformanceProbes,
 } from "@/hooks/use-conformance-probes";
-import { ConformanceCheckPicker } from "./ConformanceCheckPicker";
+import {
+  ConformanceCheckPicker,
+  withoutMissingInputs,
+  type CheckSuite,
+} from "./ConformanceCheckPicker";
 import { ProbeCheckExtra, useProbeTools } from "./ConformanceProbeField";
 import { acceptsToolArguments } from "./conformance-tool-input";
 
@@ -31,6 +35,7 @@ export function ConformanceChecksEditor({
   probes,
   onProbesChange,
   onValidChange,
+  onRunSelectionChange,
   defaultsMode = false,
 }: {
   server?: ServerWithName | null;
@@ -40,6 +45,8 @@ export function ConformanceChecksEditor({
   probes: ConformanceProbes;
   onProbesChange: (probes: ConformanceProbes) => void;
   onValidChange: (valid: boolean) => void;
+  /** What a run sends: `selection` without the checks missing their input. */
+  onRunSelectionChange?: (selection: ConformanceSelection) => void;
   defaultsMode?: boolean;
 }) {
   const [probeValid, setProbeValid] = useState<Record<string, boolean>>({});
@@ -119,6 +126,35 @@ export function ConformanceChecksEditor({
   useEffect(() => {
     onValidChange(valid);
   }, [valid, onValidChange]);
+  const inputStatus = (suite: CheckSuite, checkId: string) => {
+    if (suite === "protocol" && protocolProbes) {
+      return outputCheckNotApplicable(suite, checkId)
+        ? undefined
+        : inputStatusFor(checkId);
+    }
+    if (suite === "tasks" && tasksProbe) {
+      // Metadata belongs to the existing connection, so a 2026 pin still
+      // requires an explicit tool even when a legacy task tool is listed.
+      const canPickTaskTool =
+        versionPin !== "2026-07-28" &&
+        !probes.tasksProbe &&
+        probeTools.canAutoPickTaskTool;
+      if (
+        canPickTaskTool &&
+        !(isTasksToolCheck(checkId) && probes.tasksOverrides?.[checkId])
+      )
+        return undefined;
+      return inputStatusFor(checkId);
+    }
+    return undefined;
+  };
+  // A run leaves out the checks still missing their input. Reported by its
+  // JSON, so an equal selection rebuilt on each render is not sent again.
+  const runSelection = withoutMissingInputs(selection, versionPin, inputStatus);
+  const runSelectionKey = JSON.stringify(runSelection);
+  useEffect(() => {
+    onRunSelectionChange?.(JSON.parse(runSelectionKey));
+  }, [runSelectionKey, onRunSelectionChange]);
   return (
     <ConformanceCheckPicker
       versionPin={versionPin}
@@ -174,28 +210,7 @@ export function ConformanceChecksEditor({
               ) : null
           : undefined
       }
-      checkInputStatus={(suite, checkId) => {
-        if (suite === "protocol" && protocolProbes) {
-          return outputCheckNotApplicable(suite, checkId)
-            ? undefined
-            : inputStatusFor(checkId);
-        }
-        if (suite === "tasks" && tasksProbe) {
-          // Metadata belongs to the existing connection, so a 2026 pin still
-          // requires an explicit tool even when a legacy task tool is listed.
-          const canPickTaskTool =
-            versionPin !== "2026-07-28" &&
-            !probes.tasksProbe &&
-            probeTools.canAutoPickTaskTool;
-          if (
-            canPickTaskTool &&
-            !(isTasksToolCheck(checkId) && probes.tasksOverrides?.[checkId])
-          )
-            return undefined;
-          return inputStatusFor(checkId);
-        }
-        return undefined;
-      }}
+      checkInputStatus={inputStatus}
       checkNotApplicable={(suite, checkId) =>
         outputCheckNotApplicable(suite, checkId)
           ? "No tool on this server declares an output schema, so this check does not apply."

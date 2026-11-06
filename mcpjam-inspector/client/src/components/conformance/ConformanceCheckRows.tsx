@@ -596,6 +596,7 @@ export function CatalogList({
   note = ".",
   heading,
   isSelected,
+  isLocked,
   onSelectedChange,
   renderExtra,
   renderTag,
@@ -617,6 +618,8 @@ export function CatalogList({
    * `onSelectedChange` too, the user picks rows one by one.
    */
   isSelected?: (id: string) => boolean;
+  /** A row whose checkbox the user cannot change, e.g. one missing its input. */
+  isLocked?: (id: string) => boolean;
   onSelectedChange?: (id: string, selected: boolean) => void;
 }) {
   return (
@@ -629,7 +632,7 @@ export function CatalogList({
           key={entry.id}
           entry={entry}
           {...(isSelected ? { selected: isSelected(entry.id) } : {})}
-          {...(isSelected && onSelectedChange
+          {...(isSelected && onSelectedChange && !isLocked?.(entry.id)
             ? {
                 onSelectedChange: (selected: boolean) =>
                   onSelectedChange(entry.id, selected),

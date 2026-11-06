@@ -906,14 +906,14 @@ describe("ConformanceTab", () => {
     const oauth = screen.getByRole("button", {
       name: /^OAuth.*checks selected$/,
     });
-    expect(oauth).toHaveTextContent(/\d+ checks selected/);
+    expect(oauth).toHaveTextContent(/\d+\/\d+ checks selected/);
     expect(oauth).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(oauth);
     expect(oauth).toHaveAttribute("aria-expanded", "true");
     // The open suite lists its checks under the same count. OAuth runs as
     // one flow, so a check's box says whether it COUNTS: unchecked, it still
     // runs, unscored.
-    const count = oauth.textContent?.match(/(\d+) checks selected/)?.[1];
+    const count = oauth.textContent?.match(/(\d+)\/\d+ checks selected/)?.[1];
     const oauthRow = oauth.parentElement!.parentElement!;
     expect(
       within(oauthRow).getByText(
@@ -937,8 +937,11 @@ describe("ConformanceTab", () => {
     }
     fireEvent.click(oauthChecks[0]!);
     expect(oauthChecks[0]).toHaveAttribute("data-state", "unchecked");
-    expect(oauthBox).toHaveAttribute("data-state", "indeterminate");
-    expect(oauth).toHaveTextContent(`${Number(count) - 1} checks selected`);
+    // No in-between state: the suite's box is checked only with every check.
+    expect(oauthBox).toHaveAttribute("data-state", "unchecked");
+    expect(oauth).toHaveTextContent(
+      `${Number(count) - 1}/${count} checks selected`,
+    );
     // The suite's box puts every check back, then leaves the flow out.
     fireEvent.click(oauthBox);
     expect(oauthChecks[0]).toHaveAttribute("data-state", "checked");
@@ -973,16 +976,17 @@ describe("ConformanceTab", () => {
     const appsBox = screen.getByRole("checkbox", { name: "Run Apps" });
     expect(appsBox).toHaveAttribute("data-state", "checked");
 
-    // Leave one Apps check out: the suite reads as partly picked.
+    // Leave one Apps check out: the suite's box goes unchecked, and the
+    // count says how many of the suite's checks are left.
     const appsRow = appsBox.closest("label")!.parentElement!.parentElement!;
     const appsChecks = within(appsRow)
       .getAllByRole("checkbox")
       .filter((box) => box !== appsBox);
     const dropped = appsChecks[0]!;
     fireEvent.click(dropped);
-    expect(appsBox).toHaveAttribute("data-state", "indeterminate");
+    expect(appsBox).toHaveAttribute("data-state", "unchecked");
     expect(appsRow).toHaveTextContent(
-      `${appsChecks.length - 1} checks selected`,
+      `${appsChecks.length - 1}/${appsChecks.length} checks selected`,
     );
 
     // Leave Tasks and OAuth out entirely.
@@ -1081,6 +1085,11 @@ describe("ConformanceTab", () => {
         remainingRunTimeoutMs: expect.any(Number),
         signal: expect.any(AbortSignal),
         protocolVersion: "2026-07-28",
+        // No tool is set, so the checks that call one sit the run out.
+        checkIds: expect.not.arrayContaining(["modern-logs-require-log-level"]),
+        readinessIds: expect.not.arrayContaining([
+          "readiness-log-level-filtering",
+        ]),
       }),
     );
     expect(mockRunProtocol).toHaveBeenCalledTimes(1);
@@ -1895,7 +1904,13 @@ describe("ConformanceTab", () => {
       expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
     );
 
+    // The checks that sat the run out for want of a tool stay picked in the
+    // defaults, so they run once a tool is set.
+    expect(onSaveServerDefaults.mock.calls[0]![1].protocol).toBeUndefined();
+
     // The saved row has not come back yet: Settings shows the run's picks.
+    // Its protocol checks that need a tool show unchecked, so the suite's box
+    // does too.
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByRole("checkbox", { name: "Run Tasks" })).toHaveAttribute(
       "data-state",
@@ -1903,7 +1918,10 @@ describe("ConformanceTab", () => {
     );
     expect(
       screen.getByRole("checkbox", { name: "Run Protocol" }),
-    ).toHaveAttribute("data-state", "checked");
+    ).toHaveAttribute("data-state", "unchecked");
+    expect(
+      screen.getByRole("button", { name: /^Protocol.*checks selected$/ }),
+    ).not.toHaveTextContent(/(^|\D)0\/\d+ checks selected/);
   });
 
   it("runs again with the checks changed in Settings", async () => {
@@ -1972,11 +1990,14 @@ describe("ConformanceTab", () => {
         "Could not save the default checks and inputs. Try again.",
       ),
     );
-    // Once the save settles, the boxes show what is saved again.
+    // Once the save settles, the boxes show what is saved again. The Tasks
+    // checks that need a tool stay unchecked, so the count shows the others.
+    const tasksHeader = () =>
+      screen.getByRole("button", { name: /^Tasks.*checks selected$/ });
     await waitFor(() =>
-      expect(
-        screen.getByRole("checkbox", { name: "Run Tasks" }),
-      ).toHaveAttribute("data-state", "checked"),
+      expect(tasksHeader()).not.toHaveTextContent(
+        /(^|\D)0\/\d+ checks selected/,
+      ),
     );
 
     // Run again does not use the change that was never saved.
@@ -2419,6 +2440,65 @@ describe("ConformanceTab", () => {
       ).toBeInTheDocument();
     });
 
+    it("leaves checks that need input unchecked, and runs without them", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await toStep2();
+
+      // Three protocol checks still need a tool: the count leaves them out,
+      // so the suite's box is unchecked.
+      const header = screen.getByRole("button", {
+        name: /^Protocol.*checks selected$/,
+      });
+      const [, picked, total] = header
+        .textContent!.match(/(\d+)\/(\d+) checks selected/)!
+        .map(Number);
+      expect(picked).toBe(total! - 3);
+      const suiteBox = screen.getByRole("checkbox", { name: "Run Protocol" });
+      expect(suiteBox).toHaveAttribute("data-state", "unchecked");
+
+      fireEvent.click(header);
+      const logsCheck = screen.getByRole("checkbox", {
+        name: "Run Logs Require A Log Level",
+      });
+      expect(logsCheck).toHaveAttribute("data-state", "unchecked");
+      expect(logsCheck).toBeDisabled();
+
+      // Every check that can run is picked, so the suite's box leaves the
+      // suite out, then picks it again.
+      fireEvent.click(suiteBox);
+      expect(header).toHaveTextContent(`0/${total} checks selected`);
+      fireEvent.click(suiteBox);
+      expect(header).toHaveTextContent(
+        `${total! - 3}/${total} checks selected`,
+      );
+
+      // The tool field stays under the locked check, so it can still be set.
+      const logs = screen.getByRole("combobox", {
+        name: "Tool that emits logs",
+      });
+      await waitFor(() => expect(logs).toBeEnabled());
+      await user.click(logs);
+      await user.click(
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
+      );
+      expect(logsCheck).toHaveAttribute("data-state", "checked");
+      expect(logsCheck).toBeEnabled();
+      expect(header).toHaveTextContent(
+        `${total! - 2}/${total} checks selected`,
+      );
+      expect(suiteBox).toHaveAttribute("data-state", "unchecked");
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+      const { checkIds } = mockRunProtocol.mock.calls[0]![1] as {
+        checkIds?: string[];
+      };
+      expect(checkIds).toContain("modern-logs-require-log-level");
+      expect(checkIds).not.toContain("modern-undeclared-capability-error");
+      expect(checkIds).not.toContain("modern-tool-output-schema-conformant");
+    });
+
     it("shades the output check when no tool declares an output schema", async () => {
       const user = userEvent.setup();
       mockListTools.mockResolvedValue({
@@ -2517,12 +2597,13 @@ describe("ConformanceTab", () => {
           name: /^Undeclared Task Creation Refused/,
         });
         expect(taskRow).toHaveTextContent("Needs input");
-        fireEvent.click(
-          screen.getByRole("checkbox", { name: "Run Result Type Discipline" }),
-        );
-        expect(
-          within(header).getByText(inputBadge("10 optional checks need input")),
-        ).toBeInTheDocument();
+        // A picked check without its tool sits the run out: shown unchecked,
+        // and locked until the tool is set.
+        const typeCheck = screen.getByRole("checkbox", {
+          name: "Run Result Type Discipline",
+        });
+        expect(typeCheck).toHaveAttribute("data-state", "unchecked");
+        expect(typeCheck).toBeDisabled();
         await user.click(
           screen.getByRole("combobox", { name: "Tool that creates a task" }),
         );
@@ -2531,6 +2612,8 @@ describe("ConformanceTab", () => {
         );
         expect(within(header).queryByText(/needs? input/)).toBeNull();
         expect(taskRow).toHaveTextContent("Input set");
+        expect(typeCheck).toHaveAttribute("data-state", "checked");
+        expect(typeCheck).toBeEnabled();
 
         await user.click(
           screen.getByRole("combobox", { name: "Tool that creates a task" }),
@@ -2540,7 +2623,7 @@ describe("ConformanceTab", () => {
         fireEvent.click(header);
         expect(header).toHaveAttribute("aria-expanded", "false");
         expect(
-          within(header).getByText(inputBadge("10 optional checks need input")),
+          within(header).getByText(inputBadge("11 optional checks need input")),
         ).toBeInTheDocument();
       },
     );
@@ -2884,7 +2967,15 @@ describe("ConformanceTab", () => {
     });
 
     it("turns the advice off with the suite's box, and offers none with no check picked", async () => {
+      const user = userEvent.setup();
       await openProtocolChecks();
+      // The advice calls the logs tool, so it can run once that is set.
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      await user.click(
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
+      );
       const suite = screen.getByRole("checkbox", { name: "Run Protocol" });
       fireEvent.click(suite);
       expect(suite).toHaveAttribute("data-state", "unchecked");
@@ -2895,7 +2986,9 @@ describe("ConformanceTab", () => {
       expect(advice).toBeDisabled();
 
       fireEvent.click(suite);
-      expect(suite).toHaveAttribute("data-state", "checked");
+      // Two protocol checks still need a tool, so the suite's box stays
+      // unchecked while the advice comes back.
+      expect(suite).toHaveAttribute("data-state", "unchecked");
       expect(advice).toHaveAttribute("data-state", "checked");
       expect(advice).toBeEnabled();
     });
@@ -3651,6 +3744,11 @@ describe("ConformanceTab", () => {
         remainingRunTimeoutMs: expect.any(Number),
         signal: expect.any(AbortSignal),
         protocolVersion: "2026-07-28",
+        // No tool is set, so the checks that call one sit the run out.
+        checkIds: expect.not.arrayContaining(["modern-logs-require-log-level"]),
+        readinessIds: expect.not.arrayContaining([
+          "readiness-log-level-filtering",
+        ]),
       });
     });
     await waitFor(() => {
