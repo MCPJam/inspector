@@ -329,14 +329,22 @@ describe("translateConvexReadError", () => {
     expect(errorMock).not.toHaveBeenCalled();
   });
 
-  it("answers 401 to a Convex 401 whose body names no credential", () => {
+  it.each([
     // By text alone this reads `upstream`, and a 502 tells the client to
     // retry the same dead token.
-    const error = new ConvexHttpStatusError(401, "Unauthorized");
+    "Unauthorized",
+    // By text alone this reads `membership`, and a 404 tells the client to
+    // forget a resource it may still own.
+    "Not a member of this project",
+  ])("answers 401 to a Convex 401 whatever its body says: %s", (body) => {
+    const error = new ConvexHttpStatusError(401, body);
     expect(classifyConvexReadError(error).kind).toBe("authentication");
-    expect(translateConvexReadError(error, { scope: "v1.test" }).status).toBe(
-      401,
-    );
+    expect(
+      translateConvexReadError(error, {
+        scope: "v1.test",
+        redactedIsRefusal: true,
+      }).status,
+    ).toBe(401);
     expect(errorMock).not.toHaveBeenCalled();
   });
 

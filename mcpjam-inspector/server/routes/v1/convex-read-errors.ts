@@ -255,9 +255,9 @@ export function classifyConvexReadError(error: unknown): ConvexReadFailure {
   const message = error instanceof Error ? error.message : String(error);
   const convexStatus =
     error instanceof ConvexHttpStatusError ? error.convexStatus : undefined;
+  if (convexStatus === 401) return { kind: "authentication" };
   if (MEMBERSHIP_REFUSAL.test(message)) return { kind: "membership" };
-  if (convexStatus === 401 || AUTHENTICATION_FAILURE.test(message))
-    return { kind: "authentication" };
+  if (AUTHENTICATION_FAILURE.test(message)) return { kind: "authentication" };
   if (ARGUMENT_VALIDATION_FAILURE.test(message))
     return { kind: "invalid-argument" };
   if (convexStatus === undefined && REDACTED_SERVER_ERROR.test(message))
