@@ -23,6 +23,14 @@ import {
 } from "@/components/evals/eval-surface-chrome";
 import { EVAL_DESTRUCTIVE_BUTTON_CLASS } from "@/components/evals/constants";
 import { AddCaseMenu } from "./add-case-menu";
+import { CaseCopyMenu } from "./case-copy-menu";
+
+export interface CopyTarget {
+  suiteId: string;
+  name: string;
+  /** CI-owned: listed, disabled. */
+  locked: boolean;
+}
 
 export interface AddCaseItem {
   label: "Describe" | "Generate" | "Import" | "Add manually";
@@ -42,8 +50,12 @@ export interface SuiteCasesCardProps {
   lockedReason?: string;
   /** "Review N draft cases". */
   headerExtra?: ReactNode;
+  /** null hides the copy icon. [] = a disabled icon. */
+  copyTargets: CopyTarget[] | null;
+  pendingCopyCaseId: string | null;
   canDelete: boolean;
   onOpenCase(caseId: string): void;
+  onCopy(caseId: string, target: CopyTarget): void;
   /** The card owns the confirm dialog and its toasts. */
   onDelete(caseId: string): Promise<void>;
 }
@@ -51,15 +63,18 @@ export interface SuiteCasesCardProps {
 const TRASH_BUTTON_CLASS =
   "shrink-0 rounded p-1.5 text-muted-foreground/60 transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40";
 
-/** The Test cases tab's card: one title row per case, with delete. */
+/** The Test cases tab's card: one title row per case, with copy and delete. */
 export function SuiteCasesCard({
   cases,
   addCaseItems,
   generateDisabledReason,
   lockedReason,
   headerExtra,
+  copyTargets,
+  pendingCopyCaseId,
   canDelete,
   onOpenCase,
+  onCopy,
   onDelete,
 }: SuiteCasesCardProps) {
   const [caseToDelete, setCaseToDelete] = useState<{
@@ -67,6 +82,7 @@ export function SuiteCasesCard({
     title: string;
   } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [menuCaseId, setMenuCaseId] = useState<string | null>(null);
 
   const confirmDelete = async () => {
     if (!caseToDelete) return;
@@ -117,6 +133,7 @@ export function SuiteCasesCard({
               className={cn(
                 "group flex items-center gap-1 pr-2",
                 evalSurfaceRowHoverClass,
+                menuCaseId === row.caseId && "bg-muted/70 dark:bg-muted/45",
               )}
             >
               <button
@@ -129,6 +146,18 @@ export function SuiteCasesCard({
                   {row.title}
                 </span>
               </button>
+              {copyTargets ? (
+                <CaseCopyMenu
+                  caseId={row.caseId}
+                  title={row.title}
+                  targets={copyTargets}
+                  pending={pendingCopyCaseId === row.caseId}
+                  onCopy={(target) => onCopy(row.caseId, target)}
+                  onOpenChange={(open) =>
+                    setMenuCaseId(open ? row.caseId : null)
+                  }
+                />
+              ) : null}
               {canDelete ? (
                 <Tooltip>
                   <TooltipTrigger asChild>

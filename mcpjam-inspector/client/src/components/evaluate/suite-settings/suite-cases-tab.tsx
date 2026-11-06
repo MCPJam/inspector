@@ -10,13 +10,15 @@ import { buildSuiteTestCaseRows } from "../suite-detail-model";
 import { SuiteCasesCard } from "./suite-cases-card";
 import { suiteGenerateState } from "./suite-generate-state";
 import { useSuiteCaseAuthoring } from "./use-suite-case-authoring";
+import { buildCopyTargets, useCopyTestCase } from "./use-copy-test-case";
 
-/** Test cases: the case card, its takeovers, Add case and delete. */
+/** Test cases: the case card, its takeovers, Add case, copy and delete. */
 export function SuiteCasesTab({
   route,
   names,
   suite,
   cases,
+  projectSuites,
   projectId,
   locked,
   onClearImportJob,
@@ -25,8 +27,9 @@ export function SuiteCasesTab({
   names: EvalNavNames;
   suite: EvalSuite;
   cases: EvalCase[];
+  projectSuites: EvalSuite[];
   projectId: string | null;
-  /** CI-owned or read-only: no authoring, delete stays. */
+  /** CI-owned or read-only: no authoring, delete and copy stay. */
   locked: boolean;
   /** Back to the plain cases address, keeping the arrival state. */
   onClearImportJob(): void;
@@ -56,7 +59,18 @@ export function SuiteCasesTab({
     canGenerate: generate.canGenerate,
     generateDisabledReason: generate.disabledReason,
   });
+  const copy = useCopyTestCase({
+    onOpenCopy: ({ suiteId, testCaseId }) =>
+      open({ type: "case-settings", suiteId, testCaseId }),
+  });
   const rows = useMemo(() => buildSuiteTestCaseRows(cases), [cases]);
+  const copyTargets = useMemo(
+    () =>
+      services.isDirectGuest
+        ? null
+        : buildCopyTargets(projectSuites, suite._id),
+    [services.isDirectGuest, projectSuites, suite._id],
+  );
 
   return (
     <>
@@ -71,6 +85,8 @@ export function SuiteCasesTab({
             generateDisabledReason={generate.disabledReason}
             lockedReason={locked ? CI_OWNED_REASON_COPY : undefined}
             headerExtra={authoring.reviewDraftsButton}
+            copyTargets={copyTargets}
+            pendingCopyCaseId={copy.pendingCaseId}
             canDelete
             onOpenCase={(caseId) =>
               open({
@@ -79,6 +95,10 @@ export function SuiteCasesTab({
                 testCaseId: caseId,
               })
             }
+            onCopy={(caseId, target) => {
+              const row = rows.find((candidate) => candidate.caseId === caseId);
+              if (row) void copy.copy(row, target);
+            }}
             onDelete={(caseId) => services.deleteTestCase(caseId)}
           />
         ))}

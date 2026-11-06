@@ -24,6 +24,10 @@ const cases = [
   { caseId: "c1", title: "Draw a rectangle" },
   { caseId: "c2", title: "Untitled test case" },
 ];
+const targets = [
+  { suiteId: "s2", name: "Asana SDK ingestion", locked: false },
+  { suiteId: "s3", name: "mcpjam-mcp dogfood (production)", locked: true },
+];
 const items = (overrides: Partial<AddCaseItem> = {}): AddCaseItem[] => [
   {
     label: "Describe",
@@ -42,8 +46,11 @@ function renderCard(props: Partial<SuiteCasesCardProps> = {}) {
   const all: SuiteCasesCardProps = {
     cases,
     addCaseItems: items(),
+    copyTargets: targets,
+    pendingCopyCaseId: null,
     canDelete: true,
     onOpenCase: vi.fn(),
+    onCopy: vi.fn(),
     onDelete: vi.fn().mockResolvedValue(undefined),
     ...props,
   };
@@ -110,7 +117,7 @@ describe("SuiteCasesCard (C-1 to C-10)", () => {
     ).toBeTruthy();
   });
 
-  it("locked: no Add case, the reason instead, delete stays", () => {
+  it("locked: no Add case, the reason instead, delete and copy stay", () => {
     renderCard({
       addCaseItems: null,
       lockedReason:
@@ -123,6 +130,7 @@ describe("SuiteCasesCard (C-1 to C-10)", () => {
       ),
     ).toBeTruthy();
     expect(screen.getByTestId("suite-settings-case-delete-c1")).toBeTruthy();
+    expect(screen.getByTestId("suite-settings-case-copy-c1")).toBeTruthy();
   });
 
   it("deletes through onDelete after the confirm, then toasts", async () => {
@@ -147,5 +155,58 @@ describe("SuiteCasesCard (C-1 to C-10)", () => {
       fireEvent.click(screen.getByTestId("suite-settings-case-delete-confirm"));
     });
     expect(mocks.error).toHaveBeenCalledWith("Failed to delete test case");
+  });
+});
+
+describe("Copy to another suite (P-1 to P-4, P-8)", () => {
+  it("labels the button and lists every target, the CI one disabled with its reason", async () => {
+    const user = userEvent.setup();
+    const props = renderCard();
+    const button = screen.getByTestId("suite-settings-case-copy-c1");
+    expect(button.getAttribute("aria-label")).toBe(
+      "Copy test case: Draw a rectangle",
+    );
+    await user.click(button);
+    const open = screen.getByTestId("suite-settings-copy-target-s2");
+    expect(open.textContent).toBe("Copy to Asana SDK ingestion");
+    const locked = screen.getByTestId("suite-settings-copy-target-s3");
+    expect(locked.hasAttribute("data-disabled")).toBe(true);
+    expect(locked.textContent).toBe(
+      "Copy to mcpjam-mcp dogfood (production)Runs from CI. Edit its cases in the repo.",
+    );
+    await user.click(open);
+    expect(props.onCopy).toHaveBeenCalledWith("c1", targets[0]);
+  });
+
+  it("disables the button with a reason when there is no other suite", async () => {
+    const user = userEvent.setup();
+    renderCard({ copyTargets: [] });
+    const button = screen.getByTestId(
+      "suite-settings-case-copy-c1",
+    ) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    await user.hover(button.parentElement as HTMLElement);
+    expect(
+      (await screen.findAllByText("No other suite to copy to")).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("spins and blocks the pending row's button", () => {
+    renderCard({ pendingCopyCaseId: "c1" });
+    const pending = screen.getByTestId(
+      "suite-settings-case-copy-c1",
+    ) as HTMLButtonElement;
+    expect(pending.disabled).toBe(true);
+    expect(pending.getAttribute("aria-busy")).toBe("true");
+    expect(pending.querySelector(".animate-spin")).toBeTruthy();
+    const other = screen.getByTestId(
+      "suite-settings-case-copy-c2",
+    ) as HTMLButtonElement;
+    expect(other.disabled).toBe(false);
+  });
+
+  it("hides the copy icon when copyTargets is null", () => {
+    renderCard({ copyTargets: null });
+    expect(screen.queryByTestId("suite-settings-case-copy-c1")).toBeNull();
   });
 });
