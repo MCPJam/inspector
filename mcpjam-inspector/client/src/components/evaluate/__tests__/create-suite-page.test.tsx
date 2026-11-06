@@ -128,9 +128,14 @@ vi.mock("@/components/project-environments/environment-picker", () => ({
   MAX_SUITE_ENVIRONMENTS: 10,
   EnvironmentPicker: () => null,
 }));
-vi.mock("@/lib/app-navigation", () => ({
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
   navigateApp: vi.fn(),
   routePaths: { hosts: "/hosts", environments: "/environments" },
+}));
+const navFlag = vi.hoisted(() => ({ enabled: false as boolean | undefined }));
+vi.mock("@/hooks/useEvaluateNavEnabled", () => ({
+  useEvaluateNavEnabled: () => navFlag.enabled,
 }));
 vi.mock("@/components/hosts/CreateHostDialog", () => ({
   CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
@@ -154,6 +159,7 @@ describe("CreateSuitePage", () => {
     onSubmit.mockResolvedValue(undefined);
     toastError.mockReset();
     flagState.environments = true;
+    navFlag.enabled = false;
     capability.matrix = true;
     environmentsRef.current = [];
     attachmentsRef.current = [
@@ -222,6 +228,45 @@ describe("CreateSuitePage", () => {
     expect(
       screen.queryByRole("button", { name: /^create suite$/i }),
     ).toBeNull();
+  });
+
+  it("shows today's strip and hint with the nav flag off", () => {
+    render(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+      />,
+    );
+    expect(screen.getByText("New suite")).toHaveClass("font-semibold");
+    expect(
+      screen.getByText("Choose a client and the models to evaluate it with."),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Evaluate" }));
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it("shows the Nav crumb bar and hint with the nav flag on", () => {
+    navFlag.enabled = true;
+    render(
+      <CreateSuitePage
+        onCancel={onCancel}
+        onSubmit={onSubmit}
+        hostsEnabled
+        projectId="proj-1"
+      />,
+    );
+    const strip = screen.getByTestId("evals-header");
+    expect(strip).toHaveTextContent("Evaluate/New suite");
+    expect(screen.getByText("New suite")).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByText("New suite")).not.toHaveClass("font-semibold");
+    expect(
+      screen.getByText("Choose a default client and model to evaluate with."),
+    ).toBeTruthy();
   });
 
   it("uses the Where it runs table to configure client rows and model overrides", async () => {

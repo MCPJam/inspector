@@ -12,6 +12,7 @@ import type {
 } from "@/lib/eval-route-types";
 import { isEvalNavRoute, legacyEvalRouteFor } from "@/lib/eval-nav-routes";
 import type { EvalNavPageName } from "./eval-nav-analytics";
+import { EvaluateLandingPage } from "../landing/evaluate-landing-page";
 
 /** Route kinds a new page will own: the per-layer kinds plus the three existing pages being rebuilt. */
 export type EvalNavPageRouteType =
@@ -38,8 +39,8 @@ export type EvalNavPages = Record<EvalNavPageRouteType, EvalNavPageEntry>;
 
 /** One line per kind so page work on different kinds merges without conflicts. */
 export const EVAL_NAV_PAGES: EvalNavPages = {
-  list: { analyticsPage: "suites", Page: null },
-  "evaluate-runs": { analyticsPage: "runs", Page: null },
+  list: { analyticsPage: "suites", Page: EvaluateLandingPage },
+  "evaluate-runs": { analyticsPage: "runs", Page: EvaluateLandingPage },
   "suite-overview": { analyticsPage: "suite", Page: null },
   "suite-settings": { analyticsPage: "suite_settings", Page: null },
   "case-new": { analyticsPage: "new_test_case", Page: null },
