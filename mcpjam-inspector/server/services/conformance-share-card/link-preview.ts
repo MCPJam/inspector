@@ -8,7 +8,6 @@
  * A short life keeps a narrowed or rotated link from showing for long.
  */
 
-import { logger } from "../../utils/logger.js";
 import type { ConformanceShareCardData } from "@/shared/conformance-share-card";
 import { canDrawShareCard } from "@/shared/conformance-share-card";
 import { renderConformanceShareCardPng } from "./render.js";
@@ -88,6 +87,18 @@ export function cardDataFromPreview(
   return canDrawShareCard(data) ? data : null;
 }
 
+/**
+ * The backend could not answer (network failure, timeout, a 5xx or a garbled
+ * body). Unlike "no card", this is never cached: the next request asks again.
+ */
+export class ShareCardUnavailable extends Error {
+  constructor(cause: unknown) {
+    super("The share preview backend did not answer", { cause });
+    this.name = "ShareCardUnavailable";
+  }
+}
+
+/** The preview, null for a link with no public card; throws when unsure. */
 async function fetchLinkPreview(token: string): Promise<BackendPreview | null> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) return null;
@@ -101,21 +112,18 @@ async function fetchLinkPreview(token: string): Promise<BackendPreview | null> {
       redirect: "manual",
     });
   } catch (error) {
-    logger.warn("[conformance-share-card] preview fetch failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
+    throw new ShareCardUnavailable(error);
   }
-  // 400/404: no such link, or not one anyone may open. Not an error.
-  if (!response.ok) return null;
+  // 400/404: no such link, or not one anyone may open. A real answer.
+  if (response.status === 400 || response.status === 404) return null;
+  if (!response.ok) {
+    throw new ShareCardUnavailable(`HTTP ${response.status}`);
+  }
   let body: { ok?: boolean; preview?: BackendPreview } | null;
   try {
     body = (await response.json()) as typeof body;
   } catch (error) {
-    logger.warn("[conformance-share-card] preview answer was not JSON", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
+    throw new ShareCardUnavailable(error);
   }
   return body?.ok && body.preview ? body.preview : null;
 }
@@ -148,9 +156,11 @@ export class ShareCardLookupLimited extends Error {
 
 /**
  * The PNG for a share link, or null when the link has no public preview.
- * `siteLabel` is the host the link lives on, shown in the card's footer.
+ * `siteLabel` is the host the link lives on, shown in the card's footer; it
+ * must come from a fixed set (it is part of the cache key).
  * `admitLookup` is asked only before a backend read, never for a cached card;
- * when it refuses, this throws `ShareCardLookupLimited`.
+ * when it refuses, this throws `ShareCardLookupLimited`. A backend that does
+ * not answer throws `ShareCardUnavailable`, and nothing is cached.
  */
 export async function conformanceShareCardForToken(
   token: string,

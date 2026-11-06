@@ -10,6 +10,11 @@ import {
   resetShareCardLookupLimit,
 } from "../../../services/conformance-share-card/lookup-limit.js";
 
+// With no edge attestation or trusted header configured, Cloudflare's
+// address is the one the limiter vouches for.
+const FROM_A = { "cf-connecting-ip": "203.0.113.7" };
+const FROM_B = { "cf-connecting-ip": "203.0.113.8" };
+
 /** A distinct, valid link token for each `n`. */
 function tokenFor(n: number): string {
   return `invented_token_${String(n).padStart(6, "0")}`;
@@ -95,23 +100,32 @@ describe("GET /api/web/conformance-share-card/:token.png", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("stops asking the backend once an IP spends its lookup budget", async () => {
+  it("stops asking the backend once an address spends its lookup budget", async () => {
     fetchMock.mockImplementation(async () =>
       Response.json({ ok: false }, { status: 404 }),
     );
     for (let n = 0; n < SHARE_CARD_LOOKUP_LIMIT; n++) {
       const res = await app().request(
         `/api/web/conformance-share-card/${tokenFor(n)}.png`,
+        { headers: FROM_A },
       );
       expect(res.status).toBe(404);
     }
 
     const limited = await app().request(
       `/api/web/conformance-share-card/${tokenFor(SHARE_CARD_LOOKUP_LIMIT)}.png`,
+      { headers: FROM_A },
     );
     expect(limited.status).toBe(429);
     expect(limited.headers.get("retry-after")).toBe("600");
     expect(fetchMock).toHaveBeenCalledTimes(SHARE_CARD_LOOKUP_LIMIT);
+
+    // Another address has its own budget.
+    const other = await app().request(
+      `/api/web/conformance-share-card/${tokenFor(SHARE_CARD_LOOKUP_LIMIT)}.png`,
+      { headers: FROM_B },
+    );
+    expect(other.status).toBe(404);
   });
 
   it("serves a cached card even after the budget is spent", async () => {
@@ -119,16 +133,62 @@ describe("GET /api/web/conformance-share-card/:token.png", () => {
       Response.json({ ok: false }, { status: 404 }),
     );
     // Cache the answer for one token, then spend the rest of the budget.
-    await app().request(`/api/web/conformance-share-card/${TOKEN}.png`);
+    await app().request(`/api/web/conformance-share-card/${TOKEN}.png`, {
+      headers: FROM_A,
+    });
     for (let n = 1; n < SHARE_CARD_LOOKUP_LIMIT; n++) {
-      await app().request(`/api/web/conformance-share-card/${tokenFor(n)}.png`);
+      await app().request(
+        `/api/web/conformance-share-card/${tokenFor(n)}.png`,
+        {
+          headers: FROM_A,
+        },
+      );
     }
 
     const cached = await app().request(
       `/api/web/conformance-share-card/${TOKEN}.png`,
+      { headers: FROM_A },
     );
     expect(cached.status).toBe(404);
     expect(fetchMock).toHaveBeenCalledTimes(SHARE_CARD_LOOKUP_LIMIT);
+  });
+
+  it("does not cache a backend that did not answer", async () => {
+    fetchMock
+      .mockRejectedValueOnce(new Error("connect ECONNREFUSED"))
+      .mockResolvedValueOnce(Response.json({ ok: false }, { status: 404 }));
+
+    const down = await app().request(
+      `/api/web/conformance-share-card/${TOKEN}.png`,
+    );
+    expect(down.status).toBe(503);
+    expect(down.headers.get("cache-control")).toBe("no-store");
+
+    const back = await app().request(
+      `/api/web/conformance-share-card/${TOKEN}.png`,
+    );
+    expect(back.status).toBe(404);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats a backend 5xx as unavailable, not as no card", async () => {
+    fetchMock.mockResolvedValue(new Response("boom", { status: 502 }));
+    const res = await app().request(
+      `/api/web/conformance-share-card/${TOKEN}.png`,
+    );
+    expect(res.status).toBe(503);
+  });
+
+  it("does not let a made-up host mint new cache entries", async () => {
+    fetchMock.mockImplementation(async () =>
+      Response.json({ ok: false }, { status: 404 }),
+    );
+    for (const host of ["a.evil.test", "b.evil.test", "c.evil.test"]) {
+      await app().request(`/api/web/conformance-share-card/${TOKEN}.png`, {
+        headers: { "X-Forwarded-Host": host },
+      });
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("refuses anything that is not a link token", async () => {

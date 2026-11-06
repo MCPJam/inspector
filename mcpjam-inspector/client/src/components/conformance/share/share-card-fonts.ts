@@ -63,7 +63,7 @@ export function shareCardFontEmbedCss(): Promise<string> {
       const response = await fetch(url);
       // Internal: caught by the download, which shows its own message.
       if (!response.ok) {
-        throw new Error(`Could not load a card font (HTTP ${response.status})`);
+        throw new Error("Could not load a card font. Try again.");
       }
       return [url, await toDataUrl(await response.blob())] as const;
     }),
