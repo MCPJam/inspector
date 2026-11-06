@@ -121,6 +121,10 @@ export async function openPlaygroundArm(context, opener, config) {
       await page.bringToFront();
       await installBrowserTrace(page);
       await page.getByPlaceholder(composer).fill(prompt);
+      await page.getByPlaceholder(composer).blur();
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      if (await page.getByPlaceholder(composer).inputValue() !== prompt)
+        throw Error("The composer changed the benchmark prompt before submission.");
       let reject;
       const refused = new Promise((_, r) => {
         reject = r;
