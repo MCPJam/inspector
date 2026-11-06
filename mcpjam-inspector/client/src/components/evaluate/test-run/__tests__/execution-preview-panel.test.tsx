@@ -6,6 +6,7 @@ import {
   renderHook,
   screen,
 } from "@testing-library/react";
+import { track } from "@/lib/analytics";
 import type { PreviewItem } from "../../case-steps/case-steps-model";
 import {
   EXECUTION_PREVIEW_OPEN_KEY,
@@ -13,6 +14,8 @@ import {
   ExecutionPreviewToggle,
   useExecutionPreviewOpen,
 } from "../../case-steps/execution-preview-panel";
+
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 const ITEMS: PreviewItem[] = [
   {
@@ -92,6 +95,35 @@ describe("useExecutionPreviewOpen", () => {
     expect(result.current[0]).toBe(false);
     act(() => result.current[1](true));
     expect(result.current[0]).toBe(true);
+  });
+});
+
+describe("useExecutionPreviewOpen with a surface", () => {
+  const opened = () =>
+    vi
+      .mocked(track)
+      .mock.calls.filter(([event]) => event === "eval_execution_preview_opened")
+      .map(([, props]) => props);
+  beforeEach(() => vi.mocked(track).mockClear());
+
+  it("counts an open once for its surface, and never a close", () => {
+    const { result } = renderHook(() => useExecutionPreviewOpen("editor"));
+    act(() => result.current[1](true));
+    act(() => result.current[1](true));
+    act(() => result.current[1](false));
+    expect(opened()).toEqual([
+      expect.objectContaining({ surface: "editor", project_id: null }),
+    ]);
+  });
+
+  it("does not count a panel restored open, nor an open with no surface", () => {
+    window.localStorage.setItem(EXECUTION_PREVIEW_OPEN_KEY, "1");
+    const restored = renderHook(() => useExecutionPreviewOpen("test_run"));
+    act(() => restored.result.current[1](true));
+    window.localStorage.clear();
+    const silent = renderHook(() => useExecutionPreviewOpen());
+    act(() => silent.result.current[1](true));
+    expect(opened()).toEqual([]);
   });
 });
 

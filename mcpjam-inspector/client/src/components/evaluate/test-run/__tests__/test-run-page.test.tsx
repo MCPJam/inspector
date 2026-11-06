@@ -144,11 +144,16 @@ describe("TestRunPage", () => {
   });
 
   it("opens the preview by click, counted once, and a step opens the editor there", () => {
+    window.history.pushState({}, "", `/p/proj00000000000001${base}`);
     render(<TestRunPage route={route} projectId="p1" />);
     fireEvent.click(screen.getByRole("button", { name: "Execution preview" }));
     expect(tracked("eval_execution_preview_opened")).toEqual([
-      expect.objectContaining({ surface: "test_run", project_id: "p1" }),
+      expect.objectContaining({
+        surface: "test_run",
+        project_id: "proj00000000000001",
+      }),
     ]);
+    window.history.pushState({}, "", "/");
     fireEvent.click(screen.getByText("Expected outcome"));
     expect(tracked("eval_edit_from_test_run")).toEqual([
       expect.objectContaining({ surface: "preview_step" }),
