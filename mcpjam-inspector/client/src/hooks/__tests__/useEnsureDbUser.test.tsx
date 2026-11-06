@@ -486,6 +486,7 @@ describe("useEnsureDbUser", () => {
     mockState.hasGuestActivationMarker.mockReturnValue(true);
     mockState.isGuestActivated.mockReturnValue(true);
     mockState.getGuestPromotionProof.mockResolvedValue("proof-jwt");
+    mockState.revokeGuestSessionAndCookie.mockResolvedValue(true);
 
     renderHook(() => useEnsureDbUser());
 
@@ -504,6 +505,53 @@ describe("useEnsureDbUser", () => {
     });
     // The marker goes with the cookie, so the next sign-in skips the lookup.
     expect(mockState.clearGuestActivation).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the marker when the promoted guest's cookie revoke is not confirmed", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.getExistingGuestId.mockResolvedValue("guest-activated");
+    mockState.hasGuestActivationMarker.mockReturnValue(true);
+    mockState.isGuestActivated.mockReturnValue(true);
+    mockState.getGuestPromotionProof.mockResolvedValue("proof-jwt");
+    mockState.revokeGuestSessionAndCookie.mockResolvedValue(false);
+
+    const { result } = renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => expect(result.current.isUserReady).toBe(true));
+    expect(mockState.revokeGuestSessionAndCookie).toHaveBeenCalledTimes(1);
+    expect(mockState.clearGuestActivation).not.toHaveBeenCalled();
+  });
+
+  it("drops a marker once the lookup confirms there is no guest cookie", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.hasGuestActivationMarker.mockReturnValue(true);
+    mockState.getExistingGuestId.mockResolvedValue(null);
+
+    const { result } = renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => expect(result.current.isUserReady).toBe(true));
+    expect(mockState.clearGuestActivation).toHaveBeenCalled();
+    expect(mockState.getGuestPromotionProof).not.toHaveBeenCalled();
+  });
+
+  it("keeps the marker and still ensures the user when the lookup fails", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.hasGuestActivationMarker.mockReturnValue(true);
+    mockState.getExistingGuestId.mockRejectedValue(new Error("lookup failed"));
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    const { result } = renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => expect(result.current.isUserReady).toBe(true));
+    expect(mockState.ensureUser).toHaveBeenCalledExactlyOnceWith({});
+    expect(mockState.clearGuestActivation).not.toHaveBeenCalled();
+    expect(mockState.revokeGuestSessionAndCookie).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   it("revokes an unactivated cookie after ensureUser when the marker names another guest", async () => {
@@ -565,6 +613,30 @@ describe("useEnsureDbUser", () => {
       resolveLookup?.("guest-incidental");
     });
     expect(mockState.revokeGuestSessionAndCookie).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not revoke a guest that was activated while the deferred lookup was pending", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    let resolveLookup: ((guestId: string | null) => void) | undefined;
+    mockState.getExistingGuestId.mockImplementation(
+      () =>
+        new Promise<string | null>((resolve) => {
+          resolveLookup = resolve;
+        }),
+    );
+
+    const { result } = renderHook(() => useEnsureDbUser());
+    await waitFor(() => expect(result.current.isUserReady).toBe(true));
+
+    mockState.isGuestActivated.mockImplementation(
+      (guestId: string | null | undefined) => guestId === "guest-activated",
+    );
+    await act(async () => {
+      resolveLookup?.("guest-activated");
+    });
+    expect(mockState.isGuestActivated).toHaveBeenCalledWith("guest-activated");
+    expect(mockState.revokeGuestSessionAndCookie).not.toHaveBeenCalled();
   });
 
   it("sends posthogAnonDistinctId ($device_id) for WorkOS auth", async () => {

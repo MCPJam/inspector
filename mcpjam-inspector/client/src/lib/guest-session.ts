@@ -567,7 +567,9 @@ export async function getExistingGuestBearerToken(): Promise<string | null> {
  * Resolve the `guestId` of the guest backed by the current cookie WITHOUT
  * minting a new guest. Prefers the in-memory cache (the common same-tab
  * guest→sign-in case) and otherwise issues a single `lookup_only`. Returns
- * null when there is no existing guest cookie or on transient failure.
+ * null only when the server confirms there is no guest cookie, and throws on
+ * a failed lookup, so a caller can tell a stale activation marker from a
+ * transient failure.
  *
  * Used by the promotion path to look up the activation marker for the cookie
  * actually present, so an incidental document-bootstrap cookie (never
@@ -578,12 +580,12 @@ export async function getExistingGuestId(): Promise<string | null> {
   if (cached?.guestId) {
     return cached.guestId;
   }
-  try {
-    await getExistingGuestBearerToken();
-  } catch {
-    return null;
-  }
-  return getCachedGuestSession()?.guestId ?? null;
+  const token = await getExistingGuestBearerToken();
+  if (token === null) return null;
+  const guestId = getCachedGuestSession()?.guestId;
+  // A session cleared while the lookup was in flight is not a confirmed miss.
+  if (!guestId) throw new Error("guest session cleared during lookup");
+  return guestId;
 }
 
 /**

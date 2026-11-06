@@ -110,7 +110,7 @@ async function revokeIncidentalGuestCookie(shouldContinue: () => boolean) {
     await revokeGuestSessionAndCookie();
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error("[auth] incidental guest cookie revoke failed", err);
+    console.error("[auth] incidental guest cookie cleanup failed", err);
   }
 }
 
@@ -352,6 +352,10 @@ export function useEnsureDbUser() {
           let guestId: string | null = null;
           try {
             guestId = await getExistingGuestId();
+            // The server confirmed there is no guest cookie, so the marker
+            // can never match one; drop it so later sign-ins skip the lookup.
+            // A failed lookup throws instead and keeps the marker.
+            if (guestId === null) clearGuestActivation();
           } catch {
             guestId = null;
           }
@@ -432,10 +436,11 @@ export function useEnsureDbUser() {
       // is set the server treats it as a no-op.
       if (isWorkOsAuth && guestProofJwt) {
         try {
-          await revokeGuestSessionAndCookie();
           // The marker never expires on its own; left set, every later
-          // sign-in would wait on the guest lookup again.
-          clearGuestActivation();
+          // sign-in would wait on the guest lookup again. Only a confirmed
+          // revoke drops it: a cookie that survived a failed request is
+          // still an activated guest.
+          if (await revokeGuestSessionAndCookie()) clearGuestActivation();
         } catch (err) {
           // eslint-disable-next-line no-console
           console.error("[auth] guest session revoke failed", err);
