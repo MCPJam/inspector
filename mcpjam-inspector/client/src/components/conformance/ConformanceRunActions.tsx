@@ -7,14 +7,12 @@
 import { useEffect, useState } from "react";
 import { Settings, Share2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { ShareDialog } from "@/components/sharing/ShareDialog";
-import { ResourceSharePanel } from "@/components/sharing/ResourceSharePanel";
 import type { ConformanceSelection } from "@/hooks/use-conformance-run";
 import {
   buildConformanceRunServerPath,
-  buildConformanceSharePath,
   useAppNavigate,
 } from "@/lib/app-navigation";
+import { ConformanceShareRunDialog } from "./share/ConformanceShareRunDialog";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
 import type { ConformanceDefaults } from "@/hooks/use-conformance-server-data";
@@ -39,15 +37,18 @@ export type SavedRunServerSettings = {
 };
 
 /**
- * Share for one saved run: opens the share dialog. Only a finished run can be
- * shared.
+ * Share for one saved run: opens the run's score card, to download or post,
+ * with its link and access settings. Only a finished run can be shared.
+ * `serverName` titles the card; the public link's preview never shows it.
  */
 export function ConformanceRunShareButton({
   runId,
   finished,
+  serverName,
 }: {
   runId: string;
   finished: boolean;
+  serverName?: string;
 }) {
   const [shareOpen, setShareOpen] = useState(false);
 
@@ -62,30 +63,13 @@ export function ConformanceRunShareButton({
       >
         <Share2 className="size-3.5" aria-hidden /> Share
       </Button>
-      <ShareDialog
+      <ConformanceShareRunDialog
+        runId={runId}
+        serverName={serverName}
+        finished={finished}
         open={shareOpen}
         onOpenChange={setShareOpen}
-        title="Share conformance run"
-        description="A redacted snapshot of this run."
-      >
-        <ResourceSharePanel
-          resourceType="conformanceRun"
-          resourceId={runId}
-          disabledReason={finished ? null : "Only a finished run can be shared"}
-          footerSlot={
-            <p className="text-xs text-muted-foreground">
-              Viewers see a frozen snapshot. Revoking access takes effect
-              immediately.
-            </p>
-          }
-          linkLabel="Share link"
-          buildShareUrl={(token) =>
-            `${window.location.origin}${buildConformanceSharePath(token)}`
-          }
-          testIdPrefix="conformance-share"
-          invites={false}
-        />
-      </ShareDialog>
+      />
     </>
   );
 }
@@ -99,6 +83,7 @@ export function SavedRunActions({
   runId,
   finished,
   serverName,
+  displayName,
   settings,
   onOpenSettings,
   serversLoading = false,
@@ -106,6 +91,8 @@ export function SavedRunActions({
   runId: string;
   finished: boolean;
   serverName?: string;
+  /** The name the run is shown under, for its share card. */
+  displayName?: string;
   settings?: SavedRunServerSettings;
   onOpenSettings: () => void;
   serversLoading?: boolean;
@@ -125,7 +112,11 @@ export function SavedRunActions({
           <Settings className="size-3.5" aria-hidden /> Settings
         </Button>
       ) : null}
-      <ConformanceRunShareButton runId={runId} finished={finished} />
+      <ConformanceRunShareButton
+        runId={runId}
+        finished={finished}
+        serverName={displayName ?? serverName}
+      />
       <Button
         size="sm"
         disabled={serversLoading}

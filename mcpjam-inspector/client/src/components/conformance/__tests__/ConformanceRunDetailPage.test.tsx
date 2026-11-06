@@ -18,6 +18,7 @@ const { navigateMock, useArtifactQueryMock, fetchArtifactMock } = vi.hoisted(
 );
 
 vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
   useQuery: vi.fn(),
   useMutation: () => vi.fn(),
   useAction: () => vi.fn(),
@@ -183,12 +184,14 @@ describe("ConformanceRunDetailPage", () => {
     expect(screen.getByRole("button", { name: "Run again" })).toBeDefined();
   });
 
-  it("opens the share dialog for this run from Share", () => {
+  it("opens the run's share card, with its access settings one click away", async () => {
     useArtifactQueryMock.mockReturnValue(run([report()]));
     render(<ConformanceRunDetailPage runId="run_1" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
-    expect(screen.getByTestId("stub-share-panel")).toHaveTextContent(
+    expect(screen.getByText("Share conformance run")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("conformance-share-edit-access"));
+    expect(await screen.findByTestId("stub-share-panel")).toHaveTextContent(
       "conformanceRun:run_1",
     );
   });
@@ -213,7 +216,7 @@ describe("ConformanceRunDetailPage", () => {
 
     expect(screen.queryByRole("button", { name: /Shareable/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
-    expect(screen.getByTestId("stub-share-panel")).toBeInTheDocument();
+    expect(screen.getByText("Share conformance run")).toBeInTheDocument();
   });
 
   it("names the server from the project's saved servers", () => {
