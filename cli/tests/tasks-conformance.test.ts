@@ -328,6 +328,19 @@ test("buildTasksConformanceConfig rejects an unknown --protocol-version", () => 
   );
 });
 
+test("buildTasksConformanceConfig rejects a blank --protocol-version", () => {
+  assert.throws(
+    () =>
+      buildTasksConformanceConfig({
+        url: "https://example.com/mcp",
+        protocolVersion: "   ",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Unknown --protocol-version")
+  );
+});
+
 test("buildTasksConformanceConfig rejects --protocol-version against a stdio target", () => {
   assert.throws(
     () =>

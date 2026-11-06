@@ -189,7 +189,9 @@ export function buildTasksConformanceConfig(
 
   const trimmedProtocolVersion = options.protocolVersion?.trim();
   let mcpProtocolVersion: McpProtocolVersion | undefined;
-  if (trimmedProtocolVersion) {
+  // A blank version is a mistake, not an omitted flag: dropping it would run
+  // unpinned instead of the version asked for.
+  if (trimmedProtocolVersion !== undefined) {
     if (!isKnownProtocolVersion(trimmedProtocolVersion)) {
       throw usageError(`Unknown --protocol-version: ${trimmedProtocolVersion}`);
     }
