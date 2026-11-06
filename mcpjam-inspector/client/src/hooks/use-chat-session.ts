@@ -171,6 +171,7 @@ import {
   patchBodyAccessVersion,
 } from "@/lib/scenario-access-errors";
 import {
+  AUTO_TOPUP_DECLINED_CODE,
   notifyMCPJamLimitError,
   notifyMCPJamLimitErrorFromResponse,
 } from "@/lib/mcpjam-limit";
@@ -3608,7 +3609,11 @@ export function useChatSession(
         message: chatError.message,
         limitKind,
         ...(hostedScenarioId ? { surface: "scenario" as const } : {}),
-        showsDeclinedCard: true,
+        // Follow the banner's own reading, so an error that only quotes a
+        // decline still opens the dialog the banner won't replace.
+        showsDeclinedCard:
+          formatErrorMessage(chatError.message)?.code ===
+          AUTO_TOPUP_DECLINED_CODE,
       });
       if (hostedProjectId) {
         void askStdioCommandApprovalForChatError(
