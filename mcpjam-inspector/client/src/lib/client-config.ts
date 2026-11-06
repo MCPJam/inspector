@@ -262,14 +262,37 @@ export function mergeProjectConnectionHeaders(
   projectHeaders?: Record<string, string>,
   serverHeaders?: Record<string, string>,
 ): Record<string, string> {
-  return {
-    ...normalizeProjectConnectionHeaders(
-      projectHeaders as Record<string, unknown> | undefined,
-    ),
-    ...normalizeExplicitConnectionHeaders(
-      serverHeaders as Record<string, unknown> | undefined,
-    ),
-  };
+  const project = normalizeProjectConnectionHeaders(
+    projectHeaders as Record<string, unknown> | undefined,
+  );
+  const server = normalizeExplicitConnectionHeaders(
+    serverHeaders as Record<string, unknown> | undefined,
+  );
+
+  const merged: Record<string, string> = {};
+  const lowerKeyMap = new Map<string, string>();
+
+  for (const [key, value] of Object.entries(project)) {
+    const lower = key.toLowerCase();
+    const existing = lowerKeyMap.get(lower);
+    if (existing !== undefined) {
+      delete merged[existing];
+    }
+    merged[key] = value;
+    lowerKeyMap.set(lower, key);
+  }
+
+  for (const [key, value] of Object.entries(server)) {
+    const lower = key.toLowerCase();
+    const existing = lowerKeyMap.get(lower);
+    if (existing !== undefined) {
+      delete merged[existing];
+    }
+    merged[key] = value;
+    lowerKeyMap.set(lower, key);
+  }
+
+  return merged;
 }
 
 export function mergeProjectClientCapabilities(
