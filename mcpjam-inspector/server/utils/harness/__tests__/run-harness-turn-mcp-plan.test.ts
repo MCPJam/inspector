@@ -88,7 +88,7 @@ vi.mock("../registry.js", () => ({
 const projectSpy = vi.hoisted(() =>
   vi.fn(async (_args: Record<string, unknown>) => ({
     tools: {},
-    keyToServerId: {},
+    keyToServerId: { server: "srv-a" },
   })),
 );
 vi.mock("../host-executed-mcp-tools.js", async (importOriginal) => ({
@@ -201,6 +201,7 @@ vi.mock("../native-discovery.js", async (original) => {
 });
 
 import { runHarnessTurn } from "../run-harness-turn";
+import { harnessConnectionFingerprint } from "../harness-connection-profile";
 import { setManagerConnections } from "../../mcp-connections";
 
 function manager() {
@@ -489,6 +490,39 @@ describe("the route receipt on the persisted turn trace", () => {
       qualification: { status: "not-required" },
     });
     expect(receipt?.profileDigest).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it.each(["native-proxy", "host-tools"] as const)(
+    "omits the profile when %s delivers no servers",
+    async (route) => {
+      vi.stubEnv("HARNESS_NATIVE_FORWARDING", "false");
+      const options = enrolled({
+        ...(route === "host-tools" ? { agentLoop: "claude-code" } : {}),
+        unavailableServerIds: ["srv-a"],
+      });
+      if (route === "host-tools") {
+        projectSpy.mockResolvedValueOnce({ tools: {}, keyToServerId: {} });
+      }
+      const receipt = await persisted(options);
+      expect(receipt).not.toHaveProperty("profile");
+      expect(receipt).not.toHaveProperty("profileDigest");
+      expect(receipt?.reasons).toContain("no servers delivered");
+    },
+  );
+
+  it("digests only delivered servers when another selection is unavailable", async () => {
+    vi.stubEnv("HARNESS_NATIVE_FORWARDING", "false");
+    const options = enrolled({
+      selectedServers: ["srv-a", "srv-b"],
+      unavailableServerIds: ["srv-b"],
+    });
+    const receipt = await persisted(options);
+    expect(receipt?.profileDigest).toBe(
+      harnessConnectionFingerprint(options.mcpClientManager as never, ["srv-a"]),
+    );
+    expect(receipt?.profileDigest).not.toBe(
+      harnessConnectionFingerprint(options.mcpClientManager as never, ["srv-a", "srv-b"]),
+    );
   });
 
   it("records why forwarding was not admitted on a retained route", async () => {

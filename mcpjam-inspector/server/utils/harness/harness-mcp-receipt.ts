@@ -36,7 +36,7 @@ export type HarnessMcpConnectionFacts = {
   /** The plane the turn's MCP endpoint was built on. */
   plane: HarnessMcpProxyStrategy["plane"];
   serverCount: number;
-  /** `harnessConnectionFingerprint` over the selected servers. */
+  /** `harnessConnectionFingerprint` over the servers actually delivered. */
   profileDigest: () => string;
 };
 
@@ -45,7 +45,13 @@ function handshakeOwner(
   connection: HarnessMcpConnectionFacts,
 ): { profile?: "client"; reason?: string } {
   if (plan.upstream === "harness") return {};
-  if (connection.serverCount === 0) return { reason: NO_SERVERS_REASON };
+  if (connection.serverCount === 0) {
+    return {
+      reason: plan.reasons.includes(NO_SERVERS_REASON)
+        ? NO_SERVERS_REASON
+        : "no servers delivered",
+    };
+  }
   if (plan.delivery === "host-tools" || plan.forwardingKind === "profiled") {
     return { profile: "client" };
   }

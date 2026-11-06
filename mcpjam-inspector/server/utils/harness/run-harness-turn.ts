@@ -3700,8 +3700,8 @@ export async function runHarnessTurn(
             // The plane the proxy config was built on, read after the local plane bound.
             connection: {
               plane: (localMcpPlane?.strategy ?? harnessMcpProxy ?? { plane: "local-mcp" }).plane,
-              serverCount: selectedServers?.length ?? 0,
-              profileDigest: () => harnessConnectionFingerprint(mcpClientManager, selectedServers ?? [], modelVisibleMcpToolResults),
+              serverCount: Object.keys(harnessKeyToServerId).length,
+              profileDigest: () => harnessConnectionFingerprint(mcpClientManager, Object.values(harnessKeyToServerId), modelVisibleMcpToolResults),
             },
             pinnedRuntimeVersion: harnessAdapter.pinnedRuntimeVersion,
             observedRuntimeVersion: installedRuntimeVersion,
