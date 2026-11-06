@@ -188,6 +188,7 @@ function ready(): SuiteSettingsPageData {
     suite,
     cases: [],
     runs: [],
+    projectSuites: [suite],
     organizationId: "o1",
     availableModels: [],
     onAddProvider: null,

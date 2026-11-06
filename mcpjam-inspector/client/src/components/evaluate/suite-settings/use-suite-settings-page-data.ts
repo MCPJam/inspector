@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useConvexAuth } from "convex/react";
 import type { ModelDefinition } from "@/shared/types";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
@@ -18,6 +19,8 @@ export type SuiteSettingsPageData =
       suite: EvalSuite;
       cases: EvalCase[];
       runs: EvalSuiteRunListItem[];
+      /** Project suites in Suites-list order. */
+      projectSuites: EvalSuite[];
       organizationId: string | null;
       availableModels: ModelDefinition[];
       requireOrgKeys?: boolean;
@@ -50,6 +53,10 @@ export function useSuiteSettingsPageData({
     isDirectGuest,
     perRunMetrics: true,
   });
+  const projectSuites = useMemo(
+    () => queries.sortedSuites.map((entry) => entry.suite),
+    [queries.sortedSuites],
+  );
   const suite = queries.selectedSuite;
   const cases = queries.suiteDetails?.testCases;
 
@@ -67,6 +74,7 @@ export function useSuiteSettingsPageData({
     suite,
     cases,
     runs: queries.runsForSelectedSuite,
+    projectSuites,
     organizationId: context.organizationId,
     availableModels: context.availableModels,
     requireOrgKeys: context.requireOrgKeys,

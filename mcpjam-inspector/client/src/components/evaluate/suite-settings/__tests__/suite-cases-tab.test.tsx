@@ -81,6 +81,7 @@ const suite: EvalSuite = {
   updatedAt: 1,
   source: "ui",
 };
+const other: EvalSuite = { ...suite, _id: "s2", name: "Asana SDK ingestion" };
 const testCase = { _id: "c1", title: "Draw a rectangle" } as EvalCase;
 
 function renderTab({
@@ -102,6 +103,7 @@ function renderTab({
         names={{ suiteName: "Excalidraw quickstart" }}
         suite={suite}
         cases={cases}
+        projectSuites={[suite, other]}
         projectId="p1"
         locked={locked}
         onClearImportJob={mocks.clearImportJob}
@@ -243,7 +245,7 @@ describe("SuiteCasesTab", () => {
     });
   });
 
-  it("locked: no Add case, the CI reason, delete stays (C-10)", () => {
+  it("locked: no Add case, the CI reason, copy and delete stay (C-10)", () => {
     renderTab({ locked: true });
     expect(screen.queryByTestId("suite-settings-add-case")).toBeNull();
     expect(
@@ -251,6 +253,13 @@ describe("SuiteCasesTab", () => {
         "Managed by CI — edit the test file, or duplicate to edit here",
       ),
     ).toBeTruthy();
+    expect(screen.getByTestId("suite-settings-case-copy-c1")).toBeTruthy();
     expect(screen.getByTestId("suite-settings-case-delete-c1")).toBeTruthy();
+  });
+
+  it("hides copy for a direct guest (P-8)", () => {
+    mocks.isDirectGuest = true;
+    renderTab();
+    expect(screen.queryByTestId("suite-settings-case-copy-c1")).toBeNull();
   });
 });

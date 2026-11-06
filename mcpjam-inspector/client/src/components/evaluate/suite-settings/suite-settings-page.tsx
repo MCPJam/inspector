@@ -198,6 +198,7 @@ function ReadySuiteSettingsPage({
               names={names}
               suite={suite}
               cases={cases}
+              projectSuites={data.projectSuites}
               projectId={projectId}
               locked={sheet.editingDisabled}
               onClearImportJob={() => changeTab("cases")}
