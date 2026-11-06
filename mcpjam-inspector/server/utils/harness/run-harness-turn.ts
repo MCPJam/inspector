@@ -2441,31 +2441,12 @@ export async function runHarnessTurn(
         box !== null && box.kind === "computer" ? box.computerId : undefined;
       tSandbox = Date.now();
 
-      // 3a. RESERVE the box, then start the baseline-preserving broker lease.
-      //
-      // The harness runtime is installed into the sandbox by a bootstrap recipe
-      // that shells `pnpm install` for the agent CLI. The lease keeps the box's
-      // own egress baseline (public internet for members; web-only for guests)
-      // and only adds a header transform on the model-proxy host, so the
-      // in-stream bootstrap can reach the package registry on its own. The
-      // reservation is a concurrency/liveness control — it is NOT an egress
-      // lock — and is kept on its own merits pending an independent removal
-      // gate.
-      //
-      // ONE id for the whole turn: it names this turn's claim on the box, and
-      // the lease consumes that claim by matching it. Deliberately NOT assigned
-      // to `brokerRunId` yet — that variable means "a lease may exist under this
-      // id", and teardown reads it to decide whether to revoke. Setting it here
-      // would make every failed preparation issue a pointless revoke for a lease
-      // that was never minted.
+      // Brokered turns acquire their exclusive box lease before any sandbox
+      // bootstrap. External-account runtimes have no broker lease, so their
+      // separate reservation must protect preparation and the full turn.
       const turnRunId = crypto.randomUUID();
 
-      // Claim the box for the whole preparation window. The lease's own per-box
-      // fence starts only once a lease exists, so without this two turns could
-      // interleave wake / bootstrap / broker-start. A refusal here is the same
-      // condition a caller would otherwise meet at broker start, just detected
-      // before we do any work.
-      if (box !== null) {
+      if (box !== null && externalAccountAuth) {
         await org.reserve({
           box: box!,
           harnessId: harnessAdapter.id,
@@ -2648,20 +2629,19 @@ export async function runHarnessTurn(
           // A scenario's non-member participant never sees the owner-facing
           // detail ("add credits", "Organization → Budget", "share link");
           // the code and status still classify the failure.
+          const boxBusy = broker.status === 409 && broker.code === undefined;
           throw new HarnessInfraSetupError(
             scenarioParticipant && executionScope?.kind === "swarm"
               ? participantSafeStudyError(broker)
               : broker.error,
             {
-              source: "platform_setup",
-              code: broker.code ?? "harness_broker_unavailable",
+              source: boxBusy ? "sandbox_setup" : "platform_setup",
+              code: broker.code ?? (boxBusy ? "harness_box_reservation_failed" : "harness_broker_unavailable"),
               httpStatus: broker.status,
             },
           );
         }
-        // The lease is recorded, which consumed this turn's claim on the box; the
-        // lease's own per-box fence covers the rest of the turn. Releasing now
-        // would free a box that is very much still in use.
+        // The recorded lease owns the box until this turn's teardown.
         clearReservationHeartbeat();
         reservationHeld = false;
         if (useNativeForwarding) {

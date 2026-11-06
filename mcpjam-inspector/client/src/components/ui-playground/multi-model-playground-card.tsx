@@ -25,6 +25,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -34,7 +35,6 @@ import { Braces, Loader2 } from "lucide-react";
 import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import type { LocalHarnessTargetIds } from "@/lib/local-harness-consent";
-import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { cn } from "@/lib/utils";
 import type { ModelDefinition } from "@/shared/types";
@@ -92,8 +92,8 @@ import {
 import type { DeviceType, DisplayMode } from "@/stores/ui-playground-store";
 import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
 import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
-import type { WidgetModelContextEntry } from "@/shared/chat-v2";
-import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { useWidgetModelContextQueue } from "@/hooks/use-widget-model-context-queue";
+import { fitWidgetModelContext } from "@/lib/widget-model-context";
 import { useComparisonBrowser } from "@/hooks/use-comparison-browser";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
@@ -384,9 +384,8 @@ export function MultiModelPlaygroundCard({
   const effectiveMcpProfile = hostSnapshot
     ? hostSnapshot.mcpProfile
     : tabRootMcpProfile;
-  const [modelContextQueue, setModelContextQueue] = useState<
-    WidgetModelContextEntry[]
-  >([]);
+  const [modelContextQueue, setModelContextQueue, handleModelContextUpdate] =
+    useWidgetModelContextQueue();
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
   const [revealedInChat, setRevealedInChat] = useState(false);
@@ -398,6 +397,14 @@ export function MultiModelPlaygroundCard({
     useState<Record<string, ToolRenderOverride>>({});
   const lastBroadcastRequestIdRef = useRef<number | null>(null);
   const lastExecutionRequestIdRef = useRef<number | null>(null);
+  // Read when a restore fails, after the props it closed over may have moved.
+  // Set at commit, so a render React discards never counts as received.
+  const broadcastRequestIdRef = useRef(broadcastRequest?.id);
+  const executionRequestIdRef = useRef(deterministicExecutionRequest?.id);
+  useLayoutEffect(() => {
+    broadcastRequestIdRef.current = broadcastRequest?.id;
+    executionRequestIdRef.current = deterministicExecutionRequest?.id;
+  }, [broadcastRequest?.id, deterministicExecutionRequest?.id]);
   const onSummaryChangeRef = useRef(onSummaryChange);
   const onHasMessagesChangeRef = useRef(onHasMessagesChange);
   const lastAddColumnVersionRef = useRef(0);
@@ -703,6 +710,12 @@ export function MultiModelPlaygroundCard({
       })
       .catch(() => {
         if (cancelled) return;
+        // The turns that arrived while restoring are dropped with the alert;
+        // the next one starts this column fresh.
+        lastBroadcastRequestIdRef.current =
+          broadcastRequestIdRef.current ?? null;
+        lastExecutionRequestIdRef.current =
+          executionRequestIdRef.current ?? null;
         setRecoveryStatus("failed");
         recordChatAuthRecoveryFailure("comparison_restore_failed", {
           chatSessionId: recoveryColumn.chatSessionId,
@@ -935,7 +948,7 @@ export function MultiModelPlaygroundCard({
   }, [modelContextQueue]);
 
   useEffect(() => {
-    if (recoveryStatus !== "ready") return;
+    if (recoveryStatus === "loading") return;
     if (!isSessionBootstrapComplete) return;
 
     if (!broadcastRequest) {
@@ -948,6 +961,8 @@ export function MultiModelPlaygroundCard({
 
     lastBroadcastRequestIdRef.current = broadcastRequest.id;
     if (broadcastRequest.id === restoredBroadcastId) return;
+    // A column whose restore failed runs the next turn as a fresh column.
+    if (recoveryStatus === "failed") setRecoveryStatus("ready");
 
     if (broadcastRequest.prependMessages.length > 0) {
       setMessages((previous) => [
@@ -961,10 +976,10 @@ export function MultiModelPlaygroundCard({
       text: broadcastRequest.text,
       files: broadcastRequest.files,
       metadata: outgoingSenderMetadata,
-      widgetModelContext: [
+      widgetModelContext: fitWidgetModelContext([
         ...(broadcastRequest.widgetModelContext ?? []),
         ...widgetModelContext,
-      ],
+      ]),
     });
   }, [
     broadcastRequest,
@@ -978,7 +993,7 @@ export function MultiModelPlaygroundCard({
   ]);
 
   useEffect(() => {
-    if (recoveryStatus !== "ready" || !deterministicExecutionRequest) {
+    if (recoveryStatus === "loading" || !deterministicExecutionRequest) {
       return;
     }
 
@@ -990,6 +1005,7 @@ export function MultiModelPlaygroundCard({
 
     lastExecutionRequestIdRef.current = deterministicExecutionRequest.id;
     if (deterministicExecutionRequest.id === restoredExecutionRequestId) return;
+    if (recoveryStatus === "failed") setRecoveryStatus("ready");
 
     const deterministicOptions =
       deterministicExecutionRequest.state === "output-error"
@@ -1115,21 +1131,6 @@ export function MultiModelPlaygroundCard({
       });
     },
     [drainModelContextQueue, sendMessage, outgoingSenderMetadata],
-  );
-
-  const handleModelContextUpdate = useCallback(
-    (
-      toolCallId: string,
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      },
-    ) => {
-      setModelContextQueue((previous) =>
-        upsertWidgetModelContextEntry(previous, toolCallId, context),
-      );
-    },
-    [],
   );
 
   // Provider stack wraps the WHOLE card body — header + trace branch +

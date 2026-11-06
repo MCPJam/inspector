@@ -586,9 +586,12 @@ export {
 // the debugger without sending it to their own exception tracker.
 export { isAuthenticatedRequestFailure } from "./oauth/state-machines/shared/response-error.js";
 // A proxy route's verdict that the server under test presented a certificate
-// Node.js would not accept: the debugger shows it as the server's and keeps it
-// out of the host's exception tracker.
-export { isTlsTrustFailure } from "./oauth-proxy-error.js";
+// Node.js would not accept, or could not be reached at all: the debugger shows
+// it as the server's and keeps it out of the host's exception tracker.
+export {
+  isTlsTrustFailure,
+  isUnreachableTargetFailure,
+} from "./oauth-proxy-error.js";
 export { stepFailureFindingKey } from "./oauth/state-machines/shared/step-failure-key.js";
 export {
   isResourceMetadataNotImplemented,
@@ -1108,6 +1111,12 @@ export type {
   PaginationTraversalMode,
   MrtrSupport,
 } from "./host-config/index.js";
+
+// Reviewed canonical ↔ native model ids (also at `@mcpjam/sdk/model-factory`).
+// Pure and browser-safe: the Inspector client canonicalizes picker rows with
+// the same rows the SDK sends.
+export { ANTHROPIC_NATIVE_MODEL_IDS } from "./model-native-ids.js";
+export type { NativeModelIdMapping } from "./model-native-ids.js";
 
 // Saved model selection (also at `@mcpjam/sdk/host-config`). Pure and
 // browser-safe.

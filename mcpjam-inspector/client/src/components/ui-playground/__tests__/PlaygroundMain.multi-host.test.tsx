@@ -896,6 +896,45 @@ describe("PlaygroundMain — multi-host render path", () => {
     }
   });
 
+  it("settles a restored host column whose host no longer exists", async () => {
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }];
+    multiHostFixture.hosts = { "h-A": makeHost("h-A", "Host A") };
+    multiHostFixture.selectedHostIds = ["h-A", "h-gone"];
+    window.history.replaceState({}, "", "/playground?comparisonRecovery=gone");
+    const key = "mcp-comparison-auth-v1:gone";
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({
+        version: 1,
+        id: "gone",
+        projectId: "local",
+        multiModelEnabled: false,
+        hostIds: ["h-A", "h-gone"],
+        selectedServers: [],
+        modelSelections: null,
+        clickedColumn: "h-gone",
+        continuationId: "c1",
+        columns: [
+          {
+            compareId: "h-gone",
+            order: 1,
+            kind: "host",
+            chatSessionId: "chat-gone",
+            hasMessages: true,
+          },
+        ],
+      }),
+    );
+    try {
+      render(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => expect(sessionStorage.getItem(key)).toBeNull());
+      expect(window.location.search).toBe("");
+    } finally {
+      sessionStorage.clear();
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
   it("keeps the saved comparison server set while other servers reconnect", () => {
     window.history.replaceState(
       {},

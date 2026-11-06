@@ -979,6 +979,42 @@ describe("comparison redirect restoration", () => {
     expect(mockUseChatSession.loadChatSession).toHaveBeenCalledTimes(1);
   });
 
+  it("runs the next turn as a fresh column after a failed restore", async () => {
+    let reject!: (error: Error) => void;
+    historyDetail.mockReturnValue(
+      new Promise((_, fail) => {
+        reject = fail;
+      }),
+    );
+    const workspace = { id: "group", order: 0, clientCount: 1 };
+    const turn = (id: number) => ({
+      id,
+      text: `turn ${id}`,
+      prependMessages: [],
+    });
+    const view = render(
+      <Harness browserWorkspace={workspace} broadcastRequest={turn(1)} />,
+    );
+    view.rerender(
+      <Harness browserWorkspace={workspace} broadcastRequest={turn(2)} />,
+    );
+    await act(async () => reject(new Error("missing history")));
+    // The turn sent while restoring is dropped with the alert.
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    view.rerender(
+      <Harness browserWorkspace={workspace} broadcastRequest={turn(3)} />,
+    );
+    await waitFor(() =>
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1),
+    );
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "turn 3" }),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(mockUseChatSession.loadChatSession).not.toHaveBeenCalled();
+  });
+
   it("shows a terminal column error when history fails", async () => {
     historyDetail.mockRejectedValue(new Error("missing history"));
     render(<Harness />);

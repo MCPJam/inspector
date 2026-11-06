@@ -515,6 +515,8 @@ export type ConvexAuthorizeResponse = {
     headers?: Record<string, string>;
     hasHeaders?: boolean;
     useOAuth?: boolean;
+    oauthProtocolMode?: string;
+    oauthProtocolVersion?: string;
     // Cross-App Access (XAA) discriminator + non-secret config, surfaced by the
     // hosted authorize endpoint. The confidential client secret + token endpoint
     // are resolved separately at mint time via the hardened reveal-secret path.
@@ -985,7 +987,11 @@ export async function authorizeProject(
   caller: ManagerCallerContext,
   bearerToken: string,
   projectId: string,
-): Promise<{ chatEnvironments: boolean }> {
+): Promise<{
+  chatEnvironments: boolean;
+  chatPreparation: boolean;
+  projectAccess?: { projectRole: "admin" | "editor" };
+}> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     throw new WebRouteError(
@@ -1016,9 +1022,21 @@ export async function authorizeProject(
       payload = await response.json();
     } catch {
       // Older successful authorization responses need not advertise features.
-      return { chatEnvironments: false };
+      return { chatEnvironments: false, chatPreparation: false };
     }
+    const projectRole =
+      payload && typeof payload === "object" && "projectRole" in payload
+        ? payload.projectRole
+        : undefined;
     return {
+      chatPreparation:
+        !!payload &&
+        typeof payload === "object" &&
+        "chatPreparationVersion" in payload &&
+        payload.chatPreparationVersion === 1,
+      ...(projectRole === "admin" || projectRole === "editor"
+        ? { projectAccess: { projectRole } }
+        : {}),
       chatEnvironments:
         !!payload &&
         typeof payload === "object" &&
@@ -1282,6 +1300,7 @@ function resolveEffectiveInitializePinsForServer(
     toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   },
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>,
+  serverConfig?: ConvexAuthorizeResponse["serverConfig"],
 ):
   | {
       clientInfo?: { name?: string; version?: string } & Record<
@@ -1299,10 +1318,19 @@ function resolveEffectiveInitializePinsForServer(
     }
   | undefined {
   const perServerPin = mcpProtocolVersionsByServerId?.[serverId];
+  // Reconstruct the browser's server-specific OAuth pin from fresh authority.
+  // Auto retains negotiation; its last resolved OAuth profile is not a pin.
+  const oauthProfilePin =
+    serverConfig?.useOAuth === true &&
+    serverConfig.oauthProtocolVersion === "2026-07-28" &&
+    (serverConfig.oauthProtocolMode === undefined ||
+      serverConfig.oauthProtocolMode === "2026-07-28")
+      ? "2026-07-28"
+      : undefined;
   const mcpProtocolVersion =
     typeof perServerPin === "string" && isKnownProtocolVersion(perServerPin)
       ? perServerPin
-      : initializePins?.mcpProtocolVersion;
+      : oauthProfilePin ?? initializePins?.mcpProtocolVersion;
   const supportedProtocolVersions =
     mcpProtocolVersion &&
     !isStatelessProtocolVersion(mcpProtocolVersion) &&
@@ -2100,6 +2128,7 @@ export async function createAuthorizedManager(
           serverId,
           options?.initializePins,
           options?.mcpProtocolVersionsByServerId,
+          auth.serverConfig,
         );
         // Per-server timeout: a pinned `requestTimeoutOverride` (threaded by the
         // swarm runner) wins over the batch-uniform host default. Guard against a

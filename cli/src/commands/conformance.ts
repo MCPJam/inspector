@@ -63,6 +63,11 @@ export interface ProtocolConformanceOptions {
   logProbeTool?: string;
   logProbeArgs?: string;
   logProbeLevel?: string;
+  logFilterTool?: string;
+  logFilterArgs?: string;
+  logFilterLevel?: string;
+  inputRequiredTool?: string;
+  inputRequiredArgs?: string;
 }
 
 export function registerProtocolCommands(program: Command): void {
@@ -140,6 +145,26 @@ export function registerProtocolCommands(program: Command): void {
     .option(
       "--log-probe-level <level>",
       `Log level the advice asks --log-probe-tool for: ${MCP_LOG_LEVELS.join(", ")}. Default: warning.`,
+    )
+    .option(
+      "--log-filter-tool <name>",
+      "Name of a tool the log level advice calls instead of --log-probe-tool. Same rules: it writes logs and is safe to call. Default: --log-probe-tool.",
+    )
+    .option(
+      "--log-filter-args <json>",
+      "Arguments for --log-filter-tool, as a JSON object. Default: {}.",
+    )
+    .option(
+      "--log-filter-level <level>",
+      `Log level the advice asks --log-filter-tool for: ${MCP_LOG_LEVELS.join(", ")}. Default: warning.`,
+    )
+    .option(
+      "--input-required-tool <name>",
+      "Name of a tool that asks the client for input and is safe to call. Lets the 2026-07-28 undeclared capability check run. Nothing is called without this.",
+    )
+    .option(
+      "--input-required-args <json>",
+      "Arguments for --input-required-tool, as a JSON object. Default: {}.",
     )
     .option(
       "--reporter <reporter>",
@@ -271,32 +296,35 @@ function resolveFixtures(
 }
 
 /**
- * The tool the logging probes may call. `--log-probe-args` and
- * `--log-probe-level` only describe that call, so either one without a tool
- * is a usage error instead of a flag that is silently ignored.
+ * A tool a check or advice may call, named by `--<prefix>-tool`.
+ * `--<prefix>-args` and, for the log tools, `--<prefix>-level` only describe
+ * that call, so either one without a tool is a usage error instead of a flag
+ * that is silently ignored.
  */
-function resolveLogProbe(
-  options: ProtocolConformanceOptions,
+function resolveToolProbe(
+  prefix: "log-probe" | "log-filter" | "input-required",
+  flags: { tool?: string; args?: string; level?: string },
+  argsLabel: string,
 ): MCPConformanceConfig["logProbe"] | undefined {
-  const toolName = options.logProbeTool?.trim();
+  const hasLevel = prefix !== "input-required";
+  const toolName = flags.tool?.trim();
   // A blank name is a mistake, not an omitted flag: without this the probe
-  // would be dropped and the logging check could not run.
-  if (options.logProbeTool !== undefined && !toolName) {
-    throw usageError("--log-probe-tool needs a tool name.");
+  // would be dropped and the check that calls it could not run.
+  if (flags.tool !== undefined && !toolName) {
+    throw usageError(`--${prefix}-tool needs a tool name.`);
   }
   if (!toolName) {
-    if (
-      options.logProbeArgs !== undefined ||
-      options.logProbeLevel !== undefined
-    ) {
+    if (flags.args !== undefined || flags.level !== undefined) {
       throw usageError(
-        "--log-probe-args and --log-probe-level need --log-probe-tool.",
+        hasLevel
+          ? `--${prefix}-args and --${prefix}-level need --${prefix}-tool.`
+          : `--${prefix}-args needs --${prefix}-tool.`,
       );
     }
     return undefined;
   }
 
-  const level = options.logProbeLevel?.trim();
+  const level = flags.level?.trim();
   if (
     level !== undefined &&
     !(MCP_LOG_LEVELS as readonly string[]).includes(level)
@@ -305,13 +333,48 @@ function resolveLogProbe(
       `Unknown log level: ${level}. Known: ${MCP_LOG_LEVELS.join(", ")}`,
     );
   }
-  const args = parseJsonRecord(options.logProbeArgs, "Log probe arguments");
+  const args = parseJsonRecord(flags.args, argsLabel);
 
   return {
     toolName,
     ...(args ? { arguments: args } : {}),
     ...(level ? { level: level as MCPLogLevel } : {}),
   };
+}
+
+/**
+ * The tools the logging check and the log level advice may call. The advice
+ * calls `--log-filter-tool` when it is set and never reads `--log-probe-level`
+ * then, so that pair is a usage error too.
+ */
+function resolveLogProbes(options: ProtocolConformanceOptions): {
+  logProbe?: MCPConformanceConfig["logProbe"];
+  logLevelFilteringProbe?: MCPConformanceConfig["logLevelFilteringProbe"];
+} {
+  const logProbe = resolveToolProbe(
+    "log-probe",
+    {
+      tool: options.logProbeTool,
+      args: options.logProbeArgs,
+      level: options.logProbeLevel,
+    },
+    "Log probe arguments",
+  );
+  const logLevelFilteringProbe = resolveToolProbe(
+    "log-filter",
+    {
+      tool: options.logFilterTool,
+      args: options.logFilterArgs,
+      level: options.logFilterLevel,
+    },
+    "Log filter arguments",
+  );
+  if (logLevelFilteringProbe && options.logProbeLevel !== undefined) {
+    throw usageError(
+      "--log-probe-level is not used when --log-filter-tool is set. Use --log-filter-level.",
+    );
+  }
+  return { logProbe, logLevelFilteringProbe };
 }
 
 function readFixturesFile(
@@ -436,7 +499,12 @@ export function buildConfig(
   }
 
   const fixtures = resolveFixtures(options);
-  const logProbe = resolveLogProbe(options);
+  const { logProbe, logLevelFilteringProbe } = resolveLogProbes(options);
+  const inputRequiredProbe = resolveToolProbe(
+    "input-required",
+    { tool: options.inputRequiredTool, args: options.inputRequiredArgs },
+    "Input required arguments",
+  );
 
   const protocolVersion = options.protocolVersion?.trim();
   if (
@@ -470,5 +538,7 @@ export function buildConfig(
       : {}),
     ...(fixtures ? { fixtures } : {}),
     ...(logProbe ? { logProbe } : {}),
+    ...(logLevelFilteringProbe ? { logLevelFilteringProbe } : {}),
+    ...(inputRequiredProbe ? { inputRequiredProbe } : {}),
   };
 }

@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "10.2.0",
+  "version": "10.3.0",
   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
   "type": "module",
   "main": "dist/index.js",
@@ -51,6 +51,11 @@
       "types": "./dist/skill-reference.d.ts",
       "import": "./dist/skill-reference.js",
       "default": "./dist/skill-reference.js"
+    },
+    "./model-native-ids": {
+      "types": "./dist/model-native-ids.d.ts",
+      "import": "./dist/model-native-ids.js",
+      "default": "./dist/model-native-ids.js"
     },
     "./model-factory": {
       "types": "./dist/model-factory.d.ts",

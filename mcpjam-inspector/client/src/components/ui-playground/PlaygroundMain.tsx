@@ -1,5 +1,6 @@
 import {
   hasComparisonAuthRecoveryRequest,
+  markComparisonColumnSettled,
   readComparisonAuthRecovery,
   registerComparisonLayout,
   clearComparisonAuthRecovery,
@@ -141,7 +142,6 @@ import {
   AlertDialogTitle,
 } from "@mcpjam/design-system/alert-dialog";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
-import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { toast } from "sonner";
 import { ModelDefinition } from "@/shared/types";
@@ -365,8 +365,7 @@ import {
   isDynamicTool,
   getToolInfo,
 } from "@/components/chat-v2/thread/thread-helpers";
-import type { WidgetModelContextEntry } from "@/shared/chat-v2";
-import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { useWidgetModelContextQueue } from "@/hooks/use-widget-model-context-queue";
 import { artifactStableKey } from "@/lib/artifact-urls";
 import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 
@@ -760,9 +759,8 @@ export function PlaygroundMain({
   );
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
-  const [modelContextQueue, setModelContextQueue] = useState<
-    WidgetModelContextEntry[]
-  >([]);
+  const [modelContextQueue, setModelContextQueue, handleModelContextUpdate] =
+    useWidgetModelContextQueue();
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
@@ -2409,6 +2407,29 @@ export function PlaygroundMain({
   const unavailableClients = clientResolutions.filter(
     (result) => result.status !== "ready",
   );
+  // A restored host column whose host no longer exists renders no card, so
+  // nothing else settles it. Only a definite answer counts: signed in, the
+  // list loaded, and the slot's query done without a host.
+  const absentRestoredHostIds =
+    comparisonRecovery && isConvexAuthenticated && !hostListLoading
+      ? clientResolutions.flatMap((resolution, index) =>
+          resolution.status === "unavailable" &&
+          !hostSlots[index].host &&
+          !hostSlots[index].isLoading
+            ? [resolution.compareId]
+            : [],
+        )
+      : [];
+  // A string, so the effect runs when the set changes, not on every render.
+  const absentRestoredHostKey = absentRestoredHostIds.join("\n");
+  useEffect(() => {
+    if (!absentRestoredHostKey) return;
+    for (const compareId of absentRestoredHostKey.split("\n"))
+      markComparisonColumnSettled(convexProjectId ?? "local", {
+        kind: "host",
+        compareId,
+      });
+  }, [absentRestoredHostKey, convexProjectId]);
 
   // When viewing a history session the transcript lives on the single chat
   // session; compare layout would override that render. Matches ChatTabV2.
@@ -4747,22 +4768,6 @@ export function PlaygroundMain({
     onStreamingChange?.(isRunBusy);
   }, [isRunBusy, onStreamingChange]);
 
-  // Handle model context updates from widgets (SEP-1865 ui/update-model-context)
-  const handleModelContextUpdate = useCallback(
-    (
-      toolCallId: string,
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      },
-    ) => {
-      setModelContextQueue((previous) =>
-        upsertWidgetModelContextEntry(previous, toolCallId, context),
-      );
-    },
-    [],
-  );
-
   const handleResetAllChats = useCallback(() => {
     composer.prepareForClearChat();
     // Clearing empties the transcript and mints a fresh `chatSessionId`, so the
@@ -4919,6 +4924,12 @@ export function PlaygroundMain({
       const next = setCompareCardEffort(compareCards, cardKey, effort);
       if (!next) return;
       compareSeedSourceRef.current[next.key] = cardKey;
+      // The replaced card unmounts, perhaps mid-restore; left unsettled, its
+      // saved column would bring the old effort back on the next reload.
+      markComparisonColumnSettled(convexProjectId ?? "local", {
+        kind: "model",
+        compareId: cardKey,
+      });
       setCompareSelections(next.selections);
       // A new effort is a new comparison key; the phone switcher follows
       // the card rather than falling back to the first one.
@@ -4926,7 +4937,7 @@ export function PlaygroundMain({
         current === `model:${cardKey}` ? `model:${next.key}` : current,
       );
     },
-    [compareCards, setCompareSelections],
+    [compareCards, convexProjectId, setCompareSelections],
   );
 
   // Efforts in the model menu: a model and its effort in one pick; in

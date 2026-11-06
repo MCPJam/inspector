@@ -358,6 +358,8 @@ import {
   cloneHostTemplateInput,
   gateMcpToolResultImageRenderingByModelVisibility,
 } from "./lib/client-config-v2";
+import { useOrgBoundTemplateSeed } from "@/hooks/use-org-bound-template-seed";
+import { withModelChoiceNotice } from "@/lib/org-bound-template-seed";
 import type { ProjectServerConfigDto } from "./lib/project-server-config";
 import {
   shouldQueryHostId,
@@ -1198,6 +1200,7 @@ function useTemplateVerifyDeepLink({
     projectId,
   });
   const { createHost } = useHostMutations();
+  const orgSeed = useOrgBoundTemplateSeed(projectId);
   const { canManage: canCreateHost, isLoading: roleLoading } =
     useCanManageProjectClients({ isAuthenticated, projectId });
   const claudeCodeEnabled = useClaudeCodeHostEnabledState();
@@ -1296,21 +1299,36 @@ function useTemplateVerifyDeepLink({
       toast.error(PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE);
       return;
     }
+    // Until the organization's key policy has answered, the template's hosted
+    // model would be saved as is.
+    if (!orgSeed.ready) return;
 
     handledRef.current = true;
+    const prepared = orgSeed.prepare(
+      cloneHostTemplateInput(
+        seedFromHostTemplate(template.id, { theme: themeMode }),
+        { themeMode },
+      ),
+      template.label,
+    );
+    if (!prepared) {
+      navigate(routePaths.hosts, { replace: true });
+      return;
+    }
 
     void (async () => {
       try {
-        const seed = cloneHostTemplateInput(
-          seedFromHostTemplate(template.id, { theme: themeMode }),
-          { themeMode },
-        );
         const { hostId } = await createHost({
           projectId,
           name: template.label,
-          input: { ...seed, serverIds: [] },
+          input: { ...prepared.input, serverIds: [] },
           applyDefaultSystemPrompt: true,
         });
+        if (prepared.needsModelChoice) {
+          toast.success(
+            withModelChoiceNotice(`Created ${template.label} client.`, prepared.needsModelChoice),
+          );
+        }
         navigate(buildHostVerifyLandingPath(hostId, requestedFocusTab), {
           replace: true,
         });
@@ -1338,6 +1356,8 @@ function useTemplateVerifyDeepLink({
     flagWaitExpired,
     roleLoading,
     canCreateHost,
+    orgSeed.ready,
+    orgSeed.prepare,
     themeMode,
     createHost,
     navigate,

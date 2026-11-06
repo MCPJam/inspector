@@ -1459,6 +1459,16 @@ export function ScenarioChatPage({
 
     return (
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        {session.payload.modelReadiness?.ready === false ? (
+          <div
+            role="alert"
+            className="border-b border-warning bg-muted px-4 py-3 text-sm"
+          >
+            This study's model cannot run with its current connection. Ask the
+            study owner or an editor to choose an approved organization model in
+            the study settings, then reload this link.
+          </div>
+        ) : null}
         <ScenarioUnreachableServersBanner serverNames={unreachableServerNames} />
         <ChatTabV2
           connectedOrConnectingServerConfigs={scenarioServerConfigs}
@@ -1503,12 +1513,16 @@ export function ScenarioChatPage({
           }}
           onOAuthRequired={handleOAuthRequired}
           scenarioComposerBlocked={
-            introGate.composerBlocked || isCheckingServerReachability
+            session.payload.modelReadiness?.ready === false ||
+            introGate.composerBlocked ||
+            isCheckingServerReachability
           }
           scenarioComposerBlockedReason={
-            introGate.composerBlocked
-              ? "Get started or authorize to send messages…"
-              : "Connecting to this session's tools…"
+            session.payload.modelReadiness?.ready === false
+              ? "Ask the study owner or an editor to repair the model…"
+              : introGate.composerBlocked
+                ? "Get started or authorize to send messages…"
+                : "Connecting to this session's tools…"
           }
           scenarioOptionalInventory={scenarioOptionalInventory}
           onEnableScenarioOptionalServer={handleEnableScenarioOptionalServer}

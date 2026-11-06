@@ -7,14 +7,18 @@ import {
   MCP_TASKS_READINESS_IDS,
   MCPTasksConformanceTest,
   RENAMED_MCP_TASKS_CHECK_IDS,
+  isKnownProtocolVersion,
   isMCPTasksWireError,
   isUnknownTaskError,
   type MCPClientManager,
+  type McpProtocolVersion,
   type MCPTasksCheckCategory,
   type MCPTasksCheckId,
+  type MCPTasksCheckOverrides,
   type MCPTasksConformanceConfig,
   type TasksSupport,
   scoreFromTasksResult,
+  validateTaskOverrides,
 } from "@mcpjam/sdk";
 import {
   renderConformanceForCli,
@@ -97,8 +101,10 @@ export interface TasksConformanceOptions extends SharedServerTargetOptions {
   adviceId?: string[];
   toolName?: string;
   toolArgs?: string;
+  checkOverrides?: string;
   pollTimeout?: number;
   inputResponses?: string;
+  protocolVersion?: string;
 }
 
 function collectInvalidEntries(
@@ -179,8 +185,27 @@ export function buildTasksConformanceConfig(
         )
       : undefined;
 
+  const checkOverrides = parseCheckOverrides(options.checkOverrides);
+
+  const trimmedProtocolVersion = options.protocolVersion?.trim();
+  let mcpProtocolVersion: McpProtocolVersion | undefined;
+  // A blank version is a mistake, not an omitted flag: dropping it would run
+  // unpinned instead of the version asked for.
+  if (trimmedProtocolVersion !== undefined) {
+    if (!isKnownProtocolVersion(trimmedProtocolVersion)) {
+      throw usageError(`Unknown --protocol-version: ${trimmedProtocolVersion}`);
+    }
+    if (!("url" in serverConfig) || !serverConfig.url) {
+      throw usageError(
+        "--protocol-version can only be used with an HTTP target (--url)."
+      );
+    }
+    mcpProtocolVersion = trimmedProtocolVersion;
+  }
+
   return {
     ...serverConfig,
+    ...(mcpProtocolVersion ? { mcpProtocolVersion } : {}),
     ...(resolvedCheckIds && resolvedCheckIds.length > 0
       ? { checkIds: resolvedCheckIds as MCPTasksConformanceConfig["checkIds"] }
       : {}),
@@ -194,6 +219,9 @@ export function buildTasksConformanceConfig(
     ...(options.toolArgs
       ? { toolArguments: parseJsonRecord(options.toolArgs, "--tool-args") }
       : {}),
+    ...(checkOverrides && Object.keys(checkOverrides).length > 0
+      ? { checkOverrides }
+      : {}),
     ...(options.pollTimeout ? { pollTimeoutMs: options.pollTimeout } : {}),
     ...(options.inputResponses
       ? {
@@ -204,6 +232,27 @@ export function buildTasksConformanceConfig(
         }
       : {}),
   };
+}
+
+/**
+ * `--check-overrides`: a different tool for some checks, keyed by check id.
+ * Checked with the SDK's own rule here, so a check that calls no tool, an
+ * unknown field or a blank tool name is a usage error before anything runs.
+ */
+function parseCheckOverrides(
+  value: string | undefined
+): MCPTasksCheckOverrides | undefined {
+  const parsed = parseJsonRecord(value, "--check-overrides");
+  if (!parsed) return undefined;
+  try {
+    return validateTaskOverrides(parsed);
+  } catch (error) {
+    throw usageError(
+      `--check-overrides: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
 }
 
 export interface TaskVerbOptions extends SharedServerTargetOptions {
@@ -774,6 +823,10 @@ export function registerTasksCommands(program: Command): void {
       )
       .option("--tool-args <json>", "Tool arguments as a JSON object")
       .option(
+        "--check-overrides <json>",
+        'A different tool for some checks, keyed by check id: {"tasks-cancel-ack-shape":{"toolName":"slow_job","toolArguments":{"seconds":5}}}. Checks left out use --tool-name and --tool-args.'
+      )
+      .option(
         "--input-responses <json>",
         'Responses to submit when the probed task reports input_required, keyed by inputRequests key: {"name":{"result":{"action":"accept","content":{"name":"Ada"}}}}. Without it the run stops as soon as the task parks on input_required, and the tasks/update acknowledgement check is not applicable.'
       )
@@ -782,6 +835,10 @@ export function registerTasksCommands(program: Command): void {
         "How long to poll a created task for a terminal status",
         (value: string) => parsePositiveInteger(value, "Poll timeout"),
         30_000
+      )
+      .option(
+        "--protocol-version <version>",
+        "Pin the MCP protocol version for the conformance connection (e.g. 2026-07-28). HTTP targets only."
       )
       .option(
         "--reporter <reporter>",

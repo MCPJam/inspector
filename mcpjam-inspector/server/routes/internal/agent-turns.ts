@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import { internalServiceAuthMiddleware } from "../../middleware/internal-service-auth.js";
+import { refuseDoorbellWhileDraining } from "../../services/lifecycle/admission.js";
+import { serverDrain } from "../../services/lifecycle/drain.js";
 import { getSelfFetch } from "../../utils/self-app.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 import {
@@ -71,8 +73,9 @@ export async function runDurableAgentPass() {
 }
 const router = new Hono();
 router.use("*", internalServiceAuthMiddleware());
+router.use("*", refuseDoorbellWhileDraining());
 router.post("/dispatch", (c) => {
-  void runDurableAgentPass().catch((error) =>
+  void serverDrain.track("doorbell", runDurableAgentPass()).catch((error) =>
     reportRouteFailure("Durable agent dispatch failed", error, {
       source: "agent-turns.dispatch",
       hop: "mcpjam_internal",

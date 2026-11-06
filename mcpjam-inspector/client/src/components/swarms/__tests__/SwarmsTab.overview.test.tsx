@@ -255,6 +255,14 @@ let overviewThrows = false;
 let waveSignalsData: SwarmWaveSignals | undefined;
 
 vi.mock("convex/react", () => ({
+  useConvex: () => ({
+    query: async (_reference: unknown, { runIds }: { runIds: string[] }) =>
+      runIds.map((runId) => ({
+        journeyRefId: overviewData?.runs.find((run) => run.runId === runId)
+          ?.journeyRefId,
+        problems: [],
+      })),
+  }),
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
     queryCalls.push({ name, args });

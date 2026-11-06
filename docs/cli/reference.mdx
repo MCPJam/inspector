@@ -419,7 +419,7 @@ For a cloud authorization server, expose the inspector origin through a tunnel a
 | `--step-timeout <ms>` | No | `30000` | Per-step timeout |
 | `--verify-tools` | No | | After OAuth, list tools |
 | `--verify-call-tool <name>` | No | | Also call the named tool |
-| `--conformance-checks` | No | | Run additional negative OAuth checks, including DCR redirect URI policy and redirect-mismatch probes |
+| `--conformance-checks` | No | | Deprecated. The negative OAuth checks (DCR redirect URI policy, redirect-mismatch probes and more) now always run; this flag is accepted and ignored |
 | `--advice-id <id>` | No | all | Restrict advice to one or more advice IDs. An unknown ID is an error that lists the valid ones |
 | `--credentials-out <path>` | No | | Write OAuth credentials to file (mode 0600); stdout has secrets redacted |
 | `--print-url` | No | | Print consent URL to stderr (interactive only) |
@@ -474,6 +474,11 @@ mode will dial a link-local or cloud-metadata address.
 | `--category <category>` | No | all | Restrict checks to one or more categories |
 | `--check-id <id>` | No | all | Restrict checks to one or more check IDs |
 | `--advice-id <id>` | No | all | Restrict advice to one or more advice IDs. An unknown ID is an error that lists the valid ones |
+| `--log-filter-tool <name>` | No | `--log-probe-tool` | Tool the log level advice calls instead of `--log-probe-tool`. It must write logs and be safe to call |
+| `--log-filter-args <json>` | No | `{}` | Arguments for `--log-filter-tool`, as a JSON object |
+| `--log-filter-level <level>` | No | `warning` | Log level the advice asks `--log-filter-tool` for |
+| `--input-required-tool <name>` | No | | Tool that asks the client for input and is safe to call. Lets the 2026-07-28 undeclared capability check run |
+| `--input-required-args <json>` | No | `{}` | Arguments for `--input-required-tool`, as a JSON object |
 | `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
 Use `--format json|human` for raw output and `--reporter json-summary|junit-xml` for CI reports.
@@ -1348,6 +1353,8 @@ Start a hosted readiness run that grades a saved server against OpenAI's app-dir
 | `--lazy-auth-public-tool <name>` | The public tool the probe calls first. Implies `--lazy-auth-probe`. Up to 128 characters, and it must name a different tool than `--lazy-auth-tool`. |
 
 The probe never sends credentials, not even an `--access-token` or `--credentials-file` passed to `readiness check`. Those still apply to the rest of the run.
+
+Readiness probes invoke tools on the target server with test inputs, which can be empty. `readOnlyHint` is a server-provided hint, not a guarantee against side effects. Use a trusted test server and disposable data; authenticated step-up probes may execute an operation when the supplied credential already grants its scope.
 
 ```bash
 mcpjam readiness check claude https://your-server.com/mcp \
@@ -2990,5 +2997,3 @@ When `MCPJAM_API_KEY` is set to an active `sk_` key, `logout` prints a warning t
 | `130` | Interrupted by a signal (`tasks watch` aborted, or a second Ctrl-C during `tunnel` shutdown) |
 
 Codes above `2` are reserved for outcomes a script should act on *differently* — not merely for naming a failure. See [MCP Tasks](/cli/tasks#watch-exit-codes) for the full `tasks watch` mapping.
-
-Readiness probes invoke tools on the target server with test inputs, which can be empty. `readOnlyHint` is a server-provided hint, not a guarantee against side effects. Use a trusted test server and disposable data; authenticated step-up probes may execute an operation when the supplied credential already grants its scope.

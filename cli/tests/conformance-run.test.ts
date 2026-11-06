@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import test from "node:test";
+import { OAuthConformanceTest } from "@mcpjam/sdk";
 import { Command } from "commander";
 import {
+  buildOAuthConfig,
   normalizeConformanceRunSuites,
   registerConformanceRunCommand,
+  serverTargetOptions,
 } from "../src/commands/conformance-run.js";
+import { parseServerConfig } from "../src/lib/server-config.js";
 import { CliError } from "../src/lib/output.js";
 import { main } from "../src/index.js";
 
@@ -64,6 +68,43 @@ test("conformance run rejects an unknown suite", () => {
     () => normalizeConformanceRunSuites(["directory"]),
     (error) =>
       error instanceof CliError && error.message.includes("Unknown suite"),
+  );
+});
+
+test("conformance run --suite oauth runs the OAuth negative checks", () => {
+  const config = buildOAuthConfig(
+    { url: "https://example.com/mcp" },
+    {
+      oauthStrategy: "client_credentials",
+      clientId: "client",
+      clientSecret: "secret",
+    },
+  );
+
+  assert.equal(config.oauthConformanceChecks, true);
+  assert.equal(config.allowPrivateNetwork, true);
+  // The SDK validates in the constructor: a config it rejects never reaches
+  // a single check, and the run reports no OAuth result at all.
+  assert.doesNotThrow(() => new OAuthConformanceTest(config));
+});
+
+test("conformance run --suite oauth keeps the client_credentials client out of the server config", () => {
+  const options = {
+    url: "https://example.com/mcp",
+    oauthStrategy: "client_credentials",
+    clientId: "client",
+    clientSecret: "secret",
+  };
+
+  assert.doesNotThrow(() =>
+    parseServerConfig(serverTargetOptions(options, ["oauth"])),
+  );
+  // Without the OAuth suite they are still a refresh-token login, and
+  // `--refresh-token` is still required.
+  assert.throws(
+    () => parseServerConfig(serverTargetOptions(options, ["protocol"])),
+    (error) =>
+      error instanceof CliError && error.message.includes("--refresh-token"),
   );
 });
 

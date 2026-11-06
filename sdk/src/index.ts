@@ -1214,6 +1214,9 @@ export type {
 // native one). Also on `@mcpjam/sdk/model-factory`.
 export {
   ANTHROPIC_NATIVE_MODEL_IDS,
+  OPENAI_NATIVE_MODEL_IDS,
+  GOOGLE_NATIVE_MODEL_IDS,
+  nativeModelIdFor,
   anthropicNativeModelId,
 } from "./model-native-ids.js";
 export type { NativeModelIdMapping } from "./model-native-ids.js";
@@ -1223,6 +1226,15 @@ export type { NativeModelIdMapping } from "./model-native-ids.js";
 // pulling the Node graph in; exported here so a Node consumer building its own
 // request doesn't re-derive the version thresholds locally.
 export { modelRejectsTemperature } from "./model-sampling-support.js";
+
+// MCP tool names a provider rejects (`cart.add`), aliased on the wire only.
+export {
+  createToolNameAliases,
+  renameToolNamePart,
+  renameToolNamesInMessages,
+  withProviderSafeToolNames,
+} from "./provider-tool-names.js";
+export type { ToolNameAliases } from "./provider-tool-names.js";
 
 // Widget helpers (for injecting OpenAI compat runtime into MCP App HTML)
 export {
@@ -1271,8 +1283,11 @@ export {
 export type { OAuthProxyRequest, OAuthProxyResponse } from "./oauth-proxy.js";
 export {
   isTlsTrustFailure,
+  isUnreachableTargetFailure,
   TLS_TRUST_FAILURE,
   tlsTrustFailure,
+  UNREACHABLE_TARGET_FAILURE,
+  unreachableTargetFailure,
 } from "./oauth-proxy-error.js";
 
 // Skill reference (SKILL.md content for agent brief generation)

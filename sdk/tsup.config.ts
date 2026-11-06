@@ -17,6 +17,7 @@ export default defineConfig({
     "src/operations.ts",
     "src/skill-reference.ts",
     "src/model-factory.ts",
+    "src/model-native-ids.ts",
     "src/matchers.ts",
     "src/assertions/index.ts",
     "src/predicates/index.ts",
