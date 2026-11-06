@@ -11,6 +11,10 @@ import type { CustomProvider } from "@mcpjam/sdk/browser";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import {
+  AZURE_DEPLOYMENT_REQUIRED_REASON,
+  azureDeploymentName,
+} from "@/shared/azure-deployment";
+import {
   isUsableOrgConnection,
   type OrgAiKeyPolicyView,
   type OrgAiReadinessView,
@@ -251,7 +255,8 @@ export function buildAvailableModelsFromOrgConfig(
   };
   // Azure OpenAI runs on deployments the admin named. When the org lists its
   // deployment names, those replace the static `azure/…` rows, which name no
-  // deployment (see `azureDeploymentModels`).
+  // deployment (see `azureDeploymentModels`). Without any, the static rows
+  // stay visible but locked, saying where to add one.
   const azureConfig = orgProviderByKey.get("azure");
   const azureDeployments =
     azureConfig && availableProviderKeys.has("azure")
@@ -263,7 +268,14 @@ export function buildAvailableModelsFromOrgConfig(
     return availableProviderKeys.has(m.provider);
   }).map((m) => {
     const provider = orgProviderByKey.get(m.provider);
-    return provider ? { ...m, orgProvider: orgStamp(provider) } : m;
+    const row = provider ? { ...m, orgProvider: orgStamp(provider) } : m;
+    return row.provider === "azure" && !azureDeploymentName({ modelId: row.id })
+      ? {
+          ...row,
+          disabled: true,
+          disabledReason: AZURE_DEPLOYMENT_REQUIRED_REASON,
+        }
+      : row;
   });
   const models: ModelDefinition[] = [...orgKeyModels, ...azureDeployments];
 

@@ -4,6 +4,9 @@
  * of a launch can't run on the organization's providers. The backend refuses
  * the same launch; this lets the sheet say so before Start.
  *
+ * Also, with or without the policy: an Azure OpenAI model saved without a
+ * deployment, which no attempt can run.
+ *
  * Kept apart from `suite-run-preflight.tsx`, which composes these problems
  * with the server and environment checks.
  */
@@ -19,6 +22,12 @@ import {
   isRuntimeChosenModelSentinel,
 } from "@/shared/model-provider";
 import { isMCPJamProvidedModel } from "@/shared/types";
+import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
+import {
+  AZURE_PROVIDER_KEY,
+  azureDeploymentMissingReason,
+  azureDeploymentName,
+} from "@/shared/azure-deployment";
 import {
   harnessDisplayName,
   harnessNoRunnableModelReason,
@@ -45,6 +54,7 @@ export type PreflightSelection = {
   modelId?: string;
   source?: string;
   connectionRef?: { kind?: string; id?: string } | null;
+  nativeModelId?: string;
 };
 
 export type PreflightHost = {
@@ -220,24 +230,83 @@ function orgKeyHarnessProblem(
   return `${label} can't run on ${harnessDisplayName(harnessId)}. ${reason}`;
 }
 
+/** An explicit judge, read as the model it grades with. */
+function judgePreflightModel(
+  judge: Extract<PreflightJudge, { kind: "explicit" }>,
+): PreflightModel {
+  return {
+    model: judge.modelId,
+    provider:
+      classifyModelIdProvider(judge.modelId)?.provider ??
+      judge.modelId.split("/")[0] ??
+      "",
+    selection: judge.selection ?? { source: "hosted" },
+  };
+}
+
 function orgKeyJudgeProblem(
   orgConfig: PreflightOrgConfig,
   judge: PreflightJudge,
 ): string | null {
   // No default judge runs on the organization's keys: a person picks one.
   if (judge.kind === "default") return CHOOSE_ORG_JUDGE_MODEL;
-  return orgKeyModelProblem(
-    orgConfig,
-    {
-      model: judge.modelId,
-      provider:
-        classifyModelIdProvider(judge.modelId)?.provider ??
-        judge.modelId.split("/")[0] ??
-        "",
-      selection: judge.selection ?? { source: "hosted" },
-    },
-    "The judge",
+  return orgKeyModelProblem(orgConfig, judgePreflightModel(judge), "The judge");
+}
+
+/**
+ * An Azure OpenAI model that runs on the organization's connection without a
+ * deployment: Azure runs only the deployments an admin named, so every
+ * attempt would be refused. A legacy or unlabelled row runs there too when
+ * the organization has an Azure connection, and its saved id is what the
+ * runner sends.
+ */
+function azureDeploymentProblem(
+  orgConfig: PreflightOrgConfig,
+  model: PreflightModel,
+): string | null {
+  if (model.selectionKnown === false) return null;
+  if (orgModelVendor(orgConfig, model) !== AZURE_PROVIDER_KEY) return null;
+  const orgSelection =
+    model.selection?.source === "org" ? model.selection : undefined;
+  if (
+    !orgSelection &&
+    !orgConfig.providers.some(
+      (provider) =>
+        provider.providerKey === AZURE_PROVIDER_KEY && provider.enabled,
+    )
+  ) {
+    return null;
+  }
+  return azureDeploymentName({
+    modelId: orgSelection?.modelId ?? model.model,
+    nativeModelId: orgSelection?.nativeModelId,
+  })
+    ? null
+    : azureDeploymentMissingReason(model.model);
+}
+
+/**
+ * Every problem with the organization's AI configuration a launch can't
+ * start with, once each: under the key policy, {@link orgKeyProblemsOf}; with
+ * or without it, an Azure model or judge saved without a deployment.
+ */
+export function orgConfigProblemsOf(
+  orgConfig: PreflightOrgConfig,
+  models: readonly PreflightModel[],
+  judge?: PreflightJudge,
+): string[] {
+  const problems = new Set(
+    orgRequiresOwnKeys(orgConfig)
+      ? orgKeyProblemsOf(orgConfig, models, judge)
+      : [],
   );
+  const judged =
+    judge?.kind === "explicit" ? [...models, judgePreflightModel(judge)] : models;
+  for (const model of judged) {
+    const problem = azureDeploymentProblem(orgConfig, model);
+    if (problem) problems.add(problem);
+  }
+  return [...problems];
 }
 
 /**
