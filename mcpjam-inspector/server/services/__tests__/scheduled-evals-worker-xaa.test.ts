@@ -53,6 +53,7 @@ vi.mock("../evals/compat-runtime.js", () => ({
 }));
 
 import { executeClaimedRun } from "../scheduled-evals-worker";
+import { loadSuiteHostConfig } from "../evals/compat-runtime.js";
 
 const CLAIM = {
   triggerId: "trig-xaa",
@@ -79,8 +80,16 @@ function decodeJwt(token: string) {
 describe("scheduled run against an XAA server", () => {
   const signingKey = generateKeyPairSync("rsa", { modulusLength: 2048 });
   let backendCalls: string[];
+  let serverConfig: Record<string, unknown>;
 
   beforeEach(() => {
+    serverConfig = {
+      transportType: "http",
+      url: RESOURCE,
+      authMethod: "xaa",
+      registrationMode: "cimd",
+      xaaAuthzIssuer: AUTHZ_ISSUER,
+    };
     vi.stubEnv("CONVEX_URL", "https://convex.test");
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
@@ -107,13 +116,7 @@ describe("scheduled run against an XAA server", () => {
                 role: "member",
                 accessLevel: "project_member",
                 permissions: { chatOnly: false },
-                serverConfig: {
-                  transportType: "http",
-                  url: RESOURCE,
-                  authMethod: "xaa",
-                  registrationMode: "cimd",
-                  xaaAuthzIssuer: AUTHZ_ISSUER,
-                },
+                serverConfig,
               },
             },
           });
@@ -187,6 +190,30 @@ describe("scheduled run against an XAA server", () => {
       String(vi.mocked(fetch).mock.calls.at(-1)![1]!.body),
     );
     expect(completion).toMatchObject({ ok: true, runId: "run-xaa" });
+  });
+
+  it("refuses an unregistered auto server under the host's enterprise policy", async () => {
+    vi.mocked(loadSuiteHostConfig).mockResolvedValueOnce({
+      mcpProfile: {
+        extensions: { "com.mcpjam/enterprise-managed-auth": { idp: "mcpjam" } },
+      },
+    });
+    serverConfig = { transportType: "http", url: RESOURCE, authMethod: "auto" };
+
+    await executeClaimedRun(CLAIM);
+
+    // The policy makes the server XAA, and with no client registration it is
+    // refused before any mint, rather than connected through discover.
+    expect(executeOAuthProxyMock).not.toHaveBeenCalled();
+    expect(mcpClientManagerMock).not.toHaveBeenCalled();
+    expect(prepareEvalRun).not.toHaveBeenCalled();
+    const completion = JSON.parse(
+      String(vi.mocked(fetch).mock.calls.at(-1)![1]!.body),
+    );
+    expect(completion.ok).toBe(false);
+    expect(completion.failureReason).toContain(
+      "has no XAA client registration configured",
+    );
   });
 
   it("fails the run closed when the deployment configures no public URL", async () => {

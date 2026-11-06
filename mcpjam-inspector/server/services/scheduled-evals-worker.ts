@@ -254,11 +254,13 @@ export async function executeClaimedRun(
     // does an API launch of the same suite, so a monitor takes the auth path
     // a real run takes, and an unconfigured `auto` server is refused rather
     // than connected through the discover path, on the schedule creator's own
-    // OAuth grant when one is stored.
+    // OAuth grant when one is stored. A failed read stops this window's run:
+    // the default host it would fall back to carries no policy.
     const hostConfig = await loadSuiteHostConfig(
       convex,
       claimed.suiteId,
       selection.resolvedEnvironment?.hostId,
+      { failClosed: true },
     );
 
     // Empty caller context = plain-JWT caller (locked by caller-context

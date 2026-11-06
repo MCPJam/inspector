@@ -201,10 +201,13 @@ describe("executeClaimedRun connection", () => {
 
     await executeClaimedRun(CLAIM);
 
+    // Failing closed: a suite config that cannot be read must stop the run,
+    // not fall back to the default host and connect with no policy.
     expect(loadSuiteHostConfig).toHaveBeenCalledWith(
       { bearer: "bearer" },
       "suite-1",
       undefined,
+      { failClosed: true },
     );
     expect(connectOptions()).toMatchObject({ xaaPolicy: { idp: "mcpjam" } });
   });
@@ -223,8 +226,23 @@ describe("executeClaimedRun connection", () => {
       { bearer: "bearer" },
       "suite-1",
       "host-env",
+      { failClosed: true },
     );
     expect(connectOptions()).toMatchObject({ xaaPolicy: { idp: "mcpjam" } });
+  });
+
+  it("stops the run when the host settings cannot be read", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    loadSuiteHostConfig.mockRejectedValue(
+      new Error("Couldn't load this suite's host settings"),
+    );
+
+    await executeClaimedRun(CLAIM);
+
+    expect(createAuthorizedManager).not.toHaveBeenCalled();
+    expect(prepareEvalRun).not.toHaveBeenCalled();
+    const [, init] = fetchMock.mock.calls.at(-1)!;
+    expect(JSON.parse(init.body)).toMatchObject({ ok: false });
   });
 
   it("connects with no policy when the host sets none", async () => {

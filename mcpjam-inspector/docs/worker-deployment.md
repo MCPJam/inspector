@@ -84,7 +84,7 @@ falling back to OAuth. Whether a loop applies that policy:
 
 | Loop | Host policy | Why |
 | --- | --- | --- |
-| Scheduled eval runs | Applied, from the host the run executes under: the pinned environment's host, else the suite's own | An API launch of the same suite applies it, and a monitor should take the auth path a real run takes. Without it, an unconfigured `auto` server would connect through the discover path instead, with the schedule creator's own OAuth grant if they have one. |
+| Scheduled eval runs | Applied, from the host the run executes under: the pinned environment's host, else the suite's own. If those settings cannot be read, that window's run stops instead of falling back to the default host, which has no policy | An API launch of the same suite applies it, and a monitor should take the auth path a real run takes. Without it, an unconfigured `auto` server would connect through the discover path instead, with the schedule creator's own OAuth grant if they have one. |
 | GitHub PR checks | Not applied | The one server is a throwaway row the check creates for the PR build, with no client registration. The policy could only refuse it, and registering it would hand a customer's client credentials to the PR's code. |
 | Connector Bench runs | Not applied | Cleanup connects after every cell, under no cell's host, and has to reach what the cells created, so every connection uses the measured server's own auth settings. |
 
