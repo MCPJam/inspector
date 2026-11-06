@@ -50,6 +50,9 @@ import { useAvailableModels } from "@/hooks/use-available-models";
 import { RequiredMark } from "@/components/shared/required-mark";
 import { toast } from "@/lib/toast";
 import { EvalTargetMatrix } from "./eval-target-matrix";
+import { EvalCrumbBar } from "./evals-header";
+import type { EvalCrumb } from "./nav/eval-nav-crumbs";
+import { useEvaluateNavEnabled } from "@/hooks/useEvaluateNavEnabled";
 import type { HostAttachmentDraft } from "../evals/client-attachments-editor";
 import {
   nextUnusedSuiteName,
@@ -106,6 +109,12 @@ type CreateSuitePageProps = {
   existingSuiteNames?: readonly string[];
 };
 
+const NAV_CRUMBS: readonly EvalCrumb[] = [
+  { label: "Evaluate", to: { type: "list" } },
+  { label: "New suite" },
+];
+const NAV_HINT = "Choose a default client and model to evaluate with.";
+
 export function CreateSuitePage({
   onCancel,
   onSubmit,
@@ -120,6 +129,7 @@ export function CreateSuitePage({
   const [name, setName] = useState(seededName);
   const nameEditedRef = useRef(false);
   const [isSaving, setIsSaving] = useState(false);
+  const navEnabled = useEvaluateNavEnabled() === true;
   const [target, setTarget] =
     useState<EnvironmentComposerState>(emptyComposerState);
 
@@ -411,29 +421,33 @@ export function CreateSuitePage({
       className="flex h-full min-h-0 flex-col"
       data-testid="create-suite-page"
     >
-      <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
-        <Breadcrumb className="min-w-0">
-          <BreadcrumbList className="min-w-0 flex-nowrap">
-            <BreadcrumbItem>
-              <BreadcrumbLink asChild>
-                <button
-                  type="button"
-                  className="inline-flex border-0 bg-transparent p-0 font-medium text-muted-foreground hover:text-foreground"
-                  onClick={onCancel}
-                >
-                  Evaluate
-                </button>
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage className="font-semibold">
-                New suite
-              </BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
-      </div>
+      {navEnabled ? (
+        <EvalCrumbBar crumbs={NAV_CRUMBS} />
+      ) : (
+        <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
+          <Breadcrumb className="min-w-0">
+            <BreadcrumbList className="min-w-0 flex-nowrap">
+              <BreadcrumbItem>
+                <BreadcrumbLink asChild>
+                  <button
+                    type="button"
+                    className="inline-flex border-0 bg-transparent p-0 font-medium text-muted-foreground hover:text-foreground"
+                    onClick={onCancel}
+                  >
+                    Evaluate
+                  </button>
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage className="font-semibold">
+                  New suite
+                </BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-background">
         <div className="mx-auto flex max-w-2xl flex-col gap-8 px-6 py-8 sm:px-8">
@@ -499,6 +513,7 @@ export function CreateSuitePage({
                     maxTargets={MAX_SUITE_ENVIRONMENTS}
                     projectId={projectId}
                     disabled={isSaving}
+                    hint={navEnabled ? NAV_HINT : undefined}
                     modelsEditable={composeCapable}
                     onHostsChange={handleHostsChange}
                     onModelSelectionChange={handleModelSelectionChange}

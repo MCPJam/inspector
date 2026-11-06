@@ -22,8 +22,8 @@ const withPages = (Page: typeof StubPage): EvalNavPages => ({
 describe("EVAL_NAV_PAGES", () => {
   it("has one entry per page kind, none with a page yet", () => {
     expect(EVAL_NAV_PAGES).toEqual({
-      list: { analyticsPage: "suites", Page: null },
-      "evaluate-runs": { analyticsPage: "runs", Page: null },
+      list: { analyticsPage: "suites", Page: expect.any(Function) },
+      "evaluate-runs": { analyticsPage: "runs", Page: expect.any(Function) },
       "suite-overview": { analyticsPage: "suite", Page: null },
       "suite-settings": { analyticsPage: "suite_settings", Page: null },
       "case-new": { analyticsPage: "new_test_case", Page: null },

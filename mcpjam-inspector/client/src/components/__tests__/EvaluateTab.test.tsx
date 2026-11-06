@@ -705,6 +705,7 @@ describe("EvaluateTab", () => {
     );
 
     it("keeps the landing and counts it as the suites page", () => {
+      mocks.evaluateFlag.enabled = false;
       mocks.route.current = { type: "list" };
       render(<EvaluateTab projectId="ws-1" />);
       expect(screen.getByTestId("evals-runs-landing")).toBeInTheDocument();
@@ -741,16 +742,15 @@ describe("EvaluateTab", () => {
       });
     });
 
-    it("is on for both surfaces once the flag is on", async () => {
+    it("is on for both surfaces once the flag is on", () => {
       mocks.evaluateFlag.enabled = true;
-      mocks.route.current = { type: "list" };
-      const user = userEvent.setup();
+      mocks.route.current = { type: "evaluate-runs" };
       render(<EvaluateTab projectId="ws-1" />);
-      await user.click(screen.getByRole("button", { name: /^overview$/i }));
 
       expect(mocks.projectRunsTable.mock.calls.at(-1)?.[0]).toMatchObject({
         projectId: "ws-1",
         decisionSummaryEnabled: true,
+        navLanding: true,
       });
     });
 
@@ -772,6 +772,40 @@ describe("EvaluateTab", () => {
         evaluateDecisionSummary: true,
       });
     });
+  });
+
+  describe("the Nav landing", () => {
+    it.each([{ type: "list" }, { type: "evaluate-runs" }] as const)(
+      "renders the new landing at $type with the flag on",
+      (route) => {
+        mocks.evaluateFlag.enabled = true;
+        mocks.route.current = route;
+        render(<EvaluateTab projectId="ws-1" />);
+        expect(
+          screen.getByRole("button", { name: "More options" }),
+        ).toBeInTheDocument();
+        expect(screen.queryByTestId("evals-suites-overview")).toBeNull();
+        expect(
+          screen.queryByRole("button", { name: /^overview$/i }),
+        ).toBeNull();
+      },
+    );
+
+    it.each([{ type: "list" }, { type: "evaluate-runs" }] as const)(
+      "renders today's landing at $type with the flag off",
+      (route) => {
+        mocks.evaluateFlag.enabled = false;
+        mocks.route.current = route;
+        render(<EvaluateTab projectId="ws-1" />);
+        expect(screen.getByTestId("evals-runs-landing")).toBeInTheDocument();
+        expect(
+          screen.getByRole("button", { name: /^overview$/i }),
+        ).toHaveAttribute("aria-current", "page");
+        expect(
+          screen.queryByRole("button", { name: "More options" }),
+        ).toBeNull();
+      },
+    );
   });
 
   it("switches between Suites and Runs via the header tabs", async () => {
