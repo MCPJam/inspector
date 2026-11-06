@@ -109,6 +109,11 @@ import {
   isCiOwnedSuite,
 } from "@/lib/evals/is-ci-owned-suite";
 import { agentRunIterations } from "./evaluate/suite-run-iterations";
+import {
+  buildEvalNavPageServices,
+  EvalNavPageServicesProvider,
+  useEvalNavLaunchSources,
+} from "./evaluate/nav/eval-nav-page-services";
 
 /** Cap the agent snapshot's suite list — state overview, not a data dump. */
 const AGENT_SNAPSHOT_MAX_SUITES = 30;
@@ -1672,6 +1677,47 @@ function EvaluateTabContent({
     );
   };
 
+  const navLaunchSources = useEvalNavLaunchSources(projectId ?? null);
+  const navPageServices = useMemo(
+    () =>
+      buildEvalNavPageServices({
+        rerunWithQuota: handleRerunWithQuota,
+        deleteTestCasesBatch: handleDeleteTestCasesBatch,
+        handlers,
+        canDeleteRuns,
+        canDeleteArtifact,
+        evalRunsDisabledReason,
+        isDirectGuest,
+        projectServers,
+        connectedServerNames,
+        ensureServersReady,
+        openCreateSuite: handleOpenCreateSuite,
+        evalServer: handleEvalServer,
+        showQuickstart,
+        quickstartRunning: isQuickstartRunning,
+        runQuickstart: handleExcalidrawQuickstart,
+        launchSources: navLaunchSources,
+      }),
+    [
+      handleRerunWithQuota,
+      handleDeleteTestCasesBatch,
+      handlers,
+      canDeleteRuns,
+      canDeleteArtifact,
+      evalRunsDisabledReason,
+      isDirectGuest,
+      projectServers,
+      connectedServerNames,
+      ensureServersReady,
+      handleOpenCreateSuite,
+      handleEvalServer,
+      showQuickstart,
+      isQuickstartRunning,
+      handleExcalidrawQuickstart,
+      navLaunchSources,
+    ],
+  );
+
   const renderPlaygroundBody = () => renderSuitesBrowsePanel();
 
   return createElement(
@@ -1771,10 +1817,12 @@ function EvaluateTabContent({
           <LaunchedCaseJudge key={runId} runId={runId} />
         ))}
         {navResolution.kind === "page" ? (
-          <navResolution.Page
-            route={navResolution.route}
-            projectId={projectId ?? null}
-          />
+          <EvalNavPageServicesProvider value={navPageServices}>
+            <navResolution.Page
+              route={navResolution.route}
+              projectId={projectId ?? null}
+            />
+          </EvalNavPageServicesProvider>
         ) : route.type === "create" ? (
           <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <CreateSuitePage

@@ -18,6 +18,8 @@ import { SuiteRunNavPage } from "../nav-run/suite-run-nav-page";
 import { TestRunPage } from "../test-run/test-run-page";
 import { IterationPage } from "../test-run/iteration-page";
 import { SuiteSettingsPage } from "../suite-settings/suite-settings-page";
+import { CaseEvaluatorsNavPage } from "../case-steps/case-evaluators-nav-page";
+import { CaseStepsNavPage } from "../case-steps/case-steps-page";
 
 /** Route kinds a new page will own: the per-layer kinds plus the three existing pages being rebuilt. */
 export type EvalNavPageRouteType =
@@ -48,13 +50,16 @@ export const EVAL_NAV_PAGES: EvalNavPages = {
   "evaluate-runs": { analyticsPage: "runs", Page: EvaluateLandingPage },
   "suite-overview": { analyticsPage: "suite", Page: SuiteNavPage },
   "suite-settings": { analyticsPage: "suite_settings", Page: SuiteSettingsPage },
-  "case-new": { analyticsPage: "new_test_case", Page: null },
-  "case-settings": { analyticsPage: "test_case", Page: null },
-  "case-evaluators": { analyticsPage: "test_case_evaluators", Page: null },
+  "case-new": { analyticsPage: "new_test_case", Page: CaseStepsNavPage },
+  "case-settings": { analyticsPage: "test_case", Page: CaseStepsNavPage },
+  "case-evaluators": {
+    analyticsPage: "test_case_evaluators",
+    Page: CaseEvaluatorsNavPage,
+  },
   "run-detail": { analyticsPage: "suite_run", Page: SuiteRunNavPage },
   "test-run": { analyticsPage: "test_run", Page: TestRunPage },
   iteration: { analyticsPage: "iteration", Page: IterationPage },
-  "test-run-edit": { analyticsPage: "test_run_edit", Page: null },
+  "test-run-edit": { analyticsPage: "test_run_edit", Page: CaseStepsNavPage },
 };
 
 export type EvalNavResolution =
