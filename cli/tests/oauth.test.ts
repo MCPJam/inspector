@@ -8,6 +8,7 @@ import {
   buildOAuthLoginConfig,
   buildOAuthLoginSnapshotConfig,
   summarizeOAuthLoginCommandInput,
+  withDefaultOAuthConformanceChecks,
 } from "../src/commands/oauth.js";
 import { CliError } from "../src/lib/output.js";
 
@@ -196,14 +197,40 @@ test("oauth conformance threads --advice-id into readinessIds", async () => {
   assert.deepEqual(captured?.readinessIds, ["readiness-oauth-iss-advertised"]);
 });
 
-test("buildOAuthConformanceConfig defaults conformance checks to false", () => {
+test("buildOAuthConformanceConfig runs conformance checks by default", () => {
   const config = buildOAuthConformanceConfig({
     url: "https://example.com/mcp",
     protocolVersion: "2025-11-25",
     registration: "dcr",
   });
 
-  assert.equal(config.oauthConformanceChecks, false);
+  assert.equal(config.oauthConformanceChecks, true);
+});
+
+test("withDefaultOAuthConformanceChecks turns checks on unless the suite file turns them off", () => {
+  const flows = [
+    { protocolVersion: "2025-11-25" as const, registrationStrategy: "dcr" as const },
+    {
+      protocolVersion: "2025-11-25" as const,
+      registrationStrategy: "cimd" as const,
+      oauthConformanceChecks: false,
+    },
+  ];
+
+  const unset = withDefaultOAuthConformanceChecks({
+    serverUrl: "https://example.com/mcp",
+    flows,
+  });
+  assert.equal(unset.defaults?.oauthConformanceChecks, true);
+  // A flow's own value still wins over defaults when the SDK merges them.
+  assert.equal(unset.flows[1].oauthConformanceChecks, false);
+
+  const off = withDefaultOAuthConformanceChecks({
+    serverUrl: "https://example.com/mcp",
+    defaults: { oauthConformanceChecks: false },
+    flows,
+  });
+  assert.equal(off.defaults?.oauthConformanceChecks, false);
 });
 
 test("buildOAuthLoginConfig defaults login flows to automatic protocol and registration planning", () => {

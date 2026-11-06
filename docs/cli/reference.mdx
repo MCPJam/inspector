@@ -334,7 +334,7 @@ For a cloud authorization server, expose the inspector origin through a tunnel a
 | `--step-timeout <ms>` | No | `30000` | Per-step timeout |
 | `--verify-tools` | No | | After OAuth, list tools |
 | `--verify-call-tool <name>` | No | | Also call the named tool |
-| `--conformance-checks` | No | | Run additional negative OAuth checks, including DCR redirect URI policy and redirect-mismatch probes |
+| `--conformance-checks` | No | | Deprecated. The negative OAuth checks (DCR redirect URI policy, redirect-mismatch probes and more) now always run; this flag is accepted and ignored |
 | `--advice-id <id>` | No | all | Restrict advice to one or more advice IDs. An unknown ID is an error that lists the valid ones |
 | `--credentials-out <path>` | No | | Write OAuth credentials to file (mode 0600); stdout has secrets redacted |
 | `--print-url` | No | | Print consent URL to stderr (interactive only) |
