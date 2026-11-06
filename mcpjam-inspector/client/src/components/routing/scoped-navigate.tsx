@@ -27,9 +27,12 @@ import {
 export function ScopedNavigate({
   to,
   replace,
+  state,
 }: {
   to: string;
   replace?: boolean;
+  /** History state for the target entry; passed to <Navigate> and to the no-Router fallback. */
+  state?: unknown;
 }) {
   const pathname = useCurrentPathname();
   const navigate = useAppNavigate();
@@ -38,9 +41,9 @@ export function ScopedNavigate({
 
   useEffect(() => {
     if (hasRouter) return;
-    navigate(target, { replace });
-  }, [hasRouter, navigate, target, replace]);
+    navigate(target, { replace, state });
+  }, [hasRouter, navigate, target, replace, state]);
 
   if (!hasRouter) return null;
-  return <Navigate to={target} replace={replace} />;
+  return <Navigate to={target} replace={replace} state={state} />;
 }

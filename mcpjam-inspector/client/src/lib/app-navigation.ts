@@ -539,18 +539,22 @@ export function buildEvaluatePath(route: EvalRoute): string {
   return buildEvalRoutePath(routePaths.evaluate, route);
 }
 
-/** Retired Evaluate URLs preserve artifact context; commits open the plain run table. */
+/** Retired Evaluate URLs preserve artifact context; Runs roots and commits open the Runs tab. */
 export function legacyEvalPathToEvaluatePath(
   pathname: string,
   search = "",
   hash = "",
 ): string {
+  const runsTab = buildEvaluatePath({ type: "evaluate-runs" });
   if (/^\/(?:evals\/runs|ci-evals)\/commit\/[^/]+\/*$/i.test(pathname)) {
     const params = new URLSearchParams(search);
     const project = params.get("project");
     const query = new URLSearchParams();
     if (project) query.set("project", project);
-    return `${routePaths.evaluate}${query.size ? `?${query}` : ""}`;
+    return `${runsTab}${query.size ? `?${query}` : ""}`;
+  }
+  if (/^\/(?:evals\/runs|ci-evals)\/*$/i.test(pathname)) {
+    return `${runsTab}${search}${hash}`;
   }
   const rewritten = pathname.replace(
     /^\/(?:evals(?:\/runs)?|ci-evals)(?=\/|$)/i,
