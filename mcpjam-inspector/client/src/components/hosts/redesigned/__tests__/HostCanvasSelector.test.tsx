@@ -130,6 +130,41 @@ describe("HostCanvasSelector", () => {
     expect(addBtn).toHaveTextContent("Add client");
   });
 
+  it("tracks the overlay as opened once the client controls render", () => {
+    mockUseHostList.mockReturnValue({ hosts: [], isLoading: true });
+    const { rerender } = render(
+      <HostCanvasSelector projectId="proj-1" activeHostId="host-a" />,
+    );
+    expect(track).not.toHaveBeenCalledWith(
+      "connect_host_overlay_opened",
+      expect.anything(),
+    );
+
+    mockUseHostList.mockReturnValue({ hosts: twoHosts, isLoading: false });
+    rerender(<HostCanvasSelector projectId="proj-1" activeHostId="host-a" />);
+    rerender(<HostCanvasSelector projectId="proj-1" activeHostId="host-b" />);
+
+    const openedCalls = vi
+      .mocked(track)
+      .mock.calls.filter(([event]) => event === "connect_host_overlay_opened");
+    expect(openedCalls).toEqual([
+      [
+        "connect_host_overlay_opened",
+        { location: "host_canvas", host_count: 2 },
+      ],
+    ]);
+  });
+
+  it("does not track the overlay as opened without an active client", () => {
+    mockUseHostList.mockReturnValue({ hosts: oneHost, isLoading: false });
+    render(<HostCanvasSelector projectId="proj-1" activeHostId="missing" />);
+
+    expect(track).not.toHaveBeenCalledWith(
+      "connect_host_overlay_opened",
+      expect.anything(),
+    );
+  });
+
   it("opens the create dialog and tracks when Add client is clicked", async () => {
     const user = userEvent.setup();
     render(<HostCanvasSelector projectId="proj-1" activeHostId="host-a" />);
