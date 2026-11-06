@@ -6,9 +6,9 @@ import { usePostHog } from "posthog-js/react";
 import { setSentryActor } from "@/lib/sentry-identity";
 import {
   clearGuestActivation,
+  getActivatedGuestId,
   getExistingGuestId,
   getGuestPromotionProof,
-  hasGuestActivationMarker,
   isGuestActivated,
   revokeGuestSessionAndCookie,
 } from "@/lib/guest-session";
@@ -348,14 +348,15 @@ export function useEnsureDbUser() {
         // activation marker; an incidental cookie is revoked once the user is
         // ready. With no marker at all there is nothing to promote, so skip
         // the lookup rather than hold ensureUser behind it.
-        if (hasGuestActivationMarker()) {
+        const markedGuestId = getActivatedGuestId();
+        if (markedGuestId) {
           let guestId: string | null = null;
           try {
             guestId = await getExistingGuestId();
             // The server confirmed there is no guest cookie, so the marker
             // can never match one; drop it so later sign-ins skip the lookup.
             // A failed lookup throws instead and keeps the marker.
-            if (guestId === null) clearGuestActivation();
+            if (guestId === null) clearGuestActivation(markedGuestId);
           } catch {
             guestId = null;
           }
@@ -440,7 +441,9 @@ export function useEnsureDbUser() {
           // sign-in would wait on the guest lookup again. Only a confirmed
           // revoke drops it: a cookie that survived a failed request is
           // still an activated guest.
-          if (await revokeGuestSessionAndCookie()) clearGuestActivation();
+          if (await revokeGuestSessionAndCookie() && promotionGuestId) {
+            clearGuestActivation(promotionGuestId);
+          }
         } catch (err) {
           // eslint-disable-next-line no-console
           console.error("[auth] guest session revoke failed", err);

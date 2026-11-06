@@ -29,7 +29,7 @@ const mockState = vi.hoisted(() => ({
   revokeGuestSessionAndCookie: vi.fn().mockResolvedValue(false),
   getExistingGuestId: vi.fn().mockResolvedValue(null as string | null),
   isGuestActivated: vi.fn().mockReturnValue(false),
-  hasGuestActivationMarker: vi.fn().mockReturnValue(false),
+  getActivatedGuestId: vi.fn().mockReturnValue(null as string | null),
   clearGuestActivation: vi.fn(),
   sentrySetUser: vi.fn(),
   sentrySetTag: vi.fn(),
@@ -61,7 +61,7 @@ vi.mock("@/lib/guest-session", () => ({
   revokeGuestSessionAndCookie: mockState.revokeGuestSessionAndCookie,
   getExistingGuestId: mockState.getExistingGuestId,
   isGuestActivated: mockState.isGuestActivated,
-  hasGuestActivationMarker: mockState.hasGuestActivationMarker,
+  getActivatedGuestId: mockState.getActivatedGuestId,
   clearGuestActivation: mockState.clearGuestActivation,
 }));
 
@@ -96,7 +96,7 @@ describe("useEnsureDbUser", () => {
     mockState.revokeGuestSessionAndCookie.mockResolvedValue(false);
     mockState.getExistingGuestId.mockResolvedValue(null);
     mockState.isGuestActivated.mockReturnValue(false);
-    mockState.hasGuestActivationMarker.mockReturnValue(false);
+    mockState.getActivatedGuestId.mockReturnValue(null);
     mockState.actorKey = "guest-1";
     mockState.auth.user = null;
     mockState.convexAuth.isAuthenticated = true;
@@ -113,7 +113,7 @@ describe("useEnsureDbUser", () => {
     mockState.auth.user = { id: "workos-1" };
     mockState.actorKey = "workos-1";
     mockState.getExistingGuestId.mockResolvedValue("guest-1");
-    mockState.hasGuestActivationMarker.mockReturnValue(true);
+    mockState.getActivatedGuestId.mockReturnValue("guest-1");
     mockState.isGuestActivated.mockReturnValue(true);
     mockState.getGuestPromotionProof.mockResolvedValue("proof");
     const finish = vi.fn();
@@ -483,7 +483,7 @@ describe("useEnsureDbUser", () => {
     mockState.auth.user = { id: "workos-user-1" };
     mockState.actorKey = "workos-user-1";
     mockState.getExistingGuestId.mockResolvedValue("guest-activated");
-    mockState.hasGuestActivationMarker.mockReturnValue(true);
+    mockState.getActivatedGuestId.mockReturnValue("guest-activated");
     mockState.isGuestActivated.mockReturnValue(true);
     mockState.getGuestPromotionProof.mockResolvedValue("proof-jwt");
     mockState.revokeGuestSessionAndCookie.mockResolvedValue(true);
@@ -504,14 +504,16 @@ describe("useEnsureDbUser", () => {
       expect(mockState.revokeGuestSessionAndCookie).toHaveBeenCalledTimes(1);
     });
     // The marker goes with the cookie, so the next sign-in skips the lookup.
-    expect(mockState.clearGuestActivation).toHaveBeenCalledTimes(1);
+    expect(mockState.clearGuestActivation).toHaveBeenCalledExactlyOnceWith(
+      "guest-activated",
+    );
   });
 
   it("keeps the marker when the promoted guest's cookie revoke is not confirmed", async () => {
     mockState.auth.user = { id: "workos-user-1" };
     mockState.actorKey = "workos-user-1";
     mockState.getExistingGuestId.mockResolvedValue("guest-activated");
-    mockState.hasGuestActivationMarker.mockReturnValue(true);
+    mockState.getActivatedGuestId.mockReturnValue("guest-activated");
     mockState.isGuestActivated.mockReturnValue(true);
     mockState.getGuestPromotionProof.mockResolvedValue("proof-jwt");
     mockState.revokeGuestSessionAndCookie.mockResolvedValue(false);
@@ -526,20 +528,21 @@ describe("useEnsureDbUser", () => {
   it("drops a marker once the lookup confirms there is no guest cookie", async () => {
     mockState.auth.user = { id: "workos-user-1" };
     mockState.actorKey = "workos-user-1";
-    mockState.hasGuestActivationMarker.mockReturnValue(true);
+    mockState.getActivatedGuestId.mockReturnValue("guest-gone");
     mockState.getExistingGuestId.mockResolvedValue(null);
 
     const { result } = renderHook(() => useEnsureDbUser());
 
     await waitFor(() => expect(result.current.isUserReady).toBe(true));
-    expect(mockState.clearGuestActivation).toHaveBeenCalled();
+    // Only the marker read before the lookup: one set meanwhile survives.
+    expect(mockState.clearGuestActivation).toHaveBeenCalledWith("guest-gone");
     expect(mockState.getGuestPromotionProof).not.toHaveBeenCalled();
   });
 
   it("keeps the marker and still ensures the user when the lookup fails", async () => {
     mockState.auth.user = { id: "workos-user-1" };
     mockState.actorKey = "workos-user-1";
-    mockState.hasGuestActivationMarker.mockReturnValue(true);
+    mockState.getActivatedGuestId.mockReturnValue("guest-activated");
     mockState.getExistingGuestId.mockRejectedValue(new Error("lookup failed"));
     const consoleError = vi
       .spyOn(console, "error")
@@ -557,7 +560,7 @@ describe("useEnsureDbUser", () => {
   it("revokes an unactivated cookie after ensureUser when the marker names another guest", async () => {
     mockState.auth.user = { id: "workos-user-1" };
     mockState.actorKey = "workos-user-1";
-    mockState.hasGuestActivationMarker.mockReturnValue(true);
+    mockState.getActivatedGuestId.mockReturnValue("guest-other");
     mockState.getExistingGuestId.mockResolvedValue("guest-incidental");
     mockState.isGuestActivated.mockReturnValue(false);
 

@@ -166,27 +166,30 @@ export function isGuestActivated(guestId: string | null | undefined): boolean {
 }
 
 /**
- * Forget the activation marker once its guest has been promoted and its
- * cookie retired, so later sign-ins take the no-marker path.
+ * Forget the activation marker for `guestId`, so later sign-ins take the
+ * no-marker path. A marker that names another guest (one activated in another
+ * tab meanwhile) is left alone.
  */
-export function clearGuestActivation(): void {
+export function clearGuestActivation(guestId: string): void {
   try {
-    localStorage.removeItem(GUEST_ACTIVATED_STORAGE_KEY);
+    if (localStorage.getItem(GUEST_ACTIVATED_STORAGE_KEY) === guestId) {
+      localStorage.removeItem(GUEST_ACTIVATED_STORAGE_KEY);
+    }
   } catch {
     // ignore (private mode / storage disabled)
   }
 }
 
 /**
- * Returns true when any guest in this browser was ever activated. Without a
- * marker no guest cookie can pass `isGuestActivated`, so sign-in can skip the
- * guest lookup that would only tell it there is nothing to promote.
+ * The guest this browser last activated, or null. Without a marker no guest
+ * cookie can pass `isGuestActivated`, so sign-in can skip the guest lookup
+ * that would only tell it there is nothing to promote.
  */
-export function hasGuestActivationMarker(): boolean {
+export function getActivatedGuestId(): string | null {
   try {
-    return localStorage.getItem(GUEST_ACTIVATED_STORAGE_KEY) !== null;
+    return localStorage.getItem(GUEST_ACTIVATED_STORAGE_KEY);
   } catch {
-    return false;
+    return null;
   }
 }
 

@@ -617,6 +617,18 @@ describe("guest-session module", () => {
     });
   });
 
+  describe("clearGuestActivation", () => {
+    it("clears only the marker of the given guest", () => {
+      guestSession.markGuestActivated("guest-new");
+
+      guestSession.clearGuestActivation("guest-old");
+      expect(guestSession.getActivatedGuestId()).toBe("guest-new");
+
+      guestSession.clearGuestActivation("guest-new");
+      expect(guestSession.getActivatedGuestId()).toBeNull();
+    });
+  });
+
   describe("getExistingGuestId", () => {
     it("returns null when the server confirms there is no guest", async () => {
       vi.mocked(global.fetch).mockResolvedValue({
