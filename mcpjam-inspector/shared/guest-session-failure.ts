@@ -26,6 +26,14 @@ export const GUEST_SESSION_FAILURE_REASONS = [
 export type GuestSessionFailureReason =
   (typeof GUEST_SESSION_FAILURE_REASONS)[number];
 
+/**
+ * The `code` on a 403 from `POST /api/web/guest-session` when the deployment
+ * does not issue guest sessions at all (the backend's non-production lockdown).
+ * Unlike a revoked guest, this never clears on retry: the browser stops asking
+ * and offers sign-in.
+ */
+export const GUEST_ACCESS_DISABLED_CODE = "GUEST_ACCESS_DISABLED";
+
 export type GuestSessionFailureDetails = {
   reason: GuestSessionFailureReason;
   /** The upstream's HTTP status, when it answered with a non-ok response. */

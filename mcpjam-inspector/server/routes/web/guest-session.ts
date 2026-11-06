@@ -42,6 +42,8 @@ const MAX_LEGACY_TOKEN_LENGTH = 4096;
 export const GUEST_SESSION_REFUSED_MESSAGE =
   "Too many guest sessions from your network today. Sign in to continue.";
 const GUEST_SESSION_REFUSED_RETRY_AFTER_S = 600;
+export const GUEST_ACCESS_DISABLED_MESSAGE =
+  "Guest access is off on this deployment. Sign in to continue.";
 
 function parseRequestBody(raw: unknown): GuestSessionRequestBody {
   if (!raw || typeof raw !== "object") return {};
@@ -165,6 +167,16 @@ guestSession.post("/", async (c) => {
 
   if (result.kind === "miss") {
     return c.body(null, 204);
+  }
+
+  if (result.status === 403 && result.guestAccessDisabled) {
+    return c.json(
+      {
+        code: ErrorCode.GUEST_ACCESS_DISABLED,
+        message: GUEST_ACCESS_DISABLED_MESSAGE,
+      },
+      403
+    );
   }
 
   if (result.status === 403) {

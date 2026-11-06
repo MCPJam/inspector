@@ -14,6 +14,7 @@ import { guestTabRecovery } from "./auth/guest-tab-recovery";
  */
 
 import {
+  GUEST_ACCESS_DISABLED_CODE,
   sanitizeGuestSessionFailureDetails,
   type GuestSessionFailureDetails,
 } from "@/shared/guest-session-failure";
@@ -59,14 +60,17 @@ let legacyMigrationConsumed = false;
 // token by overwriting cachedSession.
 let sessionGeneration = 0;
 const sessionListeners = new Set<() => void>();
-// Set when the server refused to CREATE a guest (429: per-IP daily cap).
-// While it stands, mint attempts short-circuit to null without a request —
-// the refusal is deterministic for the rest of the window, so retrying only
-// burns the network — and the app offers sign-in instead.
+// Set when the server refused to CREATE a guest: a 429 for the per-IP daily
+// cap, or a 403 when the deployment issues no guests at all. While it stands,
+// mint attempts short-circuit to null without a request — the refusal is
+// deterministic for the rest of the window, so retrying only burns the
+// network — and the app offers sign-in instead.
 const GUEST_SESSION_REFUSED_DEFAULT_MS = 10 * 60 * 1000;
+export type GuestSessionRefusalReason = "rate_limited" | "guest_access_disabled";
 export interface GuestSessionRefusal {
   /** Epoch ms after which a new attempt is allowed. */
   readonly until: number;
+  readonly reason: GuestSessionRefusalReason;
 }
 let refusal: GuestSessionRefusal | null = null;
 let refusalExpiryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -263,13 +267,15 @@ class GuestSessionRequestError extends Error {
   }
 }
 
-/** The server refused to create a guest (429). Not transient: do not retry. */
+/** The server refused to create a guest. Not transient: do not retry. */
 export class GuestSessionRefusedError extends GuestSessionRequestError {
   readonly retryAfterMs: number;
-  constructor(retryAfterMs: number) {
-    super("guest-session creation refused (429)");
+  readonly reason: GuestSessionRefusalReason;
+  constructor(retryAfterMs: number, reason: GuestSessionRefusalReason) {
+    super(`guest-session creation refused (${reason})`);
     this.name = "GuestSessionRefusedError";
     this.retryAfterMs = retryAfterMs;
+    this.reason = reason;
   }
 }
 
@@ -277,9 +283,12 @@ export class GuestSessionRefusedError extends GuestSessionRequestError {
 // would hang the retry ladder behind a report that only wants a reason.
 const UPSTREAM_FAILURE_READ_TIMEOUT_MS = 1000;
 
-async function readUpstreamFailure(
-  response: Response,
-): Promise<GuestSessionFailureDetails | undefined> {
+type ErrorBody = {
+  code?: unknown;
+  details?: unknown;
+};
+
+async function readErrorBody(response: Response): Promise<ErrorBody | undefined> {
   if (typeof response.json !== "function") return undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -292,9 +301,7 @@ async function readUpstreamFailure(
         );
       }),
     ]);
-    return sanitizeGuestSessionFailureDetails(
-      (body as { details?: unknown } | null | undefined)?.details,
-    );
+    return body && typeof body === "object" ? (body as ErrorBody) : undefined;
   } catch {
     return undefined;
   } finally {
@@ -364,11 +371,24 @@ async function requestGuestSession(
   if (response.status === 429) {
     throw new GuestSessionRefusedError(
       parseRetryAfterMs(response.headers?.get?.("retry-after")),
+      "rate_limited",
     );
   }
 
   if (!response.ok) {
-    const upstreamFailure = await readUpstreamFailure(response);
+    const errorBody = await readErrorBody(response);
+    if (
+      response.status === 403 &&
+      errorBody?.code === GUEST_ACCESS_DISABLED_CODE
+    ) {
+      throw new GuestSessionRefusedError(
+        GUEST_SESSION_REFUSED_DEFAULT_MS,
+        "guest_access_disabled",
+      );
+    }
+    const upstreamFailure = sanitizeGuestSessionFailureDetails(
+      errorBody?.details,
+    );
     throw new GuestSessionRequestError(
       `guest-session request failed: ${response.status} ${response.statusText}${describeUpstreamFailure(upstreamFailure)}`,
       response.status,
@@ -405,7 +425,7 @@ async function requestGuestSession(
  * memory and not within the expiry buffer; otherwise issues a single
  * `lookup_or_create` request and dedupes concurrent callers.
  *
- * Returns null on a refusal (429) or a definitive miss, and THROWS the real
+ * Returns null on a refusal or a definitive miss, and THROWS the real
  * cause on any other failure. Only the auth retry ladder calls this, so it can
  * report why a mint failed; everyone else uses `getOrCreateGuestSession`.
  */
@@ -441,7 +461,10 @@ export async function getOrCreateGuestSessionOrThrow(): Promise<GuestSession | n
       return session;
     } catch (error) {
       if (error instanceof GuestSessionRefusedError) {
-        setRefusal({ until: Date.now() + error.retryAfterMs });
+        setRefusal({
+          until: Date.now() + error.retryAfterMs,
+          reason: error.reason,
+        });
         return null;
       }
       console.error("Failed to create guest session:", error);
@@ -664,9 +687,10 @@ export async function getGuestPromotionProof(): Promise<string | null> {
  * it can report why a refresh failed; everyone else uses
  * `forceRefreshGuestSession`.
  *
- * A 429 refusal resolves null and records the refusal, exactly as a mint
- * does: retrying it only spends more of the per-IP budget, and the ladder
- * reads the standing refusal as terminal instead of reporting a failure.
+ * A refusal resolves null and records it, exactly as a mint does: retrying
+ * it only spends more of the per-IP budget or asks a deployment that issues no
+ * guests, and the ladder reads the standing refusal as terminal instead of
+ * reporting a failure.
  */
 export async function forceRefreshGuestSessionOrThrow(): Promise<string | null> {
   if (forceRefreshInFlight) {
@@ -697,7 +721,10 @@ export async function forceRefreshGuestSessionOrThrow(): Promise<string | null> 
       return session;
     } catch (error) {
       if (error instanceof GuestSessionRefusedError) {
-        setRefusal({ until: Date.now() + error.retryAfterMs });
+        setRefusal({
+          until: Date.now() + error.retryAfterMs,
+          reason: error.reason,
+        });
         return null;
       }
       console.error("Failed to refresh guest session:", error);

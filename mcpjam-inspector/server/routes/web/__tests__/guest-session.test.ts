@@ -300,6 +300,35 @@ describe("POST /guest-session", () => {
     expect(data.code).toBe("FORBIDDEN");
   });
 
+  it.each([
+    [
+      "the backend's non-production lockdown",
+      { error: "Guest access is disabled in non-production environments" },
+    ],
+    [
+      "a hosted Inspector authority relaying it",
+      { code: "GUEST_ACCESS_DISABLED", message: "Guest access is off." },
+    ],
+  ])(
+    "returns GUEST_ACCESS_DISABLED, not a revoke, for %s",
+    async (_label, upstreamBody) => {
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(upstreamBody), {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ) as typeof fetch;
+
+      const res = await app.request(`${HOSTED}/guest-session`, {
+        method: "POST",
+      });
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.code).toBe("GUEST_ACCESS_DISABLED");
+      expect(data.message).not.toMatch(/revoked/i);
+    },
+  );
+
   describe("HTTP method handling", () => {
     it("returns 404 for GET requests", async () => {
       const res = await app.request("/guest-session");
