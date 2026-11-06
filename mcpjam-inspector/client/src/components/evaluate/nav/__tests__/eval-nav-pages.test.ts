@@ -10,6 +10,7 @@ import {
 } from "../eval-nav-pages";
 import { SuiteNavPage } from "../../nav-suite/suite-nav-page";
 import { SuiteRunNavPage } from "../../nav-run/suite-run-nav-page";
+import { SuiteSettingsPage } from "../../suite-settings/suite-settings-page";
 
 function StubPage() {
   return null;
@@ -29,7 +30,10 @@ describe("EVAL_NAV_PAGES", () => {
       list: { analyticsPage: "suites", Page: expect.any(Function) },
       "evaluate-runs": { analyticsPage: "runs", Page: expect.any(Function) },
       "suite-overview": { analyticsPage: "suite", Page: SuiteNavPage },
-      "suite-settings": { analyticsPage: "suite_settings", Page: null },
+      "suite-settings": {
+        analyticsPage: "suite_settings",
+        Page: SuiteSettingsPage,
+      },
       "case-new": { analyticsPage: "new_test_case", Page: null },
       "case-settings": { analyticsPage: "test_case", Page: null },
       "case-evaluators": { analyticsPage: "test_case_evaluators", Page: null },
@@ -150,6 +154,45 @@ describe("resolveEvalNavPage", () => {
     expect(resolveEvalNavPage(route, true, withPages(StubPage))).toEqual({
       kind: "legacy",
       route,
+    });
+  });
+});
+
+describe("suite-settings page (T-1, T-2)", () => {
+  const settings: EvalNavRoute = {
+    type: "suite-settings",
+    suiteId: "s",
+    tab: "settings",
+  };
+  const cases: EvalNavRoute = { ...settings, tab: "cases", importJob: "j1" };
+
+  it("opens SuiteSettingsPage when the flag is on", () => {
+    expect(resolveEvalNavPage(settings, true)).toEqual({
+      kind: "page",
+      Page: SuiteSettingsPage,
+      route: settings,
+    });
+  });
+
+  it("waits while the flag loads", () => {
+    expect(resolveEvalNavPage(settings, undefined)).toEqual({
+      kind: "pending",
+    });
+  });
+
+  it("renders today's pages with the flag off", () => {
+    expect(resolveEvalNavPage(settings, false)).toEqual({
+      kind: "legacy",
+      route: { type: "suite-edit", suiteId: "s" },
+    });
+    expect(resolveEvalNavPage(cases, false)).toEqual({
+      kind: "legacy",
+      route: {
+        type: "suite-overview",
+        suiteId: "s",
+        view: "test-cases",
+        importJob: "j1",
+      },
     });
   });
 });

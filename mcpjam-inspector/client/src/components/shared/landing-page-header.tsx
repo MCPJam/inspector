@@ -28,7 +28,8 @@ import {
 export const PAGE_HEADER_STRIP_CLASSNAME =
   "relative shrink-0 border-b border-border/40 px-4 py-4 sm:px-6";
 
-const TAB_CLASSNAME =
+/** Compacts a ViewModeSelector strip for a page header. */
+export const TAB_CLASSNAME =
   "mt-0 w-auto min-w-0 shrink justify-start overflow-x-auto [&_button]:min-h-8 [&_button]:px-2.5 [&_button]:py-1 [&_button]:text-sm sm:[&_button]:min-h-8 sm:[&_button]:px-3 sm:[&_button]:text-sm md:[&_button]:min-h-8 lg:[&_button]:px-3.5";
 
 export function LandingPageHeader<T extends string>({
