@@ -85,7 +85,9 @@ vi.mock("convex/browser", () => ({
   }),
 }));
 
+import { ConvexHttpClient } from "convex/browser";
 import v1Routes from "../index.js";
+import { convexReadFetch } from "../convex-read-errors.js";
 import { MAX_RUN_GROUP_TARGETS, parseMaxConcurrentRuns } from "../evals.js";
 import {
   __resetHostedModelCatalogForTests,
@@ -3133,6 +3135,21 @@ describe("v1 write routes", () => {
           },
         },
       });
+    });
+
+    it("reads through convexReadFetch, so an upstream failure keeps its HTTP status", async () => {
+      // Without this fetch the client drops the status of a non-2xx Convex
+      // answer, and Sentry gets an empty `Error` (INSPECTOR-HONO-17).
+      convexQueryMock.mockResolvedValueOnce(RUN_DOC);
+      await request(
+        makeApp(),
+        "GET",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      );
+      expect(ConvexHttpClient).toHaveBeenCalledWith(
+        "https://convex.example.com",
+        { fetch: convexReadFetch }
+      );
     });
 
     it("surfaces a RECORDED execution engine, and only when the run has one", async () => {
