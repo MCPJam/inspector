@@ -9,9 +9,13 @@ import {
 } from "@mcpjam/sdk/host-compat";
 import {
   cloneHostTemplateInput,
+  hostConfigInputsEqual,
+  hostConfigDtoToInput,
   emptyHostConfigInputV2,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
+import { canonicalizeHostConfigV2 } from "@mcpjam/sdk/host-config/internal";
+import { addHostTemplateDefaults } from "../host-template-defaults";
 import { UpdateHostToLatestButton } from "../UpdateHostToLatestButton";
 import { toast } from "@/lib/toast";
 
@@ -365,4 +369,36 @@ describe("UpdateHostToLatestButton", () => {
       ).toBeDisabled();
     },
   );
+
+  it("converges after the actual saved configuration canonicalizer", () => {
+    const latest = catalogDraftFor("chatgpt");
+    const sparse: HostConfigInputV2 = {
+      ...latest,
+      mcpProfile: {
+        ...latest.mcpProfile,
+        profileVersion: 1,
+        apps: {
+          ...latest.mcpProfile?.apps,
+          pluginExtensions: {
+            enabled: true,
+            capabilities: {
+              fileResources: false,
+              fileViewers: false,
+              localFiles: false,
+              forms: false,
+            },
+          },
+        },
+      },
+    };
+    const first = addHostTemplateDefaults(latest, sparse);
+    const saved = hostConfigDtoToInput({
+      ...cloneHostTemplateInput(canonicalizeHostConfigV2(first)),
+      id: "saved-config",
+      schemaVersion: 2,
+    });
+    const second = addHostTemplateDefaults(latest, saved);
+    expect(second).toEqual(saved);
+    expect(hostConfigInputsEqual(saved, second)).toBe(true);
+  });
 });
