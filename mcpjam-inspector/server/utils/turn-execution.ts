@@ -28,8 +28,15 @@ import {
   runDirectChatTurn,
   consumeDirectChatTurnHeadless,
   stampMcpToolOriginProviderOptions,
+  type DirectChatTurnTraceEvents,
+  type RunDirectChatTurnHandle,
   type RunDirectChatTurnOptions,
 } from "./direct-chat-turn";
+import {
+  consumeDirectChatTurnFullStream,
+  type DirectChatTurnFullStreamResult,
+  type DirectFullStreamPart,
+} from "./direct-chat-turn-full-stream";
 
 /** Hosted engine: where/how to execute + auth-adjacent routing, made explicit. */
 export type HostedRuntime = {
@@ -74,6 +81,14 @@ export type UnifiedTurnResult = RunAssistantTurnResult & {
    * (Convex handles cancellation internally; `runAssistantTurn` exposes no flag).
    */
   aborted: boolean;
+  /**
+   * Only for a direct turn consumed part by part (`onStreamPart`): the AI SDK's
+   * step records and total usage, and the model id the provider reported.
+   */
+  direct?: Pick<
+    DirectChatTurnFullStreamResult,
+    "steps" | "totalUsage" | "upstreamModel"
+  >;
 };
 
 /** Hosted options = `runAssistantTurn`'s, with routing lifted into `runtime`. */
@@ -121,12 +136,21 @@ export type DirectTurnOptions = {
   onToolCallChunk?: NonNullable<
     RunDirectChatTurnOptions["traceEvents"]
   >["onToolCallChunk"];
-  // TODO(PR 3 — local eval migration): local STREAMING eval still depends on the
-  // direct engine's `traceEvents` (`onStepSnapshot`, `onToolResultChunk`) to emit
-  // its SSE. Before PR 3 deletes `stream-adapter.ts`, expose normalized
-  // `onToolCall`/`onToolResult` (+ snapshot) callbacks here and prove byte-shape
-  // parity against `stream-adapter.test.ts`. This facade is NOT yet the full eval
-  // streaming turn API.
+  /** Each step's request, uncapped (`turnTrace` keeps only capped copies). */
+  onRequestPayload?: DirectChatTurnTraceEvents["onRequestPayload"];
+  /** After each step settles: the trace history and this turn's spans so far. */
+  onStepSnapshot?: DirectChatTurnTraceEvents["onStepSnapshot"];
+  /** The live trace context, before the stream is consumed: a turn that then
+   * throws still leaves its caller the spans to finalize. */
+  onTraceContext?: (
+    traceContext: RunDirectChatTurnHandle["traceContext"],
+  ) => void;
+  /**
+   * Opt-in: hand each `fullStream` part over as it arrives instead of draining
+   * with `consumeStream()`. A throw then propagates as the stream raised it
+   * (its typed `error` part reached this callback first).
+   */
+  onStreamPart?: (part: DirectFullStreamPart) => void;
 } & Pick<
   RunDirectChatTurnOptions,
   | "systemPrompt"
@@ -134,6 +158,7 @@ export type DirectTurnOptions = {
   | "tools"
   | "toolChoice"
   | "abortSignal"
+  | "maxRetries"
   | "maxSteps"
   | "traceStartedAt"
   | "progressivePlan"
@@ -198,6 +223,16 @@ export async function runUnifiedAssistantTurn(
   }
 
   const { runtime } = opts;
+  const traceEvents: DirectChatTurnTraceEvents = {
+    ...(opts.onRequestPayload
+      ? { onRequestPayload: opts.onRequestPayload }
+      : {}),
+    ...(opts.onStepSnapshot ? { onStepSnapshot: opts.onStepSnapshot } : {}),
+    ...(opts.onToolCallChunk ? { onToolCallChunk: opts.onToolCallChunk } : {}),
+    ...(opts.onToolResultChunk
+      ? { onToolResultChunk: opts.onToolResultChunk }
+      : {}),
+  };
   const handle = runDirectChatTurn({
     llmModel: runtime.llmModel,
     modelId: runtime.modelId,
@@ -211,6 +246,7 @@ export async function runUnifiedAssistantTurn(
     tools: opts.tools,
     toolChoice: opts.toolChoice,
     abortSignal: opts.abortSignal,
+    ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
     maxSteps: opts.maxSteps,
     traceStartedAt: opts.traceStartedAt,
     progressivePlan: opts.progressivePlan,
@@ -220,22 +256,15 @@ export async function runUnifiedAssistantTurn(
     onLiveTextDelta: opts.onLiveTextDelta,
     onStepFinish: opts.onStepFinish,
     onEngineError: opts.onEngineError,
-    // PR 3a: only forward `traceEvents` when the caller wired a chunk hook, so
-    // callers that don't set it stay byte-identical (no traceEvents object).
-    ...(opts.onToolResultChunk || opts.onToolCallChunk
-      ? {
-          traceEvents: {
-            ...(opts.onToolCallChunk
-              ? { onToolCallChunk: opts.onToolCallChunk }
-              : {}),
-            ...(opts.onToolResultChunk
-              ? { onToolResultChunk: opts.onToolResultChunk }
-              : {}),
-          },
-        }
-      : {}),
+    // Only forward `traceEvents` when the caller wired a hook, so callers that
+    // don't set one stay byte-identical (no traceEvents object).
+    ...(Object.keys(traceEvents).length > 0 ? { traceEvents } : {}),
   });
-  const headless = await consumeDirectChatTurnHeadless(handle);
+  opts.onTraceContext?.(handle.traceContext);
+  const full = opts.onStreamPart
+    ? await consumeDirectChatTurnFullStream(handle, opts.onStreamPart)
+    : undefined;
+  const headless = full ?? (await consumeDirectChatTurnHeadless(handle));
   // Direct's `response.messages` IS this turn's response slice. Stamp the
   // mcp-tool-origin serverId onto its tool parts — the hosted engine does this
   // internally, and the local-BYOK persistence path (session viewer replay via
@@ -258,6 +287,15 @@ export async function runUnifiedAssistantTurn(
     // Surface the cancellation signal (don't throw) so callers keep the existing
     // "check flag → return cancelled" pattern instead of try/catch.
     aborted: headless.aborted,
+    ...(full
+      ? {
+          direct: {
+            steps: full.steps,
+            totalUsage: full.totalUsage,
+            upstreamModel: full.upstreamModel,
+          },
+        }
+      : {}),
   };
 }
 
