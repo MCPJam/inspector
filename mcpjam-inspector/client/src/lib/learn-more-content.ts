@@ -48,6 +48,30 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
       "A local development environment for ChatGPT apps and MCP apps. Emulate widgets, test across devices, themes, and client styles, debug CSP, and chat with your server — no ngrok or paid subscription needed.",
     docsUrl: "https://docs.mcpjam.com/inspector/playground",
   },
+  // Swarms, User Testing and Evaluate have no clips yet, so their hover
+  // cards show the description and expand button alone.
+  swarms: {
+    title: "Swarms",
+    videoUrl: "",
+    description: "Simulate many user scenarios across clients in parallel.",
+    expandedDescription:
+      "Simulate many user scenarios across ChatGPT, Claude, and more in parallel. Personas work through your MCP server the way real users would, so you catch the edge cases your tests miss.",
+  },
+  "user-testing": {
+    title: "User Testing",
+    videoUrl: "",
+    description: "See how real users interact with your product.",
+    expandedDescription:
+      "See how real users interact with your product. Hand testers live sandboxes, review every session, and measure sentiment to uncover usability gaps.",
+  },
+  evaluate: {
+    title: "Evaluate",
+    videoUrl: "",
+    description: "Turn user workflows into repeatable test suites.",
+    expandedDescription:
+      "Turn user workflows into repeatable, durable test suites. Pin down which tools fire and what the answer looks like, then re-run the suite across your preferred models and clients.",
+    docsUrl: "https://docs.mcpjam.com/inspector/evals",
+  },
   // No `skills` entry: learn-more cards are keyed off sidebar nav item URLs
   // (see nav-main.tsx) and Skills is now a Servers tab, not a sidebar item, so
   // the card had no host left to render in.
