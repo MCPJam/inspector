@@ -38,7 +38,7 @@
  *      (`event-trigger-<triggerId>`, `origin: "event"`) so event runs appear
  *      in the Playground, and that id is reported with `runs/finish`.
  *
- * Env-gated: `EVENTS_EXECUTOR_ENABLED === "1"`. The inbox's dispatch rings
+ * Starts when the hosted backend is configured. The inbox's dispatch rings
  * `kickEventsExecutor()` (via `/api/internal/events/enqueue`) so a scheduled
  * run starts without waiting for the next poll.
  */
@@ -55,7 +55,7 @@ import {
   isEventsBackendConfigured,
   type EventRunClaim,
 } from "./backend-client.js";
-import { defaultEventsHolder, isEventsExecutorEnabled } from "./config.js";
+import { defaultEventsHolder } from "./config.js";
 import { registerEventsExecutorBell } from "./executor-bell.js";
 import {
   DEFAULT_EVENT_RUN_MODEL_ID,
@@ -478,15 +478,11 @@ export { kickEventsExecutor } from "./executor-bell.js";
 export function startEventsExecutor(options?: {
   claimedBy?: string;
   deps?: EventExecutorDeps;
-  force?: boolean;
   intervalMs?: number;
 }): EventsExecutorHandle {
-  if (!options?.force && !isEventsExecutorEnabled()) {
-    return { stop: async () => {}, kick: () => {} };
-  }
   if (!options?.deps && !isEventsBackendConfigured()) {
-    logger.warn(
-      "[events-executor] enabled but CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing; not starting",
+    logger.debug(
+      "[events-executor] CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing; not starting",
     );
     return { stop: async () => {}, kick: () => {} };
   }

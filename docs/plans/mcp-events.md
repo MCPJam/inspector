@@ -227,7 +227,7 @@ Results report the profile, each check's strength (MUST fails, SHOULD warns) and
 
 ## Rules that apply throughout
 
-- **Labelling:** mark events "Draft" in the UI instead of hiding them behind a flag, and name the profile.
+- **Labelling:** gate the Events and Triggers tabs with `mcp-events-enabled`, mark events "Draft" in the UI, and name the profile.
 - **Advertising:** MCPJam's client declares nothing for events unless the ChatGPT profile shows ChatGPT does.
 - **Event data is untrusted:** show it as data, never pass it to the model as instructions. Secrets are redacted at capture (C8).
 - **Shared files:** `MCPClientManager.ts`, `official-sdk-client-adapter.ts`, `managed-mcp-client.ts`, `transport-utils.ts` and `assistant-turn.ts` should have one owner at a time.
@@ -262,6 +262,6 @@ As of 2026-09-30. This spans two PRs: MCPJam/inspector (SDK, CLI, inspector serv
 
 **Before first deploy:**
 - Set the Worker secrets and confirm `INSPECTOR_INTERNAL_ORIGIN` in `events-inbox/wrangler.jsonc` (the backend PR's rollout notes list the steps).
-- Set the inspector env: `EVENTS_INBOX_ADMIN_TOKEN`, `EVENTS_INBOX_DISPATCH_TOKEN`, `EVENTS_INBOX_VIEWER_KEY`, `EVENTS_KEEPER_ENABLED=1`, `EVENTS_EXECUTOR_ENABLED=1`.
+- Set the inspector env: `EVENTS_INBOX_ADMIN_TOKEN`, `EVENTS_INBOX_DISPATCH_TOKEN`, `EVENTS_INBOX_VIEWER_KEY`.
 - Confirm the policy numbers in open questions 1 and 2.
 - Raise the [working-group notes](./mcp-events-working-group-notes.md) upstream.

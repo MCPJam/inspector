@@ -12,8 +12,6 @@
  * | `EVENTS_INBOX_ADMIN_TOKEN` | inbox client | `x-events-inbox-admin-token` for the C5 admin API. |
  * | `EVENTS_INBOX_VIEWER_KEY` | viewer token | HMAC key for feed viewer tokens (C7). The Worker verifies with the same key. |
  * | `EVENTS_INBOX_DISPATCH_TOKEN` | `/api/internal/events/enqueue` | `x-events-inbox-token` the Worker's dispatch alarm presents. |
- * | `EVENTS_KEEPER_ENABLED` | server/index.ts | `"1"` starts the hosted subscription keeper. |
- * | `EVENTS_EXECUTOR_ENABLED` | server/index.ts | `"1"` starts the event-job executor. |
  */
 
 export const DEFAULT_EVENTS_INBOX_URL = "https://hooks.mcpjam.com";
@@ -46,14 +44,6 @@ export function getEventsInboxViewerKey(): string | undefined {
 
 export function getEventsInboxDispatchToken(): string | undefined {
   return trimmed(process.env.EVENTS_INBOX_DISPATCH_TOKEN);
-}
-
-export function isEventsKeeperEnabled(): boolean {
-  return process.env.EVENTS_KEEPER_ENABLED === "1";
-}
-
-export function isEventsExecutorEnabled(): boolean {
-  return process.env.EVENTS_EXECUTOR_ENABLED === "1";
 }
 
 /** `inspector-<replica>` — the lease holder name both workers claim with. */

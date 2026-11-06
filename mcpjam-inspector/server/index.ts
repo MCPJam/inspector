@@ -210,18 +210,8 @@ import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-r
 import { stopLiveConformanceOAuthRuns } from "./services/conformance-oauth-rendezvous.js";
 import { startBackgroundWorkers } from "./services/background-workers";
 import { drainBeforeTeardown } from "./services/lifecycle/shutdown-drain.js";
-import {
-  startEventsKeeper,
-  type EventsKeeperHandle,
-} from "./services/events/keeper.js";
-import {
-  startEventsExecutor,
-  type EventsExecutorHandle,
-} from "./services/events/executor.js";
-import {
-  isEventsExecutorEnabled,
-  isEventsKeeperEnabled,
-} from "./services/events/config.js";
+import { startEventsKeeper } from "./services/events/keeper.js";
+import { startEventsExecutor } from "./services/events/executor.js";
 import {
   SERVER_PORT,
   CORS_OPTIONS,
@@ -1007,17 +997,10 @@ const backgroundWorkers = startBackgroundWorkers();
 // MCP Events (hosted). The keeper leases due subscriptions from the Convex
 // registry and runs one coordinator step each (subscribe/refresh/poll/
 // unsubscribe); the executor claims scheduled trigger runs and executes them
-// as unattended turns. Both env-gated (`EVENTS_KEEPER_ENABLED`,
-// `EVENTS_EXECUTOR_ENABLED`); the inbox dispatch rings the executor through
-// `/api/internal/events/enqueue`.
-let eventsKeeper: EventsKeeperHandle | undefined;
-if (isEventsKeeperEnabled()) {
-  eventsKeeper = startEventsKeeper();
-}
-let eventsExecutor: EventsExecutorHandle | undefined;
-if (isEventsExecutorEnabled()) {
-  eventsExecutor = startEventsExecutor();
-}
+// as unattended turns. Each worker starts when its backend is configured;
+// the inbox dispatch rings the executor through `/api/internal/events/enqueue`.
+const eventsKeeper = startEventsKeeper();
+const eventsExecutor = startEventsExecutor();
 
 const expectedParentPid = Number.parseInt(
   process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
@@ -1082,8 +1065,8 @@ async function shutdown() {
     // lease-recoverable, and the teardowns below are not.
     await Promise.all([
       drainBeforeTeardown(backgroundWorkers, shutdownSettings),
-      eventsKeeper?.stop(),
-      eventsExecutor?.stop(),
+      eventsKeeper.stop(),
+      eventsExecutor.stop(),
     ]);
     stopRevokedSessionCache();
     // Abort the swarm runs still going after the drain: each stops its
