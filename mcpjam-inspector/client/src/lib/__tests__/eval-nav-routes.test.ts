@@ -77,6 +77,19 @@ describe("legacyEvalRouteFor", () => {
       { type: "suite-overview", suiteId: "s", view: "test-cases" },
     ],
     [
+      { type: "suite-settings", suiteId: "s", tab: "cases", importJob: "j1" },
+      {
+        type: "suite-overview",
+        suiteId: "s",
+        view: "test-cases",
+        importJob: "j1",
+      },
+    ],
+    [
+      { type: "suite-settings", suiteId: "s", tab: "settings", importJob: "j1" },
+      { type: "suite-edit", suiteId: "s" },
+    ],
+    [
       { type: "case-new", suiteId: "s" },
       { type: "test-edit", suiteId: "s", testId: "draft:describe" },
     ],
@@ -120,6 +133,21 @@ describe("legacyEvalRouteFor", () => {
     ],
   ])("maps %o to today's page", (route, expected) => {
     expect(legacyEvalRouteFor(route)).toEqual(expected);
+  });
+});
+
+describe("buildEvalNavPath with importJob", () => {
+  it("appends the encoded job id and round-trips through buildEvaluatePath", () => {
+    const route: EvalNavRoute = {
+      type: "suite-settings",
+      suiteId: "s",
+      tab: "cases",
+      importJob: "job 1/2",
+    };
+    expect(buildEvalNavPath(route)).toBe(
+      "/evaluate/suite/s/settings/cases?importJob=job+1%2F2",
+    );
+    expect(buildEvaluatePath(route)).toBe(buildEvalNavPath(route));
   });
 });
 

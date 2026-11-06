@@ -67,7 +67,13 @@ export type EvalRoute =
   /** /evaluate/runs — the Evaluate landing's Runs tab. */
   | { type: "evaluate-runs" }
   /** …/suite/:suiteId/settings[/cases|/evaluators] */
-  | { type: "suite-settings"; suiteId: string; tab: SuiteSettingsTab }
+  | {
+      type: "suite-settings";
+      suiteId: string;
+      tab: SuiteSettingsTab;
+      /** An import job whose drafts the Test cases tab opens on (?importJob=). */
+      importJob?: string;
+    }
   /** …/suite/:suiteId/settings/cases/new */
   | { type: "case-new"; suiteId: string }
   /** …/suite/:suiteId/settings/cases/:testCaseId */
