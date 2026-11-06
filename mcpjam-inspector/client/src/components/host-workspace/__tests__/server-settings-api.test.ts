@@ -118,6 +118,70 @@ describe("settings transport ownership", () => {
     expect(session.controller.getSnapshot().dirty).toBe(false);
     await session.close();
   });
+  it.each([
+    { code: "PLUGIN_SETTINGS_INVALID_RESULT", outcomeUnknown: true },
+    { code: "INVOCATION_OUTCOME_UNKNOWN" },
+  ])("requires a successful refresh after $code before another save", async (failure) => {
+    const original = f.fetch.getMockImplementation()!;
+    let writes = 0;
+    let refuseRefresh = false;
+    f.fetch.mockImplementation(async (path: string, init: RequestInit) => {
+      if (path.endsWith("/read") && refuseRefresh)
+        return response({ code: "SETTINGS_UNAVAILABLE" }, 503);
+      if (!path.endsWith("/update")) return original(path, init);
+      calls.push({ path, body: JSON.parse(String(init.body)) });
+      writes++;
+      return writes === 1
+        ? response(failure, 403)
+        : completed({ values: { ...settingsFixture().values, count: 0 } });
+    });
+    const session = await createServerSettingsApi(scope, "server", vi.fn()).open(
+      new AbortController().signal,
+    );
+    session.controller.edit("count", 0);
+    await expect(session.controller.save()).rejects.toThrow(failure.code);
+    expect(session.controller.getSnapshot()).toMatchObject({
+      draft: { count: 0 }, dirty: true, uncertain: true,
+    });
+    await expect(session.controller.save()).rejects.toThrow("PLUGIN_SETTINGS_REFRESH_REQUIRED");
+    expect(writes).toBe(1);
+    refuseRefresh = true;
+    await expect(session.controller.refresh()).rejects.toThrow("SETTINGS_UNAVAILABLE");
+    expect(session.controller.getSnapshot().uncertain).toBe(true);
+    refuseRefresh = false;
+    await session.controller.refresh();
+    expect(session.controller.getSnapshot()).toMatchObject({
+      draft: { count: 0 }, dirty: true, uncertain: false,
+    });
+    await session.controller.save();
+    expect(writes).toBe(2);
+    expect(session.controller.getSnapshot().dirty).toBe(false);
+    await session.close();
+  });
+
+  it("allows a new save after a known pre-dispatch refusal", async () => {
+    const original = f.fetch.getMockImplementation()!;
+    let writes = 0;
+    f.fetch.mockImplementation(async (path: string, init: RequestInit) => {
+      if (!path.endsWith("/update")) return original(path, init);
+      writes++;
+      return writes === 1
+        ? response({ code: "APPROVAL_DENIED", outcomeUnknown: false }, 403)
+        : completed({ values: { ...settingsFixture().values, count: 0 } });
+    });
+    const session = await createServerSettingsApi(scope, "server", vi.fn()).open(
+      new AbortController().signal,
+    );
+    session.controller.edit("count", 0);
+    await expect(session.controller.save()).rejects.toThrow("APPROVAL_DENIED");
+    expect(session.controller.getSnapshot()).toMatchObject({
+      draft: { count: 0 }, dirty: true, uncertain: false,
+    });
+    await session.controller.save();
+    expect(writes).toBe(2);
+    expect(session.controller.getSnapshot().dirty).toBe(false);
+    await session.close();
+  });
   it("reopening an inline App keeps its original effect operation but uses a new child", async () => {
     const session = await createServerSettingsApi(
       scope,

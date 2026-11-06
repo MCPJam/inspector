@@ -77,7 +77,9 @@ export function createServerSettingsApi(
         typeof reply.value.code === "string"
           ? reply.value.code
           : "SETTINGS_UNAVAILABLE",
-        reply.response.status >= 500,
+        reply.value.outcomeUnknown === true ||
+          reply.value.code === "INVOCATION_OUTCOME_UNKNOWN" ||
+          reply.response.status >= 500,
       );
     return reply.value;
   }
