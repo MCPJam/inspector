@@ -21,7 +21,10 @@ import { assertNativeDiscovery } from "./native-discovery.js";
 
 export function assertHarnessMcpDiscoveryGate(args: {
   required: boolean | undefined;
-  plan: Pick<HarnessMcpPlan, "delivery" | "forwardingKind" | "gaps">;
+  plan: Pick<
+    HarnessMcpPlan,
+    "delivery" | "forwardingKind" | "gaps" | "reasons"
+  >;
   harnessId: string;
   pinnedRuntimeVersion: string | undefined;
   adapterVersion: string | undefined;
@@ -44,16 +47,16 @@ export function assertHarnessMcpDiscoveryGate(args: {
         gap.startsWith("server-capability:"),
     )
   ) {
-    assertNativeDiscovery({ required: true });
+    assertNativeDiscovery({ required: true, reasons: plan.reasons });
   }
   if (
     usesAppHostCapabilities({ manager, serverIds }) &&
     (!args.hostCapabilities || args.hostCapabilities.gaps.length)
   ) {
-    assertNativeDiscovery({ required: true });
+    assertNativeDiscovery({ required: true, reasons: plan.reasons });
   }
   if (!serverIds.length || args.scenarioParticipant) {
-    assertNativeDiscovery({ required: true });
+    assertNativeDiscovery({ required: true, reasons: plan.reasons });
   }
   const platform = args.brokeredEndpoint === "platform";
   const route: Omit<HarnessDiscoveryRoute, "delivery" | "protocolVersion"> = {
@@ -78,6 +81,7 @@ export function assertHarnessMcpDiscoveryGate(args: {
   for (const serverId of serverIds) {
     assertNativeDiscovery({
       required: true,
+      reasons: plan.reasons,
       harnessId: args.harnessId,
       route: harnessDiscoveryRoute(plan, {
         ...route,

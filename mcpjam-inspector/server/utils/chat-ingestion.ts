@@ -1,3 +1,4 @@
+import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import type { SetupAtTurn } from "../services/chat-turn/setup-manifest.js";
 import type { PersistedRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
@@ -314,6 +315,12 @@ export interface PersistedTurnTrace {
    * saying so.
    */
   pageToolsAtTurn?: MintedPageToolRecord[];
+  /**
+   * Which MCP route a harness turn ran on, and why. Inside the turn trace like
+   * `skillsAtTurn`, so it reaches the wire with no change to the body builder;
+   * the backend drops a receipt it cannot parse and keeps the trace.
+   */
+  harnessMcpAtTurn?: HarnessMcpAtTurn;
 }
 
 // Its own import-free module so `log-events.ts`, which the client typecheck
