@@ -3,7 +3,6 @@ import { Button } from "@mcpjam/design-system/button";
 import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import { cn } from "@/lib/utils";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
-import type { ThemeMode } from "@/types/preferences/theme";
 import type {
   HostAttentionIssue,
   HostFocusTabId,
@@ -24,7 +23,6 @@ import {
 } from "./host-focus-tab-defs";
 import { HostIdentityRow } from "./HostIdentityRow";
 import { UpdateHostToLatestButton } from "./UpdateHostToLatestButton";
-import { useAvailableModels } from "@/hooks/use-available-models";
 import { HostVerifiedAtStamp } from "./HostVerifiedAtStamp";
 import {
   hostFocusShellHeaderRowClass,
@@ -50,9 +48,7 @@ interface HostFocusPanelProps {
    */
   focusSubKey?: SandboxConfigSubKey;
   hostDisplayName: string;
-  savedHostDisplayName?: string;
   onHostDisplayNameChange: (value: string) => void;
-  themeMode?: ThemeMode;
   draft: HostConfigInputV2;
   savedDraft?: HostConfigInputV2;
   onDraftChange: (
@@ -77,9 +73,7 @@ export function HostFocusPanel({
   onTabChange,
   focusSubKey,
   hostDisplayName,
-  savedHostDisplayName,
   onHostDisplayNameChange,
-  themeMode = "light",
   draft,
   savedDraft,
   onDraftChange,
@@ -101,11 +95,6 @@ export function HostFocusPanel({
   // Guard against a tab being hidden out from under the user (e.g. detach +
   // flag off while on Computer) — render the clamped tab everywhere.
   const activeTab = activeHostFocusTab(tab, visibleTabs);
-  // Under the organization's key policy (or while it is still loading) a
-  // newer template must not bring its hosted model back.
-  const { requireOrgKeys, pending: modelPolicyPending } = useAvailableModels({
-    projectId,
-  });
 
   return (
     <div className={hostFocusShellRootClass} aria-busy={saveInFlight}>
@@ -128,14 +117,10 @@ export function HostFocusPanel({
                 draft={draft}
                 savedDraft={savedDraft}
                 hostDisplayName={hostDisplayName}
-                savedHostDisplayName={savedHostDisplayName}
-                onHostDisplayNameChange={onHostDisplayNameChange}
-                themeMode={themeMode}
                 onDraftChange={onDraftChange}
                 onSaveLatest={onSaveLatest}
                 hostLoaded={hostLoaded}
                 saveInFlight={saveInFlight}
-                keepModel={requireOrgKeys || modelPolicyPending === true}
               />
             </>
           }
