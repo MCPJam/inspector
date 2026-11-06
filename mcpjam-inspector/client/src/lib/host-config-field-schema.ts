@@ -102,7 +102,16 @@ export type HostConfigFieldKind =
       support?: Readonly<Record<string, SupportLevel>>;
     }
   /** Set of modes (e.g. display modes); each candidate renders present/absent. */
-  | { kind: "mode-set"; modes: ReadonlyArray<string> }
+  | {
+      kind: "mode-set";
+      modes: ReadonlyArray<string>;
+      /**
+       * How many modes every client has anyway, so having only that many is
+       * no support (default 1: every host renders `inline`). 0 when any mode
+       * counts, as for Event delivery.
+       */
+      baseline?: number;
+    }
   /** Short string rendered inline. */
   | { kind: "string" }
   /**
@@ -1194,7 +1203,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     path: `mcpProfile.extensions.${MCPJAM_EVENTS_EXTENSION_ID}`,
     description:
       "The MCP Events delivery modes this client accepts. Without a saved choice, its client style decides.",
-    kind: { kind: "mode-set", modes: EVENT_DELIVERY_MODES },
+    kind: { kind: "mode-set", modes: EVENT_DELIVERY_MODES, baseline: 0 },
     // The saved setting only, like Task execution above: this row is public
     // on caniuse.dev, where a style default is not a measurement, so a client
     // with nothing saved reads as "Not yet tested". Subscriptions still use
