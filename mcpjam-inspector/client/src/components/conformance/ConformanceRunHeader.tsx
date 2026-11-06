@@ -89,7 +89,11 @@ export function ConformanceRunHeader({
           ) : null}
           {showShare ? (
             savedRunId ? (
-              <ConformanceRunShareButton runId={savedRunId} finished={!busy} />
+              <ConformanceRunShareButton
+                runId={savedRunId}
+                finished={!busy}
+                serverName={serverName}
+              />
             ) : (
               // Not saved yet: Share waits for the run to finish.
               <Button variant="outline" size="sm" disabled>
