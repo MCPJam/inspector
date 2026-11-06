@@ -586,9 +586,14 @@ describe("legacy /ci-evals redirects", () => {
   // 404 the user can recognize.
   it("rewrites every legacy shape onto /evaluate", () => {
     const cases: Array<[string, string]> = [
-      ["/ci-evals", "/evaluate"],
+      ["/ci-evals", "/evaluate/runs"],
+      ["/ci-evals/", "/evaluate/runs"],
+      ["/evals/runs", "/evaluate/runs"],
+      ["/evals/runs/", "/evaluate/runs"],
+      ["/evals", "/evaluate"],
       ["/ci-evals/create", "/evaluate/create"],
-      ["/ci-evals/commit/abc1234567890", "/evaluate"],
+      ["/ci-evals/commit/abc1234567890", "/evaluate/runs"],
+      ["/evals/runs/commit/abc1234567890", "/evaluate/runs"],
       ["/ci-evals/suite/s_123", "/evaluate/suite/s_123"],
       ["/ci-evals/suite/s_123/edit", "/evaluate/suite/s_123/edit"],
       ["/ci-evals/suite/s_123/runs/r_9", "/evaluate/suite/s_123/runs/r_9"],
@@ -607,9 +612,9 @@ describe("legacy /ci-evals redirects", () => {
     expect(
       legacyEvalPathToEvaluatePath(
         "/ci-evals/commit/abc123",
-        "?suite=s_1&iteration=i_4"
+        "?suite=s_1&iteration=i_4&project=p_9"
       )
-    ).toBe("/evaluate");
+    ).toBe("/evaluate/runs?project=p_9");
     expect(
       legacyEvalPathToEvaluatePath(
         "/ci-evals/suite/s_1/runs/r_2",
@@ -620,7 +625,7 @@ describe("legacy /ci-evals redirects", () => {
     );
     expect(
       legacyEvalPathToEvaluatePath("/ci-evals", "?project=p_9", "#frag")
-    ).toBe("/evaluate?project=p_9#frag");
+    ).toBe("/evaluate/runs?project=p_9#frag");
   });
 
   it("preserves encoded path segments verbatim", () => {

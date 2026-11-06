@@ -329,6 +329,7 @@ const ROUTE_ELEMENTS: Record<
   "evaluate/suite/:suiteId/runs/:runId/cases/:testCaseId": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId/runs/:runId/cases/:testCaseId/edit": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId/runs/:runId/cases/:testCaseId/iter/:iterationId": { element: <EvaluateRoute /> },
+  "evaluate/*": { element: <EvaluateRoute /> },
   // Old CI links always land in public Evaluate, with fragments intact.
   "ci-evals": { element: <LegacyEvalRedirect /> },
   "ci-evals/*": { element: <LegacyEvalRedirect /> },
