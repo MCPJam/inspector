@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   showGroups: true,
   runsLoading: false,
   runsById: new Map<string, unknown>(),
+  failedRunIds: new Set<string>(),
   groups: [] as Array<{ _id: string; name: string }>,
 }));
 
@@ -27,6 +28,7 @@ vi.mock("../../evals/use-runs-iterations", () => ({
   useRunsIterations: () => ({
     runsById: mocks.runsById,
     isLoading: mocks.runsLoading,
+    failedRunIds: mocks.failedRunIds,
   }),
 }));
 
@@ -72,6 +74,7 @@ describe("RunServerGroups", () => {
   beforeEach(() => {
     mocks.showGroups = true;
     mocks.runsLoading = false;
+    mocks.failedRunIds = new Set();
     mocks.groups = [
       { _id: "g-uat", name: "CTRL UAT" },
       { _id: "g-sim", name: "CTRL SimNext" },
@@ -127,6 +130,19 @@ describe("RunServerGroups", () => {
   it("draws nothing until every target has answered", () => {
     mocks.runsLoading = true;
     renderWith([makeRun("r1", "h-claude", ["CTRL UAT"], "g-uat")]);
+    expect(screen.queryByTestId("evaluate-run-server-groups")).toBeNull();
+  });
+
+  it("draws nothing when a target's read failed, rather than part of the launch", () => {
+    const answered = makeRun("r1", "h-claude", ["CTRL UAT"], "g-uat");
+    mocks.failedRunIds = new Set(["r2"]);
+    mocks.runsById = new Map([[answered._id, answered]]);
+    render(
+      <RunServerGroups
+        targets={[answered, makeRun("r2", "h-codex", ["CTRL SimNext"], "g-sim")]}
+        hostNamesById={hostNamesById}
+      />,
+    );
     expect(screen.queryByTestId("evaluate-run-server-groups")).toBeNull();
   });
 

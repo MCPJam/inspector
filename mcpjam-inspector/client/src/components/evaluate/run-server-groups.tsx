@@ -41,9 +41,11 @@ export function RunServerGroups({
 }) {
   const { isAuthenticated, isLoading: authLoading } = useConvexAuth();
   const showGroups = useProjectEnvironmentsEnabled();
-  const { runsById, isLoading: runsLoading } = useRunsIterations(
-    targets.map((run) => run._id),
-  );
+  const {
+    runsById,
+    isLoading: runsLoading,
+    failedRunIds,
+  } = useRunsIterations(targets.map((run) => run._id));
   const projectId = targets[0]?.projectId ?? null;
   const { serverAttachments, isLoading: groupsLoading } =
     useProjectServerAttachments({ isAuthenticated, authLoading, projectId });
@@ -55,8 +57,9 @@ export function RunServerGroups({
         : new Map(serverAttachments.map((group) => [group._id, group.name])),
     [groupsLoading, serverAttachments],
   );
-  // Wait for every target: drawing as runs answer showed a partial list.
-  if (runsLoading) return null;
+  // Every target or nothing: a missing one would pass the rest off as the
+  // whole launch, whether it is still loading or its read failed.
+  if (runsLoading || failedRunIds.size > 0) return null;
   const runs = targets.flatMap((run) => {
     const full = runsById.get(run._id);
     return full ? [full] : [];
