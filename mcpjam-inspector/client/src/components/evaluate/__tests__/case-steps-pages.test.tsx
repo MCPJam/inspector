@@ -28,6 +28,7 @@ const h = vi.hoisted(() => ({
   toast: { success: vi.fn(), error: vi.fn() },
   capabilities: null as null | { ownership?: { ciOwned?: boolean } },
   panel: vi.fn(),
+  previewSurface: vi.fn(),
 }));
 
 vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: () => false }));
@@ -81,7 +82,10 @@ vi.mock("../suite-run-review", () => ({
 vi.mock("../case-steps/execution-preview-panel", async () => {
   const { useState } = await import("react");
   return {
-    useExecutionPreviewOpen: () => useState(false),
+    useExecutionPreviewOpen: (surface?: string) => {
+      h.previewSurface(surface);
+      return useState(false);
+    },
     ExecutionPreviewToggle: (props: {
       open: boolean;
       onToggle: () => void;
@@ -424,10 +428,13 @@ describe("Execution preview slot", () => {
         .querySelector('[data-case-step-toggle="check:a2"]')!
         .getAttribute("aria-expanded"),
     ).toBe("true");
-    expect(h.track).toHaveBeenCalledWith(
-      "eval_execution_preview_opened",
-      expect.objectContaining({ surface: "editor", project_id: "p1" }),
-    );
+    // The hook fires the opened event for the surface it is given; the page adds none.
+    expect(h.previewSurface).toHaveBeenCalledWith("editor");
+    expect(
+      h.track.mock.calls.some(
+        ([event]) => event === "eval_execution_preview_opened",
+      ),
+    ).toBe(false);
   });
 });
 
