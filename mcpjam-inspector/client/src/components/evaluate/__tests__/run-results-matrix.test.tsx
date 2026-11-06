@@ -10,6 +10,9 @@ import {
   cellResult,
 } from "../run-results-matrix-model";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
+import { track } from "@/lib/analytics";
+
+vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 vi.mock("convex/react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("convex/react")>()),
@@ -189,6 +192,55 @@ describe("run results matrix", () => {
     );
     expect(onEditEvaluator).toHaveBeenCalledWith("refund");
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("counts each drawer open as a legacy page view", async () => {
+    const trackMock = vi.mocked(track);
+    trackMock.mockClear();
+    render(
+      <RunResultsMatrix
+        run={run("one")}
+        iterations={[iteration("pass", "one")]}
+        hostNamesById={names}
+      />,
+    );
+    const user = userEvent.setup();
+    const views = (page: string) =>
+      trackMock.mock.calls.filter(
+        ([event, props]) =>
+          event === "eval_nav_page_viewed" && props?.page === page,
+      );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Inspect Refund order on Claude · sonnet",
+      }),
+    );
+    expect(views("test_run")).toEqual([
+      [
+        "eval_nav_page_viewed",
+        {
+          page: "test_run",
+          tab: null,
+          arrived_via: "link",
+          ui: "legacy",
+          project_id: null,
+          location: "evaluate_tab",
+        },
+      ],
+    ]);
+    await user.click(
+      screen.getByRole("button", { name: "Open iteration 1 details" }),
+    );
+    expect(views("iteration")).toHaveLength(1);
+    expect(views("iteration")[0][1]).toMatchObject({ ui: "legacy" });
+    await user.click(
+      screen.getByRole("button", { name: "Back to test case iterations" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Open iteration 1 details" }),
+    );
+    expect(views("iteration")).toHaveLength(2);
+    expect(views("test_run")).toHaveLength(1);
   });
 
   it("opens the saved case editor and closes the iterations drawer", async () => {

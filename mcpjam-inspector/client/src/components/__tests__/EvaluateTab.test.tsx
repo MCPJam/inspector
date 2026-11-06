@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import * as errorReporting from "@/lib/error-reporting";
+import posthog from "posthog-js";
 import userEvent from "@testing-library/user-event";
 import { executeInspectorCommand } from "@/lib/inspector-command-handlers";
 import { readSurfaceSnapshot } from "@/lib/webmcp/surface-snapshot-registry";
@@ -661,6 +662,62 @@ describe("EvaluateTab", () => {
     });
   });
 
+  describe("per-layer addresses open today's pages", () => {
+    const navViews = () =>
+      vi
+        .mocked(posthog.capture)
+        .mock.calls.filter(([event]) => event === "eval_nav_page_viewed");
+
+    it.each([undefined, false, true])(
+      "renders the run page for a test run address (flag %s)",
+      (flag) => {
+        mocks.evaluateFlag.enabled = flag;
+        mocks.route.current = {
+          type: "test-run",
+          suiteId: "suite-a",
+          runId: "run-1",
+          testCaseId: "case-a",
+        };
+        render(<EvaluateTab projectId="ws-1" />);
+        expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
+          route: {
+            type: "run-detail",
+            suiteId: "suite-a",
+            runId: "run-1",
+            testCaseId: "case-a",
+          },
+        });
+        expect(screen.queryByTestId("evals-runs-landing")).toBeNull();
+        expect(navViews()).toEqual([
+          [
+            "eval_nav_page_viewed",
+            expect.objectContaining({
+              page: "test_run",
+              tab: null,
+              arrived_via: "direct",
+              ui: "legacy",
+              project_id: "ws-1",
+              location: "evaluate_tab",
+            }),
+          ],
+        ]);
+      },
+    );
+
+    it("keeps the landing and counts it as the suites page", () => {
+      mocks.evaluateFlag.enabled = false;
+      mocks.route.current = { type: "list" };
+      render(<EvaluateTab projectId="ws-1" />);
+      expect(screen.getByTestId("evals-runs-landing")).toBeInTheDocument();
+      expect(navViews()).toEqual([
+        [
+          "eval_nav_page_viewed",
+          expect.objectContaining({ page: "suites", ui: "legacy" }),
+        ],
+      ]);
+    });
+  });
+
   it("defaults the bare Evaluate route to Runs, with Runs first", () => {
     mocks.route.current = { type: "list" };
     render(<EvaluateTab projectId="ws-1" />);
@@ -685,16 +742,15 @@ describe("EvaluateTab", () => {
       });
     });
 
-    it("is on for both surfaces once the flag is on", async () => {
+    it("is on for both surfaces once the flag is on", () => {
       mocks.evaluateFlag.enabled = true;
-      mocks.route.current = { type: "list" };
-      const user = userEvent.setup();
+      mocks.route.current = { type: "evaluate-runs" };
       render(<EvaluateTab projectId="ws-1" />);
-      await user.click(screen.getByRole("button", { name: /^overview$/i }));
 
       expect(mocks.projectRunsTable.mock.calls.at(-1)?.[0]).toMatchObject({
         projectId: "ws-1",
         decisionSummaryEnabled: true,
+        navLanding: true,
       });
     });
 
@@ -716,6 +772,40 @@ describe("EvaluateTab", () => {
         evaluateDecisionSummary: true,
       });
     });
+  });
+
+  describe("the Nav landing", () => {
+    it.each([{ type: "list" }, { type: "evaluate-runs" }] as const)(
+      "renders the new landing at $type with the flag on",
+      (route) => {
+        mocks.evaluateFlag.enabled = true;
+        mocks.route.current = route;
+        render(<EvaluateTab projectId="ws-1" />);
+        expect(
+          screen.getByRole("button", { name: "Create suite" }),
+        ).toBeInTheDocument();
+        expect(screen.queryByTestId("evals-suites-overview")).toBeNull();
+        expect(
+          screen.queryByRole("button", { name: /^overview$/i }),
+        ).toBeNull();
+      },
+    );
+
+    it.each([{ type: "list" }, { type: "evaluate-runs" }] as const)(
+      "renders today's landing at $type with the flag off",
+      (route) => {
+        mocks.evaluateFlag.enabled = false;
+        mocks.route.current = route;
+        render(<EvaluateTab projectId="ws-1" />);
+        expect(screen.getByTestId("evals-runs-landing")).toBeInTheDocument();
+        expect(
+          screen.getByRole("button", { name: /^overview$/i }),
+        ).toHaveAttribute("aria-current", "page");
+        expect(
+          screen.queryByRole("button", { name: "Create suite" }),
+        ).toBeNull();
+      },
+    );
   });
 
   it("switches between Suites and Runs via the header tabs", async () => {

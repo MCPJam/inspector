@@ -148,18 +148,7 @@ export function SuiteHealth({
   const threshold =
     suiteOverview?.find((entry) => entry.suite._id === suiteId)?.suite
       .defaultPassCriteria?.minimumPassRate ?? recordedThreshold;
-  const validThreshold =
-    threshold != null &&
-    Number.isFinite(threshold) &&
-    threshold >= 0 &&
-    threshold <= 100;
-  const dateLabel = (date: number) =>
-    Number.isFinite(date)
-      ? new Date(date).toLocaleDateString(undefined, {
-          month: "short",
-          day: "numeric",
-        })
-      : "Unknown date";
+  const validThreshold = isValidThreshold(threshold);
 
   return (
     <section aria-label="Suite Health" className="mb-8 space-y-3">
@@ -253,75 +242,12 @@ export function SuiteHealth({
                 </Button>
               </p>
             )}
-            <div className="flex gap-2 pt-2">
-              <div className="relative mt-2 h-20 w-9 shrink-0 text-right text-[11px] text-muted-foreground">
-                <span className="absolute right-0 top-0 -translate-y-1/2">
-                  100%
-                </span>
-                <span className="absolute bottom-0 right-0 translate-y-1/2">
-                  0%
-                </span>
-                {validThreshold && (
-                  <span
-                    className="absolute right-0 translate-y-1/2 bg-background font-semibold text-ring"
-                    style={{ bottom: `${threshold}%` }}
-                  >
-                    {threshold}%
-                  </span>
-                )}
-              </div>
-              <div className="min-w-0 flex-1 overflow-x-auto pt-2">
-                <div style={{ minWidth: points.length * 80 }}>
-                  <div
-                    className="relative flex h-20 items-end gap-1.5"
-                    role="group"
-                    aria-label="Pass rate per run"
-                  >
-                    {points.map((point) => (
-                      <button
-                        key={point.key}
-                        type="button"
-                        disabled={!point.target || !onSelectRun}
-                        onMouseEnter={() => onHoverRun?.(point.key)}
-                        onMouseLeave={() => onHoverRun?.(null)}
-                        onFocus={() => onHoverRun?.(point.key)}
-                        onBlur={() => onHoverRun?.(null)}
-                        onClick={() =>
-                          point.target && onSelectRun?.(point.target)
-                        }
-                        aria-label={`Run #${point.runNumber}, ${dateLabel(point.date)}: ${Math.round(point.rate)}%`}
-                        title={`Run #${point.runNumber} · ${dateLabel(point.date)} · ${Math.round(point.rate)}%`}
-                        data-testid="suite-health-bar"
-                        className="min-w-2 flex-1 cursor-pointer rounded-sm border-0 bg-primary p-0 hover:opacity-80 focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default"
-                        style={{
-                          height: `${point.rate}%`,
-                          minHeight: point.rate === 0 ? 1 : undefined,
-                        }}
-                      />
-                    ))}
-                    {validThreshold && (
-                      <div
-                        data-testid="suite-health-threshold"
-                        aria-label={`Minimum accuracy: ${threshold}%`}
-                        className="pointer-events-none absolute inset-x-0 border-t-2 border-dashed border-ring"
-                        style={{ bottom: `${threshold}%` }}
-                      />
-                    )}
-                  </div>
-                  <div className="mt-2 flex gap-1.5 text-[11px] text-muted-foreground">
-                    {points.map((point) => (
-                      <span
-                        key={point.key}
-                        data-testid="suite-health-bar-date"
-                        className="min-w-2 flex-1 whitespace-nowrap text-center"
-                      >
-                        {dateLabel(point.date)}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
+            <SuiteHealthBars
+              points={points}
+              threshold={threshold}
+              onHoverRun={onHoverRun}
+              onSelectRun={onSelectRun}
+            />
             {!validThreshold && (
               <p className="text-xs text-muted-foreground">
                 No minimum accuracy recorded.
@@ -331,6 +257,119 @@ export function SuiteHealth({
         )}
       </div>
     </section>
+  );
+}
+
+export interface SuiteHealthBarPoint {
+  key: string;
+  runNumber: number;
+  /** ms epoch, for the date label. */
+  date: number;
+  /** 0–100. */
+  rate: number;
+  /** Where a click goes; null renders a disabled bar. */
+  target: { suiteId: string; runId: string } | null;
+}
+
+function isValidThreshold(threshold: number | null): threshold is number {
+  return (
+    threshold != null &&
+    Number.isFinite(threshold) &&
+    threshold >= 0 &&
+    threshold <= 100
+  );
+}
+
+function dateLabel(date: number): string {
+  return Number.isFinite(date)
+    ? new Date(date).toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+      })
+    : "Unknown date";
+}
+
+/**
+ * The bar chart: an axis, one bar per run, the minimum-accuracy line and a
+ * date under each bar. Exported so the Suite page draws the same chart.
+ */
+export function SuiteHealthBars({
+  points,
+  threshold,
+  onHoverRun,
+  onSelectRun,
+}: {
+  points: readonly SuiteHealthBarPoint[];
+  /** Percent; null or out of 0–100 hides the line and its axis label. */
+  threshold: number | null;
+  onHoverRun?: (key: string | null) => void;
+  onSelectRun?: (target: { suiteId: string; runId: string }) => void;
+}) {
+  const validThreshold = isValidThreshold(threshold);
+  return (
+    <div className="flex gap-2 pt-2">
+      <div className="relative mt-2 h-20 w-9 shrink-0 text-right text-[11px] text-muted-foreground">
+        <span className="absolute right-0 top-0 -translate-y-1/2">100%</span>
+        <span className="absolute bottom-0 right-0 translate-y-1/2">0%</span>
+        {validThreshold && (
+          <span
+            className="absolute right-0 translate-y-1/2 bg-background font-semibold text-ring"
+            style={{ bottom: `${threshold}%` }}
+          >
+            {threshold}%
+          </span>
+        )}
+      </div>
+      <div className="min-w-0 flex-1 overflow-x-auto pt-2">
+        <div style={{ minWidth: points.length * 80 }}>
+          <div
+            className="relative flex h-20 items-end gap-1.5"
+            role="group"
+            aria-label="Pass rate per run"
+          >
+            {points.map((point) => (
+              <button
+                key={point.key}
+                type="button"
+                disabled={!point.target || !onSelectRun}
+                onMouseEnter={() => onHoverRun?.(point.key)}
+                onMouseLeave={() => onHoverRun?.(null)}
+                onFocus={() => onHoverRun?.(point.key)}
+                onBlur={() => onHoverRun?.(null)}
+                onClick={() => point.target && onSelectRun?.(point.target)}
+                aria-label={`Run #${point.runNumber}, ${dateLabel(point.date)}: ${Math.round(point.rate)}%`}
+                title={`Run #${point.runNumber} · ${dateLabel(point.date)} · ${Math.round(point.rate)}%`}
+                data-testid="suite-health-bar"
+                className="min-w-2 flex-1 cursor-pointer rounded-sm border-0 bg-primary p-0 hover:opacity-80 focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default"
+                style={{
+                  height: `${point.rate}%`,
+                  minHeight: point.rate === 0 ? 1 : undefined,
+                }}
+              />
+            ))}
+            {validThreshold && (
+              <div
+                data-testid="suite-health-threshold"
+                aria-label={`Minimum accuracy: ${threshold}%`}
+                className="pointer-events-none absolute inset-x-0 border-t-2 border-dashed border-ring"
+                style={{ bottom: `${threshold}%` }}
+              />
+            )}
+          </div>
+          <div className="mt-2 flex gap-1.5 text-[11px] text-muted-foreground">
+            {points.map((point) => (
+              <span
+                key={point.key}
+                data-testid="suite-health-bar-date"
+                className="min-w-2 flex-1 whitespace-nowrap text-center"
+              >
+                {dateLabel(point.date)}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
