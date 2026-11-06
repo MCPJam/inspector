@@ -39,8 +39,8 @@ import {
   MCPJAM_EVENTS_EXTENSION_ID,
   MCPJAM_TASKS_POLICY_EXTENSION_ID,
   MCP_SKILLS_EXTENSION_ID,
+  readEventsHostSetting,
   readTasksPolicy,
-  resolveHostEventDeliveryModes,
   TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
   UNAUTHORIZED_CHALLENGE_TRIGGERS,
 } from "@mcpjam/sdk/browser";
@@ -1195,10 +1195,15 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     description:
       "The MCP Events delivery modes this client accepts. Without a saved choice, its client style decides.",
     kind: { kind: "mode-set", modes: EVENT_DELIVERY_MODES },
-    // Effective, like the display-mode rows ("(effective)" is left off the
-    // path so the copy check doesn't read it as prose): a host with no saved
-    // setting shows its style's default, which subscriptions are checked by.
-    read: (cfg) => resolveHostEventDeliveryModes(cfg),
+    // The saved setting only, like Task execution above: this row is public
+    // on caniuse.dev, where a style default is not a measurement, so a client
+    // with nothing saved reads as "Not yet tested". Subscriptions still use
+    // the default (`resolveHostEventDeliveryModes`).
+    read: (cfg) => {
+      const setting = readEventsHostSetting(cfg);
+      if (setting.kind === "unset") return undefined;
+      return setting.kind === "valid" ? setting.modes : [];
+    },
   },
 
   // ============================================================
