@@ -114,16 +114,22 @@ async function fetchLinkPreview(token: string): Promise<BackendPreview | null> {
   } catch (error) {
     throw new ShareCardUnavailable(error);
   }
-  // 400/404: no such link, or not one anyone may open. A real answer.
-  if (response.status === 400 || response.status === 404) return null;
-  if (!response.ok) {
+  const refused = response.status === 400 || response.status === 404;
+  if (!response.ok && !refused) {
     throw new ShareCardUnavailable(`HTTP ${response.status}`);
   }
   let body: { ok?: boolean; preview?: BackendPreview } | null;
   try {
     body = (await response.json()) as typeof body;
   } catch (error) {
+    // A 404 that is not the route's own JSON is a backend without the route
+    // (not deployed yet), not a link without a card.
     throw new ShareCardUnavailable(error);
+  }
+  if (refused) {
+    // The route's own refusal: no such link, or not one anyone may open.
+    if (body?.ok === false) return null;
+    throw new ShareCardUnavailable(`HTTP ${response.status}`);
   }
   return body?.ok && body.preview ? body.preview : null;
 }

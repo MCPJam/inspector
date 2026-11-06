@@ -171,6 +171,26 @@ describe("GET /api/web/conformance-share-card/:token.png", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("treats a backend without the route as unavailable, not as no card", async () => {
+    // Convex's own 404 for an unknown HTTP route is not the route's JSON.
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response("No matching routes found", { status: 404 }),
+      )
+      .mockResolvedValueOnce(Response.json({ ok: false }, { status: 404 }));
+
+    const missingRoute = await app().request(
+      `/api/web/conformance-share-card/${TOKEN}.png`,
+    );
+    expect(missingRoute.status).toBe(503);
+    // Not cached: the next request asks again and gets the route's answer.
+    const answered = await app().request(
+      `/api/web/conformance-share-card/${TOKEN}.png`,
+    );
+    expect(answered.status).toBe(404);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("treats a backend 5xx as unavailable, not as no card", async () => {
     fetchMock.mockResolvedValue(new Response("boom", { status: 502 }));
     const res = await app().request(
