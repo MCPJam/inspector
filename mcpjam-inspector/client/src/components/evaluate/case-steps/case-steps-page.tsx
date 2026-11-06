@@ -15,7 +15,7 @@ import { stripTimestampSuffix } from "@/components/evals/suite-overview-presenta
 import type { Predicate } from "@/shared/eval-matching";
 import { EvalCrumbBar } from "../evals-header";
 import { SuiteRunReview } from "../suite-run-review";
-import { trackEvalNav, useEvalNavPageView } from "../nav/eval-nav-analytics";
+import { useEvalNavPageView } from "../nav/eval-nav-analytics";
 import {
   buildEvalBack,
   buildEvalCrumbs,
@@ -102,7 +102,7 @@ function CaseStepsPage({
   const tools = useCaseTools(projectId, data.suite);
   const appState = useOptionalSharedAppState();
 
-  const [previewOpen, setPreviewOpen] = useExecutionPreviewOpen();
+  const [previewOpen, setPreviewOpen] = useExecutionPreviewOpen("editor");
   const [openKey, setOpenKey] = useState<string | null>(null);
   const jump = useCaseStepJump({
     onOpenKeyChange: setOpenKey,
@@ -149,15 +149,7 @@ function CaseStepsPage({
   const toggle = (
     <ExecutionPreviewToggle
       open={previewOpen}
-      onToggle={() => {
-        // A user's click only; restoring the stored open state sends nothing.
-        if (!previewOpen)
-          trackEvalNav("eval_execution_preview_opened", {
-            surface: "editor",
-            project_id: projectId,
-          });
-        setPreviewOpen(!previewOpen);
-      }}
+      onToggle={() => setPreviewOpen(!previewOpen)}
     />
   );
   const panel = previewOpen ? (
