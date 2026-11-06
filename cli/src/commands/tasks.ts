@@ -7,9 +7,11 @@ import {
   MCP_TASKS_READINESS_IDS,
   MCPTasksConformanceTest,
   RENAMED_MCP_TASKS_CHECK_IDS,
+  isKnownProtocolVersion,
   isMCPTasksWireError,
   isUnknownTaskError,
   type MCPClientManager,
+  type McpProtocolVersion,
   type MCPTasksCheckCategory,
   type MCPTasksCheckId,
   type MCPTasksCheckOverrides,
@@ -102,6 +104,7 @@ export interface TasksConformanceOptions extends SharedServerTargetOptions {
   checkOverrides?: string;
   pollTimeout?: number;
   inputResponses?: string;
+  protocolVersion?: string;
 }
 
 function collectInvalidEntries(
@@ -184,8 +187,25 @@ export function buildTasksConformanceConfig(
 
   const checkOverrides = parseCheckOverrides(options.checkOverrides);
 
+  const trimmedProtocolVersion = options.protocolVersion?.trim();
+  let mcpProtocolVersion: McpProtocolVersion | undefined;
+  // A blank version is a mistake, not an omitted flag: dropping it would run
+  // unpinned instead of the version asked for.
+  if (trimmedProtocolVersion !== undefined) {
+    if (!isKnownProtocolVersion(trimmedProtocolVersion)) {
+      throw usageError(`Unknown --protocol-version: ${trimmedProtocolVersion}`);
+    }
+    if (!("url" in serverConfig) || !serverConfig.url) {
+      throw usageError(
+        "--protocol-version can only be used with an HTTP target (--url)."
+      );
+    }
+    mcpProtocolVersion = trimmedProtocolVersion;
+  }
+
   return {
     ...serverConfig,
+    ...(mcpProtocolVersion ? { mcpProtocolVersion } : {}),
     ...(resolvedCheckIds && resolvedCheckIds.length > 0
       ? { checkIds: resolvedCheckIds as MCPTasksConformanceConfig["checkIds"] }
       : {}),
@@ -815,6 +835,10 @@ export function registerTasksCommands(program: Command): void {
         "How long to poll a created task for a terminal status",
         (value: string) => parsePositiveInteger(value, "Poll timeout"),
         30_000
+      )
+      .option(
+        "--protocol-version <version>",
+        "Pin the MCP protocol version for the conformance connection (e.g. 2026-07-28). HTTP targets only."
       )
       .option(
         "--reporter <reporter>",
