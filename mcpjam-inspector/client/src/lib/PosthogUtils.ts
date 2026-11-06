@@ -11,6 +11,7 @@ import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
 import { HOSTED_MODE } from "./config";
 import { scrubSensitiveUrl } from "../../../shared/credential-url";
 import { stampPostHogEvent } from "./telemetry-context";
+import { hasAnalyticsConsent } from "./analytics-consent";
 import {
   isErrorCaptureSurface,
   MASKED_SESSION_RECORDING_OPTIONS,
@@ -227,6 +228,19 @@ export const options = {
   ...getPageviewCaptureOptions(),
   ...SERVER_EVALUATED_FLAG_OPTIONS,
   person_profiles: "always" as const,
+  // A visitor who must opt in (lib/analytics-consent.ts) and has not starts
+  // opted out: no events, no replay and nothing stored until they accept.
+  get opt_out_capturing_by_default() {
+    return !hasAnalyticsConsent();
+  },
+  get opt_out_persistence_by_default() {
+    return !hasAnalyticsConsent();
+  },
+  // Conversations ignores opt-out outside cookieless mode and writes a widget
+  // session id to localStorage, so it stays off until consent.
+  get disable_conversations() {
+    return !hasAnalyticsConsent();
+  },
   // Fetch keeps the SDK bearer and the live-policy guard on unload batches.
   disable_beacon: true,
   // Capture records policy only; the relay owns the final vendor serializer.
