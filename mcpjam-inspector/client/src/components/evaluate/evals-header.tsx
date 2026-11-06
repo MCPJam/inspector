@@ -1,5 +1,10 @@
-import type { ReactNode } from "react";
-import { ChevronDown, Play, Plus } from "lucide-react";
+import { Fragment, type ReactNode } from "react";
+import {
+  ArrowLeft,
+  ChevronDown,
+  Play,
+  Plus,
+} from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Breadcrumb,
@@ -21,6 +26,13 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@mcpjam/design-system/dropdown-menu";
+import { useAppNavigate } from "@/lib/app-navigation";
+import { cn } from "@/lib/utils";
+import type { EvalBack, EvalCrumb } from "./nav/eval-nav-crumbs";
+import {
+  useEvalNavigate,
+  type EvalNavLocationState,
+} from "./nav/eval-nav-state";
 
 const EVALUATE_HEADER_DESCRIPTION =
   "Build a durable test suite from the prompts you already run by hand and automatically measure performance over time.";
@@ -236,6 +248,164 @@ export function EvalsHeader({
             Create suite
           </Button>
         ) : null
+      }
+    />
+  );
+}
+
+export interface EvalCrumbBarProps {
+  /** buildEvalCrumbs(route, names) output, unchanged. Callers pass `?? []` for null. */
+  crumbs: readonly EvalCrumb[];
+  /** buildEvalBack(route, names, useEvalNavArrival().from) output. null/absent: no Back. */
+  back?: EvalBack | null;
+  /** Buttons that live in the bar, left of Back. */
+  actions?: ReactNode;
+}
+
+const BACK_STATE: EvalNavLocationState = { evalNav: { via: "back" } };
+
+/**
+ * The strip at the top of every per-layer Evaluate page: breadcrumbs, then the
+ * page's own bar actions, then Back. Same height and inset as the landing
+ * header. A crumb with `to` pushes it with via "crumb"; Back pushes back.path.
+ * On a phone a trail longer than three keeps the first and the last two and
+ * folds the rest into "…".
+ */
+export function EvalCrumbBar({ crumbs, back, actions }: EvalCrumbBarProps) {
+  const navigateEval = useEvalNavigate();
+  const navigate = useAppNavigate();
+  const last = crumbs.length - 1;
+  const folds = crumbs.length > 3;
+  const folded = (index: number) => folds && index > 0 && index < last - 1;
+
+  return (
+    <div
+      className={cn(PAGE_HEADER_STRIP_CLASSNAME, "flex items-center gap-3")}
+      data-testid="evals-header"
+    >
+      <Breadcrumb className="min-w-0 flex-1">
+        <BreadcrumbList className="min-w-0 flex-nowrap">
+          {crumbs.map((crumb, index) => {
+            const busy = crumb.pending ? true : undefined;
+            const to = index === last ? undefined : crumb.to;
+            return (
+              <Fragment key={index}>
+                {index === 1 && folds ? (
+                  <>
+                    <BreadcrumbSeparator className="shrink-0 sm:hidden">
+                      /
+                    </BreadcrumbSeparator>
+                    <li aria-hidden="true" className="shrink-0 sm:hidden">
+                      …
+                    </li>
+                  </>
+                ) : null}
+                {index > 0 ? (
+                  <BreadcrumbSeparator
+                    className={cn(
+                      "shrink-0",
+                      folded(index) && "hidden sm:inline",
+                    )}
+                  >
+                    /
+                  </BreadcrumbSeparator>
+                ) : null}
+                <BreadcrumbItem
+                  className={cn(
+                    "min-w-0",
+                    folded(index) && "hidden sm:inline-flex",
+                    index === 0
+                      ? "shrink-[0.5] sm:shrink-0"
+                      : index === last
+                        ? "shrink"
+                        : "max-w-48 shrink",
+                  )}
+                >
+                  {to ? (
+                    <BreadcrumbLink asChild>
+                      <button
+                        type="button"
+                        aria-busy={busy}
+                        onClick={() => navigateEval(to, { via: "crumb" })}
+                        className="inline-flex min-w-0 border-0 bg-transparent p-0 font-normal text-muted-foreground hover:text-foreground"
+                      >
+                        <span className="truncate">{crumb.label}</span>
+                      </button>
+                    </BreadcrumbLink>
+                  ) : (
+                    <BreadcrumbPage className="truncate" aria-busy={busy}>
+                      {crumb.label}
+                    </BreadcrumbPage>
+                  )}
+                </BreadcrumbItem>
+              </Fragment>
+            );
+          })}
+        </BreadcrumbList>
+      </Breadcrumb>
+      {actions}
+      {back ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 shrink-0 gap-1.5 px-2.5"
+          title={back.label}
+          onClick={() => navigate(back.path, { state: BACK_STATE })}
+        >
+          <ArrowLeft className="size-3.5" aria-hidden />
+          <span className="hidden sm:inline">{back.label}</span>
+          <span className="sm:hidden">Back</span>
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+/** The landing's two tabs, each an address: list = /evaluate, evaluate-runs = /evaluate/runs. */
+export type EvalNavLandingTab = "suites" | "runs";
+
+export const EVAL_NAV_LANDING_TABS = [
+  { value: "suites", label: "Suites" },
+  { value: "runs", label: "Runs" },
+] as const satisfies readonly ViewModeSelectorOption<EvalNavLandingTab>[];
+
+export interface EvalNavLandingHeaderProps {
+  tab: EvalNavLandingTab;
+  onTabChange: (tab: EvalNavLandingTab) => void;
+  onCreateSuite: () => void;
+}
+
+/** The Evaluate landing header with the flag on: Suites | Runs and Create suite. */
+export function EvalNavLandingHeader({
+  tab,
+  onTabChange,
+  onCreateSuite,
+}: EvalNavLandingHeaderProps) {
+  return (
+    <LandingPageHeader
+      testId="evals-header"
+      title="Evaluate"
+      description={EVALUATE_HEADER_DESCRIPTION}
+      tabs={{
+        value: tab,
+        options: EVAL_NAV_LANDING_TABS,
+        onChange: onTabChange,
+        ariaLabel: "Evaluate view",
+        indicatorId: "evals-landing",
+      }}
+      actions={
+        <div className="flex items-center gap-1.5">
+          <Button
+            type="button"
+            size="sm"
+            className="gap-1.5"
+            onClick={onCreateSuite}
+          >
+            <Plus className="h-4 w-4" aria-hidden />
+            Create suite
+          </Button>
+        </div>
       }
     />
   );

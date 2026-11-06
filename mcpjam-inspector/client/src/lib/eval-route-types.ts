@@ -10,6 +10,9 @@ export type SuiteOverviewView =
  * omitted from Suites URLs at runtime.
  */
 
+/** Suite settings tab, from the segment after /settings (none = "settings"). */
+export type SuiteSettingsTab = "settings" | "cases" | "evaluators";
+
 export type EvalRoute =
   | { type: "list" }
   | { type: "create" }
@@ -60,4 +63,52 @@ export type EvalRoute =
       commitSha: string;
       suite?: string;
       iteration?: string;
+    }
+  /** /evaluate/runs — the Evaluate landing's Runs tab. */
+  | { type: "evaluate-runs" }
+  /** …/suite/:suiteId/settings[/cases|/evaluators] */
+  | { type: "suite-settings"; suiteId: string; tab: SuiteSettingsTab }
+  /** …/suite/:suiteId/settings/cases/new */
+  | { type: "case-new"; suiteId: string }
+  /** …/suite/:suiteId/settings/cases/:testCaseId */
+  | { type: "case-settings"; suiteId: string; testCaseId: string }
+  /** …/suite/:suiteId/settings/cases/:testCaseId/evaluators */
+  | { type: "case-evaluators"; suiteId: string; testCaseId: string }
+  /** …/suite/:suiteId/runs/:runId/cases/:testCaseId[?target=] */
+  | {
+      type: "test-run";
+      suiteId: string;
+      runId: string;
+      testCaseId: string;
+      /** The model shown when the run used several. Omitted when absent. */
+      target?: string;
+    }
+  /** …/runs/:runId/cases/:testCaseId/iter/:iterationId */
+  | {
+      type: "iteration";
+      suiteId: string;
+      runId: string;
+      testCaseId: string;
+      iterationId: string;
+    }
+  /** …/runs/:runId/cases/:testCaseId/edit — a test case opened from a test run. */
+  | {
+      type: "test-run-edit";
+      suiteId: string;
+      runId: string;
+      testCaseId: string;
     };
+
+/** The kinds that give each eval layer its own page. Only /evaluate parses them. */
+export type EvalNavRouteType =
+  | "evaluate-runs"
+  | "suite-settings"
+  | "case-new"
+  | "case-settings"
+  | "case-evaluators"
+  | "test-run"
+  | "iteration"
+  | "test-run-edit";
+export type EvalNavRoute = Extract<EvalRoute, { type: EvalNavRouteType }>;
+/** Every kind the pre-navigation pages render. */
+export type LegacyEvalRoute = Exclude<EvalRoute, EvalNavRoute>;

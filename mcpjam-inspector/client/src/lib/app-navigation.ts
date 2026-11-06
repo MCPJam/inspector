@@ -23,6 +23,11 @@ import { UNSAFE_LocationContext, UNSAFE_NavigationContext } from "react-router";
 import { getAppRouter } from "../router-ref";
 import type { EvalRoute } from "./eval-route-types";
 import type { EvalRoutePrefix } from "./eval-route-url";
+import {
+  buildEvalNavPath,
+  isEvalNavRoute,
+  legacyEvalRouteFor,
+} from "./eval-nav-routes";
 import { normalizeHostedHashTab } from "./hosted-tab-policy";
 import { isProjectScopedRoutePath } from "./app-routes";
 import {
@@ -513,17 +518,19 @@ export function buildOrganizationPath(
  * Build a Suites route; test cases always open Ding Dong.
  */
 export function buildEvalsPath(route: EvalRoute): string {
+  const target = isEvalNavRoute(route) ? legacyEvalRouteFor(route) : route;
   return buildEvalRoutePath(
-    route.type === "test-edit" || route.type === "test-detail"
-      ? routePaths.evaluate : routePaths.evals, route,
+    target.type === "test-edit" || target.type === "test-detail"
+      ? routePaths.evaluate : routePaths.evals, target,
   );
 }
 
 /** Build a Runs route; test cases always open Ding Dong. */
 export function buildEvalsRunsPath(route: EvalRoute): string {
+  const target = isEvalNavRoute(route) ? legacyEvalRouteFor(route) : route;
   return buildEvalRoutePath(
-    route.type === "test-edit" || route.type === "test-detail"
-      ? routePaths.evaluate : routePaths.evalsRuns, route,
+    target.type === "test-edit" || target.type === "test-detail"
+      ? routePaths.evaluate : routePaths.evalsRuns, target,
   );
 }
 
@@ -631,6 +638,18 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
         query ? `?${query}` : ""
       }`;
     }
+    // Per-layer pages exist only on /evaluate; other prefixes get today's page.
+    case "evaluate-runs":
+    case "suite-settings":
+    case "case-new":
+    case "case-settings":
+    case "case-evaluators":
+    case "test-run":
+    case "iteration":
+    case "test-run-edit":
+      return prefix === routePaths.evaluate
+        ? buildEvalNavPath(route)
+        : buildEvalRoutePath(prefix, legacyEvalRouteFor(route));
   }
 }
 
@@ -644,6 +663,8 @@ export interface AppNavigateOptions {
    * failed to open". Everything else wants the inheritance.
    */
   unscoped?: boolean;
+  /** History state for the target entry (react-router `location.state`). */
+  state?: unknown;
 }
 
 /**
@@ -697,7 +718,10 @@ export function navigateApp(to: string, options?: AppNavigateOptions): void {
   const target = options?.unscoped ? to : scopeNavigationTarget(to);
   const router = getAppRouter();
   if (router) {
-    void router.navigate(target, { replace: options?.replace });
+    void router.navigate(target, {
+      replace: options?.replace,
+      state: options?.state,
+    });
     return;
   }
   if (
@@ -706,10 +730,11 @@ export function navigateApp(to: string, options?: AppNavigateOptions): void {
     )
   )
     return;
+  const state = options?.state ?? {};
   if (options?.replace) {
-    window.history.replaceState({}, "", target);
+    window.history.replaceState(state, "", target);
   } else {
-    window.history.pushState({}, "", target);
+    window.history.pushState(state, "", target);
   }
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
@@ -734,9 +759,9 @@ export function useAppNavigate() {
         : scopeNavigationTarget(to, pathname);
       if (navigator) {
         if (options?.replace) {
-          navigator.replace(target);
+          navigator.replace(target, options.state);
         } else {
-          navigator.push(target);
+          navigator.push(target, options?.state);
         }
         return;
       }
