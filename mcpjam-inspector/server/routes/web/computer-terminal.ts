@@ -55,6 +55,7 @@ import {
 import { logger } from "../../utils/logger.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
 import { classifyError } from "../../utils/error-classify.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 // PTY process TTL inside the sandbox. The E2B default is 60s, which would
 // kill an idle terminal almost immediately; match the sandbox's own 1h
@@ -162,6 +163,7 @@ export function createComputerTerminalWsHandler(
     let pty: CommandHandle | null = null;
     let sandbox: Sandbox | null = null;
     let closed = false;
+    let inputTail: Promise<void> = Promise.resolve();
     // Throttle gate for the activity touch (see ACTIVITY_TOUCH_THROTTLE_MS).
     let lastActivityTouchAt = 0;
     const maybeTouchActivity = () => {
@@ -284,10 +286,43 @@ export function createComputerTerminalWsHandler(
         }
         // Binary frames are stdin.
         const bytes = toUint8Array(data);
-        if (bytes && pty && sandbox) {
+        if (bytes && pty && sandbox && !closed) {
           // Keystrokes are true user activity — refresh the idle timer.
           maybeTouchActivity();
-          void sandbox.pty.sendInput(pty.pid, bytes).catch(() => {});
+          const box = sandbox;
+          const handle = pty;
+          const input = bytes.slice();
+          // Each SDK write is a separate RPC; wait for its acknowledgement
+          // before dispatching the next frame, including Enter.
+          inputTail = inputTail
+            .then(async () => {
+              if (closed) return;
+              await box.pty.sendInput(handle.pid, input, {
+                signal: attachAbort.signal,
+              });
+            })
+            .catch((error) => {
+              // Closing aborts an in-flight write and discards queued input.
+              if (closed) return;
+              closed = true;
+              attachAbort.abort();
+              reportRouteFailure("[computer-terminal] input failed", error, {
+                source: "routes.web.computer-terminal.input",
+                hop: "mcpjam_internal",
+              });
+              requestLogger.event("computer.terminal.input_failed", {
+                errorCode: classifyError(error),
+              });
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  message:
+                    "Couldn't send input to the terminal. Reconnect to continue.",
+                }),
+              );
+              // An unacknowledged write may have arrived. Never replay it.
+              ws.close(CLOSE_UNAVAILABLE, "PTY input failed");
+            });
         }
       },
 
