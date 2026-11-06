@@ -81,7 +81,38 @@ export function validateServerFormData(
     return "Enter a complete server URL, such as https://example.com/mcp.";
   }
   if (HOSTED_MODE && parsedUrl.protocol !== "https:") {
+    if (parsedUrl.protocol !== "http:") {
+      return "Enter a complete HTTPS server URL, such as https://example.com/mcp.";
+    }
     return "MCPJam’s hosted web app requires an HTTPS server URL. To connect over HTTP, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.";
   }
   return null;
+}
+
+export const HOSTED_STDIO_ERROR =
+  "Connect your STDIO server in MCPJam’s local app. The web app connects to HTTPS servers.";
+
+// Only plugin components have a hosted STDIO runtime; first-run input does not.
+export function validateFirstRunServerFormData(
+  formData: ServerFormData,
+): string | null {
+  if (HOSTED_MODE && formData.type === "stdio") return HOSTED_STDIO_ERROR;
+  return validateServerFormData(formData);
+}
+
+export type FirstRunValidationKind = "input" | "hosted-stdio";
+
+export function inferFirstRunTransport(
+  input: string,
+  current?: "http" | "stdio",
+): "http" | "stdio" {
+  if (!HOSTED_MODE && current) return current;
+  if (/^https?:\/\//i.test(input)) return "http";
+  if (!HOSTED_MODE || /\s/.test(input)) return "stdio";
+  // Prefer local execution for common script filenames, which also resemble hosts.
+  if (/^[^/:]+\.(?:[cm]?js|tsx?|py|sh|rb|exe)$/i.test(input)) return "stdio";
+  return /^[a-z][a-z\d+.-]*:\/\//i.test(input) ||
+    /^(?:localhost|(?:[a-z\d-]+\.)+[a-z\d-]+)(?::\d+)?(?:[/?#]|$)/i.test(input)
+    ? "http"
+    : "stdio";
 }
