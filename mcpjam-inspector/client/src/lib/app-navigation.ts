@@ -923,21 +923,6 @@ export function buildConformanceRunPath(
   return projectId ? buildProjectPath(projectId, base) : base;
 }
 
-/** The Conformance tab a run's page was opened from. Its Back returns there. */
-export type ConformanceRunOrigin = "overview" | "history";
-
-/** History state for opening a run's page from `from`. */
-export function conformanceRunOriginState(from: ConformanceRunOrigin) {
-  return { conformanceRunFrom: from };
-}
-
-/** Where a run's page was opened from. A pasted link counts as History. */
-export function readConformanceRunOrigin(state: unknown): ConformanceRunOrigin {
-  const from = (state as { conformanceRunFrom?: unknown } | null)
-    ?.conformanceRunFrom;
-  return from === "overview" ? "overview" : "history";
-}
-
 /** The query key the Conformance page reads to start a run on arrival. */
 export const CONFORMANCE_RUN_PARAM = "run";
 
