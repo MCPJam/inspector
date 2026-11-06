@@ -443,6 +443,54 @@
   }
 }
 
+/* Test case editor: the row a test run's execution preview opened, pulsed, and its body easing in. */
+@keyframes case-step-arrive {
+  0% {
+    outline-color: transparent;
+    box-shadow: 0 0 0 0 transparent;
+  }
+
+  20%,
+  70% {
+    outline-color: var(--primary);
+    box-shadow: 0 0 0 5px color-mix(in oklab, var(--primary) 15%, transparent);
+  }
+
+  100% {
+    outline-color: transparent;
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@keyframes case-step-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.case-step-arrive {
+  outline: 2px solid transparent;
+  outline-offset: 3px;
+  animation: case-step-arrive 1.8s ease-in-out both;
+}
+
+.case-step-enter {
+  animation: case-step-enter 0.28s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .case-step-arrive,
+  .case-step-enter {
+    animation: none;
+  }
+}
+
 /*
  * Swarm empty-state hero — the golems jump on a loop so the page reads as
  * alive rather than unfinished (BB-120).
