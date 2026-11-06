@@ -933,9 +933,11 @@ export const startSuiteRunWithRecorder = async ({
     // together used to roll the loser back whole. The action retries that
     // conflict server-side; the mutation it wraps still exists and is what
     // older inspector builds call.
-    await convexClient.action("testSuites:startSuiteRunIterations" as any, {
-      runId,
-    });
+    if (response?.deduped !== true) {
+      await convexClient.action("testSuites:startSuiteRunIterations" as any, {
+        runId,
+      });
+    }
   } catch (error) {
     const cause = error instanceof Error ? error.message : String(error);
     // Defense in depth: the run-start pre-check normally rejects out-of-quota

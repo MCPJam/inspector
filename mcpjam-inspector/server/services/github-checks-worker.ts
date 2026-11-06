@@ -1009,7 +1009,7 @@ async function runTerminality(
 }
 
 /**
- * Read a run, waiting out a gating judge's hold.
+ * Read a run, waiting for its existing executor and gating judge.
  *
  * IT DECIDES NOTHING. It returns the last row it read, and every judgement
  * stays where it was: `runReachedAVerdict` is unchanged and still answers
@@ -1055,7 +1055,7 @@ export async function awaitJudgeVerdict(
     } | null;
 
   let run = await read();
-  while (run?.status === "grading") {
+  while (run?.status === "grading" || run?.status === "running" || run?.status === "pending") {
     if (options.isLeaseHeld?.() === false) return run;
     if (now() >= deadline) return run;
     await sleep(options.pollMs);
@@ -1063,7 +1063,7 @@ export async function awaitJudgeVerdict(
       run = await read();
     } catch (error) {
       // Not evidence about the run. Keep the last row and try again.
-      logger.warn("[github-checks] failed to re-read a run held for grading", {
+      logger.warn("[github-checks] failed to re-read an active eval run", {
         runId,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -1288,12 +1288,8 @@ async function executeCheckRun(
   args: RunEvalSuiteArgs,
 ): Promise<Awaited<ReturnType<typeof awaitJudgeVerdict>>> {
   try {
-    // A redelivered claim replays the run its key already started. If that
-    // run FINISHED, re-executing would run the suite a second time and bill
-    // for it — and the verdict this check needs is already recorded on it.
-    // Only the execution is skipped; everything below still reads the run's
-    // terminality and reports it, which is exactly what a redelivery should
-    // do.
+    // A redelivered claim adopts the original worker's run. Wait for its
+    // verdict below while keeping this claim's heartbeat and temporary server.
     if (shouldSkipExecution(prepared)) {
       logger.info("[github-checks] trigger already ran — not re-executing", {
         triggerId: args.claimed.triggerId,

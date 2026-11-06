@@ -9,6 +9,15 @@ import {
 } from "../recorder.js";
 
 describe("startSuiteRunWithRecorder", () => {
+  it.each(["pending", "running", "grading", "completed"])("does not prepare iterations again for a replay in %s", async (status) => {
+    const client = new ConvexHttpClient("https://replay.test");
+    const mutation = vi.spyOn(client, "mutation").mockResolvedValue({ runId: "existing-run", testCases: [], deduped: true, status });
+    const action = vi.spyOn(client, "action").mockRejectedValue(new Error("A replay must not reserve usage or finalize the run"));
+    const result = await startSuiteRunWithRecorder({ convexClient: client, suiteId: "suite-1", idempotencyKey: "same-key" });
+    expect(result).toMatchObject({ runId: "existing-run", deduped: true, status });
+    expect(mutation).toHaveBeenCalledTimes(1);
+    expect(action).not.toHaveBeenCalled();
+  });
   it("forwards the GitHub server replacement and omits undefined overrides", async () => {
     const action = vi.fn().mockResolvedValue(undefined);
     const mutation = vi

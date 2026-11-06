@@ -12,15 +12,10 @@ const prepareEvalRun = vi.fn();
 const createAuthorizedManager = vi.fn();
 const createConvexClient = vi.fn();
 
-vi.mock("../../routes/shared/evals.js", async () => {
-  const { isEvalRunPastExecution } = await import("@mcpjam/sdk/contract");
-  return {
-    prepareEvalRun: (...args: unknown[]) => prepareEvalRun(...args),
-    // The real rule: only a replayed run with nothing left to execute skips.
-    shouldSkipExecution: (prepared: { deduped?: boolean; status?: string }) =>
-      prepared.deduped === true && isEvalRunPastExecution(prepared.status),
-  };
-});
+vi.mock("../../routes/shared/evals.js", () => ({
+  prepareEvalRun: (...args: unknown[]) => prepareEvalRun(...args),
+  shouldSkipExecution: (prepared: { deduped?: boolean }) => prepared.deduped === true,
+}));
 vi.mock("../../routes/web/auth.js", () => ({
   createAuthorizedManager: (...args: unknown[]) =>
     createAuthorizedManager(...args),

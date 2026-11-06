@@ -67,10 +67,8 @@ export function detachPreparedEvalRun(args: {
 }) {
   const { prepared, convexAuthToken, logPrefix, logContext, cleanup } = args;
 
-  // A REPLAY of a finished run has nothing to execute. Running it would repeat
-  // every case and bill for it, over results that are already final — the
-  // double-spend an idempotency key is sent to prevent. Guarded here rather
-  // than at each call site so every surface that detaches a run inherits it.
+  // An idempotent replay belongs to its original executor. Every detached
+  // surface shares this guard so retries cannot run or bill the same trials twice.
   if (shouldSkipExecution(prepared)) {
     logger.info(`${logPrefix} idempotent replay — not re-executing`, {
       ...logContext,
