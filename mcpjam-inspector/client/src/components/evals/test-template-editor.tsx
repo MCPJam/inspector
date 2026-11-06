@@ -141,10 +141,7 @@ import {
 import { isHostedMode } from "@/lib/apis/mode-client";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { ServerPicker } from "@/components/hosts/server-picker";
-import {
-  resolvePromptTurnsWithLegacyProbe,
-  stripPromptTurnsFromAdvancedConfig,
-} from "@/shared/steps";
+import { stripPromptTurnsFromAdvancedConfig } from "@/shared/steps";
 import { PROBE_TOOL_NAME_PLACEHOLDER } from "@/shared/probe-config";
 import {
   deriveExpectedToolCalls,
@@ -173,24 +170,7 @@ import {
 } from "@/shared/steps";
 import { appendScenarioPredicatesAsAssertSteps } from "@/shared/predicate-migration";
 
-/**
- * Seed the editor's `editForm.steps` from a test case. The backend stores
- * `steps` natively; prefer them directly. Old `widget_probe`/pre-steps blobs
- * (no `steps`) are bridged once through the legacy resolver — the ONE remaining
- * use of the prompt-turns adapter on the load path, deletable in Phase E once
- * no un-migrated rows remain.
- */
-function loadSteps(testCase: unknown): TestStep[] {
-  const steps = (testCase as { steps?: unknown })?.steps;
-  if (Array.isArray(steps) && steps.length > 0) {
-    return normalizeSteps(steps);
-  }
-  return promptTurnsToSteps(
-    resolvePromptTurnsWithLegacyProbe(
-      testCase as Parameters<typeof resolvePromptTurnsWithLegacyProbe>[0],
-    ),
-  );
-}
+import { loadCaseSteps as loadSteps } from "./load-case-steps";
 import { normalizeToolChoice } from "@/shared/tool-choice";
 import {
   resolveCasePredicates,
