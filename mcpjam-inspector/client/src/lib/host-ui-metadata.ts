@@ -18,6 +18,7 @@ import clineLogoDark from "/cline_logo_dark.svg";
 import clineLogoLight from "/cline_logo_light.svg";
 import notionLogo from "/notion_logo.png";
 import slackLogo from "/slack_logo.png";
+import geminiLogo from "/google_logo.png";
 
 export const DEFAULT_CATALOG_HOST_ID = "mcpjam";
 
@@ -41,6 +42,8 @@ const LOGO_BY_HOST_ID: Record<string, string> = {
   vscode: vscodeLogo,
   agentcore: bedrockLogo,
   n8n: n8nLogo,
+  // The Gemini spark; the file is named for the vendor, not the product.
+  gemini: geminiLogo,
   perplexity: perplexityLogo,
   cline: clineLogoLight,
   notion: notionLogo,

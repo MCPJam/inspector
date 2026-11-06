@@ -1,3 +1,4 @@
+import { resolveAgentLoop } from './harness/agent-loop-dispatch.js';
 /**
  * Assistant turn engine (Stage 1 of horizontally-safe synthetic scenario
  * sessions — see plan v3 §A "engine extraction").
@@ -89,12 +90,8 @@ export interface RunAssistantTurnOptions {
   modelSelectionOrigin?: "backfill";
 
   selectedServerIds?: string[];
-  /**
-   * Optional display names for the selected servers. Reserved for the
-   * upcoming synthetic runner adapter so a generated `chatSessions.row`
-   * can resolve `serverIds → serverNames` without re-querying the
-   * manager. Stage 1 does not consume this; persist when present.
-   */
+  unavailableServerIds?: readonly string[];
+  /** Optional display names aligned with selectedServerIds for persistence. */
   selectedServerNames?: string[];
 
   mcpClientManager: MCPClientManager;
@@ -105,8 +102,9 @@ export interface RunAssistantTurnOptions {
    * Source-of-traffic marker forwarded into chat-ingestion. Mirrors
    * the existing `MCPJamHandlerOptions.sourceType` union but kept
    * narrowed to the public values to avoid silent string churn.
+   * `event` is an MCP Events trigger run (unattended, like eval/swarm).
    */
-  sourceType: "direct" | "scenario" | "eval" | "swarm";
+  sourceType: "direct" | "scenario" | "eval" | "swarm" | "event";
   /**
    * Product-surface discriminator forwarded into chat-ingestion. Required
    * so each caller (eval runner, session simulation, MCP route) explicitly
@@ -164,6 +162,9 @@ export interface RunAssistantTurnOptions {
    * resolved host config's `harness` field.
    */
   harness?: Harness;
+  agentLoop?: Harness;
+  harnessTurnContext?: string;
+  harnessUnavailableAppTools?: boolean;
   harnessExecutionTarget?: MCPJamHandlerOptions["harnessExecutionTarget"];
 
   streamSink: RunAssistantTurnStreamSink;
@@ -179,6 +180,7 @@ export interface RunAssistantTurnOptions {
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
   abortSignal?: AbortSignal;
+  remainingTurnMs?: MCPJamHandlerOptions["remainingTurnMs"];
   heartbeatIntervalMs?: number;
   maxSteps?: number;
 
@@ -493,6 +495,7 @@ function buildHandlerOptions(
     systemPrompt: opts.systemPrompt,
     tools: opts.tools,
     mcpClientManager: opts.mcpClientManager,
+    unavailableServerIds: opts.unavailableServerIds,
     authHeader: opts.authContext.token,
     ...(opts.temperature !== undefined
       ? { temperature: opts.temperature }
@@ -513,6 +516,9 @@ function buildHandlerOptions(
       : {}),
     // Pass the verified harness selector through to its driver.
     ...(opts.harness ? { harness: opts.harness } : {}),
+    ...(opts.agentLoop ? { agentLoop: opts.agentLoop } : {}),
+    harnessTurnContext: opts.harnessTurnContext,
+    harnessUnavailableAppTools: opts.harnessUnavailableAppTools,
     ...(opts.harnessExecutionTarget ? { harnessExecutionTarget: opts.harnessExecutionTarget } : {}),
     // Harness MCP-proxy plane + swarm continuity identity: pass-throughs so an
     // eval/synthetic harness turn driven through this facade can (a) reach MCP
@@ -608,6 +614,7 @@ function buildHandlerOptions(
       ? { clientIp: opts.authContext.clientIp }
       : {}),
     ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
+    ...(opts.remainingTurnMs ? { remainingTurnMs: opts.remainingTurnMs } : {}),
     ...(opts.heartbeatIntervalMs !== undefined
       ? { heartbeatIntervalMs: opts.heartbeatIntervalMs }
       : {}),
@@ -649,6 +656,8 @@ function buildHandlerOptions(
 export async function runAssistantTurn(
   opts: RunAssistantTurnOptions,
 ): Promise<RunAssistantTurnResult> {
+  const dispatch = resolveAgentLoop({ agentLoop: opts.agentLoop, harness: opts.agentLoop ? undefined : opts.harness });
+  opts = { ...opts, harness: dispatch.harnessId };
   let capturedMessages: ModelMessage[] | undefined;
   let capturedTrace: PersistedTurnTrace | undefined;
   let capturedHarnessCommit: HarnessSessionCommitPayload | undefined;

@@ -1,3 +1,4 @@
+import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 import { harnessReasoningEfforts } from "@mcpjam/sdk/browser";
 import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
 import {
@@ -57,12 +58,10 @@ import {
  * "Claude Code", which was already wrong for a Codex host and would have been
  * wrong for two harnesses out of three.
  */
-export const HARNESS_DISPLAY_NAME: Record<HostConfigHarnessV2, string> = {
-  "claude-code": "Claude Code",
-  codex: "Codex",
-  // "Cursor CLI", not "Cursor": the emulated `cursor` host style is the IDE's
-  // chat panel, and a user reading this needs to know which one they attached.
-  cursor: "Cursor CLI",
+export const HARNESS_DISPLAY_NAME = {
+  "claude-code": HARNESS_DESCRIPTORS["claude-code"].displayName,
+  codex: HARNESS_DESCRIPTORS.codex.displayName,
+  cursor: HARNESS_DESCRIPTORS.cursor.displayName,
 };
 
 /** Behavior-tab controls whose value may not cross into a harness runtime. */
@@ -86,93 +85,14 @@ const ENFORCED = ENFORCED_CONTROL;
 
 /** Controls owned by the harness's own agent loop — no MCPJam-side mediation
  *  can change these answers, so they are declared per harness. */
-type HarnessLoopControl = Exclude<
-  HarnessGatedControl,
-  "respectToolVisibility" | "reasoningEffort"
->;
+
 
 // Keyed by harness id. A host with no harness (emulated engine) enforces
 // everything — callers pass `undefined` and get ENFORCED for every control.
-const HARNESS_LOOP_CONTROL_STATE: Record<
-  HostConfigHarnessV2,
-  Record<HarnessLoopControl, HarnessControlState>
-> = {
-  "claude-code": {
-    // MCPJam brokers this harness's model credentials, so the selected model is
-    // the model the runtime is launched with.
-    modelId: ENFORCED,
-    // Permanent: the Claude Code CLI exposes no temperature knob.
-    temperature: {
-      enforced: false,
-      note: "Claude Code runs its own loop and ignores temperature.",
-    },
-    // Claude Code pauses on all three surfaces: its own built-ins, its
-    // host-executed tools, and — under `approvalPermissionMode: "allow-reads"`
-    // — the MCP tools its in-sandbox client calls. The interposition point is
-    // the adapter bridge's `canUseTool`, which every tool call passes through
-    // before the CLI may run it; MCP tool names fall into its "edit" default,
-    // which "allow-reads" gates. This entry previously read `enforced: false`
-    // on the belief that MCP tools were unreachable, and a turn on an approval
-    // host with any server selected was REFUSED outright. It isn't anymore.
-    requireToolApproval: ENFORCED,
-    // The real Claude Code owns its own tool discovery; MCPJam's progressive
-    // meta-tools are an emulated-loop mechanism and don't apply to a harness.
-    progressiveToolDiscovery: {
-      enforced: false,
-      note: "Claude Code does its own tool discovery.",
-    },
-  },
-  codex: {
-    // Brokered, same as Claude Code — the selection reaches the runtime.
-    modelId: ENFORCED,
-    // Permanent: the Codex CLI exposes no temperature knob to the host.
-    temperature: {
-      enforced: false,
-      note: "Codex runs its own loop and ignores temperature.",
-    },
-    // Codex runs on MCPJam's app-server adapter, which pauses on every command
-    // and file change and gates host-executed MCP tools before they run.
-    requireToolApproval: ENFORCED,
-    // The real Codex owns its own tool discovery.
-    progressiveToolDiscovery: {
-      enforced: false,
-      note: "Codex does its own tool discovery.",
-    },
-  },
-  cursor: {
-    // The one harness whose MODEL is not MCPJam's to choose. It authenticates
-    // with the customer's own Cursor account and that account picks the model
-    // (Cursor Auto), so a selection here would persist onto the host, show in
-    // the editor, and reach nothing — a saved setting that silently lies about
-    // what ran. The host carries the `cursor/auto` sentinel instead, which is
-    // what the runtime actually resolves to.
-    modelId: {
-      enforced: false,
-      note: "The Cursor CLI runs on your Cursor account, which chooses the model itself.",
-    },
-    // Permanent for the same reason: Cursor's CLI takes no temperature either.
-    temperature: {
-      enforced: false,
-      note: "The Cursor CLI runs on your Cursor account and ignores temperature.",
-    },
-    // The ACP bridge pauses on its own built-ins: every tool call goes through
-    // `session/request_permission`, and under the adapter's "allow-reads" mode
-    // anything outside read/search/think/fetch emits a `tool-approval-request`
-    // the turn waits on. Verified against a live cursor-agent.
-    //
-    // ENFORCED describes the NATIVE surface, which is what this control means
-    // here. Whether Cursor also pauses on MCP-server tools is not yet measured
-    // — the adapter's `supportsMcpToolApproval` is `false` pending that check,
-    // so a host that requires approval AND selects servers is refused outright
-    // rather than run with some calls unapproved. Refused, never silently
-    // un-enforced.
-    requireToolApproval: ENFORCED,
-    // The real Cursor CLI owns its own tool discovery, same as the other two.
-    progressiveToolDiscovery: {
-      enforced: false,
-      note: "The Cursor CLI does its own tool discovery.",
-    },
-  },
+const HARNESS_LOOP_CONTROL_STATE = {
+  "claude-code": HARNESS_DESCRIPTORS["claude-code"].controls,
+  codex: HARNESS_DESCRIPTORS.codex.controls,
+  cursor: HARNESS_DESCRIPTORS.cursor.controls,
 };
 
 /**
@@ -183,7 +103,7 @@ const HARNESS_LOOP_CONTROL_STATE: Record<
 function toolVisibilityState(
   delivery: HarnessMcpDelivery,
 ): HarnessControlState {
-  if (delivery === "host-executed") return ENFORCED;
+  if (delivery === "mcpjam") return ENFORCED;
   return {
     enforced: false,
     // Stated in terms of the mechanism, so it reads correctly for any future

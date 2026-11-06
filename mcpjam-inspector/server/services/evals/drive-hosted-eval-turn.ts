@@ -1,3 +1,4 @@
+import { guardEvalViewTools } from "./view-tool-policy.js";
 import { appendPluginModelContext } from "../../../shared/plugin-model-context.js";
 import { createConvexEvidenceReadTransport } from "../../utils/harness/harness-evidence-reader.js";
 import { expandPersistedRequestPayloads } from "@/shared/live-chat-trace";
@@ -58,7 +59,7 @@ import { runAssistantTurn } from "../../utils/assistant-turn.js";
 import type { RunAssistantTurnOptions } from "../../utils/assistant-turn.js";
 import { EVAL_WIDGET_MODEL_CONTEXT } from "../../config.js";
 import { HOSTED_STEP_MAX_OUTPUT_TOKENS } from "../hosted-step-limits.js";
-import { withWidgetContextSystemPrompt } from "./widget-interaction-context.js";
+import { withWidgetContextSystemPrompt, buildEvalWidgetContextSystemPrompt } from "./widget-interaction-context.js";
 import type {
   MCPJamEngineErrorEvent,
   MCPJamStepFinishEvent,
@@ -182,6 +183,7 @@ export interface DriveHostedEvalTurnParams {
   /** Host harness selector (resolvedExecution.harness). When set (claude-code |
    *  codex) the turn runs that real runtime; absent ⇒ emulated (today's path). */
   harness?: Harness;
+  agentLoop?: Harness;
   /** The case's saved selection, read by the harness turn only. */
   modelSelection?: RunAssistantTurnOptions["modelSelection"];
   /** Host approval intent (resolvedExecution.requireToolApproval). Forwarded to
@@ -348,6 +350,8 @@ export interface DriveHostedEvalTurnParams {
    * iteration's own clock still bounds the sum of them.
    */
   turnTimeoutMs: number;
+  /** When the enclosing iteration's deadline fires (epoch ms). */
+  iterationDeadlineAt?: number;
   maxSteps: number;
   runStartedAt: number;
   isAborted: () => boolean;
@@ -526,6 +530,7 @@ export async function driveHostedEvalTurn(
   const mergedTools = {
     ...prepared.allTools,
     ...browser.computerWidgetTools,
+    ...guardEvalViewTools(browser.viewTools ?? {}, params.toolPolicyGate),
   };
   const tracedTools = wrapToolSetForEvalTrace(
     params.toolPolicyGate
@@ -543,7 +548,7 @@ export async function driveHostedEvalTurn(
   acc.messageHistory.push({ role: "user", content: params.prompt });
   acc.traceMessageHistory.push({ role: "user", content: params.prompt });
   const messageCountBeforeTurn = acc.messageHistory.length;
-  const appContext = browser.getModelContext?.();
+  let appContext: ReturnType<BrowserSessionContext["getModelContext"]>;
   const inputMessages: ModelMessage[] = [...acc.messageHistory];
 
   const baselineUsage = {
@@ -715,6 +720,7 @@ export async function driveHostedEvalTurn(
   // iteration-abort path (CodeRabbit, PR 2610).
   try {
     await browser.dismissCarriedWidget();
+    appContext = browser.getModelContext?.();
     sinks =
       params.buildSinks?.({
         promptIndex,
@@ -767,6 +773,7 @@ export async function driveHostedEvalTurn(
   // turn holds the iteration until the ITERATION's budget expires — the whole
   // remaining allowance spent on a turn that was never coming back.
   turnDeadline = withDeadline(abortSignal, turnTimeoutMs, "turn");
+  const activeTurnDeadline = turnDeadline;
 
   let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
   try {
@@ -781,7 +788,7 @@ export async function driveHostedEvalTurn(
       // PR2 (flagged): append recorded model-visible widget interactions to the
       // system prompt so the model reasons over them (system prompt only — no
       // transcript/matcher/persistence impact; mirrors the local path).
-      systemPrompt: EVAL_WIDGET_MODEL_CONTEXT
+      systemPrompt: EVAL_WIDGET_MODEL_CONTEXT && !params.harness
         ? withWidgetContextSystemPrompt(
             prepared.enhancedSystemPrompt,
             browser.browserInteractionSteps,
@@ -809,6 +816,8 @@ export async function driveHostedEvalTurn(
       ...(params.harness
         ? {
             harness: params.harness,
+            agentLoop: params.agentLoop,
+            harnessTurnContext: EVAL_WIDGET_MODEL_CONTEXT ? buildEvalWidgetContextSystemPrompt(browser.browserInteractionSteps) : undefined,
             ...(params.modelSelection
               ? { modelSelection: params.modelSelection }
               : {}),
@@ -889,6 +898,16 @@ export async function driveHostedEvalTurn(
       extraBodyFields: mergedExtraBodyFields,
       ...(params.extraHeaders ? { extraHeaders: params.extraHeaders } : {}),
       abortSignal: turnDeadline.signal,
+      // A busy-admission wait that would outlast the turn returns the refusal
+      // instead of sleeping into the turn's abort. The turn's signal also
+      // fires on the iteration's deadline, which a later turn can reach first.
+      remainingTurnMs: () =>
+        Math.min(
+          activeTurnDeadline.remainingMs(),
+          params.iterationDeadlineAt === undefined
+            ? Infinity
+            : Math.max(0, params.iterationDeadlineAt - Date.now()),
+        ),
       maxSteps: params.maxSteps,
       progressivePlan: prepared.progressivePlan,
       discoveryState: prepared.discoveryState,
@@ -1071,7 +1090,15 @@ export async function driveHostedEvalTurn(
           iterationErrorDetails: lastEngineError.rawText,
         }
       : { iterationError: fallbackError };
-    logger.error(logLine);
+    // `logger.error` with no error object always captures. An empty step was
+    // already reported once by the engine, which decided whether it is ours
+    // (`isMcpjamOwnedEmptyStep`); capturing it again here, untagged, would
+    // page on the provider-owned ones that verdict declines.
+    if (lastEngineError?.code === "provider_empty_response") {
+      logger.warn(logLine);
+    } else {
+      logger.error(logLine);
+    }
     sinks.onTurnFailure?.(failure);
     // WHICH LAYER, from the engine's own report rather than from this call
     // site's position.

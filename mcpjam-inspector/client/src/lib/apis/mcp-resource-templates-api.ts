@@ -1,6 +1,8 @@
 import type { MCPResourceTemplate } from "@mcpjam/sdk/browser";
 import { authFetch } from "@/lib/session-token";
-import { ensureLocalMode } from "@/lib/apis/mode-client";
+import { runByMode } from "@/lib/apis/mode-client";
+import { webPost } from "@/lib/apis/web/base";
+import { buildServerRequest } from "@/lib/apis/web/context";
 
 /** SEP-2549 cache-serve provenance (§11.2) — present ONLY on an actual hit. */
 export type ServedFromCache = { ageMs: number };
@@ -12,7 +14,7 @@ export type ResourceTemplateListWithProvenance = MCPResourceTemplate[] & {
 
 export async function listResourceTemplates(
   serverId: string,
-  opts?: { cursor?: string; refresh?: boolean },
+  opts?: { cursor?: string; refresh?: boolean; forceHosted?: boolean },
 ): Promise<ResourceTemplateListWithProvenance> {
   const { resourceTemplates, servedFromCache } =
     await listResourceTemplatesPage(serverId, opts);
@@ -38,13 +40,26 @@ export async function listResourceTemplates(
 // Templates UI would call.
 export async function listResourceTemplatesPage(
   serverId: string,
-  opts?: { cursor?: string; refresh?: boolean },
+  opts?: { cursor?: string; refresh?: boolean; forceHosted?: boolean },
 ): Promise<{
   resourceTemplates: MCPResourceTemplate[];
   nextCursor?: string;
   servedFromCache?: ServedFromCache;
 }> {
-  ensureLocalMode("Browsing resource templates isn’t available in MCPJam’s hosted web app. To use it, run npx @mcpjam/inspector@latest on your computer or use the MCPJam desktop app.");
+  return runByMode({
+    forceHosted: opts?.forceHosted,
+    hosted: () => webPost("/api/web/resources/templates/list", {
+      ...buildServerRequest(serverId),
+      ...(opts?.cursor !== undefined ? { cursor: opts.cursor } : {}),
+    }),
+    local: () => listLocalResourceTemplatesPage(serverId, opts),
+  });
+}
+
+async function listLocalResourceTemplatesPage(
+  serverId: string,
+  opts?: { cursor?: string; refresh?: boolean },
+): Promise<{ resourceTemplates: MCPResourceTemplate[]; nextCursor?: string; servedFromCache?: ServedFromCache }> {
 
   const res = await authFetch("/api/mcp/resource-templates/list", {
     method: "POST",

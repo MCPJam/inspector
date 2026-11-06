@@ -34,9 +34,10 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "24.14.0"
+          node-version: "24.22.1"
 
       - name: Count hand-written changed lines
         env:
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: node scripts/slop/pr-size.mjs --base HEAD^1

@@ -709,7 +709,7 @@ export function registerCdpAttacher(
 export interface LaunchBrowserdContextOptions {
   /** Present only on local managed browsers; hosted policy is unchanged. */
   securityPolicy?: LocalBrowserSecurityPolicy;
-  /** Persistent profile directory — the singleton whose lock L8 clears. */
+  /** Profile directory; run-scoped when an ephemeral browser imports an archive. */
   userDataDir: string;
   /** Headed under Xfce in the sandbox; tests may force headless. */
   headless?: boolean;
@@ -718,10 +718,12 @@ export interface LaunchBrowserdContextOptions {
   /**
    * `persistent` (default) keeps one profile across boots — what a
    * playground login depends on. `ephemeral` launches a throwaway browser
-   * with a fresh context and NO profile dir, so an eval iteration can never
-   * inherit the previous one's cookies.
+   * with a fresh context or an imported archive in a run-scoped profile directory.
+   * Each run starts from its own copy and never saves changes back.
    */
   contextMode?: "persistent" | "ephemeral";
+  /** The daemon restored an archive into this run's userDataDir. */
+  profileImported?: boolean;
   /**
    * Device pixels per CSS pixel, from the box's own configuration.
    *
@@ -904,11 +906,45 @@ export async function launchBrowserdContext(
       }),
     };
 
+    const launchProfileContext = async (
+      contextMode: "persistent" | "ephemeral",
+    ) => {
+      const cleared = await clearStaleSingletonLock(options.userDataDir);
+      if (cleared.heldBy) {
+        // Somebody took the profile between the session layer's check and this
+        // launch. Refusing here beats Chromium's own message, and beats removing a
+        // live owner's lock to make room for ourselves.
+        throw new Error(
+          `profile_in_use: another browser (pid ${
+            cleared.heldBy.pid ?? "unknown"
+          }` +
+            `${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds ` +
+            "this profile; close it and try again",
+        );
+      }
+      const context = await chromium.launchPersistentContext(
+        options.userDataDir,
+        {
+          ...launchArgs,
+          acceptDownloads: false,
+          permissions: [],
+          ...contextOptionsFor({
+            contextMode,
+            surface,
+            ...(options.deviceScaleFactor !== undefined
+              ? { deviceScaleFactor: options.deviceScaleFactor }
+              : {}),
+          }),
+        },
+      );
+      return await finish(context);
+    };
+
     if (options.contextMode === "ephemeral") {
-      // No user-data-dir at all: an eval's isolation must be a property of the
-      // BROWSER, not of remembering to clear cookies. Nothing persists, so
-      // there is no singleton lock to clear either (L8 is about the shared
-      // profile directory, which does not exist here).
+      if (options.profileImported)
+        return await launchProfileContext("ephemeral");
+      // Unseeded runs use an isolated in-memory context with no profile
+      // directory.
       const browser = await chromium.launch(launchArgs);
       let context;
       try {
@@ -930,35 +966,7 @@ export async function launchBrowserdContext(
       return await finish(context, () => browser.close());
     }
 
-    const cleared = await clearStaleSingletonLock(options.userDataDir);
-    if (cleared.heldBy) {
-      // Somebody took the profile between the session layer's check and this
-      // launch. Refusing here beats Chromium's own message, and beats removing a
-      // live owner's lock to make room for ourselves.
-      throw new Error(
-        `profile_in_use: another browser (pid ${
-          cleared.heldBy.pid ?? "unknown"
-        }` +
-          `${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds ` +
-          "this profile; close it and try again",
-      );
-    }
-    const context = await chromium.launchPersistentContext(
-      options.userDataDir,
-      {
-        ...launchArgs,
-        acceptDownloads: false,
-        permissions: [],
-        ...contextOptionsFor({
-          contextMode: "persistent",
-          surface,
-          ...(options.deviceScaleFactor !== undefined
-            ? { deviceScaleFactor: options.deviceScaleFactor }
-            : {}),
-        }),
-      },
-    );
-    return await finish(context);
+    return await launchProfileContext("persistent");
   } catch (error) {
     await proxy?.close();
     throw error;

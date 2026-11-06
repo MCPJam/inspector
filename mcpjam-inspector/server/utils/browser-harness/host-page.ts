@@ -1,3 +1,4 @@
+import { createViewToolsPage } from "../webmcp-view/view-tools-page.js";
 import type { HarnessPresentation } from "../../../shared/unattended-workspace";
 import { mountHarnessWorkspace } from "./host-workspace";
 /**
@@ -32,12 +33,23 @@ import {
   createHostAppBridge,
   registerHostBridgeHandlers,
   resolveIframeSandboxPolicy,
+  type HostBridgeCallbacks,
 } from "@/components/chat-v2/thread/mcp-apps/host-app-bridge";
 import { PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";
+import {
+  deliverToolData,
+  settleToolData,
+  type ToolDataDelivery,
+} from "./tool-data-delivery";
+
+type ReadResourceHandler = NonNullable<HostBridgeCallbacks["onReadResourceV2"]>;
 
 const WIDGET_ROOT_ID = "mcpjam-widget-root";
 
+const viewTools = createViewToolsPage();
+
 export interface HostPageRenderOptions {
+  enableViewTools?: boolean;
   presentation?: HarnessPresentation;
   widgetId: string;
   /** Widget resource HTML (already OpenAI-compat-injected by Node if needed). */
@@ -62,6 +74,8 @@ export interface HostPageRenderResult {
   /** Structural blankness: the mounted document painted no visible content. */
   blank: boolean;
   mountError?: string;
+  /** What happened to the tool data sent after the handshake. */
+  toolData?: ToolDataDelivery;
 }
 
 interface ActiveWidget {
@@ -89,6 +103,12 @@ declare global {
       widgetId: string;
       text: string;
     }) => Promise<void>;
+    __mcpjamHostReadResource?: (payload: {
+      widgetId: string;
+      params: Parameters<ReadResourceHandler>[0];
+    }) => Promise<
+      { result: Awaited<ReturnType<ReadResourceHandler>> } | { error: string }
+    >;
     __mcpjamHostContext?: (payload: {
       widgetId: string;
       params: unknown;
@@ -192,6 +212,7 @@ async function renderWidget(
   }
 
   let initialized = false;
+  let toolData: Promise<ToolDataDelivery> | undefined;
   const bridge = createHostAppBridge({
     hostInfo: opts.hostInfo,
     hostCapabilities: opts.hostCapabilities as never,
@@ -215,13 +236,19 @@ async function renderWidget(
       },
       onAppInitialized: (b) => {
         initialized = true;
-        // Deliver tool data so data-driven widgets actually paint.
-        if (opts.toolInput) {
-          void b.sendToolInput({ arguments: opts.toolInput }).catch(() => {});
-        }
-        if (opts.toolOutput !== undefined) {
-          void b.sendToolResult(opts.toolOutput as never).catch(() => {});
-        }
+        // Deliver tool data so data-driven widgets actually paint, and keep
+        // what happened to it: painting is not proof the widget took its data.
+        toolData = deliverToolData(b, {
+          toolInput: opts.toolInput,
+          toolOutput: opts.toolOutput,
+        });
+      },
+      onReadResourceV2: async (params) => {
+        const readResource = window.__mcpjamHostReadResource;
+        if (!readResource) throw new Error("Resource read binding unavailable");
+        const out = await readResource({ widgetId: opts.widgetId, params });
+        if ("error" in out) throw new Error(out.error);
+        return out.result;
       },
       onCallTool: async (name, args) => {
         const rpc = window.__mcpjamHostRpc;
@@ -256,6 +283,8 @@ async function renderWidget(
     };
   }
 
+  const detachViewTools = opts.enableViewTools ? viewTools.attach(opts.widgetId, iframe) : () => {};
+
   // Host is now listening. Write the widget HTML into the SAME document so the
   // guest's scripts execute against a host that's already connected.
   try {
@@ -266,6 +295,7 @@ async function renderWidget(
     // Close the connected bridge + drop the iframe so this failed render
     // doesn't leave an orphaned host bridge running.
     void bridge.close?.().catch?.(() => {});
+    detachViewTools();
     iframe.remove();
     return {
       mounted: false,
@@ -282,6 +312,7 @@ async function renderWidget(
         bridge.setHostContext({ theme: value.theme });
     },
     dispose: () => {
+      detachViewTools();
       void bridge.close?.().catch?.(() => {});
       iframe.remove();
     },
@@ -297,6 +328,14 @@ async function renderWidget(
     mounted: true,
     bridgeInitialized: initialized,
     blank: isDocumentBlank(iframe.contentDocument),
+    ...(toolData
+      ? {
+          toolData: await settleToolData(
+            toolData,
+            opts.renderTimeoutMs - (Date.now() - start),
+          ),
+        }
+      : {}),
   };
 }
 

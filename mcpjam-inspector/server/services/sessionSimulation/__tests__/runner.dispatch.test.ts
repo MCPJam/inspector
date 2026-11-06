@@ -946,7 +946,7 @@ describe("drainAssistantTurn — engine error surfacing", () => {
     );
   });
 
-  it("returns the aborted direct turn without persisting or billing", async () => {
+  it.each([true, false])("retains direct timeout evidence without changing cancellation or billing: %s", async (timedOut) => {
     const calls: unknown[] = [];
     stubDirectEngine(calls, { aborted: true });
     resolveSyntheticModelSourceMock.mockResolvedValue({
@@ -961,6 +961,7 @@ describe("drainAssistantTurn — engine error surfacing", () => {
     const result = await drainAssistantTurn(
       baseArgs({
         messages: input,
+        abortSignal: AbortSignal.abort(Object.assign(new Error("fixture abort"), { name: "AbortError", clock: timedOut ? "turn" : undefined })),
         modelId: "llama3",
         modelDefinition: {
           id: "llama3",
@@ -969,9 +970,8 @@ describe("drainAssistantTurn — engine error surfacing", () => {
         } as ModelDefinition,
       }) as Parameters<typeof drainAssistantTurn>[0],
     );
-    expect(result.turnTrace).toBeUndefined();
-    // Aborted turns return the input history unchanged and never bill.
-    expect(result.history).toEqual(input);
+    expect(result.turnTrace).toEqual(timedOut ? TURN_TRACE : undefined);
+    expect(result.history).toEqual(timedOut ? [...input, { role: "assistant", content: "local reply" }] : input);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -1007,7 +1007,7 @@ describe("drainAssistantTurn — engine error surfacing", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("rebuilds local-BYOK history with dedup so response messages overlapping the input prefix don't double-write", async () => {
+  it.each([true, false])("deduplicates overlapping direct-turn messages, including timeout: %s", async (aborted) => {
     const calls: unknown[] = [];
     runDirectChatTurnMock.mockImplementation((opts: any) => {
       calls.push(opts);
@@ -1028,7 +1028,7 @@ describe("drainAssistantTurn — engine error surfacing", () => {
       finishReason: "stop",
       spans: [],
       turnTrace: TURN_TRACE,
-      aborted: false,
+      aborted,
     }));
     resolveSyntheticModelSourceMock.mockResolvedValue({
       source: "local_byok",
@@ -1041,6 +1041,7 @@ describe("drainAssistantTurn — engine error surfacing", () => {
     const result = await drainAssistantTurn(
       baseArgs({
         messages: input,
+        abortSignal: AbortSignal.abort(Object.assign(new Error("fixture timeout"), { name: "AbortError", clock: "turn" })),
         modelId: "llama3",
         modelDefinition: {
           id: "llama3",

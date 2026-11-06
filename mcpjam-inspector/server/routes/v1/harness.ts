@@ -77,7 +77,7 @@ harness.get("/harness/:harnessId/capabilities", async (c) => {
     // the one that governs, which is exactly the distinction that made a
     // hand-written client map go stale.
     supportsMcpToolApproval: adapter.supportsMcpToolApproval,
-    mcpDelivery: adapter.mcpDelivery,
+    mcpDelivery: adapter.mcpDelivery === "harness" ? "native" : "host-executed",
   });
 });
 

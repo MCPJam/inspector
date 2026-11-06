@@ -57,11 +57,11 @@ import { logger } from "../logger.js";
 import {
   LOCAL_BROWSER_ENABLED,
   browserSecretPlaceholdersEnabled,
-  hostedBrowserEnabled,
 } from "../../config.js";
 import {
   isHostedBrowserExposable,
   isHostedBrowserRefused,
+  isHostedBrowserVerdictStale,
 } from "../computers/runtime-config.js";
 import { type ExecutionScope } from "../execution-scope.js";
 import {
@@ -480,6 +480,14 @@ export function resolveHostTools(
 
   for (const id of ids) {
     if (id === WEB_SEARCH_TOOL_NAME) {
+      // The backend refuses guest searches outside a shared scenario, so the tool would only fail.
+      if (ctx.isGuest && !ctx.scenarioId) {
+        logger.debug(
+          "[built-in-tools] web_search not advertised to guest actor outside a scenario; skipping",
+          { projectId: ctx.projectId },
+        );
+        continue;
+      }
       out[WEB_SEARCH_TOOL_NAME] = buildExaWebSearchTool({
         authHeader,
         projectId: ctx.projectId,
@@ -678,37 +686,42 @@ export function resolveHostTools(
         continue;
       }
 
-      // The three HOSTED gates. A local browser is not a hosted resource: it
-      // boots no desktop, reserves nothing, and costs no credits, so gating it
-      // on the hosted rollout's env flag and the backend's desktop-template
-      // readiness would refuse a capability neither of them describes.
-      if (!isLocalBrowser && !hostedBrowserEnabled()) {
-        logger.debug(
-          "[built-in-tools] browser requested while HOSTED_BROWSER_TOOLS_ENABLED is off; skipping",
-          { projectId: ctx.projectId },
-        );
-        ctx.onToolSuppressed?.({ id, reason: "HOSTED_BROWSER_TOOLS_ENABLED is disabled on this server." });
-        continue;
-      }
+      // The HOSTED gates. A local browser is not a hosted resource: it boots no
+      // desktop, reserves nothing, and costs no credits, so gating it on the
+      // backend's desktop-template readiness would refuse a capability that
+      // readiness does not describe. Who may use the hosted one is decided
+      // before this, by the backend's `hosted-browser` gate.
+      //
       // The backend's own gate (catalog entry + desktop template + desktop
-      // credit rate). An explicit `false` is honored even with the env flag
-      // on: the likeliest reason is an unset desktop rate, which would meter
-      // every hosted browser hour at the terminal rate. On a HOSTED replica
+      // credit rate). An explicit `false` is honored: the likeliest reason is
+      // an unset desktop rate, which would meter every hosted browser hour at
+      // the terminal rate. On a HOSTED replica
       // silence is a refusal too — see `isHostedBrowserRefused` — because the
       // gate the inspector route reads treats it the same way, and two callers
       // disagreeing about the same silence is how a browser gets exposed that
       // the other half believes is closed.
-      if (!isLocalBrowser && isHostedBrowserRefused()) {
+      //
+      // A stale verdict is not checked for a run that already holds its own
+      // desktop box: the runner asked before booking it, and refusing now
+      // leaves that box paid for and idle until the run ends.
+      const boxBooked =
+        ctx.sandboxBinding?.runtimeKind === "desktop-browser" &&
+        Boolean(ctx.sandboxBinding.sandboxRowId);
+      if (!isLocalBrowser && isHostedBrowserRefused({ boxBooked })) {
         // Said separately, because they are different facts and only one of
         // them is the backend's answer. A `null` verdict means we never got an
-        // answer — an older backend, or bootstrap not yet run — and reporting
-        // that as "the backend reports it is not exposable" sends whoever
-        // reads this log looking at a setting nobody has set.
+        // answer — an older backend, or bootstrap not yet run — and a stale
+        // one means the backend stopped answering. Reporting either as "the
+        // backend reports it is not exposable" sends whoever reads this log
+        // looking at a setting nobody has set.
         const answered = isHostedBrowserExposable() === false;
+        const stale = !answered && isHostedBrowserVerdictStale();
         logger.warn(
           answered
             ? "[built-in-tools] browser suppressed: the backend reports it is not exposable"
-            : "[built-in-tools] browser suppressed: no exposure verdict from the backend yet",
+            : stale
+              ? "[built-in-tools] browser suppressed: the backend's exposure verdict is out of date"
+              : "[built-in-tools] browser suppressed: no exposure verdict from the backend yet",
           { projectId: ctx.projectId },
         );
         ctx.onToolSuppressed?.({
@@ -716,8 +729,11 @@ export function resolveHostTools(
           reason: answered
             ? "browser is not available on this deployment yet: the backend reports " +
               "the hosted browser runtime is not fully configured."
-            : "browser is not available on this deployment yet: this server has no " +
-              "exposure verdict from the backend.",
+            : stale
+              ? "browser is not available on this deployment right now: this " +
+                "server's exposure verdict from the backend is out of date."
+              : "browser is not available on this deployment yet: this server has no " +
+                "exposure verdict from the backend.",
         });
         continue;
       }

@@ -19,6 +19,8 @@ import {
   assertNoConflictingEnvironmentOverrides,
 } from "../../services/evals/quick-run-environment.js";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
+import { refuseWhileDraining } from "../../services/lifecycle/admission.js";
+import { serverDrain } from "../../services/lifecycle/drain.js";
 import { prepareSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
 import {
   createAuthorizedManager,
@@ -63,6 +65,14 @@ import {
 } from "../shared/evals.js";
 
 const evals = new Hono();
+
+// The routes that start eval work, refused while this process drains.
+evals.on("POST", ["/run", "/replay-run"], refuseWhileDraining("eval_run"));
+evals.on(
+  "POST",
+  ["/run-test-case", "/stream-test-case"],
+  refuseWhileDraining("quick_run"),
+);
 
 const hostedBatchSchema = z.object({
   projectId: z.string().min(1),
@@ -377,6 +387,7 @@ evals.post("/run-test-case", async (c) => {
     c,
     hostedRunTestCaseSchema,
     async (manager, body) =>
+      // Drained by its admission until this answers; see refuseWhileDraining.
       runEvalTestCaseWithManager(manager, {
         ...body,
         ...((await anyUnattendedLocalHarness(c.req.header("authorization"), body.projectId)) ? { runtimeVenue: "local" as const } : {}),
@@ -540,6 +551,14 @@ evals.post("/stream-test-case", async (c) => {
   // manager above authorizes the raw bearer itself.
   const convexAuthToken = await getConvexBearerForRequest(c);
 
+  // A shutdown drains the run until its stream completes.
+  let streamSettled!: () => void;
+  void serverDrain.track(
+    "quick_run",
+    new Promise<void>((resolve) => {
+      streamSettled = resolve;
+    }),
+  );
   try {
     const stream = await streamEvalTestCaseWithManager(
       manager,
@@ -553,7 +572,10 @@ evals.post("/stream-test-case", async (c) => {
           : {}),
       },
       {
-        onStreamComplete: () => manager.disconnectAllServers(),
+        onStreamComplete: () => {
+          streamSettled();
+          return manager.disconnectAllServers();
+        },
         // Client disconnect aborts the run (including any awaited task).
         requestSignal: c.req.raw.signal,
       },
@@ -567,6 +589,7 @@ evals.post("/stream-test-case", async (c) => {
       },
     });
   } catch (error) {
+    streamSettled();
     await manager.disconnectAllServers();
     throw error;
   }

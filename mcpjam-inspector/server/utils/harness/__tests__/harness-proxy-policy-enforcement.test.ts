@@ -233,7 +233,7 @@ describe("harnessToolPolicyLaunchRefusal", () => {
   // secret was merely too SHORT (nonempty, under the 16-char minimum) refused
   // every policied Codex eval outright.
   it("exempts host-executed delivery from the proxy-seal requirement", () => {
-    expect(getHarnessAdapter("codex").mcpDelivery).toBe("host-executed");
+    expect(getHarnessAdapter("codex").mcpDelivery).toBe("mcpjam");
     process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = "short";
     expect(
       harnessToolPolicyLaunchRefusal({ hasToolPolicy: true, harness: "codex" })
@@ -248,7 +248,7 @@ describe("harnessToolPolicyLaunchRefusal", () => {
   // native path still fails CLOSED on the same deployment.
   it("keeps NATIVE delivery failing closed on the same weak-secret deployment", () => {
     process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = "short";
-    expect(getHarnessAdapter("claude-code").mcpDelivery).toBe("native");
+    expect(getHarnessAdapter("claude-code").mcpDelivery).toBe("harness");
     expect(
       harnessToolPolicyLaunchRefusal({
         hasToolPolicy: true,

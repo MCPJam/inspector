@@ -21,8 +21,10 @@
 
 import { WEB_CALL_TIMEOUT_MS } from "../config.js";
 import { logger } from "../utils/logger";
+import { abortableSleep } from "../utils/run-supervisor/backoff.js";
 import { getConvexBearerForDelegation } from "../utils/v1-convex-token.js";
 import { createAuthorizedManager } from "../routes/web/auth.js";
+import { WebRouteError } from "../routes/web/errors.js";
 import {
   prepareEvalRun,
   type PreparedEvalRun,
@@ -30,6 +32,7 @@ import {
 } from "../routes/shared/evals.js";
 import { fetchSuiteRunServerSelection } from "../routes/v1/evals.js";
 import { createConvexClient } from "./evals/route-helpers.js";
+import { isPlatformFeeRefusal } from "./evals/platform-fee-refusal.js";
 import {
   environmentServerIds,
   environmentServerNames,
@@ -39,6 +42,7 @@ import {
   type ResolvedEnvironmentForLaunch,
 } from "./environments/resolve.js";
 import { getServiceCredential } from "./service-credential.js";
+import { serverDrain } from "./lifecycle/drain.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
@@ -166,7 +170,12 @@ export function classifyFailure(error: unknown): string {
   // every window — so it shares `quota_exhausted`. Both canonical markers
   // are matched: the `/stream` wire code and the launch mutation's
   // ConvexError code, since either can be what stringifies into `message`.
-  if (/spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED/i.test(message)) {
+  // The recorder's 403 translation carries the code in `details.reason`.
+  if (
+    /spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED/i.test(message) ||
+    (error instanceof WebRouteError &&
+      error.details?.reason === "ORGANIZATION_SPEND_BUDGET_REACHED")
+  ) {
     return "quota_exhausted";
   }
   if (/delegated token exchange failed \(40[13]\)/i.test(message)) {
@@ -279,7 +288,16 @@ export async function executeClaimedRun(
         idempotencyKey: claimed.triggerId,
       });
     } catch (error) {
-      logger.error("[scheduled-evals] run setup failed", error, logContext);
+      // Out of credits or over budget: the organization's limits working as
+      // designed, so no Sentry page on every window.
+      if (isPlatformFeeRefusal(error)) {
+        logger.warn("[scheduled-evals] run setup refused", {
+          ...logContext,
+          reason: error.details?.reason,
+        });
+      } else {
+        logger.error("[scheduled-evals] run setup failed", error, logContext);
+      }
       await reportComplete({
         triggerId: claimed.triggerId,
         ok: false,
@@ -338,21 +356,6 @@ export async function executeClaimedRun(
   }
 }
 
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(done, ms);
-    function done() {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }
-    function onAbort() {
-      clearTimeout(timer);
-      done();
-    }
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
 export interface ScheduledEvalsWorkerHandle {
   /** Aborts polling and resolves once the loop (incl. an in-flight run) settles. */
   stop: () => Promise<void>;
@@ -396,7 +399,7 @@ export function startScheduledEvalsWorker(options?: {
           // doesn't need an Inspector restart.
           waitMs = ERROR_BACKOFF_MS;
         } else if (claimed) {
-          await execute(claimed);
+          await serverDrain.track("claimed_job", execute(claimed));
           // Drain mode: if a trigger was waiting, check again immediately —
           // another suite's window may be queued behind it.
           waitMs = 1_000;
@@ -407,7 +410,8 @@ export function startScheduledEvalsWorker(options?: {
         });
         waitMs = ERROR_BACKOFF_MS;
       }
-      await sleep(waitMs, abort.signal);
+      // Resolves at once when `stop()` aborted while a run was executing.
+      await abortableSleep(waitMs, abort.signal);
     }
     logger.info("[scheduled-evals] worker stopped");
   })();

@@ -1,7 +1,7 @@
 import { defineConfig } from "tsup";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
 import { resolveClientBuildSurface } from "../shared/sentry-config";
 
 const serverDir = dirname(fileURLToPath(import.meta.url));
@@ -34,6 +34,13 @@ export default defineConfig({
   splitting: false,
   target: "node22",
   outDir: join(rootDir, "dist/server"),
+  onSuccess: async () => {
+    mkdirSync(join(rootDir, "dist/licenses"), { recursive: true });
+    copyFileSync(
+      join(serverDir, "utils/webmcp-view/third-party/ext-apps-LICENSE"),
+      join(rootDir, "dist/licenses/ext-apps-LICENSE"),
+    );
+  },
   clean: true,
   bundle: true,
   minify: false,
@@ -118,8 +125,10 @@ export default defineConfig({
     "@mcpjam/sdk/plugin-bundle",
     "@mcpjam/sdk/oauth/node",
     "@mcpjam/sdk/widget-runtime",
+    "@mcpjam/sdk/events",
     "@mcpjam/sdk/internal/plugin-host",
     "@mcpjam/sdk/internal/telemetry",
+    "@mcpjam/sdk/internal/network-proxy",
   ],
   esbuildOptions(options) {
     options.platform = "node";
@@ -146,6 +155,10 @@ export default defineConfig({
       "@mcpjam/sdk/internal/telemetry": join(
         rootDir,
         "../sdk/dist/internal/telemetry.js",
+      ),
+      "@mcpjam/sdk/internal/network-proxy": join(
+        rootDir,
+        "../sdk/dist/internal/network-proxy.js",
       ),
       "@mcpjam/sdk": join(rootDir, "../sdk/dist/index.js"),
       "@mcpjam/sdk/operations": join(rootDir, "../sdk/dist/operations.js"),
@@ -184,6 +197,8 @@ export default defineConfig({
         rootDir,
         "../sdk/dist/widget-runtime/index.js",
       ),
+      // MCP Events: keeper, executor, local runtime, rpc-log redaction.
+      "@mcpjam/sdk/events": join(rootDir, "../sdk/dist/events/index.js"),
     };
   },
 });

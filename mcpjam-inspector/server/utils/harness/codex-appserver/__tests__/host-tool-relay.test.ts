@@ -61,12 +61,34 @@ describe("host tool naming", () => {
 
   it("round-trips an alias back to the host's own tool name", () => {
     const catalog = buildHostToolCatalog([
-      { name: "mcp__weather__get_forecast", inputSchema: { type: "object" } },
+      {
+        name: "mcp__weather__get_forecast",
+        description: "Read the forecast.",
+        inputSchema: { type: "object" },
+      },
     ]);
     expect(catalog.descriptors[0]?.name).toBe("weather__get_forecast");
+    expect(catalog.descriptors[0]?.title).toBe("get_forecast");
+    expect(catalog.descriptors[0]?.description).toBe("Read the forecast.");
     expect(catalog.aliasToCanonical.get("weather__get_forecast")).toBe(
       "mcp__weather__get_forecast",
     );
+  });
+
+  it("keeps source names searchable without conflating two servers' tools", () => {
+    const catalog = buildHostToolCatalog([
+      { name: "mcp__a__get__forecast" },
+      { name: "mcp__b__get__forecast" },
+      { name: "web_search", description: "Search the web." },
+    ]);
+    expect(catalog.descriptors).toMatchObject([
+      { name: "a__get__forecast", title: "get__forecast" },
+      { name: "b__get__forecast", title: "get__forecast" },
+      { name: "web_search", description: "Search the web." },
+    ]);
+    expect(catalog.descriptors[2]).not.toHaveProperty("title");
+    expect(catalog.aliasToCanonical.get("a__get__forecast")).toBe("mcp__a__get__forecast");
+    expect(catalog.aliasToCanonical.get("b__get__forecast")).toBe("mcp__b__get__forecast");
   });
 
   it("gives a schemaless tool a permissive schema rather than dropping it", () => {
@@ -430,6 +452,9 @@ describe("the stdio MCP server Codex spawns", () => {
     const list = await server.handle({ id: 2, method: "tools/list" });
     // The model sees the STRIPPED name; Codex adds its own qualification.
     expect((list?.result as any).tools[0].name).toBe("weather__get_forecast");
+    expect(list?.result).toMatchObject({
+      tools: [{ title: "get_forecast", description: "Forecast" }],
+    });
 
     const call = await server.handle({
       id: 3,

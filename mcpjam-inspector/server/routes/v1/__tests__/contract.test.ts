@@ -77,6 +77,13 @@ describe("internal-code -> public-code mapping", () => {
     "TASKS_UNSUPPORTED",
     "SCENARIO_ACCESS_DENIED",
     "SCENARIO_ACCESS_STALE",
+    // MCP Events: the hosted Events tab's routes (`/api/web/events/*`); no
+    // `/api/v1` surface serves them yet.
+    "EVENTS_UNDECLARED",
+    "EVENTS_INVALID_PAYLOAD",
+    "EVENTS_RPC_ERROR",
+    "EVENTS_NOT_FOUND",
+    "EVENTS_UNAVAILABLE",
     // Raised only by the hosted chat routes' loop guard, before `/api/v1`'s
     // own agent route is involved.
     "AGENT_STEP_LIMIT",
@@ -84,6 +91,9 @@ describe("internal-code -> public-code mapping", () => {
     // than in the shared table: UNAUTHORIZED + `details.reason`. Pinned in
     // envelope.test.ts.
     "SESSION_REVOKED",
+    // Inspector-only (a local stdio spawn this device has not approved), and
+    // mapped at the v1 boundary the same way: FORBIDDEN, terms in `details`.
+    "STDIO_COMMAND_APPROVAL_REQUIRED",
     // Produced only by `mapTargetServerError` on the hosted `/api/web/*`
     // routes. The v1 surface maps through `mapRuntimeError` and never sees it.
     "UPSTREAM_HTTP_ERROR",

@@ -15,7 +15,7 @@ import {
 } from "@/hooks/useCreditBalance";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
-import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
+import { useModelSelectionsCapability } from "@/hooks/use-project-environment-capability";
 
 /**
  * Models the current user can pick on any model-picker surface (eval suite
@@ -62,6 +62,12 @@ export function useAvailableModels(options?: {
    */
   onManageOrgProviders?: () => void;
   /**
+   * Opens the scoped organization's AI providers for a viewer who may manage
+   * them, under any key policy: a model search with no match offers "Add a
+   * provider" from it. `null` when that organization offers this viewer none.
+   */
+  onAddProvider: (() => void) | null;
+  /**
    * Whether this deployment stores a saved model selection beside a model id
    * (`getCapabilities.modelSelections` for the scoped project). A picker that
    * saves a `ModelSelection` sends it only when this is true.
@@ -70,6 +76,12 @@ export function useAvailableModels(options?: {
   /** Why the MCPJam rows are locked ("Out of MCPJam credits · resets in
    * 3h"), or null while the org can spend. */
   outOfCreditsReason: string | null;
+  /**
+   * The organization's key policy has not answered yet, or it is on and the
+   * selections capability has not. `requireOrgKeys` reads false until then,
+   * so a surface that writes a model from this list waits for this to clear.
+   */
+  pending: boolean;
 } {
   const appState = useSharedAppState();
   const scopedProjectId =
@@ -99,7 +111,9 @@ export function useAvailableModels(options?: {
   const outOfCredits = outOfCreditsReason !== null;
   const freeTierOnly = useFreeTierOnly(organizationId);
   const { hostedCatalog } = useHostedModelCatalog();
-  const modelSelectionsSupported = useModelSelectionsSupported(convexProjectId);
+  const modelSelectionsCapability =
+    useModelSelectionsCapability(convexProjectId);
+  const modelSelectionsSupported = modelSelectionsCapability === true;
   const manageOrgProviders = useOrgModelsHandoff(organizationId);
   const savedModelIdsKey = (options?.savedModelIds ?? [])
     .filter((id): id is string => typeof id === "string" && id.length > 0)
@@ -142,13 +156,18 @@ export function useAvailableModels(options?: {
   );
 
   const requireOrgKeys = orgRequiresOwnKeys(hostedOrgModelConfig);
+  const pending =
+    hostedOrgModelConfig?.pending === true ||
+    (requireOrgKeys && modelSelectionsCapability === undefined);
   return {
     availableModels,
     modelSelectionsSupported,
     outOfCreditsReason,
     requireOrgKeys,
+    pending,
     ...(requireOrgKeys && manageOrgProviders
       ? { onManageOrgProviders: manageOrgProviders }
       : {}),
+    onAddProvider: manageOrgProviders ?? null,
   };
 }

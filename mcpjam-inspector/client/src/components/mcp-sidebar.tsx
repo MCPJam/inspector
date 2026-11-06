@@ -24,8 +24,14 @@ import {
   Cable,
   MessagesSquare,
   Globe,
+  Radio,
+  Zap,
 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
+import {
+  EVENTS_FEATURE_FLAG,
+  useEventsEnabledState,
+} from "@/hooks/useEventsEnabled";
 import { track } from "@/lib/analytics";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -70,7 +76,10 @@ import {
 } from "@/lib/hosted-tab-policy";
 import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
 import { useLearnMore } from "@/hooks/use-learn-more";
-import { WEBMCP_INSPECTOR_FEATURE_FLAG } from "@/hooks/useWebmcpInspectorEnabled";
+import {
+  WEBMCP_INSPECTOR_FEATURE_FLAG,
+  useWebmcpInspectorEnabledState,
+} from "@/hooks/useWebmcpInspectorEnabled";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
 import {
   useOrganizationBillingStatus,
@@ -129,6 +138,7 @@ export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "unified-sessions-enabled",
   "evaluate-enabled",
   WEBMCP_INSPECTOR_FEATURE_FLAG,
+  EVENTS_FEATURE_FLAG,
 ] as const;
 
 /**
@@ -241,6 +251,16 @@ export const navigationSections: NavSection[] = [
         icon: MessageCircle,
       },
       {
+        // Agent runs fired by MCP Events on MCPJam's hosted runner. Sits next
+        // to Playground because it is the unattended version of the same
+        // thing: a model with the project's servers, reacting to an event
+        // instead of a message.
+        title: "Triggers",
+        url: "/triggers",
+        icon: Zap,
+        featureFlag: EVENTS_FEATURE_FLAG,
+      },
+      {
         title: "Environments",
         url: "/environments",
         icon: Layers,
@@ -326,6 +346,7 @@ export const navigationSections: NavSection[] = [
         // PostHog. Keep the `mcpjam-` prefix so it's obvious at a glance that
         // this is an internal-only flag (same convention as `mcpjam-learning`).
         featureFlag: "mcpjam-conformance",
+        badge: "New",
       },
       {
         title: "Compatibility",
@@ -362,6 +383,12 @@ export const navigationSections: NavSection[] = [
         title: "Tasks",
         url: "/tasks",
         icon: ListTodo,
+      },
+      {
+        title: "Events",
+        url: "/events",
+        icon: Radio,
+        featureFlag: EVENTS_FEATURE_FLAG,
       },
       {
         // Tools a live web PAGE registers, rather than an MCP server — the
@@ -493,7 +520,6 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   billingUiEnabled?: boolean;
   isCreateProjectDisabled?: boolean;
   createProjectDisabledReason?: string;
-  onBeforeSignOut?: () => void | Promise<void>;
 }
 
 export function MCPSidebar({
@@ -514,7 +540,6 @@ export function MCPSidebar({
   billingUiEnabled = false,
   isCreateProjectDisabled = false,
   createProjectDisabledReason,
-  onBeforeSignOut,
   ...props
 }: MCPSidebarProps) {
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
@@ -531,9 +556,8 @@ export function MCPSidebar({
     "unified-sessions-enabled",
   );
   const evaluateEnabled = useFeatureFlagEnabled("evaluate-enabled");
-  const webmcpInspectorEnabled = useFeatureFlagEnabled(
-    WEBMCP_INSPECTOR_FEATURE_FLAG,
-  );
+  const eventsEnabled = useEventsEnabledState();
+  const webmcpInspectorEnabled = useWebmcpInspectorEnabledState();
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
   const { user, isLoading: isWorkOsAuthLoading } = useAuth();
   // Until WorkOS + Convex resolve the session we don't yet know guest-vs-authed
@@ -653,9 +677,10 @@ export function MCPSidebar({
       // Project-scoped like the rows above: every screen behind it needs a
       // project to resolve suites against.
       "evaluate-enabled": evaluateEnabled === true && isAuthenticated,
-      // Deployment-specific Browser rollout; local guests are eligible too.
-      // Hosted execution retains its server-side sign-in/entitlement checks.
+      // Hosted: the backend's availability answer, flag and readiness both.
+      // Local: the local Browser rollout, which local guests may be in too.
       [WEBMCP_INSPECTOR_FEATURE_FLAG]: webmcpInspectorEnabled === true,
+      [EVENTS_FEATURE_FLAG]: eventsEnabled === true,
     }),
     [
       learningEnabled,
@@ -668,6 +693,7 @@ export function MCPSidebar({
       unifiedSessionsEnabled,
       evaluateEnabled,
       webmcpInspectorEnabled,
+      eventsEnabled,
       isAuthenticated,
     ],
   );
@@ -930,7 +956,7 @@ export function MCPSidebar({
               className="mt-1"
             />
           ) : null}
-          <SidebarUser onBeforeSignOut={onBeforeSignOut} />
+          <SidebarUser />
         </SidebarFooter>
       </Sidebar>
       {!authResolving && (

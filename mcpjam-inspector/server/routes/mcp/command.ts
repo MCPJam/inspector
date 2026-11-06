@@ -10,7 +10,7 @@ import { inspectorCommandBus } from "../../services/inspector-command-bus.js";
 import { logger } from "../../utils/logger.js";
 
 const command = new Hono();
-type CommandHttpStatus = 200 | 400 | 404 | 409 | 422 | 500 | 504;
+type CommandHttpStatus = 200 | 400 | 403 | 404 | 409 | 422 | 500 | 504;
 
 function buildCommandId(): string {
   return `cmd_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
@@ -159,6 +159,8 @@ function getCommandHttpStatus(
       return 409;
     case "unsupported_in_mode":
       return 422;
+    case "authorization_required":
+      return 403;
     case "timeout":
       return 504;
     case "execution_failed":

@@ -4,11 +4,11 @@ import {
   streamText,
   stepCountIs,
   type ToolSet,
+  type LanguageModel,
   type ToolChoice,
   type Tool as AiTool,
 } from "ai";
 import type { ModelMessage, ProviderOptions } from "@ai-sdk/provider-utils";
-import type { createLlmModel } from "./chat-helpers";
 import {
   appendDedupedModelMessages,
   normalizeFinishReason,
@@ -57,6 +57,7 @@ import { pageToolBindingOf } from "./built-in-tools/page-tools";
 import type { PersistedTurnTrace } from "./chat-ingestion";
 import { logger } from "./logger";
 import { withoutEmptyTextBlocks } from "./empty-text-blocks";
+import { withProviderSafeToolNames } from "@mcpjam/sdk";
 import {
   applyPrepareAdvertisedTools,
   gateToolsToAdvertisedSubset,
@@ -290,8 +291,19 @@ export interface DirectChatTurnEngineErrorEvent {
   stepIndex?: number;
 }
 
+/**
+ * Every direct turn (BYOK chat and evals, org-configured providers) reaches
+ * the provider through here, so the request fixes live here: MCP tool names a
+ * provider rejects (`cart.add`) are aliased on the wire and restored in its
+ * reply. A gateway id string has no model object to wrap.
+ */
+function providerReadyModel(llmModel: LanguageModel): LanguageModel {
+  const model = withoutEmptyTextBlocks(llmModel);
+  return typeof model === "string" ? model : withProviderSafeToolNames(model);
+}
+
 export interface RunDirectChatTurnOptions {
-  llmModel: ReturnType<typeof createLlmModel>;
+  llmModel: LanguageModel;
   modelId: string;
   /**
    * Logical provider for span metadata (OTel `gen_ai.provider.name`, e.g.
@@ -407,8 +419,11 @@ export interface RunDirectChatTurnOptions {
    * boundary.
    */
   shouldPauseAfterStep?: () => boolean;
-  /** Identifies the temporary tool-error result to omit from trace/history. */
-  suspendedToolCallId?: () => string | undefined;
+  /**
+   * The calls suspended in this turn, whose temporary tool-error results are
+   * omitted from trace/history. Several can suspend in one step.
+   */
+  suspendedToolCallIds?: () => ReadonlySet<string>;
   /**
    * What each step SENDS, derived from the messages the step would send — the
    * history-provenance presentation on browser-facing chat (MJ-009). The
@@ -589,7 +604,7 @@ export function runDirectChatTurn(
     traceStartedAt,
     maxSteps,
     shouldPauseAfterStep,
-    suspendedToolCallId,
+    suspendedToolCallIds,
     transformStepMessages,
   } = options;
   const resolvedMaxSteps =
@@ -703,8 +718,8 @@ export function runDirectChatTurn(
   const scrubSuspendedToolResultMessages = (
     messages: ModelMessage[],
   ): ModelMessage[] => {
-    const suspendedId = suspendedToolCallId?.();
-    if (!suspendedId) return messages;
+    const suspendedIds = suspendedToolCallIds?.();
+    if (!suspendedIds?.size) return messages;
     return messages.flatMap((message) => {
       if (message.role !== "tool" || !Array.isArray((message as any).content)) {
         return [message];
@@ -713,7 +728,7 @@ export function runDirectChatTurn(
         (part: any) =>
           !(
             part?.type === "tool-result" &&
-            part.toolCallId === suspendedId
+            suspendedIds.has(part.toolCallId)
           ),
       );
       return content.length > 0
@@ -727,7 +742,7 @@ export function runDirectChatTurn(
   let result: ReturnType<typeof streamText>;
   try {
     result = streamText({
-    model: withoutEmptyTextBlocks(llmModel),
+    model: providerReadyModel(llmModel),
     messages: messageHistory,
     // AI SDK 7 rejects system messages in `messages` by default. The history
     // carries them on purpose: MCP server instructions reach the model as
@@ -748,7 +763,7 @@ export function runDirectChatTurn(
     ...(experimentalTelemetry
       ? { experimental_telemetry: experimentalTelemetry }
       : {}),
-    prepareStep: ({ stepNumber, messages: stepMessages }) => {
+    prepareStep: async ({ stepNumber, messages: stepMessages }) => {
       currentStepIndex = stepNumber;
       registerAiSdkPrepareStep(traceContext, stepNumber, {
         modelId,
@@ -769,7 +784,7 @@ export function runDirectChatTurn(
       // stream-handler hook: names outside the default set are ignored, and a
       // throw is logged + falls back to the default set.
       if (prepareAdvertisedTools) {
-        activeToolNames = applyPrepareAdvertisedTools({
+        activeToolNames = await applyPrepareAdvertisedTools({
           defaultToolNames: activeToolNames ?? Object.keys(tools),
           stepIndex: stepNumber,
           prepareAdvertisedTools,
@@ -1099,8 +1114,9 @@ export function runDirectChatTurn(
             .flatMap((step) => step.toolResults ?? [])
             .filter(
               (result) =>
-                (result as { toolCallId?: unknown }).toolCallId !==
-                suspendedToolCallId?.(),
+                !suspendedToolCallIds?.().has(
+                  String((result as { toolCallId?: unknown }).toolCallId),
+                ),
             ),
           usage: traceTurn.turnUsage,
           finishReason: event.finishReason,

@@ -2,7 +2,7 @@
  * A raw `io.modelcontextprotocol/skills` (SEP-2640) fixture server, spoken
  * over Streamable HTTP on a real socket.
  *
- * PIN: modelcontextprotocol/modelcontextprotocol @ a3e147ca27 (branch `sep/skills-extension`, `seps/2640-skills-extension.md`).
+ * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  * Every wire shape below is copied from that commit — re-diff when re-syncing.
  *
  * Why hand-rolled JSON-RPC rather than `@modelcontextprotocol/server`:
@@ -346,10 +346,10 @@ export async function startSkillsFixture(
       resultType: "complete",
       skills: page,
       ...(hasMore ? { nextCursor: String(nextStart) } : {}),
-      ...(options.listTtlMs !== undefined ? { ttlMs: options.listTtlMs } : {}),
-      ...(options.listCacheScope !== undefined
-        ? { cacheScope: options.listCacheScope }
-        : {}),
+      // Required by the stable spec, so a conforming fixture always sends
+      // them; the options only override the values.
+      ttlMs: options.listTtlMs ?? LIST_RESULT_TTL_MS,
+      cacheScope: options.listCacheScope ?? LIST_RESULT_CACHE_SCOPE,
     };
   }
 
@@ -368,8 +368,14 @@ export async function startSkillsFixture(
     }
     // The SEP's envelope: `{ skill }`. Spreading the entry at the top level
     // would let a client that forgot to unwrap pass — the fixture would then
-    // be validating the client's bug instead of the protocol.
-    return { resultType: "complete", skill: entryOf(skill) };
+    // be validating the client's bug instead of the protocol. The stable spec
+    // requires the cache attributes here as on `skills/list`.
+    return {
+      resultType: "complete",
+      skill: entryOf(skill),
+      ttlMs: LIST_RESULT_TTL_MS,
+      cacheScope: LIST_RESULT_CACHE_SCOPE,
+    };
   }
 
   function handleResourcesRead(
@@ -487,6 +493,10 @@ export async function startSkillsFixture(
         );
         return {
           resultType: "complete",
+          // Required on directory reads since the 2026-10-11 ext-skills
+          // decision, with `resources/list` semantics.
+          ttlMs: LIST_RESULT_TTL_MS,
+          cacheScope: LIST_RESULT_CACHE_SCOPE,
           resources: (skill?.files ?? []).map((file) => ({
             uri: fileUriFor(skill!, file.path),
             name: file.path,

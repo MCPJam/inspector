@@ -119,6 +119,9 @@ export function harnessModelPurposeForSourceType(
 ): HarnessModelPurpose {
   if (sourceType === "direct") return "chat";
   if (sourceType === "swarm") return "swarm";
+  // An MCP Events trigger run is unattended and its results are reviewed
+  // later, so it takes the strict (eval) reading, like anything unlabelled.
+  if (sourceType === "event") return "eval";
   return "eval";
 }
 
@@ -447,7 +450,7 @@ export function harnessToolApprovalRefusalReason(args: {
     );
   }
   const mcpToolApproval =
-    args.adapter.mcpDelivery === "native"
+    args.adapter.mcpDelivery === "harness"
       ? args.adapter.supportsMcpToolApproval
       : args.adapter.supportsHostExecutedToolApproval;
   if (args.hasSelectedMcpServers && !mcpToolApproval) {

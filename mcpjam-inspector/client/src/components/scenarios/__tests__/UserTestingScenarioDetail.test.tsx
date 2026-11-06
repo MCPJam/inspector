@@ -108,6 +108,22 @@ vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock("@/components/scenarios/ScenarioModelEditor", () => ({
+  ScenarioModelEditor: ({
+    scenarioId,
+    projectId,
+  }: {
+    scenarioId: string;
+    projectId: string;
+  }) => (
+    <div
+      data-testid="study-model-editor"
+      data-scenario-id={scenarioId}
+      data-project-id={projectId}
+    />
+  ),
+}));
+
 vi.mock("@/hooks/useScenarios", () => ({
   useScenarioMutations: () => ({
     deleteScenario: deleteScenarioMock,
@@ -1534,6 +1550,7 @@ describe("UserTestingScenarioDetail — settings layout", () => {
     expect(
       screen.getByTestId("user-testing-settings-tasks"),
     ).toBeInTheDocument();
+    expect(screen.getByTestId("study-model-editor")).toBeInTheDocument();
   });
 });
 

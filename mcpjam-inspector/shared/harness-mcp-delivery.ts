@@ -2,12 +2,12 @@
  * HOW each harness gets the host's selected MCP servers to the model — the one
  * declaration, shared by the server runtime registry and the client.
  *
- *  - `native`        — the runtime's own MCP client connects from inside the
+ *  - `harness`        — the runtime's own MCP client connects from inside the
  *                      sandbox, to config MCPJam writes there (Claude Code's
  *                      `.mcp.json`). MCPJam does not build those tools, so
  *                      nothing MCPJam decides about how a tool is BUILT can
  *                      reach them.
- *  - `host-executed` — MCPJam enumerates each server's tools at turn start and
+ *  - `mcpjam` — MCPJam enumerates each server's tools at turn start and
  *                      runs them in-process, relaying invocations out of the
  *                      sandbox (Codex, COMP-39). These tools come from the SAME
  *                      `getToolsForAiSdk` projection the emulated engine uses,
@@ -29,7 +29,7 @@
  *
  *  - the registry's adapters set `mcpDelivery: HARNESS_MCP_DELIVERY[<id>]`
  *    (the `as const` keeps the literal type, so the adapter union still
- *    discriminates and `native` still requires `deliverMcpServers`);
+ *    discriminates and `harness` still requires `deliverMcpServers`);
  *  - the client capability map keys its construction-time controls off
  *    {@link harnessMcpDelivery}.
  *
@@ -38,29 +38,14 @@
  */
 import { HARNESS_IDS, type Harness } from "@mcpjam/sdk/host-config/internal";
 
-/** The two MCP-delivery arms. Every harness uses one; there is no "no MCP" arm. */
-export type HarnessMcpDelivery = "native" | "host-executed";
-
-/**
- * Delivery mode per harness id.
- *
- * `satisfies Record<Harness, HarnessMcpDelivery>` makes a new SDK harness id
- * without an entry a COMPILE error, the same way `HARNESS_ADAPTERS` does — and
- * `as const` preserves each literal so the registry's discriminated union still
- * narrows on it.
- */
+import { HARNESS_DESCRIPTORS } from "./harness-descriptors";
+export type HarnessMcpDelivery = "harness" | "mcpjam";
 export const HARNESS_MCP_DELIVERY = {
-  "claude-code": "native",
-  codex: "host-executed",
-  cursor: "native",
+  "claude-code": HARNESS_DESCRIPTORS["claude-code"].mcpClient,
+  codex: HARNESS_DESCRIPTORS.codex.mcpClient,
+  cursor: HARNESS_DESCRIPTORS.cursor.mcpClient,
 } as const satisfies Record<Harness, HarnessMcpDelivery>;
-
-/** Delivery mode for `harness`. Callers holding a narrower union (the client's
- *  `HostConfigHarnessV2`) index the map directly and keep the literal type. */
 export function harnessMcpDelivery(harness: Harness): HarnessMcpDelivery {
   return HARNESS_MCP_DELIVERY[harness];
 }
-
-/** Every harness id that has a delivery declaration — the SDK's list, so the
- *  parity test can iterate without re-listing the ids. */
 export const HARNESS_MCP_DELIVERY_IDS: readonly Harness[] = HARNESS_IDS;

@@ -95,7 +95,7 @@ describe("judgeAnswerState", () => {
 });
 
 describe("JudgeAnswerRow", () => {
-  it("answers in a word, with the score and the threshold", () => {
+  it("answers in a word, leaving the score to the judge row", () => {
     render(
       <JudgeAnswerRow
         state={{
@@ -108,10 +108,32 @@ describe("JudgeAnswerRow", () => {
     );
     expect(screen.getByText("Did it accomplish the goal?")).toBeTruthy();
     expect(screen.getByTestId("judge-answer-word").textContent).toBe("Yes");
-    expect(screen.getByText("0.82 ≥ 0.70")).toBeTruthy();
+    expect(screen.queryByText("0.82 ≥ 0.70")).toBeNull();
   });
 
-  it("says an advisory verdict does not change the result", () => {
+  it("sits inline in the Judge cell with its score and model, and no card", () => {
+    render(
+      <JudgeAnswerRow
+        inline
+        model="GPT 5.4 Mini"
+        state={{
+          kind: "scored",
+          judgeCase: scored(),
+          threshold: 0.7,
+          gating: false,
+        }}
+      >
+        <div data-testid="verdict-card" />
+      </JudgeAnswerRow>,
+    );
+    expect(screen.queryByText("Did it accomplish the goal?")).toBeNull();
+    expect(screen.getByTestId("judge-answer-word").textContent).toBe("Yes");
+    expect(screen.getByText("82% · GPT 5.4 Mini")).toBeTruthy();
+    expect(screen.getByText("Advisory")).toBeTruthy();
+    expect(screen.queryByTestId("verdict-card")).toBeNull();
+  });
+
+  it("marks an advisory verdict with a chip that explains it", () => {
     render(
       <JudgeAnswerRow
         state={{
@@ -122,9 +144,15 @@ describe("JudgeAnswerRow", () => {
         }}
       />,
     );
+    expect(screen.getByText("Advisory")).toBeTruthy();
     expect(
-      screen.getByText("Advisory — does not change the result"),
+      screen.getByLabelText(
+        "Advisory: Shown on the result. Never fails the iteration.",
+      ),
     ).toBeTruthy();
+    expect(
+      screen.queryByText("Advisory — does not change the result"),
+    ).toBeNull();
   });
 
   it("says Required when the suite earned one", () => {

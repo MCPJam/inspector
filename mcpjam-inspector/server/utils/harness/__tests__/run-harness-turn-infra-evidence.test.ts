@@ -55,7 +55,7 @@ vi.mock("../registry.js", () => ({
     displayName: "Claude Code",
     defaultPermissionMode: "allow-all",
     supportsSkills: false,
-    mcpDelivery: "host-executed",
+    mcpDelivery: "mcpjam",
     supportsModel: vi.fn(() => true),
     createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
@@ -287,8 +287,8 @@ describe("runHarnessTurn — structured failure evidence", () => {
     });
   });
 
-  it("a box that cannot be reserved is a typed SANDBOX setup failure", async () => {
-    vi.mocked(reserveHarnessBox).mockResolvedValueOnce({
+  it("a busy broker admission remains a typed setup failure", async () => {
+    vi.mocked(startHarnessModelBroker).mockResolvedValueOnce({
       ok: false,
       status: 409,
       error: "box is busy",

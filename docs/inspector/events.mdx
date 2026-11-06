@@ -1,0 +1,48 @@
+---
+title: "Events and Triggers"
+description: "Inspect a server's MCP Events, subscribe to them, and run an agent when they arrive"
+icon: "bell-ring"
+---
+
+MCP Events let a server tell a client that something happened, so an agent can react without anyone typing. MCPJam supports the working-group draft, pinned at `28ec35e`, and a ChatGPT profile describing what ChatGPT supports today. Both are labelled **Draft** in the app.
+
+## Events tab (Inspect)
+
+Select a server and open **Events**:
+
+- **Capability.** Shows whether the server declares top-level `capabilities.events`, which handshake said so, and the raw capabilities it sent.
+- **Profile.** *Draft* allows poll, push and webhook. *ChatGPT* allows webhook only, the one mode ChatGPT uses.
+- **Event types.** Each type's delivery modes, with its input and payload schemas.
+- **Subscribe.** A form built from the event's `inputSchema`, and a delivery mode.
+  - In the hosted app, webhooks deliver to MCPJam's public inbox at `hooks.mcpjam.com`. Every subscription gets its own callback URL and signing secret, and the secret is never shown or logged.
+  - In the local app, webhooks can use a plain-http development receiver on the inspector's own port. It is labelled as a non-conformant development override.
+- **Subscriptions.** State, refresh deadline, cursor, delivery status, conflicts and errors, with pause, resume, remove and rotate-secret actions.
+- **Live feed.** Every accepted delivery, whatever mode it came through. Simulated events carry a `simulation` badge and never trigger live runs.
+- **Rejected deliveries.** The reason (bad signature, stale timestamp, unknown slot) and metadata only, never bodies.
+- **Simulate.** Inject an event to test your triggers without the real server.
+
+Event data is always shown as data. It is never rendered as markdown or HTML.
+
+## Triggers tab (Explore)
+
+A trigger pairs a subscription with a standing instruction ("when someone comments on this doc, reply"). When an event arrives, MCPJam runs an agent turn unattended with the tools of the environment you chose.
+
+- **Approval policy.** *Read-only tools only* (the default) lets the agent call only tools the server marks `readOnlyHint`. *Allow writes* also runs tools that change data, and still denies any tool that would need a person to approve it, because nobody is watching.
+- **Limits.** Each trigger has a rate limit (runs per hour) and a daily spending cap, checked before a run starts.
+- **Who can change a trigger.** A trigger's runs use the credentials of the person who created the subscription, so only that person can add or edit its triggers, turn them on, or simulate its events. A project admin can turn a trigger off or delete it.
+- **Untrusted events.** The event is passed to the model as untrusted data, and the instruction is the only thing it follows.
+- **Parked runs.** If a tool call's outcome is unknown, for example because the runner stopped mid-call, the run is **parked** rather than retried. MCPJam never repeats a write it can't confirm.
+- **Run history.** Shows each event, the turn it caused, and the tool calls.
+
+<Note>
+  Triggers run on MCPJam's hosted runner. A server that only runs on your
+  machine can't be reached while the local app is closed.
+</Note>
+
+## Support matrix
+
+| Mode | Local app | Hosted | CLI | Unattended triggers |
+|---|---|---|---|---|
+| Webhook | Development receiver (labelled non-conformant) | Yes | Yes | Yes |
+| Poll | Yes | Yes | Yes | Yes |
+| Push | Yes | Not yet | Yes | No |

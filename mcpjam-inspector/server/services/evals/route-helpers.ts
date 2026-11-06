@@ -48,13 +48,31 @@ export async function captureToolSnapshotForEvalAuthoring(
   };
 }
 
-export function createConvexClient(convexAuthToken: string) {
+export function createConvexClient(
+  convexAuthToken: string,
+  signal?: AbortSignal,
+) {
   const convexUrl = process.env.CONVEX_URL;
   if (!convexUrl) {
     throw new Error("CONVEX_URL is not set");
   }
 
-  const convexClient = new ConvexHttpClient(convexUrl);
+  const convexClient = new ConvexHttpClient(
+    convexUrl,
+    signal
+      ? {
+          fetch: (input, init) =>
+            fetch(input, {
+              ...init,
+              signal: AbortSignal.any([
+                signal,
+                AbortSignal.timeout(WEB_CALL_TIMEOUT_MS),
+                ...(init?.signal ? [init.signal] : []),
+              ]),
+            }),
+        }
+      : undefined,
+  );
   convexClient.setAuth(convexAuthToken);
   return convexClient;
 }

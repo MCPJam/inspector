@@ -134,6 +134,19 @@ test("without the Inspector server only the SDK catalog is written", () => {
   }
 });
 
+test("the Inspector catalog names dependency errors and keeps the capturing event as a fact", () => {
+  const root = fixture();
+  try {
+    const outputs = buildTelemetryCatalogs({ root });
+    assert.ok(inspector(outputs).errors.includes("McpError"));
+    assert.ok(JSON.parse(outputs[OUTPUTS.browser]).errors.includes("AI_APICallError"));
+    assert.deepEqual(inspector(outputs).diagnosticFields.event, ["probe.request"]);
+    assert.ok(!JSON.parse(outputs[OUTPUTS.sdk]).errors.includes("McpError"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a second scan in one process sees edited, renamed and deleted routes", () => {
   const root = fixture();
   try {
@@ -166,6 +179,21 @@ test("a LogConvexId field gets the context-only convexId rule, a plain string no
       orgId: { kind: "convexId" },
       statusCode: { kind: "number" },
     });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a payload declared in log-events/ gets field rules; one elsewhere does not", () => {
+  const root = fixture();
+  try {
+    edit(root, "mcpjam-inspector/shared/log-events/probe.ts", "export type ProbeEvent = { drained: boolean; waitedMs: number };");
+    edit(root, "mcpjam-inspector/shared/probe-event.ts", "export type Elsewhere = { elsewhereMs: number };");
+    edit(root, "mcpjam-inspector/shared/log-events.ts",
+      'export type SystemEventMap = { "probe.system": import("./log-events/probe.js").ProbeEvent };');
+    const catalog = inspector(buildTelemetryCatalogs({ root }));
+    assert.deepEqual(catalog.fields, { drained: { kind: "boolean" }, waitedMs: { kind: "number" } });
+    assert.deepEqual(catalog.events, ["probe.system"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -15,10 +15,7 @@ import { useAvailableModels } from "@/hooks/use-available-models";
 import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
 import { useHostHarnessTargets } from "@/hooks/use-host-harness-targets";
-import {
-  applyHarnessModelLocks,
-  type HarnessModelTarget,
-} from "@/lib/harness-model-locks";
+import type { HarnessModelTarget } from "@/lib/harness-model-locks";
 import type { ModelDefinition } from "@/shared/types";
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import { ChevronDown, Plus, Trash2, X } from "lucide-react";
@@ -33,6 +30,7 @@ import {
 } from "@/components/environment-composer/environment-stack";
 import { modelTarget } from "@/lib/model-target";
 import {
+  evalModelRows,
   pickedModelTarget,
   resolveEvalModelChoice,
 } from "@/lib/org-keys-model-target";
@@ -423,8 +421,12 @@ function EvalModelPicker({
   testId: string;
   defaultModelId?: string;
 }) {
-  const { availableModels, requireOrgKeys, onManageOrgProviders } =
-    useAvailableModels({ projectId });
+  const {
+    availableModels,
+    requireOrgKeys,
+    onManageOrgProviders,
+    onAddProvider,
+  } = useAvailableModels({ projectId });
   return (
     <EvalModelChoices
       {...{
@@ -438,6 +440,7 @@ function EvalModelPicker({
         harness,
         requireOrgKeys,
         onManageOrgProviders,
+        onAddProvider,
       }}
     />
   );
@@ -455,6 +458,7 @@ export function EvalModelChoices({
   effortEditable = true,
   requireOrgKeys = false,
   onManageOrgProviders,
+  onAddProvider,
 }: {
   /**
    * Offer each model's reasoning efforts in the model menus. Off where the
@@ -472,6 +476,8 @@ export function EvalModelChoices({
    * while the organization requires its own keys (see `useAvailableModels`).
    */
   onManageOrgProviders?: () => void;
+  /** The same, under any key policy, for a model search with no match; `null` when none is offered. */
+  onAddProvider: (() => void) | null;
   inModal?: boolean;
   value: ModelSelection;
   onChange: (value: ModelSelection) => void;
@@ -487,13 +493,8 @@ export function EvalModelChoices({
    */
   harness?: HarnessModelTarget | null;
 }) {
-  // Under the organization's key policy a harness runs only on an
-  // organization connection to its own vendor; the lock says so.
   const availableModels = useMemo(
-    () =>
-      applyHarnessModelLocks(catalogModels, [harness], "eval", {
-        requireOrgKeys,
-      }),
+    () => evalModelRows(catalogModels, harness, requireOrgKeys),
     [catalogModels, harness, requireOrgKeys],
   );
   const selectionsSupported = useModelSelectionsSupported();
@@ -634,7 +635,9 @@ export function EvalModelChoices({
     const efforts = effortsFor()(model);
     if (!efforts) {
       return !choices.some(
-        (choice) => String(choice.model.id) === String(model.id),
+        (choice) =>
+          !isOrgKeysDisallowedRow(choice.model) &&
+          String(choice.model.id) === String(model.id),
       );
     }
     return [undefined, ...efforts.levels].some(
@@ -654,6 +657,7 @@ export function EvalModelChoices({
               disabled={disabled}
               requireOrgKeys={requireOrgKeys}
               onManageOrgProviders={onManageOrgProviders}
+              onAddProvider={onAddProvider}
               analyticsLocation="eval_suite"
               workload="evalTarget"
               onModelChange={(next) => changeChoice(key, inherited, next)}
@@ -750,6 +754,7 @@ export function EvalModelChoices({
         disabled={disabled}
         requireOrgKeys={requireOrgKeys}
         onManageOrgProviders={onManageOrgProviders}
+        onAddProvider={onAddProvider}
         analyticsLocation="eval_suite"
         workload="evalTarget"
         onModelChange={(model) =>

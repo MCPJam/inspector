@@ -23,6 +23,8 @@ import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completio
 import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
 import internalAgentTurns from "./routes/internal/agent-turns.js";
 import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
+import internalEvents from "./routes/internal/events.js";
+import internalHostedBrowserSynthetic from "./routes/internal/hosted-browser-synthetic.js";
 import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
 import { createComputerBrowserStreamWsHandler } from "./routes/web/computer-browser-stream.js";
 import {
@@ -39,9 +41,11 @@ import surfaceLinkRoutes from "./routes/surface-link/index.js";
 import relayRoutes, { relayBodyLimit } from "./routes/relay.js";
 import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata.js";
 import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd.js";
+import { registerSyntheticWebMcpPageRoutes } from "./routes/synthetic-webmcp-page.js";
 import { createXaaWebRouter } from "./routes/web/xaa.js";
 import workosAuthkitRoutes from "./routes/workos-authkit.js";
 import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
+import { resolveTrustedClientIpHeader } from "./utils/client-ip.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
@@ -362,6 +366,13 @@ export async function createHonoApp() {
   // backend's own queue rather than from anything the caller named.
   app.route("/api/internal/chat-stage", internalChatStageDerivations);
   app.route("/api/internal/agent-turns", internalAgentTurns);
+  // MCP Events: the inbox Worker's dispatch (`/enqueue`, its own
+  // `x-events-inbox-token`) and the executor doorbell (`/dispatch`, service
+  // token). Mirror of the mount in server/index.ts.
+  app.route("/api/internal/events", internalEvents);
+  // Backend → inspector hourly hosted-browser check, service-token gated.
+  // Mirror of the mount in server/index.ts.
+  app.route("/api/internal/hosted-browser", internalHostedBrowserSynthetic);
   // W1 hosted-browser debug probe. Mounted ONLY when explicitly enabled — it
   // provisions a desktop and boots browserd end to end — and, like the other
   // internal routes, gated by the service token. Mirror of the mount in
@@ -451,6 +462,10 @@ export async function createHonoApp() {
   // value which would otherwise send the admin API key to another host. Unset
   // (every deployment) this is a no-op.
   resolveWorkosApiBaseUrl(process.env);
+  // Same for `MCPJAM_TRUSTED_CLIENT_IP_HEADER`: a value that is not one header
+  // name fails here rather than in every request that asks for a client
+  // address. Unset, this is a no-op.
+  resolveTrustedClientIpHeader(process.env);
 
   // Mounted in every runtime, hosted included — see the mirror of this mount
   // in server/index.ts for why the gate had to go.
@@ -491,6 +506,9 @@ export async function createHonoApp() {
   // production entries must wire this up.
   registerXaaClientMetadataRoute(app);
   registerXaaConfidentialCimdRoute(app);
+  // The page the hosted-browser check opens; a cloud desktop fetches it with
+  // no credential. Mirror of the mount in server/index.ts.
+  registerSyntheticWebMcpPageRoutes(app);
 
   // Health check
   app.get("/health", (c) => {

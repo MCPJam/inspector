@@ -129,6 +129,7 @@ export interface HostJson {
   systemPromptDefault?: SystemPromptDefault;
   temperature: number;
   requireToolApproval: boolean;
+  requireNativeToolDiscovery?: boolean;
   progressiveToolDiscovery?: boolean;
   respectToolVisibility?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
@@ -141,6 +142,8 @@ export interface HostJson {
   /** Which harness runs the turn; absent ⇒ emulated. `"claude-code"` runs the
    * turn in a real Claude Code runtime (requires an attached `computer`). */
   harness?: Harness;
+  /** Run a vendor harness while preserving this host's MCPJam client. */
+  agentLoop?: Harness;
   servers: ServerId[];
   optionalServers: ServerId[];
   /** Skill selection. Absent ⇒ legacy all-visible. Normalized:
@@ -189,6 +192,7 @@ export interface HostInit {
   /** Sampling temperature. Default: 0.7. */
   temperature?: number;
   requireToolApproval?: boolean;
+  requireNativeToolDiscovery?: boolean;
   /** Opt into progressive MCP tool discovery (search/load meta-tools). */
   progressiveToolDiscovery?: boolean;
   /** SEP-1865 `_meta.ui.visibility` filtering. Undefined → spec default. */
@@ -211,6 +215,8 @@ export interface HostInit {
    * so a computer is required when this is set.
    */
   harness?: Harness;
+  /** Run a vendor harness while preserving this host's MCPJam client. */
+  agentLoop?: Harness;
   /** Required servers this host connects to. */
   servers?: ServerId[];
   /** Optional (auto-connect-if-available) servers. */

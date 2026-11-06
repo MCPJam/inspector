@@ -4,6 +4,11 @@ import { toast as sonnerToast } from "sonner";
 import { OrganizationsTab } from "../OrganizationsTab";
 import { ImageUploadError } from "@/lib/image-upload";
 
+vi.mock("@/hooks/useCreditBalance", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/hooks/useCreditBalance")>(),
+  useUnlimitedCredits: vi.fn(() => false),
+}));
+
 const mockUseAuth = vi.fn();
 const mockUseConvexAuth = vi.fn();
 const mockUseOrganizationQueries = vi.fn();
@@ -397,6 +402,10 @@ describe("OrganizationsTab member management", () => {
     expect(
       screen.getByRole("textbox", { name: "Invite with email" }),
     ).toBeInTheDocument();
+
+    expect(
+      screen.queryByRole("button", { name: /Permission groups/ }),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText("change-role-member@example.com"));
 

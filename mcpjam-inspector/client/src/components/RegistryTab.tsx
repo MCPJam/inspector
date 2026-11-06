@@ -9,7 +9,6 @@ import {
   Unplug,
   BadgeCheck,
   Building2,
-  Plus,
   Pencil,
   Trash2,
 } from "lucide-react";
@@ -17,13 +16,6 @@ import { Card } from "@mcpjam/design-system/card";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
 import { EmptyState } from "./ui/empty-state";
 import { SearchInput } from "./ui/search-input";
 import {
@@ -65,6 +57,10 @@ import {
   type OrgRegistryDialogSeed,
 } from "./registry/OrgRegistryServerDialog";
 import { OrgRegistryRemoveDialog } from "./registry/OrgRegistryRemoveDialog";
+import {
+  RegistryTabHeader,
+  type RegistryView,
+} from "./registry/RegistryTabHeader";
 import { ErrorBoundary } from "./ui/error-boundary";
 import { toast } from "@/lib/toast";
 import { convexErrMessage } from "@/lib/convex-error";
@@ -157,13 +153,6 @@ function readDirectorySource(value: unknown): DirectorySource | undefined {
   );
 }
 
-const TIER_LABELS: Record<DirectoryTier, string> = {
-  all: "All tiers",
-  anthropic: "Anthropic",
-  partner: "Partner",
-  community: "Community",
-};
-
 interface RegistryTabProps {
   projectId: string | null;
   isAuthenticated: boolean;
@@ -219,6 +208,15 @@ export function RegistryTab({
     hasContent: boolean;
     isLoading: boolean;
   } | null>(null);
+  // The organization's shelf opens first. Directories is the page when this
+  // project has no shelf, or when the person picks it.
+  const [preferredView, setPreferredView] =
+    useState<RegistryView>("organization");
+  // The add dialog lives with the org shelf. The header button calls in.
+  const [addOrgServer, setAddOrgServer] = useState<(() => void) | null>(null);
+  const handleAddOrgServerReady = useCallback((add: (() => void) | null) => {
+    setAddOrgServer(() => add);
+  }, []);
   const handleOrgShelfState = useCallback(
     (next: { hasContent: boolean; isLoading: boolean }) => {
       setOrgShelfState((previous) =>
@@ -650,6 +648,28 @@ export function RegistryTab({
     return <LoadingSkeleton />;
   }
 
+  // A source with nothing to show does not get a tab. Organization is the
+  // landing while the shelf exists or is still resolving, so a project that
+  // has one does not flash the catalog first. Directories is the page once
+  // we know there is no shelf, or when the person picks it.
+  const directoryAvailable =
+    directory.isLoadingFirstPage ||
+    directory.items.length > 0 ||
+    directoryFiltered;
+  const organizationAvailable = orgShelfState?.hasContent === true;
+  const orgKnownEmpty =
+    orgShelfState !== null &&
+    !orgShelfState.isLoading &&
+    !orgShelfState.hasContent;
+  const view: RegistryView =
+    preferredView === "directories" && directoryAvailable
+      ? "directories"
+      : !orgKnownEmpty && preferredView === "organization"
+        ? "organization"
+        : directoryAvailable
+          ? "directories"
+          : "organization";
+
   if (directoryEmpty && orgShelfEmpty && !directoryFiltered) {
     return (
       <EmptyState
@@ -661,44 +681,47 @@ export function RegistryTab({
   }
 
   return (
-    <div className="h-full overflow-auto">
-      <div className="space-y-8 p-8">
-        {/* Header */}
-        <div>
-          <h2 className="text-lg font-semibold">Registry</h2>
-          <p className="text-sm text-muted-foreground">
-            Servers your organization has shared, plus connector directories you
-            can connect from.
-          </p>
+    <div className="flex h-full min-h-0 flex-col">
+      <RegistryTabHeader
+        view={view}
+        showViewSwitch={directoryAvailable && organizationAvailable}
+        onViewChange={setPreferredView}
+        onAddServer={
+          view === "organization" ? (addOrgServer ?? undefined) : undefined
+        }
+      />
+      <div className="min-h-0 flex-1 overflow-auto">
+        <div className="flex min-h-full flex-col p-6 sm:p-8">
+          {/*
+            The organization's own shelf. It stays mounted on the directories
+            view so the switch can appear once the shelf resolves, and so a
+            missing backend function stays inside this boundary instead of
+            taking the directory down with it. A browser can outlive a
+            rollback, and `useQuery` for a missing function throws during
+            render.
+          */}
+          <ErrorBoundary name="org-registry-section" fallback={null}>
+            <OrgRegistrySectionContainer
+              projectId={projectId}
+              isAuthenticated={isAuthenticated}
+              liveServers={servers}
+              onConnect={onConnect}
+              onDisconnect={onDisconnect}
+              onState={handleOrgShelfState}
+              onAddReady={handleAddOrgServerReady}
+              visible={view === "organization"}
+            />
+          </ErrorBoundary>
+
+          {view === "directories" ? (
+            <ServerDirectorySection
+              directory={directory}
+              statusFor={directoryStatusFor}
+              onConnect={handleDirectoryConnect}
+              onOpenDetail={setDetailServer}
+            />
+          ) : null}
         </div>
-
-        {/*
-          The organization's own shelf, above the directories: it is the
-          smaller list and the one a team put there on purpose.
-
-          Behind its OWN boundary. This section is the only part of the tab
-          that reads functions the deployed backend may not have yet — a
-          browser can outlive a rollback, and `useQuery` for a missing function
-          throws during render. Without the boundary that takes the entire
-          Registry tab, directory included, down with it.
-        */}
-        <ErrorBoundary name="org-registry-section" fallback={null}>
-          <OrgRegistrySectionContainer
-            projectId={projectId}
-            isAuthenticated={isAuthenticated}
-            liveServers={servers}
-            onConnect={onConnect}
-            onDisconnect={onDisconnect}
-            onState={handleOrgShelfState}
-          />
-        </ErrorBoundary>
-
-        <ServerDirectorySection
-          directory={directory}
-          statusFor={directoryStatusFor}
-          onConnect={handleDirectoryConnect}
-          onOpenDetail={setDetailServer}
-        />
       </div>
 
       {detailServer && (
@@ -758,6 +781,8 @@ function OrgRegistrySectionContainer({
   onConnect,
   onDisconnect,
   onState,
+  onAddReady,
+  visible,
 }: {
   projectId: string | null;
   isAuthenticated: boolean;
@@ -765,6 +790,10 @@ function OrgRegistrySectionContainer({
   onConnect: (formData: ServerFormData) => void;
   onDisconnect?: (serverName: string) => void;
   onState: (state: { hasContent: boolean; isLoading: boolean }) => void;
+  /** Header "Add a server". Null when this member cannot add. */
+  onAddReady: (add: (() => void) | null) => void;
+  /** False on the directories view. The hook still runs so the switch can appear. */
+  visible: boolean;
 }) {
   const orgRegistry = useOrgRegistryServers({
     projectId,
@@ -779,6 +808,11 @@ function OrgRegistrySectionContainer({
   const [orgRemoveTarget, setOrgRemoveTarget] =
     useState<EnrichedOrgRegistryServer | null>(null);
   const [orgRemoving, setOrgRemoving] = useState(false);
+  const openAdd = useCallback(() => setOrgDialog({ seed: null }), []);
+
+  useEffect(() => {
+    onAddReady(orgRegistry.canAdd ? openAdd : null);
+  }, [onAddReady, openAdd, orgRegistry.canAdd]);
 
   useEffect(() => {
     onState({
@@ -859,26 +893,27 @@ function OrgRegistrySectionContainer({
 
   return (
     <>
-      <OrgRegistrySection
-        registry={orgRegistry}
-        onAdd={() => setOrgDialog({ seed: null })}
-        onEdit={(server) =>
-          setOrgDialog({
-            seed: {
-              registryServerId: server._id,
-              displayName: server.displayName,
-              description: server.description,
-              url: server.transport.url ?? "",
-              useOAuth: server.transport.useOAuth,
-              oauthScopes: server.transport.oauthScopes,
-              derived: server.derived,
-            },
-          })
-        }
-        onRemove={setOrgRemoveTarget}
-        onConnect={handleOrgConnect}
-        onDisconnect={handleOrgDisconnect}
-      />
+      {visible ? (
+        <OrgRegistrySection
+          registry={orgRegistry}
+          onEdit={(server) =>
+            setOrgDialog({
+              seed: {
+                registryServerId: server._id,
+                displayName: server.displayName,
+                description: server.description,
+                url: server.transport.url ?? "",
+                useOAuth: server.transport.useOAuth,
+                oauthScopes: server.transport.oauthScopes,
+                derived: server.derived,
+              },
+            })
+          }
+          onRemove={setOrgRemoveTarget}
+          onConnect={handleOrgConnect}
+          onDisconnect={handleOrgDisconnect}
+        />
+      ) : null}
       {orgRemoveTarget && (
         <OrgRegistryRemoveDialog
           open
@@ -909,10 +944,10 @@ function OrgRegistrySectionContainer({
  * The organization's own shelf.
  *
  * Renders nothing at all for a project outside an organization, or for
- * somebody who is neither a member nor looking at any entries — an empty
- * "Your organization" heading over a project that has no organization is
- * noise, not information. It DOES render for a member with an empty shelf,
- * because that is the state the invitation to add belongs in.
+ * somebody who is neither a member nor looking at any entries. It DOES
+ * render for a member with an empty shelf, because that is the state the
+ * invitation to add belongs in. The add button itself lives in the page
+ * header, next to the view switch.
  *
  * The cards carry no star control. Stars are the identity of a consolidated
  * PUBLIC card (`registryCardKey`), an org entry has none, and the backend's
@@ -921,14 +956,12 @@ function OrgRegistrySectionContainer({
  */
 function OrgRegistrySection({
   registry,
-  onAdd,
   onEdit,
   onRemove,
   onConnect,
   onDisconnect,
 }: {
   registry: ReturnType<typeof useOrgRegistryServers>;
-  onAdd: () => void;
   onEdit: (server: EnrichedOrgRegistryServer) => void;
   onRemove: (server: EnrichedOrgRegistryServer) => void | Promise<void>;
   onConnect: (server: EnrichedOrgRegistryServer) => void | Promise<void>;
@@ -941,31 +974,6 @@ function OrgRegistrySection({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-end justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-semibold flex items-center gap-1.5">
-            <Building2 className="h-4 w-4 text-muted-foreground" />
-            Your organization
-          </h3>
-          <p className="text-xs text-muted-foreground">
-            Servers your team has shared. Visible in every project in this
-            organization.
-          </p>
-        </div>
-        {canAdd && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs gap-1"
-            onClick={onAdd}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Add a server
-          </Button>
-        )}
-      </div>
-
       {isLoading ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {Array.from({ length: 2 }).map((_, i) => (
@@ -973,14 +981,12 @@ function OrgRegistrySection({
           ))}
         </div>
       ) : servers.length === 0 ? (
-        <Card className="px-4 py-6 text-center">
-          <p className="text-sm font-medium">Nothing shared yet</p>
-          <p className="text-xs text-muted-foreground mt-1">
-            Paste a remote server&rsquo;s address and we&rsquo;ll read the rest
-            off it — or share one you already have connected from its menu on
-            the Servers tab.
-          </p>
-        </Card>
+        <EmptyState
+          icon={Building2}
+          title="Nothing shared yet"
+          description="Add a server to share it with your organization."
+          className="flex-1"
+        />
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {servers.map((server) => (
@@ -1112,15 +1118,10 @@ function OrgRegistryServerCard({
 }
 
 /**
- * The mirrored upstream directories.
+ * The Claude connector directory.
  *
- * Thousands of entries per source, so it is search-first: no all-at-once grid,
- * a debounced query, a source facet, a tier filter, and an explicit Load more.
- *
- * ONE SOURCE AT A TIME (Claude by default). Cross-directory listing overlap
- * stays visible when someone switches — a connector listed in both is a
- * signal, not a duplicate to hide — and only CONNECT collapses the two, in the
- * backend.
+ * Thousands of entries, so it is search-first: a debounced query and an
+ * explicit Load more. There is one catalog, so there is no source picker.
  */
 function ServerDirectorySection({
   directory,
@@ -1133,8 +1134,7 @@ function ServerDirectorySection({
   onConnect: (server: DirectoryServer) => void;
   onOpenDetail: (server: DirectoryServer) => void;
 }) {
-  const { items, query, setQuery, tier, setTier, source, setSource } =
-    directory;
+  const { items, query, setQuery, source } = directory;
   const filtering = isDirectoryFiltered(directory);
 
   // Nothing loaded and nothing asked for: the section stays out of the way
@@ -1145,23 +1145,6 @@ function ServerDirectorySection({
 
   return (
     <section className="space-y-4" data-testid="server-directory-section">
-      <div>
-        <h3 className="text-sm font-semibold">Connector directories</h3>
-        <p className="text-xs text-muted-foreground">
-          Connectors mirrored from a public directory. Search to find one, then
-          connect it into this project.
-          {directory.lastSyncedAt ? (
-            <>
-              {" "}
-              <span data-testid="directory-as-of">
-                {DIRECTORY_SOURCE_LABELS[source]} as of{" "}
-                {new Date(directory.lastSyncedAt).toLocaleDateString()}.
-              </span>
-            </>
-          ) : null}
-        </p>
-      </div>
-
       <div className="flex flex-wrap items-center gap-2">
         <SearchInput
           value={query}
@@ -1169,61 +1152,6 @@ function ServerDirectorySection({
           placeholder={`Search the ${DIRECTORY_SOURCE_LABELS[source]}…`}
           className="w-full sm:w-72"
         />
-        <Select
-          value={source}
-          onValueChange={(value) => setSource(value as DirectorySource)}
-        >
-          <SelectTrigger
-            data-testid="directory-source-filter"
-            className="h-8 w-[min(100%,11rem)] text-xs"
-            aria-label="Choose which directory to browse"
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {DIRECTORY_SOURCES.map((value) => (
-              <SelectItem key={value} value={value}>
-                {DIRECTORY_SOURCE_LABELS[value]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Button
-          variant={directory.connectableOnly ? "default" : "outline"}
-          size="sm"
-          className="h-8 text-xs"
-          aria-pressed={directory.connectableOnly}
-          data-testid="directory-connectable-filter"
-          onClick={() =>
-            directory.setConnectableOnly(!directory.connectableOnly)
-          }
-        >
-          Connectable only
-        </Button>
-        {/* Verification tiers are a Claude concept. Rendering the filter for a
-            source that publishes none would offer a control that can only ever
-            empty the list. */}
-        {sourceHasTiers(source) && (
-          <Select
-            value={tier}
-            onValueChange={(value) => setTier(value as DirectoryTier)}
-          >
-            <SelectTrigger
-              data-testid="directory-tier-filter"
-              className="h-8 w-[min(100%,9rem)] text-xs"
-              aria-label="Filter the directory by tier"
-            >
-              <SelectValue placeholder="All tiers" />
-            </SelectTrigger>
-            <SelectContent>
-              {DIRECTORY_TIERS.map((value) => (
-                <SelectItem key={value} value={value}>
-                  {TIER_LABELS[value]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
       </div>
 
       {directory.isLoadingFirstPage ? (

@@ -16,6 +16,7 @@
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
 import type { SandboxNoticeReason } from "@/shared/sandbox-notice";
 import { AI_CONFIGURATION_REFUSAL_CODES } from "@/shared/ai-execution-refusal";
+import { fetchScenarioExecutionConfig } from "./scenario-execution-fetch.js";
 import { logger } from "./logger.js";
 import { backendFailureText } from "./backend-failure-text.js";
 import type {
@@ -550,7 +551,7 @@ export async function fetchScenarioRuntimeConfig(args: {
 
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await fetchScenarioExecutionConfig(url, {
       method: "POST",
       headers: {
         "content-type": "application/json",

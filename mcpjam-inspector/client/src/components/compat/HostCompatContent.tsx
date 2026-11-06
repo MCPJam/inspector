@@ -44,6 +44,8 @@ import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
 import { filterReportsByFeatureFlags } from "@/lib/host-compat/feature-visibility";
+import { useOrgBoundTemplateSeed } from "@/hooks/use-org-bound-template-seed";
+import { withModelChoiceNotice } from "@/lib/org-bound-template-seed";
 import type { ToolsDataStatus } from "@/lib/host-compat/use-host-compat";
 
 const FINDING_ICON: Record<
@@ -186,6 +188,7 @@ export function HostCompatContent({
     projectId,
   });
   const canCreateHosts = Boolean(projectId && serverId && canManageClients);
+  const orgSeed = useOrgBoundTemplateSeed(projectId ?? null);
   const handleTestInHost = async (report: HostCompatReport) => {
     const templateId = report.hostId;
     if (!projectId || !serverId) return;
@@ -210,15 +213,24 @@ export function HostCompatContent({
       server_name: server.name,
     });
 
+    const prepared = orgSeed.prepare(
+      cloneHostTemplateInput(template, { themeMode }),
+      label,
+    );
+    if (!prepared) return;
     setCreatingTemplateId(templateId);
     try {
-      const seed = cloneHostTemplateInput(template, { themeMode });
       const { hostId, hostConfigId } = await createHost({
         projectId,
         name: label,
-        input: { ...seed, serverIds: [serverId] },
+        input: { ...prepared.input, serverIds: [serverId] },
         applyDefaultSystemPrompt: true,
       });
+      if (prepared.needsModelChoice) {
+        toast.success(
+          withModelChoiceNotice(`Created ${label} client.`, prepared.needsModelChoice),
+        );
+      }
       // Same event the create dialog fires, so host creation stays one
       // unified number — filter on `via`/`location` to isolate CTA-driven
       // creates. Best-effort: a posthog throw must not surface a failure
@@ -362,6 +374,7 @@ export function HostCompatContent({
                       className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
                       disabled={
                         creatingTemplateId !== null ||
+                        !orgSeed.ready ||
                         !canCreateFromLiveTemplate
                       }
                       onClick={() => handleTestInHost(report)}

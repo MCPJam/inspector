@@ -1,3 +1,4 @@
+import { HARNESS_DESCRIPTORS } from "./harness-descriptors";
 /**
  * The credential an EXTERNAL-ACCOUNT harness (Cursor) runs under, declared once
  * for the server runtime registry and every client surface, and the one
@@ -43,17 +44,7 @@ export interface ExternalAccountCredentialSpec {
  * host-scoped, so brokering the host covers that exchange and any sibling call
  * that authenticates the same way.
  */
-export const EXTERNAL_ACCOUNT_CREDENTIALS = {
-  cursor: {
-    env: "CURSOR_API_KEY",
-    label: "Cursor API key",
-    binding: {
-      hosts: ["api2.cursor.sh"],
-      header: "authorization",
-      template: "Bearer {}",
-    },
-  },
-} as const satisfies Record<string, ExternalAccountCredentialSpec>;
+export const EXTERNAL_ACCOUNT_CREDENTIALS = { cursor: HARNESS_DESCRIPTORS.cursor.credential } as const satisfies Record<string, ExternalAccountCredentialSpec>;
 
 /** The credential a harness authenticates with, or undefined when it needs none. */
 export function externalAccountCredentialFor(
@@ -153,11 +144,11 @@ export interface ExternalCredentialSelection {
  * User Testing — which therefore cannot carry a personal key at all.
  */
 export function externalCredentialSecretSelection(
-  hostConfig: { harness?: string | null },
+  hostConfig: { harness?: string | null; agentLoop?: string | null },
   secrets: readonly ExternalCredentialSecret[] | undefined,
   options: { requireShared?: boolean } = {},
 ): ExternalCredentialSelection | undefined {
-  const harnessId = hostConfig.harness ?? undefined;
+  const harnessId = hostConfig.agentLoop ?? hostConfig.harness ?? undefined;
   const spec = externalAccountCredentialFor(harnessId);
   if (!spec || !harnessId) return undefined;
   const fail = (code: ExternalCredentialProblem, message: string): never => {

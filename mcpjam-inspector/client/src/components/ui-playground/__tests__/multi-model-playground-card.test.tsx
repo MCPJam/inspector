@@ -1,10 +1,30 @@
 import { useState } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MultiModelPlaygroundCard } from "../multi-model-playground-card";
 import type { MultiModelCardSummary } from "@/components/chat-v2/model-compare-card-header";
+import { showPluginNotice } from "@/lib/plugins/plugin-notice-display";
 import type { LiveChatTraceEnvelope } from "@/shared/live-chat-trace";
 import { useBrowserComparisonStore } from "@/stores/browser-comparison-store";
+
+const composition = vi.hoisted(() => ({ wanted: false, failed: false, blockingError: undefined as string | undefined }));
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => false,
+}));
+
+vi.mock("@/hooks/use-playground-hidden-environment", () => ({
+  usePlaygroundHiddenEnvironment: () => ({
+    wanted: composition.wanted,
+    failed: composition.failed,
+    blockingError: composition.blockingError,
+    environmentId: "env_column",
+    pluginServerIds: ["plugin_server"],
+    pluginServers: [{ serverId: "plugin_server", name: "Plugin" }],
+    venue: "hosted",
+  }),
+}));
+
+vi.mock("@/lib/plugins/plugin-notice-display", () => ({ showPluginNotice: vi.fn() }));
 
 vi.mock("use-stick-to-bottom", () => {
   const StickToBottomComponent = ({
@@ -27,7 +47,12 @@ vi.mock("use-stick-to-bottom", () => {
   };
 });
 
+const { historyDetail } = vi.hoisted(() => ({ historyDetail: vi.fn() }));
+vi.mock("@/components/chat-v2/history/chat-history-prefetch", () => ({
+  getCachedChatHistoryDetail: historyDetail,
+}));
 const mockUseChatSession = {
+  loadChatSession: vi.fn().mockResolvedValue(undefined),
   // Elicitation surface (hosted). These suites never elicit, but the shape
   // must match the hook's contract or the dialog crashes on undefined.
   pendingElicitations: [],
@@ -35,6 +60,8 @@ const mockUseChatSession = {
   elicitationResponding: false,
   urlElicitationRequired: [],
   dismissUrlElicitationRequired: vi.fn(),
+  hiddenEnvironmentActive: false,
+  isSessionBootstrapComplete: true,
   messages: [],
   setMessages: vi.fn(),
   sendMessage: vi.fn(),
@@ -178,7 +205,24 @@ const model = {
   provider: "openai" as const,
 };
 
-function Harness({ browserWorkspace, extensionBinding, selection, compareKind = "model" }: {
+function Harness({
+  browserWorkspace,
+  extensionBinding,
+  selection,
+  compareKind = "model",
+  broadcastRequest = null,
+  deterministicExecutionRequest = null,
+  onSendReadinessChange,
+}: {
+  broadcastRequest?: Parameters<
+    typeof MultiModelPlaygroundCard
+  >[0]["broadcastRequest"];
+  deterministicExecutionRequest?: Parameters<
+    typeof MultiModelPlaygroundCard
+  >[0]["deterministicExecutionRequest"];
+  onSendReadinessChange?: Parameters<
+    typeof MultiModelPlaygroundCard
+  >[0]["onSendReadinessChange"];
   selection?: Parameters<typeof MultiModelPlaygroundCard>[0]["selection"];
   compareKind?: "model" | "host";
   browserWorkspace?: { id: string; order: number; clientCount: number };
@@ -198,6 +242,7 @@ function Harness({ browserWorkspace, extensionBinding, selection, compareKind = 
         {Object.keys(messageFlags).length}
       </div>
       <MultiModelPlaygroundCard
+        onSendReadinessChange={onSendReadinessChange}
         extensionBinding={extensionBinding}
         browserWorkspace={browserWorkspace}
         hostedContext={{ projectId: "project-1", selectedServerIds: [] }}
@@ -208,10 +253,14 @@ function Harness({ browserWorkspace, extensionBinding, selection, compareKind = 
         selection={selection}
         comparisonSummaries={Object.values(summaries)}
         selectedServers={[]}
-        broadcastRequest={null}
-        deterministicExecutionRequest={null}
+        broadcastRequest={broadcastRequest}
+        deterministicExecutionRequest={deterministicExecutionRequest}
         stopRequestId={0}
-        executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
+        executionConfig={{
+          systemPrompt: "",
+          temperature: 0.7,
+          requireToolApproval: false,
+        }}
         displayMode="inline"
         onDisplayModeChange={vi.fn()}
         hostStyle="chatgpt"
@@ -244,6 +293,13 @@ describe("MultiModelPlaygroundCard", () => {
   });
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionStorage.clear();
+    window.history.replaceState({}, "", "/");
+    composition.wanted = false;
+    composition.failed = false;
+    composition.blockingError = undefined;
+    mockUseChatSession.status = "ready";
+    mockUseChatSession.hiddenEnvironmentActive = false;
     useBrowserComparisonStore.setState({ clients: {}, selected: {} });
   });
 
@@ -283,9 +339,52 @@ describe("MultiModelPlaygroundCard", () => {
     expect(lane.view.mock.calls.at(-1)![0].apps).toBeNull();
   });
 
+  it("carries the column's plugin composition into its chat context", () => {
+    composition.wanted = true;
+    mockUseChatSession.hiddenEnvironmentActive = true;
+    render(<Harness />);
+    expect(
+      lane.chatOptions.mock.calls.at(-1)?.[0].hostedContext.hiddenEnvironment,
+    ).toMatchObject({
+      environmentId: "env_column",
+      pluginServerIds: ["plugin_server"],
+    });
+    expect(lane.owner.mock.calls.at(-1)?.[1]).toContainEqual({
+      serverId: "plugin_server",
+      name: "Plugin",
+    });
+  });
+
+  it("omits plugin Apps when this model does not run the hidden environment", () => {
+    composition.wanted = true;
+    mockUseChatSession.hiddenEnvironmentActive = false;
+    render(<Harness />);
+    expect(lane.owner.mock.calls.at(-1)?.[1]).toEqual([]);
+  });
+
+  it("only blocks on a cap for a turn that uses the hidden environment", () => {
+    composition.blockingError = "Setup limit reached";
+    const readiness = vi.fn();
+    const { rerender } = render(<Harness onSendReadinessChange={readiness} />);
+    expect(readiness).toHaveBeenLastCalledWith(expect.any(String), true, undefined);
+    mockUseChatSession.hiddenEnvironmentActive = true;
+    rerender(<Harness onSendReadinessChange={readiness} />);
+    expect(readiness).toHaveBeenLastCalledWith(expect.any(String), false, "Setup limit reached");
+  });
+
+  it("does not announce failed composition before a send", () => {
+    composition.failed = true;
+    const { rerender } = render(<Harness />);
+    expect(showPluginNotice).not.toHaveBeenCalled();
+    mockUseChatSession.status = "submitted";
+    rerender(<Harness />);
+    expect(showPluginNotice).toHaveBeenCalledWith("chat-session-1", { kind: "unavailable" });
+  });
   it("registers the model's own conversation under the shared browser workspace", () => {
     const view = render(
-      <Harness browserWorkspace={{ id: "parent-chat", order: 1, clientCount: 2 }} />,
+      <Harness
+        browserWorkspace={{ id: "parent-chat", order: 1, clientCount: 2 }}
+      />,
     );
     expect(useBrowserComparisonStore.getState().clients).toEqual({
       "chat-session-1": expect.objectContaining({
@@ -325,7 +424,11 @@ describe("MultiModelPlaygroundCard", () => {
         broadcastRequest={null}
         deterministicExecutionRequest={null}
         stopRequestId={0}
-        executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
+        executionConfig={{
+          systemPrompt: "",
+          temperature: 0.7,
+          requireToolApproval: false,
+        }}
         displayMode="inline"
         onDisplayModeChange={vi.fn()}
         hostStyle="chatgpt"
@@ -351,7 +454,11 @@ describe("MultiModelPlaygroundCard", () => {
         broadcastRequest={null}
         deterministicExecutionRequest={null}
         stopRequestId={0}
-        executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
+        executionConfig={{
+          systemPrompt: "",
+          temperature: 0.7,
+          requireToolApproval: false,
+        }}
         displayMode="inline"
         onDisplayModeChange={vi.fn()}
         hostStyle="chatgpt"
@@ -379,7 +486,11 @@ describe("MultiModelPlaygroundCard", () => {
         broadcastRequest={null}
         deterministicExecutionRequest={null}
         stopRequestId={0}
-        executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
+        executionConfig={{
+          systemPrompt: "",
+          temperature: 0.7,
+          requireToolApproval: false,
+        }}
         displayMode="inline"
         onDisplayModeChange={vi.fn()}
         hostStyle="chatgpt"
@@ -400,7 +511,11 @@ describe("MultiModelPlaygroundCard", () => {
         broadcastRequest={null}
         deterministicExecutionRequest={null}
         stopRequestId={1}
-        executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
+        executionConfig={{
+          systemPrompt: "",
+          temperature: 0.7,
+          requireToolApproval: false,
+        }}
         displayMode="inline"
         onDisplayModeChange={vi.fn()}
         hostStyle="chatgpt"
@@ -526,7 +641,11 @@ describe("MultiModelPlaygroundCard", () => {
           broadcastRequest={null}
           deterministicExecutionRequest={null}
           stopRequestId={0}
-          executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
+          executionConfig={{
+            systemPrompt: "",
+            temperature: 0.7,
+            requireToolApproval: false,
+          }}
           displayMode="inline"
           onDisplayModeChange={vi.fn()}
           hostStyle="chatgpt"
@@ -539,6 +658,35 @@ describe("MultiModelPlaygroundCard", () => {
       const root = screen.getByTestId("multi-model-playground-card-root");
       expect(root.className).not.toMatch(/min-h-\[\d+rem\]/);
       expect(root.className).toContain("min-h-0");
+    });
+
+    it("puts a caller's class on the card root (the phone switcher hides a lane with it)", () => {
+      render(
+        <MultiModelPlaygroundCard
+          className="hidden"
+          compareId={String(model.id)}
+          compareLabel={model.name}
+          compareKind="model"
+          model={model}
+          comparisonSummaries={[]}
+          selectedServers={[]}
+          broadcastRequest={null}
+          deterministicExecutionRequest={null}
+          stopRequestId={0}
+          executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
+          displayMode="inline"
+          onDisplayModeChange={vi.fn()}
+          hostStyle="chatgpt"
+          effectiveThreadTheme="light"
+          deviceType="desktop"
+          onSummaryChange={vi.fn()}
+        />,
+      );
+
+      // A class token, not a substring: the root also carries overflow-hidden.
+      expect(screen.getByTestId("multi-model-playground-card-root")).toHaveClass(
+        "hidden",
+      );
     });
 
     it("shell drops its min-height in default desktop inline compare", () => {
@@ -562,7 +710,11 @@ describe("MultiModelPlaygroundCard", () => {
           broadcastRequest={null}
           deterministicExecutionRequest={null}
           stopRequestId={0}
-          executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
+          executionConfig={{
+            systemPrompt: "",
+            temperature: 0.7,
+            requireToolApproval: false,
+          }}
           displayMode="inline"
           onDisplayModeChange={vi.fn()}
           hostStyle="chatgpt"
@@ -598,7 +750,11 @@ describe("MultiModelPlaygroundCard", () => {
           broadcastRequest={null}
           deterministicExecutionRequest={null}
           stopRequestId={0}
-          executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
+          executionConfig={{
+            systemPrompt: "",
+            temperature: 0.7,
+            requireToolApproval: false,
+          }}
           displayMode="fullscreen"
           onDisplayModeChange={vi.fn()}
           hostStyle="chatgpt"
@@ -612,5 +768,265 @@ describe("MultiModelPlaygroundCard", () => {
       expect(shell).not.toBeNull();
       expect(shell!.className).toContain("min-h-[34rem]");
     });
+  });
+});
+
+describe("comparison redirect restoration", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.history.replaceState(
+      {},
+      "",
+      "/p/project-1/playground?comparisonRecovery=group",
+    );
+    sessionStorage.setItem(
+      "mcp-comparison-auth-v1:group",
+      JSON.stringify({
+        version: 1,
+        id: "group",
+        projectId: "project-1",
+        multiModelEnabled: true,
+        hostIds: [],
+        modelSelections: [],
+        selectedServers: [],
+        continuationId: "call1",
+        clickedColumn: String(model.id),
+        columns: [
+          {
+            compareId: String(model.id),
+            kind: "model",
+            order: 0,
+            chatSessionId: "original-chat",
+            hasMessages: true,
+          },
+        ],
+      }),
+    );
+  });
+  afterEach(() => {
+    window.history.replaceState({}, "", "/");
+    sessionStorage.clear();
+  });
+  it("waits for delayed history and loads the original chat without seeding or sending", async () => {
+    let resolve!: (detail: unknown) => void;
+    historyDetail.mockReturnValue(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    render(
+      <Harness browserWorkspace={{ id: "group", order: 0, clientCount: 1 }} />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Restoring comparison chat",
+    );
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    await act(async () =>
+      resolve({
+        session: {
+          chatSessionId: "original-chat",
+          messagesBlobUrl: "https://example.test/history",
+          version: 1,
+        },
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("status")).not.toBeInTheDocument(),
+    );
+    expect(mockUseChatSession.loadChatSession).toHaveBeenCalledWith(
+      expect.objectContaining({ chatSessionId: "original-chat" }),
+      expect.anything(),
+    );
+    expect(mockUseChatSession.startChatWithMessages).not.toHaveBeenCalled();
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+  });
+  it("sends a turn that arrives while the column restores, and not the one already there", async () => {
+    let resolve!: (detail: unknown) => void;
+    historyDetail.mockReturnValue(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    const turn = (id: number, text: string) => ({
+      id,
+      text,
+      prependMessages: [],
+    });
+    const workspace = { id: "group", order: 0, clientCount: 1 };
+    const view = render(
+      <Harness
+        browserWorkspace={workspace}
+        broadcastRequest={turn(1, "old")}
+      />,
+    );
+    view.rerender(
+      <Harness
+        browserWorkspace={workspace}
+        broadcastRequest={turn(2, "new")}
+      />,
+    );
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    await act(async () =>
+      resolve({
+        session: {
+          chatSessionId: "original-chat",
+          messagesBlobUrl: "https://example.test/history",
+          version: 1,
+        },
+      }),
+    );
+    await waitFor(() =>
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1),
+    );
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "new" }),
+    );
+  });
+
+  it("applies a tool run that arrives while the column restores, and not the one already there", async () => {
+    let resolve!: (detail: unknown) => void;
+    historyDetail.mockReturnValue(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    const run = (id: number) => ({
+      id,
+      toolName: "lookup",
+      params: {},
+      result: { content: [] },
+      toolMeta: undefined,
+      toolCallId: `run-${id}`,
+    });
+    const applied = (toolCallId: string) =>
+      mockUseChatSession.setMessages.mock.calls.filter(([update]) =>
+        JSON.stringify(
+          typeof update === "function" ? update([]) : update,
+        ).includes(toolCallId),
+      ).length;
+    const workspace = { id: "group", order: 0, clientCount: 1 };
+    const view = render(
+      <Harness
+        browserWorkspace={workspace}
+        deterministicExecutionRequest={run(1)}
+      />,
+    );
+    view.rerender(
+      <Harness
+        browserWorkspace={workspace}
+        deterministicExecutionRequest={run(2)}
+      />,
+    );
+    expect(applied("run-2")).toBe(0);
+    await act(async () =>
+      resolve({
+        session: {
+          chatSessionId: "original-chat",
+          messagesBlobUrl: "https://example.test/history",
+          version: 1,
+        },
+      }),
+    );
+    await waitFor(() => expect(applied("run-2")).toBe(1));
+    expect(applied("run-1")).toBe(0);
+  });
+
+  it("does not send the turn already present when a column restores", async () => {
+    historyDetail.mockResolvedValue({
+      session: {
+        chatSessionId: "original-chat",
+        messagesBlobUrl: "https://example.test/history",
+        version: 1,
+      },
+    });
+    render(
+      <Harness
+        browserWorkspace={{ id: "group", order: 0, clientCount: 1 }}
+        broadcastRequest={{ id: 1, text: "old", prependMessages: [] }}
+      />,
+    );
+    await waitFor(() =>
+      expect(mockUseChatSession.loadChatSession).toHaveBeenCalled(),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("status")).not.toBeInTheDocument(),
+    );
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("restores a column once, even when its session bootstraps again", async () => {
+    historyDetail.mockResolvedValue({
+      session: {
+        chatSessionId: "original-chat",
+        messagesBlobUrl: "https://example.test/history",
+        version: 1,
+      },
+    });
+    const view = render(<Harness />);
+    await waitFor(() =>
+      expect(mockUseChatSession.loadChatSession).toHaveBeenCalledTimes(1),
+    );
+    try {
+      mockUseChatSession.isSessionBootstrapComplete = false;
+      view.rerender(<Harness />);
+      mockUseChatSession.isSessionBootstrapComplete = true;
+      view.rerender(<Harness />);
+      await act(async () => {});
+    } finally {
+      mockUseChatSession.isSessionBootstrapComplete = true;
+    }
+    expect(historyDetail).toHaveBeenCalledTimes(1);
+    expect(mockUseChatSession.loadChatSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs the next turn as a fresh column after a failed restore", async () => {
+    let reject!: (error: Error) => void;
+    historyDetail.mockReturnValue(
+      new Promise((_, fail) => {
+        reject = fail;
+      }),
+    );
+    const workspace = { id: "group", order: 0, clientCount: 1 };
+    const turn = (id: number) => ({
+      id,
+      text: `turn ${id}`,
+      prependMessages: [],
+    });
+    const view = render(
+      <Harness browserWorkspace={workspace} broadcastRequest={turn(1)} />,
+    );
+    view.rerender(
+      <Harness browserWorkspace={workspace} broadcastRequest={turn(2)} />,
+    );
+    await act(async () => reject(new Error("missing history")));
+    // The turn sent while restoring is dropped with the alert.
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    view.rerender(
+      <Harness browserWorkspace={workspace} broadcastRequest={turn(3)} />,
+    );
+    await waitFor(() =>
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1),
+    );
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "turn 3" }),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(mockUseChatSession.loadChatSession).not.toHaveBeenCalled();
+  });
+
+  it("shows a terminal column error when history fails", async () => {
+    historyDetail.mockRejectedValue(new Error("missing history"));
+    render(<Harness />);
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Could not restore this comparison chat. Run the comparison again.",
+      ),
+    );
+    expect(mockUseChatSession.loadChatSession).not.toHaveBeenCalled();
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    // A reload must not bring the failed comparison back.
+    expect(window.location.search).toBe("");
+    expect(sessionStorage.getItem("mcp-comparison-auth-v1:group")).toBeNull();
   });
 });
