@@ -35,6 +35,10 @@ export function EvalAddDrawer({
   onOutcomeFocus,
   onPromptFocus,
   allowRouteChecks = false,
+  title = "Add actions or assertions",
+  description = "Choose what happens next or what this test verifies.",
+  ariaLabel,
+  filter,
 }: {
   onSelect: (choice: EvalAddChoice) => void;
   authorableKinds?: readonly PredicateKind[];
@@ -47,6 +51,14 @@ export function EvalAddDrawer({
   onOutcomeFocus?: () => void;
   onPromptFocus?: () => void;
   allowRouteChecks?: boolean;
+  /** Sheet heading. */
+  title?: string;
+  /** Sheet subheading. */
+  description?: string;
+  /** Trigger aria-label; triggerLabel when absent. */
+  ariaLabel?: string;
+  /** Narrows the catalog to what one section accepts. */
+  filter?: (entry: EvalAddEntry) => boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -62,6 +74,7 @@ export function EvalAddDrawer({
   };
   const entries = EVAL_ADD_CATALOG.filter((item) => {
     if (item.choice.kind === "route-check" && !allowRouteChecks) return false;
+    if (filter && !filter(item)) return false;
     if (
       wholeRunOnly &&
       item.choice.kind !== "check" &&
@@ -92,7 +105,7 @@ export function EvalAddDrawer({
           variant={primary ? "default" : "outline"}
           size="sm"
           className={`gap-1.5 ${primary ? "" : "border-dashed"} ${className ?? ""}`}
-          aria-label={triggerLabel}
+          aria-label={ariaLabel ?? triggerLabel}
         >
           <Plus className="size-3.5" aria-hidden />
           {triggerLabel}
@@ -114,10 +127,8 @@ export function EvalAddDrawer({
         }}
       >
         <SheetHeader className="shrink-0 pr-12">
-          <SheetTitle>Add actions or assertions</SheetTitle>
-          <SheetDescription>
-            Choose what happens next or what this test verifies.
-          </SheetDescription>
+          <SheetTitle>{title}</SheetTitle>
+          <SheetDescription>{description}</SheetDescription>
         </SheetHeader>
         <div className="px-4 pb-3">
           <Input

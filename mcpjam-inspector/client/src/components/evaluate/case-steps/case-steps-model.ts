@@ -198,7 +198,8 @@ function where(target: Parameters<typeof isLocatorComplete>[0]): string {
   return target && isLocatorComplete(target) ? describeLocator(target) : "";
 }
 
-function interactText(action: InteractStep["action"]): string {
+/** The action as a phrase ("click …", "press Enter"); "" while incomplete. */
+export function interactText(action: InteractStep["action"]): string {
   switch (action.kind) {
     case "click": {
       const at = where(action.target);
