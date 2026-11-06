@@ -1393,6 +1393,37 @@ describe("ChatTabV2 history sync", () => {
     );
   });
 
+  it("resends once when Retry is clicked twice while the resend is being prepared", async () => {
+    mockUseChatSession.rewindToMessage.mockResolvedValue({
+      previousChatSessionId: "prev-session-1",
+    });
+    mockUseChatSession.error = Object.assign(
+      new Error("The organization's AI provider is unavailable."),
+      { formatted: { code: "provider_unavailable" } },
+    );
+    // One-shot answer for the edit's pre-send sync, so nothing leaks onward.
+    mockGetChatHistoryDetail.mockResolvedValueOnce({
+      ok: true,
+      session: {
+        ...mockHistorySession,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["server-1"] },
+      },
+      widgetSnapshots: [],
+    });
+    render(<ChatTabV2 {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit first message" }));
+    await flushMicrotasks();
+    // The first resend is still preparing when the second click lands.
+    mockUseChatSession.sendMessage.mockReturnValueOnce(new Promise(() => {}));
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await flushMicrotasks();
+
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
   it("offers Retry when the organization's AI policy couldn't be checked", () => {
     mockUseChatSession.error = Object.assign(
       new Error("The organization's AI policy couldn't be checked."),

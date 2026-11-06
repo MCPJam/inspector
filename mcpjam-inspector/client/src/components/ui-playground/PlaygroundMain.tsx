@@ -4660,7 +4660,7 @@ export function PlaygroundMain({
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
-      void (async () => {
+      return (async () => {
         // Same gate as the composer, and for the same reason: a widget-driven
         // follow-up on a reopened conversation would otherwise be the FIRST
         // thing that runs on a target the transcript never used, with no user
@@ -5646,9 +5646,18 @@ export function PlaygroundMain({
     ) {
       return;
     }
-    trackSendMessage({ single_model_send: true });
-    handleSendFollowUp(lastUserMessageText);
-  }, [lastUserMessageText, sendBlocked, trackSendMessage, handleSendFollowUp]);
+    // A resend of the same text: one at a time, like the composer.
+    void composerSend.run(async () => {
+      trackSendMessage({ single_model_send: true });
+      await handleSendFollowUp(lastUserMessageText);
+    });
+  }, [
+    lastUserMessageText,
+    sendBlocked,
+    trackSendMessage,
+    handleSendFollowUp,
+    composerSend.run,
+  ]);
   const errorRetryHandler =
     !isCompareMode &&
     lastUserMessageText &&

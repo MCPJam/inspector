@@ -2332,6 +2332,28 @@ describe("PlaygroundMain", () => {
       );
     });
 
+    it("resends once when the error banner's Retry is clicked twice during the pre-send sync", async () => {
+      mockUseChatSession.error = Object.assign(
+        new Error("The organization's AI provider is unavailable."),
+        { formatted: { code: "provider_unavailable" } },
+      );
+      await openSavedThread();
+      const releaseSync = holdPreSendSync();
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("error-box-retry"));
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("error-box-retry"));
+      });
+      await act(async () => releaseSync());
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "Hello" }),
+      );
+    });
+
     it("still sends the same text twice when the user repeats it on purpose", async () => {
       await openSavedThread();
       mockGetChatHistoryDetail.mockResolvedValue(detail);
