@@ -16,12 +16,17 @@ import { findingsBuilt } from "../unified-findings-section";
 import { FindingsCompactList } from "./findings-compact";
 import { mergeLaunchFindings, type RunFindings } from "./launch-findings-model";
 
-/** Readers only read: building and analysing stay with the fallback panel's controller. */
+/**
+ * Readers only read: building and analysing stay with the fallback panel's
+ * controller. `canRequest: false` keeps them inert; `unavailable` stays false
+ * because the hook reads it as "the backend refuses analysis" and then never
+ * reports the snapshot as built, even with rule-based findings in it.
+ */
 const READ_ONLY: BorrowedGenerationController = {
   pending: false,
   failedGeneration: false,
   error: null,
-  unavailable: true,
+  unavailable: false,
   canRequest: false,
   requestInsight: () => undefined,
 };
