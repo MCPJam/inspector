@@ -1,3 +1,5 @@
+import { ConvexHttpClient } from "convex/browser";
+import { ConvexError } from "convex/values";
 import { describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "ai";
 import { logger } from "../../../utils/logger";
@@ -7,6 +9,15 @@ import {
 } from "../recorder.js";
 
 describe("startSuiteRunWithRecorder", () => {
+  it.each(["pending", "running", "grading", "completed"])("does not prepare iterations again for a replay in %s", async (status) => {
+    const client = new ConvexHttpClient("https://replay.test");
+    const mutation = vi.spyOn(client, "mutation").mockResolvedValue({ runId: "existing-run", testCases: [], deduped: true, status });
+    const action = vi.spyOn(client, "action").mockRejectedValue(new Error("A replay must not reserve usage or finalize the run"));
+    const result = await startSuiteRunWithRecorder({ convexClient: client, suiteId: "suite-1", idempotencyKey: "same-key" });
+    expect(result).toMatchObject({ runId: "existing-run", deduped: true, status });
+    expect(mutation).toHaveBeenCalledTimes(1);
+    expect(action).not.toHaveBeenCalled();
+  });
   it("forwards the GitHub server replacement and omits undefined overrides", async () => {
     const action = vi.fn().mockResolvedValue(undefined);
     const mutation = vi
@@ -1156,4 +1167,20 @@ describe("createSuiteRunRecorder", () => {
     expect(query.mock.calls.length).toBe(queryCallsBefore);
     expect(mutation.mock.calls.length).toBe(mutationCallsBefore);
   });
+});
+
+
+it("answers a capacity refusal without retrying admission or starting work", async () => {
+  const client = new ConvexHttpClient("https://capacity.test");
+  const mutation = vi.spyOn(client, "mutation").mockRejectedValue(new ConvexError({
+    kind: "at_capacity", resource: "eval_runs", message: "Eval capacity reached. Try again after another eval finishes.",
+  }));
+  const action = vi.spyOn(client, "action");
+  await expect(startSuiteRunWithRecorder({ convexClient: client, suiteId: "suite-1" })).rejects.toMatchObject({
+    status: 429, code: "RATE_LIMITED",
+    headers: { "Retry-After": "1" },
+    details: { code: "at_capacity", resource: "eval_runs", retryAfterMs: 1000 },
+  });
+  expect(mutation).toHaveBeenCalledTimes(1);
+  expect(action).not.toHaveBeenCalled();
 });

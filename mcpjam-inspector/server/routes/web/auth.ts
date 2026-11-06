@@ -1,3 +1,5 @@
+import { bindWarmApprovalConnection } from "../../utils/harness/warm-approval-binding";
+import { hostedWarmAgentEnabled } from "../../utils/harness/harness-flags";
 import { setManagerResourceSnapshots, setManagerResourceHostConfig, type ManagerResourceSnapshot } from "../../utils/mcp-connections";
 import { taskOwnerScope } from "../../../shared/task-owner.js";
 import {
@@ -990,6 +992,7 @@ export async function authorizeProject(
 ): Promise<{
   chatEnvironments: boolean;
   chatPreparation: boolean;
+  organizationId?: string;
   projectAccess?: { projectRole: "admin" | "editor" };
 }> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
@@ -1029,6 +1032,8 @@ export async function authorizeProject(
         ? payload.projectRole
         : undefined;
     return {
+      ...(payload && typeof payload === "object" && "organizationId" in payload &&
+        typeof payload.organizationId === "string" ? { organizationId: payload.organizationId } : {}),
       chatPreparation:
         !!payload &&
         typeof payload === "object" &&
@@ -1688,6 +1693,25 @@ export async function createAuthorizedManager(
         if (selectedId && !auth.oauthConnections && auth.oauthCredentialId === selectedId && auth.oauthAccessToken) {
           auth.oauthConnections = [{connectionId: selectedId, accessToken: auth.oauthAccessToken, credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt, isDefault: false}];
         }
+        // A member's only login on a server arrives as the default credential,
+        // not as an account list (the backend lists two or more). Without a
+        // group its calls carry no connection, so a sign-in continuation binds
+        // to nothing and its resume cannot prove the credential it replays on.
+        // Same rails as the stored-token path below: OAuth or discover only,
+        // never XAA or a bearer header, whose tokens the group would override.
+        if (
+          !selectedId &&
+          options.multiConnection &&
+          !auth.oauthConnections &&
+          auth.oauthCredentialId &&
+          auth.oauthAccessToken &&
+          auth.accessLevel === "project_member" &&
+          ["oauth", "discover"].includes(
+            resolveEffectiveAuthMethod(auth.serverConfig, options?.xaaPolicy),
+          )
+        ) {
+          auth.oauthConnections = [{connectionId: auth.oauthCredentialId, accessToken: auth.oauthAccessToken, credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt, isDefault: true, implicit: true}];
+        }
         const live = (auth.oauthConnections ?? []).filter(
           (c) =>
             c.accessToken &&
@@ -1717,9 +1741,14 @@ export async function createAuthorizedManager(
           serverId: id,
           connectionId: c.connectionId,
           key: connectionKey(id, c.connectionId, c.isDefault),
-          label: groupLabels[index],
+          // An implicit login is the server itself to the user; its sign-in
+          // errors name the server, exactly as the ungrouped path does.
+          label: c.implicit
+            ? displayNameForServer(id, serverNamesById, auth.serverConfig)
+            : groupLabels[index],
           profile: c.profile,
           isDefault: c.isDefault,
+          ...(c.implicit ? { implicit: true } : {}),
         }));
       }
     }
@@ -2729,14 +2758,21 @@ export async function createAuthorizedManager(
   if (Object.keys(connectionsByServerId).length)
     setManagerConnections(manager, connectionsByServerId);
   const resourceSnapshots = new Map<string, ManagerResourceSnapshot>();
-  for (const [key] of connectionEntries) {
+  const bindWarmAccounts = hostedWarmAgentEnabled(batch.organizationId ?? undefined);
+  for (const [key, config] of connectionEntries) {
     const connection = connectionsByKey.get(key);
     const serverId = connection?.serverId ?? key;
     const auth = batch.results[serverId];
-    if (!auth?.ok || auth.serverConfig.updatedAt === undefined || auth.serverConfig.httpVariant === "sse") continue;
+    if (!auth?.ok) continue;
     const account = connection ? auth.oauthConnections?.find(c => c.connectionId === connection.connectionId) : undefined;
     const credentialAuthorizedAt = account ? account.credentialAuthorizedAt ?? account.authorizedAt : auth.oauthCredentialAuthorizedAt ?? null;
-    if (connection && credentialAuthorizedAt === undefined) continue;
+    if (bindWarmAccounts) bindWarmApprovalConnection(manager, key, {
+      serverId, credentialId: connection?.connectionId ?? auth.oauthCredentialId ?? undefined,
+      updatedAt: auth.serverConfig.updatedAt, authorizedAt: credentialAuthorizedAt,
+      defaultAccount: connection?.isDefault, profileId: connection?.profile?.id,
+    }, "url" in config ? config.requestInit?.headers : undefined);
+    if (auth.serverConfig.updatedAt === undefined || auth.serverConfig.httpVariant === "sse") continue;
+    if (connection && !connection.implicit && credentialAuthorizedAt === undefined) continue;
     resourceSnapshots.set(key, {serverUpdatedAt: auth.serverConfig.updatedAt, credentialAuthorizedAt: credentialAuthorizedAt ?? null, credentialId: connection?.connectionId ?? auth.oauthCredentialId ?? undefined, headersReconstructible: !!connection || reconstructibleHeaderServers.has(serverId)});
   }
   setManagerResourceSnapshots(manager, resourceSnapshots);

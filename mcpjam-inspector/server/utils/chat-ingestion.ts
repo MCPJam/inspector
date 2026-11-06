@@ -23,6 +23,7 @@ import {
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { SecretScrubber } from "./secrets/secret-scrubber";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
+import type { ChatOrigin } from "./chat-origin.js";
 
 const DEFAULT_INGEST_TIMEOUT_MS = 5_000;
 /**
@@ -315,20 +316,9 @@ export interface PersistedTurnTrace {
   pageToolsAtTurn?: MintedPageToolRecord[];
 }
 
-// Mirrors mcpjam-backend `chatOriginValidator`. Required at every writer
-// boundary so a new surface can't be added without explicitly choosing one.
-// Backend still accepts undefined for historical-row compatibility; the
-// inspector pins to the closed set. `swarm` is the journey-execution surface
-// (single-host synthetic sessions launched by a project member).
-export type ChatOrigin =
-  | "playground"
-  | "mcpjam_agent"
-  | "scenario"
-  | "eval"
-  | "swarm"
-  // Agent Playground turn route. Validator ships with backend PR 4; this
-  // mirror must exist before anything emits `"api"`.
-  | "api";
+// Its own import-free module so `log-events.ts`, which the client typecheck
+// reaches, can name it without pulling in this file's server imports.
+export type { ChatOrigin };
 
 interface PersistChatSessionOptions {
   chatSessionId: string;
@@ -352,7 +342,7 @@ interface PersistChatSessionOptions {
   modelSource: "mcpjam" | "byok" | "local_byok" | "external-account";
   authHeader?: string;
   projectId?: string;
-  sourceType?: "scenario" | "direct" | "eval" | "swarm";
+  sourceType?: "scenario" | "direct" | "eval" | "swarm" | "event";
   origin: ChatOrigin;
   directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";

@@ -181,6 +181,7 @@ import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completio
 import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
 import internalAgentTurns from "./routes/internal/agent-turns.js";
 import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
+import internalEvents from "./routes/internal/events.js";
 import internalHostedBrowserSynthetic from "./routes/internal/hosted-browser-synthetic.js";
 import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
 import { createComputerBrowserStreamWsHandler } from "./routes/web/computer-browser-stream.js";
@@ -209,6 +210,8 @@ import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-r
 import { stopLiveConformanceOAuthRuns } from "./services/conformance-oauth-rendezvous.js";
 import { startBackgroundWorkers } from "./services/background-workers";
 import { drainBeforeTeardown } from "./services/lifecycle/shutdown-drain.js";
+import { startEventsKeeper } from "./services/events/keeper.js";
+import { startEventsExecutor } from "./services/events/executor.js";
 import {
   SERVER_PORT,
   CORS_OPTIONS,
@@ -565,6 +568,10 @@ app.route("/api/internal/evals", internalEvalJudgeCompletions);
 // backend's own queue rather than from anything the caller named.
 app.route("/api/internal/chat-stage", internalChatStageDerivations);
 app.route("/api/internal/agent-turns", internalAgentTurns);
+// MCP Events: the inbox Worker's dispatch (`/enqueue`, its own
+// `x-events-inbox-token`) and the executor doorbell (`/dispatch`, service
+// token). Mirror of the mount in server/app.ts.
+app.route("/api/internal/events", internalEvents);
 // Backend → inspector hourly hosted-browser check. Service-token gated like
 // the doorbells above; it reserves a desktop as the backend's synthetic user
 // and deletes it before answering. Mirror of the mount in server/app.ts.
@@ -987,6 +994,14 @@ injectWebSocket(server);
 // Claim loops (scheduled evals, GitHub checks, bench, production scoring).
 const backgroundWorkers = startBackgroundWorkers();
 
+// MCP Events (hosted). The keeper leases due subscriptions from the Convex
+// registry and runs one coordinator step each (subscribe/refresh/poll/
+// unsubscribe); the executor claims scheduled trigger runs and executes them
+// as unattended turns. Each worker starts when its backend is configured;
+// the inbox dispatch rings the executor through `/api/internal/events/enqueue`.
+const eventsKeeper = startEventsKeeper();
+const eventsExecutor = startEventsExecutor();
+
 const expectedParentPid = Number.parseInt(
   process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
   10,
@@ -1045,7 +1060,14 @@ async function shutdown() {
     // Inside the guarded path so a rejecting worker still reaches the rest of
     // shutdown rather than skipping straight to the force-exit deadline.
     await localServerCheckQueue.shutdown();
-    await drainBeforeTeardown(backgroundWorkers, shutdownSettings);
+    // The events keeper and executor stop alongside the drain and wait at most
+    // a second each: an in-flight keeper step or trigger run is
+    // lease-recoverable, and the teardowns below are not.
+    await Promise.all([
+      drainBeforeTeardown(backgroundWorkers, shutdownSettings),
+      eventsKeeper.stop(),
+      eventsExecutor.stop(),
+    ]);
     stopRevokedSessionCache();
     // Abort the swarm runs still going after the drain: each stops its
     // heartbeat and reports a terminal attempt. Bounded internally.

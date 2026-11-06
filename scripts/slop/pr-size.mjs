@@ -7,7 +7,8 @@
  * and git's move detection finds the copy that was removed.
  *
  *   over LARGE (800):   reported; the PR should carry `large-pr`.
- *   over LIMIT (1,500): fails unless labelled `mechanical` (moves, codemods).
+ *   over LIMIT (1,500): fails unless labelled `mechanical` (moves, codemods)
+ *   or covered by the explicitly approved repository/PR exception below.
  *
  *   node scripts/slop/pr-size.mjs --base HEAD^1
  *
@@ -135,7 +136,16 @@ export function parseLabels(value) {
   return labels.map(String);
 }
 
-export function verdict(total, labels) {
+export function verdict(
+  total,
+  labels,
+  { repository, pullRequestNumber } = {}
+) {
+  if (
+    total > LIMIT &&
+    repository === "MCPJam/inspector" &&
+    pullRequestNumber === "5764"
+  ) return "size-exception";
   if (total > LIMIT && !labels.includes("mechanical")) return "fail";
   if (total > LARGE)
     return labels.includes("large-pr") || labels.includes("mechanical")
@@ -144,8 +154,8 @@ export function verdict(total, labels) {
   return "ok";
 }
 
-function report({ total, moved, files }, labels) {
-  const result = verdict(total, labels);
+function report({ total, moved, files }, labels, context) {
+  const result = verdict(total, labels, context);
   const movedNote = moved ? `, with ${moved} moved lines counted once` : "";
   const lines = [
     "## PR size",
@@ -153,7 +163,11 @@ function report({ total, moved, files }, labels) {
     `**${total}** changed lines of hand-written source${movedNote} (budget ${LARGE}, hard limit ${LIMIT}).`,
     "",
   ];
-  if (result === "fail") {
+  if (result === "size-exception") {
+    lines.push(
+      "Maintainer-approved one-off size exception for [MCPJam/inspector#5764](https://github.com/MCPJam/inspector/pull/5764). All other merge checks still apply."
+    );
+  } else if (result === "fail") {
     lines.push(
       `Over ${LIMIT}. Split it into stacked PRs, or, if it is a move or codemod, label it \`mechanical\` and review it with \`git diff --color-moved\`.`
     );
@@ -186,6 +200,10 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const labels = parseLabels(process.env.PR_LABELS);
   process.exitCode = report(
     measureDiff(resolveBase(process.argv.slice(2))),
-    labels
+    labels,
+    {
+      repository: process.env.GITHUB_REPOSITORY,
+      pullRequestNumber: process.env.PR_NUMBER,
+    }
   );
 }

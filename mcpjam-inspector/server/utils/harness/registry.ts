@@ -138,17 +138,20 @@ const BROKER_DUMMY_CREDENTIAL = "mcpjam-broker-dummy";
 export function buildBrokerDummyAuth(
   harnessId: HarnessId,
   proxyBaseUrl: string,
+  closeModelConnections = false,
 ): HarnessAuth {
   switch (harnessId) {
     case "claude-code":
       return {
         ANTHROPIC_AUTH_TOKEN: BROKER_DUMMY_CREDENTIAL,
         ANTHROPIC_BASE_URL: proxyBaseUrl,
+        ...(closeModelConnections ? { ANTHROPIC_CUSTOM_HEADERS: "Connection: close" } : {}),
       };
     case "codex":
       return {
         CODEX_API_KEY: BROKER_DUMMY_CREDENTIAL,
         OPENAI_BASE_URL: proxyBaseUrl,
+        ...(closeModelConnections ? { MCPJAM_CLOSE_MODEL_CONNECTIONS: "1" } : {}),
       };
     case "cursor":
       throw new Error(
@@ -485,6 +488,8 @@ type HarnessRuntimeAdapterBase = {
  *  are delivered outside the VM, see `buildBrokerDummyAuth`; an
  *  external-account harness gets its customer credential in `auth` instead.) */
 export type HarnessCreateArgs = {
+  startupTimeoutMs?: number;
+  warmAgent?: boolean;
   modelId: string;
   auth: HarnessAuth;
   elicitationHandler?: boolean;
@@ -920,6 +925,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   // No `model` here: the adapter no longer reads one at construction. The
   // turn hands `toNativeModel(modelId)` to `HarnessAgent` instead.
   createHarness({
+    startupTimeoutMs,
     modelId,
     auth,
     mcpJson,
@@ -945,6 +951,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
     // (`withLocalRuntimeBootstrap`): the bridge it runs is the one compiled
     // into the layer and re-hashed before every exec.
     return createHostedClaudeCodeHarness({
+      startupTimeoutMs,
       mcpServers: mcpJson.mcpServers,
       auth,
       // WITH an effort the turn asks for adaptive thinking (the only shape the
@@ -1095,9 +1102,11 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // run match a Codex run tool-for-tool. Codex's own natives arrive as common
   // names (`bash`, `read`, …), which have no prefix and pass through unchanged.
   parseToolName: parseHarnessToolName,
-  createHarness({ modelId, auth, sandboxPolicy, reasoningEffort, upstream, forwardingMcpJson }) {
+  createHarness({ modelId, auth, sandboxPolicy, reasoningEffort, upstream, forwardingMcpJson, startupTimeoutMs, warmAgent }) {
     const nativeModel = toCodexNativeModel(modelId, upstream);
     return createCodexAppServer({
+      startupTimeoutMs,
+      warmAgent,
       ...(nativeModel ? { model: nativeModel } : {}),
       // Forwarded on the bridge `start` message, which sends it as
       // `turn/start` `effort`.

@@ -35,9 +35,12 @@ import {
 } from "@/lib/apps-capability-dimensions";
 import {
   AUTH_CHALLENGE_ACTIONS,
+  EVENT_DELIVERY_MODES,
+  MCPJAM_EVENTS_EXTENSION_ID,
   MCPJAM_TASKS_POLICY_EXTENSION_ID,
   MCP_SKILLS_EXTENSION_ID,
   readTasksPolicy,
+  resolveHostEventDeliveryModes,
   TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
   UNAUTHORIZED_CHALLENGE_TRIGGERS,
 } from "@mcpjam/sdk/browser";
@@ -1140,7 +1143,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     // MCPJam-only tasks policy below: this key goes on the initialize
     // envelope, and declaring it commits the host to fetching, digest-
     // verifying, and refusing unlisted files. It is therefore under "Client
-    // capabilities supported" rather than "Host policy".
+    // capabilities supported" rather than "Client policy".
     id: "capabilities.skillsExtension",
     section: "protocol",
     subsection: "Client capabilities supported",
@@ -1158,7 +1161,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   },
 
   // ============================================================
-  // Protocol · Host policy
+  // Protocol · Client policy
   //
   // MCPJam's own product policy, NOT an MCP wire capability. It is stored
   // under `mcpProfile.extensions["com.mcpjam/tasks"]` and is never advertised
@@ -1169,7 +1172,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "tasksPolicy",
     section: "protocol",
-    subsection: "Host policy",
+    subsection: "Client policy",
     label: "Task execution",
     path: `mcpProfile.extensions.${MCPJAM_TASKS_POLICY_EXTENSION_ID}.enabled`,
     description:
@@ -1182,6 +1185,20 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       const policy = readTasksPolicy(cfg);
       return policy === "unset" ? undefined : policy;
     },
+  },
+  {
+    id: "eventsDeliveryModes",
+    section: "protocol",
+    subsection: "Client policy",
+    label: "Event delivery",
+    path: `mcpProfile.extensions.${MCPJAM_EVENTS_EXTENSION_ID}`,
+    description:
+      "The MCP Events delivery modes this client accepts. Without a saved choice, its client style decides.",
+    kind: { kind: "mode-set", modes: EVENT_DELIVERY_MODES },
+    // Effective, like the display-mode rows ("(effective)" is left off the
+    // path so the copy check doesn't read it as prose): a host with no saved
+    // setting shows its style's default, which subscriptions are checked by.
+    read: (cfg) => resolveHostEventDeliveryModes(cfg),
   },
 
   // ============================================================

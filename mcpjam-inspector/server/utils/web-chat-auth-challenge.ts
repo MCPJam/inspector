@@ -90,6 +90,12 @@ export function buildWebChatAuthChallenge(input: {
               toolInput,
               toolCallId,
             )?.connectionId,
+          connectionIsImplicit: (toolName, toolInput, toolCallId) =>
+            toolConnectionAttribution(
+              preparedTools[toolName],
+              toolInput,
+              toolCallId,
+            )?.implicit === true,
           ...(localRuntime
             ? {
                 hasRecentSignIn: ({ serverId, toolName, toolCallId }) =>
