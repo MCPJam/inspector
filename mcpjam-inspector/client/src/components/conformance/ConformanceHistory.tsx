@@ -461,7 +461,7 @@ export function ConformanceRunDetailPage({
           <SavedRunActions
             runId={detail._id}
             finished={finished}
-            serverName={savedServerName} displayName={serverName}
+            serverName={savedServerName}
             settings={serverSettings}
             serversLoading={serversLoading}
             onOpenSettings={() => setSettingsOpen(true)}

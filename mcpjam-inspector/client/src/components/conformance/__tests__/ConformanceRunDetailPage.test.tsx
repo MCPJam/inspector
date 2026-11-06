@@ -196,6 +196,35 @@ describe("ConformanceRunDetailPage", () => {
     );
   });
 
+  it("keeps a run's address off its share card when no saved server names it", () => {
+    useArtifactQueryMock.mockReturnValue(
+      run([report()], {
+        targetKey: "url:https://internal.example/mcp",
+        serverId: undefined,
+      }),
+    );
+    render(<ConformanceRunDetailPage runId="run_1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    const card = screen.getByTestId("conformance-share-card");
+    expect(card).not.toHaveTextContent("internal.example");
+  });
+
+  it("names a saved server on its share card", () => {
+    useArtifactQueryMock.mockReturnValue(run([report()]));
+    render(
+      <ConformanceRunDetailPage
+        runId="run_1"
+        serverNames={new Map([["srv_1", "Weather"]])}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    expect(screen.getByTestId("conformance-share-card")).toHaveTextContent(
+      "Weather",
+    );
+  });
+
   it("keeps Share disabled while the run is still going", () => {
     useArtifactQueryMock.mockReturnValue(
       run([report({ status: "running", outcome: null })], {

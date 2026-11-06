@@ -83,7 +83,6 @@ export function SavedRunActions({
   runId,
   finished,
   serverName,
-  displayName,
   settings,
   onOpenSettings,
   serversLoading = false,
@@ -91,8 +90,6 @@ export function SavedRunActions({
   runId: string;
   finished: boolean;
   serverName?: string;
-  /** The name the run is shown under, for its share card. */
-  displayName?: string;
   settings?: SavedRunServerSettings;
   onOpenSettings: () => void;
   serversLoading?: boolean;
@@ -112,10 +109,13 @@ export function SavedRunActions({
           <Settings className="size-3.5" aria-hidden /> Settings
         </Button>
       ) : null}
+      {/* Only a saved server's own name goes on the card. A run without one
+          would fall back to its target key (a URL or a raw id), and the card
+          and post are public; with no name, the card shows none. */}
       <ConformanceRunShareButton
         runId={runId}
         finished={finished}
-        serverName={displayName ?? serverName}
+        serverName={serverName}
       />
       <Button
         size="sm"
