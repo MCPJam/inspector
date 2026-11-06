@@ -11,6 +11,7 @@ import { observeProcesses } from "./process-observer.mjs";
 import { openPlaygroundArm } from "./playground-arm.mjs";
 import { openGatewayCli } from "./gateway-cli.mjs";
 import { primeMatched, withMeasurementWindow } from "./matched-priming.mjs";
+import { createMeasurementLane, measurePaths } from "./measured-paths.mjs";
 import { schedule, verdict } from "./qualification.mjs";
 import {
   digest,
@@ -45,20 +46,7 @@ context.on("request", (request) => {
   )
     bearer = auth;
 });
-let uiTail = Promise.resolve();
-async function ui(fn) {
-  const prior = uiTail;
-  let release;
-  uiTail = new Promise((r) => {
-    release = r;
-  });
-  await prior;
-  try {
-    return await fn();
-  } finally {
-    release();
-  }
-}
+const ui = createMeasurementLane();
 const prime = "Respond with only READY",
   ready = "READY";
 const trios = [];
@@ -76,6 +64,7 @@ const sources = await Promise.all(
     "qualification",
     "process-observer",
     "matched-priming",
+    "measured-paths",
   ].map((n) =>
     readFile(
       new URL(
@@ -242,13 +231,14 @@ async function runPair(plan, host) {
       };
     await saveEvidence(file, row);
     await withMeasurementWindow(primers, plan.waitMs, ui, async () => {
-      for (const path of plan.paths) {
-        const ended =
-          path === "cli" ? cliPrimer.endedAt : primers[path].endedAt;
-        await delay(Math.max(0, ended + plan.waitMs - Date.now()));
-        row[path].reason = "submission-started";
-        await saveEvidence(file, row);
-        try {
+      await measurePaths(
+        plan.paths,
+        async (path) => {
+          const ended =
+            path === "cli" ? cliPrimer.endedAt : primers[path].endedAt;
+          await delay(Math.max(0, ended + plan.waitMs - Date.now()));
+          row[path].reason = "submission-started";
+          await saveEvidence(file, row);
           const beforeFixture = await fixtureSnapshot(config.fixtureStatsUrl);
           assertFollowupWindow(Date.now() - ended, plan.window);
           if (path === "cli") {
@@ -293,16 +283,26 @@ async function runPair(plan, host) {
           };
           if (row[path].matchId !== matchId)
             throw Error("The measured input differs from the other arms.");
-        } catch (error) {
+          if (row[path].protocolFailure)
+            throw Error("The preceding turn did not confirm completion.");
+          await saveEvidence(file, row);
+        },
+        async (path, error) => {
+          const ended =
+            path === "cli" ? cliPrimer.endedAt : primers[path].endedAt;
           row[path] = failedMeasurement(row[path], error);
+          row[path].drained = path === "cli";
+          if (!row[path].drained) row[path].protocolFailure = true;
           if (Number.isFinite(row[path].submittedAt))
             row[path].followupMs = row[path].submittedAt - ended;
           await saveEvidence(file, row);
           if (path !== "cli") await arms[path].stop();
-          break;
-        }
-        await saveEvidence(file, row);
-      }
+          if (!row[path].drained)
+            throw Error("Unconfirmed UI completion stops the measurement lane.");
+          return row[path];
+        },
+        plan.window,
+      );
     });
     row.status = "complete";
     await saveEvidence(file, row);

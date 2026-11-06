@@ -169,6 +169,7 @@ export async function openPlaygroundArm(context, opener, config) {
         clearTimeout(deadline);
       }
       if (finished || !reply.ok()) sample.failed = true;
+      if (finished) sample.protocolFailure = true;
       const text = page.locator('[data-message-text="assistant"]').last();
       const output = (await text.count())
         ? (await text.innerText({ timeout: 2000 })).trim()
