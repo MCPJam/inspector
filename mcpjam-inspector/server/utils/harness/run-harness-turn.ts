@@ -5,9 +5,8 @@ import { nativeForwardingSelection, prepareNativeForwarding, hasForwardingOrgani
   nativeToolMetadata,
 } from "./forwarding/native-turn.js";
 import { forwardingAdmission } from "./forwarding/enhanced-admission.js";
-import { usesAppHostCapabilities } from "./forwarding/native-admission.js";
-import { assertNativeDiscovery } from "./native-discovery.js";
-import { harnessOrgUpstream } from "@/shared/harness-model-support";
+import { resolveHarnessMcpPlan } from "./harness-mcp-plan.js";
+import { assertHarnessMcpDiscoveryGate } from "./harness-mcp-discovery-gate.js";
 import {
   presentNativeTranscript,
   type NativeResultPresentation,
@@ -120,7 +119,7 @@ import {
 import { withWarmBridgeRuntime } from "./warm-bridge-runtime.js";
 import { withWarmBridgeBootstrap } from "./warm-bridge-files.js";
 import { OrgLeaseTurn } from "./org-lease-turn.js";
-import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
+import { harnessBrokerDeliveryEnabled, nativeForwardingEnabled } from "./harness-flags.js";
 import {
   emitError,
   emitFinish,
@@ -1562,8 +1561,8 @@ export async function runHarnessTurn(
       // Account selectors and resource conversion must execute together in
       // the inspector; native sandbox MCP clients cannot own that dispatch.
       const accountGroups = evalIterationId ? {} : getManagerConnections(mcpClientManager) ?? {};
-      let nativeMcpDelivery =
-        resolveAgentLoop({ agentLoop: options.agentLoop, harness: options.agentLoop ? undefined : harnessAdapter.id, defaultMcpClient: harnessAdapter.mcpDelivery === "harness" ? "harness" : "mcpjam", hasAccountRouting: hasAccountRouting(accountGroups) }).mcpClient === "harness";
+      const dispatch = resolveAgentLoop({ agentLoop: options.agentLoop, harness: options.agentLoop ? undefined : harnessAdapter.id, defaultMcpClient: harnessAdapter.mcpDelivery === "harness" ? "harness" : "mcpjam", hasAccountRouting: hasAccountRouting(accountGroups) });
+      let nativeMcpDelivery = dispatch.mcpClient === "harness";
       // Fail closed: with MCP servers selected but no plane strategy, a NATIVE
       // adapter would silently get zero MCP tools (the exact failure we hit).
       // Host-executed delivery needs no proxy at all — its tools run in THIS
@@ -1629,60 +1628,32 @@ export async function runHarnessTurn(
           : {}),
       });
       const forwardingRuntime = qualifiedForwardingRuntime(harnessAdapter);
-      const nativeCandidate = process.env.HARNESS_NATIVE_FORWARDING === "true" && hasForwardingOrganization(mcpClientManager) && (nativeMcpDelivery || (forwardingRuntime !== undefined && !hasAccountRouting(accountGroups))) && forwardingRuntime !== undefined && harnessMcpProxy?.plane === "web-authorized" && !scenarioId && !evalIterationId && !journeyRunId && !harnessExecutionTarget && !!hostId && !!selectedServers?.length;
-      const admission = nativeCandidate ? forwardingAdmission({ manager: mcpClientManager, hostCapabilities: options.harnessHostCapabilities, serverIds: selectedServers ?? [], respectToolVisibility, modelVisibleMcpToolResults, hasClientTools: options.harnessUnavailableAppTools, hasTasks: tasks !== undefined,
-            elicitationRuntimeVersion: onHarnessElicitation ? harnessAdapter.pinnedRuntimeVersion : undefined,
-            modernInputAvailable: options.harnessOwnedInput === true,
-            ownedTasksAvailable: options.harnessOwnedTasks === true && tasks?.mode === "expose",
-          })
-        : { delivery: undefined, gaps: [] };
-      const nativeGaps = admission.gaps;
-      const enhancedApps = admission.delivery === "bridge";
-      const useNativeForwarding = admission.delivery !== undefined;
-      if (options.requireNativeToolDiscovery) {
-        if (nativeGaps.some(gap =>
-          gap === "server-capabilities-unavailable" || gap.startsWith("server-capability:"),
-        )) {
-          assertNativeDiscovery({ required: true });
-        }
-        if (
-          usesAppHostCapabilities({
-            manager: mcpClientManager,
-            serverIds: selectedServers ?? [],
-          }) &&
-          (!options.harnessHostCapabilities || options.harnessHostCapabilities.gaps.length)
-        ) {
-          assertNativeDiscovery({ required: true });
-        }
-        if (!selectedServers?.length || scenarioParticipant) {
-          assertNativeDiscovery({ required: true });
-        }
-        for (const serverId of selectedServers ?? []) {
-          assertNativeDiscovery({
-            required: true,
-            harnessId: harnessAdapter.id,
-            route: {
-              runtimeVersion: harnessAdapter.pinnedRuntimeVersion ?? "",
-              adapterVersion: forwardingRuntime?.configurationVersion ?? "",
-              protocolVersion: mcpClientManager.getInitializationInfo(serverId)?.protocolVersion ?? "",
-              modelId,
-              delivery: useNativeForwarding
-                ? enhancedApps ? "forwarded-bridge" : "forwarded-native"
-                : nativeMcpDelivery ? "native-proxy" : "host-tools",
-              venue: !harnessExecutionTarget && harnessMcpProxy?.plane === "web-authorized" ? "hosted" : "local",
-              surface: sourceType === "eval" ? "eval" : sourceType === "swarm" ? "swarm" : "chat",
-              funding: org.brokeredEndpoint === "platform" ? "platform" : "organization",
-              upstreamProfile: org.brokeredEndpoint === "platform" ? "gateway" : harnessOrgUpstream(harnessAdapter.id)?.profile ?? "gateway",
-            },
-          });
-        }
-      }
+      const mcpPlan = resolveHarnessMcpPlan({
+        dispatch, forwardingRuntime, forwardingEnabled: nativeForwardingEnabled(),
+        forwardingOrganization: hasForwardingOrganization(mcpClientManager), accountRouting: hasAccountRouting(accountGroups),
+        plane: harnessMcpProxy?.plane, selectedServerCount: selectedServers?.length ?? 0,
+        hostId, scenarioId, evalIterationId, journeyRunId, localExecution: !!harnessExecutionTarget,
+        admit: () => forwardingAdmission({ manager: mcpClientManager, hostCapabilities: options.harnessHostCapabilities, serverIds: selectedServers ?? [], respectToolVisibility, modelVisibleMcpToolResults, hasClientTools: options.harnessUnavailableAppTools, hasTasks: tasks !== undefined,
+          elicitationRuntimeVersion: onHarnessElicitation ? harnessAdapter.pinnedRuntimeVersion : undefined,
+          modernInputAvailable: options.harnessOwnedInput === true,
+          ownedTasksAvailable: options.harnessOwnedTasks === true && tasks?.mode === "expose",
+        }),
+      });
+      const enhancedApps = mcpPlan.forwardingKind === "profiled";
+      const useNativeForwarding = mcpPlan.forwardingKind !== undefined;
+      assertHarnessMcpDiscoveryGate({
+        required: options.requireNativeToolDiscovery, plan: mcpPlan, harnessId: harnessAdapter.id,
+        pinnedRuntimeVersion: harnessAdapter.pinnedRuntimeVersion, adapterVersion: forwardingRuntime?.configurationVersion,
+        manager: mcpClientManager, serverIds: selectedServers ?? [], hostCapabilities: options.harnessHostCapabilities,
+        scenarioParticipant, modelId, sourceType, plane: harnessMcpProxy?.plane,
+        localExecution: !!harnessExecutionTarget, brokeredEndpoint: org.brokeredEndpoint,
+      });
       // Enrolled client profiles keep their existing delivery unless this exact
       // server/profile combination qualifies for the forwarding adapter.
-      nativeMcpDelivery ||= useNativeForwarding;
-      if (nativeCandidate && !useNativeForwarding)
+      nativeMcpDelivery = mcpPlan.delivery === "mcp-endpoint";
+      if (mcpPlan.candidate && !useNativeForwarding)
         logger.info(
-          `[harness] retaining configured bridge (${nativeGaps.join(", ")})`, { gaps: nativeGaps },
+          `[harness] retaining configured bridge (${mcpPlan.gaps.join(", ")})`, { gaps: mcpPlan.gaps },
         );
       if (!useNativeForwarding) onHarnessMcpReady?.();
       const proxyConfig = nativeMcpDelivery && !harnessExecutionTarget && !useNativeForwarding && !warmAgentPilot
@@ -1712,10 +1683,7 @@ export async function runHarnessTurn(
       // box is woken, so an unreachable server fails the turn cheaply.
       const retainedExecutor = retainedResourceExecutor({
         manager: mcpClientManager, existing: hostToolExecutor,
-        enabled: forwardingRuntime !== undefined && !harnessExecutionTarget &&
-          harnessMcpProxy?.plane === "web-authorized" && process.env.HARNESS_NATIVE_FORWARDING === "true" &&
-          hasForwardingOrganization(mcpClientManager) && !scenarioId &&
-          !evalIterationId && !journeyRunId && !!hostId,
+        enabled: mcpPlan.surface,
         laneId: () => continuity?.laneId, sources: retainedResourceSources, turnId,
       });
       const hostExecutedMcp =

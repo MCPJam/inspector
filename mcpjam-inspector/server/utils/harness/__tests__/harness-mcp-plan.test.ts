@@ -1,31 +1,31 @@
 /**
  * The MCP route a harness turn takes, as one table.
  *
- * Every row is a literal expectation. `legacyPlan` is the decision exactly as
- * `run-harness-turn.ts` spells it inline today; the agreement test proves the
- * rows describe that code before anything moves out of it.
+ * Every row is a literal expectation, first pinned against the inline decision
+ * the runner used to spell out before it moved into `resolveHarnessMcpPlan`.
+ * The runner-level cases live in `run-harness-turn-mcp-plan.test.ts`.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import {
+  HARNESS_MCP_AT_TURN_DELIVERIES,
+  HARNESS_MCP_AT_TURN_FORWARDING_KINDS,
+  HARNESS_MCP_AT_TURN_LIMITS,
+  HARNESS_MCP_AT_TURN_UPSTREAMS,
+} from "@mcpjam/sdk/host-config/internal";
 import type { ForwardingRuntimeContract } from "../forwarding/runtime-contract";
-import type { HarnessMcpProxyStrategy } from "../harness-proxy-strategy";
-
-type Admission = { delivery?: "native" | "bridge"; gaps: string[] };
-
-type Facts = {
-  dispatch: { mcpClient: "mcpjam" | "harness" };
-  forwardingRuntime: ForwardingRuntimeContract | undefined;
-  forwardingOrganization: boolean;
-  accountRouting: boolean;
-  forwardingEnabled: boolean;
-  plane: HarnessMcpProxyStrategy["plane"] | undefined;
-  selectedServerCount: number;
-  hostId?: string;
-  scenarioId?: string;
-  evalIterationId?: string;
-  journeyRunId?: string;
-  localExecution: boolean;
-  admit: () => Admission;
-};
+import {
+  HARNESS_MCP_PLAN_REASONS,
+  harnessDiscoveryRoute,
+  hostedForwardingSurface,
+  resolveHarnessMcpPlan,
+  toDiscoveryDeliveryLabel,
+  type HarnessForwardingAdmission as Admission,
+  type HarnessMcpPlan,
+  type HarnessMcpPlanFacts as Facts,
+  type HarnessMcpPlanReason,
+} from "../harness-mcp-plan";
 
 type Observed = {
   candidate: boolean;
@@ -44,54 +44,16 @@ const RUNTIME: ForwardingRuntimeContract = {
   refresh: (runtime) => runtime,
 };
 
-/** Lines 1565–1566, 1632–1641, 1669–1671, 1682 and 1713–1719 of the runner. */
-function legacyPlan(f: Facts): Observed {
-  let nativeMcpDelivery = f.dispatch.mcpClient === "harness";
-  const forwardingRuntime = f.forwardingRuntime;
-  const nativeCandidate =
-    f.forwardingEnabled &&
-    f.forwardingOrganization &&
-    (nativeMcpDelivery ||
-      (forwardingRuntime !== undefined && !f.accountRouting)) &&
-    forwardingRuntime !== undefined &&
-    f.plane === "web-authorized" &&
-    !f.scenarioId &&
-    !f.evalIterationId &&
-    !f.journeyRunId &&
-    !f.localExecution &&
-    !!f.hostId &&
-    f.selectedServerCount > 0;
-  const admission: Admission = nativeCandidate
-    ? f.admit()
-    : { delivery: undefined, gaps: [] };
-  const enhancedApps = admission.delivery === "bridge";
-  const useNativeForwarding = admission.delivery !== undefined;
-  const label = useNativeForwarding
-    ? enhancedApps
-      ? "forwarded-bridge"
-      : "forwarded-native"
-    : nativeMcpDelivery
-      ? "native-proxy"
-      : "host-tools";
-  nativeMcpDelivery ||= useNativeForwarding;
-  const surface =
-    forwardingRuntime !== undefined &&
-    !f.localExecution &&
-    f.plane === "web-authorized" &&
-    f.forwardingEnabled &&
-    f.forwardingOrganization &&
-    !f.scenarioId &&
-    !f.evalIterationId &&
-    !f.journeyRunId &&
-    !!f.hostId;
+/** The values the runner reads off a plan, named as the runner names them. */
+function observed(plan: HarnessMcpPlan): Observed {
   return {
-    candidate: nativeCandidate,
-    surface,
-    useNativeForwarding,
-    enhancedApps,
-    nativeMcpDelivery,
-    label,
-    gaps: admission.gaps,
+    candidate: plan.candidate,
+    surface: plan.surface,
+    useNativeForwarding: plan.forwardingKind !== undefined,
+    enhancedApps: plan.forwardingKind === "profiled",
+    nativeMcpDelivery: plan.delivery === "mcp-endpoint",
+    label: toDiscoveryDeliveryLabel(plan),
+    gaps: plan.gaps,
   };
 }
 
@@ -122,6 +84,7 @@ type Row = {
   name: string;
   facts: Partial<Facts>;
   expected: Omit<Observed, "gaps"> & { gaps?: string[] };
+  reasons: HarnessMcpPlanReason[];
   admitCalls: number;
 };
 
@@ -150,6 +113,7 @@ const ROUTE_ROWS: Row[] = [
     name: "ready, pass-through admitted",
     facts: { admit: NATIVE },
     expected: forwarded("forwarded-native"),
+    reasons: [],
     admitCalls: 1,
   },
   {
@@ -159,6 +123,7 @@ const ROUTE_ROWS: Row[] = [
       ...forwarded("forwarded-bridge"),
       gaps: ["app-host-capabilities", "unqualified-protocol"],
     },
+    reasons: [],
     admitCalls: 1,
   },
   {
@@ -169,6 +134,7 @@ const ROUTE_ROWS: Row[] = [
       candidate: true,
       gaps: ["unqualified-protocol"],
     },
+    reasons: ["forwarding not admitted; configured route retained"],
     admitCalls: 1,
   },
   {
@@ -179,90 +145,105 @@ const ROUTE_ROWS: Row[] = [
       candidate: true,
       gaps: ["unqualified-protocol"],
     },
+    reasons: ["forwarding not admitted; configured route retained"],
     admitCalls: 1,
   },
   {
     name: "MCPJam client, pass-through admitted",
     facts: { admit: NATIVE, dispatch: { mcpClient: "mcpjam" } },
     expected: forwarded("forwarded-native"),
+    reasons: [],
     admitCalls: 1,
   },
   {
     name: "forwarding flag off",
     facts: { forwardingEnabled: false },
     expected: notCandidate("native-proxy", false),
+    reasons: ["forwarding flag off"],
     admitCalls: 0,
   },
   {
     name: "organization not enrolled",
     facts: { forwardingOrganization: false },
     expected: notCandidate("native-proxy", false),
+    reasons: ["organization not enrolled"],
     admitCalls: 0,
   },
   {
     name: "no qualified forwarding runtime",
     facts: { forwardingRuntime: undefined },
     expected: notCandidate("native-proxy", false),
+    reasons: ["runtime contract unqualified"],
     admitCalls: 0,
   },
   {
     name: "no qualified forwarding runtime, MCPJam client",
     facts: { forwardingRuntime: undefined, dispatch: { mcpClient: "mcpjam" } },
     expected: notCandidate("host-tools", false),
+    reasons: ["runtime contract unqualified"],
     admitCalls: 0,
   },
   {
     name: "local-mcp plane",
     facts: { plane: "local-mcp" },
     expected: notCandidate("native-proxy", false),
+    reasons: ["plane is not web-authorized"],
     admitCalls: 0,
   },
   {
     name: "local-loopback plane",
     facts: { plane: "local-loopback" },
     expected: notCandidate("native-proxy", false),
+    reasons: ["plane is not web-authorized"],
     admitCalls: 0,
   },
   {
     name: "no plane",
     facts: { plane: undefined },
     expected: notCandidate("native-proxy", false),
+    reasons: ["plane is not web-authorized"],
     admitCalls: 0,
   },
   {
     name: "scenario turn",
     facts: { scenarioId: "scenario-1" },
     expected: notCandidate("native-proxy", false),
+    reasons: ["scenario turn"],
     admitCalls: 0,
   },
   {
     name: "eval iteration",
     facts: { evalIterationId: "iteration-1" },
     expected: notCandidate("native-proxy", false),
+    reasons: ["eval iteration"],
     admitCalls: 0,
   },
   {
     name: "journey run",
     facts: { journeyRunId: "journey-1" },
     expected: notCandidate("native-proxy", false),
+    reasons: ["journey run"],
     admitCalls: 0,
   },
   {
     name: "local execution target",
     facts: { localExecution: true },
     expected: notCandidate("native-proxy", false),
+    reasons: ["local execution target"],
     admitCalls: 0,
   },
   {
     name: "no host id",
     facts: { hostId: undefined },
     expected: notCandidate("native-proxy", false),
+    reasons: ["no host id"],
     admitCalls: 0,
   },
   {
     name: "empty host id",
     facts: { hostId: "" },
     expected: notCandidate("native-proxy", false),
+    reasons: ["no host id"],
     admitCalls: 0,
   },
   // The surface stays open with no servers: the retained-resource executor
@@ -271,12 +252,14 @@ const ROUTE_ROWS: Row[] = [
     name: "no servers selected",
     facts: { selectedServerCount: 0 },
     expected: notCandidate("native-proxy", true),
+    reasons: ["no servers selected"],
     admitCalls: 0,
   },
   {
     name: "account routing on the MCPJam client",
     facts: { accountRouting: true, dispatch: { mcpClient: "mcpjam" } },
     expected: notCandidate("host-tools", true),
+    reasons: ["account routing"],
     admitCalls: 0,
   },
   // `resolveAgentLoop` never pairs account routing with the harness client;
@@ -285,7 +268,19 @@ const ROUTE_ROWS: Row[] = [
     name: "account routing on the harness client",
     facts: { accountRouting: true, admit: NATIVE },
     expected: forwarded("forwarded-native"),
+    reasons: [],
     admitCalls: 1,
+  },
+  {
+    name: "several refusals at once, in the planner's order",
+    facts: {
+      forwardingEnabled: false,
+      scenarioId: "scenario-1",
+      selectedServerCount: 0,
+    },
+    expected: notCandidate("native-proxy", false),
+    reasons: ["forwarding flag off", "scenario turn", "no servers selected"],
+    admitCalls: 0,
   },
 ];
 
@@ -297,7 +292,101 @@ function withAdmitSpy(row: Row) {
 describe("harness MCP route table", () => {
   it.each(ROUTE_ROWS)("$name", (row) => {
     const { admit, facts: input } = withAdmitSpy(row);
-    expect(legacyPlan(input)).toEqual({ gaps: [], ...row.expected });
+    const plan = resolveHarnessMcpPlan(input);
+    expect(observed(plan)).toEqual({ gaps: [], ...row.expected });
+    expect(plan.reasons).toEqual(row.reasons);
     expect(admit).toHaveBeenCalledTimes(row.admitCalls);
+  });
+});
+
+describe("the three route fields", () => {
+  it.each([
+    ["forwarded-native", NATIVE, "harness", "mcp-endpoint", "pass-through"],
+    ["forwarded-bridge", BRIDGE, "mcpjam", "mcp-endpoint", "profiled"],
+    ["native-proxy", RETAINED, "mcpjam", "mcp-endpoint", undefined],
+  ] as const)(
+    "describes %s by who talks to the server and how tools arrive",
+    (label, admit, upstream, delivery, forwardingKind) => {
+      const plan = resolveHarnessMcpPlan(facts({ admit }));
+      expect(plan).toMatchObject({ upstream, delivery });
+      expect(plan.forwardingKind).toBe(forwardingKind);
+      expect(toDiscoveryDeliveryLabel(plan)).toBe(label);
+    },
+  );
+
+  it("describes host tools on MCPJam's client", () => {
+    const plan = resolveHarnessMcpPlan(
+      facts({ dispatch: { mcpClient: "mcpjam" }, forwardingEnabled: false }),
+    );
+    expect(plan).toMatchObject({ upstream: "mcpjam", delivery: "host-tools" });
+    expect(plan).not.toHaveProperty("forwardingKind");
+    expect(toDiscoveryDeliveryLabel(plan)).toBe("host-tools");
+  });
+
+  it("speaks the receipt's vocabulary and stays inside its limits", () => {
+    expect(HARNESS_MCP_AT_TURN_UPSTREAMS).toEqual(["mcpjam", "harness"]);
+    expect(HARNESS_MCP_AT_TURN_DELIVERIES).toEqual([
+      "host-tools",
+      "mcp-endpoint",
+    ]);
+    expect(HARNESS_MCP_AT_TURN_FORWARDING_KINDS).toEqual([
+      "pass-through",
+      "profiled",
+    ]);
+    expect(HARNESS_MCP_PLAN_REASONS.length).toBeLessThanOrEqual(
+      HARNESS_MCP_AT_TURN_LIMITS.reasons,
+    );
+    for (const reason of HARNESS_MCP_PLAN_REASONS) {
+      expect(reason.length).toBeLessThanOrEqual(
+        HARNESS_MCP_AT_TURN_LIMITS.string,
+      );
+    }
+  });
+
+  it("puts the route label on the discovery evidence key", () => {
+    const route = {
+      runtimeVersion: "pinned",
+      adapterVersion: "config-v1",
+      protocolVersion: "2025-11-25",
+      modelId: "model",
+      venue: "hosted",
+      surface: "chat",
+      funding: "platform",
+      upstreamProfile: "gateway",
+    } as const;
+    expect(
+      harnessDiscoveryRoute(
+        resolveHarnessMcpPlan(facts({ admit: BRIDGE })),
+        route,
+      ),
+    ).toEqual({ ...route, delivery: "forwarded-bridge" });
+  });
+});
+
+describe("the hosted forwarding surface", () => {
+  it.each([
+    [{ hostId: "host-1", localExecution: false }, true],
+    [{ hostId: "", localExecution: false }, false],
+    [{ hostId: "host-1", scenarioId: "s", localExecution: false }, false],
+    [{ hostId: "host-1", evalIterationId: "e", localExecution: false }, false],
+    [{ hostId: "host-1", journeyRunId: "j", localExecution: false }, false],
+    [{ hostId: "host-1", localExecution: true }, false],
+  ])("reads %j as %s", (input, open) => {
+    expect(hostedForwardingSurface(input)).toBe(open);
+  });
+});
+
+describe("what the planner must not know", () => {
+  const source = (file: string) =>
+    readFileSync(join(__dirname, "..", file), "utf8");
+  it.each([
+    "harness-mcp-plan.ts",
+    "harness-mcp-discovery-gate.ts",
+    "agent-loop-dispatch.ts",
+  ])("%s names no harness, so a new adapter needs no edit there", (file) => {
+    expect(source(file)).not.toMatch(/claude-code|codex|cursor/i);
+  });
+  it("reads no environment: the runner passes the forwarding switch in", () => {
+    expect(source("harness-mcp-plan.ts")).not.toContain("process.env");
   });
 });
