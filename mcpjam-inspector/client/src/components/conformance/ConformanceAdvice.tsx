@@ -88,13 +88,16 @@ export function reportAdviceGroups(
   }));
 }
 
-/** The spec's requirement words are defined in RFC 2119, section 1. */
-const RFC_2119_URL = "https://www.rfc-editor.org/info/rfc2119/#section-1";
+/** RFC 2119 defines each requirement word in its own section. */
+const RFC_2119_URLS = {
+  SHOULD: "https://www.rfc-editor.org/info/rfc2119/#section-3",
+  MAY: "https://www.rfc-editor.org/info/rfc2119/#section-5",
+};
 
-function SpecWord({ word }: { word: string }) {
+function SpecWord({ word }: { word: keyof typeof RFC_2119_URLS }) {
   return (
     <a
-      href={RFC_2119_URL}
+      href={RFC_2119_URLS[word]}
       target="_blank"
       rel="noreferrer"
       className="text-primary underline underline-offset-2 hover:text-primary/80"
