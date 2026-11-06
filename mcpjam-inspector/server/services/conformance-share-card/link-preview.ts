@@ -138,17 +138,29 @@ export function clearConformanceShareCardCache(): void {
   cache.clear();
 }
 
+/** The caller spent its budget of backend lookups (see lookup-limit.ts). */
+export class ShareCardLookupLimited extends Error {
+  constructor() {
+    super("Too many share card lookups");
+    this.name = "ShareCardLookupLimited";
+  }
+}
+
 /**
  * The PNG for a share link, or null when the link has no public preview.
  * `siteLabel` is the host the link lives on, shown in the card's footer.
+ * `admitLookup` is asked only before a backend read, never for a cached card;
+ * when it refuses, this throws `ShareCardLookupLimited`.
  */
 export async function conformanceShareCardForToken(
   token: string,
   siteLabel: string | null,
+  admitLookup: () => boolean = () => true,
 ): Promise<Uint8Array | null> {
   const key = `${siteLabel ?? ""}\u0000${token}`;
   const hit = cache.get(key);
   if (hit && hit.expiresAt > Date.now()) return hit.png;
+  if (!admitLookup()) throw new ShareCardLookupLimited();
 
   const preview = await fetchLinkPreview(token);
   const data = preview ? cardDataFromPreview(preview, siteLabel) : null;

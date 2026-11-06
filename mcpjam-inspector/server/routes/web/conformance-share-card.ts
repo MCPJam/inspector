@@ -6,11 +6,22 @@
  * session, the same way they read the page's meta tags. The token in the URL
  * is the credential, and the backend answers only for a link anyone may open,
  * with the score summary the card draws. Any other link is a plain 404.
+ *
+ * Each IP gets a budget of backend lookups (lookup-limit.ts); a card already
+ * cached costs nothing. Past the budget the route answers 429.
  */
 import { Hono, type Context } from "hono";
 import { logger } from "../../utils/logger.js";
 import { isConformanceShareLinkToken } from "../../utils/conformance-share-meta-tags.js";
-import { conformanceShareCardForToken } from "../../services/conformance-share-card/link-preview.js";
+import { getClientIp } from "../../utils/client-ip.js";
+import {
+  ShareCardLookupLimited,
+  conformanceShareCardForToken,
+} from "../../services/conformance-share-card/link-preview.js";
+import {
+  SHARE_CARD_LOOKUP_WINDOW_MS,
+  admitShareCardLookup,
+} from "../../services/conformance-share-card/lookup-limit.js";
 
 const conformanceShareCard = new Hono();
 
@@ -33,8 +44,16 @@ conformanceShareCard.get("/:file", async (c) => {
     png = await conformanceShareCardForToken(
       token,
       siteLabel(c.req.header("X-Forwarded-Host") ?? c.req.header("Host")),
+      () => admitShareCardLookup(getClientIp(c) ?? "unknown"),
     );
   } catch (error) {
+    if (error instanceof ShareCardLookupLimited) {
+      c.header(
+        "retry-after",
+        String(Math.ceil(SHARE_CARD_LOOKUP_WINDOW_MS / 1000)),
+      );
+      return c.text("Too many card requests. Try again later.", 429);
+    }
     logger.error("[conformance-share-card] render failed", error);
     return c.text("Could not draw this card", 500);
   }

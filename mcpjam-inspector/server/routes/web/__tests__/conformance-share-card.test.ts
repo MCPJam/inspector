@@ -5,6 +5,15 @@ import {
   cardDataFromPreview,
   clearConformanceShareCardCache,
 } from "../../../services/conformance-share-card/link-preview.js";
+import {
+  SHARE_CARD_LOOKUP_LIMIT,
+  resetShareCardLookupLimit,
+} from "../../../services/conformance-share-card/lookup-limit.js";
+
+/** A distinct, valid link token for each `n`. */
+function tokenFor(n: number): string {
+  return `invented_token_${String(n).padStart(6, "0")}`;
+}
 
 const TOKEN = "V1StGXR8_Z5jdHi6B-myT";
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47];
@@ -37,6 +46,7 @@ describe("GET /api/web/conformance-share-card/:token.png", () => {
 
   beforeEach(() => {
     clearConformanceShareCardCache();
+    resetShareCardLookupLimit();
     vi.stubEnv("CONVEX_HTTP_URL", "https://backend.example.test");
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -83,6 +93,42 @@ describe("GET /api/web/conformance-share-card/:token.png", () => {
     await app().request(`/api/web/conformance-share-card/${TOKEN}.png`);
     await app().request(`/api/web/conformance-share-card/${TOKEN}.png`);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops asking the backend once an IP spends its lookup budget", async () => {
+    fetchMock.mockImplementation(async () =>
+      Response.json({ ok: false }, { status: 404 }),
+    );
+    for (let n = 0; n < SHARE_CARD_LOOKUP_LIMIT; n++) {
+      const res = await app().request(
+        `/api/web/conformance-share-card/${tokenFor(n)}.png`,
+      );
+      expect(res.status).toBe(404);
+    }
+
+    const limited = await app().request(
+      `/api/web/conformance-share-card/${tokenFor(SHARE_CARD_LOOKUP_LIMIT)}.png`,
+    );
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("retry-after")).toBe("600");
+    expect(fetchMock).toHaveBeenCalledTimes(SHARE_CARD_LOOKUP_LIMIT);
+  });
+
+  it("serves a cached card even after the budget is spent", async () => {
+    fetchMock.mockImplementation(async () =>
+      Response.json({ ok: false }, { status: 404 }),
+    );
+    // Cache the answer for one token, then spend the rest of the budget.
+    await app().request(`/api/web/conformance-share-card/${TOKEN}.png`);
+    for (let n = 1; n < SHARE_CARD_LOOKUP_LIMIT; n++) {
+      await app().request(`/api/web/conformance-share-card/${tokenFor(n)}.png`);
+    }
+
+    const cached = await app().request(
+      `/api/web/conformance-share-card/${TOKEN}.png`,
+    );
+    expect(cached.status).toBe(404);
+    expect(fetchMock).toHaveBeenCalledTimes(SHARE_CARD_LOOKUP_LIMIT);
   });
 
   it("refuses anything that is not a link token", async () => {
