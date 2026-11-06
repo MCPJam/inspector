@@ -5,6 +5,12 @@ interface BrowserLocation {
   sessionId: string;
   engine: "local" | "cloud";
 }
+interface PublishedChatSession {
+  sessionId: string;
+  appSessionScopeId: string;
+  compareActive: boolean;
+  viewOnly: boolean;
+}
 interface ActiveChatSessionState {
   restorationPending: boolean;
   setRestorationPending: (pending: boolean) => void;
@@ -18,7 +24,12 @@ interface ActiveChatSessionState {
   ) => void;
   approvalSettings: Record<string, boolean>;
   setApprovalSetting: (id: string, enabled: boolean) => void;
+  /** Durable row / browser identity. Never use it to resolve live App tools. */
   sessionId: string | null;
+  appSessionScopeId: string | null;
+  publisher: symbol | null;
+  publishSession: (owner: symbol, session: PublishedChatSession) => void;
+  releaseSession: (owner: symbol) => void;
   compareActive: boolean;
   viewOnly: boolean;
   browserLocation: BrowserLocation | null;
@@ -41,13 +52,25 @@ export const useActiveChatSessionStore = create<ActiveChatSessionState>(
     setRestorationPending: (restorationPending) => set({ restorationPending }),
     restoredSession: null,
     setRestoredSession: (restoredSession) =>
-      set({ restoredSession, sessionId: restoredSession.sessionId }),
+      set((state) => ({ restoredSession, sessionId: restoredSession.sessionId,
+        ...(state.sessionId !== restoredSession.sessionId ? { appSessionScopeId: null, publisher: null } : {}),
+      })),
     approvalSettings: {},
     setApprovalSetting: (id, enabled) =>
       set((state) => ({
         approvalSettings: { ...state.approvalSettings, [id]: enabled },
       })),
     sessionId: null,
+    appSessionScopeId: null,
+    publisher: null,
+    publishSession: (publisher, session) => set((state) => ({
+      ...session, publisher,
+      ...(state.restoredSession?.sessionId !== session.sessionId && state.sessionId !== session.sessionId
+        ? { restoredSession: null } : {}),
+    })),
+    releaseSession: (publisher) => set((state) => state.publisher === publisher
+      ? { sessionId: null, appSessionScopeId: null, publisher: null, compareActive: false, viewOnly: false }
+      : state),
     compareActive: false,
     viewOnly: false,
     browserLocation: null,
@@ -56,6 +79,7 @@ export const useActiveChatSessionStore = create<ActiveChatSessionState>(
     setSessionId: (sessionId) =>
       set((state) => ({
         sessionId,
+        ...(sessionId !== state.sessionId ? { appSessionScopeId: null, publisher: null } : {}),
         ...(sessionId !== state.sessionId &&
         state.restoredSession?.sessionId !== sessionId
           ? { restoredSession: null }

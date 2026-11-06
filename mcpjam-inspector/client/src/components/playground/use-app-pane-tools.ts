@@ -5,9 +5,9 @@ import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { deriveAppPaneTools } from "./app-pane-tools";
 
 export function useAppPaneTools() {
-  const { sessionId, compareActive } = useActiveChatSessionStore(
+  const { appSessionScopeId, compareActive } = useActiveChatSessionStore(
     useShallow((state) => ({
-      sessionId: state.sessionId,
+      appSessionScopeId: state.appSessionScopeId,
       compareActive: state.compareActive,
     })),
   );
@@ -22,8 +22,8 @@ export function useAppPaneTools() {
   return useMemo(
     () =>
       deriveAppPaneTools(
-        listAppToolCatalog(state, compareActive ? null : sessionId),
+        listAppToolCatalog(state, compareActive ? null : appSessionScopeId),
       ),
-    [state, sessionId, compareActive],
+    [state, appSessionScopeId, compareActive],
   );
 }

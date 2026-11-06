@@ -1,3 +1,4 @@
+import { AppSessionScopeContext } from "./thread/app-session-scope";
 import type { HarnessStartupPhase } from "@/shared/harness-startup";
 // Inspector transcript renderer for Playground, Evals, and session review
 // (Sessions, User Testing, Swarms, and share dialogs). Provider-free external
@@ -59,6 +60,7 @@ export const TRANSCRIPT_COLUMN_CLASS = "min-w-0 w-full max-w-4xl mx-auto px-4";
 interface ThreadProps {
   harnessStartupPhase?: HarnessStartupPhase | null;
   chatSessionId?: string;
+  appSessionScopeId?: string;
   messages: UIMessage[];
   sendFollowUpMessage: (text: string) => void;
   model: ModelDefinition;
@@ -163,6 +165,7 @@ function getMessageToolCallIds(messages: UIMessage[]): Set<string> {
 export function Thread({
   harnessStartupPhase,
   chatSessionId,
+  appSessionScopeId = chatSessionId,
   messages,
   sendFollowUpMessage,
   model,
@@ -232,7 +235,7 @@ export function Thread({
 
   useEffect(() => {
     setAppToolInvocations([]);
-  }, [chatSessionId]);
+  }, [appSessionScopeId]);
 
   useEffect(() => {
     const liveToolCallIds = getMessageToolCallIds(messages);
@@ -374,7 +377,7 @@ export function Thread({
     ? getScenarioChatBackground(scenarioHostStyle, "dark")
     : undefined;
 
-  return (
+  const thread = (
     <WidgetSurfaceHostProvider>
       <div
         className={cn(
@@ -445,7 +448,7 @@ export function Thread({
         />
         {widgetPolicy !== "placeholder" && (
           <InspectorWidgetHostProvider>
-            <WidgetSurfaceHost chatSessionId={chatSessionId} />
+            <WidgetSurfaceHost chatSessionId={appSessionScopeId} />
           </InspectorWidgetHostProvider>
         )}
 
@@ -492,5 +495,10 @@ export function Thread({
         )}
       </div>
     </WidgetSurfaceHostProvider>
+  );
+  return (
+    <AppSessionScopeContext.Provider value={appSessionScopeId}>
+      {thread}
+    </AppSessionScopeContext.Provider>
   );
 }

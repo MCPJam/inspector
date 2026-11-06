@@ -1,6 +1,9 @@
+import type { UIMessage } from "ai";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
+import { makeAppInstance } from "@/test/factories";
+import { useAppToolsRegistry } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import { invalidateChatHistoryPrefetch } from "@/components/chat-v2/history/chat-history-prefetch";
 
 const mockState = vi.hoisted(() => ({
@@ -164,13 +167,18 @@ vi.mock("@ai-sdk/react", async () => {
     useChat: vi.fn(
       ({
         id,
+        messages: initialMessages,
         onFinish,
         sendAutomaticallyWhen,
       }: {
         id: string;
+        messages?: UIMessage[];
         onFinish?: (event: any) => void;
         sendAutomaticallyWhen?: (options: any) => boolean;
       }) => {
+        if (!mockState.sessionMessages.has(id) && initialMessages) {
+          mockState.sessionMessages.set(id, initialMessages);
+        }
         mockState.onFinish = onFinish ?? null;
         mockState.sendAutomaticallyWhen = sendAutomaticallyWhen ?? null;
         const currentIdRef = React.useRef(id);
@@ -1445,4 +1453,164 @@ describe("useChatSession fork preservation", () => {
     expect(outcome).toBeNull();
     expect(mockState.sendMessage).not.toHaveBeenCalled();
   });
+  it("retains App scope, in-flight registrations and aliases only for a conflict continuation", async () => {
+    const registry = useAppToolsRegistry.getState();
+    const onReset = vi.fn();
+    const renders: string[][] = [];
+    const { result } = renderHook(() => {
+      const chat = useChatSession({ selectedServers: [], onReset, hostedContext: { projectId: "project-1", selectedServerIds: [] } });
+      renders.push(chat.messages.map((message) => message.id));
+      return chat;
+    });
+    const scope = result.current.appSessionScopeId;
+    const message: UIMessage = { id: "live-app", role: "assistant", parts: [] };
+    act(() => result.current.setMessages([message]));
+    const instance = makeAppInstance({
+      bridgeId: "conflict-live", chatSessionId: scope,
+      tools: [{ name: "read_count", inputSchema: { type: "object" } }],
+    });
+    await registry.registerInstance(instance);
+    const alias = registry.snapshotForChatBody(scope)[0].alias;
+    const pendingCall = new AbortController();
+    registry.registerPendingCall(instance.bridgeId, pendingCall);
+
+    // Pause alias hashing for a second App until after the fork commits.
+    const digest = crypto.subtle.digest.bind(crypto.subtle);
+    let releaseHash!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseHash = resolve; });
+    const hashSpy = vi.spyOn(crypto.subtle, "digest").mockImplementation(async (...args) => {
+      await gate;
+      return digest(...args);
+    });
+    const incoming = makeAppInstance({
+      bridgeId: "conflict-incoming", chatSessionId: scope, parentToolCallId: "incoming",
+      tools: [{ name: "new_tool", inputSchema: { type: "object" } }],
+    });
+    const registration = registry.registerInstance(incoming);
+    try {
+      renders.length = 0;
+      const fork = await result.current.detachToLocalFork([message], { preserveAppSession: true });
+      expect(fork).not.toBeNull();
+      expect(result.current.chatSessionId).not.toBe(scope);
+      expect(result.current.appSessionScopeId).toBe(scope);
+      expect(renders.length).toBeGreaterThan(0);
+      expect(renders.every((ids) => ids.includes("live-app"))).toBe(true);
+      expect(onReset).toHaveBeenLastCalledWith("conflict-fork");
+      releaseHash();
+      await registration;
+      expect(pendingCall.signal.aborted).toBe(false);
+      expect(registry.resolve(alias, scope)?.instance.bridgeId).toBe(instance.bridgeId);
+      expect(registry.resolve(alias, result.current.chatSessionId)).toBeNull();
+      expect(registry.snapshotForChatBody(result.current.chatSessionId)).toEqual([]);
+      // The transport must select the local App lifetime, while persisting to
+      // the new conversation id. Apps mounted after the fork join that lifetime.
+      await registry.registerInstance(makeAppInstance({
+        bridgeId: "conflict-new", chatSessionId: result.current.appSessionScopeId,
+        parentToolCallId: "new", tools: [{ name: "after_fork", inputSchema: { type: "object" } }],
+      }));
+      expect(mockState.lastTransportOptions.body()).toMatchObject({
+        chatSessionId: fork!.chatSessionId,
+        appTools: expect.arrayContaining([
+          expect.objectContaining({ alias }),
+          expect.objectContaining({ rawName: "new_tool" }),
+          expect.objectContaining({ rawName: "after_fork" }),
+        ]),
+      });
+      act(() => result.current.resetChat());
+      expect(result.current.appSessionScopeId).not.toBe(result.current.chatSessionId);
+      expect(result.current.appSessionScopeId).not.toBe(scope);
+      expect(mockState.lastTransportOptions.body().appTools).toEqual([]);
+    } finally {
+      releaseHash();
+      await registration;
+      hashSpy.mockRestore();
+      for (const id of ["conflict-live", "conflict-incoming", "conflict-new"]) registry.unregisterInstance(id);
+    }
+    expect(pendingCall.signal.aborted).toBe(true);
+    expect(registry.resolve(alias, scope)).toBeNull();
+    expect(registry.snapshotForChatBody(scope)).toEqual([]);
+  });
+
+  it("isolates ordinary branches and unrelated history after a retained conflict fork", async () => {
+    const { result } = renderHook(() => useChatSession({ selectedServers: [] }));
+    const scope = result.current.appSessionScopeId;
+    await result.current.detachToLocalFork([], { preserveAppSession: true });
+    expect(result.current.appSessionScopeId).toBe(scope);
+    await result.current.startChatWithMessages([]);
+    expect(result.current.appSessionScopeId).not.toBe(result.current.chatSessionId);
+    expect(result.current.appSessionScopeId).not.toBe(scope);
+    const branchScope = result.current.appSessionScopeId;
+    await result.current.loadChatSession({ chatSessionId: "unrelated-history", version: 4 });
+    expect(result.current.appSessionScopeId).not.toBe("unrelated-history");
+    expect(result.current.appSessionScopeId).not.toBe(branchScope);
+    const pendingFork = result.current.detachToLocalFork([], { preserveAppSession: true });
+    result.current.resetChat();
+    expect(await pendingFork).toBeNull();
+    expect(result.current.appSessionScopeId).not.toBe(result.current.chatSessionId);
+    expect(result.current.appSessionScopeId).not.toBe("unrelated-history");
+  });
+
+  it("never reclaims an ancestor App scope when reopening history, but keeps same-row refresh stable", async () => {
+    const { result } = renderHook(() => useChatSession({ selectedServers: [] }));
+    await result.current.loadChatSession({ chatSessionId: "source-history", version: 4 });
+    const sourceScope = result.current.appSessionScopeId;
+    await result.current.detachToLocalFork([], { preserveAppSession: true });
+    expect(result.current.appSessionScopeId).toBe(sourceScope);
+    await result.current.loadChatSession({ chatSessionId: "source-history", version: 5 });
+    expect(result.current.chatSessionId).toBe("source-history");
+    const reopenedScope = result.current.appSessionScopeId;
+    expect(reopenedScope).not.toBe(sourceScope);
+    await result.current.loadChatSession({ chatSessionId: "source-history", version: 6 });
+    expect(result.current.appSessionScopeId).toBe(reopenedScope);
+    await result.current.detachToLocalFork([], { preserveAppSession: true });
+    expect(result.current.appSessionScopeId).toBe(reopenedScope);
+    await result.current.loadChatSession({ chatSessionId: "unrelated-history", version: 1 });
+    const unrelatedScope = result.current.appSessionScopeId;
+    expect(unrelatedScope).not.toBe(reopenedScope);
+    await result.current.loadChatSession({ chatSessionId: "source-history", version: 6 });
+    expect(result.current.appSessionScopeId).not.toBe(sourceScope);
+    expect(result.current.appSessionScopeId).not.toBe(reopenedScope);
+    expect(result.current.appSessionScopeId).not.toBe(unrelatedScope);
+  });
+
+  it("unmounts copied tool rows during a manual branch instead of retaining editor and teardown state", async () => {
+    const renders: string[][] = [];
+    const { result } = renderHook(() => {
+      const chat = useChatSession({ selectedServers: [] });
+      renders.push(chat.messages.map((message) => message.id));
+      return chat;
+    });
+    const message: UIMessage = { id: "same-app-row", role: "assistant", parts: [
+      { type: "dynamic-tool", toolName: "counter", toolCallId: "same-call", state: "output-available", input: {}, output: {} },
+    ] };
+    act(() => result.current.setMessages([message]));
+    renders.length = 0;
+    await result.current.startChatWithMessages([message]);
+    expect(renders).toContainEqual([]);
+    expect(result.current.messages).toEqual([message]);
+  });
+
+  it("reports the committed hydration transcript and lifetime to reset consumers on same-row refresh", async () => {
+    const onReset = vi.fn();
+    const transcript = [{ id: "app-row", role: "assistant", content: [{
+      type: "tool-call", toolCallId: "refresh-call", toolName: "counter", args: {},
+      result: { content: [{ type: "text", text: "counter" }] },
+    }] }];
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(transcript), {
+      headers: { "content-type": "application/json" },
+    })));
+    const { result } = renderHook(() => useChatSession({ selectedServers: [], onReset }));
+    await result.current.loadChatSession({ chatSessionId: "refresh-row", version: 4, messagesBlobUrl: "https://storage.test/real-refresh-v4" });
+    const scope = result.current.appSessionScopeId;
+    await result.current.loadChatSession({ chatSessionId: "refresh-row", version: 5, messagesBlobUrl: "https://storage.test/real-refresh-v5" });
+    expect(result.current.appSessionScopeId).toBe(scope);
+    expect(onReset).toHaveBeenLastCalledWith("hydrate", {
+      appSessionScopeId: scope, messages: expect.arrayContaining([
+        expect.objectContaining({ parts: expect.arrayContaining([expect.objectContaining({ toolCallId: "refresh-call" })]) }),
+      ]), toolRenderOverrides: {},
+    });
+    await result.current.loadChatSession({ chatSessionId: "other-refresh-row", version: 5, messagesBlobUrl: "https://storage.test/real-refresh-v5" });
+    expect(result.current.appSessionScopeId).not.toBe(scope);
+  });
+
 });

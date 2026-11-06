@@ -1,3 +1,4 @@
+import { useAppSessionScope } from "../app-session-scope";
 import { ToolResourceAttachments } from "@/components/host-workspace/file-actions";
 import {
   CHAT_AUTH_RECOVERY_MESSAGE,
@@ -180,7 +181,7 @@ export function ToolPart({
   // SEP-1865 App-Provided Tools: opaque `app_<hash>` aliases are resolved
   // through the shared app-tool registry/log helper so UI never leaks the
   // model-facing alias when a human-readable tool name is available.
-  const appToolAttribution = useAppToolAttribution(label, chatSessionId);
+  const appToolAttribution = useAppToolAttribution(label, useAppSessionScope(chatSessionId));
   // Page-tool names belong to the recorded call/result, not the live page.
   // Call metadata also labels inspector aliases while approval is pending.
   const pageToolAttribution = resolvePageToolAttribution({

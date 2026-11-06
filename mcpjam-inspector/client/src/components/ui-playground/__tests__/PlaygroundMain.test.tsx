@@ -1,8 +1,15 @@
+import { useTrafficLogStore } from "@/stores/traffic-log-store";
+import { makeAppInstance } from "@/test/factories";
+import { useAppToolsRegistry, useAppToolInvocationLog } from "@mcpjam/widget-react";
+import { useAppToolRun } from "@/components/playground/use-app-tool-run";
+import { AppToolsSection } from "@/components/playground/AppToolsSection";
+import { createDeterministicToolMessages } from "../playground-helpers";
 import { useEffect } from "react";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   render,
+  renderHook,
   screen,
   fireEvent,
   waitFor,
@@ -368,6 +375,7 @@ const mockUseChatSession = {
   syncResumedVersion: vi.fn(),
   resumedVersion: null,
   restoredToolRenderOverrides: {},
+  appSessionScopeId: "live-app-scope",
   chatSessionId: "chat-session-1",
   liveTraceEnvelope: null,
   requestPayloadHistory: [],
@@ -426,7 +434,9 @@ vi.mock("@/components/chat-v2/thread", () => ({
     onFullscreenChange,
     interactive,
     onToolApprovalResponse,
+    toolRenderOverrides,
   }: {
+    toolRenderOverrides?: Record<string, import("@/components/chat-v2/thread/tool-render-overrides").ToolRenderOverride>;
     interactive?: boolean;
     onToolApprovalResponse?: (response: any) => unknown;
     messages: any[];
@@ -452,6 +462,7 @@ vi.mock("@/components/chat-v2/thread", () => ({
         onFullscreenChange,
         interactive,
         onToolApprovalResponse,
+        toolRenderOverrides,
       });
       return (
         <div data-testid="thread">
@@ -806,14 +817,6 @@ vi.mock("@/components/shared/ClientContextHeader", () => ({
   },
 }));
 
-// Mock traffic log store
-vi.mock("@/stores/traffic-log-store", () => ({
-  useTrafficLogStore: (selector: any) => {
-    const state = { clear: vi.fn() };
-    return selector ? selector(state) : state;
-  },
-}));
-
 // Mock shared app state (mutate `connectionStatus` in tests when needed)
 const mockSharedAppState = {
   servers: {
@@ -927,6 +930,7 @@ describe("PlaygroundMain", () => {
       submitBlocked: false,
       isStreaming: false,
       chatSessionId: "chat-session-1",
+      appSessionScopeId: "live-app-scope",
       resumedVersion: null,
       availableModels: [],
       selectedModelIds: [],
@@ -946,6 +950,139 @@ describe("PlaygroundMain", () => {
     mockMultiModelPlaygroundCard.mockClear();
     compareSetup.ready = true;
     compareSetup.error = undefined;
+  });
+
+  describe("live App tools through the product publisher and rail", () => {
+    beforeEach(() => {
+      mockUseChatSession.appSessionScopeId = "live-app-scope";
+      useAppToolsRegistry.getState().setEnabled(true);
+      useAppToolsRegistry.setState({ aliases: new Map(), instancesByBridgeId: new Map(), activeBridgeByParent: new Map(), pendingControllers: new Map() });
+      useAppToolInvocationLog.getState().clear();
+    });
+
+    it("keeps manual selection and pending calls across conflict continuation, then isolates a source reopen", async () => {
+      const counter = makeAppInstance({
+        bridgeId: "counter", chatSessionId: "live-app-scope", appName: "Live counter",
+        tools: [{ name: "read_count", inputSchema: { type: "object" } }],
+      });
+      const answer = { content: [{ type: "text" as const, text: "3" }] };
+      const call = vi.spyOn(counter.bridge, "callTool").mockResolvedValue(answer);
+      await useAppToolsRegistry.getState().registerInstance(counter);
+      await useAppToolsRegistry.getState().registerInstance(makeAppInstance({
+        bridgeId: "other-tab", chatSessionId: "other-lifetime", appName: "Other counter",
+      }));
+      const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+      const rail = renderHook(() => useAppToolRun());
+      const section = render(<AppToolsSection searchQuery="" onSelect={rail.result.current.select} />);
+      expect(screen.getByText("Live counter")).toBeInTheDocument();
+      expect(screen.queryByText("Other counter")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByText("read_count"));
+      await act(async () => rail.result.current.run());
+      expect(rail.result.current.result).toEqual({ ok: true, text: "3" });
+      expect(call).toHaveBeenCalledOnce();
+      const key = rail.result.current.selectedKey;
+      const pendingAnswer = Promise.withResolvers<typeof answer>();
+      call.mockReturnValueOnce(pendingAnswer.promise);
+      let pending: Promise<void> = Promise.resolve();
+      act(() => { pending = rail.result.current.run(); });
+      const controller = [...useAppToolsRegistry.getState().pendingControllers.get("counter")!][0];
+      // Mirror the hook's confirmed conflict commit: row changes, lifetime does not.
+      mockUseChatSession.chatSessionId = "fork-row";
+      rerender(<PlaygroundMain {...defaultProps} />);
+      expect(useActiveChatSessionStore.getState().sessionId).toBe("fork-row");
+      expect(controller.signal.aborted).toBe(false);
+      expect(rail.result.current.selectedKey).toBe(key);
+      await act(async () => { pendingAnswer.resolve(answer); await pending; });
+      expect(rail.result.current.result).toEqual({ ok: true, text: "3" });
+      expect(useAppToolInvocationLog.getState().records.at(-1)?.chatSessionId).toBe("chat-session-1");
+      await act(async () => rail.result.current.run());
+      expect(useAppToolInvocationLog.getState().records.at(-1)).toMatchObject({
+        chatSessionId: "fork-row", appSessionScopeId: "live-app-scope", initiatedBy: "user",
+      });
+      expect(useTrafficLogStore.getState().items[0]?.message).toMatchObject({
+        chatSessionId: "fork-row", appSessionScopeId: "live-app-scope", initiatedBy: "user",
+      });
+      const lateAnswer = Promise.withResolvers<typeof answer>();
+      call.mockReturnValueOnce(lateAnswer.promise);
+      act(() => { pending = rail.result.current.run(); });
+      const staleController = [...useAppToolsRegistry.getState().pendingControllers.get("counter")!][0];
+      mockUseChatSession.chatSessionId = "chat-session-1";
+      mockUseChatSession.appSessionScopeId = "reopened-lifetime";
+      rerender(<PlaygroundMain {...defaultProps} />);
+      expect(staleController.signal.aborted).toBe(true);
+      expect(rail.result.current.groups).toEqual([]);
+      expect(rail.result.current.selectedKey).toBeNull();
+      expect(screen.queryByText("Live counter")).not.toBeInTheDocument();
+      await act(async () => { lateAnswer.resolve(answer); await pending; });
+      expect(rail.result.current.result).toBeNull();
+      section.unmount();
+    });
+  });
+
+  it("retains only unsnapshotted injected Apps through the real reactive same-row history refresh", async () => {
+    mockConvexAuthState.isAuthenticated = true;
+    invalidateChatHistoryPrefetch();
+    const session = {
+      _id: "refresh-row", chatSessionId: "chat-session-1", version: 4,
+      firstMessagePreview: "Apps", status: "active" as const,
+      directVisibility: "private" as const, messageCount: 2,
+      startedAt: 1, lastActivityAt: 1, isPinned: false, manualUnread: false,
+      isUnread: false, messagesBlobUrl: "https://storage.test/refresh-v4",
+      resumeConfig: { selectedServers: ["test-server"] },
+    };
+    const message = (ids: string[]) => ({ id: "apps", role: "assistant", parts: ids.map((toolCallId) => ({
+      type: "dynamic-tool", toolName: "counter", toolCallId, state: "output-available", input: {}, output: {},
+    })) });
+    mockUseChatSession.messages = [message(["live", "removed", "snapshotted"])];
+    const originalLoad = mockUseChatSession.loadChatSession.getMockImplementation();
+    mockUseChatSession.loadChatSession.mockImplementation(async (incoming) => {
+      mockUseChatSession.resumedVersion = incoming.version;
+      if (incoming.version === 5) {
+        mockUseChatSession.messages = [message(["live", "snapshotted"])];
+        mockUseChatSession.restoredToolRenderOverrides = { snapshotted: { cachedWidgetHtmlUrl: "https://storage.test/saved.html" } };
+      }
+      capturedChatSessionOptions.onReset("hydrate", {
+        appSessionScopeId: mockUseChatSession.appSessionScopeId,
+        messages: mockUseChatSession.messages,
+        toolRenderOverrides: mockUseChatSession.restoredToolRenderOverrides,
+      });
+    });
+    try {
+      mockGetChatHistoryDetail.mockResolvedValue({ ok: true, session, widgetSnapshots: [] });
+      const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBeNull());
+      await act(async () => { await usePlaygroundChatHistoryBridgeStore.getState().bridge?.onSelectThread(session); });
+      for (const toolCallId of ["live", "removed", "snapshotted"]) {
+        vi.mocked(createDeterministicToolMessages).mockReturnValueOnce({ messages: [], toolCallId });
+        rerender(<PlaygroundMain {...defaultProps} pendingExecution={{ toolName: "counter", toolCallId, params: {}, result: {}, renderOverride: { cachedWidgetHtmlUrl: "https://storage.test/injected.html" } }} />);
+      }
+      rerender(<PlaygroundMain {...defaultProps} />);
+      expect(mockThread.mock.lastCall?.[0].toolRenderOverrides.live).toBeDefined();
+      mockUseChatSession.resumedVersion = 4;
+      mockReactiveHistoryState.session = { ...session, version: 5, messagesBlobUrl: "https://storage.test/refresh-v5" };
+      mockReactiveHistoryState.widgetSnapshots = [];
+      rerender(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => expect(mockUseChatSession.loadChatSession).toHaveBeenCalledWith(
+        expect.objectContaining({ version: 5 }), expect.anything(),
+      ));
+      const overrides = mockThread.mock.lastCall?.[0].toolRenderOverrides;
+      expect(overrides.live?.cachedWidgetHtmlUrl).toBe("https://storage.test/injected.html");
+      expect(overrides).not.toHaveProperty("removed");
+      expect(overrides.snapshotted?.cachedWidgetHtmlUrl).toBe("https://storage.test/saved.html");
+      // An explicit different-row selection with identical tool ids cannot inherit metadata.
+      mockUseChatSession.appSessionScopeId = "other-lifetime";
+      mockUseChatSession.restoredToolRenderOverrides = {};
+      mockReactiveHistoryState.session = undefined;
+      mockReactiveHistoryState.widgetSnapshots = undefined;
+      mockGetChatHistoryDetail.mockResolvedValue({ ok: true, session: { ...session, _id: "other-row", chatSessionId: "other-row" }, widgetSnapshots: [] });
+      await act(async () => { await usePlaygroundChatHistoryBridgeStore.getState().bridge?.onSelectThread({ ...session, _id: "other-row", chatSessionId: "other-row" }); });
+      rerender(<PlaygroundMain {...defaultProps} />);
+      expect(mockThread.mock.lastCall?.[0].toolRenderOverrides).not.toHaveProperty("live");
+    } finally {
+      mockUseChatSession.loadChatSession.mockImplementation(originalLoad ?? (async () => undefined));
+      mockUseChatSession.restoredToolRenderOverrides = {};
+      invalidateChatHistoryPrefetch();
+    }
   });
 
   describe("installed plugins (hidden environment)", () => {
@@ -4121,6 +4258,78 @@ describe("PlaygroundMain", () => {
   });
 
   describe("pending execution", () => {
+    it("forks an explicit conflict receipt with injected App overrides", async () => {
+      invalidateChatHistoryPrefetch();
+      const session = {
+        _id: "conflict-history", chatSessionId: "chat-session-1", version: 4,
+        firstMessagePreview: "App", status: "active" as const,
+        directVisibility: "private" as const, messageCount: 2,
+        startedAt: 1, lastActivityAt: 1, isPinned: false, manualUnread: false,
+        isUnread: false, messagesBlobUrl: "https://storage.test/conflict",
+        resumeConfig: { selectedServers: ["test-server"] },
+      };
+      const override = { serverId: "injected-server", resourceUri: "ui://counter" };
+      mockUseChatSession.messages = [
+        { id: "app", role: "assistant", parts: [{ type: "text", text: "App" }] },
+      ];
+      mockGetChatHistoryDetail.mockResolvedValue({ ok: true, session, widgetSnapshots: [] });
+      const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBeNull());
+      await act(async () => {
+        await usePlaygroundChatHistoryBridgeStore.getState().bridge?.onSelectThread(session);
+      });
+      vi.mocked(createDeterministicToolMessages).mockReturnValueOnce({ messages: [], toolCallId: "counter-call" });
+      rerender(<PlaygroundMain {...defaultProps}
+        pendingExecution={{ toolName: "counter", toolCallId: "counter-call", params: {}, result: {}, renderOverride: override }}
+      />);
+      rerender(<PlaygroundMain {...defaultProps} />);
+      mockUseChatSession.resumedVersion = 4;
+      mockUseChatSession.status = "streaming";
+      rerender(<PlaygroundMain {...defaultProps} />);
+      mockUseChatSession.consumePersistReceipt.mockReturnValueOnce({
+        outcome: "conflict", chatSessionId: session.chatSessionId,
+        currentVersion: 5, turnId: "losing-turn",
+      });
+      mockUseChatSession.status = "ready";
+      rerender(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => expect(mockUseChatSession.detachToLocalFork).toHaveBeenCalledWith(
+        mockUseChatSession.messages,
+        { preserveAppSession: true, toolRenderOverrides: { "counter-call": override } },
+      ));
+      expect(mockUseChatSession.detachToLocalFork).toHaveBeenCalledTimes(1);
+      invalidateChatHistoryPrefetch();
+    });
+
+    it.each(["conflict-fork", "reset", "fork", "hydrate"])(
+      "keeps injected App render overrides only across %s when appropriate",
+      async (reason) => {
+        vi.mocked(createDeterministicToolMessages).mockReturnValueOnce({ messages: [], toolCallId: "counter-call" });
+        const override = { serverId: "injected-server", resourceUri: "ui://counter" };
+        mockUseChatSession.messages = [
+          { id: "app", role: "assistant", parts: [{ type: "text", text: "App" }] },
+        ];
+        const onExecutionInjected = vi.fn();
+        const { rerender } = render(
+          <PlaygroundMain
+            {...defaultProps}
+            pendingExecution={{ toolName: "counter", toolCallId: "counter-call", params: {}, result: {}, renderOverride: override }}
+            onExecutionInjected={onExecutionInjected}
+          />
+        );
+        await waitFor(() => expect(onExecutionInjected).toHaveBeenCalled());
+        // Remove the pending injection so a reset cannot re-inject it.
+        rerender(<PlaygroundMain {...defaultProps} />);
+        expect(mockThread.mock.lastCall?.[0].toolRenderOverrides).toMatchObject({ "counter-call": override });
+        act(() => capturedChatSessionOptions.onReset(reason));
+        const overrides = mockThread.mock.lastCall?.[0].toolRenderOverrides;
+        if (reason === "conflict-fork") {
+          expect(overrides).toMatchObject({ "counter-call": override });
+        } else {
+          expect(overrides).not.toHaveProperty("counter-call");
+        }
+      }
+    );
+
     it("injects messages when pendingExecution is set", async () => {
       const onExecutionInjected = vi.fn();
       const pendingExecution = {

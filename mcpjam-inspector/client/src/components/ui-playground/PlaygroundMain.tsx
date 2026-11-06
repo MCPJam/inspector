@@ -1,3 +1,6 @@
+import { retainInjectedAppOverrides } from "./retain-injected-app-overrides";
+import type { ChatSessionHydration } from "@/hooks/use-chat-session";
+import { usePublishActiveChatSession } from "@/hooks/use-publish-active-chat-session";
 import {
   hasComparisonAuthRecoveryRequest,
   markComparisonColumnSettled,
@@ -769,6 +772,7 @@ export function PlaygroundMain({
   const [isTakeoverChatOpen, setIsTakeoverChatOpen] = useState(false);
   const [isPreparingServerForSend, setIsPreparingServerForSend] =
     useState(false);
+  const injectedAppScopeRef = useRef<string | null>(null);
   const [injectedToolRenderOverrides, setInjectedToolRenderOverrides] =
     useState<Record<string, ToolRenderOverride>>({});
   const [preludeTraceExecutions, setPreludeTraceExecutions] = useState<
@@ -1340,6 +1344,7 @@ export function PlaygroundMain({
     mcpToolsTokenCountErrors,
     resetChat,
     startChatWithMessages,
+    appSessionScopeId,
     detachToLocalFork,
     consumePersistReceipt,
     consumeTurnAborted,
@@ -1487,10 +1492,18 @@ export function PlaygroundMain({
       ? { harnessId: previewedHarnessId }
       : null,
     preferredModelId: previewedHost?.config?.modelId ?? null,
-    onReset: (reason?: ChatSessionResetReason) => {
+    onReset: (reason?: ChatSessionResetReason, hydration?: ChatSessionHydration) => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);
-      setInjectedToolRenderOverrides({});
+      if (reason === "hydrate" && hydration &&
+          injectedAppScopeRef.current === hydration.appSessionScopeId) {
+        setInjectedToolRenderOverrides((previous) => retainInjectedAppOverrides(
+          previous, hydration.messages, hydration.toolRenderOverrides,
+        ));
+      } else if (reason !== "conflict-fork") {
+        injectedAppScopeRef.current = null;
+        setInjectedToolRenderOverrides({});
+      }
       if (reason === "servers-changed") {
         return;
       }
@@ -1506,6 +1519,11 @@ export function PlaygroundMain({
     },
   });
 
+  const activeInjectedToolRenderOverrides = useMemo(
+    () => injectedAppScopeRef.current === appSessionScopeId ? injectedToolRenderOverrides : {},
+    [appSessionScopeId, injectedToolRenderOverrides],
+  );
+
   // The Browser tab lives in the sibling right rail. Publish the current
   // conversation only while this Playground center is mounted; the rail then
   // binds the watched browser to the same durable owner. Clearing is guarded
@@ -1519,9 +1537,6 @@ export function PlaygroundMain({
     (state) =>
       state.restoredSession?.sessionId === chatSessionId &&
       state.restoredSession.origin === "api",
-  );
-  const setActiveChatSessionId = useActiveChatSessionStore(
-    (state) => state.setSessionId,
   );
 
   // Set playground active flag for widget renderers to read
@@ -2455,25 +2470,9 @@ export function PlaygroundMain({
   // mode-specific flags around for code that still needs to know
   // WHICH compare grid is up (e.g. the per-column derivation memos).
   const isCompareMode = isMultiModelMode || isMultiHostMode;
-  useEffect(() => {
-    setActiveChatSessionId(chatSessionId);
-    useActiveChatSessionStore.setState({
-      compareActive: isCompareMode,
-      viewOnly: apiSessionViewOnly,
-    });
-    return () => {
-      useActiveChatSessionStore.setState((state) =>
-        state.sessionId === chatSessionId
-          ? { sessionId: null, compareActive: false, viewOnly: false }
-          : state,
-      );
-    };
-  }, [
-    chatSessionId,
-    setActiveChatSessionId,
-    isCompareMode,
-    apiSessionViewOnly,
-  ]);
+  usePublishActiveChatSession(
+    chatSessionId, appSessionScopeId, isCompareMode, apiSessionViewOnly,
+  );
   const { isMultiModelLayoutMode, onModelSelectorOpenChange } =
     useModelSelectorLayoutLock(isCompareMode);
 
@@ -3504,7 +3503,7 @@ export function PlaygroundMain({
   suppressHistoryConflictToastRef.current = suppressHistoryConflictToast;
 
   const detachHistorySession = useCallback(
-    (toastMessage: string, opts?: { silent?: boolean }) => {
+    (toastMessage: string, opts?: { silent?: boolean; preserveAppSession?: boolean }) => {
       resumedThreadSendBaselineRef.current = null;
       cancelPendingHistorySelection();
       setPendingDirectVisibility("private");
@@ -3538,7 +3537,11 @@ export function PlaygroundMain({
       // shown once the fork is confirmed live. `resumedVersion` is cleared by
       // the fork's own hydration, so it survives a fork that never commits.
       void detachToLocalFork(cloneUiMessages(messagesRef.current), {
-        toolRenderOverrides: restoredToolRenderOverrides,
+        preserveAppSession: opts?.preserveAppSession,
+        toolRenderOverrides: {
+          ...restoredToolRenderOverrides,
+          ...(opts?.preserveAppSession ? activeInjectedToolRenderOverrides : {}),
+        },
       })
         .then((fork) => {
           notify(fork ? toastMessage : DETACH_FORK_FAILED_MESSAGE);
@@ -3556,6 +3559,7 @@ export function PlaygroundMain({
     [
       cancelPendingHistorySelection,
       isThreadEmpty,
+      activeInjectedToolRenderOverrides,
       restoredToolRenderOverrides,
       detachToLocalFork,
       syncResumedVersion,
@@ -4191,6 +4195,7 @@ export function PlaygroundMain({
     onConflict: () => {
       detachHistorySession(RESUMED_THREAD_CONFLICT_MESSAGE, {
         silent: suppressHistoryConflictToastRef.current,
+        preserveAppSession: true,
       });
     },
     onUnsaved: () => {
@@ -4379,6 +4384,7 @@ export function PlaygroundMain({
       );
 
     if (pendingExecution.renderOverride) {
+      injectedAppScopeRef.current = appSessionScopeId;
       setInjectedToolRenderOverrides((prev) => ({
         ...prev,
         [toolCallId]: pendingExecution.renderOverride!,
@@ -5115,12 +5121,12 @@ export function PlaygroundMain({
       // Thread. Live overrides from this turn (`injected*`) and the parent
       // (`external*`) win over restored ones for the same toolCallId.
       ...restoredToolRenderOverrides,
-      ...injectedToolRenderOverrides,
+      ...activeInjectedToolRenderOverrides,
       ...externalToolRenderOverrides,
     }),
     [
       restoredToolRenderOverrides,
-      injectedToolRenderOverrides,
+      activeInjectedToolRenderOverrides,
       externalToolRenderOverrides,
     ],
   );
@@ -6454,6 +6460,7 @@ export function PlaygroundMain({
               <div className="relative flex-1 min-h-0">
                 <StickToBottom.Content className="flex flex-col min-h-0">
                   <Thread
+                    appSessionScopeId={appSessionScopeId}
                     harnessStartupPhase={harnessStartupPhase}
                     chatSessionId={chatSessionId}
                     messages={messages}

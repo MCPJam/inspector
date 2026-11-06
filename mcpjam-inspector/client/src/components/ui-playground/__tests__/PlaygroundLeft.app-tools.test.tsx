@@ -35,7 +35,8 @@ const props = {
 beforeEach(() => {
   vi.clearAllMocks();
   useActiveChatSessionStore.setState({
-    sessionId: "chat-1",
+    sessionId: "saved-row",
+    appSessionScopeId: "chat-1",
     compareActive: false,
     viewOnly: false,
   });

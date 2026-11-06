@@ -157,6 +157,7 @@ export function MultiModelChatCard({
     status,
     error,
     chatSessionId,
+    appSessionScopeId,
     toolsMetadata,
     toolServerMap,
     liveTraceEnvelope,
@@ -605,6 +606,7 @@ export function MultiModelChatCard({
             <div className="relative flex-1 min-h-0">
               <StickToBottom.Content className="flex flex-col min-h-0">
                 <Thread
+                  appSessionScopeId={appSessionScopeId}
                   harnessStartupPhase={harnessStartupPhase}
                   chatSessionId={chatSessionId}
                   messages={messages}

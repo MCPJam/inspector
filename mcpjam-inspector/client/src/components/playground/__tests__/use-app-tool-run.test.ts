@@ -39,6 +39,7 @@ beforeEach(() => {
   useAppToolInvocationLog.getState().clear();
   useActiveChatSessionStore.setState({
     sessionId: "chat-1",
+    appSessionScopeId: "chat-1",
     viewOnly: false,
     compareActive: false,
   });
@@ -79,6 +80,78 @@ describe("manual app runs", () => {
     );
     expect(registry.getState().pendingControllers.size).toBe(0);
   });
+  it.each(["compare", "read-only"])("revokes pending manual access in %s mode", async (mode) => {
+    const { result, call, instance } = await mount();
+    const late = Promise.withResolvers<typeof answer>();
+    call.mockReturnValueOnce(late.promise);
+    act(() => result.current.detailProps?.onFieldChange("san", "e4"));
+    const key = result.current.selectedKey;
+    let pending: Promise<void> = Promise.resolve();
+    act(() => { pending = result.current.run(); });
+    const controller = [...registry.getState().pendingControllers.get(instance.bridgeId)!][0];
+    act(() => useActiveChatSessionStore.setState(mode === "compare" ? { compareActive: true } : { viewOnly: true }));
+    await act(async () => pending);
+    expect(controller.signal.aborted).toBe(true);
+    expect(result.current.canRun).toBe(false);
+    expect(result.current.invoking).toBe(false);
+    expect(result.current.result).toBeNull();
+    expect(registry.getState().pendingControllers.size).toBe(0);
+    expect(useAppToolInvocationLog.getState().records).toHaveLength(0);
+    if (mode === "compare") {
+      expect(result.current.groups).toEqual([]);
+      expect(result.current.selectedKey).toBeNull();
+      expect(result.current.fields).toEqual([]);
+      await act(async () => { late.resolve(answer); await Promise.resolve(); });
+    } else {
+      expect(result.current.selectedKey).toBe(key);
+      expect(result.current.fields.find((field) => field.name === "san")?.value).toBe("e4");
+      act(() => useActiveChatSessionStore.setState({ viewOnly: false }));
+      expect(result.current.canRun).toBe(true);
+      const retry = Promise.withResolvers<typeof answer>();
+      call.mockReturnValueOnce(retry.promise);
+      let retryPending: Promise<void> = Promise.resolve();
+      act(() => { retryPending = result.current.run(); });
+      await act(async () => { late.resolve(answer); await Promise.resolve(); });
+      expect(result.current.invoking).toBe(true);
+      expect(result.current.result).toBeNull();
+      await act(async () => {
+        retry.resolve({ content: [{ type: "text", text: "new execution" }], structuredContent: { fen: "e4" } });
+        await retryPending;
+      });
+      expect(result.current.result?.text).toContain("new execution");
+      expect(call).toHaveBeenCalledTimes(2);
+    }
+    if (mode === "compare") expect(result.current.result).toBeNull();
+    else expect(result.current.result?.text).toContain("new execution");
+    expect(result.current.invoking).toBe(false);
+    expect(useAppToolInvocationLog.getState().records).toHaveLength(mode === "compare" ? 0 : 1);
+  });
+
+  it("preserves selected detail, input draft and completed result across read-only and writable transitions", async () => {
+    const { result, call } = await mount();
+    act(() => result.current.detailProps?.onFieldChange("san", "e4"));
+    const key = result.current.selectedKey;
+    await act(async () => result.current.run());
+    const completed = result.current.result;
+    expect(completed?.ok).toBe(true);
+    const writableRun = result.current.run;
+    act(() => useActiveChatSessionStore.setState({ viewOnly: true }));
+    expect(result.current.selectedKey).toBe(key);
+    expect(result.current.fields.find((field) => field.name === "san")?.value).toBe("e4");
+    expect(result.current.result).toEqual(completed);
+    expect(result.current.canRun).toBe(false);
+    expect(result.current.detailProps?.status).toBe("This session only allows viewing.");
+    await act(async () => { await writableRun(); await result.current.run(); });
+    expect(call).toHaveBeenCalledOnce();
+    act(() => useActiveChatSessionStore.setState({ viewOnly: false }));
+    expect(result.current.selectedKey).toBe(key);
+    expect(result.current.result).toEqual(completed);
+    expect(result.current.canRun).toBe(true);
+    await act(async () => result.current.run());
+    expect(call).toHaveBeenCalledTimes(2);
+    expect(call).toHaveBeenLastCalledWith({ name: "make_move", arguments: { san: "e4" } });
+  });
+
   it("blocks runs while chat streams and surfaces thrown tool errors", async () => {
     const { result, call } = await mount();
     act(() =>
@@ -156,7 +229,7 @@ describe("manual app runs", () => {
       });
       act(() =>
         change === "chat"
-          ? useActiveChatSessionStore.setState({ sessionId: "chat-2" })
+          ? useActiveChatSessionStore.getState().setSessionId("chat-2")
           : result.current.clear(),
       );
       await act(async () => {
@@ -170,8 +243,8 @@ describe("manual app runs", () => {
   );
   it("does not restore a stale selection when returning to a previous chat", async () => {
     const { result } = await mount();
-    act(() => useActiveChatSessionStore.setState({ sessionId: "chat-2" }));
-    act(() => useActiveChatSessionStore.setState({ sessionId: "chat-1" }));
+    act(() => useActiveChatSessionStore.getState().setSessionId("chat-2"));
+    act(() => useActiveChatSessionStore.getState().setSessionId("chat-1"));
     expect(result.current.selected).toBeNull();
   });
   it("uses the active modal bridge under the stable row key", async () => {

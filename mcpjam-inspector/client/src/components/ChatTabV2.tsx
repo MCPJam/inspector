@@ -1,3 +1,4 @@
+import { usePublishActiveChatSession } from "@/hooks/use-publish-active-chat-session";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { resolveRestoredModel } from "@/lib/model-selection";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
@@ -467,6 +468,7 @@ export function ChatTabV2({
     systemPromptTokenCountLoading,
     resetChat: baseResetChat,
     startChatWithMessages,
+    appSessionScopeId,
     detachToLocalFork,
     consumePersistReceipt,
     consumeTurnAborted,
@@ -744,7 +746,7 @@ export function ChatTabV2({
   }, [fileAttachments]);
 
   const detachHistorySession = useCallback(
-    (toastMessage: string) => {
+    (toastMessage: string, preserveAppSession = false) => {
       resumedThreadSendBaselineRef.current = null;
       cancelPendingHistorySelection();
       setPendingDirectVisibility("private");
@@ -762,6 +764,7 @@ export function ChatTabV2({
       // shown once the fork is confirmed live. `resumedVersion` is cleared by
       // the fork's own hydration, so it survives a fork that never commits.
       void detachToLocalFork(cloneUiMessages(messages), {
+        preserveAppSession,
         toolRenderOverrides: restoredToolRenderOverrides,
       })
         .then((fork) => {
@@ -1230,7 +1233,7 @@ export function ChatTabV2({
       });
     },
     onConflict: () => {
-      detachHistorySession(RESUMED_THREAD_CONFLICT_MESSAGE);
+      detachHistorySession(RESUMED_THREAD_CONFLICT_MESSAGE, true);
     },
     onUnsaved: () => {
       toast.error(RESUMED_THREAD_UNSAVED_MESSAGE);
@@ -1346,6 +1349,7 @@ export function ChatTabV2({
   // The user can still toggle multi-model for new chats afterward.
   const isMultiModelMode =
     canEnableMultiModel && multiModelEnabled && !activeHistorySessionId;
+  usePublishActiveChatSession(chatSessionId, appSessionScopeId, isMultiModelMode, false);
   const { isMultiModelLayoutMode, onModelSelectorOpenChange } =
     useModelSelectorLayoutLock(isMultiModelMode);
 
@@ -2928,6 +2932,7 @@ export function ChatTabV2({
                     <div className="relative flex-1 min-h-0">
                       <StickToBottom.Content className="flex flex-col min-h-0">
                         <Thread
+                          appSessionScopeId={appSessionScopeId}
                           harnessStartupPhase={harnessStartupPhase}
                           chatSessionId={chatSessionId}
                           messages={messages}

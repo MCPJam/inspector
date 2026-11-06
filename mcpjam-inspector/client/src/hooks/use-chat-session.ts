@@ -682,13 +682,20 @@ export interface UseChatSessionOptions {
    */
   usePageTools?: boolean;
   /** Callback when chat is reset */
-  onReset?: (reason?: ChatSessionResetReason) => void;
+  onReset?: (reason?: ChatSessionResetReason, hydration?: ChatSessionHydration) => void;
+}
+
+export interface ChatSessionHydration {
+  appSessionScopeId: string;
+  messages: UIMessage[];
+  toolRenderOverrides: Record<string, ToolRenderOverride>;
 }
 
 export type ChatSessionResetReason =
   | "auth-bootstrap"
   | "hydrate"
   | "fork"
+  | "conflict-fork"
   | "servers-changed"
   | "reset";
 
@@ -819,6 +826,8 @@ export interface UseChatSessionReturn {
    * the reply was cut off, or the turn spent its step budget — else `null`.
    */
   autoResumeNotice: string | null;
+  /** Local App lifetime, independent of the persisted conversation row. */
+  appSessionScopeId: string;
   chatSessionId: string;
 
   // Model state
@@ -941,6 +950,8 @@ export interface UseChatSessionReturn {
   detachToLocalFork: (
     messages: UIMessage[],
     options?: {
+      /** Set only for a conflict receipt continuing the full live transcript. */
+      preserveAppSession?: boolean;
       toolRenderOverrides?: Record<string, ToolRenderOverride>;
     },
   ) => Promise<{ chatSessionId: string } | null>;
@@ -1138,6 +1149,7 @@ interface LiveTraceAccumulatorState {
 
 interface PendingSessionHydration {
   sessionId: string;
+  appSessionScopeId?: string;
   messages: UIMessage[];
   resumedVersion: number | null;
   toolRenderOverrides?: Record<
@@ -2266,9 +2278,22 @@ export function useChatSession(
   );
   // Restoring the stored id — rather than minting a fresh one and seeding it —
   // is what keeps the resumed turns appending to the SAME server-side thread.
-  const [chatSessionId, setChatSessionId] = useState(
+  const [chatSessionId, setChatSessionIdState] = useState(
     () => restoredScenarioTranscript?.chatSessionId ?? generateId(),
   );
+  // The server row changes on conflict, but the local App runtime must not.
+  // Keeping its scope also retains aliases and registrations still hashing;
+  // every ordinary session transition resets both identities together.
+  const [appSessionScopeId, setAppSessionScopeId] = useState(chatSessionId);
+  const appSessionScopeIdRef = useRef(appSessionScopeId);
+  appSessionScopeIdRef.current = appSessionScopeId;
+  // A row id is not a lifetime: returning to the source row of a conflict
+  // fork must not reclaim the fork's retained App scope. Only an explicit
+  // continuation supplies a scope; all other transitions mint a fresh one.
+  const setChatSessionId = useCallback((id: string, appScopeId = generateId()) => {
+    setAppSessionScopeId(appScopeId);
+    setChatSessionIdState(id);
+  }, []);
   const pluginWorkspace =
     typeof options.pluginWorkspace === "function"
       ? options.pluginWorkspace(chatSessionId)
@@ -4288,7 +4313,7 @@ export function useChatSession(
           // the server defends the boundary again in `validateAppToolEntries`.
           appTools: appToolsRegistryRef.current
             .getState()
-            .snapshotForChatBody(chatSessionIdRef.current),
+            .snapshotForChatBody(appSessionScopeIdRef.current),
           // WebMCP page tools, when the caller opted this turn into the tools
           // of an open inspector session. Drained fresh at POST time for the
           // same reason as `appTools`: the page may have registered or dropped
@@ -4404,6 +4429,13 @@ export function useChatSession(
     addToolOutput,
   } = useChat({
     id: chatSessionId,
+    // Seed the new SDK store before its first render. An empty intermediate
+    // transcript unmounts the App's anchor even when its lifetime is retained.
+    messages:
+      pendingSessionHydrationRef.current?.sessionId === chatSessionId &&
+      pendingSessionHydrationRef.current.appSessionScopeId !== undefined
+        ? pendingSessionHydrationRef.current.messages
+        : undefined,
     // Buffered stream chunks can otherwise publish enough synchronous store
     // updates to exhaust React's update-depth limit before it drains effects.
     experimental_throttle: 50,
@@ -4471,7 +4503,7 @@ export function useChatSession(
 
       const entry = appToolsRegistryRef.current
         .getState()
-        .resolve(toolName, chatSessionIdRef.current);
+        .resolve(toolName, appSessionScopeIdRef.current);
       if (!entry) {
         // Two cases:
         //   - server tool name: not an app alias, let the server's
@@ -4552,6 +4584,7 @@ export function useChatSession(
       const controller = new AbortController();
       const registry = appToolsRegistryRef.current.getState();
       registry.registerPendingCall(entry.instance.bridgeId, controller);
+      const invocationSessionId = chatSessionIdRef.current;
       try {
         const raw = await dispatchAppToolCall(
           entry,
@@ -4563,6 +4596,8 @@ export function useChatSession(
         const sanitized = scrubAppToolResultForModel(raw);
         recordAppToolInvocation(
           {
+            chatSessionId: invocationSessionId,
+            appSessionScopeId: entry.instance.chatSessionId,
             alias: tc.toolName,
             rawName: entry.rawName,
             appName: entry.instance.appName,
@@ -5180,7 +5215,7 @@ export function useChatSession(
           ...hydration,
           resolve,
         };
-        setChatSessionId(hydration.sessionId);
+        setChatSessionId(hydration.sessionId, hydration.appSessionScopeId);
       });
     },
     [clearPendingSessionHydration, baseSetMessages, syncResumedVersion],
@@ -5895,6 +5930,7 @@ export function useChatSession(
       messages: UIMessage[],
       options?: {
         resetReason?: ChatSessionResetReason;
+        appSessionScopeId?: string;
         toolRenderOverrides?: Record<string, ToolRenderOverride>;
       },
     ) => {
@@ -5931,6 +5967,7 @@ export function useChatSession(
         : messages;
       const hydrationPromise = queueSessionHydration({
         sessionId: nextSessionId,
+        appSessionScopeId: options?.appSessionScopeId,
         messages: branchMessages,
         resumedVersion: null,
         toolRenderOverrides: options?.toolRenderOverrides,
@@ -6140,11 +6177,15 @@ export function useChatSession(
     async (
       messages: UIMessage[],
       options?: {
+        preserveAppSession?: boolean;
         toolRenderOverrides?: Record<string, ToolRenderOverride>;
       },
     ): Promise<{ chatSessionId: string } | null> => {
       const forkSessionId = await startChatWithMessages(messages, {
-        resetReason: "fork",
+        resetReason: options?.preserveAppSession ? "conflict-fork" : "fork",
+        appSessionScopeId: options?.preserveAppSession
+          ? appSessionScopeIdRef.current
+          : undefined,
         toolRenderOverrides: options?.toolRenderOverrides,
       });
       // Exact match, not "it changed": the live id after a superseded hydration
@@ -6319,7 +6360,14 @@ export function useChatSession(
         persistedSnapshotToolCallIds,
         turnTraces: hydratedTurnTraces,
       });
-      onResetRef.current?.("hydrate");
+      if (chatSessionIdRef.current === session.chatSessionId &&
+          (!options?.shouldApply || options.shouldApply())) {
+        onResetRef.current?.("hydrate", {
+          appSessionScopeId: appSessionScopeIdRef.current,
+          messages: uiMessages,
+          toolRenderOverrides: overrides,
+        });
+      }
     },
     [
       queueSessionHydration,
@@ -6852,6 +6900,7 @@ export function useChatSession(
     status,
     error,
     autoResumeNotice,
+    appSessionScopeId,
     chatSessionId,
 
     // Model state
