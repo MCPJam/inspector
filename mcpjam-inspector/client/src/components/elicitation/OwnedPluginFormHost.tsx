@@ -1,7 +1,7 @@
 import { useRetainedFormPortal } from "./use-retained-form-portal";
 import { PluginFormPreviewServices } from "./form-app-preview";
 import { formResourcePreviewPorts } from "./form-resource-preview";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { decodePrivatePluginFormSchema } from "@/shared/plugin-extensions/form-plan";
 import type { ReactNode } from "react";
 import {
