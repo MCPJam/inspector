@@ -10,6 +10,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatTabV2 } from "../ChatTabV2";
 import { track } from "@/lib/analytics";
+import type { UseChatSessionOptions } from "@/hooks/use-chat-session";
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
@@ -171,10 +172,14 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
   },
 }));
 
+const mockThread = vi.fn();
 vi.mock("@/components/chat-v2/thread", () => ({
-  Thread: ({ messages }: { messages: any[] }) => (
-    <div data-testid="thread" data-message-count={messages.length} />
-  ),
+  Thread: (props: { messages: any[] }) => {
+    mockThread(props);
+    return (
+      <div data-testid="thread" data-message-count={props.messages.length} />
+    );
+  },
 }));
 
 const mockMultiModelChatCard = vi.fn();
@@ -190,15 +195,24 @@ vi.mock("@/components/evals/trace-viewer", () => ({
   TraceViewer: ({
     forcedViewMode,
     trace,
+    appSessionScopeId,
+    onRevealNavigateToChat,
   }: {
     forcedViewMode?: "timeline" | "raw" | "chat";
     trace?: unknown;
+    appSessionScopeId?: string;
+    onRevealNavigateToChat?: () => void;
   }) => (
     <div
       data-testid="trace-viewer"
       data-mode={forcedViewMode ?? "timeline"}
       data-trace={JSON.stringify(trace ?? null)}
-    />
+      data-app-scope={appSessionScopeId}
+    >
+      {onRevealNavigateToChat && (
+        <button onClick={onRevealNavigateToChat}>Reveal in chat</button>
+      )}
+    </div>
   ),
 }));
 
@@ -293,8 +307,12 @@ const mockUseChatSession = {
   submitBlocked: false,
 } as any;
 
+let onChatReset: UseChatSessionOptions["onReset"];
 vi.mock("@/hooks/use-chat-session", () => ({
-  useChatSession: () => mockUseChatSession,
+  useChatSession: (options: UseChatSessionOptions) => {
+    onChatReset = options.onReset;
+    return mockUseChatSession;
+  },
 }));
 
 const sampleLiveTraceEnvelope = {
@@ -336,6 +354,7 @@ describe("ChatTabV2 trace views", () => {
       status: "ready",
       error: undefined,
       chatSessionId: "chat-session-1",
+      appSessionScopeId: "chat-session-1",
       availableModels: [],
       selectedModelIds: [],
       multiModelEnabled: false,
@@ -566,6 +585,70 @@ describe("ChatTabV2 trace views", () => {
     expect(screen.getByTestId("trace-viewer")).toBeInTheDocument();
   });
 
+  it.each([
+    ["conflict-fork", false, true],
+    ["hydrate", true, true],
+    ["hydrate", false, false],
+  ] as const)(
+    "scopes buffered App context after %s (same-row refresh: %s)",
+    (reason, sameRow, keep) => {
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ];
+      render(<ChatTabV2 {...defaultProps} />);
+      const context = { structuredContent: { count: 7 } };
+      act(() =>
+        mockThread.mock.lastCall![0].onModelContextUpdate("counter", context),
+      );
+      act(() =>
+        onChatReset?.(
+          reason,
+          sameRow
+            ? {
+                appSessionScopeId: "chat-session-1",
+                messages: [],
+                toolRenderOverrides: {},
+              }
+            : undefined,
+        ),
+      );
+      act(() =>
+        mockThread.mock.lastCall![0].sendFollowUpMessage("Read the counter"),
+      );
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          widgetModelContext: keep ? [{ toolCallId: "counter", context }] : [],
+        }),
+      );
+    },
+  );
+
+  it("keeps the revealed trace on a conflict and closes it on returning to the source", () => {
+    Object.assign(mockUseChatSession, {
+      messages: [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ],
+      traceViewsSupported: true,
+      hasLiveTimelineContent: true,
+      liveTraceEnvelope: sampleLiveTraceEnvelope,
+    });
+    const { rerender } = render(
+      <ChatTabV2 {...defaultProps} enableTraceViews />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Trace" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reveal in chat" }));
+    const revealed = screen.getByTestId("trace-viewer");
+    expect(revealed).toHaveAttribute("data-mode", "chat");
+    mockUseChatSession.chatSessionId = "fork";
+    rerender(<ChatTabV2 {...defaultProps} enableTraceViews />);
+    expect(screen.getByTestId("trace-viewer")).toBe(revealed);
+    expect(revealed).toHaveAttribute("data-app-scope", "chat-session-1");
+    mockUseChatSession.chatSessionId = "chat-session-1";
+    rerender(<ChatTabV2 {...defaultProps} enableTraceViews />);
+    expect(revealed).not.toBeInTheDocument();
+    expect(screen.getByTestId("thread")).toBeInTheDocument();
+  });
+
   it("snaps back to chat mode when the chat session changes", async () => {
     mockUseChatSession.messages = [
       { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
@@ -585,6 +668,7 @@ describe("ChatTabV2 trace views", () => {
     expect(screen.getByTestId("thread")).toBeInTheDocument();
 
     mockUseChatSession.chatSessionId = "chat-session-2";
+    mockUseChatSession.appSessionScopeId = "chat-session-2";
     rerender(<ChatTabV2 {...defaultProps} enableTraceViews={true} />);
 
     await waitFor(() => {

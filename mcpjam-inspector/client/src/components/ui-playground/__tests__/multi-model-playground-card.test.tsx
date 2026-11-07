@@ -69,6 +69,7 @@ const mockUseChatSession = {
   status: "ready",
   error: undefined,
   chatSessionId: "chat-session-1",
+  appSessionScopeId: "app-owner-1",
   toolsMetadata: {},
   toolServerMap: {},
   liveTraceEnvelope: null,
@@ -300,6 +301,8 @@ describe("MultiModelPlaygroundCard", () => {
     composition.blockingError = undefined;
     mockUseChatSession.status = "ready";
     mockUseChatSession.hiddenEnvironmentActive = false;
+    mockUseChatSession.chatSessionId = "chat-session-1";
+    mockUseChatSession.appSessionScopeId = "app-owner-1";
     useBrowserComparisonStore.setState({ clients: {}, selected: {} });
   });
 
@@ -313,12 +316,12 @@ describe("MultiModelPlaygroundCard", () => {
     const { rerender } = render(<Harness extensionBinding={binding} />);
     const options = lane.chatOptions.mock.calls.at(-1)![0];
     const [scope, servers, ownerOptions] = lane.owner.mock.calls.at(-1)!;
-    const workspace = options.pluginWorkspace("chat-session-1");
+    const workspace = options.pluginWorkspace("app-owner-1");
     expect(workspace.workspaceId).toMatch(/^compare:/);
     expect(scope).toEqual({
       projectId: "project-1",
       hostId: "host",
-      threadId: "chat-session-1",
+      threadId: "app-owner-1",
       pluginWorkspace: workspace,
     });
     expect(servers).toEqual(binding.servers);
@@ -331,10 +334,17 @@ describe("MultiModelPlaygroundCard", () => {
     expect(lane.view.mock.calls.at(-1)![0].apps).toMatchObject({ scope });
     // Another lane never shares the workspace.
     expect(workspace.workspaceId).toContain('"model"');
+    mockUseChatSession.chatSessionId = "another-conflict";
+    rerender(<Harness extensionBinding={binding} />);
+    expect(lane.owner.mock.lastCall![0]).toBe(scope);
+    mockUseChatSession.chatSessionId = "app-owner-1";
+    rerender(<Harness extensionBinding={binding} />);
+    expect(lane.owner.mock.lastCall![0]).toEqual(scope);
+    expect(lane.owner.mock.lastCall![0]).not.toBe(scope);
     rerender(<Harness extensionBinding={null} />);
     expect(lane.owner.mock.calls.at(-1)![0]).toBeNull();
     expect(
-      lane.chatOptions.mock.calls.at(-1)![0].pluginWorkspace("chat-session-1"),
+      lane.chatOptions.mock.calls.at(-1)![0].pluginWorkspace("app-owner-1"),
     ).toBeUndefined();
     expect(lane.view.mock.calls.at(-1)![0].apps).toBeNull();
   });

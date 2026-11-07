@@ -157,6 +157,7 @@ export function MultiModelChatCard({
     status,
     error,
     chatSessionId,
+    appSessionScopeId,
     toolsMetadata,
     toolServerMap,
     liveTraceEnvelope,
@@ -185,9 +186,11 @@ export function MultiModelChatCard({
     pinnedModelProvider: String(model.provider),
     reasoningEffortEnabled: true,
     fixedReasoningEffort: reasoningEffort ?? null,
-    onReset: () => {
-      setWidgetStateQueue([]);
-      setModelContextQueue([]);
+    onReset: (reason) => {
+      if (reason !== "conflict-fork") {
+        setWidgetStateQueue([]);
+        setModelContextQueue([]);
+      }
     },
   });
 
@@ -506,6 +509,7 @@ export function MultiModelChatCard({
                 <StickToBottom.Content className="flex min-h-0 flex-1 flex-col overflow-y-auto">
                   <TraceViewer
                     chatSessionId={chatSessionId}
+                    appSessionScopeId={appSessionScopeId}
                     trace={traceViewerTrace}
                     model={model}
                     toolsMetadata={toolsMetadata}
@@ -534,6 +538,7 @@ export function MultiModelChatCard({
               <div className="flex min-h-64 flex-1 flex-col overflow-hidden p-3">
                 <TraceViewer
                   chatSessionId={chatSessionId}
+                  appSessionScopeId={appSessionScopeId}
                   trace={traceViewerTrace}
                   model={model}
                   toolsMetadata={toolsMetadata}
@@ -570,6 +575,7 @@ export function MultiModelChatCard({
                 ) : (
                   <TraceViewer
                     chatSessionId={chatSessionId}
+                    appSessionScopeId={appSessionScopeId}
                     trace={traceViewerTrace}
                     model={model}
                     toolsMetadata={toolsMetadata}
@@ -605,6 +611,7 @@ export function MultiModelChatCard({
             <div className="relative flex-1 min-h-0">
               <StickToBottom.Content className="flex flex-col min-h-0">
                 <Thread
+                  appSessionScopeId={appSessionScopeId}
                   harnessStartupPhase={harnessStartupPhase}
                   chatSessionId={chatSessionId}
                   messages={messages}

@@ -1,3 +1,4 @@
+import { useAppSessionScope } from "./app-session-scope";
 import { PLUGIN_MODEL_APP_META, pluginModelAppSchema } from "@/shared/plugin-model-app";
 import { retainedResourceProofFor } from "@/shared/retained-app-resources";
 import { isForwardingApprovalId } from "@/shared/forwarding-approval";
@@ -266,6 +267,7 @@ function LivePartSwitch({
   onRecorderReady?: (event: RecorderReadyEvent) => void;
   onReplayControllerReady?: (event: ReplayControllerEvent) => void;
 }) {
+  const appSessionScopeId = useAppSessionScope(chatSessionId);
   const [appSupportedDisplayModes, setAppSupportedDisplayModes] = useState<
     DisplayMode[] | undefined
   >();
@@ -759,7 +761,7 @@ function LivePartSwitch({
             <WidgetReplay
               attributedModelApp={attributedModelApp}
               serverId={serverId}
-              chatSessionId={chatSessionId}
+              chatSessionId={appSessionScopeId}
               toolName={toolInfo.toolName}
               toolCallId={toolInfo.toolCallId}
               {...(() => {

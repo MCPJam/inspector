@@ -1,3 +1,4 @@
+import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import type { CSSProperties, ReactNode } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -553,6 +554,15 @@ describe("ChatTabV2 history sync", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
+  });
+
+  it("publishes separate browser row and live App ownership through ChatTabV2", () => {
+    mockUseChatSession.appSessionScopeId = "chat-tab-app-lifetime";
+    render(<ChatTabV2 {...defaultProps} />);
+    expect(useActiveChatSessionStore.getState()).toMatchObject({
+      sessionId: "chat-session-1", appSessionScopeId: "chat-tab-app-lifetime",
+      compareActive: false, viewOnly: false,
+    });
   });
 
   it("loads org model config from the effective hosted project id", () => {

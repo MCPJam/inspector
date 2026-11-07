@@ -1,3 +1,4 @@
+import { usePublishActiveChatSession } from "@/hooks/use-publish-active-chat-session";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { resolveRestoredModel } from "@/lib/model-selection";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
@@ -64,6 +65,7 @@ import type { DialogElicitation } from "@/components/ToolsTab";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { collectInputHistory } from "@/components/chat-v2/chat-input/input-history";
 import { Thread } from "@/components/chat-v2/thread";
+import { useAppSessionReopenKey } from "@/components/chat-v2/thread/app-session-scope";
 import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
 import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ServerWithName } from "@/hooks/use-app-state";
@@ -100,10 +102,9 @@ import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi
 import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
-import { useChatSession } from "@/hooks/use-chat-session";
 import {
   DETACH_FORK_FAILED_MESSAGE,
-  type ChatSessionResetReason,
+  useChatSession,
 } from "@/hooks/use-chat-session";
 import {
   RESUMED_THREAD_CONFLICT_MESSAGE,
@@ -467,6 +468,7 @@ export function ChatTabV2({
     systemPromptTokenCountLoading,
     resetChat: baseResetChat,
     startChatWithMessages,
+    appSessionScopeId,
     detachToLocalFork,
     consumePersistReceipt,
     consumeTurnAborted,
@@ -514,13 +516,15 @@ export function ChatTabV2({
     hostStyle:
       hostStyle === "claude" || hostStyle === "chatgpt" ? hostStyle : undefined,
     minimalMode,
-    onReset: (reason?: ChatSessionResetReason) => {
-      if (reason === "auth-bootstrap" || reason === "hydrate") {
+    onReset: (reason, hydration) => {
+      if (reason === "auth-bootstrap") {
         return;
       }
-      setModelContextQueue([]);
-      setWidgetStateQueue([]);
-      if (reason === "servers-changed") {
+      if (reason !== "conflict-fork" && !(reason === "hydrate" && hydration)) {
+        setModelContextQueue([]);
+        setWidgetStateQueue([]);
+      }
+      if (reason === "servers-changed" || reason === "hydrate") {
         return;
       }
       setInput("");
@@ -744,7 +748,7 @@ export function ChatTabV2({
   }, [fileAttachments]);
 
   const detachHistorySession = useCallback(
-    (toastMessage: string) => {
+    (toastMessage: string, preserveAppSession = false) => {
       resumedThreadSendBaselineRef.current = null;
       cancelPendingHistorySelection();
       setPendingDirectVisibility("private");
@@ -762,6 +766,7 @@ export function ChatTabV2({
       // shown once the fork is confirmed live. `resumedVersion` is cleared by
       // the fork's own hydration, so it survives a fork that never commits.
       void detachToLocalFork(cloneUiMessages(messages), {
+        preserveAppSession,
         toolRenderOverrides: restoredToolRenderOverrides,
       })
         .then((fork) => {
@@ -1230,7 +1235,7 @@ export function ChatTabV2({
       });
     },
     onConflict: () => {
-      detachHistorySession(RESUMED_THREAD_CONFLICT_MESSAGE);
+      detachHistorySession(RESUMED_THREAD_CONFLICT_MESSAGE, true);
     },
     onUnsaved: () => {
       toast.error(RESUMED_THREAD_UNSAVED_MESSAGE);
@@ -1346,6 +1351,7 @@ export function ChatTabV2({
   // The user can still toggle multi-model for new chats afterward.
   const isMultiModelMode =
     canEnableMultiModel && multiModelEnabled && !activeHistorySessionId;
+  usePublishActiveChatSession(chatSessionId, appSessionScopeId, isMultiModelMode, false);
   const { isMultiModelLayoutMode, onModelSelectorOpenChange } =
     useModelSelectorLayoutLock(isMultiModelMode);
 
@@ -1523,10 +1529,11 @@ export function ChatTabV2({
     );
   }, [modelCompareCards]);
 
+  const appReopenKey = useAppSessionReopenKey(chatSessionId, appSessionScopeId);
   useEffect(() => {
     setTraceViewMode("chat");
     setRevealedInChat(false);
-  }, [chatSessionId]);
+  }, [appSessionScopeId, appReopenKey]);
 
   useEffect(() => {
     if (!evalChatHandoff) {
@@ -2829,6 +2836,9 @@ export function ChatTabV2({
                     <div className="flex flex-1 min-h-0 flex-col">
                       <SingleModelTraceDiagnosticsBody
                         chatSessionId={chatSessionId}
+                        appSessionScopeId={appSessionScopeId}
+                        onModelContextUpdate={handleModelContextUpdate}
+                        onWidgetStateChange={handleWidgetStateChange}
                         activeTraceViewMode={activeTraceViewMode}
                         isThreadEmpty={isThreadEmpty}
                         showLiveTracePending={
@@ -2928,6 +2938,7 @@ export function ChatTabV2({
                     <div className="relative flex-1 min-h-0">
                       <StickToBottom.Content className="flex flex-col min-h-0">
                         <Thread
+                          appSessionScopeId={appSessionScopeId}
                           harnessStartupPhase={harnessStartupPhase}
                           chatSessionId={chatSessionId}
                           messages={messages}
