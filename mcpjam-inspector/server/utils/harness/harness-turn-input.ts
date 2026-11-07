@@ -33,7 +33,8 @@ export function withHarnessTurnContext(messages: ModelMessage[], context?: strin
 }
 
 /** Recorded as discovery information, without pretending an unavailable tool ran. */
-export function unavailableAppToolsSpan(): EvalTraceSpan {
+export function unavailableAppToolsSpan(count = 0): EvalTraceSpan {
   return { id: "unavailable-app-tools", category: "discovery", status: "ok", startMs: 0, endMs: 0,
-    name: "App-provided and page tools are unavailable in this agent runtime." };
+    name: count ? `${count} App-provided tool${count === 1 ? " is" : "s are"} unavailable in this agent runtime.`
+      : "Some App-provided or page tools are unavailable in this agent runtime." };
 }
