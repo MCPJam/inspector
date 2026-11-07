@@ -52,10 +52,13 @@ describe("ConformanceAdvice", () => {
     ).not.toBeInTheDocument();
 
     // The spec words link to their definitions, outside the toggle.
-    for (const word of ["SHOULD", "MAY"]) {
+    for (const [word, section] of [
+      ["SHOULD", 3],
+      ["MAY", 5],
+    ] as const) {
       expect(screen.getByRole("link", { name: word })).toHaveAttribute(
         "href",
-        "https://datatracker.ietf.org/doc/html/bcp14",
+        `https://www.rfc-editor.org/info/rfc2119/#section-${section}`,
       );
     }
 

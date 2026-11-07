@@ -104,10 +104,8 @@ import {
   useEvalRunDecisionBadge,
   useHasBeenVisible,
 } from "@/hooks/use-eval-run-decision-summary";
-import {
-  evalRunDecisionRevision,
-  isTerminalEvalRunStatus,
-} from "@/lib/evals/eval-decision-summary-store";
+import { evalRunDecisionRevision } from "@/lib/evals/eval-decision-summary-store";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 import {
   decisionMeasurementUnitLabel,
   formatDecisionCounts,
@@ -1473,7 +1471,7 @@ function ProjectRunTableRow({
 }) {
   const [visibilityRef, hasBeenVisible, onScreen] =
     useHasBeenVisible<HTMLTableRowElement>();
-  const terminal = isTerminalEvalRunStatus(row.status);
+  const terminal = isEvalRunTerminalStatus(row.status);
   const {
     status: summaryStatus,
     summary,
