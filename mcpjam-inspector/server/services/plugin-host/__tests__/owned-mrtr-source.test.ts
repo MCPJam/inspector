@@ -261,8 +261,9 @@ describe("a pending MRTR form and the client's current Forms toggle", () => {
       { continuationId: "parent", round: 1, responsesBlobId: "answer" },
       new AbortController().signal,
     );
-  const leg = (onPrepared?: (responses: unknown) => void) =>
+  const leg = (onPrepared?: (responses: unknown) => void, beforeCommit?: () => void) =>
     seams.resume.mockImplementationOnce(async (options) => {
+      let preparedInput = false;
       try {
         const prepared = await options.prepareLeg(
           {
@@ -277,13 +278,15 @@ describe("a pending MRTR form and the client's current Forms toggle", () => {
           },
           { input: { action: "accept", content: { name: "bolt" } } },
         );
+        preparedInput = true;
+        beforeCommit?.();
         await prepared.commit();
         // The prepared answer is what the next leg sends to the server.
         onPrepared?.(prepared.responses);
         return { outcome: "completed", result: { content: [] } };
       } catch {
         // The leg helper releases its lease and reports a pre-wire failure.
-        return { outcome: "failed", reason: "admission refused" };
+        return { outcome: "failed", reason: "admission refused", ...(preparedInput ? { terminal: true as const } : {}) };
       }
     });
   let source: ReturnType<typeof pluginFormSources.bind>;
@@ -360,6 +363,17 @@ describe("a pending MRTR form and the client's current Forms toggle", () => {
     });
     expect(drive).not.toHaveBeenCalled();
     expect(seams.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("ends the form when Forms is revoked between preparation and final admission", async () => {
+    const forms = { on: true };
+    const live = service(forms);
+    const delivered = vi.fn();
+    leg(delivered, () => { forms.on = false; });
+    await expect(resume(live)).rejects.toMatchObject({ code: "PLUGIN_FORMS_DISABLED", outcomeUnknown: false });
+    expect(delivered).not.toHaveBeenCalled();
+    expect(seams.cancel).toHaveBeenCalledOnce();
+    expect(() => pluginFormSources.get(source.token, owner, parent)).toThrow("FORM_SOURCE_UNAVAILABLE");
   });
 
   it("delivers the answer when Forms is turned off and on again before submit", async () => {
