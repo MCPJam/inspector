@@ -129,6 +129,9 @@ export function normalizeModelMessagesForConvex(
       if (output) {
         out.output = output;
       }
+      // The raw result is UI data the backend never reads; sending it doubled
+      // the request and the credit estimate (PLB-300).
+      delete out.result;
       return out;
     }
 

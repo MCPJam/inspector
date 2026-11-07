@@ -57,6 +57,8 @@ import { pageToolBindingOf } from "./built-in-tools/page-tools";
 import type { PersistedTurnTrace } from "./chat-ingestion";
 import { buildDirectChatTurnTrace } from "./direct-chat-turn-full-stream";
 import { logger } from "./logger";
+import { fitStepForModel } from "./model-context-window";
+import type { ContextCompactionReport } from "@/shared/model-context-budget";
 import { withoutEmptyTextBlocks } from "./empty-text-blocks";
 import { withProviderSafeToolNames } from "@mcpjam/sdk";
 import {
@@ -224,6 +226,11 @@ export interface DirectChatTurnTraceEvents {
    * final `turn_finish` SSE event.
    */
   onTurnFinish?: (event: DirectChatTurnFinish) => void;
+  /** Fired on a step whose messages were capped or cleared (PLB-300). */
+  onContextCompaction?: (event: {
+    turnId: string;
+    report: ContextCompactionReport;
+  }) => void;
 }
 
 /**
@@ -431,6 +438,8 @@ export interface RunDirectChatTurnOptions {
    * conversation `streamText` accumulates, and the transcript, are unchanged.
    */
   transformStepMessages?: (messages: ModelMessage[]) => ModelMessage[];
+  /** The model's context window when the caller knows it (PLB-300). */
+  modelContextTokens?: number;
   /**
    * Optional `experimental_telemetry` block forwarded verbatim to
    * `streamText`. Eval populates with suite/test/iteration metadata for
@@ -607,6 +616,7 @@ export function runDirectChatTurn(
     shouldPauseAfterStep,
     suspendedToolCallIds,
     transformStepMessages,
+    modelContextTokens,
   } = options;
   const resolvedMaxSteps =
     typeof maxSteps === "number" && Number.isFinite(maxSteps) && maxSteps > 0
@@ -764,7 +774,12 @@ export function runDirectChatTurn(
     ...(experimentalTelemetry
       ? { experimental_telemetry: experimentalTelemetry }
       : {}),
-    prepareStep: async ({ stepNumber, messages: stepMessages }) => {
+    prepareStep: async ({
+      stepNumber,
+      messages: stepMessages,
+      initialMessages,
+      responseMessages,
+    }) => {
       currentStepIndex = stepNumber;
       registerAiSdkPrepareStep(traceContext, stepNumber, {
         modelId,
@@ -796,10 +811,46 @@ export function runDirectChatTurn(
         // a hidden tool call can't take effect (read by `executableTools`).
         advertisedToolNames = new Set(activeToolNames);
       }
-      // What the model is shown this step, when the caller shapes it.
+      const stepTools = activeToolNames
+        ? (Object.fromEntries(
+            activeToolNames.map((name) => [name, tools[name]]),
+          ) as ToolSet)
+        : tools;
+      // What the model is shown this step: rebuilt from the unfitted history,
+      // not from the previous step's output (AI SDK carries that forward), so
+      // a presentation and a cut apply once per step (PLB-300).
+      const unfitted =
+        initialMessages && responseMessages
+          ? [...initialMessages, ...responseMessages]
+          : stepMessages;
+      const shaped =
+        transformStepMessages && unfitted
+          ? transformStepMessages(unfitted)
+          : unfitted;
+      const fitted = shaped
+        ? fitStepForModel({
+            messages: shaped,
+            modelId,
+            provider,
+            contextTokens: modelContextTokens,
+            systemPrompt: providerSystemPrompt,
+            tools,
+            // OpenAI Responses (`openai.responses`, `azure.responses`) replays
+            // a reply by id and rejects it without its reasoning item.
+            dropEarlierReasoning:
+              typeof llmModel === "string" ||
+              !llmModel.provider?.endsWith(".responses"),
+          })
+        : undefined;
+      if (fitted?.report) {
+        traceEvents?.onContextCompaction?.({
+          turnId: traceTurn.turnId,
+          report: fitted.report,
+        });
+      }
       const presentedMessages =
-        transformStepMessages && stepMessages
-          ? transformStepMessages(stepMessages)
+        fitted && (transformStepMessages || fitted.messages !== shaped)
+          ? fitted.messages
           : undefined;
       const request = {
         turnId: traceTurn.turnId,
@@ -807,11 +858,7 @@ export function runDirectChatTurn(
         stepIndex: stepNumber,
         systemPrompt,
         messages: presentedMessages ?? stepMessages ?? traceHistory,
-        tools: activeToolNames
-          ? Object.fromEntries(
-              activeToolNames.map((name) => [name, tools[name]]),
-            ) as ToolSet
-          : tools,
+        tools: stepTools,
       };
       traceContext.recordedRequestPayloads.push({
         turnId: request.turnId,

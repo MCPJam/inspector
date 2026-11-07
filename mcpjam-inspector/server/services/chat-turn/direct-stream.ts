@@ -129,6 +129,7 @@ function formatStreamError(error: unknown, provider?: string): string {
 export function streamDirectChatWithLiveTrace(options: {
   llmModel: RunDirectChatTurnOptions["llmModel"];
   modelId: string;
+  modelContextTokens?: number;
   provider?: string;
   messageHistory: ModelMessage[];
   systemPrompt: string;

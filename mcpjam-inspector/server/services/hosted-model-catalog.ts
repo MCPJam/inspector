@@ -59,6 +59,8 @@ const SEED_IDS: ReadonlySet<string> = new Set(MCPJAM_PROVIDED_MODEL_IDS);
 // successful refresh; on refresh failure the previous value is retained (stale
 // but safe) rather than being cleared.
 let catalogIds: Set<string> | null = null;
+// Context window per catalog id, from the same fetch; empty until it succeeds.
+let catalogContextLengths: ReadonlyMap<string, number> = new Map();
 let refreshInFlight: Promise<void> | null = null;
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 let started = false;
@@ -75,7 +77,10 @@ function catalogUrl(): string | undefined {
  * and always lists every allowed model, so an empty `items` is treated as a
  * failed/implausible fetch rather than an authoritative empty catalog.
  */
-async function fetchCatalogIds(): Promise<Set<string> | null> {
+async function fetchCatalogIds(): Promise<{
+  ids: Set<string>;
+  contextLengths: Map<string, number>;
+} | null> {
   const url = catalogUrl();
   if (!url) return failedCatalogRefresh("fetch_failed");
 
@@ -97,13 +102,17 @@ async function fetchCatalogIds(): Promise<Set<string> | null> {
     )
       return failedCatalogRefresh("invalid_catalog");
     const ids = new Set<string>();
+    const contextLengths = new Map<string, number>();
     for (const item of body.items) {
       if (typeof item?.id === "string" && item.id.length > 0) {
         ids.add(item.id);
+        if (Number.isFinite(item.context_length) && item.context_length > 0) {
+          contextLengths.set(item.id, item.context_length);
+        }
       }
     }
     if (ids.size === 0) return failedCatalogRefresh("invalid_catalog");
-    return ids;
+    return { ids, contextLengths };
   } catch {
     return failedCatalogRefresh(failureReason);
   }
@@ -118,10 +127,12 @@ async function fetchCatalogIds(): Promise<Set<string> | null> {
 export function refreshHostedModelCatalog(): Promise<void> {
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = (async () => {
-    const fresh = await fetchCatalogIds();
-    if (fresh) {
+    const fetched = await fetchCatalogIds();
+    if (fetched) {
+      const fresh = fetched.ids;
       const added = [...fresh].filter((id) => !SEED_IDS.has(id)).length;
       catalogIds = fresh;
+      catalogContextLengths = fetched.contextLengths;
       logger.debug("[hosted-model-catalog] refreshed", {
         catalogSize: fresh.size,
         beyondSeed: added,
@@ -223,6 +234,14 @@ export function isHostedModelDefinition(model: {
   return isHostedCatalogModel(String(model.id), model.provider);
 }
 
+/** A hosted model's context window from the last catalog fetch, if it had one. */
+export function hostedCatalogContextLength(
+  modelId: string,
+  provider?: string,
+): number | undefined {
+  return catalogContextLengths.get(getCanonicalModelId(modelId, provider));
+}
+
 // Rows for `hostedCatalogModelDefinitions`, rebuilt only when `catalogIds` is
 // replaced. Every writer assigns a new Set, so identity is the version.
 let definitionsCache: {
@@ -259,13 +278,18 @@ export function hostedCatalogModelDefinitions(): ModelDefinition[] {
 // ── Test hooks ────────────────────────────────────────────────────────────
 
 /** Seed the dynamic catalog directly (bypasses the network). */
-export function __setHostedCatalogForTests(ids: Iterable<string>): void {
+export function __setHostedCatalogForTests(
+  ids: Iterable<string>,
+  contextLengths: Record<string, number> = {},
+): void {
   catalogIds = new Set(ids);
+  catalogContextLengths = new Map(Object.entries(contextLengths));
 }
 
 /** Reset all module state to a cold start. */
 export function __resetHostedModelCatalogForTests(): void {
   catalogIds = null;
+  catalogContextLengths = new Map();
   definitionsCache = null;
   refreshInFlight = null;
   if (refreshTimer) clearInterval(refreshTimer);
