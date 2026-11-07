@@ -310,7 +310,8 @@ export async function projectSelectedMcpServersAsHostTools(args: {
       }
       tools[harnessMcpToolName(key, toolName)] = withServerSource(
         projected,
-        args.serverDisplayNames?.[serverId],
+        args.serverDisplayNames && Object.hasOwn(args.serverDisplayNames, serverId)
+          ? args.serverDisplayNames[serverId] : undefined,
       );
     }
   }
