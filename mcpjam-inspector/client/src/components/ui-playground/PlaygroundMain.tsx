@@ -39,6 +39,7 @@ import {
   ChatPluginFormHosts,
   OwnedPluginFormHost,
 } from "@/components/elicitation/OwnedPluginFormHost";
+import { TakeoverFormSlot } from "@/components/elicitation/TakeoverFormSlot";
 import { cancelComposerForms } from "@/components/elicitation/composer-form-store";
 import { shouldUseOwnedExtensionModelRoute } from "@/components/host-workspace/model-route";
 import {
@@ -6608,6 +6609,7 @@ export function PlaygroundMain({
           {/* Fullscreen overlay chat (input pinned + collapsible thread) */}
           {showFullscreenChatOverlay && (
             <FullscreenChatOverlay
+              contextAttachments={sharedChatInputProps.contextAttachments}
               chatSessionId={chatSessionId}
               messages={messages}
               open={isFullscreenChatOpen}
@@ -6732,6 +6734,7 @@ export function PlaygroundMain({
           // The chat fullscreen's floating composer, over the global App.
           // Messages go to the current chat.
           <FullscreenChatOverlay
+            contextAttachments={sharedChatInputProps.contextAttachments}
             contained
             chatSessionId={chatSessionId}
             messages={messages}
@@ -6751,6 +6754,16 @@ export function PlaygroundMain({
               setIsTakeoverChatOpen(true);
               void performComposerSubmit();
             }}
+          />
+        ) : null}
+        {hasExtensionProvider && globalTakeoverOpen ? (
+          <TakeoverFormSlot
+            chatWorkspaceId={extensionScope?.pluginWorkspace.workspaceId}
+            globalWorkspaceId={
+              extensionIdentity
+                ? globalOwnerWorkspace(extensionIdentity).workspaceId
+                : undefined
+            }
           />
         ) : null}
         {showLoadingOverlay && (

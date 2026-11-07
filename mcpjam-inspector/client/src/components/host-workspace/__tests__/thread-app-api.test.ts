@@ -301,11 +301,16 @@ describe("thread App authenticated transport", () => {
           result: { content: [], structuredContent: { zero: 0, no: false } },
         }),
       );
-    const approve = vi.fn().mockResolvedValue(true);
+    const waiting = vi.fn();
+    const approve = vi.fn(async () => {
+      expect(waiting).toHaveBeenLastCalledWith(true);
+      return true;
+    });
     await createThreadAppApi(scope).invoke(handle, signal(), approve, {
       name: "read",
       arguments: { path: "synthetic" },
-    });
+    }, waiting);
+    expect(waiting.mock.calls).toEqual([[true], [false]]);
     const bodies = fetch.mock.calls.map((call) => JSON.parse(call[1].body));
     expect(new Set(bodies.map((body) => body.invocationId)).size).toBe(1);
     expect(approve).toHaveBeenCalledTimes(1);

@@ -26,6 +26,8 @@ import {
   PLUGIN_FORM_SUBMIT_TIMEOUT_MS,
 } from "../OwnedPluginFormHost";
 
+import { registerComposerSlot, __resetComposerFormStore } from "../composer-form-store";
+
 function request(id = "owned-request") {
   return {
     rendezvousId: id,
@@ -64,6 +66,70 @@ describe("owned plugin form delivery surface", () => {
       .mockReset()
       .mockResolvedValue({ ok: true, storageId: "owned-receipt" });
   });
+  it("does not resend when a submitting initial dialog gains its first composer", async () => {
+    state.rows = [{ ...request(), requestedSchema: {
+      type: "object", required: ["note"], properties: {
+        note: { type: "string", minLength: 2 },
+      },
+    } }];
+    let finish!: (value: { ok: boolean }) => void;
+    state.mutate.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const view = render(ui());
+    fireEvent.change(screen.getByLabelText(/note/i), { target: { value: "kept answer" } });
+    fireEvent.click(screen.getByRole("button", { name: "Accept", exact: true }));
+    await waitFor(() => expect(state.mutate).toHaveBeenCalledTimes(1));
+    const slot = document.createElement("div");
+    document.body.append(slot);
+    let release!: () => void;
+    act(() => { release = registerComposerSlot("workspace", slot); });
+    expect(screen.getByRole("button", { name: /Continue/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /Continue/ }));
+    expect(state.mutate).toHaveBeenCalledTimes(1);
+    await act(async () => finish({ ok: true }));
+    view.unmount();
+    release();
+    slot.remove();
+  });
+
+  it("keeps an in-flight submission mounted when its composer slot changes", async () => {
+    state.rows = [{ ...request(), requestedSchema: {
+      type: "object", required: ["note"], properties: {
+        note: { type: "string", minLength: 2 },
+      },
+    } }];
+    const background = document.createElement("div");
+    const takeover = document.createElement("div");
+    document.body.append(background, takeover);
+    let releaseBackground = registerComposerSlot("workspace", background);
+    let finish!: (value: { ok: boolean }) => void;
+    state.mutate.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const view = render(ui());
+    const field = await screen.findByRole("textbox");
+    fireEvent.change(field, { target: { value: "kept answer" } });
+    fireEvent.click(screen.getByRole("button", { name: /Continue/ }));
+    await waitFor(() => expect(state.mutate).toHaveBeenCalledTimes(1));
+    let releaseTakeover!: () => void;
+    act(() => { releaseTakeover = registerComposerSlot("workspace", takeover); });
+    expect(takeover.querySelector("input")).toBe(field);
+    expect(screen.getByRole("button", { name: /Continue/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /Continue/ }));
+    act(releaseTakeover);
+    expect(background.querySelector("input")).toBe(field);
+    act(releaseBackground);
+    expect(field.isConnected).toBe(true);
+    expect(screen.getByRole("dialog")).toContainElement(field);
+    act(() => { releaseBackground = registerComposerSlot("workspace", background); });
+    expect(background.querySelector("input")).toBe(field);
+    expect(screen.getByRole("button", { name: /Continue/ })).toBeDisabled();
+    expect(state.mutate).toHaveBeenCalledTimes(1);
+    await act(async () => { finish({ ok: true }); });
+    await waitFor(() => expect(screen.queryByRole("textbox")).not.toBeInTheDocument());
+    view.unmount();
+    releaseBackground();
+    background.remove();
+    takeover.remove();
+  });
+
   it("survives StrictMode and explicitly retries the same private receipt after an uncertain acknowledgement", async () => {
     state.mutate.mockRejectedValueOnce(new Error("lost acknowledgement"));
     render(ui());
@@ -241,4 +307,5 @@ describe("owned plugin form delivery surface", () => {
 });
 afterEach(() => {
   vi.useRealTimers();
+  __resetComposerFormStore();
 });

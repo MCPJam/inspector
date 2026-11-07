@@ -102,9 +102,15 @@ export function ownedPluginFormSchema(
 export function ownedMrtrFormCapabilities(
   base: Record<string, unknown>,
 ): Record<string, unknown> {
+  const elicitation = base.elicitation;
   return {
     ...base,
-    elicitation: { form: {} },
+    elicitation: {
+      ...(elicitation && typeof elicitation === "object" && !Array.isArray(elicitation)
+        ? elicitation
+        : {}),
+      form: {},
+    },
     extensions: {
       ...(base.extensions as Record<string, unknown> | undefined),
       [OPENAI_ELICITATION_EXTENSION]: { form: {} },
@@ -125,6 +131,7 @@ export function createOwnedPluginMrtr(deps: {
   bearer: string;
   projectId: string;
   serverId: string;
+  serverName?: () => string | undefined;
   manager: () => MCPClientManager | undefined;
   assertCurrent: () => Promise<unknown>;
   sourceBinding: { hostId: string; hostRevision: string };
@@ -133,6 +140,8 @@ export function createOwnedPluginMrtr(deps: {
   uploadTarget?: () => "local-stdio" | "computer" | undefined;
   /** The client's File resources toggle; absent counts as off. */
   fileResources?: boolean;
+  /** Latest permission read by assertCurrent; issuance retains fileResources. */
+  fileResourcesEnabled?: () => boolean;
   /** The client's CURRENT Forms toggle, as of the latest `assertCurrent`
    * (one fresh admission read). Absent counts as on. */
   formsEnabled?: () => boolean;
@@ -252,6 +261,7 @@ export function createOwnedPluginMrtr(deps: {
       bearer: deps.bearer,
       projectId: deps.projectId,
       serverId: deps.serverId,
+      serverName: deps.serverName?.(),
       negotiatedEra,
       bindingFingerprint: fingerprint(current, op),
       schemaDisplayMaxBytes: PLUGIN_FORM_SCHEMA_MAX_BYTES,
@@ -366,6 +376,23 @@ export function createOwnedPluginMrtr(deps: {
       // form was shown with.
       if (formsOff()) return formsDisabled();
       let turnedOff = false;
+      let uploadRefusal: PluginContinuationRefused | undefined;
+      const assertUploadAllowed = (
+        origin: ResolvedInvocationContext["origin"],
+        hasUploads: boolean,
+      ) => {
+        if (
+          origin === "app" && hasUploads &&
+          !(deps.fileResourcesEnabled?.() ?? fileResources)
+        ) {
+          uploadRefusal = withPluginDiagnostic(
+            new PluginContinuationRefused("PLUGIN_FORM_WEB_UPLOAD_UNSUPPORTED"),
+            deps.serverId,
+            "Form submission refused: File resources is turned off for this client",
+          );
+          throw uploadRefusal;
+        }
+      };
       const client = current.getManagedClient(deps.serverId);
       // No wire started: the answer can be resent once the server reconnects.
       if (!client)
@@ -414,9 +441,10 @@ export function createOwnedPluginMrtr(deps: {
             Object.keys(state.pendingInputRequests).length
           )
             throw new PluginInvocationError("CONTINUATION_FORM_UNSUPPORTED");
-          const deliveries: ReturnType<
-            typeof pluginFormFileGrants.prepareDelivery
-          >[] = [];
+          const deliveries: {
+            delivery: ReturnType<typeof pluginFormFileGrants.prepareDelivery>;
+            origin: ResolvedInvocationContext["origin"];
+          }[] = [];
           const sources: AbortSignal[] = [];
           const mapped = Object.fromEntries(
             Object.entries(state.pendingInputRequests).map(([key, request]) => {
@@ -464,7 +492,8 @@ export function createOwnedPluginMrtr(deps: {
                 original.token,
                 answer.content,
               );
-              deliveries.push(delivery);
+              assertUploadAllowed(original.source.origin, delivery.hasUploads);
+              deliveries.push({ delivery, origin: original.source.origin });
               return [key, { ...answer, content: delivery.content }];
             }),
           );
@@ -473,8 +502,13 @@ export function createOwnedPluginMrtr(deps: {
             commit: () => {
               signal.throwIfAborted();
               for (const source of sources) source.throwIfAborted();
-              for (const delivery of deliveries) delivery.assertReady();
-              for (const delivery of deliveries) delivery.commit();
+              // The durable pre-wire fence awaits after preparation; permission
+              // must still hold before any upload is promoted for delivery.
+              for (const { delivery, origin } of deliveries) {
+                assertUploadAllowed(origin, delivery.hasUploads);
+                delivery.assertReady();
+              }
+              for (const { delivery } of deliveries) delivery.commit();
             },
           };
         },
@@ -522,6 +556,7 @@ export function createOwnedPluginMrtr(deps: {
               continuationId: submission.continuationId,
               round: result.round,
               serverId: deps.serverId,
+              serverName: deps.serverName?.(),
               method: "tools/call",
               operationLabel: params.name,
               inputRequests: result.displays,
@@ -541,6 +576,7 @@ export function createOwnedPluginMrtr(deps: {
       }
       // Forms went off during this leg's admission: nothing reached the wire.
       if (!wireStarted && turnedOff) return formsDisabled();
+      if (!wireStarted && uploadRefusal) throw uploadRefusal;
       if (!wireStarted && result.outcome === "failed")
         throw new PluginContinuationRefused();
       pluginFormSources.closeOperation(authorization.owner, invocationId);
