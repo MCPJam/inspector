@@ -231,7 +231,7 @@ export async function reviewStdioCommandApproval(
       }, projectId);
     } else if (body && typeof body === "object" && "approved" in body && body.approved === true) {
       toast.success("Already allowed on this device. Send your message again.");
-    } else throw new Error("The command review did not include approval details. Try reviewing it again.");
+    } else throw new Error("Could not review the command. Try again.");
   } catch {
     // Keep the command unapproved and leave the original turn untouched.
     toast.error("The command could not be reviewed. Try again.");
