@@ -256,7 +256,10 @@ export function getCaniuseSupportLevel(
       // pass through a `_meta` challenge), but for a host nobody measured it is
       // not a fact about that host.
       field.id === "unauthorizedChallenge" ||
-      field.id === "toolResultAuthChallenge") &&
+      field.id === "toolResultAuthChallenge" ||
+      // A client with no saved Event delivery has only MCPJam's default for
+      // its style, which is not a measurement.
+      field.id === "eventsDeliveryModes") &&
     field.read(config) === undefined
   ) {
     return "unknown";

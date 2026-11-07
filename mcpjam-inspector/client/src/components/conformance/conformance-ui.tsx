@@ -268,7 +268,7 @@ export type ScoreSummary = Pick<
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-/** A sentence after the verdict: "11 could not run and 15 not applicable." */
+/** A sentence after the verdict: "11 checks could not run and 15 checks not applicable." */
 function exceptionSentence(parts: string[]): string {
   if (parts.length <= 1) return `${parts[0] ?? ""}.`;
   if (parts.length === 2) return `${parts[0]} and ${parts[1]}.`;
@@ -325,6 +325,11 @@ export function OverallScoreCard({
   const missingInputs = score
     ? Math.max(0, score.passed + score.failed + score.couldNotRun - score.applicable)
     : 0;
+  const signInBlocked = Math.min(blockedBySignIn, score?.couldNotRun ?? 0);
+  const inputSentence =
+    missingInputs > 0
+      ? `${plural(missingInputs, "check")} need${missingInputs === 1 ? "s" : ""} input. Select tools in setup and run again.`
+      : null;
 
   const verdict = (() => {
     // A partial score is no verdict: a clean Protocol would read "Fully
@@ -334,7 +339,6 @@ export function OverallScoreCard({
         ? `Running conformance checks. ${progress.done} of ${progress.total} suites done.`
         : "Running conformance checks...";
     }
-    const signInBlocked = Math.min(blockedBySignIn, score?.couldNotRun ?? 0);
     if (score && signInBlocked > 0) {
       const otherUnrun = score.couldNotRun - signInBlocked;
       return [
@@ -345,10 +349,6 @@ export function OverallScoreCard({
         .filter(Boolean)
         .join(" ");
     }
-    const inputSentence =
-      missingInputs > 0
-        ? `${plural(missingInputs, "check")} need${missingInputs === 1 ? "s" : ""} input. Select tools in setup and run again.`
-        : null;
     if (
       score?.outcome === "incomplete" &&
       missingInputs > 0 &&
@@ -400,14 +400,24 @@ export function OverallScoreCard({
   })();
 
   // The fraction already says how many passed. This line is only the checks
-  // the fraction leaves out.
+  // the fraction leaves out, minus the counts the verdict already gives.
+  const verdictCountsUnrun =
+    signInBlocked > 0 || scored?.outcome === "incomplete";
+  const verdictCountsInputs =
+    inputSentence !== null && verdict.includes(inputSentence);
   const counts =
     score && !isRunning
       ? [
-          score.couldNotRun > missingInputs ? `${score.couldNotRun - missingInputs} could not run` : null,
-          missingInputs ? `${missingInputs} not run (missing input)` : null,
-          score.pending ? `${score.pending} unscored` : null,
-          score.notApplicable ? `${score.notApplicable} not applicable` : null,
+          score.couldNotRun > missingInputs && !verdictCountsUnrun
+            ? `${plural(score.couldNotRun - missingInputs, "check")} could not run`
+            : null,
+          missingInputs && !verdictCountsInputs
+            ? `${plural(missingInputs, "check")} not run (missing input)`
+            : null,
+          score.pending ? `${plural(score.pending, "check")} unscored` : null,
+          score.notApplicable
+            ? `${plural(score.notApplicable, "check")} not applicable`
+            : null,
           oauthNotScored ? "OAuth not scored (no auth)" : null,
         ].filter((part): part is string => part !== null)
       : [];

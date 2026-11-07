@@ -27,6 +27,7 @@ import {
 } from "../../services/swarm-agent.js";
 import { upstreamRefusalRouteError } from "../../services/upstream-refusal.js";
 import type { SwarmStreamEvent } from "../../../shared/swarm-stream-events.js";
+import { isJourneyRunTerminalStatus } from "../../../shared/journey-run-status.js";
 import { logger } from "../../utils/logger.js";
 import { assertBearerToken } from "./errors.js";
 
@@ -65,12 +66,18 @@ swarmRuns.get("/runs/:runId/stream", async (c) => {
   // subscribe and rejection.
   const bearerToken = await getConvexBearerForRequest(c);
   let authorized = false;
+  // Kept from the same read: without a hub, only a status the backend has
+  // settled may tell the client the run is over.
+  let backendStatus: unknown;
   try {
-    const run = await createConvexClient(bearerToken).query(
+    const run: unknown = await createConvexClient(bearerToken).query(
       "journeyRuns:getJourneyRun" as never,
       { runId } as never
     );
     authorized = run != null;
+    if (typeof run === "object" && run !== null && "status" in run) {
+      backendStatus = run.status;
+    }
   } catch (error) {
     // Membership failure, malformed id, or Convex unreachable. Fail CLOSED —
     // a stream is not worth serving on an unverified authorization.
@@ -95,12 +102,16 @@ swarmRuns.get("/runs/:runId/stream", async (c) => {
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       if (!hub) {
-        // Run already finished (or never started on this process). Clients
-        // fall back to Convex + blobs for history.
+        // No runner on this process. A settled backend status means the run
+        // is over and clients read history from Convex + blobs. Anything else
+        // (running elsewhere, not started yet, runner lost, status unknown)
+        // is not a completion, so the client keeps its durable view.
         try {
           controller.enqueue(
             encodeSseEvent({
-              type: "run_complete",
+              type: isJourneyRunTerminalStatus(backendStatus)
+                ? "run_complete"
+                : "run_remote",
               runId,
               hostId: "",
               chatSessionId: "",
