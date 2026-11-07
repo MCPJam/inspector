@@ -1,3 +1,4 @@
+import { useSandboxReadyDeadline, SANDBOX_READY_TIMEOUT_MS } from "./use-sandbox-ready-deadline";
 import { createAppToolDiscovery } from "./app-tool-discovery";
 import { useAppToolPresentation } from "./app-tool-presentation";
 import { useInitialRenderOutcome } from "./use-initial-render-outcome";
@@ -3802,6 +3803,18 @@ export function MCPAppsRendererSurface({
     hasWidgetHtml,
     logReady: (details) =>
       logWidgetDebug("ui-to-host", "debug/sandbox-proxy-ready", details),
+  });
+
+  useSandboxReadyDeadline({
+    waiting: !!widgetHtml && sandboxProxyGeneration === 0 && !loadError,
+    identity: toolCallId,
+    onTimeout: () => {
+      setLoadError("The app sandbox did not become ready. Reload this page to try again.");
+      logWidgetDebug("host-to-ui", "debug/sandbox-proxy-timeout", {
+        code: "SANDBOX_PROXY_TIMEOUT",
+        timeoutMs: SANDBOX_READY_TIMEOUT_MS,
+      });
+    },
   });
 
   useEffect(() => {

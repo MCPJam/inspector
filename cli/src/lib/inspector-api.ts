@@ -1,3 +1,4 @@
+import type { InspectorProjectTarget } from "./inspector-project-target.js";
 import { randomBytes } from "node:crypto";
 import {
   readFileSync,
@@ -564,13 +565,36 @@ export class InspectorApiClient {
   async connectServer(
     serverId: string,
     serverConfig: unknown,
-    options: { timeoutMs?: number } = {},
+    options: { timeoutMs?: number; target?: InspectorProjectTarget } = {},
   ) {
-    return this.request("/api/mcp/connect", {
-      method: "POST",
-      body: { serverId, serverConfig },
-      timeoutMs: options.timeoutMs,
-    });
+    const target = options.target;
+    try {
+      return await this.request("/api/mcp/connect", {
+        method: "POST",
+        body: target
+          ? {
+              projectId: target.projectId,
+              serverId: target.serverId,
+              serverName: target.serverName,
+            }
+          : { serverId, serverConfig },
+        ...(target
+          ? { headers: { Authorization: `Bearer ${target.accessToken}` } }
+          : {}),
+        timeoutMs: options.timeoutMs,
+      });
+    } catch (error) {
+      if (
+        !target &&
+        error instanceof Error &&
+        error.message.includes("projectId is required")
+      ) {
+        throw operationalError(
+          "This Inspector requires a saved project server. Use --server-id <id> with --project <id-or-name>. Add ad-hoc configurations in Inspector first.",
+        );
+      }
+      throw error;
+    }
   }
 
   async listServers() {

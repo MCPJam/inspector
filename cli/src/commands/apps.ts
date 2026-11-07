@@ -1,3 +1,6 @@
+import { declareMcpjamUse } from "../lib/deployment-preflight.js";
+import { resolveInspectorProjectTarget } from "../lib/inspector-project-target.js";
+import { platformOptionsOf } from "../lib/platform-command.js";
 import {
   conformanceExitCode,
   conformanceSuiteExitCode,
@@ -94,6 +97,10 @@ export interface AppsRenderOptions extends SharedServerTargetOptions {
   protocol?: string;
   serverName?: string;
   inspectorUrl?: string;
+  project?: string;
+  serverId?: string;
+  apiKey?: string;
+  apiUrl?: string;
   requireRender?: boolean;
 }
 
@@ -109,6 +116,10 @@ export interface AppsSessionStartOptions extends SharedServerTargetOptions {
   protocol?: string;
   serverName?: string;
   inspectorUrl?: string;
+  project?: string;
+  serverId?: string;
+  apiKey?: string;
+  apiUrl?: string;
   requireRender?: boolean;
 }
 
@@ -164,6 +175,19 @@ function getConformanceGlobals(command: Command, reporter?: ReporterFormat): {
 
 function writeConformanceOutput(output: string): void {
   process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
+}
+
+function addRenderServerOptions(command: Command): Command {
+  return declareMcpjamUse(
+    addSharedServerOptions(command)
+      .option("--project <id-or-name>", "Project containing the saved server")
+      .option("--server-id <id>", "Saved project server to render")
+      .option("--api-key <key>", "MCPJam API key (or use cloud login)")
+      .option("--api-url <url>", "MCPJam API base URL"),
+    {
+      when: (options) => typeof options.serverId === "string",
+    },
+  );
 }
 
 export function registerAppsCommands(program: Command): void {
@@ -247,7 +271,7 @@ export function registerAppsCommands(program: Command): void {
     }
   });
 
-  addSharedServerOptions(
+  addRenderServerOptions(
     apps
       .command("render")
       .description(
@@ -282,7 +306,8 @@ export function registerAppsCommands(program: Command): void {
       ),
   ).action(async (options: AppsRenderOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const config = parseServerConfig({
+    const target = await resolveInspectorProjectTarget(platformOptionsOf<AppsRenderOptions>(command));
+    const config = target ? undefined : parseServerConfig({
       ...options,
       timeout: globalOptions.timeout,
     });
@@ -322,7 +347,8 @@ export function registerAppsCommands(program: Command): void {
     const response = await runWidgetRender({
       baseUrl: options.inspectorUrl,
       config,
-      serverName,
+      ...(target ? { target } : {}),
+      serverName: target?.serverName ?? serverName,
       toolName,
       parameters,
       injectOpenAiCompat,
@@ -364,7 +390,7 @@ export function registerAppsCommands(program: Command): void {
       "Interactive headless widget sessions via the local Inspector. `action` drives by pixel coordinate; `snapshot` + `step` drive by role/name/testId, which is what a caller that cannot see the screenshot needs.",
     );
 
-  addSharedServerOptions(
+  addRenderServerOptions(
     session
       .command("start")
       .description("Render a widget and keep it mounted for stepping")
@@ -397,7 +423,8 @@ export function registerAppsCommands(program: Command): void {
       ),
   ).action(async (options: AppsSessionStartOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const config = parseServerConfig({
+    const target = await resolveInspectorProjectTarget(platformOptionsOf<AppsSessionStartOptions>(command));
+    const config = target ? undefined : parseServerConfig({
       ...options,
       timeout: globalOptions.timeout,
     });
@@ -437,7 +464,8 @@ export function registerAppsCommands(program: Command): void {
     const response = await runWidgetSessionStart({
       baseUrl: options.inspectorUrl,
       config,
-      serverName,
+      ...(target ? { target } : {}),
+      serverName: target?.serverName ?? serverName,
       toolName,
       parameters,
       injectOpenAiCompat,
