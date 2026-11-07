@@ -25,9 +25,9 @@ describe("shared ordinary tool admission", () => {
   const readTool = { ...tool, annotations: { readOnlyHint: true } };
   const error = (kind: string) => new Error(kind);
 
-  it("admits an assembly-sized App read without changing its bytes or schema validation", () => {
+  it.each(["app", "settings"] as const)("admits an assembly-sized %s read without changing its bytes or schema validation", (origin) => {
     const result = fileResult(6_090_525);
-    const validate = pluginToolCallValidation(readTool, {}, error, "app");
+    const validate = pluginToolCallValidation(readTool, {}, error, origin);
     expect(() => validate(result)).not.toThrow();
     expect(JSON.stringify(result)).toHaveLength(6_090_525);
     expect(result.structuredContent.blob.length).toBeGreaterThan(6_000_000);
@@ -45,7 +45,7 @@ describe("shared ordinary tool admission", () => {
   it("keeps the ordinary budget for non-App origins and mutating or unannotated App calls", () => {
     const result = fileResult(512 * 1024 + 1);
     for (const origin of PLUGIN_INVOCATION_ORIGINS.filter(
-      (value) => value !== "app",
+      (value) => value !== "app" && value !== "settings",
     ))
       expect(() =>
         pluginToolCallValidation(readTool, {}, error, origin)(result),

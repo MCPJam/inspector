@@ -62,6 +62,7 @@ type Grant = {
   release?: () => Promise<void>;
   promoted: boolean;
   closed: boolean;
+  retainUntil: number;
   retryAfter?: number;
   ready: Promise<void>;
   expiry: ReturnType<typeof setTimeout>;
@@ -166,7 +167,10 @@ export class PluginFormFileGrants {
       this.janitor.unref();
     }
     if (!localJournal) return Promise.resolve();
-    this.startup ??= this.sweepJournal();
+    this.startup ??= this.sweepJournal().catch((error: unknown) => {
+      this.startup = undefined;
+      throw error;
+    });
     return this.startup;
   }
   private sweepJournal() {
@@ -300,6 +304,7 @@ export class PluginFormFileGrants {
         paths: [],
         promoted: false,
         closed: false,
+        retainUntil: Date.now() + FORM_FILE_RETENTION_MS,
         ready: Promise.resolve(),
         expiry: setTimeout(() => this.remove(key), FORM_FILE_RETENTION_MS),
         detach: () => {},
@@ -447,15 +452,19 @@ export class PluginFormFileGrants {
     grant.closed = true;
     grant.detach();
     clearTimeout(grant.expiry);
-    const cleanup = grant.ready
-      .catch(() => {})
-      .then(async () => {
+    const release = async () => {
         if (grant.release) await grant.release();
         if (this.records.get(key) === grant) this.records.delete(key);
-      })
+    };
+    // A failed upload still owns its reservation and needs the same release.
+    const cleanup = grant.ready
+      .then(release, release)
       .catch((error: unknown) => {
-        grant.retryAfter = Date.now() + 60_000;
+        const expired = Date.now() >= grant.retainUntil;
+        if (expired && this.records.get(key) === grant) this.records.delete(key);
+        else grant.retryAfter = Math.min(Date.now() + 60_000, grant.retainUntil);
         logger.warn("[plugin-forms] temporary file cleanup failed", {
+          expired,
           errorName: error instanceof Error ? error.name : typeof error,
           ...(error instanceof PluginInvocationError
             ? { errorCode: error.code }
@@ -468,8 +477,8 @@ export class PluginFormFileGrants {
     this.deleting.set(key, cleanup);
   }
   private retryCleanup() {
-    // Failed closed grants still count against the existing upload bounds. Only
-    // their journal-verified release is retried; no invocation is resumed.
+    // Retry only through retention. A refused ownership check never authorizes
+    // deleting the tree; the durable journal remains responsible for its bytes.
     for (const [key, grant] of this.records)
       if (grant.closed) this.remove(key);
   }

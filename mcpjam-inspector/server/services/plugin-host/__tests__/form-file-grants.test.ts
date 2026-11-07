@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -247,6 +247,41 @@ describe("original local stdio file grants", () => {
     vi.advanceTimersByTime(30 * 60_000);
     await f.registry.drain();
     expect(await readdir(f.base)).toEqual([]);
+  });
+  it("retries startup after a transient journal failure", async () => {
+    const f = await fixture();
+    const sweep = vi.spyOn(PluginFormFileJournal.prototype, "sweep")
+      .mockRejectedValueOnce(new Error("temporary I/O failure"))
+      .mockResolvedValue({ retained: 0, removed: 0, refused: 0, overflow: false });
+    try {
+      await expect(f.registry.start()).rejects.toThrow("temporary I/O failure");
+      await expect(f.registry.start()).resolves.toMatchObject({ refused: 0 });
+      expect(sweep).toHaveBeenCalledTimes(2);
+    } finally { sweep.mockRestore(); }
+  });
+  it("expires closed receipts after retention without deleting a refused placement", async () => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    const release = vi.spyOn(PluginFormFileJournal.prototype, "release")
+      .mockRejectedValue(new Error("ownership marker changed"));
+    try {
+      const selected = await f.registry.upload(f.input);
+      const placement = (await readdir(f.base))[0]!;
+      await writeFile(join(f.base, placement, "ownership.json"), "{}", { mode: 0o600 });
+      f.sourceAbort.abort();
+      await f.registry.drain();
+      await vi.advanceTimersByTimeAsync(30 * 60_000);
+      await f.registry.drain();
+      const attempts = release.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(2 * 60_000);
+      await f.registry.drain();
+      expect(release).toHaveBeenCalledTimes(attempts);
+      expect(await readdir(f.base)).not.toEqual([]);
+      expect(() => f.registry.deliver(f.current, "opaque", { files: selected.uris }))
+        .toThrow("FORM_FILE_UNAVAILABLE");
+      const next = await f.registry.upload({ ...f.input, sourceSignal: new AbortController().signal });
+      expect(next.uris).not.toEqual(selected.uris);
+    } finally { release.mockRestore(); }
   });
   it("coalesces journal sweeps and drains the active sweep before returning", async () => {
     vi.useFakeTimers();
