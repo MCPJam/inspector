@@ -184,9 +184,11 @@ export function loadPrivateEgressAllowlist(): PrivateEgressAllowlist {
   if (!loadedAllowlist || loadedAllowlist.raw !== raw) {
     const { allowlist, invalid } = parsePrivateEgressAllowlist(raw);
     if (invalid.length > 0) {
+      // Entries by position, never quoted: a mistyped entry can be a pasted
+      // URL with credentials, and this goes to Sentry and Axiom.
       logger.error(
         `[egress] MCPJAM_PRIVATE_EGRESS_ALLOWLIST is ignored, so hosted mode will dial no private address: ${invalid
-          .map(({ entry, reason }) => `"${entry}" ${reason}`)
+          .map(({ position, reason }) => `entry ${position} ${reason}`)
           .join("; ")}. Fix the entries and restart.`
       );
     }

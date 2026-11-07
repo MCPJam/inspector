@@ -229,9 +229,22 @@ describe("an invalid list", () => {
     expect(error).toHaveBeenCalledTimes(1);
     const [message] = error.mock.calls[0];
     expect(message).toContain("MCPJAM_PRIVATE_EGRESS_ALLOWLIST is ignored");
-    expect(message).toContain('"*.svc.cluster.local"');
-    expect(message).toContain('"172.16.0.0/33"');
-    expect(message).not.toContain('"10.0.0.0/8"');
+    expect(message).toContain("entry 2 is not a host suffix");
+    expect(message).toContain("entry 3 needs a prefix length");
+    expect(message).not.toContain("entry 1 ");
+    expect(message).not.toContain("*.svc.cluster.local");
+    expect(message).not.toContain("172.16.0.0/33");
+  });
+
+  it("names a bad entry by position, so a pasted URL's credentials stay out of the log", () => {
+    const error = vi.spyOn(logger, "error").mockImplementation(() => undefined);
+    allow("10.0.0.0/8, https://ops:hunter2@mcp.internal.example/mcp?token=abc");
+
+    expect(isBlockedEgressHost("10.0.0.1", true)).toBe(true);
+    expect(error).toHaveBeenCalledTimes(1);
+    const [message] = error.mock.calls[0];
+    expect(message).toContain("entry 2 ");
+    expect(message).not.toMatch(/hunter2|ops:|token=|mcp\.internal/);
   });
 
   it("reports a value once, not on every check", async () => {

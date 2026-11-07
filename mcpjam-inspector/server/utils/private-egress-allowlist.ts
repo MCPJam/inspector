@@ -49,9 +49,15 @@ export interface PrivateEgressAllowlist {
 }
 
 export interface InvalidAllowlistEntry {
+  /** As written. Not for logs: a mistyped entry can be a pasted URL with credentials. */
   entry: string;
+  /** Its 1-based place in the comma-separated value, for messages that must not quote it. */
+  position: number;
   reason: string;
 }
+
+/** What the entry parsers report; the list parser adds the position. */
+type EntryFault = Omit<InvalidAllowlistEntry, "position">;
 
 export interface ParsedPrivateEgressAllowlist {
   allowlist: PrivateEgressAllowlist;
@@ -155,7 +161,7 @@ function addressBytes(text: string): AddressBytes | null {
   return ipv4Bytes(text) ?? (text.includes(":") ? ipv6Bytes(text) : null);
 }
 
-function parseCidr(entry: string): Cidr | InvalidAllowlistEntry {
+function parseCidr(entry: string): Cidr | EntryFault {
   const slash = entry.lastIndexOf("/");
   const address = slash === -1 ? entry : entry.slice(0, slash);
   const bytes = addressBytes(address);
@@ -183,7 +189,7 @@ function parseCidr(entry: string): Cidr | InvalidAllowlistEntry {
 /** RFC 1123 labels: letters, digits and inner hyphens. */
 const HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
-function parseSuffix(entry: string): string | InvalidAllowlistEntry {
+function parseSuffix(entry: string): string | EntryFault {
   const suffix = normalizeEgressHost(entry.replace(/^\./, ""));
   const labels = suffix.split(".");
   if (
@@ -218,7 +224,7 @@ export function parsePrivateEgressAllowlist(
   const suffixes: string[] = [];
   const invalid: InvalidAllowlistEntry[] = [];
 
-  for (const piece of (raw ?? "").split(",")) {
+  for (const [index, piece] of (raw ?? "").split(",").entries()) {
     const entry = piece.trim();
     if (!entry) continue;
     // Anything shaped like an address is judged as one: an entry made of
@@ -228,7 +234,8 @@ export function parsePrivateEgressAllowlist(
         ? parseCidr(entry)
         : parseSuffix(entry);
     if (typeof parsed === "string") suffixes.push(parsed);
-    else if ("reason" in parsed) invalid.push(parsed);
+    else if ("reason" in parsed)
+      invalid.push({ ...parsed, position: index + 1 });
     else cidrs.push(parsed);
   }
 

@@ -157,8 +157,10 @@ MCPJAM_PRIVATE_EGRESS_ALLOWLIST=10.0.0.0/8,fd00::/8,svc.cluster.local
 - Every redirect hop is checked again, so a listed host cannot redirect onto an
   unlisted one.
 - One invalid entry voids the whole list, so a typo never widens it: nothing
-  private is reachable, and the server logs an error at boot naming each bad
-  entry. In production the console shows it only with `VERBOSE_LOGS=true`.
+  private is reachable, and the server logs an error at boot giving each bad
+  entry's position in the list and what is wrong with it. The entry itself is
+  not logged, since it could be a pasted URL with credentials. In production
+  the console shows the error only with `VERBOSE_LOGS=true`.
 
 The preflight check queries DNS directly, without `/etc/hosts`, so use fully
 qualified names such as `mcp.tools.svc.cluster.local`.

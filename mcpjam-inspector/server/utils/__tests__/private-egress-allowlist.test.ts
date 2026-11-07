@@ -63,7 +63,9 @@ describe("parsePrivateEgressAllowlist — what an entry is", () => {
     const parsed = parsePrivateEgressAllowlist(
       "10.0.0.0/8,svc.cluster.local,10.0.0.0/",
     );
-    expect(parsed.invalid.map(({ entry }) => entry)).toEqual(["10.0.0.0/"]);
+    expect(
+      parsed.invalid.map(({ entry, position }) => [entry, position]),
+    ).toEqual([["10.0.0.0/", 3]]);
     expect(parsed.allowlist.isEmpty).toBe(true);
     // Neither the valid range nor the valid suffix survives the bad entry.
     expect(parsed.allowlist.admits({ hostname: "10.1.2.3" })).toBe(false);
