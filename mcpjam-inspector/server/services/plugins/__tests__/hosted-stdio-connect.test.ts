@@ -57,6 +57,13 @@ describe("resolvePluginStdioHttpTarget", () => {
     expect(mocks.resolveColocatedPluginBox).toHaveBeenCalledWith(expect.objectContaining({ bearer: "delegated-user-jwt" }));
   });
 
+  it.each(["", "   "])("refuses missing delegation before reading launch secrets (%j)", async (bearerToken) => {
+    await expect(resolvePluginStdioHttpTarget({ ...ARGS, bearerToken })).resolves.toBeNull();
+    expect(mocks.readAuthorizedStdioLaunchSpec).not.toHaveBeenCalled();
+    expect(mocks.resolveColocatedPluginBox).not.toHaveBeenCalled();
+    expect(mocks.ensurePluginStdioRuntime).not.toHaveBeenCalled();
+  });
+
   it("refuses invalid delegation before reserving a Computer", async () => {
     mocks.readAuthorizedStdioLaunchSpec.mockRejectedValueOnce(new Error("Invalid token"));
     await expect(resolvePluginStdioHttpTarget({ ...ARGS, bearerToken: "invalid-jwt" })).resolves.toBeNull();
