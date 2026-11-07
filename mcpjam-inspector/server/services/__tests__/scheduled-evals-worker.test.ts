@@ -80,16 +80,16 @@ describe("executeClaimedRun setup failure", () => {
     return JSON.parse(init.body);
   }
 
-  it.each([false, true])("uses the saved Computer policy (%s) before setup", async (computer) => {
-    queryHostConfig.mockResolvedValue({ computer });
+  it("keeps plugin placement disabled before an iteration sandbox exists", async () => {
+    queryHostConfig.mockResolvedValue({ computer: { kind: "personal" } });
     prepareEvalRun.mockRejectedValueOnce(new Error("setup stopped"));
     vi.spyOn(logger, "error").mockImplementation(() => {});
     await executeClaimedRun(CLAIM);
-    expect(queryHostConfig).toHaveBeenCalledWith(
-      "hostConfigsV2:getSuiteConfig", { suiteId: CLAIM.suiteId },
-    );
-    expect(vi.mocked(createAuthorizedManager).mock.calls.at(-1)?.[7]).toMatchObject({
-      pluginComputerRuntime: computer,
+    expect(queryHostConfig).not.toHaveBeenCalled();
+    expect(
+      vi.mocked(createAuthorizedManager).mock.calls.at(-1)?.[7],
+    ).toMatchObject({
+      pluginComputerRuntime: false,
     });
   });
 

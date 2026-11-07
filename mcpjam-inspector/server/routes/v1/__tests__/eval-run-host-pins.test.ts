@@ -260,7 +260,7 @@ describe("v1 eval run — connects as the run's host", () => {
     expect(response.status).toBeLessThan(400);
 
     const [, , , , timeoutMs, , clientCapabilities, options] = managerOptions();
-    expect(options.pluginComputerRuntime).toBe(true);
+    expect(options.pluginComputerRuntime).toBe(false);
 
     // The host's own request timeout, not the route's 30s default.
     expect(timeoutMs).toBe(12_000);
