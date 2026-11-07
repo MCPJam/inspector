@@ -20,6 +20,8 @@ export type OutboundMessage = z.infer<typeof outboundMessageSchema>;
 
 export const startMessageSchema = harnessV1BridgeStartBaseSchema.extend({
   nativeMcpServers: nativeMcpServersSchema.optional(),
+  /** Current workdir resolved by the hosted pilot's sandbox session. */
+  warmWorkDir: z.string().min(1).optional(),
   /** Extra instructions, sent as `developerInstructions` so Codex keeps its own
    *  system prompt (see `app-server-protocol.ts`). */
   instructions: z.string().optional(),

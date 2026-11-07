@@ -102,7 +102,7 @@ export const HARNESS_DESCRIPTORS = {
     controls: LOOP_CONTROLS.codex, reasoningEfforts: HARNESS_REASONING_EFFORTS.codex,
   },
   cursor: {
-    displayName: "Cursor CLI", runtimeVersion: "2026.10.01-e373342", mcpClient: "harness",
+    displayName: "Cursor CLI", runtimeVersion: "2026.11.05-86047df", mcpClient: "harness",
     modelAccess: "external-account", local: false, guest: false,
     orgUpstream: null, protocol: null,
     credential: { env: "CURSOR_API_KEY", label: "Cursor API key",
