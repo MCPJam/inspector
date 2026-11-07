@@ -188,7 +188,7 @@ export function withForwardingResume<T extends HarnessV1>(
           return {
             ...bootstrap,
             files: bootstrap.files.map((file) =>
-              file.path.endsWith("/bridge.mjs")
+              (file.path.endsWith("/bridge.mjs") || file.path.endsWith("/warm-bridge.mjs"))
                 ? {
                     ...file,
                     content: patchBootstrap(file.content),

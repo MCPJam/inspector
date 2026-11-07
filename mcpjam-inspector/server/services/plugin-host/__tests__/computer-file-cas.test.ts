@@ -1,11 +1,11 @@
 // @vitest-environment node
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createComputerFileCas, type ComputerCasTransport, type ComputerCompareAndReplaceInput } from "../computer-file-cas.js";
+import { createComputerFileCas, qualifiedComputerFileCas, type ComputerCasTransport, type ComputerCompareAndReplaceInput } from "../computer-file-cas.js";
 import { COMPUTER_FILE_CAS_COMMAND, COMPUTER_FILE_CAS_PYTHON } from "../computer-file-cas-helper.js";
 
 const encode = (value: string) => new TextEncoder().encode(value);
@@ -30,7 +30,7 @@ function transport(root = home) {
       if (request.root) request.root = mapped(request.root);
       if (request.path) request.path = mapped(request.path);
       // Only the VM's home prefix differs; both writers execute the production helper.
-      const code = COMPUTER_FILE_CAS_PYTHON.replace('HOME = "/home/user"', `HOME = ${JSON.stringify(root)}`);
+      const code = COMPUTER_FILE_CAS_PYTHON.replace('HOME = "/home/user"', `HOME = ${JSON.stringify(root)}`).replace('LOCK_ROOT = "/tmp/mcpjam-file-cas-" + str(os.getuid())', `LOCK_ROOT = ${JSON.stringify(join(root, ".cas-locks"))}`);
       const child = spawn("python3", ["-c", code], { env: { ...process.env, MCPJAM_FILE_CAS: Buffer.from(JSON.stringify(request)).toString("base64url") }, stdio: ["ignore", "pipe", "pipe"] });
       children.add(child);
       if (request.op === "commit") { pids.push(child.pid!); started(); }
@@ -48,7 +48,8 @@ function transport(root = home) {
 }
 
 async function holdLock(path: string) {
-  const lock = join(home, "parts", `.mcpjam-cas-lock-${digest(path)}`);
+  await mkdir(join(home, ".cas-locks"), { mode: 0o700, recursive: true });
+  const lock = join(home, ".cas-locks", digest(path));
   const child = spawn("python3", ["-c", "import fcntl,os,sys,time; f=os.open(sys.argv[1],os.O_RDWR|os.O_CREAT,0o600); fcntl.flock(f,fcntl.LOCK_EX); print('locked',flush=True); time.sleep(30)", lock]);
   children.add(child);
   await new Promise<void>((resolve, reject) => { child.stdout!.once("data", () => resolve()); child.once("error", reject); });
@@ -86,6 +87,7 @@ describe("Computer VM atomic file helper", () => {
     expect(["left", "right"]).toContain(content);
     expect(results.every(value => value.etag === digest(content))).toBe(true);
     expect((await stat(path)).mode & 0o777).toBe(0o640);
+    expect(await readdir(join(home, "parts"))).toEqual(["part.stl"]);
     expect(await stages()).toEqual([]);
   });
 
@@ -103,7 +105,8 @@ describe("Computer VM atomic file helper", () => {
   it("returns conflict without replacing a newer file and keeps a persistent lock inode", async () => {
     const path = await target(); const cas = createComputerFileCas(transport().value);
     await expect(cas.compareAndReplace(input(path, "first"))).resolves.toMatchObject({ outcome: "saved" });
-    const lock = join(home, "parts", `.mcpjam-cas-lock-${digest(path)}`); const before = await stat(lock);
+    await mkdir(join(home, ".cas-locks"), { mode: 0o700, recursive: true });
+  const lock = join(home, ".cas-locks", digest(path)); const before = await stat(lock);
     await expect(cas.compareAndReplace(input(path, "second"))).resolves.toEqual({ outcome: "conflict", etag: digest("first") });
     expect((await stat(lock)).ino).toBe(before.ino); expect(await readFile(path, "utf8")).toBe("first");
     expect(await stages()).toEqual([]);
@@ -223,4 +226,21 @@ describe("Computer VM atomic file helper", () => {
     expect(await readFile(path, "utf8")).toBe("changed"); expect(await stages()).toEqual([]);
     await expect(createComputerFileCas(transport().value).compareAndReplace(input(path, "next", "changed"))).resolves.toMatchObject({ outcome: "saved" });
   });
+});
+
+it("shares successful qualification across requests to one VM and retries transient failures", async () => {
+  const id = randomUUID();
+  const first = transport(); const second = transport();
+  const cas = qualifiedComputerFileCas(id, first.value);
+  expect(await cas.supports()).toBe(true);
+  expect(await qualifiedComputerFileCas(id, second.value).supports()).toBe(true);
+  expect(first.operations.filter(op => op === "probe")).toHaveLength(1);
+  expect(second.operations).toEqual([]);
+  const failed = transport();
+  const run = failed.value.run;
+  failed.value.run = async () => { throw new Error("temporary outage"); };
+  const retry = qualifiedComputerFileCas(randomUUID(), failed.value);
+  expect(await retry.supports()).toBe(false);
+  failed.value.run = run;
+  expect(await retry.supports()).toBe(true);
 });

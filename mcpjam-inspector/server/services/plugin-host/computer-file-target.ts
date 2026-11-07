@@ -19,7 +19,7 @@ import {
   type LocalFileTarget,
 } from "./local-file-target.js";
 import { PluginFileTargetRefusal } from "./file-target-refusal.js";
-import { createComputerFileCas, type ComputerCompareAndReplace } from "./computer-file-cas.js";
+import { qualifiedComputerFileCas, type ComputerCompareAndReplace } from "./computer-file-cas.js";
 
 /**
  * File targets on the project's Computer (hosted MCPJam, with the MCP server
@@ -101,7 +101,7 @@ export function createProjectComputerConnector(
     deps.connect ??
     (async (sandboxId: string): Promise<ComputerFileSystem> => {
       const sandbox = await attachRunningSandbox(sandboxId);
-      const cas = createComputerFileCas({
+      const cas = qualifiedComputerFileCas(sandboxId, {
         write: (path, data, options) => sandbox.files.write(path, data, options),
         run: (command, options) => sandbox.commands.run(command, options),
       });

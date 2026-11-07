@@ -41,6 +41,7 @@ describe("swarmEventToEvalPayload", () => {
   it("returns null for lifecycle events", () => {
     expect(swarmEventToEvalPayload(evt({ type: "session_start" }))).toBeNull();
     expect(swarmEventToEvalPayload(evt({ type: "run_complete" }))).toBeNull();
+    expect(swarmEventToEvalPayload(evt({ type: "run_remote" }))).toBeNull();
     expect(
       swarmEventToEvalPayload(
         evt({
@@ -226,6 +227,19 @@ describe("reduceSwarmStreamEvent", () => {
       })
     );
     expect(state.runComplete).toBe(true);
+  });
+
+  it("does not treat run_remote as a completion", () => {
+    const state = reduceSwarmStreamEvent(
+      empty(),
+      evt({
+        type: "run_remote",
+        hostId: "",
+        chatSessionId: "",
+        sessionIndex: -1,
+      })
+    );
+    expect(state).toEqual(empty());
   });
 });
 
