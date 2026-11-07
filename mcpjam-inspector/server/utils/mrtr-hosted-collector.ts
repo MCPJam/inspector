@@ -735,6 +735,8 @@ export type ResumeMrtrOutcome =
       reason: string;
       /** HTTP status to surface (defaults per outcome). */
       status?: number;
+      /** The durable continuation is closed; the same receipt cannot resume. */
+      terminal?: true;
       /**
        * Present only when the MCP leg COMPLETED but the durable record could not
        * be finalized: the result is real and in hand, the store just does not
@@ -791,6 +793,8 @@ function terminalFromStatus(status: string): ResumeMrtrOutcome {
   switch (status) {
     case "completed":
       return { outcome: "completed", result: undefined };
+    case "failed":
+      return { outcome: "failed", reason: "continuation already failed", terminal: true };
     case "cancelled":
       return { outcome: "cancelled", reason: "continuation already cancelled" };
     case "expired":
@@ -1166,6 +1170,7 @@ export async function resumeMrtrContinuationLeg(
     return {
       outcome: "failed",
       reason: error instanceof Error ? error.message : "Continuation input admission refused",
+      terminal: true,
     };
   }
 
