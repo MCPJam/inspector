@@ -58,6 +58,11 @@ it("updates hidden ancestors without calling tools, changing owners or reviving 
   expect(snapshot().alias).toBe(alias);
   expect(snapshot().parentToolCallId).toBe("file-call");
   expect(call).not.toHaveBeenCalled();
+  const unchanged = vi.fn();
+  const unsubscribe = registry.subscribe(unchanged);
+  registry.getState().updatePresentation("file", { label: "File viewer: keycap.stl", visibility: "visible" });
+  expect(unchanged).not.toHaveBeenCalled();
+  unsubscribe();
   registry.getState().unregisterInstance("file");
   act(() => {
     view.getByTestId("outer").hidden = true;

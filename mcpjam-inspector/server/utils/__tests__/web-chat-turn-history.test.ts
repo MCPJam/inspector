@@ -1153,3 +1153,13 @@ it("resolves authorization at final persistence without rerunning the completed 
   const { persistChatSessionToConvex } = await import("../chat-ingestion.js");
   expect(vi.mocked(persistChatSessionToConvex)).toHaveBeenLastCalledWith(expect.objectContaining({ authHeader: "Bearer renewed-at-completion" }));
 });
+
+it("returns a failed receipt when final save authorization is unavailable, without rerunning the turn", async () => {
+  const { WebRouteError, ErrorCode } = await import("../../routes/web/errors.js");
+  const getAuthorization = vi.fn(async () => { throw new WebRouteError(503, ErrorCode.SERVER_UNREACHABLE, "Session check unavailable"); });
+  const chunks = await runTurn([user("u1", "one reply")], { getAuthorization });
+  expect(getAuthorization).toHaveBeenCalledOnce();
+  expect(modelRequests).toHaveLength(1);
+  expect(state.persisted).toEqual([]);
+  expect(chunks).toContainEqual(expect.objectContaining({ type: "data-persist-receipt", data: expect.objectContaining({ outcome: "failed", failureKind: "http_error" }) }));
+});

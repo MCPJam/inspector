@@ -356,6 +356,13 @@ export class ResourceGrantService {
         params.ifMatch,
         activeSignal,
       );
+    } catch (error) {
+      if (error instanceof ResourceGrantError &&
+          ["RESOURCE_DENIED", "RESOURCE_TOO_LARGE", "RESOURCE_WRITE_UNAVAILABLE"].includes(error.code))
+        throw error;
+      throw new ResourceGrantError("RESOURCE_OUTCOME_UNKNOWN");
+    }
+    try {
       activeSignal.throwIfAborted();
       await this.authorize(owner, params.uri, "write");
     } catch {

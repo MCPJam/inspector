@@ -549,9 +549,10 @@ export function createAppToolsRegistry(
       });
     },
 
-    updatePresentation: (bridgeId, presentation) => set((state) => ({
-      instancesByBridgeId: updateAppPresentation(state.instancesByBridgeId, bridgeId, presentation),
-    })),
+    updatePresentation: (bridgeId, presentation) => set((state) => {
+      const instancesByBridgeId = updateAppPresentation(state.instancesByBridgeId, bridgeId, presentation);
+      return instancesByBridgeId === state.instancesByBridgeId ? state : { instancesByBridgeId };
+    }),
     snapshotForChatBody: (chatSessionId) => {
       const catalog = listAppToolCatalog(get(), chatSessionId);
       const capped = catalog.dropped.filter(
