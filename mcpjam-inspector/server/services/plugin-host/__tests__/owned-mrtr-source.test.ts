@@ -13,6 +13,7 @@ vi.mock("../../../utils/mrtr-continuation-state.js", async (original) => ({
   cancelContinuation: seams.cancel,
 }));
 import { createOwnedPluginMrtr } from "../owned-mrtr";
+import { pluginFormFileGrants } from "../form-file-grants";
 import { pluginFormSources } from "../form-sources";
 import { PluginInvocationError } from "../invocation";
 afterEach(() => vi.restoreAllMocks());
@@ -303,6 +304,15 @@ describe("a pending MRTR form and the client's current Forms toggle", () => {
     });
   });
   afterEach(() => source.release());
+
+  it("closes a finalized pre-wire refusal instead of retaining a retryable form", async () => {
+    const closeGrants = vi.spyOn(pluginFormFileGrants, "closeOperation");
+    seams.resume.mockResolvedValueOnce({ outcome: "failed", reason: "admission refused", terminal: true });
+    await expect(resume(service({ on: true }))).rejects.toMatchObject({ code: "CONTINUATION_FAILED", outcomeUnknown: false });
+    expect(closeGrants).toHaveBeenCalledWith(owner, "operation");
+    expect(() => pluginFormSources.get(source.token, owner, parent)).toThrow("FORM_SOURCE_UNAVAILABLE");
+    expect(seams.cancel).not.toHaveBeenCalled();
+  });
 
   it("never delivers the answer when Forms is off at submit, ending the form once", async () => {
     await expect(resume(service({ on: false }))).rejects.toMatchObject({
