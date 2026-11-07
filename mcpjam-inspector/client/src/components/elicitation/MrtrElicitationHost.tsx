@@ -117,9 +117,7 @@ export function MrtrElicitationHost() {
   const collection = useMrtrElicitationStore((s) => s.collection);
   const setCollection = useMrtrElicitationStore((s) => s.setCollection);
 
-  useEffect(() => {
-    connect();
-  }, [connect]);
+  useEffect(() => connect(), [connect]);
 
   const activeRound = rounds[0] ?? null;
 
