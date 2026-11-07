@@ -45,16 +45,13 @@ describe.each(["history", "shared"] as const)("%s check design", (page) => {
     await screen.findByRole("button", { name: /Listed UI Resources Valid/ });
   }
 
-  it("shows the boxed failure and expands to its explanation", async () => {
+  it("opens a failure to its explanation, then the boxed failure", async () => {
     await showCases();
     const row = screen.getByRole("button", {
       name: /Listed UI Resources Valid/,
     });
     expect(row).toHaveAttribute("aria-expanded", "false");
-    expect(within(row).getByText(failureMessage).parentElement).toHaveClass(
-      "border-red-500/20",
-      "bg-red-500/5",
-    );
+    expect(within(row).queryByText(failureMessage)).toBeNull();
     expect(within(row).getByText("12ms")).toBeInTheDocument();
 
     fireEvent.click(row);
@@ -64,6 +61,7 @@ describe.each(["history", "shared"] as const)("%s check design", (page) => {
     expect(explanation.closest("[inert]")).toBeNull();
     const message = screen.getByText(failureMessage);
     expect(message.closest("button")).toBeNull();
+    expect(message).toHaveClass("border-red-500/20", "bg-red-500/5");
     expect(
       explanation.compareDocumentPosition(message) &
         Node.DOCUMENT_POSITION_FOLLOWING,
@@ -72,7 +70,7 @@ describe.each(["history", "shared"] as const)("%s check design", (page) => {
 
   it("reveals a not-applicable reason only when its check opens", async () => {
     await showCases();
-    const row = screen.getByRole("button", { name: "UI Tool Metadata Valid" });
+    const row = screen.getByRole("button", { name: /^UI Tool Metadata Valid/ });
     expect(within(row).queryByText(skipMessage)).toBeNull();
     expect(screen.getByText(skipMessage).closest("[inert]")).not.toBeNull();
     expect(screen.queryByText("0ms")).toBeNull();
@@ -81,7 +79,7 @@ describe.each(["history", "shared"] as const)("%s check design", (page) => {
 
     expect(screen.getByText(skipMessage).closest("[inert]")).toBeNull();
     expect(
-      screen.getByRole("button", { name: "Older saved check" }),
+      screen.getByRole("button", { name: /^Older saved check/ }),
     ).not.toHaveTextContent("undefinedms");
   });
 

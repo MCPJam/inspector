@@ -1,3 +1,4 @@
+import { resolveE2BPortEndpoint } from "./e2b-port-endpoint.js";
 import {
   attachRunningSandbox,
   attachBrokerPreparedSandbox,
@@ -601,22 +602,18 @@ export function createE2BHarnessSandboxProvider(
 
       // ── infra surface ─────────────────────────────────────────────────
       ports,
-      // The claude-code adapter leases its bridge port from `ports` and calls
-      // this to open its WebSocket. E2B's `getHost` URL is directly reachable,
-      // so no scoped headers are needed on the endpoint. IMPORTANT for the
-      // broker model: this URL is the in-sandbox bridge, NOT a model endpoint —
-      // model traffic leaves the box through the E2B egress transform that
-      // injects the broker lease outside the VM (see harness-model-broker.ts).
-      getPortEndpoint: async ({ port, protocol }) => {
-        const host = sandbox.getHost(port);
-        const scheme = protocol === "ws" ? "wss" : (protocol ?? "https");
-        return { url: `${scheme}://${host}` };
-      },
-      // Deprecated in the stable contract but still required; same resolution.
+      // Embed routes ports through its configured client proxy; hosted E2B
+      // continues to use the sandbox's public hostname.
+      getPortEndpoint: async ({ port, protocol }) =>
+        resolveE2BPortEndpoint(sandbox, port, protocol),
       getPortUrl: async ({ port, protocol }) => {
-        const host = sandbox.getHost(port);
-        const scheme = protocol === "ws" ? "wss" : (protocol ?? "https");
-        return `${scheme}://${host}`;
+        const endpoint = resolveE2BPortEndpoint(sandbox, port, protocol);
+        if (endpoint.headers) {
+          throw new Error(
+            "This E2B endpoint requires routing headers. Use getPortEndpoint.",
+          );
+        }
+        return endpoint.url;
       },
       // Never tear down a shared host computer: the control plane owns its
       // lifecycle (provision / wake / hibernate / delete). Ending a harness

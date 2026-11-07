@@ -1,5 +1,9 @@
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
-import { isCreditExhaustion, isHoldRefusal } from "@/shared/credit-exhaustion";
+import {
+  isCreditExhaustion,
+  isDeclinedCardLimit,
+  isHoldRefusal,
+} from "@/shared/credit-exhaustion";
 import {
   AGENT_STEP_LIMIT_CODE,
   STEP_LIMIT_REFUSAL_MESSAGE,
@@ -35,6 +39,16 @@ export function isSpendBudgetReachedCode(code: string | undefined): boolean {
  */
 export const SPEND_BUDGET_REACHED_MESSAGE =
   "This organization's spend budget is reached. An owner or admin can raise it in Organization \u2192 Billing.";
+
+/** The code chat gives a refusal after a declined card paused auto-reload. */
+export const AUTO_TOPUP_DECLINED_CODE = "auto_topup_declined";
+
+/** The title every surface gives it: the card, not a limit, is what to fix. */
+export const AUTO_TOPUP_DECLINED_TITLE = "Update your declined card";
+
+/** What every surface says for it, under that title. */
+export const AUTO_TOPUP_DECLINED_MESSAGE =
+  "Your card was declined, so auto-reload is paused. Update your payment method and turn auto-reload back on in Organization \u2192 Billing, or add credits to keep going.";
 export type MCPJamLimitKind = "total" | "concurrency";
 
 /** Which allowance ran out. Free orgs draw on a daily bucket, Team orgs on a
@@ -69,6 +83,12 @@ type MCPJamLimitErrorInput = {
   surface?: MCPJamLimitSurface;
   /** A button the user pressed to see the dialog; see `MCPJamLimitNotifyInput`. */
   userInitiated?: boolean;
+  /**
+   * The caller shows a declined card itself (chat's Card declined banner), so
+   * the dialog, which does not name the card, stays shut for one. Elsewhere
+   * the dialog is the only billing prompt and still opens.
+   */
+  showsDeclinedCard?: boolean;
 };
 
 const getStringProperty = (value: unknown, key: string): string | undefined => {
@@ -291,7 +311,11 @@ export function notifyMCPJamLimitError(args: MCPJamLimitErrorInput): boolean {
     useFrontierSignInDialogStore.getState().open();
     return true;
   }
-  if (!isMCPJamModelLimitError(args)) return false;
+  if (
+    !isMCPJamModelLimitError(args) ||
+    (args.showsDeclinedCard && isDeclinedCardLimit(args))
+  )
+    return false;
   const period = findMCPJamLimitPeriod(args.message);
   const shortfall = findMCPJamCreditShortfall(args);
   useMCPJamLimitDialogStore.getState().notifyLimitHit({
@@ -498,6 +522,7 @@ export function describeMCPJamLimitMessage(
 export async function notifyMCPJamLimitErrorFromResponse(
   response: Response,
   surface?: MCPJamLimitSurface,
+  options: Pick<MCPJamLimitErrorInput, "showsDeclinedCard"> = {},
 ): Promise<boolean> {
   let details: unknown;
   let message: string | null = null;
@@ -531,5 +556,6 @@ export async function notifyMCPJamLimitErrorFromResponse(
         ? limitKind
         : undefined,
     ...(surface ? { surface } : {}),
+    ...options,
   });
 }
