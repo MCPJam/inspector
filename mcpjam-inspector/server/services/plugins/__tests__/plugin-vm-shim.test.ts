@@ -509,6 +509,28 @@ describe("plugin vm shim: handshake and calls", () => {
     expect((await post(shim, reply, { sessionId })).status).toBe(400);
     stream.close();
   });
+  it("queues overlapping form calls without assigning an input to the wrong parent", async () => {
+    const shim = await startShim({ env: { MCPJAM_SHIM_REQUEST_TIMEOUT_MS: "100" } });
+    const { sessionId } = await openSession(shim);
+    const stream = await openInputStream(shim, sessionId);
+    const firstCall = toolCall("provoke");
+    const first = post(shim, firstCall, { sessionId });
+    const firstInput = await stream.read();
+    const secondCall = toolCall("provoke");
+    const second = post(shim, secondCall, { sessionId });
+    await new Promise(resolve => setTimeout(resolve, 180));
+    expect((await post(shim, { jsonrpc: "2.0", id: firstInput.id, result: {} }, { sessionId })).status).toBe(202);
+    const firstReply = await (await first).json();
+    expect(firstReply.id).toBe(firstCall.id);
+    expect(JSON.stringify(firstReply)).toContain("host answered with a result");
+    const secondInput = await stream.read();
+    expect(secondInput.id).not.toBe(firstInput.id);
+    expect((await post(shim, { jsonrpc: "2.0", id: secondInput.id, result: {} }, { sessionId })).status).toBe(202);
+    const secondReply = await (await second).json();
+    expect(secondReply.id).toBe(secondCall.id);
+    expect(JSON.stringify(secondReply)).toContain("host answered with a result");
+    stream.close();
+  });
   it("isolates replies by session and refuses late replies after stream loss", async () => {
     const shim = await startShim();
     const first = await openSession(shim);

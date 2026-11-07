@@ -8,20 +8,20 @@
     {
       "harnessId": "claude-code",
       "bootstrapDir": ".harness-bootstrap/claude-code",
-      "identity": "a3c6110787fd6dc1",
+      "identity": "345e061cb401da33",
       "runtimeVersion": "2.1.245"
     },
     {
       "harnessId": "codex",
       "bootstrapDir": ".harness-bootstrap/codex-appserver",
-      "identity": "cf6f4025fcd1bf51",
+      "identity": "fe7ee0599ab265fa",
       "runtimeVersion": "0.163.0"
     },
     {
       "harnessId": "cursor",
       "bootstrapDir": ".harness-bootstrap/cursor",
-      "identity": "1e02a0aee92902b9",
-      "runtimeVersion": "2026.10.01-e373342"
+      "identity": "1cd3c8b5f9bfa1d3",
+      "runtimeVersion": "2026.11.05-86047df"
     }
   ]
 }
