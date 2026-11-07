@@ -169,7 +169,8 @@ export function createComputerTerminalWsHandler(
     let pty: CommandHandle | null = null;
     let sandbox: Sandbox | null = null;
     let closed = false;
-    let inputTail: Promise<void> = Promise.resolve();
+    const inputQueue: Uint8Array[] = [];
+    let inputRunning = false;
     let pendingInputBytes = 0;
     let pendingInputFrames = 0;
     // Throttle gate for the activity touch (see ACTIVITY_TOUCH_THROTTLE_MS).
@@ -329,26 +330,41 @@ export function createComputerTerminalWsHandler(
           }
           // Keystrokes are true user activity — refresh the idle timer.
           maybeTouchActivity();
+          inputQueue.push(bytes.slice());
+          pendingInputBytes += bytes.byteLength;
+          pendingInputFrames++;
+          if (inputRunning) return;
+          inputRunning = true;
           const box = sandbox;
           const handle = pty;
-          const input = bytes.slice();
-          pendingInputBytes += input.byteLength;
-          pendingInputFrames++;
-          // Each SDK write is a separate RPC; wait for its acknowledgement
-          // before dispatching the next frame, including Enter.
-          inputTail = inputTail
-            .then(async () => {
-              try {
-                if (closed) return;
-                await box.pty.sendInput(handle.pid, input, {
-                  signal: attachAbort.signal,
-                });
-              } finally {
-                pendingInputBytes -= input.byteLength;
-                pendingInputFrames--;
+          void (async () => {
+            try {
+              while (!closed && inputQueue.length) {
+                // Batch input accumulated during one RPC. Acknowledgements
+                // still order every byte, without one round trip per key.
+                const frames = inputQueue.splice(0);
+                const length = frames.reduce((sum, frame) => sum + frame.byteLength, 0);
+                const input = new Uint8Array(length);
+                let offset = 0;
+                for (const frame of frames) {
+                  input.set(frame, offset);
+                  offset += frame.byteLength;
+                }
+                try {
+                  await box.pty.sendInput(handle.pid, input, { signal: attachAbort.signal });
+                } finally {
+                  pendingInputBytes -= length;
+                  pendingInputFrames -= frames.length;
+                }
               }
-            })
-            .catch((error) => failInput(error, ws));
+            } catch (error) {
+              failInput(error, ws);
+            } finally {
+              inputQueue.length = 0;
+              pendingInputBytes = pendingInputFrames = 0;
+              inputRunning = false;
+            }
+          })();
         }
       },
 

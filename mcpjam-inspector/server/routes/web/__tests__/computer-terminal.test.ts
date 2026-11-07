@@ -364,8 +364,11 @@ describe("GET /api/web/computers/terminal", () => {
             expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(1);
             finish();
             await vi.waitFor(() =>
-              expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(frames.length),
+              expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(2),
             );
+            expect(Buffer.concat(fakeSandbox.pty.sendInput.mock.calls.map(
+              (call) => Buffer.from(call[1]),
+            ))).toEqual(Buffer.concat(frames));
             // Acknowledged input releases capacity for subsequent frames.
             const pong = waitForMessage(ws);
             ws.send(Buffer.from("z"));
@@ -373,7 +376,7 @@ describe("GET /api/web/computers/terminal", () => {
             expect(await pong).toEqual({ type: "pong" });
             await vi.waitFor(() =>
               expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(
-                frames.length + 1,
+                3,
               ),
             );
             expect(reportRouteFailure).not.toHaveBeenCalled();
@@ -399,13 +402,13 @@ describe("GET /api/web/computers/terminal", () => {
         if (outcome === "complete") {
           finish();
           await vi.waitFor(() =>
-            expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(3),
+            expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(2),
           );
           expect(
             fakeSandbox.pty.sendInput.mock.calls.map((call) =>
               Buffer.from(call[1]).toString(),
             ),
-          ).toEqual(["a", "b", "\r"]);
+          ).toEqual(["a", "b\r"]);
         } else if (outcome === "reject") {
           const error = waitForMessage(ws);
           const closed = waitForClose(ws);
