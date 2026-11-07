@@ -55,8 +55,8 @@ import type {
 } from "@/shared/scripted-steps";
 import {
   buildSandboxProxyWidgetCsp,
-  sanitizeProxyDomain,
 } from "./sandbox-proxy-csp";
+import { sanitizeDomain } from "./sandbox-csp-policy";
 import { HARNESS_PAGE_BUNDLE } from "./browser-harness/HarnessPageBundle.generated";
 import type { ToolDataDelivery } from "./browser-harness/tool-data-delivery";
 import {
@@ -1238,7 +1238,7 @@ export class McpAppBrowserHarness {
       ...(input.cspMeta?.resource_domains ?? []),
       ...(input.cspMeta?.frame_domains ?? []),
     ]
-      .map(sanitizeProxyDomain)
+      .map(sanitizeDomain)
       .filter(Boolean);
 
     // Enforce the widget's declared CSP IN the iframe with the SAME policy the

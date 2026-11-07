@@ -16,11 +16,36 @@ export interface SandboxCspSubtypePolicy {
   };
 }
 
+/** Serialize internationalized hosts and paths as ASCII before signing or serving CSP. */
+export function normalizeSandboxDomainSource(value: string): string {
+  const source = value.trim();
+  if (!/[^\x20-\x7e]/.test(source)) return source;
+  if (/[\s\x00-\x1f\x7f,;'"<>\\]/.test(source)) return source;
+  try {
+    const scheme = source.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//)?.[0] ?? "";
+    const rest = source.slice(scheme.length);
+    const end = rest.search(/[/?#]/);
+    const authority = end < 0 ? rest : rest.slice(0, end);
+    const suffix = end < 0 ? "" : rest.slice(end);
+    const port = authority.match(/:(?:\*|[0-9]+)$/)?.[0] ?? "";
+    const hostname = port ? authority.slice(0, -port.length) : authority;
+    if (hostname.includes(":") && !(hostname.startsWith("[") && hostname.endsWith("]"))) return source;
+    const url = new URL(`${scheme || "https://"}${hostname}${port === ":*" ? "" : port}`);
+    if (url.username || url.password) return source;
+    // Preserve explicit ports and literal dot segments: URL normalization
+    // must not change the scope of a declared CSP host or path source.
+    return `${scheme}${url.hostname}${port}${suffix.replace(/[^\x00-\x7f]+/g, encodeURIComponent)}`;
+  } catch {
+    // Invalid declarations remain invalid for the admission validator.
+    return source;
+  }
+}
+
 export function sanitizeDomain(domain: unknown): string {
   if (typeof domain !== "string") return "";
   // Remove characters that could break out of CSP or HTML attributes
   // Valid CSP sources shouldn't contain these characters
-  return domain.replace(/['"<>;]/g, "").trim();
+  return normalizeSandboxDomainSource(domain.replace(/['"<>;]/g, ""));
 }
 
 /**
@@ -308,3 +333,13 @@ export function buildCSP(
 
   return directives.join("; ");
 }
+
+export const PERMISSIVE_SANDBOX_CSP = [
+  "default-src * 'unsafe-inline' 'unsafe-eval' data: blob: filesystem: about:",
+  "script-src * 'unsafe-inline' 'unsafe-eval' data: blob:",
+  "style-src * 'unsafe-inline' data: blob:", "img-src * data: blob: https: http:",
+  "media-src * data: blob: https: http:", "font-src * data: blob: https: http:",
+  "connect-src * data: blob: https: http: ws: wss: about:",
+  "frame-src * data: blob: https: http: about:", "object-src * data: blob:",
+  "base-uri *", "form-action *",
+].join("; ");

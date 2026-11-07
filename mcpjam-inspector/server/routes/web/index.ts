@@ -228,6 +228,8 @@ web.use(
   bearerAuthMiddleware,
   guestRateLimitMiddleware,
 );
+web.use("/apps/mcp-apps/view-admissions", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/apps/mcp-apps/view-admissions/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 
 // MJ-012. The rate limit for signed-in callers on this family.
 //

@@ -1,12 +1,12 @@
+import { buildSandboxProxyFrameAncestors, renderSandboxProxyHtml } from "../apps/mcp-apps/sandbox-proxy-html.js";
+import { serveSandboxViewDocument } from "../apps/mcp-apps/view-document.js";
+import { sandboxSourceReceipt } from "../../services/sandbox-view-source.js";
+import { sandboxViewAdmissionRoutes } from "../apps/mcp-apps/view-admissions.js";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { readResourceDisplayHints } from "@mcpjam/sdk/widget-runtime";
 import { Hono } from "hono";
 import { z } from "zod";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
-import {
-  buildSandboxProxyFrameAncestors,
-  renderSandboxProxyHtml,
-} from "../apps/mcp-apps/sandbox-proxy-html.js";
 import { injectOpenAICompat } from "../../utils/widget-helpers.js";
 import { logger } from "../../utils/logger.js";
 import {
@@ -25,6 +25,7 @@ import {
 } from "./auth.js";
 
 const apps = new Hono();
+apps.route("/mcp-apps", sandboxViewAdmissionRoutes());
 
 const MCP_APPS_MIMETYPE = RESOURCE_MIME_TYPE;
 // Mimetypes accepted by the hosted-mode widget-content route. Mirrors
@@ -237,6 +238,8 @@ export async function buildMcpAppsWidgetContent(manager: MCPClientManager, body:
  * authenticated POST APIs.
  */
 apps.get("/mcp-apps/sandbox-proxy", (c) => {
+  if ((c.req.header("Host") ?? "").startsWith("v-"))
+    return serveSandboxViewDocument(c);
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "no-cache, no-store, must-revalidate");
   // Same list the proxy pins its host origin against — see
@@ -252,7 +255,13 @@ apps.post("/mcp-apps/widget-content", async (c) =>
   withEphemeralConnection(
     c,
     mcpAppsWidgetContentSchema,
-    (manager, body) => buildMcpAppsWidgetContent(manager, body, c.req.raw.signal),
+    async (manager, body) => {
+      const result = await buildMcpAppsWidgetContent(manager, body, c.req.raw.signal);
+      return {
+        ...result,
+        sourceReceipt: await sandboxSourceReceipt(c, { serverId: body.serverId, resourceUri: body.template || body.resourceUri, toolCallId: body.toolId }, result.html, result.csp, body.projectId),
+      };
+    },
   ),
 );
 
