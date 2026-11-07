@@ -9,6 +9,7 @@ import {
 import { z } from "zod";
 import {
   buildCSP,
+  normalizeSandboxDomainSource,
   PERMISSIVE_SANDBOX_CSP,
 } from "../utils/sandbox-csp-policy.js";
 import {
@@ -59,9 +60,9 @@ export function isSandboxDomainSource(value: string): boolean {
 }
 const domains = z
   .array(
-    cleanToken.refine(
-      isSandboxDomainSource,
-      "CSP domains must be individual source expressions",
+    z.string().max(2048).transform(normalizeSandboxDomainSource).pipe(
+      cleanToken.refine(isSandboxDomainSource,
+        "CSP domains must be individual source expressions"),
     ),
   )
   .max(128)
@@ -278,7 +279,7 @@ export function resolveSandboxViewPolicy(
   if (input.policy.permissive)
     throw new Error("Declared-policy Apps cannot request permissive rendering");
   // Multiple HTTP CSP policies are intersected by the browser, so host overrides cannot widen declared resource policy.
-  return checkedSandboxPolicy(`${baseline}, ${requested}`);
+  return checkedSandboxPolicy(baseline === requested ? baseline : `${baseline}, ${requested}`);
 }
 
 /** Opaque digests only; all source metadata stays in the authenticated lease store. */

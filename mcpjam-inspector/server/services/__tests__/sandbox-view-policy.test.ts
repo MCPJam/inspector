@@ -129,6 +129,16 @@ describe("App source receipts and HTTP policy", () => {
     }
   });
 
+  it("normalizes supported whitespace and internationalized sources identically for receipts and headers", () => {
+    const csp = { connectDomains: [" https://bücher.example/部品 "], resourceDomains: ["https://例え.example"] };
+    const receipt = issueSandboxSourceReceipt(owner, source, html, csp);
+    const parsed = prepareSandboxViewSchema.parse({ ...request(), sourceReceipt: receipt, policy: { csp, permissive: false } });
+    const policy = resolveSandboxViewPolicy(parsed, owner);
+    expect(openSandboxClaim(receipt).policy).toContain("https://xn--bcher-kva.example/%E9%83%A8%E5%93%81");
+    expect(policy).toBe(openSandboxClaim(receipt).policy);
+    expect(policy).not.toMatch(/[^\x20-\x7e]/);
+  });
+
   it("rejects header control characters and oversized policy declarations", () => {
     expect(() =>
       prepareSandboxViewSchema.parse({
