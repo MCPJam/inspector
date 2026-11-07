@@ -743,6 +743,8 @@ export function createShim(config) {
       shortId: id.slice(0, 8),
       child,
       pending: new Map(),
+      dispatchTail: Promise.resolve(),
+      queuedRequests: 0,
       stdoutBuffer: "",
       stderrBuffer: "",
       lastUsedAt: Date.now(),
@@ -812,7 +814,27 @@ export function createShim(config) {
    * Correlation is by id rather than by arrival order because a compliant MCP
    * server may answer concurrent requests in any order.
    */
-  function dispatch(session, message) {
+  // Stdio supplies no trustworthy parent correlation for server requests.
+  // Serialize dispatch so an input wait always belongs to exactly one call.
+  async function dispatch(session, message, disconnected = () => false) {
+    if (session.queuedRequests >= 16)
+      return jsonRpcError(message.id, SHIM_CHILD_UNAVAILABLE, "the session request queue is full");
+    session.queuedRequests++;
+    const previous = session.dispatchTail;
+    let release;
+    session.dispatchTail = new Promise((resolve) => { release = resolve; });
+    try {
+      await previous;
+      if (disconnected() || session.terminating)
+        return jsonRpcError(message.id, SHIM_CHILD_UNAVAILABLE, "the request is no longer active");
+      return await dispatchNow(session, message);
+    } finally {
+      session.queuedRequests--;
+      release();
+    }
+  }
+
+  function dispatchNow(session, message) {
     return new Promise((resolve) => {
       const key = pendingKey(message.id);
       const superseded = session.pending.get(key);
@@ -1044,7 +1066,7 @@ export function createShim(config) {
       // session header from the handshake, so there is no session to reuse and
       // reusing one by accident would hand a client another client's child.
       const session = createSession();
-      const response = await dispatch(session, message);
+      const response = await dispatch(session, message, () => res.destroyed);
       session.initialized = true;
       // Only advertise a session the client can still address: a child that
       // died during the handshake leaves no session behind, and naming it
@@ -1100,7 +1122,7 @@ export function createShim(config) {
       return;
     }
 
-    const response = await dispatch(session, message);
+    const response = await dispatch(session, message, () => res.destroyed);
     sendJson(res, 200, response);
   }
 

@@ -7,11 +7,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 import type { EvalSuiteRunListItem, RunGroupQualityResult } from "./types";
 
 type GroupStatus = "pending" | "completed" | "failed" | undefined;
-
-const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 export interface RunGroupQualityState {
   result: RunGroupQualityResult | undefined;
@@ -62,7 +61,7 @@ export function useRunGroupQuality(params: {
   const result = statusData?.quality;
 
   const allRunsTerminal =
-    runs.length >= 2 && runs.every((r) => TERMINAL_RUN_STATUSES.has(r.status));
+    runs.length >= 2 && runs.every((r) => isEvalRunTerminalStatus(r.status));
   const canRequest =
     enabled && allRunsTerminal && status !== "pending" && !unavailable;
 
