@@ -79,6 +79,12 @@ export class TurnAuthorizationRegistry {
     return Math.min(exp * 1000, entry.expiresAt);
   }
   private readonly entries = new Map<string, Entry>();
+  private hasCapacity(owner: TurnAuthorizationOwner, pending: boolean) {
+    const entries = [...this.entries.values()].filter((entry) => entry.pending === pending);
+    return entries.length < 64 && entries.filter(
+      (entry) => entry.owner.subject === owner.subject,
+    ).length < 8;
+  }
   constructor(private readonly verifyToken = verifyAuthKitToken) {}
 
   create(
@@ -89,10 +95,7 @@ export class TurnAuthorizationRegistry {
   ): AuthorizationLease {
     if (
       token.length > MAX_TOKEN_BYTES ||
-      this.entries.size >= 64 ||
-      [...this.entries.values()].filter(
-        (e) => e.owner.subject === owner.subject,
-      ).length >= 8
+      !this.hasCapacity(owner, "pluginOperation" in scope)
     )
       throw new WebRouteError(
         429,
@@ -166,6 +169,11 @@ export class TurnAuthorizationRegistry {
               }),
               AbortSignal.timeout(15_000),
             );
+          } catch (error) {
+            // Renewal is preferred, but a delayed refresh must not revoke a
+            // still-valid token. Its identity and revocation are checked below.
+            if (!(error instanceof DOMException && error.name === "TimeoutError") ||
+                this.tokenExpiresAt(entry) <= Date.now()) throw error;
           } finally {
             entry.waiters.delete(wake);
           }
@@ -248,6 +256,9 @@ export class TurnAuthorizationRegistry {
     )
       throw refused();
     if (!entry.pending) return undefined;
+    if (!this.hasCapacity(owner, false))
+      throw new WebRouteError(429, ErrorCode.RATE_LIMITED,
+        "Too many active turns. Wait for a turn to finish.");
     entry.pending = false;
     clearTimeout(entry.timer);
     entry.timer = setTimeout(

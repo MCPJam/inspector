@@ -8,6 +8,7 @@ import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import { patchClaudeCodeBackgroundDrain } from "./claude-code-background-drain.js";
 import { patchClaudeCodeSubagentSteps } from "./claude-code-subagent-steps.js";
 import { patchClaudeCodeElicitation } from "./claude-code-elicitation.js";
+import { patchClaudeCodeBootstrapLock } from "./claude-code-lockfile.js";
 
 export function createClaudeCodeHarness(
   settings?: Parameters<typeof createClaudeCode>[0],
@@ -538,7 +539,9 @@ export function patchClaudeCodeHarnessBootstrap(
                     patchClaudeCodeElicitation(patchClaudeCodeBridgeContent(file.content)),
                   ),
                 }
-              : file,
+              : file.path.endsWith("/pnpm-lock.yaml")
+                ? { ...file, content: patchClaudeCodeBootstrapLock(file.content) }
+                : file,
           ),
           {
             path: `${bootstrap.bootstrapDir}/.npmrc`,

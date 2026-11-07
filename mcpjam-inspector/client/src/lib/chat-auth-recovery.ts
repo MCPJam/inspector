@@ -3,6 +3,9 @@ import { captureSentryMessage } from "@/lib/sentry";
 
 export const CHAT_AUTH_RECOVERY_MESSAGE =
   "Could not retry the call after sign-in. Run it again.";
+/** A sign-in card whose window ran out before the user finished signing in. */
+export const AUTH_CHALLENGE_EXPIRED_MESSAGE =
+  "This call expired. Sign in and run it again.";
 const KEY = "mcp-chat-auth-recovery-v1";
 export type RecoveryReason =
   | "comparison_restore_failed"
@@ -36,6 +39,22 @@ export interface ChatAuthRecoveryFailure extends RecoveryContext {
   reason: RecoveryReason;
   timestamp: number;
   dismissed?: boolean;
+}
+
+/**
+ * What the user reads for a failed sign-in recovery. A card that expired
+ * while still waiting for the user (no click, or a sign-in left unfinished)
+ * says so; "could not retry after sign-in" would claim a sign-in that never
+ * happened. Every other failure, including one that expired after the user
+ * signed in, keeps the retry copy.
+ */
+export function chatAuthRecoveryFailureMessage(
+  failure: Pick<ChatAuthRecoveryFailure, "reason" | "phase">,
+): string {
+  return failure.reason === "expired" &&
+    (failure.phase === "awaiting_click" || failure.phase === "awaiting_oauth")
+    ? AUTH_CHALLENGE_EXPIRED_MESSAGE
+    : CHAT_AUTH_RECOVERY_MESSAGE;
 }
 interface RecoveryState {
   history: Array<RecoveryContext & { stage: string; timestamp: number }>;

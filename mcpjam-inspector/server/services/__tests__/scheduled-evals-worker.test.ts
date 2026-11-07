@@ -21,7 +21,7 @@ vi.mock("../../routes/web/auth.js", () => ({
 }));
 vi.mock("../../routes/shared/evals.js", () => ({
   prepareEvalRun: (...args: unknown[]) => prepareEvalRun(...args),
-  shouldSkipExecution: vi.fn(),
+  shouldSkipExecution: (prepared: { deduped?: boolean }) => prepared.deduped === true,
 }));
 
 import {
@@ -91,6 +91,14 @@ describe("executeClaimedRun setup failure", () => {
     expect(vi.mocked(createAuthorizedManager).mock.calls.at(-1)?.[7]).toMatchObject({
       pluginComputerRuntime: computer,
     });
+  });
+
+  it("acknowledges an adopted active run without executing it again", async () => {
+    const execute = vi.fn();
+    prepareEvalRun.mockResolvedValueOnce({ runId: "existing-run", suiteId: "suite-1", deduped: true, status: "running", execute });
+    await executeClaimedRun(CLAIM);
+    expect(execute).not.toHaveBeenCalled();
+    expect(completion()).toMatchObject({ triggerId: CLAIM.triggerId, ok: true, runId: "existing-run" });
   });
 
   it("logs a spend-budget refusal at warn and pauses the schedule", async () => {

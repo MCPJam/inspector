@@ -97,6 +97,7 @@ export const DEFAULT_CODEX_APPSERVER_MODEL = "gpt-5.5";
 const CODEX_SKILLS_SUBDIR = ".agents/skills";
 
 export type CodexAppServerSettings = {
+  warmAgent?: boolean;
   nativeMcpServers?: HarnessMcpJson["mcpServers"];
   /** Native model id. Omitted ⇒ Codex's own default. */
   model?: string;
@@ -429,7 +430,7 @@ export function createCodexAppServer(
             permissionMode: startOpts.permissionMode,
             debug: startOpts.observability?.debug,
             sandbox: toolSafeSandboxSession,
-            sandboxHomeDir,
+            sandboxHomeDir, workDir,
           });
         } catch {
           // Unreachable bridge — respawn below.
@@ -592,7 +593,7 @@ export function createCodexAppServer(
         permissionMode: startOpts.permissionMode,
         debug: startOpts.observability?.debug,
         sandbox: toolSafeSandboxSession,
-        sandboxHomeDir,
+        sandboxHomeDir, workDir,
       });
     },
   };
@@ -617,6 +618,7 @@ function createCodexAppServerSession(input: {
   debug: HarnessV1DebugConfig | undefined;
   sandbox: SandboxSession;
   sandboxHomeDir: string;
+  workDir: string;
 }): HarnessV1Session {
   const { channel, sessionId } = input;
   let stopped = false;
@@ -698,7 +700,7 @@ function createCodexAppServerSession(input: {
     const fingerprint = fingerprintTurnConfiguration({
       instructions: turnInput.instructions,
       tools: turnInput.tools,
-      sandboxPolicy: input.settings.sandboxPolicy,
+      sandboxPolicy: input.settings.warmAgent ? undefined : input.settings.sandboxPolicy,
     });
     // Codex reads its MCP server's tool list ONCE, when it starts. A changed
     // tool set therefore cannot be applied to a live thread — there is no
@@ -872,6 +874,7 @@ function createCodexAppServerSession(input: {
     const message = {
       type: "start" as const,
       prompt: extractUserText(turnInput.prompt),
+      ...(input.settings.warmAgent ? { warmWorkDir: input.workDir, nativeMcpServers: input.settings.nativeMcpServers ?? {} } : {}),
       tools: turnInput.tools.map((tool) => ({
         name: tool.name,
         description: tool.description,
