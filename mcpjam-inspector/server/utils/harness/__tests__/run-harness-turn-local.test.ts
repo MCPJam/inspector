@@ -618,6 +618,13 @@ describe("runHarnessTurn local continuity", () => {
     await cache.scan(); setRevokedSessionCacheForTests(cache);
     const original = await sign();
     const store = new TurnAuthorizationRegistry((value) => verify(value));
+    const authorizationReads: Promise<string>[] = [];
+    const advanceMinute = async (settleReads = false) => {
+      await vi.advanceTimersByTimeAsync(60_000);
+      await cache.scan();
+      // WebCrypto runs outside fake timers; settle reads before moving time again.
+      if (settleReads) await Promise.all(authorizationReads);
+    };
     let lease: ReturnType<typeof store.create> | undefined;
     let release!: () => void;
     harnessState.holdStream = new Promise<void>((resolve) => { release = resolve; });
@@ -629,7 +636,11 @@ describe("runHarnessTurn local continuity", () => {
         start: (turnId: string, writer: { write(chunk: UIMessageChunk): void }) => { lease = store.create({ subject: "actor", sessionId: "session", organizationId: "org" }, {
           projectId: "project-1", chatSessionId: "chat-1", turnId, requestId: "f56e90a1-dc58-443e-85b0-14677744b9b3",
         }, original); writer.write({ type: "data-turn-authorization", transient: true, data: lease.data }); },
-        getAuthorization: () => lease!.getAuthorization(),
+        getAuthorization: () => {
+          const reading = lease!.getAuthorization();
+          authorizationReads.push(reading);
+          return reading;
+        },
         getCleanupAuthorization: () => lease!.getCleanupAuthorization(),
         dispose: () => lease?.dispose(),
       },
@@ -637,10 +648,11 @@ describe("runHarnessTurn local continuity", () => {
     const body = result.response!.text();
     try {
       await vi.waitFor(() => expect(harnessState.streamStarted).toHaveBeenCalledOnce());
-      for (let minute = 0; minute < 4; minute++) { await vi.advanceTimersByTimeAsync(60_000); await cache.scan(); }
+      for (let minute = 0; minute < 4; minute++) await advanceMinute();
       const fresh = await sign();
       await store.renew(lease!.data, { subject: "actor", sessionId: "session", organizationId: "org" }, fresh);
-      for (let minute = 0; minute < 2; minute++) { await vi.advanceTimersByTimeAsync(60_000); await cache.scan(); }
+      await Promise.all(authorizationReads);
+      for (let minute = 0; minute < 2; minute++) await advanceMinute(true);
       await expect(verify(original)).rejects.toThrow();
       expect(vi.mocked(heartbeatHarnessSessionState).mock.lastCall?.[0].bearer).toBe(`Bearer ${fresh}`);
       release(); const text = await body;
