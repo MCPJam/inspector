@@ -47,6 +47,8 @@ export interface ChatV2Request {
    * deliberately different.
    */
   environmentOverrides?: EnvironmentOverrides;
+  /** Optional automatic plugin additions; never grants permission to execute. */
+  autoContributedPluginServerIds?: string[];
   chatSessionId?: string;
   /** Bind browser discovery and execution to this chatSessionId. */
   browserScope?: "conversation";

@@ -451,6 +451,8 @@ function isHostedAuthAllowedOrigin(parsed: URL): boolean {
  * with an extra path component can slip through.
  */
 const HOSTED_AUTH_PATH_PATTERNS = [
+  // Reading command terms re-authorizes the server under the signed-in member.
+  /^\/api\/mcp\/servers\/command-approval\/?$/,
   // The /conformance page starting, polling, cancelling and reading a
   // directory-readiness run.
   /^\/api\/v1\/projects\/[^/]+\/readiness-runs(\/[^/]+(\/(cancel|report))?)?$/,
