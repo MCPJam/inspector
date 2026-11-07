@@ -636,6 +636,7 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
 
 export interface AppNavigateOptions {
   replace?: boolean;
+  state?: unknown;
   /**
    * Navigate to the LOGICAL path, refusing to inherit the current project.
    *
@@ -697,7 +698,7 @@ export function navigateApp(to: string, options?: AppNavigateOptions): void {
   const target = options?.unscoped ? to : scopeNavigationTarget(to);
   const router = getAppRouter();
   if (router) {
-    void router.navigate(target, { replace: options?.replace });
+    void router.navigate(target, { replace: options?.replace, state: options?.state });
     return;
   }
   if (
@@ -707,9 +708,9 @@ export function navigateApp(to: string, options?: AppNavigateOptions): void {
   )
     return;
   if (options?.replace) {
-    window.history.replaceState({}, "", target);
+    window.history.replaceState(options?.state ?? {}, "", target);
   } else {
-    window.history.pushState({}, "", target);
+    window.history.pushState(options?.state ?? {}, "", target);
   }
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
@@ -734,9 +735,9 @@ export function useAppNavigate() {
         : scopeNavigationTarget(to, pathname);
       if (navigator) {
         if (options?.replace) {
-          navigator.replace(target);
+          navigator.replace(target, options?.state);
         } else {
-          navigator.push(target);
+          navigator.push(target, options?.state);
         }
         return;
       }

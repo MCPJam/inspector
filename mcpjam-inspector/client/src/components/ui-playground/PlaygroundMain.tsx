@@ -7,6 +7,7 @@ import {
 } from "@/lib/comparison-auth-recovery";
 import { useRetainedCompareClients } from "@/hooks/use-retained-compare-clients";
 import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
+import { ResourceChatHandoff } from "@/components/host-workspace/resource-chat-handoff";
 import { WorkspaceFileActionsProvider } from "@/components/host-workspace/file-actions";
 import type { RunPluginOnboarding } from "@/components/host-workspace/use-plugin-onboarding";
 import {
@@ -6759,6 +6760,12 @@ export function PlaygroundMain({
             : "bg-muted/20",
         )}
       >
+        <ResourceChatHandoff
+          identity={extensionIdentity}
+          fileActions={threadApps.fileActions}
+          compareActive={isMultiModelLayoutMode}
+          ready={isSessionBootstrapComplete && !!previewedHost && !isRestoringConversation && !extensionIdentityPending}
+        />
         {/* The global owner remains mounted in both single chat and Compare. */}
         {globalFormScope ? (
           <ScenarioHostStyleProvider value={hostStyle}>

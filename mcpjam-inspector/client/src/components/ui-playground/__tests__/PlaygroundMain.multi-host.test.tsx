@@ -682,6 +682,28 @@ describe("PlaygroundMain — multi-host render path", () => {
     onExecutionInjected: vi.fn(),
   };
 
+  it("consumes a resource handoff in the actual Compare branch without choosing a lane", async () => {
+    const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }, { hostId: "h-B", name: "Host B" }];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    const router = createMemoryRouter([{ path: "/playground", element: <PlaygroundMain {...defaultProps} /> }], {
+      initialEntries: [{ pathname: "/playground", state: { pluginResourceFile: {
+        actorId: "actor", projectId: "k57aaaaaaaaaaaaaaaaaaaaaaaaa", hostId: "h-A", serverId: "saved-server",
+        resourceUri: "fixture-file://private/triangle.stl", nonce: crypto.randomUUID(), createdAt: Date.now(),
+      } } }],
+    });
+    render(<RouterProvider router={router} />);
+    expect(screen.getByTestId("playground-multi-host-compare-section")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Switch to a single chat");
+    expect(router.state.location.state).toEqual({});
+    expect(mockSetMultiHostEnabled).not.toHaveBeenCalled();
+    expect(mockUseChatSession.setMultiModelEnabled).not.toHaveBeenCalled();
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    expect(mockUseChatSession.startChatWithMessages).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     mobileFixture.isMobile = false;
     previewedHostFixture.resolve = false;
