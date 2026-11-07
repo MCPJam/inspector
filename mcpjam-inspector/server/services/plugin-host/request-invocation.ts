@@ -223,13 +223,16 @@ export async function invokePluginRequest(
                   throw new PluginInvocationError(
                     "CONTINUATION_PROTOCOL_DENIED",
                   );
-                return runtime.resumeMrtr(
+                const result = await runtime.resumeMrtr(
                   authorization,
                   input.invocationId,
                   next,
                   input.resume!,
                   signal,
                 );
+                if (!(result instanceof PluginInvocationSuspension))
+                  validateResult?.(result);
+                return result;
               },
             },
           }

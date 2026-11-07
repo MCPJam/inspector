@@ -1,3 +1,4 @@
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 import { randomBytes } from "node:crypto";
 import { sandboxSourceReceipt } from "../../services/sandbox-view-source.js";
 import {
@@ -46,6 +47,7 @@ import {
   resolvePluginSettingsCatalog,
   settingsActionBindings,
   settingsActionToolValidation,
+  settingsResultValidation,
   settingsToolValidation,
 } from "../../services/plugin-host/settings-catalog.js";
 import {
@@ -122,10 +124,11 @@ async function identity(c: Context, body: z.infer<typeof scope>) {
 }
 /** Errors carry a plain-English description; server-author mistakes in the
  * settings declaration also carry a Logs diagnostic. */
-const failure = (code: string, serverId?: string) => {
+const failure = (code: string, serverId?: string, outcomeUnknown = false) => {
   const description = describePluginError(code);
   return {
     code,
+    ...(outcomeUnknown ? { outcomeUnknown: true } : {}),
     ...(description ? { description } : {}),
     ...(code.startsWith("PLUGIN_SETTINGS_") && serverId
       ? {
@@ -159,7 +162,18 @@ async function route(c: Context, run: () => Promise<Response>) {
       error instanceof PluginInvocationError ||
       error instanceof PluginSettingsError
     )
-      return c.json(failure(error.code, serverId), 403);
+      return c.json(
+        failure(
+          error.code,
+          serverId,
+          error instanceof PluginInvocationError && error.outcomeUnknown,
+        ),
+        403,
+      );
+    reportRouteFailure("Plugin Settings request failed", error, {
+      source: "web.pluginSettings",
+      hop: "mcpjam_internal",
+    });
     return c.json(failure("SETTINGS_UNAVAILABLE"), 503);
   }
 }
@@ -399,7 +413,7 @@ for (const method of ["read", "update", "action"] as const)
               method === "action"
                 ? settingsActionToolValidation(resolved.tool)
                 : settingsToolValidation(resolved.tool, args);
-            return (result) => {
+            return settingsResultValidation((result) => {
               validate(result);
               const content =
                 mcpAppToolResultSchema.parse(result).structuredContent;
@@ -413,7 +427,7 @@ for (const method of ["read", "update", "action"] as const)
                 );
                 documents.set(body.instanceToken, { ...document!, values });
               }
-            };
+            });
           },
           invoke: (ports, params) =>
             pluginInstances.invoke(
