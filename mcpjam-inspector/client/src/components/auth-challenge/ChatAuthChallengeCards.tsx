@@ -1,5 +1,5 @@
 import {
-  CHAT_AUTH_RECOVERY_MESSAGE,
+  chatAuthRecoveryFailureMessage,
   dismissChatAuthRecoveryFailure,
   useChatAuthRecoveryFailures,
 } from "@/lib/chat-auth-recovery";
@@ -58,7 +58,7 @@ export function ChatAuthChallengeCards({
             role="alert"
             className="rounded-lg border border-destructive p-3 text-sm"
           >
-            <p>{CHAT_AUTH_RECOVERY_MESSAGE}</p>
+            <p>{chatAuthRecoveryFailureMessage(failure)}</p>
             <Button
               size="sm"
               variant="ghost"

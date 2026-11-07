@@ -44,6 +44,7 @@ import { getConvexBearerForDelegation } from "../utils/v1-convex-token.js";
 import { createAuthorizedManager } from "../routes/web/auth.js";
 import { WebRouteError } from "../routes/web/errors.js";
 import { prepareEvalRun, shouldSkipExecution } from "../routes/shared/evals.js";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 import { createConvexClient } from "./evals/route-helpers.js";
 import type { CheckRecipe } from "./github-checks/recipes.js";
 import {
@@ -965,18 +966,6 @@ async function defaultDeleteEphemeralServer(args: {
 }
 
 /**
- * Run statuses the eval runner treats as final. `timed_out` is included because
- * the runner stamps it before rethrowing — re-finalizing as `failed` would
- * overwrite a real timeout verdict.
- */
-const TERMINAL_RUN_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-]);
-
-/**
  * Whether the run already has a terminal record — with `unknown` kept distinct
  * from `non_terminal`.
  *
@@ -1011,7 +1000,7 @@ async function runTerminality(
     })) as { status?: string } | null;
     if (!run) return "unknown";
     if (run.status === "grading") return "grading";
-    return TERMINAL_RUN_STATUSES.has(String(run.status))
+    return isEvalRunTerminalStatus(run.status)
       ? "terminal"
       : "non_terminal";
   } catch {
@@ -1020,7 +1009,7 @@ async function runTerminality(
 }
 
 /**
- * Read a run, waiting out a gating judge's hold.
+ * Read a run, waiting for its existing executor and gating judge.
  *
  * IT DECIDES NOTHING. It returns the last row it read, and every judgement
  * stays where it was: `runReachedAVerdict` is unchanged and still answers
@@ -1066,7 +1055,7 @@ export async function awaitJudgeVerdict(
     } | null;
 
   let run = await read();
-  while (run?.status === "grading") {
+  while (run?.status === "grading" || run?.status === "running" || run?.status === "pending") {
     if (options.isLeaseHeld?.() === false) return run;
     if (now() >= deadline) return run;
     await sleep(options.pollMs);
@@ -1074,7 +1063,7 @@ export async function awaitJudgeVerdict(
       run = await read();
     } catch (error) {
       // Not evidence about the run. Keep the last row and try again.
-      logger.warn("[github-checks] failed to re-read a run held for grading", {
+      logger.warn("[github-checks] failed to re-read an active eval run", {
         runId,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -1186,6 +1175,7 @@ async function abandonPreparedRun(
   prepared: Awaited<ReturnType<typeof prepareEvalRun>>,
   ctx: { triggerId: string; reason: string; what: string },
 ): Promise<void> {
+  if (prepared.deduped === true) return;
   const notes = ctx.reason.slice(0, 500);
   await client
     .mutation("testSuites:markSetupPendingIterationsFailed" as any, {
@@ -1299,12 +1289,8 @@ async function executeCheckRun(
   args: RunEvalSuiteArgs,
 ): Promise<Awaited<ReturnType<typeof awaitJudgeVerdict>>> {
   try {
-    // A redelivered claim replays the run its key already started. If that
-    // run FINISHED, re-executing would run the suite a second time and bill
-    // for it — and the verdict this check needs is already recorded on it.
-    // Only the execution is skipped; everything below still reads the run's
-    // terminality and reports it, which is exactly what a redelivery should
-    // do.
+    // A redelivered claim adopts the original worker's run. Wait for its
+    // verdict below while keeping this claim's heartbeat and temporary server.
     if (shouldSkipExecution(prepared)) {
       logger.info("[github-checks] trigger already ran — not re-executing", {
         triggerId: args.claimed.triggerId,
