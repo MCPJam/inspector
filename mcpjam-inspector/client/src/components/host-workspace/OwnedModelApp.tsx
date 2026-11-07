@@ -1,3 +1,4 @@
+import { useComposerForms } from "@/components/elicitation/composer-form-store";
 import { withModelAppResources } from "./model-app-resources";
 import { withLocalFileHost } from "./local-file-host";
 import { useWorkspaceFileActions } from "./file-actions";
@@ -500,6 +501,7 @@ function ModelApp({
     },
     [ownedHost, context.snapshot],
   );
+  const hostInputPending = useComposerForms(marker.workspaceId).length > 0;
   const queue = useRef(Promise.resolve());
   if (error)
     return (
@@ -518,6 +520,7 @@ function ModelApp({
           toolOutput={withoutModelAppControl(renderProps.toolOutput)}
           toolResponseMetadata={guestMetadata}
           appToolSourceLabel={`Model App: ${renderProps.toolName}`}
+          hostInputPending={hostInputPending}
           serverId={marker.serverId}
           serverName={serverName}
           resourceUri={handle.resourceUri}
