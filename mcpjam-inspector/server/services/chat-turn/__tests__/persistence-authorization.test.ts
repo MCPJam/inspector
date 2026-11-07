@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({
   service: true,
   revoked: false,
   rebound: false,
+  reassigned: false,
   getBearer: vi.fn(async () => "current-delegation"),
   prepare: vi.fn(),
   revalidate: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock("../../../middleware/bearer-auth.js", () => ({
     expect(c.get("workosApiKeyBinding")).toBeUndefined();
     if (state.revoked) return c.json({ error: "revoked" }, 401);
     if (state.rebound) c.set("mcpjamOrganizationId", "other-org");
+    if (state.reassigned) c.set("workosUserId", "other-actor");
     await next();
   },
 }));
@@ -67,7 +69,7 @@ async function prepare(
 beforeEach(() => {
   vi.clearAllMocks();
   state.hosted = state.service = true;
-  state.revoked = state.rebound = false;
+  state.revoked = state.rebound = state.reassigned = false;
 });
 
 it("captures verified background authority before execution and resolves it only for persistence", async () => {
@@ -79,7 +81,7 @@ it("captures verified background authority before execution and resolves it only
   expect(await authorization!()).toBe("Bearer current-delegation");
   expect(state.revalidate).not.toHaveBeenCalled();
 });
-it.each(["revoked", "rebound"] as const)(
+it.each(["revoked", "rebound", "reassigned"] as const)(
   "refuses a %s original API key before using delegation",
   async (reason) => {
     const authorization = await prepare("workos_api_key");

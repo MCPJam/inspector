@@ -518,7 +518,7 @@ export async function handleManagedChatTurn(
         },
         persist: {
           getAuthorization: turnAuthorization?.getAuthorization,
-          ...(!HOSTED_MODE && executionTarget.kind !== "scenario" && !c.get("guestId") && typeof retrySubject === "string" ? { retryOwner: { subject: retrySubject, projectId: hostedBody.projectId } } : {}),
+          ...(executionTarget.kind !== "scenario" && !c.get("guestId") && typeof retrySubject === "string" ? { retryOwner: { subject: retrySubject, projectId: hostedBody.projectId } } : {}),
           requireNativeToolDiscovery: resolvedExecution.requireNativeToolDiscovery,
           executionBindingVersion: resolvedExecution.executionBindingVersion,
           executionTarget: toResumeExecutionTarget(executionTarget),
