@@ -20,15 +20,21 @@ export interface SandboxCspSubtypePolicy {
 export function normalizeSandboxDomainSource(value: string): string {
   const source = value.trim();
   if (!/[^\x20-\x7e]/.test(source)) return source;
+  if (/[\s\x00-\x1f\x7f,;'"<>\\]/.test(source)) return source;
   try {
-    const hasScheme = source.includes("://");
-    const url = new URL((hasScheme ? source : `https://${source}`).replace(/:\*(?=\/|$)/, ":65535"));
+    const scheme = source.match(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//)?.[0] ?? "";
+    const rest = source.slice(scheme.length);
+    const end = rest.search(/[/?#]/);
+    const authority = end < 0 ? rest : rest.slice(0, end);
+    const suffix = end < 0 ? "" : rest.slice(end);
+    const port = authority.match(/:(?:\*|[0-9]+)$/)?.[0] ?? "";
+    const hostname = port ? authority.slice(0, -port.length) : authority;
+    if (hostname.includes(":") && !(hostname.startsWith("[") && hostname.endsWith("]"))) return source;
+    const url = new URL(`${scheme || "https://"}${hostname}${port === ":*" ? "" : port}`);
     if (url.username || url.password) return source;
-    let normalized = url.href;
-    if (!source.endsWith("/") && url.pathname === "/" && !url.search && !url.hash)
-      normalized = normalized.slice(0, -1);
-    if (!hasScheme) normalized = normalized.slice("https://".length);
-    return source.includes(":*") ? normalized.replace(":65535", ":*") : normalized;
+    // Preserve explicit ports and literal dot segments: URL normalization
+    // must not change the scope of a declared CSP host or path source.
+    return `${scheme}${url.hostname}${port}${suffix.replace(/[^\x00-\x7f]+/g, encodeURIComponent)}`;
   } catch {
     // Invalid declarations remain invalid for the admission validator.
     return source;
