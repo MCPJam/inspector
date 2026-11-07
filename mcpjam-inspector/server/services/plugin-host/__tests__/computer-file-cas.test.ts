@@ -91,6 +91,32 @@ describe("Computer VM atomic file helper", () => {
     expect(await stages()).toEqual([]);
   });
 
+  it("does not let a cancelled waiter poison another caller's shared qualification", async () => {
+    const t = transport();
+    const original = t.value.run;
+    let resume!: () => void;
+    const gate = new Promise<void>((resolve) => { resume = resolve; });
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => { started = resolve; });
+    t.value.run = async (command, options) => {
+      const request = JSON.parse(Buffer.from(options.envs.MCPJAM_FILE_CAS!, "base64url").toString());
+      if (request.op === "probe") {
+        started(); await gate;
+        options.signal?.throwIfAborted();
+      }
+      return original(command, options);
+    };
+    const cas = createComputerFileCas(t.value);
+    const abort = new AbortController();
+    const cancelled = cas.supports(abort.signal).then(() => "unexpected", () => "cancelled");
+    await entered;
+    const healthy = cas.supports();
+    abort.abort(); resume();
+    expect(await cancelled).toBe("cancelled");
+    expect(await healthy).toBe(true);
+    expect(t.operations.filter((op) => op === "probe")).toHaveLength(1);
+  });
+
   it("does not share locks or results across independent Computer filesystems", async () => {
     const other = join(home, "other-vm"); await mkdir(join(other, "parts"), { recursive: true });
     const a = await target(); const b = join(other, "parts", "part.stl"); await writeFile(b, "original");
