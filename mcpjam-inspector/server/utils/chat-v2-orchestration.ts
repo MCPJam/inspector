@@ -11,7 +11,7 @@ import { getManagerConnections } from "./mcp-connections.js";
  *
  * Encapsulates the identical prep logic used by both mcp/chat-v2 and web/chat-v2:
  *   1. getToolsForAiSdk + the turn's skill source + needsApproval merge
- *   2. Anthropic tool name validation (throws on invalid names)
+ *   2. Anthropic tool name validation, harness turns only (throws on invalid)
  *   3. System prompt + skills prompt concatenation
  *   4. Temperature resolution (GPT-5 check)
  *   5. scrubMessages lambda construction
@@ -72,6 +72,11 @@ import {
   type UiToolAnnotations,
 } from "@/shared/client-fulfilled-tools";
 import { needsApprovalFor } from "@/shared/tool-approval";
+import {
+  WIDGET_MODEL_CONTEXT_MAX_CONTENT_BLOCKS,
+  WIDGET_MODEL_CONTEXT_MAX_ENTRIES,
+  WIDGET_MODEL_CONTEXT_MAX_JSON_BYTES,
+} from "@/shared/widget-model-context-limits";
 import {
   WEBMCP_TOOL_DESCRIPTION_MAX_CHARS,
   WEBMCP_TOOL_INPUT_SCHEMA_MAX_BYTES,
@@ -137,9 +142,6 @@ const APP_TOOL_MAX_INPUT_SCHEMA_BYTES = 8 * 1024;
 const UI_TOOL_MAX_ENTRIES = 64;
 const UI_TOOL_MAX_DESCRIPTION_CHARS = 512;
 const UI_TOOL_MAX_INPUT_SCHEMA_BYTES = 8 * 1024;
-const WIDGET_MODEL_CONTEXT_MAX_ENTRIES = 32;
-const WIDGET_MODEL_CONTEXT_MAX_CONTENT_BLOCKS = 32;
-const WIDGET_MODEL_CONTEXT_MAX_JSON_BYTES = 64 * 1024;
 // WebMCP Inspector page-tool caps. Same shape as the app-tool caps above, and
 // deliberately no more generous: the entries describe tools a third-party page
 // registered, so every field here is attacker-influenced text.
@@ -1901,9 +1903,13 @@ export async function prepareChatV2(
   // 3. Anthropic tool name validation — meta-tool names are conforming and
   // checked alongside real tools. Bedrock's Converse API enforces the same
   // ^[a-zA-Z0-9_-]{1,64}$ tool-name shape as Anthropic, so it shares the gate.
+  // Only harness turns are checked: a direct or hosted turn aliases such names
+  // on the wire (`withProviderSafeToolNames`, the hosted stream request), while
+  // a harness runtime builds its own tool names from the server's.
   if (
-    isAnthropicCompatibleModel(modelDefinition, customProviders) ||
-    modelDefinition.provider === "bedrock"
+    harness &&
+    (isAnthropicCompatibleModel(modelDefinition, customProviders) ||
+      modelDefinition.provider === "bedrock")
   ) {
     const invalidNames = getInvalidAnthropicToolNames(Object.keys(allTools));
     if (invalidNames.length > 0) {

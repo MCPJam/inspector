@@ -21,6 +21,7 @@ import {
   registerMainProcessCrashHandlers,
 } from "./crash-reporting.js";
 import { retireConsoleOnStreamError } from "./log-console-safety.js";
+import { trustSystemCertificates } from "./system-ca.js";
 import { loadSentryInstallationId } from "./sentry-installation.js";
 import { initializeDesktopSentryIdentity } from "../shared/desktop-sentry-state.js";
 import { installDesktopSentryIdentity } from "./sentry-identity-electron.js";
@@ -106,6 +107,11 @@ retireConsoleOnStreamError(
 // the user actually attaches to a bug report (and is the only diagnostic when
 // reporting is offline or opted out).
 registerMainProcessCrashHandlers(log);
+
+// Before the embedded server makes any request: on a network that re-signs
+// HTTPS, Node rejects the company root the OS (and so the window) trusts, and a
+// first launch never gets past the loading screen. See the file.
+trustSystemCertificates(log);
 
 // Wire autoUpdater event handlers BEFORE polling starts, otherwise an early
 // `update-available` event could fire before our listener exists.

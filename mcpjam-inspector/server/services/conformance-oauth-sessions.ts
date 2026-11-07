@@ -28,6 +28,7 @@ export interface OAuthConformanceSession {
    */
   owner?: string;
   controller: RemoteBrowserAuthorizationController;
+  cancelRunner?: (reason: Error) => void;
   /** Authorization URL once the runner has surfaced it. */
   authorizationUrl?: string;
   completedSteps: Array<{ step: string; status: string }>;
@@ -65,6 +66,7 @@ function ensureCleanupTimer() {
     const now = Date.now();
     for (const [id, session] of sessions) {
       if (now - session.lastActivityAt > SESSION_IDLE_TTL_MS) {
+        session.cancelRunner?.(new Error("Session expired"));
         session.controller.fail(new Error("Session expired"));
         sessions.delete(id);
       }
@@ -158,6 +160,7 @@ export function touchSession(sessionId: string): void {
 export function deleteSession(sessionId: string): void {
   const session = sessions.get(sessionId);
   if (session) {
+    session.cancelRunner?.(new Error("Run cancelled"));
     session.controller.fail(new Error("Session deleted"));
     sessions.delete(sessionId);
   }
@@ -221,6 +224,7 @@ export function setSessionError(sessionId: string, error: string): void {
 // For testing: clear all sessions
 export function clearAllSessions(): void {
   for (const session of sessions.values()) {
+    session.cancelRunner?.(new Error("Sessions cleared"));
     session.controller.fail(new Error("Sessions cleared"));
   }
   sessions.clear();

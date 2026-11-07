@@ -144,7 +144,7 @@ export function buildV2ComparePlanSections(
           unavailable,
           unavailable,
           text("Basic"),
-          text("Custom roles, SCIM"),
+          text("Roles, SCIM"),
         ),
         row(
           "Data processing agreement",

@@ -14,15 +14,19 @@ import {
 import { Switch } from "@mcpjam/design-system/switch";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
+  AUTH_CHALLENGE_ACTIONS,
   clearTasksPolicy,
   describeInvalidTasksPolicy,
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
   MCP_PROTOCOL_VERSIONS,
   protocolVersionLabel,
+  readEventsHostSetting,
   readTasksPolicy,
   readXaaEnterprisePolicy,
   setTasksPolicy,
+  TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
+  UNAUTHORIZED_CHALLENGE_TRIGGERS,
   withXaaEnterprisePolicy,
   withoutXaaEnterprisePolicy,
   XAA_MCP_EXTENSION,
@@ -35,12 +39,20 @@ import {
   type McpProtocolVersion,
 } from "@/lib/client-config-v2";
 import type {
+  AuthChallengeAction,
   MrtrSupport,
   PaginationTraversalMode,
   ToolParamHeaderMirroring,
+  ToolResultAuthChallengeTrigger,
+  UnauthorizedChallengeTrigger,
 } from "@mcpjam/sdk/browser";
 import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
+import {
+  ProtocolAuthChallengeSection,
+  type AuthChallengeKnob,
+} from "./ProtocolAuthChallengeSection";
+import { EventsHostSupportSection } from "./EventsHostSupportSection";
 
 /**
  * "auto" is a stored selection policy, NOT a wire literal. The SDK negotiates
@@ -90,6 +102,16 @@ const TASKS_POLICY_VALUE: Partial<Record<TasksPolicy, TasksPolicyChoice>> = {
   on: "on",
   off: "off",
 };
+
+/** Narrow an untrusted JSON value to one of a closed set of literals. */
+function closedEnumValue<T extends string>(
+  allowed: readonly T[],
+  raw: unknown,
+): T | undefined {
+  return typeof raw === "string" && (allowed as readonly string[]).includes(raw)
+    ? (raw as T)
+    : undefined;
+}
 
 /**
  * `MCP_PROTOCOL_VERSIONS` is ordered oldest-first; the dropdown lists
@@ -242,6 +264,15 @@ type ProtocolDoc = {
     listens?: boolean;
     refetches?: boolean;
   };
+  /**
+   * Mid-session sign-in knobs. Absent → the SDK default for each, written
+   * back as absence for the same hash reason as the knobs above. Map onto
+   * the same-named `mcpProfile` fields.
+   */
+  unauthorizedChallenge?: AuthChallengeAction;
+  unauthorizedChallengeTrigger?: UnauthorizedChallengeTrigger;
+  toolResultAuthChallenge?: AuthChallengeAction;
+  toolResultAuthChallengeTrigger?: ToolResultAuthChallengeTrigger;
   capabilities?: Record<string, unknown>;
   /**
    * Host-level MCP profile extensions (`mcpProfile.extensions`) — freeform
@@ -320,6 +351,22 @@ export function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
   const toolListChanged = draft.mcpProfile?.toolListChanged;
   if (toolListChanged && Object.keys(toolListChanged).length > 0) {
     doc.toolListChanged = { ...toolListChanged };
+  }
+
+  // Same only-when-set rule for the mid-session sign-in knobs.
+  if (draft.mcpProfile?.unauthorizedChallenge !== undefined) {
+    doc.unauthorizedChallenge = draft.mcpProfile.unauthorizedChallenge;
+  }
+  if (draft.mcpProfile?.unauthorizedChallengeTrigger !== undefined) {
+    doc.unauthorizedChallengeTrigger =
+      draft.mcpProfile.unauthorizedChallengeTrigger;
+  }
+  if (draft.mcpProfile?.toolResultAuthChallenge !== undefined) {
+    doc.toolResultAuthChallenge = draft.mcpProfile.toolResultAuthChallenge;
+  }
+  if (draft.mcpProfile?.toolResultAuthChallengeTrigger !== undefined) {
+    doc.toolResultAuthChallengeTrigger =
+      draft.mcpProfile.toolResultAuthChallengeTrigger;
   }
 
   if (
@@ -581,6 +628,25 @@ export function applyJsonToDraft(
     }
   }
 
+  // Same closed-enum collapse for the mid-session sign-in knobs, against the
+  // SDK's own literal lists so a new value never needs a second edit here.
+  const unauthorizedChallenge = closedEnumValue(
+    AUTH_CHALLENGE_ACTIONS,
+    parsed.unauthorizedChallenge,
+  );
+  const unauthorizedChallengeTrigger = closedEnumValue(
+    UNAUTHORIZED_CHALLENGE_TRIGGERS,
+    parsed.unauthorizedChallengeTrigger,
+  );
+  const toolResultAuthChallenge = closedEnumValue(
+    AUTH_CHALLENGE_ACTIONS,
+    parsed.toolResultAuthChallenge,
+  );
+  const toolResultAuthChallengeTrigger = closedEnumValue(
+    TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
+    parsed.toolResultAuthChallengeTrigger,
+  );
+
   let toolListChangedParsed: HostConfigMcpProfileV1["toolListChanged"];
   if (isPlainObject(parsed.toolListChanged)) {
     const incoming = parsed.toolListChanged;
@@ -664,6 +730,10 @@ export function applyJsonToDraft(
       mrtrSupport,
       toolCallCancellation,
       toolListChanged: toolListChangedParsed,
+      unauthorizedChallenge,
+      unauthorizedChallengeTrigger,
+      toolResultAuthChallenge,
+      toolResultAuthChallengeTrigger,
       extensions: profileExtensions,
       // `apps` is owned by the Apps tab (including the widget tool-result
       // policy that used to be edited here); this view must pass it through
@@ -860,7 +930,9 @@ export function ProtocolTab({
     });
   };
 
-  const setConformanceKnob = <K extends "paginationTraversal" | "mrtrSupport">(
+  const setConformanceKnob = <
+    K extends "paginationTraversal" | "mrtrSupport" | AuthChallengeKnob,
+  >(
     key: K,
     next: HostConfigMcpProfileV1[K] | undefined,
   ) => {
@@ -950,6 +1022,11 @@ export function ProtocolTab({
   // is stranded with tasks disabled and no UI left to re-enable them.
   const tasksFlagEnabled = useFeatureFlagEnabled("mcp-tasks");
   const showTasksPolicy = tasksFlagEnabled === true || tasksPolicy !== "unset";
+  // Shown with Events, and always once a setting is saved, so a client is
+  // never left with a delivery setting nobody can see or change.
+  const eventsFlagEnabled = useFeatureFlagEnabled("mcp-events-enabled");
+  const showEventsDelivery =
+    eventsFlagEnabled === true || readEventsHostSetting(draft).kind !== "unset";
   const fTasksPolicy = hostConfigField("tasksPolicy");
   const setTasksPolicyChoice = (next: TasksPolicyChoice) => {
     onDraftChange((prev) =>
@@ -1260,6 +1337,11 @@ export function ProtocolTab({
             </div>
           </div>
         </div>
+        <ProtocolAuthChallengeSection
+          profile={draft.mcpProfile}
+          onChange={setConformanceKnob}
+          readOnly={readOnly}
+        />
         {showPolicyToggle && (
           <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
             <div className="min-w-0">
@@ -1333,6 +1415,13 @@ export function ProtocolTab({
               </SelectContent>
             </Select>
           </div>
+        )}
+        {showEventsDelivery && (
+          <EventsHostSupportSection
+            draft={draft}
+            onDraftChange={onDraftChange}
+            readOnly={readOnly}
+          />
         )}
         <div className="mt-2.5 border-t border-border/50 pt-2.5">
           <div className="flex items-center justify-between gap-3">

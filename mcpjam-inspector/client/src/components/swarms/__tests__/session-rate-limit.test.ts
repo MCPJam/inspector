@@ -83,6 +83,29 @@ describe("describeSwarmAttemptFailure", () => {
       severity: "info", oneLine: "Sign in again.", rawMessage: "Sign in again.", rawCode: "xaa_reauth_required",
     });
   });
+  it.each([
+    "Setup couldn't create this target's test data, so its conversations didn't run. Run it again.",
+    "Setup created more test data than it can track, so this target's conversations didn't run.",
+    "Setup made more tool calls than it can track, so this target's conversations didn't run.",
+    "Setup ran out of time before this target's test data was ready, so its conversations didn't run. Run it again.",
+    "Setup couldn't reach the MCP server, so this target's conversations didn't run. Check the server's connection, then run it again.",
+    "MCPJam couldn't run setup for this target, so its conversations didn't run. Run it again later.",
+  ])("cards a setup stop with its own sentence: %s", (sentence) => {
+    const error = describeSwarmAttemptFailure(
+      sentence,
+      "prerequisites_unavailable",
+      "Your provider",
+    );
+    expect(error).toMatchObject({
+      title: "Setup stopped this target",
+      oneLine: sentence,
+      likelyCauses: [],
+      nextSteps: [],
+      rawCode: "prerequisites_unavailable",
+      docsAnchor: "/troubleshooting/error-codes",
+    });
+    expect(JSON.stringify(error)).not.toContain("New error class");
+  });
   it("retains a failure's humanized meaning and machine code", () => {
     const error = describeSwarmAttemptFailure("Runner stopped.", "execution_failed", "Your provider");
     expect(error.title).toBe("Session failed");
@@ -388,5 +411,33 @@ describe("describeSwarmAttemptFailure organization AI-key refusals", () => {
       severity: "info",
       nextSteps: ["Run the session again in a moment."],
     });
+  });
+});
+
+describe("describeSwarmAttemptFailure declined card", () => {
+  // What the runner stores after a declined card paused auto-reload: the
+  // backend's sentence under the generic code, with the refusal reason gone.
+  const DECLINED =
+    "Your card was declined, so auto-reload is paused and this organization is out of MCPJam credits.";
+
+  it("names the card instead of an empty balance or a hold", () => {
+    const result = describeSwarmAttemptFailure(
+      DECLINED,
+      "user_rate_limit",
+      "Anthropic",
+    );
+    expect(result.title).toBe("Update your declined card");
+    expect(result.oneLine).toMatch(/update your payment method/i);
+    expect(result.slug).toBe(ERROR_CATALOG["provider/mcpjam_limit"].slug);
+    expect(result.rawMessage).toBe(DECLINED);
+  });
+
+  it("reads the structured reason over a held-credits sentence", () => {
+    const result = describeSwarmAttemptFailure(
+      'Backend stream error: 429 {"code":"user_rate_limit","refusalReason":"auto_topup_declined","error":"MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits."}',
+      "user_rate_limit",
+      "Anthropic",
+    );
+    expect(result.title).toBe("Update your declined card");
   });
 });

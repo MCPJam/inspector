@@ -32,6 +32,7 @@ import {
   GOOSE_PLATFORM,
 } from "./goose-style.js";
 import { SLACK_FONT_CSS, getSlackStyleVariables } from "./slack-style.js";
+import { CHATGPT_MODEL_CONTEXT_POLICY } from "./chatgpt-model-context-policy.js";
 
 type HostThemeMode = "light" | "dark";
 
@@ -611,6 +612,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // No `toolListChanged` here: that capture came back `not-deliverable`
         // (the prober deployment holds no `subscriptions/listen` stream to
         // publish on), so neither half of the pair was actually asked.
+        //
+        // Mid-session sign-in: from Anthropic's PUBLISHED connector docs, not
+        // a probe (no manual measurement pass has happened yet). Claude starts
+        // sign-in from a 401 carrying `WWW-Authenticate: Bearer`, the same
+        // value the backend host catalog ships. Everything else stays absent:
+        // the 401 action is `prompt`, and the `_meta` challenge is not honored.
+        unauthorizedChallengeTrigger: "bearer-header",
         mcpProtocolVersion: "auto",
         mrtrModes: {
           requestState: false,
@@ -853,6 +861,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // No `toolListChanged` here: that capture came back `not-deliverable`
         // (the prober deployment holds no `subscriptions/listen` stream to
         // publish on), so neither half of the pair was actually asked.
+        //
+        // Mid-session sign-in: from Anthropic's PUBLISHED connector docs, not
+        // a probe (no manual measurement pass has happened yet). Claude starts
+        // sign-in from a 401 carrying `WWW-Authenticate: Bearer`, the same
+        // value the backend host catalog ships. Everything else stays absent:
+        // the 401 action is `prompt`, and the `_meta` challenge is not honored.
+        unauthorizedChallengeTrigger: "bearer-header",
         mcpProtocolVersion: "auto",
         mrtrModes: {
           requestState: false,
@@ -1090,6 +1105,14 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // and Claude Code re-issued tools/list 136 ms later.
         paginationTraversal: "full",
         toolListChanged: { listens: true, refetches: true },
+        // Mid-session sign-in: from Claude Code's PUBLISHED behavior, not a
+        // probe (no manual measurement pass has happened yet). On a 401 it
+        // tells the model to run `/mcp` to authenticate, and neither starts
+        // sign-in nor retries the call itself (`notify`). Like the Claude
+        // connectors, only a 401 carrying `WWW-Authenticate: Bearer` counts as
+        // a challenge. The `_meta` challenge stays absent (not honored).
+        unauthorizedChallenge: "notify",
+        unauthorizedChallengeTrigger: "bearer-header",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // Capability provenance above is from the v2.1.176 probe. The
@@ -1184,6 +1207,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // so no server notification can reach it. `refetches` stays absent —
         // unprovable while nothing is ever delivered.
         toolListChanged: { listens: true },
+        // Mid-session sign-in: from OpenAI's PUBLISHED Apps SDK auth docs,
+        // not a probe (no manual measurement pass has happened yet). ChatGPT
+        // shows its sign-in UI for a `_meta["mcp/www_authenticate"]` tool
+        // result. Its gate (an `oauth2` securitySchemes entry plus both
+        // `error` and `error_description`) is the absent trigger, so only the
+        // action is written. The 401 pair stays absent (the spec reading).
+        toolResultAuthChallenge: "prompt",
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // Stored in the established connection-profile envelope. The
@@ -1206,6 +1236,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             },
             enabled: true,
           },
+          modelContextPolicy: { ...CHATGPT_MODEL_CONTEXT_POLICY },
           // MCP Apps extension: hostInfo sent to the View iframe in
           // `ui/initialize`. Different protocol layer from clientInfo
           // above — apps that branch on `hostInfo.name === "chatgpt"`

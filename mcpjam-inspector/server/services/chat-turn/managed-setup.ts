@@ -1,4 +1,6 @@
 import { resolveHostedChatSetup } from "./resolve-hosted-chat-setup.js";
+import { buildHostConnectionPins } from "../host-connection-pins.js";
+import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import {
   localHarnessIdOf,
   shouldUseLocalHarness,
@@ -85,7 +87,9 @@ import {
 } from "../environments/effective-capabilities.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import { HOSTED_APP_HANDLERS, qualifyHarnessHostCapabilities } from "../../../shared/harness-host-capabilities.js";
-import { resolveTurnBuiltInToolIds } from "../../utils/built-in-tools/built-in-tool-policy.js";
+import {
+  resolveTurnBuiltInToolIds,
+} from "../../utils/built-in-tools/built-in-tool-policy.js";
 import { logger } from "../../utils/logger.js";
 import { listLocalRuntimeSkills } from "../../utils/skill-tools.js";
 import { readLocalBrowserSetting } from "../../utils/computers/local-browser-settings.js";
@@ -101,8 +105,10 @@ export async function resolveManagedTurnSetup(args: {
 }) {
   const { c, rawBody, bearerToken, localIngress, rpcCollector } = args;
   const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
-  const { initializePins, mcpProtocolVersionsByServerId } =
-    extractMcpInitializeOptions(rawBody);
+  const {
+    initializePins,
+    mcpProtocolVersionsByServerId: requestedProtocolPins,
+  } = extractMcpInitializeOptions(rawBody);
   const body = rawBody as unknown as ChatV2Request & {
     projectId: string;
     selectedServerIds: string[];
@@ -161,15 +167,13 @@ export async function resolveManagedTurnSetup(args: {
       "model is not supported",
     );
   }
-  let chatEnvironmentsSupported = false;
-  if (!isScenarioRequest) {
-    const authorized = await authorizeProject(
-      callerContextFromHono(c),
-      bearerToken,
-      hostedBody.projectId,
-    );
-    chatEnvironmentsSupported = authorized.chatEnvironments;
-  }
+  const authorized = isScenarioRequest
+    ? undefined
+    : await authorizeProject(
+        callerContextFromHono(c),
+        bearerToken,
+        hostedBody.projectId,
+      );
   const {
     mode: turnMode,
     hostRuntimeConfig,
@@ -184,6 +188,7 @@ export async function resolveManagedTurnSetup(args: {
     toolConfigurationUnavailable,
     workspaceToolsBarred,
   } = await resolveHostedChatSetup({
+    prepareChatTurn: authorized?.chatPreparation,
     target: executionTarget,
     access:
       executionTarget.kind === "scenario"
@@ -196,14 +201,14 @@ export async function resolveManagedTurnSetup(args: {
             kind: "project",
             projectId: hostedBody.projectId,
             guest: Boolean(c.get("guestId")),
-            chatEnvironments: chatEnvironmentsSupported,
+            chatEnvironments: authorized?.chatEnvironments ?? false,
           },
     projectId: hostedBody.projectId,
     selectedServerIds: requestedServerIds,
     bearer: bearerToken,
     signal: c.req.raw.signal,
     getClient: async () =>
-      createConvexClient(await getConvexBearerForRequest(c)),
+      createConvexClient(await getConvexBearerForRequest(c), c.req.raw.signal),
   });
   let requiredNativeDiscoveryPin = false;
   if (turnMode === "interactive" && !c.get("guestId") && hostedBody.projectId && hostedBody.chatSessionId) {
@@ -261,36 +266,25 @@ export async function resolveManagedTurnSetup(args: {
     : scenarioEnvironment
       ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
       : undefined;
+  const hostPins =
+    authoritativeConnectionPolicy && hostRuntimeConfig
+      ? buildHostConnectionPins(hostRuntimeConfig, WEB_STREAM_TIMEOUT_MS)
+      : undefined;
+  const mcpProtocolVersionsByServerId = hostPins
+    ? hostPins.mcpProtocolVersionsByServerId
+    : requestedProtocolPins;
   const xaaPolicy =
     authoritativeConnectionPolicy && hostRuntimeConfig
-      ? xaaPolicyFromMcpProfile(
-          (
-            hostRuntimeConfig as {
-              mcpProfile?: unknown;
-            }
-          ).mcpProfile,
-        )
+      ? xaaPolicyFromMcpProfile(hostRuntimeConfig.mcpProfile)
       : parseXaaPolicyValue(rawBody.xaaPolicy);
   const effectiveInitializePins =
     authoritativeConnectionPolicy && hostRuntimeConfig
       ? applyHostConformanceKnobs(
-          applyHostParamMirroring(
-            initializePins,
-            mirrorToolParamHeadersFromMcpProfile(
-              (
-                hostRuntimeConfig as {
-                  mcpProfile?: unknown;
-                }
-              ).mcpProfile,
-            ),
+          applyHostParamMirroring<NonNullable<typeof initializePins>>(
+            hostPins?.initializePins,
+            mirrorToolParamHeadersFromMcpProfile(hostRuntimeConfig.mcpProfile),
           ),
-          conformanceKnobsFromMcpProfile(
-            (
-              hostRuntimeConfig as {
-                mcpProfile?: unknown;
-              }
-            ).mcpProfile,
-          ),
+          conformanceKnobsFromMcpProfile(hostRuntimeConfig.mcpProfile),
         )
       : initializePins;
   const resolvedExecution = resolveExecutionContext({
@@ -386,12 +380,13 @@ export async function resolveManagedTurnSetup(args: {
     workspaceToolsBarred,
     requestedToolApproval: resolvedExecution.requireToolApproval,
     loadProjectAccess: async () =>
-      (await createConvexClient(await getConvexBearerForRequest(c)).query(
+      authorized?.projectAccess ??
+      ((await createConvexClient(await getConvexBearerForRequest(c)).query(
         "projects:getProjectCapabilities" as never,
         { projectId: hostedBody.projectId } as never,
       )) as {
         projectRole?: string | null;
-      } | null,
+      } | null),
   });
   if (builtInToolPolicy.dropped.length > 0) {
     getRequestLogger(c, "routes.web.chat-v2").event(
@@ -731,6 +726,7 @@ export async function resolveManagedTurnSetup(args: {
   }
   return {
     value: {
+      authorizedOrganizationId: authorized?.organizationId,
       harnessHostCapabilities:
         resolvedExecution.harness && hostRuntimeConfig
           ? qualifyHarnessHostCapabilities(hostRuntimeConfig, HOSTED_APP_HANDLERS)

@@ -355,6 +355,13 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       },
       mcpProfile: {
         profileVersion: 1,
+        extensions: {
+          "com.mcpjam/events": {
+            poll: true,
+            push: true,
+            webhook: true,
+          },
+        },
         initialize: {
           clientInfo: {
             name: "mcpjam-inspector",
@@ -1499,6 +1506,11 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       },
       mcpProfile: {
         profileVersion: 1,
+        extensions: {
+          "com.mcpjam/events": {
+            webhook: true,
+          },
+        },
         mcpProtocolVersion: "auto",
         paginationTraversal: "full",
         toolListChanged: {
@@ -1521,6 +1533,11 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               mentions: false,
             },
             enabled: true,
+          },
+          modelContextPolicy: {
+            maxBlocks: 256,
+            turnMaxBytes: 8388608,
+            updateMaxBytes: 2548000,
           },
           uiInitialize: {
             hostInfo: {

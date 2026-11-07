@@ -150,6 +150,7 @@ export async function runSecurityChecks(
   ctx: RawHttpCheckContext,
   selectedCheckIds: Set<MCPCheckId>,
 ): Promise<MCPCheckResult[]> {
+  ctx.config.signal?.throwIfAborted();
   const results: MCPCheckResult[] = [];
 
   if (
@@ -258,6 +259,7 @@ export async function runSecurityChecks(
             ),
       );
     } catch (error) {
+      ctx.config.signal?.throwIfAborted();
       results.push(
         failedResult(
           SECURITY_CHECK_METADATA["localhost-host-rebinding-rejected"],
@@ -306,6 +308,7 @@ export async function runSecurityChecks(
             ),
       );
     } catch (error) {
+      ctx.config.signal?.throwIfAborted();
       results.push(
         failedResult(
           SECURITY_CHECK_METADATA["localhost-host-valid-accepted"],

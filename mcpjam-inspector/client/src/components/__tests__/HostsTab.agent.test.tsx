@@ -200,6 +200,16 @@ vi.mock("framer-motion", () => {
 
 import { HostsTab } from "@/components/HostsTab";
 
+// The organization key policy binding has its own tests; here a template
+// seed is created as it is.
+vi.mock("@/hooks/use-org-bound-template-seed", () => ({
+  useOrgBoundTemplateSeed: () => ({
+    ready: true,
+    bind: (input: unknown) => ({ kind: "unchanged", input }),
+    prepare: (input: unknown) => ({ input }),
+  }),
+}));
+
 let commandSeq = 0;
 async function dispatch(command: Omit<InspectorCommand, "id">) {
   commandSeq += 1;

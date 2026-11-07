@@ -59,6 +59,8 @@ import {
   getHostLogoSrc,
 } from "@/lib/host-ui-metadata";
 import { filterHostsByFeatureFlags } from "@/lib/host-compat/feature-visibility";
+import { useOrgBoundTemplateSeed } from "@/hooks/use-org-bound-template-seed";
+import { withModelChoiceNotice } from "@/lib/org-bound-template-seed";
 
 interface CreateHostDialogProps {
   isOpen: boolean;
@@ -173,6 +175,7 @@ export function CreateHostDialog({
   );
   const projectSecrets = useProjectSecrets(projectId || null);
   const createProjectSecret = useCreateProjectSecret();
+  const orgSeed = useOrgBoundTemplateSeed(projectId || null);
   const updateProjectSecret = useUpdateProjectSecret();
   const [externalKey, setExternalKey] = useState("");
   // Waits for the secrets rather than skipping the key step on a guess, and
@@ -210,7 +213,8 @@ export function CreateHostDialog({
     !isSaving &&
     catalogState.status === "live" &&
     Boolean(selectedTemplateInput) &&
-    externalKeySetup.state !== "loading";
+    externalKeySetup.state !== "loading" &&
+    orgSeed.ready;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -243,6 +247,13 @@ export function CreateHostDialog({
       }
       return;
     }
+    // Resolved before any write: a create refused here must not leave the
+    // external-account secret below behind.
+    const prepared = orgSeed.prepare(
+      cloneHostTemplateInput(selectedTemplateInput, { themeMode }),
+      trimmed,
+    );
+    if (!prepared) return;
     setSetupError(null);
     setIsSaving(true);
     try {
@@ -254,7 +265,7 @@ export function CreateHostDialog({
       // opens the whole project catalog regardless of a host's serverIds
       // (see preferences-store.ts), so the original storm risk is gone,
       // but the deliberate-creation framing stays.
-      const seed = cloneHostTemplateInput(selectedTemplateInput, { themeMode });
+      const seed = prepared.input;
       if (
         externalKeySetup.state === "needed" &&
         externalCredential &&
@@ -307,7 +318,9 @@ export function CreateHostDialog({
           .then(() => toast.success(`${harnessName} is ready`, { id: setupToast }))
           .catch(error => toast.error(`Client created. ${error instanceof Error ? error.message : `${harnessName} setup needs a retry.`}`, { id: setupToast }));
       }
-      toast.success(`Client "${trimmed}" created`);
+      toast.success(
+        withModelChoiceNotice(`Client "${trimmed}" created`, prepared.needsModelChoice),
+      );
       handleClose();
       onCreated(hostId);
       // Telemetry is best-effort: a posthog throw must not bubble into the

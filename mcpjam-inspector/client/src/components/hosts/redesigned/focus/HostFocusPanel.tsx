@@ -24,6 +24,7 @@ import {
 } from "./host-focus-tab-defs";
 import { HostIdentityRow } from "./HostIdentityRow";
 import { UpdateHostToLatestButton } from "./UpdateHostToLatestButton";
+import { useAvailableModels } from "@/hooks/use-available-models";
 import { HostVerifiedAtStamp } from "./HostVerifiedAtStamp";
 import {
   hostFocusShellHeaderRowClass,
@@ -100,6 +101,11 @@ export function HostFocusPanel({
   // Guard against a tab being hidden out from under the user (e.g. detach +
   // flag off while on Computer) — render the clamped tab everywhere.
   const activeTab = activeHostFocusTab(tab, visibleTabs);
+  // Under the organization's key policy (or while it is still loading) a
+  // newer template must not bring its hosted model back.
+  const { requireOrgKeys, pending: modelPolicyPending } = useAvailableModels({
+    projectId,
+  });
 
   return (
     <div className={hostFocusShellRootClass} aria-busy={saveInFlight}>
@@ -129,6 +135,7 @@ export function HostFocusPanel({
                 onSaveLatest={onSaveLatest}
                 hostLoaded={hostLoaded}
                 saveInFlight={saveInFlight}
+                keepModel={requireOrgKeys || modelPolicyPending === true}
               />
             </>
           }

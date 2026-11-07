@@ -1,3 +1,4 @@
+import { asCapacityRouteError } from "../../utils/capacity-route-error.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { ModelMessage } from "ai";
@@ -21,6 +22,7 @@ import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
 import { findPrecreatedIterationByCase } from "./precreated-iteration.js";
 import { retrySuiteStartOnConflict } from "./suite-start-retry.js";
 import { rerunRefusalError } from "./rerun-refusal.js";
+import { platformFeeRefusalError } from "./platform-fee-refusal.js";
 import { localHarnessCapabilities, runnerCapabilities } from "./runner-capabilities.js";
 import type { RunCiMetadata, RunLauncher } from "../../utils/launch-context.js";
 import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
@@ -844,6 +846,8 @@ export const startSuiteRunWithRecorder = async ({
     // The eval-iteration cap is checked fail-fast inside startTestSuiteRun
     // (before any run row is created), so an out-of-quota launch rejects here
     // with the billing ConvexError and NO pending run group is stranded.
+    const capacity = asCapacityRouteError(error);
+    if (capacity) throw capacity;
     const billing = asBillingRouteError(error);
     if (billing) {
       throw billing;
@@ -856,6 +860,12 @@ export const startSuiteRunWithRecorder = async ({
     const aiRefusal = asAiRefusalRouteError(error);
     if (aiRefusal) {
       throw aiRefusal;
+    }
+    // An organization already over its spend budget is refused by the
+    // allowance pre-check, before any run row exists.
+    const feeRefusal = platformFeeRefusalError(error);
+    if (feeRefusal) {
+      throw feeRefusal;
     }
     // The environment resolves to no model — no override on it, none pinned on
     // its client — so the backend refused before creating anything. Remediable
@@ -923,15 +933,40 @@ export const startSuiteRunWithRecorder = async ({
     // together used to roll the loser back whole. The action retries that
     // conflict server-side; the mutation it wraps still exists and is what
     // older inspector builds call.
-    await convexClient.action("testSuites:startSuiteRunIterations" as any, {
-      runId,
-    });
+    if (response?.deduped !== true) {
+      await convexClient.action("testSuites:startSuiteRunIterations" as any, {
+        runId,
+      });
+    }
   } catch (error) {
     const cause = error instanceof Error ? error.message : String(error);
-    logger.error("[evals] Failed to pre-create suite run iterations", error, {
-      suiteId,
-      runId,
-    });
+    // Defense in depth: the run-start pre-check normally rejects out-of-quota
+    // launches before the run row exists, but a launch that races another to
+    // exhaust the cap can still trip the reserve here. Preserve the billing
+    // payload so the client renders the proper upgrade message. The eval_step
+    // fee is charged here and not at run start, so an organization out of
+    // credits is first refused at this step.
+    const refusal =
+      asBillingRouteError(error) ??
+      asAiRefusalRouteError(error) ??
+      platformFeeRefusalError(error);
+    if (refusal) {
+      // The organization's limits working as designed, so no Sentry page.
+      logger.warn("[evals] Suite run iterations refused", {
+        suiteId,
+        runId,
+        code: refusal.code,
+        status: refusal.status,
+        // `code` is FORBIDDEN for every 403 refusal; the backend code tells
+        // them apart.
+        reason: refusal.details?.reason ?? refusal.details?.code,
+      });
+    } else {
+      logger.error("[evals] Failed to pre-create suite run iterations", error, {
+        suiteId,
+        runId,
+      });
+    }
     try {
       await convexClient.mutation(
         "testSuites:markSetupPendingIterationsFailed" as any,
@@ -951,18 +986,10 @@ export const startSuiteRunWithRecorder = async ({
       status: "failed",
       notes: "Failed to prepare eval test attempts.",
     });
-    // Defense in depth: the run-start pre-check normally rejects out-of-quota
-    // launches before the run row exists, but a launch that races another to
-    // exhaust the cap can still trip the reserve here. Preserve the billing
-    // payload so the client renders the proper upgrade message; the run was
-    // already finalized failed above, so no pending group is left behind.
-    const billing = asBillingRouteError(error);
-    if (billing) {
-      throw billing;
-    }
-    const aiRefusal = asAiRefusalRouteError(error);
-    if (aiRefusal) {
-      throw aiRefusal;
+    // The run was already finalized failed above, so no pending group is left
+    // behind.
+    if (refusal) {
+      throw refusal;
     }
     // `cause` is logged above and recorded on the run; the response carries
     // only the run id (MJ-020, MJ-021).

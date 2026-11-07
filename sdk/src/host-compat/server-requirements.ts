@@ -14,6 +14,11 @@ import type { ConnectionFacts, ServerRequirements } from "./types.js";
 export interface HostCompatTool {
   name: string;
   _meta?: Record<string, unknown>;
+  /**
+   * The tool's per-tool auth declaration, as the server listed it. Read with
+   * `_meta.securitySchemes` as the fallback, the order a host reads them in.
+   */
+  securitySchemes?: unknown;
 }
 
 /**

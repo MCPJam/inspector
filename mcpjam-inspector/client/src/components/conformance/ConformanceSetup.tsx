@@ -4,25 +4,31 @@
  * its Run starts the run with them.
  */
 
-import { useEffect, useId, useRef, useState } from "react";
-import { ChevronLeft } from "lucide-react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { ConformanceTimeout } from "./ConformanceTimeout";
+import {
+  Breadcrumb,
+  BreadcrumbList,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@mcpjam/design-system/breadcrumb";
 import { Button } from "@mcpjam/design-system/button";
+import type { McpProtocolVersion } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import {
-  isHttpServer,
   type ConformanceSelection,
   type ProtocolVersionPin,
 } from "@/hooks/use-conformance-run";
-import {
-  probeInputStatus,
-  probesApply,
-  type ConformanceProbeKey,
-  type ConformanceProbes,
-} from "@/hooks/use-conformance-probes";
-import { ProbeCheckExtra, useProbeTools } from "./ConformanceProbeField";
+import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
+import type { ConformanceDefaults } from "@/hooks/use-conformance-server-data";
+import { ConformanceChecksEditor } from "./ConformanceChecksEditor";
 import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { toast } from "@/lib/toast";
 import { startConnectToast } from "@/lib/connect-toast";
+import { useConformanceProtocolConnection } from "@/hooks/use-conformance-protocol-connection";
+import { ConformanceProtocolConnection } from "./ConformanceProtocolConnection";
 import type {
   ConformanceConnectOutcome,
   ConformanceConnectServer,
@@ -35,7 +41,6 @@ import {
   RUN_LABEL,
 } from "./ConformancePageChrome";
 import {
-  ConformanceCheckPicker,
   checkCatalogs,
   nothingPicked,
 } from "./ConformanceCheckPicker";
@@ -53,10 +58,13 @@ export function ConformanceSetup({
   initialVersionPin,
   initialSelection,
   defaultsFor,
+  timeoutFor,
+  onSaveTimeout,
   defaultsLoaded = true,
   onConnectServer,
   onEditServer,
   probesFor,
+  onLoadDefaults,
   onCancel,
   onRun,
 }: {
@@ -78,28 +86,34 @@ export function ConformanceSetup({
   defaultsFor?: (serverName: string) => ConformanceSelection | undefined;
   /** False while the saved defaults are still loading: step 2 waits. */
   defaultsLoaded?: boolean;
+  timeoutFor?: (serverName: string) => number | undefined;
+  onSaveTimeout?: (serverName: string, seconds: number | null) => Promise<void>;
   /** Connects a server from the picker; the steps go on once it is. */
   onConnectServer?: ConformanceConnectServer;
   /** Opens a server's connection settings, offered when a connect fails. */
   onEditServer?: (serverName: string) => void;
   /** The tools a server's checks may call, as last set for it. */
   probesFor?: (serverName: string) => ConformanceProbes;
+  onLoadDefaults?: (serverName: string) => Promise<ConformanceDefaults>;
   onCancel: () => void;
   onRun: (
     serverName: string,
     versionPin: ProtocolVersionPin,
     selection: ConformanceSelection,
     probes: ConformanceProbes,
+    resolvedProtocolVersion?: McpProtocolVersion,
   ) => void;
 }) {
   // The tools the checks that must call one may use, set in step 2's list,
-  // and whether each one's arguments box parses.
+  // and whether each one's arguments box (and the Tasks answers) parses.
   const [probes, setProbes] = useState<ConformanceProbes>({});
-  const [probeValid, setProbeValid] = useState<
-    Partial<Record<ConformanceProbeKey, boolean>>
-  >({});
+  const [inputsValid, setInputsValid] = useState(true);
   // A draft until Run, so Cancel leaves the page's selection as it was.
   const [serverName, setServerName] = useState(initialServerName);
+  const currentServerName = useRef(serverName);
+  useLayoutEffect(() => {
+    currentServerName.current = serverName;
+  }, [serverName]);
   const [versionPin, setVersionPin] = useState(initialVersionPin);
   const [step, setStep] = useState(0);
   // Step 2 starts from the picked server's checks: the last run's on the same
@@ -115,12 +129,15 @@ export function ConformanceSetup({
   const serverLabelId = useId();
   const versionLabelId = useId();
   const picked = servers.find((server) => server.name === serverName);
-  // Only HTTP servers run the protocol suite, and the checks that call a
-  // tool run only on a pinned 2026-07-28 run, so only then is a tool asked
-  // for. One tools list serves every field.
-  const probeServer =
-    picked && isHttpServer(picked) && probesApply(versionPin) ? picked : null;
-  const probeTools = useProbeTools(probeServer);
+  const protocolConnection = useConformanceProtocolConnection(
+    picked,
+    versionPin,
+  );
+  const resolvedVersion =
+    protocolConnection.result?.status === "ready"
+      ? protocolConnection.result.protocolVersion
+      : undefined;
+  const effectiveVersion = resolvedVersion ?? versionPin;
   // Picked from the project's list before this session loaded it: it has no
   // runtime entry until it connects.
   const pickedName =
@@ -133,7 +150,7 @@ export function ConformanceSetup({
   const [connecting, setConnecting] = useState<readonly string[]>([]);
   // The run needs the server live, so the steps wait until it is: the picker
   // connects it in place.
-  const canContinue = picked?.connectionStatus === "connected";
+  const canContinue = protocolConnection.ready;
   // Picking a server readies it: one that is not connected starts
   // connecting in the background, with no separate Connect to remember.
   const needsConnect = (name: string) => {
@@ -148,6 +165,7 @@ export function ConformanceSetup({
     );
   };
   const selectServer = (name: string) => {
+    currentServerName.current = name;
     setServerName(name);
     if (!needsConnect(name)) return;
     if (onConnectServer) void connect(name);
@@ -194,6 +212,7 @@ export function ConformanceSetup({
     });
   const connect = async (name: string, signIn = false) => {
     if (!onConnectServer) return;
+    currentServerName.current = name;
     setServerName(name);
     clearFailure(name);
     setConnecting((names) => (names.includes(name) ? names : [...names, name]));
@@ -224,11 +243,17 @@ export function ConformanceSetup({
   // is over, so a later drop does not bring the old alert back.
   // Own keys only: `in` also finds what every object inherits, so a server
   // named `constructor` would read as failed and clear on every render.
-  if (canContinue && pickedName && Object.hasOwn(connectFailures, pickedName)) {
+  if (
+    picked?.connectionStatus === "connected" &&
+    pickedName &&
+    Object.hasOwn(connectFailures, pickedName)
+  ) {
     clearFailure(pickedName);
   }
   const failure =
-    pickedName && !canContinue && Object.hasOwn(connectFailures, pickedName)
+    pickedName &&
+    picked?.connectionStatus !== "connected" &&
+    Object.hasOwn(connectFailures, pickedName)
       ? connectFailures[pickedName]!
       : null;
   const noServers =
@@ -236,28 +261,78 @@ export function ConformanceSetup({
     servers.length === 0 &&
     (projectServerNames?.length ?? 0) === 0;
 
-  const continueToChecks = () => {
-    if (serverName !== selectionFor) {
-      setSelection(startingSelection(serverName));
-      setSelectionFor(serverName);
-      setProbes(serverName ? (probesFor?.(serverName) ?? {}) : {});
-      setProbeValid({});
+  const [loadingDefaults, setLoadingDefaults] = useState(false);
+  const [defaultsError, setDefaultsError] = useState(false);
+  const continueToChecks = async () => {
+    const targetServerName = serverName;
+    setLoadingDefaults(true);
+    setDefaultsError(false);
+    try {
+      const loaded =
+        targetServerName && onLoadDefaults
+          ? await onLoadDefaults(targetServerName)
+          : undefined;
+      if (currentServerName.current !== targetServerName) return;
+      if (targetServerName !== selectionFor) {
+        setSelection(loaded?.selection ?? startingSelection(targetServerName));
+        setSelectionFor(targetServerName);
+        setProbes(
+          loaded?.inputs ??
+            (targetServerName ? (probesFor?.(targetServerName) ?? {}) : {}),
+        );
+        setInputsValid(true);
+      }
+      setStep(1);
+    } catch {
+      if (currentServerName.current === targetServerName)
+        setDefaultsError(true);
+    } finally {
+      setLoadingDefaults(false);
     }
-    setStep(1);
   };
+
+  const protocolNotice = (
+    <ConformanceProtocolConnection
+      checking={protocolConnection.checking}
+      result={protocolConnection.result}
+      serverName={serverName ?? "Server"}
+      version={versionPin}
+      onRetry={protocolConnection.retry}
+      onSignIn={() => {
+        if (pickedName)
+          void connect(pickedName, true).then(protocolConnection.retry);
+      }}
+    />
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
       <div className="mx-auto w-full max-w-2xl px-8 py-6">
-        <Button
-          variant="link"
-          size="sm"
-          onClick={onCancel}
-          className="h-auto gap-1 px-0 text-sm has-[>svg]:px-0"
-        >
-          <ChevronLeft className="size-3.5" />
-          Conformance
-        </Button>
+        <Breadcrumb>
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              <BreadcrumbLink asChild>
+                <button type="button" onClick={onCancel}>Conformance</button>
+              </BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              {step === 0 ? (
+                <BreadcrumbPage>Choose server and protocol</BreadcrumbPage>
+              ) : (
+                <BreadcrumbLink asChild>
+                  <button type="button" onClick={() => setStep(0)}>
+                    Choose server and protocol
+                  </button>
+                </BreadcrumbLink>
+              )}
+            </BreadcrumbItem>
+            {step === 1 && <>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem><BreadcrumbPage>Select what to test</BreadcrumbPage></BreadcrumbItem>
+            </>}
+          </BreadcrumbList>
+        </Breadcrumb>
 
         <ProgressStepper
           steps={STEPS}
@@ -324,62 +399,65 @@ export function ConformanceSetup({
                   Select protocol version
                 </div>
                 <ProtocolVersionSelect
+                  id={`${versionLabelId}-select`}
                   value={versionPin}
                   onChange={setVersionPin}
                   labelledBy={versionLabelId}
                 />
+                {protocolNotice}
               </div>
             </div>
 
+            {defaultsError ? (
+              <p role="alert" className="mt-3 text-sm text-destructive">
+                Could not load your saved inputs. Try again.
+              </p>
+            ) : null}
             <div className="mt-7 flex items-center justify-end gap-2">
               <Button variant="ghost" onClick={onCancel}>
                 Cancel
               </Button>
               <Button
-                disabled={!canContinue || !defaultsLoaded}
-                onClick={continueToChecks}
+                disabled={!canContinue || !defaultsLoaded || loadingDefaults}
+                onClick={() => void continueToChecks()}
               >
-                Continue
+                {defaultsError
+                  ? "Retry"
+                  : loadingDefaults
+                    ? "Loading defaults..."
+                    : "Continue"}
               </Button>
             </div>
           </>
         ) : (
           <>
-            <h2 className="mt-3 text-2xl font-semibold tracking-[-0.02em]">
-              Set what you'd like to test
-            </h2>
+            {protocolNotice}
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <h2 className="text-2xl font-semibold tracking-[-0.02em]">
+                Set what you'd like to test
+              </h2>
+              {serverName && onSaveTimeout && (
+                <ConformanceTimeout
+                  key={serverName}
+                  seconds={timeoutFor?.(serverName)}
+                  onSave={(seconds) => onSaveTimeout(serverName, seconds)}
+                />
+              )}
+            </div>
             <p className="mt-1.5 text-sm leading-relaxed font-medium">
               Pick the suites and checks this run covers.
             </p>
 
             {/* The protocol list follows the revision picked in step 1. */}
             <div className="mt-3">
-              <ConformanceCheckPicker
-                versionPin={versionPin}
+              <ConformanceChecksEditor
+                server={picked}
+                versionPin={effectiveVersion}
                 selection={selection}
                 onChange={setSelection}
-                renderProtocolExtra={
-                  probeServer
-                    ? (checkId, isPicked, checkTitle) => (
-                        <ProbeCheckExtra
-                          checkId={checkId}
-                          checkTitle={checkTitle}
-                          isPicked={isPicked}
-                          tools={probeTools}
-                          probes={probes}
-                          onProbesChange={setProbes}
-                          onValidChange={(key, valid) =>
-                            setProbeValid((prev) => ({ ...prev, [key]: valid }))
-                          }
-                        />
-                      )
-                    : undefined
-                }
-                protocolInputStatus={
-                  probeServer
-                    ? (checkId) => probeInputStatus(checkId, probes)
-                    : undefined
-                }
+                probes={probes}
+                onProbesChange={setProbes}
+                onValidChange={setInputsValid}
               />
             </div>
 
@@ -390,12 +468,18 @@ export function ConformanceSetup({
               <Button
                 disabled={
                   !canContinue ||
-                  nothingPicked(selection, checkCatalogs(versionPin)) ||
-                  Object.values(probeValid).includes(false)
+                  nothingPicked(selection, checkCatalogs(effectiveVersion)) ||
+                  !inputsValid
                 }
                 onClick={() => {
                   if (serverName)
-                    onRun(serverName, versionPin, selection, probes);
+                    onRun(
+                      serverName,
+                      versionPin,
+                      selection,
+                      probes,
+                      resolvedVersion,
+                    );
                 }}
               >
                 {RUN_LABEL}

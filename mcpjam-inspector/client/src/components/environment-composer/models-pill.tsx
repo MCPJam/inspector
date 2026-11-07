@@ -38,7 +38,6 @@ import {
   findModelForStoredChoice,
   modelRowKey,
   selectionBesideLegacyId,
-  storedModelChoice,
 } from "@/components/chat-v2/shared/model-selection";
 import {
   modelTargetKey,
@@ -49,6 +48,10 @@ import {
   type TargetBudgetContext,
 } from "@/components/environment-composer/environment-stack";
 import { modelTarget } from "@/lib/model-target";
+import {
+  orgSavableModels,
+  pickedModelTarget,
+} from "@/lib/org-keys-model-target";
 import { useAvailableModels } from "@/hooks/use-available-models";
 import {
   reasoningEffortOptions,
@@ -118,12 +121,16 @@ export function ModelsPill({
   workload?: ModelWorkload;
 }) {
   const {
-    availableModels,
+    availableModels: listedModels,
     modelSelectionsSupported,
     requireOrgKeys,
     onManageOrgProviders,
     onAddProvider,
   } = useAvailableModels({ projectId });
+  const availableModels = useMemo(
+    () => orgSavableModels(listedModels, requireOrgKeys),
+    [listedModels, requireOrgKeys],
+  );
   // Per ROW, not per id: the hosted row and an org-connection row of one id
   // run on different keys, and a harness may run one and refuse the other.
   // Under the organization's key policy a harness runs only on an
@@ -199,21 +206,9 @@ export function ModelsPill({
 
   const replaceSoleChoice = canReplaceSoleChoice(budget);
 
-  // The target a picked row adds. Under the organization's key policy, an
-  // organization row whose id is bare (`gpt-5` on an org OpenAI connection)
-  // is saved under its canonical id with its org selection: the bare id
-  // alone runs as a legacy id, which the policy refuses (`org_keys_required`).
-  // Every other row keeps its own id, and `syncExplicitTargets` adds the
-  // selection it can carry beside it.
-  const pickedTarget = (model: ModelDefinition): ModelTarget => {
-    if (requireOrgKeys && !selectionBesideLegacyId(model, "evalTarget")) {
-      const choice = storedModelChoice(model, undefined, "evalTarget");
-      if (choice.selection?.source === "org") {
-        return modelTarget(choice.modelId, choice.selection);
-      }
-    }
-    return { modelId: String(model.id) };
-  };
+  // The target a picked row adds (see `pickedModelTarget`).
+  const pickedTarget = (model: ModelDefinition): ModelTarget =>
+    pickedModelTarget(model, requireOrgKeys);
 
   // Every edit fills in the saved selection of a target that has none; the
   // row just picked decides the selection of its new target.
@@ -295,7 +290,14 @@ export function ModelsPill({
       emit({ includeClientDefaults: false, explicitTargets: [added] }, model);
       return;
     }
-    emit({ ...value, explicitTargets: [...targets, added] }, model);
+    // A target saved under this row's bare id before the pick could carry its
+    // connection reads as disallowed; the pick repairs it, not adds beside it.
+    const bareId = String(model.id);
+    const remaining =
+      modelId === bareId || !staleExplicit.includes(bareId)
+        ? targets
+        : targets.filter((target) => target.modelId !== bareId);
+    emit({ ...value, explicitTargets: [...remaining, added] }, model);
   };
 
   // The id a selected row's targets were saved under. An organization row

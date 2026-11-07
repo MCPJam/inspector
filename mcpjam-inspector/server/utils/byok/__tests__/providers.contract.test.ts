@@ -21,6 +21,7 @@ import { GOOGLE_NATIVE_IDS } from "../providers/google.js";
 import { OPENAI_NATIVE_IDS } from "../providers/openai.js";
 import { ollamaHostRoot } from "../providers/ollama.js";
 import { createNativeIdTable } from "../native-id-table.js";
+import { canonicalModelIdForNative } from "@/shared/canonical-model-id";
 import type { ByokListResult, ByokProviderAdapter } from "../types.js";
 import { PLACEHOLDER_KEY, fixtureFetch } from "./fixture-fetch.js";
 
@@ -195,6 +196,23 @@ describe("native id tables", () => {
   ] as const)("maps every SUPPORTED_MODELS %s row", (provider, adapter) => {
     expectStaticRowsMapped(provider, adapter);
   });
+
+  it.each([
+    ["openai", OPENAI_NATIVE_IDS],
+    ["anthropic", ANTHROPIC_NATIVE_IDS],
+    ["google", GOOGLE_NATIVE_IDS],
+  ] as const)(
+    "agrees with the canonical id the browser saves for every %s row",
+    (provider, rows) => {
+      // A pick saves `canonicalModelIdForNative`'s id; the adapter must map
+      // that same id back, or the two disagree about one model.
+      for (const row of rows) {
+        expect(canonicalModelIdForNative(provider, row.nativeId)).toBe(
+          row.canonicalId,
+        );
+      }
+    },
+  );
 
   it.each([
     ["azure", azureAdapter],
