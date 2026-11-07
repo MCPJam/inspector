@@ -102,6 +102,8 @@
     },
     "@sentry/bundler-plugins": {
       "glob": "^14.0.2"
-    }
+    },
+    "minimatch@^9.0.0": "^11.0.4",
+    "minimatch@^10.0.0": "^11.0.4"
   }
 }
