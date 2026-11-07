@@ -89,7 +89,9 @@ export function listAppToolCatalog(
     const total = counts.get(key) ?? 1;
     const presentation = entry.instance.presentation;
     if (presentation?.label || presentation?.visibility) {
-      const prefix = `[${[presentation.label?.replace(/\s+/g, " ").trim().slice(0, 200), presentation.visibility].filter(Boolean).join("; ")}] `;
+      const label = presentation.label?.replace(/\s+/g, " ").trim().slice(0, 200)
+        .replace(/[\[\];]/g, (character) => ({ "[": "［", "]": "］", ";": "；" })[character]!);
+      const prefix = `[${[label, presentation.visibility].filter(Boolean).join("; ")}] `;
       const hint = total > 1 ? ` (instance ${(indices.get(key) ?? 0) + 1} of ${total})` : "";
       entry.description = prefix + (entry.description ?? "").slice(0, Math.max(0, MAX_DESCRIPTION_CHARS - prefix.length - hint.length)) + hint;
       indices.set(key, (indices.get(key) ?? 0) + 1);
