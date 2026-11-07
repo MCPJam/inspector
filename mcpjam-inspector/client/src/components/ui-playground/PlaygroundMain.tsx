@@ -1916,6 +1916,9 @@ export function PlaygroundMain({
           identity: extensionIdentity,
           chatId: chatSessionId,
           servers: extensionServers,
+          ...(hiddenEnvironmentActive && hiddenEnvironment.environmentId && hiddenPluginServers.length
+            ? { includedPluginTools: { environmentId: hiddenEnvironment.environmentId, serverIds: hiddenPluginServers.map((server) => server.serverId), includeAppOnly: previewedHost?.config?.respectToolVisibility === false } }
+            : {}),
           // The client's per-extension toggles (C1). One switched off removes
           // only that capability; running Apps keep running.
           capabilities: pluginExtensions.capabilities,
