@@ -55,14 +55,14 @@ describe("detached eval runs and the shutdown drain", () => {
     await vi.waitFor(() => expect(drain.current?.counts()).toEqual({}));
   });
 
-  it("does not register a replay of a finished run, which executes nothing", () => {
+  it.each(["pending", "running", "grading", "completed"])("does not register a second executor for a replay in %s", (status) => {
     const execute = vi.fn(async () => {});
     detach({
       suiteId: "suite",
       runId: "run",
       execute,
       deduped: true,
-      status: "completed",
+      status,
     });
 
     expect(execute).not.toHaveBeenCalled();

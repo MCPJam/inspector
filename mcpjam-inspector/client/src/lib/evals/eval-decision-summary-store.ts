@@ -36,7 +36,9 @@
  * ── What it deliberately does NOT do ─────────────────────────────────────────
  *
  * It knows nothing about run lifecycle, verdicts, or rendering. Callers decide
- * whether a run is terminal (see {@link isTerminalEvalRunStatus}) and nothing
+ * whether a run is terminal (`isEvalRunTerminalStatus` in the SDK contract:
+ * a pending, running or grading row is lifecycle-only, and asking for its
+ * summary spends a request to be told `notEstablished`) and nothing
  * here ever derives, aggregates, or repairs a summary — it stores exactly what
  * the contract validated, or exactly why there is none.
  */
@@ -62,26 +64,13 @@ export const DECISION_SUMMARY_BADGE_LIMIT = 1;
 /** Fixed detail page size. Pagination appends; it never widens the page. */
 export const DECISION_SUMMARY_DETAIL_LIMIT = 25;
 
-/** Run lifecycle states that can carry a decision summary worth reading. */
-const TERMINAL_RUN_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-]);
-
 /**
- * Whether this run has stopped.
- *
- * A pending or running row is lifecycle-only on every surface: asking for its
- * decision summary spends a request to be told `notEstablished`, once per
- * poll, for as long as the run lasts.
+ * The SDK's `isEvalRunTerminalStatus` under the name this module exported
+ * before the contract owned it. Callers still importing it from here (the test
+ * template editor's trial-chain display) get the same predicate; new code
+ * imports it from `@mcpjam/sdk/contract`.
  */
-export function isTerminalEvalRunStatus(
-  status: string | null | undefined,
-): boolean {
-  return typeof status === "string" && TERMINAL_RUN_STATUSES.has(status);
-}
+export { isEvalRunTerminalStatus as isTerminalEvalRunStatus } from "@mcpjam/sdk/contract";
 
 /**
  * A marker for "this run row, as currently observed".

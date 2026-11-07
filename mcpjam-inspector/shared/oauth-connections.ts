@@ -21,6 +21,12 @@ export interface AuthorizedOAuthConnection extends OAuthConnection {
   credentialAuthorizedAt?: number;
   accessToken?: string | null;
   unavailableReason?: string;
+  /**
+   * Built by the Inspector from the authorize result's default credential, not
+   * listed by the backend (it lists accounts only when there are two or more).
+   * The server's only login, so nothing on the wire names it.
+   */
+  implicit?: true;
 }
 export function connectionLabel(c: OAuthConnection, index = 0): string {
   return (

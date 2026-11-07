@@ -102,7 +102,9 @@ export async function createSandbox(): Promise<Sandbox> {
     home,
     authFile: path.join(home, ".config", "mcpjam", "auth.json"),
     netLog: path.join(home, "net.log"),
-    remove: () => rm(home, { recursive: true, force: true }),
+    // The CLI's detached update check can still be writing its cache here
+    // when a test ends, so retry on ENOTEMPTY instead of failing.
+    remove: () => rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
   };
 }
 
