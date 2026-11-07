@@ -19,7 +19,7 @@ export function pluginToolCallValidation(
   // Binary file reads can carry base64 in structuredContent. Only an admitted
   // App's read-only call gets that budget; model/action results stay small.
   const resultBytes =
-    origin === "app" && tool.annotations?.readOnlyHint === true
+    (origin === "app" || origin === "settings") && tool.annotations?.readOnlyHint === true
       ? PLUGIN_APP_READ_RESULT_BYTES
       : DEFAULT_RESULT_BYTES;
   let input: ReturnType<DialectAwareJsonSchemaValidator["getValidator"]>;
@@ -48,7 +48,7 @@ export function pluginToolCallValidation(
   if (!valid) throw error("arguments");
   return (result: unknown) => {
     if (
-      new TextEncoder().encode(JSON.stringify(result)).byteLength > resultBytes
+      Buffer.byteLength(JSON.stringify(result), "utf8") > resultBytes
     )
       throw error("limit");
     const parsed = CallToolResultSchema.safeParse(result);

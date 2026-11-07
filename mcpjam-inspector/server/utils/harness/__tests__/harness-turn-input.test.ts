@@ -32,5 +32,7 @@ describe("harness per-turn App context", () => {
   });
   it("records unavailable tools as discovery information", () => {
     expect(unavailableAppToolsSpan()).toMatchObject({ category: "discovery", status: "ok" });
+    expect(unavailableAppToolsSpan(1).name).toBe("1 App-provided tool is unavailable in this agent runtime.");
+    expect(unavailableAppToolsSpan(2).name).toBe("2 App-provided tools are unavailable in this agent runtime.");
   });
 });
