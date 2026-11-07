@@ -714,7 +714,7 @@ function createCodexAppServerSession(input: {
       (latestThreadId !== undefined && skillsResult.changed) ||
       (latestFingerprint !== undefined && latestFingerprint !== fingerprint);
     latestFingerprint = fingerprint;
-    if (restartThread) pendingResumeThreadId = undefined;
+    if (restartThread) pendingResumeThreadId = latestThreadId ?? pendingResumeThreadId;
     return { restartThread };
   };
 
