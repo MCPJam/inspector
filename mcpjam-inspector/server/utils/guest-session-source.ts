@@ -181,6 +181,24 @@ function parseRetryAfterSeconds(raw: string | null): number | undefined {
   return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
 }
 
+// The codes an authority puts on a 403 about the GUEST: a revoked session
+// (`FORBIDDEN`) or a suspended account. Any other 403 — the backend's bare
+// `{ error: "Forbidden" }` for a shared secret it does not accept, its
+// non-production lockdown, an edge block — refused this server, and calling it
+// "revoked" hid that a deployment was misconfigured.
+const GUEST_LEVEL_REFUSAL_CODES = new Set(["FORBIDDEN", "account_suspended"]);
+
+async function isGuestLevelRefusal(response: Response): Promise<boolean> {
+  try {
+    const body = (await response.json()) as { code?: unknown } | null;
+    return (
+      typeof body?.code === "string" && GUEST_LEVEL_REFUSAL_CODES.has(body.code)
+    );
+  } catch {
+    return false;
+  }
+}
+
 // Default per-fetch timeout. Callers may shorten this (e.g. the document
 // bootstrap path) as defense-in-depth so the inner fetch can't outlive a
 // shorter whole-helper deadline.
@@ -227,6 +245,22 @@ export async function fetchGuestSession(
     }
     if (response.status === 404 && mode === "lookup_only") {
       return { kind: "miss", setCookies };
+    }
+
+    if (response.status === 403 && !(await isGuestLevelRefusal(response))) {
+      logger.warn(
+        `[guest-auth] ${source} guest authority refused this server (403). ` +
+          "Check that MCPJAM_GUEST_SESSION_SHARED_SECRET matches the backend's " +
+          "GUEST_SESSION_SHARED_SECRET and that guests are enabled there.",
+        { event: "guest_auth.authority_refused" },
+      );
+      return {
+        kind: "error",
+        status: 503,
+        setCookies,
+        reason: "authority_refused",
+        upstreamStatus: 403,
+      };
     }
 
     if (!response.ok) {

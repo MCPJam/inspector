@@ -255,6 +255,50 @@ describe("guest-session-source", () => {
     expect(result.status).toBe(404);
   });
 
+  it("keeps a revoked guest's 403 as a 403", async () => {
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({ code: "FORBIDDEN", message: "Guest session revoked" }),
+        { status: 403 },
+      ),
+    );
+    const { fetchGuestSession } = await load();
+    const result = await fetchGuestSession();
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") return;
+    expect(result.status).toBe(403);
+    expect(result.reason).toBe("upstream_status");
+  });
+
+  it.each([
+    ["a rejected shared secret", JSON.stringify({ error: "Forbidden" })],
+    [
+      "the non-production lockdown",
+      JSON.stringify({
+        error: "Guest access is disabled in non-production environments",
+      }),
+    ],
+    ["an edge block", "<html>403 Forbidden</html>"],
+  ])(
+    "names a 403 from %s as the authority refusing this server",
+    async (_label, body) => {
+      vi.mocked(global.fetch).mockResolvedValue(
+        new Response(body, { status: 403 }),
+      );
+      const { fetchGuestSession } = await load();
+      const result = await fetchGuestSession();
+      expect(result.kind).toBe("error");
+      if (result.kind !== "error") return;
+      expect(result.status).toBe(503);
+      expect(result.reason).toBe("authority_refused");
+      expect(result.upstreamStatus).toBe(403);
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("refused this server (403)"),
+        expect.objectContaining({ event: "guest_auth.authority_refused" }),
+      );
+    },
+  );
+
   it("carries the upstream Retry-After on a 429 refusal", async () => {
     vi.mocked(global.fetch).mockResolvedValueOnce(
       new Response(JSON.stringify({ error: "capped" }), {
