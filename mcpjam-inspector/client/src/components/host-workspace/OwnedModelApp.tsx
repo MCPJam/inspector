@@ -331,7 +331,7 @@ function ModelApp({
           typeof value.resourceUri !== "string"
         )
           throw new Error("App unavailable");
-        if (mounted.current) setHandle(value);
+        if (mounted.current) setHandle({ ...value, serverId: marker.serverId });
       })
       .catch(() => {
         if (mounted.current && !lifetime.signal.aborted) setError(true);

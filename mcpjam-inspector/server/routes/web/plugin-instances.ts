@@ -16,7 +16,7 @@ import {
   uploadPluginFormFiles,
 } from "../../services/plugin-host/form-files.js";
 import {
-  pluginFormServiceRequestSchema,
+  pluginFormFileServiceRequestSchema,
   pluginFormFileUploadRequestSchema,
   PLUGIN_FORM_FILE_MAX_COUNT,
   PLUGIN_FORM_FILE_MAX_BYTES,
@@ -1711,7 +1711,7 @@ for (const action of ["execute", "call-tool"] as const)
 instances.post("/form-files/services", (c) =>
   route(c, async () => {
     c.header("cache-control", "no-store");
-    const body = pluginFormServiceRequestSchema.parse(await c.req.json());
+    const body = pluginFormFileServiceRequestSchema.parse(await c.req.json());
     const { bearer, admission, actor } = await admitted(c, body);
     return c.json(
       await describePluginFormFiles({

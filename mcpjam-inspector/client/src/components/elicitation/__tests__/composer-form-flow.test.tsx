@@ -584,7 +584,9 @@ const appTarget = { type: "mcp_app_tool", name: "part.preview" };
 function servePreviews() {
   services.fetch.mockReset().mockImplementation(async (url: string) =>
     Response.json(
-      url.endsWith("/form-preview")
+      url.endsWith("/services")
+        ? { userResources: false, userResourceKinds: [] }
+        : url.endsWith("/form-preview")
         ? {
             type: "resource",
             contents: [
@@ -656,7 +658,7 @@ describe("form previews in the composer card", () => {
       const requests = services.fetch.mock.calls.map(([url, init]) => ({
         url: url as string,
         body: JSON.parse(String((init as RequestInit).body)),
-      }));
+      })).filter(({ body }) => body.includeOperation !== true);
       expect(requests[0].body).toMatchObject({
         sourceToken: "a".repeat(43),
         parent: { kind: "legacy", id: "one", round: 0 },
