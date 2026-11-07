@@ -677,6 +677,9 @@ export async function prepareManagedConnections(args: {
   // drives one retry leg (with reconstructed output-schema validation) before
   // the first model call and splices the result. `resolve` closes over the
   // freshly-authorized manager for the bound server.
+  const resumeServerName = mrtrResumeRequest
+    ? buildServerNamesById(selectedServerIds, selectedServerNames)?.[mrtrResumeRequest.serverId]
+    : undefined;
   const mrtrEngineResume: MrtrEngineResume | undefined =
     mrtrResumeRequest?.owned
       ? {
@@ -700,17 +703,7 @@ export async function prepareManagedConnections(args: {
                 manager,
                 bearer: convexBearer,
                 serverId: mrtrResumeRequest.serverId,
-                ...(buildServerNamesById(
-                  selectedServerIds,
-                  selectedServerNames,
-                )?.[mrtrResumeRequest.serverId]
-                  ? {
-                      serverName: buildServerNamesById(
-                        selectedServerIds,
-                        selectedServerNames,
-                      )![mrtrResumeRequest.serverId],
-                    }
-                  : {}),
+                ...(resumeServerName ? { serverName: resumeServerName } : {}),
                 toolCallId: mrtrResumeRequest.toolCallId,
                 submission: {
                   continuationId: mrtrResumeRequest.continuationId,
