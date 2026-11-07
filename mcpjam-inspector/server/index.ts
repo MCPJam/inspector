@@ -226,6 +226,11 @@ import {
   getCaniuseMetaTagsHtml,
   getCaniuseTitleTag,
 } from "./utils/caniuse-meta-tags";
+import {
+  conformanceShareTokenFromPath,
+  injectConformanceShareMetaTags,
+  requestOrigin,
+} from "./utils/conformance-share-meta-tags";
 import "./types/hono"; // Type extensions
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 import { buildHealthMeta } from "./utils/health-payload.js";
@@ -852,6 +857,24 @@ if (process.env.NODE_ENV === "production") {
           "</head>",
           `${getCaniuseMetaTagsHtml()}</head>`,
         );
+      }
+
+      // A shared conformance run's link unfurls as its score card. The image
+      // route answers only for links anyone may open; for any other link the
+      // crawler finds no image and shows the title alone.
+      const sharedRunToken = conformanceShareTokenFromPath(reqPath);
+      const sharedRunOrigin = sharedRunToken
+        ? requestOrigin({
+            host: c.req.header("Host"),
+            forwardedHost: c.req.header("X-Forwarded-Host"),
+            forwardedProto: c.req.header("X-Forwarded-Proto"),
+          })
+        : null;
+      if (sharedRunToken && sharedRunOrigin) {
+        htmlContent = injectConformanceShareMetaTags(htmlContent, {
+          origin: sharedRunOrigin,
+          token: sharedRunToken,
+        });
       }
 
       const host = c.req.header("Host");
