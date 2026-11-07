@@ -59,8 +59,11 @@ export { MAX_SEALED_PLAINTEXT_BYTES } from "./harness-proxy-limits.js";
 export const MAX_SEALED_DENIED_TOOL_NAMES = 500;
 
 /** The sealed plaintext. Short keys because it rides an HTTP header. */
+export type HarnessProxyTurn = { laneId: string; leaseId: string };
+
 interface SealedPolicyEnvelope {
-  v: 1 | 2;
+  v: 1 | 2 | 3;
+  turn?: HarnessProxyTurn;
   profile?: HarnessConnectionProfile;
   /** The Convex-minted proxy token, verbatim. */
   t: string;
@@ -73,6 +76,7 @@ interface SealedPolicyEnvelope {
 }
 
 export interface SealedHarnessProxyPolicy {
+  turn?: HarnessProxyTurn;
   token: string;
   serverId: string;
   policy: ToolPolicySnapshot;
@@ -122,7 +126,7 @@ export function isSealedHarnessProxyToken(value: string | undefined): boolean {
   return (
     typeof value === "string" &&
     (value.startsWith(`${HARNESS_PROXY_POLICY_SEAL_PREFIX}.`) ||
-      value.startsWith("mcpjps2."))
+      value.startsWith("mcpjps2.") || value.startsWith("mcpjps3."))
   );
 }
 
@@ -133,6 +137,7 @@ export function isSealedHarnessProxyToken(value: string | undefined): boolean {
  * a bare token.
  */
 export function sealHarnessProxyToken(args: {
+  turn?: HarnessProxyTurn;
   token: string;
   serverId: string;
   policy: ToolPolicySnapshot;
@@ -147,7 +152,8 @@ export function sealHarnessProxyToken(args: {
     );
   }
   const envelope: SealedPolicyEnvelope = {
-    v: args.profile ? 2 : 1,
+    v: args.turn ? 3 : args.profile ? 2 : 1,
+    ...(args.turn ? { turn: args.turn } : {}),
     ...(args.profile
       ? { profile: harnessConnectionProfileSchema.parse(args.profile) }
       : {}),
@@ -167,7 +173,7 @@ export function sealHarnessProxyToken(args: {
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   const sealed = Buffer.concat([ciphertext, cipher.getAuthTag()]);
   return [
-    args.profile ? "mcpjps2" : HARNESS_PROXY_POLICY_SEAL_PREFIX,
+    `mcpjps${envelope.v}`,
     iv.toString("base64url"),
     sealed.toString("base64url"),
   ].join(".");
@@ -218,9 +224,13 @@ export function unsealHarnessProxyToken(
   } catch {
     return null;
   }
-  if (envelope?.v !== (parts[0] === "mcpjps2" ? 2 : 1)) return null;
+  if (!envelope || ![1, 2, 3].includes(envelope.v) || parts[0] !== `mcpjps${envelope.v}`) return null;
+  if (envelope.v === 3 && (
+    typeof envelope.turn?.laneId !== "string" || !envelope.turn.laneId ||
+    typeof envelope.turn?.leaseId !== "string" || !envelope.turn.leaseId
+  )) return null;
   const profile =
-    envelope.v === 2
+    envelope.v === 2 || (envelope.v === 3 && envelope.profile !== undefined)
       ? harnessConnectionProfileSchema.safeParse(envelope.profile)
       : undefined;
   if (profile && !profile.success) return null;
@@ -257,6 +267,7 @@ export function unsealHarnessProxyToken(
 
   return {
     token: envelope.t,
+    ...(envelope.v === 3 ? { turn: envelope.turn } : {}),
     serverId: envelope.s,
     policy,
     ...(profile?.success ? { profile: profile.data } : {}),
