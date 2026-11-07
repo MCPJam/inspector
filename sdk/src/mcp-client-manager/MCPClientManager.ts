@@ -4150,7 +4150,9 @@ export class MCPClientManager {
       }
 
       return this.withoutUnansweredClaims(
-        serverId, exactCapabilities, mrtrFulfils,
+        serverId,
+        exactCapabilities,
+        mrtrFulfils,
         era === "modern" || this.isPinnedModern(config)
       ) as ClientCapabilityOptions;
     }
@@ -4190,7 +4192,9 @@ export class MCPClientManager {
       delete (resolved as Record<string, unknown>).elicitation;
     }
     return this.withoutUnansweredClaims(
-      serverId, resolved as Record<string, unknown>, mrtrFulfils,
+      serverId,
+      resolved as Record<string, unknown>,
+      mrtrFulfils,
       era === "modern" || this.isPinnedModern(config)
     ) as ClientCapabilityOptions;
   }
@@ -4221,11 +4225,14 @@ export class MCPClientManager {
     mrtrFulfils: boolean,
     modern = true
   ): Record<string, unknown> {
-    const legacyClaims = (this.extensionRequestHandlers.get(serverId) ?? [])
-      .flatMap((binding) => binding.legacyClaim ? [binding.legacyClaim] : []);
+    const legacyClaims = (
+      this.extensionRequestHandlers.get(serverId) ?? []
+    ).flatMap((binding) => (binding.legacyClaim ? [binding.legacyClaim] : []));
     const claims = modern
       ? this.unansweredModernClaims(serverId, mrtrFulfils)
-      : (this.mrtrExtensionClaims.get(serverId) ?? []).filter((claim) => !legacyClaims.includes(claim));
+      : (this.mrtrExtensionClaims.get(serverId) ?? []).filter(
+          (claim) => !legacyClaims.includes(claim)
+        );
     const extensions = capabilities.extensions;
     if (
       !claims.length ||
