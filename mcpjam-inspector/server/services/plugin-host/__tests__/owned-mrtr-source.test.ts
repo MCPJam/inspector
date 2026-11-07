@@ -158,7 +158,7 @@ it.each(["decline", "cancel", "accept"] as const)(
           },
         },
       );
-      prepared.commit();
+      await prepared.commit();
       commit();
       return { outcome: "completed", result: { content: [] } };
     });
@@ -276,7 +276,7 @@ describe("a pending MRTR form and the client's current Forms toggle", () => {
           },
           { input: { action: "accept", content: { name: "bolt" } } },
         );
-        prepared.commit();
+        await prepared.commit();
         // The prepared answer is what the next leg sends to the server.
         onPrepared?.(prepared.responses);
         return { outcome: "completed", result: { content: [] } };
@@ -469,7 +469,7 @@ describe('an owned MRTR form whose schema rides in _meta["openai/elicitation"]',
       const prepared = await options.prepareLeg(pending, {
         input: { action: "accept", content: { name: "bolt" } },
       });
-      prepared.commit();
+      await prepared.commit();
       delivered(prepared.responses);
       return { outcome: "completed", result: { content: [] } };
     });

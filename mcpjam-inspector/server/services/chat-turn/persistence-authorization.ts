@@ -37,7 +37,9 @@ export async function prepareBackgroundRequestAuthorization(
   )
     return;
   const prepare = () => abortable(
-    getBackgroundRunBearerForRequest(c, projectId, { requireFreshSessionOnUse: true }),
+    getBackgroundRunBearerForRequest(c, projectId, {
+      requireFreshSessionOnUse: true, allowOriginalBearerOnMintFailure: true,
+    }),
     AbortSignal.timeout(20_000),
   );
   let prepared = options.lazy ? undefined : prepare();

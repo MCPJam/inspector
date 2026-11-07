@@ -144,7 +144,9 @@ export function OwnedPluginFormHost({
   ) as Omit<HostedElicitationRequestEvent, "kind">[] | undefined;
   const scopeKey = JSON.stringify([projectId, workspaceId]);
   const focusOwner = useRef({ ownerId: owner?._id, scopeKey });
-  focusOwner.current = { ownerId: owner?._id, scopeKey };
+  useLayoutEffect(() => {
+    focusOwner.current = { ownerId: owner?._id, scopeKey };
+  });
   const requests =
     rows?.filter(
       (row) =>
