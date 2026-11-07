@@ -1,3 +1,4 @@
+import { asCapacityRouteError } from "../../utils/capacity-route-error.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { ModelMessage } from "ai";
@@ -845,6 +846,8 @@ export const startSuiteRunWithRecorder = async ({
     // The eval-iteration cap is checked fail-fast inside startTestSuiteRun
     // (before any run row is created), so an out-of-quota launch rejects here
     // with the billing ConvexError and NO pending run group is stranded.
+    const capacity = asCapacityRouteError(error);
+    if (capacity) throw capacity;
     const billing = asBillingRouteError(error);
     if (billing) {
       throw billing;
@@ -930,9 +933,11 @@ export const startSuiteRunWithRecorder = async ({
     // together used to roll the loser back whole. The action retries that
     // conflict server-side; the mutation it wraps still exists and is what
     // older inspector builds call.
-    await convexClient.action("testSuites:startSuiteRunIterations" as any, {
-      runId,
-    });
+    if (response?.deduped !== true) {
+      await convexClient.action("testSuites:startSuiteRunIterations" as any, {
+        runId,
+      });
+    }
   } catch (error) {
     const cause = error instanceof Error ? error.message : String(error);
     // Defense in depth: the run-start pre-check normally rejects out-of-quota

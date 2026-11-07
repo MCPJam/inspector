@@ -146,6 +146,17 @@ describe("eval launch server preflight", () => {
       expect(mocks.mutation.mock.calls.map(([name]) => name)).toEqual([
         "testSuites:startTestSuiteRun",
       ]);
+      expect(mocks.action).not.toHaveBeenCalled();
+    });
+
+    it("adopts a reachable in-flight run before current setup gates can fail it", async () => {
+      answerStart(true);
+      const prepared = await launch(manager({ status: "connected", listTools: async () => ({ tools: [] }) }), { idempotencyKey: "same-key" });
+      expect(prepared).toMatchObject({ runId: "run-1", deduped: true, status: "running" });
+      expect(shouldSkipExecution(prepared)).toBe(true);
+      await expect(prepared.execute()).rejects.toThrow(/already has an executor/);
+      expect(mocks.action).not.toHaveBeenCalled();
+      expect(mocks.mutation.mock.calls.map(([name]) => name)).toEqual(["testSuites:startTestSuiteRun"]);
     });
 
     it("closes a run the start created instead and keeps the refusal", async () => {
