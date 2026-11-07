@@ -2,6 +2,7 @@ import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-
 
 export interface CompareBroadcastDelivery {
   request: BroadcastChatTurnRequest;
+  retainRecipients: (recipients: readonly string[]) => void;
   claim: (request: BroadcastChatTurnRequest, recipient: string) => boolean;
 }
 
@@ -14,6 +15,10 @@ export function createCompareBroadcast(
   const expiresAt = Date.now() + 60_000;
   return {
     request,
+    retainRecipients(recipients) {
+      const current = new Set(recipients);
+      for (const recipient of pending) if (!current.has(recipient)) pending.delete(recipient);
+    },
     claim(candidate, recipient) {
       if (Date.now() >= expiresAt) {
         pending.clear();
@@ -32,6 +37,7 @@ export function compareBroadcastRecipient(scope: {
   kind: "host" | "model";
   hostId: string | null;
   compareId: string;
+  ownerKey?: string | null;
 }): string {
   return JSON.stringify(scope);
 }
