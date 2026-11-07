@@ -1,3 +1,4 @@
+import { guardToolResponseStreams } from "./tool-response-stream.js";
 import { runOperationWithAuthRecovery } from "./auth-provider-recovery.js";
 import { isolateAuthChallenge, matchingRecordedChallenge, attachRecordedAuthChallenge } from "./auth-challenge-isolation.js";
 import { connectionErrorMessage } from "./connection-error-message.js";
@@ -3339,6 +3340,7 @@ export class MCPClientManager {
       client.onclose = undefined;
       try {
         const logger = this.resolveRpcLogger(config);
+        const guarded = guardToolResponseStreams(streamableTransport);
         const wrapped = wrapTransportForEventStreams(
           this.applyDroppedListChanged(
             config,
@@ -3346,8 +3348,8 @@ export class MCPClientManager {
               config,
               wrapTransportForTaskResults(
                 logger
-                  ? wrapTransportForLogging(serverId, logger, streamableTransport)
-                  : streamableTransport
+                  ? wrapTransportForLogging(serverId, logger, guarded)
+                  : guarded
               )
             )
           ),
