@@ -82,6 +82,7 @@ import { WebmcpInspectorTab } from "./components/webmcp-inspector/WebmcpInspecto
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { createConformanceConnector } from "./components/conformance/connect-conformance-server";
 import { ConformanceTab } from "./components/conformance/ConformanceTab";
+import { conformanceRunOriginState } from "./components/conformance/conformance-run-origin";
 import { ServerDetailModal } from "./components/connection/ServerDetailModal";
 import {
   ConformanceHistory,
@@ -1826,7 +1827,9 @@ export function ConformanceRoute() {
         onViewRun={
           convexProjectId
             ? (runId) =>
-                navigate(buildConformanceRunPath(runId, convexProjectId))
+                navigate(buildConformanceRunPath(runId, convexProjectId), {
+                  state: conformanceRunOriginState("overview"),
+                })
             : undefined
         }
       />
