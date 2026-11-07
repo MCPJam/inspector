@@ -1,8 +1,10 @@
+import { HOSTED_MODE } from "../config.js";
+import { COMPLETED_TURN_RETRY_TTL_MS, HOSTED_PERSIST_RETRY_PREFIX } from "../../shared/persist-receipt.js";
+import { createCompletedTurnTicket, readCompletedTurnTicket } from "./completed-turn-ticket.js";
 import { abortable } from "./sessionSimulation/target-discovery.js";
 import { randomUUID } from "node:crypto";
 import type { PersistChatOutcome } from "../utils/chat-ingestion.js";
 
-export const COMPLETED_TURN_RETRY_TTL_MS = 30_000;
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 const MAX_ACTOR_BYTES = 16 * 1024 * 1024;
@@ -36,6 +38,7 @@ export class CompletedTurnPersistence {
     chatSessionId: string,
     turnId: string,
   ): string | undefined {
+    if (HOSTED_MODE) return createCompletedTurnTicket({ ...owner, chatSessionId, turnId }, body);
     const bytes = Buffer.byteLength(body);
     const records = [...this.records.values()];
     const own = records.filter((record) => record.subject === owner.subject);
@@ -100,6 +103,11 @@ export class CompletedTurnPersistence {
     owner: CompletedTurnOwner & { chatSessionId: string; turnId: string },
     persist: (body: string, signal: AbortSignal) => Promise<PersistChatOutcome>,
   ): Promise<PersistChatOutcome | "missing" | "busy"> {
+    if (id.startsWith(HOSTED_PERSIST_RETRY_PREFIX)) {
+      const body = readCompletedTurnTicket(id, owner);
+      if (body === undefined) return "missing";
+      return persist(body, AbortSignal.timeout(10_000));
+    }
     const record = this.records.get(id);
     // A guessed handle never changes the rightful owner's wait or claim.
     if (
