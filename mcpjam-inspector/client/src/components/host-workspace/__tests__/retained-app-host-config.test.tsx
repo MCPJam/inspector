@@ -170,6 +170,7 @@ vi.mock("../thread-app-api", async (importOriginal) => ({
     ...host,
     discoverServer: async (serverId: string) => ({
       entries: await host.discover(serverId),
+      pluginId: "bits",
       mentions: { available: false },
       mentionsReported: true,
     }),
@@ -186,6 +187,7 @@ import {
   useExtensionOwners,
   useExtensionRegistration,
   useExtensionSlot,
+  usePublishPluginIcons,
   type ExtensionRegistration,
 } from "../ExtensionWorkspaceProvider";
 import { ThreadAppError } from "../thread-app-api";
@@ -432,6 +434,8 @@ describe("an open App when the client's binding or switch changes", () => {
     chat: null,
   };
   let opened = 0;
+  const noIcons = new Map();
+  const pluginNames = new Map([["bits", "Bits & Bolts"]]);
   function Center({
     registration,
   }: {
@@ -441,6 +445,7 @@ describe("an open App when the client's binding or switch changes", () => {
       sendMessage: async () => true,
       runOnboarding: async () => {},
     });
+    usePublishPluginIcons(noIcons, pluginNames);
     owners = useExtensionOwners();
     return null;
   }
@@ -505,6 +510,16 @@ describe("an open App when the client's binding or switch changes", () => {
     );
     return view;
   }
+
+  it("shows the plugin manifest name in the global header without changing the server key", async () => {
+    const imported = { ...server, name: "bits-and-bolts:server:bits-and-bolts@2cc7fa5b" };
+    render(playground(registration({ servers: [imported] })));
+    await waitFor(() => expect(owners.global?.entries.saved).toBeDefined());
+    await act(async () => { await owners.global!.launch(imported, library); });
+    expect(screen.getByText("Bits & Bolts")).toBeDefined();
+    expect(owners.global!.apps[0].server).toEqual(imported);
+    expect(host.open.mock.calls[0][0]).toBe("saved");
+  });
 
   it("unmounts the App when the extensions switch goes off, leaving no hidden iframe", async () => {
     const view = await openLibrary();

@@ -32,6 +32,8 @@ import {
 import {
   EMPTY_PLUGIN_ICON_DIRECTORY,
   PluginIconDirectoryProvider,
+  serverDisplayName,
+  usePluginIconDirectory,
   type PluginIconDirectory,
 } from "./plugin-icon-directory";
 import type { PluginIcons } from "@/lib/plugins/plugin-api-types";
@@ -145,6 +147,7 @@ interface ExtensionWorkspaceContextValue {
   setPorts: (ports: ExtensionPorts) => void;
   /** The project's plugin icons by plugin id, from the center's subscription. */
   setPluginIcons: (icons: ReadonlyMap<string, PluginIcons>) => void;
+  setPluginNames: (names: ReadonlyMap<string, string>) => void;
   /** A deleted (archived) chat closes its owner once it is no longer shown. */
   releaseChat: (chatId: string) => void;
 }
@@ -192,6 +195,9 @@ export function ExtensionWorkspaceProvider({
   const [pluginIcons, setPluginIcons] = useState<
     ReadonlyMap<string, PluginIcons>
   >(EMPTY_PLUGIN_ICON_DIRECTORY.plugins);
+  const [pluginNames, setPluginNames] = useState<ReadonlyMap<string, string>>(
+    () => new Map(),
+  );
   const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const portsRef = useRef<ExtensionPorts>({
@@ -233,6 +239,7 @@ export function ExtensionWorkspaceProvider({
         portsRef.current = ports;
       },
       setPluginIcons,
+      setPluginNames,
       releaseChat: (chatId) =>
         setReleased((old) =>
           old.has(chatId) ? old : new Set([...old, chatId]),
@@ -338,8 +345,8 @@ export function ExtensionWorkspaceProvider({
   // Entrypoints and composer chips of a plugin-owned server show that
   // plugin's icons: discovery names the owner, the plugin list its icons.
   const iconDirectory = useMemo<PluginIconDirectory>(
-    () => ({ plugins: pluginIcons, servers: discovery.servers }),
-    [pluginIcons, discovery.servers],
+    () => ({ plugins: pluginIcons, pluginNames, servers: discovery.servers }),
+    [pluginIcons, pluginNames, discovery.servers],
   );
   const currentThreadId = useCallback(
     () => store.getState().currentChatId ?? GLOBAL_OWNER_THREAD_ID,
@@ -439,6 +446,7 @@ function SlotPortal({
  * keeps the App retained.
  */
 function GlobalTakeover({ workspace }: { workspace: ThreadAppWorkspace }) {
+  const directory = usePluginIconDirectory();
   const current = workspace.apps.find((row) => row.key === workspace.active);
   return (
     <div
@@ -451,7 +459,9 @@ function GlobalTakeover({ workspace }: { workspace: ThreadAppWorkspace }) {
       <div className="grid h-14 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-3 border-b border-border/40 bg-background/95 px-4 backdrop-blur">
         <div />
         <div className="min-w-0 max-w-[40vw] truncate text-sm font-medium text-muted-foreground">
-          {current?.server.name ?? ""}
+          {current
+            ? serverDisplayName(current.server.serverId, directory, [current.server])
+            : ""}
         </div>
         <div className="flex min-w-0 items-center justify-end gap-2">
           <button
@@ -675,11 +685,13 @@ export function useExtensionRegistration(
  */
 export function usePublishPluginIcons(
   icons: ReadonlyMap<string, PluginIcons>,
+  names?: ReadonlyMap<string, string>,
 ) {
   const context = useContext(ExtensionWorkspaceContext);
   useLayoutEffect(() => {
     context?.setPluginIcons(icons);
-  }, [context, icons]);
+    if (names) context?.setPluginNames(names);
+  }, [context, icons, names]);
 }
 
 /**
