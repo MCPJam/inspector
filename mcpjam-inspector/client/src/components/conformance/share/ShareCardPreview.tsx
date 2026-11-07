@@ -93,12 +93,18 @@ export async function exportShareCardPng(svg: string): Promise<Blob> {
     canvas.width = SHARE_CARD_WIDTH * 2;
     canvas.height = SHARE_CARD_HEIGHT * 2;
     const context = canvas.getContext("2d");
-    if (!context) throw new Error("No 2D canvas to draw the card on");
+    if (!context) {
+      throw new Error(
+        "Could not create the card image in this browser. Try a different browser.",
+      );
+    }
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
     return await new Promise<Blob>((resolve, reject) => {
       canvas.toBlob(
         (blob) =>
-          blob ? resolve(blob) : reject(new Error("The canvas gave no PNG")),
+          blob
+            ? resolve(blob)
+            : reject(new Error("Could not create the image. Try again.")),
         "image/png",
       );
     });
