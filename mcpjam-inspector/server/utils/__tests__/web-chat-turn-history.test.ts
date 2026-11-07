@@ -47,7 +47,8 @@ vi.mock("../chat-v2-orchestration.js", () => ({
 vi.mock("../chat-ingestion.js", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   persistChatSessionToConvex: vi.fn(
-    async (args: { sessionMessages: unknown[] }) => {
+    async (args: { sessionMessages: unknown[]; authorizationFailure?: { status?: number } }) => {
+      if (args.authorizationFailure) return { outcome: "failed", failureKind: "http_error", status: args.authorizationFailure.status };
       state.persisted.push(args.sessionMessages);
       return { outcome: "saved" };
     },

@@ -1,3 +1,4 @@
+import { isPersistRetryHandle, MAX_PERSIST_RETRY_HANDLE_CHARS } from "../../../shared/persist-receipt.js";
 import { abortable } from "../../services/sessionSimulation/target-discovery.js";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -21,7 +22,7 @@ import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 const bodySchema = z
   .object({
-    retryHandle: z.string().uuid(),
+    retryHandle: z.string().max(MAX_PERSIST_RETRY_HANDLE_CHARS).refine(isPersistRetryHandle),
     projectId: z.string().min(1),
     chatSessionId: z.string().min(1),
     turnId: z.string().min(1),

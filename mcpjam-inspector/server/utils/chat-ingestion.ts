@@ -351,6 +351,7 @@ interface PersistChatSessionOptions {
    */
   modelSource: "mcpjam" | "byok" | "local_byok" | "external-account";
   authHeader?: string;
+  authorizationFailure?: { status?: number };
   retryOwner?: CompletedTurnOwner;
   projectId?: string;
   sourceType?: "scenario" | "direct" | "eval" | "swarm" | "event";
@@ -867,16 +868,13 @@ export async function persistChatSessionToConvex(
   if (!options.chatSessionId) {
     return { outcome: "not-attempted", reason: "no-session-id" };
   }
-  if (!options.authHeader) {
-    return { outcome: "not-attempted", reason: "no-auth" };
-  }
 
   const perAttemptTimeoutMs = options.timeoutMs ?? DEFAULT_INGEST_TIMEOUT_MS;
   const deadline =
     Date.now() + Math.max(perAttemptTimeoutMs, INGEST_TOTAL_BUDGET_MS);
   const ingestHeaders: Record<string, string> = {
     "content-type": "application/json",
-    authorization: options.authHeader,
+    ...(options.authHeader ? { authorization: options.authHeader } : {}),
     ...options.forwardHeaders,
   };
   const body = buildIngestBody(options);
@@ -888,6 +886,9 @@ export async function persistChatSessionToConvex(
     const retryHandle = completedTurnPersistence.register(options.retryOwner, body, options.chatSessionId, options.turnTrace.turnId);
     return retryHandle ? { ...outcome, retryHandle, retryProjectId: options.retryOwner.projectId } : outcome;
   };
+
+  if (options.authorizationFailure) return retain({ outcome: "failed", failureKind: "http_error", status: options.authorizationFailure.status });
+  if (!options.authHeader) return { outcome: "not-attempted", reason: "no-auth" };
 
   const logFailure = (detail: {
     failureKind: PersistChatFailureKind | "version_conflict";
