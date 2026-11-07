@@ -55,6 +55,7 @@ import {
   type StageState,
   type UserValueStage,
 } from "./chain.js";
+import { isEvalIterationNonVerdictStatus } from "./eval-lifecycle.js";
 import { PREDICATE_STAGE, type PredicateKind } from "./grader-stage.js";
 
 /**
@@ -684,23 +685,6 @@ const row = (
   ...(reason ? { reason } : {}),
   ...(evidence && Object.keys(evidence).length > 0 ? { evidence } : {}),
 });
-
-/**
- * Iteration statuses that mean "no verdict was ever produced".
- *
- * NOTE on reachability: a cancelled inspector iteration finalizes on a path
- * that builds no stage metadata at all, and `setup_failed` normally reaches the
- * setup-abort branch below, which can still name whose side broke. This set is
- * the floor for everything else: a caller that CAN spell a stopped status must
- * not have it mis-attributed to a server failure.
- */
-const LIFECYCLE_STOPPED: ReadonlySet<IterationStatus> =
-  new Set<IterationStatus>([
-    "cancelled",
-    "timed_out",
-    "setup_failed",
-    "skipped",
-  ]);
 
 /**
  * Which stages this case can say anything about at all.
@@ -1484,7 +1468,13 @@ export function deriveStageResults(
   // Precedence 2: the run never produced a verdict. Harness noise must not
   // inflate any server failure rate, so nothing here is ever `failed` unless
   // setup signals measured the other side's server saying no.
-  if (LIFECYCLE_STOPPED.has(iteration.status) && !isSetupAbort) {
+  // An iteration that never produced a verdict. NOTE on reachability: a
+  // cancelled inspector iteration finalizes on a path that builds no stage
+  // metadata at all, and `setup_failed` normally reaches the setup-abort branch
+  // above, which can still name whose side broke. This is the floor for
+  // everything else: a caller that CAN spell a stopped status must not have it
+  // mis-attributed to a server failure.
+  if (isEvalIterationNonVerdictStatus(iteration.status) && !isSetupAbort) {
     const reason: StageReason =
       iteration.status === "setup_failed" ? "setupAborted" : "lifecycleStopped";
     return finalize(

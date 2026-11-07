@@ -1,0 +1,98 @@
+{
+  "__readme": "Parity fixture for the eval LIFECYCLE predicates in sdk/src/contract/eval-lifecycle.ts. Every run and iteration status, with each predicate's answer. Loaded by sdk/tests/contract-eval-lifecycle.test.ts here and by tests/convex/evalLifecycleParity.test.ts in mcpjam-backend, which holds a byte-for-byte copy pinned by convex/lib/mirrors.json (pair eval-lifecycle-parity-fixtures). A status added to either union fails both sides until it is classified here. Copy it byte for byte; do not re-author it.",
+  "run": [
+    {
+      "status": "pending",
+      "terminal": false,
+      "pastExecution": false,
+      "nonVerdict": false
+    },
+    {
+      "status": "running",
+      "terminal": false,
+      "pastExecution": false,
+      "nonVerdict": false
+    },
+    {
+      "status": "grading",
+      "terminal": false,
+      "pastExecution": true,
+      "nonVerdict": false
+    },
+    {
+      "status": "completed",
+      "terminal": true,
+      "pastExecution": true,
+      "nonVerdict": false
+    },
+    {
+      "status": "failed",
+      "terminal": true,
+      "pastExecution": true,
+      "nonVerdict": true
+    },
+    {
+      "status": "cancelled",
+      "terminal": true,
+      "pastExecution": true,
+      "nonVerdict": true
+    },
+    {
+      "status": "timed_out",
+      "terminal": true,
+      "pastExecution": true,
+      "nonVerdict": true
+    }
+  ],
+  "iteration": [
+    {
+      "status": "pending",
+      "terminal": false,
+      "nonVerdict": false
+    },
+    {
+      "status": "running",
+      "terminal": false,
+      "nonVerdict": false
+    },
+    {
+      "status": "completed",
+      "terminal": true,
+      "nonVerdict": false
+    },
+    {
+      "status": "failed",
+      "terminal": true,
+      "nonVerdict": false
+    },
+    {
+      "status": "cancelled",
+      "terminal": true,
+      "nonVerdict": true
+    },
+    {
+      "status": "timed_out",
+      "terminal": true,
+      "nonVerdict": true
+    },
+    {
+      "status": "setup_failed",
+      "terminal": true,
+      "nonVerdict": true
+    },
+    {
+      "status": "skipped",
+      "terminal": true,
+      "nonVerdict": true
+    }
+  ],
+  "notStatuses": [
+    null,
+    3,
+    {},
+    "",
+    "COMPLETED",
+    "canceled",
+    "done"
+  ]
+}
