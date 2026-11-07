@@ -73,7 +73,7 @@ beforeEach(() => {
 it("captures verified background authority before execution and resolves it only for persistence", async () => {
   const authorization = await prepare();
   expect(state.prepare).toHaveBeenCalledWith(expect.anything(), "project", {
-    requireFreshSessionOnUse: true,
+    requireFreshSessionOnUse: true, allowOriginalBearerOnMintFailure: true,
   });
   expect(state.getBearer).not.toHaveBeenCalled();
   expect(await authorization!()).toBe("Bearer current-delegation");

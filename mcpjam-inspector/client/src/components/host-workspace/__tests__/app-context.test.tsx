@@ -170,6 +170,7 @@ describe("retained App composer context", () => {
     // The Context chip names the App's plugin with its icons.
     expect(rows[0]?.group).toMatchObject({
       title: "Context",
+      appTitle: "Parts",
       serverName: "Bits & Bolts",
       icons: { logo: chipLogo },
       serverIcons: chipServerIcons,

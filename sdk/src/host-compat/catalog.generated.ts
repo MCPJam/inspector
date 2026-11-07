@@ -1530,7 +1530,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               fileResources: false,
               fileViewers: false,
               localFiles: false,
-              mentions: true,
+              mentions: false,
             },
             enabled: true,
           },
