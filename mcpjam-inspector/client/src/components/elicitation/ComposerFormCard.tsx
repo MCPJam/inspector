@@ -111,7 +111,7 @@ export function ComposerFormFrame({
     >
       <header className="flex min-w-0 shrink-0 items-start gap-2 px-4 pb-2 pt-3">
         <PluginServerIcon
-          serverName={displayName}
+          serverName={serverName}
           pluginIcons={icons?.pluginIcons}
           serverIcons={icons?.serverIcons}
           className="mt-0.5"
