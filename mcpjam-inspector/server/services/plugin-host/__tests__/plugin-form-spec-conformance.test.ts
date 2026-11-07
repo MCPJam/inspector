@@ -280,7 +280,7 @@ describe("10. Legacy and MRTR complete the same way", () => {
         },
         { form: response },
       );
-      prepared.commit();
+      await prepared.commit();
       delivered = prepared.responses.form;
       return { outcome: "completed", result: { content: [] } };
     });

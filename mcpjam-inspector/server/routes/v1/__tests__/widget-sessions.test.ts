@@ -11,7 +11,14 @@ const f = vi.hoisted(() => ({
   action: vi.fn(),
   step: vi.fn(),
   revoked: false,
+  localIdentity: vi.fn(),
+  localWithoutWorkos: false,
 }));
+vi.mock("../../../services/plugin-host/admission.js", async (original) => ({
+  ...(await original<typeof import("../../../services/plugin-host/admission.js")>()),
+  resolvePluginCleanupActor: f.localIdentity,
+}));
+vi.mock("../../../utils/v1-convex-token.js", () => ({ getConvexBearerForRequest: async () => "verified-by-backend" }));
 vi.mock("../../web/auth.js", () => ({
   createManualHostedConnection: f.connect,
 }));
@@ -37,7 +44,7 @@ import { WebRouteError, ErrorCode } from "../../web/errors.js";
 const app = new Hono();
 app.use("*", async (c, next) => {
   c.set("authMethod", "workos_api_key");
-  c.set("workosUserId", c.req.header("x-test-subject") ?? "user-a");
+  if (!f.localWithoutWorkos) c.set("workosUserId", c.req.header("x-test-subject") ?? "user-a");
   await next();
 });
 app.onError((error) => Response.json(
@@ -62,6 +69,8 @@ beforeEach(async () => {
   await widgetRenderSessions.disposeAll();
   vi.clearAllMocks();
   f.revoked = false;
+  f.localWithoutWorkos = false;
+  f.localIdentity.mockResolvedValue("backend-user");
   f.connect.mockImplementation(async (_c, scope) => {
     if (f.revoked)
       throw new WebRouteError(
@@ -137,6 +146,23 @@ async function start(clientCapabilities?: Record<string, unknown>) {
 }
 
 describe("scoped retained widget HTTP sessions", () => {
+  it("binds local sessions to a backend-verified identity when WorkOS is not configured", async () => {
+    f.localWithoutWorkos = true;
+    const id = await start();
+    expect(f.localIdentity).toHaveBeenCalledWith(expect.objectContaining({ bearer: "verified-by-backend" }));
+    expect((await request(`${base}/${id}/snapshot`)).status).toBe(200);
+    f.localIdentity.mockResolvedValue("different-backend-user");
+    expect((await request(`${base}/${id}/snapshot`)).status).toBe(404);
+  });
+  it.each([
+    { route: base, body: { toolName: "open", clientCapabilities: [] } },
+    { route: `${base}/unknown/scripted-step`, body: { step: { kind: "invented" } } },
+    { route: `${base}/unknown/scripted-step`, body: { step: { kind: "wait", ms: 1 }, priorWidgetToolCalls: "invalid" } },
+  ])("answers malformed widget fields with 400: $body", async ({ route, body }) => {
+    expect((await request(route, "POST", body)).status).toBe(400);
+    expect(f.render).not.toHaveBeenCalled();
+    expect(f.step).not.toHaveBeenCalled();
+  });
   it("does not apply its verifier to later sibling routes", async () => {
     expect((await request("/unrelated")).status).toBe(200);
     expect(f.verify).not.toHaveBeenCalled();
@@ -189,7 +215,7 @@ describe("scoped retained widget HTTP sessions", () => {
       ],
     ])
       expect((await request(path, "GET", undefined, subject)).status).toBe(404);
-    await expect(widgetRenderSessions.close(id)).rejects.toThrow("not found");
+    await expect(widgetRenderSessions.close(id)).resolves.toBe(false);
     expect(f.connect).toHaveBeenCalledOnce();
     expect(f.snapshot).not.toHaveBeenCalled();
     expect(

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  ResourceGrantError,
   ResourceGrantService,
   type BoundResourceAdapter,
   type ResourceOwner,
@@ -233,6 +234,18 @@ describe("instance-owned resource grants", () => {
     ).rejects.toMatchObject({ code: "RESOURCE_DENIED" });
     expect(denied.authorize).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["RESOURCE_DENIED", "RESOURCE_TOO_LARGE", "RESOURCE_WRITE_UNAVAILABLE"] as const)(
+    "preserves a definite pre-effect %s refusal without retrying", async (code) => {
+      const { adapter } = managedAdapter();
+      const { service, uri } = setup(adapter);
+      await service.read(owner, { uri });
+      adapter.conditionalWrite = vi.fn(async () => { throw new ResourceGrantError(code); });
+      await expect(service.write(owner, { uri, text: "changed" })).rejects.toMatchObject({ code });
+      expect(adapter.conditionalWrite).toHaveBeenCalledTimes(1);
+      expect((await service.read(owner, { uri })).contents[0]).toMatchObject({ text: "original" });
+    },
+  );
 
   it("reports uncertain write outcomes without retrying the effect", async () => {
     const { adapter } = managedAdapter();

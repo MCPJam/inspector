@@ -298,6 +298,7 @@ export function useAppContext(
         );
     };
     const group = {
+      appTitle: handle.toolTitle ?? "App",
       removeAllLabel: `Remove all ${handle.toolTitle ?? "App"} context`,
       serverName,
       ...(pluginIcons ? { icons: pluginIcons } : {}),
