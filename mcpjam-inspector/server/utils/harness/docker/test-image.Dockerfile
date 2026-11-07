@@ -35,15 +35,15 @@ RUN apt-get update \
 # NodeSource channel that moves underneath the pin.
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in \
-      amd64) node_arch=x64; node_sha=2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2 ;; \
-      arm64) node_arch=arm64; node_sha=5f4ddab610c1ab2016b3c227cebdbf6d9495161487e4739c7b90090595f465f7 ;; \
+      amd64) node_arch=x64; node_sha=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6 ;; \
+      arm64) node_arch=arm64; node_sha=dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e ;; \
       *) echo "unsupported architecture $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -fsSLo /tmp/node.tar.xz "https://nodejs.org/dist/v24.20.0/node-v24.20.0-linux-${node_arch}.tar.xz"; \
+    curl -fsSLo /tmp/node.tar.xz "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-${node_arch}.tar.xz"; \
     echo "${node_sha}  /tmp/node.tar.xz" | sha256sum -c -; \
     tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --no-same-owner; \
     rm /tmp/node.tar.xz; \
-    test "$(node --version)" = "v24.20.0"
+    test "$(node --version)" = "v24.22.1"
 
 # pnpm by exact version, into /usr/local/bin so every shell finds it.
 RUN npm install -g pnpm@12.8.1 && test "$(pnpm --version)" = "12.8.1"
