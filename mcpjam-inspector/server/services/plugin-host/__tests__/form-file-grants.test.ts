@@ -8,6 +8,7 @@ import {
   pluginFormFileAccepted,
 } from "../form-file-grants";
 import type { PluginFormSource } from "../form-sources";
+import { PluginFormFileJournal } from "../form-file-journal";
 
 const roots: string[] = [];
 const registries: PluginFormFileGrants[] = [];
@@ -246,6 +247,38 @@ describe("original local stdio file grants", () => {
     vi.advanceTimersByTime(30 * 60_000);
     await f.registry.drain();
     expect(await readdir(f.base)).toEqual([]);
+  });
+  it("coalesces journal sweeps and drains the active sweep before returning", async () => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    const result = await f.registry.upload(f.input);
+    f.registry.deliver(f.current, "opaque", { files: result.uris });
+    let resume!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const sweep = vi
+      .spyOn(PluginFormFileJournal.prototype, "sweep")
+      .mockImplementation(async () => {
+        await gate;
+        return { retained: 1, removed: 0, refused: 0, overflow: false };
+      });
+    try {
+      vi.advanceTimersByTime(3 * 60_000);
+      expect(sweep).toHaveBeenCalledTimes(1);
+      let drained = false;
+      const draining = f.registry.drain().then(() => {
+        drained = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(drained).toBe(false);
+      resume();
+      await draining;
+      expect(drained).toBe(true);
+    } finally {
+      resume();
+      sweep.mockRestore();
+    }
   });
   it("preserves legal maximum-length filenames and separates duplicate basenames", async () => {
     const f = await fixture();
