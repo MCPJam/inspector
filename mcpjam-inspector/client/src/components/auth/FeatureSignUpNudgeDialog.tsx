@@ -6,24 +6,21 @@
  * generalisation of it. That one exists to reopen the invite dialog after the
  * WorkOS round trip, so it plants `markPendingInviteDialog()` and the sidebar
  * consumes the marker on return. A gated tab needs no marker: the return path
- * IS the tab, and `captureAppSignInReturnPath()` already carries it. Folding
- * both into one component would mean a "should I leave a marker" flag whose
- * two settings have nothing else in common.
+ * is the creation flow named by its CTA, or, on a shared swarm or study
+ * permalink, that permalink itself. Folding both into one component
+ * would mean a "should I leave a marker" flag whose two settings have
+ * nothing else in common.
  *
  * What it does share is the ordering that matters on every button:
- *   1. captureAppSignInReturnPath() — remember the page, in sessionStorage,
- *      before WorkOS navigates away;
- *   2. signUp/signIn(permalinkSignInOptions()) — the navigation itself.
- * Get those backwards and the user lands on the app's front door instead of
- * the tab they were reading about.
+ *   1. writeAppSignInReturnPath(returnPath) — remember where to come back to,
+ *      in sessionStorage, before WorkOS navigates away;
+ *   2. signUp/signIn(permalinkSignInOptions(returnPath)) — the navigation itself.
+ * Get those backwards and the user lands on the app's front door instead.
  *
  * "Create free account" is primary because the whole surface exists to convert
- * a visitor with no account; "I already have an account" stays for someone
- * signed in on another device. Both return to the same place — the task they
- * came for is the same either way.
- *
- * Only guests see this. A plan-locked user already HAS an account, so their
- * preview gets the billing upsell instead and never opens this dialog.
+ * a visitor with no account; "Sign in" stays for someone signed in on another
+ * device. Both return to the same place — the task they came for is the same
+ * either way.
  */
 
 import { useEffect, useRef } from "react";
@@ -36,14 +33,34 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { Button } from "@mcpjam/design-system/button";
+import { JamIllustration } from "@/components/billing/JamIllustration";
 import { track } from "@/lib/analytics";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
-import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
+import { writeAppSignInReturnPath } from "@/lib/app-signin-return-path";
+import { buildProjectPath, parseProjectPath } from "@/lib/project-route";
 import {
   GATED_FEATURE_COPY,
   type GatedFeatureId,
 } from "@/components/guest-preview/feature-highlights";
 import { LegalConsentNotice } from "@/components/legal/LegalConsentNotice";
+
+/**
+ * The creation flow from the tab root or `/new`, in whichever project the
+ * guest was looking at: a `/p/<id>` prefix and any `?project=` both carry
+ * over. Anywhere deeper is a shared swarm or study permalink, and the
+ * recipient lands back on it as-is.
+ */
+function signInReturnPath(createPath: string): string {
+  const { pathname, search, hash } = window.location;
+  const scoped = parseProjectPath(pathname);
+  const path = (scoped?.relativePath ?? pathname).replace(/\/+$/, "");
+  const listPath = createPath.replace(/\/new$/, "");
+  if (path === listPath || path === createPath) {
+    const target = `${createPath}${search}${hash}`;
+    return scoped ? buildProjectPath(scoped.projectId, target) : target;
+  }
+  return `${pathname}${search}${hash}`;
+}
 
 export function FeatureSignUpNudgeDialog({
   feature,
@@ -79,14 +96,16 @@ export function FeatureSignUpNudgeDialog({
 
   const handleSignUp = () => {
     track("sign_up_button_clicked", { location });
-    captureAppSignInReturnPath();
-    signUp(permalinkSignInOptions());
+    const returnPath = signInReturnPath(copy.createPath);
+    writeAppSignInReturnPath(returnPath);
+    signUp(permalinkSignInOptions(returnPath));
   };
 
   const handleSignIn = () => {
     track("login_button_clicked", { location });
-    captureAppSignInReturnPath();
-    signIn(permalinkSignInOptions());
+    const returnPath = signInReturnPath(copy.createPath);
+    writeAppSignInReturnPath(returnPath);
+    signIn(permalinkSignInOptions(returnPath));
   };
 
   return (
@@ -97,10 +116,9 @@ export function FeatureSignUpNudgeDialog({
       }}
     >
       <DialogContent className="sm:max-w-md">
-        {/* No bullet list any more. It carried three sell lines I had written,
-            including "run your first swarm on us, no card needed", which was a
-            pricing promise nobody had made. The title and one true sentence
-            are what is left; REEV-11 owns whatever replaces them. */}
+        <JamIllustration />
+        {/* Title and one sentence only: no bullet list, and no pricing or
+            free-run claims in this copy. */}
         <DialogHeader>
           <DialogTitle>{copy.nudge.title}</DialogTitle>
           <DialogDescription>{copy.nudge.body}</DialogDescription>
@@ -114,7 +132,7 @@ export function FeatureSignUpNudgeDialog({
             Create free account
           </Button>
           <Button variant="outline" onClick={handleSignIn} className="flex-1">
-            I already have an account
+            Sign in
           </Button>
         </div>
         <LegalConsentNotice />
