@@ -174,3 +174,25 @@ describe("resolveServerInit", () => {
     expect(init.perServerOverride).toBeUndefined();
   });
 });
+
+
+describe("local manual form capability composition", () => {
+  const capture = { extensions: { "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] } } };
+  it("adds the installed local fulfiller to a Forms-enabled ChatGPT capture", () => {
+    const host = makeHost({ hostStyle: "chatgpt", clientCapabilities: capture });
+    expect(resolveEffectiveClientCapabilities({ host, localFormSupport: true })).toMatchObject({
+      elicitation: { form: {} }, extensions: { "openai/elicitation": { form: {} } },
+    });
+    expect(capture).not.toHaveProperty("elicitation");
+    expect(resolveEffectiveClientCapabilities({ host })).not.toHaveProperty("elicitation");
+  });
+  it("honors Forms off and exact per-server overrides", () => {
+    const host = makeHost({ hostStyle: "chatgpt", clientCapabilities: { extensions: { "openai/elicitation": { form: {} } } },
+      mcpProfile: { profileVersion: 1, apps: { pluginExtensions: { enabled: true, capabilities: { forms: false } } } },
+    });
+    expect(resolveEffectiveClientCapabilities({ host, localFormSupport: true })).not.toHaveProperty("extensions.openai/elicitation");
+    expect(resolveEffectiveClientCapabilities({ host: makeHost({ hostStyle: "chatgpt" }), localFormSupport: true,
+      serverConfig: { clientCapabilities: { extensions: {} } },
+    })).not.toHaveProperty("elicitation");
+  });
+});
