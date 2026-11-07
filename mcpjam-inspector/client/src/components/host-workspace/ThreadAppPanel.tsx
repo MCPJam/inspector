@@ -235,6 +235,7 @@ export interface ThreadAppWorkspaceOptions {
   routeLaunch?: (
     server: WorkspaceServer,
     declaration: ThreadAppDeclaration,
+    waitForAdmission?: boolean,
   ) => Promise<void> | undefined;
   /**
    * A deep link opens its plugin's GLOBAL App. Chat-owned Apps (thread, file
@@ -1148,7 +1149,7 @@ export function useThreadAppWorkspace(
           currentThreadId: options.currentThreadId,
           capabilities,
           navigate: options.routeNavigate ?? navigateDeepLink,
-          openFile: (server, entry) => options.routeLaunch?.(server, entry) ?? launch(server, entry, undefined, true),
+          openFile: (server, entry) => options.routeLaunch?.(server, entry, true) ?? launch(server, entry, undefined, true),
           chooseViewer,
           renderOutcome,
           approve: (...args) => current.current.approve(...args),

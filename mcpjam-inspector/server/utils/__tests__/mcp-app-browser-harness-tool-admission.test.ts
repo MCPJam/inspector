@@ -126,6 +126,19 @@ describe("headless App server-tool admission", () => {
     expect(f.callTool).not.toHaveBeenCalled();
   });
 
+  it("records a slow visibility lookup in the buffer that admitted the call", async () => {
+    let release!: (visibility: Array<"model" | "app">) => void;
+    const pending = new Promise<Array<"model" | "app">>((resolve) => { release = resolve; });
+    const f = await fixture({ enableViewTools: true, resolveToolVisibility: () => pending });
+    const original = f.harness["toolCallBuffer"];
+    const request = f.invoke();
+    f.harness["toolCallBuffer"] = [];
+    release(["app"]);
+    await request;
+    expect(original).toHaveLength(1);
+    expect(f.harness["toolCallBuffer"]).toEqual([]);
+  });
+
   it("refuses dispatch when current metadata cannot be read", async () => {
     const f = await fixture({ resolveToolVisibility: async () => { throw new Error("unavailable"); } });
     expect(await f.invoke()).toHaveProperty("error");

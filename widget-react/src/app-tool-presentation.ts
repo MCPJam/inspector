@@ -61,7 +61,7 @@ export function useAppToolPresentation(
   getElement: () => HTMLElement | null,
 ) {
   const current = useRef({ label, getElement });
-  current.current = { label, getElement };
+  useLayoutEffect(() => { current.current = { label, getElement }; });
   const read = useCallback(
     () =>
       appToolPresentation(current.current.label, current.current.getElement()),
