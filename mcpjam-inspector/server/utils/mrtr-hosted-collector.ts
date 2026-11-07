@@ -1149,9 +1149,28 @@ export async function resumeMrtrContinuationLeg(
     }
   }
 
-  let leg: MrtrLegResult<unknown>;
   try {
     await prepared?.commit();
+  } catch (error) {
+    // The durable fence precedes admission's final check, but no leg was sent.
+    // Close this attempt as a known refusal instead of claiming a lost result.
+    const finalized = await finalize(deps.bearer, {
+      continuationId,
+      leaseId,
+      expectedStateVersion: stateVersion,
+      status: "failed",
+      terminalReason: "resume_admission_refused",
+    });
+    if (!finalized.ok) return mapError(finalized);
+    emitResolved(deps, continuationId, "failed");
+    return {
+      outcome: "failed",
+      reason: error instanceof Error ? error.message : "Continuation input admission refused",
+    };
+  }
+
+  let leg: MrtrLegResult<unknown>;
+  try {
     leg = await deps.driveLeg(
       state,
       prepared?.responses ?? (responses as InputResponses),
