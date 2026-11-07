@@ -10,6 +10,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -292,7 +293,7 @@ function ModelApp({
   const ports = useRef(currentPorts).current;
   const files = useWorkspaceFileActions();
   const currentFiles = useRef(files);
-  currentFiles.current = files;
+  useLayoutEffect(() => { currentFiles.current = files; }, [files]);
   const launch = useMemo(() => ports?.observeLaunch?.(marker.instanceToken), [ports, marker.instanceToken]);
   const [handle, setHandle] = useState<ThreadAppHandle | null>(null);
   const [error, setError] = useState(false);
@@ -469,9 +470,9 @@ function ModelApp({
         throw new Error("File viewer unavailable");
       return actions;
     };
-    const withFiles = files && files.workspaceId === marker.workspaceId &&
-      files.enabled !== false && files.serverIds.includes(marker.serverId)
-      ? withLocalFileHost(withContext, {
+    // The admitted handle defines support. Availability is checked on each
+    // request so a late workspace registration needs no bridge replacement.
+    const withFiles = withLocalFileHost(withContext, {
           ...api,
           resolveLocalFile: (...args) => {
             requireFiles();
@@ -483,8 +484,7 @@ function ModelApp({
             const selected = await requireFiles().chooseViewer?.(entries, signal) ?? null;
             requireFiles();
             return selected;
-          })
-      : withContext;
+          });
     return ports && ports.messagesEnabled !== false
       ? withAppMessages(withFiles, base, handle, {
           threadId: scope.threadId,
@@ -501,7 +501,6 @@ function ModelApp({
     ports,
     scope.threadId,
     lifetime,
-    files,
   ]);
   const negotiatedHost = useRef<WidgetHost | null>(null);
   // Replacing bridge services aborts outstanding requests, including a form
