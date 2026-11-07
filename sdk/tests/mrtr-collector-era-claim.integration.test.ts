@@ -177,20 +177,27 @@ describe("an MRTR collector's elicitation claim follows the negotiated era", () 
       served = await serveLegacy();
       const collect = vi.fn(acceptAll("never"));
       manager = new MCPClientManager();
-      manager.setMrtrInputCollector("fixture", collect, { extensionClaims: ["openai/elicitation"] });
+      manager.setMrtrInputCollector("fixture", collect, {
+        extensionClaims: ["openai/elicitation"],
+      });
       await manager.connectToServer("fixture", {
         url: served.url,
         timeout: 10_000,
         ...(mcpProtocolVersion ? { mcpProtocolVersion } : {}),
         // An exact set naming form support, as the hosted plugin runtime pins.
-        clientCapabilities: { elicitation: { form: {} }, extensions: { "openai/elicitation": { form: {} } } },
+        clientCapabilities: {
+          elicitation: { form: {} },
+          extensions: { "openai/elicitation": { form: {} } },
+        },
       });
       expect(manager.getInitializationInfo("fixture")?.protocolVersion).toBe(
         "2025-11-25"
       );
       expect(served.initialize).toHaveLength(1);
       expect(served.initialize[0]!.elicitation).toBeUndefined();
-      expect(served.initialize[0]!).not.toHaveProperty("extensions.openai/elicitation");
+      expect(served.initialize[0]!).not.toHaveProperty(
+        "extensions.openai/elicitation"
+      );
 
       const result = (await manager.executeTool(
         "fixture",
@@ -215,7 +222,10 @@ describe("an MRTR collector's elicitation claim follows the negotiated era", () 
     await manager.connectToServer("fixture", {
       url: served.url,
       timeout: 10_000,
-      clientCapabilities: { elicitation: { form: {} }, extensions: { "openai/elicitation": { form: {} } } },
+      clientCapabilities: {
+        elicitation: { form: {} },
+        extensions: { "openai/elicitation": { form: {} } },
+      },
     });
     expect(served.initialize[0]!.elicitation).toEqual({ form: {} });
     const result = (await manager.executeTool(
@@ -235,19 +245,26 @@ describe("an MRTR collector's elicitation claim follows the negotiated era", () 
       served = await serveModern();
       const collect = vi.fn(acceptAll("apples"));
       manager = new MCPClientManager();
-      manager.setMrtrInputCollector("fixture", collect, { extensionClaims: ["openai/elicitation"] });
+      manager.setMrtrInputCollector("fixture", collect, {
+        extensionClaims: ["openai/elicitation"],
+      });
       await manager.connectToServer("fixture", {
         url: served.url,
         timeout: 10_000,
         ...(mcpProtocolVersion ? { mcpProtocolVersion } : {}),
-        clientCapabilities: { elicitation: { form: {} }, extensions: { "openai/elicitation": { form: {} } } },
+        clientCapabilities: {
+          elicitation: { form: {} },
+          extensions: { "openai/elicitation": { form: {} } },
+        },
       });
       const info = manager.getInitializationInfo("fixture");
       expect(info?.protocolVersion).toBe("2026-07-28");
       expect(
         (info?.clientCapabilities as Record<string, unknown>).elicitation
       ).toEqual({ form: {} });
-      expect(info?.clientCapabilities).toMatchObject({ extensions: { "openai/elicitation": { form: {} } } });
+      expect(info?.clientCapabilities).toMatchObject({
+        extensions: { "openai/elicitation": { form: {} } },
+      });
       // The server embeds a form only when the request envelope declares it
       // (otherwise -32021); the collector answers it.
       const result = (await manager.executeTool("fixture", "confirm", {

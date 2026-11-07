@@ -81,7 +81,6 @@ export function useFormDialogFocus(
   const token = useId();
   const key = workspaceId ?? token;
   const activeScope = useRef(workspaceId);
-  activeScope.current = workspaceId;
   const holder = useMemo<{ current: ReturnPoint }>(
     () => ({
       current: points.get(key) ?? {
@@ -104,7 +103,10 @@ export function useFormDialogFocus(
     [key, fallbackWorkspaceId, canRestore, returnTo],
   );
   const lastOpen = useRef(holder);
-  if (open) lastOpen.current = holder;
+  useLayoutEffect(() => {
+    activeScope.current = workspaceId;
+    if (open) lastOpen.current = holder;
+  });
   useLayoutEffect(() => {
     if (!open && !canRestore) return;
     const current = points.get(key) ?? holder.current;

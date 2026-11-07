@@ -4,6 +4,7 @@ const MAX_PENDING = 16;
 const MAX_FRAME_BYTES = 1024 * 1024;
 const MAX_PENDING_BYTES = 4 * MAX_FRAME_BYTES;
 const INPUT_TIMEOUT_MS = 5 * 60_000;
+const STREAM_ATTACH_TIMEOUT_MS = 5_000;
 const key = (id) => `${typeof id}:${id}`;
 const validId = (id) =>
   typeof id === "string" || (typeof id === "number" && Number.isFinite(id));
@@ -98,6 +99,12 @@ export function createServerRequestRelay({
     disconnect();
     return false;
   };
+  const arm = (entry, duration) => {
+    clearTimeout(entry.timer);
+    entry.timer = setTimeout(() =>
+      finish(entry, failure(entry.id, "The host input request timed out.")), duration);
+    entry.timer.unref();
+  };
   return {
     open(req, res) {
       if (!req.headers.accept?.includes("text/event-stream")) {
@@ -134,7 +141,10 @@ export function createServerRequestRelay({
       res.on("close", () => {
         if (stream === res) disconnect();
       });
-      for (const entry of pending.values()) if (!write(entry.frame)) break;
+      for (const entry of pending.values()) {
+        arm(entry, Math.min(timeoutMs, INPUT_TIMEOUT_MS));
+        if (!write(entry.frame)) break;
+      }
     },
     receive(message) {
       const hasId = "id" in message;
@@ -180,12 +190,9 @@ export function createServerRequestRelay({
       };
       entry.cancel = () =>
         finish(entry, failure(entry.id, "The parent request ended."));
-      entry.timer = setTimeout(
-        () =>
-          finish(entry, failure(entry.id, "The host input request timed out.")),
-        Math.min(timeoutMs, INPUT_TIMEOUT_MS),
-      );
-      entry.timer.unref();
+      // Allow asynchronous GET setup, without giving a streamless client the
+      // full interactive wait. The parent deadline still has its hard cap.
+      arm(entry, Math.min(timeoutMs, stream ? INPUT_TIMEOUT_MS : STREAM_ATTACH_TIMEOUT_MS));
       bytes += size;
       pending.set(key(entry.id), entry);
       parent.signal.addEventListener("abort", entry.cancel, { once: true });
