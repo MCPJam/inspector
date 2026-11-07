@@ -128,6 +128,7 @@ export class PluginFormFileGrants {
   private readonly deleting = new Map<string, Promise<void>>();
   private readonly journal: PluginFormFileJournal;
   private startup?: Promise<unknown>;
+  private sweeping?: ReturnType<PluginFormFileJournal["sweep"]>;
   private janitor?: ReturnType<typeof setInterval>;
   private readonly local: PluginFormFileStore;
   constructor(base = FORM_FILE_DIRECTORY) {
@@ -157,9 +158,7 @@ export class PluginFormFileGrants {
       this.janitor = setInterval(() => {
         this.retryCleanup();
         if (!this.sweepLocal) return;
-        void this.journal
-          .sweep()
-          .then((value) => this.reportSweep(value))
+        void this.sweepJournal()
           .catch(() => {
             logger.warn("[plugin-forms] upload journal cleanup failed");
           });
@@ -167,11 +166,22 @@ export class PluginFormFileGrants {
       this.janitor.unref();
     }
     if (!localJournal) return Promise.resolve();
-    this.startup ??= this.journal.sweep().then((result) => {
-      this.reportSweep(result);
-      return result;
-    });
+    this.startup ??= this.sweepJournal();
     return this.startup;
+  }
+  private sweepJournal() {
+    // A slow sweep must finish before another starts, including when cleanup
+    // is drained while a placement is quarantined for removal.
+    this.sweeping ??= this.journal
+      .sweep()
+      .then((result) => {
+        this.reportSweep(result);
+        return result;
+      })
+      .finally(() => {
+        this.sweeping = undefined;
+      });
+    return this.sweeping;
   }
   private reportSweep(
     result: Awaited<ReturnType<PluginFormFileJournal["sweep"]>>,
@@ -464,7 +474,7 @@ export class PluginFormFileGrants {
       if (grant.closed) this.remove(key);
   }
   async drain() {
-    await Promise.all([...this.deleting.values()]);
+    await Promise.all([...this.deleting.values(), this.sweeping]);
   }
 }
 export const pluginFormFileGrants = new PluginFormFileGrants();
