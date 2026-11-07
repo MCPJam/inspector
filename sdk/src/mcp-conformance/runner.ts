@@ -10,6 +10,7 @@ import {
   isUnauthorizedProbe,
 } from "../conformance-authorization.js";
 import { PROTOCOL_CHECK_CATALOG } from "../conformance-catalog.js";
+import { captureConformanceRun } from "../telemetry.js";
 import {
   buildConformanceProfileStamp,
   conformanceProfile,
@@ -567,13 +568,17 @@ function reclassifyUnauthorizedProbe(check: MCPCheckResult): MCPCheckResult {
 
 export class MCPConformanceTest {
   private readonly config: NormalizedMCPConformanceConfig;
+  private readonly suppressTelemetry: boolean;
 
   constructor(config: MCPConformanceConfig) {
     this.config = normalizeMCPConformanceConfig(config);
+    // The normalized config drops it, so read it from the caller's config.
+    this.suppressTelemetry = config.__suppressTelemetry === true;
   }
 
   async run(): Promise<MCPConformanceResult> {
     this.config.signal?.throwIfAborted();
+    if (!this.suppressTelemetry) void captureConformanceRun("sdk");
     const startedAt = Date.now();
     const selectedCheckIds = buildCheckSelection(this.config);
     // ONE record for the whole run, opened before the first byte moves. The

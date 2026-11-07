@@ -47,7 +47,7 @@ const POSTHOG_HOST = "https://us.i.posthog.com";
 
 // Same opt-outs the client honors, plus the conventional DO_NOT_TRACK for
 // npm/local installs where the server runs on the user's machine.
-function isAnalyticsDisabled(): boolean {
+export function isAnalyticsDisabled(): boolean {
   const dnt = process.env.DO_NOT_TRACK;
   return (
     process.env.VITE_DISABLE_POSTHOG_LOCAL === "true" ||

@@ -12,6 +12,7 @@ import { canRunConformance } from "@mcpjam/sdk/browser";
 import { Button } from "@mcpjam/design-system/button";
 import type { ServerWithName } from "@/state/app-types";
 import { routePaths } from "@/lib/app-navigation";
+import { track } from "@/lib/analytics";
 import {
   runProtocolConformance,
   runAppsConformance,
@@ -72,7 +73,14 @@ const failedTitlesOf = (
   return { scored, pending };
 };
 
-export function ConformanceGate({ server }: { server: ServerWithName }) {
+export function ConformanceGate({
+  server,
+  location = "compat_detail_modal",
+}: {
+  server: ServerWithName;
+  /** Where the gate is shown, for the `conformance_run_triggered` event. */
+  location?: "compat_detail_modal" | "compat_page";
+}) {
   const isConnected = server.connectionStatus === "connected";
 
   // `canRunConformance` is the single source of truth for transport gating.
@@ -110,6 +118,10 @@ export function ConformanceGate({ server }: { server: ServerWithName }) {
     const token = (runTokenRef.current += 1);
     setHasRun(true);
     const serverName = server.name;
+    // One event per click, and only when a suite can actually run here.
+    if (support.protocol.supported || support.apps.supported) {
+      track("conformance_run_triggered", { location, run_source: "ui" });
+    }
 
     // Drop a write if the server changed or a newer run started mid-flight.
     const apply = (suite: SuiteId, outcome: SuiteOutcome) => {
@@ -160,7 +172,7 @@ export function ConformanceGate({ server }: { server: ServerWithName }) {
       runSuite("protocol", () => runProtocolConformance(serverName)),
       runSuite("apps", () => runAppsConformance(serverName)),
     ]);
-  }, [server.name, support]);
+  }, [location, server.name, support]);
 
   // Aggregate banner: any real failure ⇒ "fix first"; all-ran-and-passed ⇒ ok.
   const anyFailed = (["protocol", "apps"] as const).some((s) => {
