@@ -1,3 +1,4 @@
+import { COMPLETED_TURN_RETRY_TTL_MS, HOSTED_PERSIST_RETRY_PREFIX } from "../../shared/persist-receipt.js";
 import type { UIMessageChunk } from "ai";
 import { completedTurnPersistence } from "../services/completed-turn-persistence.js";
 import {
@@ -13,6 +14,8 @@ export async function finishPendingPersist(
   signal?: AbortSignal,
 ): Promise<PersistChatOutcome | void> {
   if (outcome?.outcome !== "failed" || !outcome.retryHandle) return outcome;
+  // A hosted retry can land on another replica; its receipt completes on the client.
+  if (outcome.retryHandle.startsWith(HOSTED_PERSIST_RETRY_PREFIX)) return outcome;
   if (!writer) {
     completedTurnPersistence.cancel(outcome.retryHandle);
     return outcome;
@@ -29,4 +32,16 @@ export async function finishPendingPersist(
   } finally {
     signal?.removeEventListener("abort", cancel);
   }
+}
+
+/** Keep the original sidecar lease until a cross-replica retry has had its bounded window. */
+export function deferCompletedTurnLeaseRelease(
+  outcome: PersistChatOutcome | void,
+  release: () => Promise<void>,
+  onError: (error: unknown) => void,
+): boolean {
+  if (outcome?.outcome !== "failed" || !outcome.retryHandle?.startsWith(HOSTED_PERSIST_RETRY_PREFIX)) return false;
+  const timer = setTimeout(() => { void release().catch(onError); }, COMPLETED_TURN_RETRY_TTL_MS);
+  timer.unref?.();
+  return true;
 }

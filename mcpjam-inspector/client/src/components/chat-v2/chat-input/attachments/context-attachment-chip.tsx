@@ -134,7 +134,12 @@ export function ContextGroupChip({
               pluginIcons={group.icons}
               serverIcons={group.serverIcons}
             />
-            <span className="max-w-48 truncate">{title}</span>
+            <span className="flex min-w-0 max-w-48 items-center gap-1">
+              {group.appTitle && (
+                <span className="max-w-24 truncate">{group.appTitle}:</span>
+              )}
+              <span className="min-w-0 flex-1 truncate">{group.title}</span>
+            </span>
           </Button>
         </PopoverTrigger>
         {group.removeAll && (
