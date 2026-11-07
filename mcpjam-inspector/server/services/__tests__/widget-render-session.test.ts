@@ -502,7 +502,9 @@ it("fences every scoped operation and expires without exposing the harness", asy
   await expect(registry.executeAction(session.sessionId, { action: "screenshot" })).rejects.toThrow(WidgetSessionNotFoundError);
   await expect(registry.captureSnapshot(session.sessionId, "other")).rejects.toThrow(WidgetSessionNotFoundError);
   await expect(registry.runScriptedStep(session.sessionId, { kind: "wait", ms: 1 }, undefined, "other")).rejects.toThrow(WidgetSessionNotFoundError);
-  await expect(registry.close(session.sessionId, "other")).rejects.toThrow(WidgetSessionNotFoundError);
+  await expect(registry.close(session.sessionId, "other")).resolves.toBe(false);
+  expect(registry.get(session.sessionId, "owner")).toBeDefined();
+  expect(harness.dispose).not.toHaveBeenCalled();
   now = 21;
   await expect(registry.captureSnapshot(session.sessionId, "owner")).rejects.toThrow(WidgetSessionNotFoundError);
   expect(registry.get(session.sessionId, "owner")).toBeUndefined();
