@@ -1,7 +1,7 @@
+import { COMPLETED_TURN_RETRY_TTL_MS } from "../../../shared/persist-receipt.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CompletedTurnPersistence,
-  COMPLETED_TURN_RETRY_TTL_MS,
 } from "../completed-turn-persistence.js";
 
 afterEach(() => vi.useRealTimers());

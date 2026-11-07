@@ -1,4 +1,4 @@
-import { COMPLETED_TURN_RETRY_TTL_MS } from "../../../services/completed-turn-persistence.js";
+import { COMPLETED_TURN_RETRY_TTL_MS } from "../../../../shared/persist-receipt.js";
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { PersistReceiptData } from "@/shared/persist-receipt";
@@ -6,7 +6,9 @@ const mocks = vi.hoisted(() => ({
   verify: vi.fn(),
   membership: true,
   tokenBlocked: false,
+  hosted: false,
 }));
+vi.mock("../../../config.js", async (original) => ({ ...await original<object>(), get HOSTED_MODE() { return mocks.hosted; } }));
 vi.mock("../../../middleware/bearer-auth.js", () => ({
   bearerAuthMiddleware: async (
     c: {
@@ -47,6 +49,7 @@ beforeEach(() => {
   bodies.length = 0;
   mocks.membership = true;
   mocks.tokenBlocked = false;
+  mocks.hosted = false;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: string, init: RequestInit) => {
@@ -221,3 +224,30 @@ it.each(["token", "authorization"])(
     vi.useRealTimers();
   },
 );
+
+it("saves hosted completed bytes with fresh authority on another replica after authorization failed", async () => {
+  mocks.hosted = true;
+  vi.stubEnv("HISTORY_PROVENANCE_SECRET", "fixture shared hosted signing key long enough");
+  const first = await persistChatSessionToConvex({
+    chatSessionId: "chat", modelId: "model", modelSource: "mcpjam", origin: "playground",
+    startedAt: 1, projectId: "project", authorizationFailure: { status: 503 },
+    retryOwner: { subject: "actor", projectId: "project" },
+    turnTrace: { turnId: "turn" } as never,
+    sessionMessages: [{ role: "assistant", content: "Completed operation, never repeat it" }],
+  });
+  expect(first).toMatchObject({ outcome: "failed", retryHandle: expect.stringMatching(/^mjpr1\./) });
+  expect(bodies).toEqual([]);
+  if (first.outcome !== "failed" || !first.retryHandle) throw new Error("Missing retry ticket");
+  const payload = { retryHandle: first.retryHandle, projectId: "project", chatSessionId: "chat", turnId: "turn" };
+  const send = (actor: string) => app.request("/api/web/chat-persistence", { method: "POST", headers: { authorization: `Bearer fresh-${actor}`, "content-type": "application/json" }, body: JSON.stringify(payload) });
+  expect((await send("other-actor")).status).toBe(404);
+  mocks.membership = false;
+  expect((await send("actor")).status).toBe(403);
+  expect(bodies).toEqual([]);
+  mocks.membership = true;
+  const result = await send("actor");
+  expect(result.status).toBe(200);
+  expect(await result.json()).toMatchObject({ outcome: "saved", version: 2 });
+  expect(bodies).toHaveLength(1);
+  expect(bodies[0]).toContain("Completed operation, never repeat it");
+});

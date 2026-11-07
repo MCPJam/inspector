@@ -5125,8 +5125,9 @@ export function PlaygroundMain({
     ],
   );
 
-  const broadcastRecipient = (kind: "host" | "model", compareId: string) =>
-    compareBroadcastRecipient({
+  const broadcastRecipient = (kind: "host" | "model", compareId: string) => {
+    const client = clientResolutions.find((value) => value.status === "ready" && value.column.compareId === compareId);
+    return compareBroadcastRecipient({
       actorId: currentUserForSender?._id ?? null,
       projectId: convexProjectId ?? activeProjectId ?? null,
       chatSessionId,
@@ -5134,7 +5135,16 @@ export function PlaygroundMain({
       kind,
       hostId: kind === "host" ? compareId : previewedHostId ?? null,
       compareId,
+      ownerKey: kind === "host" && client?.status === "ready" ? client.ownerKey : null,
     });
+  };
+  const currentBroadcastRecipients = compareLanes.map(({ id }) => {
+    const kind = isMultiHostMode ? "host" : "model";
+    return broadcastRecipient(kind, id.slice(kind.length + 1));
+  });
+  useLayoutEffect(() => {
+    broadcastRequest?.retainRecipients(currentBroadcastRecipients);
+  }, [broadcastRequest, currentBroadcastRecipients]);
   const queueBroadcastRequest = (
     request: Omit<BroadcastChatTurnRequest, "id">,
     captureProps?: Record<string, unknown>,
