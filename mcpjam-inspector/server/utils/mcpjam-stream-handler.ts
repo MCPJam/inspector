@@ -1,3 +1,4 @@
+import type { TurnAuthorization } from "../services/turn-authorization.js";
 import { finishPendingPersist } from "./completed-turn-finalization.js";
 import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
 import { assertNativeDiscovery } from "./harness/native-discovery.js";
@@ -932,6 +933,7 @@ function applyToolRefresh(
 }
 
 export interface MCPJamHandlerOptions {
+  turnAuthorization?: TurnAuthorization;
   harnessStartupRequestId?: string;
   /** Effective saved App declaration, qualified by the caller's installed handlers. */
   harnessHostCapabilities?: import("@/shared/harness-host-capabilities").HarnessHostCapabilityQualification;
@@ -5612,6 +5614,7 @@ export async function runChatEngineLoop(
     let modelInvoked = false;
 
     try {
+      options.turnAuthorization?.start(traceTurn.turnId, safeWriter);
       onStreamWriterReady?.(safeWriter);
 
       if (aborted) {
@@ -5833,7 +5836,7 @@ export async function runChatEngineLoop(
             tools,
             progressivePlan,
             discoveryState,
-            authHeader,
+            authHeader: options.turnAuthorization ? await options.turnAuthorization.getAuthorization() : authHeader,
             scenarioId,
             accessVersion,
             projectId,

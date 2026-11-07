@@ -8,20 +8,21 @@ import { setRequestLocal } from "../../middleware/request-local.js";
 import { getBackgroundRunBearerForRequest } from "../../utils/v1-convex-token.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 
-/** Authorize before execution; only the completed write uses this renewable bearer. */
+/** Revalidate the original identity before each delegated turn operation. */
 export async function preparePersistenceAuthorization(
   c: Context,
   scope: {
     projectId: string;
     chatSessionId?: string;
     executionTarget: InternalExecutionTarget;
+    includeNativeApiKey?: boolean;
   },
 ): Promise<(() => Promise<string>) | undefined> {
   const method = c.get("authMethod");
   if (
     !scope.chatSessionId ||
     scope.executionTarget.kind === "scenario" ||
-    !HOSTED_MODE ||
+    (!HOSTED_MODE && !(scope.includeNativeApiKey && method === "workos_api_key")) ||
     !hasServiceCredential() ||
     c.get("guestId") ||
     (method !== "authkit_jwt" && method !== "workos_api_key")
@@ -54,7 +55,7 @@ export async function preparePersistenceAuthorization(
         throw new WebRouteError(
           403,
           ErrorCode.FORBIDDEN,
-          "Your access changed before this reply could be saved. Sign in again.",
+          "Your access changed during this turn. Sign in again.",
         );
       }
     }
