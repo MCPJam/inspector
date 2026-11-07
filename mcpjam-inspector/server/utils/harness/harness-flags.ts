@@ -17,3 +17,19 @@
 export function harnessBrokerDeliveryEnabled(): boolean {
   return process.env.MCPJAM_HARNESS_BROKER_DELIVERY !== "false";
 }
+
+/** Hosted reuse defaults on; operators can disable it or restrict organizations. */
+export function hostedWarmAgentEnabled(organizationId: string | undefined): boolean {
+  const enabled = process.env.MCPJAM_HOSTED_WARM_AGENT?.trim().toLowerCase();
+  if (!organizationId || enabled === "0" || enabled === "false") return false;
+  const organizations = (process.env.MCPJAM_HOSTED_WARM_AGENT_ORG_IDS ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+  return organizations.length === 0 || organizations.includes(organizationId);
+}
+
+/** Hosted native MCP forwarding; read per call so operators can turn it off. */
+export function nativeForwardingEnabled(): boolean {
+  return process.env.HARNESS_NATIVE_FORWARDING === "true";
+}

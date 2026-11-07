@@ -26,6 +26,11 @@ class Socket extends EventTarget implements WebSocket {
     this.sent.push(String(data));
   }
   close(code = 1000) {
+    if (code !== 1000 && (code < 3000 || code > 4999))
+      throw new DOMException("Invalid browser close code", "InvalidAccessError");
+    this.disconnect(code);
+  }
+  disconnect(code = 1006) {
     this.closeCode = code;
     this.readyState = 3;
     this.onclose?.call(this, new CloseEvent("close", { code }));
@@ -135,7 +140,7 @@ describe("local form WebSocket", () => {
         q: { action: "accept", content: { value: 1 } },
       }),
     ).rejects.toThrow("interrupted");
-    f.sockets[0].close(1006);
+    f.sockets[0].disconnect();
     await answer;
     await vi.advanceTimersByTimeAsync(1500);
     expect(f.sockets).toHaveLength(2);
@@ -147,7 +152,7 @@ describe("local form WebSocket", () => {
   it("keeps answers blocked after reconnect until the replacement snapshot ends", async () => {
     vi.useFakeTimers();
     const f = fixture();
-    f.sockets[0].close(1006);
+    f.sockets[0].disconnect();
     await vi.advanceTimersByTimeAsync(1500);
     f.sockets[1].open();
     await expect(
@@ -172,21 +177,50 @@ describe("local form WebSocket", () => {
   it("cancels reconnect when its owner releases the stream", async () => {
     vi.useFakeTimers();
     const f = fixture();
-    f.sockets[0].close(1006);
+    f.sockets[0].disconnect();
     f.stream.close();
     await vi.advanceTimersByTimeAsync(10_000);
     expect(f.sockets).toHaveLength(1);
   });
 
+  it.each(["protocol", "json", "schema", "oversized"])(
+    "reconnects after a %s failure without replaying an uncertain answer",
+    async (failure) => {
+      vi.useFakeTimers();
+      const f = fixture();
+      const answer = expect(
+        f.stream.respond("op", "op:1", { q: { action: "accept" } }),
+      ).rejects.toThrow("interrupted");
+      const socket = f.sockets[0];
+      if (failure === "protocol") {
+        socket.protocol = "unexpected";
+        socket.open();
+      } else {
+        socket.onmessage?.call(socket, new MessageEvent("message", {
+          data: failure === "json" ? "{" : failure === "schema"
+            ? '{"type":"unknown"}' : "x".repeat(LOCAL_MRTR_MAX_FRAME_BYTES + 1),
+        }));
+      }
+      await answer;
+      expect(socket.readyState).toBe(3);
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(f.sockets).toHaveLength(2);
+      f.sockets[1].open();
+      expect(f.sockets[1].sent).toEqual([]);
+      expect(f.onEvent).not.toHaveBeenCalled();
+      f.stream.close();
+    },
+  );
+
   it("refuses malformed and oversized messages before using them", () => {
     const f = fixture();
     f.sockets[0].message({ type: "mrtr_input_request", opId: 42 });
-    expect(f.sockets[0].closeCode).toBe(1007);
+    expect(f.sockets[0].closeCode).toBe(4007);
     expect(f.onEvent).not.toHaveBeenCalled();
     f.stream.close();
     const oversized = fixture();
     oversized.sockets[0].message("x".repeat(LOCAL_MRTR_MAX_FRAME_BYTES + 1));
-    expect(oversized.sockets[0].closeCode).toBe(1009);
+    expect(oversized.sockets[0].closeCode).toBe(4009);
     oversized.stream.close();
   });
 });

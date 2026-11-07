@@ -16,11 +16,30 @@ export interface SandboxCspSubtypePolicy {
   };
 }
 
+/** Serialize internationalized hosts and paths as ASCII before signing or serving CSP. */
+export function normalizeSandboxDomainSource(value: string): string {
+  const source = value.trim();
+  if (!/[^\x20-\x7e]/.test(source)) return source;
+  try {
+    const hasScheme = source.includes("://");
+    const url = new URL((hasScheme ? source : `https://${source}`).replace(/:\*(?=\/|$)/, ":65535"));
+    if (url.username || url.password) return source;
+    let normalized = url.href;
+    if (!source.endsWith("/") && url.pathname === "/" && !url.search && !url.hash)
+      normalized = normalized.slice(0, -1);
+    if (!hasScheme) normalized = normalized.slice("https://".length);
+    return source.includes(":*") ? normalized.replace(":65535", ":*") : normalized;
+  } catch {
+    // Invalid declarations remain invalid for the admission validator.
+    return source;
+  }
+}
+
 export function sanitizeDomain(domain: unknown): string {
   if (typeof domain !== "string") return "";
   // Remove characters that could break out of CSP or HTML attributes
   // Valid CSP sources shouldn't contain these characters
-  return domain.replace(/['"<>;]/g, "").trim();
+  return normalizeSandboxDomainSource(domain.replace(/['"<>;]/g, ""));
 }
 
 /**

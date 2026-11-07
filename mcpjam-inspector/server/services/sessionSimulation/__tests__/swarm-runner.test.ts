@@ -1927,6 +1927,20 @@ describe("classifyRateLimit — a halt needs a real spend signal", () => {
     ).toBe("org_spend_cap");
   });
 
+  // A declined card refuses every call until the card or the balance changes,
+  // so it halts the run like any exhaustion. The runner gets the backend's
+  // sentences without the code, so the words alone must say so.
+  it("halts the run on a declined card", () => {
+    const declined =
+      "Your card was declined, so auto-reload is paused and this organization is out of MCPJam credits. Update your payment method in billing and turn auto-reload back on, or top up to keep going.";
+    expect(
+      classifyRateLimit(declined, {
+        code: "user_rate_limit",
+        refusalReason: "auto_topup_declined",
+      }),
+    ).toBe("org_spend_cap");
+  });
+
   // What a stored row or a flattened error keeps: the backend's sentence, with
   // no JSON, no structured reason and no hint. Blaming the user's provider for
   // it (or halting the whole run as a spend cap) would both be wrong.

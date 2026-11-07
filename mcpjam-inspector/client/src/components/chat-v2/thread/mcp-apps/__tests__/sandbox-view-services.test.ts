@@ -46,7 +46,14 @@ describe("sandbox view API routing", () => {
     expect(mocks.server).not.toHaveBeenCalled();
   });
 
-  it.each(["http://localhost:5173/admitted", "http://remote.example/admitted", "https://name:secret@example.test/admitted"])("rejects an unsafe prepared URL %s", async (proxyUrl) => {
+  it("accepts only the admission-bound isolated localhost origin", async () => {
+    const admissionId = "f25fbd38-3b88-4602-b52c-845cad7677d0";
+    const result = { ...prepared, admissionId, proxyUrl: `http://${admissionId}.localhost:64001/admitted` };
+    mocks.fetch.mockResolvedValue({ ok: true, json: async () => result });
+    await expect(createSandboxViewServices(() => false).prepareSandboxView(request)).resolves.toEqual(result);
+  });
+
+  it.each(["http://arbitrary.localhost:64001/admitted", "http://f25fbd38-3b88-4602-b52c-845cad7677d0.localhost:64001/admitted", "http://localhost:5173/admitted", "http://remote.example/admitted", "https://name:secret@example.test/admitted"])("rejects an unsafe prepared URL %s", async (proxyUrl) => {
     mocks.fetch.mockResolvedValue({ ok: true, json: async () => ({ ...prepared, proxyUrl }) });
     await expect(createSandboxViewServices(() => false).prepareSandboxView(request)).rejects.toThrow("Could not open this App securely");
     expect(mocks.fetch).toHaveBeenLastCalledWith("/api/apps/mcp-apps/view-admissions/admission", expect.objectContaining({ method: "DELETE" }));

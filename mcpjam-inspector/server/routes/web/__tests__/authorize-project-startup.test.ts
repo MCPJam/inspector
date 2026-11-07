@@ -20,6 +20,7 @@ describe("startup authorization facts", () => {
             ok: true,
             chatEnvironmentVersion: 1,
             chatPreparationVersion: 1,
+            organizationId: "signed-org",
             projectRole,
           }),
         ),
@@ -27,6 +28,7 @@ describe("startup authorization facts", () => {
       expect(await authorizeProject({}, "test-bearer", "project")).toEqual({
         chatEnvironments: true,
         chatPreparation: true,
+        organizationId: "signed-org",
         projectAccess: { projectRole },
       });
       expect(fetch).toHaveBeenCalledOnce();
