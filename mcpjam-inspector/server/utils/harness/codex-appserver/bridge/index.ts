@@ -16,7 +16,7 @@
  * separate from rotating credentials for the same native MCP server set.
  */
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { runBridge, type BridgeTurn } from "@ai-sdk/harness/bridge";
 import { callHostTool } from "./host-tool-call.js";
 import { RELAY_MCP_SERVER_NAME } from "../shared/tool-names.js";
@@ -48,6 +48,7 @@ import {
   type NativeMcpRuntime,
 } from "./native-mcp-refresh.js";
 import { waitForMcpStartup, waitForNativeMcpServers } from "./native-mcp-ready.js";
+import { needsNativeMcpReload } from "../shared/native-mcp.js";
 import { createApprovalController } from "./approval-controller.js";
 import { foreignMcpServerOverrides } from "./mcp-isolation.js";
 import { setupWindowsSandbox } from "./windows-sandbox-setup.js";
@@ -140,6 +141,7 @@ export function toCodexPermissions(
   options: {
     sandboxPolicy?: CodexWorkspaceWriteSandboxPolicy | undefined;
     supervisedLocally?: boolean;
+    warmWorkDir?: string;
   } = {},
 ): {
   approvalPolicy: CodexApprovalPolicy;
@@ -149,6 +151,10 @@ export function toCodexPermissions(
   // Checked here, not trusted: the framework only `JSON.parse`s the start
   // message, so a policy of any shape (e.g. `dangerFullAccess`) would
   // otherwise reach `turn/start` as-is.
+  if (options.warmWorkDir !== undefined &&
+      (options.supervisedLocally || !isAbsolute(options.warmWorkDir))) {
+    throw new CodexPermissionRefusedError("A warm Codex turn requires an absolute hosted working directory.");
+  }
   let sandboxPolicy: CodexWorkspaceWriteSandboxPolicy | undefined;
   if (options.sandboxPolicy !== undefined) {
     const parsed = parseWorkspaceWriteSandboxPolicy(options.sandboxPolicy);
@@ -171,7 +177,8 @@ export function toCodexPermissions(
       return {
         approvalPolicy: "untrusted",
         sandbox: "workspace-write",
-        ...(sandboxPolicy ? { sandboxPolicy: { ...sandboxPolicy } } : {}),
+        ...(sandboxPolicy ? { sandboxPolicy } : options.warmWorkDir
+          ? { sandboxPolicy: { type: "workspaceWrite", networkAccess: false } } : {}),
       };
     case "allow-all":
       if (sandboxPolicy) {
@@ -188,7 +195,10 @@ export function toCodexPermissions(
             "workspace-write sandbox policy.",
         );
       }
-      return { approvalPolicy: "never", sandbox: "danger-full-access" };
+      return {
+        approvalPolicy: "never", sandbox: "danger-full-access",
+        ...(options.warmWorkDir ? { sandboxPolicy: { type: "dangerFullAccess" } as const } : {}),
+      };
     default:
       throw new CodexPermissionRefusedError(
         `Unknown permission mode ${JSON.stringify(mode)}; refusing rather ` +
@@ -239,12 +249,12 @@ function turnConfigurationFingerprint(start: StartMessage): string {
       instructions: start.instructions,
       tools: start.tools ?? [],
     }),
-    permissionMode: start.permissionMode ?? "allow-all",
+    permissionMode: start.warmWorkDir ? undefined : start.permissionMode ?? "allow-all",
     // A changed command sandbox is a changed configuration: a resumed thread
     // would otherwise keep running under the previous one.
-    sandboxPolicy: sandboxPolicyFingerprint(start.sandboxPolicy),
+    sandboxPolicy: start.warmWorkDir ? undefined : sandboxPolicyFingerprint(start.sandboxPolicy),
     webSearch: start.webSearch ?? false,
-    model: start.model ?? "",
+    model: start.warmWorkDir ? undefined : start.model ?? "",
   });
 }
 
@@ -334,6 +344,7 @@ async function main(): Promise<void> {
       // placeholder (or local capability) that satisfies Codex's auth check.
       baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
       apiKeyEnvVar: "CODEX_API_KEY",
+      closeModelConnections: process.env.MCPJAM_CLOSE_MODEL_CONNECTIONS === "1",
       hostToolsEntrypoint: join(args.layerDir, "host-tools-mcp.mjs"),
       relayUrl: relay.url,
       relayCredential: relay.credential,
@@ -437,6 +448,7 @@ async function main(): Promise<void> {
         {
           sandboxPolicy: start.sandboxPolicy,
           supervisedLocally: isSupervisedLocally(),
+          warmWorkDir: start.warmWorkDir,
         },
       );
 
@@ -444,16 +456,23 @@ async function main(): Promise<void> {
       // tools once, at startup.
       catalog = buildHostToolCatalog(start.tools ?? []);
       await nativeRefresh.settled();
+      const previousRuntime = client;
       await ensureRuntime(start);
       const runtime = client;
       if (!runtime) throw new Error("codex app-server failed to start");
 
+      const readinessTimeout = start.warmWorkDir && runtime === previousRuntime ? 1500 : undefined;
+      const removed = Object.keys(nativeHome?.nativeMcpServers ?? {}).filter(name => !(name in (start.nativeMcpServers ?? {})));
       if (start.nativeMcpServers && nativeHome) {
-        nativeHome = { ...nativeHome, nativeMcpServers: start.nativeMcpServers };
+        const reload = needsNativeMcpReload(nativeHome.nativeMcpServers, start.nativeMcpServers);
+        nativeHome = {
+          ...nativeHome, nativeMcpServers: start.nativeMcpServers,
+          ...(start.warmWorkDir ? { untrustedProjectPaths: untrustedProjectPathsFor(start.warmWorkDir) } : {}),
+        };
         prepareCodexHome(nativeHome);
         try {
-          await waitForNativeMcpServers({
-            runtime, serverNames: [], reload: true, signal: turn.abortSignal,
+          if (reload) await waitForNativeMcpServers({
+            runtime, serverNames: [], reload: true, signal: turn.abortSignal, timeoutMs: readinessTimeout,
           });
         } catch (error) {
           await retireRuntime(runtime);
@@ -486,7 +505,7 @@ async function main(): Promise<void> {
       lastFingerprint = fingerprint;
 
       const threadParams: ThreadStartParams = {
-        cwd: args.workdir,
+        cwd: start.warmWorkDir ?? args.workdir,
         approvalPolicy,
         sandbox,
         // Only meaningful when the policy asks anyone at all; harmless
@@ -527,6 +546,8 @@ async function main(): Promise<void> {
           runtime,
           threadId,
           serverNames: nativeNames,
+          ...(start.warmWorkDir ? {removedServerNames: removed} : {}),
+          timeoutMs: readinessTimeout,
           signal: turn.abortSignal,
         });
       } catch (error) {
@@ -542,6 +563,7 @@ async function main(): Promise<void> {
       const started = await runtime.request<TurnStartResult>("turn/start", {
         threadId,
         input: [{ type: "text", text: start.prompt }],
+        ...(start.warmWorkDir ? { cwd: start.warmWorkDir, approvalPolicy } : {}),
         ...(start.model ? { model: start.model } : {}),
         ...(start.reasoningEffort ? { effort: start.reasoningEffort } : {}),
         // Explicit, every turn it applies to. The schema's own workspace-write

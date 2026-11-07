@@ -100,6 +100,16 @@ describe("builtin tool catalog", () => {
 });
 
 describe("permission mapping", () => {
+  it("overwrites the previous sandbox and refuses warm overrides on a local machine", () => {
+    const hosted = { warmWorkDir: "/home/user/work" };
+    expect(toCodexPermissions("allow-all", hosted).sandboxPolicy).toEqual({ type: "dangerFullAccess" });
+    expect(toCodexPermissions("allow-reads", hosted)).toMatchObject({
+      approvalPolicy: "untrusted", sandboxPolicy: { type: "workspaceWrite", networkAccess: false },
+    });
+    expect(() => toCodexPermissions("allow-reads", { ...hosted, supervisedLocally: true })).toThrow("hosted");
+    expect(() => toCodexPermissions("allow-reads", { warmWorkDir: "relative" })).toThrow("absolute");
+  });
+
   it("gates side effects under an approval mode and frees them otherwise", () => {
     // `untrusted` is what produces approval requests: Codex auto-approves the
     // commands it knows are read-only and asks about the rest.

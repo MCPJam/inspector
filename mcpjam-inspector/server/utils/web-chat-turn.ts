@@ -1081,17 +1081,19 @@ export async function streamChatTurn(
           toolName: string;
           toolInput: unknown;
         }) => {
+          const connection = toolConnectionAttribution(
+            preparedTools[toolName],
+            toolInput,
+            info.toolCallId,
+          );
           const event = await createHostedScopeStepUpContinuation({
             bearer: runtime.scopeStepUp!.bearer,
             authPrincipal: runtime.scopeStepUp!.authPrincipal,
             projectId: persist.projectId,
             chatSessionId: persist.chatSessionId!,
             manager,
-            connectionId: toolConnectionAttribution(
-              preparedTools[toolName],
-              toolInput,
-              info.toolCallId,
-            )?.connectionId,
+            connectionId: connection?.connectionId,
+            ...(connection?.implicit ? { connectionImplicit: true } : {}),
             serverName: scopeStepUpServerNamesById[info.serverId],
             info,
             toolName,
