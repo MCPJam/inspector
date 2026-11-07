@@ -309,6 +309,7 @@ export const USED_CLIENT_METHODS = [
   "initialize",
   "thread/start",
   "thread/resume",
+  "thread/fork",
   "turn/start",
   "turn/interrupt",
   "thread/compact/start",
