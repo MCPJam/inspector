@@ -10,7 +10,7 @@ vi.mock("../bridge/codex-home.js", () => ({ prepareCodexHome: vi.fn() }));
 beforeEach(() => vi.resetAllMocks());
 afterEach(() => vi.restoreAllMocks());
 
-function fixture(threadId?: string) {
+function fixture(threadId?: string, timeoutMs?: number) {
   const runtime = {
     request: vi.fn<NativeMcpRuntime["request"]>(async () => undefined),
     kill: vi.fn(async () => undefined),
@@ -39,6 +39,7 @@ function fixture(threadId?: string) {
   });
   const controller = createNativeMcpRefresher({
     current: () => state,
+    timeoutMs,
     commit,
     invalidate,
   });
@@ -82,6 +83,17 @@ it("confirms the refreshed thread's inventory before acknowledging", async () =>
       { threadId: "thread", serverName: "server", detail: "toolsAndAuthOnly" },
     ],
   ]);
+  expect(f.runtime.kill).not.toHaveBeenCalled();
+});
+
+it("does no native I/O for a host-only credential refresh", async () => {
+  const f = fixture("thread");
+  const state = f.state();
+  if (!state) throw Error("Missing test state");
+  state.home.nativeMcpServers = {};
+  await f.controller.refresh({});
+  expect(f.runtime.request).not.toHaveBeenCalled();
+  expect(prepareCodexHome).not.toHaveBeenCalled();
   expect(f.runtime.kill).not.toHaveBeenCalled();
 });
 
@@ -173,3 +185,18 @@ it.each(["write", "reload"])(
     );
   },
 );
+
+it("applies a shorter deadline for an interactive warm refresh", async () => {
+  const f = fixture("thread", 1000);
+  const deadline = new AbortController();
+  const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+  f.runtime.request.mockImplementation(() => new Promise(() => {}));
+  const pending = f.controller.refresh(f.candidate("fresh"));
+  const failed = expect(pending).rejects.toThrow("did not become ready");
+  await vi.waitFor(() => expect(timeout).toHaveBeenCalledWith(1000));
+  deadline.abort();
+  await failed;
+  expect(f.runtime.kill).toHaveBeenCalledOnce();
+  expect(f.commit).not.toHaveBeenCalled();
+  expect(f.state()).toBeUndefined();
+});

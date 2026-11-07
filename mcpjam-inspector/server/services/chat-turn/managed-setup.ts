@@ -726,6 +726,7 @@ export async function resolveManagedTurnSetup(args: {
   }
   return {
     value: {
+      authorizedOrganizationId: authorized?.organizationId,
       harnessHostCapabilities:
         resolvedExecution.harness && hostRuntimeConfig
           ? qualifyHarnessHostCapabilities(hostRuntimeConfig, HOSTED_APP_HANDLERS)

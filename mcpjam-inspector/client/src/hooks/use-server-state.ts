@@ -3237,18 +3237,74 @@ export function useServerState({
         }
         if (result.success && onlyStoresCredential(hostedCallbackContext)) {
           markOnboardingSignInCompleted(hostedCallbackContext?.pluginSignIn);
-          if (!HOSTED_MODE && result.serverName) {
-            const existing =
-              appStateServersRef.current[result.serverName] ??
-              latestEffectiveServersRef.current[result.serverName];
-            if (existing)
-              await guardedReconnectServer(result.serverName, existing.config);
+          const settledServerName =
+            result.serverName ?? hostedCallbackContext?.serverName;
+          // Reconnect in hosted mode too, and publish the outcome. The callback
+          // marked the server "connecting" before the exchange, and the
+          // redirect left it disconnected: without this, a call waiting on a
+          // per-login sign-in finds no live connection and fails as "could
+          // not retry". A failed reconnect still lets the waiting call settle.
+          const existing = settledServerName
+            ? (appStateServersRef.current[settledServerName] ??
+              latestEffectiveServersRef.current[settledServerName])
+            : undefined;
+          if (settledServerName && existing) {
+            try {
+              const reconnected = await guardedReconnectServer(
+                settledServerName,
+                existing.config,
+              );
+              if (isCancelled()) return;
+              if (reconnected?.success) {
+                dispatch({
+                  type: "CONNECT_SUCCESS",
+                  name: settledServerName,
+                  config: existing.config,
+                  tokens: undefined,
+                  useOAuth: true,
+                });
+                if (reconnected.initInfo)
+                  storeInitInfo(settledServerName, reconnected.initInfo).catch(
+                    (err) =>
+                      logger.warn("Failed to fetch init info", {
+                        serverName: settledServerName,
+                        err,
+                      }),
+                  );
+              } else {
+                const reconnectNormalized = (
+                  reconnected as { normalized?: unknown } | undefined
+                )?.normalized;
+                dispatch({
+                  type: "CONNECT_FAILURE",
+                  name: settledServerName,
+                  error:
+                    (typeof reconnected?.error === "string" &&
+                    reconnected.error.length > 0
+                      ? reconnected.error
+                      : undefined) ??
+                    "The server could not reconnect after sign-in. Reconnect it to try again.",
+                  ...(reconnectNormalized &&
+                  typeof reconnectNormalized === "object"
+                    ? { normalized: reconnectNormalized as NormalizedError }
+                    : {}),
+                });
+              }
+            } catch (error) {
+              if (isCancelled()) return;
+              dispatch({
+                type: "CONNECT_FAILURE",
+                name: settledServerName,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "The server could not reconnect after sign-in. Reconnect it to try again.",
+              });
+            }
           }
           // A step-up or sign-in that was waiting on this connection settles
           // here too. This branch used to return first, so a saved call never
           // resumed after a hosted connection-intent callback.
-          const settledServerName =
-            result.serverName ?? hostedCallbackContext?.serverName;
           if (settledServerName) {
             const notRetried = await settleSignInCallback(settledServerName, {
               state,

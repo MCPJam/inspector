@@ -1187,12 +1187,10 @@ export {
   evalBacktestDraftSchema,
   evalBacktestRequestSchema,
   evalBacktestContinuationSchema,
-} from "./eval-backtest.js";
-export type {
-  EvalBacktestDraft,
-  EvalBacktestContinuation,
-  EvalBacktestDifference,
-  EvalBacktestReport,
+  type EvalBacktestDraft,
+  type EvalBacktestContinuation,
+  type EvalBacktestDifference,
+  type EvalBacktestReport,
 } from "./eval-backtest.js";
 export * from "./standard-check-ids.js";
 export * from "./standard-checks.js";
@@ -1203,3 +1201,4 @@ export * from "./swarm-report.js";
 export * from "./eval-authoring.js";
 export * from "./eval-authoring-review.js";
 export * from "./swarm-finding.js";
+export * from "./eval-lifecycle.js";

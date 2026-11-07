@@ -390,6 +390,43 @@ describe("hosted sign-in continuations", () => {
       expect(tools.get_my_orders.execute).toHaveBeenCalledTimes(1);
     });
 
+    it("replays a first sign-in on a server's only login, attributed implicitly", async () => {
+      // Hosted chat groups a member's single login itself (the backend lists
+      // accounts only when there are two or more); the flag must not weaken
+      // the ownership check the replay relies on.
+      const saved = await saveAndClaim({});
+      const tools = {
+        get_my_orders: {
+          _serverId: "server-1",
+          _connectionForInput: () => ({
+            serverId: "server-1",
+            connectionId: "new-personal",
+            label: "Orders",
+            implicit: true,
+          }),
+          execute: vi.fn(async () => ({ content: [{ type: "text", text: "2" }] })),
+        },
+      };
+      const resolution = await resume(saved.continuationId, tools).resolve(
+        () => undefined,
+      );
+      expect(resolution.kind).toBe("complete");
+      expect(tools.get_my_orders.execute).toHaveBeenCalledTimes(1);
+    });
+
+    it("refuses a first sign-in whose rebuilt call names no login", async () => {
+      // Without attribution nothing proves which
+      // credential the replay would run on, so it is never replayed.
+      const saved = await saveAndClaim({});
+      const tools = tool(() => ({ content: [] }));
+      const resolution = await resume(saved.continuationId, tools).resolve(
+        () => undefined,
+      );
+      expect(resolution.kind).toBe("recover");
+      expect(tools.get_my_orders.execute).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
     it("replays an owned credential only on that credential", async () => {
       const saved = await saveAndClaim({
         connectionId: "c1",
