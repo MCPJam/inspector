@@ -49,7 +49,10 @@ it("refuses expired, tampered and truncated tickets", () => {
   const value = ticket();
   expect(readCompletedTurnTicket(value.slice(0, -4), owner)).toBeUndefined();
   const parts = value.split(".");
-  parts[2] = "A" + parts[2]!.slice(1);
+  const ciphertext = Buffer.from(parts[2]!, "base64url");
+  ciphertext[0] = ciphertext[0]! ^ 1;
+  parts[2] = ciphertext.toString("base64url");
+  expect(parts.join(".")).not.toBe(value);
   expect(readCompletedTurnTicket(parts.join("."), owner)).toBeUndefined();
   vi.advanceTimersByTime(30_000);
   expect(readCompletedTurnTicket(value, owner)).toBeUndefined();
