@@ -322,7 +322,7 @@ describe("Resources to the current chat", () => {
       vi.advanceTimersByTime(15_000);
     });
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "The chat is not ready",
+      "The chat could not open the file",
     );
     expect(router.state.location.state).toEqual({});
   });

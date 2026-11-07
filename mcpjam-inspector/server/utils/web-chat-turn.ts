@@ -1423,6 +1423,7 @@ export async function streamChatTurn(
       // `data-persist-receipt` so the client is TOLD what happened to its save
       // rather than inferring it from a version poll.
       let authHeader: string | undefined;
+      let authorizationFailure: { status?: number } | undefined;
       try {
         authHeader = persist.getAuthorization ? await persist.getAuthorization() : runtime.authHeader;
       } catch (error) {
@@ -1430,10 +1431,11 @@ export async function streamChatTurn(
         logger.warn("Chat save authorization unavailable", {
           status, errorName: error instanceof Error ? error.name : typeof error,
         });
-        return { outcome: "failed" as const, failureKind: "http_error" as const, status };
+        authorizationFailure = { status };
       }
       return await persistChatSessionToConvex({
         chatSessionId: hostedChatSessionId,
+        authorizationFailure,
         retryOwner: persist.retryOwner,
         // Applied to the SERIALIZED ingest body, so it covers every payload
         // this call can carry — session messages, the tool snapshot, assistant
