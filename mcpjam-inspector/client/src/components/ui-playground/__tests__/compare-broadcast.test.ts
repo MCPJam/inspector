@@ -33,3 +33,14 @@ describe("Compare broadcast delivery", () => {
     expect(delivery.claim(request, recipient)).toBe(false);
   });
 });
+
+it("permanently drops only the replaced owner's pending delivery", () => {
+  const original = compareBroadcastRecipient({ ...scope, ownerKey: "original" });
+  const replacement = compareBroadcastRecipient({ ...scope, ownerKey: "replacement" });
+  const delivery = createCompareBroadcast(request, [original, "other-lane"]);
+  delivery.retainRecipients([replacement, "other-lane"]);
+  expect(delivery.claim(request, replacement)).toBe(false);
+  delivery.retainRecipients([original, "other-lane"]);
+  expect(delivery.claim(request, original)).toBe(false);
+  expect(delivery.claim(request, "other-lane")).toBe(true);
+});
