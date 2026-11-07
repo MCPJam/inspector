@@ -42,9 +42,10 @@ export function loadShareCardFontFaceCss(): Promise<string> {
     SHARE_CARD_FONT_FACES.map(async ({ file }) => {
       const url = SHARE_CARD_FONT_URLS[file];
       // Internal: the preview falls back to the browser's own faces.
-      if (!url) throw new Error(`No bundled URL for ${file}`);
+      if (!url) throw new Error("Could not load a card font. Try again.");
       const response = await fetch(url);
-      if (!response.ok) throw new Error("Could not load a card font.");
+      if (!response.ok)
+        throw new Error("Could not load a card font. Try again.");
       return [file, await toDataUrl(await response.blob())] as const;
     }),
   )
