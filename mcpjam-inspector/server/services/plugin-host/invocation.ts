@@ -348,12 +348,13 @@ export class PluginContinuationRefused extends PluginInvocationError {
   }
 }
 
-/** The continuation ended before this leg reached the wire (it expired or was
- * cancelled): a known, final outcome, never an uncertain effect. */
+/** The continuation ended before this leg reached the wire: a known, final
+ * outcome, never an uncertain effect from this attempt. */
 export class PluginContinuationTerminal extends PluginInvocationError {
   constructor(
     code:
       | "CONTINUATION_EXPIRED"
+      | "CONTINUATION_FAILED"
       | "CONTINUATION_CANCELLED"
       | "PLUGIN_FORMS_DISABLED",
   ) {
