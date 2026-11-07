@@ -1,3 +1,4 @@
+import { completedTurnPersistence } from "../../../services/completed-turn-persistence.js";
 const localProjection = vi.hoisted(() => vi.fn(async () => ({ tools: {}, keyToServerId: {} })));
 vi.mock("../host-executed-mcp-tools.js", () => ({ projectSelectedMcpServersAsHostTools: localProjection }));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -545,6 +546,38 @@ describe("runHarnessTurn local continuity", () => {
       onConversationComplete.mock.invocationCallOrder[0]!,
     );
     expect(stream).toContain('"type":"data-persist-receipt"');
+  });
+
+  it("holds the original completed harness lease through persistence recovery without rerunning", async () => {
+    let retryHandle = "";
+    let turnId = "";
+    const onConversationComplete = vi.fn(async (_history: unknown, trace: { turnId: string }) => {
+      turnId = trace.turnId;
+      retryHandle = completedTurnPersistence.register({ subject: "actor", projectId: "project-1" }, "exact-completed-body", "chat-1", turnId)!;
+      return { outcome: "failed" as const, failureKind: "http_error" as const, retryHandle, retryProjectId: "project-1" };
+    });
+    const result = await runHarnessTurn(baseOptions({ onConversationComplete }) as never, "ui");
+    const reader = result.response!.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    while (!text.includes('"retryHandle"')) {
+      const next = await reader.read();
+      if (next.done) throw new Error("Expected pending save receipt");
+      text += decoder.decode(next.value);
+    }
+    expect(harnessState.create).toHaveBeenCalledOnce();
+    expect(onConversationComplete).toHaveBeenCalledOnce();
+    expect(harnessState.discardState).not.toHaveBeenCalled();
+    expect(releaseHarnessSessionState).not.toHaveBeenCalled();
+    await completedTurnPersistence.retry(retryHandle, { subject: "actor", projectId: "project-1", chatSessionId: "chat-1", turnId }, async (body) => {
+      expect(body).toBe("exact-completed-body");
+      return { outcome: "saved", version: 2 };
+    });
+    for (;;) { const next = await reader.read(); if (next.done) break; text += decoder.decode(next.value); }
+    expect(text).toContain('"outcome":"saved"');
+    expect(harnessState.create).toHaveBeenCalledOnce();
+    expect(onConversationComplete).toHaveBeenCalledOnce();
+    expect(harnessState.discardState).not.toHaveBeenCalled();
   });
 
   it("discards state when the completed turn could not be persisted", async () => {

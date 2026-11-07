@@ -1,4 +1,5 @@
 import { managedTurnFailureResponse } from "./managed-turn-error.js";
+import { preparePersistenceAuthorization } from "./persistence-authorization.js";
 import { TurnResources } from "./resources.js";
 import { stripForwardingRequestBody } from "@/shared/forwarding-approval";
 import { preparePluginMessageTurn } from "../plugin-host/message.js";
@@ -61,6 +62,7 @@ export async function handleManagedChatTurn(
   let streamOwnsResources = false;
   try {
     const bearerToken = assertBearerToken(c);
+    const retrySubject = c.get("workosUserId");
     const rawBody = JSON.parse(
       stripForwardingRequestBody(
         JSON.stringify(
@@ -141,6 +143,9 @@ export async function handleManagedChatTurn(
       projectSkillReadFailed,
     } = setup.value;
 
+    const getPersistenceAuthorization = await preparePersistenceAuthorization(c, {
+      projectId: hostedBody.projectId, chatSessionId: body.chatSessionId, executionTarget,
+    });
     const connections = await prepareManagedConnections({
       c,
       rawBody,
@@ -510,6 +515,8 @@ export async function handleManagedChatTurn(
           },
         },
         persist: {
+          getAuthorization: getPersistenceAuthorization,
+          ...(executionTarget.kind !== "scenario" && !c.get("guestId") && typeof retrySubject === "string" ? { retryOwner: { subject: retrySubject, projectId: hostedBody.projectId } } : {}),
           requireNativeToolDiscovery: resolvedExecution.requireNativeToolDiscovery,
           executionBindingVersion: resolvedExecution.executionBindingVersion,
           executionTarget: toResumeExecutionTarget(executionTarget),

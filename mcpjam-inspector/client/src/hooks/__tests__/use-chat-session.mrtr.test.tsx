@@ -1,3 +1,4 @@
+import { authFetch } from "@/lib/session-token";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
@@ -414,3 +415,39 @@ describe("useChatSession hosted MRTR", () => {
     expect(mockState.cancelContinuation).not.toHaveBeenCalled();
   });
 });
+
+
+it("recovers only persistence from a failed receipt, deduplicates chunks and preserves the chat turn", async () => {
+  vi.mocked(authFetch).mockResolvedValue(Response.json({ outcome: "saved", chatSessionId: "unused", turnId: "turn", version: 4 }));
+  const rendered = renderHook(() => useChatSession({ selectedServers: [], hostedContext: { projectId: "project" } }));
+  await waitFor(() => expect(rendered.result.current.isSessionBootstrapComplete).toBe(true));
+  const chatSessionId = rendered.result.current.chatSessionId;
+  vi.mocked(authFetch).mockResolvedValue(Response.json({ outcome: "saved", chatSessionId, turnId: "turn", version: 4 }));
+  vi.mocked(authFetch).mockClear();
+  mockState.sendMessage.mockClear();
+  const part = { type: "data-persist-receipt", data: { outcome: "failed", failureKind: "http_error", chatSessionId, turnId: "turn", retryProjectId: "project", retryHandle: "ac7bb39a-9219-40ca-802d-583951fab542" } };
+  await act(async () => { mockState.chatOnData?.(part); mockState.chatOnData?.(part); await Promise.resolve(); });
+  await waitFor(() => expect(vi.mocked(authFetch)).toHaveBeenCalledOnce());
+  expect(rendered.result.current.consumePersistReceipt()).toMatchObject({ outcome: "saved", version: 4 });
+  expect(mockState.sendMessage).not.toHaveBeenCalled();
+  expect(vi.mocked(authFetch).mock.calls[0][0]).toBe("/api/web/chat-persistence");
+  act(() => mockState.chatOnData?.({ ...part, data: { ...part.data, chatSessionId: "foreign" } }));
+  expect(vi.mocked(authFetch)).toHaveBeenCalledOnce();
+  rendered.unmount();
+});
+
+
+it("does not resurrect a consumed failed receipt when recovery finishes late", async () => {
+  const rendered = renderHook(() => useChatSession({ selectedServers: [], hostedContext: { projectId: "project" } }));
+  await waitFor(() => expect(rendered.result.current.isSessionBootstrapComplete).toBe(true));
+  const chatSessionId = rendered.result.current.chatSessionId;
+  let resolve!: (response: Response) => void;
+  vi.mocked(authFetch).mockReset().mockImplementation(() => new Promise((done) => { resolve = done; }));
+  const part = { type: "data-persist-receipt", data: { outcome: "failed", failureKind: "http_error", chatSessionId, turnId: "turn", retryProjectId: "project", retryHandle: "ac7bb39a-9219-40ca-802d-583951fab542" } };
+  act(() => mockState.chatOnData?.(part));
+  expect(rendered.result.current.consumePersistReceipt()).toMatchObject({ outcome: "failed" });
+  await act(async () => { resolve(Response.json({ outcome: "saved", chatSessionId, turnId: "turn", version: 4 })); });
+  expect(rendered.result.current.consumePersistReceipt()).toBeNull();
+  rendered.unmount();
+});
+

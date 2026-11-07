@@ -1,3 +1,4 @@
+import { finishPendingPersist } from "./completed-turn-finalization.js";
 import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
 import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
@@ -6133,10 +6134,11 @@ export async function runChatEngineLoop(
         };
         capturedTurnTrace = trace;
         try {
-          const persistOutcome = await onConversationComplete?.(
+          let persistOutcome = await onConversationComplete?.(
             [...messageHistory],
             trace,
           );
+          if (chatSessionId) persistOutcome = await finishPendingPersist(persistOutcome, receiptWriter, { chatSessionId, turnId: trace.turnId }, abortSignal);
           // Costs no latency: `onConversationComplete` already awaited the
           // ingest, which is what gates this stream's close in the first place.
           if (persistOutcome && chatSessionId) {

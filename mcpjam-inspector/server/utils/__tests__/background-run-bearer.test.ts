@@ -40,14 +40,14 @@ const mint = vi.fn();
 let userNumber = 0;
 let subject: string;
 
-async function authorize(seed?: (c: Context) => void, token = "browser-token") {
+async function authorize(seed?: (c: Context) => void, token = "browser-token", requireFreshSessionOnUse = false, allowOriginalBearerOnMintFailure = false) {
   let getBearer: (() => Promise<string>) | undefined;
   let error: unknown;
   const app = new Hono();
   app.get("/", async (c) => {
     seed?.(c);
     try {
-      getBearer = await getBackgroundRunBearerForRequest(c, "project-1");
+      getBearer = await getBackgroundRunBearerForRequest(c, "project-1", { requireFreshSessionOnUse, allowOriginalBearerOnMintFailure });
     } catch (cause) {
       error = cause;
     }
@@ -203,6 +203,30 @@ describe("browser authorization for detached runs", () => {
     expect(mint).not.toHaveBeenCalled();
   });
 
+  it("uses a freshly verified original bearer only for opted-in transient mint failures", async () => {
+    const cache = new RevokedSessionCache({ fetchPage: async () => ({ sessions: [], cursor: null, isDone: true, watermark: Date.now() }) });
+    await cache.scan();
+    setRevokedSessionCacheForTests(cache);
+    mocks.verify.mockResolvedValue({ sub: subject, sid: "live-session" });
+    mint.mockRejectedValue(new TypeError("network unavailable"));
+    const { error, getBearer } = await authorize(undefined, "browser-token", true, true);
+    expect(error).toBeUndefined();
+    expect(await getBearer!()).toBe("browser-token");
+    mocks.verify.mockRejectedValueOnce(new AuthKitVerificationError("expired"));
+    await expect(getBearer!()).rejects.toThrow();
+    cache.markRevokedLocally("live-session");
+    await expect(getBearer!()).rejects.toMatchObject({ code: "SESSION_REVOKED" });
+  });
+  it("does not use the fallback for revoked sessions or rejected delegation", async () => {
+    const cache = new RevokedSessionCache({ fetchPage: async () => ({ sessions: [], cursor: null, isDone: true, watermark: Date.now() }) });
+    await cache.scan();
+    setRevokedSessionCacheForTests(cache);
+    mocks.verify.mockResolvedValue({ sub: subject, sid: "live-session" });
+    mint.mockResolvedValue(Response.json({ ok: false }, { status: 403 }));
+    const denied = await authorize(undefined, "browser-token", true, true);
+    expect(denied.error).toMatchObject({ status: 403 });
+    expect(denied.getBearer).toBeUndefined();
+  });
   it("fails authorization immediately if the backend refuses delegation", async () => {
     mint.mockResolvedValueOnce(Response.json({ ok: false }, { status: 403 }));
     const { error, getBearer } = await authorize();
@@ -245,4 +269,36 @@ it("uses the member bearer on a native install without a service token, and stop
   expect(mint).not.toHaveBeenCalled();
   mocks.verify.mockRejectedValueOnce(new AuthKitVerificationError("expired"));
   await expect(getBearer!()).rejects.toThrow("expired");
+});
+
+
+it("saves with hosted delegation after the verified original JWT expires, but refuses its revoked session", async () => {
+  vi.useFakeTimers();
+  const { privateKey, publicKey } = await generateKeyPair("RS256");
+  const issuer = "https://login.mcpjam.com";
+  const clientId = "client_01K4C1TVPBE7JTBFQJF9SDW9P9";
+  const original = await new SignJWT({ sid: "persist-session" }).setProtectedHeader({ alg: "RS256" }).setIssuer(issuer).setSubject(subject).setAudience(clientId).setIssuedAt().setExpirationTime("5m").sign(privateKey);
+  const deps: AuthKitVerifyDeps = { clientId, resolveKey: (candidate) => candidate === issuer ? publicKey : null };
+  mocks.verify.mockImplementation((token, _deps, options) => mocks.realVerify(token, deps, options));
+  const cache = new RevokedSessionCache({ fetchPage: async () => ({ sessions: [], cursor: null, isDone: true, watermark: Date.now() }) });
+  await cache.scan();
+  setRevokedSessionCacheForTests(cache);
+  const { getBearer, error } = await authorize(undefined, original, true);
+  expect(error).toBeUndefined();
+  vi.setSystemTime(Date.now() + 6 * 60_000);
+  await cache.scan();
+  await expect(mocks.realVerify(original, deps)).rejects.toThrow();
+  expect(await getBearer!()).toBe("execution-token-1");
+  expect(mocks.verify).toHaveBeenCalledOnce();
+  const ingest = vi.fn(async (_url: unknown, init: RequestInit) => {
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer execution-token-1");
+    return Response.json({ version: 2 });
+  });
+  vi.stubGlobal("fetch", ingest);
+  const { persistChatSessionToConvex } = await import("../chat-ingestion.js");
+  expect(await persistChatSessionToConvex({ chatSessionId: "chat", projectId: "project-1", modelId: "model", modelSource: "mcpjam", origin: "playground", startedAt: Date.now(), authHeader: `Bearer ${await getBearer!()}` })).toMatchObject({ outcome: "saved", version: 2 });
+  expect(ingest).toHaveBeenCalledOnce();
+  cache.markRevokedLocally("persist-session");
+  await expect(getBearer!()).rejects.toMatchObject({ code: "SESSION_REVOKED" });
+  expect(mint).toHaveBeenCalledOnce();
 });
