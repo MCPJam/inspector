@@ -258,6 +258,29 @@ describe("MCP image policy fields", () => {
   });
 });
 
+describe("Event delivery field", () => {
+  const field = () => fieldById("eventsDeliveryModes");
+  const withEvents = (events: unknown) =>
+    makeConfig({
+      hostStyle: "chatgpt",
+      mcpProfile: {
+        profileVersion: 1,
+        extensions: { "com.mcpjam/events": events },
+      },
+    } as Partial<HostConfigDtoV2>);
+
+  it("reads only a saved setting, so an unmeasured client is not yet tested", () => {
+    // ChatGPT's style default is webhook, but nothing saved is no reading.
+    expect(field().read(makeConfig({ hostStyle: "chatgpt" }))).toBeUndefined();
+    expect(field().read(withEvents({ webhook: true }))).toEqual(["webhook"]);
+    expect(field().read(withEvents({}))).toEqual([]);
+  });
+
+  it("reads a malformed setting as no modes, never wider", () => {
+    expect(field().read(withEvents({ webhook: "yes" }))).toEqual([]);
+  });
+});
+
 describe("fieldDiverges", () => {
   it("returns false for a single host (nothing to compare)", () => {
     expect(fieldDiverges(fieldById("modelId"), [makeConfig()])).toBe(false);

@@ -14,7 +14,10 @@
  *     both the record and the handle.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { BrowserdHandle } from "../boot-browserd";
+import {
+  BROWSERD_READY_TIMEOUT_MS,
+  type BrowserdHandle,
+} from "../boot-browserd";
 import type { BrowserdLeaseState, BrowserdStatus } from "../browserd-client";
 import { HandoffLease } from "../daemon/lease";
 import { BROWSERD_PROTOCOL_VERSION } from "../protocol";
@@ -34,6 +37,7 @@ import {
   BrowserSessionInUseError,
   BrowserSessionTargetError,
   ensureBrowserSession,
+  RELAUNCH_CLAIM_TTL_MS,
   type BrowserSessionDeps,
   type SessionClient,
   type SessionSandbox,
@@ -644,6 +648,10 @@ describe("ensureBrowserSession — relaunch triggers", () => {
     const claimOrder = f.claimRelaunch.mock.invocationCallOrder[0]!;
     const killOrder = f.sandbox.killBrowserd.mock.invocationCallOrder[0]!;
     expect(claimOrder).toBeLessThan(killOrder);
+    // Outlasts the boot it guards: an expired claim lets another replica
+    // pkill a daemon that is still launching Chromium.
+    expect(f.claimRelaunch.mock.calls[0]![0].ttlMs).toBe(RELAUNCH_CLAIM_TTL_MS);
+    expect(RELAUNCH_CLAIM_TTL_MS).toBeGreaterThan(BROWSERD_READY_TIMEOUT_MS);
     expect(f.releaseRelaunch).toHaveBeenCalledWith(
       expect.objectContaining({
         claimId: f.claimRelaunch.mock.calls[0]![0].claimId,
@@ -1281,6 +1289,7 @@ describe("ensureBrowserSession — sandbox target", () => {
         sandboxRowId: SANDBOX_ROW,
         watched: true,
         claimId: expect.any(String),
+        ttlMs: RELAUNCH_CLAIM_TTL_MS,
       }),
     );
     expect(f.releaseRelaunch).toHaveBeenCalledWith(
