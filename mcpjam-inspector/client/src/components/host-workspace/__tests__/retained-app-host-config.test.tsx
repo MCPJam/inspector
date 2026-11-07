@@ -8,17 +8,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // stand-ins that count constructions, teardowns and guest document loads.
 const f = vi.hoisted(() => {
   const bridges: Array<Record<string, any>> = [];
+  const appTools = { enabled: false };
   const ctor = vi.fn().mockImplementation(function () {
+    const requests = new AbortController();
     const bridge: Record<string, any> = {
+      requests,
       sendToolInput: vi.fn(),
       sendToolInputPartial: vi.fn(),
       sendToolResult: vi.fn(),
       sendToolCancelled: vi.fn(),
       setHostContext: vi.fn(),
       teardownResource: vi.fn().mockResolvedValue({}),
-      close: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn(async () => { requests.abort(); }),
       connect: vi.fn().mockResolvedValue(undefined),
-      getAppCapabilities: vi.fn().mockReturnValue(undefined),
+      getAppCapabilities: vi.fn(() => appTools.enabled ? { tools: {} } : undefined),
+      getAppVersion: vi.fn(() => ({ name: "bits-and-bolts", version: "1" })),
+      listTools: vi.fn(async () => ({ tools: [{ name: "read_view", inputSchema: { type: "object" } }] })),
       setRequestHandler: vi.fn(),
       setNotificationHandler: vi.fn(),
       oninitialized: null,
@@ -28,6 +33,7 @@ const f = vi.hoisted(() => {
   });
   return {
     bridges,
+    appTools,
     ctor,
     /** Guest documents loaded by `sandbox-resource-ready`. */
     loads: [] as unknown[],
@@ -163,6 +169,7 @@ const host = vi.hoisted(() => ({
   onboarding: vi.fn(),
   context: vi.fn(),
   discover: vi.fn(),
+  resolveLocalFile: vi.fn(),
 }));
 vi.mock("../thread-app-api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../thread-app-api")>()),
@@ -193,6 +200,10 @@ import {
 import { ThreadAppError } from "../thread-app-api";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
+import { WidgetWorkspaceProvider, useAppToolsRegistryApi } from "@mcpjam/widget-react";
+import { OwnedModelApp } from "../OwnedModelApp";
+import { WorkspaceFileActionsProvider, type WorkspaceFileActions } from "../file-actions";
+import { authFetch } from "@/lib/session-token";
 
 const scope = {
   projectId: "project",
@@ -452,6 +463,7 @@ describe("an open App when the client's binding or switch changes", () => {
   function Takeover() {
     return <div ref={useExtensionSlot("takeover")} />;
   }
+  function Rail() { return <div ref={useExtensionSlot("rail")} />; }
   const playground = (registration: ExtensionRegistration | null) => (
     <ActiveMcpProfileProvider value={profile()}>
       <ExtensionWorkspaceProvider>
@@ -476,6 +488,7 @@ describe("an open App when the client's binding or switch changes", () => {
     f.iframeMounts = 0;
     owners = { global: null, chat: null };
     opened = 0;
+    f.appTools.enabled = false;
     host.discover.mockResolvedValue([library]);
     host.onboarding.mockResolvedValue({ available: false });
     host.open.mockImplementation(async () => {
@@ -510,6 +523,57 @@ describe("an open App when the client's binding or switch changes", () => {
     );
     return view;
   }
+
+  it("routes a global App's mapped file into the opening chat's live tool catalog", async () => {
+    f.appTools.enabled = true;
+    let registry: ReturnType<typeof useAppToolsRegistryApi>;
+    function Capture() { registry = useAppToolsRegistryApi(); return null; }
+    host.open.mockImplementation(async (_server: string, tool: string) => ({
+      ...rowFor("global").handle,
+      instanceToken: tool.padEnd(43, "x"), instanceId: tool, operationId: tool,
+      appToolsEnabled: true, localFilesAvailable: true,
+      ...(tool === "viewer" ? { file: { name: "keycap.stl", resourceUri: "host-resource://keycap" } } : {}),
+    }));
+    host.resolveLocalFile.mockResolvedValue([{ kind: "file", toolName: "viewer", title: "Viewer", resourceUri: "host-resource://keycap" }]);
+    const scene = (chatId: string) => <WidgetWorkspaceProvider workspaceId="shared-model-tools">
+      <Capture />
+      <ActiveMcpProfileProvider value={profile({ mcpAppsOverrides: { serverTools: true, availableDisplayModes: ["inline", "fullscreen"] } })}>
+        <ExtensionWorkspaceProvider>
+          <Center registration={registration({ chatId })} /><Takeover /><Rail />
+        </ExtensionWorkspaceProvider>
+      </ActiveMcpProfileProvider>
+    </WidgetWorkspaceProvider>;
+    const view = render(scene("chat-a"));
+    await waitFor(() => expect(owners.global?.entries.saved).toBeDefined());
+    await act(async () => { await owners.global!.launch(server, library); });
+    await waitFor(() => expect(f.bridges).toHaveLength(1));
+    act(() => f.bridges[0].oninitialized());
+    const handler = f.bridges[0].setRequestHandler.mock.calls.find(
+      ([schema]: [{ shape: { method: { value: string } } }]) => schema.shape.method.value === "openai/files/open",
+    )?.[1];
+    expect(handler).toBeTypeOf("function");
+    await act(async () => { await handler({ method: "openai/files/open", params: { path: "/mapped/keycap.stl" } }, { signal: new AbortController().signal }); });
+    await waitFor(() => expect(f.bridges).toHaveLength(2));
+    act(() => f.bridges[1].oninitialized());
+    await waitFor(() => expect(registry!.getState().snapshotForChatBody("chat-a")).toHaveLength(2));
+    const snapshots = registry!.getState().snapshotForChatBody("chat-a");
+    expect(snapshots.find((entry) => entry.parentToolCallId === "viewer")?.description).toContain("File viewer: keycap.stl");
+    expect(owners.global?.apps.map((row) => row.declaration.kind)).toEqual(["global"]);
+    expect(owners.global?.active).toBeNull();
+    expect(owners.chat?.apps.map((row) => row.declaration.kind)).toEqual(["file"]);
+    await act(async () => { await handler({ method: "openai/files/open", params: { path: "/mapped/keycap.stl" } }, { signal: new AbortController().signal }); });
+    expect(registry!.getState().snapshotForChatBody("chat-a").map((entry) => entry.alias)).toEqual(snapshots.map((entry) => entry.alias));
+    view.rerender(scene("chat-b"));
+    await waitFor(() => expect(owners.chat?.scope?.threadId).toBe("chat-b"));
+    const current = registry!.getState().snapshotForChatBody("chat-b");
+    expect(current.map((entry) => entry.parentToolCallId)).toEqual(["library"]);
+    expect(registry!.getState().snapshotForChatBody("chat-a").map((entry) => entry.parentToolCallId)).toEqual(["viewer"]);
+    expect(host.open).toHaveBeenCalledTimes(2);
+    expect(f.bridges).toHaveLength(2);
+    expect(f.bridges.every((bridge) => bridge.close.mock.calls.length === 0)).toBe(true);
+    view.unmount();
+    await waitFor(() => expect(registry!.getState().snapshotForChatBody("chat-a")).toEqual([]));
+  });
 
   it("shows the plugin manifest name in the global header without changing the server key", async () => {
     const imported = { ...server, name: "bits-and-bolts:server:bits-and-bolts@2cc7fa5b" };
@@ -551,5 +615,81 @@ describe("an open App when the client's binding or switch changes", () => {
       expect(iframes[0].style.opacity).toBe("1");
     });
     expect(owners.global?.apps[0].handle?.instanceId).toBe("library-2");
+  });
+});
+
+describe("a model App with pending user input", () => {
+  const marker = {
+    instanceToken: "m".repeat(43), projectId: "project", hostId: "client",
+    workspaceId: "workspace", serverId: "saved",
+  };
+  const handle = { ...rowFor("thread").handle, instanceToken: marker.instanceToken, appToolsEnabled: true };
+  const open = vi.fn(async () => {});
+  const actions = (): WorkspaceFileActions => ({
+    workspaceId: "workspace", api: host as never, serverIds: ["saved"], open,
+  });
+  const model = (files = actions()) => <ActiveMcpProfileProvider value={profile({ mcpAppsOverrides: { serverTools: true } })}>
+    <WorkspaceFileActionsProvider value={files}>
+      <OwnedModelApp marker={marker} renderProps={{
+        toolCallId: "model-call", toolName: "library", serverId: "saved",
+        resourceUri: "ui://library", toolState: "output-available", chatSessionId: "chat",
+      }} />
+    </WorkspaceFileActionsProvider>
+  </ActiveMcpProfileProvider>;
+
+  beforeEach(() => {
+    f.bridges.length = 0;
+    f.loads.length = 0;
+    f.ctor.mockClear();
+    vi.mocked(authFetch).mockResolvedValue(new Response(JSON.stringify(handle)));
+    host.close.mockResolvedValue(undefined);
+    host.renew.mockResolvedValue({ expiresAt: Date.now() + 30 * 60_000 });
+  });
+  afterEach(() => { cleanup(); vi.useRealTimers(); });
+
+  it("keeps the same bridge request through file-action churn, context updates and renewal, then cancels on unmount", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    let finish: (() => void) | undefined;
+    let signal: AbortSignal | undefined;
+    host.invoke.mockImplementation(async (_handle, active, _approve, _call, inputPending) => {
+      signal = active;
+      inputPending(true);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          finish = resolve;
+          active.addEventListener("abort", () => reject(new Error("owner closed")), { once: true });
+        });
+        return { content: [] };
+      } finally { inputPending(false); }
+    });
+    const view = render(model());
+    await waitFor(() => expect(f.bridges).toHaveLength(1));
+    const bridge = f.bridges[0];
+    act(() => bridge.oninitialized());
+    const invoke = () => bridge.oncalltool(
+      { name: "pickReferences", arguments: {} },
+      { signal: bridge.requests.signal, requestId: 1 },
+    );
+    const pending = invoke();
+    await waitFor(() => expect(signal).toBeDefined());
+    const loads = f.loads.length;
+    stores.hostContext.draftHostContext = { locale: "en-GB" };
+    view.rerender(model());
+    await act(async () => { await Promise.resolve(); });
+    expect(f.bridges).toHaveLength(1);
+    expect(bridge.close).not.toHaveBeenCalled();
+    expect(signal!.aborted).toBe(false);
+    expect(f.loads).toHaveLength(loads);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
+    expect(host.renew).toHaveBeenCalledWith(handle, expect.any(AbortSignal));
+    expect(f.bridges).toHaveLength(1);
+    expect(signal!.aborted).toBe(false);
+    await act(async () => { finish!(); await pending; });
+    const closing = invoke();
+    const cancelled = expect(closing).rejects.toThrow("owner closed");
+    view.unmount();
+    await cancelled;
+    expect(signal!.aborted).toBe(true);
+    expect(host.close).toHaveBeenCalled();
   });
 });

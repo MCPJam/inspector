@@ -360,7 +360,7 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
       signal: AbortSignal,
     ) => {
       const { response, value } = await post(
-        "files/open",
+        routePrefix + "files/open",
         { ...owner, instanceToken: handle.instanceToken, path },
         signal,
       );

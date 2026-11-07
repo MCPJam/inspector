@@ -252,6 +252,9 @@ export function validateAppToolEntries(input: unknown): AppToolEntry[] {
       );
     }
     const appVersion = raw.appVersion as string | undefined;
+    if (raw.bridgeId !== undefined && (typeof raw.bridgeId !== "string" || !raw.bridgeId || raw.bridgeId.length > 128)) {
+      throw new AppToolValidationError(`appTools[${i}].bridgeId must be a non-empty string of at most 128 characters`);
+    }
     let description: string | undefined;
     if (raw.description !== undefined) {
       if (typeof raw.description !== "string") {
@@ -301,6 +304,7 @@ export function validateAppToolEntries(input: unknown): AppToolEntry[] {
       alias,
       appName,
       appVersion,
+      ...(typeof raw.bridgeId === "string" ? { bridgeId: raw.bridgeId } : {}),
       serverId,
       parentToolCallId,
       rawName,

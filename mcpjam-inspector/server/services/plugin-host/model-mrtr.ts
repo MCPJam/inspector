@@ -1,4 +1,5 @@
 import { modelApps } from "./model-apps.js";
+import { isCallToolResult } from "@modelcontextprotocol/client";
 import { pluginBindingDigest } from "./bindings.js";
 import { createHash, randomBytes } from "node:crypto";
 import type { Context } from "hono";
@@ -71,6 +72,34 @@ export function createModelMrtrAdapter(options: Options) {
       { hostId: options.hostId, serverId: record.instance.owner.serverId },
       record.instance,
     );
+  const publishCompleted = async (
+    record: Record,
+    runtime: ReturnType<typeof getRuntime>,
+    result: unknown,
+    signal: AbortSignal,
+    validateOutput = false,
+  ) => {
+    if (result instanceof PluginInvocationSuspension) return result;
+    if (validateOutput) {
+      const manager = runtime.manager();
+      if (!manager) throw denied();
+      if (!isCallToolResult(result)) return result;
+      try {
+        await manager.assertMrtrToolOutputSchema(
+          record.instance.owner.serverId, record.params.name, result,
+        );
+      } catch {
+        // Keep the invalid result in the receipt for the existing recovery
+        // response, without issuing any App capability for it.
+        return result;
+      }
+    }
+    const completed = await runtime.resolve(record.params.name, signal);
+    if (completed.revision !== record.revision) throw denied();
+    return modelApps.publish(
+      result, record.instance, record.params.name, record.revision, completed.tool._meta,
+    );
+  };
   const current = (record: Record) => {
     if (
       records.get(record.token) !== record ||
@@ -257,13 +286,14 @@ export function createModelMrtrAdapter(options: Options) {
             async () => {
               active.set(execution.serverKey, runtime.collectOwnedMrtr);
               try {
-                return await runtime.runOwnedModern(
+                const result = await runtime.runOwnedModern(
                   auth,
                   original.toolCallId,
                   params,
                   currentSignal,
                   run,
                 );
+                return await publishCompleted(original, runtime, result, currentSignal);
               } finally {
                 active.delete(execution.serverKey);
               }
@@ -282,15 +312,7 @@ export function createModelMrtrAdapter(options: Options) {
           result.pending.round as number,
         );
       }
-      const completed = await runtime.resolve(original.params.name, signal);
-      if (completed.revision !== original.revision) throw denied();
-      return modelApps.publish(
-        result,
-        original.instance,
-        original.params.name,
-        original.revision,
-        completed.tool._meta,
-      );
+      return result;
     } finally {
       await runtime.release();
     }
@@ -341,14 +363,14 @@ export function createModelMrtrAdapter(options: Options) {
         });
         invokePorts.continuation = {
           submission,
-          resume: (auth, params, signal) =>
-            runtime.resumeMrtr(
+          resume: async (auth, params, signal) =>
+            publishCompleted(record, runtime, await runtime.resumeMrtr(
               auth,
               record.toolCallId,
               params,
               submission,
               signal,
-            ),
+            ), signal, true),
         };
         const result = await record.invoker.invoke(
           invokePorts,
@@ -408,18 +430,11 @@ export function createModelMrtrAdapter(options: Options) {
           options.c.req.raw.signal,
         );
         if (completed.revision !== record.revision) throw denied();
-        const published = modelApps.publish(
-          result,
-          record.instance,
-          record.params.name,
-          record.revision,
-          completed.tool._meta,
-        );
         const toolResultMessage = await buildMrtrToolResultMessage(
           record.toolCallId,
           record.params.name,
           serverId,
-          published as never,
+          result as never,
           options.modelVisibleMcpToolResults,
           manager,
         );
