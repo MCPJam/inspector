@@ -502,6 +502,10 @@ export function createOwnedPluginMrtr(deps: {
             commit: async () => {
               await deps.assertCurrent();
               signal.throwIfAborted();
+              if (formsOff()) {
+                turnedOff = true;
+                throw new PluginInvocationError("PLUGIN_FORMS_DISABLED");
+              }
               for (const source of sources) source.throwIfAborted();
               // The durable pre-wire fence awaits after preparation; permission
               // must still hold before any upload is promoted for delivery.
