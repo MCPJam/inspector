@@ -42,6 +42,8 @@ export interface InspectorApiClientOptions {
 type InspectorRequestInit = Omit<RequestInit, "body"> & {
   body?: unknown;
   timeoutMs?: number;
+  /** Scoped operations may execute a tool before returning an auth failure. */
+  retrySessionAuth?: boolean;
   /**
    * Return this non-2xx body instead of throwing, when the caller can read it.
    *
@@ -709,7 +711,7 @@ export class InspectorApiClient {
   ): Promise<unknown> {
     const fetchRequest = async (): Promise<Response> => {
       const token = await fetchInspectorSessionToken(this.baseUrl);
-      const { body: initBody, timeoutMs, ...fetchInit } = init;
+      const { body: initBody, timeoutMs, retrySessionAuth: _retrySessionAuth, ...fetchInit } = init;
       const headers = new Headers(fetchInit.headers);
       headers.set("X-MCP-Session-Auth", `Bearer ${token}`);
 
@@ -732,7 +734,7 @@ export class InspectorApiClient {
     let response: Response;
     try {
       response = await fetchRequest();
-      if (isAuthFailure(response)) {
+      if (init.retrySessionAuth !== false && isAuthFailure(response)) {
         clearInspectorSessionTokenCache(this.baseUrl);
         response = await fetchRequest();
       }

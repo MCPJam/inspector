@@ -25,13 +25,15 @@ import {
 } from "./mcp-app-render-observation";
 import { hasUpstreamFailureEvidence } from "./hosted-connect-failure";
 import { markLocalRouteFailure } from "./hosted-route-failure";
-import { findCurrentTool } from "./browser-harness/current-tool";
+import { currentAppToolVisibility, findCurrentTool } from "./browser-harness/current-tool";
 
 /** Actionable hint surfaced when the harness reports `browser_unavailable`. */
 export const CHROMIUM_INSTALL_HINT = "npx playwright install chromium";
 
 export interface RenderWidgetForRequestParams {
-  mcpClientManager: MCPClientManager;
+  mcpClientManager: Pick<MCPClientManager, "listTools" | "readResource"> & {
+    executeTool(serverId: string, name: string, args: Record<string, unknown>): ReturnType<MCPClientManager["executeTool"]>;
+  };
   serverId: string;
   toolName: string;
   parameters: Record<string, unknown>;
@@ -116,6 +118,7 @@ export async function renderWidgetForRequest(
 
   const harness = new McpAppBrowserHarness({
     callTool: (s, n, a) => mcpClientManager.executeTool(s, n, a),
+    resolveToolVisibility: (s, n) => currentAppToolVisibility(mcpClientManager, s, n),
     readResource: (s, p) => mcpClientManager.readResource(s, p),
     ...(params.viewport ? { viewport: params.viewport } : {}),
   });

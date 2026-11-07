@@ -33,6 +33,7 @@ test("saved Inspector target resolves within the selected project", async () => 
       apiUrl: `http://127.0.0.1:${port}`,
     });
     assert.deepEqual(target, {
+      apiUrl: `http://127.0.0.1:${port}`,
       projectId: "selected",
       serverId: "saved",
       serverName: "CAD",

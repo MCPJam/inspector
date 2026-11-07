@@ -8,6 +8,7 @@ import {
 } from "./platform-client.js";
 
 export interface InspectorProjectTarget {
+  apiUrl?: string;
   projectId: string;
   serverId: string;
   serverName: string;
@@ -31,7 +32,7 @@ export async function resolveInspectorProjectTarget(
       "--server-id cannot be combined with --url or --command. Choose a saved server or an ad-hoc configuration.",
     );
   }
-  const { client } = buildPlatformClient(options);
+  const { client, baseUrl } = buildPlatformClient(options);
   const selector = resolveCloudProjectArgs(options).project;
   const projects = await client.listProjects();
   const resolved = resolveProject(projects.items, selector);
@@ -45,6 +46,7 @@ export async function resolveInspectorProjectTarget(
       `Server "${options.serverId}" is not saved in project "${resolved.project.name}". Choose a server from that project.`,
     );
   return {
+    apiUrl: baseUrl,
     projectId: resolved.project.id,
     serverId: server.id,
     serverName: server.name,
