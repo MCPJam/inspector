@@ -195,8 +195,19 @@ async function isGuestAccessDisabledResponse(
   ) {
     return true;
   }
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const raw: unknown = await response.json();
+    // The fetch's own timeout is ten seconds; a stalled 403 body must not
+    // hold every bootstrap attempt that long just to classify it.
+    const raw: unknown = await Promise.race([
+      response.json(),
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(
+          () => resolve(undefined),
+          REFUSAL_BODY_READ_TIMEOUT_MS,
+        );
+      }),
+    ]);
     if (!raw || typeof raw !== "object") return false;
     const { error, code } = raw as Record<string, unknown>;
     return (
@@ -206,8 +217,12 @@ async function isGuestAccessDisabledResponse(
   } catch {
     // An unreadable 403 body is an ordinary 403: the caller still answers it.
     return false;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
+
+const REFUSAL_BODY_READ_TIMEOUT_MS = 1000;
 
 function parseRetryAfterSeconds(raw: string | null): number | undefined {
   if (!raw) return undefined;

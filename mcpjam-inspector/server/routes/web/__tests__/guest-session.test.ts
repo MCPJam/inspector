@@ -332,6 +332,24 @@ describe("POST /guest-session", () => {
     },
   );
 
+  it("answers a 403 whose body stalls without waiting for the fetch timeout", async () => {
+    const stalled = new ReadableStream({ start() {} });
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(stalled, {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ) as typeof fetch;
+
+    const started = Date.now();
+    const res = await app.request(`${HOSTED}/guest-session`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("FORBIDDEN");
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
   describe("HTTP method handling", () => {
     it("returns 404 for GET requests", async () => {
       const res = await app.request("/guest-session");
