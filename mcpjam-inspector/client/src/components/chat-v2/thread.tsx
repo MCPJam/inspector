@@ -1,4 +1,7 @@
-import { AppSessionScopeContext } from "./thread/app-session-scope";
+import {
+  AppSessionScopeContext,
+  useAppSessionReopenKey,
+} from "./thread/app-session-scope";
 import type { HarnessStartupPhase } from "@/shared/harness-startup";
 // Inspector transcript renderer for Playground, Evals, and session review
 // (Sessions, User Testing, Swarms, and share dialogs). Provider-free external
@@ -162,7 +165,13 @@ function getMessageToolCallIds(messages: UIMessage[]): Set<string> {
   return ids;
 }
 
-export function Thread({
+export function Thread(props: ThreadProps) {
+  const scope = props.appSessionScopeId ?? props.chatSessionId;
+  const key = useAppSessionReopenKey(props.chatSessionId, scope);
+  return <MountedThread key={key} {...props} />;
+}
+
+function MountedThread({
   harnessStartupPhase,
   chatSessionId,
   appSessionScopeId = chatSessionId,

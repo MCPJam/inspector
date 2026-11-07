@@ -65,6 +65,7 @@ import type { DialogElicitation } from "@/components/ToolsTab";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { collectInputHistory } from "@/components/chat-v2/chat-input/input-history";
 import { Thread } from "@/components/chat-v2/thread";
+import { useAppSessionReopenKey } from "@/components/chat-v2/thread/app-session-scope";
 import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
 import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ServerWithName } from "@/hooks/use-app-state";
@@ -101,10 +102,9 @@ import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi
 import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
-import { useChatSession } from "@/hooks/use-chat-session";
 import {
   DETACH_FORK_FAILED_MESSAGE,
-  type ChatSessionResetReason,
+  useChatSession,
 } from "@/hooks/use-chat-session";
 import {
   RESUMED_THREAD_CONFLICT_MESSAGE,
@@ -516,13 +516,15 @@ export function ChatTabV2({
     hostStyle:
       hostStyle === "claude" || hostStyle === "chatgpt" ? hostStyle : undefined,
     minimalMode,
-    onReset: (reason?: ChatSessionResetReason) => {
-      if (reason === "auth-bootstrap" || reason === "hydrate") {
+    onReset: (reason, hydration) => {
+      if (reason === "auth-bootstrap") {
         return;
       }
-      setModelContextQueue([]);
-      setWidgetStateQueue([]);
-      if (reason === "servers-changed") {
+      if (reason !== "conflict-fork" && !(reason === "hydrate" && hydration)) {
+        setModelContextQueue([]);
+        setWidgetStateQueue([]);
+      }
+      if (reason === "servers-changed" || reason === "hydrate") {
         return;
       }
       setInput("");
@@ -1527,10 +1529,11 @@ export function ChatTabV2({
     );
   }, [modelCompareCards]);
 
+  const appReopenKey = useAppSessionReopenKey(chatSessionId, appSessionScopeId);
   useEffect(() => {
     setTraceViewMode("chat");
     setRevealedInChat(false);
-  }, [chatSessionId]);
+  }, [appSessionScopeId, appReopenKey]);
 
   useEffect(() => {
     if (!evalChatHandoff) {
@@ -2833,6 +2836,9 @@ export function ChatTabV2({
                     <div className="flex flex-1 min-h-0 flex-col">
                       <SingleModelTraceDiagnosticsBody
                         chatSessionId={chatSessionId}
+                        appSessionScopeId={appSessionScopeId}
+                        onModelContextUpdate={handleModelContextUpdate}
+                        onWidgetStateChange={handleWidgetStateChange}
                         activeTraceViewMode={activeTraceViewMode}
                         isThreadEmpty={isThreadEmpty}
                         showLiveTracePending={

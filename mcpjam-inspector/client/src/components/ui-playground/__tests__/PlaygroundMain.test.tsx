@@ -22,6 +22,7 @@ import { DEFAULT_CHAT_COMPOSER_PLACEHOLDER } from "@/components/chat-v2/shared/c
 import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
+import * as extensionOwners from "@/components/host-workspace/extension-owners";
 import { saveSelectedModelId } from "@/lib/selected-model-storage";
 import { invalidateChatHistoryPrefetch } from "@/components/chat-v2/history/chat-history-prefetch";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
@@ -431,6 +432,7 @@ vi.mock("@/components/chat-v2/thread", () => ({
     onEditUserMessage,
     editDisabled,
     sendFollowUpMessage,
+    onModelContextUpdate,
     onFullscreenChange,
     interactive,
     onToolApprovalResponse,
@@ -447,6 +449,9 @@ vi.mock("@/components/chat-v2/thread", () => ({
     // Widget-driven follow-ups bypass the composer, so tests need the handler
     // itself — a rendered button could never stand in for that path.
     sendFollowUpMessage?: (text: string) => void;
+    onModelContextUpdate?: React.ComponentProps<
+      typeof import("@/components/chat-v2/thread").Thread
+    >["onModelContextUpdate"];
     // A widget going fullscreen is what swaps the docked composer for the
     // pinned overlay; only the widget can report it, so tests drive it here.
     onFullscreenChange?: (fullscreen: boolean) => void;
@@ -459,6 +464,7 @@ vi.mock("@/components/chat-v2/thread", () => ({
         onEditUserMessage,
         editDisabled,
         sendFollowUpMessage,
+        onModelContextUpdate,
         onFullscreenChange,
         interactive,
         onToolApprovalResponse,
@@ -1017,6 +1023,43 @@ describe("PlaygroundMain", () => {
       expect(rail.result.current.result).toBeNull();
       section.unmount();
     });
+  });
+
+  it("preserves the reopened source's forms when the fork's archive finishes later", async () => {
+    mockUseChatSession.chatSessionId = "fork";
+    mockUseChatSession.appSessionScopeId = "source";
+    const scope = vi.spyOn(extensionOwners, "archivedChatAppScope");
+    try {
+      const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+      const finishArchive =
+        usePlaygroundChatHistoryBridgeStore.getState().bridge?.onSessionAction;
+      expect(finishArchive).toBeDefined();
+      mockUseChatSession.chatSessionId = "source";
+      rerender(<PlaygroundMain {...defaultProps} />);
+      await act(async () => {
+        await finishArchive!({
+          action: "archive",
+          session: {
+            _id: "history-fork",
+            chatSessionId: "fork",
+            firstMessagePreview: "App",
+            status: "active",
+            directVisibility: "private",
+            version: 1,
+            messageCount: 1,
+            startedAt: 1,
+            lastActivityAt: 1,
+            isPinned: false,
+            manualUnread: false,
+            isUnread: false,
+          },
+        });
+      });
+      expect(scope).toHaveBeenCalledWith("fork", "source", "source");
+      expect(scope).toHaveReturnedWith("fork");
+    } finally {
+      scope.mockRestore();
+    }
   });
 
   it("retains only unsnapshotted injected Apps through the real reactive same-row history refresh", async () => {
@@ -4328,6 +4371,58 @@ describe("PlaygroundMain", () => {
           expect(overrides).not.toHaveProperty("counter-call");
         }
       }
+    );
+
+    it.each([
+      ["conflict-fork", false, true],
+      ["hydrate", true, true],
+      ["hydrate", false, false],
+      ["reset", false, false],
+      ["fork", false, false],
+    ] as const)(
+      "scopes pending widget context after %s (same-row refresh: %s)",
+      async (reason, sameRow, keep) => {
+        mockUseChatSession.messages = [
+          {
+            id: "counter",
+            role: "assistant",
+            parts: [{ type: "text", text: "Opened" }],
+          },
+        ];
+        render(<PlaygroundMain {...defaultProps} />);
+        const context = { structuredContent: { count: 7 } };
+        act(() =>
+          mockThread.mock.lastCall![0].onModelContextUpdate(
+            "counter-call",
+            context,
+          ),
+        );
+        act(() =>
+          capturedChatSessionOptions.onReset(
+            reason,
+            sameRow
+              ? {
+                  appSessionScopeId: mockUseChatSession.appSessionScopeId,
+                  messages: mockUseChatSession.messages,
+                  toolRenderOverrides: {},
+                }
+              : undefined,
+          ),
+        );
+        await act(async () => {
+          mockThread.mock.lastCall![0].sendFollowUpMessage("Read the counter");
+        });
+        await waitFor(() =>
+          expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+              text: "Read the counter",
+              widgetModelContext: keep
+                ? [{ toolCallId: "counter-call", context }]
+                : [],
+            }),
+          ),
+        );
+      },
     );
 
     it("injects messages when pendingExecution is set", async () => {

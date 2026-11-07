@@ -9,6 +9,7 @@ import { parseSSEStream } from "@/lib/sse";
 import type { RetainedResourceProof } from "@/shared/retained-app-resources";
 import type { McpWidgetExecutionContext } from "@/shared/mcp-tool-origin-metadata";
 import { ToolPart } from "./parts/tool-part";
+import { useAppSessionScope } from "./app-session-scope";
 import { toast } from "@/lib/toast";
 import { HOSTED_HARNESS_INPUT_VERSION } from "@/shared/hosted-elicitation";
 
@@ -31,6 +32,7 @@ export function useForwardedWidgetCalls(
   enabled = true,
   parentExecutionId?: string,
 ) {
+  const appScope = useAppSessionScope(chatSessionId);
   const [pending, setPending] = useState<Pending[]>([]);
   const requests = useRef(new Set<AbortController>());
   useEffect(() => {
@@ -40,7 +42,7 @@ export function useForwardedWidgetCalls(
       for (const request of activeRequests) request.abort();
       activeRequests.clear();
     };
-  }, [chatSessionId, enabled, parentExecutionId]);
+  }, [appScope, enabled, parentExecutionId]);
 
   const answer = async (entry: Pending, approved: boolean) => {
     try {

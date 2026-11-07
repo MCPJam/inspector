@@ -52,8 +52,12 @@ export const useActiveChatSessionStore = create<ActiveChatSessionState>(
     setRestorationPending: (restorationPending) => set({ restorationPending }),
     restoredSession: null,
     setRestoredSession: (restoredSession) =>
-      set((state) => ({ restoredSession, sessionId: restoredSession.sessionId,
-        ...(state.sessionId !== restoredSession.sessionId ? { appSessionScopeId: null, publisher: null } : {}),
+      set((state) => ({
+        restoredSession,
+        sessionId: restoredSession.sessionId,
+        ...(state.sessionId !== restoredSession.sessionId
+          ? { appSessionScopeId: null, publisher: null }
+          : {}),
       })),
     approvalSettings: {},
     setApprovalSetting: (id, enabled) =>
@@ -63,14 +67,27 @@ export const useActiveChatSessionStore = create<ActiveChatSessionState>(
     sessionId: null,
     appSessionScopeId: null,
     publisher: null,
-    publishSession: (publisher, session) => set((state) => ({
-      ...session, publisher,
-      ...(state.restoredSession?.sessionId !== session.sessionId && state.sessionId !== session.sessionId
-        ? { restoredSession: null } : {}),
-    })),
-    releaseSession: (publisher) => set((state) => state.publisher === publisher
-      ? { sessionId: null, appSessionScopeId: null, publisher: null, compareActive: false, viewOnly: false }
-      : state),
+    publishSession: (publisher, session) =>
+      set((state) => ({
+        ...session,
+        publisher,
+        ...(state.restoredSession?.sessionId !== session.sessionId &&
+        state.sessionId !== session.sessionId
+          ? { restoredSession: null }
+          : {}),
+      })),
+    releaseSession: (publisher) =>
+      set((state) =>
+        state.publisher === publisher
+          ? {
+              sessionId: null,
+              appSessionScopeId: null,
+              publisher: null,
+              compareActive: false,
+              viewOnly: false,
+            }
+          : state,
+      ),
     compareActive: false,
     viewOnly: false,
     browserLocation: null,
@@ -79,7 +96,9 @@ export const useActiveChatSessionStore = create<ActiveChatSessionState>(
     setSessionId: (sessionId) =>
       set((state) => ({
         sessionId,
-        ...(sessionId !== state.sessionId ? { appSessionScopeId: null, publisher: null } : {}),
+        ...(sessionId !== state.sessionId
+          ? { appSessionScopeId: null, publisher: null }
+          : {}),
         ...(sessionId !== state.sessionId &&
         state.restoredSession?.sessionId !== sessionId
           ? { restoredSession: null }

@@ -16,6 +16,7 @@ import {
 } from "@/shared/plugin-message";
 import { buildMentionContextMessages } from "@/shared/user-context-message";
 import type { PluginMentionSelection } from "@/shared/plugin-mentions";
+import type { PluginWorkspaceDescriptor } from "@/shared/plugin-workspace";
 import { createPrivateFormAnswer } from "@/lib/apis/private-form-answer";
 import { sameChatAuthSession } from "@/lib/chat-auth-session";
 import {
@@ -486,7 +487,7 @@ function useMaybeSharedAppState(): AppState | null {
 function pluginGlobalTurnFields(
   global:
     | {
-        workspace: import("@/shared/plugin-workspace").PluginWorkspaceDescriptor;
+        workspace: PluginWorkspaceDescriptor;
         references: string[];
       }
     | undefined,
@@ -512,15 +513,13 @@ export interface UseChatSessionOptions {
    */
   pluginGlobalContext?: () =>
     | {
-        workspace: import("@/shared/plugin-workspace").PluginWorkspaceDescriptor;
+        workspace: PluginWorkspaceDescriptor;
         references: string[];
       }
     | undefined;
   pluginWorkspace?:
-    | import("@/shared/plugin-workspace").PluginWorkspaceDescriptor
-    | ((chatSessionId: string) =>
-        | import("@/shared/plugin-workspace").PluginWorkspaceDescriptor
-        | undefined);
+    | PluginWorkspaceDescriptor
+    | ((appSessionScopeId: string) => PluginWorkspaceDescriptor | undefined);
   prepareAuthRecovery?: (
     continuationId: string,
   ) => import("@/lib/scope-step-up-pending").PendingWriteResult;
@@ -2287,16 +2286,14 @@ export function useChatSession(
   const [appSessionScopeId, setAppSessionScopeId] = useState(chatSessionId);
   const appSessionScopeIdRef = useRef(appSessionScopeId);
   appSessionScopeIdRef.current = appSessionScopeId;
-  // A row id is not a lifetime: returning to the source row of a conflict
-  // fork must not reclaim the fork's retained App scope. Only an explicit
-  // continuation supplies a scope; all other transitions mint a fresh one.
-  const setChatSessionId = useCallback((id: string, appScopeId = generateId()) => {
+  // Only a conflict continuation keeps the previous row as its App owner.
+  const setChatSessionId = useCallback((id: string, appScopeId = id) => {
     setAppSessionScopeId(appScopeId);
     setChatSessionIdState(id);
   }, []);
   const pluginWorkspace =
     typeof options.pluginWorkspace === "function"
-      ? options.pluginWorkspace(chatSessionId)
+      ? options.pluginWorkspace(appSessionScopeId)
       : options.pluginWorkspace;
   const chatSessionIdRef = useRef(chatSessionId);
   chatSessionIdRef.current = chatSessionId;
@@ -6352,6 +6349,7 @@ export function useChatSession(
         : null;
       skipNextForkDetectionRef.current = true;
       rewindRef.current = null;
+      const sameRow = chatSessionIdRef.current === session.chatSessionId;
       await queueSessionHydration({
         sessionId: session.chatSessionId,
         messages: uiMessages,
@@ -6362,11 +6360,12 @@ export function useChatSession(
       });
       if (chatSessionIdRef.current === session.chatSessionId &&
           (!options?.shouldApply || options.shouldApply())) {
-        onResetRef.current?.("hydrate", {
+        const hydration = {
           appSessionScopeId: appSessionScopeIdRef.current,
           messages: uiMessages,
           toolRenderOverrides: overrides,
-        });
+        };
+        onResetRef.current?.("hydrate", sameRow ? hydration : undefined);
       }
     },
     [

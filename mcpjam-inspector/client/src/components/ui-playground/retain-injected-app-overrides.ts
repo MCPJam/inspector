@@ -7,11 +7,17 @@ export function retainInjectedAppOverrides(
   messages: UIMessage[],
   persisted: Record<string, ToolRenderOverride>,
 ) {
-  const live = new Set(messages.flatMap((message) => message.parts.flatMap((part) =>
-    "toolCallId" in part && typeof part.toolCallId === "string" ? [part.toolCallId] : [],
-  )));
-  const entries = Object.entries(previous).filter(([id]) =>
-    live.has(id) && !Object.hasOwn(persisted, id),
+  const live = new Set(
+    messages.flatMap((message) =>
+      message.parts.flatMap((part) =>
+        "toolCallId" in part && typeof part.toolCallId === "string"
+          ? [part.toolCallId]
+          : [],
+      ),
+    ),
+  );
+  const entries = Object.entries(previous).filter(
+    ([id]) => live.has(id) && !Object.hasOwn(persisted, id),
   );
   return entries.length === Object.keys(previous).length
     ? previous

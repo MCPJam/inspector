@@ -1456,9 +1456,15 @@ describe("useChatSession fork preservation", () => {
   it("retains App scope, in-flight registrations and aliases only for a conflict continuation", async () => {
     const registry = useAppToolsRegistry.getState();
     const onReset = vi.fn();
+    const pluginWorkspace = vi.fn(() => undefined);
     const renders: string[][] = [];
     const { result } = renderHook(() => {
-      const chat = useChatSession({ selectedServers: [], onReset, hostedContext: { projectId: "project-1", selectedServerIds: [] } });
+      const chat = useChatSession({
+        selectedServers: [],
+        onReset,
+        pluginWorkspace,
+        hostedContext: { projectId: "project-1", selectedServerIds: [] },
+      });
       renders.push(chat.messages.map((message) => message.id));
       return chat;
     });
@@ -1496,6 +1502,7 @@ describe("useChatSession fork preservation", () => {
       expect(renders.length).toBeGreaterThan(0);
       expect(renders.every((ids) => ids.includes("live-app"))).toBe(true);
       expect(onReset).toHaveBeenLastCalledWith("conflict-fork");
+      expect(pluginWorkspace).toHaveBeenLastCalledWith(scope);
       releaseHash();
       await registration;
       expect(pendingCall.signal.aborted).toBe(false);
@@ -1517,7 +1524,9 @@ describe("useChatSession fork preservation", () => {
         ]),
       });
       act(() => result.current.resetChat());
-      expect(result.current.appSessionScopeId).not.toBe(result.current.chatSessionId);
+      expect(result.current.appSessionScopeId).toBe(
+        result.current.chatSessionId,
+      );
       expect(result.current.appSessionScopeId).not.toBe(scope);
       expect(mockState.lastTransportOptions.body().appTools).toEqual([]);
     } finally {
@@ -1537,20 +1546,20 @@ describe("useChatSession fork preservation", () => {
     await result.current.detachToLocalFork([], { preserveAppSession: true });
     expect(result.current.appSessionScopeId).toBe(scope);
     await result.current.startChatWithMessages([]);
-    expect(result.current.appSessionScopeId).not.toBe(result.current.chatSessionId);
+    expect(result.current.appSessionScopeId).toBe(result.current.chatSessionId);
     expect(result.current.appSessionScopeId).not.toBe(scope);
     const branchScope = result.current.appSessionScopeId;
     await result.current.loadChatSession({ chatSessionId: "unrelated-history", version: 4 });
-    expect(result.current.appSessionScopeId).not.toBe("unrelated-history");
+    expect(result.current.appSessionScopeId).toBe("unrelated-history");
     expect(result.current.appSessionScopeId).not.toBe(branchScope);
     const pendingFork = result.current.detachToLocalFork([], { preserveAppSession: true });
     result.current.resetChat();
     expect(await pendingFork).toBeNull();
-    expect(result.current.appSessionScopeId).not.toBe(result.current.chatSessionId);
+    expect(result.current.appSessionScopeId).toBe(result.current.chatSessionId);
     expect(result.current.appSessionScopeId).not.toBe("unrelated-history");
   });
 
-  it("never reclaims an ancestor App scope when reopening history, but keeps same-row refresh stable", async () => {
+  it("restores the row scope on history navigation and preserves it across same-row refresh", async () => {
     const { result } = renderHook(() => useChatSession({ selectedServers: [] }));
     await result.current.loadChatSession({ chatSessionId: "source-history", version: 4 });
     const sourceScope = result.current.appSessionScopeId;
@@ -1559,7 +1568,8 @@ describe("useChatSession fork preservation", () => {
     await result.current.loadChatSession({ chatSessionId: "source-history", version: 5 });
     expect(result.current.chatSessionId).toBe("source-history");
     const reopenedScope = result.current.appSessionScopeId;
-    expect(reopenedScope).not.toBe(sourceScope);
+    expect(reopenedScope).toBe("source-history");
+    expect(reopenedScope).toBe(sourceScope);
     await result.current.loadChatSession({ chatSessionId: "source-history", version: 6 });
     expect(result.current.appSessionScopeId).toBe(reopenedScope);
     await result.current.detachToLocalFork([], { preserveAppSession: true });
@@ -1568,8 +1578,7 @@ describe("useChatSession fork preservation", () => {
     const unrelatedScope = result.current.appSessionScopeId;
     expect(unrelatedScope).not.toBe(reopenedScope);
     await result.current.loadChatSession({ chatSessionId: "source-history", version: 6 });
-    expect(result.current.appSessionScopeId).not.toBe(sourceScope);
-    expect(result.current.appSessionScopeId).not.toBe(reopenedScope);
+    expect(result.current.appSessionScopeId).toBe(sourceScope);
     expect(result.current.appSessionScopeId).not.toBe(unrelatedScope);
   });
 

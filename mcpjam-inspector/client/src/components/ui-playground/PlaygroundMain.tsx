@@ -71,6 +71,7 @@ import {
 } from "@mcpjam/widget-react";
 import {
   chatOwnerScope,
+  archivedChatAppScope,
   chatOwnerWorkspace,
   globalOwnerWorkspace,
   type ExtensionOwnerIdentity,
@@ -151,6 +152,7 @@ import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Thread } from "@/components/chat-v2/thread";
+import { useAppSessionReopenKey } from "@/components/chat-v2/thread/app-session-scope";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { collectInputHistory } from "@/components/chat-v2/chat-input/input-history";
 import { StickToBottom } from "use-stick-to-bottom";
@@ -1493,7 +1495,9 @@ export function PlaygroundMain({
       : null,
     preferredModelId: previewedHost?.config?.modelId ?? null,
     onReset: (reason?: ChatSessionResetReason, hydration?: ChatSessionHydration) => {
-      setModelContextQueue([]);
+      if (reason !== "conflict-fork" && !(reason === "hydrate" && hydration)) {
+        setModelContextQueue([]);
+      }
       setPreludeTraceExecutions([]);
       if (reason === "hydrate" && hydration &&
           injectedAppScopeRef.current === hydration.appSessionScopeId) {
@@ -1757,12 +1761,14 @@ export function PlaygroundMain({
   ) as ThreadThemeMode;
   const themePreset = usePreferencesStore((s) => s.themePreset);
   const effectiveThreadTheme = extractHostTheme(hostContext) ?? globalThemeMode;
+  const appReopenKey = useAppSessionReopenKey(chatSessionId, appSessionScopeId);
+  // Reopening the source starts a new inline workspace at the same address.
   const extensionScope = useMemo(
     () =>
       extensionIdentity && !multiModelEnabled
-        ? chatOwnerScope(extensionIdentity, chatSessionId)
+        ? chatOwnerScope(extensionIdentity, appSessionScopeId)
         : null,
-    [extensionIdentity, chatSessionId, multiModelEnabled],
+    [extensionIdentity, appSessionScopeId, multiModelEnabled, appReopenKey],
   );
   // The servers a hidden environment's plugins add to this chat's turns. Empty
   // unless the chat actually carries them (see `hiddenEnvironmentActive`), so
@@ -1922,7 +1928,8 @@ export function PlaygroundMain({
     extensionScope && extensionIdentity
       ? {
           identity: extensionIdentity,
-          chatId: chatSessionId,
+          chatId: appSessionScopeId,
+          sessionId: chatSessionId,
           servers: extensionServers,
           // The client's per-extension toggles (C1). One switched off removes
           // only that capability; running Apps keep running.
@@ -1932,7 +1939,7 @@ export function PlaygroundMain({
           hostRevision: previewedHost?.config?.id,
         }
       : extensionIdentityPending
-        ? { identity: null, chatId: chatSessionId, servers: [], hold: true }
+        ? { identity: null, chatId: appSessionScopeId, servers: [], hold: true }
         : null,
     extensionPorts,
   );
@@ -2006,6 +2013,7 @@ export function PlaygroundMain({
             extensionScope.projectId,
             extensionScope.hostId,
             extensionScope.pluginWorkspace.workspaceId,
+            appReopenKey,
           ]),
           projectId: extensionScope.projectId,
           hostId: extensionScope.hostId,
@@ -3644,10 +3652,14 @@ export function PlaygroundMain({
 
   const currentHistoryTargetRef = useRef({
     chatSessionId,
+    appSessionScopeId,
+    extensionIdentity,
     projectId: convexProjectId,
   });
   currentHistoryTargetRef.current = {
     chatSessionId,
+    appSessionScopeId,
+    extensionIdentity,
     projectId: convexProjectId,
   };
 
@@ -4081,11 +4093,20 @@ export function PlaygroundMain({
       // An archived chat's Apps close once it is no longer the shown chat,
       // and its pending extension forms are cancelled once (D6).
       if (action === "archive") {
-        releaseExtensionChat(session.chatSessionId);
-        if (extensionIdentity)
+        // The user may have reopened the source while the archive was pending.
+        const visible = currentHistoryTargetRef.current;
+        let scope: string | null = session.chatSessionId;
+        if (visible.extensionIdentity === extensionIdentity) {
+          releaseExtensionChat(session.chatSessionId);
+          scope = archivedChatAppScope(
+            session.chatSessionId,
+            visible.chatSessionId,
+            visible.appSessionScopeId,
+          );
+        }
+        if (extensionIdentity && scope)
           cancelComposerForms(
-            chatOwnerWorkspace(extensionIdentity, session.chatSessionId)
-              .workspaceId,
+            chatOwnerWorkspace(extensionIdentity, scope).workspaceId,
           );
       }
       if (
@@ -4596,8 +4617,12 @@ export function PlaygroundMain({
     previewedHostId,
   ]);
   const pluginMessage = usePluginMessage({
-    threadId: chatSessionId,
-    scope: JSON.stringify([extensionOwnerScope, chatSessionId]),
+    threadId: appSessionScopeId,
+    scope: JSON.stringify([
+      extensionOwnerScope,
+      appSessionScopeId,
+      chatSessionId,
+    ]),
     disabled:
       !extensionScope ||
       isCompareMode ||
@@ -7262,6 +7287,7 @@ export function PlaygroundMain({
                       >
                         <SingleModelTraceDiagnosticsBody
                           chatSessionId={chatSessionId}
+                          appSessionScopeId={appSessionScopeId}
                           activeTraceViewMode={activeTraceViewMode}
                           isThreadEmpty={isThreadEmpty}
                           showLiveTracePending={showLiveTracePending}

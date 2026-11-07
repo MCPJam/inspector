@@ -50,6 +50,16 @@ export function globalOwnerWorkspace(
   };
 }
 
+/** The visible continuation owns the source's forms until it is left. */
+export function archivedChatAppScope(
+  archivedId: string,
+  sessionId: string,
+  appScopeId: string,
+): string | null {
+  if (archivedId === sessionId) return appScopeId;
+  return archivedId === appScopeId ? null : archivedId;
+}
+
 export function chatOwnerWorkspace(
   identity: ExtensionOwnerIdentity,
   chatId: string,

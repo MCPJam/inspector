@@ -11,10 +11,16 @@ export function usePublishActiveChatSession(
   const [owner] = useState(() => Symbol("active-chat"));
   useLayoutEffect(() => {
     useActiveChatSessionStore.getState().publishSession(owner, {
-      sessionId, appSessionScopeId, compareActive, viewOnly,
+      sessionId,
+      appSessionScopeId,
+      compareActive,
+      viewOnly,
     });
   }, [owner, sessionId, appSessionScopeId, compareActive, viewOnly]);
-  useLayoutEffect(() => () => {
-    useActiveChatSessionStore.getState().releaseSession(owner);
-  }, [owner]);
+  useLayoutEffect(
+    () => () => {
+      useActiveChatSessionStore.getState().releaseSession(owner);
+    },
+    [owner],
+  );
 }

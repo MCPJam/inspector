@@ -127,6 +127,32 @@ describe("manual app runs", () => {
     expect(useAppToolInvocationLog.getState().records).toHaveLength(mode === "compare" ? 0 : 1);
   });
 
+  it("keeps the rail on a conflict but clears it when the user reopens the source", async () => {
+    const { result, call } = await mount();
+    act(() => result.current.detailProps?.onFieldChange("san", "e4"));
+    await act(async () => result.current.run());
+    const selection = result.current.selectedKey;
+    const completed = result.current.result;
+    const runFromFork = result.current.run;
+    expect(completed?.ok).toBe(true);
+
+    act(() => useActiveChatSessionStore.setState({ sessionId: "fork-row" }));
+    expect(result.current.selectedKey).toBe(selection);
+    expect(
+      result.current.fields.find((field) => field.name === "san")?.value,
+    ).toBe("e4");
+    expect(result.current.result).toEqual(completed);
+
+    act(() => useActiveChatSessionStore.setState({ sessionId: "chat-1" }));
+    expect(result.current.selectedKey).toBeNull();
+    expect(result.current.fields).toEqual([]);
+    expect(result.current.result).toBeNull();
+
+    act(() => result.current.select(result.current.groups[0].tools[0].key));
+    await act(async () => runFromFork());
+    expect(call).toHaveBeenCalledOnce();
+  });
+
   it("preserves selected detail, input draft and completed result across read-only and writable transitions", async () => {
     const { result, call } = await mount();
     act(() => result.current.detailProps?.onFieldChange("san", "e4"));
