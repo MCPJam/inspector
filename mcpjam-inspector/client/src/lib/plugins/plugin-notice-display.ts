@@ -177,6 +177,18 @@ export function showPluginNotice(
   data: PluginNoticeData,
 ): boolean {
   if (data.kind === "skipped" && data.plugins.length === 0) return false;
+  if (data.kind === "skipped" && data.plugins.length > 1) {
+    const reviews = data.plugins.filter((plugin) => plugin.reviewCommand);
+    if (reviews.length) {
+      let shown = false;
+      for (const plugin of reviews)
+        shown = showPluginNotice(chatSessionId, { kind: "skipped", plugins: [plugin] }) || shown;
+      const remaining = data.plugins.filter((plugin) => !plugin.reviewCommand);
+      if (remaining.length)
+        shown = showPluginNotice(chatSessionId, { kind: "skipped", plugins: remaining }) || shown;
+      return shown;
+    }
+  }
   const key = pluginNoticeKey(chatSessionId, data);
   if (shownNotices.has(key)) return false;
   if (shownNotices.size >= MAX_SHOWN) {
