@@ -4125,7 +4125,7 @@ export function useChatSession(
         // — and that second one stalls the turn.
         turnRequireToolApprovalRef.current = requireToolApprovalRef.current;
         harnessStartupRequestRef.current = crypto.randomUUID();
-        setHarnessStartupPhase(null);
+        setHarnessStartupPhase(harnessId ? "preparing" : null);
         const taskOwnerScope = getOwnedTaskScope();
         const ownerRequestId = taskOwnerRequests.current.capture(
           generateId(),
@@ -4320,6 +4320,7 @@ export function useChatSession(
         : {}),
     });
   }, [
+    harnessId,
     savedClientSendGuard,
     options.savedClientConfig,
     selectedModel,
@@ -6842,7 +6843,9 @@ export function useChatSession(
   }, [chatSessionId]);
 
   return {
-    harnessStartupPhase: status === "submitted" || status === "streaming" ? harnessStartupPhase : null,
+    harnessStartupPhase: status === "submitted" && harnessId
+      ? (harnessStartupPhase ?? "preparing")
+      : status === "streaming" ? harnessStartupPhase : null,
     // Chat state
     messages,
     setMessages,
