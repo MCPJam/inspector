@@ -886,6 +886,47 @@ describe("project run history metrics", () => {
     });
   });
 
+  it("navLanding drops Suite Health and searches runs in place of the heading", async () => {
+    arrangeHistory();
+    const user = userEvent.setup();
+    render(
+      <ProjectRunsTable
+        projectId="proj_1"
+        onSelectRun={vi.fn()}
+        historyMetricsEnabled
+        evaluateLayout
+        navLanding
+      />,
+    );
+    await waitFor(() => expect(inTable().getByText("50%")).toBeVisible());
+    expect(screen.queryByRole("region", { name: "Suite Health" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Runs" })).toBeNull();
+    const search = screen.getByRole("searchbox", { name: "Search runs" });
+    expect(search).toHaveAttribute("placeholder", "All runs");
+    await user.type(search, "sdk suite");
+    expect(
+      inTable().getAllByRole("button", { name: /^Open run #/ }),
+    ).toHaveLength(1);
+    await user.clear(search);
+    await user.type(search, " nothing ");
+    expect(screen.getByText("No runs match “nothing”.")).toBeVisible();
+  });
+
+  it("keeps the Runs heading and Suite Health without navLanding", async () => {
+    arrangeHistory();
+    render(
+      <ProjectRunsTable
+        projectId="proj_1"
+        onSelectRun={vi.fn()}
+        historyMetricsEnabled
+        evaluateLayout
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Runs" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Suite Health" })).toBeVisible();
+    expect(screen.queryByRole("searchbox", { name: "Search runs" })).toBeNull();
+  });
+
   it("keeps Suite Health drawn while the next page's history is read", async () => {
     const first = makeRow({ _id: "first", runNumber: 2, createdAt: 2000 });
     const older = makeRow({ _id: "older", runNumber: 1, createdAt: 1000 });

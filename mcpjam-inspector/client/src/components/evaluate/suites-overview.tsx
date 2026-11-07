@@ -131,56 +131,16 @@ function OverviewBody({
   const [modelFilter, setModelFilter] = useState(ALL_EVAL_FILTER_VALUES);
   // Resolved once per suite per data change, not four times per render: the
   // model pass alone is a scan of `environments` for every environment id.
-  const resolved = useMemo(() => {
-    const environmentsById = new Map(
-      environments.map((environment) => [
-        environment.environmentId,
-        environment,
-      ]),
-    );
-    const entries = overview.map(({ suite }) => {
-      const ids = suite.environmentIds?.length
-        ? suite.environmentIds
-            .map((id) => environmentsById.get(id)?.hostId)
-            .filter((hostId): hostId is string => Boolean(hostId))
-        : (suite.hostAttachments ?? []).map((host) => host.namedHostId);
-      // A host id is not a name. Until `useHostList` resolves, an unnamed id
-      // is UNKNOWN, not a label — printing the raw id put opaque Convex ids in
-      // the column and, worse, in the filter's option list.
-      const clients = [
-        ...new Set(
-          ids
-            .map(
-              (id) =>
-                hostNamesById.get(id)?.trim() ||
-                suite.hostAttachments
-                  ?.find((host) => host.namedHostId === id)
-                  ?.hostName?.trim() ||
-                null,
-            )
-            .filter((name): name is string => Boolean(name)),
-        ),
-      ];
-      // `null` where the model is not resolved YET, so the placeholder stays a
-      // display string and never becomes a value the Model filter offers.
-      const models = [
-        ...new Set(
-          suite.environmentIds?.length
-            ? suite.environmentIds.map((id) => {
-                const environment = environmentsById.get(id);
-                return environment
-                  ? environment.modelId ||
-                      hostModelsById.get(environment.hostId) ||
-                      null
-                  : null;
-              })
-            : [suite.defaultConfig?.modelId || null],
-        ),
-      ];
-      return [suite._id, { clients, models }] as const;
-    });
-    return new Map(entries);
-  }, [overview, environments, hostNamesById, hostModelsById]);
+  const resolved = useMemo(
+    () =>
+      resolveSuiteTargets(
+        overview,
+        environments,
+        hostNamesById,
+        hostModelsById,
+      ),
+    [overview, environments, hostNamesById, hostModelsById],
+  );
   const clientsForSuite = (suite: EvalSuite) =>
     resolved.get(suite._id)?.clients ?? [];
   const modelsForSuite = (suite: EvalSuite) =>
@@ -382,18 +342,79 @@ function OverviewBody({
   );
 }
 
+/** Each suite's clients and models, by suite id. `null` is a model not resolved yet. */
+export function resolveSuiteTargets(
+  overview: readonly EvalSuiteOverviewEntry[],
+  environments: readonly Pick<
+    ProjectEnvironmentView,
+    "environmentId" | "hostId" | "modelId"
+  >[],
+  hostNamesById: ReadonlyMap<string, string>,
+  hostModelsById: ReadonlyMap<string, string>,
+): Map<string, { clients: string[]; models: (string | null)[] }> {
+  const environmentsById = new Map(
+    environments.map((environment) => [environment.environmentId, environment]),
+  );
+  const entries = overview.map(({ suite }) => {
+    const ids = suite.environmentIds?.length
+      ? suite.environmentIds
+          .map((id) => environmentsById.get(id)?.hostId)
+          .filter((hostId): hostId is string => Boolean(hostId))
+      : (suite.hostAttachments ?? []).map((host) => host.namedHostId);
+    // A host id is not a name. Until `useHostList` resolves, an unnamed id
+    // is UNKNOWN, not a label — printing the raw id put opaque Convex ids in
+    // the column and, worse, in the filter's option list.
+    const clients = [
+      ...new Set(
+        ids
+          .map(
+            (id) =>
+              hostNamesById.get(id)?.trim() ||
+              suite.hostAttachments
+                ?.find((host) => host.namedHostId === id)
+                ?.hostName?.trim() ||
+              null,
+          )
+          .filter((name): name is string => Boolean(name)),
+      ),
+    ];
+    // `null` where the model is not resolved YET, so the placeholder stays a
+    // display string and never becomes a value the Model filter offers.
+    const models = [
+      ...new Set(
+        suite.environmentIds?.length
+          ? suite.environmentIds.map((id) => {
+              const environment = environmentsById.get(id);
+              return environment
+                ? environment.modelId ||
+                    hostModelsById.get(environment.hostId) ||
+                    null
+                : null;
+            })
+          : [suite.defaultConfig?.modelId || null],
+      ),
+    ];
+    return [suite._id, { clients, models }] as const;
+  });
+  return new Map(entries);
+}
+
 function stopRowClick(event: MouseEvent) {
   event.preventDefault();
   event.stopPropagation();
 }
 
-function RowRunControl({
+export function RowRunControl({
   suite,
   latestRun,
   onRerun,
   onCancelRun,
   rerunningSuiteId,
   cancellingRunId,
+  cancelling,
+  cancelDisabled = false,
+  runLabel = "Setup Run",
+  className,
 }: {
   suite: EvalSuite;
   latestRun: EvalSuiteRun | null;
@@ -401,6 +422,13 @@ function RowRunControl({
   onCancelRun: (runId: string) => void;
   rerunningSuiteId: string | null;
   cancellingRunId: string | null;
+  /** Overrides the spinner rule when a cancel covers more than the latest run. */
+  cancelling?: boolean;
+  /** Blocks Cancel while another cancel is in flight. */
+  cancelDisabled?: boolean;
+  runLabel?: string;
+  /** Extra classes for the button, e.g. the card's split shape. */
+  className?: string;
 }) {
   const suiteTitle = suite.name || "Untitled suite";
   // An environment suite runs its environments' servers, not its legacy
@@ -409,7 +437,8 @@ function RowRunControl({
   const latestRunInProgress =
     latestRun?.status === "running" || latestRun?.status === "pending";
   const isStarting = rerunningSuiteId === suite._id && !latestRunInProgress;
-  const isCancelling = Boolean(latestRun && cancellingRunId === latestRun._id);
+  const isCancelling =
+    cancelling ?? Boolean(latestRun && cancellingRunId === latestRun._id);
 
   if (latestRunInProgress && latestRun) {
     return (
@@ -417,10 +446,10 @@ function RowRunControl({
         type="button"
         variant="outline"
         size="sm"
-        className="h-7 px-2.5"
+        className={cn("h-7 px-2.5", className)}
         data-testid="evals-suites-overview-cancel"
         aria-label={`Cancel run for ${suiteTitle}`}
-        disabled={isCancelling}
+        disabled={isCancelling || cancelDisabled}
         onClick={(event) => {
           stopRowClick(event);
           onCancelRun(latestRun._id);
@@ -440,7 +469,7 @@ function RowRunControl({
         type="button"
         variant="outline"
         size="sm"
-        className="h-7 px-2.5"
+        className={cn("h-7 px-2.5", className)}
         data-testid="evals-suites-overview-running"
         aria-label={`Running ${suiteTitle}`}
         disabled
@@ -455,10 +484,10 @@ function RowRunControl({
       type="button"
       variant="outline"
       size="sm"
-      className="h-7 gap-1.5 px-2.5"
+      className={cn("h-7 gap-1.5 px-2.5", className)}
       data-testid="evals-suites-overview-run"
       aria-label={
-        hasServers ? `Setup Run ${suiteTitle}` : "No servers configured"
+        hasServers ? `${runLabel} ${suiteTitle}` : "No servers configured"
       }
       title={hasServers ? undefined : "No servers configured"}
       disabled={!hasServers}
@@ -468,7 +497,7 @@ function RowRunControl({
       }}
     >
       <Play className="h-3.5 w-3.5 shrink-0" aria-hidden />
-      Setup Run
+      {runLabel}
     </Button>
   );
 }
@@ -549,7 +578,7 @@ function ClientCell({
   );
 }
 
-function latestActivityAt(entry: EvalSuiteOverviewEntry): number {
+export function latestActivityAt(entry: EvalSuiteOverviewEntry): number {
   return (
     entry.latestRun?.completedAt ??
     entry.latestRun?.createdAt ??

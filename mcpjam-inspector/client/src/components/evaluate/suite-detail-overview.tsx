@@ -96,6 +96,12 @@ import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
 import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
 import { CI_OWNED_REASON_COPY } from "@/lib/evals/is-ci-owned-suite";
 import { targetKeyLabel } from "@/lib/eval-target-key";
+import {
+  SUITE_COLUMN_HINTS,
+  SuitePageHeader,
+  type SuiteDetailNav,
+} from "./nav-suite/suite-page-header";
+import { SuiteNavEmptyState } from "./nav-suite/suite-runs-health";
 
 export const SUITE_EMPTY_CASES_TITLE = "No cases yet";
 export const SUITE_EMPTY_CASES_DESCRIPTION =
@@ -164,6 +170,7 @@ export function SuiteDetailOverview({
   importJobId = null,
   onClearImportJob,
   onGeneratingChange,
+  nav,
 }: {
   suite: EvalSuite;
   runReviewRequested?: boolean;
@@ -259,6 +266,8 @@ export function SuiteDetailOverview({
   onGeneratingChange?: (
     state: { exit: () => void; label?: string } | null,
   ) => void;
+  /** The new Suite page: results only; case authoring lives in Suite settings. */
+  nav?: SuiteDetailNav;
 }) {
   const { runs, loadGroup, forgetRuns } = useRunGroupSummaries(
     suite._id,
@@ -454,6 +463,7 @@ export function SuiteDetailOverview({
     isReplaying: replayingRunId != null,
     runningTestCase: runningTestCaseId != null,
     evalRunsDisabledReason,
+    nav: Boolean(nav),
   });
   const runDisabled = Boolean(runBlockedReason);
   const hasCases = cases.length > 0;
@@ -486,10 +496,12 @@ export function SuiteDetailOverview({
    */
   const importedDrafts =
     generation?.drafts.filter((draft) => draft.authoring?.source) ?? [];
+  const forwardImportJob = nav?.onForwardImportJob;
   useEffect(() => {
     // Linked-to jobs are followed, not assumed: the poll stages whatever the
     // job still holds, and committed drafts are already excluded from it, so
     // the surface opens on exactly the cases that still need a person.
+    if (importJobId && forwardImportJob) return forwardImportJob(importJobId);
     if (!projectId || !importJobId) return;
     // `takeOver`, because opening a review link IS the request to review that
     // job. Without it the link stood down to whatever id the suite still
@@ -500,7 +512,7 @@ export function SuiteDetailOverview({
       // `?importJob=` is only ever handed out by an import.
       source: "import",
     });
-  }, [projectId, importJobId, suite._id]);
+  }, [projectId, importJobId, suite._id, forwardImportJob]);
   /**
    * An import lands on its drafts; a later visit lands on the suite.
    *
@@ -520,6 +532,7 @@ export function SuiteDetailOverview({
       generation?.authoringSource === "markdown");
   const reviewingImport = Boolean(
     projectId &&
+    !nav &&
     (importedDrafts.length || importRunning) &&
     (Boolean(importJobId) ||
       importRunning ||
@@ -661,6 +674,7 @@ export function SuiteDetailOverview({
       />
     );
 
+  if (nav && importJobId) return null;
   if (reviewingImport && projectId)
     return (
       <div
@@ -718,98 +732,113 @@ export function SuiteDetailOverview({
           disabledReason={runBlockedReason}
         />
       )}
-      <div
-        className="flex min-w-0 flex-wrap items-start justify-between gap-3"
-        data-testid="suite-detail-identity"
-      >
-        <div className="min-w-0">
-          <h2 className="truncate text-xl font-semibold tracking-tight text-foreground">
-            {suite.name}
-          </h2>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {importedDrafts.length && !reviewingImport ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8"
-              data-testid="suite-resume-import-review"
-              // Clearing the marker is what reopens the review: the reader is
-              // asking to be shown these drafts again.
-              onClick={() =>
-                projectId &&
-                reopenImportReview({ projectId, suiteId: suite._id })
-              }
-            >
-              {importedDrafts.length === 1
-                ? "Review 1 draft case"
-                : `Review ${importedDrafts.length} draft cases`}
-            </Button>
-          ) : null}
-          {onSetupSdk && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8"
-              onClick={onSetupSdk}
-            >
-              <Code2 className="size-3.5" aria-hidden /> Setup SDK
-            </Button>
-          )}
-          {configLocked ? (
-            // The reason and the way out, together. A disabled Edit button with
-            // a tooltip would make the remedy discoverable only by hovering the
-            // thing that does not work.
-            <span
-              className="text-xs text-muted-foreground"
-              data-testid="suite-detail-ci-owned"
-            >
-              {CI_OWNED_REASON_COPY}
-            </span>
-          ) : !readOnlyConfig ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8"
-              onClick={onEditSuite}
-            >
-              Configure suite evaluators
-            </Button>
-          ) : null}
-          {configLocked && onDuplicateSuite ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8"
-              onClick={onDuplicateSuite}
-              data-testid="suite-detail-duplicate-to-edit"
-            >
-              Duplicate to edit
-            </Button>
-          ) : null}
-          {cancelButton}
-          {runDisabled && runBlockedReason ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="inline-flex">{runButton}</span>
-              </TooltipTrigger>
-              <TooltipContent
-                variant="muted"
-                side="bottom"
-                className="max-w-[16rem]"
+      {nav ? (
+        <SuitePageHeader
+          name={suite.name}
+          pills={nav.pills}
+          onExportSdk={onSetupSdk}
+          onOpenSettings={nav.onOpenSettings}
+          ciLocked={configLocked}
+          onDuplicate={onDuplicateSuite}
+          cancel={cancelButton}
+          runBlockedReason={runBlockedReason}
+          runBusy={isRerunning}
+          onRun={() => setReviewRun(true)}
+        />
+      ) : (
+        <div
+          className="flex min-w-0 flex-wrap items-start justify-between gap-3"
+          data-testid="suite-detail-identity"
+        >
+          <div className="min-w-0">
+            <h2 className="truncate text-xl font-semibold tracking-tight text-foreground">
+              {suite.name}
+            </h2>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {importedDrafts.length && !reviewingImport ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8"
+                data-testid="suite-resume-import-review"
+                // Clearing the marker is what reopens the review: the reader is
+                // asking to be shown these drafts again.
+                onClick={() =>
+                  projectId &&
+                  reopenImportReview({ projectId, suiteId: suite._id })
+                }
               >
-                {runBlockedReason}
-              </TooltipContent>
-            </Tooltip>
-          ) : (
-            runButton
-          )}
+                {importedDrafts.length === 1
+                  ? "Review 1 draft case"
+                  : `Review ${importedDrafts.length} draft cases`}
+              </Button>
+            ) : null}
+            {onSetupSdk && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={onSetupSdk}
+              >
+                <Code2 className="size-3.5" aria-hidden /> Setup SDK
+              </Button>
+            )}
+            {configLocked ? (
+              // The reason and the way out, together. A disabled Edit button with
+              // a tooltip would make the remedy discoverable only by hovering the
+              // thing that does not work.
+              <span
+                className="text-xs text-muted-foreground"
+                data-testid="suite-detail-ci-owned"
+              >
+                {CI_OWNED_REASON_COPY}
+              </span>
+            ) : !readOnlyConfig ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={onEditSuite}
+              >
+                Configure suite evaluators
+              </Button>
+            ) : null}
+            {configLocked && onDuplicateSuite ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={onDuplicateSuite}
+                data-testid="suite-detail-duplicate-to-edit"
+              >
+                Duplicate to edit
+              </Button>
+            ) : null}
+            {cancelButton}
+            {runDisabled && runBlockedReason ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">{runButton}</span>
+                </TooltipTrigger>
+                <TooltipContent
+                  variant="muted"
+                  side="bottom"
+                  className="max-w-[16rem]"
+                >
+                  {runBlockedReason}
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              runButton
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {showRunHistory ? (
         <section
@@ -844,6 +873,7 @@ export function SuiteDetailOverview({
           <SuiteRunHistorySnapshot
             runs={runs.filter((run) => filteredRunIds.has(run._id))}
             metricsByRun={metricsByRun}
+            nav={nav}
           />
 
           {filteredRows.length === 0 ? (
@@ -860,7 +890,10 @@ export function SuiteDetailOverview({
           ) : (
             <div className="@container/run-history overflow-x-auto bg-card">
               <RunHistoryTable aria-label="Suite run history">
-                <EvaluateHistoryHeader showActions={showDeleteColumn} />
+                <EvaluateHistoryHeader
+                  showActions={showDeleteColumn}
+                  hints={nav && SUITE_COLUMN_HINTS}
+                />
                 <TableBody>
                   {visibleRows.map((launch) => {
                     const representative = [...launch.runs].sort(
@@ -913,7 +946,9 @@ export function SuiteDetailOverview({
                               }
                             : undefined
                         }
-                        onOpen={() => onRunClick(representative._id)}
+                        onOpen={() =>
+                          (nav?.onOpenRun ?? onRunClick)(representative._id)
+                        }
                       />
                     );
                   })}
@@ -948,7 +983,14 @@ export function SuiteDetailOverview({
         </section>
       ) : null}
 
-      {showEmptyCasesHero ? (
+      {nav ? (
+        <SuiteNavEmptyState
+          hasCases={hasCases}
+          hasRuns={showRunHistory}
+          nav={nav}
+          canEdit={!readOnlyConfig && !configLocked}
+        />
+      ) : showEmptyCasesHero ? (
         <SuiteEmptyCasesHero
           readOnly={readOnlyConfig || configLocked}
           onDescribe={onDescribeCases ?? onEditCases}

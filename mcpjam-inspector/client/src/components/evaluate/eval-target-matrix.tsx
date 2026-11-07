@@ -155,6 +155,7 @@ export function EvalTargetMatrix({
   onRemoveClient,
   singleClient = false,
   renderModels,
+  hint = "Choose a client and the models to evaluate it with.",
 }: {
   hostIds: readonly string[];
   hosts: readonly TargetMatrixHost[];
@@ -173,6 +174,7 @@ export function EvalTargetMatrix({
   disabled?: boolean;
   inModal?: boolean;
   hideHeading?: boolean;
+  hint?: string;
   modelsEditable: boolean;
   onHostsChange: (hostIds: string[]) => void;
   onModelSelectionChange: (hostId: string, selection: ModelSelection) => void;
@@ -217,9 +219,7 @@ export function EvalTargetMatrix({
               *
             </span>
           </h2>
-          <p className="text-xs text-muted-foreground">
-            Choose a client and the models to evaluate it with.
-          </p>
+          <p className="text-xs text-muted-foreground">{hint}</p>
         </div>
       )}
       <table className="w-full table-fixed border-collapse text-left text-sm">

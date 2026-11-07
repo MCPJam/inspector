@@ -24,10 +24,14 @@
  * in the same place as "what is on".
  */
 
-import { useMemo, useState } from "react";
+import { useContext, useMemo, useState } from "react";
 import { type UserValueStage } from "@mcpjam/sdk/contract";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import type { EvalMatchOptions } from "@/shared/eval-matching";
+import {
+  SettingInfoPill,
+  SuiteSettingsCompactContext,
+} from "./suite-settings-compact";
 import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { STAGE_CHIP_TONE_CLASS } from "@/components/evaluate/stage-chain-model";
 import { cn } from "@/lib/utils";
@@ -360,6 +364,9 @@ export function SuiteScorerTable({
   // furniture. A case page has its own title and reads as a plain
   // checklist: stage name on the left, boxes on the right.
   const suiteChrome = scope.kind === "suite";
+  // Suite settings page: tighter rows, the hint behind a pill, and ticking a
+  // box changes only that row.
+  const compact = useContext(SuiteSettingsCompactContext) && suiteChrome;
   const hasMatchEditor = suiteChrome && onMatchOptionsChange !== undefined;
   const hasJudgeEditor = suiteChrome && onJudgeConfigChange !== undefined;
   const editableRowIds = table.groups.flatMap((group) =>
@@ -381,17 +388,37 @@ export function SuiteScorerTable({
     openAllEditors();
   };
 
+  const editEvaluatorsButton = (
+    <Button
+      type="button"
+      variant="secondary"
+      size="sm"
+      className={compact ? "shrink-0" : "ml-auto shrink-0"}
+      aria-expanded={allEditorsOpen}
+      onClick={toggleAllEditors}
+    >
+      {allEditorsOpen ? "Close evaluators" : "Edit evaluators"}
+    </Button>
+  );
+
   return (
     <div>
       <div data-setting-key="checks">
         <div
           className={cn(
             "flex flex-wrap items-center justify-between gap-4",
-            headerDescription ? "mb-2" : "mb-4",
+            headerDescription || compact ? "mb-2" : "mb-4",
           )}
         >
           {headerContent ??
-            (suiteChrome ? (
+            (compact ? (
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-semibold tracking-tight text-foreground">
+                  Evaluators
+                </h3>
+                <SettingInfoPill label="Evaluators" hint={passOrFailHint} />
+              </div>
+            ) : suiteChrome ? (
               <div className="space-y-1">
                 <div className="flex items-center gap-1.5">
                   <h3 className="text-lg font-semibold tracking-tight text-foreground">
@@ -407,6 +434,7 @@ export function SuiteScorerTable({
             ))}
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             {headerActions}
+            {compact && showEditEvaluators ? editEvaluatorsButton : null}
             <SuiteScorerLibraryMenu
               primary
               authorableKinds={authorableKinds}
@@ -436,25 +464,17 @@ export function SuiteScorerTable({
             <span>Stage of user value chain</span>
             <div className="flex min-w-0 items-center justify-between gap-3">
               <span className="hidden sm:block">Evaluators</span>
-              {showEditEvaluators ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  className="ml-auto shrink-0"
-                  aria-expanded={allEditorsOpen}
-                  onClick={toggleAllEditors}
-                >
-                  {allEditorsOpen ? "Close evaluators" : "Edit evaluators"}
-                </Button>
-              ) : null}
+              {showEditEvaluators && !compact ? editEvaluatorsButton : null}
             </div>
           </div>
           {table.groups.map((group) => (
             <section
               key={group.stage}
               data-stage-group={group.stage}
-              className="grid grid-cols-1 gap-x-6 gap-y-3 border-b border-border py-5 sm:grid-cols-[minmax(10rem,1fr)_2fr]"
+              className={cn(
+                "grid grid-cols-1 gap-x-6 border-b border-border sm:grid-cols-[minmax(10rem,1fr)_2fr]",
+                compact ? "gap-y-2 py-3" : "gap-y-3 py-5",
+              )}
             >
               <div>
                 <h4 className="font-medium">{group.label}</h4>
@@ -482,7 +502,7 @@ export function SuiteScorerTable({
                         onDisabledReason={onDisabledReason(row)}
                         onEnabledChange={(enabled) => {
                           setRowEnabled(row, enabled);
-                          openAllEditors();
+                          if (!compact) openAllEditors();
                         }}
                         checkPolicy={checkPolicy}
                         judgeConfig={judgeConfig}

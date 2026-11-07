@@ -9,6 +9,7 @@ import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { runClientIdentity } from "../evals/helpers";
+import { InfoHint } from "../evals/global-gates-info";
 import {
   resolveRunOrigin,
   resolveRunOriginDetail,
@@ -30,13 +31,20 @@ import {
   type SuiteRunHistoryRow,
 } from "./suite-detail-model";
 
+type HintedColumn = "Latency" | "Tokens" | "Calls";
+const isHintedColumn = (label: string): label is HintedColumn =>
+  label === "Latency" || label === "Tokens" || label === "Calls";
+
 export function EvaluateHistoryHeader({
   showSuite = false,
   showActions = false,
+  hints,
 }: {
   showSuite?: boolean;
   /** Adds the untitled last column that holds each row's delete button. */
   showActions?: boolean;
+  /** Text behind an ⓘ beside these column headers; absent renders none. */
+  hints?: Partial<Record<HintedColumn, string>>;
 }) {
   return (
     <TableHeader>
@@ -56,7 +64,19 @@ export function EvaluateHistoryHeader({
           "Calls",
         ].map((label) => (
           <TableHead key={label} className="whitespace-nowrap">
-            {label}
+            {isHintedColumn(label) && hints?.[label] ? (
+              <span className="inline-flex items-center gap-1">
+                {label}
+                <InfoHint
+                  label={`About ${label}`}
+                  className="border border-border bg-muted/50"
+                >
+                  {hints[label]}
+                </InfoHint>
+              </span>
+            ) : (
+              label
+            )}
           </TableHead>
         ))}
         {showActions && (

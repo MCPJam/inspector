@@ -45,6 +45,9 @@ import { UnifiedFindingsSection } from "./unified-findings-section";
 import { useRunErrorBreakdownToast } from "./run-error-breakdown";
 import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
 import type { SingleRunContent } from "./evaluate-run-content";
+import { NavRunLayout } from "./nav-run/nav-run-layout";
+import { LaunchFindings } from "./nav-run/launch-findings";
+import type { NavRunOptions } from "./nav-run/use-nav-run-links";
 
 type MemberReport = {
   pending: boolean;
@@ -73,6 +76,7 @@ export function CombinedRunContent({
   onEditCase,
   onEditEvaluator,
   onOpenIteration,
+  nav,
 }: Parameters<typeof SingleRunContent>[0] & { runs: EvalSuiteRunListItem[] }) {
   const [findingsRunId, setFindingsRunId] = useState(routeRun._id);
   const history = useProjectRunHistory(
@@ -287,6 +291,47 @@ export function CombinedRunContent({
             No results match these filters.
           </p>
         </div>
+      ) : nav ? (
+        // A picked model shows its run's findings; All models merges every run's.
+        <NavRunLayout
+          matrix={matrix}
+          pairings={pairings}
+          passThreshold={nav.passThreshold}
+          findings={(picked) => {
+            const runFindings = (runId: string, compact: boolean) => {
+              const run =
+                hydratedRuns.find((item) => item._id === runId) ?? routeRun;
+              return (
+                <SelectedRunFindings
+                  key={run._id}
+                  run={run}
+                  view={reports.get(run._id)?.view}
+                  iterations={history.details.get(run._id)?.iterations ?? []}
+                  onOpenIteration={onOpenIteration}
+                  nav={{
+                    ...nav,
+                    scopeLabel: `for ${findingRunLabel(run._id)}`,
+                    compact,
+                  }}
+                />
+              );
+            };
+            if (picked) return runFindings(picked.run._id, true);
+            return (
+              <LaunchFindings
+                runs={hydratedRuns.map((run) => ({
+                  runId: run._id,
+                  iterations: history.details.get(run._id)?.iterations ?? [],
+                }))}
+                scope={`across ${matrix.targets.length} models`}
+                onOpenIteration={nav.openIteration}
+                fallback={(runId) => runFindings(runId, false)}
+              />
+            );
+          }}
+          onOpenTestRun={nav.openTestRun}
+          onEditTestCase={nav.editTestCase}
+        />
       ) : (
         <>
           <RunVerdictHero
@@ -360,19 +405,24 @@ function SelectedRunFindings({
   view,
   iterations,
   onOpenIteration,
+  nav,
 }: {
   scopeControl?: React.ReactNode;
   run: EvalSuiteRun;
   view?: RunVerdictHeroView;
   iterations: readonly EvalIteration[];
   onOpenIteration: Parameters<typeof SingleRunContent>[0]["onOpenIteration"];
+  /** Iteration links by row; `compact` shows the compact list once built. */
+  nav?: NavRunOptions & { scopeLabel: string; compact: boolean };
 }) {
   const generation = useServerQuality(run, { autoRequest: false });
   const openEvidence = (iterationId: string) => {
     const iteration = iterations.find(
       (row) => row._id === iterationId && row.suiteRunId === run._id,
     );
-    if (iteration?.testCaseId) {
+    if (iteration && nav) {
+      nav.openIteration(iteration);
+    } else if (iteration?.testCaseId) {
       onOpenIteration?.({ testCaseId: iteration.testCaseId, iterationId });
     }
   };
@@ -397,7 +447,9 @@ function SelectedRunFindings({
         canRequest: generation.canRequest,
         requestInsight: generation.requestServerQuality,
       }}
-      {...(onOpenIteration ? { onOpenIteration: openEvidence } : {})}
+      {...(onOpenIteration || nav ? { onOpenIteration: openEvidence } : {})}
+      variant={nav?.compact ? "compact" : "panel"}
+      scopeLabel={nav?.scopeLabel}
     />
   );
 }

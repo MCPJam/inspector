@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import * as errorReporting from "@/lib/error-reporting";
+import posthog from "posthog-js";
 import userEvent from "@testing-library/user-event";
 import { executeInspectorCommand } from "@/lib/inspector-command-handlers";
 import { readSurfaceSnapshot } from "@/lib/webmcp/surface-snapshot-registry";
@@ -215,6 +216,10 @@ vi.mock("../evaluate/create-suite-page", () => ({
   },
 }));
 
+vi.mock("../evaluate/nav-suite/suite-nav-page", () => ({
+  SuiteNavPage: () => <div data-testid="nav-suite-page" />,
+}));
+
 vi.mock("../evals/suite-iterations-view", () => ({
   SuiteIterationsView: (props: Record<string, unknown>) => {
     mocks.suiteIterationsView(props);
@@ -420,9 +425,9 @@ describe("EvaluateTab", () => {
     vi.clearAllMocks();
     mocks.isDirectGuest = false;
     mocks.isAuthenticated = true;
-    // Default OFF, matching `useFeatureFlagEnabled`'s own "still loading"
-    // value. Specs that care about the redesign flag opt in explicitly.
-    mocks.evaluateFlag.enabled = undefined;
+    // Default OFF. Specs that care about the redesign flag (or its "still
+    // loading" undefined, which holds pages that have a nav Page) opt in.
+    mocks.evaluateFlag.enabled = false;
     mocks.evalIterationQuota = undefined;
     mocks.getEffectiveSuiteServers.mockImplementation(() => []);
     mocks.useQuery.mockImplementation((name: unknown) => {
@@ -661,6 +666,81 @@ describe("EvaluateTab", () => {
     });
   });
 
+  describe("per-layer addresses open today's pages", () => {
+    const navViews = () =>
+      vi
+        .mocked(posthog.capture)
+        .mock.calls.filter(([event]) => event === "eval_nav_page_viewed");
+
+    it.each([false])(
+      "renders the run page for a test run address (flag %s)",
+      (flag) => {
+        mocks.evaluateFlag.enabled = flag;
+        mocks.route.current = {
+          type: "test-run",
+          suiteId: "suite-a",
+          runId: "run-1",
+          testCaseId: "case-a",
+        };
+        render(<EvaluateTab projectId="ws-1" />);
+        expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
+          route: {
+            type: "run-detail",
+            suiteId: "suite-a",
+            runId: "run-1",
+            testCaseId: "case-a",
+          },
+        });
+        expect(screen.queryByTestId("evals-runs-landing")).toBeNull();
+        expect(navViews()).toEqual([
+          [
+            "eval_nav_page_viewed",
+            expect.objectContaining({
+              page: "test_run",
+              tab: null,
+              arrived_via: "direct",
+              ui: "legacy",
+              project_id: "ws-1",
+              location: "evaluate_tab",
+            }),
+          ],
+        ]);
+      },
+    );
+
+    it("renders the Test run page with the flag on, counted as a nav view", () => {
+      mocks.evaluateFlag.enabled = true;
+      mocks.route.current = {
+        type: "test-run",
+        suiteId: "suite-a",
+        runId: "run-1",
+        testCaseId: "case-a",
+      };
+      render(<EvaluateTab projectId="ws-1" />);
+      expect(screen.getByTestId("nav-test-run-loading")).toBeInTheDocument();
+      expect(mocks.suiteIterationsView).not.toHaveBeenCalled();
+      expect(navViews()).toEqual([
+        [
+          "eval_nav_page_viewed",
+          expect.objectContaining({ page: "test_run", ui: "nav", project_id: "ws-1" }),
+        ],
+      ]);
+    });
+
+    it("keeps the landing and counts it as the suites page", () => {
+      mocks.evaluateFlag.enabled = false;
+      mocks.route.current = { type: "list" };
+      render(<EvaluateTab projectId="ws-1" />);
+      expect(screen.getByTestId("evals-runs-landing")).toBeInTheDocument();
+      expect(navViews()).toEqual([
+        [
+          "eval_nav_page_viewed",
+          expect.objectContaining({ page: "suites", ui: "legacy" }),
+        ],
+      ]);
+    });
+  });
+
   it("defaults the bare Evaluate route to Runs, with Runs first", () => {
     mocks.route.current = { type: "list" };
     render(<EvaluateTab projectId="ws-1" />);
@@ -685,21 +765,19 @@ describe("EvaluateTab", () => {
       });
     });
 
-    it("is on for both surfaces once the flag is on", async () => {
+    it("is on for both surfaces once the flag is on", () => {
       mocks.evaluateFlag.enabled = true;
-      mocks.route.current = { type: "list" };
-      const user = userEvent.setup();
+      mocks.route.current = { type: "evaluate-runs" };
       render(<EvaluateTab projectId="ws-1" />);
-      await user.click(screen.getByRole("button", { name: /^overview$/i }));
 
       expect(mocks.projectRunsTable.mock.calls.at(-1)?.[0]).toMatchObject({
         projectId: "ws-1",
         decisionSummaryEnabled: true,
+        navLanding: true,
       });
     });
 
-    it("threads the flag and the project id into the suite surface", () => {
-      mocks.evaluateFlag.enabled = true;
+    it("threads the project id into the suite surface", () => {
       render(<EvaluateTab projectId="ws-1" />);
 
       expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
@@ -709,6 +787,14 @@ describe("EvaluateTab", () => {
       });
     });
 
+    it("renders the nav Suite page instead once the nav flag is on", () => {
+      mocks.evaluateFlag.enabled = true;
+      render(<EvaluateTab projectId="ws-1" />);
+
+      expect(screen.getByTestId("nav-suite-page")).toBeInTheDocument();
+      expect(mocks.suiteIterationsView).not.toHaveBeenCalled();
+    });
+
     it("enables suite summaries even when the legacy flag is off", () => {
       render(<EvaluateTab projectId="ws-1" />);
 
@@ -716,6 +802,40 @@ describe("EvaluateTab", () => {
         evaluateDecisionSummary: true,
       });
     });
+  });
+
+  describe("the Nav landing", () => {
+    it.each([{ type: "list" }, { type: "evaluate-runs" }] as const)(
+      "renders the new landing at $type with the flag on",
+      (route) => {
+        mocks.evaluateFlag.enabled = true;
+        mocks.route.current = route;
+        render(<EvaluateTab projectId="ws-1" />);
+        expect(
+          screen.getByRole("button", { name: "More options" }),
+        ).toBeInTheDocument();
+        expect(screen.queryByTestId("evals-suites-overview")).toBeNull();
+        expect(
+          screen.queryByRole("button", { name: /^overview$/i }),
+        ).toBeNull();
+      },
+    );
+
+    it.each([{ type: "list" }, { type: "evaluate-runs" }] as const)(
+      "renders today's landing at $type with the flag off",
+      (route) => {
+        mocks.evaluateFlag.enabled = false;
+        mocks.route.current = route;
+        render(<EvaluateTab projectId="ws-1" />);
+        expect(screen.getByTestId("evals-runs-landing")).toBeInTheDocument();
+        expect(
+          screen.getByRole("button", { name: /^overview$/i }),
+        ).toHaveAttribute("aria-current", "page");
+        expect(
+          screen.queryByRole("button", { name: "More options" }),
+        ).toBeNull();
+      },
+    );
   });
 
   it("switches between Suites and Runs via the header tabs", async () => {
