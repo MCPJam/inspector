@@ -33,7 +33,6 @@ import {
 import { fetchSuiteRunServerSelection } from "../routes/v1/evals.js";
 import { createConvexClient } from "./evals/route-helpers.js";
 import { isPlatformFeeRefusal } from "./evals/platform-fee-refusal.js";
-import { loadSuiteHostConfig } from "./evals/compat-runtime.js";
 import {
   environmentServerIds,
   environmentServerNames,
@@ -245,17 +244,13 @@ export async function executeClaimedRun(
           "authorized",
         );
 
-    const hostConfig = await loadSuiteHostConfig(
-      createConvexClient(bearer),
-      claimed.suiteId,
-      selection.resolvedEnvironment?.hostId,
-    );
     // Empty caller context = plain-JWT caller (locked by caller-context
     // contract test); the delegated JWT is the principal.
     //
     // NO xaaIssuer/xaaPolicy here: the worker has no request Context to
-    // derive the issuer from. The saved host is read for Computer admission. A
-    // per-server XAA (`useXaa`) server in a scheduled suite fails closed in
+    // derive the issuer from. Preflight has no iteration sandbox, so personal
+    // plugin placement stays disabled. A per-server XAA (`useXaa`) server in a
+    // scheduled suite fails closed in
     // the manager builder ("Missing XAA issuer") — the pre-existing behavior
     // on this surface. Lifting it needs an env-derived public issuer URL.
     const authorized = await createAuthorizedManager(
@@ -268,7 +263,7 @@ export async function executeClaimedRun(
       undefined,
       {
         serverNames: selection.serverNames,
-        pluginComputerRuntime: !!hostConfig.computer,
+        pluginComputerRuntime: false,
       },
     );
     manager = authorized.manager;
