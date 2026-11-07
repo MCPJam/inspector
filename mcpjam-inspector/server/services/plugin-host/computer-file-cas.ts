@@ -72,13 +72,15 @@ export function createComputerFileCas(transport: ComputerCasTransport) {
   const supports = async (signal?: AbortSignal): Promise<boolean> => {
     signal?.throwIfAborted();
     qualification ??= (async () => {
+      // One caller cancelling must not cancel the shared capability check.
+      const probeSignal = AbortSignal.timeout(60_000);
       let staged: Stage | undefined;
       try {
-        if (outcomeSchema.parse(await call({ op: "probe" }, signal)).outcome !== "ready") return false;
-        staged = await stage(HOME_ROOT, `${HOME_ROOT}/.mcpjam-cas-probe`, signal);
+        if (outcomeSchema.parse(await call({ op: "probe" }, probeSignal)).outcome !== "ready") return false;
+        staged = await stage(HOME_ROOT, `${HOME_ROOT}/.mcpjam-cas-probe`, probeSignal);
         const bytes = new Uint8Array([0]);
-        await upload(staged, bytes, signal);
-        const response = outcomeSchema.parse(await call({ ...staged, op: "verify", maxBytes: 1, size: 1, sha256: digest(bytes) }, signal));
+        await upload(staged, bytes, probeSignal);
+        const response = outcomeSchema.parse(await call({ ...staged, op: "verify", maxBytes: 1, size: 1, sha256: digest(bytes) }, probeSignal));
         return response.outcome === "ready";
       } catch {
         return false;

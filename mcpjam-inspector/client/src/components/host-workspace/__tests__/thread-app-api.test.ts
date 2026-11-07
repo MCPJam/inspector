@@ -52,6 +52,17 @@ describe("thread App authenticated transport", () => {
     const result = await createThreadAppApi(scope).readFile({ ...handle, file: { name: "part.stl", resourceUri: "host-resource://f" } }, { uri: "host-resource://f" }, signal());
     expect(result).toEqual({ contents: [{ uri: "host-resource://f", blob: "AAH/", _meta: { "openai/resource": { etag: "revision" } } }] });
   });
+  it("retries a file read after transport loss with the same request", async () => {
+    fetch.mockRejectedValueOnce(new Error("lost")).mockResolvedValueOnce(response({
+      contents: [{ uri: "host-resource://f", text: "saved" }],
+    }));
+    await expect(createThreadAppApi(scope).readFile(
+      { ...handle, file: { name: "part.stl", resourceUri: "host-resource://f" } },
+      { uri: "host-resource://f" }, signal(),
+    )).resolves.toMatchObject({ contents: [{ text: "saved" }] });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[0][1]).toBe(fetch.mock.calls[1][1]);
+  });
   it("retries a binary write with the same operation and immutable bytes", async () => {
     fetch.mockRejectedValueOnce(new Error("lost")).mockResolvedValueOnce(response({ outcome: "saved", etag: "next" }));
     await createThreadAppApi(scope).writeFile({ ...handle, fileCapabilities: { write: true, subscribe: false } }, { uri: "host-resource://f", text: "saved 🧩", ifMatch: "first" }, signal());
@@ -62,6 +73,13 @@ describe("thread App authenticated transport", () => {
     expect(metadata).toMatchObject({ instanceToken: "opaque", operationId: expect.any(String), params: { uri: "host-resource://f", ifMatch: "first" } });
     expect(metadata.params).not.toHaveProperty("text");
     expect(new TextDecoder().decode(init.body)).toBe("saved 🧩");
+  });
+  it.each(["aGk", "a Gk=", "!!!!"])("rejects malformed base64 %s before sending bytes", async (blob) => {
+    await expect(createThreadAppApi(scope).writeFile(
+      { ...handle, fileCapabilities: { write: true, subscribe: false } },
+      { uri: "host-resource://f", blob, ifMatch: "first" }, signal(),
+    )).rejects.toMatchObject({ code: "RESOURCE_INVALID" });
+    expect(fetch).not.toHaveBeenCalled();
   });
   it("asks about a plugin with no server by plugin, never a made-up server", async () => {
     fetch
