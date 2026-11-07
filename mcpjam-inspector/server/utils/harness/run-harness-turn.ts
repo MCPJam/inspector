@@ -1,6 +1,6 @@
 import { startLeaseHeartbeat } from "./lease-heartbeat.js";
 import { isCallToolResult } from "@modelcontextprotocol/client";
-import { finishPendingPersist } from "../completed-turn-finalization.js";
+import { deferCompletedTurnLeaseRelease, finishPendingPersist } from "../completed-turn-finalization.js";
 import { harnessAppTools } from "./app-tools";
 import { harnessStartupPart } from "@/shared/harness-startup";
 import { withRetainedResourceSource } from "@/shared/retained-app-resources";
@@ -4935,6 +4935,7 @@ export async function runHarnessTurn(
       // commit releases the lease; if persistence is absent or fails, the
       // sidecar did NOT advance — release the lane best-effort.
       let persistOk = false;
+      let completedRetry: Awaited<ReturnType<NonNullable<typeof onConversationComplete>>> | void = undefined;
       try {
         let persistOutcome = await onConversationComplete?.(
           presentNativeTranscript(messageHistory, nativePresentations),
@@ -4942,6 +4943,7 @@ export async function runHarnessTurn(
           runSucceeded ? capturedHarnessCommit : undefined,
         );
         if (chatSessionId) persistOutcome = await finishPendingPersist(persistOutcome, receiptWriter, { chatSessionId, turnId: trace.turnId }, abortSignal);
+        completedRetry = persistOutcome;
         // The callback RESOLVING is not the same as the turn being saved. Now
         // that it reports an outcome, a `failed`/`skipped`/`conflict` result
         // resolves normally — treating that as success would leave the harness
@@ -4975,7 +4977,9 @@ export async function runHarnessTurn(
         !discardLocalState &&
         (!onConversationComplete || !persistOk)
       ) {
-        await releaseHarnessLease?.();
+        if (!releaseHarnessLease || !deferCompletedTurnLeaseRelease(completedRetry, releaseHarnessLease,
+          (error) => logger.warn("[harness] completed save retry lease cleanup failed", { error })))
+          await releaseHarnessLease?.();
       }
     }
     if (discardLocalState && !retainLocalState) {
