@@ -251,6 +251,8 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
   MODEL_APP_UNAVAILABLE: "This App from the chat is no longer available.",
   CONTINUATION_EXPIRED:
     "This form expired before it was answered, so the tool call did not finish. Run it again.",
+  CONTINUATION_FAILED:
+    "This form is closed and cannot be submitted. Start the tool call again.",
   CONTINUATION_CANCELLED:
     "This form was cancelled, so the tool call did not finish.",
   CONTINUATION_CONNECTION_UNAVAILABLE:
