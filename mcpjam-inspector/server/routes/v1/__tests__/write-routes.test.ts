@@ -88,6 +88,8 @@ vi.mock("convex/browser", () => ({
 import { ConvexHttpClient } from "convex/browser";
 import v1Routes from "../index.js";
 import { convexReadFetch } from "../convex-read-errors.js";
+import { createConvexClient } from "../convex-client.js";
+import { createConvexClients } from "../../shared/evals.js";
 import { MAX_RUN_GROUP_TARGETS, parseMaxConcurrentRuns } from "../evals.js";
 import {
   __resetHostedModelCatalogForTests,
@@ -3149,6 +3151,20 @@ describe("v1 write routes", () => {
       expect(ConvexHttpClient).toHaveBeenCalledWith(
         "https://convex.example.com",
         { fetch: convexReadFetch }
+      );
+    });
+
+    it.each([
+      ["createConvexClient", () => createConvexClient("tok")],
+      ["createConvexClients", () => createConvexClients("tok").convexClient],
+    ])("%s reads through convexReadFetch too", (_factory, create) => {
+      // The shared factories serve most v1 routes and the eval run writes;
+      // their failures reach Sentry through the same strict boundary.
+      create();
+      expect(ConvexHttpClient).toHaveBeenCalledTimes(1);
+      expect(ConvexHttpClient).toHaveBeenCalledWith(
+        "https://convex.example.com",
+        { fetch: convexReadFetch },
       );
     });
 

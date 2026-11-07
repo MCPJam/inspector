@@ -83,6 +83,7 @@ import {
 } from "./eval-case-batch.js";
 import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { convexReadFetch } from "../v1/convex-read-errors.js";
 import {
   resolveOrgModelConfig,
   type ResolvedOrgModelConfig,
@@ -1324,7 +1325,9 @@ export function createConvexClients(convexAuthToken: string) {
     throw new Error("CONVEX_HTTP_URL is not set");
   }
 
-  const convexClient = new ConvexHttpClient(convexUrl);
+  const convexClient = new ConvexHttpClient(convexUrl, {
+    fetch: convexReadFetch,
+  });
   convexClient.setAuth(convexAuthToken);
 
   return { convexClient, convexHttpUrl };

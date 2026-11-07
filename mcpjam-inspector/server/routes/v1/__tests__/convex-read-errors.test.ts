@@ -29,6 +29,7 @@ import {
   redactedReadRefusalError,
   translateConvexReadError,
 } from "../convex-read-errors.js";
+import { translateConvexWriteError } from "../convex-errors.js";
 import { WebRouteError } from "../../web/errors.js";
 import { describeError } from "@mcpjam/sdk";
 
@@ -326,6 +327,80 @@ describe("translateConvexReadError", () => {
     );
     expect(err.status).toBe(401);
     expect(errorMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    // By text alone this reads `upstream`, and a 502 tells the client to
+    // retry the same dead token.
+    "Unauthorized",
+    // By text alone this reads `membership`, and a 404 tells the client to
+    // forget a resource it may still own.
+    "Not a member of this project",
+  ])("answers 401 to a Convex 401 whatever its body says: %s", (body) => {
+    const error = new ConvexHttpStatusError(401, body);
+    expect(classifyConvexReadError(error).kind).toBe("authentication");
+    expect(
+      translateConvexReadError(error, {
+        scope: "v1.test",
+        redactedIsRefusal: true,
+      }).status,
+    ).toBe(401);
+    expect(errorMock).not.toHaveBeenCalled();
+  });
+
+  it("answers 502 to a proxy's 500 even at a preflight", () => {
+    // "Server Error" in the body, but the function never ran: a redacted
+    // refusal comes back as a 560 the client reads itself. Answering 404
+    // here would report an outage as a missing resource.
+    const error = new ConvexHttpStatusError(500, "500 Internal Server Error");
+    expect(classifyConvexReadError(error).kind).toBe("upstream");
+    const err = translateConvexReadError(error, {
+      scope: "v1.test",
+      notFoundMessage: "Scenario not found",
+      redactedIsRefusal: true,
+    });
+    expect(err.status).toBe(502);
+    expect(warnMock).not.toHaveBeenCalled();
+    expect(errorMock.mock.calls[0]![2]).toMatchObject({ httpStatus: 500 });
+    expect(
+      redactedReadRefusalError(error, "Scenario not found"),
+    ).toBeUndefined();
+  });
+});
+
+describe("a ConvexHttpStatusError reads like the Error(body) it replaces", () => {
+  // `convexReadFetch` keeps the body as the message, so every classifier that
+  // matches on text answers the same. Only the two status rules above differ.
+  const translations = (error: Error) => {
+    const read = translateConvexReadError(error, {
+      scope: "v1.test",
+      notFoundMessage: "Scenario not found",
+      redactedIsRefusal: true,
+    });
+    const write = translateConvexWriteError(error, { resource: "Server" });
+    return [read, write].map(({ status, code, message, details }) => ({
+      status,
+      code,
+      message,
+      details,
+    }));
+  };
+
+  it.each([
+    "Not a member of this project",
+    "Insufficient project permissions: requires admin",
+    "Server already exists",
+    "token expired",
+    "ArgumentValidationError: Value does not match validator",
+    "fetch failed",
+    "socket hang up",
+    "Request timed out",
+    "Could not find public function for servers:get",
+    "boom",
+  ])("%s", (body) => {
+    expect(translations(new ConvexHttpStatusError(502, body))).toEqual(
+      translations(new Error(body)),
+    );
   });
 });
 
