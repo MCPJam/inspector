@@ -46,7 +46,7 @@ import {
  * ## A run held for its judge is not a status this module ever sees
  *
  * `grading` — every trial finished, the run waiting for its gating judge — is
- * not in `TERMINAL_RUN_STATUSES` and never reaches `NON_VERDICT_STATUSES`.
+ * not `isEvalRunTerminalStatus` and never reaches `NON_VERDICT_STATUSES`.
  * `--wait` therefore keeps polling through it, and a wait that runs out with
  * the run still held is the "deadline with a non-terminal run" case above:
  * exit 5, never 1. A judge that has not answered is an absence of verdict, and
