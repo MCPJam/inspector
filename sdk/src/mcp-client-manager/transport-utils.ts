@@ -15,6 +15,7 @@ import { createRpcLogRedactor } from "./rpc-log-redaction.js";
 // The send side and the Tracing verdict read ONE set, so a method added to the
 // SEP-2663 routing requirement cannot be sent-but-unjudged (or vice versa).
 import { TASK_ROUTED_METHODS } from "./mcp-header-mirror.js";
+import { deduplicateRequestHeaders } from "./transport-headers.js";
 
 /**
  * Normalizes headers from various formats (Headers, string[][], or plain object)
@@ -61,32 +62,29 @@ export function getExistingAuthorization(
 }
 
 /**
- * Builds the requestInit object, merging accessToken into Authorization header if provided.
+ * Builds the requestInit object, deduplicating headers case-insensitively,
+ * normalizing `mcp-protocol-version` to lowercase so it cleanly overrides
+ * transport defaults without comma-separated duplicates, and merging
+ * accessToken into Authorization header if provided.
  *
  * @param accessToken - Optional access token for Bearer auth
  * @param requestInit - Optional existing requestInit config
- * @returns Merged requestInit with Authorization header if accessToken provided
+ * @returns Merged requestInit with normalized headers and Authorization header if accessToken provided
  */
 export function buildRequestInit(
   accessToken: string | undefined,
   requestInit: StreamableHTTPClientTransportOptions["requestInit"]
 ): StreamableHTTPClientTransportOptions["requestInit"] {
-  if (!accessToken) {
+  if (!accessToken && !requestInit?.headers) {
     return requestInit;
   }
 
   const existingHeaders = normalizeHeaders(requestInit?.headers);
   const existingAuth = getExistingAuthorization(existingHeaders);
 
-  // Remove any lowercase 'authorization' key to avoid duplicate headers
-  const { authorization: _, ...headersWithoutLowercaseAuth } = existingHeaders;
-
   return {
     ...requestInit,
-    headers: {
-      Authorization: existingAuth ?? `Bearer ${accessToken}`,
-      ...headersWithoutLowercaseAuth,
-    },
+    headers: deduplicateRequestHeaders(existingHeaders, accessToken, existingAuth),
   };
 }
 
