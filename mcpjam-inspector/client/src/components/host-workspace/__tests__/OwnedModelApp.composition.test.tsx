@@ -285,7 +285,7 @@ function ModelFormWorkspace() {
   return <><Workspace /><div ref={slot} data-testid="owned-form-slot" /><HostedMrtrHost /></>;
 }
 
-it("opens a model App's admitted local file in its own workspace and withdraws the bridge on cleanup", async () => {
+it.each([false, true])("opens admitted model App files with late workspace registration=%s without replacing the bridge", async (late) => {
   const open = vi.fn(async () => {});
   const chooseViewer = vi.fn(async (entries: import("../thread-app-api").ThreadAppDeclaration[]) => entries[1]);
   const scope = { projectId: "project", hostId: "host", threadId: "thread", pluginWorkspace: { version: 1 as const, workspaceId: "workspace" } };
@@ -296,10 +296,10 @@ it("opens a model App's admitted local file in its own workspace and withdraws t
     if (url.endsWith("/model/close")) return reply({ closed: true });
     throw new Error("Unexpected API path");
   });
-  const view = (workspaceId: string) => <WorkspaceFileActionsProvider value={{
-    workspaceId, api: createThreadAppApi(scope), serverIds: ["saved-server"], open, chooseViewer,
+  const view = (workspaceId: string, serverIds = ["saved-server"]) => <WorkspaceFileActionsProvider value={{
+    workspaceId, api: createThreadAppApi(scope), serverIds, open, chooseViewer,
   }}><Workspace /></WorkspaceFileActionsProvider>;
-  const rendered = render(view("workspace"));
+  const rendered = render(view("workspace", late ? [] : ["saved-server"]));
   await waitFor(() => expect(mocks.host?.services.configureAppBridge).toBeTypeOf("function"));
   const caps = { experimental: { "openai/files": {} } };
   const bridge = new AppBridge(null, { name: "test", version: "1" }, caps);
@@ -313,6 +313,14 @@ it("opens a model App's admitted local file in its own workspace and withdraws t
     void guestTransport.send({ jsonrpc: "2.0", id: ++id, method: "openai/files/open", params: { path: "/allowed/part.stl" } });
   });
   try {
+    if (late) {
+      const configure = mocks.host!.services.configureAppBridge;
+      const reads = mocks.fetch.mock.calls.length;
+      expect(await send()).toHaveProperty("error");
+      expect(mocks.fetch.mock.calls).toHaveLength(reads);
+      rendered.rerender(view("workspace"));
+      expect(mocks.host!.services.configureAppBridge).toBe(configure);
+    }
     expect(await send()).toMatchObject({ result: {} });
     expect(chooseViewer).toHaveBeenCalledOnce();
     expect(open).toHaveBeenCalledExactlyOnceWith("saved-server", { kind: "file", toolName: "other", title: "Other viewer", resourceUri: "cad://part" });
