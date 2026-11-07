@@ -9,14 +9,12 @@ import {
   getGuestSessionRefusal,
   subscribeGuestSessionChanges,
 } from "@/lib/guest-session";
+import { guestSessionRefusalCopy } from "@/lib/guest-session-refusal-copy";
 
 /**
- * Shown when the backend refused to CREATE a guest session because this
- * network already minted its daily allowance (per-IP cap, mcpjam-backend
- * #1391/#1392). Before this the refusal surfaced as a generic 503, the
- * bootstrap retried it four times, reported it as an error, and the page
- * rendered as signed-out with no explanation. The refusal is deliberate and
- * sign-in is the real next step, so say so.
+ * Shown when the backend refused to CREATE a guest session: this network used
+ * its daily allowance, or the deployment issues no guests at all. Either way
+ * the refusal is deliberate and sign-in is the real next step, so say so.
  */
 export function GuestSessionRefusedBanner() {
   const refusal = useSyncExternalStore(
@@ -42,7 +40,7 @@ export function GuestSessionRefusedBanner() {
     >
       <CircleAlert className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500" />
       <span className="text-foreground">
-        Too many guest sessions from your network today. Sign in to continue.
+        {guestSessionRefusalCopy(refusal.reason).banner}
       </span>
       <Button size="sm" variant="outline" onClick={handleSignIn}>
         Sign in
