@@ -48,6 +48,8 @@ import { PromptsTab } from "./components/PromptsTab";
 import { SkillsTab } from "./components/SkillsTab";
 import { LearningTab } from "./components/LearningTab";
 import { TaskAccountsTab } from "./components/TaskAccountsTab";
+import { EventsTab } from "./components/EventsTab";
+import { EventTriggersTab } from "./components/EventTriggersTab";
 import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
@@ -370,6 +372,7 @@ import { GuestPreviewCta } from "@/components/guest-preview/GuestPreviewCta";
 import type { GatedFeatureId } from "@/components/guest-preview/feature-highlights";
 import { useUnifiedSessionsEnabledState } from "@/hooks/useUnifiedSessionsEnabled";
 import { useEvaluateEnabled } from "@/hooks/useEvaluateEnabled";
+import { useEventsEnabledState } from "@/hooks/useEventsEnabled";
 import { LegacyEvalRedirect } from "./components/routing/legacy-eval-redirect";
 import {
   HOST_TEMPLATES,
@@ -713,6 +716,10 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <PromptsRoute />;
     case "tasks":
       return <TasksRoute />;
+    case "events":
+      return <EventsRoute />;
+    case "triggers":
+      return <EventTriggersRoute />;
     case "skills":
       return <SkillsRoute />;
     case "learning":
@@ -2564,6 +2571,60 @@ export function TasksRoute() {
         connectionStatus={
           appState.servers[appState.selectedServer]?.connectionStatus
         }
+      />
+    </div>
+  );
+}
+
+export function EventsRoute() {
+  const {
+    selectedMCPConfig,
+    appState,
+    convexProjectId,
+    activeHost,
+    activeHostId,
+  } = useAppRouteContext();
+  const eventsEnabled = useEventsEnabledState();
+  if (eventsEnabled === false) {
+    return <ScopedNavigate to={routePaths.servers} replace />;
+  }
+  if (eventsEnabled === undefined) return null;
+  return (
+    <div className="h-full overflow-hidden">
+      <EventsTab
+        serverConfig={selectedMCPConfig}
+        serverName={appState.selectedServer}
+        isActive
+        connectionStatus={
+          appState.servers[appState.selectedServer]?.connectionStatus
+        }
+        projectId={convexProjectId ?? null}
+        activeHostId={activeHostId ?? null}
+        activeHost={activeHost ?? null}
+      />
+    </div>
+  );
+}
+
+/**
+ * Triggers run on MCPJam's hosted runner against a project's hosted
+ * subscriptions, so the tab needs a signed-in member and a cloud project. It
+ * renders its own explanatory empty state otherwise rather than redirecting,
+ * so a local user can see what the feature is.
+ */
+export function EventTriggersRoute() {
+  const { convexProjectId, isAuthenticated, isGuestProjectActor } =
+    useAppRouteContext();
+  const eventsEnabled = useEventsEnabledState();
+  if (eventsEnabled === false) {
+    return <ScopedNavigate to={routePaths.servers} replace />;
+  }
+  if (eventsEnabled === undefined) return null;
+  return (
+    <div className="h-full overflow-hidden">
+      <EventTriggersTab
+        projectId={convexProjectId ?? null}
+        isSignedInMember={isAuthenticated === true && !isGuestProjectActor}
       />
     </div>
   );
@@ -4734,6 +4795,7 @@ export default function App() {
       activeTab === "resources" ||
       activeTab === "prompts" ||
       activeTab === "tasks" ||
+      activeTab === "events" ||
       activeTab === "compatibility";
     if (!needsServer || selectedMCPConfig) return;
 
@@ -6424,6 +6486,7 @@ export default function App() {
     activeTab === "resources" ||
     activeTab === "prompts" ||
     activeTab === "tasks" ||
+    activeTab === "events" ||
     activeTab === "compatibility" ||
     activeTab === "oauth-flow" ||
     (activeTab === "xaa-flow" && xaaEnabled === true) ||
