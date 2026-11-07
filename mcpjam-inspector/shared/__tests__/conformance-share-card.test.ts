@@ -70,6 +70,51 @@ describe("conformance share card", () => {
     ).toBe("NOT SCORED");
   });
 
+  it("does not hold a suite back for checks that only need input", () => {
+    // Two unrun checks need input, so they are outside `applicable`.
+    const suite = {
+      kind: "protocol",
+      applicable: 3,
+      passed: 3,
+      failed: 0,
+      couldNotRun: 2,
+    };
+    expect(shareCardSuiteStatus(suite).label).toBe("PASSED");
+    // One of the two could not run for another reason.
+    expect(shareCardSuiteStatus({ ...suite, applicable: 4 }).label).toBe(
+      "INCOMPLETE",
+    );
+  });
+
+  it("draws checks that need input apart from checks that could not run", () => {
+    const footerFills = (data: ConformanceShareCardData) =>
+      [...svgOf(data).matchAll(/<rect [^>]*y="522"[^>]*fill="([^"]+)"/g)].map(
+        (match) => match[1]!,
+      );
+    // Passed, could not run, needs input and n/a: four segments, four colors.
+    const split = footerFills(card({ applicable: 26 }));
+    expect(split).toHaveLength(4);
+    expect(new Set(split).size).toBe(4);
+    // When every unrun check only needs input, no bar on the card is amber.
+    const amber = footerFills(card())[1]!;
+    const inputOnly = svgOf(
+      card({
+        outcome: "passed",
+        applicable: 24,
+        suites: [
+          {
+            kind: "protocol",
+            applicable: 24,
+            passed: 24,
+            failed: 0,
+            couldNotRun: 4,
+          },
+        ],
+      }),
+    );
+    expect(inputOnly).not.toContain(`fill="${amber}"`);
+  });
+
   it("keeps the denominator, the unrun and the not-applicable checks", () => {
     expect(shareCardChecksLine(card())).toBe(
       "24/28 checks passed · 4 could not run · 2 n/a",
