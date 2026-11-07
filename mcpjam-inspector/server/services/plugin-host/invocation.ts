@@ -355,6 +355,7 @@ export class PluginContinuationTerminal extends PluginInvocationError {
     code:
       | "CONTINUATION_EXPIRED"
       | "CONTINUATION_FAILED"
+      | "PLUGIN_FORM_WEB_UPLOAD_UNSUPPORTED"
       | "CONTINUATION_CANCELLED"
       | "PLUGIN_FORMS_DISABLED",
   ) {
