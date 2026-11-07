@@ -176,7 +176,9 @@ export function OwnedPluginFormHost({
       ? previous?.rows
       : rows;
   const focusOwner = useRef({ ownerId: displayedOwner?._id, scopeKey });
-  focusOwner.current = { ownerId: displayedOwner?._id, scopeKey };
+  useLayoutEffect(() => {
+    focusOwner.current = { ownerId: displayedOwner?._id, scopeKey };
+  });
   const requests =
     displayedRows?.filter(
       (row) =>

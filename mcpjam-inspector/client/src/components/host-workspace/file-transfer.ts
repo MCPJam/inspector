@@ -1,3 +1,4 @@
+import { ZodError } from "zod";
 import { authFetch } from "@/lib/session-token";
 import { pluginFileWriteParamsSchema } from "@/shared/plugin-file";
 import {
@@ -7,6 +8,7 @@ import {
   PLUGIN_FILE_MAX_BYTES,
   PLUGIN_FILE_MEDIA_TYPE,
   pluginFileBytesToBase64,
+  isPluginFileBase64,
   readPluginFileBody,
 } from "@/shared/plugin-file-transfer";
 import { PLUGIN_FILE_METADATA_HEADER } from "@/shared/plugin-file-headers";
@@ -46,13 +48,20 @@ export async function writeTransferredFile(
   params: unknown,
   signal: AbortSignal,
 ) {
-  const parsed = pluginFileWriteParamsSchema.parse(params);
+  let parsed;
+  try { parsed = pluginFileWriteParamsSchema.parse(params); }
+  catch (error) {
+    if (error instanceof ZodError) throw new PluginFileTransferError("RESOURCE_INVALID");
+    throw error;
+  }
   const { text, blob, ...metadata } = parsed;
   if (
     blob !== undefined &&
     blob.length > Math.ceil(PLUGIN_FILE_MAX_BYTES / 3) * 4
   )
     throw new PluginFileTransferError("RESOURCE_TOO_LARGE");
+  if (blob !== undefined && !isPluginFileBase64(blob))
+    throw new PluginFileTransferError("RESOURCE_INVALID");
   const bytes =
     text !== undefined
       ? new TextEncoder().encode(text)

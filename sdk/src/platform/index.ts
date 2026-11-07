@@ -83,12 +83,18 @@ export {
 
 export { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
 export type {
-  PlatformWidgetSessionTarget, PlatformWidgetViewport,
-  PlatformWidgetSessionCreateBody, PlatformWidgetSessionCreated,
-  PlatformWidgetAction, PlatformWidgetToolCall,
-  PlatformWidgetSessionActionResult, PlatformWidgetSessionSnapshot,
-  PlatformWidgetSessionAssertion, PlatformWidgetSessionStep,
-  PlatformWidgetSessionStepBody, PlatformWidgetSessionStepResult,
+  PlatformWidgetSessionTarget,
+  PlatformWidgetViewport,
+  PlatformWidgetSessionCreateBody,
+  PlatformWidgetSessionCreated,
+  PlatformWidgetAction,
+  PlatformWidgetToolCall,
+  PlatformWidgetSessionActionResult,
+  PlatformWidgetSessionSnapshot,
+  PlatformWidgetSessionAssertion,
+  PlatformWidgetSessionStep,
+  PlatformWidgetSessionStepBody,
+  PlatformWidgetSessionStepResult,
   PlatformWidgetSessionClosed,
   PlatformWidgetRenderBody,
 } from "./widget-session-types.js";
