@@ -47,7 +47,12 @@ function describeHttpTarget(url: string): string {
 }
 
 export type UiProtocol = "mcp-apps" | "openai-apps";
-export type McpServerLogKind = "rpc" | "oauth" | "http" | "webmcp";
+/**
+ * `webhook` rows are MCP Events feed entries the Events tab observed (a
+ * delivery the inbox journalled, or a simulated one). They carry the journal
+ * entry, which never holds a webhook secret or a viewer token (contract C8).
+ */
+export type McpServerLogKind = "rpc" | "oauth" | "http" | "webmcp" | "webhook";
 
 export interface UiLogEvent {
   id: string;
