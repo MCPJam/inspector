@@ -124,7 +124,7 @@ test('provider failures never disclose raw errors, variables, or token', async (
     async () => Response.json({ errors: [{ message: 'private-provider-details' }] }),
     async () => new Response('private-provider-details', { status: 500 }),
   ]) {
-    await assert.rejects(resolvePreviewOrigin({ ...scope, fetchImpl }), (error) => {
+    await assert.rejects(resolvePreviewOrigin({ ...scope, fetchImpl, wait: async () => {} }), (error) => {
       assert.doesNotMatch(error.message, /private/);
       assert.match(error.message, /metadata/);
       return true;
@@ -155,4 +155,35 @@ test('all preview jobs resolve a concrete service origin before registering it',
   const checks = readFileSync(new URL('../workflows/preview-cleanup-checks.yml', import.meta.url), 'utf8');
   assert.match(checks, /node --test .*railway-preview-origin\.test\.mjs/);
   assert.equal((checks.match(/- \.github\/scripts\/railway-preview-origin\.mjs/g) || []).length, 2);
+});
+
+for (const fault of ['network', 429, 502, 503]) {
+  test(`retries transient read failure ${fault} before validating the canonical origin`, async () => {
+    const waits = [];
+    let calls = 0;
+    const data = fixture();
+    const origin = await resolvePreviewOrigin({ ...scope, wait: async ms => { waits.push(ms); }, fetchImpl: async (_url, init) => {
+      calls++;
+      if (calls === 1) {
+        if (fault === 'network') throw new Error('private provider detail');
+        return new Response('', { status: fault });
+      }
+      const { query } = JSON.parse(init.body);
+      return Response.json({ data: query.includes('PreviewEnvironments')
+        ? { project: { environments: { edges: data.environments } } }
+        : query.includes('query Domains') ? { domains: data.domains } : { variables: data.variables } });
+    } });
+    assert.equal(origin, `https://${FRONTEND}`);
+    assert.equal(calls, 4);
+    assert.deepEqual(waits, [1000]);
+  });
+}
+test('bounds transient retries and never retries authentication refusal', async () => {
+  for (const status of [401, 503]) {
+    let calls = 0;
+    await assert.rejects(resolvePreviewOrigin({ ...scope, wait: async () => {}, fetchImpl: async () => {
+      calls++; return new Response('', { status });
+    } }), /refused/);
+    assert.equal(calls, status === 401 ? 1 : 5);
+  }
 });

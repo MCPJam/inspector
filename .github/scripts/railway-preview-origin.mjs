@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
 const ENDPOINT = 'https://backboard.railway.app/graphql/v2';
@@ -39,30 +40,40 @@ function domainList(value) {
   return [...new Set(value.map((item) => item.domain.toLowerCase()))];
 }
 
-export async function resolvePreviewOrigin({ projectId, environment, serviceId, token, fetchImpl = fetch }) {
+export async function resolvePreviewOrigin({ projectId, environment, serviceId, token, fetchImpl = fetch, wait = delay }) {
   if (![projectId, environment, serviceId, token].every((value) => typeof value === 'string' && value.trim())) {
     throw new Error('Preview origin resolution requires the Railway project, environment, service, and token.');
   }
   async function query(queryText, variables) {
-    let response;
-    let result;
-    try {
-      response = await fetchImpl(ENDPOINT, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: queryText, variables }),
-        signal: AbortSignal.timeout(30_000),
-        redirect: 'error',
-      });
-      result = await response.json();
-    } catch {
-      // Provider details can contain variable values; report only a static failure.
-      throw new Error('Could not read Railway preview origin metadata.');
+    for (let attempt = 0; attempt < 5; attempt++) {
+      let response;
+      try {
+        response = await fetchImpl(ENDPOINT, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: queryText, variables }),
+          signal: AbortSignal.timeout(30_000),
+          redirect: 'error',
+        });
+      } catch {
+        // Only read queries are retried; provider details may contain secrets.
+        if (attempt === 4) throw new Error('Could not read Railway preview origin metadata.');
+      }
+      if (response?.ok) {
+        let result;
+        try { result = await response.json(); }
+        catch { throw new Error('Railway returned invalid preview origin metadata.'); }
+        if (!result || result.errors || !result.data) {
+          throw new Error('Railway refused the preview origin metadata query.');
+        }
+        return result.data;
+      }
+      if (response && response.status !== 429 && response.status < 500) {
+        throw new Error('Railway refused the preview origin metadata query.');
+      }
+      if (attempt === 4) throw new Error('Railway refused the preview origin metadata query.');
+      await wait(1000 * 2 ** attempt);
     }
-    if (!response.ok || !result || result.errors || !result.data) {
-      throw new Error('Railway refused the preview origin metadata query.');
-    }
-    return result.data;
   }
 
   const inventory = await query(ENVIRONMENTS, { id: projectId });
