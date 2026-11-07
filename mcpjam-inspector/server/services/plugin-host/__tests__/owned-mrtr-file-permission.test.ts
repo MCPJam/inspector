@@ -3,7 +3,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { OfficialSdkClientAdapter } from "../../../../../sdk/src/mcp-client-manager/official-sdk-client-adapter.js";
 import { afterEach, expect, it, vi } from "vitest";
-import type { ResolvedInvocationContext } from "../invocation";
+import { PluginContinuationRefused, PluginContinuationTerminal, type ResolvedInvocationContext } from "../invocation";
 
 const seams = vi.hoisted(() => ({
   resume: vi.fn<typeof import("../../../utils/mrtr-hosted-collector.js").resumeMrtrContinuationLeg>(),
@@ -57,6 +57,8 @@ async function fixture(options: {
   vi.spyOn(manager, "getManagedClient").mockReturnValue(
     new OfficialSdkClientAdapter(new Client({ name: "fixture", version: "1" })),
   );
+  const closedSources = vi.spyOn(pluginFormSources, "closeOperation");
+  const closedGrants = vi.spyOn(pluginFormFileGrants, "closeOperation");
   const committed = vi.fn();
   const wire = vi.fn();
   vi.spyOn(pluginFormFileGrants, "prepareDelivery").mockReturnValue({
@@ -72,10 +74,11 @@ async function fixture(options: {
     fileResources: true, fileResourcesEnabled: () => fileResourcesEnabled,
     uploadTarget: () => "local-stdio",
     assertCurrent: async () => {
-      if (++reads === 2 && options.disableAt === "admission") fileResourcesEnabled = false;
+      if (++reads === (options.disableAt === "admission" ? 2 : 3) && options.disableAt) fileResourcesEnabled = false;
     },
   });
   seams.resume.mockImplementationOnce(async (deps) => {
+    let preparedInput = false;
     try {
       const prepared = await deps.prepareLeg!({
         opId: "operation", round: 1, maxRounds: 4, method: "tools/call",
@@ -83,14 +86,15 @@ async function fixture(options: {
           input: { method: "elicitation/create", params: { mode: "form", message: "Choose", requestedSchema: schema } },
         },
       }, { input: { action: "accept", content: { file: "fixture://selected" } } });
+      preparedInput = true;
       // The real continuation helper awaits its durable lease and wire fence here.
       await Promise.resolve();
-      if (options.disableAt === "commit") fileResourcesEnabled = false;
-      prepared.commit();
+      // Permission changes are visible only after refreshing the runtime snapshot.
+      await prepared.commit();
       wire(prepared.responses);
       return { outcome: "completed", result: { content: [] } };
     } catch {
-      return { outcome: "failed", reason: "Continuation input admission refused" };
+      return { outcome: "failed", reason: "Continuation input admission refused", ...(preparedInput ? { terminal: true as const } : {}) };
     }
   });
   const authorization: ResolvedInvocationContext = {
@@ -105,7 +109,7 @@ async function fixture(options: {
         (value) => ({ ok: true as const, value }),
         (error: unknown) => ({ ok: false as const, error }),
       ),
-      committed, wire,
+      committed, wire, closedSources, closedGrants,
     };
   } finally {
     source.release();
@@ -116,12 +120,22 @@ async function fixture(options: {
 it.each(["admission", "commit"] as const)(
   "refuses App uploads when File resources is revoked during %s",
   async (disableAt) => {
-    const { result, committed, wire } = await fixture({ disableAt });
+    const { result, committed, wire, closedSources, closedGrants } = await fixture({ disableAt });
     expect(result).toMatchObject({ ok: false, error: {
       code: "PLUGIN_FORM_WEB_UPLOAD_UNSUPPORTED", diagnostics: [expect.objectContaining({
         code: "PLUGIN_FORM_WEB_UPLOAD_UNSUPPORTED", serverId: "server",
       })],
     } });
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(disableAt === "commit" ? PluginContinuationTerminal : PluginContinuationRefused);
+    }
+    if (disableAt === "commit") {
+      expect(closedSources).toHaveBeenCalledOnce();
+      expect(closedGrants).toHaveBeenCalledOnce();
+    } else {
+      expect(closedSources).not.toHaveBeenCalled();
+      expect(closedGrants).not.toHaveBeenCalled();
+    }
     expect(committed).not.toHaveBeenCalled();
     expect(wire).not.toHaveBeenCalled();
   },

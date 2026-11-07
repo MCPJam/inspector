@@ -239,7 +239,7 @@ describe("modern MRTR gate", () => {
         },
         { [key]: response },
       );
-      prepared.commit();
+      await prepared.commit();
       return round === 1
         ? {
             outcome: "input_required",

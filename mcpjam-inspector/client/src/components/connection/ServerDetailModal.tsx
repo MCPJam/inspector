@@ -227,7 +227,7 @@ function PluginServerDetailModal({
               <div className="mt-4 border-t border-border/60 pt-4">
                 {settings.failed ? (
                   <div role="alert" className="space-y-2">
-                    <p>Settings could not be loaded.</p>
+                    <p>{settings.errorMessage ?? "Settings could not be loaded."}</p>
                     <Button
                       type="button"
                       variant="outline"
@@ -978,7 +978,7 @@ function ProjectServerDetailModal({
                   >
                     {settings.failed ? (
                       <div role="alert" className="space-y-2 p-4">
-                        <p>Settings could not be loaded.</p>
+                        <p>{settings.errorMessage ?? "Settings could not be loaded."}</p>
                         <Button type="button" variant="outline" onClick={settings.retry}>
                           Retry
                         </Button>

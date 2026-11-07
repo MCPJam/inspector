@@ -137,7 +137,7 @@ export async function createHonoApp() {
   // Load environment variables early so route handlers can read CONVEX_HTTP_URL
   const loadedEnv = loadInspectorEnv(__dirname);
   warnOnConvexDevMisconfiguration(loadedEnv);
-  if (!HOSTED_MODE) void startPluginFormFileJanitor();
+  void startPluginFormFileJanitor(!HOSTED_MODE);
   // One line, after the env is loaded: which grading-engine mode this process
   // could reach. An operator debugging "why are there no score rows" should
   // find the answer in the log, not in a flag dashboard.
