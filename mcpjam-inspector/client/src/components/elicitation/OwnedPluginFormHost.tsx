@@ -1,7 +1,7 @@
+import { useRetainedFormPortal } from "./use-retained-form-portal";
 import { PluginFormPreviewServices } from "./form-app-preview";
 import { formResourcePreviewPorts } from "./form-resource-preview";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { decodePrivatePluginFormSchema } from "@/shared/plugin-extensions/form-plan";
 import type { ReactNode } from "react";
 import {
@@ -192,6 +192,8 @@ function OwnedRequest({
   const [schemaFailed, setSchemaFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [cancelling, setCancelling] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const pendingAnswer = useRef<Promise<void>>(undefined);
   const convexRef = useRef(convex);
   convexRef.current = convex;
   useEffect(() => {
@@ -245,7 +247,7 @@ function OwnedRequest({
       if (answerRef.current === privateAnswer) answerRef.current = undefined;
     };
   }, [request.rendezvousId, request.expiresAt]);
-  const respond = async (answer: HostedElicitationAnswer) => {
+  const sendResponse = async (answer: HostedElicitationAnswer) => {
     const privateAnswer = answerRef.current;
     if (!privateAnswer) throw new Error("The form request is no longer active");
     let result: Awaited<ReturnType<typeof respondToChatElicitation>>;
@@ -299,6 +301,20 @@ function OwnedRequest({
       setResolved(true);
     }
   };
+  const respond = (answer: HostedElicitationAnswer) => {
+    if (pendingAnswer.current) return pendingAnswer.current;
+    setSubmitting(true);
+    const pending = sendResponse(answer);
+    pendingAnswer.current = pending;
+    const settled = () => {
+      if (pendingAnswer.current === pending) {
+        pendingAnswer.current = undefined;
+        setSubmitting(false);
+      }
+    };
+    void pending.then(settled, settled);
+    return pending;
+  };
   const serverName = request.serverName?.trim() || request.serverId;
   const icons = useServerIconSources(request.serverId);
   const queue = useComposerFormRegistration(
@@ -312,16 +328,17 @@ function OwnedRequest({
         },
   );
   const slot = useComposerSlot(workspaceId);
+  const portal = useRetainedFormPortal(slot, queue.active && active);
   if (resolved) return null;
   // Later requests for this chat wait until the earlier ones are answered.
-  if (!queue.active) return null;
-  // Another chat is shown: this request waits with its own chat.
-  if (!active) return null;
+  if ((!queue.active || !active) && !portal.ready) return null;
+  // Once presented, keep the card mounted in its detached portal while hidden.
+  // Pending submission state belongs to the request, not its current slot.
   // The composer card replaces the modal whenever this chat's composer is
   // mounted; the modal remains for layouts without a composer.
-  if (slot) {
+  if (portal.ready) {
     if (request.hasPrivateSchema && schema === undefined)
-      return createPortal(
+      return portal.render(
         <ComposerFormFrame
           requestId={request.rendezvousId}
           title={request.message}
@@ -352,7 +369,6 @@ function OwnedRequest({
               : "Loading the form…"}
           </p>
         </ComposerFormFrame>,
-        slot,
       );
   }
   // Never mount the editor with a missing private schema. A late read cannot
@@ -409,11 +425,12 @@ function OwnedRequest({
     hasPrivateSchema: undefined,
   };
   const render = (services: OwnedPluginFormServices) =>
-    slot ? (
-      createPortal(
+    portal.ready ? (
+      portal.render(
         <OwnedComposerCard
           request={hydratedRequest}
           services={services}
+          loading={submitting}
           onRespond={(action, content) =>
             respond({
               rendezvousId: request.rendezvousId,
@@ -422,12 +439,12 @@ function OwnedRequest({
             })
           }
         />,
-        slot,
       )
     ) : (
       <ElicitationRequestDialog
         request={hydratedRequest}
         pluginForm={services}
+        loading={submitting}
         onRespond={respond}
       />
     );
@@ -492,10 +509,12 @@ function OwnedRequest({
 function OwnedComposerCard({
   request,
   services,
+  loading,
   onRespond,
 }: {
   request: HostedElicitationRequestEvent;
   services: OwnedPluginFormServices;
+  loading: boolean;
   onRespond: (
     action: ComposerFormAction,
     content?: Record<string, unknown>,
@@ -537,6 +556,7 @@ function OwnedComposerCard({
       unsupported={compiled.unsupported}
       ports={services.ports}
       presentation={services.presentation}
+      loading={loading}
       onRespond={onRespond}
     />
   );

@@ -14,7 +14,10 @@ import {
   type SendPluginOnboarding,
 } from "./playground-onboarding";
 import { useComposerMentions } from "@/components/host-workspace/use-composer-mentions";
-import { usePluginIconsById } from "@/components/host-workspace/plugin-icon-directory";
+import {
+  usePluginIconsById,
+  pluginDisplayNamesById,
+} from "@/components/host-workspace/plugin-icon-directory";
 import { useProjectPlugins } from "@/hooks/usePluginImportApi";
 import { usePlaygroundHiddenEnvironment } from "@/hooks/use-playground-hidden-environment";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
@@ -36,6 +39,7 @@ import {
   ChatPluginFormHosts,
   OwnedPluginFormHost,
 } from "@/components/elicitation/OwnedPluginFormHost";
+import { TakeoverFormSlot } from "@/components/elicitation/TakeoverFormSlot";
 import { cancelComposerForms } from "@/components/elicitation/composer-form-store";
 import { shouldUseOwnedExtensionModelRoute } from "@/components/host-workspace/model-route";
 import {
@@ -1759,11 +1763,14 @@ export function PlaygroundMain({
   // One subscription to the project's plugins; discovery names each
   // server's plugin, and the hidden environment's plugin servers carry them
   // directly.
-  const pluginIconsById = usePluginIconsById(
-    useProjectPlugins(
-      extensionScope?.projectId ??
-        (hiddenPluginServers.length > 0 ? convexProjectId : null),
-    ),
+  const projectPlugins = useProjectPlugins(
+    extensionScope?.projectId ??
+      (hiddenPluginServers.length > 0 ? convexProjectId : null),
+  );
+  const pluginIconsById = usePluginIconsById(projectPlugins);
+  const pluginNamesById = useMemo(
+    () => pluginDisplayNamesById(projectPlugins),
+    [projectPlugins],
   );
   // A chat that carries its plugins through a hidden environment shows their
   // servers beside the selected ones: they run on every turn, so the Apps
@@ -2003,7 +2010,7 @@ export function PlaygroundMain({
     pluginExtensions.capabilities.modelContext,
     pluginExtensions.capabilities.displayModes,
   );
-  usePublishPluginIcons(pluginIconsById);
+  usePublishPluginIcons(pluginIconsById, pluginNamesById);
   const composerMentions = useComposerMentions(
     pluginExtensions.capabilities.mentions ? extensionScope : null,
     extensionServers,
@@ -6602,6 +6609,7 @@ export function PlaygroundMain({
           {/* Fullscreen overlay chat (input pinned + collapsible thread) */}
           {showFullscreenChatOverlay && (
             <FullscreenChatOverlay
+              contextAttachments={sharedChatInputProps.contextAttachments}
               chatSessionId={chatSessionId}
               messages={messages}
               open={isFullscreenChatOpen}
@@ -6726,6 +6734,7 @@ export function PlaygroundMain({
           // The chat fullscreen's floating composer, over the global App.
           // Messages go to the current chat.
           <FullscreenChatOverlay
+            contextAttachments={sharedChatInputProps.contextAttachments}
             contained
             chatSessionId={chatSessionId}
             messages={messages}
@@ -6745,6 +6754,16 @@ export function PlaygroundMain({
               setIsTakeoverChatOpen(true);
               void performComposerSubmit();
             }}
+          />
+        ) : null}
+        {hasExtensionProvider && globalTakeoverOpen ? (
+          <TakeoverFormSlot
+            chatWorkspaceId={extensionScope?.pluginWorkspace.workspaceId}
+            globalWorkspaceId={
+              extensionIdentity
+                ? globalOwnerWorkspace(extensionIdentity).workspaceId
+                : undefined
+            }
           />
         ) : null}
         {showLoadingOverlay && (

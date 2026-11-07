@@ -1,3 +1,5 @@
+import { OPENAI_ELICITATION_EXTENSION } from "@mcpjam/sdk";
+import { ownedPluginFormSchema } from "../plugin-host/owned-mrtr.js";
 import { admitWarmChatManager } from "../../utils/harness/warm-approval-binding";
 import { setManagerResourceHostConfig } from "../../utils/mcp-connections";
 import { TurnResources } from "./resources.js";
@@ -209,7 +211,8 @@ export async function prepareManagedConnections(args: {
   const isEmulatedMcpjam =
     Boolean(modelDefinition.id) &&
     turnRail === "hosted" &&
-    !resolvedExecution.harness;
+    !resolvedExecution.harness &&
+    !resolvedExecution.agentLoop;
   const rawMrtrVersion = (rawBody as Record<string, unknown>).hostedMrtrVersion;
   const mrtrEnabled =
     isEmulatedMcpjam &&
@@ -435,6 +438,8 @@ export async function prepareManagedConnections(args: {
         serverIds: effectiveServerIds,
         pinFor: pluginPinFor,
         mrtrEnabled,
+        inlineMrtr: turnMode === "interactive" && hasServiceCredential() &&
+          hostedBody.hostedElicitationVersion === HOSTED_ELICITATION_VERSION,
         forms: pluginExtensions?.capabilities.forms,
       })
     : undefined;
@@ -486,10 +491,12 @@ export async function prepareManagedConnections(args: {
         modelVisibleMcpToolResults,
       });
     }
-    // All of the turn's servers or none (shared connection capabilities).
+    // Legacy and inline consumers cover the whole batch's shared capabilities.
     let legacyExecutor: typeof modelToolExecutor;
-    if (eligibleServerIds.length) {
-      modelFormDispatch = createModelFormDispatch(eligibleServerIds);
+    const inlineServerIds = pluginFormPlan.inlineServerIds ?? [];
+    const liveFormServerIds = [...new Set([...eligibleServerIds, ...inlineServerIds])];
+    if (liveFormServerIds.length) {
+      modelFormDispatch = createModelFormDispatch(liveFormServerIds);
       legacyExecutor = createModelFormExecutor({
         c,
         admission: modelPluginAdmission,
@@ -503,15 +510,18 @@ export async function prepareManagedConnections(args: {
         hostId,
         hostRevision: pluginHostBindingDigest(hostRuntimeConfig),
         serverIds: effectiveServerIds,
-        eligibleServerIds,
+        eligibleServerIds: liveFormServerIds,
         dispatch: modelFormDispatch,
+        inlineMrtr: inlineServerIds.length > 0,
       });
     }
     // An Auto server is in both plans; each call follows its negotiated era.
     modelToolExecutor = chatPluginToolExecutor({
       ...(modelMrtr
         ? { modern: { serverIds: modernServerIds, execute: modelMrtr.execute } }
-        : {}),
+        : inlineServerIds.length && legacyExecutor
+          ? { modern: { serverIds: inlineServerIds, execute: legacyExecutor } }
+          : {}),
       legacy: legacyExecutor,
       pinFor: pluginPinFor,
       negotiatedVersion: (serverId) => pluginNegotiatedVersion(serverId),
@@ -567,15 +577,13 @@ export async function prepareManagedConnections(args: {
             pluginExtensions,
           )
         : effectiveClientCapabilities,
-      // An Auto server's MRTR answers standard elicitation; only a pinned
-      // modern server keeps OpenAI's claim for MRTR (unchanged by Auto).
+      // Auto connections need both form claims when they negotiate modern MCP.
+      // The SDK withholds the collector's claims on legacy connections.
       {
         ...(modelFormDispatch
           ? { legacy: { binding: modelFormDispatch.handlers } }
           : {}),
-        mrtr:
-          !!modelMrtr &&
-          effectiveServerIds.some((id) => pluginPinFor(id) === "2026-07-28"),
+        mrtr: !!modelMrtr || !!pluginFormPlan?.inlineServerIds?.length,
       },
       pluginExtensions?.capabilities.forms,
     ),
@@ -608,13 +616,23 @@ export async function prepareManagedConnections(args: {
       // Registered SYNCHRONOUSLY inside createAuthorizedManager (before the
       // connect microtask) so `buildCapabilities` advertises `elicitation`
       // for MRTR-capable servers — same race discipline as elicitation.
-      ...(mrtrBridge || harnessInput
+      ...(mrtrBridge || harnessInput || pluginFormPlan?.inlineServerIds?.length
         ? {
+            mrtrInputOptionsForServer: (serverId: string) =>
+              modelMrtr?.collectorOptionsForServer(serverId) ??
+              (pluginFormPlan?.inlineServerIds?.includes(serverId) ? {
+                extensionClaims: [OPENAI_ELICITATION_EXTENSION],
+                selectFormSchema: (params: Record<string, unknown> | undefined) =>
+                  ownedPluginFormSchema(params, serverId),
+              } : undefined),
             mrtrInputCollectorForServer: (
               serverId: string,
               organizationId?: string | null,
             ) =>
               modelMrtr?.collectorForServer(serverId) ??
+              (pluginFormPlan?.inlineServerIds?.includes(serverId)
+                ? modelFormDispatch?.inlineCollectorForServer(serverId)
+                : undefined) ??
               mrtrBridge?.mrtrInputCollectorForServer(serverId) ??
               (isForwardingOrganization(organizationId)
                 ? harnessInput?.collectMrtrForServer(serverId)

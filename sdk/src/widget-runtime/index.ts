@@ -50,6 +50,7 @@ export type {
   WidgetDebugDirection,
   HostBridgeMatrix,
   HostBridgeCallbacks,
+  AppToolRequestContext,
   RegisterHostBridgeHandlersOptions,
 } from "./host-app-bridge.js";
 

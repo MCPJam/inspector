@@ -4461,6 +4461,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
       await vi.waitFor(() => {
         expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+        expect(mockBridge.oninitialized).toBeTypeOf("function");
       });
       act(() => triggerReady());
 
@@ -4511,6 +4512,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
       await vi.waitFor(() => {
         expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+        expect(mockBridge.oninitialized).toBeTypeOf("function");
       });
       expect(sandboxedIframePropsRef.current.csp.connectDomains).toEqual([]);
 
@@ -4662,10 +4664,10 @@ describe("MCPAppsRenderer host capability enforcement", () => {
       await mockBridge.oncalltool({
         name: "transparency-test",
         arguments: { value: 1 },
-      });
+      }, { signal: new AbortController().signal, requestId: 1 });
     });
 
-    expect(onCallTool).toHaveBeenCalledWith("transparency-test", { value: 1 });
+    expect(onCallTool).toHaveBeenCalledWith("transparency-test", { value: 1 }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(onAppToolInvocationChange).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({

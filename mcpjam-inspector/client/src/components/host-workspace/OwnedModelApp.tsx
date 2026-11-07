@@ -485,10 +485,10 @@ function ModelApp({
           serverName={serverName}
           resourceUri={handle.resourceUri}
           toolMetadata={handle.toolMetadata}
-          onCallTool={(name, args) =>
+          onCallTool={(name, args, context) =>
             api.invoke(
               handle,
-              lifetime.signal,
+              context ? AbortSignal.any([lifetime.signal, context.signal]) : lifetime.signal,
               (value, signal) => {
                 const answer = queue.current.then(
                   () =>
@@ -511,6 +511,7 @@ function ModelApp({
                 return answer;
               },
               { name, arguments: args },
+              context?.onInputPending,
             )
           }
         />

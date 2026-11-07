@@ -4306,7 +4306,7 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://mcp.example.com/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4419,7 +4419,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://multiaccount.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4465,7 +4465,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://multiaccount.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4517,7 +4517,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://secure.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4580,7 +4580,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://secure.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4629,7 +4629,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: 'node server.js --config "My Files/config.json" ""' },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4832,7 +4832,7 @@ describe("App hosted OAuth callback handling", () => {
     const view = render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://personal.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4879,7 +4879,7 @@ describe("App hosted OAuth callback handling", () => {
     const view = render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://personal.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));

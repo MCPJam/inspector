@@ -527,6 +527,7 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
       signal: AbortSignal,
       approve: ApproveAppTool,
       call?: { name: string; arguments: Record<string, unknown> },
+      onInputPending?: (pending: boolean) => void,
     ): Promise<ThreadAppToolResult> => {
       const path = routePrefix + (call ? "call" : "activation/execute");
       const body = {
@@ -545,7 +546,13 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
         if (!parsed.success)
           throw new ThreadAppError("INSTANCE_RESPONSE_INVALID");
         const approval = parsed.data;
-        const approved = await approve(approval, signal);
+        let approved: boolean;
+        onInputPending?.(true);
+        try {
+          approved = await approve(approval, signal);
+        } finally {
+          onInputPending?.(false);
+        }
         signal.throwIfAborted();
         reply = await post(
           path,
@@ -556,6 +563,7 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
       accepted(reply.response, reply.value);
       reply.value = (await driveOwnedPluginMrtr(reply.value, {
         signal,
+        onInputPending,
         formScope: {
           projectId: scope.projectId,
           workspaceId: scope.pluginWorkspace.workspaceId,
