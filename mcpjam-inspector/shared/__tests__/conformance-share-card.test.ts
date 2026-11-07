@@ -139,6 +139,14 @@ describe("conformance share card", () => {
     expect(texts(svg)).toContain(`${"x".repeat(39)}…`);
   });
 
+  it("never cuts an emoji in half", () => {
+    const name = `${"x".repeat(38)}🚀🚀🚀`;
+    const svg = svgOf(card({ serverName: name }));
+    expect(texts(svg)).toContain(`${"x".repeat(38)}🚀…`);
+    // A lone surrogate would make the preview's data URL throw.
+    expect(() => encodeURIComponent(svg)).not.toThrow();
+  });
+
   it("wraps the checks line before it runs into the footer", () => {
     const busy = card({
       applicable: 120,

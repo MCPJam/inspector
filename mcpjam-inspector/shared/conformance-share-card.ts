@@ -210,6 +210,12 @@ const FAMILY = {
   mono: `'${SHARE_CARD_FONTS.mono}', monospace`,
 };
 
+/** At most `max` characters, cut by code point so no emoji is split in half. */
+function truncate(text: string, max: number): string {
+  const chars = Array.from(text);
+  return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : text;
+}
+
 function escapeXml(value: string): string {
   return value.replace(
     /[&<>"']/g,
@@ -335,7 +341,7 @@ function suiteRow(
     text(
       SUITE_LEFT,
       round(contentTop + 21),
-      shareCardSuiteLabel(suite.kind).slice(0, 24),
+      truncate(shareCardSuiteLabel(suite.kind), 24),
       { family: FAMILY.sans, size: 22, weight: 600 },
     ),
     text(SUITE_RIGHT, round(contentTop + 18), status.label, {
@@ -400,10 +406,9 @@ export function buildConformanceShareCardSvg(
     shareCardChecksParts(data),
     FOOTER_WIDTH - footerRight.length * MONO_FOOTER_ADVANCE - 24,
   );
-  const serverName =
-    data.serverName && data.serverName.length > SERVER_NAME_MAX
-      ? `${data.serverName.slice(0, SERVER_NAME_MAX - 1)}…`
-      : data.serverName;
+  const serverName = data.serverName
+    ? truncate(data.serverName, SERVER_NAME_MAX)
+    : null;
   const wordmarkHeight = 23;
   const wordmarkWidth = Math.round(wordmarkHeight * MCPJAM_WORDMARK_ASPECT);
 

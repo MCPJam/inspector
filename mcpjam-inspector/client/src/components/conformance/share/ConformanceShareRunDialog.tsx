@@ -2,10 +2,9 @@
  * Share for one saved conformance run: the run's score card, with Download
  * PNG, Copy link, and posts to X and LinkedIn.
  *
- * The posts share the run's link, not the image: the link's page carries the
- * same card as its og:image (see server/utils/conformance-share-meta-tags.ts),
- * so X and LinkedIn unfurl it as the card — but only while anyone may open the
- * link. Who may is the existing access dialog, one click away.
+ * The posts share the run's link, not the image. X and LinkedIn can only
+ * unfurl a link anyone may open, so a restricted link says so. Who may open it
+ * is the existing access dialog, one click away.
  */
 
 import { useMemo, useState, type ReactNode } from "react";
@@ -25,6 +24,7 @@ import { useShareSettings } from "@/hooks/useShares";
 import { useArtifactQuery } from "@/lib/artifact-urls";
 import { buildConformanceSharePath } from "@/lib/app-navigation";
 import { copyToClipboard } from "@/lib/clipboard";
+import { HOSTED_MODE } from "@/lib/config";
 import { toast } from "@/lib/toast";
 import {
   SHARE_CARD_HEIGHT,
@@ -147,7 +147,8 @@ function ShareRunBody({
       run
         ? shareCardDataFromRun(run, {
             serverName,
-            siteLabel: window.location.hostname,
+            // A self-hosted address stays off a card meant to be posted.
+            siteLabel: HOSTED_MODE ? window.location.hostname : null,
           })
         : null,
     [run, serverName],
