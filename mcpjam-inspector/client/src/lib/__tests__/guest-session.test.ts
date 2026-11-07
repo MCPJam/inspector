@@ -617,6 +617,53 @@ describe("guest-session module", () => {
     });
   });
 
+  describe("clearGuestActivation", () => {
+    it("clears only the marker of the given guest", () => {
+      guestSession.markGuestActivated("guest-new");
+
+      guestSession.clearGuestActivation("guest-old");
+      expect(guestSession.getActivatedGuestId()).toBe("guest-new");
+
+      guestSession.clearGuestActivation("guest-new");
+      expect(guestSession.getActivatedGuestId()).toBeNull();
+    });
+  });
+
+  describe("getExistingGuestId", () => {
+    it("returns null when the server confirms there is no guest", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: true,
+        status: 204,
+        statusText: "No Content",
+      } as Response);
+
+      await expect(guestSession.getExistingGuestId()).resolves.toBeNull();
+    });
+
+    it("throws on a failed lookup so callers can keep the activation marker", async () => {
+      vi.mocked(global.fetch).mockRejectedValue(new TypeError("Failed to fetch"));
+
+      await expect(guestSession.getExistingGuestId()).rejects.toThrow(
+        "Failed to fetch",
+      );
+    });
+
+    it("returns the guestId of the looked-up session", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            guestId: "guest-1",
+            token: "token-1",
+            expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+          }),
+      } as Response);
+
+      await expect(guestSession.getExistingGuestId()).resolves.toBe("guest-1");
+    });
+  });
+
   describe("forceRefreshGuestSession", () => {
     it("clears in-memory cache and re-requests with credentials", async () => {
       vi.mocked(global.fetch)
