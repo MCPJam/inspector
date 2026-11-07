@@ -3,6 +3,7 @@ import type { ErrorOrigin } from "@mcpjam/sdk";
 import type { RouteFailureHop } from "./route-error-report.js";
 import type { ChatOrigin } from "./chat-origin.js";
 import type { LogConvexId } from "./log-convex-id.js";
+import type { OnboardingPhaseTimings, OnboardingTraceLastPhase } from "../../shared/onboarding-trace.js";
 import type { PluginContextRefusedEvent } from "./context-refused-event.js";
 
 export type Environment =
@@ -426,10 +427,9 @@ export type RequestEventMap = {
   /** An App context update refused before anything was stored. */
   "plugin.instance.context.refused": PluginContextRefusedEvent;
   /**
-   * One plugin onboarding turn (the Playground's Run onboarding or Set up),
-   * from its request to its terminal result. `phases` holds the ms since the
-   * request at which each phase was first reached. IDs, codes, counts and
-   * timings only; never skill text, credentials or tool arguments.
+   * One onboarding turn from request to terminal result. `phases` holds ms
+   * since the request. The strict boundary hashes correlation IDs and keeps
+   * known phase timings, never skill text, credentials or tool arguments.
    */
   "plugin.onboarding.turn": {
     attemptId: string;
@@ -438,16 +438,16 @@ export type RequestEventMap = {
     code?: string;
     statusCode: number;
     totalMs: number;
-    phases: Record<string, number>;
+    phases: OnboardingPhaseTimings;
     unavailableServers: number;
   };
   /** The same turn, unfinished when its watchdog fired: where it stopped. */
   "plugin.onboarding.turn.stalled": {
     attemptId: string;
     pluginVersionId: string;
-    lastPhase: string;
+    lastPhase: OnboardingTraceLastPhase;
     elapsedMs: number;
-    phases: Record<string, number>;
+    phases: OnboardingPhaseTimings;
   };
   "mcp.tool.execution.failed": {
     toolName: string;

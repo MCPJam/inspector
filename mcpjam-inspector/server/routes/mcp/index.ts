@@ -37,6 +37,7 @@ import webmcpInspector from "./webmcp-inspector";
 import audioTranscriptions from "./audio-transcriptions";
 import plugins from "./plugins";
 import { buildHealthMeta } from "../../utils/health-payload.js";
+import { onboardingTurnTraceMiddleware } from "../../services/plugin-host/onboarding-trace.js";
 
 const mcp = new Hono();
 
@@ -51,6 +52,7 @@ mcp.get("/health", (c) => {
 });
 
 // Chat v2 endpoint
+mcp.use("/chat-v2", onboardingTurnTraceMiddleware);
 mcp.route("/chat-v2", chatV2);
 mcp.route("/chat-persistence", chatPersistence);
 mcp.route("/turn-authorization", turnAuthorization);
