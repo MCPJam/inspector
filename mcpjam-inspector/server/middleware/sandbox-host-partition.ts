@@ -27,7 +27,8 @@ import {
   SANDBOX_HOSTS,
   type SandboxIsolationStatus,
 } from "../config.js";
-import { logger as appLogger } from "../utils/logger.js";
+import { logger as appLogger, printForOperator } from "../utils/logger.js";
+import { sandboxOriginOf } from "../../shared/sandbox-origin.js";
 
 /**
  * Everything a sandbox hostname is allowed to answer.
@@ -139,8 +140,24 @@ function sandboxIsolationFault(status: SandboxIsolationStatus): string | null {
       return null;
     case "unset":
       return "SANDBOX_HOSTS names no hostname to partition (or MCPJAM_HOSTED_ORIGIN is unparseable), so MCP Apps widgets are not isolated from the host app.";
-    case "same-origin":
-      return `SANDBOX_HOSTS contains the app's own host from MCPJAM_HOSTED_ORIGIN (${MCPJAM_HOSTED_ORIGIN}): MCP Apps widgets share cookies and storage with the host app, and that hostname now answers nothing but the sandbox proxy.`;
+    case "same-origin": {
+      // Listed in SANDBOX_HOSTS, or named only by MCPJAM_SANDBOX_ORIGIN.
+      const listed =
+        resolveSandboxIsolation(SANDBOX_HOSTS, MCPJAM_HOSTED_ORIGIN, null) ===
+        "same-origin";
+      // The parsed origin, never the raw value, as for "unpartitioned" below.
+      // This verdict is only reached once the value has parsed.
+      const appOrigin = new URL(MCPJAM_HOSTED_ORIGIN).origin;
+      return listed
+        ? `SANDBOX_HOSTS contains the app's own host from MCPJAM_HOSTED_ORIGIN (${appOrigin}): MCP Apps widgets share cookies and storage with the host app, and that hostname now answers nothing but the sandbox proxy.`
+        : `MCPJAM_SANDBOX_ORIGIN is the app's own origin from MCPJAM_HOSTED_ORIGIN (${appOrigin}): MCP Apps widgets share cookies and storage with the host app. Point it at a separate hostname and list that hostname in SANDBOX_HOSTS.`;
+    }
+    case "unpartitioned": {
+      // The parsed origin, never the raw value, which could carry credentials
+      // or a query string into the logs.
+      const origin = sandboxOriginOf(process.env.MCPJAM_SANDBOX_ORIGIN);
+      return `MCPJAM_SANDBOX_ORIGIN (${origin}) names a host that SANDBOX_HOSTS does not list, so that host still serves the app shell and /api next to MCP Apps widgets. Add its hostname to SANDBOX_HOSTS.`;
+    }
   }
 }
 
@@ -156,5 +173,6 @@ export function assertSandboxIsolation(): void {
   const fault = sandboxIsolationFault(resolveSandboxIsolation());
   if (fault) {
     appLogger.error(`[Security] ${fault}`);
+    printForOperator(`[Security] ${fault}`);
   }
 }

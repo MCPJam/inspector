@@ -4,6 +4,7 @@ export interface InspectorClientRuntimeConfig {
   workosClientId?: string;
   workosApiHostname?: string;
   doNotTrack?: boolean;
+  sandboxOrigin?: string;
 }
 
 declare global {
@@ -53,6 +54,14 @@ export function getRuntimeWorkosClientId(): string | undefined {
  */
 export function getRuntimeWorkosApiHostname(): string | undefined {
   return getNonEmptyString(getRuntimeConfig()?.workosApiHostname);
+}
+
+/**
+ * The server's `MCPJAM_SANDBOX_ORIGIN`. Read through `SANDBOX_ORIGIN` in
+ * `config.ts`, which validates it and falls back to the build-time origin.
+ */
+export function getRuntimeSandboxOrigin(): string | undefined {
+  return getNonEmptyString(getRuntimeConfig()?.sandboxOrigin);
 }
 
 /**

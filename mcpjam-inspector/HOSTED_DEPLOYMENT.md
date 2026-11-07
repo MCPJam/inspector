@@ -13,24 +13,35 @@ substitute — origin separation is what enforces isolation.
 
 ### Configuration
 
-Two settings, and both are required. The client build says where widgets load
-from; the server says which hostnames serve nothing but widgets.
+Two settings, and both are required: where widgets load from, and which
+hostnames serve nothing but widgets.
 
 ```bash
-# Client build time.
+# Server runtime. Served to the browser with the page, so one image serves
+# every deployment. Wins over the build-time value below.
+MCPJAM_SANDBOX_ORIGIN=https://sandbox.example.com
+
+# Client build time. Used when MCPJAM_SANDBOX_ORIGIN is unset.
 VITE_MCPJAM_SANDBOX_ORIGIN=https://sandbox.example.com
 
 # Server runtime. Comma-separated hostnames, no scheme, no port.
 SANDBOX_HOSTS=sandbox.example.com
 ```
 
-`VITE_MCPJAM_SANDBOX_ORIGIN` must be:
+The sandbox origin must be an `http://` or `https://` origin, and:
 
 - A different registrable origin from the host app (e.g. host on
   `app.example.com`, sandbox on `sandbox.example.com`), so the browser scopes
   cookies and storage separately.
 - Reachable by browsers. The same MCPJam backend serves both DNS names — no
   separate deploy is required.
+
+An `MCPJAM_SANDBOX_ORIGIN` that is not an http(s) origin is ignored, with a
+warning on stderr, and the browser uses the image's build-time
+`VITE_MCPJAM_SANDBOX_ORIGIN` instead. On an image built by MCPJam's Railway
+pipeline that is `https://sandbox.mcpjam.com`, so widgets would load from
+MCPJam's sandbox host, not yours. An image built without one falls back to the
+app's own origin (see Fallback behavior below).
 
 `SANDBOX_HOSTS` must list that hostname. A host on this list serves **exactly
 two paths** and answers `404` for everything else — no app shell, no assets, no
@@ -107,19 +118,26 @@ in `WEB_ALLOWED_ORIGINS` so the host page is allowed to frame the sandbox.
 
 `/health` reports `sandboxIsolation`:
 
-- `ok` — a sandbox hostname is configured and it is not the app's own host.
+- `ok` — a sandbox hostname is configured, it is not the app's own host, and
+  `MCPJAM_SANDBOX_ORIGIN`, when set, names a listed host.
 - `same-origin` — `SANDBOX_HOSTS` contains the app's host from
-  `MCPJAM_HOSTED_ORIGIN`. Widgets are not isolated, and that hostname has
-  stopped serving the app.
+  `MCPJAM_HOSTED_ORIGIN`, so that hostname has stopped serving the app, or
+  `MCPJAM_SANDBOX_ORIGIN` is the app's own origin. Either way widgets are not
+  isolated.
+- `unpartitioned` — `MCPJAM_SANDBOX_ORIGIN` names a host that `SANDBOX_HOSTS`
+  does not list, so the host widgets load from still serves the app shell and
+  `/api`.
 - `unset` — nothing is partitioned, or `MCPJAM_HOSTED_ORIGIN` could not be
   parsed to compare against.
 
-Anything other than `ok` is also logged once at error level during boot.
+Anything other than `ok` is also logged once at error level during boot, and
+printed on stderr, so it shows even in production without `VERBOSE_LOGS=true`.
 
 ### Fallback behavior
 
-If `VITE_MCPJAM_SANDBOX_ORIGIN` is unset in a hosted build — or set to the
-app's own origin, which produces the same iframe — the sandbox falls back to
+If neither `MCPJAM_SANDBOX_ORIGIN` nor `VITE_MCPJAM_SANDBOX_ORIGIN` names a
+sandbox origin in a hosted deployment — or the one named is the app's own
+origin, which produces the same iframe — the sandbox falls back to
 same-origin and the client logs a security warning to the browser console. The
 fallback exists only as a soft-fail for misconfigured deploys; production
 deployments must set the variable. The regression test at
