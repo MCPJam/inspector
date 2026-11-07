@@ -123,7 +123,7 @@ export function ContextGroupChip({
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 gap-1.5 px-1.5 text-xs font-medium"
+            className="h-7 min-w-0 shrink gap-1.5 px-1.5 text-xs font-medium"
             title={title}
             aria-label={`${contextLabel}, ${items.length} item${
               items.length === 1 ? "" : "s"
