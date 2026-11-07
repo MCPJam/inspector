@@ -19,6 +19,7 @@ export function openConfiguredThread(
         restart ? "thread/fork" : "thread/resume",
         {
           ...config,
+          ...(restart ? { developerInstructions: config.developerInstructions ?? "" } : {}),
           threadId: previousThreadId,
         },
       )
