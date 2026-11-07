@@ -1828,9 +1828,10 @@ describe("ConformanceTab", () => {
     fireEvent.click(suiteHeader("oauth"));
     const row = screen.getByText(left.title).closest("button")!;
     expect(within(row).getByText("unscored")).toBeInTheDocument();
-    // Its failure is reported, not counted: grey, not red.
-    // The tone is on the box around the clamped text.
-    const message = within(row).getByText("profile shape is wrong").parentElement;
+    // Its failure is reported, not counted: grey, not red. It shows once open.
+    expect(within(row).queryByText("profile shape is wrong")).toBeNull();
+    fireEvent.click(row);
+    const message = screen.getByText("profile shape is wrong");
     expect(message).toHaveClass("text-muted-foreground");
     expect(message).not.toHaveClass("text-red-600");
     expect(screen.queryByText(/^Not conformant\./)).toBeNull();
@@ -3493,9 +3494,7 @@ describe("ConformanceTab", () => {
     fireEvent.click(suiteHeader("protocol"));
 
     // Shut, an era skip stays in the inert content without a row preview.
-    const reason = screen.getByText(
-      /Not applicable to the legacy era/,
-    ).parentElement!;
+    const reason = screen.getByText(/Not applicable to the legacy era/);
     expect(isCollapsed(reason)).toBe(true);
 
     clickRow("No Session Id Minted");
@@ -3804,6 +3803,66 @@ describe("ConformanceTab", () => {
     openSpy.mockRestore();
   });
 
+  it("asks for sign-in at the top of the run, not in the OAuth suite at its end", async () => {
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockReturnValue({} as unknown as Window);
+    // Held back, so the run is on screen before sign-in is needed.
+    const oauthStart = createDeferred<{
+      phase: "authorization_needed";
+      sessionId: string;
+      authorizationUrl: string;
+    }>();
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockReturnValue(oauthStart.promise);
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    await clickRun();
+    // The live region is there, empty, before sign-in is needed, so filling it
+    // is announced; inserted with its text, it may not be.
+    const announcement = await screen.findByTestId(
+      "conformance-oauth-announcement",
+    );
+    expect(announcement.getAttribute("role")).toBe("status");
+    expect(announcement.textContent).toBe("");
+    oauthStart.resolve({
+      phase: "authorization_needed",
+      sessionId: "session-1",
+      authorizationUrl: "https://auth.example.com/authorize",
+    });
+
+    // Below the fold, a run waiting on sign-in looked like one that never
+    // stops loading (CQT-97).
+    await screen.findByText("Waiting for browser authorization...");
+    const prompt = screen.getByTestId("conformance-oauth-prompt");
+    expect(screen.getByTestId("conformance-oauth-announcement")).toBe(
+      announcement,
+    );
+    expect(announcement.textContent).toBe(
+      "This run is waiting for you to sign in.",
+    );
+    expect(
+      prompt.compareDocumentPosition(suiteHeader("protocol")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      within(prompt).getByRole("button", { name: "Open sign-in page" }),
+    ).toBeDefined();
+    expect(
+      within(prompt).getByRole("button", { name: "Skip OAuth" }),
+    ).toBeDefined();
+    // One prompt: the OAuth suite points at it rather than repeating it.
+    expect(
+      screen.getAllByRole("button", { name: "Skip OAuth" }),
+    ).toHaveLength(1);
+    expect(
+      screen.getByText(
+        "Waiting for sign-in. Use the prompt at the top of the run.",
+      ),
+    ).toBeDefined();
+    openSpy.mockRestore();
+  });
+
   it("offers the authorization page and a skip when the browser blocks the popup", async () => {
     const openSpy = vi
       .spyOn(window, "open")
@@ -3824,6 +3883,11 @@ describe("ConformanceTab", () => {
     expect(
       screen.queryByText("Waiting for browser authorization..."),
     ).toBeNull();
+    // The OAuth suite warns too: a spinner there reads as a run that never
+    // finishes (CQT-97).
+    expect(
+      screen.getByTestId("conformance-oauth-suite-blocked"),
+    ).toBeDefined();
 
     // Opening it again from a click is what a popup blocker lets through. The
     // blocked-window dialog sits over the page, so its button is the one in
@@ -4486,15 +4550,15 @@ describe("ConformanceTab", () => {
         .closest("button"),
     ).toBe(pendingRow);
     // An unscored finding reads as information, not as a failure that counts.
-    expect(
-      within(pendingRow!).getByText("schema mismatch").parentElement,
-    ).toHaveClass("text-muted-foreground");
+    fireEvent.click(pendingRow!);
+    expect(screen.getByText("schema mismatch")).toHaveClass(
+      "text-muted-foreground",
+    );
 
     const scoredRow = screen.getByText("Ping").closest("button");
     expect(scoredRow).not.toHaveTextContent("unscored");
-    expect(
-      within(scoredRow!).getByText("pong missing").parentElement,
-    ).toHaveClass("text-red-600");
+    fireEvent.click(scoredRow!);
+    expect(screen.getByText("pong missing")).toHaveClass("text-red-600");
   });
 
   it("badges an incomplete tasks run distinctly from a passing one", async () => {
@@ -4626,13 +4690,14 @@ describe("ConformanceTab", () => {
     render(<ConformanceTab server={createHttpServer()} />);
     await runToCompletion();
 
-    // On the row itself, not only inside its collapsed details.
+    // The row shows its status; the reason waits for the row to open.
     const row = screen.getByText("Request Resource Metadata").closest("button");
     expect(row).not.toBeNull();
     expect(within(row!).getByText("!")).toBeInTheDocument();
-    expect(
-      within(row!).getByText("The authorization server timed out."),
-    ).toBeInTheDocument();
+    const reason = "The authorization server timed out.";
+    expect(within(row!).queryByText(reason)).toBeNull();
+    fireEvent.click(row!);
+    expect(screen.getByText(reason).closest("[inert]")).toBeNull();
   });
 });
 

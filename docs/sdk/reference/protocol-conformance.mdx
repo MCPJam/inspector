@@ -81,7 +81,9 @@ probe call reports `could-not-run` instead. The runner never picks tools to call
 on your behalf.
 
 From the CLI, pass `--log-probe-tool <name>`, plus `--log-probe-args <json>` and
-`--log-probe-level <level>` when needed.
+`--log-probe-level <level>` when needed. To give the advice its own tool
+(`logLevelFilteringProbe`), pass `--log-filter-tool <name>`, plus
+`--log-filter-args <json>` and `--log-filter-level <level>` when needed.
 
 ## Suite
 
