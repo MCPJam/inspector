@@ -2028,6 +2028,7 @@ export function PlaygroundMain({
     // composer from carrying their (now refused) context references.
     pluginExtensions.capabilities.modelContext,
     pluginExtensions.capabilities.displayModes,
+    pluginExtensionProfileForHost(previewedHost?.config),
   );
   usePublishPluginIcons(pluginIconsById, pluginNamesById);
   const composerMentions = useComposerMentions(

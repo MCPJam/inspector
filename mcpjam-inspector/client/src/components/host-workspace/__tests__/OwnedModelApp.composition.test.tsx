@@ -212,7 +212,7 @@ function CompareModelLane({ lane, enabled = true }: { lane: string; enabled?: bo
   const workspace = useCompareLaneModelApps(scope, {
     ...ALL_EXTENSION_CAPABILITIES,
     modelContext: enabled,
-  });
+  }, "codex");
   return <OwnedModelAppPortsProvider value={workspace.value}>
     <output data-testid={`references-${lane}`}>{JSON.stringify(workspace.references)}</output>
     <OwnedModelApp
