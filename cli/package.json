@@ -4,8 +4,10 @@
   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
   "type": "module",
   "main": "dist/index.js",
+  "license": "MIT",
   "files": [
-    "dist"
+    "dist",
+    "LICENSE"
   ],
   "bin": {
     "mcpjam": "dist/index.js"

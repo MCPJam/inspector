@@ -28,6 +28,9 @@ export default defineConfig({
       resolveClientBuildSurface(process.env.MCPJAM_BUILD_SURFACE),
     ),
   },
+  banner: {
+    js: "/*! Portions of this file are licensed under the MCPJam Enterprise Edition License. See LICENSE-EE. */",
+  },
   format: ["esm"],
   // One file per entry: Sentry owns and maps frames only in these fixed
   // outputs, and shared chunks get hashed names that no catalog can list.
