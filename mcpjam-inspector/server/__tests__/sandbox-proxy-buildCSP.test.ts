@@ -35,8 +35,10 @@ function extract(name: string): string {
   return html.slice(m.index, i);
 }
 
-const sanitize = extract("sanitizeDomain");
-const build = extract("buildCSP");
+const policyStart = html.indexOf("var SandboxCspPolicy =");
+const policyEnd = html.indexOf("const { sanitizeDomain, buildCSP, PERMISSIVE_SANDBOX_CSP }");
+if (policyStart < 0 || policyEnd <= policyStart) throw new Error("Missing compiled CSP policy module");
+const policy = html.slice(policyStart, policyEnd);
 const buildGuard = extract("buildConnectGuardScript");
 const buildStorageGuard = extract("buildBrowserStorageGuardScript");
 
@@ -45,7 +47,7 @@ const buildCSP = new Function(
   "csp",
   "cspDirectives",
   "cspSubtypePolicy",
-  `${sanitize}\n${build}\nreturn buildCSP(csp, cspDirectives, cspSubtypePolicy);`
+  `${policy}\nreturn SandboxCspPolicy.buildCSP(csp, cspDirectives, cspSubtypePolicy);`
 ) as (
   csp: unknown,
   cspDirectives?: Record<string, string[]>,
