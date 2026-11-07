@@ -13,17 +13,13 @@ export function useCompareLaneModelApps(
   profile?: ExtensionLaunchProfile,
   canInvoke?: () => boolean,
 ) {
+  const workspaceId = scope?.pluginWorkspace.workspaceId;
+  const projectId = scope?.projectId;
+  const hostId = scope?.hostId;
   const modelScope = useMemo(
-    () =>
-      scope
-        ? {
-            key: scope.pluginWorkspace.workspaceId,
-            projectId: scope.projectId,
-            hostId: scope.hostId,
-            workspaceId: scope.pluginWorkspace.workspaceId,
-          }
-        : null,
-    [scope],
+    () => workspaceId !== undefined && projectId !== undefined && hostId !== undefined
+      ? { key: workspaceId, projectId, hostId, workspaceId } : null,
+    [workspaceId, projectId, hostId],
   );
   const workspace = useOwnedModelAppWorkspace(
     rejectAppMessage,
