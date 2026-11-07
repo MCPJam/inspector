@@ -1,10 +1,14 @@
 import { MCPJAM_CLOUD_API_URL } from "../deployment/address.js";
 import { widgetSessionPath } from "./widget-session-types.js";
 import type {
-  PlatformWidgetSessionTarget, PlatformWidgetSessionCreateBody,
-  PlatformWidgetSessionCreated, PlatformWidgetAction,
-  PlatformWidgetSessionActionResult, PlatformWidgetSessionSnapshot,
-  PlatformWidgetSessionStepBody, PlatformWidgetSessionStepResult,
+  PlatformWidgetSessionTarget,
+  PlatformWidgetSessionCreateBody,
+  PlatformWidgetSessionCreated,
+  PlatformWidgetAction,
+  PlatformWidgetSessionActionResult,
+  PlatformWidgetSessionSnapshot,
+  PlatformWidgetSessionStepBody,
+  PlatformWidgetSessionStepResult,
   PlatformWidgetSessionClosed,
   PlatformWidgetRenderBody,
 } from "./widget-session-types.js";
@@ -3881,7 +3885,7 @@ export class PlatformApiClient {
   /** Retain a widget on a local Inspector; hosted deployments return 404. */
   createServerWidgetSession(
     params: ServerScope & { body: PlatformWidgetSessionCreateBody },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformWidgetSessionCreated> {
     return this.serverOp(params, "widget-sessions", options);
   }
@@ -3889,7 +3893,7 @@ export class PlatformApiClient {
   /** Read the retained widget's current accessibility tree. */
   getServerWidgetSessionSnapshot(
     params: PlatformWidgetSessionTarget,
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformWidgetSessionSnapshot> {
     const path = `${widgetSessionPath(params)}/snapshot`;
     return this.request("GET", path, {}, options);
@@ -3900,7 +3904,7 @@ export class PlatformApiClient {
     params: PlatformWidgetSessionTarget & {
       body: { action: PlatformWidgetAction };
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformWidgetSessionActionResult> {
     const path = `${widgetSessionPath(params)}/action`;
     return this.request("POST", path, { body: params.body }, options);
@@ -3911,7 +3915,7 @@ export class PlatformApiClient {
     params: PlatformWidgetSessionTarget & {
       body: PlatformWidgetSessionStepBody;
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformWidgetSessionStepResult> {
     const path = `${widgetSessionPath(params)}/scripted-step`;
     return this.request("POST", path, { body: params.body }, options);
@@ -3920,7 +3924,7 @@ export class PlatformApiClient {
   /** Dispose the original owner's retained browser; closing is idempotent. */
   closeServerWidgetSession(
     params: PlatformWidgetSessionTarget,
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformWidgetSessionClosed> {
     return this.request("DELETE", widgetSessionPath(params), {}, options);
   }

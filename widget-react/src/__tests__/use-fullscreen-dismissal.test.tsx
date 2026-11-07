@@ -1,4 +1,4 @@
-import { createRef, useRef, useState } from "react";
+import { createRef, useRef, useState, startTransition, Suspense } from "react";
 import {
   act,
   cleanup,
@@ -99,9 +99,30 @@ it("dismisses only the focused owner and waits for every input before reopening"
     screen.getByRole("button", { name: "Open left" }).hasAttribute("disabled"),
   ).toBe(true);
   act(() => second.finish());
+  // A finished ticket cannot re-arm the wait or disable reopening.
   act(() => second.update(true));
   expect(screen.getByRole("button", { name: "Open left" }).hasAttribute("disabled")).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "Open left" }));
   expect(opens.mock.calls).toEqual([["left"], ["left"]]);
   expect(unchangedGuest.current).toBe(guest);
+});
+
+it("keeps the committed owner's callbacks when a concurrent render suspends", async () => {
+  const exit = vi.fn();
+  const pending = new Promise<void>(() => {});
+  function Pane({ version }: { version: string }) {
+    const presentation = useFullscreenDismissal({
+      fullscreen: true, enabled: true, canInline: false, unowned: false,
+      hostInputPending: false, element: () => null, inline: () => {},
+      exit: () => exit(version), open: () => {},
+    });
+    if (version === "suspended") throw pending;
+    return <button onClick={presentation.dismiss}>Dismiss committed App</button>;
+  }
+  const view = render(<Suspense fallback="loading"><Pane version="committed" /></Suspense>);
+  await act(async () => { startTransition(() => {
+    view.rerender(<Suspense fallback="loading"><Pane version="suspended" /></Suspense>);
+  }); });
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss committed App" }));
+  expect(exit).toHaveBeenCalledExactlyOnceWith("committed");
 });

@@ -281,6 +281,7 @@ export function pluginModelAppRoutes(ports: {
       const signal = AbortSignal.any([c.req.raw.signal, record.abort.signal]);
       const verify = async () => {
         const source = await runtime.resolve(record.toolName, signal);
+        await admission.revalidate({ signal });
         if (source.revision !== record.revision || pluginResourceUri(source.tool._meta) !== record.resourceUri)
           throw denied();
         modelApps.get(body.instanceToken, actor);
