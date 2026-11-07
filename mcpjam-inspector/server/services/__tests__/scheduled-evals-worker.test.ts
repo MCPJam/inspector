@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const prepareEvalRun = vi.fn();
+const queryHostConfig = vi.hoisted(() => vi.fn());
+vi.mock("../evals/route-helpers.js", () => ({
+  createConvexClient: () => ({ query: queryHostConfig }),
+}));
 
 vi.mock("../../utils/v1-convex-token.js", () => ({
   getConvexBearerForDelegation: vi.fn().mockResolvedValue("bearer"),
@@ -27,6 +31,7 @@ import {
 } from "../scheduled-evals-worker";
 import { platformFeeRefusalError } from "../evals/platform-fee-refusal";
 import { logger } from "../../utils/logger";
+import { createAuthorizedManager } from "../../routes/web/auth.js";
 import { serverDrain } from "../lifecycle/drain.js";
 
 const CLAIM = {
@@ -53,6 +58,7 @@ describe("executeClaimedRun setup failure", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    queryHostConfig.mockReset().mockResolvedValue({});
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
     fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
@@ -73,6 +79,19 @@ describe("executeClaimedRun setup failure", () => {
     );
     return JSON.parse(init.body);
   }
+
+  it("keeps plugin placement disabled before an iteration sandbox exists", async () => {
+    queryHostConfig.mockResolvedValue({ computer: { kind: "personal" } });
+    prepareEvalRun.mockRejectedValueOnce(new Error("setup stopped"));
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    await executeClaimedRun(CLAIM);
+    expect(queryHostConfig).not.toHaveBeenCalled();
+    expect(
+      vi.mocked(createAuthorizedManager).mock.calls.at(-1)?.[7],
+    ).toMatchObject({
+      pluginComputerRuntime: false,
+    });
+  });
 
   it("acknowledges an adopted active run without executing it again", async () => {
     const execute = vi.fn();

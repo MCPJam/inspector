@@ -248,9 +248,9 @@ export async function executeClaimedRun(
     // contract test); the delegated JWT is the principal.
     //
     // NO xaaIssuer/xaaPolicy here: the worker has no request Context to
-    // derive the issuer from, and the scheduled-suite selection carries no
-    // host-persona input, so there is no enterprise policy to enforce. A
-    // per-server XAA (`useXaa`) server in a scheduled suite fails closed in
+    // derive the issuer from. Preflight has no iteration sandbox, so personal
+    // plugin placement stays disabled. A per-server XAA (`useXaa`) server in a
+    // scheduled suite fails closed in
     // the manager builder ("Missing XAA issuer") — the pre-existing behavior
     // on this surface. Lifting it needs an env-derived public issuer URL.
     const authorized = await createAuthorizedManager(
@@ -261,7 +261,10 @@ export async function executeClaimedRun(
       WEB_CALL_TIMEOUT_MS,
       undefined,
       undefined,
-      { serverNames: selection.serverNames },
+      {
+        serverNames: selection.serverNames,
+        pluginComputerRuntime: false,
+      },
     );
     manager = authorized.manager;
 
