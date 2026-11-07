@@ -31,3 +31,9 @@ it("starts empty only when there is no previous thread", async () => {
   await openConfiguredThread({ request }, {}, undefined, true);
   expect(request).toHaveBeenCalledWith("thread/start", {});
 });
+
+it("clears removed developer instructions instead of inheriting them from the fork", async () => {
+  const request = vi.fn(async <T>(): Promise<T> => ({ thread: { id: "new" } }) as T);
+  await openConfiguredThread({ request }, {}, "previous", true);
+  expect(request).toHaveBeenCalledWith("thread/fork", { threadId: "previous", developerInstructions: "" });
+});
