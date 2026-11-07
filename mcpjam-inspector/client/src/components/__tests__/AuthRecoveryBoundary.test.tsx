@@ -51,7 +51,9 @@ describe("AuthRecoveryBoundary", () => {
     expect(screen.queryByTestId("app")).toBeNull();
     expect(screen.queryByText("Loading")).toBeNull();
     expect(
-      screen.getByText("This deployment doesn't allow guest sessions."),
+      screen.getByText(
+        "This deployment doesn't allow guest sessions. Sign in to continue.",
+      ),
     ).toBeInTheDocument();
   });
 
