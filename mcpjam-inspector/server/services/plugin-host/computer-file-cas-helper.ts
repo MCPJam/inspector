@@ -5,6 +5,7 @@ export const COMPUTER_FILE_CAS_PYTHON = String.raw`
 import base64, errno, fcntl, hashlib, json, os, re, stat
 
 HOME = "/home/user"
+LOCK_ROOT = "/tmp/mcpjam-file-cas-" + str(os.getuid())
 NOFOLLOW = os.O_NOFOLLOW
 DIRECTORY = os.O_DIRECTORY
 
@@ -70,18 +71,25 @@ def stage_bytes(fd, request):
     if len(data) != request["size"] or hashlib.sha256(data).hexdigest() != request["sha256"]: refuse()
     return info
 
-def lock_target(parent, path):
-    name = ".mcpjam-cas-lock-" + hashlib.sha256(path.encode()).hexdigest()
-    fd = os.open(name, os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600, dir_fd=parent)
-    info = os.fstat(fd)
-    if not private(info) or info.st_mode & 0o077:
-        os.close(fd)
-        refuse()
-    fcntl.flock(fd, fcntl.LOCK_EX)
-    return fd
+def lock_target(path):
+    try: os.mkdir(LOCK_ROOT, mode=0o700)
+    except FileExistsError: pass
+    parent = directory(LOCK_ROOT)
+    try:
+        info = os.fstat(parent)
+        if info.st_uid != os.getuid() or info.st_mode & 0o077: refuse()
+        name = hashlib.sha256(path.encode()).hexdigest()
+        fd = os.open(name, os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600, dir_fd=parent)
+        info = os.fstat(fd)
+        if not private(info) or info.st_mode & 0o077:
+            os.close(fd)
+            refuse()
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return fd
+    finally: os.close(parent)
 
 def cleanup(parent, request):
-    lock = lock_target(parent, request["path"])
+    lock = lock_target(request["path"])
     try: cleanup_locked(parent, request)
     finally: os.close(lock)
 
@@ -129,7 +137,7 @@ def main(request):
                 stage_bytes(payload, request)
                 return {"outcome": "ready"}
             if not re.fullmatch(r"[a-f0-9]{64}", request["expectedEtag"]): refuse()
-            lock = lock_target(parent, request["path"])
+            lock = lock_target(request["path"])
             try:
                 info = stage_bytes(payload, request)
                 current = os.open(target, os.O_RDONLY | NOFOLLOW, dir_fd=parent)
