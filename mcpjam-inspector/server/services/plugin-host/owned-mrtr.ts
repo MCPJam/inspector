@@ -502,7 +502,8 @@ export function createOwnedPluginMrtr(deps: {
           );
           return {
             responses: mapped,
-            commit: () => {
+            commit: async () => {
+              await deps.assertCurrent();
               signal.throwIfAborted();
               for (const source of sources) source.throwIfAborted();
               // The durable pre-wire fence awaits after preparation; permission

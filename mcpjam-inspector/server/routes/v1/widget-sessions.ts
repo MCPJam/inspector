@@ -3,7 +3,9 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { HOSTED_MODE } from "../../config.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
-import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { resolvePluginCleanupActor, PluginWorkspaceAdmissionError } from "../../services/plugin-host/admission.js";
 import { readJsonObjectBody } from "./adapter.js";
 import { parseBrowserAction } from "../mcp/widget-session.js";
 import { scriptedStepSchema } from "../../../shared/scripted-steps.js";
@@ -39,14 +41,26 @@ const priorSchema = z
   .max(1000)
   .optional();
 
-function scope(c: Context) {
+async function scope(c: Context) {
   if (HOSTED_MODE)
     throw new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,
       "Retained widget sessions require a local Inspector.",
     );
-  const subject = c.get("workosUserId");
+  let subject = c.get("workosUserId");
+  if (!subject) {
+    try {
+      subject = await resolvePluginCleanupActor({
+        bearer: await getConvexBearerForRequest(c), signal: c.req.raw.signal,
+      });
+    } catch (error) {
+      if (!(error instanceof PluginWorkspaceAdmissionError)) throw error;
+      if (error.failure === "unreachable" || error.failure === "cancelled")
+        throw new WebRouteError(503, ErrorCode.SERVER_UNREACHABLE, "Could not verify your sign-in. Try again.");
+      throw new WebRouteError(401, ErrorCode.UNAUTHORIZED, "Sign in to open a widget session.");
+    }
+  }
   if (typeof subject !== "string" || !subject)
     throw new WebRouteError(
       401,
@@ -69,7 +83,7 @@ async function control(
     ownerKey: string,
   ) => Promise<Record<string, unknown>>,
 ) {
-  const owner = scope(c),
+  const owner = await scope(c),
     id = z.string().parse(c.req.param("id"));
   if (!widgetRenderSessions.get(id, owner.ownerKey) || !ports.has(id))
     throw new WebRouteError(
@@ -102,12 +116,11 @@ async function control(
 }
 
 routes.post(prefix, async (c) => {
-  const owner = scope(c);
+  const owner = await scope(c);
   const body = await readJsonObjectBody(c);
-  const capabilities = z
-    .record(z.string(), z.unknown())
-    .optional()
-    .parse(body.clientCapabilities);
+  const capabilities = parseWithSchema(
+    z.record(z.string(), z.unknown()).optional(), body.clientCapabilities,
+  );
   const parsed = parseWidgetRenderRequestBody({
     ...body,
     serverId: owner.serverId,
@@ -201,8 +214,8 @@ routes.post(`${prefix}/:id/action`, async (c) => {
 });
 routes.post(`${prefix}/:id/scripted-step`, async (c) => {
   const body = await readJsonObjectBody(c);
-  const step = scriptedStepSchema.parse(body.step);
-  const prior = priorSchema.parse(body.priorWidgetToolCalls);
+  const step = parseWithSchema(scriptedStepSchema, body.step);
+  const prior = parseWithSchema(priorSchema, body.priorWidgetToolCalls);
   return control(c, async (_port, id, key) => {
     const { result, expiresAt } = await widgetRenderSessions.runScriptedStep(
       id,
@@ -214,7 +227,7 @@ routes.post(`${prefix}/:id/scripted-step`, async (c) => {
   });
 });
 routes.delete(`${prefix}/:id`, async (c) => {
-  const owner = scope(c);
+  const owner = await scope(c);
   // Closing needs the original verified owner, but not continuing project access.
   // Revoking a server must not prevent its owner from disposing the browser.
   const id = c.req.param("id");

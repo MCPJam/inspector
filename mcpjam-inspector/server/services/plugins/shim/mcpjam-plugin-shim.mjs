@@ -1067,7 +1067,8 @@ export function createShim(config) {
       // reusing one by accident would hand a client another client's child.
       const session = createSession();
       const response = await dispatch(session, message, () => res.destroyed);
-      session.initialized = true;
+      session.initialized = isJsonRpcResponse(response) && "result" in response;
+      if (!session.initialized) terminateSession(session, "initialization failed");
       // Only advertise a session the client can still address: a child that
       // died during the handshake leaves no session behind, and naming it
       // would send the client's next request to a guaranteed 404.

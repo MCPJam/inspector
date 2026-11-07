@@ -11,7 +11,7 @@ export function selectLocalMrtrForm(params?: Record<string, unknown>) {
     extensionForms: true,
   });
   if (selected.kind === "unsupported")
-    throw new Error("The requested extension form has no valid schema.");
+    throw new Error("The requested extension form has no valid schema.", { cause: selected.reason });
   if (selected.source === "core") return { schema: selected.schema };
   // Refuse unsupported service-dependent fields before publishing any form.
   try {

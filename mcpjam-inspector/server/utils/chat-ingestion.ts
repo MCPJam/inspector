@@ -881,8 +881,10 @@ export async function persistChatSessionToConvex(
   };
   const body = buildIngestBody(options);
   const retain = (outcome: PersistChatOutcome): PersistChatOutcome => {
-    if (outcome.outcome !== "failed" || !options.retryOwner || !options.turnTrace?.turnId ||
-        outcome.status === 400 || outcome.status === 403 || outcome.status === 404) return outcome;
+    if (outcome.outcome !== "failed" || !options.retryOwner || !options.turnTrace?.turnId) return outcome;
+    const status = outcome.status;
+    if (status !== undefined && status >= 400 && status < 500 &&
+        ![401, 408, 425, 429].includes(status)) return outcome;
     const retryHandle = completedTurnPersistence.register(options.retryOwner, body, options.chatSessionId, options.turnTrace.turnId);
     return retryHandle ? { ...outcome, retryHandle, retryProjectId: options.retryOwner.projectId } : outcome;
   };
