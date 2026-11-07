@@ -306,16 +306,15 @@ export async function executeClaimedRun(
       return;
     }
 
-    // The trigger id IS this run's idempotency key, so a redelivered trigger
-    // replays the run it already started. If that run has finished, there is
-    // nothing left to do — executing would re-run the suite and bill the
-    // organization a second time for a scheduled run it only asked for once.
+    // A redelivered trigger adopts the original worker's run. Acknowledge the
+    // launch receipt; the run lifecycle owns completion and failure reporting.
     if (shouldSkipExecution(prepared)) {
       logger.info("[scheduled-evals] trigger already ran — not re-executing", {
         ...logContext,
         runId: prepared.runId,
         status: prepared.status,
       });
+      await reportComplete({ triggerId: claimed.triggerId, ok: true, runId: prepared.runId });
       return;
     }
 

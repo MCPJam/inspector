@@ -2,6 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { ChatAuthChallengeCards } from "../ChatAuthChallengeCards";
 import {
+  AUTH_CHALLENGE_EXPIRED_MESSAGE,
   CHAT_AUTH_RECOVERY_MESSAGE,
   recordChatAuthRecoveryFailure,
 } from "@/lib/chat-auth-recovery";
@@ -41,4 +42,32 @@ it("keeps one notice per failed call through remount and remembers dismissal", (
   second.unmount();
   render(<ChatAuthChallengeCards toolCallIds={["tool"]} />);
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it.each(["awaiting_click", "awaiting_oauth"])(
+  "says the call expired when the card ran out in %s",
+  (phase) => {
+    recordChatAuthRecoveryFailure(
+      "expired",
+      { toolCallId: "tool", continuationId: "cont", phase },
+      { report: false },
+    );
+    render(<ChatAuthChallengeCards toolCallIds={["tool"]} />);
+    expect(
+      screen.getByText(AUTH_CHALLENGE_EXPIRED_MESSAGE),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(CHAT_AUTH_RECOVERY_MESSAGE),
+    ).not.toBeInTheDocument();
+  },
+);
+
+it("keeps the retry copy when the call expired after the user signed in", () => {
+  recordChatAuthRecoveryFailure("expired", {
+    toolCallId: "tool",
+    continuationId: "cont",
+    phase: "ready",
+  });
+  render(<ChatAuthChallengeCards toolCallIds={["tool"]} />);
+  expect(screen.getByText(CHAT_AUTH_RECOVERY_MESSAGE)).toBeInTheDocument();
 });

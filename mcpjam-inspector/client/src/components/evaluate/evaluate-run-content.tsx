@@ -26,10 +26,8 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { useDescriptionExperimentEnabled } from "@/hooks/useDescriptionExperimentEnabled";
-import {
-  evalRunDecisionRevision,
-  isTerminalEvalRunStatus,
-} from "@/lib/evals/eval-decision-summary-store";
+import { evalRunDecisionRevision } from "@/lib/evals/eval-decision-summary-store";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 
 import { unifyTriageRows } from "../evals/ai-triage-helpers";
 import { useServerQuality } from "../evals/use-server-quality";
@@ -113,7 +111,7 @@ export function SingleRunContent({
   const active =
     Boolean(projectId) &&
     decisionSummaryEnabled &&
-    isTerminalEvalRunStatus(run.status);
+    isEvalRunTerminalStatus(run.status);
 
   const detail = useEvalRunDecisionDetail({
     projectId,
@@ -209,7 +207,7 @@ export function SingleRunContent({
   // run or an in-flight read would give it.
   const errorBreakdown = useMemo(
     () =>
-      isTerminalEvalRunStatus(run.status) &&
+      isEvalRunTerminalStatus(run.status) &&
       (!active ||
         (!["disabled", "loading"].includes(detail.status) &&
           !["disabled", "loading"].includes(chains.status)))
