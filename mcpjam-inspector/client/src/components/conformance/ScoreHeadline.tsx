@@ -69,7 +69,7 @@ export function ScoreHeadline({
             ? "Incomplete run"
             : score.advisories.length > 0
             ? "Conformant, with advice"
-            : "Fully conformant"}
+            : "Conformant"}
         </div>
         <div
           className={`truncate text-muted-foreground ${

@@ -234,7 +234,7 @@ export function ScoreResultsPage() {
                   ? "Incomplete run"
                   : run.advisoryCount > 0
                     ? "Conformant, with advice"
-                    : "Fully conformant"}
+                    : "Conformant"}
             </div>
             <div className="text-xs text-muted-foreground">
               {describeStoredScore(run, pendingTotal)}

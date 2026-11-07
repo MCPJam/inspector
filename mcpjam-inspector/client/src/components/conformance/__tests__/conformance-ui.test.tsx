@@ -31,10 +31,10 @@ describe("OverallScoreCard", () => {
     expect(screen.queryByText(/passed/)).toBeNull();
     expect(screen.getByText("10/10")).toBeInTheDocument();
     expect(screen.queryByText(/partial/)).toBeNull();
-    expect(screen.queryByText("Fully conformant.")).toBeNull();
+    expect(screen.queryByText("Conformant.")).toBeNull();
   });
 
-  it("calls a passed run that skipped optional input checks fully conformant", () => {
+  it("calls a passed run that skipped optional input checks conformant", () => {
     render(
       <OverallScoreCard
         score={{ ...passedScore(100), couldNotRun: 2 }}
@@ -44,7 +44,7 @@ describe("OverallScoreCard", () => {
     );
     expect(
       screen.getByText(
-        "Fully conformant. 2 checks need input. Select tools in setup and run again.",
+        "Conformant. 2 checks need input. Select tools in setup and run again.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/missing input/)).toBeNull();
@@ -140,7 +140,7 @@ describe("OverallScoreCard", () => {
     expect(screen.getByText("Conformant, with guidance.")).toBeInTheDocument();
   });
 
-  it("reads a passed run at 100 as fully conformant", () => {
+  it("reads a passed run at 100 as conformant", () => {
     render(
       <OverallScoreCard
         score={passedScore(100)}
@@ -148,7 +148,7 @@ describe("OverallScoreCard", () => {
         version="Auto"
       />,
     );
-    expect(screen.getByText("Fully conformant.")).toBeInTheDocument();
+    expect(screen.getByText("Conformant.")).toBeInTheDocument();
   });
 
   it("gives no verdict on a partial score while suites are still running", () => {
@@ -160,7 +160,7 @@ describe("OverallScoreCard", () => {
         isRunning
       />,
     );
-    expect(screen.queryByText("Fully conformant.")).toBeNull();
+    expect(screen.queryByText("Conformant.")).toBeNull();
     expect(
       screen.getByText("Running conformance checks..."),
     ).toBeInTheDocument();
