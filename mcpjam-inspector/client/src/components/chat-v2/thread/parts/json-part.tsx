@@ -106,11 +106,12 @@ export function JsonPart({
           </div>
         </div>
       ) : imageState.status === "ready" &&
-        imageState.previews.length > 0 &&
+        (imageState.previews.length > 0 || imageState.omittedImageCount > 0) &&
         imageMode === "images" ? (
         <div className="max-h-[480px] overflow-auto rounded-md border border-border/30 bg-muted/20 p-2">
           <McpToolResultImagePreviewGrid
             previews={imageState.previews}
+            omittedImageCount={imageState.omittedImageCount}
             className="grid-cols-1"
             tileClassName="min-h-[160px]"
             imageClassName="max-h-[440px]"
