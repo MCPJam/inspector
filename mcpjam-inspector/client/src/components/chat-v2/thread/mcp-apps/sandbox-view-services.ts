@@ -48,7 +48,9 @@ export function createSandboxViewServices(
       const prepared = preparedViewSchema.parse(value);
       if (prepared.expiresAt <= Date.now()) throw new SandboxViewAdmissionError();
       const url = new URL(prepared.proxyUrl);
-      const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
+      const isolatedLocalhost = z.uuid().safeParse(prepared.admissionId).success &&
+        url.hostname === `${prepared.admissionId}.localhost`;
+      const loopback = isolatedLocalhost || ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
       if (
         (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) ||
         url.origin === request.hostOrigin || url.username || url.password || url.hash

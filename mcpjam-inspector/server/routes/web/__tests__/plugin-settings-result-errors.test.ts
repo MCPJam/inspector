@@ -9,12 +9,14 @@ import type { DurableInvocationReceipt } from "../../../services/plugin-host/rec
 import { PluginInvocationError } from "../../../services/plugin-host/invocation";
 
 const f = vi.hoisted(() => ({
+  report: vi.fn(),
   catalog: vi.fn(),
   get: vi.fn(),
   execute: vi.fn(),
   invoke: vi.fn<PluginInstanceRegistry["invoke"]>(),
   receipts: undefined as PluginInvocationReceiptPort | undefined,
 }));
+vi.mock("../../../utils/route-error-report.js", () => ({ reportRouteFailure: f.report }));
 vi.mock("../../../utils/analytics.js", () => ({ captureServerEvent: vi.fn() }));
 vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerForRequest: async () => "fixture-bearer",
@@ -185,4 +187,17 @@ it("preserves an invalid dispatched update as uncertain through retries and cold
   expect(fxt.saved("update")?.legs[0]).toMatchObject({
     state: "unknown", errorCode: "PLUGIN_SETTINGS_INVALID_RESULT",
   });
+});
+
+it("reports an unexpected pre-dispatch failure once without exposing its details", async () => {
+  const fxt = fixture({ content: [], structuredContent: settingsFixture() });
+  const error = new Error("private infrastructure failure");
+  f.catalog.mockRejectedValueOnce(error);
+  const response = await fxt.read();
+  expect(response.status).toBe(503);
+  expect(JSON.stringify(await response.json())).not.toContain(error.message);
+  expect(f.report).toHaveBeenCalledExactlyOnceWith(
+    "Plugin Settings request failed", error, { source: "web.pluginSettings", hop: "mcpjam_internal" },
+  );
+  expect(f.execute).not.toHaveBeenCalled();
 });

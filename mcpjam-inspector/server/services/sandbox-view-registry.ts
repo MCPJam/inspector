@@ -1,8 +1,4 @@
 import {
-  retiredSandboxPorts,
-  type RetiredSandboxPorts,
-} from "./sandbox-retired-ports.js";
-import {
   sandboxViewIdentity,
   type SandboxViewLease,
 } from "./sandbox-view-lease.js";
@@ -64,10 +60,7 @@ export class SandboxViewRegistry {
 
   constructor(
     private readonly now = Date.now,
-    private readonly ports: Pick<
-      RetiredSandboxPorts,
-      "reserve"
-    > = retiredSandboxPorts,
+    private readonly port = 0,
   ) {}
 
   private arm(entry: Entry): void {
@@ -143,7 +136,7 @@ export class SandboxViewRegistry {
     let server: Server | undefined;
     try {
       signal?.throwIfAborted();
-      for (let attempt = 0; attempt < 32; attempt++) {
+      {
         server = createServer((request, response) => {
           response.statusCode = 404;
           for (const [name, value] of Object.entries(
@@ -192,7 +185,7 @@ export class SandboxViewRegistry {
         });
         await new Promise<void>((resolve, reject) => {
           server!.once("error", reject);
-          server!.listen(0, "127.0.0.1", () => {
+          server!.listen(this.port, "127.0.0.1", () => {
             server!.removeListener("error", reject);
             resolve();
           });
@@ -200,10 +193,6 @@ export class SandboxViewRegistry {
         const address = server.address();
         if (!address || typeof address === "string")
           throw new Error("App document listener did not open");
-        if (!(await this.ports.reserve(address.port))) {
-          await new Promise<void>((resolve) => server!.close(() => resolve()));
-          continue;
-        }
         signal?.throwIfAborted();
         if (this.closing) throw new Error("App document service is closed");
         const id = randomUUID();
@@ -215,7 +204,9 @@ export class SandboxViewRegistry {
           htmlHash: sandboxDigest(input.html),
           policyHash: sandboxDigest(policy),
           hostOrigin: input.hostOrigin,
-          viewOrigin: `http://127.0.0.1:${address.port}`,
+          // A fresh loopback hostname gives every admission its own browser
+          // origin even when the OS reuses a port. The Host check rejects old URLs.
+          viewOrigin: `http://${id}.localhost:${address.port}`,
           policy,
         };
         const lease: SandboxViewLease = {
@@ -240,9 +231,6 @@ export class SandboxViewRegistry {
         this.arm(entry);
         return this.response(entry);
       }
-      throw new Error(
-        "No new App origin is available; close all browser windows and request an App-origin reset",
-      );
     } catch (error) {
       if (server?.listening && !entry) {
         server.closeAllConnections();

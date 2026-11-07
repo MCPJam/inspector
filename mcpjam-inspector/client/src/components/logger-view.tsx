@@ -61,7 +61,13 @@ import { InlineFrameHeaders } from "@/components/tracing/InlineFrameHeaders";
 import type { HttpExchangeLogEvent } from "@mcpjam/sdk/browser";
 import { isWebMcpError } from "@/lib/webmcp-traffic";
 
-type TrafficSource = "mcp-server" | "mcp-apps" | "oauth" | "http" | "webmcp";
+type TrafficSource =
+  | "mcp-server"
+  | "mcp-apps"
+  | "oauth"
+  | "http"
+  | "webmcp"
+  | "webhook";
 
 interface RenderableRpcItem {
   id: string;
@@ -290,6 +296,16 @@ function DirectionLabel({
     );
   }
 
+  if (source === "webhook") {
+    // An MCP Events delivery: always inbound, from the server's webhook (or a
+    // simulation) into MCPJam's inbox.
+    return (
+      <span className="font-mono text-[10px] leading-none flex-shrink-0 text-info">
+        ← webhook
+      </span>
+    );
+  }
+
   const isSend = direction === "SEND";
   return (
     <span
@@ -396,6 +412,8 @@ export function LoggerView({
           ? ("http" as TrafficSource)
           : item.kind === "webmcp"
           ? ("webmcp" as TrafficSource)
+          : item.kind === "webhook"
+          ? ("webhook" as TrafficSource)
           : ("mcp-server" as TrafficSource),
       oauthStatus: item.oauthStatus,
       oauthRecovered: item.oauthRecovered,
@@ -666,6 +684,9 @@ export function LoggerView({
                     </DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="webmcp" className="text-xs">
                       WebMCP
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="webhook" className="text-xs">
+                      Webhooks
                     </DropdownMenuRadioItem>
                   </DropdownMenuRadioGroup>
                 </DropdownMenuContent>

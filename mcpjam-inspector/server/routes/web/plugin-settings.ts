@@ -1,3 +1,4 @@
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 import { randomBytes } from "node:crypto";
 import { sandboxSourceReceipt } from "../../services/sandbox-view-source.js";
 import {
@@ -169,6 +170,10 @@ async function route(c: Context, run: () => Promise<Response>) {
         ),
         403,
       );
+    reportRouteFailure("Plugin Settings request failed", error, {
+      source: "web.pluginSettings",
+      hop: "mcpjam_internal",
+    });
     return c.json(failure("SETTINGS_UNAVAILABLE"), 503);
   }
 }

@@ -1,5 +1,6 @@
 import { OPENAI_ELICITATION_EXTENSION } from "@mcpjam/sdk";
 import { ownedPluginFormSchema } from "../plugin-host/owned-mrtr.js";
+import { admitWarmChatManager } from "../../utils/harness/warm-approval-binding";
 import { setManagerResourceHostConfig } from "../../utils/mcp-connections";
 import { TurnResources } from "./resources.js";
 import {
@@ -8,6 +9,8 @@ import {
 } from "../../utils/harness/input-host.js";
 import { isForwardingOrganization } from "../../utils/harness/forwarding/native-turn.js";
 import { qualifiedForwardingRuntime } from "../../utils/harness/forwarding/runtime-contract.js";
+import { nativeForwardingEnabled } from "../../utils/harness/harness-flags.js";
+import { hostedForwardingSurface } from "../../utils/harness/harness-mcp-plan.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
 import { chatTurnIsolatedServerIds } from "../../utils/plugin-server-isolation.js";
 import {
@@ -106,7 +109,7 @@ export async function prepareManagedConnections(args: {
   bearerToken: string;
   rpcCollector: ReturnType<typeof createHostedRpcLogCollector>;
   resources: TurnResources;
-  setup: Pick<
+  setup: { authorizedOrganizationId?: string } & Pick<
     ManagedSetup,
     | "environmentSpec"
     | "effectiveCapabilities"
@@ -329,9 +332,10 @@ export async function prepareManagedConnections(args: {
     resolvedExecution.harness &&
     qualifiedForwardingRuntime(getHarnessAdapter(resolvedExecution.harness))?.ownedInput === true &&
     rawBody.hostedHarnessInputVersion === HOSTED_HARNESS_INPUT_VERSION &&
-    process.env.HARNESS_NATIVE_FORWARDING === "true" &&
+    nativeForwardingEnabled() &&
     (turnRail === "hosted" || turnRail === "org") &&
-    typeof inputHostId === "string" && inputHostId.length > 0 && !scenarioId && !rawBody.harnessExecutionTarget
+    typeof inputHostId === "string" &&
+    hostedForwardingSurface({ hostId: inputHostId, scenarioId, localExecution: !!rawBody.harnessExecutionTarget })
       ? createHarnessInputHost({
           allowedServerIds: new Set(effectiveServerIds),
           modes: harnessElicitationModes(effectiveClientCapabilities),
@@ -647,6 +651,7 @@ export async function prepareManagedConnections(args: {
       ...(executionScope ? { executionScope } : {}),
     },
   );
+  admitWarmChatManager(manager, args.setup.authorizedOrganizationId, effectiveServerIds.length > 0);
   if (typeof hostRuntimeConfig?.hostConfigId === "string" && typeof hostRuntimeConfig.hostId === "string") setManagerResourceHostConfig(manager, hostRuntimeConfig.hostConfigId, hostRuntimeConfig.hostId);
   connectedManager = manager;
   taskCreatedBridge?.bindOwner(hostedBody.projectId, authenticatedUserId);
@@ -675,6 +680,9 @@ export async function prepareManagedConnections(args: {
   // drives one retry leg (with reconstructed output-schema validation) before
   // the first model call and splices the result. `resolve` closes over the
   // freshly-authorized manager for the bound server.
+  const resumeServerName = mrtrResumeRequest
+    ? buildServerNamesById(selectedServerIds, selectedServerNames)?.[mrtrResumeRequest.serverId]
+    : undefined;
   const mrtrEngineResume: MrtrEngineResume | undefined =
     mrtrResumeRequest?.owned
       ? {
@@ -698,17 +706,7 @@ export async function prepareManagedConnections(args: {
                 manager,
                 bearer: convexBearer,
                 serverId: mrtrResumeRequest.serverId,
-                ...(buildServerNamesById(
-                  selectedServerIds,
-                  selectedServerNames,
-                )?.[mrtrResumeRequest.serverId]
-                  ? {
-                      serverName: buildServerNamesById(
-                        selectedServerIds,
-                        selectedServerNames,
-                      )![mrtrResumeRequest.serverId],
-                    }
-                  : {}),
+                ...(resumeServerName ? { serverName: resumeServerName } : {}),
                 toolCallId: mrtrResumeRequest.toolCallId,
                 submission: {
                   continuationId: mrtrResumeRequest.continuationId,

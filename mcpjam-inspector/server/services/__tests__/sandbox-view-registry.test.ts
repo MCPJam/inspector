@@ -1,3 +1,4 @@
+import { get } from "node:http";
 import { createConnection } from "node:net";
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,6 +9,27 @@ import {
   SANDBOX_VIEW_LEASE_MS,
 } from "../sandbox-view-policy.js";
 import { SandboxViewRegistry } from "../sandbox-view-registry.js";
+
+// Node's OS resolver need not implement .localhost; browsers resolve it to
+// loopback. Keep the original Host header while driving the actual listener.
+function fetch(value: string | URL): Promise<Response> {
+  const url = new URL(value);
+  const host = url.host;
+  url.hostname = "127.0.0.1";
+  return new Promise((resolve, reject) => {
+    get(url, { headers: { Host: host } }, (response) => {
+      const body: Buffer[] = [];
+      response.on("data", (chunk: Buffer) => body.push(chunk));
+      response.on("error", reject);
+      response.on("end", () => resolve(new Response(Buffer.concat(body), {
+        status: response.statusCode,
+        headers: Object.fromEntries(Object.entries(response.headers).flatMap(
+          ([key, value]) => typeof value === "string" ? [[key, value]] : [],
+        )),
+      })));
+    }).on("error", reject);
+  });
+}
 
 const owner = sandboxDigest("owner");
 const input = () =>
@@ -28,14 +50,7 @@ let registry: SandboxViewRegistry;
 beforeEach(() => {
   generateSessionToken();
   now = Date.now();
-  const retired = new Set<number>();
-  registry = new SandboxViewRegistry(() => now, {
-    reserve: async (port) => {
-      if (retired.has(port)) return false;
-      retired.add(port);
-      return true;
-    },
-  });
+  registry = new SandboxViewRegistry(() => now);
 });
 afterEach(() => {
   registry.close();
@@ -76,12 +91,30 @@ describe("local App document leases", () => {
     expect((await fetch(noCapability)).status).toBe(404);
   });
 
+  it("reuses a one-port pool across restarts without reusing browser authority", async () => {
+    const first = await registry.prepare(input(), owner);
+    const port = Number(new URL(first.proxyUrl).port);
+    registry.close();
+    for (let attempt = 0; attempt < 8; attempt++) {
+      registry = new SandboxViewRegistry(() => now, port);
+      const next = await registry.prepare(input(), owner);
+      expect(new URL(next.proxyUrl).origin).not.toBe(new URL(first.proxyUrl).origin);
+      expect(new URL(next.proxyUrl).port).toBe(String(port));
+      expect((await fetch(next.proxyUrl)).status).toBe(200);
+      expect((await fetch(first.proxyUrl)).status).toBe(404);
+      const oldCapability = new URL(next.proxyUrl);
+      oldCapability.search = new URL(first.proxyUrl).search;
+      expect((await fetch(oldCapability)).status).toBe(404);
+      registry.close();
+    }
+  });
+
   it("contains malformed absolute-form targets and keeps the listener usable", async () => {
     const view = await registry.prepare(input(), owner);
     const url = new URL(view.proxyUrl);
     const raw = await new Promise<string>((resolve, reject) => {
       const socket = createConnection({
-        host: url.hostname,
+        host: "127.0.0.1",
         port: Number(url.port),
       });
       let text = "";
