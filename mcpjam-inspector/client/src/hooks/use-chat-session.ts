@@ -1,3 +1,4 @@
+import { reportCaught } from "@/lib/error-reporting";
 import { createTurnAuthorizationRenewal } from "@/lib/turn-authorization-renewal";
 import { createPersistReceiptRecovery } from "@/lib/persist-receipt-recovery";
 import { appToolInvocationEvent, appToolInvocations } from "@/shared/app-tool-rendezvous";
@@ -2286,7 +2287,12 @@ export function useChatSession(
    * noise.
    */
   const persistReceiptRef = useRef<PersistReceiptData | null>(null);
-  const recoverPersistReceipt = useRef(createPersistReceiptRecovery(authFetch)).current;
+  const [recoverPersistReceipt] = useState(() => createPersistReceiptRecovery(authFetch));
+  const persistReceiptGenerationRef = useRef(0);
+  useEffect(() => {
+    persistReceiptGenerationRef.current++;
+    return () => { persistReceiptGenerationRef.current++; };
+  }, [chatSessionId]);
   /** Session + turn the in-flight turn belongs to; set at `turn_start`. */
   const receiptTurnIdentityRef = useRef<{
     chatSessionId: string;
@@ -3031,7 +3037,12 @@ export function useChatSession(
           const currentReceipt = accept(part.data);
           if (currentReceipt && part.data.retryHandle && part.data.chatSessionId === chatSessionIdRef.current &&
               part.data.retryProjectId === hostedProjectId) {
-            void recoverPersistReceipt(part.data).then(accept);
+            const generation = persistReceiptGenerationRef.current;
+            void recoverPersistReceipt(part.data).then((receipt) => {
+              if (generation === persistReceiptGenerationRef.current) accept(receipt);
+            }).catch((error: unknown) => {
+              reportCaught(error, { source: "chat_persistence_recovery" });
+            });
           }
         } else if (isHarnessSessionDataPart(part)) {
           // Cache the harness workdir so the Playground Shell can open a
@@ -3099,6 +3110,7 @@ export function useChatSession(
           turnId: part.data.turnId,
         };
         persistReceiptRef.current = null;
+        persistReceiptGenerationRef.current++;
         // Same lifetime as the receipt: a new turn invalidates the previous
         // turn's abort just as it invalidates the previous turn's receipt.
         // `onFinish` already clears it at every turn end, so this only matters
@@ -3136,11 +3148,14 @@ export function useChatSession(
   const consumePersistReceipt = useCallback((): PersistReceiptData | null => {
     const receipt = persistReceiptRef.current;
     persistReceiptRef.current = null;
+    persistReceiptGenerationRef.current++;
     // Re-checked at CONSUME time, not just on arrival: the session can change
     // in the window between the receipt landing and a post-stream effect
     // reading it, and handing a receipt for the old thread to the new one would
     // sync its version baseline — or detach it — on the wrong conversation.
-    if (receipt && receipt.chatSessionId !== chatSessionIdRef.current) {
+    if (receipt && (receipt.chatSessionId !== chatSessionIdRef.current ||
+        (receipt.turnId && receiptTurnIdentityRef.current?.turnId &&
+         receipt.turnId !== receiptTurnIdentityRef.current.turnId))) {
       return null;
     }
     return receipt;

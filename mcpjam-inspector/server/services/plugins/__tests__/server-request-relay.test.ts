@@ -1,3 +1,5 @@
+import { EventEmitter } from "node:events";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   createServerRequestRelay,
@@ -130,4 +132,25 @@ it("keeps the largest accepted Node deadline from overflowing to one millisecond
   vi.advanceTimersByTime(1000);
   expect(expired).not.toHaveBeenCalled();
   deadline.stop();
+});
+
+it("bounds stream setup, while allowing a late stream its full input wait", () => {
+  vi.useFakeTimers();
+  const streamless = relay(300_000);
+  streamless.instance.receive(request("streamless"));
+  vi.advanceTimersByTime(5000);
+  expect(streamless.release).toHaveBeenCalledOnce();
+  expect(streamless.send).toHaveBeenCalledOnce();
+  streamless.instance.close();
+  const late = relay(300_000);
+  late.instance.receive(request("late"));
+  vi.advanceTimersByTime(4000);
+  const res = Object.assign(new EventEmitter(), {
+    writeHead: vi.fn(), flushHeaders: vi.fn(), write: vi.fn(), end: vi.fn(), writableLength: 0,
+  });
+  late.instance.open({ headers: { accept: "text/event-stream" } } as IncomingMessage, res as ServerResponse);
+  vi.advanceTimersByTime(10_000);
+  expect(late.send).not.toHaveBeenCalled();
+  expect(late.instance.respond({ jsonrpc: "2.0", id: "late", result: {} })).toBe(true);
+  late.instance.close();
 });

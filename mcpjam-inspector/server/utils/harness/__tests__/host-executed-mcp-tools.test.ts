@@ -82,6 +82,14 @@ describe("projectSelectedMcpServersAsHostTools", () => {
     expect((projected.tools["mcp__source__read"] as FakeTool).description).toBe('MCP server: "Friendly source".\nd');
   });
 
+  it("ignores inherited display-name keys without dropping their tools", async () => {
+    const projected = await projectSelectedMcpServersAsHostTools({
+      manager: fakeManager({ constructor: { read: tool() } }),
+      selectedServerIds: ["constructor"], serverDisplayNames: {},
+    });
+    expect(Object.keys(projected.tools)).toEqual(["mcp__constructor__read"]);
+    expect((projected.tools["mcp__constructor__read"] as FakeTool).description).toBe("d");
+  });
   it("never enumerates a refused server's cached tools", async () => {
     const manager = fakeManager({ live: { read: tool() }, refused: { write: tool() } });
     const projected = await projectSelectedMcpServersAsHostTools({

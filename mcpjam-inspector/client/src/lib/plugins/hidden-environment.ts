@@ -256,7 +256,8 @@ export function unavailableServersForNotice(
       plugin.servers.some((server) => server.serverId === unavailable.serverId),
     );
     const chosen =
-      own.find((unavailable) => unavailable.reason === "needs_auth") ?? own[0];
+      own.find((unavailable) => unavailable.reason === "needs_auth") ??
+      own.find((unavailable) => unavailable.reason === "needs_approval") ?? own[0];
     if (!chosen) return [];
     const componentKey = plugin.servers.find(
       (server) => server.serverId === chosen.serverId,
