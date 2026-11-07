@@ -112,6 +112,42 @@ describe("groupHostConfigFields", () => {
   });
 });
 
+describe("mid-session sign-in fields", () => {
+  it("groups the four knobs in one protocol subsection, actions before triggers", () => {
+    const protocol = groupHostConfigFields().find(
+      (g) => g.section.id === "protocol"
+    )!;
+    const signIn = protocol.subsections.find(
+      (s) => s.label === "Mid-session sign-in"
+    );
+    expect(signIn?.fields.map((f) => f.id)).toEqual([
+      "unauthorizedChallenge",
+      "unauthorizedChallengeTrigger",
+      "toolResultAuthChallenge",
+      "toolResultAuthChallengeTrigger",
+    ]);
+  });
+
+  it("reads the stored value and leaves an absent knob undefined", () => {
+    // The matrix shows what the row stores; the SDK owns the absent defaults.
+    const set = makeConfig({
+      mcpProfile: {
+        profileVersion: 1,
+        unauthorizedChallengeTrigger: "bearer-header",
+        toolResultAuthChallenge: "prompt",
+      },
+    });
+    expect(fieldById("unauthorizedChallengeTrigger").read(set)).toBe(
+      "bearer-header"
+    );
+    expect(fieldById("toolResultAuthChallenge").read(set)).toBe("prompt");
+    expect(fieldById("unauthorizedChallenge").read(set)).toBeUndefined();
+    expect(
+      fieldById("toolResultAuthChallengeTrigger").read(makeConfig())
+    ).toBeUndefined();
+  });
+});
+
 describe("MCP image policy fields", () => {
   it("default to enabled and read explicit image opt-outs", () => {
     const direct = fieldById("modelVisibleMcpToolResults.directContent.image");
@@ -219,6 +255,29 @@ describe("MCP image policy fields", () => {
         })
       )
     ).toBe(false);
+  });
+});
+
+describe("Event delivery field", () => {
+  const field = () => fieldById("eventsDeliveryModes");
+  const withEvents = (events: unknown) =>
+    makeConfig({
+      hostStyle: "chatgpt",
+      mcpProfile: {
+        profileVersion: 1,
+        extensions: { "com.mcpjam/events": events },
+      },
+    } as Partial<HostConfigDtoV2>);
+
+  it("reads only a saved setting, so an unmeasured client is not yet tested", () => {
+    // ChatGPT's style default is webhook, but nothing saved is no reading.
+    expect(field().read(makeConfig({ hostStyle: "chatgpt" }))).toBeUndefined();
+    expect(field().read(withEvents({ webhook: true }))).toEqual(["webhook"]);
+    expect(field().read(withEvents({}))).toEqual([]);
+  });
+
+  it("reads a malformed setting as no modes, never wider", () => {
+    expect(field().read(withEvents({ webhook: "yes" }))).toEqual([]);
   });
 });
 

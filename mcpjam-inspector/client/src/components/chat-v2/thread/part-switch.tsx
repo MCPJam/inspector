@@ -1,3 +1,4 @@
+import { PLUGIN_MODEL_APP_META, pluginModelAppSchema } from "@/shared/plugin-model-app";
 import { retainedResourceProofFor } from "@/shared/retained-app-resources";
 import { isForwardingApprovalId } from "@/shared/forwarding-approval";
 import { ContextAttachmentChip } from "../chat-input/attachments/context-attachment-chip";
@@ -58,6 +59,9 @@ import {
   isToolPart,
 } from "./thread-helpers";
 import { useSharedAppState } from "@/state/app-state-context";
+import { resolveScopeStepUpServer } from "@/lib/scope-step-up";
+import { presentWidgetAuthChallenge } from "@/lib/auth-challenge-lifecycle";
+import { authChallengeFromError } from "@/lib/apis/insufficient-scope";
 import { localServerNameForId } from "@/lib/apis/web/context";
 import { UI_CONTEXT_PART_TYPE } from "@/shared/ui-context";
 import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
@@ -447,6 +451,14 @@ function LivePartSwitch({
       readMcpToolOriginServerId((toolPart as any).callProviderMetadata) ??
       readMcpToolOriginServerId((toolPart as any).providerMetadata) ??
       readMcpToolOriginServerId((toolPart as any).providerOptions);
+    // Owned Apps obtain their resource URI from the admitted instance when opened.
+    // The tool catalog need not still contain the declaration from this turn.
+    const marker = originalResult !== undefined && streamedToolMeta?.[PLUGIN_MODEL_APP_META];
+    const parsedApp = marker ? pluginModelAppSchema.safeParse(marker) : undefined;
+    const attributedModelApp =
+      parsedApp?.success && parsedApp.data.serverId === providerMetadataServerId
+        ? parsedApp.data
+        : undefined;
     // Which credential produced this result, when the server had more than one
     // live. Rerun resolves a server, not a connection, so a call made on a
     // specific account cannot be replayed faithfully yet.
@@ -628,7 +640,8 @@ function LivePartSwitch({
       hostSupportsWidgetRendering(resolveHostCaps(serverId ?? undefined), {
         hostStyle,
       }) &&
-      (uiType === UIType.OPENAI_SDK ||
+      (attributedModelApp !== undefined ||
+        uiType === UIType.OPENAI_SDK ||
         uiType === UIType.MCP_APPS ||
         uiType === UIType.OPENAI_SDK_AND_MCP_APPS);
 
@@ -637,7 +650,8 @@ function LivePartSwitch({
     // frozen screenshots: the Browser tab owns recorded renders for Sessions.
     if (
       widgetPolicy === "placeholder" &&
-      (uiType === UIType.OPENAI_SDK ||
+      (attributedModelApp !== undefined ||
+        uiType === UIType.OPENAI_SDK ||
         uiType === UIType.MCP_APPS ||
         uiType === UIType.OPENAI_SDK_AND_MCP_APPS ||
         renderOverride?.resourceUri ||
@@ -743,6 +757,7 @@ function LivePartSwitch({
             />
           ) : (
             <WidgetReplay
+              attributedModelApp={attributedModelApp}
               serverId={serverId}
               chatSessionId={chatSessionId}
               toolName={toolInfo.toolName}
@@ -842,7 +857,41 @@ function LivePartSwitch({
                   ? (toolName, params) => {
                       const proof = retainedResourceProofFor({toolCallId: toolInfo.toolCallId, toolName: toolInfo.toolName, input: toolInfo.input, output: originalResult}, ("resultProviderMetadata" in toolPart ? toolPart.resultProviderMetadata : undefined) ?? toolPart.callProviderMetadata);
                       const bound = widgetContext ?? proof;
-                      return bound ? forwardedWidgetCalls.call(bound, toolName, params) : callTool(serverId ?? "offline-view", toolName, params);
+                      if (bound)
+                        return forwardedWidgetCalls.call(
+                          bound,
+                          toolName,
+                          params,
+                        );
+                      // A sign-in challenge on the widget's own call shows a
+                      // Connect card in host chrome under this tool call; the
+                      // iframe still gets its result or error unchanged.
+                      const widgetServer = serverId
+                        ? resolveScopeStepUpServer(appState, { serverId })
+                        : undefined;
+                      return callTool(
+                        serverId ?? "offline-view",
+                        toolName,
+                        params,
+                        {
+                          onResultAuthChallenge: (challenge, schemes) =>
+                            presentWidgetAuthChallenge({
+                              server: widgetServer,
+                              signal: challenge,
+                              toolName,
+                              toolCallId: toolInfo.toolCallId,
+                              schemes,
+                            }),
+                        },
+                      ).catch((error: unknown) => {
+                        presentWidgetAuthChallenge({
+                          server: widgetServer,
+                          signal: authChallengeFromError(error),
+                          toolName,
+                          toolCallId: toolInfo.toolCallId,
+                        });
+                        throw error;
+                      });
                     }
                   : undefined
               }

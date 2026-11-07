@@ -34,9 +34,15 @@ import {
   OPENAI_APPS_METHOD_LABELS,
 } from "@/lib/apps-capability-dimensions";
 import {
+  AUTH_CHALLENGE_ACTIONS,
+  EVENT_DELIVERY_MODES,
+  MCPJAM_EVENTS_EXTENSION_ID,
   MCPJAM_TASKS_POLICY_EXTENSION_ID,
   MCP_SKILLS_EXTENSION_ID,
+  readEventsHostSetting,
   readTasksPolicy,
+  TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
+  UNAUTHORIZED_CHALLENGE_TRIGGERS,
 } from "@mcpjam/sdk/browser";
 
 export type HostConfigSectionId = "agent" | "protocol" | "apps";
@@ -96,7 +102,16 @@ export type HostConfigFieldKind =
       support?: Readonly<Record<string, SupportLevel>>;
     }
   /** Set of modes (e.g. display modes); each candidate renders present/absent. */
-  | { kind: "mode-set"; modes: ReadonlyArray<string> }
+  | {
+      kind: "mode-set";
+      modes: ReadonlyArray<string>;
+      /**
+       * How many modes every client has anyway, so having only that many is
+       * no support (default 1: every host renders `inline`). 0 when any mode
+       * counts, as for Event delivery.
+       */
+      baseline?: number;
+    }
   /** Short string rendered inline. */
   | { kind: "string" }
   /**
@@ -790,6 +805,79 @@ const TOOL_CALL_CANCELLATION_FIELDS: ReadonlyArray<HostConfigFieldDef> = (
   })
 );
 
+/**
+ * Mid-session sign-in ("lazy authentication"): how the client reacts when a
+ * server refuses a call until the user signs in. Two signal families, each an
+ * action plus a trigger, with the SDK owning the literal lists and the absent
+ * values (`AUTH_CHALLENGE_POLICY_DEFAULTS`).
+ *
+ * The actions are support-shaped (does this host start sign-in?). The triggers
+ * are plain values: they narrow an action rather than answer a yes/no
+ * question, and are inert while their action is `passthrough`.
+ *
+ * Absent reads as `undefined` here, not as the default literal: the matrix
+ * shows what the host row stores, and the descriptions name each default.
+ */
+const AUTH_CHALLENGE_ACTION_SUPPORT: Readonly<Record<string, SupportLevel>> = {
+  prompt: "supported",
+  notify: "partial",
+  passthrough: "unsupported",
+};
+const AUTH_CHALLENGE_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
+  {
+    id: "unauthorizedChallenge",
+    section: "protocol",
+    subsection: "Mid-session sign-in",
+    label: "When the server asks for sign-in",
+    path: "mcpProfile.unauthorizedChallenge",
+    description:
+      "What the client does when a server asks the user to sign in: prompt to sign in and run the call again, tell the user to sign in, or show an ordinary error. If unset, the client prompts.",
+    kind: {
+      kind: "enum",
+      options: AUTH_CHALLENGE_ACTIONS,
+      support: AUTH_CHALLENGE_ACTION_SUPPORT,
+    },
+    read: (cfg) => mcpProfile(cfg)?.unauthorizedChallenge,
+  },
+  {
+    id: "unauthorizedChallengeTrigger",
+    section: "protocol",
+    subsection: "Mid-session sign-in",
+    label: "Server sign-in trigger",
+    path: "mcpProfile.unauthorizedChallengeTrigger",
+    description:
+      "Accept any server sign-in request, only requests that name Bearer authentication, or only those that also provide a resource metadata link. If unset, any request counts.",
+    kind: { kind: "enum", options: UNAUTHORIZED_CHALLENGE_TRIGGERS },
+    read: (cfg) => mcpProfile(cfg)?.unauthorizedChallengeTrigger,
+  },
+  {
+    id: "toolResultAuthChallenge",
+    section: "protocol",
+    subsection: "Mid-session sign-in",
+    label: "When a tool result asks for sign-in",
+    path: "mcpProfile.toolResultAuthChallenge",
+    description:
+      "What the client does when a tool result asks the user to sign in. If unset, the client treats the result as an ordinary tool error.",
+    kind: {
+      kind: "enum",
+      options: AUTH_CHALLENGE_ACTIONS,
+      support: AUTH_CHALLENGE_ACTION_SUPPORT,
+    },
+    read: (cfg) => mcpProfile(cfg)?.toolResultAuthChallenge,
+  },
+  {
+    id: "toolResultAuthChallengeTrigger",
+    section: "protocol",
+    subsection: "Mid-session sign-in",
+    label: "Tool result sign-in trigger",
+    path: "mcpProfile.toolResultAuthChallengeTrigger",
+    description:
+      "What a tool result's sign-in request needs before it counts: nothing more, a tool that supports OAuth sign-in, or that plus an error code and description. If unset, it needs the tool to support OAuth sign-in and the result to carry both the error code and its description.",
+    kind: { kind: "enum", options: TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS },
+    read: (cfg) => mcpProfile(cfg)?.toolResultAuthChallengeTrigger,
+  },
+];
+
 export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   // ============================================================
   // Agent · Agent tooling
@@ -1064,7 +1152,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     // MCPJam-only tasks policy below: this key goes on the initialize
     // envelope, and declaring it commits the host to fetching, digest-
     // verifying, and refusing unlisted files. It is therefore under "Client
-    // capabilities supported" rather than "Host policy".
+    // capabilities supported" rather than "Client policy".
     id: "capabilities.skillsExtension",
     section: "protocol",
     subsection: "Client capabilities supported",
@@ -1082,7 +1170,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   },
 
   // ============================================================
-  // Protocol · Host policy
+  // Protocol · Client policy
   //
   // MCPJam's own product policy, NOT an MCP wire capability. It is stored
   // under `mcpProfile.extensions["com.mcpjam/tasks"]` and is never advertised
@@ -1093,7 +1181,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "tasksPolicy",
     section: "protocol",
-    subsection: "Host policy",
+    subsection: "Client policy",
     label: "Task execution",
     path: `mcpProfile.extensions.${MCPJAM_TASKS_POLICY_EXTENSION_ID}.enabled`,
     description:
@@ -1105,6 +1193,25 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     read: (cfg) => {
       const policy = readTasksPolicy(cfg);
       return policy === "unset" ? undefined : policy;
+    },
+  },
+  {
+    id: "eventsDeliveryModes",
+    section: "protocol",
+    subsection: "Client policy",
+    label: "Event delivery",
+    path: `mcpProfile.extensions.${MCPJAM_EVENTS_EXTENSION_ID}`,
+    description:
+      "The MCP Events delivery modes this client accepts. Without a saved choice, its client style decides.",
+    kind: { kind: "mode-set", modes: EVENT_DELIVERY_MODES, baseline: 0 },
+    // The saved setting only, like Task execution above: this row is public
+    // on caniuse.dev, where a style default is not a measurement, so a client
+    // with nothing saved reads as "Not yet tested". Subscriptions still use
+    // the default (`resolveHostEventDeliveryModes`).
+    read: (cfg) => {
+      const setting = readEventsHostSetting(cfg);
+      if (setting.kind === "unset") return undefined;
+      return setting.kind === "valid" ? setting.modes : [];
     },
   },
 
@@ -1201,6 +1308,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   ...TOOL_LIST_CHANGED_FIELDS,
   PAGINATION_FIELD,
   ...TOOL_CALL_CANCELLATION_FIELDS,
+  ...AUTH_CHALLENGE_FIELDS,
   {
     id: "sandbox.sandboxAttrs",
     section: "apps",

@@ -21,12 +21,15 @@
 
 import { Hono } from "hono";
 import { internalServiceAuthMiddleware } from "../../middleware/internal-service-auth.js";
+import { refuseDoorbellWhileDraining } from "../../services/lifecycle/admission.js";
+import { serverDrain } from "../../services/lifecycle/drain.js";
 import { runJudgeSecondPass } from "../../services/evals/judge-second-pass.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 const internalEvalJudgeCompletions = new Hono();
 
 internalEvalJudgeCompletions.use("*", internalServiceAuthMiddleware());
+internalEvalJudgeCompletions.use("*", refuseDoorbellWhileDraining());
 
 internalEvalJudgeCompletions.post("/judge-completed", async (c) => {
   const body = (await c.req.json().catch(() => null)) as {
@@ -40,7 +43,8 @@ internalEvalJudgeCompletions.post("/judge-completed", async (c) => {
   }
 
   // Deliberately not awaited. See the note above: the caller is a doorbell.
-  void runJudgeSecondPass(runId).catch((error: unknown) => {
+  const pass = serverDrain.track("doorbell", runJudgeSecondPass(runId));
+  void pass.catch((error: unknown) => {
     // The 202 has already gone out, so this is the last place the failure can
     // be seen. Only the run id is safe to record: everything else in the pass
     // is customer evidence.

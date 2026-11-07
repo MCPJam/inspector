@@ -12,8 +12,20 @@ import {
   type ExtensionOwnerIdentity,
 } from "@/components/host-workspace/extension-owners";
 import {
+  markComparisonColumnSettled,
+  readComparisonAuthRecovery,
+  registerComparisonColumn,
+  prepareComparisonAuthRecovery,
+} from "@/lib/comparison-auth-recovery";
+import { getCachedChatHistoryDetail } from "@/components/chat-v2/history/chat-history-prefetch";
+import {
+  recordChatAuthRecoveryFailure,
+  traceChatAuthRecovery,
+} from "@/lib/chat-auth-recovery";
+import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -23,7 +35,6 @@ import { Braces, Loader2 } from "lucide-react";
 import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import type { LocalHarnessTargetIds } from "@/lib/local-harness-consent";
-import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { cn } from "@/lib/utils";
 import type { ModelDefinition } from "@/shared/types";
@@ -81,8 +92,8 @@ import {
 import type { DeviceType, DisplayMode } from "@/stores/ui-playground-store";
 import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
 import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
-import type { WidgetModelContextEntry } from "@/shared/chat-v2";
-import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { useWidgetModelContextQueue } from "@/hooks/use-widget-model-context-queue";
+import { fitWidgetModelContext } from "@/lib/widget-model-context";
 import { useComparisonBrowser } from "@/hooks/use-comparison-browser";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
@@ -107,6 +118,11 @@ export interface PlaygroundDeterministicExecutionRequest {
   toolCallId: string;
   replaceExisting?: boolean;
 }
+
+// A failed column clears the saved comparison, so a reload starts from the
+// current layout; running the comparison again is what recovers it.
+const COMPARISON_RESTORE_FAILED_MESSAGE =
+  "Could not restore this comparison chat. Run the comparison again.";
 
 function InvokingIndicator({
   toolName,
@@ -368,9 +384,8 @@ export function MultiModelPlaygroundCard({
   const effectiveMcpProfile = hostSnapshot
     ? hostSnapshot.mcpProfile
     : tabRootMcpProfile;
-  const [modelContextQueue, setModelContextQueue] = useState<
-    WidgetModelContextEntry[]
-  >([]);
+  const [modelContextQueue, setModelContextQueue, handleModelContextUpdate] =
+    useWidgetModelContextQueue();
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
   const [revealedInChat, setRevealedInChat] = useState(false);
@@ -382,6 +397,14 @@ export function MultiModelPlaygroundCard({
     useState<Record<string, ToolRenderOverride>>({});
   const lastBroadcastRequestIdRef = useRef<number | null>(null);
   const lastExecutionRequestIdRef = useRef<number | null>(null);
+  // Read when a restore fails, after the props it closed over may have moved.
+  // Set at commit, so a render React discards never counts as received.
+  const broadcastRequestIdRef = useRef(broadcastRequest?.id);
+  const executionRequestIdRef = useRef(deterministicExecutionRequest?.id);
+  useLayoutEffect(() => {
+    broadcastRequestIdRef.current = broadcastRequest?.id;
+    executionRequestIdRef.current = deterministicExecutionRequest?.id;
+  }, [broadcastRequest?.id, deterministicExecutionRequest?.id]);
   const onSummaryChangeRef = useRef(onSummaryChange);
   const onHasMessagesChangeRef = useRef(onHasMessagesChange);
   const lastAddColumnVersionRef = useRef(0);
@@ -444,6 +467,36 @@ export function MultiModelPlaygroundCard({
     harnessId: pluginHarnessId ?? hostCapsResolver?.agentLoop ?? hostCapsResolver?.harness,
     hostResolved: pluginHostResolved,
   });
+  const [recoveryColumn] = useState(() =>
+    readComparisonAuthRecovery(
+      hostedContext?.projectId ?? "local",
+    )?.columns.find(
+      (column) => column.compareId === compareId && column.kind === compareKind,
+    ),
+  );
+  const [recoveryStatus, setRecoveryStatus] = useState<
+    "loading" | "ready" | "failed"
+  >(recoveryColumn ? "loading" : "ready");
+  // The turn already present when a restored column mounts is in its history.
+  // A turn sent while the column restores is new, and waits for it.
+  const [restoredBroadcastId] = useState(() =>
+    recoveryColumn ? broadcastRequest?.id : undefined,
+  );
+  const [restoredExecutionRequestId] = useState(() =>
+    recoveryColumn ? deterministicExecutionRequest?.id : undefined,
+  );
+  const prepareAuthRecovery = useCallback(
+    (continuationId: string) =>
+      browserWorkspace
+        ? prepareComparisonAuthRecovery(
+            browserWorkspace.id,
+            compareId,
+            continuationId,
+            browserWorkspace.clientCount,
+          )
+        : { ok: true as const },
+    [browserWorkspace?.id, browserWorkspace?.clientCount, compareId],
+  );
   const {
     messages,
     setMessages,
@@ -464,6 +517,8 @@ export function MultiModelPlaygroundCard({
     hiddenEnvironmentActive,
     addToolApprovalResponse,
     startChatWithMessages,
+    harnessStartupPhase,
+    loadChatSession,
   } = useChatSession({
     pickedModelSelection: selection,
     savedClientConfig: compareKind === "host" ? hostCapsResolver ?? undefined : undefined,
@@ -473,6 +528,8 @@ export function MultiModelPlaygroundCard({
     pluginContextReferences: currentLaneContext,
     // A comparison column never shares the member's one personal computer.
     comparePane: true,
+    prepareAuthRecovery,
+    authRecoveryPaused: recoveryStatus !== "ready",
     selectedServers,
     usePageTools,
     hostedContext: columnHostedContext,
@@ -576,6 +633,111 @@ export function MultiModelPlaygroundCard({
   // A lane with live Apps keeps placeholder transcripts in its Trace view,
   // so one App never has two live hosts.
   const laneWidgetPolicy = laneScope ? "placeholder" : "live";
+  useEffect(() => {
+    if (!browserWorkspace || recoveryStatus !== "ready") return;
+    return registerComparisonColumn(browserWorkspace.id, {
+      compareId,
+      kind: compareKind,
+      order: browserWorkspace.order,
+      chatSessionId,
+      hasMessages: messages.some(
+        (message) => message.role === "user" || message.role === "assistant",
+      ),
+    });
+  }, [
+    browserWorkspace?.id,
+    browserWorkspace?.order,
+    compareId,
+    compareKind,
+    chatSessionId,
+    messages,
+    recoveryStatus,
+  ]);
+  const recoveryLoaderRef = useRef(loadChatSession);
+  recoveryLoaderRef.current = loadChatSession;
+  useEffect(() => {
+    // Once the column has settled, a later bootstrap or project change must
+    // not load the saved transcript over the messages that came after it.
+    if (
+      !recoveryColumn ||
+      recoveryStatus !== "loading" ||
+      !isSessionBootstrapComplete
+    )
+      return;
+    let cancelled = false;
+    const history = recoveryColumn.hasMessages
+      ? getCachedChatHistoryDetail({
+          chatSessionId: recoveryColumn.chatSessionId,
+          projectId: hostedContext?.projectId ?? undefined,
+        })
+      : Promise.resolve({
+          session: {
+            chatSessionId: recoveryColumn.chatSessionId,
+            messagesBlobUrl: null,
+            version: 0,
+          },
+          widgetSnapshots: undefined,
+          turnTraces: undefined,
+        });
+    void history
+      .then(async (detail) => {
+        if (cancelled) return;
+        if (
+          detail.session.chatSessionId !== recoveryColumn.chatSessionId ||
+          (recoveryColumn.hasMessages && !detail.session.messagesBlobUrl)
+        )
+          throw new Error(COMPARISON_RESTORE_FAILED_MESSAGE);
+        await recoveryLoaderRef.current(
+          {
+            ...detail.session,
+            widgetSnapshots: detail.widgetSnapshots,
+            turnTraces: detail.turnTraces,
+          },
+          { shouldApply: () => !cancelled, restoredModel: model },
+        );
+        if (!cancelled) {
+          traceChatAuthRecovery("comparison_restored", {
+            chatSessionId: recoveryColumn.chatSessionId,
+            projectId: hostedContext?.projectId,
+            recoveryResult: "column_restored",
+          });
+          setRecoveryStatus("ready");
+          markComparisonColumnSettled(hostedContext?.projectId ?? "local", {
+            kind: recoveryColumn.kind,
+            compareId: recoveryColumn.compareId,
+          });
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // The turns that arrived while restoring are dropped with the alert;
+        // the next one starts this column fresh.
+        lastBroadcastRequestIdRef.current =
+          broadcastRequestIdRef.current ?? null;
+        lastExecutionRequestIdRef.current =
+          executionRequestIdRef.current ?? null;
+        setRecoveryStatus("failed");
+        recordChatAuthRecoveryFailure("comparison_restore_failed", {
+          chatSessionId: recoveryColumn.chatSessionId,
+          projectId: hostedContext?.projectId,
+          recoveryResult: "column_restore_failed",
+        });
+        // A failed column is settled too: left saved, the next reload would
+        // bring the sign-in-time layout back and fail the same way.
+        markComparisonColumnSettled(hostedContext?.projectId ?? "local", {
+          kind: recoveryColumn.kind,
+          compareId: recoveryColumn.compareId,
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    recoveryColumn,
+    recoveryStatus,
+    isSessionBootstrapComplete,
+    hostedContext?.projectId,
+  ]);
 
   useComparisonBrowser(
     browserWorkspace && hostedContext?.projectId
@@ -608,6 +770,8 @@ export function MultiModelPlaygroundCard({
   }, [messages, compareId, compareKind, compareEnterMessages, onTranscriptSync]);
 
   useEffect(() => {
+    // A restored column loads its own history instead of any seed.
+    if (recoveryColumn) return;
     if (compareKind === "host") {
       if (lastCompareEnterVersionRef.current > 0) return;
       lastCompareEnterVersionRef.current = 1;
@@ -784,9 +948,8 @@ export function MultiModelPlaygroundCard({
   }, [modelContextQueue]);
 
   useEffect(() => {
-    if (!isSessionBootstrapComplete) {
-      return;
-    }
+    if (recoveryStatus === "loading") return;
+    if (!isSessionBootstrapComplete) return;
 
     if (!broadcastRequest) {
       return;
@@ -797,6 +960,9 @@ export function MultiModelPlaygroundCard({
     }
 
     lastBroadcastRequestIdRef.current = broadcastRequest.id;
+    if (broadcastRequest.id === restoredBroadcastId) return;
+    // A column whose restore failed runs the next turn as a fresh column.
+    if (recoveryStatus === "failed") setRecoveryStatus("ready");
 
     if (broadcastRequest.prependMessages.length > 0) {
       setMessages((previous) => [
@@ -810,13 +976,15 @@ export function MultiModelPlaygroundCard({
       text: broadcastRequest.text,
       files: broadcastRequest.files,
       metadata: outgoingSenderMetadata,
-      widgetModelContext: [
+      widgetModelContext: fitWidgetModelContext([
         ...(broadcastRequest.widgetModelContext ?? []),
         ...widgetModelContext,
-      ],
+      ]),
     });
   }, [
     broadcastRequest,
+    recoveryStatus,
+    restoredBroadcastId,
     drainModelContextQueue,
     isSessionBootstrapComplete,
     sendMessage,
@@ -825,7 +993,7 @@ export function MultiModelPlaygroundCard({
   ]);
 
   useEffect(() => {
-    if (!deterministicExecutionRequest) {
+    if (recoveryStatus === "loading" || !deterministicExecutionRequest) {
       return;
     }
 
@@ -836,6 +1004,8 @@ export function MultiModelPlaygroundCard({
     }
 
     lastExecutionRequestIdRef.current = deterministicExecutionRequest.id;
+    if (deterministicExecutionRequest.id === restoredExecutionRequestId) return;
+    if (recoveryStatus === "failed") setRecoveryStatus("ready");
 
     const deterministicOptions =
       deterministicExecutionRequest.state === "output-error"
@@ -931,6 +1101,8 @@ export function MultiModelPlaygroundCard({
     });
   }, [
     deterministicExecutionRequest,
+    recoveryStatus,
+    restoredExecutionRequestId,
     hasTraceSnapshot,
     resolvedMcpToolResultImageRendering,
     setMessages,
@@ -959,21 +1131,6 @@ export function MultiModelPlaygroundCard({
       });
     },
     [drainModelContextQueue, sendMessage, outgoingSenderMetadata],
-  );
-
-  const handleModelContextUpdate = useCallback(
-    (
-      toolCallId: string,
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      },
-    ) => {
-      setModelContextQueue((previous) =>
-        upsertWidgetModelContextEntry(previous, toolCallId, context),
-      );
-    },
-    [],
   );
 
   // Provider stack wraps the WHOLE card body — header + trace branch +
@@ -1036,6 +1193,16 @@ export function MultiModelPlaygroundCard({
           </div>
         ) : null}
 
+        {recoveryStatus !== "ready" && (
+          <div
+            role={recoveryStatus === "failed" ? "alert" : "status"}
+            className="p-3 text-sm text-muted-foreground"
+          >
+            {recoveryStatus === "failed"
+              ? COMPARISON_RESTORE_FAILED_MESSAGE
+              : "Restoring comparison chat…"}
+          </div>
+        )}
         <CompareLaneWorkspace
           apps={laneScope ? laneApps : null}
           showDiagnostics={showTraceDiagnosticsShell}
@@ -1140,6 +1307,7 @@ export function MultiModelPlaygroundCard({
                 <div className="relative flex-1 min-h-0">
                   <StickToBottom.Content className="flex flex-col min-h-0">
                     <Thread
+                      harnessStartupPhase={harnessStartupPhase}
                       chatSessionId={chatSessionId}
                       messages={messages}
                       sendFollowUpMessage={handleSendFollowUp}

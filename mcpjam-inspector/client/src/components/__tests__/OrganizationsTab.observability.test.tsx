@@ -1,6 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/hooks/useCreditBalance", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/hooks/useCreditBalance")>(),
+  useUnlimitedCredits: vi.fn(() => false),
+}));
+
 /**
  * The Observability entry in the org settings strip.
  *

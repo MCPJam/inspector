@@ -81,6 +81,7 @@ describe("mcp conformance unit checks", () => {
     }
 
     const result = await check.run({
+      config: { checkTimeout: 250 },
       manager: {
         listTools: vi.fn().mockResolvedValue({
           tools: [{ name: "echo", inputSchema: {} }],

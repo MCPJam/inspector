@@ -1,7 +1,9 @@
 import type { LaunchEngagement } from "../../shared/launch-engagement.js";
 import type { ErrorOrigin } from "@mcpjam/sdk";
 import type { RouteFailureHop } from "./route-error-report.js";
+import type { ChatOrigin } from "./chat-origin.js";
 import type { LogConvexId } from "./log-convex-id.js";
+import type { PluginContextRefusedEvent } from "./context-refused-event.js";
 
 export type Environment =
   | "prod"
@@ -109,6 +111,7 @@ export interface SystemLogContext extends CommonLogContext {
     | "model_reported_missing"
     | "unsupported_claim"
     | "entity_record_limit"
+    | "call_record_limit"
     | "write_errored";
   requestId: null;
   route: null;
@@ -370,19 +373,13 @@ export type RequestEventMap = {
      * and a bare status code.
      */
     responsePreview?: string;
-    sourceType?: "scenario" | "direct" | "eval" | "swarm";
+    sourceType?: "scenario" | "direct" | "eval" | "swarm" | "event";
     // Product-surface discriminator carried alongside sourceType so PostHog
     // can pivot persist failures by surface without rejoining to chatSessions.
     // CAUTION: this `origin` is a DIFFERENT axis from the ErrorOrigin field
     // of the same name on `http.request.failed` / `route.operation.failed` —
     // never join the two in an APL query.
-    origin?:
-      | "playground"
-      | "mcpjam_agent"
-      | "scenario"
-      | "eval"
-      | "swarm"
-      | "api";
+    origin?: ChatOrigin;
   };
   /**
    * The backend accepted the request but declined the write, judging the
@@ -391,14 +388,8 @@ export type RequestEventMap = {
    * Its own event so the silent-drop class is measurable rather than inferred.
    */
   "chat.session.persist.skipped": {
-    sourceType?: "scenario" | "direct" | "eval" | "swarm";
-    origin?:
-      | "playground"
-      | "mcpjam_agent"
-      | "scenario"
-      | "eval"
-      | "swarm"
-      | "api";
+    sourceType?: "scenario" | "direct" | "eval" | "swarm" | "event";
+    origin?: ChatOrigin;
     /** False means the payload had no idempotency key to dedupe on. */
     hasTurnId: boolean;
   };
@@ -432,6 +423,8 @@ export type RequestEventMap = {
     totalMs: number;
     spans: Record<string, { count: number; totalMs: number; maxMs: number }>;
   };
+  /** An App context update refused before anything was stored. */
+  "plugin.instance.context.refused": PluginContextRefusedEvent;
   /**
    * One plugin onboarding turn (the Playground's Run onboarding or Set up),
    * from its request to its terminal result. `phases` holds the ms since the
@@ -546,6 +539,9 @@ export type RequestEventMap = {
 
 export type SystemEventMap = {
   telemetry_canary: Record<string, never>;
+  "server.shutdown.drain": import("./log-events/shutdown-drain.js").ShutdownDrainEvent;
+  /** One per start: `web` runs no claim loops; `worker` and `all` do. */
+  "server.process_role": { role: "all" | "web" | "worker" };
   llm_spend_unattested_ip_pooled: Record<string, never>;
   "model_catalog.refresh.failed": {
     reason: "fetch_failed" | "invalid_catalog";

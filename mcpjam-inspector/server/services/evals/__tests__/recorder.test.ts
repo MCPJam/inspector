@@ -1,3 +1,5 @@
+import { ConvexHttpClient } from "convex/browser";
+import { ConvexError } from "convex/values";
 import { describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "ai";
 import { logger } from "../../../utils/logger";
@@ -7,6 +9,15 @@ import {
 } from "../recorder.js";
 
 describe("startSuiteRunWithRecorder", () => {
+  it.each(["pending", "running", "grading", "completed"])("does not prepare iterations again for a replay in %s", async (status) => {
+    const client = new ConvexHttpClient("https://replay.test");
+    const mutation = vi.spyOn(client, "mutation").mockResolvedValue({ runId: "existing-run", testCases: [], deduped: true, status });
+    const action = vi.spyOn(client, "action").mockRejectedValue(new Error("A replay must not reserve usage or finalize the run"));
+    const result = await startSuiteRunWithRecorder({ convexClient: client, suiteId: "suite-1", idempotencyKey: "same-key" });
+    expect(result).toMatchObject({ runId: "existing-run", deduped: true, status });
+    expect(mutation).toHaveBeenCalledTimes(1);
+    expect(action).not.toHaveBeenCalled();
+  });
   it("forwards the GitHub server replacement and omits undefined overrides", async () => {
     const action = vi.fn().mockResolvedValue(undefined);
     const mutation = vi
@@ -584,6 +595,115 @@ describe("startSuiteRunWithRecorder", () => {
       },
     );
   });
+
+  it.each([
+    // A budget refusal has no retry time, so it is not a 429: the v1 spec
+    // promises `Retry-After` on every 429.
+    ["PLATFORM_FEE_REQUIRED", 403, "FORBIDDEN", "reason"],
+    ["ORGANIZATION_SPEND_BUDGET_REACHED", 403, "FORBIDDEN", "reason"],
+    ["billing_limit_reached", 402, "BILLING_LIMIT_REACHED", "code"],
+    ["org_keys_required", 403, "FORBIDDEN", "code"],
+  ])(
+    "answers the %s precreate refusal with a %i, without paging",
+    async (backendCode, status, code, detailsKey) => {
+      const { ConvexError } = await import("convex/values");
+      const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+      const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+      const action = vi.fn().mockRejectedValueOnce(
+        new ConvexError({
+          code: backendCode,
+          message: "The backend says why.",
+        }),
+      );
+      const mutation = vi
+        .fn()
+        .mockResolvedValueOnce({ runId: "run-1", testCases: [] })
+        .mockResolvedValue(undefined);
+
+      try {
+        await expect(
+          startSuiteRunWithRecorder({
+            convexClient: { mutation, action } as any,
+            suiteId: "suite-1",
+          }),
+        ).rejects.toMatchObject({
+          status,
+          code,
+          message: "The backend says why.",
+          details: { [detailsKey]: backendCode },
+        });
+
+        expect(errorSpy).not.toHaveBeenCalled();
+        expect(warnSpy).toHaveBeenCalledWith(
+          "[evals] Suite run iterations refused",
+          expect.objectContaining({
+            runId: "run-1",
+            status,
+            reason: backendCode,
+          }),
+        );
+        // A refused run still ends failed rather than pending.
+        expect(mutation).toHaveBeenCalledWith(
+          "testSuites:updateTestSuiteRun",
+          expect.objectContaining({ runId: "run-1", status: "failed" }),
+        );
+      } finally {
+        errorSpy.mockRestore();
+        warnSpy.mockRestore();
+      }
+    },
+  );
+
+  it("answers a run start refused over the spend budget with a 403", async () => {
+    const { ConvexError } = await import("convex/values");
+    const action = vi.fn();
+    const mutation = vi.fn().mockRejectedValueOnce(
+      new ConvexError({
+        code: "ORGANIZATION_SPEND_BUDGET_REACHED",
+        message: "The backend says why.",
+      }),
+    );
+
+    await expect(
+      startSuiteRunWithRecorder({
+        convexClient: { mutation, action } as any,
+        suiteId: "suite-1",
+      }),
+    ).rejects.toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+      message: "The backend says why.",
+      details: { reason: "ORGANIZATION_SPEND_BUDGET_REACHED" },
+    });
+    // Refused before the run row exists, so nothing is pre-created.
+    expect(action).not.toHaveBeenCalled();
+  });
+
+  it("keeps PLATFORM_FEE_UNAVAILABLE on the retryable 500 path", async () => {
+    const { ConvexError } = await import("convex/values");
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const action = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ConvexError({ code: "PLATFORM_FEE_UNAVAILABLE" }),
+      );
+    const mutation = vi
+      .fn()
+      .mockResolvedValueOnce({ runId: "run-1", testCases: [] })
+      .mockResolvedValue(undefined);
+
+    try {
+      await expect(
+        startSuiteRunWithRecorder({
+          convexClient: { mutation, action } as any,
+          suiteId: "suite-1",
+        }),
+      ).rejects.toMatchObject({ status: 500, details: { runId: "run-1" } });
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 });
 
 describe("createSuiteRunRecorder", () => {
@@ -1047,4 +1167,20 @@ describe("createSuiteRunRecorder", () => {
     expect(query.mock.calls.length).toBe(queryCallsBefore);
     expect(mutation.mock.calls.length).toBe(mutationCallsBefore);
   });
+});
+
+
+it("answers a capacity refusal without retrying admission or starting work", async () => {
+  const client = new ConvexHttpClient("https://capacity.test");
+  const mutation = vi.spyOn(client, "mutation").mockRejectedValue(new ConvexError({
+    kind: "at_capacity", resource: "eval_runs", message: "Eval capacity reached. Try again after another eval finishes.",
+  }));
+  const action = vi.spyOn(client, "action");
+  await expect(startSuiteRunWithRecorder({ convexClient: client, suiteId: "suite-1" })).rejects.toMatchObject({
+    status: 429, code: "RATE_LIMITED",
+    headers: { "Retry-After": "1" },
+    details: { code: "at_capacity", resource: "eval_runs", retryAfterMs: 1000 },
+  });
+  expect(mutation).toHaveBeenCalledTimes(1);
+  expect(action).not.toHaveBeenCalled();
 });

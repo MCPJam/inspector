@@ -12,17 +12,18 @@ import {
 } from "../../../shared/swarm-attempt-error.js";
 import type { SpendRefusal } from "./admission-retry.js";
 import { prepareTargetGrounding } from "./target-grounding";
-import { SwarmSetupError, setupFailureMessage } from "./swarm-setup-turn";
+import {
+  SETUP_PLATFORM_STOPPED_MESSAGE,
+  SwarmSetupError,
+  setupFailureMessage,
+} from "./swarm-setup-turn";
 import { HOSTED_STEP_MAX_OUTPUT_TOKENS } from "../hosted-step-limits";
 import { isCreditExhaustion } from "../../../shared/credit-exhaustion.js";
 import { composeAbortSignals } from "@mcpjam/sdk";
 import { logger } from "../../utils/logger.js";
 import { withDeadline } from "../../utils/run-supervisor/deadline.js";
-import {
-  resolveExecutionBudgetsForSurface,
-  platformExecutionBudgetCeilings,
-  type ResolvedExecutionBudgets,
-} from "@mcpjam/sdk/contract";
+import type { ResolvedExecutionBudgets } from "@mcpjam/sdk/contract";
+import { swarmRunBudgets } from "./swarm-run-budgets.js";
 import { buildSyntheticModelDefinition } from "../../utils/org-model-config.js";
 import {
   backendModelSelection,
@@ -133,24 +134,6 @@ const HEARTBEAT_INTERVAL_MS = 5_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
 
 /**
- * The swarm platform defaults, taken from the contract's own resolver rather
- * than written out here. A second copy of these numbers is a second thing to
- * keep in step with the ceilings and the settings surface.
- */
-function defaultSwarmExecutionBudgets(): ResolvedExecutionBudgets {
-  const resolution = resolveExecutionBudgetsForSurface({ surface: "swarms" });
-  if (!resolution.ok) {
-    // Unreachable: the platform defaults are the thing ceilings are defined
-    // against. Thrown rather than silently patched, because a violation here
-    // means the two tables have drifted and every run is mis-bounded.
-    throw new Error(
-      `platform swarm budgets must resolve: ${JSON.stringify(resolution.violations)}`,
-    );
-  }
-  return resolution.resolved;
-}
-
-/**
  * Deadline on the attempt-terminal artifact flush that carries a hosted
  * recording. Matches the session core's own terminal flush budget.
  *
@@ -240,7 +223,8 @@ export function swarmTargetModelDefinition(
     });
   }
   const wireModelId = wireModelIdForSelection(selection);
-  const definition = buildSyntheticModelDefinition(wireModelId, {
+  // Native deployment names need not identify their provider. Classify the saved canonical id.
+  const definition = buildSyntheticModelDefinition(selection.modelId, {
     hosted: selection.source === "hosted",
   });
   const ref = selection.connectionRef;
@@ -254,7 +238,7 @@ export function swarmTargetModelDefinition(
         : {}),
     };
   }
-  return definition;
+  return { ...definition, id: wireModelId };
 }
 
 /**
@@ -403,10 +387,11 @@ export interface StartJourneyRunOptions {
   /** Aborts the run mid-fan-out on inspector shutdown / user cancel. */
   abortSignal?: AbortSignal;
   /**
-   * The run's FROZEN execution budgets. Absent ⇒ the platform defaults, which
-   * is every run until the backend writes authored budgets into the launch
-   * snapshot. Resolved through the real resolver either way, so a defaulted
-   * run and a frozen one take the same code path.
+   * The run's FROZEN execution budgets, from its launch snapshot. Absent ⇒ a
+   * backend that predates frozen swarm budgets: the platform defaults, sized
+   * here for local sessions. Present ⇒ authoritative and never resized: the
+   * backend already resolved and sized them when it froze them
+   * ({@link swarmRunBudgets}).
    */
   budgets?: ResolvedExecutionBudgets;
 }
@@ -706,17 +691,11 @@ async function runJourneyFanOut(
 
   // Run-level stop controller. Aborting it cancels every in-flight session's
   // turns; composed with the incoming abort so a shutdown/cancel does the same.
-  const budgets = opts.budgets ?? defaultSwarmExecutionBudgets();
-  if (!opts.budgets) {
-    // Only size a platform default. Explicit/frozen limits remain authoritative.
-    const localSessions =
-      hosts.filter((host) => runsLocally(opts, host.harness)).length *
-      sessionsPerTarget;
-    budgets.runTimeoutMs = Math.min(
-      platformExecutionBudgetCeilings("swarms").runTimeoutMs,
-      Math.max(budgets.runTimeoutMs, Math.ceil(localSessions / 2) * budgets.unitTimeoutMs),
-    );
-  }
+  const budgets = swarmRunBudgets(
+    opts.budgets,
+    hosts.filter((host) => runsLocally(opts, host.harness)).length *
+      sessionsPerTarget,
+  );
 
   // The RUN's clock. Nested under the caller's abort (shutdown / cancel) and
   // composed with `runStop`, the spend-cap short-circuit — so every session's
@@ -944,6 +923,7 @@ async function runJourneyFanOut(
               {
                 terminalStatus: "failed",
                 errorCode: "prerequisites_unavailable",
+                errorMessage: SETUP_PLATFORM_STOPPED_MESSAGE,
               },
             );
           }
@@ -2220,7 +2200,7 @@ async function runJourneyFanOut(
       const failureMessage =
         signInMessage ??
         (err instanceof SwarmSetupError && !signInFailure
-          ? setupFailureMessage(err.partial)
+          ? setupFailureMessage(err.partial, err.platformFailure)
           : undefined);
       const failureCode =
         signInFailure ??

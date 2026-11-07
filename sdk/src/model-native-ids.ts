@@ -93,6 +93,125 @@ export const ANTHROPIC_NATIVE_MODEL_IDS: readonly NativeModelIdMapping[] =
     },
   ]);
 
+// Every row here is a `SUPPORTED_MODELS` OpenAI row: `createLlmModel`
+// (server/utils/chat-helpers.ts) sends that id verbatim to api.openai.com, and
+// OpenAI's `GET /v1/models` lists models under the same ids. The canonical id
+// is the hosted catalog's spelling (shared/hosted-model-ids.generated.ts).
+const OPENAI_VERBATIM =
+  "SUPPORTED_MODELS row sent verbatim to api.openai.com by createLlmModel; listed under this id by GET /v1/models";
+const OPENAI_HOSTED = `${OPENAI_VERBATIM}; canonical spelling from hosted-model-ids.generated.ts`;
+
+export const OPENAI_NATIVE_MODEL_IDS: readonly NativeModelIdMapping[] = [
+  {
+    canonicalId: "openai/gpt-6.1-sol",
+    nativeId: "gpt-6.1-sol",
+    evidence: "Reviewed GPT-6 native name used by the org OpenAI model picker",
+  },
+  {
+    canonicalId: "openai/gpt-6-luna",
+    nativeId: "gpt-6-luna",
+    evidence: "Reviewed GPT-6 native name used by the org OpenAI model picker",
+  },
+  {
+    canonicalId: "openai/gpt-6-sol",
+    nativeId: "gpt-6-sol",
+    evidence: "Reviewed GPT-6 native name used by the org OpenAI model picker",
+  },
+  {
+    canonicalId: "openai/gpt-6-astra",
+    nativeId: "gpt-6-astra",
+    evidence: "Reviewed GPT-6 native name used by the org OpenAI model picker",
+  },
+
+  {
+    canonicalId: "openai/gpt-5.6-luna",
+    nativeId: "gpt-5.6-luna",
+    evidence: OPENAI_HOSTED,
+  },
+  {
+    canonicalId: "openai/gpt-5.6-sol",
+    nativeId: "gpt-5.6-sol",
+    evidence: OPENAI_HOSTED,
+  },
+  {
+    canonicalId: "openai/gpt-5.6-terra",
+    nativeId: "gpt-5.6-terra",
+    evidence: OPENAI_HOSTED,
+  },
+  // Not in the hosted catalog (it lists gpt-5.1-instant / -thinking instead);
+  // the canonical id follows the `openai/<native>` spelling of its siblings.
+  { canonicalId: "openai/gpt-5.1", nativeId: "gpt-5.1", evidence: OPENAI_VERBATIM },
+  {
+    canonicalId: "openai/gpt-5.1-codex",
+    nativeId: "gpt-5.1-codex",
+    evidence: OPENAI_HOSTED,
+  },
+  {
+    canonicalId: "openai/gpt-5.1-codex-mini",
+    nativeId: "gpt-5.1-codex-mini",
+    evidence: OPENAI_HOSTED,
+  },
+  { canonicalId: "openai/gpt-5", nativeId: "gpt-5", evidence: OPENAI_HOSTED },
+  {
+    canonicalId: "openai/gpt-5-mini",
+    nativeId: "gpt-5-mini",
+    evidence: OPENAI_HOSTED,
+  },
+  {
+    canonicalId: "openai/gpt-5-nano",
+    nativeId: "gpt-5-nano",
+    evidence: OPENAI_HOSTED,
+  },
+  { canonicalId: "openai/gpt-5-pro", nativeId: "gpt-5-pro", evidence: OPENAI_HOSTED },
+  {
+    canonicalId: "openai/gpt-5-codex",
+    nativeId: "gpt-5-codex",
+    evidence: OPENAI_HOSTED,
+  },
+  { canonicalId: "openai/gpt-4.1", nativeId: "gpt-4.1", evidence: OPENAI_HOSTED },
+  {
+    canonicalId: "openai/gpt-4.1-mini",
+    nativeId: "gpt-4.1-mini",
+    evidence: OPENAI_HOSTED,
+  },
+  {
+    canonicalId: "openai/gpt-4.1-nano",
+    nativeId: "gpt-4.1-nano",
+    evidence: OPENAI_HOSTED,
+  },
+  { canonicalId: "openai/gpt-4o", nativeId: "gpt-4o", evidence: OPENAI_HOSTED },
+  {
+    canonicalId: "openai/gpt-4o-mini",
+    nativeId: "gpt-4o-mini",
+    evidence: OPENAI_HOSTED,
+  },
+];
+
+// Every native id is a `SUPPORTED_MODELS` Google row that `createLlmModel`
+// (server/utils/chat-helpers.ts) sends verbatim to the Gemini API.
+const GOOGLE_VERBATIM =
+  "SUPPORTED_MODELS row sent verbatim to the Gemini API by createLlmModel";
+const GOOGLE_HOSTED = `${GOOGLE_VERBATIM}; canonical spelling from hosted-model-ids.generated.ts`;
+
+export const GOOGLE_NATIVE_MODEL_IDS: readonly NativeModelIdMapping[] = [
+  {
+    canonicalId: "google/gemini-2.5-pro",
+    nativeId: "gemini-2.5-pro",
+    evidence: GOOGLE_HOSTED,
+  },
+  {
+    canonicalId: "google/gemini-2.5-flash",
+    nativeId: "gemini-2.5-flash",
+    evidence: GOOGLE_HOSTED,
+  },
+  // Not in the hosted catalog; canonical spelling follows its siblings.
+  {
+    canonicalId: "google/gemini-2.0-flash-exp",
+    nativeId: "gemini-2.0-flash-exp",
+    evidence: GOOGLE_VERBATIM,
+  },
+];
+
 /**
  * canonical id → row, built once and checked on the way.
  *
@@ -136,6 +255,23 @@ const ANTHROPIC_BY_CANONICAL = indexByCanonicalId(
   "Anthropic",
   ANTHROPIC_NATIVE_MODEL_IDS
 );
+
+const PROVIDER_NATIVE_IDS: ReadonlyMap<
+  string,
+  ReadonlyMap<string, NativeModelIdMapping>
+> = new Map([
+  ["anthropic", ANTHROPIC_BY_CANONICAL],
+  ["openai", indexByCanonicalId("OpenAI", OPENAI_NATIVE_MODEL_IDS)],
+  ["google", indexByCanonicalId("Google", GOOGLE_NATIVE_MODEL_IDS)],
+]);
+
+/** Look up a reviewed provider name. Unknown canonical ids have no mapping. */
+export function nativeModelIdFor(
+  providerKey: string,
+  canonicalId: string
+): string | undefined {
+  return PROVIDER_NATIVE_IDS.get(providerKey)?.get(canonicalId)?.nativeId;
+}
 
 /**
  * The id to call `api.anthropic.com` with, for the MODEL part of a BYOK

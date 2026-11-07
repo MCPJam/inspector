@@ -2383,6 +2383,44 @@ describe("useChatSession — environment execution target", () => {
       unmount();
     });
 
+    it.each([false, true])(
+      "keeps an OAuth challenge out of study-access recovery (after recovery: %s)",
+      async (afterRecovery) => {
+        const refreshAccessSession = vi
+          .fn()
+          .mockResolvedValue({ ok: true, accessVersion: 2 });
+        const onAccessRevoked = vi.fn();
+        const { unmount } = renderScenario({
+          refreshAccessSession,
+          onAccessRevoked,
+        });
+        const challenge = {
+          code: "UNAUTHORIZED",
+          message: 'Server "Asana" requires authorization.',
+          details: { oauthRequired: true, serverId: "server-id-1" },
+        };
+        const response = new Response(JSON.stringify(challenge), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+        if (afterRecovery) {
+          mockState.authFetch.mockResolvedValueOnce(
+            accessErrorResponse("SCENARIO_ACCESS_STALE", 409),
+          );
+        }
+        mockState.authFetch.mockResolvedValue(response);
+
+        const result = await chatFetch()(TURN_URL, turnInit(1));
+
+        expect(result).toBe(response);
+        await expect(result.json()).resolves.toEqual(challenge);
+        expect(refreshAccessSession).toHaveBeenCalledTimes(afterRecovery ? 1 : 0);
+        expect(mockState.authFetch).toHaveBeenCalledTimes(afterRecovery ? 2 : 1);
+        expect(onAccessRevoked).not.toHaveBeenCalled();
+        unmount();
+      },
+    );
+
     it("never recovers twice — a replay that also fails is final", async () => {
       const refreshAccessSession = vi
         .fn()
@@ -2581,7 +2619,11 @@ describe("useChatSession — hidden environment (a Playground chat's plugins)", 
     );
     expect(again.result.current.hiddenEnvironmentActive).toBe(false);
     const body = lastTransportOptions.body();
-    expect(body).toEqual(plain);
+    expect(body).toEqual({
+      ...plain,
+      harnessStartupRequestId: expect.any(String),
+    });
+    expect(body.harnessStartupRequestId).not.toBe(plain.harnessStartupRequestId);
     expect(body.hostId).toBe("host_1");
     expect(body).not.toHaveProperty("executionTarget");
     expect(body).not.toHaveProperty("environmentOverrides");

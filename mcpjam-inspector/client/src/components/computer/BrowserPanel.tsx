@@ -23,6 +23,12 @@
  * Nothing here is persisted. The stream is live only.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { MoreHorizontal } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@mcpjam/design-system/dropdown-menu";
 import { BrowserStream } from "./BrowserStream";
 import { BrowserProfileSaveButton } from "@/components/browser/BrowserProfileSaveButton";
 import {
@@ -407,11 +413,26 @@ export function BrowserPanel({
           </span>
         )}
         <div className="ml-auto flex gap-2">
-          <BrowserProfileSaveButton
-            projectId={projectId}
-            exportArchive={exportProfile}
-            disabled={holding || busy}
-          />
+          {/* The save action is a menu item, as in the other browser bodies:
+              rendered outside a menu it throws and takes the page down. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="More browser actions"
+                className="rounded border px-2 py-1"
+              >
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <BrowserProfileSaveButton
+                projectId={projectId}
+                exportArchive={exportProfile}
+                disabled={holding || busy}
+              />
+            </DropdownMenuContent>
+          </DropdownMenu>
           {holding ? (
             <button
               type="button"
