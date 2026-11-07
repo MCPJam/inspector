@@ -54,7 +54,7 @@ export async function resolvePluginStdioHttpTarget(args: {
   /** Test seam for the vendor boundary; defaults to real E2B. */
   connect?: PluginBoxConnector;
 }): Promise<PluginStdioHttpTarget | null> {
-  if (!canColocatePluginStdio()) return null;
+  if (!args.bearerToken.trim() || !canColocatePluginStdio()) return null;
 
   // SHARE-LINK SCENARIO GUEST. The spec reread goes through
   // `/web/authorize-batch-local`, which authorizes under the caller's OWN

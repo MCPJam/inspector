@@ -461,6 +461,7 @@ export type RequestEventMap = {
     computerId: string;
     errorCode: string;
   };
+  "computer.terminal.input_failed": { errorCode: string };
   // Saved browser profile download (routes/web/browser-profile-download.ts,
   // MJ-005): the archive could not be served. `stage` is the hop that failed,
   // `lookup` (the backend's owner check) or `archive` (reading the archive).

@@ -310,10 +310,7 @@ export function assertPluginWorkspaceRuntime(runtime: {
   agentLoop?: string;
   hostPolicy: { hostStyle?: string };
 }): void {
-  if (
-    !usesMcpjamClient(runtime) ||
-    (!runtime.agentLoop && !runtime.harness && runtime.hostPolicy.hostStyle !== "chatgpt")
-  ) {
+  if (!usesMcpjamClient(runtime)) {
     throw new PluginWorkspaceAdmissionError();
   }
 }

@@ -1178,6 +1178,7 @@ export function PlaygroundMain({
     hostId: previewedHostId,
     harnessId: (previewedHost?.config?.agentLoop ?? previewedHost?.config?.harness),
     hostResolved: !previewedHostConfigUnresolved,
+    computerAttached: !!previewedHost?.config?.computer,
   });
 
   // ONE dialog for the whole surface. Six composers each owning their own
@@ -7217,6 +7218,7 @@ export function PlaygroundMain({
                             compareId={compareId}
                             compareLabel={entry.label}
                             pluginHostResolved={!previewedHostConfigUnresolved}
+                            pluginComputerAttached={!!previewedHost?.config?.computer}
                             pluginHarnessId={
                               previewedHost?.config?.agentLoop ??
                               previewedHost?.config?.harness

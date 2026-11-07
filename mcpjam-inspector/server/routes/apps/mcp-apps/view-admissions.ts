@@ -7,10 +7,12 @@ import {
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { HOSTED_MODE } from "../../../config.js";
+import { canColocatePluginStdio } from "../../../services/plugins/computer-stdio.js";
 import { sandboxViews } from "../../../services/sandbox-view-registry.js";
 import {
   prepareSandboxViewSchema,
   sandboxViewSourceSchema,
+  type SandboxViewInput,
 } from "../../../services/sandbox-view-policy.js";
 import {
   isSandboxWebRequest,
@@ -38,9 +40,10 @@ const admissionProjectSchema = projectServerSchema.extend({
 
 async function authorizePreparation(
   c: Context,
-  source: { serverId: string },
+  input: SandboxViewInput,
   body: Record<string, unknown>,
 ): Promise<string> {
+  const source = input.source;
   if (isSandboxWebRequest(c)) {
     const bearer = assertBearerToken(c);
     if (source.serverId !== MCPJAM_PLATFORM_SERVER_ID) {
@@ -59,7 +62,50 @@ async function authorizePreparation(
         ...(parsed.connectionId ? { connectionId: parsed.connectionId } : {}),
       };
       if (HOSTED_MODE) {
-        await authorizeServer(c, bearer, parsed.projectId, source.serverId, options);
+        try {
+          await authorizeServer(
+            c, bearer, parsed.projectId, source.serverId, options,
+          );
+        } catch (error) {
+          if (
+            !canColocatePluginStdio() ||
+            !(error instanceof WebRouteError) ||
+            error.code !== ErrorCode.FEATURE_NOT_SUPPORTED ||
+            error.details?.refusalReason !== "hosted_stdio_unsupported"
+          ) {
+            throw error;
+          }
+          // Rendering already-read bytes grants no process execution or Computer.
+          // The signed receipt still binds the admitted owner, source and HTML;
+          // prepareHostedSandboxView validates it before creating the lease.
+          if (!input.sourceReceipt) {
+            throw new WebRouteError(
+              403, ErrorCode.FORBIDDEN,
+              "Reopen this App to read its current document.",
+            );
+          }
+          const batch = await authorizeBatch(
+            callerContextFromHono(c), bearer, parsed.projectId, [source.serverId],
+            { ...options, pluginComputerRuntime: true },
+          );
+          const result = batch.results[source.serverId];
+          if (!result?.ok) {
+            throw new WebRouteError(
+              result?.status ?? 403,
+              Object.values(ErrorCode).find((code) => code === result?.code) ??
+                ErrorCode.FORBIDDEN,
+              result?.message ?? "The App server is no longer available.",
+            );
+          }
+          if (
+            result.serverConfig.transportType !== "stdio" ||
+            result.serverConfig.pluginComponent !== true
+          ) {
+            throw new WebRouteError(
+              403, ErrorCode.FORBIDDEN, "The App server is no longer available.",
+            );
+          }
+        }
       } else {
         // The local batch authorizer preserves caller scope and accepts saved
         // STDIO servers without connecting or executing their commands.
@@ -118,7 +164,7 @@ export function sandboxViewAdmissionRoutes(): Hono {
       const raw = await c.req.json<Record<string, unknown>>();
       const input = prepareSandboxViewSchema.parse(raw);
       validateSandboxHostOrigin(c, input.hostOrigin);
-      const owner = await authorizePreparation(c, input.source, raw);
+      const owner = await authorizePreparation(c, input, raw);
       return c.json(
         HOSTED_MODE
           ? await prepareHostedSandboxView(input, owner)
