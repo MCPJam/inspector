@@ -435,12 +435,17 @@ export function buildConformanceShareCardSvg(
       anchor: "end",
       spacing: 1.8,
     }),
+    // Clipped to the left column: wide glyphs can outrun the character cap,
+    // and the name must not cross into the suites.
     serverName
-      ? text(72, 158, serverName, {
+      ? `<clipPath id="server-name">${rect(72, 128, 590, 40, "#fff")}</clipPath>` +
+        `<g clip-path="url(#server-name)">` +
+        text(72, 158, serverName, {
           family: FAMILY.sans,
           size: 25,
           weight: 600,
-        })
+        }) +
+        `</g>`
       : "",
     `<text x="60" y="367" font-family="${FAMILY.display}" font-size="206" font-weight="800"` +
       ` letter-spacing="-11" fill="${COLOR.fg}">${escapeXml(formatShareCardScore(data.score))}` +

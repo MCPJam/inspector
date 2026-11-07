@@ -139,6 +139,14 @@ describe("conformance share card", () => {
     expect(texts(svg)).toContain(`${"x".repeat(39)}…`);
   });
 
+  it("keeps a wide server name inside the left column", () => {
+    const svg = svgOf(card({ serverName: "W".repeat(40) }));
+    expect(svg).toContain(
+      '<clipPath id="server-name"><rect x="72" y="128" width="590" height="40" fill="#fff"/></clipPath>' +
+        '<g clip-path="url(#server-name)"><text x="72" y="158"',
+    );
+  });
+
   it("never cuts an emoji in half", () => {
     const name = `${"x".repeat(38)}🚀🚀🚀`;
     const svg = svgOf(card({ serverName: name }));
