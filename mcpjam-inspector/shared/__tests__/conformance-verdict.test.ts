@@ -16,7 +16,7 @@ describe("conformanceVerdict", () => {
       tone: "ok",
     });
     expect(conformanceVerdict("passed", 0)).toEqual({
-      label: "Fully conformant",
+      label: "Conformant",
       tone: "ok",
     });
   });
