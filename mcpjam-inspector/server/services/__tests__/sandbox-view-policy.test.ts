@@ -172,3 +172,20 @@ it("reports an oversized declared policy as an actionable validation refusal", (
     expect(String(error)).toContain("Reduce its domain lists");
   }
 });
+
+it.each([
+  ["https://bücher.example:65535/assets:*", "https://xn--bcher-kva.example:65535/assets:*"],
+  ["bücher.example:443/部品", "xn--bcher-kva.example:443/%E9%83%A8%E5%93%81"],
+  ["https://bücher.example/assets/../部品", "https://xn--bcher-kva.example/assets/../%E9%83%A8%E5%93%81"],
+  ["http://[::1]:*/部品", "http://[::1]:*/%E9%83%A8%E5%93%81"],
+])("normalizes %s without changing its declared port or path scope", (source, expected) => {
+  const receipt = issueSandboxSourceReceipt(owner, request().source, html, { connectDomains: [source] });
+  expect(openSandboxClaim(receipt).policy.split("; ").find(value => value.startsWith("connect-src ")))
+    .toBe(`connect-src ${expected}`);
+});
+
+it.each(["https://bücher.example\n.attacker.example", "https://bücher.example\t.attacker.example", "\u0000https://bücher.example"])(
+  "does not normalize structural control characters into an admitted domain (%j)", (domain) => {
+    expect(() => issueSandboxSourceReceipt(owner, source, html, { connectDomains: [domain] })).toThrow();
+  },
+);
