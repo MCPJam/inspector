@@ -533,13 +533,13 @@ const GlobalOwner = memo(function GlobalOwner({
     currentThreadId,
     sendMessage,
     runOnboarding,
-    routeLaunch: (server, declaration) => {
+    routeLaunch: (server, declaration, waitForAdmission) => {
       if (declaration.kind === "global") return undefined;
       const { chats, currentChatId } = store.getState();
       const chat = currentChatId ? chats[currentChatId] : undefined;
       if (chat) {
         store.getState().global?.select(null);
-        return chat.launch(server, declaration);
+        return chat.launch(server, declaration, undefined, waitForAdmission);
       }
       logExtensionEvent({
         serverId: server.serverId,
