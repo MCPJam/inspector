@@ -4499,8 +4499,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
     try {
       const { rerender } = render(<HostedRenderer {...baseProps} />);
 
+      // The handler exists before resource bytes commit. A violation must
+      // belong to the mounted HTML rather than the loading placeholder.
       await vi.waitFor(() => {
         expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+        expect(sandboxedIframePropsRef.current?.html).toBeTruthy();
       });
 
       postCspViolation({ blockedUri: "https://resource-a.example/app.js" });
