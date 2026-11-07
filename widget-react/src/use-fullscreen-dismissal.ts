@@ -19,7 +19,7 @@ export function useFullscreenDismissal(args: {
   open: () => void;
 }) {
   const current = useRef(args);
-  current.current = args;
+  useLayoutEffect(() => { current.current = args; });
   const [dismissed, setDismissed] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const pending = useRef(new Set<symbol>());

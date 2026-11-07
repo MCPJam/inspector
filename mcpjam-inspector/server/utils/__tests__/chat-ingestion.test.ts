@@ -1,3 +1,4 @@
+import { completedTurnPersistence } from "../../services/completed-turn-persistence";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "hono";
 import {
@@ -427,6 +428,21 @@ describe("chat-ingestion", () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
+  it.each([400, 403, 404, 405, 413, 415, 422])("does not retain a permanently rejected ingest body for HTTP %s", async (status) => {
+    global.fetch = vi.fn(async () => new Response("invalid request", { status }));
+    const register = vi.spyOn(completedTurnPersistence, "register");
+    try {
+      const outcome = await persistChatSessionToConvex({
+        chatSessionId: "oversized", modelId: "model", modelSource: "mcpjam",
+        authHeader: "Bearer credential", origin: "playground", startedAt: 1,
+        retryOwner: { subject: "actor", projectId: "project" },
+        turnTrace: { turnId: "large-turn", promptIndex: 0, startedAt: 1, endedAt: 2, spans: [], modelId: "model" },
+      });
+      expect(outcome).toEqual({ outcome: "failed", failureKind: "http_error", status });
+      expect(register).not.toHaveBeenCalled();
+      expect(global.fetch).toHaveBeenCalledOnce();
+    } finally { register.mockRestore(); }
+  });
   it("does not retry a 4xx that is not a conflict", async () => {
     global.fetch = vi
       .fn()

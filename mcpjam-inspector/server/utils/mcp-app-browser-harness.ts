@@ -935,12 +935,16 @@ export class McpAppBrowserHarness {
         }
         // Metadata admission is in flight too; action draining must await it.
         this.pendingRpcCount += 1;
+        const ownedBuffer = this.opts.enableViewTools ? this.toolCallBuffer : undefined;
         try {
           const serverId = widget.serverId;
           let visibility: Array<"model" | "app"> | undefined;
           try {
             visibility = await this.opts.resolveToolVisibility?.(serverId, payload.name);
-          } catch {
+          } catch (error) {
+            logger.warn("App tool visibility lookup failed", {
+              errorName: error instanceof Error ? error.name : typeof error,
+            });
             return { error: "Tool declaration could not be verified" };
           }
           if (this.closing || this.mounted.get(payload.widgetId) !== widget) {
@@ -952,7 +956,6 @@ export class McpAppBrowserHarness {
           if (isVisibleToModelOnly({ ui: { visibility } })) {
             return { error: `Tool "${payload.name}" is not callable by apps (visibility: model-only)` };
           }
-          const ownedBuffer = this.opts.enableViewTools ? this.toolCallBuffer : undefined;
           const startedAt = Date.now();
           const completeRecording = this.workspaceRecorder.beginCall(
             payload.widgetId,
