@@ -574,6 +574,9 @@ export type HostConfigMcpProfileV1 = {
     // Budgets for plugin App context. Absent → MCPJam's defaults.
     modelContextPolicy?: HostConfigModelContextPolicyV1;
   };
+  // MCPJam host policy keyed by id, never advertised to a server:
+  // `com.mcpjam/tasks` (tasks-policy.ts) and `com.mcpjam/events`, the
+  // delivery modes the host receives MCP Events by (events-support.ts).
   extensions?: Record<string, unknown>;
 };
 

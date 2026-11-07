@@ -298,6 +298,26 @@ describe("Claude approval through the turn runner's pause and teardown", () => {
       expect(state.resumed).toBe(1);
     },
   );
+  it("saves the paused turn with its route receipt and withholds the commit", async () => {
+    const onConversationComplete = vi.fn(async () => ({ outcome: "saved" as const }));
+    const responseBody = await request(options({ onConversationComplete }));
+    expect(responseBody).toContain("tool-approval-request");
+    expect(onConversationComplete).toHaveBeenCalledOnce();
+    const [, trace, commit] = onConversationComplete.mock.calls[0] as unknown as [
+      unknown,
+      { harnessMcpAtTurn?: Record<string, unknown> },
+      unknown,
+    ];
+    expect(trace.harnessMcpAtTurn).toMatchObject({
+      version: 1,
+      upstream: "mcpjam",
+      delivery: "mcp-endpoint",
+      reasons: expect.arrayContaining(["no servers selected"]),
+    });
+    // No servers were selected, so no connection can vouch for a handshake.
+    expect(trace.harnessMcpAtTurn).not.toHaveProperty("profile");
+    expect(commit).toBeUndefined();
+  });
   it("survives reload reads then resumes the same pending approval", async () => {
     await request();
     for (let i = 0; i < 2; i++)

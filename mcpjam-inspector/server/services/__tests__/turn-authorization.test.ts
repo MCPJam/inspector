@@ -124,3 +124,31 @@ it("binds and cancels an App preflight without consuming another principal's han
   expect(store.claimOperation(lease.data, owner, abort.signal)).toBeUndefined();
   abort.abort(); await expect(claim.getAuthorization()).rejects.toThrow();
 });
+
+it("uses still-valid authority when proactive renewal is delayed", async () => {
+  const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+    const abort = new AbortController();
+    setTimeout(() => abort.abort(new DOMException("Timed out", "TimeoutError")), ms);
+    return abort.signal;
+  });
+  const original = await token({}, "25s");
+  const store = registry();
+  const lease = store.create(owner, scope, original); leases.push(lease);
+  const pending = lease.getAuthorization();
+  await vi.advanceTimersByTimeAsync(15_000); await cache.scan();
+  expect(await pending).toBe(`Bearer ${original}`);
+  timeout.mockRestore();
+});
+it("does not let unclaimed App preflights consume the active chat budget", async () => {
+  const store = registry(); const original = await token();
+  for (let index = 0; index < 8; index++) {
+    leases.push(store.prepareOperation(owner, {
+      projectId: "project", requestId: crypto.randomUUID(), pluginOperation: {
+        workspaceId: "workspace", instanceId: crypto.randomUUID(), generation: 1,
+        hostId: "host", serverId: "server", invocationId: crypto.randomUUID(), bindingHash: "f".repeat(64),
+      },
+    }, original, new AbortController().signal));
+  }
+  const chat = store.create(owner, scope, original); leases.push(chat);
+  expect(await chat.getAuthorization()).toBe(`Bearer ${original}`);
+});
