@@ -4,7 +4,7 @@ import { authFetch } from "./session-token";
 
 /** One bounded, non-overlapping renewal loop for the current streamed turn. */
 export function createTurnAuthorizationRenewal(
-  current: () => { chatSessionId: string; requestId: string | null },
+  current: () => { chatSessionId?: string; operationId?: string; requestId: string | null },
   fetcher: typeof authFetch = authFetch,
   refresh: typeof renewSessionBearer = renewSessionBearer,
 ) {
@@ -19,10 +19,12 @@ export function createTurnAuthorizationRenewal(
       const data = parsed.data.data;
       const owns = () => {
         const owner = current();
-        return owner.chatSessionId === data.chatSessionId && owner.requestId === data.requestId;
+        return owner.requestId === data.requestId && ("pluginOperation" in data
+          ? owner.operationId === data.pluginOperation.invocationId
+          : owner.chatSessionId === data.chatSessionId);
       };
       if (!owns() || data.expiresAt <= Date.now() ||
-        (closedRequest?.requestId === data.requestId && closedRequest.chatSessionId === data.chatSessionId)) return true;
+        (closedRequest?.requestId === data.requestId)) return true;
       if (activeHandle === data.handle) return true;
       stop();
       activeHandle = data.handle;

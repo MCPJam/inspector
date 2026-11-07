@@ -37,7 +37,7 @@ vi.mock("../../../middleware/bearer-auth.js", () => ({
     await next();
   },
 }));
-import { preparePersistenceAuthorization } from "../persistence-authorization.js";
+import { prepareBackgroundRequestAuthorization, preparePersistenceAuthorization } from "../persistence-authorization.js";
 
 async function prepare(
   method:
@@ -122,4 +122,29 @@ it("does not request delegation for a turn with no history identity", async () =
     await prepare("authkit_jwt", { kind: "host", hostId: "host" }, false),
   ).toBeUndefined();
   expect(state.prepare).not.toHaveBeenCalled();
+});
+
+it("deduplicates concurrent bearer reads while revalidating every subsequent operation", async () => {
+  const authorization = (await prepare("workos_api_key"))!;
+  await Promise.all(Array.from({ length: 5 }, () => authorization()));
+  expect(state.revalidate).toHaveBeenCalledOnce();
+  expect(state.prepare).toHaveBeenCalledOnce();
+  state.revoked = true;
+  await expect(authorization()).rejects.toMatchObject({ status: 403 });
+  expect(state.revalidate).toHaveBeenCalledTimes(2);
+});
+
+it("defers optional operation delegation until it is actually used", async () => {
+  let resolve: (() => Promise<string>) | undefined;
+  const app = new Hono().get("/", async (c) => {
+    c.set("authMethod", "authkit_jwt");
+    c.set("workosUserId", "actor");
+    c.set("mcpjamOrganizationId", "original-org");
+    resolve = await prepareBackgroundRequestAuthorization(c, "project", { lazy: true });
+    return c.json({ ok: true });
+  });
+  expect((await app.request("/")).status).toBe(200);
+  expect(state.prepare).not.toHaveBeenCalled();
+  expect(await resolve!()).toBe("Bearer current-delegation");
+  expect(state.prepare).toHaveBeenCalledOnce();
 });

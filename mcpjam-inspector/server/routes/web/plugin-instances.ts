@@ -1,3 +1,5 @@
+import { pluginOperationRequest, pluginOperationAuthorization } from "../../../shared/plugin-operation-authorization.js";
+import { preparePluginOperation, bindPluginOperation, cancelPluginOperation, receiptOnlyPorts, rootPluginOperation } from "../../services/plugin-host/operation-authorization.js";
 import { discoveryIcons, openOwnedLocalFile } from "../../services/plugin-host/open-local-file.js";
 import { fileReadResponse, readFileWriteBody } from "../../services/plugin-host/file-transfer.js";
 import { PLUGIN_FILE_MAX_BYTES, PLUGIN_FILE_MEDIA_TYPE } from "../../../shared/plugin-file-transfer.js";
@@ -170,6 +172,7 @@ const approvalSchema = z.strictObject({
   approved: z.boolean(),
 });
 const executeSchema = handleSchema.extend({
+  authorization: pluginOperationAuthorization.optional(),
   approval: approvalSchema.optional(),
   resume: z
     .strictObject({
@@ -211,6 +214,7 @@ async function admitted(c: Context, body: z.infer<typeof scopeSchema>) {
   const scoped = await scope(c, body);
   const admission = await admitPluginWorkspace({
     ...scoped,
+    getAuthorization: () => getConvexBearerForRequest(c),
     projectId: body.projectId,
     signal: c.req.raw.signal,
   });
@@ -1228,27 +1232,11 @@ async function invoke(
     actor,
     c.req.raw.signal,
   );
-  if (
-    origin === "entrypoint" &&
-    instance.activation.selector.kind === "quick-action"
-  )
-    origin = "quick-action";
-  const params =
-    "params" in body
-      ? body.params
-      : {
-          name: instance.activation.toolName,
-          arguments: instance.activation.file
-            ? ownedFileResources.get(
-                instance,
-                pluginInstances.signal(body.instanceToken, actor),
-              ).input
-            : (instance.activation.arguments ?? {}),
-        };
-  const invocationId =
-    "invocationId" in body
-      ? body.invocationId
-      : instance.activation.operationId;
+  const operation = rootPluginOperation(instance, "params" in body ? { params: body.params, invocationId: body.invocationId } : {}, pluginInstances.signal(body.instanceToken, actor));
+  origin = operation.origin as typeof origin;
+  const { params, invocationId } = operation;
+  const authorization = await bindPluginOperation(c, instance, operation, body.authorization, c.req.raw.signal);
+  try {
   const runtime = createPluginRequestRuntime(
     c,
     admission,
@@ -1281,6 +1269,7 @@ async function invoke(
   // beside admission), so the invoker's first authorization can reuse it.
   // Await the complete dispatch/delivery before releasing its request-owned manager.
   return await invokePluginRequest(c, {
+    receiptOnly: authorization.receiptOnly,
     actor,
     owner: instance.owner,
     admission,
@@ -1388,7 +1377,7 @@ async function invoke(
       pluginInstances.invoke(
         body.instanceToken,
         actor,
-        ports,
+        receiptOnlyPorts(ports, authorization.receiptOnly),
         invocationId,
         next,
         AbortSignal.any([
@@ -1399,6 +1388,7 @@ async function invoke(
         fence,
       ),
   });
+  } finally { authorization.dispose(); }
 }
 instances.post("/activation/execute", (c) =>
   route(c, async () =>
@@ -1556,24 +1546,27 @@ async function renewFileGrant(
 /** Lease renewal for a retained App: same instance, same activation. */
 instances.post("/renew", (c) =>
   route(c, async () => {
-    const body = handleSchema.parse(await c.req.json());
+    const body = handleSchema.extend({ operation: pluginOperationRequest.optional(), cancelAuthorization: pluginOperationAuthorization.optional() }).parse(await c.req.json());
     const { admission, bearer, actor } = await admitted(c, body);
+    let operationAuthorization;
     let writableFile: { file: string; serverId: string } | undefined;
     const renewed = await pluginInstances.renewPersistent(
       body.instanceToken,
       actor,
       c.req.raw.signal,
-      (instance) => {
+      async (instance) => {
         const file = instance.activation?.file;
         writableFile = file?.localTarget
           ? { file: file.name, serverId: instance.owner.serverId }
           : undefined;
-        return assertPluginInstanceBindingCurrent({
+        await assertPluginInstanceBindingCurrent({
           admission,
           bearer,
           instance,
           signal: c.req.raw.signal,
         });
+        if (body.cancelAuthorization) await cancelPluginOperation(c, body.cancelAuthorization, instance);
+        if (body.operation) operationAuthorization = await preparePluginOperation(c, instance, rootPluginOperation(instance, body.operation, pluginInstances.signal(body.instanceToken, actor)), body.operation.requestId, pluginInstances.signal(body.instanceToken, actor));
       },
     );
     const diagnostics = writableFile
@@ -1582,6 +1575,7 @@ instances.post("/renew", (c) =>
     return c.json({
       status: renewed.renewed ? "renewed" : "unchanged",
       expiresAt: renewed.expiresAt,
+      ...(operationAuthorization ? { operationAuthorization } : {}),
       ...(diagnostics.length ? { diagnostics } : {}),
     });
   }),
