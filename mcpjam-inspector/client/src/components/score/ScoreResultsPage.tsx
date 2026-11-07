@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
 import { missingInputMessage, noTaskCreatedMessage } from "@mcpjam/sdk/browser";
 import { NotRunTag } from "../conformance/ConformanceCheckRows";
+import { VERDICT_TONE_CLASS } from "../conformance/ScoreHeadline";
+import { conformanceVerdict } from "@/shared/conformance-verdict";
 import { Button } from "@mcpjam/design-system/button";
 import { Loader2, CheckCircle2, XCircle, MinusCircle } from "lucide-react";
 import { routePaths } from "@/lib/app-navigation";
@@ -199,12 +201,7 @@ export function ScoreResultsPage() {
     );
   }
 
-  const toneClass =
-    run.outcome === "failed"
-      ? "text-red-400"
-      : run.outcome === "incomplete"
-        ? "text-amber-500"
-        : "text-green-500";
+  const verdict = conformanceVerdict(run.outcome, run.advisoryCount);
 
   return (
     <div className="mx-auto flex h-full w-full max-w-3xl flex-col gap-6 overflow-y-auto px-6 py-10">
@@ -227,14 +224,10 @@ export function ScoreResultsPage() {
             </span>
           </div>
           <div className="min-w-0 space-y-0.5">
-            <div className={`text-sm font-medium ${toneClass}`}>
-              {run.outcome === "failed"
-                ? "Not conformant"
-                : run.outcome === "incomplete"
-                  ? "Incomplete run"
-                  : run.advisoryCount > 0
-                    ? "Conformant, with advice"
-                    : "Conformant"}
+            <div
+              className={`text-sm font-medium ${VERDICT_TONE_CLASS[verdict.tone]}`}
+            >
+              {verdict.label}
             </div>
             <div className="text-xs text-muted-foreground">
               {describeStoredScore(run, pendingTotal)}

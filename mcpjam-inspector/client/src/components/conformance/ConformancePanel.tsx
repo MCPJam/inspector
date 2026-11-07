@@ -515,6 +515,9 @@ export function ConformanceContent({
           settingsLoading={settingsLoading}
           showShare={Boolean(persist)}
           savedRunId={savedRunId}
+          // A server the project doesn't have is saved as an external target
+          // with no name, and the card and post are public: no name here either.
+          shareServerName={persist?.serverId ? server.name : undefined}
           onRunAgain={onRunAgain ? () => onRunAgain(versionPin) : handleRun}
           runDisabled={runDisabled}
         />
