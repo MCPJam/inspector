@@ -456,7 +456,7 @@ export class WidgetRenderSessionRegistry {
   async close(sessionId: string, ownerKey?: string): Promise<boolean> {
     const session = this.sessions.get(sessionId);
     if (session && session.ownerKey !== ownerKey)
-      throw new WidgetSessionNotFoundError(`Widget session "${sessionId}" not found.`);
+      return false;
     return this.disposeSession(sessionId, "close");
   }
 
