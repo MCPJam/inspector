@@ -7,6 +7,11 @@ export interface McpToolConnection {
   label: string;
   profile?: OpenAIProfile;
   isDefault?: boolean;
+  /**
+   * The server's only login, grouped by the host for attribution alone. It
+   * still routes and attributes calls; hosts keep it off user-facing metadata.
+   */
+  implicit?: boolean;
 }
 export type ConnectionsByServerId = Readonly<
   Record<string, readonly McpToolConnection[]>

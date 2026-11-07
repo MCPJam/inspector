@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   harnessRuntimeFingerprint,
+  warmHarnessRuntimeFingerprint,
   toToolResultOutput,
 } from "../run-harness-turn";
 import {
@@ -21,11 +22,28 @@ describe("harnessRuntimeFingerprint", () => {
     permissionMode: "allow-all",
   };
 
+  it("retains the warm session across per-turn approval and sandbox changes", () => {
+    const codex = { ...base, harnessId: "codex" };
+    const approved = { ...codex, permissionMode: "allow-reads", commandSandbox: "read-only" };
+    expect(warmHarnessRuntimeFingerprint(codex)).toBe(warmHarnessRuntimeFingerprint(approved));
+    // The full policy still invalidates approval decisions made under other settings.
+    expect(harnessRuntimeFingerprint(codex)).not.toBe(harnessRuntimeFingerprint(approved));
+    expect(warmHarnessRuntimeFingerprint({ ...codex, secretsHash: "rotated" }))
+      .not.toBe(warmHarnessRuntimeFingerprint(codex));
+  });
+
   it("forks forwarded processes when their launch configuration changes", () => {
     const forwarded = { ...base, nativeForwarding: "v2" };
     expect(harnessRuntimeFingerprint({ ...forwarded, forwardingConfigurationVersion: "tool-search-auto-v1" })).not.toBe(harnessRuntimeFingerprint(forwarded));
     expect(harnessRuntimeFingerprint({ ...forwarded, forwardingConfigurationVersion: undefined })).toBe(harnessRuntimeFingerprint(forwarded));
     expect(harnessRuntimeFingerprint({ ...base, forwardingConfigurationVersion: "unused" })).toBe(harnessRuntimeFingerprint(base));
+  });
+
+  it("keeps profiled and pass-through forwarding in separate lanes", () => {
+    expect(harnessRuntimeFingerprint({ ...base, nativeForwarding: "bridge-v1" }))
+      .not.toBe(harnessRuntimeFingerprint({ ...base, nativeForwarding: "v2" }));
+    expect(harnessRuntimeFingerprint({ ...base, nativeForwarding: "bridge-v1" }))
+      .not.toBe(harnessRuntimeFingerprint(base));
   });
 
   it("versions required discovery on a retained client without changing eager clients", () => {

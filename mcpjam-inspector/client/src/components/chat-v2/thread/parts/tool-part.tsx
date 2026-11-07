@@ -1,6 +1,6 @@
 import { ToolResourceAttachments } from "@/components/host-workspace/file-actions";
 import {
-  CHAT_AUTH_RECOVERY_MESSAGE,
+  chatAuthRecoveryFailureMessage,
   useChatAuthRecoveryFailures,
 } from "@/lib/chat-auth-recovery";
 import {
@@ -193,13 +193,15 @@ export function ToolPart({
 
   const toolCallId = (part as any).toolCallId as string | undefined;
   const recoveryFailures = useChatAuthRecoveryFailures();
-  const recoveryFailed =
-    toolCallId !== undefined &&
-    recoveryFailures.some(
-      (item) =>
-        item.toolCallId === toolCallId &&
-        (!chatSessionId || item.chatSessionId === chatSessionId),
-    );
+  const recoveryFailure =
+    toolCallId !== undefined
+      ? recoveryFailures.find(
+          (item) =>
+            item.toolCallId === toolCallId &&
+            (!chatSessionId || item.chatSessionId === chatSessionId),
+        )
+      : undefined;
+  const recoveryFailed = recoveryFailure !== undefined;
   const state = (
     recoveryFailed &&
     !["output-available", "output-error", "output-denied"].includes(
@@ -319,7 +321,9 @@ export function ToolPart({
   const errorText =
     (part as any).errorText ??
     (part as any).error ??
-    (recoveryFailed ? CHAT_AUTH_RECOVERY_MESSAGE : undefined);
+    (recoveryFailure
+      ? chatAuthRecoveryFailureMessage(recoveryFailure)
+      : undefined);
   // Through the package's shared reader rather than a local copy of the same
   // field test. This channel had three hand-rolled readers with three
   // different gates — this one required a recognised mode, `PartSwitch`
