@@ -221,7 +221,7 @@ export function ResourceChatHandoff({
     const timer = setTimeout(
       () =>
         setError(
-          "The chat is not ready. Check your connection, then open the file again from Resources.",
+          "The chat could not open the file. Check your connection, then open it again from Resources.",
         ),
       15_000,
     );
