@@ -1,4 +1,5 @@
 import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
+import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import { useQuery } from "convex/react";
 import { useArtifactQuery } from "@/lib/artifact-urls";
 import type { HostSnapshot } from "@/lib/host-snapshot";
@@ -359,6 +360,8 @@ export interface SharedChatTurnTrace {
   spansBlobUrl?: string | null;
   /** The `webmcp_*` page tools this turn advertised; see `ChatHistoryTurnTrace`. */
   pageToolsAtTurn?: MintedPageToolRecord[];
+  /** Harness turns only: the MCP route the turn ran on; see `ChatHistoryTurnTrace`. */
+  harnessMcpAtTurn?: HarnessMcpAtTurn;
 }
 
 export function useSharedChatTurnTraces({
