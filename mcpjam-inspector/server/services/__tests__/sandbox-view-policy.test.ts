@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateSessionToken } from "../session-token.js";
 import {
+  checkedSandboxPolicy,
   issueSandboxSourceReceipt,
   openSandboxClaim,
   prepareSandboxViewSchema,
@@ -160,4 +161,14 @@ describe("App source receipts and HTTP policy", () => {
       }),
     ).toThrow();
   });
+});
+
+it("reports an oversized declared policy as an actionable validation refusal", () => {
+  try {
+    checkedSandboxPolicy("x".repeat(8193));
+    throw new Error("Expected refusal");
+  } catch (error) {
+    expect(error).toMatchObject({ status: 400, code: "VALIDATION_ERROR" });
+    expect(String(error)).toContain("Reduce its domain lists");
+  }
 });

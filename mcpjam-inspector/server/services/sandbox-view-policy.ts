@@ -7,6 +7,7 @@ import {
   randomBytes,
 } from "node:crypto";
 import { z } from "zod";
+import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import {
   buildCSP,
   normalizeSandboxDomainSource,
@@ -227,7 +228,8 @@ export function checkedSandboxPolicy(policy: string): string {
     /[^\x20-\x7e]/.test(policy) ||
     Buffer.byteLength(policy) > SANDBOX_VIEW_MAX_HEADER_BYTES
   )
-    throw new Error("App CSP is invalid or exceeds the supported size");
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR,
+      "The App content policy is invalid or exceeds 8 KiB. Reduce its domain lists and reopen the App.");
   return policy;
 }
 export function issueSandboxSourceReceipt(
