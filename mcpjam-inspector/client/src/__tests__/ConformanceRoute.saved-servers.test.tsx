@@ -74,6 +74,12 @@ vi.mock("@/components/ui/json-editor/codemirror-json-editor", () => ({
 }));
 
 import { ConformanceRoute } from "../App";
+import { useRunBack } from "@/components/conformance/conformance-run-origin";
+
+/** Stands in for a run's page: shows where its Back would go. */
+function RunPageBack() {
+  return <p>Back to {useRunBack().label}</p>;
+}
 
 type Project = {
   id: string;
@@ -181,6 +187,7 @@ function ProjectRoute({
       <Routes>
         <Route path="/conformance" element={<ConformanceRoute />} />
         <Route path="/other" element={<p>Another page</p>} />
+        <Route path="*" element={<RunPageBack />} />
       </Routes>
     </AppRouteReactContext.Provider>
   );
@@ -275,6 +282,16 @@ describe("ConformanceRoute saved project servers", () => {
       screen.getByRole("button", { name: "Return to Conformance" }),
     );
     expect(cards().getAllByRole("listitem")).toHaveLength(2);
+  });
+
+  it("sends a run opened from an Overview card Back to Overview", () => {
+    render(page(project()));
+    fireEvent.click(
+      within(cards().getAllByRole("listitem")[0]).getByRole("button", {
+        name: "View last run",
+      }),
+    );
+    expect(screen.getByText("Back to Conformance")).toBeInTheDocument();
   });
 
   it("uses the new project's results even when session names overlap", () => {
