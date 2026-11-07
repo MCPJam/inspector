@@ -6,6 +6,7 @@ import {
 import {
   MCP_OAUTH_READINESS_IDS,
   type OAuthConformanceConfig,
+  type OAuthConformanceSuiteConfig,
   type OAuthConformanceSuiteResult,
   type OAuthLoginConfig,
   type OAuthVerificationConfig,
@@ -374,7 +375,7 @@ export function registerOAuthCommands(program: Command): void {
     )
     .option(
       "--conformance-checks",
-      "Run additional OAuth negative checks (invalid client, invalid redirect, token format) after the main flow",
+      "Deprecated: the OAuth negative checks now always run. Accepted and ignored.",
     )
     .option(
       "--advice-id <id>",
@@ -480,7 +481,9 @@ export function registerOAuthCommands(program: Command): void {
     .action(async (options, command) => {
       const reporter = parseReporterFormat(options.reporter as string | undefined);
       const format = getOAuthConformanceFormat(command, reporter);
-      const config = loadOAuthSuiteConfig(options.config as string);
+      const config = withDefaultOAuthConformanceChecks(
+        loadOAuthSuiteConfig(options.config as string),
+      );
 
       if (options.verifyTools || options.verifyCallTool) {
         const cliVerification: OAuthVerificationConfig = {
@@ -751,13 +754,33 @@ export function buildOAuthConformanceConfig(
     redirectUrl,
     stepTimeout: options.stepTimeout ?? 30_000,
     verification,
-    oauthConformanceChecks: options.conformanceChecks ?? false,
+    // Always on, like the UI's OAuth run: checking that the server rejects
+    // bad input is half of OAuth conformance. `--conformance-checks` is kept
+    // only so existing scripts still parse.
+    oauthConformanceChecks: true,
     ...(readinessIds && readinessIds.length > 0
       ? {
           readinessIds:
             readinessIds as OAuthConformanceConfig["readinessIds"],
         }
       : {}),
+  };
+}
+
+/**
+ * Turn the negative checks on for every flow the suite file says nothing
+ * about, matching `oauth conformance`. A file that sets
+ * `oauthConformanceChecks: false` in `defaults` or on a flow keeps it.
+ */
+export function withDefaultOAuthConformanceChecks(
+  config: OAuthConformanceSuiteConfig,
+): OAuthConformanceSuiteConfig {
+  return {
+    ...config,
+    defaults: {
+      ...config.defaults,
+      oauthConformanceChecks: config.defaults?.oauthConformanceChecks ?? true,
+    },
   };
 }
 

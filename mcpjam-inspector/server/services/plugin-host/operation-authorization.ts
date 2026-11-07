@@ -161,7 +161,7 @@ export async function bindPluginOperation(
   signal: AbortSignal,
 ) {
   if (!native(c)) {
-    const getBearer = await prepareBackgroundRequestAuthorization(c, instance.owner.projectId, { includeNativeApiKey: true });
+    const getBearer = await prepareBackgroundRequestAuthorization(c, instance.owner.projectId, { includeNativeApiKey: true, lazy: true });
     if (getBearer) setRequestLocal(c, "turnAuthorizationBearer", async () => (await getBearer()).replace(/^Bearer\s+/i, ""));
     return { receiptOnly: false, dispose() {} };
   }

@@ -342,3 +342,53 @@ describe("rpcLogBus", () => {
     expect(new Set(seen.map((e) => e.eventId)).size).toBe(2);
   });
 });
+
+describe("rpcLogBus webhook-secret redaction backstop (C8)", () => {
+  const SECRET = `whsec_${"A".repeat(43)}=`;
+
+  it("redacts delivery.secret on frames published outside the SDK transport", () => {
+    const serverId = `redact-${crypto.randomUUID()}`;
+    const seen: RpcLogEvent[] = [];
+    const stop = rpcLogBus.subscribe([serverId], (e) => seen.push(e));
+    try {
+      const original = {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "events/subscribe",
+        params: { name: "x", delivery: { url: "https://hooks.test/i/a/s/b", secret: SECRET } },
+      };
+      rpcLogBus.publish({
+        serverId,
+        direction: "send",
+        timestamp: new Date().toISOString(),
+        message: original,
+      });
+      const buffered = JSON.stringify(rpcLogBus.getBuffer([serverId], -1));
+      expect(buffered).not.toContain(SECRET);
+      expect(JSON.stringify(seen)).not.toContain(SECRET);
+      expect(buffered).toContain("whsec_<redacted>");
+      // The publisher's own object is untouched.
+      expect(original.params.delivery.secret).toBe(SECRET);
+    } finally {
+      stop();
+    }
+  });
+
+  it("redacts a secret a server quotes back in an error", () => {
+    const serverId = `redact-err-${crypto.randomUUID()}`;
+    rpcLogBus.publish({
+      serverId,
+      direction: "receive",
+      timestamp: new Date().toISOString(),
+      message: { jsonrpc: "2.0", id: 2, error: { code: -32602, message: `bad secret ${SECRET}` } },
+    });
+    expect(JSON.stringify(rpcLogBus.getBuffer([serverId], -1))).not.toContain(SECRET);
+  });
+
+  it("passes ordinary frames through as the same object", () => {
+    const serverId = `redact-plain-${crypto.randomUUID()}`;
+    const message = { jsonrpc: "2.0", id: 3, method: "tools/list" };
+    rpcLogBus.publish({ serverId, direction: "send", timestamp: "t", message });
+    expect(messageOf(rpcLogBus.getBuffer([serverId], -1)[0]!)).toBe(message);
+  });
+});
