@@ -261,7 +261,7 @@ export function HostCompatContent({
 
   return (
     <div className="pb-4">
-      <ConformanceGate server={server} />
+      <ConformanceGate server={server} location={source} />
 
       {analysisStatus === "analyzing" ? (
         <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">

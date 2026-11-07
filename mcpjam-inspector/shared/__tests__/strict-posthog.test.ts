@@ -64,6 +64,36 @@ describe("strict PostHog reconstruction", () => {
     expect(rebuildStrictPostHogEvent({ ...product, event })).toBeNull();
   });
 
+  it.each([
+    "conformance_tab",
+    "score_runner",
+    "compat_page",
+    "compat_detail_modal",
+  ])("keeps a conformance run started from %s", (location) => {
+    const result = rebuildStrictPostHogEvent({
+      event: "conformance_run_triggered",
+      properties: {
+        location,
+        run_source: "ui",
+        source: "client",
+        server_url: secret,
+      },
+    });
+    expect(result?.properties).toMatchObject({ location, run_source: "ui" });
+    expect(result?.properties).not.toHaveProperty("source");
+    expect(JSON.stringify(result)).not.toContain("SENTINEL");
+  });
+
+  it("drops a conformance run_source or location the app never sends", () => {
+    const result = rebuildStrictPostHogEvent({
+      event: "conformance_run_triggered",
+      properties: { location: "chat_tab", run_source: "cli" },
+    });
+    expect(result?.event).toBe("conformance_run_triggered");
+    expect(result?.properties).not.toHaveProperty("location");
+    expect(result?.properties).not.toHaveProperty("run_source");
+  });
+
   it.each([NaN, Infinity, -1, 1.5, 1_000_001, secret])(
     "drops invalid numeric measurements %s",
     (multi_model_count) => {

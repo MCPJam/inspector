@@ -18,6 +18,10 @@ import {
 } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import {
+  trackConformanceRunTriggered,
+  type ConformanceRunAnalyticsLocation,
+} from "./conformance-run-analytics";
+import {
   completeOAuthConformance,
   runAppsConformance,
   runProtocolConformance,
@@ -59,25 +63,7 @@ import {
   loadSavedClientSecret,
   oauthTargetUrl,
 } from "@/lib/oauth/saved-client-secret";
-
-/** Only web URLs may open the authorization popup. */
-function isWebUrl(raw: string): boolean {
-  try {
-    const { protocol } = new URL(raw);
-    return protocol === "https:" || protocol === "http:";
-  } catch {
-    return false;
-  }
-}
-
-/** The OAuth popup, or null when the browser blocked it. */
-function openAuthorizationPopup(authorizationUrl: string): Window | null {
-  return window.open(
-    authorizationUrl,
-    "oauth_conformance_auth",
-    "width=600,height=700,scrollbars=yes"
-  );
-}
+import { isWebUrl, openAuthorizationPopup } from "./conformance-oauth-popup";
 
 export {
   createAppsState,
@@ -103,6 +89,8 @@ export type {
 export interface UseConformanceRunOptions {
   runTimeoutSeconds?: number;
   server: ServerWithName;
+  /** Where runs start from, for analytics. Defaults to the Conformance tab. */
+  analyticsLocation?: ConformanceRunAnalyticsLocation;
   /** Park OAuth until the caller explicitly authorizes it. */
   deferOAuthAuthorization?: boolean;
   /** The revision the first run tests against, e.g. one picked before Run. */
@@ -152,6 +140,7 @@ export interface UseConformanceRunResult {
 
 export function useConformanceRun({
   server,
+  analyticsLocation = "conformance_tab",
   deferOAuthAuthorization = false,
   initialVersionPin = "auto",
   initialResolvedProtocolVersion,
@@ -619,6 +608,15 @@ export function useConformanceRun({
     const selection = selectionRef.current;
     const probes = probesRef.current ?? {};
     const selected = runnableSelection(selection, versionPin);
+    // Count only a run that starts a suite: protocol and OAuth need HTTP.
+    if (
+      isSelected(selected?.apps) ||
+      isSelected(selected?.tasks) ||
+      (httpServerNow &&
+        (isSelected(selected?.protocol) || selected?.oauth !== false))
+    ) {
+      trackConformanceRunTriggered(analyticsLocation);
+    }
     setOAuthUnscored(scorableOAuthIds(selected?.oauthUnscored));
     setRunVersion((value) => value + 1);
     setResolvedProtocolVersion(undefined);
@@ -706,6 +704,7 @@ export function useConformanceRun({
 
     await Promise.allSettled(promises);
   }, [
+    analyticsLocation,
     beginRun,
     deadline.start,
     runTimeoutSeconds,

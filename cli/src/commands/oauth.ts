@@ -49,6 +49,7 @@ import {
   resolveConformanceOutputFormatForCli,
 } from "../lib/conformance-output.js";
 import { maybeUploadSingleSuite } from "../lib/conformance-upload.js";
+import { captureConformanceRunEvent } from "../lib/telemetry.js";
 import { readInputSource } from "../lib/json-input.js";
 import { parseReporterFormat, type ReporterFormat } from "../lib/reporting.js";
 import {
@@ -404,7 +405,13 @@ export function registerOAuthCommands(program: Command): void {
       const reporter = parseReporterFormat(options.reporter as string | undefined);
       const format = getOAuthConformanceFormat(command, reporter);
       const config = buildOAuthConformanceConfig(options as OAuthCommandOptions);
-      const result = await new OAuthConformanceTest(config).run();
+      // The CLI counts the run itself, under its own opt-outs.
+      const test = new OAuthConformanceTest({
+        ...config,
+        __suppressTelemetry: true,
+      });
+      captureConformanceRunEvent();
+      const result = await test.run();
       let credentialsFilePath: string | undefined;
       let credentialsFileError: unknown;
 
@@ -502,7 +509,12 @@ export function registerOAuthCommands(program: Command): void {
         };
       }
 
-      const suite = new OAuthConformanceSuite(config);
+      // The CLI counts the run itself, under its own opt-outs.
+      const suite = new OAuthConformanceSuite({
+        ...config,
+        __suppressTelemetry: true,
+      });
+      captureConformanceRunEvent();
       const result = await suite.run();
       const credentialsResultIndex = findCredentialsResultIndex(result);
       let credentialsFilePath: string | undefined;
