@@ -67,6 +67,17 @@ vi.mock(
   }),
 );
 
+// The share dialog reads Convex queries this file doesn't mock. What these
+// tests check is the name Share hands the card.
+vi.mock("../ConformanceRunActions", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../ConformanceRunActions")>()),
+  ConformanceRunShareButton: ({ serverName }: { serverName?: string }) => (
+    <button type="button" data-server-name={serverName ?? ""}>
+      Share
+    </button>
+  ),
+}));
+
 import { ConformanceTab } from "../ConformanceTab";
 import { RUN_LABEL } from "../ConformancePageChrome";
 
@@ -278,6 +289,32 @@ describe("ConformanceTab persist", () => {
     unmount();
     expect(cancelRun).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["a saved server", "srv_1", "http-server"],
+    // Saved as an external target, the run's card shows no name in History.
+    ["a server the project doesn't have", null, ""],
+  ])(
+    "puts the server's name on the share card only for %s",
+    async (_label, serverId, cardName) => {
+      const user = userEvent.setup();
+      mockPassingSuites();
+      render(
+        <ConformanceTab
+          server={createHttpServer()}
+          persist={{ projectId: "proj_1", serverId }}
+        />,
+      );
+      await user.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Share" })).toHaveAttribute(
+          "data-server-name",
+          cardName,
+        ),
+      );
+    },
+  );
 
   it("saves the OAuth checks a server leaves out as pending in the report", async () => {
     const user = userEvent.setup();

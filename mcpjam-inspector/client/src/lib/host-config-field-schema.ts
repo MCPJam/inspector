@@ -35,8 +35,11 @@ import {
 } from "@/lib/apps-capability-dimensions";
 import {
   AUTH_CHALLENGE_ACTIONS,
+  EVENT_DELIVERY_MODES,
+  MCPJAM_EVENTS_EXTENSION_ID,
   MCPJAM_TASKS_POLICY_EXTENSION_ID,
   MCP_SKILLS_EXTENSION_ID,
+  readEventsHostSetting,
   readTasksPolicy,
   TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
   UNAUTHORIZED_CHALLENGE_TRIGGERS,
@@ -99,7 +102,16 @@ export type HostConfigFieldKind =
       support?: Readonly<Record<string, SupportLevel>>;
     }
   /** Set of modes (e.g. display modes); each candidate renders present/absent. */
-  | { kind: "mode-set"; modes: ReadonlyArray<string> }
+  | {
+      kind: "mode-set";
+      modes: ReadonlyArray<string>;
+      /**
+       * How many modes every client has anyway, so having only that many is
+       * no support (default 1: every host renders `inline`). 0 when any mode
+       * counts, as for Event delivery.
+       */
+      baseline?: number;
+    }
   /** Short string rendered inline. */
   | { kind: "string" }
   /**
@@ -1140,7 +1152,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     // MCPJam-only tasks policy below: this key goes on the initialize
     // envelope, and declaring it commits the host to fetching, digest-
     // verifying, and refusing unlisted files. It is therefore under "Client
-    // capabilities supported" rather than "Host policy".
+    // capabilities supported" rather than "Client policy".
     id: "capabilities.skillsExtension",
     section: "protocol",
     subsection: "Client capabilities supported",
@@ -1158,7 +1170,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   },
 
   // ============================================================
-  // Protocol · Host policy
+  // Protocol · Client policy
   //
   // MCPJam's own product policy, NOT an MCP wire capability. It is stored
   // under `mcpProfile.extensions["com.mcpjam/tasks"]` and is never advertised
@@ -1169,7 +1181,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "tasksPolicy",
     section: "protocol",
-    subsection: "Host policy",
+    subsection: "Client policy",
     label: "Task execution",
     path: `mcpProfile.extensions.${MCPJAM_TASKS_POLICY_EXTENSION_ID}.enabled`,
     description:
@@ -1181,6 +1193,25 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     read: (cfg) => {
       const policy = readTasksPolicy(cfg);
       return policy === "unset" ? undefined : policy;
+    },
+  },
+  {
+    id: "eventsDeliveryModes",
+    section: "protocol",
+    subsection: "Client policy",
+    label: "Event delivery",
+    path: `mcpProfile.extensions.${MCPJAM_EVENTS_EXTENSION_ID}`,
+    description:
+      "The MCP Events delivery modes this client accepts. Without a saved choice, its client style decides.",
+    kind: { kind: "mode-set", modes: EVENT_DELIVERY_MODES, baseline: 0 },
+    // The saved setting only, like Task execution above: this row is public
+    // on caniuse.dev, where a style default is not a measurement, so a client
+    // with nothing saved reads as "Not yet tested". Subscriptions still use
+    // the default (`resolveHostEventDeliveryModes`).
+    read: (cfg) => {
+      const setting = readEventsHostSetting(cfg);
+      if (setting.kind === "unset") return undefined;
+      return setting.kind === "valid" ? setting.modes : [];
     },
   },
 

@@ -111,4 +111,21 @@ describe("conversation discovery requirement", () => {
       "requires a qualified harness",
     );
   });
+
+  it("names the planner's reasons in the refusal, and only when it has some", () => {
+    const refusal = (reasons?: string[]) => {
+      try {
+        assertNativeDiscovery({ required: true, reasons });
+      } catch (error) {
+        return (error as { details?: unknown }).details;
+      }
+      throw new Error("expected a refusal");
+    };
+    expect(refusal(["forwarding flag off"])).toEqual({
+      reason: "native_discovery_unqualified",
+      reasons: ["forwarding flag off"],
+    });
+    expect(refusal([])).toEqual({ reason: "native_discovery_unqualified" });
+    expect(refusal()).toEqual({ reason: "native_discovery_unqualified" });
+  });
 });
