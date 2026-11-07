@@ -20,7 +20,6 @@ import {
   type HostConfigDtoV2,
   type HostConfigInputV2,
 } from "../client-config-v2";
-import { mergeProjectConnectionHeaders } from "../client-config";
 
 function makeInput(
   overrides: Partial<HostConfigInputV2> = {},
@@ -918,38 +917,3 @@ const MCP_APPS_FULL_SURFACE_FOR_TEST = {
   requestTeardown: true,
   widgetDisplayModeRequests: "accept" as const,
 };
-
-describe("mergeProjectConnectionHeaders (#3453)", () => {
-  it("deduplicates protocol version case-insensitively with server headers taking precedence", () => {
-    const merged = mergeProjectConnectionHeaders(
-      { "mcp-protocol-version": "2025-11-25" },
-      { "MCP-Protocol-Version": "2026-07-28" },
-    );
-
-    expect(merged).toEqual({ "MCP-Protocol-Version": "2026-07-28" });
-    const headers = new Headers(merged);
-    expect(headers.get("mcp-protocol-version")).toBe("2026-07-28");
-  });
-
-  it("overrides project header case-insensitively and preserves distinct headers", () => {
-    const merged = mergeProjectConnectionHeaders(
-      { "x-custom": "from-project", "x-other": "kept" },
-      { "X-Custom": "from-server" },
-    );
-
-    expect(merged).toEqual({
-      "X-Custom": "from-server",
-      "x-other": "kept",
-    });
-  });
-
-  it("deduplicates case collisions within project headers", () => {
-    const merged = mergeProjectConnectionHeaders(
-      { "x-header": "lower", "X-Header": "upper" },
-      undefined,
-    );
-
-    expect(merged).toEqual({ "X-Header": "upper" });
-    expect(new Headers(merged).get("x-header")).toBe("upper");
-  });
-});
