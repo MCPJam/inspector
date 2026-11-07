@@ -351,6 +351,67 @@ describe("isMCPJamModelLimitError", () => {
     await expect(response.text()).resolves.toContain("mcpjam_rate_limit");
   });
 
+  it("leaves a declined card to a caller that shows it, and opens the dialog elsewhere", async () => {
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "signedIn",
+      hasPendingLimit: false,
+      isOpen: false,
+      intent: null,
+      pendingInput: null,
+    });
+    const declined = {
+      code: "user_rate_limit",
+      refusalReason: "auto_topup_declined",
+      limitKind: "total",
+      error:
+        "Your card was declined, so auto-reload is paused and this organization is out of MCPJam credits.",
+    };
+    const respond = () =>
+      new Response(JSON.stringify(declined), { status: 429 });
+
+    // Chat shows its Card declined banner instead.
+    await expect(
+      notifyMCPJamLimitErrorFromResponse(respond(), undefined, {
+        showsDeclinedCard: true,
+      }),
+    ).resolves.toBe(false);
+    expect(
+      notifyMCPJamLimitError({
+        message: declined.error,
+        showsDeclinedCard: true,
+      }),
+    ).toBe(false);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+
+    // Evals and the agent panel have no such UI: the dialog is their prompt.
+    await expect(notifyMCPJamLimitErrorFromResponse(respond())).resolves.toBe(
+      true,
+    );
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
+  it("still opens for a new exhaustion that quotes an earlier decline", () => {
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "signedIn",
+      hasPendingLimit: false,
+      isOpen: false,
+      intent: null,
+      pendingInput: null,
+    });
+    expect(
+      notifyMCPJamLimitError({
+        code: "user_rate_limit",
+        message: "Monthly MCPJam model limit reached.",
+        details: {
+          previous:
+            "Your card was declined, so auto-reload is paused and this organization is out of MCPJam credits.",
+        },
+        showsDeclinedCard: true,
+      }),
+    ).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
   it("forwards limitKind from response payload so concurrency is suppressed", async () => {
     useMCPJamLimitDialogStore.setState({
       authStatus: "signedIn",

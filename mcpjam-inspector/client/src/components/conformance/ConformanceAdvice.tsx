@@ -88,13 +88,16 @@ export function reportAdviceGroups(
   }));
 }
 
-/** The spec's requirement words are defined by BCP 14 (RFC 2119 + RFC 8174). */
-const BCP_14_URL = "https://datatracker.ietf.org/doc/html/bcp14";
+/** RFC 2119 defines each requirement word in its own section. */
+const RFC_2119_URLS = {
+  SHOULD: "https://www.rfc-editor.org/info/rfc2119/#section-3",
+  MAY: "https://www.rfc-editor.org/info/rfc2119/#section-5",
+};
 
-function SpecWord({ word }: { word: string }) {
+function SpecWord({ word }: { word: keyof typeof RFC_2119_URLS }) {
   return (
     <a
-      href={BCP_14_URL}
+      href={RFC_2119_URLS[word]}
       target="_blank"
       rel="noreferrer"
       className="text-primary underline underline-offset-2 hover:text-primary/80"

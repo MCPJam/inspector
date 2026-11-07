@@ -973,6 +973,11 @@ function addUsage(total, usage) {
     if (manifest) {
       expect(JSON.parse(manifest.content).pnpm).toBeUndefined();
     }
+    const lockfile = bootstrap?.files.find((file) =>
+      file.path.endsWith("/pnpm-lock.yaml"),
+    );
+    expect(lockfile?.content).toContain("proxy-addr@2.0.8:");
+    expect(lockfile?.content).not.toContain("proxy-addr@2.0.7");
     expect(
       bootstrap?.commands.some((command) =>
         command.command.includes("--frozen-lockfile"),
@@ -1356,6 +1361,13 @@ describe("buildBrokerDummyAuth", () => {
     const codex = buildBrokerDummyAuth("codex", "https://proxy.example");
     expect(codex.OPENAI_BASE_URL).toBe("https://proxy.example");
     expect(codex.CODEX_API_KEY).toBeTruthy();
+  });
+
+  it("closes model connections only for the warm-agent pilot", () => {
+    expect(buildBrokerDummyAuth("claude-code", "https://proxy.example")).not.toHaveProperty("ANTHROPIC_CUSTOM_HEADERS");
+    expect(buildBrokerDummyAuth("codex", "https://proxy.example")).not.toHaveProperty("MCPJAM_CLOSE_MODEL_CONNECTIONS");
+    expect(buildBrokerDummyAuth("claude-code", "https://proxy.example", true).ANTHROPIC_CUSTOM_HEADERS).toBe("Connection: close");
+    expect(buildBrokerDummyAuth("codex", "https://proxy.example", true).MCPJAM_CLOSE_MODEL_CONNECTIONS).toBe("1");
   });
 
   it("THROWS for an external-account harness rather than defaulting", () => {

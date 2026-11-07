@@ -72,7 +72,7 @@ import {
   lockEvalSessionAfterUpdate,
   persistEvalTraceFanout,
 } from "./persist-eval-trace.js";
-import { isTerminalIterationStatus } from "./run-status.js";
+import { isEvalIterationTerminalStatus } from "@mcpjam/sdk/contract";
 import {
   buildSelectionToolCatalog,
   type SelectionCatalogToolLike,
@@ -1213,7 +1213,7 @@ export async function finalizeEvalIteration(
       "testSuites:getTestIteration" as any,
       { iterationId },
     );
-    if (isTerminalIterationStatus(iteration?.status)) {
+    if (isEvalIterationTerminalStatus(iteration?.status)) {
       logger.debug(
         "[evals] Skipping update for terminal iteration:",
         iterationId,

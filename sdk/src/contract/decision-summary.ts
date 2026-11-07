@@ -69,6 +69,7 @@ import {
   type FailureCategory,
   type UserValueStage,
 } from "./chain.js";
+import { isEvalRunTerminalStatus } from "./eval-lifecycle.js";
 import { opaqueIdSchema } from "./identity.js";
 import {
   DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
@@ -644,27 +645,6 @@ export type EvalRunDecisionAssemblyInput = {
 };
 
 /**
- * Statuses at which a run has stopped changing.
- *
- * Mirrors the CLI's `TERMINAL_RUN_STATUSES`; kept here because the summary is
- * assembled on the server too, and a server that read "still running" as
- * "no verdict" for a finished run would report `notEstablished` forever.
- *
- * `grading` IS DELIBERATELY ABSENT. A run held for its gating judge has
- * finished every trial but has not been decided: its `result` is `pending` and
- * `finalizeAfterJudge` is what will set it. Adding it here would let a reader
- * quote a stale `verdictSummary` — the one written before the judge's rows
- * landed — as the run's verdict, which is precisely the number the hold exists
- * to prevent anybody using.
- */
-const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-]);
-
-/**
  * Terminal statuses at which a LEGACY run's stored summary describes the
  * iterations it happened to record rather than the run it was asked to perform.
  *
@@ -712,7 +692,10 @@ export function assembleEvalRunDecisionSummary(
     undecided: { reason, ...(detail ? { detail } : {}) },
   });
 
-  if (!TERMINAL_RUN_STATUSES.has(run.status)) {
+  // A `grading` run is not terminal: the `verdictSummary` it carries was
+  // written before its judge's rows landed, and quoting it is precisely what
+  // the hold exists to prevent.
+  if (!isEvalRunTerminalStatus(run.status)) {
     return undecided("runNotTerminal");
   }
 
