@@ -578,6 +578,11 @@ export function createOwnedPluginMrtr(deps: {
       // Forms went off during this leg's admission: nothing reached the wire.
       if (!wireStarted && turnedOff) return formsDisabled();
       if (!wireStarted && uploadRefusal) throw uploadRefusal;
+      if (!wireStarted && result.outcome === "failed" && result.terminal) {
+        pluginFormSources.closeOperation(authorization.owner, invocationId);
+        pluginFormFileGrants.closeOperation(authorization.owner, invocationId);
+        throw new PluginContinuationTerminal("CONTINUATION_FAILED");
+      }
       if (!wireStarted && result.outcome === "failed")
         throw new PluginContinuationRefused();
       pluginFormSources.closeOperation(authorization.owner, invocationId);
