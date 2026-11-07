@@ -87,6 +87,7 @@ describe("ConformanceHistory", () => {
     // refresh, which a query the app consumes and strips cannot do.
     expect(navigateMock).toHaveBeenCalledWith(
       `/p/${projectId}/conformance/runs/run_existing`,
+      { state: { conformanceRunFrom: "history" } },
     );
     expect(startRun).not.toHaveBeenCalled();
   });
