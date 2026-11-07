@@ -1,3 +1,4 @@
+import { MCP_APPS_SANDBOX_PROXY_HTML } from "../../routes/apps/SandboxProxyHtml.bundled";
 /**
  * Parity test: `buildSandboxProxyWidgetCsp` (Node) MUST produce byte-identical
  * output to the production `buildCSP` widget-declared branch that ships inline
@@ -7,28 +8,13 @@
  *
  * Same extraction approach as `server/__tests__/sandbox-proxy-buildCSP.test.ts`:
  * pull `sanitizeDomain` + `buildCSP` out of the HTML and evaluate them, so the
- * canonical function stays physically in the document it ships in.
+ * test exercises the materialized document that ships to the browser.
  */
 import { describe, it, expect } from "vitest";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 import { buildSandboxProxyWidgetCsp } from "../sandbox-proxy-csp";
 import type { WidgetCspMeta } from "../widget-helpers";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const html = fs.readFileSync(
-  path.resolve(
-    __dirname,
-    "..",
-    "..",
-    "routes",
-    "apps",
-    "mcp-apps",
-    "sandbox-proxy.html"
-  ),
-  "utf8"
-);
+const html = MCP_APPS_SANDBOX_PROXY_HTML;
 
 // Extract a named function body from the inline <script>, brace-walking so
 // reformatting of the HTML doesn't break the test.

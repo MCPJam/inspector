@@ -21,23 +21,10 @@
  * require — so that property is asserted in the browser e2e, not here.
  */
 import { describe, it, expect, vi } from "vitest";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
+import { MCP_APPS_SANDBOX_PROXY_HTML } from "../routes/apps/SandboxProxyHtml.bundled";
 import { JSDOM } from "jsdom";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const html = fs.readFileSync(
-  path.resolve(
-    __dirname,
-    "..",
-    "routes",
-    "apps",
-    "mcp-apps",
-    "sandbox-proxy.html",
-  ),
-  "utf8",
-);
+const html = MCP_APPS_SANDBOX_PROXY_HTML;
 
 function extract(name: string): string {
   const sig = new RegExp(`function\\s+${name}\\s*\\([^)]*\\)\\s*\\{`);
