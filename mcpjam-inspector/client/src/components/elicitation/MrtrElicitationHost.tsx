@@ -1,3 +1,4 @@
+import type { MrtrKeyAnswer } from "@/shared/local-mrtr";
 import { MANUAL_PLUGIN_FORM_PROFILE } from "@/shared/plugin-extensions/manual-form";
 import {
   useCallback,
@@ -10,7 +11,6 @@ import { ElicitationDialog } from "../ElicitationDialog";
 import { UrlElicitationConsent } from "./UrlElicitationConsent";
 import {
   useMrtrElicitationStore,
-  type MrtrKeyAnswer,
 } from "@/stores/mrtr-elicitation-store";
 
 /* ------------------------------------------------------------------ *

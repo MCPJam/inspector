@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { MrtrBridgeInputRequest, MrtrRoundEvent } from "@/shared/local-mrtr.js";
 import { OPENAI_ELICITATION_EXTENSION } from "@mcpjam/sdk";
 import { selectLocalMrtrForm, selectLocalMrtrSchema, validateLocalMrtrAnswer } from "./local-mrtr-forms.js";
 import type {
@@ -82,32 +83,6 @@ type PendingRound = {
 };
 
 const pendingRounds = new Map<string, PendingRound>();
-
-/**
- * The browser-facing description of one embedded elicitation request. Untrusted
- * server strings (`message`, `url`, `requestedSchema`) travel verbatim and are
- * rendered as plain text on the client (never linkified).
- */
-export type MrtrBridgeInputRequest = {
-  key: string;
-  mode: "form" | "url";
-  message: string;
-  /** Present for form mode only. */
-  requestedSchema?: Record<string, unknown>;
-  pluginForm?: boolean;
-  /** Present for url mode only. */
-  url?: string;
-};
-
-type MrtrRoundEvent = {
-  type: "mrtr_input_request";
-  opId: string;
-  roundKey: string;
-  round: number;
-  serverId: string;
-  requests: MrtrBridgeInputRequest[];
-  timestamp: string;
-};
 
 /**
  * Projects the driver's validated `inputRequests` map (elicitation-only by the
