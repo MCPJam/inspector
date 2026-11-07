@@ -250,24 +250,47 @@ it("preserves a caller's total timeout during human input", async () => {
   }
 });
 
-
 it("ties progress to request id zero and a string token on the original transport", async () => {
   const f = await fixture(true);
   try {
     let finish!: (message: unknown) => void;
-    const result = new Promise((resolve) => { finish = resolve; });
-    f.guest.onmessage = (message) => { if ("id" in message && message.id === 0) finish(message); };
-    await f.guest.send({ jsonrpc: "2.0", id: 0, method: "tools/call", params: { name: "review", arguments: {}, _meta: { progressToken: "form-token" } } });
+    const result = new Promise((resolve) => {
+      finish = resolve;
+    });
+    f.guest.onmessage = (message) => {
+      if ("id" in message && message.id === 0) finish(message);
+    };
+    await f.guest.send({
+      jsonrpc: "2.0",
+      id: 0,
+      method: "tools/call",
+      params: {
+        name: "review",
+        arguments: {},
+        _meta: { progressToken: "form-token" },
+      },
+    });
     await vi.advanceTimersByTimeAsync(20_000);
-    const sent = f.hostSend.mock.calls.filter(([message]) => "method" in message && message.method === "notifications/progress");
+    const sent = f.hostSend.mock.calls.filter(
+      ([message]) =>
+        "method" in message && message.method === "notifications/progress"
+    );
     expect(sent.length).toBeGreaterThan(0);
     for (const [message, options] of sent) {
-      expect(message).toMatchObject({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: "form-token" } });
+      expect(message).toMatchObject({
+        jsonrpc: "2.0",
+        method: "notifications/progress",
+        params: { progressToken: "form-token" },
+      });
       expect(options).toEqual({ relatedRequestId: 0 });
     }
     f.finish();
-    await expect(result).resolves.toMatchObject({ result: { content: [{ text: "done" }] } });
-  } finally { await f.close(); }
+    await expect(result).resolves.toMatchObject({
+      result: { content: [{ text: "done" }] },
+    });
+  } finally {
+    await f.close();
+  }
 });
 
 it("stops the old request before a different bridge transport can receive progress", async () => {
@@ -286,9 +309,11 @@ it("stops the old request before a different bridge transport can receive progre
     expect(nextSend).not.toHaveBeenCalled();
     expect(f.context().signal.aborted).toBe(true);
     expect(f.call).toHaveBeenCalledOnce();
-  } finally { await nextGuest.close(); await f.close(); }
+  } finally {
+    await nextGuest.close();
+    await f.close();
+  }
 });
-
 
 it("refuses progress through a different transport while the original call can finish", async () => {
   const f = await fixture(true);
@@ -297,17 +322,29 @@ it("refuses progress through a different transport while the original call can f
   const result = f.app.callServerTool({ name: "review" });
   await vi.advanceTimersByTimeAsync(0);
   const count = f.progress().length;
-  const transport = vi.spyOn(f.bridge, "transport", "get").mockReturnValue(other);
+  const transport = vi
+    .spyOn(f.bridge, "transport", "get")
+    .mockReturnValue(other);
   try {
     await vi.advanceTimersByTimeAsync(40_000);
     expect(otherSend).not.toHaveBeenCalled();
     expect(f.progress()).toHaveLength(count);
-    expect(f.debug).toHaveBeenCalledWith("host-to-ui", "notifications/progress", { error: "App request transport is no longer connected" });
+    expect(f.debug).toHaveBeenCalledWith(
+      "host-to-ui",
+      "notifications/progress",
+      { error: "App request transport is no longer connected" }
+    );
     transport.mockRestore();
     f.finish();
-    await expect(result).resolves.toMatchObject({ content: [{ text: "done" }] });
+    await expect(result).resolves.toMatchObject({
+      content: [{ text: "done" }],
+    });
     expect(f.call).toHaveBeenCalledOnce();
-  } finally { transport.mockRestore(); await other.close(); await f.close(); }
+  } finally {
+    transport.mockRestore();
+    await other.close();
+    await f.close();
+  }
 });
 
 it("reports one rejected transport progress send without replaying the tool", async () => {
@@ -316,10 +353,18 @@ it("reports one rejected transport progress send without replaying the tool", as
   try {
     const result = f.app.callServerTool({ name: "review" });
     await vi.advanceTimersByTimeAsync(50_000);
-    expect(f.debug).toHaveBeenCalledWith("host-to-ui", "notifications/progress", { error: "Transport closed" });
+    expect(f.debug).toHaveBeenCalledWith(
+      "host-to-ui",
+      "notifications/progress",
+      { error: "Transport closed" }
+    );
     expect(f.progress()).toHaveLength(1);
     f.finish();
-    await expect(result).resolves.toMatchObject({ content: [{ text: "done" }] });
+    await expect(result).resolves.toMatchObject({
+      content: [{ text: "done" }],
+    });
     expect(f.call).toHaveBeenCalledOnce();
-  } finally { await f.close(); }
+  } finally {
+    await f.close();
+  }
 });

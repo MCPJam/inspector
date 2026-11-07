@@ -30,6 +30,7 @@ export interface ContextAttachment {
   group?: {
     id: string;
     title: string;
+    appTitle?: string;
     serverName?: string;
     /** The imported plugin's icons, when the App's server belongs to one. */
     icons?: PluginIcons;
@@ -109,7 +110,8 @@ export function ContextGroupChip({
   items: ContextAttachment[];
 }) {
   const removing = items.some((item) => item.removing);
-  const contextLabel = group.title === "Context" ? "Context" : `${group.title} context`;
+  const title = group.appTitle ? `${group.appTitle}: ${group.title}` : group.title;
+  const contextLabel = group.title === "Context" ? title : `${title} context`;
   return (
     <Popover>
       <div
@@ -122,7 +124,7 @@ export function ContextGroupChip({
             variant="ghost"
             size="sm"
             className="h-7 gap-1.5 px-1.5 text-xs font-medium"
-            title={group.title}
+            title={title}
             aria-label={`${contextLabel}, ${items.length} item${
               items.length === 1 ? "" : "s"
             }`}
@@ -132,7 +134,7 @@ export function ContextGroupChip({
               pluginIcons={group.icons}
               serverIcons={group.serverIcons}
             />
-            <span className="max-w-48 truncate">{group.title}</span>
+            <span className="max-w-48 truncate">{title}</span>
           </Button>
         </PopoverTrigger>
         {group.removeAll && (
