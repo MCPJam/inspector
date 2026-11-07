@@ -11,8 +11,12 @@ import {
   scoreFromProtocolResult,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_LOG_LEVELS,
   MCP_PROTOCOL_VERSIONS,
+  MCP_READINESS_IDS,
+  RETIRED_MCP_CHECK_IDS,
   type MCPConformanceConfig,
+  type MCPLogLevel,
   MCPConformanceSuite,
   MCPConformanceTest,
 } from "@mcpjam/sdk";
@@ -31,6 +35,7 @@ import { maybeUploadSingleSuite } from "../lib/conformance-upload.js";
 import { parseReporterFormat } from "../lib/reporting.js";
 import {
   parseHeadersOption,
+  parseJsonRecord,
   parsePositiveInteger,
 } from "../lib/server-config.js";
 import {
@@ -42,18 +47,34 @@ import {
   usageError,
 } from "../lib/output.js";
 
-export interface ProtocolConformanceOptions {
+export interface ProtocolConformanceOptions extends ProtocolRunOptions {
   url: string;
   accessToken?: string;
   credentialsFile?: string;
   header?: string[];
+}
+
+/**
+ * The flags that say which protocol checks run and which tools they may call,
+ * apart from the target. `conformance run` reads the same flags.
+ */
+export interface ProtocolRunOptions {
   checkTimeout?: number;
   category?: string[];
   checkId?: string[];
+  adviceId?: string[];
   protocolVersion?: string;
   fixturesFile?: string;
   fixtureTool?: string[];
   fixturePrompt?: string[];
+  logProbeTool?: string;
+  logProbeArgs?: string;
+  logProbeLevel?: string;
+  logFilterTool?: string;
+  logFilterArgs?: string;
+  logFilterLevel?: string;
+  inputRequiredTool?: string;
+  inputRequiredArgs?: string;
 }
 
 export function registerProtocolCommands(program: Command): void {
@@ -61,7 +82,7 @@ export function registerProtocolCommands(program: Command): void {
     .command("protocol")
     .description("MCP protocol inspection and conformance checks");
 
-  protocol
+  const conformance = protocol
     .command("conformance")
     .description("Run MCP protocol conformance checks against an HTTP server")
     .requiredOption("--url <url>", "MCP server URL")
@@ -95,25 +116,17 @@ export function registerProtocolCommands(program: Command): void {
       [],
     )
     .option(
+      "--advice-id <id>",
+      "Specific advice ID to run. Repeat for multiple. Default: all.",
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option(
       "--protocol-version <version>",
       "Pin the MCP protocol version to conform against. Default: legacy (2025-era) behavior.",
-    )
-    .option(
-      "--fixtures-file <path>",
-      'JSON file naming primitives that are SAFE TO EXECUTE, so checks that need a real result can run: {"toolCalls":[{"toolName":"echo","arguments":{}}],"promptGets":[{"promptName":"welcome"}]}. Nothing is ever called without this.',
-    )
-    .option(
-      "--fixture-tool <name>",
-      "Name of a tool that is safe to call with no arguments. Repeat for multiple. For tools that need arguments, use --fixtures-file.",
-      (value: string, previous: string[] = []) => [...previous, value],
-      [],
-    )
-    .option(
-      "--fixture-prompt <name>",
-      "Name of a prompt that is safe to render with no arguments. Repeat for multiple. For prompts that need arguments, use --fixtures-file.",
-      (value: string, previous: string[] = []) => [...previous, value],
-      [],
-    )
+    );
+  addProtocolToolOptions(conformance);
+  conformance
     .option(
       "--reporter <reporter>",
       "Structured reporter output: json-summary or junit-xml",
@@ -182,6 +195,62 @@ export function registerProtocolCommands(program: Command): void {
     });
 }
 
+/**
+ * The tools a protocol run may call. Shared with `conformance run`, so the
+ * two commands cannot drift apart on what a flag means.
+ */
+export function addProtocolToolOptions(command: Command): Command {
+  return command
+    .option(
+      "--fixtures-file <path>",
+      'JSON file naming primitives that are SAFE TO EXECUTE, so checks that need a real result can run: {"toolCalls":[{"toolName":"echo","arguments":{}}],"promptGets":[{"promptName":"welcome"}]}. Nothing is ever called without this.',
+    )
+    .option(
+      "--fixture-tool <name>",
+      "Name of a tool that is safe to call with no arguments. Repeat for multiple. For tools that need arguments, use --fixtures-file.",
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option(
+      "--fixture-prompt <name>",
+      "Name of a prompt that is safe to render with no arguments. Repeat for multiple. For prompts that need arguments, use --fixtures-file.",
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option(
+      "--log-probe-tool <name>",
+      "Name of a tool that writes logs and is safe to call a few times. Lets the 2026-07-28 logging check and log level advice run. Nothing is called without this.",
+    )
+    .option(
+      "--log-probe-args <json>",
+      "Arguments for --log-probe-tool, as a JSON object. Default: {}.",
+    )
+    .option(
+      "--log-probe-level <level>",
+      `Log level the advice asks --log-probe-tool for: ${MCP_LOG_LEVELS.join(", ")}. Default: warning.`,
+    )
+    .option(
+      "--log-filter-tool <name>",
+      "Name of a tool the log level advice calls instead of --log-probe-tool. Same rules: it writes logs and is safe to call. Default: --log-probe-tool.",
+    )
+    .option(
+      "--log-filter-args <json>",
+      "Arguments for --log-filter-tool, as a JSON object. Default: {}.",
+    )
+    .option(
+      "--log-filter-level <level>",
+      `Log level the advice asks --log-filter-tool for: ${MCP_LOG_LEVELS.join(", ")}. Default: warning.`,
+    )
+    .option(
+      "--input-required-tool <name>",
+      "Name of a tool that asks the client for input and is safe to call. Lets the 2026-07-28 undeclared capability check run. Nothing is called without this.",
+    )
+    .option(
+      "--input-required-args <json>",
+      "Arguments for --input-required-tool, as a JSON object. Default: {}.",
+    );
+}
+
 function getFormat(
   command: Command,
   reporter: ReturnType<typeof parseReporterFormat>,
@@ -218,7 +287,7 @@ function collectInvalidEntries(
  * the server is ever executed.
  */
 function resolveFixtures(
-  options: ProtocolConformanceOptions,
+  options: ProtocolRunOptions,
 ): MCPConformanceConfig["fixtures"] | undefined {
   const fromFile = options.fixturesFile
     ? readFixturesFile(options.fixturesFile)
@@ -241,6 +310,88 @@ function resolveFixtures(
     return undefined;
   }
   return { toolCalls, promptGets };
+}
+
+/**
+ * A tool a check or advice may call, named by `--<prefix>-tool`.
+ * `--<prefix>-args` and, for the log tools, `--<prefix>-level` only describe
+ * that call, so either one without a tool is a usage error instead of a flag
+ * that is silently ignored.
+ */
+function resolveToolProbe(
+  prefix: "log-probe" | "log-filter" | "input-required",
+  flags: { tool?: string; args?: string; level?: string },
+  argsLabel: string,
+): MCPConformanceConfig["logProbe"] | undefined {
+  const hasLevel = prefix !== "input-required";
+  const toolName = flags.tool?.trim();
+  // A blank name is a mistake, not an omitted flag: without this the probe
+  // would be dropped and the check that calls it could not run.
+  if (flags.tool !== undefined && !toolName) {
+    throw usageError(`--${prefix}-tool needs a tool name.`);
+  }
+  if (!toolName) {
+    if (flags.args !== undefined || flags.level !== undefined) {
+      throw usageError(
+        hasLevel
+          ? `--${prefix}-args and --${prefix}-level need --${prefix}-tool.`
+          : `--${prefix}-args needs --${prefix}-tool.`,
+      );
+    }
+    return undefined;
+  }
+
+  const level = flags.level?.trim();
+  if (
+    level !== undefined &&
+    !(MCP_LOG_LEVELS as readonly string[]).includes(level)
+  ) {
+    throw usageError(
+      `Unknown log level: ${level}. Known: ${MCP_LOG_LEVELS.join(", ")}`,
+    );
+  }
+  const args = parseJsonRecord(flags.args, argsLabel);
+
+  return {
+    toolName,
+    ...(args ? { arguments: args } : {}),
+    ...(level ? { level: level as MCPLogLevel } : {}),
+  };
+}
+
+/**
+ * The tools the logging check and the log level advice may call. The advice
+ * calls `--log-filter-tool` when it is set and never reads `--log-probe-level`
+ * then, so that pair is a usage error too.
+ */
+function resolveLogProbes(options: ProtocolRunOptions): {
+  logProbe?: MCPConformanceConfig["logProbe"];
+  logLevelFilteringProbe?: MCPConformanceConfig["logLevelFilteringProbe"];
+} {
+  const logProbe = resolveToolProbe(
+    "log-probe",
+    {
+      tool: options.logProbeTool,
+      args: options.logProbeArgs,
+      level: options.logProbeLevel,
+    },
+    "Log probe arguments",
+  );
+  const logLevelFilteringProbe = resolveToolProbe(
+    "log-filter",
+    {
+      tool: options.logFilterTool,
+      args: options.logFilterArgs,
+      level: options.logFilterLevel,
+    },
+    "Log filter arguments",
+  );
+  if (logLevelFilteringProbe && options.logProbeLevel !== undefined) {
+    throw usageError(
+      "--log-probe-level is not used when --log-filter-tool is set. Use --log-filter-level.",
+    );
+  }
+  return { logProbe, logLevelFilteringProbe };
 }
 
 function readFixturesFile(
@@ -316,6 +467,30 @@ export function buildConfig(
   const accessToken = options.credentialsFile
     ? resolveCredentialsFileAccessToken(options.credentialsFile, serverUrl)
     : options.accessToken;
+
+  return {
+    serverUrl,
+    accessToken,
+    customHeaders,
+    ...buildProtocolRunConfig(options),
+    checkTimeout: options.checkTimeout ?? 15_000,
+  };
+}
+
+/** Everything in a protocol run's config except its target. */
+export type ProtocolRunConfig = Omit<
+  MCPConformanceConfig,
+  "serverUrl" | "accessToken" | "customHeaders"
+>;
+
+/**
+ * The checks, advice and tools a protocol run uses, from the same flags as
+ * `protocol conformance`. `conformance run` passes the result to the SDK as
+ * its `protocol` config, so both commands run the same checks.
+ */
+export function buildProtocolRunConfig(
+  options: ProtocolRunOptions,
+): ProtocolRunConfig {
   const categories = options.category?.filter(Boolean);
   const invalidCategories = collectInvalidEntries(
     categories,
@@ -330,14 +505,47 @@ export function buildConfig(
   }
 
   const checkIds = options.checkId?.filter(Boolean);
-  const invalidCheckIds = collectInvalidEntries(checkIds, MCP_CHECK_IDS);
+  const invalidCheckIds = collectInvalidEntries(checkIds, [
+    ...MCP_CHECK_IDS,
+    ...Object.keys(RETIRED_MCP_CHECK_IDS),
+  ]);
   if (invalidCheckIds.length > 0) {
     throw usageError(
       `Unknown check id${invalidCheckIds.length === 1 ? "" : "s"}: ${invalidCheckIds.join(", ")}`,
     );
   }
+  // A retired id still runs (the SDK swaps in its advice); say what changed.
+  for (const id of checkIds ?? []) {
+    if (Object.hasOwn(RETIRED_MCP_CHECK_IDS, id)) {
+      process.stderr.write(
+        `Note: check ${id} is now the ${RETIRED_MCP_CHECK_IDS[id as keyof typeof RETIRED_MCP_CHECK_IDS]} advice. Running that instead.\n`,
+      );
+    }
+  }
+
+  // A blank id is a mistake, not an omitted flag: dropping it would run every
+  // advice instead of the one asked for.
+  if (options.adviceId?.some((id) => !id.trim())) {
+    throw usageError("--advice-id needs an advice id.");
+  }
+  const readinessIds = options.adviceId;
+  const invalidReadinessIds = collectInvalidEntries(
+    readinessIds,
+    MCP_READINESS_IDS,
+  );
+  if (invalidReadinessIds.length > 0) {
+    throw usageError(
+      `Unknown advice id${invalidReadinessIds.length === 1 ? "" : "s"}: ${invalidReadinessIds.join(", ")}. Valid advice ids: ${MCP_READINESS_IDS.join(", ")}`,
+    );
+  }
 
   const fixtures = resolveFixtures(options);
+  const { logProbe, logLevelFilteringProbe } = resolveLogProbes(options);
+  const inputRequiredProbe = resolveToolProbe(
+    "input-required",
+    { tool: options.inputRequiredTool, args: options.inputRequiredArgs },
+    "Input required arguments",
+  );
 
   const protocolVersion = options.protocolVersion?.trim();
   if (
@@ -350,19 +558,27 @@ export function buildConfig(
   }
 
   return {
-    serverUrl,
-    accessToken,
-    customHeaders,
-    checkTimeout: options.checkTimeout ?? 15_000,
+    // No default here: `protocol conformance` sets its own, and a
+    // `conformance run` without `--check-timeout` keeps the SDK's.
+    ...(options.checkTimeout ? { checkTimeout: options.checkTimeout } : {}),
     ...(categories && categories.length > 0
       ? { categories: categories as MCPConformanceConfig["categories"] }
       : {}),
     ...(checkIds && checkIds.length > 0
       ? { checkIds: checkIds as MCPConformanceConfig["checkIds"] }
       : {}),
+    ...(readinessIds && readinessIds.length > 0
+      ? {
+          readinessIds:
+            readinessIds as MCPConformanceConfig["readinessIds"],
+        }
+      : {}),
     ...(protocolVersion
       ? { protocolVersion: protocolVersion as MCPConformanceConfig["protocolVersion"] }
       : {}),
     ...(fixtures ? { fixtures } : {}),
+    ...(logProbe ? { logProbe } : {}),
+    ...(logLevelFilteringProbe ? { logLevelFilteringProbe } : {}),
+    ...(inputRequiredProbe ? { inputRequiredProbe } : {}),
   };
 }

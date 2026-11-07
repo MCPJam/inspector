@@ -94,7 +94,7 @@ import {
 import { getShareableAppOrigin } from "@/lib/scenario-session";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { SwarmOverviewPanel } from "@/components/swarms/swarm-overview-panel";
-import { SwarmRunDetail } from "@/components/swarms/swarm-run-detail";
+import { RepairableSwarmRunDetail } from "./swarm-rerun-repair";
 import { SwarmLiveStreamPane } from "@/components/swarms/journey-run-results";
 import { findAttemptForSelection } from "@/components/swarms/swarm-targets";
 import {
@@ -1056,7 +1056,7 @@ export function SwarmsTab({
             onChange={onRunningPersonasChange}
           />
         </ErrorBoundary>
-        <SwarmRunDetail
+        <RepairableSwarmRunDetail
           organizationId={organizationId}
           // Remount per wave. Every piece of state in here is about the wave
           // being looked at — the persona filter, the stop confirmation, and

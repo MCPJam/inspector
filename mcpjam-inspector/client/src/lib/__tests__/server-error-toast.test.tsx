@@ -23,8 +23,13 @@ beforeEach(() => {
   copyMock.mockResolvedValue(true);
 });
 
-afterEach(() => {
+afterEach(async () => {
   toast.dismiss();
+  // Sonner unmounts a dismissed toast on a 200ms timer. Let it run while the
+  // DOM exists, or it fires after the environment is torn down.
+  await waitFor(() =>
+    expect(document.querySelector("[data-sonner-toast]")).toBeNull(),
+  );
   cleanup();
 });
 

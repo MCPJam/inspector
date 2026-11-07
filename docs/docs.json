@@ -90,13 +90,18 @@
           {
             "group": "Authentication",
             "icon": "shield-check",
-            "pages": ["inspector/guided-oauth", "inspector/xaa-debugger"]
+            "pages": [
+              "inspector/guided-oauth",
+              "inspector/xaa-debugger",
+              "inspector/lazy-authentication"
+            ]
           },
           {
             "group": "Primitives",
             "icon": "puzzle",
             "pages": [
               "inspector/tools-prompts-resources",
+              "inspector/events",
               "inspector/debugging"
             ]
           },
@@ -137,6 +142,7 @@
               "cli/apps-conformance",
               "cli/tasks",
               "cli/tasks-conformance",
+              "cli/events",
               "cli/tools-resources-prompts",
               "cli/ci",
               "cli/self-hosted",
@@ -190,6 +196,7 @@
               "sdk/reference/oauth-emulation",
               "sdk/reference/apps-conformance",
               "sdk/reference/tasks-conformance",
+              "sdk/reference/events",
               "sdk/reference/host-compat",
               "sdk/reference/muse-readiness"
             ]

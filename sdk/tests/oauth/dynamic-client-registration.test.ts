@@ -1,6 +1,8 @@
 import {
+  FALLBACK_HINT,
   buildDynamicClientRegistrationRequest,
   executeDynamicClientRegistration,
+  isDynamicClientRegistrationHttpError,
   redactDynamicClientRegistrationResponse,
 } from "../../src/oauth/state-machines/shared/dynamic-client-registration.js";
 import { createOAuthStateMachine } from "../../src/oauth/state-machines/factory.js";
@@ -292,6 +294,24 @@ describe("executeDynamicClientRegistration", () => {
       httpHistory: history(),
     });
     expect(JSON.stringify(outcome)).not.toContain(SECRET);
+  });
+});
+
+describe("isDynamicClientRegistrationHttpError", () => {
+  it.each([
+    "Dynamic Client Registration failed (400).",
+    `Dynamic Client Registration failed (400). ${FALLBACK_HINT}`,
+  ])("matches the server's answer: %s", (error) => {
+    expect(isDynamicClientRegistrationHttpError(error)).toBe(true);
+  });
+
+  // A status the proxy lost, or the phrase inside another failure, is ours.
+  it.each([
+    "Dynamic Client Registration failed (0).",
+    "Dynamic Client Registration failed (undefined).",
+    "Client registration failed: Dynamic Client Registration failed (400).",
+  ])("leaves %s reportable", (error) => {
+    expect(isDynamicClientRegistrationHttpError(error)).toBe(false);
   });
 });
 

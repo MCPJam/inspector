@@ -128,7 +128,7 @@ describe("useUnifiedConvexAuth", () => {
     expect(options).toEqual({
       source: "guest_session_bootstrap",
       level: "error",
-      extra: { attempts: 4 },
+      extra: { attempts: 4, code: "guest_session/exhausted" },
     });
     expect(result.current.isLoading).toBe(false);
     expect(result.current.isAuthenticated).toBe(false);
@@ -152,7 +152,7 @@ describe("useUnifiedConvexAuth", () => {
     expect(options).toEqual({
       source: "guest_session_bootstrap",
       level: "error",
-      extra: { attempts: 4 },
+      extra: { attempts: 4, code: "guest_session/unreachable" },
     });
   });
 
@@ -186,6 +186,7 @@ describe("useUnifiedConvexAuth", () => {
         httpStatus: 503,
         upstreamReason: "network",
         networkCode: "ENOTFOUND",
+        code: "guest_session/network/ENOTFOUND",
       },
     });
   });
@@ -208,7 +209,7 @@ describe("useUnifiedConvexAuth", () => {
     expect(options).toEqual({
       source: "guest_session_bootstrap",
       level: "error",
-      extra: { attempts: 4, httpStatus: 503 },
+      extra: { attempts: 4, httpStatus: 503, code: "guest_session/http_5xx" },
     });
   });
 
@@ -393,7 +394,7 @@ describe("useUnifiedConvexAuth", () => {
         {
           source: "guest_token_refresh",
           level: "warning",
-          extra: { attempts: 4, httpStatus: 503 },
+          extra: { attempts: 4, httpStatus: 503, code: "guest_session/http_5xx" },
         },
       );
     });
@@ -434,6 +435,7 @@ describe("useUnifiedConvexAuth", () => {
             httpStatus: 503,
             upstreamReason: "upstream_status",
             upstreamStatus: 522,
+            code: "guest_session/upstream_status",
           },
         },
       );
@@ -482,7 +484,11 @@ describe("useUnifiedConvexAuth", () => {
             guest_refresh_failure: "local_server_unreachable",
           },
           fingerprint: ["guest_token_refresh", "local_server_unreachable"],
-          extra: { attempts: 4, errorName: "TypeError" },
+          extra: {
+            attempts: 4,
+            errorName: "TypeError",
+            code: "guest_session/unreachable",
+          },
         },
       );
       // The banner and its automatic retry are unchanged.
@@ -514,7 +520,11 @@ describe("useUnifiedConvexAuth", () => {
         {
           source: "guest_token_refresh",
           level: "warning",
-          extra: { attempts: 4, errorName: "TypeError" },
+          extra: {
+            attempts: 4,
+            errorName: "TypeError",
+            code: "guest_session/unreachable",
+          },
         },
       );
     });

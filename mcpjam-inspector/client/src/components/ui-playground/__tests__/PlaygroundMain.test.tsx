@@ -1425,6 +1425,46 @@ describe("PlaygroundMain", () => {
         expect(composer.onReasoningEffortChange).toBeTypeOf("function");
       });
 
+      it("settles a saved comparison column when an effort change replaces its card", () => {
+        localStorage.setItem(V2_KEY, JSON.stringify([hosted(sonnet.id)]));
+        render(
+          <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />,
+        );
+        const [lead] = renderedCardProps();
+        // The card is still restoring a comparison saved before sign-in.
+        window.history.replaceState({}, "", "/?comparisonRecovery=saved");
+        const column = { kind: "model", order: 0, hasMessages: true };
+        sessionStorage.setItem(
+          "mcp-comparison-auth-v1:saved",
+          JSON.stringify({
+            version: 1,
+            id: "saved",
+            projectId: "local",
+            multiModelEnabled: true,
+            hostIds: [],
+            modelSelections: null,
+            selectedServers: [],
+            clickedColumn: lead.compareId,
+            continuationId: "c1",
+            columns: [
+              { ...column, compareId: lead.compareId, chatSessionId: "a" },
+            ],
+          }),
+        );
+        try {
+          act(() => {
+            lead.effort.onChange("low");
+          });
+          expect(
+            sessionStorage.getItem("mcp-comparison-auth-v1:saved"),
+          ).toBeNull();
+          expect(window.location.search).toBe("");
+        } finally {
+          sessionStorage.clear();
+          window.history.replaceState({}, "", "/");
+        }
+      });
+
       it("caps the line-up at three cards", () => {
         localStorage.setItem(
           V2_KEY,

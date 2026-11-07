@@ -276,13 +276,16 @@ describe("boot invariant", () => {
     const { logged, health } = await bootWith({
       sandboxHosts: "sandbox.mcpjam.com,sandbox-staging.mcpjam.com",
       hostedOrigin: "https://inspector.customer.test",
-      sandboxOrigin: "https://sandbox.customer.test",
+      sandboxOrigin:
+        "https://ops:hunter2@sandbox.customer.test/proxy?token=abc",
     });
 
     expect(health).toBe("unpartitioned");
     expect(logged).toHaveLength(1);
-    expect(logged[0]).toContain("https://sandbox.customer.test");
+    expect(logged[0]).toContain("(https://sandbox.customer.test)");
     expect(logged[0]).toContain("SANDBOX_HOSTS");
+    // Only the origin is logged: no credentials, path or query.
+    expect(logged[0]).not.toMatch(/hunter2|token=|\/proxy/);
   });
 
   it("reports same-origin when MCPJAM_SANDBOX_ORIGIN is the app's own origin", async () => {
@@ -297,6 +300,50 @@ describe("boot invariant", () => {
     expect(logged[0]).toContain(
       "MCPJAM_SANDBOX_ORIGIN is the app's own origin",
     );
+  });
+
+  it.each([
+    { cause: "listed in SANDBOX_HOSTS", sandboxHosts: "app.mcpjam.test" },
+    {
+      cause: "named by MCPJAM_SANDBOX_ORIGIN",
+      sandboxHosts: "sandbox.mcpjam.test",
+      sandboxOrigin: "https://app.mcpjam.test",
+    },
+  ])(
+    "logs only the hosted origin when the app's own host is $cause",
+    async ({ sandboxHosts, sandboxOrigin }) => {
+      const { logged, health } = await bootWith({
+        sandboxHosts,
+        hostedOrigin: "https://ops:hunter2@app.mcpjam.test/base?token=abc",
+        sandboxOrigin,
+      });
+
+      expect(health).toBe("same-origin");
+      expect(logged).toHaveLength(1);
+      expect(logged[0]).toContain("(https://app.mcpjam.test)");
+      expect(logged[0]).not.toMatch(/hunter2|token=|\/base/);
+    },
+  );
+
+  it("also prints the fault on stderr in production without VERBOSE_LOGS", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("VERBOSE_LOGS", "");
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    try {
+      const { logged, health } = await bootWith({
+        sandboxHosts: "sandbox.mcpjam.com",
+        hostedOrigin: "https://inspector.customer.test",
+        sandboxOrigin: "https://sandbox.customer.test",
+      });
+
+      expect(health).toBe("unpartitioned");
+      expect(stderr).toHaveBeenCalledWith(`${logged[0]}\n`);
+    } finally {
+      stderr.mockRestore();
+      vi.unstubAllEnvs();
+    }
   });
 
   it("stays silent on a deploy whose sandbox host is its own hostname", async () => {

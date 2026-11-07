@@ -37,7 +37,7 @@ The sandbox origin must be an `http://` or `https://` origin, and:
   separate deploy is required.
 
 An `MCPJAM_SANDBOX_ORIGIN` that is not an http(s) origin is ignored, with a
-warning in the server log, and the browser uses the image's build-time
+warning on stderr, and the browser uses the image's build-time
 `VITE_MCPJAM_SANDBOX_ORIGIN` instead. On an image built by MCPJam's Railway
 pipeline that is `https://sandbox.mcpjam.com`, so widgets would load from
 MCPJam's sandbox host, not yours. An image built without one falls back to the
@@ -130,7 +130,8 @@ in `WEB_ALLOWED_ORIGINS` so the host page is allowed to frame the sandbox.
 - `unset` — nothing is partitioned, or `MCPJAM_HOSTED_ORIGIN` could not be
   parsed to compare against.
 
-Anything other than `ok` is also logged once at error level during boot.
+Anything other than `ok` is also logged once at error level during boot, and
+printed on stderr, so it shows even in production without `VERBOSE_LOGS=true`.
 
 ### Fallback behavior
 

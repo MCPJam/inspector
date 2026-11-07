@@ -33,6 +33,10 @@ export const CLIENT_SETTING_IDS = [
   "mcp.tool_call_cancellation.modern",
   "mcp.tool_list_changed.listens",
   "mcp.tool_list_changed.refetches",
+  "mcp.unauthorized_challenge",
+  "mcp.unauthorized_challenge_trigger",
+  "mcp.tool_result_auth_challenge",
+  "mcp.tool_result_auth_challenge_trigger",
   "mcp.initialize.supported_protocol_versions",
   "mcp.initialize.client_info",
   "mcp.apps.sandbox.csp",
@@ -108,6 +112,26 @@ const mcpProfileChanges: SettingDetector = (saved, draft) => {
       "mcp.tool_list_changed.refetches",
       before?.toolListChanged?.refetches,
       after?.toolListChanged?.refetches,
+    ],
+    [
+      "mcp.unauthorized_challenge",
+      before?.unauthorizedChallenge,
+      after?.unauthorizedChallenge,
+    ],
+    [
+      "mcp.unauthorized_challenge_trigger",
+      before?.unauthorizedChallengeTrigger,
+      after?.unauthorizedChallengeTrigger,
+    ],
+    [
+      "mcp.tool_result_auth_challenge",
+      before?.toolResultAuthChallenge,
+      after?.toolResultAuthChallenge,
+    ],
+    [
+      "mcp.tool_result_auth_challenge_trigger",
+      before?.toolResultAuthChallengeTrigger,
+      after?.toolResultAuthChallengeTrigger,
     ],
     [
       "mcp.initialize.supported_protocol_versions",

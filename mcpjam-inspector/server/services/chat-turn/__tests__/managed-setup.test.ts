@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import http from "node:http";
+import { toNodeHandler } from "@modelcontextprotocol/node";
+import { MCPClientManager } from "@mcpjam/sdk";
+import { createFixtureHandler } from "../../../../../sdk/tests/support/dual-era-fixture.js";
+import { buildHostConnectionPins } from "../../host-connection-pins.js";
+import { retainedProfileFingerprint } from "../../../utils/harness/forwarding/retained-resources.js";
 const m = vi.hoisted(() => ({
   hostedSetup: vi.fn(),
+  authorize: vi.fn(),
+  builtInPolicy: vi.fn(),
   ensure: vi.fn(),
   useLocalHarness: vi.fn(),
   localSkills: vi.fn(),
@@ -11,10 +19,10 @@ vi.mock("../resolve-hosted-chat-setup.js", () => ({
 }));
 vi.mock("../../../routes/web/auth.js", async (original) => ({
   ...(await original<typeof import("../../../routes/web/auth.js")>()),
-  authorizeProject: async () => ({ chatEnvironments: false }),
+  authorizeProject: m.authorize,
 }));
 vi.mock("../../../utils/built-in-tools/built-in-tool-policy.js", () => ({
-  resolveTurnBuiltInToolIds: async () => ({ ids: [], dropped: [] }),
+  resolveTurnBuiltInToolIds: m.builtInPolicy,
 }));
 vi.mock("../../../utils/harness/local/run-resources.js", async (original) => ({
   ...(await original<
@@ -94,6 +102,11 @@ async function resolveSetup(rawBody: Record<string, unknown>) {
 describe("managed setup local runtime policy", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    m.authorize.mockResolvedValue({
+      chatEnvironments: false,
+      chatPreparation: false,
+    });
+    m.builtInPolicy.mockResolvedValue({ ids: [], dropped: [] });
     m.useLocalHarness.mockResolvedValue(false);
     m.localSkills.mockResolvedValue([
       { ref: "machine-skill", skillId: "local:machine-skill" },
@@ -137,5 +150,185 @@ describe("managed setup local runtime policy", () => {
     expect(setup.value?.liveProjectCapabilities?.localSkills ?? []).toEqual(
       [],
     );
+  });
+});
+
+
+describe("request-scoped project access", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    m.useLocalHarness.mockResolvedValue(false);
+    m.localSkills.mockResolvedValue([]);
+    m.builtInPolicy.mockResolvedValue({ ids: [], dropped: [] });
+  });
+  it("passes advertised preparation support and reuses the authorized role", async () => {
+    m.authorize.mockResolvedValue({
+      chatEnvironments: true,
+      chatPreparation: true,
+      projectAccess: { projectRole: "editor" },
+    });
+    m.hostedSetup.mockResolvedValue(hostedSetup("interactive"));
+    let access;
+    m.builtInPolicy.mockImplementationOnce(async (args) => {
+      access = await args.loadProjectAccess();
+      return { ids: [], dropped: [] };
+    });
+    await resolveSetup({});
+    expect(access).toEqual({ projectRole: "editor" });
+    expect(m.hostedSetup).toHaveBeenLastCalledWith(
+      expect.objectContaining({ prepareChatTurn: true }),
+    );
+    m.authorize.mockRejectedValueOnce(new Error("Membership removed"));
+    await resolveSetup({});
+    expect(m.authorize).toHaveBeenCalledTimes(2);
+    expect(m.hostedSetup).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("saved client connection policy", () => {
+  const host = {
+    connectionDefaults: { requestTimeout: 10_000 },
+    mcpProfile: {
+      mcpProtocolVersion: "2026-07-28",
+      initialize: {
+        clientInfo: { name: "saved-client", version: "1.0" },
+        supportedProtocolVersions: ["2026-07-28", "2025-11-25"],
+      },
+    },
+    serverConnectionOverrides: {
+      server: { mcpProtocolVersion: "2025-11-25" },
+    },
+  };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    m.authorize.mockResolvedValue({ chatEnvironments: true });
+    m.useLocalHarness.mockResolvedValue(false);
+    m.localSkills.mockResolvedValue([]);
+    m.builtInPolicy.mockResolvedValue({ ids: [], dropped: [] });
+  });
+  it.each([
+    { hostId: "host" },
+    { executionTarget: { kind: "environment", environmentId: "environment" } },
+    { scenarioId: "scenario", accessVersion: 1 },
+  ])(
+    "uses saved pins instead of conflicting request pins for %j",
+    async (target) => {
+      m.hostedSetup.mockResolvedValue({
+        ...hostedSetup(
+          "scenarioId" in target ? "recorded" : "interactive",
+          host,
+        ),
+        authoritativeConnectionPolicy: true,
+      });
+      const { setup } = await resolveSetup({
+        ...target,
+        clientInfo: { name: "different-client" },
+        supportedProtocolVersions: ["2025-03-26"],
+        mcpProtocolVersionsByServerId: {
+          server: "2025-03-26",
+          extra: "2025-03-26",
+        },
+      });
+      const expected = buildHostConnectionPins(host, 120_000);
+      expect(setup.value?.effectiveInitializePins).toEqual(
+        expected.initializePins,
+      );
+      expect(setup.value?.mcpProtocolVersionsByServerId).toEqual(
+        expected.mcpProtocolVersionsByServerId,
+      );
+    },
+  );
+  it("removes a request pin when the saved client omits it", async () => {
+    m.hostedSetup.mockResolvedValue({
+      ...hostedSetup("interactive", {}),
+      authoritativeConnectionPolicy: true,
+    });
+    const { setup } = await resolveSetup({
+      hostId: "host",
+      clientInfo: { name: "different-client" },
+      mcpProtocolVersionsByServerId: { server: "2025-03-26" },
+    });
+    expect(setup.value?.effectiveInitializePins).toBeUndefined();
+    expect(setup.value?.mcpProtocolVersionsByServerId).toBeUndefined();
+  });
+  it("preserves ad-hoc connection overrides", async () => {
+    m.hostedSetup.mockResolvedValue(hostedSetup("interactive", host));
+    const { setup } = await resolveSetup({
+      clientInfo: { name: "ad-hoc" },
+      mcpProtocolVersionsByServerId: { server: "2025-03-26" },
+    });
+    expect(setup.value?.effectiveInitializePins).toMatchObject({
+      clientInfo: { name: "ad-hoc" },
+    });
+    expect(setup.value?.mcpProtocolVersionsByServerId).toEqual({
+      server: "2025-03-26",
+    });
+  });
+  it("retains the saved client's conformance simulation", async () => {
+    m.hostedSetup.mockResolvedValue({
+      ...hostedSetup("interactive", {
+        ...host,
+        mcpProfile: {
+          ...host.mcpProfile,
+          paginationTraversal: "firstPageOnly",
+          toolParamHeaderMirroring: "omit",
+          mrtrSupport: "none",
+        },
+      }),
+      authoritativeConnectionPolicy: true,
+    });
+    const { setup } = await resolveSetup({ hostId: "host" });
+    expect(setup.value?.effectiveInitializePins).toMatchObject({
+      clientInfo: { name: "saved-client", version: "1.0" },
+      firstPageOnly: true,
+      mirrorToolParamHeaders: false,
+      supportsMrtr: false,
+    });
+  });
+  it("matches real producing and App connection fingerprints without body pins", async () => {
+    m.hostedSetup.mockResolvedValue({
+      ...hostedSetup("interactive", host),
+      authoritativeConnectionPolicy: true,
+    });
+    const { setup } = await resolveSetup({ hostId: "host" });
+    const server = http.createServer(toNodeHandler(createFixtureHandler()));
+    const producing = new MCPClientManager();
+    const app = new MCPClientManager();
+    try {
+      await new Promise<void>((resolve) =>
+        server.listen(0, "127.0.0.1", resolve),
+      );
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new Error("No fixture address");
+      const connection = {
+        url: `http://127.0.0.1:${address.port}/mcp`,
+        timeout: 10_000,
+        clientCapabilities: {
+          extensions: {
+            "io.modelcontextprotocol/ui": {
+              mimeTypes: ["text/html;profile=mcp-app"],
+            },
+          },
+        },
+      };
+      await producing.connectToServer("fixture", {
+        ...connection,
+        ...setup.value?.effectiveInitializePins,
+      });
+      await app.connectToServer("fixture", {
+        ...connection,
+        ...buildHostConnectionPins(host, 300_000).initializePins,
+      });
+      expect(retainedProfileFingerprint(producing, "fixture")).toBe(
+        retainedProfileFingerprint(app, "fixture"),
+      );
+    } finally {
+      await producing.disconnectAllServers();
+      await app.disconnectAllServers();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
   });
 });

@@ -82,6 +82,34 @@ describe("caniuse capability catalog", () => {
     expect(getCaniuseSupportLabel("unknown")).toBe("Not yet tested");
   });
 
+  it("publishes Event delivery, unknown until a client's modes are saved", () => {
+    const ids = PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id);
+    expect(ids).toContain("eventsDeliveryModes");
+
+    const field = hostConfigField("eventsDeliveryModes");
+    const withEvents = (events: unknown) =>
+      ({
+        ...emptyHostConfigInputV2(),
+        hostStyle: "chatgpt",
+        mcpProfile: {
+          profileVersion: 1,
+          extensions: { "com.mcpjam/events": events },
+        },
+      }) as never;
+
+    expect(getCaniuseSupportLevel(field, withEvents({ webhook: true }))).toBe(
+      "partial",
+    );
+    expect(getCaniuseSupportLevel(field, withEvents({}))).toBe("neutral");
+    // ChatGPT's style default is webhook, but nothing saved is no reading.
+    expect(
+      getCaniuseSupportLevel(field, {
+        ...emptyHostConfigInputV2(),
+        hostStyle: "chatgpt",
+      } as never),
+    ).toBe("unknown");
+  });
+
   it("publishes pagination as a yes/no row, unknown until probed", () => {
     const ids = PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id);
     expect(ids).toContain("paginationTraversal");
@@ -143,6 +171,7 @@ describe("caniuse capability catalog", () => {
     expect(ids).not.toContain("modelId");
     expect(ids).not.toContain("temperature");
     expect(ids).not.toContain("systemPrompt");
+    expect(ids).not.toContain("requireToolApproval");
     expect(ids).not.toContain("clientInfo.name");
     expect(ids).not.toContain("connectionDefaults.headers");
     expect(ids).not.toContain("connectionDefaults.requestTimeout");
@@ -229,6 +258,50 @@ describe("unmeasured rows stay off the public surface", () => {
       expect(getCaniuseSupportLevel(field, config)).toBe("unknown");
     }
     expect(getCaniuseSupportLabel("unknown")).toBe("Not yet tested");
+  });
+});
+
+describe("mid-session sign-in rows", () => {
+  const AUTH_FIELD_IDS = [
+    "unauthorizedChallenge",
+    "unauthorizedChallengeTrigger",
+    "toolResultAuthChallenge",
+    "toolResultAuthChallengeTrigger",
+  ];
+  const withProfile = (profile: Record<string, string>) =>
+    ({
+      ...emptyHostConfigInputV2(),
+      mcpProfile: { profileVersion: 1, ...profile },
+    }) as never;
+
+  it("stays off the public capability pages and Compare until measured", () => {
+    // The preset values come from vendor docs, not a probe, and a capability
+    // page stamps every column "Last verified".
+    const publicIds = PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id);
+    const compareIds = CLIENT_COMPARE_FIELDS.map((field) => field.id);
+    for (const id of AUTH_FIELD_IDS) {
+      expect(publicIds).not.toContain(id);
+      expect(compareIds).not.toContain(id);
+      expect(getCaniuseCapabilityForField(hostConfigField(id))).toBeNull();
+    }
+  });
+
+  it("reads an action as a support level, unknown until measured", () => {
+    for (const id of ["unauthorizedChallenge", "toolResultAuthChallenge"]) {
+      const field = hostConfigField(id);
+      expect(getCaniuseSupportLevel(field, withProfile({ [id]: "prompt" }))).toBe(
+        "supported"
+      );
+      expect(getCaniuseSupportLevel(field, withProfile({ [id]: "notify" }))).toBe(
+        "partial"
+      );
+      expect(
+        getCaniuseSupportLevel(field, withProfile({ [id]: "passthrough" }))
+      ).toBe("unsupported");
+      // Absent is a real default for the emulator, but not a fact about a
+      // host nobody measured.
+      expect(getCaniuseSupportLevel(field, withProfile({}))).toBe("unknown");
+    }
   });
 });
 

@@ -197,3 +197,46 @@ describe("interactive authorization session", () => {
     });
   });
 });
+
+describe("interactive authorization cancellation", () => {
+  it("rejects promptly with the abort reason even when opening the browser hangs", async () => {
+    const session = await createInteractiveAuthorizationSession();
+    const controller = new AbortController();
+    const reason = new Error("Run timed out after 1 seconds");
+    const remove = vi.spyOn(controller.signal, "removeEventListener");
+    try {
+      const pending = session.authorize({
+        authorizationUrl: "https://auth.example.com/authorize",
+        timeoutMs: 300_000,
+        signal: controller.signal,
+        openUrl: () => new Promise<void>(() => {}),
+      });
+      const rejected = expect(pending).rejects.toBe(reason);
+      controller.abort(reason);
+      await rejected;
+      expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
+    } finally {
+      await session.stop();
+    }
+    await expect(fetch(session.redirectUrl)).rejects.toThrow();
+  });
+
+  it("does not open a browser for an already aborted signal", async () => {
+    const session = await createInteractiveAuthorizationSession();
+    const reason = new Error("cancelled");
+    const openUrl = vi.fn();
+    try {
+      await expect(
+        session.authorize({
+          authorizationUrl: "https://auth.example.com/authorize",
+          timeoutMs: 300_000,
+          signal: AbortSignal.abort(reason),
+          openUrl,
+        })
+      ).rejects.toBe(reason);
+      expect(openUrl).not.toHaveBeenCalled();
+    } finally {
+      await session.stop();
+    }
+  });
+});
