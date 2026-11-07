@@ -1681,7 +1681,7 @@ describe("ConformanceTab", () => {
     // Apps and Tasks finished, yet no headline number claims a result.
     await waitFor(() => expect(mockRunTasks).toHaveBeenCalled());
     expect(screen.queryByText(/^\d+\/\d+ · partial$/)).toBeNull();
-    expect(screen.queryByText("Fully conformant.")).toBeNull();
+    expect(screen.queryByText("Conformant.")).toBeNull();
   });
 
   it("counts only the suites the run covers in its progress", async () => {
