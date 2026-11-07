@@ -3034,6 +3034,8 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
   ) => Promise<T>,
   options?: {
     timeoutMs?: number;
+    /** False forbids personal plugin placement even when the host has a Computer. */
+    pluginComputerRuntime?: boolean;
     guestUnsupportedMessage?: string;
     tolerateServerRefusals?: boolean;
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
@@ -3081,6 +3083,8 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     /** See `createAuthorizedManager`; no MCP initialization before authorization. */
     lazyConnect?: boolean;
     timeoutMs?: number;
+    /** False forbids personal plugin placement even when the host has a Computer. */
+    pluginComputerRuntime?: boolean;
     guestUnsupportedMessage?: string;
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
     httpLogger?: ReturnType<typeof createHostedRpcLogCollector>["httpLogger"];
@@ -3282,7 +3286,8 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     (runHostConfig ? hostClientCapabilities(runHostConfig) : undefined) ??
       (raw.clientCapabilities as Record<string, unknown> | undefined),
     {
-      pluginComputerRuntime: !!runHostConfig?.computer,
+      pluginComputerRuntime:
+        options?.pluginComputerRuntime !== false && !!runHostConfig?.computer,
       ...(options?.lazyConnect ? { lazyConnect: true } : {}),
       ...(typeof raw.connectionId === "string" &&
       typeof raw.serverId === "string"
@@ -3449,6 +3454,8 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
   options?: {
     beforeOperation?: (body: z.infer<S>) => Promise<void>;
     timeoutMs?: number;
+    /** False forbids personal plugin placement even when the host has a Computer. */
+    pluginComputerRuntime?: boolean;
     rpcLogs?: boolean;
     guestUnsupportedMessage?: string;
     /** See `createAuthorizedManager`'s option of the same name. */
@@ -3512,6 +3519,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       },
       {
         timeoutMs: options?.timeoutMs,
+        pluginComputerRuntime: options?.pluginComputerRuntime,
         guestUnsupportedMessage: options?.guestUnsupportedMessage,
         tolerateServerRefusals: options?.tolerateServerRefusals,
         rpcLogger: rpcCollector?.rpcLogger,
