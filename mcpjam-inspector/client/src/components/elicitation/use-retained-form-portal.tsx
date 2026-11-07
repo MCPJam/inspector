@@ -16,15 +16,16 @@ export function useRetainedFormPortal(
   workspaceId?: string,
   canRestoreFocus?: () => boolean,
   terminal = false,
+  fallbackWithoutSlot = false,
 ) {
   const [target] = useState(() => document.createElement("div"));
   const [hasSlot, setHasSlot] = useState(!!slot);
   const [fallbackSlot, setFallbackSlot] = useState<HTMLDivElement | null>(null);
   const returnFocus = useFormDialogFocus(
-    workspaceId, workspaceId, hasSlot && !slot && visible, canRestoreFocus,
+    workspaceId, workspaceId, (hasSlot || fallbackWithoutSlot) && !slot && visible, canRestoreFocus,
   );
   const restore = useRef(returnFocus);
-  restore.current = returnFocus;
+  useLayoutEffect(() => { restore.current = returnFocus; });
   useEffect(() => {
     if (terminal) queueMicrotask(() => {
       if (!target.isConnected || !target.hasChildNodes()) restore.current();
@@ -86,7 +87,7 @@ export function useRetainedFormPortal(
     };
   }, [destination, target]);
   const fallback =
-    hasSlot && !slot && visible ? (
+    (hasSlot || fallbackWithoutSlot) && !slot && visible ? (
       <Dialog open>
         <DialogContent
           onCloseAutoFocus={returnFocus}
@@ -106,7 +107,7 @@ export function useRetainedFormPortal(
   return {
     target,
     onCloseAutoFocus: returnFocus,
-    ready: !!slot || hasSlot,
+    ready: !!slot || hasSlot || fallbackWithoutSlot,
     render: (children: ReactNode) => (
       <>
         {fallback}
