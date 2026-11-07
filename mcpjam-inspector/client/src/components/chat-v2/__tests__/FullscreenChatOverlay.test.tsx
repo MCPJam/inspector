@@ -774,4 +774,51 @@ describe("FullscreenChatOverlay", () => {
       ).not.toBeInTheDocument();
     });
   });
+
+  // PLB-456: the same refusal and spinner as the docked composer while a send
+  // is being prepared.
+  describe("send in progress", () => {
+    it("shows a disabled spinner and ignores Enter and submit", () => {
+      const onSend = vi.fn();
+      renderWithProviders(
+        <FullscreenChatOverlay
+          {...defaultProps}
+          input="Follow up"
+          canSend={true}
+          isSubmitting={true}
+          onSend={onSend}
+        />,
+      );
+
+      const sending = screen.getByRole("button", { name: "Sending message" });
+      expect(sending).toBeDisabled();
+      expect(sending.querySelector("svg.animate-spin")).not.toBeNull();
+      fireEvent.keyDown(screen.getByPlaceholderText("Message…"), {
+        key: "Enter",
+      });
+      fireEvent.submit(screen.getByTestId("fullscreen-composer"));
+      expect(onSend).not.toHaveBeenCalled();
+    });
+
+    it("sends on Enter again once the preparation is over", () => {
+      const onSend = vi.fn();
+      renderWithProviders(
+        <FullscreenChatOverlay
+          {...defaultProps}
+          input="Follow up"
+          canSend={true}
+          isSubmitting={false}
+          onSend={onSend}
+        />,
+      );
+
+      fireEvent.keyDown(screen.getByPlaceholderText("Message…"), {
+        key: "Enter",
+      });
+      expect(onSend).toHaveBeenCalledTimes(1);
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeEnabled();
+    });
+  });
 });

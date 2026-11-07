@@ -17,6 +17,7 @@ import { useHostContextStore } from "@/stores/client-context-store";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { saveSelectedModelId } from "@/lib/selected-model-storage";
 import { invalidateChatHistoryPrefetch } from "@/components/chat-v2/history/chat-history-prefetch";
+import { PRE_SEND_SYNC_TIMEOUT_MS } from "@/components/chat-v2/history/pre-send-sync";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
 import {
   resetShownPluginNotices,
@@ -2076,6 +2077,303 @@ describe("PlaygroundMain", () => {
     // the inner Thread reads the host id from `ScenarioHostStyleProvider`
     // context. Brand-indicator behavior is covered in
     // `LoadingIndicatorContent.test.tsx` and `Thread.test.tsx`.
+  });
+
+  // PLB-456: a send waits on the pre-send history sync while the draft is
+  // still in the box. A second Enter (or a Send click) in that window must not
+  // start a second send.
+  describe("send in progress", () => {
+    const session = {
+      _id: "history-1",
+      chatSessionId: "chat-session-1",
+      firstMessagePreview: "Hello",
+      status: "active" as const,
+      directVisibility: "private" as const,
+      messageCount: 2,
+      version: 4,
+      startedAt: 1,
+      lastActivityAt: 1,
+      isPinned: false,
+      manualUnread: false,
+      isUnread: false,
+      messagesBlobUrl: "https://storage.test/blob",
+      resumeConfig: { selectedServers: ["test-server"] },
+    };
+    const detail = { ok: true, session, widgetSnapshots: [] };
+    let originalSendMessage: unknown;
+    let sendMessage: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      invalidateChatHistoryPrefetch();
+      originalSendMessage = mockUseChatSession.sendMessage;
+      // `undefined` reads as a refused send; these tests need sends that go out.
+      sendMessage = vi.fn().mockResolvedValue(true);
+      mockUseChatSession.sendMessage = sendMessage;
+      mockUseChatSession.messages = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+        { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
+      ];
+    });
+
+    afterEach(() => {
+      mockUseChatSession.sendMessage = originalSendMessage;
+      invalidateChatHistoryPrefetch();
+    });
+
+    const composerProps = () =>
+      mockChatInputProps.mock.calls.at(-1)?.[0] as {
+        value: string;
+        isSubmitting?: boolean;
+      };
+
+    async function openSavedThread() {
+      mockGetChatHistoryDetail.mockResolvedValueOnce(detail);
+      const view = render(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null,
+        );
+      });
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(session));
+      });
+      fireEvent.click(
+        screen.getByTestId("conversation-target-notice-acknowledge"),
+      );
+      return view;
+    }
+
+    /** Every pre-send sync from here on waits on the same pending request. */
+    function holdPreSendSync() {
+      let resolve!: () => void;
+      const pending = new Promise((done) => {
+        resolve = () => done(detail);
+      });
+      mockGetChatHistoryDetail.mockReturnValue(pending);
+      return resolve;
+    }
+
+    it("sends once when a second submit lands while the pre-send sync is pending", async () => {
+      await openSavedThread();
+      const releaseSync = holdPreSendSync();
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "second message" },
+      });
+
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      expect(composerProps().isSubmitting).toBe(true);
+      expect(sendMessage).not.toHaveBeenCalled();
+      const rendersBeforeRelease = mockChatInputProps.mock.calls.length;
+
+      await act(async () => releaseSync());
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "second message" }),
+      );
+      expect(composerProps()).toMatchObject({ isSubmitting: false, value: "" });
+      // The lock is never released while the sent draft is still in the box,
+      // so Enter can't send it again in between.
+      for (const [props] of mockChatInputProps.mock.calls.slice(
+        rendersBeforeRelease,
+      )) {
+        expect(props.isSubmitting === false && props.value !== "").toBe(false);
+      }
+    });
+
+    it("keeps the draft and frees Send when the pre-send sync fails", async () => {
+      await openSavedThread();
+      mockGetChatHistoryDetail.mockRejectedValue(new Error("network down"));
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "another message" },
+      });
+
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(composerProps()).toMatchObject({
+        value: "another message",
+      });
+      expect(composerProps().isSubmitting).toBeFalsy();
+
+      mockGetChatHistoryDetail.mockResolvedValue(detail);
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("gives up on a pre-send sync that never answers, frees Send and keeps the draft", async () => {
+      await openSavedThread();
+      const timeout = new AbortController();
+      const timeoutSpy = vi
+        .spyOn(AbortSignal, "timeout")
+        .mockReturnValue(timeout.signal);
+      try {
+        // A history request that only ends when its signal aborts.
+        mockGetChatHistoryDetail.mockImplementation(
+          (_params: unknown, options?: { signal?: AbortSignal }) =>
+            new Promise((_resolve, reject) => {
+              options?.signal?.addEventListener("abort", () =>
+                reject(options.signal?.reason),
+              );
+            }),
+        );
+        fireEvent.change(screen.getByTestId("chat-input-field"), {
+          target: { value: "stuck message" },
+        });
+        await act(async () => {
+          fireEvent.submit(screen.getByTestId("chat-input"));
+        });
+        expect(composerProps().isSubmitting).toBe(true);
+        expect(timeoutSpy).toHaveBeenCalledWith(PRE_SEND_SYNC_TIMEOUT_MS);
+
+        await act(async () => {
+          timeout.abort(new DOMException("timed out", "TimeoutError"));
+        });
+
+        await waitFor(() => expect(composerProps().isSubmitting).toBe(false));
+        expect(composerProps().value).toBe("stuck message");
+        expect(sendMessage).not.toHaveBeenCalled();
+      } finally {
+        timeoutSpy.mockRestore();
+      }
+    });
+
+    it("sends once when the fullscreen composer submits twice during the pre-send sync", async () => {
+      const deviceType = mockUIPlaygroundStore.deviceType;
+      mockUIPlaygroundStore.deviceType = "fill";
+      useHostContextStore.setState({
+        draftHostContext: { displayMode: "fullscreen" },
+      });
+      try {
+        const { rerender } = await openSavedThread();
+        // A widget going fullscreen swaps the docked composer for the overlay.
+        await act(async () => {
+          rerender(<PlaygroundMain {...defaultProps} />);
+        });
+        await act(async () => {
+          mockThread.mock.calls.at(-1)?.[0].onFullscreenChange(true);
+        });
+        expect(screen.getByTestId("fullscreen-overlay")).toBeInTheDocument();
+        const overlay = () =>
+          mockFullscreenChatOverlay.mock.calls.at(-1)?.[0] as {
+            onSend: () => void;
+            isSubmitting?: boolean;
+          };
+
+        const releaseSync = holdPreSendSync();
+        fireEvent.change(screen.getByTestId("fullscreen-overlay-input"), {
+          target: { value: "from fullscreen" },
+        });
+        await act(async () => {
+          overlay().onSend();
+          overlay().onSend();
+        });
+        expect(overlay().isSubmitting).toBe(true);
+
+        await act(async () => releaseSync());
+        await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+        expect(overlay().isSubmitting).toBe(false);
+      } finally {
+        mockUIPlaygroundStore.deviceType = deviceType;
+      }
+    });
+
+    it("sends a starter prompt once when it is clicked twice while the server connects", async () => {
+      mockUseChatSession.messages = [];
+      mockSharedAppState.servers["test-server"] = {
+        connectionStatus: "disconnected",
+      };
+      const readies: Array<() => void> = [];
+      const ready = () => readies.forEach((r) => r());
+      const ensureServersReady = vi.fn(
+        () =>
+          new Promise((done) => {
+            readies.push(() =>
+              done({
+                readyServerNames: ["test-server"],
+                missingServerNames: [],
+                failedServerNames: [],
+                reauthServerNames: [],
+              }),
+            );
+          }),
+      );
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          ensureServersReady={ensureServersReady}
+        />,
+      );
+
+      const chip = screen.getByRole("button", { name: "Starter chip" });
+      // Separate events, as two real clicks are: the first one's re-render
+      // lands in between.
+      await act(async () => {
+        fireEvent.click(chip);
+      });
+      await act(async () => {
+        fireEvent.click(chip);
+      });
+      await act(async () => ready());
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      // The second click never started a send of its own.
+      expect(ensureServersReady).toHaveBeenCalledTimes(1);
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "Starter chip prompt" }),
+      );
+    });
+
+    it("resends once when the error banner's Retry is clicked twice during the pre-send sync", async () => {
+      mockUseChatSession.error = Object.assign(
+        new Error("The organization's AI provider is unavailable."),
+        { formatted: { code: "provider_unavailable" } },
+      );
+      await openSavedThread();
+      const releaseSync = holdPreSendSync();
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("error-box-retry"));
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("error-box-retry"));
+      });
+      await act(async () => releaseSync());
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "Hello" }),
+      );
+    });
+
+    it("still sends the same text twice when the user repeats it on purpose", async () => {
+      await openSavedThread();
+      mockGetChatHistoryDetail.mockResolvedValue(detail);
+
+      for (let round = 0; round < 2; round += 1) {
+        fireEvent.change(screen.getByTestId("chat-input-field"), {
+          target: { value: "same prompt" },
+        });
+        await act(async () => {
+          fireEvent.submit(screen.getByTestId("chat-input"));
+        });
+        await waitFor(() =>
+          expect(sendMessage).toHaveBeenCalledTimes(round + 1),
+        );
+      }
+      expect(sendMessage.mock.calls.map(([options]) => options.text)).toEqual([
+        "same prompt",
+        "same prompt",
+      ]);
+    });
   });
 
   describe("thread theme from host context", () => {

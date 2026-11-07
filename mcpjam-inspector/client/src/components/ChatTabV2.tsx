@@ -4,6 +4,7 @@ import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { modelRowKey } from "@/components/chat-v2/shared/model-selection";
 import { useCompareSelections } from "@/hooks/use-compare-selections";
 import { useModelPickerEfforts } from "@/hooks/use-model-picker-efforts";
+import { useSingleFlight } from "@/hooks/use-single-flight";
 import {
   compareSelectionForRow,
   mergePickedRows,
@@ -126,6 +127,7 @@ import {
   type ChatHistoryTurnTrace,
   type ChatHistoryWidgetSnapshot,
 } from "@/lib/apis/web/chat-history-api";
+import { PRE_SEND_SYNC_TIMEOUT_MS } from "@/components/chat-v2/history/pre-send-sync";
 import { useProjectServers } from "@/hooks/useViews";
 import { useProjectMembers } from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
@@ -861,7 +863,11 @@ export function ChatTabV2({
   );
 
   const refreshCurrentHistorySession = useCallback(
-    async ({ retries = 0, markRead = false } = {}) => {
+    async ({
+      retries = 0,
+      markRead = false,
+      signal,
+    }: { retries?: number; markRead?: boolean; signal?: AbortSignal } = {}) => {
       if (!showHistoryRail) {
         return null;
       }
@@ -872,11 +878,14 @@ export function ChatTabV2({
 
       for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
-          const detail = await getChatHistoryDetail({
-            sessionId: activeHistorySessionId ?? undefined,
-            chatSessionId,
-            projectId: effectiveHostedProjectId ?? undefined,
-          });
+          const detail = await getChatHistoryDetail(
+            {
+              sessionId: activeHistorySessionId ?? undefined,
+              chatSessionId,
+              projectId: effectiveHostedProjectId ?? undefined,
+            },
+            { signal },
+          );
           setActiveHistorySessionId(detail.session._id);
           setLoadedThreadOwnerUserId(detail.session.userId ?? null);
           setPendingDirectVisibility(detail.session.directVisibility);
@@ -975,7 +984,10 @@ export function ChatTabV2({
   const ensureThreadReadyForSend = useCallback(async () => {
     let detail: ChatHistoryDetailSession | null = null;
     try {
-      detail = await refreshCurrentHistorySession();
+      // Bounded: the composer's send lock waits on this request.
+      detail = await refreshCurrentHistorySession({
+        signal: AbortSignal.timeout(PRE_SEND_SYNC_TIMEOUT_MS),
+      });
     } catch (error) {
       console.error(
         "[ChatTabV2] Failed to sync chat history before send",
@@ -1868,11 +1880,15 @@ export function ChatTabV2({
   // surfaces on failures where resending is the whole fix (see the
   // `canRetryLastMessage` gate below), so we don't risk firing this on
   // unrelated retryable errors.
+  // One send at a time for the composer and Retry (see `onSubmit`).
+  const composerSend = useSingleFlight();
   const handleRetryLastMessage = useCallback(() => {
     const text = lastSentUserMessageRef.current;
     if (!text) return;
-    sendMessage({ text, metadata: outgoingSenderMetadata });
-  }, [sendMessage, outgoingSenderMetadata]);
+    void composerSend.run(() =>
+      sendMessage({ text, metadata: outgoingSenderMetadata }),
+    );
+  }, [sendMessage, outgoingSenderMetadata, composerSend.run]);
 
   // Rewind to a past user message and re-run the turn from edited text. The
   // thread BRANCHES — `rewindToMessage` seeds a fresh session with the prefix,
@@ -2245,8 +2261,7 @@ export function ChatTabV2({
     signUp();
   };
 
-  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const submitComposer = async () => {
     const hasContent =
       input.trim() ||
       mcpPromptResults.length > 0 ||
@@ -2317,6 +2332,14 @@ export function ChatTabV2({
     }
   };
 
+  // One submit at a time: the history sync above runs with the draft still in
+  // the box, where a second Enter would send it again. `preventDefault` stays
+  // first so a refused submit never falls through to a native form submit.
+  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await composerSend.run(submitComposer);
+  };
+
   const handleStarterPrompt = async (prompt: string) => {
     track("chat_starter_prompt_clicked", { prompt, location: "chat_tab" });
     if (composerDisabled || sendBlocked) {
@@ -2376,6 +2399,7 @@ export function ChatTabV2({
     stop: stopActiveChat,
     disabled: composerDisabled,
     isLoading: isStreamingActive,
+    isSubmitting: composerSend.pending,
     placeholder,
     currentModel: selectedModel,
     availableModels,

@@ -1,9 +1,10 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, FormEvent, ReactNode } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
 import { track } from "@/lib/analytics";
 import { ChatTabV2 } from "../ChatTabV2";
+import { PRE_SEND_SYNC_TIMEOUT_MS } from "@/components/chat-v2/history/pre-send-sync";
 import {
   NO_RECEIPT_RECONCILE_WINDOW_MS,
   RECEIPT_RECONCILE_WINDOW_MS,
@@ -263,19 +264,29 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
   ChatInput: ({
     value,
     onChange,
+    onSubmit,
+    isSubmitting,
     enableMultiModel,
   }: {
     value: string;
     onChange: (value: string) => void;
+    onSubmit?: (event: FormEvent<HTMLFormElement>) => void;
+    isSubmitting?: boolean;
     enableMultiModel?: boolean;
   }) => (
-    <input
-      aria-label="Chat input"
-      data-testid="chat-input"
-      data-enable-multi-model={enableMultiModel ? "true" : "false"}
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-    />
+    <form
+      data-testid="chat-input-form"
+      data-submitting={isSubmitting ? "true" : "false"}
+      onSubmit={(event) => onSubmit?.(event)}
+    >
+      <input
+        aria-label="Chat input"
+        data-testid="chat-input"
+        data-enable-multi-model={enableMultiModel ? "true" : "false"}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </form>
   ),
 }));
 
@@ -1022,6 +1033,113 @@ describe("ChatTabV2 history sync", () => {
     expect(mockToastError).not.toHaveBeenCalled();
   });
 
+  // PLB-456: a send waits on the pre-send history sync with the draft still in
+  // the box; a second submit in that window must not send it again.
+  it("sends once when a second submit lands while the pre-send sync is pending", async () => {
+    const detailResponse = {
+      ok: true,
+      session: {
+        ...mockHistorySession,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["server-1"] },
+      },
+      widgetSnapshots: [],
+    };
+    mockGetChatHistoryDetail.mockResolvedValue(detailResponse);
+    render(<ChatTabV2 {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+
+    const sync = createDeferred<typeof detailResponse>();
+    mockGetChatHistoryDetail.mockReturnValue(sync.promise);
+    fireEvent.change(screen.getByTestId("chat-input"), {
+      target: { value: "second message" },
+    });
+    fireEvent.submit(screen.getByTestId("chat-input-form"));
+    fireEvent.submit(screen.getByTestId("chat-input-form"));
+    await flushMicrotasks();
+    expect(screen.getByTestId("chat-input-form")).toHaveAttribute(
+      "data-submitting",
+      "true",
+    );
+
+    sync.resolve(detailResponse);
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "second message" }),
+    );
+    expect(screen.getByTestId("chat-input")).toHaveValue("");
+    expect(screen.getByTestId("chat-input-form")).toHaveAttribute(
+      "data-submitting",
+      "false",
+    );
+    // `clearAllMocks` keeps implementations; don't hand the next test this
+    // test's history response.
+    mockGetChatHistoryDetail.mockReset();
+  });
+
+  it("gives up on a pre-send sync that never answers and frees Send", async () => {
+    const detailResponse = {
+      ok: true,
+      session: {
+        ...mockHistorySession,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["server-1"] },
+      },
+      widgetSnapshots: [],
+    };
+    mockGetChatHistoryDetail.mockResolvedValue(detailResponse);
+    render(<ChatTabV2 {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+
+    const timeout = new AbortController();
+    const timeoutSpy = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockReturnValue(timeout.signal);
+    try {
+      mockGetChatHistoryDetail.mockImplementation(
+        (_params: unknown, options?: { signal?: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            options?.signal?.addEventListener("abort", () =>
+              reject(options.signal?.reason),
+            );
+          }),
+      );
+      fireEvent.change(screen.getByTestId("chat-input"), {
+        target: { value: "stuck message" },
+      });
+      fireEvent.submit(screen.getByTestId("chat-input-form"));
+      await flushMicrotasks();
+      expect(screen.getByTestId("chat-input-form")).toHaveAttribute(
+        "data-submitting",
+        "true",
+      );
+      expect(timeoutSpy).toHaveBeenCalledWith(PRE_SEND_SYNC_TIMEOUT_MS);
+
+      timeout.abort(new DOMException("timed out", "TimeoutError"));
+      await flushMicrotasks();
+      await flushMicrotasks();
+
+      expect(screen.getByTestId("chat-input-form")).toHaveAttribute(
+        "data-submitting",
+        "false",
+      );
+      expect(screen.getByTestId("chat-input")).toHaveValue("stuck message");
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    } finally {
+      timeoutSpy.mockRestore();
+      // `clearAllMocks` keeps implementations; don't hand the next test a
+      // history request that never answers.
+      mockGetChatHistoryDetail.mockReset();
+    }
+  });
+
   it("switches new shared threads to project visibility without persisting a draft", async () => {
     render(<ChatTabV2 {...defaultProps} />);
 
@@ -1273,6 +1391,37 @@ describe("ChatTabV2 history sync", () => {
     expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ text: "Edited text should not leak" })
     );
+  });
+
+  it("resends once when Retry is clicked twice while the resend is being prepared", async () => {
+    mockUseChatSession.rewindToMessage.mockResolvedValue({
+      previousChatSessionId: "prev-session-1",
+    });
+    mockUseChatSession.error = Object.assign(
+      new Error("The organization's AI provider is unavailable."),
+      { formatted: { code: "provider_unavailable" } },
+    );
+    // One-shot answer for the edit's pre-send sync, so nothing leaks onward.
+    mockGetChatHistoryDetail.mockResolvedValueOnce({
+      ok: true,
+      session: {
+        ...mockHistorySession,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["server-1"] },
+      },
+      widgetSnapshots: [],
+    });
+    render(<ChatTabV2 {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit first message" }));
+    await flushMicrotasks();
+    // The first resend is still preparing when the second click lands.
+    mockUseChatSession.sendMessage.mockReturnValueOnce(new Promise(() => {}));
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await flushMicrotasks();
+
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
   });
 
   it("offers Retry when the organization's AI policy couldn't be checked", () => {

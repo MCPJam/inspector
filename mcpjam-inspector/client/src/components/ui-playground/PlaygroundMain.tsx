@@ -29,6 +29,7 @@ import {
   type PluginNoticeData,
 } from "@/lib/plugins/plugin-notice-display";
 import { usePluginMessage } from "@/hooks/use-plugin-message";
+import { useSingleFlight } from "@/hooks/use-single-flight";
 import { useAppMessageDraft } from "@/components/host-workspace/use-app-message-draft";
 import { useChatThreadTransition } from "@/hooks/use-chat-thread-transition";
 import {
@@ -346,6 +347,7 @@ import {
   type ChatHistoryWidgetSnapshot,
   type ChatHistoryTurnTrace,
 } from "@/lib/apis/web/chat-history-api";
+import { PRE_SEND_SYNC_TIMEOUT_MS } from "@/components/chat-v2/history/pre-send-sync";
 import { resolveRestorableServerNames } from "@/components/chat-v2/history/session-restore";
 import {
   getCachedChatHistoryDetail,
@@ -962,7 +964,6 @@ export function PlaygroundMain({
     projectId: convexProjectId,
     isAuthenticated: isConvexAuthenticated,
   });
-  const attachmentUploadInFlightRef = useRef(false);
   const projectOrganizationId = activeProject?.organizationId ?? null;
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: convexProjectId,
@@ -3655,14 +3656,21 @@ export function PlaygroundMain({
   };
 
   const refreshCurrentHistorySession = useCallback(
-    async ({ retries = 0, markRead = false } = {}) => {
+    async ({
+      retries = 0,
+      markRead = false,
+      signal,
+    }: { retries?: number; markRead?: boolean; signal?: AbortSignal } = {}) => {
       if (!activeHistorySessionId && !chatSessionId) return null;
       for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
-          const detail = await getChatHistoryDetail({
-            chatSessionId,
-            projectId: convexProjectId ?? undefined,
-          });
+          const detail = await getChatHistoryDetail(
+            {
+              chatSessionId,
+              projectId: convexProjectId ?? undefined,
+            },
+            { signal },
+          );
           // A previous thread's request (or its still-rendered row id) must
           // never attach its persistence cursor to the newly opened chat.
           if (
@@ -3735,7 +3743,10 @@ export function PlaygroundMain({
 
     let detail: Awaited<ReturnType<typeof refreshCurrentHistorySession>> = null;
     try {
-      detail = await refreshCurrentHistorySession();
+      // Bounded: the composer's send lock waits on this request.
+      detail = await refreshCurrentHistorySession({
+        signal: AbortSignal.timeout(PRE_SEND_SYNC_TIMEOUT_MS),
+      });
     } catch (error) {
       console.error(
         "[PlaygroundMain] Failed to sync chat history before send",
@@ -4656,7 +4667,7 @@ export function PlaygroundMain({
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
-      void (async () => {
+      return (async () => {
         // Same gate as the composer, and for the same reason: a widget-driven
         // follow-up on a reopened conversation would otherwise be the FIRST
         // thing that runs on a target the transcript never used, with no user
@@ -5239,7 +5250,8 @@ export function PlaygroundMain({
     skillResults.length > 0 ||
     fileAttachments.length > 0;
 
-  // Submit handler — shared by the composer form and eval Quick Run.
+  // Submit handler — the docked composer and the fullscreen overlays reach it
+  // through `performComposerSubmit`, one submit at a time.
 
   const submitComposer = useCallback(async (): Promise<boolean> => {
     if (isCompareMode && !ensureCompareReady()) return false;
@@ -5257,7 +5269,7 @@ export function PlaygroundMain({
       return false;
     }
     // The composer is disabled in this state, so this is the belt to that
-    // brace: Enter-to-send, starter chips and eval Quick Run all land here.
+    // brace: Enter-to-send and the fullscreen overlays' Send land here.
     if (conversationSendBlockedRef.current) {
       return false;
     }
@@ -5287,10 +5299,6 @@ export function PlaygroundMain({
     // et al. keep working).
     let composerText = composer.input;
     if (fileAttachments.length > 0 && computerAttachmentsActive) {
-      if (attachmentUploadInFlightRef.current) {
-        return false;
-      }
-      attachmentUploadInFlightRef.current = true;
       try {
         const entries = await computerAttachmentUpload.uploadAttachments(
           fileAttachments.map((a) => a.file),
@@ -5320,8 +5328,6 @@ export function PlaygroundMain({
           );
         }
         return false;
-      } finally {
-        attachmentUploadInFlightRef.current = false;
       }
     }
 
@@ -5414,15 +5420,22 @@ export function PlaygroundMain({
     computerAttachmentUpload,
   ]);
   // An App draft is refused for the whole submit, which captures the composer
-  // first and clears it last.
-  const performComposerSubmit = useCallback(async (): Promise<boolean> => {
-    const release = appMessageDraft.hold();
-    try {
-      return await submitComposer();
-    } finally {
-      release();
-    }
-  }, [submitComposer, appMessageDraft.hold]);
+  // first and clears it last. One submit at a time: the gates above await the
+  // network with the draft still in the box, where a second Enter would send
+  // it again. The lock is released after the draft is cleared.
+  const composerSend = useSingleFlight();
+  const performComposerSubmit = useCallback(
+    async (): Promise<boolean> =>
+      (await composerSend.run(async () => {
+        const release = appMessageDraft.hold();
+        try {
+          return await submitComposer();
+        } finally {
+          release();
+        }
+      })) ?? false,
+    [submitComposer, appMessageDraft.hold, composerSend.run],
+  );
 
   const onboardingDeps = {
     onboardingLiveRef,
@@ -5640,9 +5653,18 @@ export function PlaygroundMain({
     ) {
       return;
     }
-    trackSendMessage({ single_model_send: true });
-    handleSendFollowUp(lastUserMessageText);
-  }, [lastUserMessageText, sendBlocked, trackSendMessage, handleSendFollowUp]);
+    // A resend of the same text: one at a time, like the composer.
+    void composerSend.run(async () => {
+      trackSendMessage({ single_model_send: true });
+      await handleSendFollowUp(lastUserMessageText);
+    });
+  }, [
+    lastUserMessageText,
+    sendBlocked,
+    trackSendMessage,
+    handleSendFollowUp,
+    composerSend.run,
+  ]);
   const errorRetryHandler =
     !isCompareMode &&
     lastUserMessageText &&
@@ -6012,6 +6034,7 @@ export function PlaygroundMain({
     stop: stopActiveChat,
     disabled: composerDisabled,
     isLoading: isStreamingActive,
+    isSubmitting: composerSend.pending,
     placeholder,
     currentModel: selectedModel,
     availableModels,
@@ -6632,6 +6655,7 @@ export function PlaygroundMain({
                 !needsConversationTargetAck
               }
               isThinking={isStreamingActive}
+              isSubmitting={composerSend.pending}
               onStop={stopActiveChat}
               // Same submit path as the docked composer. Its own copy dropped
               // attached prompts/skills (it sent raw text and then cleared the
@@ -6749,6 +6773,7 @@ export function PlaygroundMain({
               !sendBlocked && composerHasContent && !needsConversationTargetAck
             }
             isThinking={isStreamingActive}
+            isSubmitting={composerSend.pending}
             onStop={stopActiveChat}
             onSend={() => {
               setIsTakeoverChatOpen(true);
