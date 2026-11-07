@@ -1,4 +1,5 @@
 import { startLeaseHeartbeat } from "./lease-heartbeat.js";
+import { isCallToolResult } from "@modelcontextprotocol/client";
 import { deferCompletedTurnLeaseRelease, finishPendingPersist } from "../completed-turn-finalization.js";
 import { harnessAppTools } from "./app-tools";
 import { harnessStartupPart } from "@/shared/harness-startup";
@@ -3946,7 +3947,8 @@ export async function runHarnessTurn(
             const isError =
               errorEvent ||
               (part as { isError?: unknown }).isError === true ||
-              (part as { error?: unknown }).error != null;
+              (part as { error?: unknown }).error != null ||
+              (isCallToolResult(output) && output.isError === true);
             // Result-only resumes retain the saved MCP identity even when the
             // runtime echoes an unqualified tool name.
             const parsedMeta = harnessAdapter.parseToolName(
