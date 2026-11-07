@@ -26,6 +26,7 @@ export function ConformanceRunHeader({
   settingsLoading,
   showShare,
   savedRunId,
+  shareServerName,
   onRunAgain,
   runDisabled,
 }: {
@@ -43,6 +44,11 @@ export function ConformanceRunHeader({
   /** The run is saved, so it can be shared once it finishes. */
   showShare: boolean;
   savedRunId?: string | null;
+  /**
+   * The name the share card shows: set only when the run is saved against a
+   * saved server, so the card reads the same here and reopened from History.
+   */
+  shareServerName?: string;
   onRunAgain: () => void;
   runDisabled: boolean;
 }) {
@@ -92,7 +98,7 @@ export function ConformanceRunHeader({
               <ConformanceRunShareButton
                 runId={savedRunId}
                 finished={!busy}
-                serverName={serverName}
+                serverName={shareServerName}
               />
             ) : (
               // Not saved yet: Share waits for the run to finish.

@@ -144,26 +144,40 @@ export function formatShareCardScore(score: number): string {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
+type CheckCounts = Pick<
+  ShareCardSuite,
+  "applicable" | "passed" | "failed" | "couldNotRun"
+>;
+
+/**
+ * Checks that could not run only for want of an input. They count toward
+ * `couldNotRun` but not toward `applicable`: the split
+ * `describeConformanceScore` makes.
+ */
+function needsInputCount(counts: CheckCounts): number {
+  return Math.max(
+    0,
+    counts.passed + counts.failed + counts.couldNotRun - counts.applicable,
+  );
+}
+
 export function shareCardSuiteStatus(suite: ShareCardSuite): {
   label: string;
   tone: Tone;
 } {
   if (suite.applicable <= 0) return { label: "NOT SCORED", tone: "muted" };
   if (suite.failed > 0) return { label: "FAILED", tone: "bad" };
-  if (suite.couldNotRun > 0) return { label: "INCOMPLETE", tone: "warn" };
+  // A check that only needs an input doesn't hold a verdict back
+  // (`decideConformanceOutcome`), so it doesn't hold a suite back either.
+  if (suite.couldNotRun > needsInputCount(suite)) {
+    return { label: "INCOMPLETE", tone: "warn" };
+  }
   return { label: "PASSED", tone: "ok" };
 }
 
-/**
- * The parts of the checks line, each a count the score did not fold in.
- * A check that needs an input counts toward `couldNotRun` but not toward
- * `applicable`; this is the same split `describeConformanceScore` makes.
- */
+/** The parts of the checks line, each a count the score did not fold in. */
 export function shareCardChecksParts(data: ConformanceShareCardData): string[] {
-  const needsInput = Math.max(
-    0,
-    data.passed + data.failed + data.couldNotRun - data.applicable,
-  );
+  const needsInput = needsInputCount(data);
   const otherUnrun = data.couldNotRun - needsInput;
   const parts = [`${data.passed}/${data.applicable} checks passed`];
   if (data.failed > 0) parts.push(`${data.failed} failed`);
@@ -292,6 +306,18 @@ function round(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+/**
+ * A bar's unrun checks: those that could not run in amber, then those that
+ * need an input in grey, as the app's score bar draws them.
+ */
+function unrunSegments(counts: CheckCounts): Array<[number, string]> {
+  const needsInput = needsInputCount(counts);
+  return [
+    [counts.couldNotRun - needsInput, COLOR.warn],
+    [needsInput, COLOR.faint],
+  ];
+}
+
 /** The "+" marks where two frame lines cross. */
 function cross(x: number, y: number): string {
   return (
@@ -331,7 +357,7 @@ function suiteRow(
           [
             [suite.passed, COLOR.ok],
             [suite.failed, COLOR.bad],
-            [suite.couldNotRun, COLOR.warn],
+            ...unrunSegments(suite),
           ],
           2,
           false,
@@ -469,7 +495,7 @@ export function buildConformanceShareCardSvg(
       [
         [data.passed, COLOR.ok],
         [data.failed, COLOR.bad],
-        [data.couldNotRun, COLOR.warn],
+        ...unrunSegments(data),
         [data.notApplicable, COLOR.track],
       ],
       3,
