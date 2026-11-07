@@ -252,7 +252,8 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
   },
 }));
 
-vi.mock("lucide-react", () => ({
+vi.mock("lucide-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("lucide-react")>()),
   ExternalLink: (props: any) => <div {...props} />,
   X: (props: any) => <div {...props} />,
 }));
@@ -273,6 +274,7 @@ vi.mock("../../../../../../../../widget-react/src/mcp-apps-modal", () => ({
 
 // ── Import component under test (after mocks) ─────────────────────────────
 import { MCPAppsRenderer } from "../mcp-apps-renderer";
+import { ToolPart } from "../../parts/tool-part";
 import {
   WidgetFullscreenPlacementContext,
   WidgetHostProvider,
@@ -1404,6 +1406,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     function mountChat(
       presentation: ThreadAppPresentation = "model",
       openAIDisplayModes = false,
+      showControls = false,
     ) {
       const entered: { current: { label: string; exit: () => void } | null } =
         { current: null };
@@ -1413,6 +1416,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
           "inline",
         );
         const [owner, setOwner] = React.useState<string | null>(null);
+        const [modes, setModes] = React.useState<
+          ("inline" | "pip" | "fullscreen")[]
+        >();
         state.mode = mode;
         const placed = mode === "fullscreen" && owner !== null;
         return (
@@ -1433,11 +1439,30 @@ describe("MCPAppsRenderer tool input streaming", () => {
                 presentation={presentation}
                 openAIDisplayModes={openAIDisplayModes}
               >
+                {showControls && (
+                  <ToolPart
+                    part={{
+                      type: "dynamic-tool",
+                      toolName: baseProps.toolName,
+                      toolCallId: baseProps.toolCallId,
+                      state: "output-available",
+                      input: {},
+                      output: {},
+                    }}
+                    displayMode={mode}
+                    onDisplayModeChange={setMode}
+                    appSupportedDisplayModes={modes}
+                    minimalMode
+                  />
+                )}
                 <MCPAppsRenderer
                   {...baseProps}
                   displayMode={mode}
                   fullscreenWidgetId={owner}
                   onDisplayModeChange={setMode}
+                  onAppSupportedDisplayModesChange={
+                    showControls ? setModes : undefined
+                  }
                   onRequestFullscreen={setOwner}
                   onExitFullscreen={(id) =>
                     setOwner((current) => (current === id ? null : current))
@@ -1597,6 +1622,43 @@ describe("MCPAppsRenderer tool input streaming", () => {
         declare({ availableDisplayModes: ["fullscreen"] });
         const { state } = mountChat("model", true);
         await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
+      });
+
+      it("disables Inline for a fullscreen-only resource even when its App supports both modes", async () => {
+        declare({ availableDisplayModes: ["fullscreen"] });
+        const { state } = mountChat("model", true, true);
+        await initialize(["inline", "fullscreen"]);
+        const inline = screen.getByRole("button", { name: "Inline" });
+        expect(inline).toBeDisabled();
+        expect(screen.getByRole("button", { name: "Fullscreen" })).toBeEnabled();
+        fireEvent.click(inline);
+        expect(state.mode).toBe("fullscreen");
+        expect(
+          appBridgeArgsRef.current?.options?.hostContext.availableDisplayModes,
+        ).toEqual(["fullscreen"]);
+      });
+
+      it("updates controls when initialization narrows an inline-capable resource", async () => {
+        declare({ availableDisplayModes: ["inline", "fullscreen"] });
+        const { state } = mountChat("model", true, true);
+        await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+        const inline = screen.getByRole("button", { name: "Inline" });
+        expect(inline).toBeEnabled();
+        fireEvent.click(inline);
+        expect(state.mode).toBe("inline");
+        await initialize(["fullscreen"]);
+        expect(inline).toBeDisabled();
+        expect(state.mode).toBe("fullscreen");
+      });
+
+      it("disables all controls when initialization refuses an entrypoint", async () => {
+        declare({ availableDisplayModes: ["fullscreen"] });
+        mountChat("global", true, true);
+        await initialize(["inline"]);
+        expect(screen.getByText(/This App can't open here/)).toBeInTheDocument();
+        for (const name of ["Inline", "PiP", "Fullscreen"])
+          expect(screen.getByRole("button", { name })).toBeDisabled();
+        expect(mockBridge.close).toHaveBeenCalled();
       });
 
       it("offers every mode when the resource only states a preference", async () => {

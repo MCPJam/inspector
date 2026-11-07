@@ -24,12 +24,13 @@ it("removes fullscreen controls when the actual guest declares inline only", asy
   expect(f.iframeMounts).toBe(1);
   expect(f.app.call).not.toHaveBeenCalled();
 });
-it("refuses an empty post-initialize display intersection without replaying the App", async () => {
+it("closes an empty post-initialize display intersection without replay or later sends", async () => {
   f.app = appFor(["inline", "fullscreen"], "inline");
-  await open(true, { availableDisplayModes: ["pip"] });
+  const { guest } = await open(true, { availableDisplayModes: ["pip"] });
   await waitFor(() =>
     expect(screen.getByRole("alert")).toHaveTextContent(/display mode/i),
   );
+  await waitFor(() => expect(guest.transport).toBeUndefined());
   expect(f.iframeMounts).toBe(1);
   expect(f.openCount).toBe(1);
   expect(f.app.call).not.toHaveBeenCalled();
