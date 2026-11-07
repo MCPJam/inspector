@@ -125,7 +125,7 @@
       "tone": "fail"
     }
   ],
-  "pipelineVersion": 5,
+  "pipelineVersion": 6,
   "population": {
     "configured": 1,
     "graded": 1,
