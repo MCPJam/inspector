@@ -12,7 +12,7 @@ import { canRunConformance } from "@mcpjam/sdk/browser";
 import { Button } from "@mcpjam/design-system/button";
 import type { ServerWithName } from "@/state/app-types";
 import { routePaths } from "@/lib/app-navigation";
-import { track } from "@/lib/analytics";
+import { trackConformanceRunTriggered } from "@/hooks/conformance-run-analytics";
 import {
   runProtocolConformance,
   runAppsConformance,
@@ -120,7 +120,7 @@ export function ConformanceGate({
     const serverName = server.name;
     // One event per click, and only when a suite can actually run here.
     if (support.protocol.supported || support.apps.supported) {
-      track("conformance_run_triggered", { location, run_source: "ui" });
+      trackConformanceRunTriggered(location);
     }
 
     // Drop a write if the server changed or a newer run started mid-flight.

@@ -554,7 +554,7 @@ async function withSdkTelemetryWatched<T>(
   const posthogRequests: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
-    if (url.includes("posthog.com")) {
+    if (new URL(url).hostname === "us.i.posthog.com") {
       posthogRequests.push(url);
       return new Response("{}", { status: 200 });
     }

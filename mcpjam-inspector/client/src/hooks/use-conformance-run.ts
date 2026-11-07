@@ -17,7 +17,10 @@ import {
   type ConformanceScore,
 } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
-import { track } from "@/lib/analytics";
+import {
+  trackConformanceRunTriggered,
+  type ConformanceRunAnalyticsLocation,
+} from "./conformance-run-analytics";
 import {
   completeOAuthConformance,
   runAppsConformance,
@@ -60,25 +63,7 @@ import {
   loadSavedClientSecret,
   oauthTargetUrl,
 } from "@/lib/oauth/saved-client-secret";
-
-/** Only web URLs may open the authorization popup. */
-function isWebUrl(raw: string): boolean {
-  try {
-    const { protocol } = new URL(raw);
-    return protocol === "https:" || protocol === "http:";
-  } catch {
-    return false;
-  }
-}
-
-/** The OAuth popup, or null when the browser blocked it. */
-function openAuthorizationPopup(authorizationUrl: string): Window | null {
-  return window.open(
-    authorizationUrl,
-    "oauth_conformance_auth",
-    "width=600,height=700,scrollbars=yes"
-  );
-}
+import { isWebUrl, openAuthorizationPopup } from "./conformance-oauth-popup";
 
 export {
   createAppsState,
@@ -100,9 +85,6 @@ export type {
   SuiteStatus,
   TasksSuiteState,
 } from "@/hooks/conformance-suite-state";
-
-/** Where a run starts from, for the `conformance_run_triggered` event. */
-export type ConformanceRunAnalyticsLocation = "conformance_tab" | "score_runner";
 
 export interface UseConformanceRunOptions {
   runTimeoutSeconds?: number;
@@ -619,12 +601,7 @@ export function useConformanceRun({
 
   const runAll = useCallback(async () => {
     const runToken = beginRun();
-    // One event per run, however many suite requests it makes. The CLI and
-    // the SDK send the same name with their own `run_source`.
-    track("conformance_run_triggered", {
-      location: analyticsLocation,
-      run_source: "ui",
-    });
+    trackConformanceRunTriggered(analyticsLocation);
     deadline.start(runTimeoutSeconds);
     const currentServer = server;
     const httpServerNow = isHttpServer(currentServer);
