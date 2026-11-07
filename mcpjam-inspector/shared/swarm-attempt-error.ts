@@ -70,6 +70,7 @@ export const SPEND_REFUSAL_REASONS = [
   "allowance_exhausted",
   "admission_invalid",
   "insufficient_for_request",
+  "auto_topup_declined",
 ] as const;
 
 /**
@@ -193,6 +194,33 @@ export function isHeldCreditsRefusal(
     HOLDS_COMMITTED_SENTENCE.test(message) &&
     !statesExhaustion(message)
   );
+}
+
+/**
+ * The backend's sentence when a declined card paused auto-reload
+ * (`buildSpendRefusalBody`). A stored attempt row keeps it and loses the
+ * `refusalReason`, as with a hold.
+ */
+const DECLINED_CARD_SENTENCE =
+  /\bcard was declined, so auto-reload is paused\b/i;
+
+/**
+ * The backend's sentence as a text's own opening, not quoted later in it: how
+ * a plain-text error that is only the refusal's words is told apart from
+ * another error that cites one.
+ */
+export function opensWithDeclinedCardSentence(text: string): boolean {
+  const match = DECLINED_CARD_SENTENCE.exec(text);
+  return !!match && /^\s*(?:your\s+)?$/i.test(text.slice(0, match.index));
+}
+
+/** `auto_topup_declined`: the card that refills the credits was declined. */
+export function isDeclinedCardRefusal(
+  refusalReason?: string | null,
+  message?: string | null,
+): boolean {
+  if (refusalReason) return refusalReason === "auto_topup_declined";
+  return !!message && DECLINED_CARD_SENTENCE.test(message);
 }
 
 /**

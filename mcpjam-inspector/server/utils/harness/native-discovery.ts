@@ -9,6 +9,8 @@ export function assertNativeDiscovery(args: {
   required?: boolean;
   harnessId?: string;
   route?: HarnessDiscoveryRoute;
+  /** Why the route was chosen, for the refusal's details. */
+  reasons?: readonly string[];
 }): void {
   if (!args.required) return;
   const verdict =
@@ -24,7 +26,10 @@ export function assertNativeDiscovery(args: {
     ErrorCode.CONFLICT,
     verdict?.reason ??
       "Native tool discovery requires a qualified harness execution route.",
-    { reason: "native_discovery_unqualified" },
+    {
+      reason: "native_discovery_unqualified",
+      ...(args.reasons?.length ? { reasons: [...args.reasons] } : {}),
+    },
   );
 }
 
