@@ -1,5 +1,11 @@
 # `@mcpjam/sdk` changelog
 
+## 10.3.1
+
+### Patch Changes
+
+- [#7145](https://github.com/MCPJam/inspector/pull/7145) [`47a46c6`](https://github.com/MCPJam/inspector/commit/47a46c68f670d33def1c204512ef30d518959888) Thanks [@nachocossio](https://github.com/nachocossio)! - Alias MCP tool names that Anthropic, Bedrock or OpenAI reject (such as `cart.add`) in the request a provider sees, and restore them in its reply. Direct BYOK chat and evals, hosted chat and evals, and `HostRunner` no longer fail every turn on a server with dotted or slashed tool names. Claude Code harness turns on Anthropic or Bedrock models still reject them up front.
+
 ## 10.3.0
 
 ### Minor Changes
