@@ -337,3 +337,23 @@ it("keeps the inline preparation source stable across equivalent marker renders"
     preparationToken: "b".repeat(43),
   });
 });
+it("keeps an in-flight App call and its instance when workspace presentation changes", async () => {
+  let finish!: (result: { content: [] }) => void;
+  mocks.invoke.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+  const send = async () => true;
+  function Root({ revision }: { revision: number }) {
+    const workspace = useOwnedModelAppWorkspace(send, { ...marker, key: "actor" });
+    return <OwnedModelAppPortsProvider value={{ ...workspace.value, canInvoke: () => revision === 1 }}>
+      <OwnedModelApp marker={marker} renderProps={props} />
+    </OwnedModelAppPortsProvider>;
+  }
+  const view = render(<Root revision={1} />);
+  await screen.findByText("Owned App ready");
+  const call = mocks.renderer.mock.calls.at(-1)![0].onCallTool("cad.reviewForm", {});
+  view.rerender(<Root revision={2} />);
+  expect(mocks.fetch).toHaveBeenCalledOnce();
+  expect(mocks.close).not.toHaveBeenCalled();
+  finish({ content: [] });
+  await expect(call).resolves.toEqual({ content: [] });
+  expect(mocks.invoke).toHaveBeenCalledOnce();
+});
