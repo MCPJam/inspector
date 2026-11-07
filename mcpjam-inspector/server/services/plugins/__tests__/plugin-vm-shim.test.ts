@@ -392,6 +392,12 @@ describe("plugin vm shim: token comparison", () => {
 });
 
 describe("plugin vm shim: handshake and calls", () => {
+  it("does not advertise a routable session after initialize is refused", async () => {
+    const shim = await startShim({ childEnv: { FAKE_INIT_ERROR: "true" } });
+    const response = await post(shim, initializeRequest());
+    expect((await response.json()).error.message).toBe("Initialization refused");
+    expect(response.headers.get("mcp-session-id")).toBeNull();
+  });
   it("mints a session on initialize and round-trips a tool call", async () => {
     const shim = await startShim();
     const { sessionId } = await openSession(shim);
