@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SchemaFormFieldControl } from "./SchemaFormFieldControl";
+import { FormChoiceGroup } from "./FormChoiceGroup";
 import { parseElicitationSchema } from "../elicitation/schema";
 import {
   PluginDescribedError,
@@ -163,10 +164,10 @@ function ChoiceRows({
   children?: ReactNode;
 }) {
   return (
-    <div
+    <FormChoiceGroup
       className="-mx-1 min-w-0 space-y-0.5"
-      role={multiple ? "group" : "radiogroup"}
-      aria-label={label}
+      multiple={multiple}
+      label={label}
     >
       {choices.map((choice, index) => {
         // A typed entry is in the list by definition; unchecking removes it.
@@ -212,7 +213,7 @@ function ChoiceRows({
         );
       })}
       {children}
-    </div>
+    </FormChoiceGroup>
   );
 }
 
@@ -595,9 +596,9 @@ function PluginFormField({
         const collapsible = total > RESOURCE_ROW_LIMIT;
         return (
           <>
-            <div
-              role={multiple ? "group" : "radiogroup"}
-              aria-label={title}
+            <FormChoiceGroup
+              multiple={multiple}
+              label={title}
               className={cn(
                 "min-w-0",
                 expanded
@@ -759,7 +760,7 @@ function PluginFormField({
                   </div>
                 );
               })}
-            </div>
+            </FormChoiceGroup>
             {collapsible && (
               <Button
                 type="button"
