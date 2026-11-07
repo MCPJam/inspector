@@ -1,4 +1,5 @@
 import { completedTurnPersistence, type CompletedTurnOwner } from "../services/completed-turn-persistence.js";
+import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import type { SetupAtTurn } from "../services/chat-turn/setup-manifest.js";
 import type { PersistedRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
@@ -24,6 +25,7 @@ import {
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { SecretScrubber } from "./secrets/secret-scrubber";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
+import type { ChatOrigin } from "./chat-origin.js";
 
 const DEFAULT_INGEST_TIMEOUT_MS = 5_000;
 /**
@@ -316,22 +318,17 @@ export interface PersistedTurnTrace {
    * saying so.
    */
   pageToolsAtTurn?: MintedPageToolRecord[];
+  /**
+   * Which MCP route a harness turn ran on, and why. Inside the turn trace like
+   * `skillsAtTurn`, so it reaches the wire with no change to the body builder;
+   * the backend drops a receipt it cannot parse and keeps the trace.
+   */
+  harnessMcpAtTurn?: HarnessMcpAtTurn;
 }
 
-// Mirrors mcpjam-backend `chatOriginValidator`. Required at every writer
-// boundary so a new surface can't be added without explicitly choosing one.
-// Backend still accepts undefined for historical-row compatibility; the
-// inspector pins to the closed set. `swarm` is the journey-execution surface
-// (single-host synthetic sessions launched by a project member).
-export type ChatOrigin =
-  | "playground"
-  | "mcpjam_agent"
-  | "scenario"
-  | "eval"
-  | "swarm"
-  // Agent Playground turn route. Validator ships with backend PR 4; this
-  // mirror must exist before anything emits `"api"`.
-  | "api";
+// Its own import-free module so `log-events.ts`, which the client typecheck
+// reaches, can name it without pulling in this file's server imports.
+export type { ChatOrigin };
 
 interface PersistChatSessionOptions {
   chatSessionId: string;
@@ -356,7 +353,7 @@ interface PersistChatSessionOptions {
   authHeader?: string;
   retryOwner?: CompletedTurnOwner;
   projectId?: string;
-  sourceType?: "scenario" | "direct" | "eval" | "swarm";
+  sourceType?: "scenario" | "direct" | "eval" | "swarm" | "event";
   origin: ChatOrigin;
   directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";

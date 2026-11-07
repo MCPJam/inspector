@@ -71,27 +71,16 @@ function formatDetailValue(value: unknown) {
 }
 
 /**
- * The shut-row preview gives failures context without opening the row. The
- * full message stays mounted inside Collapse so it slides with the explanation
- * and details; only one message is visible at a time. Red means a failure that
- * counts; skip reasons and unscored findings use the neutral box.
- *
- * A shut row shows the box only when it says something to act on: a failure,
- * or why a check that applies could not run. A not-applicable reason waits
- * for the row to open, or every era-skipped row would carry a box of noise.
+ * What went wrong, under the explanation in an open row. A shut row shows only
+ * its title, whatever the status, so every row opens the same way. Red means
+ * a failure that counts; skip reasons and unscored findings use the neutral box.
  */
-function showsMessageShut(status: string, skipReason?: string): boolean {
-  return status === "failed" || skipReason === "could-not-run";
-}
-
 function ResultMessage({
   message,
   tone,
-  expanded,
 }: {
   message: string;
   tone: "error" | "neutral";
-  expanded: boolean;
 }) {
   return (
     <span
@@ -102,9 +91,7 @@ function ResultMessage({
           : "border-border/60 bg-muted/30 text-muted-foreground",
       )}
     >
-      {/* Clamped inside the padded box: clamped on the box itself, a third
-          line shows through the bottom padding. */}
-      <span className={cn(!expanded && "line-clamp-2")}>{message}</span>
+      {message}
     </span>
   );
 }
@@ -116,6 +103,28 @@ export function pendingIdSet(
 }
 
 /** Says a result row opens: nothing else on it does. */
+/**
+ * The status icon has no text, and a shut row shows no message, so screen
+ * readers get the result from this hidden label on the row button.
+ */
+function RowStatusLabel({
+  status,
+  skipReason,
+}: {
+  status: string;
+  skipReason?: string;
+}) {
+  const label =
+    status === "passed"
+      ? "passed"
+      : status === "failed"
+        ? "failed"
+        : skipReason === "could-not-run"
+          ? "could not run"
+          : "not applicable";
+  return <span className="sr-only">{`, ${label}`}</span>;
+}
+
 function RowChevron({ expanded }: { expanded: boolean }) {
   return (
     <ChevronRight
@@ -249,32 +258,20 @@ export function CheckRow({
         </span>
         {missingInput ? <NotRunTag /> : pending ? <UnscoredTag /> : null}
         {isTimedOutCheck(check) ? <TimedOutTag /> : null}
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span
-            className={cn(
-              "text-sm",
-              check.status === "skipped" &&
-                (missingInput || check.skipReason !== "could-not-run") &&
-                "text-muted-foreground",
-            )}
-          >
-            {check.title}
-          </span>
-          {check.error &&
-          !expanded && showsMessageShut(check.status, check.skipReason) ? (
-            <ResultMessage
-              message={
-                missingInputMessage(check) ??
-                noTaskCreatedMessage(check) ??
-                check.error.message
-              }
-              tone={
-                check.status === "failed" && !pending ? "error" : "neutral"
-              }
-              expanded={false}
-            />
-          ) : null}
+        <span
+          className={cn(
+            "min-w-0 flex-1 text-sm",
+            check.status === "skipped" &&
+              (missingInput || check.skipReason !== "could-not-run") &&
+              "text-muted-foreground",
+          )}
+        >
+          {check.title}
         </span>
+        {/* A missing-input row already says "Not run" in its tag. */}
+        {missingInput ? null : (
+          <RowStatusLabel status={check.status} skipReason={check.skipReason} />
+        )}
         {/* A skipped check never ran: its 0ms says nothing. */}
         {check.status !== "skipped" && check.durationMs !== undefined && (
           <span className="flex-shrink-0 pt-0.5 text-xs text-muted-foreground">
@@ -298,7 +295,6 @@ export function CheckRow({
               tone={
                 check.status === "failed" && !pending ? "error" : "neutral"
               }
-              expanded
             />
           )}
 
@@ -386,18 +382,8 @@ export function OAuthStepRow({
           />
         </span>
         {pending ? <UnscoredTag /> : null}
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="text-sm">{step.title}</span>
-          {step.error &&
-          !expanded && showsMessageShut(step.status, step.skipReason) ? (
-            <ResultMessage
-              message={step.error.message}
-              // An unscored failure is reported, not counted: grey, as in CheckRow.
-              tone={step.status === "failed" && !pending ? "error" : "neutral"}
-              expanded={false}
-            />
-          ) : null}
-        </span>
+        <span className="min-w-0 flex-1 text-sm">{step.title}</span>
+        <RowStatusLabel status={step.status} skipReason={step.skipReason} />
         {step.status !== "skipped" && (
           <span className="flex-shrink-0 pt-0.5 text-xs text-muted-foreground">
             {step.durationMs}ms
@@ -413,8 +399,8 @@ export function OAuthStepRow({
           {step.error && (
             <ResultMessage
               message={step.error.message}
+              // An unscored failure is reported, not counted: grey, as in CheckRow.
               tone={step.status === "failed" && !pending ? "error" : "neutral"}
-              expanded
             />
           )}
 
