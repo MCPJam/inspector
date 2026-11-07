@@ -759,13 +759,13 @@ export interface ResumeMrtrDeps {
   ) => Promise<MrtrLegResult<unknown>>;
   /** Prepare authorized wire-only input before the exactly-once fence. No effects here.
    * Rechecked under the exact live pre-wire lease/version after asynchronous admission.
-   * commit is synchronous and runs only after that fence, before driving the leg. */
+   * commit refreshes permission after that fence, before driving the leg. */
   prepareLeg?: (
     state: MrtrOperationState,
     responses: InputResponses,
   ) => Promise<{
     responses: InputResponses;
-    commit: () => void;
+    commit: () => void | Promise<void>;
   }>;
   emit?: (event: MrtrContinuationEvent) => void;
   serverName?: string;
@@ -1151,7 +1151,7 @@ export async function resumeMrtrContinuationLeg(
 
   let leg: MrtrLegResult<unknown>;
   try {
-    prepared?.commit();
+    await prepared?.commit();
     leg = await deps.driveLeg(
       state,
       prepared?.responses ?? (responses as InputResponses),
