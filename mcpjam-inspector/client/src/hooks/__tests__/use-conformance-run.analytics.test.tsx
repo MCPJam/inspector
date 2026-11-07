@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createConnectedServer,
   createHttpServerConfig,
+  createServerConfig,
 } from "@/test/factories";
 import { useConformanceRun } from "../use-conformance-run";
 
@@ -78,6 +79,29 @@ describe("conformance_run_triggered from the app", () => {
 
     await act(async () => result.current.runAll());
     expect(conformanceEvents()).toHaveLength(2);
+  });
+
+  it("does not count a run that starts no suite", async () => {
+    const stdio = createConnectedServer({
+      name: "stdio",
+      config: createServerConfig(),
+    });
+    // OAuth needs HTTP, so an OAuth-only pick on stdio runs nothing.
+    const { result } = renderHook(() =>
+      useConformanceRun({
+        server: stdio,
+        selection: { protocol: [], apps: [], tasks: [], oauth: true },
+      }),
+    );
+    await act(async () => result.current.runAll());
+    expect(conformanceEvents()).toHaveLength(0);
+
+    // The same server with its default pick runs Apps and Tasks.
+    const { result: defaults } = renderHook(() =>
+      useConformanceRun({ server: stdio }),
+    );
+    await act(async () => defaults.current.runAll());
+    expect(conformanceEvents()).toHaveLength(1);
   });
 
   it("labels the score runner's runs with its own location", async () => {

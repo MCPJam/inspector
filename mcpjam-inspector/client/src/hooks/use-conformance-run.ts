@@ -601,7 +601,6 @@ export function useConformanceRun({
 
   const runAll = useCallback(async () => {
     const runToken = beginRun();
-    trackConformanceRunTriggered(analyticsLocation);
     deadline.start(runTimeoutSeconds);
     const currentServer = server;
     const httpServerNow = isHttpServer(currentServer);
@@ -609,6 +608,15 @@ export function useConformanceRun({
     const selection = selectionRef.current;
     const probes = probesRef.current ?? {};
     const selected = runnableSelection(selection, versionPin);
+    // Count only a run that starts a suite: protocol and OAuth need HTTP.
+    if (
+      isSelected(selected?.apps) ||
+      isSelected(selected?.tasks) ||
+      (httpServerNow &&
+        (isSelected(selected?.protocol) || selected?.oauth !== false))
+    ) {
+      trackConformanceRunTriggered(analyticsLocation);
+    }
     setOAuthUnscored(scorableOAuthIds(selected?.oauthUnscored));
     setRunVersion((value) => value + 1);
     setResolvedProtocolVersion(undefined);
