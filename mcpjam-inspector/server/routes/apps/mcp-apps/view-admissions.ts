@@ -19,7 +19,9 @@ import {
 } from "../../../services/sandbox-view-owner.js";
 import {
   assertBearerToken,
+  authorizeBatch,
   authorizeServer,
+  callerContextFromHono,
   projectServerSchema,
 } from "../../web/auth.js";
 import {
@@ -28,6 +30,7 @@ import {
   webErrorFromRoute,
 } from "../../web/errors.js";
 import { MCPJAM_PLATFORM_SERVER_ID } from "../../../../shared/mcpjam-agent-widgets.js";
+import { SANDBOX_VIEW_REQUEST_MAX_BYTES } from "../../../../shared/sandbox-view-limits.js";
 
 const admissionProjectSchema = projectServerSchema.extend({
   connectionId: z.string().min(1).optional(),
@@ -48,13 +51,30 @@ async function authorizePreparation(
           ErrorCode.FORBIDDEN,
           "The App source does not match this server.",
         );
-      await authorizeServer(c, bearer, parsed.projectId, source.serverId, {
+      const options = {
         ...(parsed.scenarioId ? { scenarioId: parsed.scenarioId } : {}),
         ...(parsed.accessVersion !== undefined
           ? { accessVersion: parsed.accessVersion }
           : {}),
         ...(parsed.connectionId ? { connectionId: parsed.connectionId } : {}),
-      });
+      };
+      if (HOSTED_MODE) {
+        await authorizeServer(c, bearer, parsed.projectId, source.serverId, options);
+      } else {
+        // The local batch authorizer preserves caller scope and accepts saved
+        // STDIO servers without connecting or executing their commands.
+        const batch = await authorizeBatch(
+          callerContextFromHono(c), bearer, parsed.projectId, [source.serverId], options,
+        );
+        const result = batch.results[source.serverId];
+        if (!result?.ok) {
+          throw new WebRouteError(
+            result?.status ?? 403,
+            Object.values(ErrorCode).find((code) => code === result?.code) ?? ErrorCode.FORBIDDEN,
+            result?.message ?? "The App server is no longer available.",
+          );
+        }
+      }
       return sandboxViewOwner(c, parsed.projectId);
     }
     return sandboxViewOwner(c);
@@ -85,7 +105,7 @@ export function sandboxViewAdmissionRoutes(): Hono {
   };
   routes.use("/view-admissions", localAuthority);
   routes.use("/view-admissions/*", localAuthority);
-  const boundedBody = bodyLimit({ maxSize: 16 * 1024 * 1024 });
+  const boundedBody = bodyLimit({ maxSize: SANDBOX_VIEW_REQUEST_MAX_BYTES });
   routes.use("/view-admissions", boundedBody);
   routes.use("/view-admissions/*", boundedBody);
   routes.use("/view-admissions*", async (c, next) => {

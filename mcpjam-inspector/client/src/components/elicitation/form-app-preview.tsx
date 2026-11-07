@@ -310,11 +310,13 @@ function Controller(props: Props) {
           handle.instanceId,
           handle.operationId,
           params,
-          createThreadAppHost(host, handle, handle.serverId),
+          createThreadAppHost(host, handle, handle.serverId, "thread", {
+            projectId: props.scope.projectId,
+          }),
           "panel",
         );
     }
-  }, [apps, host, workspace, lifecycle]);
+  }, [apps, host, workspace, lifecycle, props.scope.projectId]);
   return (
     <PluginFormFileServices
       scope={props.scope}

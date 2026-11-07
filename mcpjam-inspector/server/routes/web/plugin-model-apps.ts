@@ -1,4 +1,5 @@
 import { pluginOperationRequest, pluginOperationAuthorization } from "../../../shared/plugin-operation-authorization.js";
+import { sandboxSourceReceipt } from "../../services/sandbox-view-source.js";
 import { preparePluginOperation, bindPluginOperation, cancelPluginOperation, receiptOnlyPorts } from "../../services/plugin-host/operation-authorization.js";
 import { assertPluginInstanceBindingCurrent } from "../../services/plugin-host/request-runtime.js";
 import { Hono, type Context } from "hono";
@@ -127,6 +128,17 @@ export function pluginModelAppRoutes(ports: {
           ),
           widgetContent: {
             ...widgetContent,
+            sourceReceipt: await sandboxSourceReceipt(
+              c,
+              {
+                serverId: record.owner.owner.serverId,
+                resourceUri: record.resourceUri,
+                toolCallId: record.owner.owner.instanceId,
+              },
+              widgetContent.html,
+              widgetContent.csp,
+              body.projectId,
+            ),
             permissive: false,
             injectedOpenAiCompat: false,
             viewOriginLabel: viewOriginLabelForConfig(

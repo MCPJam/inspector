@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { sandboxSourceReceipt } from "../../services/sandbox-view-source.js";
 import {
   settingsOperationIntent,
   settingsContinuation,
@@ -564,6 +565,17 @@ routes.post("/app/open", (c) =>
       )
         throw denied();
       const childToken = randomBytes(32).toString("base64url");
+      const sourceReceipt = await sandboxSourceReceipt(
+        c,
+        {
+          serverId: instance.owner.serverId,
+          resourceUri: uri,
+          toolCallId: childToken,
+        },
+        widgetContent.html,
+        widgetContent.csp,
+        body.projectId,
+      );
       const signal = pluginInstances.signal(body.instanceToken, actor);
       const lifetime = new AbortController();
       const dispose = () => {
@@ -585,7 +597,7 @@ routes.post("/app/open", (c) =>
       return c.json({
         childToken,
         resourceUri: uri,
-        widgetContent,
+        widgetContent: { ...widgetContent, sourceReceipt },
         toolMetadata: tool._meta,
         appToolsEnabled: fresh.appToolsEnabled,
       });

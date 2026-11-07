@@ -1090,16 +1090,14 @@ document.addEventListener('securitypolicyviolation', function(e) {
             const allowValue = buildInnerAllowValue(permissions, opaque);
 
             if (typeof html === "string") {
-              if (VIEW_CONTEXT) {
-                const digestSequence = ++resourceDigestSequence;
-                if (!VIEW_CONTEXT || event.origin !== VIEW_CONTEXT.hostOrigin) return;
-                const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(html));
-                if (digestSequence !== resourceDigestSequence) return;
-                const htmlSha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-                if (htmlSha256 !== VIEW_CONTEXT.htmlSha256) {
-                  window.parent.postMessage({ type: "mcpjam:view-channel-closed", reason: "App document does not match its admission" }, VIEW_CONTEXT.hostOrigin);
-                  return;
-                }
+              const digestSequence = ++resourceDigestSequence;
+              if (!VIEW_CONTEXT || event.origin !== VIEW_CONTEXT.hostOrigin) return;
+              const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(html));
+              if (digestSequence !== resourceDigestSequence) return;
+              const htmlSha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+              if (htmlSha256 !== VIEW_CONTEXT.htmlSha256) {
+                window.parent.postMessage({ type: "mcpjam:view-channel-closed", reason: "App document does not match its admission" }, VIEW_CONTEXT.hostOrigin);
+                return;
               }
               // Permissive mode: maximally permissive CSP. Must explicitly
               // allow everything since the view inherits this document's

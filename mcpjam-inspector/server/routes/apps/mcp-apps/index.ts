@@ -1,4 +1,3 @@
-import { buildSandboxProxyFrameAncestors, renderSandboxProxyHtml } from "./sandbox-proxy-html.js";
 import { serveSandboxViewDocument } from "./view-document.js";
 import { sandboxSourceReceipt } from "../../../services/sandbox-view-source.js";
 import { sandboxViewAdmissionRoutes } from "./view-admissions.js";
@@ -398,16 +397,6 @@ apps.post("/widget-content", async (c) => {
   }
 });
 
-apps.get("/sandbox-proxy", (c) => {
-  if ((c.req.header("Host") ?? "").startsWith("v-"))
-    return serveSandboxViewDocument(c);
-  c.header("Content-Type", "text/html; charset=utf-8");
-  c.header("Cache-Control", "no-cache, no-store, must-revalidate");
-  // Same list the proxy pins its host origin against — see
-  // sandbox-proxy-html.ts for why these two must not drift.
-  c.header("Content-Security-Policy", buildSandboxProxyFrameAncestors());
-  c.res.headers.delete("X-Frame-Options");
-  return c.body(renderSandboxProxyHtml());
-});
+apps.get("/sandbox-proxy", serveSandboxViewDocument);
 
 export default apps;

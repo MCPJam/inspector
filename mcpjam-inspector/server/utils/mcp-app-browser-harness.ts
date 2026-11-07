@@ -1,3 +1,4 @@
+import { HarnessViewDocument } from "./browser-harness/view-document.js";
 import { PluginWorkspaceRecorder } from "./plugin-workspace-recorder.js";
 import type { PluginWorkspaceRecording } from "../../shared/plugin-workspace-recording.js";
 import { McpAppViewTools, type ViewToolCallRecord } from "./mcp-app-view-tools.js";
@@ -628,6 +629,7 @@ export class McpAppBrowserHarness {
   private isHostBindingSource(source: { page: Page; frame: Frame }) {
     return source.page === this.page && source.frame === this.page?.mainFrame();
   }
+  private readonly viewDocument = new HarnessViewDocument();
   private readonly workspaceRecorder = new PluginWorkspaceRecorder();
   private readonly opts: McpAppBrowserHarnessOptions;
   private readonly budgets: HarnessBudgets;
@@ -853,7 +855,8 @@ export class McpAppBrowserHarness {
     // request may leave the machine, and records the rest. Non-network schemes
     // (data:, blob:, about:) pass through.
     const allowOrigins = new Set(this.opts.allowOrigins ?? []);
-    await this.context.route("**/*", (route) => {
+    await this.context.route("**/*", async (route) => {
+      if (await this.viewDocument.serve(route)) return;
       const url = route.request().url();
       if (
         url.startsWith("data:") ||
@@ -1088,11 +1091,10 @@ export class McpAppBrowserHarness {
       },
     );
 
-    await this.page.setContent(
-      "<!doctype html><html><head><meta charset='utf-8'></head><body></body></html>",
-    );
-    if (this.opts.enableViewTools) await this.page.addScriptTag({ content: WEBMCP_RELAY_SOURCE });
-    await this.page.addScriptTag({ content: HARNESS_PAGE_BUNDLE });
+    await this.viewDocument.load(this.page, buildSandboxProxyWidgetCsp(), [
+      ...(this.opts.enableViewTools ? [WEBMCP_RELAY_SOURCE] : []),
+      HARNESS_PAGE_BUNDLE,
+    ]);
   }
 
   private withWorkspaceRecording<T extends object>(
@@ -1251,6 +1253,10 @@ export class McpAppBrowserHarness {
     // `resource_domains` origin; an undeclared widget gets the SEP restrictive
     // default (`default-src 'none'`) instead of running open.
     const cspContent = buildSandboxProxyWidgetCsp(input.cspMeta);
+    await this.viewDocument.load(page, cspContent, [
+      ...(this.opts.enableViewTools ? [WEBMCP_RELAY_SOURCE] : []),
+      HARNESS_PAGE_BUNDLE,
+    ]);
     const policedHtml = injectCspMeta(input.html, cspContent, this.opts.enableViewTools ? `<script>${WEBMCP_VIEW_POLYFILL_JS}</script>` : "");
 
     let pageResult: HarnessPageRenderResult;
