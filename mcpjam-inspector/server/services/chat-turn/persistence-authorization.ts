@@ -29,7 +29,7 @@ export async function preparePersistenceAuthorization(
     return;
   const getBearer = await abortable(
     getBackgroundRunBearerForRequest(c, scope.projectId, {
-      requireFreshSessionOnUse: true,
+      requireFreshSessionOnUse: true, allowOriginalBearerOnMintFailure: true,
     }),
     AbortSignal.timeout(20_000),
   );

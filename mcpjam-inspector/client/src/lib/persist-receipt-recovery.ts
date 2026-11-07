@@ -5,18 +5,13 @@ import {
 
 /** A duplicate SSE chunk shares one save request; it never sends a chat turn. */
 export function createPersistReceiptRecovery(fetcher: typeof fetch) {
-  const pending = new Map<
-    string,
-    { at: number; promise: Promise<PersistReceiptData> }
-  >();
+  const pending = new Map<string, Promise<PersistReceiptData>>();
   return (receipt: PersistReceiptData): Promise<PersistReceiptData> => {
     const handle = receipt.retryHandle;
     if (!handle || !receipt.retryProjectId || !receipt.turnId)
       return Promise.resolve(receipt);
-    for (const [key, entry] of pending)
-      if (Date.now() - entry.at > 60_000) pending.delete(key);
     const prior = pending.get(handle);
-    if (prior) return prior.promise;
+    if (prior) return prior;
     if (pending.size >= 32) return Promise.resolve(receipt);
     const promise = (async () => {
       try {
@@ -43,8 +38,10 @@ export function createPersistReceiptRecovery(fetcher: typeof fetch) {
         // The original failed receipt remains authoritative; the server's wait expires.
         return receipt;
       }
-    })();
-    pending.set(handle, { at: Date.now(), promise });
+    })().finally(() => {
+      if (pending.get(handle) === promise) pending.delete(handle);
+    });
+    pending.set(handle, promise);
     return promise;
   };
 }
