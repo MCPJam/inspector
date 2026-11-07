@@ -262,6 +262,28 @@ export const APP_SURFACES = [
     showInAtlas: true,
   },
   {
+    id: "triggers",
+    scope: "project",
+    canonicalPath: "/triggers",
+    routePatterns: ["triggers"],
+    navSegments: ["triggers"],
+    title: "Triggers",
+    purpose:
+      "Run an agent unattended on MCPJam's hosted runner whenever a subscribed MCP event arrives, and review each run.",
+    userActivities: [
+      "Create a trigger on an event subscription with instructions, a model and budgets",
+      "Enable, disable, edit or delete a trigger",
+      "Browse a trigger's run history and a run's tool calls, result and parked reason",
+    ],
+    hasSnapshotProvider: false,
+    agentTools: {
+      kind: "none",
+      reason:
+        "Triggers spend money and act unattended on a member's credentials; configuring them stays a deliberate human action.",
+    },
+    showInAtlas: true,
+  },
+  {
     // The surface id stays `scenarios` — it keys the billing feature, the
     // agent tool group, and the Convex tables. Only the product name and the
     // URL changed.
@@ -518,6 +540,31 @@ export const APP_SURFACES = [
       kind: "none",
       reason:
         "Read-only view of a server's long-running tasks; nothing to operate, but snapshot-only for observability so the agent can see the tasks and their statuses.",
+    },
+    showInAtlas: true,
+  },
+  {
+    id: "events",
+    scope: "project",
+    canonicalPath: "/events",
+    routePatterns: ["events"],
+    navSegments: ["events"],
+    title: "Events",
+    purpose:
+      "Inspect the MCP Events (draft extension) a connected server declares, subscribe to them, and watch deliveries arrive live.",
+    userActivities: [
+      "Check whether the selected server declares capabilities.events",
+      "Browse a server's event types and their input and payload schemas",
+      "Subscribe to an event by poll, push or webhook under the draft or ChatGPT profile",
+      "Pause, resume, remove or rotate the secret of a subscription",
+      "Watch the live delivery feed and rejected deliveries",
+      "Send a simulated event to a subscription",
+    ],
+    hasSnapshotProvider: false,
+    agentTools: {
+      kind: "none",
+      reason:
+        "Subscriptions register webhooks and hold credentials-bound upstream state; creating or removing them stays a deliberate human action while the extension is a draft.",
     },
     showInAtlas: true,
   },

@@ -7,8 +7,10 @@ import {
   randomBytes,
 } from "node:crypto";
 import { z } from "zod";
+import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import {
   buildCSP,
+  normalizeSandboxDomainSource,
   PERMISSIVE_SANDBOX_CSP,
 } from "../utils/sandbox-csp-policy.js";
 import {
@@ -59,9 +61,9 @@ export function isSandboxDomainSource(value: string): boolean {
 }
 const domains = z
   .array(
-    cleanToken.refine(
-      isSandboxDomainSource,
-      "CSP domains must be individual source expressions",
+    z.string().max(2048).transform(normalizeSandboxDomainSource).pipe(
+      cleanToken.refine(isSandboxDomainSource,
+        "CSP domains must be individual source expressions"),
     ),
   )
   .max(128)
@@ -226,7 +228,8 @@ export function checkedSandboxPolicy(policy: string): string {
     /[^\x20-\x7e]/.test(policy) ||
     Buffer.byteLength(policy) > SANDBOX_VIEW_MAX_HEADER_BYTES
   )
-    throw new Error("App CSP is invalid or exceeds the supported size");
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR,
+      "The App content policy is invalid or exceeds 8 KiB. Reduce its domain lists and reopen the App.");
   return policy;
 }
 export function issueSandboxSourceReceipt(
@@ -278,7 +281,7 @@ export function resolveSandboxViewPolicy(
   if (input.policy.permissive)
     throw new Error("Declared-policy Apps cannot request permissive rendering");
   // Multiple HTTP CSP policies are intersected by the browser, so host overrides cannot widen declared resource policy.
-  return checkedSandboxPolicy(`${baseline}, ${requested}`);
+  return checkedSandboxPolicy(baseline === requested ? baseline : `${baseline}, ${requested}`);
 }
 
 /** Opaque digests only; all source metadata stays in the authenticated lease store. */

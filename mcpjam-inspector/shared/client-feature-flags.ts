@@ -28,6 +28,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "local-codex-enabled",
   "local-computer-enabled",
   "local-harness-enabled",
+  "mcp-events-enabled",
   "mcp-tasks",
   "mcpjam-compatibility",
   "mcpjam-conformance",

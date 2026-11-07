@@ -86,7 +86,10 @@ export function createComputerFileCas(transport: ComputerCasTransport) {
         if (staged) await cleanup(staged);
       }
     })();
-    const supported = await qualification;
+    const current = qualification;
+    const supported = await current;
+    // A transient transport/probe failure must not pin this VM read-only.
+    if (!supported && qualification === current) qualification = undefined;
     signal?.throwIfAborted();
     return supported;
   };
@@ -115,7 +118,7 @@ export function createComputerFileCas(transport: ComputerCasTransport) {
     } catch (error) {
       if (!signal?.aborted && !(error instanceof ResourceGrantError &&
           ["RESOURCE_DENIED", "RESOURCE_TOO_LARGE"].includes(error.code))) {
-        qualification = Promise.resolve(false);
+        qualification = undefined;
       }
       if (error instanceof ResourceGrantError) throw error;
       if (dispatched) throw new ResourceGrantError("RESOURCE_OUTCOME_UNKNOWN");
@@ -126,4 +129,21 @@ export function createComputerFileCas(transport: ComputerCasTransport) {
     }
   };
   return { supports, compareAndReplace };
+}
+
+const computerCas = new Map<string, { expiresAt: number; cas: ReturnType<typeof createComputerFileCas> }>();
+
+/** Reuse capability qualification only after the caller has reauthorized this exact VM. */
+export function qualifiedComputerFileCas(sandboxId: string, transport: ComputerCasTransport) {
+  const now = Date.now();
+  const existing = computerCas.get(sandboxId);
+  if (existing && existing.expiresAt > now) return existing.cas;
+  computerCas.delete(sandboxId);
+  for (const [id, entry] of computerCas) {
+    if (entry.expiresAt <= now) computerCas.delete(id);
+  }
+  if (computerCas.size >= 128) computerCas.delete(computerCas.keys().next().value!);
+  const cas = createComputerFileCas(transport);
+  computerCas.set(sandboxId, { expiresAt: now + 60_000, cas });
+  return cas;
 }

@@ -31,6 +31,7 @@ import {
   withManager,
   type ManagerCallerContext,
 } from "./auth";
+import { authorizeProxyTurn } from "../../utils/harness/proxy-turn.js";
 import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
 import { unsealHarnessProxyToken } from "../../utils/harness/harness-proxy-policy-seal";
 import { evaluateHarnessProxyToolPolicy } from "../../utils/harness/harness-proxy-policy-enforcement";
@@ -236,6 +237,11 @@ async function handle(c: any) {
     return c.json({ error: "Unauthorized" }, 401);
   }
 
+  const turn = sealed?.turn;
+  const checkTurn = turn ? () => authorizeProxyTurn(turn, claims) : undefined;
+  const denied = await checkTurn?.();
+  if (denied) return denied;
+
   if (rateLimited(`${claims.userId}:${serverId}`)) {
     return c.json({ error: "Rate limited" }, 429);
   }
@@ -401,6 +407,9 @@ async function handle(c: any) {
         },
       ),
       async (manager) => {
+        // Connecting to a slow server can outlive the message that requested it.
+        const refused = await checkTurn?.();
+        if (refused) return refused;
         // Enforce `toolPolicy` BEFORE the bridge: a denied call must never
         // reach `executeTool`. Only `tools/call` is gated, `tools/list` stays
         // unfiltered, and a block is a success envelope carrying the marker —
@@ -518,6 +527,10 @@ async function handle(c: any) {
         });
       },
     );
+    if (response instanceof Response) return response;
+    // A tool already running at Stop may finish. Never return its data to a later turn.
+    const finished = await checkTurn?.();
+    if (finished) return finished;
     // Notification (no id) → 202 Accepted, no body.
     if (!response) return c.body("Accepted", 202);
     return c.json(response);

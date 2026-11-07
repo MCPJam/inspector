@@ -84,7 +84,7 @@ export function openLocalMrtrStream(options: {
     socket = next;
     next.onopen = () => {
       if (next.protocol !== LOCAL_MRTR_PROTOCOL)
-        next.close(1002, "The form could not be read. Reload the page to reconnect.");
+        next.close(4002, "The form could not be read. Reload the page to reconnect.");
     };
     next.onmessage = (event) => {
       if (socket !== next || typeof event.data !== "string") return;
@@ -92,19 +92,19 @@ export function openLocalMrtrStream(options: {
         new TextEncoder().encode(event.data).byteLength >
         LOCAL_MRTR_MAX_FRAME_BYTES
       ) {
-        next.close(1009, "The form message is too large. Reload the page to reconnect.");
+        next.close(4009, "The form message is too large. Reload the page to reconnect.");
         return;
       }
       let raw: unknown;
       try {
         raw = JSON.parse(event.data);
       } catch {
-        next.close(1007, "The form could not be read. Reload the page to reconnect.");
+        next.close(4007, "The form could not be read. Reload the page to reconnect.");
         return;
       }
       const parsed = localMrtrMessageSchema.safeParse(raw);
       if (!parsed.success) {
-        next.close(1007, "The form could not be read. Reload the page to reconnect.");
+        next.close(4007, "The form could not be read. Reload the page to reconnect.");
         return;
       }
       const message = parsed.data;
