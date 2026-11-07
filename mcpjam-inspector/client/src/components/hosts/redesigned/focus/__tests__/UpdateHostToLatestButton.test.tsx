@@ -219,21 +219,21 @@ describe("UpdateHostToLatestButton", () => {
 
   it("offers the corrected mentions default without changing a saved client until requested", async () => {
     const latest = catalogDraftFor("chatgpt");
-    expect(latest.mcpProfile?.apps?.pluginExtensions?.capabilities?.mentions).toBe(true);
+    expect(latest.mcpProfile?.apps?.pluginExtensions?.capabilities?.mentions).toBe(false);
     const initial: HostConfigInputV2 = {
       ...latest,
       mcpProfile: { ...latest.mcpProfile, apps: { ...latest.mcpProfile?.apps,
         pluginExtensions: { ...latest.mcpProfile?.apps?.pluginExtensions,
-          capabilities: { ...latest.mcpProfile?.apps?.pluginExtensions?.capabilities, mentions: false },
+          capabilities: { ...latest.mcpProfile?.apps?.pluginExtensions?.capabilities, mentions: true },
         },
       } },
     };
     const user = userEvent.setup();
     const ui = renderButton({ initialDraft: initial, initialName: catalogLabelFor("chatgpt") });
-    expect(ui.draftRef.current.mcpProfile?.apps?.pluginExtensions?.capabilities?.mentions).toBe(false);
+    expect(ui.draftRef.current.mcpProfile?.apps?.pluginExtensions?.capabilities?.mentions).toBe(true);
     expect(ui.onSaveLatest).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Update to latest" }));
-    expect(ui.draftRef.current.mcpProfile?.apps?.pluginExtensions?.capabilities?.mentions).toBe(true);
+    expect(ui.draftRef.current.mcpProfile?.apps?.pluginExtensions?.capabilities?.mentions).toBe(false);
     expect(ui.onSaveLatest).toHaveBeenCalledOnce();
   });
 
