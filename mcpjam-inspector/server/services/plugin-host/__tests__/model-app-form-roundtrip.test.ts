@@ -61,7 +61,7 @@ vi.mock("../../../utils/mrtr-hosted-collector.js", async original => {
   return { ...actual, resumeMrtrContinuationLeg: async (options: Parameters<typeof actual.resumeMrtrContinuationLeg>[0]) => {
     if (!f.state) throw new Error("Missing private continuation state");
     const prepared = await options.prepareLeg!(f.state, f.responses);
-    prepared.commit();
+    await prepared.commit();
     const leg = await options.driveLeg(f.state, prepared.responses);
     if (leg.status !== "complete") throw new Error("Unexpected second form");
     return { outcome: "completed", result: leg.result };

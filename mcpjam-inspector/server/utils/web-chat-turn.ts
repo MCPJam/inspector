@@ -1422,6 +1422,16 @@ export async function streamChatTurn(
       // Returned, not discarded: the engine turns this into the turn's
       // `data-persist-receipt` so the client is TOLD what happened to its save
       // rather than inferring it from a version poll.
+      let authHeader: string | undefined;
+      try {
+        authHeader = persist.getAuthorization ? await persist.getAuthorization() : runtime.authHeader;
+      } catch (error) {
+        const status = error instanceof WebRouteError ? error.status : undefined;
+        logger.warn("Chat save authorization unavailable", {
+          status, errorName: error instanceof Error ? error.name : typeof error,
+        });
+        return { outcome: "failed" as const, failureKind: "http_error" as const, status };
+      }
       return await persistChatSessionToConvex({
         chatSessionId: hostedChatSessionId,
         retryOwner: persist.retryOwner,
@@ -1447,7 +1457,7 @@ export async function streamChatTurn(
           ? { surface: persist.surface }
           : {}),
         scenarioId: persist.scenarioId,
-        authHeader: persist.getAuthorization ? await persist.getAuthorization() : runtime.authHeader,
+        authHeader,
         // WHAT WAS SENT, for the Raw view and `get_chat_session` — distinct
         // from `resumeConfig.systemPrompt` below, which is what a RESUMED turn
         // replays.

@@ -85,7 +85,13 @@ export class ModelAppRegistry {
       };
       const actor = identity(owner);
       const abort = new AbortController();
-      const formOwner = pluginInstances.retainModelOwner(owner, abort.signal);
+      let formOwner: ReturnType<typeof pluginInstances.retainModelOwner>;
+      try {
+        formOwner = pluginInstances.retainModelOwner(owner, abort.signal);
+      } catch (error) {
+        if (!(error instanceof PluginInvocationError) || error.code !== "INSTANCE_LIMIT") throw error;
+        return { ...result, _meta: { [PLUGIN_MODEL_APP_META]: { unavailable: true } } };
+      }
       const key = token;
       const invoker = new RequestOwnedToolInvoker(owner.owner, () =>
         this.get(key, actor),
