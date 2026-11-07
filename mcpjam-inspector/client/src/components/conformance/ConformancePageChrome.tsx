@@ -235,12 +235,14 @@ export function ProtocolVersionSelect({
   onChange,
   disabled,
   labelledBy,
+  id,
 }: {
   value: ProtocolVersionPin;
   onChange?: (value: ProtocolVersionPin) => void;
   disabled?: boolean;
   /** The visible label's id; without one the select names itself. */
   labelledBy?: string;
+  id?: string;
 }) {
   return (
     <Select
@@ -249,6 +251,7 @@ export function ProtocolVersionSelect({
       disabled={disabled}
     >
       <SelectTrigger
+        id={id}
         aria-label={labelledBy ? undefined : "Protocol version"}
         aria-labelledby={labelledBy}
         className="h-9.5 w-full justify-between gap-2 px-3 text-sm"

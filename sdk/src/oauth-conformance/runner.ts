@@ -1,7 +1,4 @@
 import { refreshAuthorization } from "../oauth/browser-auth.js";
-// Profile verification is an active, contractually read-only probe, enabled
-// after this run acquires a token. This runner has no provided-token mode.
-// verification.profile.enabled=false opts out; no intrusive-probes gate applies.
 import {
   captureOpenAIProfile,
   findOpenAIProfileTool,
@@ -42,6 +39,7 @@ import {
   runInvalidRedirectCheck,
 } from "./checks/oauth-negative.js";
 import { runTokenFormatCheck } from "./checks/oauth-token-format.js";
+import { oauthReadiness } from "./readiness.js";
 import {
   buildUnauthenticatedMcpRequest,
   runUnauthenticatedChallengeCheck,
@@ -66,6 +64,12 @@ import {
   type VerificationResult,
 } from "./types.js";
 import { normalizeOAuthConformanceConfig } from "./validation.js";
+import { findPublishedResourceMetadata } from "./published-resource-metadata.js";
+
+// Profile verification is an active, contractually read-only probe, enabled
+// after this run acquires a token. This runner has no provided-token mode.
+// verification.profile.enabled=false opts out; no intrusive-probes gate applies.
+
 
 type RunCollector = {
   attempts: HttpHistoryEntry[];
@@ -271,7 +275,8 @@ function buildStepResult(
  * `oauth_unauthenticated_challenge` check calls a 2xx unverifiable rather than
  * a violation.
  */
-type AuthorizationRequirement = "required" | "not-required" | "inconclusive";
+type AuthorizationRequirement =
+  "required" | "optional" | "not-required" | "inconclusive";
 
 async function probeAuthorizationRequirement(
   config: NormalizedOAuthConformanceConfig,
@@ -283,9 +288,26 @@ async function probeAuthorizationRequirement(
     );
 
     if (response.status >= 200 && response.status < 300) {
+      // SERVING ANONYMOUSLY IS NOT THE SAME AS HAVING NO AUTHORIZATION. A
+      // lazy-authentication server answers the unauthenticated `initialize`,
+      // serves its public tools, and asks for sign-in only on a protected
+      // call — while still publishing Protected Resource Metadata for the
+      // client that call sends to sign in. Authorization is OPTIONAL in the
+      // spec, and this server has opted in, so its OAuth obligations apply:
+      // discovery is graded rather than reported not-applicable.
+      const prmUrl = await findPublishedResourceMetadata(
+        config,
+        trackedRequest
+      );
+      if (prmUrl) {
+        return {
+          requirement: "optional",
+          detail: `the server answered a request without a token with HTTP ${response.status} and publishes Protected Resource Metadata at ${prmUrl}: anonymous access is allowed and OAuth is available`,
+        };
+      }
       return {
         requirement: "not-required",
-        detail: `the server answered a request without a token with HTTP ${response.status}`,
+        detail: `the server answered a request without a token with HTTP ${response.status} instead of challenging, and publishes no Protected Resource Metadata`,
       };
     }
 
@@ -500,6 +522,7 @@ export class OAuthConformanceTest {
         warnings?: StepResult["warnings"];
       }>,
     ) => {
+      this.config.signal?.throwIfAborted();
       const beforeHistory = state.httpHistory?.length ?? 0;
       activeCollector = { attempts: [] };
 
@@ -518,6 +541,7 @@ export class OAuthConformanceTest {
           ),
         );
       } catch (error) {
+        this.config.signal?.throwIfAborted();
         const attempts = resolveAttempts(activeCollector, beforeHistory, state);
         steps.push(
           buildStepResult(
@@ -577,7 +601,7 @@ export class OAuthConformanceTest {
             headers: request.headers,
             body: serializeRequestBody(request.body, request.headers),
             redirect: options.redirect,
-            signal: controller.signal,
+            signal: this.config.signal ? AbortSignal.any([controller.signal, this.config.signal]) : controller.signal,
           });
 
           const body = await parseResponseBody(response);
@@ -598,6 +622,7 @@ export class OAuthConformanceTest {
             ok: response.ok,
           };
         } catch (error) {
+          this.config.signal?.throwIfAborted();
           const duration = Date.now() - historyEntry.timestamp;
           historyEntry.duration = duration;
           historyEntry.error = {
@@ -627,6 +652,15 @@ export class OAuthConformanceTest {
         this.config,
         trackedRequest,
       );
+
+      if (authRequirement.requirement === "optional") {
+        // Graded, not skipped. The flow's own unauthenticated probe sees the
+        // same 2xx and continues into proactive discovery, which is exactly
+        // the path a client signing in to this server takes.
+        this.config.onProgress(
+          `Anonymous access is allowed and OAuth is available — ${authRequirement.detail}. Grading discovery and the authorization flow.`
+        );
+      }
 
       if (authRequirement.requirement === "not-required") {
         notApplicableReason = authRequirement.detail;
@@ -682,6 +716,7 @@ export class OAuthConformanceTest {
         state.currentStep !== "complete" &&
         guard < 40
       ) {
+        this.config.signal?.throwIfAborted();
         guard += 1;
 
         if (
@@ -778,6 +813,7 @@ export class OAuthConformanceTest {
 
             steps.push(buildStepResult("received_access_token", "passed", 0, [], []));
           } catch (error) {
+            this.config.signal?.throwIfAborted();
             const durationMs = Date.now() - stepStartedAt;
             const logs = (state.infoLogs ?? []).slice(beforeLogs);
             const attempts = resolveAttempts(activeCollector, beforeHistory, state);
@@ -828,6 +864,7 @@ export class OAuthConformanceTest {
                     expectedState: state.state,
                     timeoutMs: this.config.stepTimeout,
                     openUrl: this.config.auth.openUrl,
+                    signal: this.config.signal,
                   })
                 : await (
                     this.deps.completeHeadlessAuthorization ??
@@ -858,6 +895,7 @@ export class OAuthConformanceTest {
               ),
             );
           } catch (error) {
+            this.config.signal?.throwIfAborted();
             updateState({
               currentStep: "received_authorization_code",
               error: error instanceof Error ? error.message : String(error),
@@ -889,11 +927,13 @@ export class OAuthConformanceTest {
 
         const startStep = state.currentStep;
         const beforeLogs = state.infoLogs?.length ?? 0;
+        this.config.signal?.throwIfAborted();
         const beforeHistory = state.httpHistory?.length ?? 0;
         activeCollector = { attempts: [] };
         const stepStartedAt = Date.now();
 
         await machine.proceedToNextStep();
+        this.config.signal?.throwIfAborted();
 
         const durationMs = Date.now() - stepStartedAt;
         const logs = (state.infoLogs ?? []).slice(beforeLogs);
@@ -959,7 +999,12 @@ export class OAuthConformanceTest {
               state.lastResponse.headers?.["www-authenticate"],
           });
 
-          if (probe.kind === "anonymous_allowed") {
+          // A server the pre-flight found publishing this server's metadata
+          // is graded from proactive discovery, so its 2xx is expected here.
+          if (
+            probe.kind === "anonymous_allowed" &&
+            authRequirement.requirement !== "optional"
+          ) {
             notApplicableReason = `the server answered a request without a token with HTTP ${probeStatus}`;
             // Replace the transition into the probe with the same single row
             // the pre-flight reports, keeping the probe's evidence.
@@ -1030,14 +1075,24 @@ export class OAuthConformanceTest {
         this.config.oauthConformanceChecks
       ) {
         const oauthCheckRedirectUrl = redirectUrl;
-        await recordOAuthCheck("oauth_dcr_http_redirect_uri", () =>
-          runDcrHttpRedirectUriCheck({
-            config: this.config,
-            state,
-            trackedRequest,
-            redirectUrl: oauthCheckRedirectUrl,
-          }),
-        );
+        if (this.config.registrationStrategy === "preregistered") {
+          steps.push(
+            buildSkippedStepResult(
+              "oauth_dcr_http_redirect_uri",
+              "not-applicable",
+              "Dynamic client registration checks do not apply to pre-registered clients"
+            )
+          );
+        } else {
+          await recordOAuthCheck("oauth_dcr_http_redirect_uri", () =>
+            runDcrHttpRedirectUriCheck({
+              config: this.config,
+              state,
+              trackedRequest,
+              redirectUrl: oauthCheckRedirectUrl,
+            })
+          );
+        }
         await recordOAuthCheck("oauth_invalid_client", () =>
           runInvalidClientCheck({
             config: this.config,
@@ -1321,7 +1376,8 @@ export class OAuthConformanceTest {
                         (freshManager, freshKey) =>
                           captureOpenAIProfile(freshManager, freshKey, {
                             timeoutMs: this.config.verification.timeout,
-                          })
+                          }),
+                        { signal: this.config.signal },
                       );
                       const same = refreshedProfile.profile?.id === profileId;
                       steps.push({
@@ -1421,7 +1477,7 @@ export class OAuthConformanceTest {
               }
             }
           },
-          { serverId: "__conformance_verify__", timeout: this.config.verification.timeout ?? 30_000 },
+          { signal: this.config.signal, serverId: "__conformance_verify__", timeout: this.config.verification.timeout ?? 30_000 },
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1453,6 +1509,7 @@ export class OAuthConformanceTest {
       credentials: buildCredentials(state),
       verification,
       ...(profileId ? { profileId } : {}),
+      ...oauthReadiness(this.config, state),
     };
   }
 }

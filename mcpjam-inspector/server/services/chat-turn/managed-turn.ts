@@ -8,9 +8,10 @@ import {
 import { pluginChatRefusal } from "../../routes/web/chat-v2-plugin-refusal.js";
 import {
   globalOwnerAdmission,
-  mergePluginContextMessages,
   withGlobalOwnerFallback,
 } from "../../routes/web/chat-v2-global-owner.js";
+import { pluginModelContextPolicy } from "../plugin-host/context-profile.js";
+import { pluginModelContextMessage } from "../../../shared/plugin-model-context.js";
 import { toResumeExecutionTarget } from "@/shared/execution-target";
 import { toMintedPageToolRecords } from "@/shared/declared-tools";
 import { type Context } from "hono";
@@ -31,7 +32,10 @@ import {
 } from "../../routes/web/auth.js";
 import { createHostedRpcLogCollector } from "../../routes/web/hosted-rpc-logs.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
-import { toolCallCancellationFromMcpProfile } from "../../utils/effective-auth.js";
+import {
+  authChallengeFromMcpProfile,
+  toolCallCancellationFromMcpProfile,
+} from "../../utils/effective-auth.js";
 import { harnessSupportsSkills } from "../../utils/harness/registry.js";
 import { runtimeServersAreOverridden } from "../environments/runtime.js";
 import { withLiveProjectSkills } from "../environments/effective-capabilities.js";
@@ -330,16 +334,20 @@ export async function handleManagedChatTurn(
             subject: modelPluginSubject!,
           },
         });
-      const pluginContext = mergePluginContextMessages(
-        contextReferences.length
-          ? await readTurnContext(contextReferences, modelPluginAdmission!)
-          : undefined,
-        globalContextReferences.length && globalPluginAdmission
-          ? await readTurnContext(
-              globalContextReferences,
-              globalPluginAdmission,
-            )
-          : undefined,
+      // One budget over both owners: the chat client's, read for this turn.
+      const pluginContext = pluginModelContextMessage(
+        [
+          ...(contextReferences.length
+            ? await readTurnContext(contextReferences, modelPluginAdmission!)
+            : []),
+          ...(globalContextReferences.length && globalPluginAdmission
+            ? await readTurnContext(
+                globalContextReferences,
+                globalPluginAdmission,
+              )
+            : []),
+        ],
+        pluginModelContextPolicy(hostRuntimeConfig).turnMaxBytes,
       );
       const appMessages = await withGlobalOwnerFallback(
         (admission) =>
@@ -423,6 +431,7 @@ export async function handleManagedChatTurn(
                 ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
                 requireNativeToolDiscovery: resolvedExecution.requireNativeToolDiscovery,
                 harnessHostCapabilities,
+                harnessStartupRequestId: hostedBody.harnessStartupRequestId,
               }
             : {}),
           ...(tasksSeam ? { tasks: tasksSeam } : {}),
@@ -549,11 +558,12 @@ export async function handleManagedChatTurn(
           ...(turnProvenance ? { turnProvenance } : {}),
           ...(environmentSpec ? { setupEnvironment: environmentSpec } : {}),
           setupSkillProvenanceIncomplete: projectSkillReadFailed,
-          // Arbitrary client-info fields cannot safely be hashed as provenance.
+          // Ad-hoc overrides are not represented by a saved client snapshot.
           setupConnectionPolicyIncomplete:
-            initializePins !== undefined ||
-            mcpProtocolVersionsByServerId !== undefined ||
-            (!authoritativeConnectionPolicy && xaaPolicy != null),
+            !authoritativeConnectionPolicy &&
+            (initializePins !== undefined ||
+              mcpProtocolVersionsByServerId !== undefined ||
+              xaaPolicy != null),
           // WHAT THIS TURN ACTUALLY ADVERTISED from the page. Written down
           // rather than re-derived, so a reopened conversation shows the tools
           // the model really had rather than the ones the browser has now.
@@ -678,6 +688,17 @@ export async function handleManagedChatTurn(
           ...(modelMrtr ? { modelFormBridge: modelMrtr } : {}),
           ...(taskCreatedBridge ? { taskCreatedBridge } : {}),
           ...(mrtrEngineResume ? { mrtrResume: mrtrEngineResume } : {}),
+          // Mid-session sign-in: the host's reaction is read per turn from
+          // the server-resolved host config, never the body; no host means
+          // the spec defaults. Without a chat session the turn cannot save
+          // the call, so a Connect card is display-only (see `scopeStepUp`).
+          authChallenge: {
+            policy: hostRuntimeConfig
+              ? authChallengeFromMcpProfile(
+                  (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile,
+                )
+              : undefined,
+          },
           ...(scopeStepUpEnabled && convexBearer
             ? {
                 scopeStepUp: {

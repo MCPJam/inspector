@@ -28,6 +28,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "local-codex-enabled",
   "local-computer-enabled",
   "local-harness-enabled",
+  "mcp-events-enabled",
   "mcp-tasks",
   "mcpjam-compatibility",
   "mcpjam-conformance",
@@ -51,7 +52,6 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "tool-quality-enabled",
   "trace-destinations",
   "unified-sessions-enabled",
-  "unified-share-conformance",
   "unified-share-evals",
   "xaa",
 ] as const;

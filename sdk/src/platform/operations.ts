@@ -1,3 +1,4 @@
+export { toolResultAuthChallengeFindings } from "../host-compat/tool-auth-compatibility.js";
 import {
   environmentNamesFor,
   resolveSuiteHostTargets,
@@ -23,6 +24,7 @@ import {
   type EvalBacktestReport,
 } from "../contract/eval-backtest.js";
 import { suppressedSuiteStandardCheckIdsSchema } from "../contract/standard-checks.js";
+import { isEvalRunTerminalStatus } from "../contract/eval-lifecycle.js";
 import { platformBrowserToolPolicySchema } from "./browser-policy.js";
 import { BROWSER_AGENT_ACT_VERBS } from "./browser-agent-contract.js";
 import type { PlatformSessionBrowserCommand } from "./types.js";
@@ -62,6 +64,10 @@ import {
   type ModelReasoningEffort,
   type ModelSelection,
 } from "../host-config/model-selection.js";
+import {
+  DIRECTORY_FEATURE_CLAIMS,
+  LAZY_AUTH_PROBE_LIMITS,
+} from "../directory-readiness/lazy-auth.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
 import {
@@ -1427,7 +1433,7 @@ export const callServerToolOperation: PlatformOperation<
   name: "call_server_tool",
   title: "Call MCPJam server tool",
   description:
-    "Execute a tool on a saved MCP server and return its result. Sends an MCP tools/call request (https://modelcontextprotocol.io/specification/2025-11-25/server/tools) with `toolName` and `parameters` exactly as given; the tool name and its parameter schema come from that server's own listing (list_server_tools). Runs with the caller's own authorization for that server and may have side effects there, including modifying or deleting data.",
+    "Execute a tool on a saved MCP server and return its result. Sends an MCP tools/call request (https://modelcontextprotocol.io/specification/2025-11-25/server/tools) with `toolName` and `parameters` exactly as given; the tool name and its parameter schema come from that server's own listing (list_server_tools). Runs with the caller's own authorization for that server and may have side effects there, including modifying or deleting data. If the server asks for sign-in on this call, the error is AUTH_REQUIRED (HTTP 403) with the parsed challenge in details.authChallenge; a completed result can also carry authChallenge beside it. Nothing signs in automatically: the user must connect the server with OAuth, then call again.",
   readOnly: false,
   mayBeDestructive: true,
   permalink: noPermalink(
@@ -1842,6 +1848,12 @@ export const checkHostCompatibilityOperation: PlatformOperation<
       tools: rawTools.map((tool) => ({
         name: String(tool.name),
         _meta: tool._meta as Record<string, unknown> | undefined,
+        // KEPT, not dropped: the per-tool auth declaration is what tells a
+        // host whether to act on a tool-result sign-in challenge. `_meta`
+        // (and any `_meta.securitySchemes` in it) rides along above.
+        ...(tool.securitySchemes !== undefined
+          ? { securitySchemes: tool.securitySchemes }
+          : {}),
       })),
     };
 
@@ -1928,12 +1940,51 @@ const readinessRunScopedInput = z.object({
 
 export type ReadinessRunScopedInput = z.infer<typeof readinessRunScopedInput>;
 
+const readinessProbeToolName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(LAZY_AUTH_PROBE_LIMITS.toolNameMaxChars);
+
+/**
+ * The lazy-auth probe's request. `enabled` is a LITERAL `true`: a field that
+ * makes a run call tools on somebody else's server is not one a falsy-looking
+ * value should be able to set, and `false` is expressed by omitting the field.
+ */
+const readinessLazyAuthProbeInput = z
+  .strictObject({
+    enabled: z.literal(true),
+    toolName: readinessProbeToolName
+      .optional()
+      .describe("The protected read-only tool to call without credentials."),
+    publicToolName: readinessProbeToolName
+      .optional()
+      .describe("The public read-only tool to call without credentials."),
+  })
+  .refine(
+    (probe) =>
+      probe.toolName === undefined || probe.toolName !== probe.publicToolName,
+    { message: "toolName and publicToolName must name different tools" }
+  );
+
 const startReadinessInput = serverScopedInput.extend({
   includeLlmObservations: z
     .boolean()
     .optional()
     .describe(
       "Ask a model for optional experience observations. Included with MCPJam; no customer credits consumed; subject to MCPJam's daily analysis budget. Defaults false; the deterministic grade is complete without it."
+    ),
+  lazyAuthProbe: readinessLazyAuthProbeInput
+    .optional()
+    .describe(
+      "Verify lazy authentication (mid-session sign-in): the run calls at most two tools annotated readOnlyHint: true — one public, one protected — WITHOUT credentials and grades how the protected call is refused. The saved server's credential is never sent on these calls. Omit to make no tool calls. Without tool names, tools are picked by their securitySchemes."
+    ),
+  claimedFeatures: z
+    .array(z.enum(DIRECTORY_FEATURE_CLAIMS))
+    .max(LAZY_AUTH_PROBE_LIMITS.maxFeatureClaims)
+    .optional()
+    .describe(
+      `Features the submitter claims (${DIRECTORY_FEATURE_CLAIMS.join(", ")}). A claim is reported as claimed, never as verified.`
     ),
   idempotencyKey: z
     .string()
@@ -1962,6 +2013,29 @@ const startOpenAIReadinessInput = startReadinessInput.extend({
 const startMuseReadinessInput = serverScopedInput.extend({
   idempotencyKey: startReadinessInput.shape.idempotencyKey,
 });
+
+/**
+ * The two optional readiness fields, present only when supplied.
+ *
+ * Absent rather than `undefined`: a start that asked for neither must send a
+ * body an endpoint that predates them still accepts.
+ */
+function readinessProbeFields(input: {
+  lazyAuthProbe?: z.infer<typeof readinessLazyAuthProbeInput>;
+  claimedFeatures?: string[];
+}): {
+  lazyAuthProbe?: z.infer<typeof readinessLazyAuthProbeInput>;
+  claimedFeatures?: string[];
+} {
+  return {
+    ...(input.lazyAuthProbe !== undefined
+      ? { lazyAuthProbe: input.lazyAuthProbe }
+      : {}),
+    ...(input.claimedFeatures !== undefined && input.claimedFeatures.length > 0
+      ? { claimedFeatures: [...new Set(input.claimedFeatures)].sort() }
+      : {}),
+  };
+}
 
 export type StartClaudeReadinessInput = z.infer<typeof startReadinessInput>;
 export type StartMuseReadinessInput = z.infer<typeof startMuseReadinessInput>;
@@ -2013,6 +2087,7 @@ export const startClaudeReadinessRunOperation: PlatformOperation<
         ...(input.idempotencyKey
           ? { idempotencyKey: input.idempotencyKey }
           : {}),
+        ...readinessProbeFields(input),
       },
       { signal }
     );
@@ -2061,6 +2136,7 @@ export const startOpenAIReadinessRunOperation: PlatformOperation<
         ...(input.idempotencyKey
           ? { idempotencyKey: input.idempotencyKey }
           : {}),
+        ...readinessProbeFields(input),
       },
       { signal }
     );
@@ -4366,7 +4442,7 @@ export const runEvalSuiteOperation: PlatformOperation<
   name: "run_eval_suite",
   title: "Run MCPJam eval suite",
   description:
-    "Start an asynchronous rerun of an existing eval suite. Returns immediately with the project and runId; the run status progresses to completed, failed, or cancelled. Eval runs execute LLM iterations and CONSUME the organization's credits or configured provider keys.\n\nWHICH TARGET RUNS is explicit, never guessed. A suite with nothing attached runs its saved server selection. A suite with exactly ONE attached environment or host runs against that one automatically. A suite with SEVERAL fails with TARGET_REQUIRED, listing them — name one with environment or host, several with environments or hosts, or every one with allAttached. Each named target is a separate paid run.\n\nA multi-target launch returns a group receipt: outcome (started | partial | failed), startedCount, failedCount, and one entry per target that either started (with its runId) or failed (with its reason). A failed target does not abort its siblings, so read outcome rather than assuming everything started.",
+    "Start an asynchronous rerun of an existing eval suite. Returns immediately with the project and runId; the run status progresses to completed, failed, cancelled, or timed_out. Eval runs execute LLM iterations and CONSUME the organization's credits or configured provider keys.\n\nWHICH TARGET RUNS is explicit, never guessed. A suite with nothing attached runs its saved server selection. A suite with exactly ONE attached environment or host runs against that one automatically. A suite with SEVERAL fails with TARGET_REQUIRED, listing them — name one with environment or host, several with environments or hosts, or every one with allAttached. Each named target is a separate paid run.\n\nA multi-target launch returns a group receipt: outcome (started | partial | failed), startedCount, failedCount, and one entry per target that either started (with its runId) or failed (with its reason). A failed target does not abort its siblings, so read outcome rather than assuming everything started.",
   readOnly: false,
   risk: "spend",
   permalink: derivePermalinks((result) => {
@@ -7163,26 +7239,6 @@ const evalRunScopedInput = z.object({
 export type EvalRunScopedInput = z.infer<typeof evalRunScopedInput>;
 
 /**
- * Statuses at which a run has stopped changing.
- *
- * Mirrors the CLI's `TERMINAL_RUN_STATUSES`. A decision summary is fetched only
- * for a terminal run: while a run is still going its verdict does not exist
- * yet, so the extra request would buy a `notEstablished` a poller already knows
- * from `status`.
- *
- * `grading` IS DELIBERATELY ABSENT. A run held for its gating judge has run
- * every trial but has not been decided — its `result` is `pending` — so
- * fetching a summary for it would return exactly the `notEstablished` this set
- * exists to avoid asking for.
- */
-const TERMINAL_EVAL_RUN_STATUSES: ReadonlySet<string> = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-]);
-
-/**
  * The diagnostics page size this operation asks for.
  *
  * Small on purpose. Each diagnostic carries a six-row chain plus evidence, and
@@ -7249,7 +7305,9 @@ export const getEvalRunOperation: PlatformOperation<
       { projectId: project.id, runId: input.runId },
       { signal }
     );
-    if (!TERMINAL_EVAL_RUN_STATUSES.has(run.status)) {
+    // A decision summary exists only for a terminal run; asking for a live or
+    // `grading` run's would buy the `notEstablished` its status already says.
+    if (!isEvalRunTerminalStatus(run.status)) {
       return { project: toSelectedProjectInfo(project), run };
     }
     // Endpoint first, then the same shared assembler over the older iteration

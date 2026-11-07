@@ -181,7 +181,8 @@ const LOCAL_ANTHROPIC = {
   provider: "anthropic",
   hosted: false,
 } as ModelDefinition;
-// An org row whose canonical id cannot be formed (no table, no catalog entry).
+// An org row neither the reviewed exceptions nor the catalog list: its
+// canonical id comes from the vendor prefix (`anthropic/claude-experimental-x`).
 const ORG_ANTHROPIC_UNKNOWN = {
   id: "claude-experimental-x",
   name: "Experimental",
@@ -209,6 +210,7 @@ describe("organization-key rows on a harness", () => {
       "hosted:anthropic:anthropic/claude-haiku-4.5",
       "hosted:anthropic:anthropic/claude-fable-5",
       "org:orgprov_anthropic:claude-sonnet-4-5",
+      "org:orgprov_anthropic:claude-experimental-x",
     ]);
   });
 
@@ -223,13 +225,8 @@ describe("organization-key rows on a harness", () => {
     ]);
   });
 
-  it("refuses another vendor's org connection, a local key, and a row with no canonical id", () => {
-    for (const row of [
-      ORG_OPENROUTER_CLAUDE,
-      LOCAL_ANTHROPIC,
-      ORG_ANTHROPIC_UNKNOWN,
-      ORG_OPENAI,
-    ]) {
+  it("refuses another vendor's org connection and a local key", () => {
+    for (const row of [ORG_OPENROUTER_CLAUDE, LOCAL_ANTHROPIC, ORG_OPENAI]) {
       expect(
         harnessRowRefusalReason(row, { harnessId: "claude-code" }, "chat"),
       ).toMatch(/MCPJam model or your organization's Anthropic key/);

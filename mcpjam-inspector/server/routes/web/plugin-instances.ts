@@ -52,7 +52,9 @@ import {
   readOnboarding,
 } from "../../services/plugin-host/onboarding.js";
 import { pluginContextRoutes } from "./plugin-context.js";
+import { pluginContextRefusalResponse } from "./plugin-context-refusal.js";
 import { PluginModelContextError } from "../../../shared/plugin-model-context.js";
+import { PLUGIN_CONTEXT_UPDATE_PATHS } from "../../middleware/web-body-limit.js";
 
 import { pluginMentionRoutes } from "./plugin-mentions.js";
 import {
@@ -266,6 +268,8 @@ async function routeUntimed(c: Context, action: () => Promise<Response>) {
   } catch (error) {
     if (isAbortError(error))
       return c.json(failure("PLUGIN_INSTANCE_CANCELLED"), 408);
+    const refused = pluginContextRefusalResponse(c, error, failure);
+    if (refused) return refused;
     if (error instanceof PluginDeepLinkError) {
       return c.json(
         failure("PLUGIN_DEEP_LINK_INVALID", {
@@ -344,7 +348,14 @@ async function routeUntimed(c: Context, action: () => Promise<Response>) {
   }
 }
 const instances = new Hono();
-instances.use("*", bodyLimit({ maxSize: 512 * 1024 }));
+const instanceBodyLimit = bodyLimit({ maxSize: 512 * 1024 });
+// A context update carries one App update up to the policy ceiling, and
+// `webBodyLimit` bounds it with a typed 413 before anything reads it.
+instances.use("*", (c, next) =>
+  c.req.method === "POST" && PLUGIN_CONTEXT_UPDATE_PATHS.has(c.req.path)
+    ? next()
+    : instanceBodyLimit(c, next),
+);
 instances.use("*", async (c, next) => {
   c.header("Cache-Control", "no-store");
   await next();

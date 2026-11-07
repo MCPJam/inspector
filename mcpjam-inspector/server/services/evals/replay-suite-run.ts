@@ -26,6 +26,7 @@ import { resolveOpenAiCompatForHostConfig } from "@mcpjam/sdk/host-config/intern
 import { recoverToolPolicyFromSourceRun } from "./replay-tool-policy.js";
 import { resolveFrozenRunGradingMode } from "./grading-mode.js";
 import { prepareClientKeyRun } from "./org-policy-client-keys.js";
+import { shouldSkipExecution } from "../../routes/shared/evals.js";
 
 export type ExecuteSuiteReplayFromRunParams = {
   convexClient: ConvexHttpClient;
@@ -51,6 +52,8 @@ export type PreparedSuiteReplayFromRunResult = {
   runId: string;
   sourceRunId: string;
   recorder: SuiteRunRecorder;
+  deduped?: boolean;
+  status?: string;
   execute: () => Promise<void>;
   cleanup: () => Promise<void>;
 };
@@ -144,6 +147,8 @@ export async function prepareSuiteReplayFromRun(
       hostConfig: runHostConfigSnapshot,
       gradingEngine: runGradingEngine,
       environmentRef,
+      deduped,
+      status,
     } = await startSuiteRunWithRecorder({
       convexClient,
       suiteId: replayMetadata.suiteId,
@@ -161,6 +166,13 @@ export async function prepareSuiteReplayFromRun(
       toolSnapshot,
       toolSnapshotDebug,
     });
+    if (deduped === true) {
+      return {
+        suiteId: replayMetadata.suiteId, runId, sourceRunId, recorder, deduped, status,
+        execute: async () => { throw new Error(`Eval run ${runId} already has an executor. Read its existing result.`); },
+        cleanup: () => replayManager.disconnectAllServers(),
+      };
+    }
     const replayHostConfig =
       runHostConfigSnapshot ??
       (await loadSuiteHostConfig(convexClient, replayMetadata.suiteId));
@@ -274,13 +286,13 @@ export async function executeSuiteReplayFromRun(
 ): Promise<ExecuteSuiteReplayFromRunResult> {
   const prepared = await prepareSuiteReplayFromRun(params);
   try {
-    await prepared.execute();
+    if (!shouldSkipExecution(prepared)) await prepared.execute();
     return {
       success: true,
       suiteId: prepared.suiteId,
       runId: prepared.runId,
       sourceRunId: prepared.sourceRunId,
-      message: "Replay completed successfully.",
+      message: prepared.deduped === true ? "An existing replay run was found. Read its status for the result." : "Replay completed successfully.",
     };
   } finally {
     await prepared.cleanup();

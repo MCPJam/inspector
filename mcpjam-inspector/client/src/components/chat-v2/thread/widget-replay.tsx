@@ -6,7 +6,7 @@ import {
   serverDisplayName,
   usePluginIconDirectory,
 } from "@/components/host-workspace/plugin-icon-directory";
-import { PLUGIN_MODEL_APP_META } from "@/shared/plugin-model-app";
+import { PLUGIN_MODEL_APP_META, type PluginModelApp } from "@/shared/plugin-model-app";
 import { WidgetPlaceholder } from "@mcpjam/chat-ui";
 import { useWidgetPresentation } from "./widget-presentation";
 import type { ContentBlock } from "@modelcontextprotocol/client";
@@ -33,6 +33,7 @@ import type { AppToolInvocationUpdate } from "./app-tool-invocations";
 import { isFailedWidgetResult } from "./widget-result-policy";
 
 export interface WidgetReplayProps {
+  attributedModelApp?: PluginModelApp;
   widgetContext?: McpWidgetExecutionContext;
   resourceProof?: RetainedResourceProof;
   chatSessionId?: string;
@@ -116,6 +117,7 @@ export function WidgetReplay(props: WidgetReplayProps) {
 }
 
 function LiveWidgetReplay({
+  attributedModelApp,
   widgetContext,
   resourceProof,
   chatSessionId,
@@ -195,7 +197,8 @@ function LiveWidgetReplay({
   // matching `initialize`.
   const hasUi =
     resolveHostSupportsWidget(serverId ?? undefined) &&
-    (uiType === UIType.MCP_APPS ||
+    (attributedModelApp !== undefined ||
+      uiType === UIType.MCP_APPS ||
       uiType === UIType.OPENAI_SDK ||
       uiType === UIType.OPENAI_SDK_AND_MCP_APPS);
   // The download-confirm dialog rides EVERY return path below, not just the
@@ -225,7 +228,7 @@ function LiveWidgetReplay({
 
   if (
     (!serverId && !hasCachedHtmlForOffline) ||
-    (!uiResourceUri && !hasCachedHtmlForOffline) ||
+    (!uiResourceUri && !hasCachedHtmlForOffline && !attributedModelApp) ||
     !toolCallId
   ) {
     return (
@@ -304,6 +307,7 @@ function LiveWidgetReplay({
     />
   );
   const modelApp =
+    attributedModelApp ??
     readToolResultMeta(rawOutput)?.[PLUGIN_MODEL_APP_META] ??
     readToolResultMeta(toolOutput)?.[PLUGIN_MODEL_APP_META];
   if (modelApp !== undefined)

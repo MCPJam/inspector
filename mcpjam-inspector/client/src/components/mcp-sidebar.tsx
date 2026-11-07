@@ -24,8 +24,14 @@ import {
   Cable,
   MessagesSquare,
   Globe,
+  Radio,
+  Zap,
 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
+import {
+  EVENTS_FEATURE_FLAG,
+  useEventsEnabledState,
+} from "@/hooks/useEventsEnabled";
 import { track } from "@/lib/analytics";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -132,6 +138,7 @@ export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "unified-sessions-enabled",
   "evaluate-enabled",
   WEBMCP_INSPECTOR_FEATURE_FLAG,
+  EVENTS_FEATURE_FLAG,
 ] as const;
 
 /**
@@ -244,6 +251,16 @@ export const navigationSections: NavSection[] = [
         icon: MessageCircle,
       },
       {
+        // Agent runs fired by MCP Events on MCPJam's hosted runner. Sits next
+        // to Playground because it is the unattended version of the same
+        // thing: a model with the project's servers, reacting to an event
+        // instead of a message.
+        title: "Triggers",
+        url: "/triggers",
+        icon: Zap,
+        featureFlag: EVENTS_FEATURE_FLAG,
+      },
+      {
         title: "Environments",
         url: "/environments",
         icon: Layers,
@@ -329,6 +346,7 @@ export const navigationSections: NavSection[] = [
         // PostHog. Keep the `mcpjam-` prefix so it's obvious at a glance that
         // this is an internal-only flag (same convention as `mcpjam-learning`).
         featureFlag: "mcpjam-conformance",
+        badge: "New",
       },
       {
         title: "Compatibility",
@@ -365,6 +383,12 @@ export const navigationSections: NavSection[] = [
         title: "Tasks",
         url: "/tasks",
         icon: ListTodo,
+      },
+      {
+        title: "Events",
+        url: "/events",
+        icon: Radio,
+        featureFlag: EVENTS_FEATURE_FLAG,
       },
       {
         // Tools a live web PAGE registers, rather than an MCP server — the
@@ -532,6 +556,7 @@ export function MCPSidebar({
     "unified-sessions-enabled",
   );
   const evaluateEnabled = useFeatureFlagEnabled("evaluate-enabled");
+  const eventsEnabled = useEventsEnabledState();
   const webmcpInspectorEnabled = useWebmcpInspectorEnabledState();
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
   const { user, isLoading: isWorkOsAuthLoading } = useAuth();
@@ -655,6 +680,7 @@ export function MCPSidebar({
       // Hosted: the backend's availability answer, flag and readiness both.
       // Local: the local Browser rollout, which local guests may be in too.
       [WEBMCP_INSPECTOR_FEATURE_FLAG]: webmcpInspectorEnabled === true,
+      [EVENTS_FEATURE_FLAG]: eventsEnabled === true,
     }),
     [
       learningEnabled,
@@ -667,6 +693,7 @@ export function MCPSidebar({
       unifiedSessionsEnabled,
       evaluateEnabled,
       webmcpInspectorEnabled,
+      eventsEnabled,
       isAuthenticated,
     ],
   );

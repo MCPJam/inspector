@@ -3,7 +3,7 @@ import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 import { AdmissionWaitBudget } from "../services/sessionSimulation/admission-retry.js";
-import { withSwarmStepAdmissionRetry } from "./swarm-step-admission.js";
+import { withModelStepAdmissionRetry } from "./model-step-admission.js";
 import { streamSelectionFields } from "./selection-rail.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { unwrapToolOutputEnvelope } from "@/shared/tool-output-envelope";
@@ -46,10 +46,13 @@ import {
   type BackendStreamFailureContext,
 } from "./org-policy-stream-refusal.js";
 import {
+  createToolNameAliases,
   describeAsSlug,
   describeError,
   isNormalizedError,
   readModelOutputImage,
+  renameToolNamePart,
+  renameToolNamesInMessages,
   type NormalizedError,
 } from "@mcpjam/sdk";
 import {
@@ -97,6 +100,10 @@ import {
 } from "@/shared/http-tool-calls";
 import { isMrtrSuspendSignalShape } from "@/shared/mrtr-continuation";
 import { isScopeStepUpSuspendSignal } from "./scope-step-up-continuation.js";
+import {
+  settleSuspendedHistoryToolCalls,
+  type SettleSuspendedToolCall,
+} from "./direct-chat-scope-step-up.js";
 import {
   spliceMrtrToolResult,
   hasUnresolvedToolCall,
@@ -708,6 +715,12 @@ const MODEL_RETIRED_CODE = "model_retired";
  */
 const ORG_MODEL_NOT_ALLOWED_CODE = "model_not_allowed";
 
+/**
+ * Backend refusal code (convex `stream/routes.ts`, `lib/llmCallShell.ts`): a
+ * guest's request is over the guest input-token cap. Arrives as HTTP 413.
+ */
+const GUEST_INPUT_TOO_LARGE_CODE = "guest_input_too_large";
+
 export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
@@ -767,6 +780,10 @@ export function describeBackendStreamFailure(
     return describeAsSlug("provider/model_retired", detail);
   if (code === ORG_MODEL_NOT_ALLOWED_CODE)
     return describeAsSlug("org/model_not_allowed", detail);
+  // Same trap at 413: `USER_OWNED_DENIAL_CODES` lists this code, but that set
+  // only exempts a 200, so the 413 reached `internal/unknown` and paged.
+  if (code === GUEST_INPUT_TOO_LARGE_CODE)
+    return describeAsSlug("account/guest_input_too_large", detail);
 
   if (status !== undefined && status >= 500) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };
@@ -914,6 +931,7 @@ function applyToolRefresh(
 }
 
 export interface MCPJamHandlerOptions {
+  harnessStartupRequestId?: string;
   /** Effective saved App declaration, qualified by the caller's installed handlers. */
   harnessHostCapabilities?: import("@/shared/harness-host-capabilities").HarnessHostCapabilityQualification;
   /** Durable callers must finish this write before the next external effect. */
@@ -1299,6 +1317,14 @@ export interface MCPJamHandlerOptions {
   mrtrResume?: MrtrEngineResume;
   /** SEP-2350 resume descriptor; driven before the first model step. */
   scopeStepUpResume?: MrtrEngineResume;
+  /**
+   * History settlement for mid-session sign-in. A call that a sign-in
+   * suspended can come back unresolved because the user sent another message
+   * instead of signing in; this answers it with the reason-aware text before
+   * the first model step, on every engine path and whether or not the history
+   * is client-supplied. Skipped on a resume, like the approval settlement.
+   */
+  settleSuspendedHistoryToolCall?: SettleSuspendedToolCall;
   /**
    * Creates a continuation for an exact harness-proxied tools/call. The
    * harness supplies its model-visible toolCallId after correlating the proxy
@@ -2492,6 +2518,9 @@ async function processStream(
   // Who and where a pill minted here is bound to (MJ-008). Required: an
   // approval id minted without it could not be verified on resume.
   approvalBinding: ToolApprovalBinding,
+  // Undoes the request's provider-safe aliases, so a call to `cart_add` is
+  // handled as the server's `cart.add`.
+  toolNameFromWire: (name: string) => string,
   onLiveTextDelta?: (delta: string) => void,
   abortSignal?: AbortSignal,
   // PR 5b-pre: chunk-level callbacks. Optional; only fired when
@@ -2606,14 +2635,17 @@ async function processStream(
             );
       }
 
-      const chunk = value.value as UIMessageChunk & {
-        totalUsage?: {
-          inputTokens?: number;
-          outputTokens?: number;
-          totalTokens?: number;
-        };
-        [key: string]: unknown;
-      };
+      const chunk = renameToolNamePart(
+        value.value as UIMessageChunk & {
+          totalUsage?: {
+            inputTokens?: number;
+            outputTokens?: number;
+            totalTokens?: number;
+          };
+          [key: string]: unknown;
+        },
+        toolNameFromWire,
+      );
 
       if (firstChunkAt === undefined) {
         firstChunkAt = Date.now();
@@ -3636,6 +3668,80 @@ function collectToolCallIds(messages: ModelMessage[]): Set<string> {
  * its tool, and SILENTLY — re-sending it would ask the browser to run it. The
  * model is never shown it or its answer (`presentHistoryForModel`).
  */
+/**
+ * Answer inherited calls a mid-session sign-in suspended, before the
+ * approval settlement below would answer them as unapproved. The answer is
+ * the reason-aware cancel text, never a run: the user moved on without
+ * signing in. Each call is re-introduced on this response first, like the
+ * unapproved ones, so the client has a part to attach the answer to.
+ */
+async function settleSuspendedSignInHistoryToolCalls(args: {
+  writer: StepContext["writer"];
+  messageHistory: ModelMessage[];
+  tools: ToolSet;
+  mcpClientManager: MCPClientManager;
+  traceTurn: LiveTraceTurnContext;
+  stepIndex: number;
+  settle: SettleSuspendedToolCall;
+  onToolResult?: (event: MCPJamToolResultEvent) => void | Promise<void>;
+  onToolCall?: (event: MCPJamToolCallEvent) => void;
+}): Promise<void> {
+  const answers = await settleSuspendedHistoryToolCalls({
+    messageHistory: args.messageHistory,
+    settle: args.settle,
+  });
+  if (answers.length === 0) return;
+  const calls = new Map<string, ToolCallPart>();
+  for (const msg of args.messageHistory) {
+    if (msg?.role !== "assistant") continue;
+    const content = (msg as AssistantModelMessage).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (part.type === "tool-call") calls.set(part.toolCallId, part);
+    }
+  }
+  for (const answer of answers) {
+    for (const result of (answer as ToolModelMessage).content) {
+      if (result.type !== "tool-result") continue;
+      const part = calls.get(result.toolCallId);
+      if (!part) continue;
+      emitToolInput(args.writer, {
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+        input: part.input ?? {},
+        ...(part.providerOptions
+          ? { providerMetadata: part.providerOptions }
+          : {}),
+      });
+      if (args.onToolCall) {
+        try {
+          args.onToolCall({
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            input: part.input,
+            stepIndex: args.stepIndex,
+            promptIndex: args.traceTurn.promptIndex,
+            serverId: readToolServerId(args.tools, part.toolName),
+          });
+        } catch (error) {
+          logger.warn(
+            "[mcpjam-stream-handler] onToolCall callback failed (suspended sign-in call)",
+            { error: error instanceof Error ? error.message : String(error) },
+          );
+        }
+      }
+    }
+  }
+  await emitToolResults(
+    args.writer,
+    args.mcpClientManager,
+    answers,
+    args.traceTurn,
+    args.stepIndex,
+    args.onToolResult,
+  );
+}
+
 async function settleUnapprovedHistoryToolCalls(args: {
   writer: StepContext["writer"];
   messageHistory: ModelMessage[];
@@ -3883,7 +3989,7 @@ async function processOneStep(ctx: StepContext): Promise<{
 
   const beforeStepLength = messageHistory.length;
   const stepStartAbs = Date.now();
-  const llmStartAbs = stepStartAbs;
+  let llmStartAbs = stepStartAbs;
   const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
 
   // Keep current-turn reasoning while cleaning only the outgoing provider copy.
@@ -3984,41 +4090,74 @@ async function processOneStep(ctx: StepContext): Promise<{
   // paying, so a claim there is incoherent rather than merely misrouted.
   const dispatchPath =
     billingFeature !== undefined ? PLATFORM_STREAM_PATH : endpointPath;
+  // MCP allows tool names (`cart.add`) that the providers behind the backend
+  // reject, so the backend gets provider-safe aliases and `processStream`
+  // restores the originals.
+  const wireToolNames = createToolNameAliases(
+    activeToolDefs.map((def) => def.name),
+  );
   let res: Response;
   // Everything above this line is ours; everything at or below it is the
   // model's turn. Marked HERE, at the handover, not once a response comes
   // back: a provider that rejects the request outright still failed as the
   // model, while a throw in the preparation above genuinely is ours.
   onModelHandover?.();
-  res = await withSwarmStepAdmissionRetry(
-    () => fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
-      method: "POST",
-      headers: convexHeaders,
-      body: JSON.stringify({
-        mode: "stream",
-        // Persist only once at the end of the full agentic loop via
-        // onConversationComplete to avoid storing partial per-step traces.
-        skipChatIngestion: true,
-        messages: JSON.stringify(scrubbedMessages),
-        model: modelId,
-        systemPrompt: providerSystemPrompt,
-        ...(temperature !== undefined ? { temperature } : {}),
-        tools: activeToolDefs,
-        ...(scenarioId ? { scenarioId } : {}),
-        ...(scenarioId && Number.isFinite(accessVersion)
-          ? { accessVersion }
-          : {}),
-        ...(projectId ? { projectId } : {}),
-        ...(chatSessionId ? { chatSessionId } : {}),
-        ...(sourceType ? { sourceType } : {}),
-        turnId: traceTurn.turnId,
-        promptIndex: traceTurn.promptIndex,
-        stepIndex,
-        ...(toolChoice ? { toolChoice } : {}),
-        ...(extraBodyFields ?? {}),
-      }),
-      ...(abortSignal ? { signal: abortSignal } : {}),
-    }),
+  let admissionAttempts = 0;
+  res = await withModelStepAdmissionRetry(
+    () => {
+      // A resend after a busy refusal restarts the model's clock, so time
+      // spent waiting for spending admission stays out of its latency.
+      if (admissionAttempts++ > 0) llmStartAbs = Date.now();
+      return fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
+        method: "POST",
+        headers: convexHeaders,
+        body: JSON.stringify({
+          mode: "stream",
+          // Persist only once at the end of the full agentic loop via
+          // onConversationComplete to avoid storing partial per-step traces.
+          skipChatIngestion: true,
+          messages: JSON.stringify(
+            renameToolNamesInMessages(scrubbedMessages, wireToolNames.toWire),
+          ),
+          model: modelId,
+          systemPrompt: providerSystemPrompt,
+          ...(temperature !== undefined ? { temperature } : {}),
+          tools: activeToolDefs.map((def) => ({
+            ...def,
+            name: wireToolNames.toWire(def.name),
+          })),
+          ...(scenarioId ? { scenarioId } : {}),
+          ...(scenarioId && Number.isFinite(accessVersion)
+            ? { accessVersion }
+            : {}),
+          ...(projectId ? { projectId } : {}),
+          ...(chatSessionId ? { chatSessionId } : {}),
+          ...(sourceType ? { sourceType } : {}),
+          turnId: traceTurn.turnId,
+          promptIndex: traceTurn.promptIndex,
+          stepIndex,
+          ...(toolChoice
+            ? {
+                toolChoice: renameToolNamePart(
+                  toolChoice,
+                  wireToolNames.toWire,
+                ),
+              }
+            : {}),
+          ...(extraBodyFields ?? {}),
+          // A hosted eval's own `toolChoice` rides in `extraBodyFields`.
+          ...(extraBodyFields?.toolChoice
+            ? {
+                toolChoice: renameToolNamePart(
+                  extraBodyFields.toolChoice,
+                  wireToolNames.toWire,
+                ),
+              }
+            : {}),
+        }),
+        ...(abortSignal ? { signal: abortSignal } : {}),
+      });
+    },
     {
       sourceType,
       stepIndex,
@@ -4291,6 +4430,7 @@ async function processOneStep(ctx: StepContext): Promise<{
     approvalDecisions,
     messageHistory,
     approvalBinding,
+    wireToolNames.fromWire,
     onLiveTextDelta,
     abortSignal,
     onToolCall,
@@ -5561,6 +5701,22 @@ export async function runChatEngineLoop(
       // call in the history is unresolved, so nothing planted beside the
       // resumed call can run on that path either; it only keeps the turn
       // paused.
+      if (
+        options.settleSuspendedHistoryToolCall &&
+        !(scopeStepUpResume ?? mrtrResume)
+      ) {
+        await settleSuspendedSignInHistoryToolCalls({
+          writer: safeWriter,
+          messageHistory,
+          tools,
+          mcpClientManager,
+          traceTurn,
+          stepIndex: effectiveSteps(),
+          settle: options.settleSuspendedHistoryToolCall,
+          onToolResult,
+          onToolCall,
+        });
+      }
       if (options.clientSuppliedHistory && !(scopeStepUpResume ?? mrtrResume)) {
         await settleUnapprovedHistoryToolCalls({
           writer: safeWriter,
