@@ -72,7 +72,7 @@ async function fixture(options: {
     fileResources: true, fileResourcesEnabled: () => fileResourcesEnabled,
     uploadTarget: () => "local-stdio",
     assertCurrent: async () => {
-      if (++reads === 2 && options.disableAt === "admission") fileResourcesEnabled = false;
+      if (++reads === (options.disableAt === "admission" ? 2 : 3) && options.disableAt) fileResourcesEnabled = false;
     },
   });
   seams.resume.mockImplementationOnce(async (deps) => {
@@ -85,8 +85,8 @@ async function fixture(options: {
       }, { input: { action: "accept", content: { file: "fixture://selected" } } });
       // The real continuation helper awaits its durable lease and wire fence here.
       await Promise.resolve();
-      if (options.disableAt === "commit") fileResourcesEnabled = false;
-      prepared.commit();
+      // Permission changes are visible only after refreshing the runtime snapshot.
+      await prepared.commit();
       wire(prepared.responses);
       return { outcome: "completed", result: { content: [] } };
     } catch {

@@ -465,7 +465,7 @@ describe("a later send and Remove all", () => {
     });
     expect(screen.getByTestId("references")).toHaveTextContent(token);
     expect(
-      screen.getByRole("button", { name: "Context, 2 items" }),
+      screen.getByRole("button", { name: "Parts: Context, 2 items" }),
     ).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Remove all Parts context" }),
@@ -532,7 +532,7 @@ describe("a stale Remove all on a model App", () => {
     );
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Context, 1 item" }),
+        screen.getByRole("button", { name: "Parts: Context, 1 item" }),
       ).toBeInTheDocument(),
     );
     expect(screen.getByTestId("references")).toHaveTextContent("[]");
