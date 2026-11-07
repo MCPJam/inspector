@@ -12,12 +12,13 @@ import { SandboxViewRegistry } from "../sandbox-view-registry.js";
 
 // Node's OS resolver need not implement .localhost; browsers resolve it to
 // loopback. Keep the original Host header while driving the actual listener.
+// Do not pool distinct origins onto one rewritten IP across listener restarts.
 function fetch(value: string | URL): Promise<Response> {
   const url = new URL(value);
   const host = url.host;
   url.hostname = "127.0.0.1";
   return new Promise((resolve, reject) => {
-    get(url, { headers: { Host: host } }, (response) => {
+    get(url, { agent: false, headers: { Host: host } }, (response) => {
       const body: Buffer[] = [];
       response.on("data", (chunk: Buffer) => body.push(chunk));
       response.on("error", reject);
