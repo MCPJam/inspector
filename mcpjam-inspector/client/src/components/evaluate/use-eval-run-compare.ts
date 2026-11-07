@@ -18,10 +18,8 @@ import {
   type EvalRunCompareDto,
   type EvalRunCompareFailureKind,
 } from "@/lib/apis/eval-run-compare-api";
-import {
-  evalRunDecisionRevision,
-  isTerminalEvalRunStatus,
-} from "@/lib/evals/eval-decision-summary-store";
+import { evalRunDecisionRevision } from "@/lib/evals/eval-decision-summary-store";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 import type { EvalSuiteRun } from "../evals/types";
 
 export type EvalRunCompareState = {
@@ -49,7 +47,7 @@ export function useEvalRunCompare({
   baseRunId?: string | null;
   enabled: boolean;
 }): EvalRunCompareState {
-  const terminal = isTerminalEvalRunStatus(run?.status);
+  const terminal = isEvalRunTerminalStatus(run?.status);
   const active = Boolean(enabled && projectId && run && terminal);
   const revision = run ? evalRunDecisionRevision(run) : "";
   const key = active

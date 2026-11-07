@@ -35,6 +35,7 @@ import type {
   BrowserdHandle,
   BrowserdSandbox,
 } from "./boot-browserd";
+import { BROWSERD_READY_TIMEOUT_MS } from "./boot-browserd";
 import type {
   BrowserdRecordArgs,
   BrowserdRecordResult,
@@ -766,6 +767,13 @@ async function trySandboxReuse(
  */
 const RELAUNCH_HOLDER_PREFIX = "relaunch:";
 const RELAUNCH_FENCE_TTL_MS = 30_000;
+
+/**
+ * How long a relaunch claim lasts: the whole boot deadline, plus a minute for
+ * the wake, kill, upload, stream and record around it. Shorter than a slow
+ * boot, an expired claim lets another replica pkill the daemon mid-launch.
+ */
+export const RELAUNCH_CLAIM_TTL_MS = BROWSERD_READY_TIMEOUT_MS + 60_000;
 
 /** A lease this relaunch is holding, to be given back if the kill fails. */
 interface RelaunchFence {
@@ -1706,6 +1714,7 @@ async function ensureOnSandbox(
         sandboxRowId: target.sandboxRowId,
         watched: true,
         claimId,
+        ttlMs: RELAUNCH_CLAIM_TTL_MS,
         ...(args.signal ? { signal: args.signal } : {}),
       });
       // Only a REFUSAL stops us, exactly as on the computer arm. `undefined`
@@ -1953,6 +1962,7 @@ async function ensureOnComputer(
     const claimed = await deps.store.claimRelaunch?.({
       computerId,
       claimId,
+      ttlMs: RELAUNCH_CLAIM_TTL_MS,
       ...(args.signal ? { signal: args.signal } : {}),
     });
     if (claimed?.ok === false && claimed.reason === "claimed") {
