@@ -14,16 +14,15 @@ export type ConformanceVerdict = {
 
 /**
  * The verdict for a scored run. Advice costs no points, but a passing run
- * with advice says so rather than reading as fully conformant.
+ * with advice says so rather than reading as fully conformant. Only a
+ * recorded pass reads as passing: a missing or unknown outcome is incomplete.
  */
 export function conformanceVerdict(
   outcome: string | null | undefined,
   advisoryCount: number,
 ): ConformanceVerdict {
   if (outcome === "failed") return { label: "Not conformant", tone: "bad" };
-  if (outcome === "incomplete") {
-    return { label: "Incomplete run", tone: "warn" };
-  }
+  if (outcome !== "passed") return { label: "Incomplete run", tone: "warn" };
   return advisoryCount > 0
     ? { label: "Conformant, with advice", tone: "ok" }
     : { label: "Fully conformant", tone: "ok" };

@@ -171,6 +171,8 @@ describe("ConformanceShareRunDialog", () => {
     const svg = mocks.exportPng.mock.calls[0]![0] as string;
     expect(svg).toMatch(/^<svg /);
     expect(svg).toContain(">amazon-test</text>");
+    // Outside the hosted app, the card names no address.
+    expect(svg).not.toContain(window.location.hostname);
   });
 
   it("says when the image could not be saved", async () => {

@@ -21,6 +21,15 @@ describe("conformanceVerdict", () => {
     });
   });
 
+  it("never reads a missing or unknown outcome as a pass", () => {
+    for (const outcome of [null, undefined, "unknown"]) {
+      expect(conformanceVerdict(outcome, 0)).toEqual({
+        label: "Incomplete run",
+        tone: "warn",
+      });
+    }
+  });
+
   it("does not let advice soften a failure", () => {
     expect(conformanceVerdict("failed", 3).label).toBe("Not conformant");
   });
