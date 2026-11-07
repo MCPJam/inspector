@@ -1,5 +1,6 @@
 import {
   GUEST_ACCESS_DISABLED_CODE,
+  GUEST_SESSION_REFUSAL_HEADER,
   type GuestSessionFailureReason,
 } from "@/shared/guest-session-failure";
 import { guestIpForwardHeaders } from "./guest-spend-ip.js";
@@ -188,6 +189,12 @@ const BACKEND_GUEST_ACCESS_DISABLED_ERROR =
 async function isGuestAccessDisabledResponse(
   response: Response,
 ): Promise<boolean> {
+  if (
+    response.headers.get(GUEST_SESSION_REFUSAL_HEADER) ===
+    GUEST_ACCESS_DISABLED_CODE
+  ) {
+    return true;
+  }
   try {
     const raw: unknown = await response.json();
     if (!raw || typeof raw !== "object") return false;

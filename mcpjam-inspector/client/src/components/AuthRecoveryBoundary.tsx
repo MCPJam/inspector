@@ -9,6 +9,7 @@ import {
   getGuestSessionRefusal,
   subscribeGuestSessionChanges,
 } from "@/lib/guest-session";
+import { guestSessionRefusalCopy } from "@/lib/guest-session-refusal-copy";
 
 /** Keep the auth providers mounted, but cancel every app subscriber during recovery. */
 export function AuthRecoveryBoundary({
@@ -21,28 +22,54 @@ export function AuthRecoveryBoundary({
   const { isLoading, isAuthenticated } = useConvexAuth();
   const paused = useSessionRefreshStore((s) => s.queriesPaused);
   const confirmed = useSessionRefreshStore((s) => s.authConfirmed);
-  // A refused guest never authenticates, so holding for one would spin
-  // forever. Let the app render signed out; it offers sign-in from there.
-  const guestRefused =
-    useSyncExternalStore(
-      subscribeGuestSessionChanges,
-      getGuestSessionRefusal,
-      () => null,
-    ) !== null;
+  const refusal = useSyncExternalStore(
+    subscribeGuestSessionChanges,
+    getGuestSessionRefusal,
+    () => null,
+  );
   if (
     isLoading ||
-    (!isAuthenticated && !shouldSkipGuestSession() && !guestRefused) ||
+    (!isAuthenticated && !shouldSkipGuestSession()) ||
     (paused && (!confirmed || !ready))
   ) {
+    // The app stays unmounted without auth so no protected subscription runs.
+    // A refused guest never authenticates, though, so a spinner would never
+    // end: say why instead, under the banner's Sign in button.
+    const settledRefusal = !isLoading && !paused && refusal;
     return (
       <>
-        <LoadingScreen
-          message={paused ? "Reconnecting your session…" : undefined}
-        />
+        {settledRefusal ? (
+          <SignedOutScreen
+            message={guestSessionRefusalCopy(settledRefusal.reason).summary}
+          />
+        ) : (
+          <LoadingScreen
+            message={paused ? "Reconnecting your session…" : undefined}
+          />
+        )}
         <SessionRefreshBanner dismissible={false} />
         <GuestSessionRefusedBanner />
       </>
     );
   }
   return children;
+}
+
+function SignedOutScreen({ message }: { message: string }) {
+  return (
+    <div
+      data-testid="guest-refused-signed-out"
+      className="flex min-h-screen items-center justify-center bg-background"
+    >
+      <div className="flex flex-col items-center gap-4 text-center">
+        <img
+          src="/mcp_jam.svg"
+          alt="MCPJam"
+          draggable={false}
+          className="h-16 w-16"
+        />
+        <p className="text-sm text-muted-foreground">{message}</p>
+      </div>
+    </div>
+  );
 }

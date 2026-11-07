@@ -34,6 +34,12 @@ export type GuestSessionFailureReason =
  */
 export const GUEST_ACCESS_DISABLED_CODE = "GUEST_ACCESS_DISABLED";
 
+/**
+ * Carries the same refusal in a header, so the browser can recognise it from
+ * the status line alone when the error body is slow to arrive or unreadable.
+ */
+export const GUEST_SESSION_REFUSAL_HEADER = "x-mcpjam-guest-refusal";
+
 export type GuestSessionFailureDetails = {
   reason: GuestSessionFailureReason;
   /** The upstream's HTTP status, when it answered with a non-ok response. */

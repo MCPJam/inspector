@@ -326,6 +326,9 @@ describe("POST /guest-session", () => {
       const data = await res.json();
       expect(data.code).toBe("GUEST_ACCESS_DISABLED");
       expect(data.message).not.toMatch(/revoked/i);
+      expect(res.headers.get("x-mcpjam-guest-refusal")).toBe(
+        "GUEST_ACCESS_DISABLED",
+      );
     },
   );
 

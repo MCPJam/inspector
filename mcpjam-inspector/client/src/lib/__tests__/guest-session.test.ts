@@ -184,6 +184,28 @@ describe("guest-session module", () => {
       expect(global.fetch).toHaveBeenCalledTimes(1);
     });
 
+    it("recognises the refusal from its header without reading the body", async () => {
+      const json = vi.fn(() => new Promise(() => {}));
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+        headers: {
+          get: (name: string) =>
+            name === "x-mcpjam-guest-refusal" ? "GUEST_ACCESS_DISABLED" : null,
+        },
+        json,
+      } as unknown as Response);
+
+      await expect(
+        guestSession.getOrCreateGuestSessionOrThrow(),
+      ).resolves.toBeNull();
+      expect(guestSession.getGuestSessionRefusal()?.reason).toBe(
+        "guest_access_disabled",
+      );
+      expect(json).not.toHaveBeenCalled();
+    });
+
     it("still throws on a revoked-guest 403 so the ladder retries", async () => {
       vi.mocked(global.fetch).mockResolvedValue({
         ok: false,

@@ -28,33 +28,44 @@ function renderBoundary() {
   );
 }
 
+const refused = () => ({
+  until: Date.now() + 600_000,
+  reason: "guest_access_disabled" as const,
+});
+
 describe("AuthRecoveryBoundary", () => {
   beforeEach(() => {
     state.convexAuth = { isLoading: false, isAuthenticated: false };
     state.refusal = null;
   });
 
-  it("holds an unauthenticated visitor while a guest session may still arrive", () => {
+  it("holds an unauthenticated visitor on the spinner while a guest may still arrive", () => {
     renderBoundary();
     expect(screen.queryByTestId("app")).toBeNull();
+    expect(screen.getByText("Loading")).toBeInTheDocument();
   });
 
-  it("renders the app signed out once the guest session was refused", () => {
-    state.refusal = {
-      until: Date.now() + 600_000,
-      reason: "guest_access_disabled",
-    };
+  it("keeps the app unmounted once the guest is refused, and says why instead of spinning", () => {
+    state.refusal = refused();
+    renderBoundary();
+    expect(screen.queryByTestId("app")).toBeNull();
+    expect(screen.queryByText("Loading")).toBeNull();
+    expect(
+      screen.getByText("This deployment doesn't allow guest sessions."),
+    ).toBeInTheDocument();
+  });
+
+  it("still shows the spinner while Convex auth is loading, refusal or not", () => {
+    state.convexAuth = { isLoading: true, isAuthenticated: false };
+    state.refusal = refused();
+    renderBoundary();
+    expect(screen.queryByTestId("guest-refused-signed-out")).toBeNull();
+    expect(screen.getByText("Loading")).toBeInTheDocument();
+  });
+
+  it("renders the app once authenticated", () => {
+    state.convexAuth = { isLoading: false, isAuthenticated: true };
     renderBoundary();
     expect(screen.getByTestId("app")).toBeInTheDocument();
-  });
-
-  it("still holds while Convex auth is loading, refusal or not", () => {
-    state.convexAuth = { isLoading: true, isAuthenticated: false };
-    state.refusal = {
-      until: Date.now() + 600_000,
-      reason: "guest_access_disabled",
-    };
-    renderBoundary();
-    expect(screen.queryByTestId("app")).toBeNull();
   });
 });

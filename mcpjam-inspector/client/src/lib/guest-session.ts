@@ -15,6 +15,7 @@ import { guestTabRecovery } from "./auth/guest-tab-recovery";
 
 import {
   GUEST_ACCESS_DISABLED_CODE,
+  GUEST_SESSION_REFUSAL_HEADER,
   sanitizeGuestSessionFailureDetails,
   type GuestSessionFailureDetails,
 } from "@/shared/guest-session-failure";
@@ -375,8 +376,20 @@ async function requestGuestSession(
     );
   }
 
+  if (
+    response.status === 403 &&
+    response.headers?.get?.(GUEST_SESSION_REFUSAL_HEADER) ===
+      GUEST_ACCESS_DISABLED_CODE
+  ) {
+    throw new GuestSessionRefusedError(
+      GUEST_SESSION_REFUSED_DEFAULT_MS,
+      "guest_access_disabled",
+    );
+  }
+
   if (!response.ok) {
     const errorBody = await readErrorBody(response);
+    // The body still decides for a server that predates the refusal header.
     if (
       response.status === 403 &&
       errorBody?.code === GUEST_ACCESS_DISABLED_CODE

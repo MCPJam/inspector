@@ -1,5 +1,9 @@
 import { Hono } from "hono";
-import { sanitizeGuestSessionFailureDetails } from "@/shared/guest-session-failure";
+import {
+  GUEST_ACCESS_DISABLED_CODE,
+  GUEST_SESSION_REFUSAL_HEADER,
+  sanitizeGuestSessionFailureDetails,
+} from "@/shared/guest-session-failure";
 import type { Context } from "hono";
 import {
   fetchGuestPromotionProof,
@@ -170,6 +174,7 @@ guestSession.post("/", async (c) => {
   }
 
   if (result.status === 403 && result.guestAccessDisabled) {
+    c.header(GUEST_SESSION_REFUSAL_HEADER, GUEST_ACCESS_DISABLED_CODE);
     return c.json(
       {
         code: ErrorCode.GUEST_ACCESS_DISABLED,
