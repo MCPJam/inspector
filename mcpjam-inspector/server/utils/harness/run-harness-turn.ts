@@ -1063,10 +1063,10 @@ export async function runHarnessTurn(
   let sessionEstablished = false;
   // Cumulative tool spans for the turn trace, hoisted so onFinishEngine (a
   // sibling closure) can read them into PersistedTurnTrace.spans.
-  const unprojectableAppTools = options.harnessAppTools?.some((entry) =>
-    harness !== "codex" || !chatSessionId || !entry.bridgeId);
+  const unprojectableAppTools = options.harnessAppTools?.filter((entry) =>
+    harness !== "codex" || !chatSessionId || !entry.bridgeId).length ?? 0;
   const capturedSpans: EvalTraceSpan[] = options.harnessUnavailableAppTools || unprojectableAppTools
-    ? [unavailableAppToolsSpan()] : [];
+    ? [unavailableAppToolsSpan(unprojectableAppTools)] : [];
   // Tool calls the MCP proxy refused on this run's sealed `toolPolicy`. The
   // block happens on whichever replica served the call; it is accounted for
   // HERE — from the proxy's own correlated report, and from the result the
