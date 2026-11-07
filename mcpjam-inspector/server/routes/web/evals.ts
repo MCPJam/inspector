@@ -203,6 +203,7 @@ evals.post("/run", async (c) =>
         rawBody,
         hostedRunEvalsSchema,
         {
+          pluginComputerRuntime: false,
           // The host THIS run executes under, so the manager negotiates as that
           // host. An environment pins its own, and the browser's pins come from
           // whichever host it had ACTIVE — without this a run could take its
@@ -400,6 +401,7 @@ evals.post("/run-test-case", async (c) => {
       }),
     {
       rpcLogs: false,
+      pluginComputerRuntime: false,
       beforeConnect: async (rawBody) => {
         preflightEnvironment = await preflightQuickRunEnvironment(c, rawBody);
       },
@@ -532,7 +534,8 @@ evals.post("/stream-test-case", async (c) => {
     (caseHostConfig ? hostClientCapabilities(caseHostConfig) : undefined) ??
       (body.clientCapabilities as Record<string, unknown> | undefined),
     {
-      pluginComputerRuntime: !!caseHostConfig?.computer,
+      // A host attachment does not authorize durable Computer placement for an eval.
+      pluginComputerRuntime: false,
       accessScope: body.accessScope as "project_member" | "chat_v2" | undefined,
       scenarioId: evalScenarioId,
       accessVersion: body.accessVersion as number | undefined,
@@ -612,6 +615,7 @@ evals.post("/generate-tests", async (c) => {
       }),
     {
       rpcLogs: false,
+      pluginComputerRuntime: false,
       beforeConnect: async (rawBody) => {
         preflightEnvironment = await preflightGenerationEnvironment(c, rawBody);
       },
@@ -635,6 +639,7 @@ evals.post("/generate-negative-tests", async (c) => {
       }),
     {
       rpcLogs: false,
+      pluginComputerRuntime: false,
       beforeConnect: async (rawBody) => {
         preflightEnvironment = await preflightGenerationEnvironment(c, rawBody);
       },
