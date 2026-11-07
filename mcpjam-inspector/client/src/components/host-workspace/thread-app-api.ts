@@ -314,12 +314,19 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "", canI
     ) => {
       if (!handle.file)
         throw new ThreadAppError("INSTANCE_RESOURCE_UNAVAILABLE");
-      const response = await authFetch("/api/web/apps/plugin-instances/files/read", {
+      const init = {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: PLUGIN_FILE_MEDIA_TYPE },
         body: JSON.stringify({ ...owner, instanceToken: handle.instanceToken, params }),
         signal,
-      });
+      };
+      let response: Response;
+      try {
+        response = await authFetch("/api/web/apps/plugin-instances/files/read", init);
+      } catch {
+        signal.throwIfAborted();
+        response = await authFetch("/api/web/apps/plugin-instances/files/read", init);
+      }
       const { value } = await parseAppResponse(response, signal);
       accepted(response, value);
       const result = z

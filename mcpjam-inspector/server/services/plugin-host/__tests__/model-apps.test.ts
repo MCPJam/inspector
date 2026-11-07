@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { PluginInvocationError } from "../invocation.js";
 import { ModelAppRegistry } from "../model-apps.js";
 import { PluginContextMemory } from "../context-memory.js";
 import { PLUGIN_MODEL_APP_META } from "../../../../shared/plugin-model-app.js";
@@ -239,6 +240,17 @@ describe("trusted completed model App ownership", () => {
       registry.close(token, actor);
       expect(() => registry.get(token, actor)).toThrow();
     }
+  });
+  it("retains a completed tool result when form-owner capacity refuses the App", () => {
+    const retain = vi.spyOn(pluginInstances, "retainModelOwner")
+      .mockImplementationOnce(() => { throw new PluginInvocationError("INSTANCE_LIMIT"); });
+    try {
+      const result = { content: [{ type: "text", text: "The operation completed" }], structuredContent: { saved: true } };
+      const registry = new ModelAppRegistry();
+      expect(registry.publish(result, owner, "tool", "rev", meta)).toEqual({
+        ...result, _meta: { [PLUGIN_MODEL_APP_META]: { unavailable: true } },
+      });
+    } finally { retain.mockRestore(); }
   });
   it("does not publish errors or non-App output", () => {
     const registry = new ModelAppRegistry();
