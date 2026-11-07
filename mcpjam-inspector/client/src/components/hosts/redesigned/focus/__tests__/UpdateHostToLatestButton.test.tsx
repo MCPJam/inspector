@@ -147,7 +147,7 @@ describe("UpdateHostToLatestButton", () => {
     const latest = catalogDraftFor("chatgpt");
     expect(
       latest.mcpProfile?.apps?.pluginExtensions?.capabilities?.mentions,
-    ).toBe(true);
+    ).toBe(false);
     const initial: HostConfigInputV2 = {
       ...latest,
       modelId: "custom-model",
@@ -326,7 +326,7 @@ describe("UpdateHostToLatestButton", () => {
     expect(
       ui.draftRef.current.mcpProfile?.apps?.pluginExtensions?.capabilities
         ?.mentions,
-    ).toBe(true);
+    ).toBe(false);
     expect(toast.success).not.toHaveBeenCalled();
   });
 

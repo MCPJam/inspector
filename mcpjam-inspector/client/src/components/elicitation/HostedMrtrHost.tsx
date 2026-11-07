@@ -369,7 +369,10 @@ function ComposerMrtrRound({ round }: { round: HostedMrtrRound }) {
   const slot = useComposerSlot(scope.workspaceId);
   const composerMounted = useComposerFormStore((s) => s.slots.length > 0);
   // Another chat's composer must not turn this retained request into a modal.
-  const portal = useRetainedFormPortal(slot, queue.active && (!!slot || !composerMounted));
+  const portal = useRetainedFormPortal(
+    slot, queue.active && (!!slot || !composerMounted), scope.workspaceId,
+    undefined, false, !composerMounted,
+  );
   const current = round.requests[Math.min(index, round.requests.length - 1)];
   if (!portal.ready || !current) return null;
 

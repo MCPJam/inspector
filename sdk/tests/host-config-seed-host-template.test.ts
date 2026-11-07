@@ -63,9 +63,9 @@ describe("seedHostTemplate", () => {
           { mcpProfile?: { unauthorizedChallengeTrigger?: string } }
         >
       )[id]?.mcpProfile;
-      expect(seedHostTemplate(id).mcpProfile?.unauthorizedChallengeTrigger).toBe(
-        catalogProfile?.unauthorizedChallengeTrigger
-      );
+      expect(
+        seedHostTemplate(id).mcpProfile?.unauthorizedChallengeTrigger
+      ).toBe(catalogProfile?.unauthorizedChallengeTrigger);
     }
   );
 
@@ -260,14 +260,17 @@ describe("seedHostTemplate", () => {
     );
   });
 
-  it("enables web mentions in the ChatGPT seed and bundled catalog without local files", () => {
-    const seeded = seedHostTemplate("chatgpt").mcpProfile?.apps?.pluginExtensions;
-    const bundled = BUNDLED_HOST_COMPAT_CATALOG.hostsById.chatgpt.mcpProfile.apps.pluginExtensions;
+  it("keeps desktop-only mentions and files off in the ChatGPT Web seed and bundled catalog", () => {
+    const seeded =
+      seedHostTemplate("chatgpt").mcpProfile?.apps?.pluginExtensions;
+    const bundled =
+      BUNDLED_HOST_COMPAT_CATALOG.hostsById.chatgpt.mcpProfile.apps
+        .pluginExtensions;
     for (const extensions of [seeded, bundled]) {
       expect(extensions).toMatchObject({
         enabled: true,
         capabilities: {
-          mentions: true,
+          mentions: false,
           fileResources: false,
           fileViewers: false,
           localFiles: false,
