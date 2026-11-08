@@ -4,7 +4,12 @@ import userEvent from "@testing-library/user-event";
 import type { HostDetail } from "@/hooks/useClients";
 import type { ModelDefinition } from "@/shared/types";
 import type { RecoveryPane } from "@/lib/comparison-recovery-record";
-import { resolvePlaygroundClientColumn } from "@/lib/playground-client-columns";
+import {
+  resolvePlaygroundClientColumn,
+  type PlaygroundClientResolution,
+} from "@/lib/playground-client-columns";
+import type { ComparePaneEnvironment } from "@/hooks/use-compare-environment-panes";
+import type { ComparePaneTargetOption } from "../compare-pane-target-select";
 import { useComparePaneStore } from "@/stores/compare-pane-store";
 import {
   useComparePaneControls,
@@ -74,12 +79,21 @@ const serverIdByName = new Map([
   ["Docs", "srv-docs"],
 ]);
 
+const clientTargets = [codex, cursor].map((host) => ({
+  target: { kind: "host" as const, hostId: host.hostId },
+  label: host.hostId,
+}));
+
 function Harness({
   paneId,
   lane = { environmentId: null, pending: false },
   overrides = {},
   sections,
   spies,
+  lineup = panes,
+  lineupResolutions = resolutions,
+  environments = [],
+  paneEnvironments = new Map(),
 }: {
   paneId: string;
   lane?: ComparePaneLane;
@@ -89,16 +103,23 @@ function Harness({
     restorePanes: ReturnType<typeof vi.fn>;
     setPaneOverrides: ReturnType<typeof vi.fn>;
     setPanePick: ReturnType<typeof vi.fn>;
+    setPaneTarget: ReturnType<typeof vi.fn>;
   };
+  lineup?: RecoveryPane[];
+  lineupResolutions?: PlaygroundClientResolution[];
+  environments?: ComparePaneTargetOption[];
+  paneEnvironments?: ReadonlyMap<string, ComparePaneEnvironment>;
 }) {
   const controls = useComparePaneControls({
     active: true,
-    panes: panes.map((pane) => ({ ...pane, ...overrides[pane.paneId] })),
-    resolutions,
+    panes: lineup.map((pane) => ({ ...pane, ...overrides[pane.paneId] })),
+    resolutions: lineupResolutions,
     sharedServers: ["GitHub", "Docs"],
     serverIdByName,
     orgConfig: undefined,
     sections,
+    targets: { clients: clientTargets, environments },
+    paneEnvironments,
     ...spies,
   });
   const header = controls.renderPaneHeader(paneId)?.(lane);
@@ -117,6 +138,7 @@ function spies() {
     restorePanes: vi.fn(),
     setPaneOverrides: vi.fn(),
     setPanePick: vi.fn(),
+    setPaneTarget: vi.fn(),
   };
 }
 
@@ -215,11 +237,18 @@ describe("Compare pane settings", () => {
     const user = userEvent.setup();
     render(<Harness paneId="cursor" spies={spies()} />);
     expect(useComparePaneStore.getState().panes).toEqual([
-      { paneId: "codex", label: "codex", hostId: "codex", serverNames: null },
+      {
+        paneId: "codex",
+        label: "codex",
+        hostId: "codex",
+        environmentId: null,
+        serverNames: null,
+      },
       {
         paneId: "cursor",
         label: "cursor",
         hostId: "cursor",
+        environmentId: null,
         serverNames: null,
       },
     ]);

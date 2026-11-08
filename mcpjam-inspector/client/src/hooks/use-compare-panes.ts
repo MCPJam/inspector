@@ -4,6 +4,8 @@ import {
   paneHostId,
   paneHostIds,
   panesForHostIds,
+  retargetPane,
+  type ComparePaneTarget,
   saveComparePanes,
   subscribeComparePanes,
   syncLeadPane,
@@ -30,6 +32,11 @@ export interface UseComparePanesReturn {
   panes: readonly RecoveryPane[];
   restorePanes: (panes: readonly RecoveryPane[]) => void;
   setPaneOverrides: (paneId: string, overrides: PaneOverrides) => void;
+  /**
+   * Runs a pane on another client or environment. It keeps its place and id;
+   * its picked model and server choices belonged to the old target and go.
+   */
+  setPaneTarget: (paneId: string, target: ComparePaneTarget) => void;
   /** Picks a model for one pane, or `undefined` to follow its client again. */
   setPanePick: (
     paneId: string,
@@ -157,6 +164,16 @@ export function useComparePanes(
     (paneId: string, overrides: PaneOverrides) => updatePane(paneId, overrides),
     [updatePane],
   );
+  const setPaneTarget = useCallback(
+    (paneId: string, target: ComparePaneTarget) => {
+      const next = retargetPane(panes, paneId, target);
+      setStoredPanes(next);
+      // Pane 0 leads: a client there becomes the previewed client.
+      const lead = next[0]?.paneId === paneId ? paneHostId(next[0]) : null;
+      if (lead) setPreviewedHostId(lead);
+    },
+    [panes, setPreviewedHostId],
+  );
   const setPanePick = useCallback(
     (paneId: string, pickedSelection: ModelSelection | undefined) =>
       updatePane(paneId, { pickedSelection }),
@@ -171,6 +188,7 @@ export function useComparePanes(
     panes,
     restorePanes,
     setPaneOverrides,
+    setPaneTarget,
     setPanePick,
     selectedHostIds,
     setSelectedHostIds,

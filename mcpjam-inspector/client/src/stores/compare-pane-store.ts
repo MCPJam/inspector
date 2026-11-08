@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { EnvironmentOverrides } from "@/shared/execution-target";
 
 /** What the Tools sidebar needs to show one Compare pane. */
 export interface ComparePaneOption {
@@ -6,6 +7,13 @@ export interface ComparePaneOption {
   label: string;
   /** The client the pane runs; its built-in and browser tools are listed. */
   hostId: string | null;
+  /** The environment an environment pane runs; null for a client pane. */
+  environmentId: string | null;
+  /**
+   * How an environment pane narrows its environment. Absent: it follows the
+   * environment. `serverIds: []` is an explicit "no servers".
+   */
+  environmentOverrides?: EnvironmentOverrides;
   /** The pane's own servers, or null when it follows the shared selection. */
   serverNames: string[] | null;
 }

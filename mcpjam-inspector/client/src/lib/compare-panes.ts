@@ -40,6 +40,13 @@ const STORAGE_PREFIX = "mcp-inspector-compare-panes";
 const V1_STORAGE_PREFIX = "mcp-inspector-selected-hosts";
 const CHANGED_EVENT = "compare-panes-changed";
 
+/** A target as one string: a pane that runs another target is a new card. */
+export function paneTargetKey(target: ComparePaneTarget): string {
+  return target.kind === "host"
+    ? `host:${target.hostId}`
+    : `environment:${target.environmentId}`;
+}
+
 /** The client a pane runs. Null for an environment pane, whose environment names it. */
 export function paneHostId(pane: ComparePane): string | null {
   return pane.target.kind === "host" ? pane.target.hostId : null;
@@ -120,26 +127,53 @@ export function normalizePanes(value: unknown): ComparePane[] {
  * The panes for a lineup of client ids, which is how the client chips,
  * first-run setup and sign-in recovery describe it. A client that already has
  * a pane keeps that pane, so its conversation survives; a new client gets a
- * new pane.
+ * new pane. Environment panes are not client chips, so they keep their places
+ * and count toward the cap of three.
  */
 export function panesForHostIds(
   current: readonly ComparePane[],
   hostIds: readonly string[],
 ): ComparePane[] {
-  const unmatched = [...current];
-  const next: ComparePane[] = [];
+  const environments = current.filter((pane) => !paneHostId(pane));
+  const unmatched = current.filter((pane) => paneHostId(pane));
+  const clients: ComparePane[] = [];
   for (const value of hostIds) {
     const hostId = readId(value);
-    if (!hostId || next.some((pane) => paneHostId(pane) === hostId)) continue;
-    if (next.length === MAX_COMPARE_PANES) break;
+    if (!hostId || clients.some((pane) => paneHostId(pane) === hostId)) {
+      continue;
+    }
+    if (clients.length + environments.length === MAX_COMPARE_PANES) break;
     const index = unmatched.findIndex((pane) => paneHostId(pane) === hostId);
-    next.push(
+    clients.push(
       index >= 0
         ? unmatched.splice(index, 1)[0]
-        : createPane({ kind: "host", hostId }, [...next, ...unmatched]),
+        : createPane({ kind: "host", hostId }, [
+            ...current,
+            ...clients,
+          ]),
     );
   }
-  return next;
+  // Each environment pane stays at its index; client panes fill the rest.
+  const next: ComparePane[] = [];
+  for (const pane of current) {
+    if (!paneHostId(pane)) next.push(pane);
+    else if (clients.length) next.push(clients.shift()!);
+  }
+  return [...next, ...clients];
+}
+
+/**
+ * The pane running `target` instead. It keeps its id and place, and drops
+ * what belonged to the old target: its picked model and server choices.
+ */
+export function retargetPane<Pane extends ComparePane>(
+  panes: readonly Pane[],
+  paneId: string,
+  target: ComparePaneTarget,
+): ComparePane[] {
+  return panes.map((pane) =>
+    pane.paneId === paneId ? { paneId, target } : pane,
+  );
 }
 
 /**
