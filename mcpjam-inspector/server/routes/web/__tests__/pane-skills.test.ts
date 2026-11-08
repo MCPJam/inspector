@@ -1,3 +1,4 @@
+import { ConvexError } from "convex/values";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createWebTestApp, postJson } from "./helpers/test-app.js";
 
@@ -144,6 +145,13 @@ describe("per-pane Skills preview", () => {
     expect(query.mock.calls.map(([ref]) => ref)).toEqual([
       "projectSkills:listSkills",
     ]);
+  });
+  it("hides a project's existence on a bare native client's membership refusal", async () => {
+    host.mockResolvedValue({ ok: true, config: { agentLoop: "codex" } });
+    query.mockRejectedValue(
+      new ConvexError({ code: "FORBIDDEN", message: "Access removed" }),
+    );
+    expect((await preview(bare)).status).toBe(404);
   });
   it("merges the native live pool with plugin pins by folder and deduplicates IDs", async () => {
     serve({ ...spec, environmentOrigin: "adhoc" });

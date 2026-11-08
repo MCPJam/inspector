@@ -11,7 +11,7 @@ import {
   harnessSupportsSkills,
 } from "../../utils/harness/registry.js";
 import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
-import { fetchRuntimeSkills } from "../../utils/harness/runtime-skills.js";
+import { convexListSkillsForRuntime } from "../../utils/computers/convex-skills-client.js";
 import { composeLivePlusSkills } from "../../utils/harness/skill-delivery.js";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
@@ -130,18 +130,15 @@ export async function previewPaneSkills(
     const adapter = getHarnessAdapter(harness);
     const pins = effective ? runtimeSkills(effective) : [];
     const live = withPool
-      ? await fetchRuntimeSkills(bearer, projectId)
+      ? await convexListSkillsForRuntime(bearer, projectId)
       : undefined;
-    if (live && !live.ok)
-      throw new WebRouteError(
-        502,
-        ErrorCode.SERVER_UNREACHABLE,
-        "Couldn't load project skills.",
-      );
-    for (const skill of live?.skills ?? []) add(skill, ["project"]);
-    const skills = live
-      ? (composeLivePlusSkills(live.skills, pins).skills ?? [])
-      : pins;
+    for (const skill of live ?? []) add(skill, ["project"]);
+    // Only composed client turns merge by folder. A bare native turn gives
+    // its adapter the unmodified live catalog.
+    const skills =
+      live && effective
+        ? (composeLivePlusSkills(live, pins).skills ?? [])
+        : (live ?? pins);
     const prepared = adapter.prepareSkills(skills);
     for (const skill of prepared.delivered) delivered.add(skill.skillId);
     const skipped = new Set(prepared.skipped.map((skill) => skill.name));
