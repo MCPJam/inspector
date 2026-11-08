@@ -101,6 +101,12 @@ function lastUserText(messages) {
   }
   return { text: "", toolResult: null };
 }
+/** "<media type>:<base64 length>" for each image block of the last user message. */
+function lastUserImages(messages) {
+  const last = [...messages].reverse().find((m) => m.role === "user");
+  const blocks = Array.isArray(last?.content) ? last.content : [];
+  return blocks.filter((b) => b.type === "image").map((b) => `${b.source?.media_type ?? "?"}:${String(b.source?.data ?? "").length}`);
+}
 function verifyPop(req) {
   if (!popSecret) return { ok: true };
   const h = req.headers["x-mcpjam-pop"];
@@ -195,6 +201,10 @@ const server = http.createServer((req, res) => {
         log("SLOW scenario: holding the response 8s");
         setTimeout(() => sse(res, textEvents(id, "SLOW DONE", inputTokens)), 8000);
         return;
+      }
+      if (t.split("\n").some((l) => /^IMAGES\b/.test(l))) {
+        const images = lastUserImages(messages);
+        return sse(res, textEvents(id, `IMAGES=${images.length} ${images.join(",")}`, inputTokens));
       }
       const m = /^(READFILE|BASH|WRITE|COUNT|MCPPROBE)\b\s*(.*)$/s.exec(t.split("\n").filter((l) => /^(READFILE|BASH|WRITE|COUNT|MCPPROBE)\b/.test(l)).pop() ?? "");
       if (m) {
