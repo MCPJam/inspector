@@ -67,6 +67,7 @@ export const OAuthAuthorizationModal = ({
 
       // Check if this is an OAuth callback message
       if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
+        dismissOAuthCallbackHint();
         // Notify parent component
         onAuthorizationComplete?.();
         // Close our "modal" state
