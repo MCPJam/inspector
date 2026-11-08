@@ -1,8 +1,16 @@
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { MCPServerConfig } from "@mcpjam/sdk";
 import { DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS } from "@mcpjam/sdk";
 import { harnessPinnedVersion } from "@/shared/harness-model-support";
 import { nativeForwardingGaps } from "../native-admission";
+import { NATIVE_ELICITATION_RUNTIME } from "../native-elicitation-profile";
+
+/** The CLI build the native profile was read from, as the bridge lock pins it. */
+const PROFILE_READ_FROM =
+  "sha512-1FQDIO4tXPFyw9wR1icEedIhEmLzOiQBAGR0NgETrXK8M2YbHEDXoE5Gg/LIuIee7giUuX5F2RzLw2N2i++ofQ==";
 
 function candidate(
   config: MCPServerConfig = {
@@ -35,42 +43,57 @@ describe("native profile admission", () => {
       capabilities: { futureCapability: {} }, gaps: ["host-capability:futureCapability"],
     } })).toEqual([]);
   });
-  it("requires new elicitation qualification when the installed runtime pin changes", () => {
-    expect(harnessPinnedVersion("claude-code")).toBe("2.1.245");
+  it("requires a new reading of the CLI handshake whenever the installed runtime moves", () => {
+    expect(harnessPinnedVersion("claude-code")).toBe(NATIVE_ELICITATION_RUNTIME);
+    const require = createRequire(import.meta.url);
+    const lock = readFileSync(
+      join(
+        dirname(require.resolve("@ai-sdk/harness-claude-code/package.json")),
+        "dist/bridge/pnpm-lock.yaml",
+      ),
+      "utf8",
+    );
+    expect(lock).toContain(
+      `'@anthropic-ai/claude-code-linux-x64@${NATIVE_ELICITATION_RUNTIME}':\n    resolution: {integrity: ${PROFILE_READ_FROM}}`,
+    );
   });
-  const formConfig = () => ({
+  const nativeConfig = () => ({
     url: "https://mcp.example/mcp",
-    clientCapabilities: { elicitation: { form: {} }, roots: { listChanged: true } },
+    clientCapabilities: {
+      elicitation: { form: {}, url: {} },
+      roots: { listChanged: true },
+    },
   });
-  it("admits the measured native form profile only with its owned runtime handler", () => {
-    const form = candidate(formConfig());
+  it("admits the CLI's own elicitation profile only with its owned runtime handler", () => {
+    const form = candidate(nativeConfig());
     expect(nativeForwardingGaps(form)).toContain("client-capabilities");
-    expect(nativeForwardingGaps({ ...form, elicitationRuntimeVersion: "2.1.245" })).toEqual([]);
+    expect(nativeForwardingGaps({ ...form, elicitationRuntimeVersion: "2.1.290" })).toEqual([]);
     expect(nativeForwardingGaps({ ...form, elicitationRuntimeVersion: "2.1.310" })).toContain("client-capabilities");
   });
   it("honors exact-set precedence over duplicated or conflicting inactive overlays", () => {
-    const config = formConfig();
+    const config = nativeConfig();
     for (const overlay of [config.clientCapabilities, { extensions: { "future.test/ignored": {} } }]) {
-      expect(nativeForwardingGaps({ ...candidate({ ...config, capabilities: overlay, eraCapabilities: { modern: overlay } }), elicitationRuntimeVersion: "2.1.245" })).toEqual([]);
+      expect(nativeForwardingGaps({ ...candidate({ ...config, capabilities: overlay, eraCapabilities: { modern: overlay } }), elicitationRuntimeVersion: "2.1.290" })).toEqual([]);
     }
     const effective = candidate(config).manager.getInitializationInfo();
-    expect(nativeForwardingGaps({ ...candidate({ url: config.url, capabilities: config.clientCapabilities }, effective), elicitationRuntimeVersion: "2.1.245" })).toContain("capability-overrides");
+    expect(nativeForwardingGaps({ ...candidate({ url: config.url, capabilities: config.clientCapabilities }, effective), elicitationRuntimeVersion: "2.1.290" })).toContain("capability-overrides");
   });
   it.each([
-    { elicitation: { form: {}, url: {} } },
+    { elicitation: { form: {} } },
+    { elicitation: { url: {} } },
     { extensions: { "io.modelcontextprotocol/tasks": {} } },
     { futureCapability: {} },
-  ])("retains unqualified additions to the form profile: %j", (addition) => {
-    const config = formConfig();
+  ])("retains a profile that differs from the CLI's own: %j", (addition) => {
+    const config = nativeConfig();
     Object.assign(config.clientCapabilities, addition);
-    expect(nativeForwardingGaps({ ...candidate(config), elicitationRuntimeVersion: "2.1.245" })).toContain("client-capabilities");
+    expect(nativeForwardingGaps({ ...candidate(config), elicitationRuntimeVersion: "2.1.290" })).toContain("client-capabilities");
   });
   it("does not qualify modern input_required with a legacy callback", () => {
-    const config = formConfig();
+    const config = nativeConfig();
     const form = candidate(config);
     expect(nativeForwardingGaps({
       ...form,
-      elicitationRuntimeVersion: "2.1.245",
+      elicitationRuntimeVersion: "2.1.290",
       manager: { ...form.manager, getInitializationInfo: () => ({ ...form.manager.getInitializationInfo(), protocolVersion: "2026-07-28" }) },
     })).toContain("client-capabilities");
   });

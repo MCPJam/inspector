@@ -5,9 +5,13 @@ import { patchWarmClaudeQuery } from "../warm-claude-query.js";
 
 // Exercise the code injected into the real bridge, including its prompt gate.
 const stub = `const q = claudeSdk.query({abortSignal: abortCtl.signal
-    }
-  });
+\t\t}
+\t});
 const [input, extra] = handlerArgs;
+\t\t\t});
+\t\t\temit({
+\t\t\t\ttype: "tool-result",
+\t\t\t\ttoolCallId,
 await q.return?.(void 0);
 mcpjamDrainController.clear();`;
 const injected = patchWarmClaudeQuery(stub);

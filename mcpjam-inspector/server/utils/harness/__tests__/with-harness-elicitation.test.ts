@@ -175,7 +175,7 @@ describe("harness elicitation control", () => {
     await f.control.done;
   });
 
-  it("refuses undeclared URL mode even from an eligible form server", async () => {
+  it("asks the user about URL mode, which the native handshake declares", async () => {
     const handle = vi.fn<HarnessElicitationHandler>(async () => ({
       action: "accept",
     }));
@@ -189,18 +189,26 @@ describe("harness elicitation control", () => {
         request: {
           serverName: "fixture",
           mode: "url",
-          message: "Unqualified URL",
+          message: "Sign in to continue",
           url: "https://example.com/qa",
+          elicitationId: "elicit-1",
         },
       },
     });
     await vi.waitFor(() =>
       expect(f.submitToolResult).toHaveBeenCalledExactlyOnceWith({
         toolCallId: "mcpjam:elicitation:url",
-        output: { action: "cancel" },
+        output: { action: "accept" },
       }),
     );
-    expect(handle).not.toHaveBeenCalled();
+    expect(handle).toHaveBeenCalledOnce();
+    expect(handle.mock.calls[0][0]).toMatchObject({
+      serverId: "server-id",
+      mode: "url",
+      message: "Sign in to continue",
+      url: "https://example.com/qa",
+      elicitationId: "elicit-1",
+    });
     f.finish();
     await f.control.done;
   });

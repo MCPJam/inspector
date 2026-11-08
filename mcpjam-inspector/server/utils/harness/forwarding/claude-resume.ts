@@ -3,15 +3,16 @@ import type { HarnessV1 } from "@ai-sdk/harness";
 import type { HarnessMcpJson } from "../mcp-config.js";
 import { withForwardingResume } from "./bridge-refresh.js";
 import { MAX_SEALED_PLAINTEXT_BYTES } from "../harness-proxy-limits.js";
+import { bridgeIndent } from "../claude-code-bridge-indent.js";
 const marker = "mcpjamRefreshNativeMcp";
 
 /** Refresh the paused query without changing its prompt, replay cursor or tools. */
 export function patchClaudeForwardingResume(source: string): string {
   if (source.includes(`var ${marker};`)) return source;
   const turn = "async function runTurn(start, turn) {";
-  const control = '      case "abort":';
-  const queryEnd = "  gracefulAbort = () => {";
-  const cleanup = "    gracefulAbort = void 0;";
+  const control = bridgeIndent('      case "abort":');
+  const queryEnd = bridgeIndent("  gracefulAbort = () => {");
+  const cleanup = bridgeIndent("    gracefulAbort = void 0;");
   if (
     ![turn, control, queryEnd, cleanup].every((needle) =>
       source.includes(needle),

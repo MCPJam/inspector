@@ -22,6 +22,7 @@ import {
   patchClaudeCodeHarnessBootstrap,
   registeredHarnessIds,
 } from "../registry";
+import { bridgeIndent } from "../claude-code-bridge-indent.js";
 
 vi.mock("../claude-code-bootstrap.js", async (original) => {
   const actual = await original<typeof import("../claude-code-bootstrap.js")>();
@@ -476,11 +477,12 @@ describe("harness registry", () => {
 
   it("patches the Claude Code bridge bootstrap compatibility gaps", async () => {
     // The fixture quotes the CURRENT installed bridge's anchor sites VERBATIM
-    // (from @ai-sdk/harness-claude-code dist/bridge/index.mjs on the 1.0.x
-    // stable line): every needle the patcher matches must appear here exactly
-    // as it does in the real bundle, or this test passes while the real patch
-    // throws. The installed-package test below is the drift alarm; this one
-    // pins WHAT the patch does to a bridge shaped like today's.
+    // (from @ai-sdk/harness-claude-code dist/bridge/index.mjs): every needle
+    // the patcher matches must appear here exactly as it does in the real
+    // bundle, or this test passes while the real patch throws. The bundle
+    // indents with one tab per level; the fixture is written two spaces per
+    // level and converted. The installed-package test below is the drift
+    // alarm; this one pins WHAT the patch does to a bridge shaped like today's.
     const harness = patchClaudeCodeHarnessBootstrap({
       getBootstrap: async () => ({
         harnessId: "claude-code",
@@ -488,88 +490,43 @@ describe("harness registry", () => {
         files: [
           {
             path: "/tmp/harness/claude-code/bridge.mjs",
-            content: `var HOST_TOOL_PREFIX = "mcp__harness-tools__";
-function createEmitStreamEvent({
-  state,
-  emit,
-  emitTerminalError
-}) {
+            content: bridgeIndent(`const HOST_TOOL_PREFIX = "mcp__harness-tools__";
+function createEmitStreamEvent({ state, emit, emitWarning, emitTerminalError, onCompactionBoundary, toCommonName }) {
   let streamStarted = false;
   return (msg) => {
     const type = msg.type;
+    if (type === "system" && msg.subtype === "task_updated" && msg.patch?.status === "failed" && typeof msg.patch.error === "string") {
+      emitTerminalError(msg.patch.error);
+      return;
+    }
     if (msg.parent_tool_use_id != null) {
+      emit({
+        type: "raw",
+        rawValue: msg
+      });
       return;
     }
     if (type === "stream_event") {
       handleStreamEvent({
         event: msg.event,
+        message: msg,
         state,
-        send: emit
+        send: emit,
+        toCommonName
       });
       return;
     }
-    if (type === "assistant" && msg.message?.content) {
+    const messageContent = msg.message?.content;
+    if (type === "assistant" && Array.isArray(messageContent)) {
       let opensStep = false;
-      for (const block of msg.message.content) {
-        if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {
-          opensStep = true;
-          emit({ type: "tool-call" });
-        }
+      for (const block of messageContent) if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {
+        opensStep = true;
+        emit({ type: "tool-call" });
       }
-      if (opensStep) {
-        state.stepOpen = true;
-      }
+      if (opensStep) state.stepOpen = true;
       return;
     }
   };
-}
-function createPermissionOptions(input) {
-  return {
-    canUseTool: async (toolName, toolInput, options) => {
-      const approvalId = options.toolUseID;
-      input.approvalRequestedToolUseIds.add(approvalId);
-      const decision = await input.turn.requestToolApproval(approvalId);
-      return decision;
-    }
-  };
-}
-async function drive() {
-  const permissionOptions = createPermissionOptions({
-    start,
-    turn,
-    emit
-  });
-  const q = claudeSdk.query({
-    options: {
-      ...start.model ? { model: start.model } : {},
-      ...start.maxTurns !== void 0 ? { maxTurns: start.maxTurns } : {},
-      hooks: {
-        PreToolUse: []
-      },
-      ...permissionOptions,
-      mcpServers,
-      cwd: workdir,
-      abortSignal: abortCtl.signal
-    }
-  });
-}
-const toUserMessage = (options) => ({
-  type: "user",
-  message: {
-    role: "user",
-    content: [{ type: "text", text: options.text }]
-  },
-  parent_tool_use_id: null,
-  uuid: options.messageId
-});
-function emitUserToolResults(msg) {
-    if (type === "system" && msg.subtype === "task_updated" && msg.patch?.status === "failed" && typeof msg.patch.error === "string") {
-      emitTerminalError(msg.patch.error);
-      return;
-    }
-    if (type === "user" && msg.message?.content) {
-      return;
-    }
 }
 async function runBridge(options) {
   const handleInbound = async (msg, ws) => {
@@ -585,19 +542,25 @@ async function runBridge(options) {
   };
   wss.on("connection", (ws, req) => {
     ws.on("close", () => {
-      if (activeSocket === ws) {
-        activeSocket = void 0;
-      }
+      if (activeSocket === ws) activeSocket = void 0;
     });
   });
 }
+function createPermissionOptions(input) {
+  return {
+    canUseTool: async (toolName, toolInput, options) => {
+      const approvalId = options.toolUseID;
+      input.approvalRequestedToolUseIds.add(approvalId);
+      const decisionPromise = input.turn.requestToolApproval(approvalId);
+      const decision = await decisionPromise.finally(() => input.clearWaitingOnHostInput(approvalId));
+      return decision;
+    }
+  };
+}
 async function runTurn(start, turn) {
   const onHostAbort = () => {
-    if (gracefulAbort) {
-      gracefulAbort();
-    } else {
-      abortCtl.abort();
-    }
+    if (gracefulAbort) gracefulAbort();
+    else abortCtl.abort();
   };
   const streamEventState = createClaudeStreamEventState();
   const queryInput = createQueryInput({
@@ -606,8 +569,22 @@ async function runTurn(start, turn) {
     abortSignal: abortCtl.signal
   });
   const skillsOption = toClaudeSkillsOption(start.skills);
-  const questionPreToolUseHook = createQuestionPreToolUseHook({
-    turn
+  const permissionOptions = createPermissionOptions({
+    start,
+    turn,
+    emit
+  });
+  const q = claudeSdk.query({
+    options: {
+      ...start.model ? { model: start.model } : {},
+      hooks: {
+        PreToolUse: []
+      },
+      ...permissionOptions,
+      mcpServers,
+      cwd: workdir,
+      abortSignal: abortCtl.signal
+    }
   });
   const emitTerminalError = (message) => {
     const normalized = message?.trim();
@@ -619,9 +596,8 @@ async function runTurn(start, turn) {
       emitStreamEvent(msg);
       if (type === "result") {
         if (msg.subtype === "success") {
-          if (typeof msg.total_cost_usd === "number") {
-            totalCostUsd = (totalCostUsd ?? 0) + msg.total_cost_usd;
-          }
+          if (typeof msg.total_cost_usd === "number") totalCostUsd = msg.total_cost_usd;
+          if (!queryInput.answersSentMessage(msg)) continue;
           queryInput.observeResult();
           if (!queryInput.hasActiveUserMessages()) {
             queryInput.close();
@@ -636,37 +612,32 @@ async function runTurn(start, turn) {
       }
     }
   } catch (err) {
-    if (!turn.abortSignal.aborted && !(abortCtl.signal.aborted && emittedTerminalError)) {
-      turn.emitError({ error: err, message: "claude-code turn failed" });
-    }
+    if (!turn.abortSignal.aborted && !(abortCtl.signal.aborted && emittedTerminalError)) turn.emitError({
+      error: err,
+      message: "claude-code turn failed"
+    });
     return;
   } finally {
     gracefulAbort = void 0;
   }
-  if (emittedTerminalError) return;
-  emittedTerminalFinish = true;
 }
-function createQueryInput({
-  initialUserMessage,
-  userMessages,
-  abortSignal
-}) {
-  return {
-    next() {
-      return {
-              value: toUserMessage({
-                  text: initialUserMessage,
-                  messageId: randomUUID3()
-                }),
-              done: false
-      };
-    }
-  };
+function createQueryInput({ initialUserMessage, userMessages, abortSignal }) {
+  const initialMessageId = randomUUID();
+  const toUserMessage = (options) => ({
+    type: "user",
+    message: {
+      role: "user",
+      content: [{ type: "text", text: options.content }]
+    },
+    parent_tool_use_id: null,
+    uuid: options.messageId
+  });
+  return { initialMessageId, toUserMessage };
 }
 function addUsage(total, usage) {
   if (total == null) return usage;
   return { ...total, ...usage };
-}`,
+}`),
           },
         ],
         commands: [],
@@ -699,7 +670,7 @@ function addUsage(total, usage) {
     expect(bridge?.content).toContain("mcpjam-fallback-");
     expect(bridge?.content).toContain("gatewayModelOverrideSettingsFor");
     expect(bridge?.content).toContain("modelOverrides");
-    expect(bridge?.content).toContain("mcpServers,\n      strictMcpConfig: true,\n      cwd: workdir,");
+    expect(bridge?.content).toContain("mcpServers,\n\t\t\tstrictMcpConfig: true,\n\t\t\tcwd: workdir,");
     expect(bridge?.content).toContain("anthropic/claude-");
     expect(bridge?.content).toContain("claude-haiku-4-5-20251001");
     // The overrides MERGE over `permissionOptions.settings` (the adapter's own
@@ -724,8 +695,9 @@ function addUsage(total, usage) {
     // the old `??=` write — reintroducing it would shadow the configured env.
     expect(bridge?.content).not.toContain("CLAUDE_CODE_EFFORT_LEVEL");
     // Group D, the background drain: one decision replaces both `break`s,
-    // the prompt carries the uuid stale results are judged against, cost is
-    // the latest cumulative figure, and Group B's dedup resets per result.
+    // the prompt carries the uuid stale results are judged against, a
+    // follow-up's result counts once the turn has its answer, and Group B's
+    // dedup resets per result.
     expect(bridge?.content).toContain("function mcpjamBackgroundDrainReducer(");
     expect(bridge?.content).toContain(
       "if (!mcpjamAnswer.keepReading && !queryInput.hasActiveUserMessages()) {",
@@ -737,18 +709,19 @@ function addUsage(total, usage) {
     // The server suspends a turn by detaching from the bridge, and resumes it
     // by reattaching: both reach the drain, which pauses on the first.
     expect(bridge?.content).toContain(
-      "activeSocket = ws;\n        mcpjamHostPresence.onAttach?.();",
+      "activeSocket = ws;\n\t\t\t\tmcpjamHostPresence.onAttach?.();",
     );
     expect(bridge?.content).toContain(
-      "activeSocket = void 0;\n        mcpjamHostPresence.onDetach?.();",
+      "activeSocket = void 0;\n\t\t\t\tmcpjamHostPresence.onDetach?.();",
     );
     expect(bridge?.content).toContain(
-      "messageId: initialMessageId ?? randomUUID3()",
+      "initialMessageId: mcpjamDrainState.promptUuid,",
     );
-    expect(bridge?.content).toContain("totalCostUsd = msg.total_cost_usd;");
-    expect(bridge?.content).not.toContain("(totalCostUsd ?? 0) +");
     expect(bridge?.content).toContain(
-      'if (type === "user" && Array.isArray(msg.message?.content)) {',
+      "const initialMessageId = mcpjamInitialMessageId ?? randomUUID();",
+    );
+    expect(bridge?.content).toContain(
+      "if (!queryInput.answersSentMessage(msg) && !mcpjamDrainState.answered) continue;",
     );
     expect(bridge?.content).toContain("streamedAssistantText = false;");
     // Approvals go through the vendor's own gate: a background agent's
@@ -758,7 +731,7 @@ function addUsage(total, usage) {
       "const mcpjamDenial = await input.mcpjamDenyBackgroundApproval?.(toolName, options);",
     );
     expect(bridge?.content).toContain(
-      "mcpjamRequestToolApproval: (approvalId) => mcpjamDrainController.trackApproval(turn.requestToolApproval(approvalId)),",
+      "mcpjamTrackApproval: (decision) => mcpjamDrainController.trackApproval(decision),",
     );
     // A terminal error is downgraded only once the drain is engaged.
     expect(bridge?.content).toContain(
@@ -822,7 +795,7 @@ function addUsage(total, usage) {
     expect(bridge?.content).toContain("mcpjam-fallback-");
     expect(bridge?.content).toContain("gatewayModelOverrideSettingsFor");
     expect(bridge?.content).toContain("modelOverrides");
-    expect(bridge?.content).toContain("mcpServers,\n      strictMcpConfig: true,\n      cwd: workdir,");
+    expect(bridge?.content).toContain("mcpServers,\n\t\t\tstrictMcpConfig: true,\n\t\t\tcwd: workdir,");
     expect(bridge?.content).toContain("claude-haiku-4-5-20251001");
     expect(bridge?.content).toContain(
       "...(permissionOptions.settings ?? {})",
@@ -855,8 +828,8 @@ function addUsage(total, usage) {
         files: vendor.files.map((file) => ({
           ...file,
           content: file.content.replace(
-            "      emitStreamEvent(msg);\n      if (type === \"result\") {",
-            "      emitStreamEvent(msg);\n\n      if (type === \"result\") {",
+            "\t\t\temitStreamEvent(msg);\n\t\t\tif (type === \"result\") {",
+            "\t\t\temitStreamEvent(msg);\n\n\t\t\tif (type === \"result\") {",
           ),
         })),
       }),
@@ -873,7 +846,7 @@ function addUsage(total, usage) {
       ...bootstrap,
       files: bootstrap.files.map((file) => ({
         ...file,
-        content: file.content.replace("      strictMcpConfig: true,\n", ""),
+        content: file.content.replace("\t\t\tstrictMcpConfig: true,\n", ""),
       })),
     };
     for (const recipe of [legacy, bootstrap]) {
@@ -893,7 +866,7 @@ function addUsage(total, usage) {
         ...legacy,
         files: legacy.files.map((file) => ({
           ...file,
-          content: file.content.replace("      mcpServers,\n      cwd: workdir,", "      cwd: workdir,"),
+          content: file.content.replace("\t\t\tmcpServers,\n\t\t\tcwd: workdir,", "\t\t\tcwd: workdir,"),
         })),
       }),
     });
@@ -921,25 +894,24 @@ function addUsage(total, usage) {
     // Without this, pnpm skips `@anthropic-ai/claude-code`'s postinstall and
     // the CLI never exists — the bootstrap dies before a single turn.
     //
-    // TWO layers, one file each, and neither is redundant: the stable adapter
-    // ships its OWN `pnpm-workspace.yaml` pinning the build by exact version
-    // (`allowBuilds`, the pnpm 11 spelling), and our `.npmrc` carries the
-    // pnpm 10 spelling — the computer template installs pnpm UNPINNED, so a
-    // not-yet-rebuilt box still resolves pnpm 10, which reads none of its
-    // settings from `pnpm-workspace.yaml`.
+    // TWO layers, one file each, and neither is redundant: the adapter ships
+    // its OWN `pnpm-workspace.yaml` allowing the CLI's build (`allowBuilds`,
+    // the pnpm 11 spelling), and our `.npmrc` carries the pnpm 10 spelling —
+    // a box without the template's pinned pnpm may still resolve pnpm 10,
+    // which reads none of its settings from `pnpm-workspace.yaml`.
     expect(npmrc?.path).toBe(`${bootstrap?.bootstrapDir}/.npmrc`);
     expect(npmrc?.content).toContain("dangerously-allow-all-builds=true");
-    // Exactly ONE pnpm-workspace.yaml, and it is the ADAPTER's version-pinned
-    // allow-list — ours is only a fallback for an adapter that ships none, and
-    // appending a second entry for the same path would write the file twice
-    // with conflicting content.
+    // Exactly ONE pnpm-workspace.yaml, and it is the ADAPTER's allow-list —
+    // ours is only a fallback for an adapter that ships none, and appending a
+    // second entry for the same path would write the file twice with
+    // conflicting content.
     expect(workspaces).toHaveLength(1);
     expect(workspaces?.[0]?.path).toBe(
       `${bootstrap?.bootstrapDir}/pnpm-workspace.yaml`,
     );
     expect(workspaces?.[0]?.content).toContain("allowBuilds:");
     expect(workspaces?.[0]?.content).toMatch(
-      /'@anthropic-ai\/claude-code@[\d.]+': true/,
+      /'@anthropic-ai\/claude-code(?:@[\d.]+)?': true/,
     );
     expect(workspaces?.[0]?.content).not.toContain("dangerouslyAllowAllBuilds");
 
@@ -1274,41 +1246,13 @@ describe("cursor adapter (Cursor CLI / ACP)", () => {
     expect(runtime.harnessId).toBe("cursor");
   });
 
-  it("shell-quotes the workdir so a metacharacter path cannot execute", () => {
-    // The workdir is host-configured. `resolveWorkingDirectory` confines it to
-    // /home/user but does NOT reject shell metacharacters, so this command is
-    // the injection surface: it is built as a string and handed to a shell in
-    // the box during session setup.
-    //
-    // These assert the EMITTED BYTES, not the intent. The first version of this
-    // used a template literal — where `\'` is just `'`, so the escape silently
-    // collapsed to three quotes, closing the quoted word and leaving the rest
-    // of the path unquoted. It read correctly and did nothing.
-    const cmd = (dir: string) =>
-      getHarnessAdapter("cursor").runtimeVersionCommand!(dir);
-
-    // A plain path is wrapped in single quotes and otherwise untouched.
-    expect(cmd("/home/user")).toBe(
-      "'/home/user/.harness-bootstrap/cursor/implementation/home/.local/bin/agent' --version",
+  it("asks the CLI the framework installed under the box's HOME", () => {
+    // The framework installs the recipe in its state directory under the
+    // box's HOME, never the host-configured workdir, so the command carries no
+    // host-supplied path: `$HOME` is its only expansion.
+    expect(getHarnessAdapter("cursor").runtimeVersionCommand!()).toBe(
+      '"$HOME/.ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.local/bin/agent" --version',
     );
-
-    // Command substitution stays INSIDE the quotes, so the shell never runs it.
-    for (const dangerous of [
-      "/home/user/$(id)",
-      "/home/user/`id`",
-      "/home/user/$IFS",
-    ]) {
-      const out = cmd(dangerous);
-      expect(out.startsWith("'" + dangerous + "/")).toBe(true);
-      // Balanced quoting, and nothing outside it but the flag.
-      expect(out.endsWith("agent' --version")).toBe(true);
-      expect((out.match(/'/g) ?? []).length % 2).toBe(0);
-    }
-
-    // An apostrophe is closed, escaped and reopened — never three bare quotes.
-    const withQuote = cmd("/home/user/it's");
-    expect(withQuote).toContain("it'\\''s");
-    expect(withQuote).not.toContain("it'''s");
   });
 
   it("names a runtime-version command (its CLI is NOT pinned by the package pin)", () => {
@@ -1316,7 +1260,7 @@ describe("cursor adapter (Cursor CLI / ACP)", () => {
     // which always fetches the current build — so what ran is only knowable by
     // asking the box. The other two adapters bootstrap a pinned npm package and
     // correctly declare nothing.
-    expect(cursor.runtimeVersionCommand?.("/home/user")).toContain("--version");
+    expect(cursor.runtimeVersionCommand?.()).toContain("--version");
     expect(
       getHarnessAdapter("claude-code").runtimeVersionCommand,
     ).toBeUndefined();

@@ -530,10 +530,12 @@ const HARNESS_HEARTBEAT_MS = 90_000;
 // A missed renewal aborts preparation immediately; the longer server-side TTL
 // is the crash-recovery backstop for a worker that disappears altogether.
 const HARNESS_RESERVATION_HEARTBEAT_MS = 60_000;
-// v7: gateway base URL normalization (Anthropic-protocol origin without /v1) —
-// resumed sessions reconnect to a bridge process holding the OLD env, so force
-// fresh sessions to pick up the corrected ANTHROPIC_BASE_URL.
-const HARNESS_RUNTIME_COMPAT_VERSION = 7;
+// A resumed session reconnects to the bridge process that created it, so a
+// change such a process cannot serve moves this and forks every session once.
+// v8: the harness framework keeps each recipe and each session's run state
+// under the box's `$HOME/.ai-sdk-harness`, where a bridge started from the
+// earlier layout keeps neither.
+const HARNESS_RUNTIME_COMPAT_VERSION = 8;
 
 /** Stable hash of the session-scoped runtime inputs. A change forces a fresh
  *  harness session (a resumed Claude Code thread keeps the model/tools it was
@@ -2988,7 +2990,7 @@ export async function runHarnessTurn(
           if (harnessAdapter.runtimeVersionCommand) {
             try {
               const probe = await session.run({
-                command: harnessAdapter.runtimeVersionCommand(sessionWorkDir),
+                command: harnessAdapter.runtimeVersionCommand(),
                 abortSignal: abortSignal
                   ? AbortSignal.any([
                       abortSignal,

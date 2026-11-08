@@ -5,6 +5,7 @@ import type {
   HarnessV1PromptTurnOptions,
 } from "@ai-sdk/harness";
 import { z } from "zod/v4";
+import { NATIVE_ELICITATION_MODES } from "./forwarding/native-elicitation-profile.js";
 import { createHarnessInputHost, type HarnessInputHandler } from "./input-host.js";
 
 const PRIVATE_EVENT = "mcpjam:elicitation";
@@ -40,7 +41,9 @@ export function withHarnessElicitation<T extends HarnessV1>(
     signal: AbortSignal;
   },
 ): T {
-  const inputHost = createHarnessInputHost({ ...args, modes: ["form"] });
+  // Installed only for servers on the native profile, so it serves every mode
+  // that profile declares.
+  const inputHost = createHarnessInputHost({ ...args, modes: NATIVE_ELICITATION_MODES });
   return new Proxy(harness, {
     get(target, key) {
       if (key !== "doStart") {

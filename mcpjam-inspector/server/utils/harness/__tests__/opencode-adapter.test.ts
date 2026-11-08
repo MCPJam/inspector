@@ -37,6 +37,12 @@ describe("the OpenCode adapter", () => {
     expect(registeredHarnessIds()).toContain("opencode");
   });
 
+  it("asks the CLI the framework installed under the box's HOME", () => {
+    expect(getHarnessAdapter("opencode").runtimeVersionCommand?.()).toBe(
+      '"$HOME/.ai-sdk-harness/.harness-bootstrap/opencode/node_modules/.bin/opencode" --version',
+    );
+  });
+
   it("uses dummy Anthropic broker auth, never a warm-agent close header", () => {
     const auth = buildBrokerDummyAuth("opencode", "https://proxy.example");
     expect(auth.ANTHROPIC_BASE_URL).toBe("https://proxy.example/v1");
@@ -69,7 +75,7 @@ describe("the OpenCode adapter", () => {
       const leaseBase = `http://127.0.0.1:${port}/web/harness/model-proxy/anthropic`;
       const auth = buildBrokerDummyAuth("opencode", leaseBase);
       // This appends `/messages` itself. It checks MCPJam's dummy base URL,
-      // not what the OpenCode binary appends (that evidence is the 1.18.23 run).
+      // not what the OpenCode binary appends (that evidence is the 1.18.34 run).
       const outgoing = `${String(auth.ANTHROPIC_BASE_URL).replace(/\/+$/, "")}/messages`;
       const response = await fetch(outgoing, {
         method: "POST",

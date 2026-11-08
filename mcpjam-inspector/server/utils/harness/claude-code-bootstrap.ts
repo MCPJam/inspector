@@ -9,6 +9,7 @@ import { patchClaudeCodeBackgroundDrain } from "./claude-code-background-drain.j
 import { patchClaudeCodeSubagentSteps } from "./claude-code-subagent-steps.js";
 import { patchClaudeCodeElicitation } from "./claude-code-elicitation.js";
 import { patchClaudeCodeBootstrapLock } from "./claude-code-lockfile.js";
+import { bridgeIndent } from "./claude-code-bridge-indent.js";
 
 export function createClaudeCodeHarness(
   settings?: Parameters<typeof createClaudeCode>[0],
@@ -28,10 +29,11 @@ export function createClaudeCodeHarness(
  * — was RETIRED at the stable bump: the adapter's own `toUserMessage` now sets
  * it, and re-applying ours would have written the key twice.
  *
- * Every needle below is quoted from the vendored `dist/bridge/index.mjs` and
- * must match VERBATIM. A miss throws rather than silently shipping an
- * unpatched bridge; `registry.test.ts` runs the patcher against the really
- * installed package so a version bump fails loudly here instead of at runtime.
+ * Every needle below is quoted from the vendored `dist/bridge/index.mjs`, two
+ * spaces per level, and must match VERBATIM once `bridgeIndent` restores the
+ * bundle's tabs. A miss throws rather than silently shipping an unpatched
+ * bridge; `registry.test.ts` runs the patcher against the really installed
+ * package so a version bump fails loudly here instead of at runtime.
  */
 
 /** Group B — assistant-text fallback.
@@ -76,24 +78,23 @@ const CLAUDE_CODE_BRIDGE_STREAM_EVENT_PATCH = `    if (type === "stream_event") 
       }
       handleStreamEvent({`;
 
-const CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_NEEDLE = `      for (const block of msg.message.content) {
-        if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {`;
-const CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_PATCH = `      for (const block of msg.message.content) {
-        if (block.type === "text" && typeof block.text === "string") {
-          emitAssistantTextFallback(block.text);
-          continue;
-        }
-        if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {`;
+/** The loop body has no braces, so the text block is the first arm of its
+ *  `if`/`else` chain. */
+const CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_NEEDLE = `      for (const block of messageContent) if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {`;
+const CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_PATCH = `      for (const block of messageContent) if (block.type === "text" && typeof block.text === "string") emitAssistantTextFallback(block.text);
+      else if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {`;
 
 /** `createEmitStreamEvent` has no `result` branch of its own, so this adds one.
  *  It is anchored AFTER the `parent_tool_use_id` sub-agent guard so a subagent's
  *  terminal result never leaks into the parent transcript. */
 const CLAUDE_CODE_BRIDGE_RESULT_TEXT_NEEDLE = `    if (msg.parent_tool_use_id != null) {
+      emit({
+        type: "raw",
+        rawValue: msg
+      });
       return;
     }`;
-const CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH = `    if (msg.parent_tool_use_id != null) {
-      return;
-    }
+const CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH = `${CLAUDE_CODE_BRIDGE_RESULT_TEXT_NEEDLE}
     if (type === "result" && msg.subtype === "success") {
       emitAssistantTextFallback(msg.result);
     }`;
@@ -120,8 +121,8 @@ const CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH = `    if (msg.parent_tool_use_id != 
  *  GONE from the patch: stable exposes a first-class `env` option on
  *  `createClaudeCode`, so it is passed as configuration instead (see
  *  `createHarness` below). */
-const CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_NEEDLE = `var HOST_TOOL_PREFIX = "mcp__harness-tools__";`;
-const CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_PATCH = `var HOST_TOOL_PREFIX = "mcp__harness-tools__";
+const CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_NEEDLE = `const HOST_TOOL_PREFIX = "mcp__harness-tools__";`;
+const CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_PATCH = `const HOST_TOOL_PREFIX = "mcp__harness-tools__";
 function gatewayModelOverrideSettingsFor(model, env) {
   if (typeof model !== "string") return undefined;
   if (env?.MCPJAM_HARNESS_UPSTREAM_PROFILE === "anthropic-native") return undefined;
@@ -179,151 +180,15 @@ const CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_PATCH = `      ...permissionOptions,
       mcpServers,
       cwd: workdir,`;
 
-/* The 1.0.100 bridge moved the turn loop out of createEmitStreamEvent and
- * stopped stamping parent_tool_use_id on its own user messages. Keep a
- * second, deliberately small patch path for that shape. The old path above is
- * still needed for the canary/stable fixture and is left byte-for-byte
- * compatible with it. */
-const MODERN_CLAUDE_CODE_BRIDGE_TEXT_STATE_NEEDLE = `  let streamStarted = false;
-  const partialBlocks = /* @__PURE__ */ new Map();`;
-const MODERN_CLAUDE_CODE_BRIDGE_TEXT_STATE_PATCH = `  let streamStarted = false;
-  let streamedAssistantText = false;
-  let lastEmittedFallbackText;
-  let fallbackTextSeq = 0;
-  const emitAssistantTextFallback = (text) => {
-    const normalized = typeof text === "string" ? text : "";
-    if (!normalized || streamedAssistantText || normalized === lastEmittedFallbackText) return;
-    const id = \`mcpjam-fallback-\${Date.now()}-\${++fallbackTextSeq}\`;
-    emit({ type: "text-start", id });
-    emit({ type: "text-delta", id, delta: normalized });
-    emit({ type: "text-end", id });
-    lastEmittedFallbackText = normalized;
-  };
-  const partialBlocks = /* @__PURE__ */ new Map();`;
-const MODERN_CLAUDE_CODE_BRIDGE_STREAM_EVENT_NEEDLE = `      if (type === "stream_event") {
-        handleStreamEvent(msg.event, partialBlocks, emit);`;
-const MODERN_CLAUDE_CODE_BRIDGE_STREAM_EVENT_PATCH = `      if (type === "stream_event") {
-        if (msg.event?.type === "content_block_delta" && msg.event?.delta?.type === "text_delta" && typeof msg.event?.delta?.text === "string" && msg.event.delta.text.length > 0) {
-          streamedAssistantText = true;
-        }
-        handleStreamEvent(msg.event, partialBlocks, emit);`;
-const MODERN_CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_NEEDLE = `        for (const block of msg.message.content) {
-          if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {`;
-const MODERN_CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_PATCH = `        for (const block of msg.message.content) {
-          if (block.type === "text" && typeof block.text === "string") {
-            emitAssistantTextFallback(block.text);
-            continue;
-          }
-          if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {`;
-const MODERN_CLAUDE_CODE_BRIDGE_RESULT_TEXT_NEEDLE = `        if (msg.subtype === "success") {
-          const emptyResult = !msg.result?.trim?.();`;
-const MODERN_CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH = `        if (msg.subtype === "success") {
-          const emptyResult = !msg.result?.trim?.();
-          if (type === "result" && msg.subtype === "success" && !emptyResult) {
-            emitAssistantTextFallback(msg.result);
-          }`;
-const MODERN_CLAUDE_CODE_BRIDGE_USER_MESSAGE_NEEDLE = `  const toUserMessage = (text) => ({
-    type: "user",
-    message: {
-      role: "user",
-      content: [{ type: "text", text }]
-    }
-  });`;
-const MODERN_CLAUDE_CODE_BRIDGE_USER_MESSAGE_PATCH = `  const toUserMessage = (text) => ({
-    type: "user",
-    message: {
-      role: "user",
-      content: [{ type: "text", text }]
-    },
-    parent_tool_use_id: null
-  });`;
-const MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_NEEDLE = `  const q = claudeSdk.query({`;
-const MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_PATCH = `  function gatewayModelOverrideSettingsFor(model, env) {
-    if (typeof model !== "string") return undefined;
-    if (env?.MCPJAM_HARNESS_UPSTREAM_PROFILE === "anthropic-native") return undefined;
-    let overrides;
-    if (model === "haiku") {
-      const native = env?.ANTHROPIC_DEFAULT_HAIKU_MODEL ?? "claude-haiku-4-5";
-      const match = native.match(/^claude-haiku-(\\d+)(?:-(\\d+))?$/);
-      if (!match) return undefined;
-      const gateway = "anthropic/claude-haiku-" + match[1] + (match[2] ? "." + match[2] : "");
-      overrides = {
-        haiku: gateway,
-        [native]: gateway,
-        "claude-haiku-4-5": gateway,
-        "claude-haiku-4-5-20251001": gateway
-      };
-    } else {
-      if (!model.startsWith("claude-")) return undefined;
-      const match = model.match(/^claude-(haiku|sonnet|opus)-(\\d+)(?:-(\\d+))?$/);
-      if (match) {
-        const [, family, major, minor] = match;
-        overrides = {
-          [model]: \`anthropic/claude-\${family}-\${major}\${minor ? \`.\${minor}\` : ""}\`
-        };
-      } else if (/^claude-[a-z0-9.-]+$/.test(model)) {
-        overrides = { [model]: \`anthropic/\${model}\` };
-      } else {
-        return undefined;
-      }
-    }
-    return { modelOverrides: overrides };
-  }
-  const q = claudeSdk.query({`;
-
-function patchModernClaudeCodeBridgeContent(content: string): string {
-  let patched = content;
-  const replacements = [
-    [
-      MODERN_CLAUDE_CODE_BRIDGE_TEXT_STATE_NEEDLE,
-      MODERN_CLAUDE_CODE_BRIDGE_TEXT_STATE_PATCH,
-    ],
-    [
-      MODERN_CLAUDE_CODE_BRIDGE_STREAM_EVENT_NEEDLE,
-      MODERN_CLAUDE_CODE_BRIDGE_STREAM_EVENT_PATCH,
-    ],
-    [
-      MODERN_CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_NEEDLE,
-      MODERN_CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_PATCH,
-    ],
-    [
-      MODERN_CLAUDE_CODE_BRIDGE_RESULT_TEXT_NEEDLE,
-      MODERN_CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH,
-    ],
-    [
-      MODERN_CLAUDE_CODE_BRIDGE_USER_MESSAGE_NEEDLE,
-      MODERN_CLAUDE_CODE_BRIDGE_USER_MESSAGE_PATCH,
-    ],
-    [
-      MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_NEEDLE,
-      MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_PATCH,
-    ],
-    [
-      CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_NEEDLE,
-      CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_PATCH,
-    ],
-  ] as const;
-
-  for (const [needle, replacement] of replacements) {
-    if (!patched.includes(needle)) {
-      throw new Error(
-        "Unable to patch Claude Code bridge bootstrap: modern bridge shape changed",
-      );
-    }
-    patched = patched.replace(needle, replacement);
-  }
-
-  return patched;
-}
-
 /**
  * Keep the product's MCP selection authoritative even in a user's workspace.
  * Apply independently of the other patches so already-patched recipes upgrade.
  */
 function enforceStrictMcpConfig(content: string): string {
-  const needle = "      mcpServers,\n      cwd: workdir,";
-  const replacement =
-    "      mcpServers,\n      strictMcpConfig: true,\n      cwd: workdir,";
+  const needle = bridgeIndent("      mcpServers,\n      cwd: workdir,");
+  const replacement = bridgeIndent(
+    "      mcpServers,\n      strictMcpConfig: true,\n      cwd: workdir,",
+  );
   if (content.includes(replacement)) return content;
   if (!content.includes(needle)) {
     throw new Error(
@@ -335,22 +200,6 @@ function enforceStrictMcpConfig(content: string): string {
 
 function patchClaudeCodeBridgeContent(content: string): string {
   let patched = content;
-
-  // Route the CANARY line to its own anchor set. Despite the name, the
-  // `MODERN_*` group below is the canary one: the stable-line anchors are the
-  // `CLAUDE_CODE_BRIDGE_*` group above, and those are what 1.0.100 matches.
-  //
-  // The discriminator is the stream-event call shape — canary passes its
-  // arguments positionally, stable passes a single object. `mcpToolUseIds` and
-  // a `const partialBlocks` binding, which used to gate this, are present on
-  // BOTH lines (stable's reads `state.partialBlocks`), so the pair never
-  // discriminated: every bridge took the canary branch and the stable anchors
-  // were unreachable, which is why a `npm ci` install of the pinned 1.0.100
-  // threw "modern bridge shape changed" while a stale canary node_modules
-  // passed.
-  if (patched.includes("handleStreamEvent(msg.event,")) {
-    return patchModernClaudeCodeBridgeContent(patched);
-  }
 
   if (!patched.includes("emitAssistantTextFallback")) {
     for (const [needle, replacement] of [
@@ -371,12 +220,15 @@ function patchClaudeCodeBridgeContent(content: string): string {
         CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH,
       ],
     ] as const) {
-      if (!patched.includes(needle)) {
+      if (!patched.includes(bridgeIndent(needle))) {
         throw new Error(
           "Unable to patch Claude Code bridge bootstrap: assistant text shape changed",
         );
       }
-      patched = patched.replace(needle, replacement);
+      patched = patched.replace(
+        bridgeIndent(needle),
+        bridgeIndent(replacement),
+      );
     }
   }
 
@@ -391,12 +243,15 @@ function patchClaudeCodeBridgeContent(content: string): string {
         CLAUDE_CODE_BRIDGE_QUERY_OPTIONS_PATCH,
       ],
     ] as const) {
-      if (!patched.includes(needle)) {
+      if (!patched.includes(bridgeIndent(needle))) {
         throw new Error(
           "Unable to patch Claude Code bridge bootstrap: model override shape changed",
         );
       }
-      patched = patched.replace(needle, replacement);
+      patched = patched.replace(
+        bridgeIndent(needle),
+        bridgeIndent(replacement),
+      );
     }
   }
 
@@ -428,17 +283,15 @@ function patchClaudeCodeBridgeContent(content: string): string {
  * (`node install.cjs`) that fetches its platform-native binary; without it the
  * CLI starts and immediately reports `claude native binary not installed`.
  * pnpm 10 stopped running dependency build scripts by default, and the
- * computer template installs pnpm UNPINNED (`npm install -g pnpm`), so a
- * rebuilt image changes behaviour with whatever pnpm is current.
+ * settings that allow them have moved between pnpm releases.
  *
  * TWO INDEPENDENT LAYERS, because the first one is a moving target:
  *
  *   1. ALLOW the build to run, so the postinstall happens normally.
- *   2. Failing that, do not let a SKIPPED build be FATAL. The adapter's own
- *      recipe re-runs `install.cjs` by hand after the install — but that
- *      rescue only fires when the install step exits zero. Turning
- *      `ERR_PNPM_IGNORED_BUILDS` back into a warning is what lets the
- *      adapter repair itself.
+ *   2. Failing that, do not let a SKIPPED build be FATAL. Turning
+ *      `ERR_PNPM_IGNORED_BUILDS` back into a warning lets the install step
+ *      exit zero, so the recipe's `claude --version` is what reports the
+ *      missing binary.
  *
  * Layer 2 is the durable one. It survives a rename of the allow-list setting,
  * which has already happened once: the first version of this patch shipped
@@ -446,21 +299,18 @@ function patchClaudeCodeBridgeContent(content: string): string {
  * settings from `.npmrc`, so it broke every harness bootstrap the moment the
  * recipe hash changed and snapshots stopped hiding it.
  *
- * WHAT CHANGED AT THE STABLE BUMP. Newer `@ai-sdk/harness-claude-code@1.0.x`
- * releases may ship their OWN `pnpm-workspace.yaml`, pinning the build it
- * needs by exact version (`allowBuilds: { '@anthropic-ai/claude-code@<v>':
- * true }`). Older/newly rebuilt adapters may omit it, so
- * {@link patchClaudeCodeHarnessBootstrap} adds an equivalent version-pinned
- * file from the bundled manifest and falls back to bounded compatibility
- * settings only when that manifest cannot be read. The adapter may also keep
- * a conditional `install.cjs` rescue in its recipe; we leave that command
- * intact and verify it still ends with `claude --version`.
+ * THE ADAPTER'S OWN ALLOW-LIST. The pinned adapter ships its own
+ * `pnpm-workspace.yaml` allowing the CLI's build (`allowBuilds:
+ * { '@anthropic-ai/claude-code': true }`; the frozen lockfile fixes the
+ * version). An adapter that omits it gets an equivalent version-pinned file
+ * from {@link patchClaudeCodeHarnessBootstrap}, built from the bundled
+ * manifest, with bounded compatibility settings only when that manifest
+ * cannot be read.
  *
  * `.npmrc` STAYS. pnpm 10 does not read `allowBuilds` from
- * `pnpm-workspace.yaml`, and the computer template installs pnpm UNPINNED
- * (`npm install -g pnpm`), so a box that has not been rebuilt still resolves
- * pnpm 10 and still needs the `.npmrc` spelling. Verified against pnpm 10.34.5
- * and 11.24.0.
+ * `pnpm-workspace.yaml`, and a box without the template's pinned pnpm may
+ * still resolve pnpm 10, which needs the `.npmrc` spelling. Verified against
+ * pnpm 10.34.5 and 11.24.0.
  *
  * WHY NOT THE MANIFEST. `onlyBuiltDependencies` would be narrower, but the
  * manifest is a bundled asset of `@ai-sdk/harness-claude-code`, not ours to
@@ -520,11 +370,11 @@ export function patchClaudeCodeHarnessBootstrap(
     getBootstrap: async (...args) => {
       if (cachedPatchedBootstrap) return cachedPatchedBootstrap;
       const bootstrap = await originalGetBootstrap(...args);
-      // The adapter ships its own version-pinned `pnpm-workspace.yaml` since
-      // the stable line. Appending a second entry for the same path would write
-      // the file twice with conflicting content, so ours is a FALLBACK: it is
-      // added only if the adapter stops shipping one. `.npmrc` is always ours —
-      // the adapter ships none, and pnpm 10 reads nothing else.
+      // The adapter ships its own `pnpm-workspace.yaml`. Appending a second
+      // entry for the same path would write the file twice with conflicting
+      // content, so ours is a FALLBACK: it is added only if the adapter stops
+      // shipping one. `.npmrc` is always ours — the adapter ships none, and
+      // pnpm 10 reads nothing else.
       const shipsPnpmWorkspace = bootstrap.files.some((file) =>
         file.path.endsWith("/pnpm-workspace.yaml"),
       );

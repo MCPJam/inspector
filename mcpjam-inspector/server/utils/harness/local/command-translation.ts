@@ -20,13 +20,13 @@
  *
  * ── Why a closed grammar is enough ────────────────────────────────────────
  * The grammar is small and finite because the framework and adapters are
- * pinned exactly (`@ai-sdk/harness@1.0.117`,
- * `@ai-sdk/harness-claude-code@1.0.121`, `@ai-sdk/harness-codex@1.0.119`) and
- * every command they emit is a literal in their own source, not model- or
- * repo-derived text. The shapes are enumerated in `ADAPTER_COMMAND_SHAPES`
- * below. An adapter upgrade that changes one of them fails CLOSED — the
- * session errors with the offending string rather than guessing — and that
- * failure is the signal to re-review the manifest.
+ * pinned exactly (`@ai-sdk/harness@1.0.158`,
+ * `@ai-sdk/harness-claude-code@1.0.162`, and the Codex app-server bundle by
+ * its identity) and every command they emit is a literal in their own source,
+ * not model- or repo-derived text. The shapes are enumerated in
+ * `ADAPTER_COMMAND_SHAPES` below. An adapter upgrade that changes one of them
+ * fails CLOSED — the session errors with the offending string rather than
+ * guessing — and that failure is the signal to re-review the manifest.
  *
  * That is not hypothetical: this module was first written against the
  * `1.0.0-canary.9` adapters, and the move to the stable line changed almost
@@ -38,14 +38,14 @@
  *
  * ── Path remapping is part of the translation, not a detail ───────────────
  * The adapters declare `bootstrapDir = .harness-bootstrap/<harnessId>`, which
- * the framework resolves against the session's default working directory — for
- * us, the user's granted workspace — and then `pnpm install` a vendor CLI into
- * it at session start. Both halves are unacceptable on a host:
+ * the framework resolves against its state directory, `$HOME/.ai-sdk-harness`
+ * (for us, inside the session's synthetic home), and then `pnpm install` a
+ * vendor CLI into it at session start. That is unacceptable on a host:
  *
- *   - a vendor CLI's whole dependency graph does not belong inside somebody's
- *     checkout, where it lands in their working tree and their VCS status;
  *   - installing a package graph while starting a session is the runtime
- *     bootstrapping the plan forbids outright.
+ *     bootstrapping the plan forbids outright;
+ *   - the CLI it installs would sit in a directory the session can write, not
+ *     in a bundle verified before consent.
  *
  * So the translator REMAPS the adapter's bootstrap dir onto the verified,
  * read-only managed runtime bundle, and turns the install/verify commands into
@@ -116,9 +116,9 @@ export interface CommandTranslationContext {
   harnessId: SupportedLocalHarnessId;
   /**
    * The adapter's declared bootstrap directory as the framework resolves it —
-   * `<defaultWorkingDirectory>/.harness-bootstrap/<harnessId>`. Never touched
-   * on disk: it is matched, and every reference to it is remapped onto the
-   * verified managed bundle.
+   * `<syntheticHome>/.ai-sdk-harness/.harness-bootstrap/<harnessId>`. Never
+   * touched on disk: it is matched, and every reference to it is remapped onto
+   * the verified managed bundle.
    */
   adapterBootstrapDir: string;
   /** Verified, read-only managed runtime bundle root that stands in for it —

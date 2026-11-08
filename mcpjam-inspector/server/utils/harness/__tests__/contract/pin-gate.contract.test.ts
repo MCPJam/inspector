@@ -1,8 +1,9 @@
 /**
  * The pin-change gate.
  *
- * A runtime pin may not move while the discovery evidence still names the old
- * version, and every place a pin is written must agree. Passing here proves
+ * A runtime pin may not move while a route is still declared qualified on
+ * evidence that names the old version, and every place a pin is written must
+ * agree. Passing here proves
  * declarations agree with each other. It does not prove Apps, elicitation or
  * Tasks survive an upgrade: that takes a live qualification run at the new
  * pin, recorded as an evidence row.
@@ -43,10 +44,11 @@ const LABELS = [
   "host-tools",
 ] as const;
 
-/** Routes with a live qualification row at the current pin. */
+/** Routes with a live qualification row at the current pin. Claude Code's
+ * rows were measured at 2.1.245, so none qualifies at 2.1.290 yet. */
 const QUALIFIED_DISCOVERY: Record<Harness, readonly (typeof LABELS)[number][]> =
   {
-    "claude-code": ["forwarded-bridge", "host-tools"],
+    "claude-code": [],
     codex: ["forwarded-bridge", "host-tools"],
     cursor: [],
     "copilot-cli": [],
@@ -141,7 +143,7 @@ function pinSites({
     sites.push([
       "isNativeElicitationProfile",
       isNativeElicitationProfile(
-        { elicitation: { form: {} }, roots: { listChanged: true } },
+        { elicitation: { form: {}, url: {} }, roots: { listChanged: true } },
         descriptor.runtimeVersion,
       )
         ? descriptor.runtimeVersion

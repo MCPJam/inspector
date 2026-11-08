@@ -58,11 +58,11 @@ export function claudeCodeBridgeHasTypedErrors(content: string): boolean {
 /** Apply the patch to bridge source, or return it unchanged if any anchor moved. */
 export function typeClaudeCodeTerminalErrors(content: string): string {
   if (claudeCodeBridgeHasTypedErrors(content)) return content;
-  const helperAnchor = /^var UNRECOVERABLE_API_RETRY_STATUSES = [^\n]*;$/m;
+  const helperAnchor = /^const UNRECOVERABLE_API_RETRY_STATUSES = [^;]*;$/m;
   const apiRetryAnchor =
     /^([ \t]*)if \(type === "system" && msg\.subtype === "api_retry"\) \{$/m;
   const errorCaptureAnchor =
-    /^([ \t]*)if \(typeof msg\.error === "string" && msg\.error\.trim\(\)\) \{\n[ \t]*state\.observedTerminalError = msg\.error\.trim\(\);$/m;
+    /^([ \t]*)if \(typeof msg\.error === "string" && msg\.error\.trim\(\)\) state\.observedTerminalError = msg\.error\.trim\(\);$/m;
   const emitAnchor =
     /error: normalized,(\s*)message: "claude-code terminal error"/;
   if (

@@ -135,7 +135,9 @@ async function fixture() {
   });
   const session = await provider.createSession({ sessionId: "s1" });
   const workRoot = join(root, "session", "work");
-  const command = `node '${workRoot}/.harness-bootstrap/claude-code/bridge.mjs' --workdir '${workRoot}/project' --bridge-state-dir '${workRoot}/.agent-runs/s1/bridge'`;
+  // The framework's state directory, in the session's synthetic home.
+  const stateDir = join(root, "session", "home", ".ai-sdk-harness");
+  const command = `node '${stateDir}/.harness-bootstrap/claude-code/bridge.mjs' --workdir '${workRoot}/project' --bridge-state-dir '${stateDir}/.agent-runs/s1/bridge'`;
   await session.spawn({
     command,
     env: {
@@ -194,7 +196,8 @@ it.skipIf(!supportsOwnershipProof())(
       actor: { kind: "member" },
       projectId: "project",
       bearer: "Bearer fixture",
-      installedAdapterVersion: "1.0.121",
+      installedAdapterVersion:
+        LOCAL_HARNESS_MANIFEST["claude-code"].adapterVersion,
       approvalContinuation: { generation: "generation", approvalIds: ["a1"] },
     });
     expect(adopted.ok).toBe(true);

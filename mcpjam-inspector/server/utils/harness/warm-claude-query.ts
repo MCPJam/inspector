@@ -1,3 +1,5 @@
+import { bridgeIndent } from "./claude-code-bridge-indent.js";
+
 /** Installed only in the hosted pilot's version-pinned Claude bridge. The SDK
  * query owns the child. Each host turn owns its input, output and callbacks. */
 // The kernel signal survives exec, so a killed bridge cannot leave the CLI
@@ -190,7 +192,12 @@ async function mcpjamOpenClaudeTurn(spec, turn, start) {
 export function patchWarmClaudeQuery(source: string): string {
   if (source.includes("async function mcpjamOpenClaudeTurn(")) return source;
   const open = "const q = claudeSdk.query({";
-  const end = "abortSignal: abortCtl.signal\n    }\n  });";
+  const end = bridgeIndent("abortSignal: abortCtl.signal\n    }\n  });");
+  // The host tool's result has settled once its `.finally` block closes here.
+  const settled = bridgeIndent("      });");
+  const toolResult = bridgeIndent(
+    '      });\n      emit({\n        type: "tool-result",\n        toolCallId,',
+  );
   const close = /await q\.return\?\.\(\s*void 0\s*\);/;
   const hostTool = "const [input, extra] = handlerArgs;";
   if (
@@ -198,6 +205,7 @@ export function patchWarmClaudeQuery(source: string): string {
     !source.includes(end) ||
     !close.test(source) ||
     !source.includes(hostTool) ||
+    source.split(toolResult).length !== 2 ||
     !source.includes("mcpjamDrainController.clear()")
   ) {
     throw new Error("The installed Claude bridge cannot retain a live query.");
@@ -205,15 +213,24 @@ export function patchWarmClaudeQuery(source: string): string {
   return (
     source
       .replace(open, "const q = await mcpjamOpenClaudeTurn({")
-      .replace(end, "abortSignal: abortCtl.signal\n    }\n  }, turn, start);")
+      .replace(
+        end,
+        bridgeIndent("abortSignal: abortCtl.signal\n    }\n  }, turn, start);"),
+      )
       .replace(
         hostTool,
         hostTool +
-          '\n          if (mcpjamWarmClaude?.owner?.turn !== turn || turn.abortSignal.aborted) throw new Error("The tool request belongs to an ended message.");',
+          bridgeIndent(
+            '\n      if (mcpjamWarmClaude?.owner?.turn !== turn || turn.abortSignal.aborted) throw new Error("The tool request belongs to an ended message.");',
+          ),
       )
       .replace(
-        "const { output, isError } = await turn.requestToolResult(toolCallId);",
-        'const { output, isError } = await turn.requestToolResult(toolCallId);\n          if (mcpjamWarmClaude?.owner?.turn !== turn || turn.abortSignal.aborted) throw new Error("The tool result belongs to an ended message.");',
+        toolResult,
+        settled +
+          bridgeIndent(
+            '\n      if (mcpjamWarmClaude?.owner?.turn !== turn || turn.abortSignal.aborted) throw new Error("The tool result belongs to an ended message.");',
+          ) +
+          toolResult.slice(settled.length),
       )
       .replace(
         close,

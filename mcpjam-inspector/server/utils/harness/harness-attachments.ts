@@ -3,9 +3,9 @@
  * session's own disk.
  *
  * A harness turn hands its adapter ONE user message (the last one,
- * `_resolvePromptTurnInput`), and no adapter can take a file part: Claude Code
- * throws on any non-text part, the ACP adapter (Cursor) throws on image and
- * file parts, and MCPJam's Codex app-server adapter drops them without a word.
+ * `_resolvePromptTurnInput`), and no adapter takes every file part: Claude
+ * Code and the ACP adapter (Cursor) take inline images but throw on any other
+ * file, and MCPJam's Codex app-server adapter drops them without a word.
  * So on every harness turn the file parts come OUT of that message before
  * `stream()`, their bytes are written into the session through the sandbox
  * file API, and a text note naming each saved path rides the prompt instead.

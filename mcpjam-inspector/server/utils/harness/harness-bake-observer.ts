@@ -5,7 +5,6 @@
  * line when it fails. See `harness-bake.ts` for what the bake is and why a
  * miss is worth recording.
  */
-import { posix } from "node:path";
 import type {
   HarnessV1NetworkSandboxSession,
   HarnessV1SandboxProvider,
@@ -15,6 +14,8 @@ import {
   HARNESS_BAKE_HOME,
   HARNESS_BAKE_MANIFEST_PATH,
   HARNESS_BAKED_BOOTSTRAP_DIRS,
+  HARNESS_LEGACY_BAKE_MANIFEST_PATH,
+  HARNESS_STATE_DIRECTORY_NAME,
   parseBakedMarker,
 } from "./harness-bake.js";
 
@@ -34,38 +35,44 @@ export type HarnessBootstrapOutcome =
 
 /**
  * Whether this turn should have hit a baked marker, and if not, why not.
- * `custom-workdir` and `unbaked-recipe` are INTENTIONAL fallbacks; a miss with
- * `baked` is the thing worth alerting on.
+ * `custom-home` (a box whose HOME is not the template's, so its state
+ * directory is elsewhere) and `unbaked-recipe` are INTENTIONAL fallbacks; a
+ * miss with `baked` is the thing worth alerting on.
  */
 export type HarnessBakeExpectation =
-  "baked" | "custom-workdir" | "unbaked-recipe" | "none";
+  "baked" | "custom-home" | "unbaked-recipe" | "none";
 
 /**
  * Whether the box carries a harness bake at all. A template marker is proof
- * (`present`, no extra read); anything else is answered by one read of the
- * bake manifest. `present` + a miss is drift; `absent` is a box from a
- * pre-bake template or a custom environment image.
+ * (`present`, no extra read); anything else is answered by reading the bake
+ * manifests. `present` + a miss is drift, and so is `other-root`, a bake only
+ * in the legacy root (this inspector is ahead of its template); `absent` is a
+ * box from a pre-bake template or a custom environment image.
  */
-export type HarnessBakeOnBox = "present" | "absent" | "unknown" | "not-checked";
+export type HarnessBakeOnBox =
+  "present" | "other-root" | "absent" | "unknown" | "not-checked";
 
 export interface HarnessBootstrapObservation {
   outcome: HarnessBootstrapOutcome;
   expectation: HarnessBakeExpectation;
   bakeOnBox: HarnessBakeOnBox;
-  /** Bootstrap dir relative to the working directory, e.g.
+  /** Bootstrap dir relative to the framework's state directory, e.g.
    *  `.harness-bootstrap/claude-code`. */
   bootstrapDir?: string;
   /** The recipe identity in the marker the framework looked for. */
   identity?: string;
-  /** The working directory the box was rooted at for this turn. */
-  defaultWorkingDirectory?: string;
+  /** The HOME whose state directory held the marker on this turn's box. */
+  home?: string;
   /** Versions the template recorded in its marker (baked only). */
   bakedVersions?: string;
   /** The bake context id the template recorded in its marker (baked only). */
   bakeId?: string;
 }
 
-const MARKER_PATH = /^(.*)\/\.bootstrap-([0-9a-f]{16})\.ok$/;
+/** `<home>/<state directory>/<bootstrapDir>/.bootstrap-<identity>.ok`. */
+const MARKER_PATH = new RegExp(
+  `^(.*)/${HARNESS_STATE_DIRECTORY_NAME.replace(/\./g, "\\.")}/(.+)/\\.bootstrap-([0-9a-f]{16})\\.ok$`,
+);
 
 /** The reduced session view the framework bootstraps through. */
 type SandboxSession = ReturnType<HarnessV1NetworkSandboxSession["restricted"]>;
@@ -81,7 +88,7 @@ const observations = new WeakMap<
  * Wrap a provider so the framework's bootstrap marker traffic is observed.
  *
  * Purely passive: every call is forwarded unchanged and in order, and the only
- * extra I/O is ONE read of the bake manifest when the marker is not the
+ * extra I/O is reading the bake manifests when the marker is not the
  * template's — off the critical path (not awaited), and on a turn that is
  * about to spend minutes installing anyway. Read the result with
  * {@link harnessBootstrapObservation}.
@@ -90,7 +97,7 @@ export function observeHarnessBootstrap(
   provider: HarnessV1SandboxProvider,
 ): HarnessV1SandboxProvider {
   const state: {
-    defaultWorkingDirectory?: string;
+    home?: string;
     bootstrapDir?: string;
     identity?: string;
     found?: "baked" | "reused";
@@ -101,35 +108,35 @@ export function observeHarnessBootstrap(
     bakeOnBox: Promise<HarnessBakeOnBox> | null;
   } = { missed: false, installed: false, bakeOnBox: null };
 
-  const noteMarker = (path: string, cwd: string) => {
+  const noteMarker = (path: string) => {
     const match = MARKER_PATH.exec(path);
     if (!match) return null;
-    state.defaultWorkingDirectory = cwd;
-    state.bootstrapDir = posix.relative(cwd, match[1]!) || ".";
-    state.identity = match[2];
+    state.home = match[1] || "/";
+    state.bootstrapDir = match[2];
+    state.identity = match[3];
     return match;
   };
 
   const probeBake = (probe: SandboxSession) => {
-    state.bakeOnBox ??= Promise.resolve(
-      probe.readTextFile({ path: HARNESS_BAKE_MANIFEST_PATH }),
-    ).then(
-      (manifest): HarnessBakeOnBox =>
-        manifest === null ? "absent" : "present",
-      (): HarnessBakeOnBox => "unknown",
-    );
+    const exists = async (path: string) =>
+      (await probe.readTextFile({ path })) !== null;
+    state.bakeOnBox ??= exists(HARNESS_BAKE_MANIFEST_PATH)
+      .then(async (found): Promise<HarnessBakeOnBox> => {
+        if (found) return "present";
+        return (await exists(HARNESS_LEGACY_BAKE_MANIFEST_PATH)) ? "other-root" : "absent";
+      })
+      .catch((): HarnessBakeOnBox => "unknown");
   };
 
   const wrapSession = <S extends SandboxSession>(
     session: S,
-    cwd: string,
     probe: SandboxSession,
   ): S =>
     ({
       ...session,
       readTextFile: async (options: ReadTextFileOptions) => {
         const result = await session.readTextFile(options);
-        if (noteMarker(options.path, cwd)) {
+        if (noteMarker(options.path)) {
           if (result === null) {
             state.missed = true;
             probeBake(probe);
@@ -147,7 +154,7 @@ export function observeHarnessBootstrap(
       },
       writeTextFile: async (options: WriteTextFileOptions) => {
         await session.writeTextFile(options);
-        if (noteMarker(options.path, cwd)) state.installed = true;
+        if (noteMarker(options.path)) state.installed = true;
       },
     }) as S;
 
@@ -155,13 +162,12 @@ export function observeHarnessBootstrap(
     pending: PromiseLike<HarnessV1NetworkSandboxSession>,
   ): Promise<HarnessV1NetworkSandboxSession> => {
     const session = await pending;
-    const cwd = session.defaultWorkingDirectory;
-    const wrapped = wrapSession(session, cwd, session);
+    const wrapped = wrapSession(session, session);
     return {
       ...wrapped,
       // The framework applies the recipe through the RESTRICTED view, so that
       // is the one that has to be observed.
-      restricted: () => wrapSession(session.restricted(), cwd, session),
+      restricted: () => wrapSession(session.restricted(), session),
     };
   };
 
@@ -185,8 +191,8 @@ export function observeHarnessBootstrap(
     if (state.bootstrapDir !== undefined) {
       expectation = !HARNESS_BAKED_BOOTSTRAP_DIRS.includes(state.bootstrapDir)
         ? "unbaked-recipe"
-        : state.defaultWorkingDirectory !== HARNESS_BAKE_HOME
-          ? "custom-workdir"
+        : state.home !== HARNESS_BAKE_HOME
+          ? "custom-home"
           : "baked";
     }
     return {
@@ -197,9 +203,7 @@ export function observeHarnessBootstrap(
         ? { bootstrapDir: state.bootstrapDir }
         : {}),
       ...(state.identity ? { identity: state.identity } : {}),
-      ...(state.defaultWorkingDirectory
-        ? { defaultWorkingDirectory: state.defaultWorkingDirectory }
-        : {}),
+      ...(state.home ? { home: state.home } : {}),
       ...(state.bakedVersions ? { bakedVersions: state.bakedVersions } : {}),
       ...(state.bakeId ? { bakeId: state.bakeId } : {}),
     };
@@ -251,7 +255,7 @@ export async function harnessBootstrapObservation(
  * console drops the context argument) and the same values as a structured
  * context for Axiom, plus the pinned runtime version. The bake-miss monitor
  * (mcpjam-backend `ops/axiom-monitors/monitors/harness-bake-miss-rate.json`)
- * reads the context: a miss on a box with `bakeOnBox=present` is drift.
+ * reads the context: a miss with `bakeOnBox=present` or `other-root` is drift.
  */
 export function harnessBootstrapLogFields(
   observation: HarnessBootstrapObservation | undefined,

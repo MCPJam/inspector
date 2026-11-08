@@ -26,8 +26,8 @@
 // which checks out this repository at the commit in its `inspector-bake-ref`
 // file and runs this script) and the hosted-harness CI test image
 // (`server/utils/harness/docker/test-image.Dockerfile`). Both copy the
-// directory's CONTENTS to `/home/user/.harness-bootstrap/` and run `bake.mjs`
-// as the runtime user.
+// directory's CONTENTS to `/home/user/.ai-sdk-harness/.harness-bootstrap/` and
+// run `bake.mjs` as the runtime user.
 //
 // The recipes come from the harness REGISTRY, through the same
 // `getHarnessAdapter(id).createHarness(...)` call a hosted turn makes in
@@ -73,7 +73,7 @@ import { writeTelemetryCatalogs } from "../../scripts/generate-telemetry-catalog
 const here = dirname(fileURLToPath(import.meta.url));
 
 export const BAKE_SCHEMA_VERSION = 1;
-export const BAKE_ROOT = "/home/user/.harness-bootstrap";
+export const BAKE_ROOT = "/home/user/.ai-sdk-harness/.harness-bootstrap";
 export const BAKE_RUNTIME_USER = "user";
 /** The committed record of what the computer template is expected to bake. */
 export const HARNESS_BAKE_LOCK_PATH = join(

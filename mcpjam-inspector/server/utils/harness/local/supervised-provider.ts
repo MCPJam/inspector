@@ -54,9 +54,10 @@ import {
   resolve,
   sep,
 } from "node:path";
-import type {
-  HarnessV1NetworkSandboxSession,
-  HarnessV1SandboxProvider,
+import {
+  harnessStateDirectoryPath,
+  type HarnessV1NetworkSandboxSession,
+  type HarnessV1SandboxProvider,
 } from "@ai-sdk/harness";
 import { logger } from "../../logger.js";
 import { localHarnessStateRoot } from "./grants.js";
@@ -526,16 +527,14 @@ export function createSupervisedLocalHarnessProvider(
   // ours lives in disposable session state instead of the user's checkout, so
   // a local session leaves no adapter scaffolding behind.
   const bootstrapOverlay = join(opts.sessionStateDir, "bootstrap");
-  // The framework requires the agent's working directory to be a proper
-  // SUBDIRECTORY of the session's default working directory ("." and absolute
-  // paths are both rejected), and it puts its own `.agent-runs/<session>` and
-  // `.harness-bootstrap` references under that default directory too.
-  //
-  // Making the granted workspace the default working directory therefore had
-  // two consequences, both wrong: the agent ran in
-  // `<workspace>/claude-code-<sessionId>` rather than in the user's checkout,
-  // and the bridge wrote its state — including `start-config.json`, mode 0644,
-  // carrying the session's model capability — INTO that checkout.
+  // The framework resolves the agent's working directory as a relative path
+  // inside the session's default working directory, `<harnessId>-<sessionId>`
+  // unless one is given. Making the granted workspace that default would run
+  // the agent in `<workspace>/claude-code-<sessionId>` rather than in the
+  // user's checkout. The framework's own `.harness-bootstrap` and
+  // `.agent-runs/<session>` live under `$HOME/.ai-sdk-harness`, inside the
+  // synthetic home, so the bridge's state (including `start-config.json`,
+  // which carries the session's model capability) stays in session state.
   //
   // So the default working directory is session-owned state, and the workspace
   // is reached through the relative work dir `project`: a symlink to the
@@ -697,11 +696,11 @@ export function createSupervisedLocalHarnessProvider(
 
     const translationContext: CommandTranslationContext = {
       harnessId: opts.harnessId,
-      // Resolved exactly as the framework resolves it — against the session's
-      // default working directory — so the translator matches the string the
-      // adapters will actually emit.
+      // Resolved exactly as the framework resolves it — against its state
+      // directory in the synthetic home — so the translator matches the
+      // string the adapters will actually emit.
       adapterBootstrapDir: posix.resolve(
-        adapterWorkRoot,
+        harnessStateDirectoryPath({ sandboxHomeDir: adapterHome }),
         opts.manifest.adapterBootstrapDir,
       ),
       managedBundleRoot: opts.runtime.rootPath,

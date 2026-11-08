@@ -1067,17 +1067,21 @@ describe("background drain patch", () => {
     )!.content;
     // Group D runs after Group B in the real patcher; here the Group B anchor
     // is supplied so the drain applies to the vendor bridge on its own.
+    const guard = `\t\tif (msg.parent_tool_use_id != null) {
+\t\t\temit({
+\t\t\t\ttype: "raw",
+\t\t\t\trawValue: msg
+\t\t\t});
+\t\t\treturn;
+\t\t}`;
     const withGroupB = source.replace(
-      `    if (msg.parent_tool_use_id != null) {
-      return;
-    }`,
-      `    if (msg.parent_tool_use_id != null) {
-      return;
-    }
-    if (type === "result" && msg.subtype === "success") {
-      emitAssistantTextFallback(msg.result);
-    }`,
+      guard,
+      `${guard}
+\t\tif (type === "result" && msg.subtype === "success") {
+\t\t\temitAssistantTextFallback(msg.result);
+\t\t}`,
     );
+    expect(withGroupB).not.toBe(source);
     const once = patchClaudeCodeBackgroundDrain(withGroupB);
     expect(once).toContain(CLAUDE_CODE_BACKGROUND_DRAIN_MARKER);
     expect(patchClaudeCodeBackgroundDrain(once)).toBe(once);

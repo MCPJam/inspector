@@ -1,13 +1,14 @@
 /**
  * Group E: a subagent's steps, for the Claude Code bridge.
  *
- * The vendored bridge (`@ai-sdk/harness-claude-code@1.0.121`,
- * `dist/bridge/index.mjs`) drops every message a subagent produces: its
- * `parent_tool_use_id` guard returns before the `assistant` and `user`
- * branches, so a subagent's tool calls never reach the turn. That is right for
- * the transcript (the subagent's work is not the main thread's, and its final
- * report already arrives as the Agent call's own result) but it leaves the
- * user watching a collapsed `Agent` card for as long as the subagent runs.
+ * The vendored bridge (`@ai-sdk/harness-claude-code`,
+ * `dist/bridge/index.mjs`) keeps every message a subagent produces out of the
+ * turn: its `parent_tool_use_id` guard forwards the message verbatim as a
+ * `raw` part, which the server does not read, and returns before the
+ * `assistant` and `user` branches. That is right for the transcript (the
+ * subagent's work is not the main thread's, and its final report already
+ * arrives as the Agent call's own result) but it leaves the user watching a
+ * collapsed `Agent` card for as long as the subagent runs.
  *
  * This patch forwards what the CLI already sends for a subagent by default
  * (its `tool_use` and `tool_result` blocks; its text only arrives with
@@ -30,6 +31,8 @@
  * chunk), and it does not open the bridge's step. The guard still returns
  * after forwarding, so nothing else about a subagent's messages changes.
  */
+
+import { bridgeIndent } from "./claude-code-bridge-indent.js";
 
 /** Present once Group E is applied; also the bake sentinel. */
 export const CLAUDE_CODE_SUBAGENT_STEPS_MARKER = "mcpjamForwardSubagentStep";
@@ -146,9 +149,17 @@ const REPLACEMENTS: readonly Replacement[] = [
   // The sub-agent guard: forward the step, then return as before.
   [
     `    if (msg.parent_tool_use_id != null) {
+      emit({
+        type: "raw",
+        rawValue: msg
+      });
       return;
     }`,
     `    if (msg.parent_tool_use_id != null) {
+      emit({
+        type: "raw",
+        rawValue: msg
+      });
       mcpjamForwardSubagentStep(state, emit, msg);
       return;
     }`,
@@ -157,7 +168,7 @@ const REPLACEMENTS: readonly Replacement[] = [
 
 /** Every needle Group E matches, for fixtures that must quote them. */
 export const CLAUDE_CODE_SUBAGENT_STEPS_NEEDLES: readonly string[] =
-  REPLACEMENTS.map(([needle]) => needle);
+  REPLACEMENTS.map(([needle]) => bridgeIndent(needle));
 
 /**
  * Apply Group E. Idempotent on {@link CLAUDE_CODE_SUBAGENT_STEPS_MARKER};
@@ -167,7 +178,8 @@ export const CLAUDE_CODE_SUBAGENT_STEPS_NEEDLES: readonly string[] =
 export function patchClaudeCodeSubagentSteps(content: string): string {
   if (content.includes(CLAUDE_CODE_SUBAGENT_STEPS_MARKER)) return content;
   let patched = content;
-  for (const [needle, replacement] of REPLACEMENTS) {
+  for (const [quoted, replacement] of REPLACEMENTS) {
+    const needle = bridgeIndent(quoted);
     const at = patched.indexOf(needle);
     if (at < 0 || patched.indexOf(needle, at + needle.length) >= 0) {
       throw new Error(
@@ -175,7 +187,9 @@ export function patchClaudeCodeSubagentSteps(content: string): string {
       );
     }
     patched =
-      patched.slice(0, at) + replacement + patched.slice(at + needle.length);
+      patched.slice(0, at) +
+      bridgeIndent(replacement) +
+      patched.slice(at + needle.length);
   }
   return patched;
 }

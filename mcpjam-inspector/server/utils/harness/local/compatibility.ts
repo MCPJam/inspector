@@ -197,11 +197,10 @@ export interface LocalHarnessCompatibility {
    *  compatibility record. Empty = no evidence, which refuses every tuple. */
   lifecycleConformanceVersion: string;
   /**
-   * The adapter's DECLARED bootstrap directory, relative to the session's
-   * default working directory. The framework resolves it against that
-   * directory — which for a local session is the user's granted workspace —
-   * and the translator remaps every reference onto the verified managed
-   * bundle, so a vendor dependency graph never lands in somebody's checkout.
+   * The adapter's DECLARED bootstrap directory, relative to the framework's
+   * state directory (`$HOME/.ai-sdk-harness`, in the session's synthetic
+   * home). The translator remaps every reference onto the verified managed
+   * bundle, so a vendor dependency graph is never installed on the host.
    */
   adapterBootstrapDir: string;
   /**
@@ -232,7 +231,7 @@ export const LOCAL_HARNESS_MANIFEST: Readonly<
 > = {
   "claude-code": {
     harnessId: "claude-code",
-    adapterVersion: "1.0.121",
+    adapterVersion: "1.0.162",
     runtime: {
       source: "managed-bundle",
       bundleName: "claude-code",

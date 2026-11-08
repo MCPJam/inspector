@@ -1,5 +1,7 @@
-const QUERY_OPTIONS = "      hooks: {\n        PreToolUse: [";
-const ABORT = '      case "abort":\n        turnAbort?.abort();';
+import { bridgeIndent } from "./claude-code-bridge-indent.js";
+
+const QUERY_OPTIONS = bridgeIndent("      hooks: {\n        PreToolUse: [");
+const ABORT = bridgeIndent('      case "abort":\n        turnAbort?.abort();');
 
 /** The pinned SDK callback uses the bridge's existing result-control channel. */
 export function patchClaudeCodeElicitation(content: string): string {

@@ -1,12 +1,12 @@
 /**
  * Group D: background drain for the Claude Code bridge.
  *
- * The vendored bridge (`@ai-sdk/harness-claude-code@1.0.121`,
- * `dist/bridge/index.mjs`) ends every turn at the CLI's FIRST `result`: two
- * `break`s, then `queryInput.close()` and `q.return()` in its `finally`. That
- * kills any work the model sent to the background. A subagent started with
- * `run_in_background` (or auto-backgrounded by the CLI, which 2.1.245 does to
- * every `Agent` call) never reports back. The model has already told the user
+ * The vendored bridge (`@ai-sdk/harness-claude-code`,
+ * `dist/bridge/index.mjs`) ends every turn at the CLI's FIRST `result` that
+ * answers the prompt: two `break`s, then `queryInput.close()` and `q.return()`
+ * in its `finally`. That kills any work the model sent to the background. A
+ * subagent started with `run_in_background`, or one the CLI moves to the
+ * background itself, never reports back. The model has already told the user
  * "I'll let you know when it's ready", and the answer never reaches the chat.
  *
  * Worse, the next turn's resumed CLI first reports the killed task with an
@@ -21,7 +21,9 @@
  * bridge the same shape inside one turn:
  *
  *   1. STALE RESULTS. This turn's prompt carries a known uuid, and the CLI
- *      stamps it on the prompt's result (`user_message_uuid`). Before the
+ *      stamps it on the prompt's result (`user_message_uuid`). The bridge
+ *      sends the prompt with that uuid and skips a result that answers none
+ *      of its messages; the drain adds its own rules ahead of it. Before the
  *      first answer, a result stamped with another uuid, or arriving while
  *      the prompt is still `queued`, is forwarded as nothing: the CLI's report
  *      of a task the previous turn killed. So is that stale turn's own
@@ -38,7 +40,9 @@
  *      filtered to `local_agent` and `local_workflow`. Shells, Monitor and
  *      anything unknown are never waited for, so a turn without background
  *      agents ends exactly where it does today.
- *   3. ENDING THE TURN. One decision replaces the two `break`s. Input stays
+ *   3. ENDING THE TURN. Once the turn has its answer, one decision replaces
+ *      the two `break`s, and a follow-up's result counts although it answers
+ *      a task notification rather than a message the bridge sent. Input stays
  *      OPEN (closing it makes the CLI auto-deny permission requests and fail
  *      in-process host tools) while an agent is pending, while a waited-for
  *      task has settled and no main-thread turn has started since
@@ -73,11 +77,10 @@
  *      the CLI is aborted. Every early exit closes open blocks and the open
  *      step before the bridge's normal `finish`.
  *   7. SEVERAL RESULTS IN ONE TURN. Cost is the LATEST `total_cost_usd` (it
- *      is cumulative per process); `observedTerminalError` and Group B's
- *      `streamedAssistantText` reset after each result; a background task's
- *      failure is a notice; once the drain is engaged a terminal error is a
- *      notice plus a normal finish; user-message content is guarded with
- *      `Array.isArray`.
+ *      is cumulative per process, and the bridge keeps the latest itself);
+ *      `observedTerminalError` and Group B's `streamedAssistantText` reset
+ *      after each result; a background task's failure is a notice; once the
+ *      drain is engaged a terminal error is a notice plus a normal finish.
  *   8. NOTICES go out as `raw` parts (`{ mcpjam: "background-task" … }` and
  *      `{ mcpjam: "drain-notice", reason }`), never as bridge warnings, which
  *      only reach the bridge's stderr. A raw part does NOT open the bridge's
@@ -92,12 +95,15 @@
  * in the background there and the drain never engages; the one exception is
  * the `Workflow` tool, which the CLI always runs in the background.
  *
- * Every needle is quoted VERBATIM from 1.0.121, except the Group B result
- * fallback (this module's own earlier output). None of them touches the
+ * Every needle is quoted from the pinned bridge two spaces per level and must
+ * match VERBATIM once `bridgeIndent` restores its tabs, except the Group B
+ * result fallback (this module's own earlier output). None of them touches the
  * regex anchors of the hosted typed-errors patch
  * (`claude-code-typed-errors.ts`); `registry.test.ts` pins that the hosted
  * bridge takes both.
  */
+
+import { bridgeIndent } from "./claude-code-bridge-indent.js";
 
 /** Present once Group D is applied; also the bake sentinel. */
 export const CLAUDE_CODE_BACKGROUND_DRAIN_MARKER =
@@ -672,21 +678,22 @@ const REPLACEMENTS: readonly Replacement[] = [
   // listener, so an abort during setup finds it unset, never uninitialized.
   [
     `  const onHostAbort = () => {
-    if (gracefulAbort) {`,
+    if (gracefulAbort) gracefulAbort();`,
     `  let mcpjamDrainController;
   const onHostAbort = () => {
     if (mcpjamDrainController?.waiting) {
       mcpjamDrainController.stop("stopped");
       return;
     }
-    if (gracefulAbort) {`,
+    if (gracefulAbort) gracefulAbort();`,
   ],
-  // The drain state, and the uuid this turn's prompt is sent with.
+  // The drain state, and the uuid this turn's prompt is sent with. The bridge
+  // matches results against the same id, so both judge staleness alike.
   [
     `  const streamEventState = createClaudeStreamEventState();`,
     `  const streamEventState = createClaudeStreamEventState();
   const mcpjamDrainState = mcpjamCreateBackgroundDrainState({
-    promptUuid: randomUUID3(),
+    promptUuid: randomUUID(),
     turnStartedAt: Date.now()
   });
   streamEventState.mcpjamDrain = mcpjamDrainState;`,
@@ -699,17 +706,12 @@ const REPLACEMENTS: readonly Replacement[] = [
     initialMessageId: mcpjamDrainState.promptUuid,`,
   ],
   [
-    `function createQueryInput({
-  initialUserMessage,`,
-    `function createQueryInput({
-  initialUserMessage,
-  initialMessageId,`,
+    `function createQueryInput({ initialUserMessage, userMessages, abortSignal }) {`,
+    `function createQueryInput({ initialUserMessage, userMessages, abortSignal, initialMessageId: mcpjamInitialMessageId }) {`,
   ],
   [
-    `                  text: initialUserMessage,
-                  messageId: randomUUID3()`,
-    `                  text: initialUserMessage,
-                  messageId: initialMessageId ?? randomUUID3()`,
+    `  const initialMessageId = randomUUID();`,
+    `  const initialMessageId = mcpjamInitialMessageId ?? randomUUID();`,
   ],
   // The host's socket closing mid-turn, or reattaching to resume it.
   [
@@ -721,12 +723,14 @@ const REPLACEMENTS: readonly Replacement[] = [
   ],
   [
     `    ws.on("close", () => {
-      if (activeSocket === ws) {
-        activeSocket = void 0;`,
+      if (activeSocket === ws) activeSocket = void 0;
+    });`,
     `    ws.on("close", () => {
       if (activeSocket === ws) {
         activeSocket = void 0;
-        mcpjamHostPresence.onDetach?.();`,
+        mcpjamHostPresence.onDetach?.();
+      }
+    });`,
   ],
   // The controller (timers, notices, approvals). `q` is read lazily.
   [
@@ -754,8 +758,8 @@ const REPLACEMENTS: readonly Replacement[] = [
       input.approvalRequestedToolUseIds.add(approvalId);`,
   ],
   [
-    `      const decision = await input.turn.requestToolApproval(approvalId);`,
-    `      const decision = await (input.mcpjamRequestToolApproval ? input.mcpjamRequestToolApproval(approvalId) : input.turn.requestToolApproval(approvalId));`,
+    `      const decision = await decisionPromise.finally(() => input.clearWaitingOnHostInput(approvalId));`,
+    `      const decision = await (input.mcpjamTrackApproval ? input.mcpjamTrackApproval(decisionPromise) : decisionPromise).finally(() => input.clearWaitingOnHostInput(approvalId));`,
   ],
   [
     `  const permissionOptions = createPermissionOptions({
@@ -763,7 +767,7 @@ const REPLACEMENTS: readonly Replacement[] = [
     `  const permissionOptions = createPermissionOptions({
     start,
     mcpjamDenyBackgroundApproval: (toolName, options) => mcpjamDrainController.denyBackgroundApproval(toolName, options),
-    mcpjamRequestToolApproval: (approvalId) => mcpjamDrainController.trackApproval(turn.requestToolApproval(approvalId)),`,
+    mcpjamTrackApproval: (decision) => mcpjamDrainController.trackApproval(decision),`,
   ],
   // Once the drain is engaged, a terminal error is a notice plus a normal
   // finish: the answer the user already has stays theirs. Gated on the drain,
@@ -779,11 +783,6 @@ const REPLACEMENTS: readonly Replacement[] = [
     }
     streamEventState.observedTerminalError = normalized;`,
   ],
-  // `total_cost_usd` is cumulative per CLI process: take the latest.
-  [
-    `            totalCostUsd = (totalCostUsd ?? 0) + msg.total_cost_usd;`,
-    `            totalCostUsd = msg.total_cost_usd;`,
-  ],
   // Observe every message; a stale result is forwarded as nothing.
   [
     `      emitStreamEvent(msg);
@@ -792,6 +791,13 @@ const REPLACEMENTS: readonly Replacement[] = [
       if (mcpjamDrainStep.ignoreResult || mcpjamDrainStep.skip) continue;
       emitStreamEvent(msg);
       if (type === "result") {`,
+  ],
+  // The bridge skips a result that answers none of the messages it sent.
+  // Once the drain holds the turn open, a background task's follow-up is
+  // exactly such a result, and it is the answer the drain waits for.
+  [
+    `          if (!queryInput.answersSentMessage(msg)) continue;`,
+    `          if (!queryInput.answersSentMessage(msg) && !mcpjamDrainState.answered) continue;`,
   ],
   // The first `break`: an answer ends the turn unless the drain keeps it open.
   [
@@ -808,24 +814,27 @@ const REPLACEMENTS: readonly Replacement[] = [
             break;
           }`,
   ],
-  // The second `break`.
+  // The second `break`. Before any answer it is the bridge's own: a prompt
+  // the CLI cancelled or discarded ends the turn. After it, the drain decides.
   [
     `      if (queryInput.hasObservedResult && !queryInput.hasActiveUserMessages()) {`,
-    `      if ((queryInput.hasObservedResult || mcpjamDrainState.answered) && !mcpjamDrainStep.keepReading && !queryInput.hasActiveUserMessages()) {`,
+    `      if ((queryInput.hasObservedResult || mcpjamDrainState.answered) && (!mcpjamDrainState.answered || !mcpjamDrainStep.keepReading) && !queryInput.hasActiveUserMessages()) {`,
   ],
   // A drain the bridge stopped itself (cap, Stop, a downgraded error) falls
   // through to the normal `finish`.
   [
-    `    if (!turn.abortSignal.aborted && !(abortCtl.signal.aborted && emittedTerminalError)) {
-      turn.emitError({ error: err, message: "claude-code turn failed" });
-    }
+    `    if (!turn.abortSignal.aborted && !(abortCtl.signal.aborted && emittedTerminalError)) turn.emitError({
+      error: err,
+      message: "claude-code turn failed"
+    });
     return;
   } finally {
     gracefulAbort = void 0;`,
     `    if (!mcpjamDrainController.stopped) {
-      if (!turn.abortSignal.aborted && !(abortCtl.signal.aborted && emittedTerminalError)) {
-        turn.emitError({ error: err, message: "claude-code turn failed" });
-      }
+      if (!turn.abortSignal.aborted && !(abortCtl.signal.aborted && emittedTerminalError)) turn.emitError({
+        error: err,
+        message: "claude-code turn failed"
+      });
       return;
     }
   } finally {
@@ -839,10 +848,6 @@ const REPLACEMENTS: readonly Replacement[] = [
     `    if (type === "system" && msg.subtype === "task_updated" && msg.patch?.status === "failed" && typeof msg.patch.error === "string") {
       if (state.mcpjamDrain && mcpjamDrainIsBackgroundTask(state.mcpjamDrain, msg.task_id)) return;
       emitTerminalError(msg.patch.error);`,
-  ],
-  [
-    `    if (type === "user" && msg.message?.content) {`,
-    `    if (type === "user" && Array.isArray(msg.message?.content)) {`,
   ],
   // Group B's result fallback (this module's own earlier output): a follow-up
   // answer that is not streamed must not be suppressed by turn 1's stream.
@@ -862,7 +867,7 @@ const REPLACEMENTS: readonly Replacement[] = [
 
 /** Every needle Group D matches, for fixtures that must quote them. */
 export const CLAUDE_CODE_BACKGROUND_DRAIN_NEEDLES: readonly string[] =
-  REPLACEMENTS.map(([needle]) => needle);
+  REPLACEMENTS.map(([needle]) => bridgeIndent(needle));
 
 /**
  * Apply Group D. Idempotent on {@link CLAUDE_CODE_BACKGROUND_DRAIN_MARKER};
@@ -872,7 +877,8 @@ export const CLAUDE_CODE_BACKGROUND_DRAIN_NEEDLES: readonly string[] =
 export function patchClaudeCodeBackgroundDrain(content: string): string {
   if (content.includes(CLAUDE_CODE_BACKGROUND_DRAIN_MARKER)) return content;
   let patched = content;
-  for (const [needle, replacement] of REPLACEMENTS) {
+  for (const [quoted, replacement] of REPLACEMENTS) {
+    const needle = bridgeIndent(quoted);
     const at = patched.indexOf(needle);
     if (at < 0 || patched.indexOf(needle, at + needle.length) >= 0) {
       throw new Error(
@@ -880,7 +886,9 @@ export function patchClaudeCodeBackgroundDrain(content: string): string {
       );
     }
     patched =
-      patched.slice(0, at) + replacement + patched.slice(at + needle.length);
+      patched.slice(0, at) +
+      bridgeIndent(replacement) +
+      patched.slice(at + needle.length);
   }
   return patched;
 }

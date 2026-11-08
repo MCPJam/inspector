@@ -77,6 +77,7 @@ import {
   CURSOR_SKILLS_BASE,
   OPENCODE_SKILLS_BASE,
 } from "./skill-roots.js";
+import { HARNESS_STATE_DIRECTORY_NAME } from "./harness-bake.js";
 
 /** A harness id this inspector has a runtime adapter for. Derived from the SDK's
  *  portable `Harness` union (the persistence-contract source of truth), so the
@@ -101,21 +102,6 @@ export type HarnessId = Harness;
  *  `createCodexAppServer`. */
 export type HarnessAuth = HarnessV1AuthenticationEnvironment;
 
-/** Escape a value for safe interpolation INSIDE a single-quoted shell word.
- *
- *  A single quote is the only character with meaning there, and the standard
- *  close-escape-reopen dance is the replacement: `'` becomes `'\''` — end the
- *  quoted word, an escaped literal quote, start a new quoted word.
- *
- *  A REGULAR string, not a template literal. In a template literal `\'` is just
- *  `'` (JS drops the backslash), so the obvious-looking `` `'\''` `` silently
- *  produces three quotes — which CLOSES the quoted word and leaves the rest of
- *  the path unquoted, restoring the very `$(…)` execution this exists to
- *  prevent. `__tests__/registry.test.ts` pins the emitted bytes. */
-function shellSingleQuote(value: string): string {
-  return value.replaceAll("'", "'\\''");
-}
-
 /** Placeholder credential value handed to the in-sandbox CLI on the broker path.
  *  It is never used for auth (the proxy ignores VM-supplied Authorization/
  *  x-api-key and trusts only E2B's injected `x-mcpjam-harness-lease`); it just
@@ -123,7 +109,7 @@ function shellSingleQuote(value: string): string {
 const BROKER_DUMMY_CREDENTIAL = "mcpjam-broker-dummy";
 
 /**
- * OpenCode 1.18.23's Anthropic client appends `/messages` to
+ * OpenCode 1.18.34's Anthropic client appends `/messages` to
  * `ANTHROPIC_BASE_URL`. Claude Code and the official SDK append
  * `/v1/messages` to the lease origin (`…/model-proxy/anthropic`). Give OpenCode
  * the `/v1` suffix so both hit the backend allowlist.
@@ -489,9 +475,9 @@ type HarnessRuntimeAdapterBase = {
    *  runtime process starts. REQUIRED when `supportsPluginBundles`. */
   deliverPluginBundles?(args: HarnessPluginDeliveryArgs): Promise<void>;
   /**
-   * Shell command that prints the INSTALLED runtime's version, given the
-   * session workdir — for adapters whose CLI version is NOT pinned by the
-   * package pin.
+   * Shell command that prints the INSTALLED runtime's version, found under
+   * the framework's state directory in the box's HOME — for adapters whose
+   * CLI version is NOT pinned by the package pin.
    *
    * Claude Code and Codex bootstrap a version-pinned npm package, so the
    * installed CLI is knowable from the lockfile and this is absent. Cursor's
@@ -504,7 +490,7 @@ type HarnessRuntimeAdapterBase = {
    * records no version and never affects the turn. A canary is not worth a
    * failed run.
    */
-  runtimeVersionCommand?(sessionWorkDir: string): string;
+  runtimeVersionCommand?(): string;
 };
 
 /** Base args every adapter's `createHarness` receives. (The per-adapter
@@ -921,7 +907,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   // …through the SDK session configuration, without writing into the workspace.
   mcpNativeDelivery: "session-config",
   forwardingRuntime: {
-    runtimeVersion: "2.1.245",
+    runtimeVersion: "2.1.290",
     configurationVersion: "tool-search-auto-v1",
     ownedInput: true,
     refresh: withClaudeForwardingResume,
@@ -1282,20 +1268,13 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // .cursor`. Recording the version per session still earns its place: it is
   // what makes a box that somehow runs another build — a stale template, a
   // custom image — attributable instead of a mystery regression.
-  runtimeVersionCommand: (sessionWorkDir) =>
-    // Layout taken from the adapter's own bootstrap: `bootstrapDir` is
-    // `.harness-bootstrap/<harnessId>` under the session workdir, and
-    // `implementation.json` puts the executable at
-    // `implementation/home/.local/bin/agent` (privateHome: true).
-    //
-    // SINGLE-quoted with embedded quotes escaped, not double-quoted: the
-    // workdir is host-configured, and `$(…)`/backticks inside double quotes
-    // are still expanded by the shell. `resolveWorkingDirectory` confines the
-    // value to /home/user but does not reject shell metacharacters, so a path
-    // like `/home/user/$(id)` would otherwise run `id` during session setup.
-    `'${shellSingleQuote(
-      sessionWorkDir,
-    )}/.harness-bootstrap/cursor/implementation/home/.local/bin/agent' --version`,
+  runtimeVersionCommand: () =>
+    // Layout taken from the adapter's own bootstrap: the framework installs
+    // `bootstrapDir` (`.harness-bootstrap/cursor`) under its state directory
+    // in the box's HOME, and `implementation.json` puts the executable at
+    // `implementation/home/.local/bin/agent` (privateHome: true). The box's
+    // `$HOME` is the only expansion; nothing host-configured reaches the shell.
+    `"$HOME/${HARNESS_STATE_DIRECTORY_NAME}/.harness-bootstrap/cursor/implementation/home/.local/bin/agent" --version`,
   createHarness({ auth, mcpJson }) {
     // Dual-`ai` boundary cast, same as the other two adapters.
     return pinCursorHarnessBootstrap(
@@ -1374,10 +1353,11 @@ const opencodeAdapter: HarnessRuntimeAdapter = {
   modelSupport: modelSupportFor("opencode"),
   supportsModel: supportsModelFor("opencode"),
   parseToolName: parseHarnessToolName,
-  runtimeVersionCommand: (sessionWorkDir) =>
-    `'${shellSingleQuote(
-      sessionWorkDir,
-    )}/.harness-bootstrap/opencode/node_modules/.bin/opencode' --version`,
+  runtimeVersionCommand: () =>
+    // The framework installs the recipe's `bootstrapDir`
+    // (`.harness-bootstrap/opencode`) under its state directory in the box's
+    // HOME. The box's `$HOME` is the only expansion.
+    `"$HOME/${HARNESS_STATE_DIRECTORY_NAME}/.harness-bootstrap/opencode/node_modules/.bin/opencode" --version`,
   createHarness({ modelId, auth, upstream, startupTimeoutMs }) {
     return createOpenCodeHarness({
       modelId,

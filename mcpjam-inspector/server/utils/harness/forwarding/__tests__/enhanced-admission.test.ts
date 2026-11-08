@@ -76,7 +76,7 @@ it("requires an authoritative effective host declaration", () => {
 it("requires owned input delivery separately from the legacy callback", () => {
   const input = candidate({}, { ...caps, elicitation: { form: {}, url: {} } });
   expect(
-    forwardingAdmission({ ...input, elicitationRuntimeVersion: "2.1.245" })
+    forwardingAdmission({ ...input, elicitationRuntimeVersion: "2.1.290" })
       .delivery,
   ).toBeUndefined();
   expect(

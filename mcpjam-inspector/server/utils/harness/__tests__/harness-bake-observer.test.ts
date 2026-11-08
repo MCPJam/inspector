@@ -20,6 +20,7 @@ import {
 import {
   HARNESS_BAKE_MANIFEST_PATH,
   HARNESS_BAKED_MARKER_AUTHOR,
+  HARNESS_LEGACY_BAKE_MANIFEST_PATH,
 } from "../harness-bake.js";
 
 // The observer is what turns "did this turn hit the baked template?" into a
@@ -28,7 +29,7 @@ import {
 // what the framework sees.
 
 const ID = "0123456789abcdef";
-const MARKER = `/home/user/.harness-bootstrap/claude-code/.bootstrap-${ID}.ok`;
+const MARKER = `/home/user/.ai-sdk-harness/.harness-bootstrap/claude-code/.bootstrap-${ID}.ok`;
 const bakedMarker = JSON.stringify({
   bakedBy: HARNESS_BAKED_MARKER_AUTHOR,
   harnessId: "claude-code",
@@ -37,12 +38,17 @@ const bakedMarker = JSON.stringify({
   versions: { "claude-code": "2.1.245", node: "24.20.0", pnpm: "12.8.1" },
 });
 
-function fakeProvider(opts: { cwd?: string; files: Record<string, string> }) {
+function fakeProvider(opts: {
+  cwd?: string;
+  home?: string;
+  files: Record<string, string>;
+}) {
   const files = { ...opts.files };
   const reads: string[] = [];
   const session = {
     id: "box",
     defaultWorkingDirectory: opts.cwd ?? "/home/user",
+    home: opts.home ?? "/home/user",
     readTextFile: vi.fn(
       async ({ path }: { path: string }): Promise<string | null> => {
         reads.push(path);
@@ -68,8 +74,9 @@ function fakeProvider(opts: { cwd?: string; files: Record<string, string> }) {
 
 /**
  * What the framework's `applyBootstrapRecipe` does, through the restricted
- * view: read the marker, and on a miss write the recipe, run its install, and
- * write the marker only when the install succeeded.
+ * view: read the marker under its state directory in the box's HOME, and on a
+ * miss write the recipe, run its install, and write the marker only when the
+ * install succeeded.
  */
 async function frameworkBootstrap(
   provider: HarnessV1SandboxProvider,
@@ -84,11 +91,12 @@ async function frameworkBootstrap(
     ? await provider.resumeSession!({ sessionId: "s" })
     : await provider.createSession();
   const restricted = session.restricted();
-  const marker = `${session.defaultWorkingDirectory}/${bootstrapDir}/.bootstrap-${ID}.ok`;
+  const stateDirectory = `${(session as unknown as { home: string }).home}/.ai-sdk-harness`;
+  const marker = `${stateDirectory}/${bootstrapDir}/.bootstrap-${ID}.ok`;
   const existing = await restricted.readTextFile({ path: marker });
   if (existing !== null) return;
   await restricted.writeTextFile({
-    path: `${session.defaultWorkingDirectory}/${bootstrapDir}/package.json`,
+    path: `${stateDirectory}/${bootstrapDir}/package.json`,
     content: "{}",
   });
   if (options.installFails) {
@@ -153,6 +161,47 @@ describe("observeHarnessBootstrap", () => {
     expect(logged.warn).not.toHaveBeenCalled();
   });
 
+  it("reports an install on a template baked into the legacy root as a counted miss", async () => {
+    // This inspector deployed before its template: the box carries the bake
+    // in ~/.harness-bootstrap, where the framework no longer looks.
+    const fake = fakeProvider({
+      files: { [HARNESS_LEGACY_BAKE_MANIFEST_PATH]: "{}" },
+    });
+    const observed = observeHarnessBootstrap(fake.provider);
+    await frameworkBootstrap(observed);
+    const o = await harnessBootstrapObservation(observed);
+    expect(o).toMatchObject({
+      outcome: "installed",
+      expectation: "baked",
+      bakeOnBox: "other-root",
+    });
+    expect(harnessBootstrapLogFields(o, "2.1.290").context).toMatchObject({
+      harnessBakeOnBox: "other-root",
+    });
+    expect(fake.reads).toEqual(
+      expect.arrayContaining([
+        HARNESS_BAKE_MANIFEST_PATH,
+        HARNESS_LEGACY_BAKE_MANIFEST_PATH,
+      ]),
+    );
+  });
+
+  it("reads the current manifest first on a template that also leaves the legacy copy", async () => {
+    const fake = fakeProvider({
+      files: {
+        [HARNESS_BAKE_MANIFEST_PATH]: "{}",
+        [HARNESS_LEGACY_BAKE_MANIFEST_PATH]: "{}",
+      },
+    });
+    const observed = observeHarnessBootstrap(fake.provider);
+    await frameworkBootstrap(observed);
+    expect(await harnessBootstrapObservation(observed)).toMatchObject({
+      outcome: "installed",
+      bakeOnBox: "present",
+    });
+    expect(fake.reads).not.toContain(HARNESS_LEGACY_BAKE_MANIFEST_PATH);
+  });
+
   it("reports an install on a box with no bake at all (old template / custom image)", async () => {
     const fake = fakeProvider({ files: {} });
     const observed = observeHarnessBootstrap(fake.provider);
@@ -192,18 +241,32 @@ describe("observeHarnessBootstrap", () => {
     expect(fake.reads).toContain(HARNESS_BAKE_MANIFEST_PATH);
   });
 
-  it("classifies a custom working directory as an INTENTIONAL fallback", async () => {
+  it("finds the bake under the box's HOME whatever the working directory", async () => {
     const fake = fakeProvider({
       cwd: "/home/user/project",
+      files: { [MARKER]: bakedMarker },
+    });
+    const observed = observeHarnessBootstrap(fake.provider);
+    await frameworkBootstrap(observed);
+    expect(await harnessBootstrapObservation(observed)).toMatchObject({
+      outcome: "baked",
+      expectation: "baked",
+      home: "/home/user",
+    });
+  });
+
+  it("classifies a box whose HOME is not the template's as an INTENTIONAL fallback", async () => {
+    const fake = fakeProvider({
+      home: "/home/other",
       files: { [HARNESS_BAKE_MANIFEST_PATH]: "{}" },
     });
     const observed = observeHarnessBootstrap(fake.provider);
     await frameworkBootstrap(observed);
     expect(await harnessBootstrapObservation(observed)).toMatchObject({
       outcome: "installed",
-      expectation: "custom-workdir",
+      expectation: "custom-home",
       bakeOnBox: "present",
-      defaultWorkingDirectory: "/home/user/project",
+      home: "/home/other",
     });
   });
 

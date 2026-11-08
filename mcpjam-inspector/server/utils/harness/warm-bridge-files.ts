@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
-import type { HarnessV1, HarnessV1StartOptions } from "@ai-sdk/harness";
+import {
+  harnessStateDirectoryPath,
+  type HarnessV1,
+  type HarnessV1StartOptions,
+} from "@ai-sdk/harness";
+import { resolveSandboxHomeDir } from "@ai-sdk/harness/utils";
 import { patchWarmClaudeQuery } from "./warm-claude-query.js";
 import { shellQuote } from "./shell-quote.js";
 import { processBirthIdentity, WARM_BRIDGE_WINDOW_MS } from "./warm-bridge.js";
@@ -93,10 +98,13 @@ void ${marker}();
   );
 }
 
-/** Bind control replies to the socket that owns the current turn. */
+/** Bind control replies to the socket that owns the current turn. The
+ *  anchors carry no indentation: the Claude Code bridge is the vendor's own
+ *  bundle, while the Codex bridge is this repository's esbuild bundle of the
+ *  same framework dispatcher, and the two indent differently. */
 export function fenceWarmBridgeSocket(source: string): string {
-  const start = '      case "start": {';
-  const until = "        let turnFinished;";
+  const start = 'case "start": {';
+  const until = "let turnFinished;";
   const begin = source.indexOf(start);
   const end = source.indexOf(until, begin);
   if (
@@ -133,7 +141,7 @@ export function fenceWarmBridgeSocket(source: string): string {
   for (const control of [
     'case "resume":',
     'case "destroy":',
-    'case "stop": {',
+    'case "stop":',
   ]) {
     if (!guarded.includes(control))
       throw new Error("The bridge ownership protocol changed.");
@@ -200,12 +208,19 @@ export function withWarmBridgeBootstrap<T extends HarnessV1>(runtime: T): T {
           const recipe = await target.getBootstrap?.({
             abortSignal: options.abortSignal,
           });
-          if (!recipe || !("defaultWorkingDirectory" in options.sandboxSession))
+          if (!recipe)
             throw new Error(
               "The hosted agent installation directory is unavailable.",
             );
+          // The framework installs every recipe under the sandbox's own HOME,
+          // which is where the adapter launches the bridge from.
           const directory = posix.resolve(
-            options.sandboxSession.defaultWorkingDirectory,
+            harnessStateDirectoryPath({
+              sandboxHomeDir: await resolveSandboxHomeDir({
+                sandbox: options.sandboxSession,
+                abortSignal: options.abortSignal,
+              }),
+            }),
             recipe.bootstrapDir,
           );
           return target.doStart({

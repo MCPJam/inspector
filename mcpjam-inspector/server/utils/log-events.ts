@@ -550,8 +550,8 @@ export type SystemEventMap = {
   "harness.timing": {
     harnessId?: "claude-code" | "codex" | "copilot-cli" | "cursor" | "opencode";
     harnessBootstrap?: "baked" | "installed" | "install-failed" | "reused" | "none";
-    harnessBakeExpected?: "baked" | "custom-workdir" | "unbaked-recipe" | "none";
-    harnessBakeOnBox?: "present" | "absent" | "unknown" | "not-checked";
+    harnessBakeExpected?: "baked" | "custom-home" | "unbaked-recipe" | "none";
+    harnessBakeOnBox?: "present" | "other-root" | "absent" | "unknown" | "not-checked";
     harnessTurn?: "failed";
   };
   "harness.bootstrap": Record<string, never>;

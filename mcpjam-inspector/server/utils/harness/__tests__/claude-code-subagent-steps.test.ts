@@ -206,7 +206,7 @@ describe("forwarding a subagent's steps", () => {
 describe("subagent steps patch", () => {
   it("the installed bridge forwards inside the sub-agent guard, which still returns", () => {
     expect(bridge).toContain(
-      "    if (msg.parent_tool_use_id != null) {\n      mcpjamForwardSubagentStep(state, emit, msg);\n      return;\n    }",
+      '\t\tif (msg.parent_tool_use_id != null) {\n\t\t\temit({\n\t\t\t\ttype: "raw",\n\t\t\t\trawValue: msg\n\t\t\t});\n\t\t\tmcpjamForwardSubagentStep(state, emit, msg);\n\t\t\treturn;\n\t\t}',
     );
     expect(bridge.match(/function mcpjamForwardSubagentStep\(/g)).toHaveLength(
       1,
@@ -238,8 +238,8 @@ describe("subagent steps patch", () => {
     expect(() =>
       patchClaudeCodeSubagentSteps(
         source.replace(
-          "    if (msg.parent_tool_use_id != null) {\n      return;\n    }",
-          "    if (msg.parent_tool_use_id) {\n      return;\n    }",
+          "\t\tif (msg.parent_tool_use_id != null) {\n\t\t\temit({",
+          "\t\tif (msg.parent_tool_use_id) {\n\t\t\temit({",
         ),
       ),
     ).toThrow("sub-agent guard shape changed");

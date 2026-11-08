@@ -120,7 +120,8 @@ describe("Claude forwarding refresh", () => {
     const begin = patched.indexOf(
       "  const refreshNativeMcp = async (servers) => {",
     );
-    const end = patched.indexOf("  gracefulAbort = () => {", begin);
+    const end = patched.indexOf("\tgracefulAbort = () => {", begin);
+    expect(end).toBeGreaterThan(begin);
     const setMcpServers = vi.fn(async () => ({ errors: {} }));
     const prior = {
       ...servers,

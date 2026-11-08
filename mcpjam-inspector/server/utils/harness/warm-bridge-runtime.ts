@@ -1,8 +1,11 @@
-import type {
-  HarnessV1,
-  HarnessV1StartOptions,
-  HarnessV1Session,
+import {
+  harnessSessionDataDirectoryPath,
+  harnessStateDirectoryPath,
+  type HarnessV1,
+  type HarnessV1StartOptions,
+  type HarnessV1Session,
 } from "@ai-sdk/harness";
+import { resolveSandboxHomeDir } from "@ai-sdk/harness/utils";
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { z } from "zod";
@@ -61,12 +64,25 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
           .update(configuration)
           .update(JSON.stringify(bootstrap?.files ?? []))
           .digest("hex");
-        const directory = posix.join(
-          options.sandboxSession.defaultWorkingDirectory,
-          ".agent-runs",
-          options.sessionId,
-          "bridge",
-        );
+        // The adapter keeps its bridge state with the session's run state,
+        // under the framework's state directory in the sandbox's own HOME.
+        // Resolved inside the bounded attach and retention steps, once.
+        let stateDirectory: string | undefined;
+        const bridgeDirectory = async (abortSignal: AbortSignal) => {
+          stateDirectory ??= harnessStateDirectoryPath({
+            sandboxHomeDir: await resolveSandboxHomeDir({
+              sandbox: options.sandboxSession,
+              abortSignal,
+            }),
+          });
+          return posix.join(
+            harnessSessionDataDirectoryPath({
+              stateDirectory,
+              sessionId: options.sessionId,
+            }),
+            "bridge",
+          );
+        };
         const saved = coordinates.safeParse(options.resumeFrom);
         let session: HarnessV1Session | undefined;
         // Resume approvals through the original adapter, then retain the
@@ -80,7 +96,7 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
           const attempt = async () => {
             const result = await options.sandboxSession.run({
               command: warmBridgeCommand({
-                directory,
+                directory: await bridgeDirectory(signal),
                 configuration: fingerprint,
                 ...saved.data.data.bridge,
                 park: false,
@@ -149,15 +165,18 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
                   const abort = new AbortController();
                   let timer: ReturnType<typeof setTimeout> | undefined;
                   try {
-                    const write = options.sandboxSession.run({
-                      command: warmBridgeCommand({
-                        directory,
-                        configuration: fingerprint,
-                        ...bridge.data.data.bridge,
-                        park: true,
-                      }),
-                      abortSignal: abort.signal,
-                    });
+                    const write = bridgeDirectory(abort.signal).then(
+                      (directory) =>
+                        options.sandboxSession.run({
+                          command: warmBridgeCommand({
+                            directory,
+                            configuration: fingerprint,
+                            ...bridge.data.data.bridge,
+                            park: true,
+                          }),
+                          abortSignal: abort.signal,
+                        }),
+                    );
                     const result = await Promise.race([
                       write,
                       new Promise<never>((_, reject) => {

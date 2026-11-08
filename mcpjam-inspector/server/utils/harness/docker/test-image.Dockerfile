@@ -53,11 +53,12 @@ RUN id -u user >/dev/null 2>&1 || useradd --create-home --shell /bin/bash --uid 
 
 # The bake: the context's CONTENTS land where the framework looks for markers,
 # owned by the runtime user, and `bake.mjs` installs and verifies every recipe
-# AS that user before it writes a single marker.
-COPY harness-bake/ /home/user/.harness-bootstrap/
-RUN chown -R user:user /home/user/.harness-bootstrap
+# AS that user before it writes a single marker. The whole state directory is
+# the user's: the framework writes each session's run state beside the bake.
+COPY harness-bake/ /home/user/.ai-sdk-harness/.harness-bootstrap/
+RUN chown -R user:user /home/user/.ai-sdk-harness
 USER user
 WORKDIR /home/user
-RUN node /home/user/.harness-bootstrap/bake.mjs
+RUN node /home/user/.ai-sdk-harness/.harness-bootstrap/bake.mjs
 
 CMD ["sleep", "infinity"]

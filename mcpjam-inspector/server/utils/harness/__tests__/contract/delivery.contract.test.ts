@@ -5,11 +5,14 @@ import { CASES, assertFullMatrix, bumpedPin } from "./support";
 it("covers every registered harness", assertFullMatrix);
 
 /** The client capabilities Claude Code's own client sends on initialize. */
-const FORM_CAPS = { elicitation: { form: {} }, roots: { listChanged: true } };
+const NATIVE_CAPS = {
+  elicitation: { form: {}, url: {} },
+  roots: { listChanged: true },
+};
 
 /**
- * Runtimes whose native initialize was measured and qualified for forms.
- * A new entry needs a live capture of that runtime's handshake first.
+ * Runtimes whose native initialize was read or captured and qualified for
+ * elicitation. A new entry needs that runtime's own handshake first.
  */
 const MEASURED_ELICITATION = new Set(["claude-code"]);
 
@@ -25,12 +28,12 @@ describe.each(CASES)("$id MCP delivery and input", ({ id, adapter }) => {
     }
   });
 
-  it("treats its native form handshake as qualified only at the measured pin", () => {
+  it("treats its native elicitation handshake as qualified only at the measured pin", () => {
     const pin = adapter.pinnedRuntimeVersion;
-    expect(isNativeElicitationProfile(FORM_CAPS, pin)).toBe(
+    expect(isNativeElicitationProfile(NATIVE_CAPS, pin)).toBe(
       MEASURED_ELICITATION.has(id),
     );
-    expect(isNativeElicitationProfile(FORM_CAPS, bumpedPin(pin ?? "0"))).toBe(
+    expect(isNativeElicitationProfile(NATIVE_CAPS, bumpedPin(pin ?? "0"))).toBe(
       false,
     );
   });

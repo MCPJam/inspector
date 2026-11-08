@@ -13,16 +13,16 @@
  * recipes at IMAGE BUILD time, from a bake context this repository generates
  * (`scripts/harness-bake-context.mjs`). No harness change is needed for that to
  * take effect: `applyBootstrapRecipe` in `@ai-sdk/harness` skips the install
- * when `<defaultWorkingDirectory>/<bootstrapDir>/.bootstrap-<identity>.ok`
- * already exists. What has to hold is that the identity the TEMPLATE baked is
+ * when `$HOME/.ai-sdk-harness/<bootstrapDir>/.bootstrap-<identity>.ok` already
+ * exists. What has to hold is that the identity the TEMPLATE baked is
  * the identity THIS inspector computes for the recipe it hands the framework —
  * which is why the identity function lives here, imported by both the bake
  * context generator and the observer that reports whether a turn actually hit
  * the bake (`harness-bake-observer.ts`).
  *
- * WHAT A MISS MEANS. A box whose working directory is not `/home/user`, a
- * custom environment image and a template built from an older bake all miss
- * the marker, and the framework
+ * WHAT A MISS MEANS. A box whose HOME is not `/home/user`, a custom
+ * environment image and a template built from an older bake all miss the
+ * marker, and the framework
  * falls back to installing — the turn still works, it is just slow. The
  * phase-timing log line says which of those it was (see
  * `harnessBootstrapLogFields`), so intentional fallback can be told apart
@@ -46,19 +46,39 @@
  */
 import { createHash } from "node:crypto";
 
-/** The box home the template bakes into — E2B's default working directory. */
+/** The box home the template bakes into — E2B's HOME for the runtime user. */
 export const HARNESS_BAKE_HOME = "/home/user";
+
+/**
+ * The framework's state directory, by name (`harnessStateDirectoryPath` in
+ * `@ai-sdk/harness`): every recipe, its marker and every session's run state
+ * live under it, in the box's HOME and never in its working directory.
+ * `harness-bake.test.ts` asserts it equals the framework's own.
+ */
+export const HARNESS_STATE_DIRECTORY_NAME = ".ai-sdk-harness";
+
+/** The state directory on a baked box: where the template installs recipes. */
+export const HARNESS_BAKE_STATE_DIRECTORY = `${HARNESS_BAKE_HOME}/${HARNESS_STATE_DIRECTORY_NAME}`;
 
 /**
  * Bake manifest on a baked box. Its PRESENCE is what tells a box built from a
  * baked template (a miss there is drift) from one that is not (an older
  * template or a custom environment image — a miss there is expected).
  */
-export const HARNESS_BAKE_MANIFEST_PATH = `${HARNESS_BAKE_HOME}/.harness-bootstrap/manifest.json`;
+export const HARNESS_BAKE_MANIFEST_PATH = `${HARNESS_BAKE_STATE_DIRECTORY}/.harness-bootstrap/manifest.json`;
 
 /**
- * Bootstrap directories (relative to the working directory) the template
- * bakes: the PATCHED Claude Code recipe, the Codex app-server recipe and the
+ * The manifest of a template that bakes into `~/.harness-bootstrap`, the root
+ * inspectors used before the framework's state directory. Templates baked into
+ * the state directory leave a copy there for those inspectors. A box with only
+ * this one carries a bake this inspector cannot hit: a miss on it is the deploy
+ * and its template on opposite sides of the move, reported as `other-root`.
+ */
+export const HARNESS_LEGACY_BAKE_MANIFEST_PATH = `${HARNESS_BAKE_HOME}/.harness-bootstrap/manifest.json`;
+
+/**
+ * Bootstrap directories (relative to the framework's state directory) the
+ * template bakes: the PATCHED Claude Code recipe, the Codex app-server recipe and the
  * Cursor recipe. Cursor became bakeable when its CLI install was PINNED to a
  * checksummed build (`cursor-bootstrap.ts`); before that its bootstrap fetched
  * whatever `cursor.com/install` served and could only ever install at turn time.
@@ -132,9 +152,11 @@ export interface HarnessBootstrapRecipe {
 /**
  * `@ai-sdk/harness`'s recipe identity (`hashHarnessBootstrap`,
  * `src/agent/internal/bootstrap-recipe.ts`), reproduced byte for byte because
- * the package does not export it: SHA-256 over NUL-terminated fields — harness
- * id, bootstrap dir, each file's path and content in `localeCompare` order, the
- * JSON of the commands and the schema version — truncated to 16 hex chars.
+ * the package does not export it: SHA-256 over NUL-terminated fields — the
+ * state directory under a symbolic `$HOME` (the box's HOME is unknown until it
+ * exists), harness id, bootstrap dir, each file's path and content in
+ * `localeCompare` order, the JSON of the commands and the schema version —
+ * truncated to 16 hex chars.
  *
  * `harness-bake.test.ts` proves this equals what the real framework puts in
  * the marker path, so a framework bump that changes the scheme fails CI rather
@@ -147,6 +169,7 @@ export function harnessRecipeIdentity(recipe: HarnessBootstrapRecipe): string {
     hash.update(value, "utf8");
     hash.update("\0", "utf8");
   };
+  push(`$HOME/${HARNESS_STATE_DIRECTORY_NAME}`);
   push(recipe.harnessId);
   push(recipe.bootstrapDir);
   const files = [...recipe.files].sort((a, b) => a.path.localeCompare(b.path));

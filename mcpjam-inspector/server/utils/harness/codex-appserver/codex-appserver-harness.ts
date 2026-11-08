@@ -24,6 +24,8 @@
  */
 import {
   HarnessCapabilityUnsupportedError,
+  harnessSessionDataDirectoryPath,
+  harnessStateDirectoryPath,
   harnessV1DiagnosticFromBridgeFrame,
   type HarnessV1,
   type HarnessV1ContinueTurnState,
@@ -342,19 +344,17 @@ export function createRetainedBridgeHarness<T extends NonNullable<HarnessV1["bui
         getRestrictedSandboxSession(sandboxSession);
       const sandboxId = "id" in sandboxSession ? sandboxSession.id : undefined;
       /*
-       * WHERE THINGS LIVE — mirroring the published adapter, because the
+       * WHERE THINGS LIVE — mirroring the published adapters, because the
        * framework and the local provider both assume this layout:
        *
-       *  - the bootstrap recipe is applied by the FRAMEWORK under the session's
-       *    DEFAULT working directory, so that is where `bridge.mjs` is;
-       *  - bridge and Codex state go under
-       *    `<defaultWorkingDirectory>/.agent-runs/<sessionId>`, which on a
-       *    cloud box is the box and on a user's machine is session-owned state;
+       *  - the bootstrap recipe is applied by the FRAMEWORK under its state
+       *    directory in the sandbox's own HOME (`$HOME/.ai-sdk-harness`), so
+       *    that is where `bridge.mjs` is;
+       *  - bridge and Codex state go under that directory's
+       *    `.agent-runs/<sessionId>`, which on a cloud box is the box and on a
+       *    user's machine is session-owned state;
        *  - only the agent's cwd is `sessionWorkDir` — which locally is the
        *    user's checkout, and must never receive Codex's state or rollouts.
-       *
-       * Resolving the bootstrap against `sessionWorkDir` pointed the bridge
-       * launch at a directory nothing was ever written to.
        */
       const defaultWorkingDirectory =
         await resolveSandboxDefaultWorkingDirectory({
@@ -367,11 +367,15 @@ export function createRetainedBridgeHarness<T extends NonNullable<HarnessV1["bui
       const sandboxHomeDir = await resolveSandboxHomeDir({
         sandbox: toolSafeSandboxSession,
       });
+      const stateDirectory = harnessStateDirectoryPath({ sandboxHomeDir });
       const bootstrapDir = posix.resolve(
-        defaultWorkingDirectory,
+        stateDirectory,
         runtime.bootstrapDir,
       );
-      const sessionDataDir = `${defaultWorkingDirectory}/.agent-runs/${startOpts.sessionId}`;
+      const sessionDataDir = harnessSessionDataDirectoryPath({
+        stateDirectory,
+        sessionId: startOpts.sessionId,
+      });
       const bridgeStateDir = `${sessionDataDir}/bridge`;
       const timeoutMs = settings.startupTimeoutMs ?? 120_000;
 

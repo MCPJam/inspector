@@ -15,11 +15,11 @@ describe("harness descriptors", () => {
       opencode: "mcpjam",
     });
     expect(HARNESS_PINNED_VERSIONS).toEqual({
-      "claude-code": "2.1.245",
+      "claude-code": "2.1.290",
       codex: "0.163.0",
       cursor: "2026.11.05-86047df",
       "copilot-cli": "1.0.92",
-      opencode: "1.18.23",
+      opencode: "1.18.34",
     });
     expect(HARNESS_ORG_UPSTREAM.cursor).toBeNull();
     expect(HARNESS_ORG_UPSTREAM.opencode).toBeNull();

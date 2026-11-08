@@ -316,7 +316,7 @@ describe("evidence table", () => {
       join(here, "..", "harness-model-support-evidence.json"),
     );
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(
-      "895f54c2803f99cbe19ace63aca4e84ad755cade806c43df2e16f9ee1c0cf0e3",
+      "44ba7cdd15f41d5faa2e78ad89eccd55fa7813a99ebeefa904235a88c6f0a5f9",
     );
   });
 
@@ -325,14 +325,14 @@ describe("evidence table", () => {
       harnessModelSupport({
         harnessId: "opencode",
         modelId: "anthropic/claude-haiku-4.5",
-        runtimeVersion: "1.18.23",
+        runtimeVersion: "1.18.34",
       }).status,
     ).toBe("supported");
     expect(
       harnessModelSupport({
         harnessId: "opencode",
         modelId: "anthropic/claude-haiku-4.5",
-        runtimeVersion: "1.18.23",
+        runtimeVersion: "1.18.34",
       }).reason,
     ).toMatch(/scripted Anthropic-compatible upstream/);
     expect(
@@ -346,21 +346,21 @@ describe("evidence table", () => {
       harnessModelSupport({
         harnessId: "opencode",
         modelId: "anthropic/claude-haiku-3.5",
-        runtimeVersion: "1.18.23",
+        runtimeVersion: "1.18.34",
       }).status,
     ).toBe("unknown");
     expect(
       harnessModelSupport({
         harnessId: "opencode",
         modelId: "anthropic/claude-sonnet-4.5",
-        runtimeVersion: "1.18.23",
+        runtimeVersion: "1.18.34",
       }).status,
     ).toBe("unknown");
     expect(
       harnessModelSupport({
         harnessId: "opencode",
         modelId: "openai/gpt-5.5",
-        runtimeVersion: "1.18.23",
+        runtimeVersion: "1.18.34",
       }).status,
     ).toBe("unsupported");
   });

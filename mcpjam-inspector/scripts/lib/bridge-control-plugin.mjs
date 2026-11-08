@@ -9,7 +9,7 @@ export const bridgeControlPlugin = {
       (args) => {
         const source = readFileSync(args.path, "utf8");
         const marker =
-          "  const handleInbound = async (msg, ws) => {\n    switch (msg.type) {";
+          "\tconst handleInbound = async (msg, ws) => {\n\t\tswitch (msg.type) {";
         if (source.split(marker).length !== 2) {
           throw new Error("The pinned bridge control dispatcher has changed.");
         }

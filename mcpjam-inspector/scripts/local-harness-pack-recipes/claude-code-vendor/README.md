@@ -6,8 +6,8 @@ native CLI it shares a version with), plus the SDK's declared peers at the
 versions the adapter's own lockfile resolves them to. Frozen by
 `pnpm-lock.yaml`; the pack build installs it with `--frozen-lockfile`.
 
-A security bump may pin a peer ahead of the adapter's lockfile (the MCP SDK is
-at 1.32.1 here while the adapter still resolves 1.30.0, and `zod` is at 4.6.6).
+A security bump may pin a peer ahead of the adapter's lockfile (`zod` is at
+4.6.6 here while the adapter resolves 4.4.3).
 Nothing checks peers against the adapter, so an adapter bump must not move one
 back down.
 

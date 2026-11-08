@@ -141,12 +141,14 @@ async function buildSession(
   sessionStateDir: string;
   /**
    * The session's default working directory: session-owned state, NOT the
-   * user's checkout. The framework resolves `.harness-bootstrap` and its own
-   * `.agent-runs` against this, and requires the agent's working directory to
-   * be a proper subdirectory of it — which is why the workspace is reached
-   * through the `project` symlink inside it rather than being it.
+   * user's checkout. The framework resolves the agent's working directory
+   * inside it, which is why the workspace is reached through the `project`
+   * symlink inside it rather than being it.
    */
   workRoot: string;
+  /** Where the framework puts the adapter's bootstrap directory: under its
+   *  state directory in the synthetic home. */
+  bootstrapDir: string;
   bridgePort: number;
 }> {
   await writeFile(join(bundleRoot, "bridge.mjs"), bridgeSource);
@@ -220,6 +222,13 @@ async function buildSession(
     session,
     sessionStateDir,
     workRoot: join(sessionStateDir, "work"),
+    bootstrapDir: join(
+      sessionStateDir,
+      "home",
+      ".ai-sdk-harness",
+      ".harness-bootstrap",
+      "claude-code",
+    ),
     bridgePort,
   };
 }
@@ -431,8 +440,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
 
   it("satisfies the bootstrap sequence without running a package manager", async () => {
     const sup = supervisor();
-    const { session, workRoot } = await buildSession("bootstrap", sup);
-    const bootstrapDir = join(workRoot, ".harness-bootstrap", "claude-code");
+    const { session, bootstrapDir } = await buildSession("bootstrap", sup);
     const invocations = [
       {
         command: 'mkdir -p "$BOOTSTRAP_DIR"',
@@ -468,8 +476,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     // where they would sit in their VCS status and never be read, because
     // every reference to them is remapped onto the bundle.
     const sup = supervisor();
-    const { session, workRoot } = await buildSession("bootfiles", sup);
-    const bootstrapDir = join(workRoot, ".harness-bootstrap", "claude-code");
+    const { session, bootstrapDir } = await buildSession("bootfiles", sup);
 
     await session.writeTextFile({
       path: join(bootstrapDir, "package.json"),
@@ -494,16 +501,11 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     // is under a session root, so it goes through the same symlink-aware check
     // the rest of the file API uses.
     const sup = supervisor();
-    const { session, workRoot, sessionStateDir } = await buildSession(
+    const { session, bootstrapDir, sessionStateDir } = await buildSession(
       "bootlink",
       sup,
     );
-    const marker = join(
-      workRoot,
-      ".harness-bootstrap",
-      "claude-code",
-      ".bootstrap-linked.ok",
-    );
+    const marker = join(bootstrapDir, ".bootstrap-linked.ok");
     await mkdir(join(sessionStateDir, "bootstrap"), {
       recursive: true,
       mode: 0o700,
@@ -524,12 +526,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
 
     // ...and an ordinary marker under the overlay still works, so the
     // confinement is not simply refusing the whole overlay.
-    const plain = join(
-      workRoot,
-      ".harness-bootstrap",
-      "claude-code",
-      ".bootstrap-plain.ok",
-    );
+    const plain = join(bootstrapDir, ".bootstrap-plain.ok");
     await session.writeTextFile({ path: plain, content: "" });
     await expect(session.readTextFile({ path: plain })).resolves.toBe("");
     await session.stop();
@@ -537,8 +534,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
 
   it("fails closed when the adapter's recipe and the bundle disagree", async () => {
     const sup = supervisor();
-    const { session, workRoot } = await buildSession("bootmismatch", sup);
-    const bootstrapDir = join(workRoot, ".harness-bootstrap", "claude-code");
+    const { session, bootstrapDir } = await buildSession("bootmismatch", sup);
 
     // Same file, different bytes: the bundle was built for another adapter
     // version, so this session would not run what the adapter bootstrapped.
@@ -570,11 +566,10 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
 
   it("keeps the framework's bootstrap marker out of the user's checkout", async () => {
     const sup = supervisor();
-    const { session, workRoot, sessionStateDir } = await buildSession(
+    const { session, bootstrapDir, sessionStateDir } = await buildSession(
       "bootmarker",
       sup,
     );
-    const bootstrapDir = join(workRoot, ".harness-bootstrap", "claude-code");
     const marker = join(bootstrapDir, ".bootstrap-claude-code-1.ok");
 
     await expect(session.readTextFile({ path: marker })).resolves.toBeNull();
@@ -598,16 +593,12 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     // if the translator did not: a `--workdir` pointed through a symlink out
     // of the workspace would start the agent outside its grant.
     const sup = supervisor();
-    const { session, workRoot } = await buildSession("bridge-args", sup);
+    const { session, bootstrapDir } = await buildSession("bridge-args", sup);
     await symlink(outside, join(workspace, "escape-args")).catch(() => {});
     await expect(
       session.spawn({
         command:
-          `node '${join(
-            workRoot,
-            ".harness-bootstrap",
-            "claude-code",
-          )}/bridge.mjs' ` +
+          `node '${bootstrapDir}/bridge.mjs' ` +
           `--workdir '${join(workspace, "escape-args", "work")}' ` +
           `--bridge-state-dir '${join(workspace, "state")}'`,
       }),
@@ -615,11 +606,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     await expect(
       session.spawn({
         command:
-          `node '${join(
-            workRoot,
-            ".harness-bootstrap",
-            "claude-code",
-          )}/bridge.mjs' ` +
+          `node '${bootstrapDir}/bridge.mjs' ` +
           `--workdir '/etc' --bridge-state-dir '${join(workspace, "state")}'`,
       }),
     ).rejects.toThrow(/outside every directory/);
@@ -692,22 +679,25 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
   it("runs the verified bundle with a sanitized environment, and cleans up", async () => {
     const sup = supervisor();
     const started: Array<{ pid: number; port: number }> = [];
-    const { session, workRoot, sessionStateDir, bridgePort } =
+    const { session, workRoot, bootstrapDir, sessionStateDir, bridgePort } =
       await buildSession("bridge", sup, async (a) => {
         started.push(a);
       });
 
     const workDir = join(workspace, "claude-code-bridge");
-    const bridgeStateDir = join(workspace, ".agent-runs", "bridge", "bridge");
+    const bridgeStateDir = join(
+      sessionStateDir,
+      "home",
+      ".ai-sdk-harness",
+      ".agent-runs",
+      "bridge",
+      "bridge",
+    );
     await session.run({ command: `mkdir -p ${workDir} ${bridgeStateDir}` });
 
     const proc = await session.spawn({
       command:
-        `node '${join(
-          workRoot,
-          ".harness-bootstrap",
-          "claude-code",
-        )}/bridge.mjs' ` +
+        `node '${bootstrapDir}/bridge.mjs' ` +
         `--workdir '${workDir}' --bridge-state-dir '${bridgeStateDir}'`,
       // What the adapter actually passes: the bridge's own channel token and
       // port, plus — here — a name outside the allowlist that must not reach
@@ -766,7 +756,7 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
     // session must stop rather than proceed — and the process must not be left
     // running behind the refusal.
     const sup = supervisor();
-    const { session, workRoot, bridgePort } = await buildSession(
+    const { session, bootstrapDir, bridgePort } = await buildSession(
       "lan-bridge",
       sup,
       undefined,
@@ -784,11 +774,7 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
     await expect(
       session.spawn({
         command:
-          `node '${join(
-            workRoot,
-            ".harness-bootstrap",
-            "claude-code",
-          )}/bridge.mjs' ` +
+          `node '${bootstrapDir}/bridge.mjs' ` +
           `--workdir '${workspace}' --bridge-state-dir '${join(
             workspace,
             "state",
@@ -801,15 +787,11 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
 
   it("destroy takes the tree down and removes the session state", async () => {
     const sup = supervisor();
-    const { session, workRoot, sessionStateDir, bridgePort } =
+    const { session, bootstrapDir, sessionStateDir, bridgePort } =
       await buildSession("destroy", sup);
     const proc = await session.spawn({
       command:
-        `node '${join(
-          workRoot,
-          ".harness-bootstrap",
-          "claude-code",
-        )}/bridge.mjs' ` +
+        `node '${bootstrapDir}/bridge.mjs' ` +
         `--workdir '${workspace}' --bridge-state-dir '${join(
           workspace,
           "state",
@@ -823,7 +805,7 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
 
   it("refuses to launch when the verified bundle changed after consent", async () => {
     const sup = supervisor();
-    const { session, workRoot, bridgePort } = await buildSession(
+    const { session, bootstrapDir, bridgePort } = await buildSession(
       "swapped",
       sup,
     );
@@ -832,11 +814,7 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
     await expect(
       session.spawn({
         command:
-          `node '${join(
-            workRoot,
-            ".harness-bootstrap",
-            "claude-code",
-          )}/bridge.mjs' ` +
+          `node '${bootstrapDir}/bridge.mjs' ` +
           `--workdir '${workspace}' --bridge-state-dir '${join(
             workspace,
             "state",

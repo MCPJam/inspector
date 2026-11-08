@@ -14,8 +14,14 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
-import type { HarnessV1SandboxProvider } from "@ai-sdk/harness";
 import {
+  harnessStateDirectoryPath,
+  type HarnessV1SandboxProvider,
+} from "@ai-sdk/harness";
+import {
+  HARNESS_BAKE_HOME,
+  HARNESS_BAKE_MANIFEST_PATH,
+  HARNESS_BAKE_STATE_DIRECTORY,
   HARNESS_BAKED_BOOTSTRAP_DIRS,
   HARNESS_TEMPLATE_NODE_VERSION,
   HARNESS_TEMPLATE_PNPM_VERSION,
@@ -92,7 +98,7 @@ async function frameworkMarkerIdentity(harness: unknown): Promise<{
     sandbox: provider,
   } as never);
   await expect(agent.createSession()).rejects.toThrow(SENTINEL);
-  const match = /^\/home\/user\/(.+)\/\.bootstrap-([0-9a-f]{16})\.ok$/.exec(
+  const match = /^\/home\/user\/\.ai-sdk-harness\/(.+)\/\.bootstrap-([0-9a-f]{16})\.ok$/.exec(
     markerPath ?? "",
   );
   if (!match) throw new Error(`unexpected marker path ${markerPath}`);
@@ -217,6 +223,15 @@ type HarnessBakeLock = {
 };
 
 describe("harnessRecipeIdentity", () => {
+  it("installs into the framework's own state directory", () => {
+    expect(harnessStateDirectoryPath({ sandboxHomeDir: HARNESS_BAKE_HOME })).toBe(
+      HARNESS_BAKE_STATE_DIRECTORY,
+    );
+    expect(HARNESS_BAKE_MANIFEST_PATH).toBe(
+      "/home/user/.ai-sdk-harness/.harness-bootstrap/manifest.json",
+    );
+  });
+
   it.each(["claude-code", "codex", "copilot-cli", "cursor", "opencode"] as const)(
     "is the identity the real framework checks for (%s)",
     async (id) => {
@@ -437,6 +452,12 @@ describe("the toolchain pins", () => {
     expect(dockerfile).toMatch(
       /ARG BASE_IMAGE=debian:bookworm-slim@sha256:[0-9a-f]{64}/,
     );
+    // The context lands where the framework looks, and the whole state
+    // directory is the runtime user's: run state is written beside the bake.
+    expect(dockerfile).toContain(
+      "COPY harness-bake/ /home/user/.ai-sdk-harness/.harness-bootstrap/",
+    );
+    expect(dockerfile).toContain("chown -R user:user /home/user/.ai-sdk-harness\n");
   });
 });
 
@@ -535,7 +556,9 @@ describe("the generated bake context", () => {
       cursor: HARNESS_PINNED_VERSIONS.cursor,
       opencode: HARNESS_PINNED_VERSIONS.opencode,
     });
-    expect(manifest.bakeRoot).toBe("/home/user/.harness-bootstrap");
+    expect(manifest.bakeRoot).toBe(
+      "/home/user/.ai-sdk-harness/.harness-bootstrap",
+    );
     expect(manifest.runtimeUser).toBe("user");
   });
 
@@ -651,7 +674,7 @@ registerHooks({ resolve(specifier, context, next) {
     );
     expect(misplaced.status).toBe(1);
     expect(misplaced.stderr).toMatch(
-      /markers are only found at \/home\/user\/\.harness-bootstrap/,
+      /markers are only found at \/home\/user\/\.ai-sdk-harness\/\.harness-bootstrap/,
     );
 
     // Real path: `bake.mjs` locates itself through its module URL, which is
