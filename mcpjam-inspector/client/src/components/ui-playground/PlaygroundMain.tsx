@@ -2591,14 +2591,7 @@ export function PlaygroundMain({
   // inline its own copy of that logic, which read neither the member's saved
   // Browser setting nor its loading state — see
   // `usePlaygroundBrowserToolSlots`.
-  const columnBuiltInToolIds = usePlaygroundBrowserToolSlots(
-    multiHostColumns.map((column) => ({
-      hostId: column.hostId,
-      config: column.hostConfig,
-    })),
-    playgroundBrowserEngine.engine,
-    convexProjectId,
-  );
+  const columnBrowsers = usePlaygroundBrowserToolSlots(multiHostColumns, comparePanes, convexProjectId);
 
   // ── The same question, asked once per COLUMN ─────────────────────────────
   //
@@ -7122,9 +7115,7 @@ export function PlaygroundMain({
                             // sends, rather than substituting the raw host
                             // list and pre-empting the loading guard.
                             builtInToolIds:
-                              columnBuiltInToolIds[
-                                multiHostColumns.indexOf(column)
-                              ],
+                              columnBrowsers.get(column.compareId)?.builtInToolIds,
                           }}
                           hostedContext={{
                             projectId: convexProjectId,
@@ -7134,7 +7125,7 @@ export function PlaygroundMain({
                             hostId: column.hostId,
                           }}
                           hostedOrgModelConfig={hostedOrgModelConfig}
-                          personalBrowserEngine={personalBrowserEngineOption}
+                          personalBrowserEngine={columnBrowsers.get(column.compareId)?.personalBrowserEngine}
                           personalComputerEngine={personalComputerEngineOption}
                           localHarnessExecution={
                             localHarnessExecutionByColumn.get(
