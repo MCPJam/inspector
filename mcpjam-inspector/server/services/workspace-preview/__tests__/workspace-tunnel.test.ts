@@ -179,6 +179,15 @@ describe("openPreviewForNavigation", () => {
     expect(preview).toEqual({ action: { kind: "navigate", url: "http://localhost:8000/docs?q=1" } });
   });
 
+  it("navigates to a public site without resolving the workspace", async () => {
+    const workspace = vi.fn(async () => {
+      throw new Error("resolving the workspace would start the computer");
+    });
+    const navigate = { kind: "navigate", url: "https://example.org" };
+    expect(await openPreviewForNavigation({ action: navigate, workspace, handle: hosted })).toEqual({ action: navigate });
+    expect(workspace).not.toHaveBeenCalled();
+  });
+
   it("does nothing for the local engine or a non-navigation", async () => {
     const attach = vi.fn();
     const workspace = { sandboxId: "ws1" };

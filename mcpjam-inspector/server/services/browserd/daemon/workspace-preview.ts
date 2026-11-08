@@ -151,11 +151,16 @@ function openTunnel(grant: PreviewGrant): Promise<Duplex> {
       // The deadline covers the whole handshake: an edge that accepts and
       // never answers would otherwise hold one of the agent's sockets forever.
       socket.setTimeout(0);
+      socket.off("close", onClose);
       const rest = buf.subarray(end + 4);
       if (rest.length) socket.unshift(rest);
       resolve(socket);
     };
+    // A peer that ends before a whole 101 raises no error, and a closed
+    // socket never times out, so the close itself has to settle the handshake.
+    const onClose = () => reject(new Error("tunnel_closed"));
     socket.on("data", onData);
+    socket.once("close", onClose);
     socket.once("error", reject);
     socket.setTimeout(15_000, () => socket.destroy(new Error("tunnel_timeout")));
   });
