@@ -1201,11 +1201,14 @@ function openTunnel(grant) {
         return;
       }
       socket.setTimeout(0);
+      socket.off("close", onClose);
       const rest = buf.subarray(end + 4);
       if (rest.length) socket.unshift(rest);
       resolve2(socket);
     };
+    const onClose = () => reject(new Error("tunnel_closed"));
     socket.on("data", onData);
+    socket.once("close", onClose);
     socket.once("error", reject);
     socket.setTimeout(15e3, () => socket.destroy(new Error("tunnel_timeout")));
   });

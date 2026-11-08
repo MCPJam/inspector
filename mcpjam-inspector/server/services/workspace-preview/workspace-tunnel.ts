@@ -316,6 +316,9 @@ export async function openPreviewForNavigation<A extends { kind: string; url?: s
   const { action } = args;
   if (args.handle.engine !== "hosted") return { action };
   if (action.kind !== "navigate" || !action.url) return { action };
+  // Resolving the workspace can start the member's computer, so a URL that
+  // names no workspace port never gets that far.
+  if (previewTargetForUrl(action.url).kind === "none") return { action };
   const attach = args.attach ?? attachRunningSandbox;
   try {
     const workspace =
