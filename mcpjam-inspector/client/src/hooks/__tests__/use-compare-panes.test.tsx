@@ -351,6 +351,48 @@ describe("useComparePanes", () => {
     ).toBeNull();
   });
 
+  it("restores both named panes in order without saving temporary overrides to the project", () => {
+    savePreviewedHostId(PROJECT, "same-client");
+    const saved = [
+      {
+        paneId: "one",
+        target: { kind: "environment" as const, environmentId: "env-b" },
+        serverIds: [],
+        pluginVersionIds: [],
+      },
+      {
+        paneId: "two",
+        target: { kind: "environment" as const, environmentId: "env-a" },
+        serverIds: null,
+      },
+    ];
+    const { result, unmount } = renderHook(() => useComparePanes(PROJECT));
+    act(() => result.current.restorePanes(saved));
+    expect(result.current.panes).toEqual(saved);
+    act(() =>
+      result.current.setPaneOverrides("two", { pluginVersionIds: ["one-pin"] }),
+    );
+    expect(result.current.panes[0]).toEqual(saved[0]);
+    expect(result.current.panes[1]).toMatchObject({
+      serverIds: null,
+      pluginVersionIds: ["one-pin"],
+    });
+    unmount();
+    const fresh = renderHook(() => useComparePanes(PROJECT));
+    expect(fresh.result.current.panes).toEqual(
+      saved.map(({ paneId, target }) => ({ paneId, target })),
+    );
+  });
+
+  it("restores the saved lead even when the previewed client changed during sign-in", () => {
+    savePreviewedHostId(PROJECT, "other-client");
+    const { result } = renderHook(() => useComparePanes(PROJECT));
+    const saved = panesForHostIds([], ["b", "a"]);
+    act(() => result.current.restorePanes(saved));
+    expect(result.current.panes).toEqual(saved);
+    expect(loadPreviewedHostId(PROJECT)).toBe("b");
+  });
+
   it("starts a new project with the v2 list", () => {
     renderHook(() => useComparePanes(PROJECT));
     expect(

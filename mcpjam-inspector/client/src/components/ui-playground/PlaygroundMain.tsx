@@ -2224,6 +2224,7 @@ export function PlaygroundMain({
   // common parent is the correct fix instead of adding event traffic.
   const {
     panes: comparePanes,
+    restorePanes,
     selectedHostIds,
     setSelectedHostIds,
     multiHostEnabled,
@@ -2375,36 +2376,22 @@ export function PlaygroundMain({
   const comparisonLayoutRestoredRef = useRef(false);
   useEffect(() => {
     if (!comparisonRecovery || comparisonLayoutRestoredRef.current) return;
+    if (comparisonRecovery.projectId !== (convexProjectId ?? "local")) return;
     comparisonLayoutRestoredRef.current = true;
     setMultiModelEnabled(comparisonRecovery.multiModelEnabled);
     if (comparisonRecovery.modelSelections)
       setCompareSelections(comparisonRecovery.modelSelections);
-    setSelectedHostIds(comparisonRecovery.hostIds);
+    if (comparisonRecovery.version === 2 && comparisonRecovery.panes.length > 0)
+      restorePanes(comparisonRecovery.panes);
+    else setSelectedHostIds(comparisonRecovery.hostIds);
   }, [
     comparisonRecovery,
+    convexProjectId,
+    restorePanes,
     setMultiModelEnabled,
     setCompareSelections,
     setSelectedHostIds,
   ]);
-  useEffect(
-    () =>
-      registerComparisonLayout(comparisonRecoveryGroupId, {
-        projectId: convexProjectId ?? "local",
-        multiModelEnabled,
-        modelSelections: compareSelections,
-        hostIds: selectedHostIds,
-        selectedServers,
-      }),
-    [
-      comparisonRecoveryGroupId,
-      convexProjectId,
-      multiModelEnabled,
-      compareSelections,
-      selectedHostIds,
-      selectedServers,
-    ],
-  );
-
   const isMultiHostMode = isComparingHosts && !viewingHistoryReplay;
   const leadHost = hostSlots[0].host;
   const currentClientResolutions = useMemo(
@@ -2444,6 +2431,32 @@ export function PlaygroundMain({
     paused: !isConvexAuthenticated || !isSessionBootstrapComplete,
     canConfirmMissing: isConvexAuthenticated && isSessionBootstrapComplete,
   });
+  useEffect(
+    () =>
+      registerComparisonLayout(comparisonRecoveryGroupId, {
+        projectId: convexProjectId ?? "local",
+        multiModelEnabled,
+        modelSelections: compareSelections,
+        hostIds: selectedHostIds,
+        panes: isComparingHosts ? [...comparePanes] : [],
+        unavailablePaneIds: clientResolutions.flatMap((r) =>
+          r.status === "unavailable" ? [r.compareId] : [],
+        ),
+        selectedServers,
+      }),
+    [
+      comparisonRecoveryGroupId,
+      clientResolutions,
+      isComparingHosts,
+      comparePanes,
+      convexProjectId,
+      multiModelEnabled,
+      compareSelections,
+      selectedHostIds,
+      selectedServers,
+    ],
+  );
+
   const multiHostColumns = clientResolutions.flatMap((result) =>
     result.status === "ready" ? [result.column] : [],
   );
