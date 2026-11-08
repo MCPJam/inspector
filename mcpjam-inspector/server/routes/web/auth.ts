@@ -1528,10 +1528,12 @@ export async function createAuthorizedManager(
      */
     requestTimeoutByServerId?: Record<string, number>;
     /**
-     * Pre-resolved MCPJam test-IdP issuer (`resolveXaaIssuer(c, HOSTED_MODE)`)
-     * for Cross-App Access servers. Supplied by callers that have the request
-     * `Context`. Required whenever the batch contains a `useXaa` server — the
-     * builder throws a 500 rather than connecting tokenless if it's missing.
+     * Pre-resolved MCPJam test-IdP issuer for Cross-App Access servers.
+     * Callers holding the request `Context` pass
+     * `resolveXaaIssuer(c, HOSTED_MODE)`; the claim loops, which have none,
+     * pass `resolveConfiguredXaaIssuer()`. Required whenever the batch
+     * contains a `useXaa` server — the builder throws a 500 rather than
+     * connecting tokenless if it's missing.
      */
     xaaIssuer?: string;
     /**
@@ -1846,10 +1848,11 @@ export async function createAuthorizedManager(
 
       // Backend-resolved identity failure (legacy partial per-server override):
       // a distinct configuration error, surfaced before any mint AND before the
-      // issuer guard — eval routes omit `xaaIssuer`, so checking that first
-      // would mask this actionable 400 behind the caller-contract 500. Gated on
-      // the same XAA selection the mint pass uses. No silent fallback to the
-      // demo identity, no silent XAA→OAuth fallback.
+      // issuer guard, so a surface that has no issuer to pass (a claim loop on
+      // a deployment with no public URL) still gets this actionable 400 rather
+      // than the caller-contract 500. Gated on the same XAA selection the mint
+      // pass uses. No silent fallback to the demo identity, no silent XAA→OAuth
+      // fallback.
       //
       // Framed like every other connect-time XAA failure: the backend's sentence
       // is written for the server's auth form, and on its own ("Complete or
@@ -2331,9 +2334,11 @@ export async function createAuthorizedManager(
           // sibling server can mint.)
           if (!options?.xaaIssuer) {
             // Caller-contract violation: a `useXaa` server reached a manager
-            // builder that didn't thread the issuer (only callers holding the
-            // request `Context` can resolve it). Fail loud here rather than
-            // connecting tokenless and surfacing a confusing downstream 401.
+            // builder that didn't thread the issuer. A claim loop lands here
+            // when the deployment configures no public URL
+            // (`MCPJAM_INSPECTOR_PUBLIC_URL`, see `resolveConfiguredXaaIssuer`).
+            // Fail loud here rather than connecting tokenless and surfacing a
+            // confusing downstream 401.
             //
             // Always MCPJam's own bug, so it is declared ours: the origin it
             // carries reaches `http.request.failed`, where the MCPJam-fault
