@@ -37,6 +37,14 @@ describe("hosted harness approval Stop", () => {
     expect(result.current.messages[0].parts[1]).toMatchObject({ state: "output-denied" });
   });
 
+  it("coalesces simultaneous Stop triggers", async () => {
+    const { result } = renderHook(useTestChat);
+    await act(async () => {
+      await Promise.all([result.current.stopApproval(), result.current.stopApproval()]);
+    });
+    expect(db.mutation).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the pending card when Approve already claimed the lane", async () => {
     db.mutation.mockResolvedValue("already-continuing");
     const { result } = renderHook(useTestChat);

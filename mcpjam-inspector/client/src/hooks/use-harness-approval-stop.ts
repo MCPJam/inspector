@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { isToolUIPart, type UIMessage } from "ai";
 import { useConvex } from "convex/react";
 import { makeFunctionReference } from "convex/server";
@@ -38,8 +38,9 @@ export function useHarnessApprovalStop({ owner, messages, setMessages }: {
   const [stopping, setStopping] = useState(false);
   const ownerKey = JSON.stringify(owner);
   const currentOwner = useRef(ownerKey);
-  currentOwner.current = ownerKey;
-  const approvalIds = useMemo(() => pendingHarnessApprovalIds(messages), [messages]);
+  useLayoutEffect(() => { currentOwner.current = ownerKey; }, [ownerKey]);
+  const inFlight = useRef(false);
+  const approvalIds = useMemo(() => owner ? pendingHarnessApprovalIds(messages) : [], [messages, ownerKey]);
   const pendingKey = JSON.stringify(approvalIds);
 
   // Rehydrating a saved transcript must not restore an ended approval card.
@@ -57,7 +58,8 @@ export function useHarnessApprovalStop({ owner, messages, setMessages }: {
   }, [convex, ownerKey, pendingKey, setMessages]);
 
   const stopApproval = useCallback(async () => {
-    if (!owner || !approvalIds.length || stopping) return;
+    if (!owner || !approvalIds.length || inFlight.current) return;
+    inFlight.current = true;
     setStopping(true);
     try {
       const result = await convex.mutation(cancelMutation, { ...owner, approvalIds });
@@ -71,9 +73,10 @@ export function useHarnessApprovalStop({ owner, messages, setMessages }: {
       reportCaught(error, { source: "harness_stop_approval" });
       toast.error("Could not stop this action. Try again.");
     } finally {
+      inFlight.current = false;
       setStopping(false);
     }
-  }, [convex, ownerKey, pendingKey, setMessages, stopping]);
+  }, [convex, ownerKey, pendingKey, setMessages]);
 
   return { canStopApproval: Boolean(owner && approvalIds.length), stopping, stopApproval };
 }

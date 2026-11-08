@@ -1542,6 +1542,7 @@ export function ChatInput({
         disabled ||
         submitDisabled ||
         isLoading ||
+        canStop ||
         // While recording/transcribing the textarea shows a placeholder but
         // `value` still holds the draft — don't let Enter submit it behind the
         // voice UI (and leave the mic open).
@@ -1696,7 +1697,10 @@ export function ChatInput({
         ref={formRef}
         hidden={formCardActive}
         className={cn("w-full", className)}
-        onSubmit={onSubmit}
+        onSubmit={(event) => {
+          if (canStop) { event.preventDefault(); return; }
+          onSubmit(event);
+        }}
       >
         <div
           ref={containerRef}
