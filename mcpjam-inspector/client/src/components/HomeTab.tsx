@@ -11,6 +11,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { track } from "@/lib/analytics";
 import { ArrowLeft, Plus } from "lucide-react";
 import { useAppNavigate } from "@/lib/app-navigation";
+import { isPlatformAgentEnabled } from "@/lib/runtime-config";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { Button } from "@mcpjam/design-system/button";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
@@ -133,8 +134,11 @@ export function HomeTab({
 }: HomeTabProps) {
   const navigate = useAppNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const sessionParam = searchParams.get("session");
-  const composeParam = searchParams.get("compose") === "1";
+  // With the agent off on the server, Home has no composer and no chat
+  // takeover, whatever the URL asks for.
+  const agentEnabled = isPlatformAgentEnabled();
+  const sessionParam = agentEnabled ? searchParams.get("session") : null;
+  const composeParam = agentEnabled && searchParams.get("compose") === "1";
 
   // Re-arms whenever loading restarts; only fires while still loading.
   const [loadingTimedOut, setLoadingTimedOut] = useState(false);
@@ -367,12 +371,14 @@ export function HomeTab({
           />
         </header>
 
-          <McpjamAgentHero
-            surface="home"
-            onSessionStart={handleSessionStart}
-            onResumeSession={handleResumeSession}
-            ready={Boolean(projectId)}
-          />
+          {agentEnabled ? (
+            <McpjamAgentHero
+              surface="home"
+              onSessionStart={handleSessionStart}
+              onResumeSession={handleResumeSession}
+              ready={Boolean(projectId)}
+            />
+          ) : null}
 
         <ProductUpdatesRow />
 
