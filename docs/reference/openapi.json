@@ -12262,13 +12262,22 @@
         "operationId": "getConformanceReport",
         "tags": ["Conformance runs"],
         "summary": "Fetch a bounded conformance report projection",
-        "description": "Failing checks only, failed before could-not-run, capped at 50. `totalCases` is every case; `totalFailingCases` is the failing population `truncated` is computed from. `pending` on a check means this profile reported it but did not score it. `404` when the run has no stored report.",
+        "description": "Failing checks only, failed before could-not-run, 50 per page. `totalCases` is every case; `totalFailingCases` is the failing population `truncated` is computed from. `pending` on a check means this profile reported it but did not score it. `404` when the run has no stored report.\n\nOnce the run has finished, a page that leaves failing checks out carries `nextCursor`; pass it back as `cursor` for the next page. A running run serves its first page only: a cursor sent while it runs is `409`, and a cursor issued for another run, or not issued at all, is `400`. Read one check in full with `GET /projects/{projectId}/conformance-runs/{runId}/checks/{checkId}`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
           },
           {
             "$ref": "#/components/parameters/runId"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The previous page's `nextCursor`.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -12282,6 +12291,107 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "400": {
+            "description": "The cursor was not issued for this run."
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "A cursor was sent while the run is still running."
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "description": "The stored report could not be read from storage."
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/conformance-runs/{runId}/checks/{checkId}": {
+      "get": {
+        "operationId": "getConformanceCheck",
+        "tags": ["Conformance runs"],
+        "summary": "Read one check of a conformance run in full",
+        "description": "One check from the run's stored suite reports, with its status, error and evidence. `details` and `output` are cut at 16 KiB each, and `truncated` says which were. `pending` means this profile reported the check but did not score it. Check ids come from the report endpoint. `suite` is needed only when the same id is in two suites of the run. `404` when the run has no stored report or no such check.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          },
+          {
+            "name": "checkId",
+            "in": "path",
+            "required": true,
+            "description": "Check id, as the report lists it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "suite",
+            "in": "query",
+            "required": false,
+            "description": "The check's suite.",
+            "schema": {
+              "type": "string",
+              "enum": ["protocol", "apps", "tasks", "oauth"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The check.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["runId", "suiteKind", "id", "status", "truncated"],
+                  "properties": {
+                    "runId": {
+                      "type": "string"
+                    },
+                    "suiteKind": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "truncated": {
+                      "type": "object",
+                      "properties": {
+                        "details": {
+                          "type": "boolean"
+                        },
+                        "output": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  },
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`suite` is not a suite, or the id is in more than one suite of the run and `suite` was not sent."
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"

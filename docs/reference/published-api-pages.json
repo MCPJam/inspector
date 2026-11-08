@@ -56,6 +56,7 @@
   "/api-reference/conformance-runs/keep-a-long-running-uploaded-conformance-run-alive",
   "/api-reference/conformance-runs/list-persisted-conformance-runs",
   "/api-reference/conformance-runs/open-a-conformance-run-for-incremental-ingestion",
+  "/api-reference/conformance-runs/read-one-check-of-a-conformance-run-in-full",
   "/api-reference/conformance-runs/start-a-persisted-conformance-run",
   "/api-reference/conformance-runs/upload-one-suite-report-onto-a-started-conformance-run",
   "/api-reference/directory-readiness/cancel-an-in-flight-readiness-run",
