@@ -316,6 +316,20 @@ describe("native image prompt", () => {
     ).toThrow(/files of media type 'application\/pdf'/);
   });
 
+  it("accepts the upstream helper's image parts on the start-message schema", () => {
+    const prompt = extractHarnessPromptContent({
+      prompt: {
+        content: [
+          { type: "text", text: "see" },
+          { type: "image", image: "abc", mediaType: "image/png" },
+        ],
+      },
+    });
+    expect(startMessageSchema.safeParse({ type: "start", prompt }).success).toBe(
+      true,
+    );
+  });
+
   it("wraps turn/start image URLs with one data prefix", () => {
     expect(
       toCodexTurnStartInput([
