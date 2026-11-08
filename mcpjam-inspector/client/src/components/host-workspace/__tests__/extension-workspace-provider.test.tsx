@@ -1,4 +1,5 @@
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -8,6 +9,7 @@ import {
   useExtensionOwners,
   useExtensionRegistration,
   useExtensionStore,
+  useExtensionWorkspaceState,
   usePublishPluginIcons,
   type ExtensionRegistration,
 } from "../ExtensionWorkspaceProvider";
@@ -98,6 +100,7 @@ function handleFor(scope: ThreadAppScope, toolName: string) {
 
 type Owners = ReturnType<typeof useExtensionOwners>;
 let owners: Owners = { global: null, chat: null };
+let includedTools: unknown = null;
 let releaseChat: (chatId: string) => void = () => {};
 function Center({ registration }: { registration: ExtensionRegistration | null }) {
   useExtensionRegistration(registration, {
@@ -105,6 +108,7 @@ function Center({ registration }: { registration: ExtensionRegistration | null }
     runOnboarding: async () => {},
   });
   owners = useExtensionOwners();
+  includedTools = useExtensionWorkspaceState((state) => state.includedPluginTools);
   releaseChat = useExtensionChatRelease();
   return null;
 }
@@ -165,6 +169,20 @@ describe("Playground extension owners", () => {
     cleanup();
     f.facts = {};
     await new Promise((resolve) => setTimeout(resolve, 10));
+  });
+
+  it("keeps included tool catalogs scoped to the current host and clears them on access loss", async () => {
+    const view = renderCenter(registration("chat-a", {
+      includedPluginTools: { environmentId: "env-a", serverIds: ["plugin-a"] },
+    }));
+    await waitFor(() => expect(includedTools).toEqual({ projectId: "project", ownerKey: JSON.stringify(["user", "project", "client"]), environmentId: "env-a", serverIds: ["plugin-a"] }));
+    view.update(registration("chat-b", {
+      identity: { ...identity, hostId: "other-client" },
+      includedPluginTools: { environmentId: "env-b", serverIds: ["plugin-b"], includeAppOnly: true },
+    }));
+    await waitFor(() => expect(includedTools).toEqual({ projectId: "project", ownerKey: JSON.stringify(["user", "project", "other-client"]), environmentId: "env-b", serverIds: ["plugin-b"], includeAppOnly: true }));
+    view.update(null);
+    await waitFor(() => expect(includedTools).toBeNull());
   });
 
   it("joins a plugin-owned server to its plugin's icons for every surface", async () => {
@@ -260,6 +278,38 @@ describe("Playground extension owners", () => {
     expect(workspaceOf(f.open.mock.calls.at(-1)!)).toBe(
       globalOwnerWorkspace(identity).workspaceId,
     );
+  });
+
+  it("keeps the requesting global App selected when file admission refuses", async () => {
+    renderCenter(registration("chat-a"));
+    await waitFor(() => expect(owners.global?.entries.saved).toBeDefined());
+    await act(async () => { await owners.global!.launch(server, global); });
+    const active = owners.global!.active;
+    f.open.mockRejectedValueOnce(new Error("File admission refused"));
+    const file = { toolName: "viewer", title: "CAD viewer", kind: "file" as const, resourceUri: "cad://part" };
+    await act(async () => { await expect(owners.global!.appPorts!.openFile!(server, file)).rejects.toThrow("File admission refused"); });
+    expect(owners.global!.active).toBe(active);
+    await act(async () => { await owners.global!.appPorts!.openFile!(server, file); });
+    expect(owners.global!.active).toBeNull();
+  });
+
+  it("resolves a menu file selection without a chat and rejects an admission-waiting request", async () => {
+    const file = { toolName: "viewer", title: "CAD viewer", kind: "file" as const, resourceUri: "cad://part" };
+    f.discover.mockResolvedValue([global, file]);
+    function Menus() {
+      const current = useExtensionOwners();
+      return current.global?.menus[server.name]?.(() => {});
+    }
+    render(<ExtensionWorkspaceProvider><Center registration={{ ...registration("chat-a"), chatId: null }} /><Menus /></ExtensionWorkspaceProvider>);
+    await waitFor(() => expect(owners.global?.entries.saved).toBeDefined());
+    expect(owners.chat).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Saved server extensions" }));
+    await user.click(screen.getByRole("menuitem", { name: /CAD viewer/ }));
+    expect(f.open).not.toHaveBeenCalled();
+    await act(async () => {
+      await expect(owners.global!.appPorts!.openFile!(server, file)).rejects.toThrow("Open a chat");
+    });
   });
 
   it("an App opened in the chat takes the rail from a fullscreen model App", async () => {

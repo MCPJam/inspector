@@ -5,6 +5,10 @@ import { expect, it, vi } from "vitest";
 import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
 import { TasksCheckOverride } from "../TasksCheckOverride";
 
+/** A tool option: its name, then its safety badge. */
+const toolOption = (name: string, tag: string) =>
+  new RegExp(`^${name}\\s*·\\s*${tag}$`);
+
 const tools = {
   status: "ready" as const,
   tools: ["default", "other"].map((name) => ({
@@ -56,7 +60,7 @@ it("shows the suite tool in its dropdown, overrides on a new pick, and resets wi
   expect(toolField()).toHaveTextContent("default");
 
   await user.click(toolField());
-  await user.click(screen.getByRole("option", { name: "other · read-only" }));
+  await user.click(screen.getByRole("option", { name: toolOption("other", "read-only") }));
   expect(saved()).toEqual({
     tasksProbe: { toolName: "default", arguments: { original: true } },
     tasksOverrides: { "tasks-inline-result": { toolName: "other" } },

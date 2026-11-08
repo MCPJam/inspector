@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildAppsConformanceConfig } from "../src/commands/apps.js";
+import { buildAppsConformanceConfig } from "../src/lib/apps-conformance-config.js";
 import { CliError } from "../src/lib/output.js";
 
 test("buildAppsConformanceConfig rejects unknown categories and check ids", () => {

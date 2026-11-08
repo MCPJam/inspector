@@ -13,9 +13,7 @@ import {
 } from "./chat-input/prompts/mentions-popover";
 import { PluginServerIcon } from "./chat-input/plugin-server-icon";
 import {
-  ContextAttachmentChip,
-  ContextGroupChip,
-  groupContextAttachments,
+  ContextAttachmentList,
   type ContextAttachment,
 } from "./chat-input/attachments/context-attachment-chip";
 import {
@@ -1583,20 +1581,7 @@ export function ChatInput({
               </Button>
             </span>
           )}
-          {groupContextAttachments(contextAttachments).map((entry) =>
-            entry.kind === "group" ? (
-              <ContextGroupChip
-                key={`group:${entry.group.id}`}
-                group={entry.group}
-                items={entry.items}
-              />
-            ) : (
-              <ContextAttachmentChip
-                key={entry.attachment.id}
-                {...entry.attachment}
-              />
-            ),
-          )}
+          <ContextAttachmentList attachments={contextAttachments} />
           {mcpPromptResults.map((mcpPromptResult, index) => (
             <MCPPromptResultCard
               key={`prompt-${index}`}

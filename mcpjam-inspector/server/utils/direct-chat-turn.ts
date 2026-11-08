@@ -55,8 +55,10 @@ import {
 } from "@/shared/mcp-tool-origin-metadata";
 import { pageToolBindingOf } from "./built-in-tools/page-tools";
 import type { PersistedTurnTrace } from "./chat-ingestion";
+import { buildDirectChatTurnTrace } from "./direct-chat-turn-full-stream";
 import { logger } from "./logger";
 import { withoutEmptyTextBlocks } from "./empty-text-blocks";
+import { withProviderSafeToolNames } from "@mcpjam/sdk";
 import {
   applyPrepareAdvertisedTools,
   gateToolsToAdvertisedSubset,
@@ -288,6 +290,17 @@ export interface DirectChatTurnEngineErrorEvent {
   rawText: string;
   promptIndex: number;
   stepIndex?: number;
+}
+
+/**
+ * Every direct turn (BYOK chat and evals, org-configured providers) reaches
+ * the provider through here, so the request fixes live here: MCP tool names a
+ * provider rejects (`cart.add`) are aliased on the wire and restored in its
+ * reply. A gateway id string has no model object to wrap.
+ */
+function providerReadyModel(llmModel: LanguageModel): LanguageModel {
+  const model = withoutEmptyTextBlocks(llmModel);
+  return typeof model === "string" ? model : withProviderSafeToolNames(model);
 }
 
 export interface RunDirectChatTurnOptions {
@@ -730,7 +743,7 @@ export function runDirectChatTurn(
   let result: ReturnType<typeof streamText>;
   try {
     result = streamText({
-    model: withoutEmptyTextBlocks(llmModel),
+    model: providerReadyModel(llmModel),
     messages: messageHistory,
     // AI SDK 7 rejects system messages in `messages` by default. The history
     // carries them on purpose: MCP server instructions reach the model as
@@ -1182,29 +1195,15 @@ export async function consumeDirectChatTurnHeadless(
     const messages = Array.isArray(responseMessages)
       ? (responseMessages as ModelMessage[])
       : [];
-    // Build the real turnTrace from the engine's own accumulator — mirrors the
-    // streaming `onPersist` construction (runDirectChatTurn ~902) so headless
-    // and streaming produce the identical PersistedTurnTrace.
-    const turnTrace: PersistedTurnTrace = {
-      turnId: handle.traceTurn.turnId,
-      promptIndex: handle.traceTurn.promptIndex,
-      startedAt: handle.traceTurn.turnStartedAt,
-      endedAt: Date.now(),
-      spans: [...handle.traceContext.recordedSpans],
-      requestPayloads: capRequestPayloadsForPersist(
-        handle.traceContext.recordedRequestPayloads,
-      ),
-      usage: handle.traceTurn.turnUsage,
-      finishReason: finishReason ?? undefined,
-      modelId: handle.modelId,
-    };
     return {
       messages,
       steps,
       totalUsage,
       finishReason,
       spans: handle.traceContext.recordedSpans,
-      turnTrace,
+      // The same construction as the streaming `onPersist` path, so headless
+      // and streaming produce the identical PersistedTurnTrace.
+      turnTrace: buildDirectChatTurnTrace(handle, finishReason),
       aborted: handle.isAborted(),
     };
   } catch (error) {

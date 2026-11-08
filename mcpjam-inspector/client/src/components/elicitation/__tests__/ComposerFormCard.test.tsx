@@ -1,3 +1,4 @@
+import { PluginIconDirectoryProvider } from "../../host-workspace/plugin-icon-directory";
 import {
   act,
   fireEvent,
@@ -6,7 +7,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { ComposerFormCard } from "../ComposerFormCard";
+import { ComposerFormCard, ComposerFormFrame } from "../ComposerFormCard";
 import {
   compileComposerForm,
   logComposerFormDiagnostics,
@@ -445,4 +446,22 @@ describe("composer form card", () => {
       "plugin-extensions/PLUGIN_FORM_PREVIEW_DROPPED",
     ]);
   });
+});
+
+it("labels a plugin form with its manifest name while preserving the request identity", () => {
+  const runtimeName = "bits-and-bolts:server:bits-and-bolts@2cc7fa5b";
+  const close = vi.fn();
+  render(
+    <PluginIconDirectoryProvider value={{
+      plugins: new Map(), pluginNames: new Map([["bits", "Bits & Bolts"]]),
+      servers: { server: { pluginId: "bits", name: runtimeName } },
+    }}>
+      <ComposerFormFrame title="" serverName={runtimeName} requestId="request-identity" onClose={close} />
+    </PluginIconDirectoryProvider>,
+  );
+  const frame = screen.getByRole("region", { name: "Bits & Bolts requests information" });
+  expect(frame.getAttribute("data-composer-form")).toBe("request-identity");
+  expect(frame.textContent).not.toContain(runtimeName);
+  fireEvent.click(screen.getByRole("button", { name: /cancel|close/i }));
+  expect(close).toHaveBeenCalledTimes(1);
 });

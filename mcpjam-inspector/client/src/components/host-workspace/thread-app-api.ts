@@ -1,3 +1,5 @@
+import { readTransferredFile, writeTransferredFile } from "./file-transfer";
+import { PLUGIN_FILE_MEDIA_TYPE } from "@/shared/plugin-file-transfer";
 import { driveOwnedPluginMrtr } from "@/lib/apis/owned-plugin-mrtr";
 import { pluginOnboardingSpecSchema } from "@/shared/plugin-onboarding";
 import { z } from "zod";
@@ -114,6 +116,11 @@ async function post(
 
 export async function parseAppResponse(response: Response, signal: AbortSignal): Promise<{ response: Response; value: Record<string, unknown> }> {
   signal.throwIfAborted();
+  if (response.ok && response.headers.get("content-type") === PLUGIN_FILE_MEDIA_TYPE) {
+    const value = await readTransferredFile(response, signal);
+    appendPluginDiagnostics(value.diagnostics);
+    return { response, value: { contents: value.contents } };
+  }
   const text = await response.text();
   if (new TextEncoder().encode(text).byteLength > PLUGIN_APP_REPLY_MAX_BYTES)
     throw new ThreadAppError("INSTANCE_RESPONSE_TOO_LARGE");
@@ -303,11 +310,20 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
     ) => {
       if (!handle.file)
         throw new ThreadAppError("INSTANCE_RESOURCE_UNAVAILABLE");
-      const { response, value } = await post(
-        "files/read",
-        { ...owner, instanceToken: handle.instanceToken, params },
+      const init = {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: PLUGIN_FILE_MEDIA_TYPE },
+        body: JSON.stringify({ ...owner, instanceToken: handle.instanceToken, params }),
         signal,
-      );
+      };
+      let response: Response;
+      try {
+        response = await authFetch("/api/web/apps/plugin-instances/files/read", init);
+      } catch {
+        signal.throwIfAborted();
+        response = await authFetch("/api/web/apps/plugin-instances/files/read", init);
+      }
+      const { value } = await parseAppResponse(response, signal);
       accepted(response, value);
       const result = z
         .object({
@@ -344,7 +360,7 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
       signal: AbortSignal,
     ) => {
       const { response, value } = await post(
-        "files/open",
+        routePrefix + "files/open",
         { ...owner, instanceToken: handle.instanceToken, path },
         signal,
       );
@@ -379,16 +395,12 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
     ) => {
       if (!handle.fileCapabilities?.write)
         throw new ThreadAppError("INSTANCE_RESOURCE_UNAVAILABLE");
-      const { response, value } = await post(
-        "files/write",
-        {
-          ...owner,
-          instanceToken: handle.instanceToken,
-          operationId: crypto.randomUUID(),
-          params,
-        },
-        signal,
-      );
+      const response = await writeTransferredFile({
+        ...owner,
+        instanceToken: handle.instanceToken,
+        operationId: crypto.randomUUID(),
+      }, params, signal);
+      const { value } = await parseAppResponse(response, signal);
       accepted(response, value);
       return value;
     },
@@ -527,6 +539,7 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
       signal: AbortSignal,
       approve: ApproveAppTool,
       call?: { name: string; arguments: Record<string, unknown> },
+      onInputPending?: (pending: boolean) => void,
     ): Promise<ThreadAppToolResult> => {
       const path = routePrefix + (call ? "call" : "activation/execute");
       const body = {
@@ -545,7 +558,13 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
         if (!parsed.success)
           throw new ThreadAppError("INSTANCE_RESPONSE_INVALID");
         const approval = parsed.data;
-        const approved = await approve(approval, signal);
+        let approved: boolean;
+        onInputPending?.(true);
+        try {
+          approved = await approve(approval, signal);
+        } finally {
+          onInputPending?.(false);
+        }
         signal.throwIfAborted();
         reply = await post(
           path,
@@ -556,6 +575,7 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "") {
       accepted(reply.response, reply.value);
       reply.value = (await driveOwnedPluginMrtr(reply.value, {
         signal,
+        onInputPending,
         formScope: {
           projectId: scope.projectId,
           workspaceId: scope.pluginWorkspace.workspaceId,

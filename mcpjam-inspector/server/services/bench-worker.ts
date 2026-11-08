@@ -96,6 +96,7 @@ import {
 } from "./internal-backend.js";
 import { startClaimLoop, type ClaimLoop } from "./workers/claim-loop.js";
 import { abortableSleep } from "../utils/run-supervisor/backoff.js";
+import { resolveConfiguredXaaIssuer } from "./xaa-configured-issuer.js";
 
 const BENCH_SERVICE_BASE = "/internal/v1/bench";
 
@@ -1353,6 +1354,23 @@ function buildWriteGuard(
 }
 
 /**
+ * How every connection this run opens to the target is set up, each cell's and
+ * the cleanup's alike.
+ *
+ * One answer for all of them, because cleanup has to reach what a write cell
+ * created, and it runs after every cell under no cell's host. So no host's XAA
+ * policy applies: the measured server's own auth settings decide, and an
+ * XAA-configured server mints with the deployment's configured issuer, since
+ * there is no request to read one from.
+ */
+function targetConnectOptions(job: ClaimedBenchmarkJob) {
+  return {
+    ...(job.serverName ? { serverNames: [job.serverName] } : {}),
+    xaaIssuer: resolveConfiguredXaaIssuer(),
+  };
+}
+
+/**
  * Run ONE matrix cell as an eval child.
  *
  * The connection is opened with the run's own scoped bearer, so stored OAuth
@@ -1380,7 +1398,7 @@ async function defaultRunEvalCell(
     WEB_CALL_TIMEOUT_MS,
     undefined,
     undefined,
-    job.serverName ? { serverNames: [job.serverName] } : undefined,
+    targetConnectOptions(job),
   );
 
   try {
@@ -1702,7 +1720,7 @@ async function defaultCleanupArtifacts(
     WEB_CALL_TIMEOUT_MS,
     undefined,
     undefined,
-    job.serverName ? { serverNames: [job.serverName] } : undefined,
+    targetConnectOptions(job),
   ).catch((error: unknown) => {
     logger.error("[bench] cleanup could not connect to the target", error, {
       benchmarkRunId: job.benchmarkRunId,
@@ -1739,6 +1757,9 @@ async function defaultCleanupArtifacts(
     await authorized.manager.disconnectAllServers().catch(() => {});
   }
 }
+
+/** Test seam: cleanup's connection has to authenticate the way the cells did. */
+export const defaultCleanupArtifactsForTests = () => defaultCleanupArtifacts;
 
 /** Observe the target's unauthenticated behaviour from our own infrastructure. */
 async function defaultRunAuthProbe(

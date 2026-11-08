@@ -8,6 +8,10 @@ import {
   type ConformanceProbes,
 } from "@/hooks/use-conformance-probes";
 
+/** A tool option: its name, then its safety badge. */
+const toolOption = (name: string, tag: string) =>
+  new RegExp(`^${name}\\s*·\\s*${tag}$`);
+
 function Editor() {
   const [probes, setProbes] = useState<ConformanceProbes>({
     tasksProbe: { toolName: "finish" },
@@ -44,7 +48,7 @@ it("sends newly entered answers after resetting and reconfiguring the update ove
   const inherit = screen.getByRole("checkbox", { name: "Use suite default" });
   await user.click(inherit);
   await user.click(screen.getByRole("combobox"));
-  await user.click(screen.getByRole("option", { name: "ask · read-only" }));
+  await user.click(screen.getByRole("option", { name: toolOption("ask", "read-only") }));
   fireEvent.change(
     screen.getByRole("textbox", {
       name: "Answers to the task's questions (optional)",
@@ -54,7 +58,7 @@ it("sends newly entered answers after resetting and reconfiguring the update ove
   await user.click(inherit);
   await user.click(inherit);
   await user.click(screen.getByRole("combobox"));
-  await user.click(screen.getByRole("option", { name: "ask · read-only" }));
+  await user.click(screen.getByRole("option", { name: toolOption("ask", "read-only") }));
   const answers = screen.getByRole("textbox", {
     name: "Answers to the task's questions (optional)",
   });

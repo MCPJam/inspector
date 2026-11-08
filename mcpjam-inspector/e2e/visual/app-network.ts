@@ -133,6 +133,7 @@ async function serveHttp(
       });
     if (
       url.pathname === "/api/mcp/subscribe" ||
+      url.pathname === "/api/mcp/mrtr/stream" ||
       url.pathname === "/api/mcp/servers/rpc/stream"
     ) {
       return route.fulfill({

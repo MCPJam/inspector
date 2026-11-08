@@ -1,3 +1,7 @@
+import { buildAppsConformanceConfig, type AppsConformanceOptions } from "../lib/apps-conformance-config.js";
+import { declareMcpjamUse } from "../lib/deployment-preflight.js";
+import { resolveInspectorProjectTarget } from "../lib/inspector-project-target.js";
+import { platformOptionsOf } from "../lib/platform-command.js";
 import {
   conformanceExitCode,
   conformanceSuiteExitCode,
@@ -7,15 +11,9 @@ import {
 } from "../lib/conformance-exit-code.js";
 import { Command } from "commander";
 import {
-  MCP_APPS_CHECK_CATEGORIES,
-  MCP_APPS_CHECK_IDS,
   MCPAppsConformanceSuite,
   MCPAppsConformanceTest,
-  isKnownProtocolVersion,
-  type MCPAppsCheckCategory,
-  type MCPAppsCheckId,
   type MCPAppsConformanceConfig,
-  type McpProtocolVersion,
   scoreFromAppsResult,
 } from "@mcpjam/sdk";
 import { loadAppsSuiteConfig } from "../lib/config-file.js";
@@ -35,6 +33,7 @@ import {
   parseJsonRecord,
   parseServerConfig,
   resolveAliasedStringOption,
+  resolveClientCapabilities,
   type SharedServerTargetOptions,
 } from "../lib/server-config.js";
 import { setProcessExitCode, usageError, writeResult } from "../lib/output.js";
@@ -59,29 +58,6 @@ import {
   parsePriorWidgetToolCalls,
 } from "../lib/widget-session.js";
 
-const APPS_CHECK_IDS_BY_CATEGORY: Record<
-  MCPAppsCheckCategory,
-  readonly MCPAppsCheckId[]
-> = {
-  tools: [
-    "ui-tools-present",
-    "ui-tool-metadata-valid",
-    "ui-tool-input-schema-valid",
-  ],
-  resources: [
-    "ui-listed-resources-valid",
-    "ui-resources-readable",
-    "ui-resource-contents-valid",
-    "ui-resource-meta-valid",
-  ],
-};
-
-export interface AppsConformanceOptions extends SharedServerTargetOptions {
-  category?: string[];
-  checkId?: string[];
-  protocolVersion?: string;
-}
-
 export interface AppsRenderOptions extends SharedServerTargetOptions {
   toolName?: string;
   name?: string;
@@ -94,6 +70,10 @@ export interface AppsRenderOptions extends SharedServerTargetOptions {
   protocol?: string;
   serverName?: string;
   inspectorUrl?: string;
+  project?: string;
+  serverId?: string;
+  apiKey?: string;
+  apiUrl?: string;
   requireRender?: boolean;
 }
 
@@ -109,10 +89,15 @@ export interface AppsSessionStartOptions extends SharedServerTargetOptions {
   protocol?: string;
   serverName?: string;
   inspectorUrl?: string;
+  project?: string;
+  serverId?: string;
+  apiKey?: string;
+  apiUrl?: string;
   requireRender?: boolean;
 }
 
 export interface AppsSessionActionOptions {
+  apiKey?: string;
   session?: string;
   action?: string;
   coordinate?: string;
@@ -164,6 +149,19 @@ function getConformanceGlobals(command: Command, reporter?: ReporterFormat): {
 
 function writeConformanceOutput(output: string): void {
   process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
+}
+
+function addRenderServerOptions(command: Command): Command {
+  return declareMcpjamUse(
+    addSharedServerOptions(command)
+      .option("--project <id-or-name>", "Project containing the saved server")
+      .option("--server-id <id>", "Saved project server to render")
+      .option("--api-key <key>", "MCPJam API key (or use cloud login)")
+      .option("--api-url <url>", "MCPJam API base URL"),
+    {
+      when: (options) => typeof options.serverId === "string",
+    },
+  );
 }
 
 export function registerAppsCommands(program: Command): void {
@@ -247,7 +245,7 @@ export function registerAppsCommands(program: Command): void {
     }
   });
 
-  addSharedServerOptions(
+  addRenderServerOptions(
     apps
       .command("render")
       .description(
@@ -282,7 +280,8 @@ export function registerAppsCommands(program: Command): void {
       ),
   ).action(async (options: AppsRenderOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const config = parseServerConfig({
+    const target = await resolveInspectorProjectTarget(platformOptionsOf<AppsRenderOptions>(command));
+    const config = target ? undefined : parseServerConfig({
       ...options,
       timeout: globalOptions.timeout,
     });
@@ -314,15 +313,16 @@ export function registerAppsCommands(program: Command): void {
     const injectOpenAiCompat = resolveWidgetRenderInjectOpenAiCompat(
       options.protocol,
     );
-    const serverName =
+    const serverName = target?.serverName ?? (
       typeof options.serverName === "string" && options.serverName.trim()
         ? options.serverName.trim()
-        : buildInspectorServerName(options);
+        : buildInspectorServerName(options));
 
     const response = await runWidgetRender({
       baseUrl: options.inspectorUrl,
       config,
-      serverName,
+      ...(target ? { target, clientCapabilities: resolveClientCapabilities(options.clientCapabilities) } : {}),
+      serverName: target?.serverName ?? serverName,
       toolName,
       parameters,
       injectOpenAiCompat,
@@ -364,7 +364,7 @@ export function registerAppsCommands(program: Command): void {
       "Interactive headless widget sessions via the local Inspector. `action` drives by pixel coordinate; `snapshot` + `step` drive by role/name/testId, which is what a caller that cannot see the screenshot needs.",
     );
 
-  addSharedServerOptions(
+  addRenderServerOptions(
     session
       .command("start")
       .description("Render a widget and keep it mounted for stepping")
@@ -397,7 +397,8 @@ export function registerAppsCommands(program: Command): void {
       ),
   ).action(async (options: AppsSessionStartOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const config = parseServerConfig({
+    const target = await resolveInspectorProjectTarget(platformOptionsOf<AppsSessionStartOptions>(command));
+    const config = target ? undefined : parseServerConfig({
       ...options,
       timeout: globalOptions.timeout,
     });
@@ -429,15 +430,16 @@ export function registerAppsCommands(program: Command): void {
     const injectOpenAiCompat = resolveWidgetRenderInjectOpenAiCompat(
       options.protocol,
     );
-    const serverName =
+    const serverName = target?.serverName ?? (
       typeof options.serverName === "string" && options.serverName.trim()
         ? options.serverName.trim()
-        : buildInspectorServerName(options);
+        : buildInspectorServerName(options));
 
     const response = await runWidgetSessionStart({
       baseUrl: options.inspectorUrl,
       config,
-      serverName,
+      ...(target ? { target, clientCapabilities: resolveClientCapabilities(options.clientCapabilities) } : {}),
+      serverName: target?.serverName ?? serverName,
       toolName,
       parameters,
       injectOpenAiCompat,
@@ -491,6 +493,7 @@ export function registerAppsCommands(program: Command): void {
       "Include the screenshot inline as base64 in the JSON output",
     )
     .option("--inspector-url <url>", "Local Inspector base URL")
+    .option("--api-key <key>", "MCPJam API key (or MCPJAM_API_KEY / cloud login)")
     .action(async (options: AppsSessionActionOptions, command) => {
       const globalOptions = getGlobalOptions(command);
       const sessionId = options.session?.trim();
@@ -502,6 +505,7 @@ export function registerAppsCommands(program: Command): void {
       const response = await runWidgetSessionAction({
         baseUrl: options.inspectorUrl,
         sessionId,
+        apiKey: options.apiKey,
         action,
         timeoutMs: globalOptions.timeout,
       });
@@ -527,9 +531,10 @@ export function registerAppsCommands(program: Command): void {
     )
     .requiredOption("--session <id>", "Session id from `apps session start`")
     .option("--inspector-url <url>", "Local Inspector base URL")
+    .option("--api-key <key>", "MCPJam API key (or MCPJAM_API_KEY / cloud login)")
     .action(
       async (
-        options: { session?: string; inspectorUrl?: string },
+        options: { session?: string; inspectorUrl?: string; apiKey?: string },
         command,
       ) => {
         const globalOptions = getGlobalOptions(command);
@@ -540,6 +545,7 @@ export function registerAppsCommands(program: Command): void {
         const response = await runWidgetSessionSnapshot({
           baseUrl: options.inspectorUrl,
           sessionId,
+          apiKey: options.apiKey,
           timeoutMs: globalOptions.timeout,
         });
         writeResult(response, globalOptions.format);
@@ -566,6 +572,7 @@ export function registerAppsCommands(program: Command): void {
       "Include the screenshot inline as base64 in the JSON output",
     )
     .option("--inspector-url <url>", "Local Inspector base URL")
+    .option("--api-key <key>", "MCPJam API key (or MCPJAM_API_KEY / cloud login)")
     .action(
       async (
         options: {
@@ -575,6 +582,7 @@ export function registerAppsCommands(program: Command): void {
           screenshotOut?: string;
           screenshotBase64?: boolean;
           inspectorUrl?: string;
+          apiKey?: string;
         },
         command,
       ) => {
@@ -591,6 +599,7 @@ export function registerAppsCommands(program: Command): void {
         const response = await runWidgetSessionScriptedStep({
           baseUrl: options.inspectorUrl,
           sessionId,
+          apiKey: options.apiKey,
           step,
           ...(priorWidgetToolCalls ? { priorWidgetToolCalls } : {}),
           timeoutMs: globalOptions.timeout,
@@ -623,9 +632,10 @@ export function registerAppsCommands(program: Command): void {
     .description("Close a widget session and dispose its browser")
     .requiredOption("--session <id>", "Session id from `apps session start`")
     .option("--inspector-url <url>", "Local Inspector base URL")
+    .option("--api-key <key>", "MCPJam API key (or MCPJAM_API_KEY / cloud login)")
     .action(
       async (
-        options: { session?: string; inspectorUrl?: string },
+        options: { session?: string; inspectorUrl?: string; apiKey?: string },
         command,
       ) => {
         const globalOptions = getGlobalOptions(command);
@@ -636,6 +646,7 @@ export function registerAppsCommands(program: Command): void {
         const response = await runWidgetSessionClose({
           baseUrl: options.inspectorUrl,
           sessionId,
+          apiKey: options.apiKey,
           timeoutMs: globalOptions.timeout,
         });
         writeResult({ closed: response.closed }, globalOptions.format);
@@ -688,75 +699,4 @@ export function registerAppsCommands(program: Command): void {
         setProcessExitCode(exitCode);
       }
     });
-}
-
-function collectInvalidEntries(
-  values: string[] | undefined,
-  allowedValues: readonly string[],
-): string[] {
-  return (values ?? []).filter((value) => !allowedValues.includes(value));
-}
-
-export function buildAppsConformanceConfig(
-  options: AppsConformanceOptions,
-): MCPAppsConformanceConfig {
-  const serverConfig = parseServerConfig(options);
-  const categories = options.category?.filter(Boolean);
-  const invalidCategories = collectInvalidEntries(
-    categories,
-    MCP_APPS_CHECK_CATEGORIES,
-  );
-  if (invalidCategories.length > 0) {
-    throw usageError(
-      invalidCategories.length === 1
-        ? `Unknown category: ${invalidCategories[0]}`
-        : `Unknown categories: ${invalidCategories.join(", ")}`,
-    );
-  }
-
-  const checkIds = options.checkId?.filter(Boolean);
-  const invalidCheckIds = collectInvalidEntries(checkIds, MCP_APPS_CHECK_IDS);
-  if (invalidCheckIds.length > 0) {
-    throw usageError(
-      `Unknown check id${
-        invalidCheckIds.length === 1 ? "" : "s"
-      }: ${invalidCheckIds.join(", ")}`,
-    );
-  }
-
-  const resolvedCheckIds =
-    checkIds && checkIds.length > 0
-      ? checkIds
-      : categories && categories.length > 0
-      ? Array.from(
-          new Set(
-            categories.flatMap(
-              (category) =>
-                APPS_CHECK_IDS_BY_CATEGORY[category as MCPAppsCheckCategory],
-            ),
-          ),
-        )
-      : undefined;
-
-  const trimmedProtocolVersion = options.protocolVersion?.trim();
-  let mcpProtocolVersion: McpProtocolVersion | undefined;
-  if (trimmedProtocolVersion) {
-    if (!isKnownProtocolVersion(trimmedProtocolVersion)) {
-      throw usageError(`Unknown --protocol-version: ${trimmedProtocolVersion}`);
-    }
-    if (!("url" in serverConfig) || !serverConfig.url) {
-      throw usageError(
-        "--protocol-version can only be used with an HTTP target (--url).",
-      );
-    }
-    mcpProtocolVersion = trimmedProtocolVersion;
-  }
-
-  return {
-    ...serverConfig,
-    ...(mcpProtocolVersion ? { mcpProtocolVersion } : {}),
-    ...(resolvedCheckIds && resolvedCheckIds.length > 0
-      ? { checkIds: resolvedCheckIds as MCPAppsConformanceConfig["checkIds"] }
-      : {}),
-  };
 }

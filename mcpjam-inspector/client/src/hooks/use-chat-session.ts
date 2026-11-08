@@ -1,3 +1,5 @@
+import { appToolInvocationEvent, appToolInvocations } from "@/shared/app-tool-rendezvous";
+import { fulfillHarnessAppTool } from "@/components/playground/fulfill-harness-app-tool";
 import { isCurrentHarnessStartup, isHarnessStartupPart, type HarnessStartupPhase } from "@/shared/harness-startup";
 import { nextResumedVersion } from "./use-resumed-thread-persistence";
 import { isForwardingApprovalId, withoutForwardingGateParts, stripForwardingRequestBody } from "@/shared/forwarding-approval";
@@ -184,6 +186,7 @@ import {
   patchBodyAccessVersion,
 } from "@/lib/scenario-access-errors";
 import {
+  AUTO_TOPUP_DECLINED_CODE,
   notifyMCPJamLimitError,
   notifyMCPJamLimitErrorFromResponse,
 } from "@/lib/mcpjam-limit";
@@ -2720,6 +2723,16 @@ export function useChatSession(
   const paidFallbackNotices = useRef(new Set<string>());
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
+      const appToolEvent = appToolInvocationEvent(part);
+      if (appToolEvent) {
+        void fulfillHarnessAppTool(appToolEvent, {
+          registry: appToolsRegistryRef.current,
+          chatSessionId: () => chatSessionIdRef.current,
+          claim: (args) => convexClient.mutation(appToolInvocations.claim, args),
+          complete: (args) => convexClient.mutation(appToolInvocations.complete, args),
+        }).catch(() => toast.error("The app tool response could not be delivered. Check whether the action ran before trying again."));
+        return;
+      }
       if (isHarnessStartupPart(part)) {
         if (isCurrentHarnessStartup(part, {
           chatSessionId: chatSessionIdRef.current,
@@ -3100,6 +3113,7 @@ export function useChatSession(
       appState,
       handleMrtrInputRequired,
       presentChatAuthRequiredEvent,
+      convexClient,
     ],
   );
 
@@ -3775,6 +3789,7 @@ export function useChatSession(
         await notifyMCPJamLimitErrorFromResponse(
           response,
           hostedScenarioId ? "scenario" : undefined,
+          { showsDeclinedCard: true },
         );
         if (isHostedTransport) {
           await ingestHostedRpcLogsFromResponse(response);
@@ -3826,6 +3841,11 @@ export function useChatSession(
         message: chatError.message,
         limitKind,
         ...(hostedScenarioId ? { surface: "scenario" as const } : {}),
+        // Follow the banner's own reading, so an error that only quotes a
+        // decline still opens the dialog the banner won't replace.
+        showsDeclinedCard:
+          formatErrorMessage(chatError.message)?.code ===
+          AUTO_TOPUP_DECLINED_CODE,
       });
       if (hostedProjectId) {
         void askStdioCommandApprovalForChatError(
@@ -4079,6 +4099,9 @@ export function useChatSession(
                 // The project's skills reach this turn as they reach a client
                 // turn, alongside the plugins' own.
                 includeProjectSkills: true,
+                autoContributedPluginServerIds: hiddenPluginServerIds.filter(
+                  (id) => !resolvedServerIds.includes(id),
+                ),
               }
             : // Host-bound direct preview: forward the saved host id so the server
               // re-resolves the host's authoritative runtime config (harness /

@@ -56,6 +56,16 @@ import {
 } from "../lib/app-signin-return-path";
 import { getGuestSessionRefusal } from "../lib/guest-session";
 
+// The organization key policy binding has its own tests; here a template
+// seed is created as it is.
+vi.mock("@/hooks/use-org-bound-template-seed", () => ({
+  useOrgBoundTemplateSeed: () => ({
+    ready: true,
+    bind: (input: unknown) => ({ kind: "unchanged", input }),
+    prepare: (input: unknown) => ({ input }),
+  }),
+}));
+
 /** Convex-shaped project ids for the cross-organization switch cases. */
 const ORG_A_PROJECT_ID = "k57aaaaaaaaaaaaaaaaaaaaaaaa1";
 const ORG_B_PROJECT_ID = "k57bbbbbbbbbbbbbbbbbbbbbbbb1";
@@ -4296,7 +4306,7 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://mcp.example.com/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4409,7 +4419,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://multiaccount.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4455,7 +4465,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://multiaccount.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4507,7 +4517,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://secure.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4570,7 +4580,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://secure.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4619,7 +4629,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: 'node server.js --config "My Files/config.json" ""' },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4822,7 +4832,7 @@ describe("App hosted OAuth callback handling", () => {
     const view = render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://personal.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -4869,7 +4879,7 @@ describe("App hosted OAuth callback handling", () => {
     const view = render(<App />);
     await screen.findByRole("heading", { name: "Welcome to MCPJam" });
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.change(screen.getByLabelText("Server URL or command"), {
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://personal.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));

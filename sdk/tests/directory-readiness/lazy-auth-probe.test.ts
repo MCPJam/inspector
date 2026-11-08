@@ -28,7 +28,10 @@ import {
 } from "../../src/openai-readiness/runner.js";
 import { resolveLazyAuthProbeMode } from "../../src/directory-readiness/lazy-auth.js";
 import { probeLazyAuthentication } from "../../src/directory-readiness/lazy-auth-probe.js";
-import { dialToolListing, dialInitialize } from "../../src/directory-readiness/mcp-dial.js";
+import {
+  dialToolListing,
+  dialInitialize,
+} from "../../src/directory-readiness/mcp-dial.js";
 
 const TOKEN = "Bearer run-token";
 const POINTER_PATH = "/meta/protected-resource.json";
@@ -74,12 +77,17 @@ afterEach(async () => {
         new Promise<void>((resolve) => {
           server.closeAllConnections?.();
           server.close(() => resolve());
-        }),
-    ),
+        })
+    )
   );
 });
 
-function json(res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
+function json(
+  res: http.ServerResponse,
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = {}
+) {
   res.writeHead(status, { "content-type": "application/json", ...headers });
   res.end(JSON.stringify(body));
 }
@@ -171,7 +179,11 @@ async function startLazyServer(options: LazyServerOptions): Promise<{
           name: "get_my_orders",
           description: "The signed-in user's orders.",
           inputSchema: { type: "object" },
-          annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+          annotations: {
+            readOnlyHint: true,
+            destructiveHint: false,
+            openWorldHint: false,
+          },
         };
         const schemes =
           options.protectedSchemes === undefined
@@ -193,7 +205,11 @@ async function startLazyServer(options: LazyServerOptions): Promise<{
                       required: ["city"],
                     }
                   : { type: "object" },
-                annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+                annotations: {
+                  readOnlyHint: true,
+                  destructiveHint: false,
+                  openWorldHint: true,
+                },
                 securitySchemes: [{ type: "noauth" }],
               },
               ...(options.withNoArgPublicTool
@@ -202,7 +218,11 @@ async function startLazyServer(options: LazyServerOptions): Promise<{
                       name: "get_time",
                       description: "Public clock.",
                       inputSchema: { type: "object", properties: {} },
-                      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+                      annotations: {
+                        readOnlyHint: true,
+                        destructiveHint: false,
+                        openWorldHint: false,
+                      },
                       securitySchemes: [{ type: "noauth" }],
                     },
                   ]
@@ -212,7 +232,11 @@ async function startLazyServer(options: LazyServerOptions): Promise<{
                 name: "cancel_order",
                 description: "Cancels an order.",
                 inputSchema: { type: "object" },
-                annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+                annotations: {
+                  readOnlyHint: false,
+                  destructiveHint: true,
+                  openWorldHint: false,
+                },
                 securitySchemes: [{ type: "oauth2", scopes: ["orders:write"] }],
               },
             ],
@@ -237,7 +261,10 @@ async function startLazyServer(options: LazyServerOptions): Promise<{
             ? json(res, 200, {
                 jsonrpc: "2.0",
                 id: body.id,
-                error: { code: -32602, message: "Invalid params: city is required" },
+                error: {
+                  code: -32602,
+                  message: "Invalid params: city is required",
+                },
               })
             : json(res, 200, {
                 jsonrpc: "2.0",
@@ -290,13 +317,19 @@ async function startLazyServer(options: LazyServerOptions): Promise<{
             content: [{ type: "text", text: "Sign in required" }],
             _meta: {
               "mcp/www_authenticate":
-                options.metaShape === "string" ? metaChallenge : [metaChallenge],
+                options.metaShape === "string"
+                  ? metaChallenge
+                  : [metaChallenge],
             },
           },
         });
       }
       if (body?.method === "resources/list") {
-        return json(res, 200, { jsonrpc: "2.0", id: body.id, result: { resources: [] } });
+        return json(res, 200, {
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { resources: [] },
+        });
       }
       return json(res, 200, {
         jsonrpc: "2.0",
@@ -313,7 +346,8 @@ async function startLazyServer(options: LazyServerOptions): Promise<{
 }
 
 const NOW = () => new Date("2026-10-01T00:00:00.000Z");
-const toolCalls = (hits: Hit[]) => hits.filter((hit) => hit.rpc === "tools/call");
+const toolCalls = (hits: Hit[]) =>
+  hits.filter((hit) => hit.rpc === "tools/call");
 const byId = <T extends { id: string }>(findings: T[], id: string) =>
   findings.find((finding) => finding.id === id)!;
 
@@ -335,7 +369,7 @@ describe("Claude: the probe and the metadata only the protected call reveals", (
           publicToolName: "get_weather",
         },
         now: NOW,
-      }),
+      })
     );
     const prm = byId(result.findings, "claude.auth.prm-discoverable");
     expect(prm.status).toBe("violated");
@@ -344,7 +378,7 @@ describe("Claude: the probe and the metadata only the protected call reveals", (
     });
     expect(
       byId(result.findings, "claude.auth.first-authorization-server-usable")
-        .status,
+        .status
     ).not.toBe("not-applicable");
   });
 
@@ -358,10 +392,10 @@ describe("Claude: the probe and the metadata only the protected call reveals", (
         enteredUrl: server.url,
         fetchFn: fetch,
         now: NOW,
-      }),
+      })
     );
     expect(byId(unprobed.findings, "claude.auth.prm-discoverable").status).toBe(
-      "not-applicable",
+      "not-applicable"
     );
 
     const evidence = await gatherClaudeReadinessEvidence({
@@ -396,17 +430,22 @@ describe("Claude: the probe and the metadata only the protected call reveals", (
       expect(byId(result.findings, id).status, id).toBe("satisfied");
     }
     expect(
-      result.badges.find((badge) => badge.id === "claude.features.lazy-authentication"),
+      result.badges.find(
+        (badge) => badge.id === "claude.features.lazy-authentication"
+      )
     ).toMatchObject({ state: "supported", provenance: "wire" });
 
     // Two calls, read-only tools only, and no credential on any of them.
     const calls = toolCalls(server.hits);
-    expect(calls.map((hit) => hit.tool)).toEqual(["get_weather", "get_my_orders"]);
+    expect(calls.map((hit) => hit.tool)).toEqual([
+      "get_weather",
+      "get_my_orders",
+    ]);
     expect(calls.every((hit) => hit.authorization === undefined)).toBe(true);
     expect(server.hits.some((hit) => hit.tool === "cancel_order")).toBe(false);
     // The anonymous session is the probe's own: its initialize carried nothing.
     const anonymousInitializes = server.hits.filter(
-      (hit) => hit.rpc === "initialize" && hit.authorization === undefined,
+      (hit) => hit.rpc === "initialize" && hit.authorization === undefined
     );
     expect(anonymousInitializes.length).toBeGreaterThanOrEqual(2);
     expect(evidence.lazyAuthProbe?.protocolVersion).toBe("2025-06-18");
@@ -414,25 +453,36 @@ describe("Claude: the probe and the metadata only the protected call reveals", (
   });
 
   it("calls a headerless 401 unsupported, quoting Claude's trigger", async () => {
-    const server = await startLazyServer({ refusal: "bare-401", prmAt: "well-known" });
+    const server = await startLazyServer({
+      refusal: "bare-401",
+      prmAt: "well-known",
+    });
     const result = gradeClaudeReadiness(
       await gatherClaudeReadinessEvidence({
         enteredUrl: server.url,
         fetchFn: fetch,
-        lazyAuthProbe: { enabled: true, toolName: "get_my_orders", publicToolName: "get_weather" },
+        lazyAuthProbe: {
+          enabled: true,
+          toolName: "get_my_orders",
+          publicToolName: "get_weather",
+        },
         now: NOW,
-      }),
+      })
     );
     const badge = result.badges.find(
-      (entry) => entry.id === "claude.features.lazy-authentication",
+      (entry) => entry.id === "claude.features.lazy-authentication"
     )!;
     expect(badge.state).toBe("unsupported");
-    expect(badge.detail).toMatch(/Claude starts sign-in only on HTTP 401 with WWW-Authenticate/);
-    expect(byId(result.findings, "claude.auth.unauthenticated-challenge").status).toBe(
-      "violated",
+    expect(badge.detail).toMatch(
+      /Claude starts sign-in only on HTTP 401 with WWW-Authenticate/
     );
+    expect(
+      byId(result.findings, "claude.auth.unauthenticated-challenge").status
+    ).toBe("violated");
     // The PRM is still graded: it is published at the well-known path.
-    expect(byId(result.findings, "claude.auth.prm-discoverable").status).toBe("satisfied");
+    expect(byId(result.findings, "claude.auth.prm-discoverable").status).toBe(
+      "satisfied"
+    );
   });
 
   it("calls a _meta-only refusal unsupported, and never follows its pointer", async () => {
@@ -440,15 +490,21 @@ describe("Claude: the probe and the metadata only the protected call reveals", (
     const evidence = await gatherClaudeReadinessEvidence({
       enteredUrl: server.url,
       fetchFn: fetch,
-      lazyAuthProbe: { enabled: true, toolName: "get_my_orders", publicToolName: "get_weather" },
+      lazyAuthProbe: {
+        enabled: true,
+        toolName: "get_my_orders",
+        publicToolName: "get_weather",
+      },
       now: NOW,
     });
     const result = gradeClaudeReadiness(evidence);
     const badge = result.badges.find(
-      (entry) => entry.id === "claude.features.lazy-authentication",
+      (entry) => entry.id === "claude.features.lazy-authentication"
     )!;
     expect(badge.state).toBe("unsupported");
-    expect(badge.detail).toMatch(/a 200 isError result is an ordinary tool failure to Claude/);
+    expect(badge.detail).toMatch(
+      /a 200 isError result is an ordinary tool failure to Claude/
+    );
     // Claude acts on the HTTP challenge only, so the `_meta` pointer is one
     // Claude never reaches; discovery is not re-run from it.
     expect(evidence.lazyAuthProbe?.rediscovery).toBeUndefined();
@@ -456,18 +512,24 @@ describe("Claude: the probe and the metadata only the protected call reveals", (
   });
 
   it("records a server that refuses initialize as not lazy", async () => {
-    const server = await startLazyServer({ refusal: "bearer-401", initialize401: true });
+    const server = await startLazyServer({
+      refusal: "bearer-401",
+      initialize401: true,
+    });
     const evidence = await gatherClaudeReadinessEvidence({
       enteredUrl: server.url,
       fetchFn: fetch,
       lazyAuthProbe: { enabled: true, toolName: "get_my_orders" },
       now: NOW,
     });
-    expect(evidence.lazyAuthProbe?.initialize).toMatchObject({ ok: false, status: 401 });
+    expect(evidence.lazyAuthProbe?.initialize).toMatchObject({
+      ok: false,
+      status: 401,
+    });
     expect(evidence.lazyAuthProbe?.reason).toMatch(/not lazy/);
     expect(toolCalls(server.hits)).toEqual([]);
     const badge = gradeClaudeReadiness(evidence).badges.find(
-      (entry) => entry.id === "claude.features.lazy-authentication",
+      (entry) => entry.id === "claude.features.lazy-authentication"
     )!;
     expect(badge.state).toBe("unsupported");
   });
@@ -491,10 +553,10 @@ describe("OpenAI: the runtime challenge, observed", () => {
         fetchFn: fetch,
         lazyAuthProbe: { enabled: true },
         now: NOW,
-      }),
+      })
     );
     expect(byId(result.findings, "openai.auth.challenge").status).toBe(
-      "not-applicable",
+      "not-applicable"
     );
     const pointer = byId(result.findings, "openai.auth.prm-pointer");
     expect(pointer.status).toBe("violated");
@@ -504,7 +566,10 @@ describe("OpenAI: the runtime challenge, observed", () => {
   });
 
   it("satisfies runtime-challenge from a _meta array on an oauth2 tool, and grades the PRM it names", async () => {
-    const server = await startLazyServer({ refusal: "meta", metaShape: "array" });
+    const server = await startLazyServer({
+      refusal: "meta",
+      metaShape: "array",
+    });
     const evidence = await gatherOpenAIReadinessEvidence({
       target: server.url,
       mode: "mcp-only",
@@ -538,12 +603,22 @@ describe("OpenAI: the runtime challenge, observed", () => {
       prmFound: true,
     });
 
-    expect(byId(result.findings, "openai.auth.runtime-challenge").status).toBe("satisfied");
-    expect(byId(result.findings, "openai.auth.prm-discoverable").status).toBe("satisfied");
-    expect(byId(result.findings, "openai.auth.pkce-s256").status).toBe("satisfied");
-    expect(byId(result.findings, "openai.auth.challenge").status).toBe("not-applicable");
+    expect(byId(result.findings, "openai.auth.runtime-challenge").status).toBe(
+      "satisfied"
+    );
+    expect(byId(result.findings, "openai.auth.prm-discoverable").status).toBe(
+      "satisfied"
+    );
+    expect(byId(result.findings, "openai.auth.pkce-s256").status).toBe(
+      "satisfied"
+    );
+    expect(byId(result.findings, "openai.auth.challenge").status).toBe(
+      "not-applicable"
+    );
     expect(
-      result.badges.find((badge) => badge.id === "openai.feature.lazy-authentication"),
+      result.badges.find(
+        (badge) => badge.id === "openai.feature.lazy-authentication"
+      )
     ).toMatchObject({ state: "supported" });
 
     const calls = toolCalls(server.hits);
@@ -553,7 +628,11 @@ describe("OpenAI: the runtime challenge, observed", () => {
   });
 
   it("requires both error and error_description in the _meta challenge", async () => {
-    const server = await startLazyServer({ refusal: "meta", metaShape: "string", metaErrorParams: false });
+    const server = await startLazyServer({
+      refusal: "meta",
+      metaShape: "string",
+      metaErrorParams: false,
+    });
     const result = gradeOpenAIReadiness(
       await gatherOpenAIReadinessEvidence({
         target: server.url,
@@ -561,7 +640,7 @@ describe("OpenAI: the runtime challenge, observed", () => {
         fetchFn: fetch,
         lazyAuthProbe: { enabled: true },
         now: NOW,
-      }),
+      })
     );
     const runtime = byId(result.findings, "openai.auth.runtime-challenge");
     expect(runtime.status).toBe("violated");
@@ -569,7 +648,10 @@ describe("OpenAI: the runtime challenge, observed", () => {
   });
 
   it("reports an undeclared tool as inheriting the server default (unresolved), not as no OAuth", async () => {
-    const server = await startLazyServer({ refusal: "meta", protectedSchemes: null });
+    const server = await startLazyServer({
+      refusal: "meta",
+      protectedSchemes: null,
+    });
     const result = gradeOpenAIReadiness(
       await gatherOpenAIReadinessEvidence({
         target: server.url,
@@ -577,32 +659,49 @@ describe("OpenAI: the runtime challenge, observed", () => {
         fetchFn: fetch,
         lazyAuthProbe: { enabled: true, toolName: "get_my_orders" },
         now: NOW,
-      }),
+      })
     );
     const runtime = byId(result.findings, "openai.auth.runtime-challenge");
     expect(runtime.status).toBe("not-evaluated");
-    expect(runtime.notEvaluatedReason).toMatch(/inherits the server default \(unresolved\)/);
+    expect(runtime.notEvaluatedReason).toMatch(
+      /inherits the server default \(unresolved\)/
+    );
     const schemes = byId(result.findings, "openai.tools.security-schemes");
     expect(schemes.details?.inheritsServerDefault).toEqual(["get_my_orders"]);
   });
 
   it("keeps discovered PRM when later challenge rediscovery fails", async () => {
-    const server = await startLazyServer({ refusal: "bearer-401", prmAt: "well-known" });
+    const server = await startLazyServer({
+      refusal: "bearer-401",
+      prmAt: "well-known",
+    });
     let metadataReads = 0;
     const fetchFn: typeof fetch = (input, init) => {
       const url = String(input instanceof Request ? input.url : input);
-      if (url.includes("oauth-protected-resource") || url.endsWith(POINTER_PATH)) {
+      if (
+        url.includes("oauth-protected-resource") ||
+        url.endsWith(POINTER_PATH)
+      ) {
         metadataReads++;
-        if (metadataReads > 1) return Promise.resolve(new Response("not found", { status: 404 }));
+        if (metadataReads > 1)
+          return Promise.resolve(new Response("not found", { status: 404 }));
       }
       return fetch(input, init);
     };
     const evidence = await gatherOpenAIReadinessEvidence({
-      target: server.url, mode: "mcp-only", fetchFn,
-      lazyAuthProbe: { enabled: true }, now: NOW,
+      target: server.url,
+      mode: "mcp-only",
+      fetchFn,
+      lazyAuthProbe: { enabled: true },
+      now: NOW,
     });
     expect(evidence.lazyAuthProbe?.rediscovery?.prmFound).toBe(false);
-    expect(byId(gradeOpenAIReadiness(evidence).findings, "openai.auth.prm-discoverable").status).toBe("satisfied");
+    expect(
+      byId(
+        gradeOpenAIReadiness(evidence).findings,
+        "openai.auth.prm-discoverable"
+      ).status
+    ).toBe("satisfied");
   });
 
   it("says a 401 is not the tool-level trigger ChatGPT documents", async () => {
@@ -615,10 +714,14 @@ describe("OpenAI: the runtime challenge, observed", () => {
       now: NOW,
     });
     const result = gradeOpenAIReadiness(evidence);
-    expect(byId(result.findings, "openai.auth.runtime-challenge").status).toBe("violated");
+    expect(byId(result.findings, "openai.auth.runtime-challenge").status).toBe(
+      "violated"
+    );
     // Any client follows a 401, so the metadata it names is still graded.
     expect(evidence.lazyAuthProbe?.rediscovery?.prmFound).toBe(true);
-    expect(byId(result.findings, "openai.auth.prm-discoverable").status).toBe("satisfied");
+    expect(byId(result.findings, "openai.auth.prm-discoverable").status).toBe(
+      "satisfied"
+    );
   });
 });
 
@@ -636,7 +739,11 @@ describe("the probe's empty arguments", () => {
       const evidence = await gatherClaudeReadinessEvidence({
         enteredUrl: server.url,
         fetchFn: fetch,
-        lazyAuthProbe: { enabled: true, toolName: "get_my_orders", publicToolName: "get_weather" },
+        lazyAuthProbe: {
+          enabled: true,
+          toolName: "get_my_orders",
+          publicToolName: "get_weather",
+        },
         now: NOW,
       });
       expect(evidence.lazyAuthProbe?.publicCall).toMatchObject({
@@ -644,10 +751,10 @@ describe("the probe's empty arguments", () => {
         invalidArguments: true,
       });
       const badge = gradeClaudeReadiness(evidence).badges.find(
-        (entry) => entry.id === "claude.features.lazy-authentication",
+        (entry) => entry.id === "claude.features.lazy-authentication"
       );
       expect(badge?.state).not.toBe("unsupported");
-    },
+    }
   );
 
   it("picks a public tool that takes no required arguments", async () => {
@@ -669,8 +776,8 @@ describe("the probe's empty arguments", () => {
     ]);
     expect(
       gradeClaudeReadiness(evidence).badges.find(
-        (entry) => entry.id === "claude.features.lazy-authentication",
-      ),
+        (entry) => entry.id === "claude.features.lazy-authentication"
+      )
     ).toMatchObject({ state: "supported" });
   });
 
@@ -686,8 +793,12 @@ describe("the probe's empty arguments", () => {
       lazyAuthProbe: { enabled: true },
       now: NOW,
     });
-    expect(evidence.lazyAuthProbe?.publicCallSkipped).toMatch(/required inputs/);
-    expect(toolCalls(server.hits).map((hit) => hit.tool)).toEqual(["get_my_orders"]);
+    expect(evidence.lazyAuthProbe?.publicCallSkipped).toMatch(
+      /required inputs/
+    );
+    expect(toolCalls(server.hits).map((hit) => hit.tool)).toEqual([
+      "get_my_orders",
+    ]);
   });
 });
 
@@ -697,7 +808,10 @@ describe("the gate", () => {
     const evidence = await gatherClaudeReadinessEvidence({
       enteredUrl: server.url,
       fetchFn: fetch,
-      lazyAuthProbe: { enabled: "true" as unknown as boolean, toolName: "get_my_orders" },
+      lazyAuthProbe: {
+        enabled: "true" as unknown as boolean,
+        toolName: "get_my_orders",
+      },
       now: NOW,
     });
     expect(evidence.lazyAuthProbe).toMatchObject({ attempted: false });
@@ -707,7 +821,10 @@ describe("the gate", () => {
 
   it("refuses a named tool that is not annotated read-only, without calling it", async () => {
     const server = await startLazyServer({ refusal: "bearer-401" });
-    const mode = resolveLazyAuthProbeMode({ enabled: true, toolName: "cancel_order" });
+    const mode = resolveLazyAuthProbeMode({
+      enabled: true,
+      toolName: "cancel_order",
+    });
     if (!mode.enabled) throw new Error("expected an armed mode");
     const evidence = await probeLazyAuthentication({
       enteredUrl: server.url,
@@ -718,17 +835,25 @@ describe("the gate", () => {
     expect(evidence.protectedCallSkipped).toMatch(/readOnlyHint: true/);
     expect(server.hits.some((hit) => hit.tool === "cancel_order")).toBe(false);
     // The public call still ran, chosen by its `noauth` scheme.
-    expect(toolCalls(server.hits).map((hit) => hit.tool)).toEqual(["get_weather"]);
+    expect(toolCalls(server.hits).map((hit) => hit.tool)).toEqual([
+      "get_weather",
+    ]);
   });
 
   it("bounds the tool names it accepts", () => {
     expect(
-      resolveLazyAuthProbeMode({ enabled: true, toolName: "x".repeat(129) }),
+      resolveLazyAuthProbeMode({ enabled: true, toolName: "x".repeat(129) })
     ).toMatchObject({ enabled: false });
     expect(
-      resolveLazyAuthProbeMode({ enabled: true, toolName: "a", publicToolName: "a" }),
+      resolveLazyAuthProbeMode({
+        enabled: true,
+        toolName: "a",
+        publicToolName: "a",
+      })
     ).toMatchObject({ enabled: false });
-    expect(resolveLazyAuthProbeMode(undefined)).toMatchObject({ enabled: false });
+    expect(resolveLazyAuthProbeMode(undefined)).toMatchObject({
+      enabled: false,
+    });
   });
 });
 
@@ -751,13 +876,19 @@ describe("the dial", () => {
           id: body.id,
           result:
             body.method === "initialize"
-              ? { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "x" } }
+              ? {
+                  protocolVersion: "2025-06-18",
+                  capabilities: { tools: {} },
+                  serverInfo: { name: "x" },
+                }
               : {
                   tools: [
                     {
                       name: "t",
                       inputSchema: { type: "object" },
-                      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["a"] }] },
+                      _meta: {
+                        securitySchemes: [{ type: "oauth2", scopes: ["a"] }],
+                      },
                     },
                   ],
                 },
@@ -765,18 +896,32 @@ describe("the dial", () => {
       });
     });
     servers.push(server);
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve)
+    );
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
-    const initialize = await dialInitialize({ enteredUrl: url, fetchFn: fetch });
-    const listing = await dialToolListing({ enteredUrl: url, fetchFn: fetch }, initialize.sessionId);
+    const initialize = await dialInitialize({
+      enteredUrl: url,
+      fetchFn: fetch,
+    });
+    const listing = await dialToolListing(
+      { enteredUrl: url, fetchFn: fetch },
+      initialize.sessionId
+    );
     expect(listing.entries[0]?.securitySchemes).toEqual([
       { type: "oauth2", scopes: ["a"] },
     ]);
   });
 
   it("keeps the challenge of a refused initialize", async () => {
-    const server = await startLazyServer({ refusal: "bearer-401", initialize401: true });
-    const initialize = await dialInitialize({ enteredUrl: server.url, fetchFn: fetch });
+    const server = await startLazyServer({
+      refusal: "bearer-401",
+      initialize401: true,
+    });
+    const initialize = await dialInitialize({
+      enteredUrl: server.url,
+      fetchFn: fetch,
+    });
     expect(initialize).toMatchObject({ ok: false, status: 401 });
     expect(initialize.wwwAuthenticate).toMatch(/resource_metadata=/);
   });

@@ -28,6 +28,12 @@ interface UpdateHostToLatestButtonProps {
   ) => Promise<boolean>;
   hostLoaded: boolean;
   saveInFlight: boolean;
+  /**
+   * Keep the client's own model and selection instead of the template's: set
+   * while the organization requires its own keys, whose clients the template's
+   * hosted model would break.
+   */
+  keepModel?: boolean;
 }
 
 const UPDATE_TOAST_ID = "client-update-available";
@@ -39,11 +45,21 @@ function cloneJson<T>(value: T): T {
 function applyCatalogTemplateToDraft(
   template: unknown,
   prev: HostConfigInputV2,
-  themeMode: ThemeMode
+  themeMode: ThemeMode,
+  keepModel: boolean
 ): HostConfigInputV2 {
   const next = cloneHostTemplateInput(template, { themeMode });
+  const { modelSelection: _templateSelection, ...rest } = next;
   return {
-    ...next,
+    ...(keepModel
+      ? {
+          ...rest,
+          modelId: prev.modelId,
+          ...(prev.modelSelection
+            ? { modelSelection: prev.modelSelection }
+            : {}),
+        }
+      : next),
     serverIds: [...prev.serverIds],
     optionalServerIds: [...prev.optionalServerIds],
     serverConnectionOverrides:
@@ -65,6 +81,7 @@ export function UpdateHostToLatestButton({
   onSaveLatest,
   hostLoaded,
   saveInFlight,
+  keepModel = false,
 }: UpdateHostToLatestButtonProps) {
   const [isUpdating, setIsUpdating] = useState(false);
   const catalogState = useHostCatalog();
@@ -87,14 +104,20 @@ export function UpdateHostToLatestButton({
   const latestDraft =
     catalogTemplate === undefined
       ? undefined
-      : applyCatalogTemplateToDraft(catalogTemplate, draft, themeMode);
+      : applyCatalogTemplateToDraft(
+          catalogTemplate,
+          draft,
+          themeMode,
+          keepModel
+        );
   const latestSavedDraft =
     savedCatalogTemplate === undefined
       ? undefined
       : applyCatalogTemplateToDraft(
           savedCatalogTemplate,
           savedDraft,
-          themeMode
+          themeMode,
+          keepModel
         );
   const latestDisplayName = catalogHost?.label;
   const latestSavedDisplayName = savedCatalogHost?.label;
@@ -155,7 +178,8 @@ export function UpdateHostToLatestButton({
     const nextDraft = applyCatalogTemplateToDraft(
       catalogTemplate,
       draft,
-      themeMode
+      themeMode,
+      keepModel
     );
     onDraftChange(() => nextDraft);
     onHostDisplayNameChange(latestDisplayName);

@@ -26,7 +26,11 @@ import {
   readComposerFormDraft,
   writeComposerFormDraft,
 } from "./composer-form-store";
-import type { ServerIconSources } from "../host-workspace/plugin-icon-directory";
+import {
+  serverDisplayName,
+  usePluginIconDirectory,
+  type ServerIconSources,
+} from "../host-workspace/plugin-icon-directory";
 
 export type ComposerFormAction = "accept" | "decline" | "cancel";
 
@@ -95,11 +99,12 @@ export function ComposerFormFrame({
   requestId?: string;
   children?: ReactNode;
 }) {
+  const displayName = serverDisplayName(serverName, usePluginIconDirectory());
   return (
     <section
       ref={rootRef}
       tabIndex={-1}
-      aria-label={title || `${serverName} requests information`}
+      aria-label={title || `${displayName} requests information`}
       data-composer-form={requestId}
       onKeyDown={onKeyDown}
       className="flex max-h-[min(70dvh,40rem)] w-full min-w-0 flex-col text-sm outline-none"
@@ -112,7 +117,7 @@ export function ComposerFormFrame({
           className="mt-0.5"
         />
         <h2 className="line-clamp-2 min-w-0 flex-1 font-medium [overflow-wrap:anywhere]">
-          <span className="sr-only">{serverName} requests information: </span>
+          <span className="sr-only">{displayName} requests information: </span>
           {title}
         </h2>
         {paging && paging.total > 1 && (

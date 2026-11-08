@@ -9,10 +9,12 @@ const mocks = vi.hoisted(() => ({
   listResources: vi.fn(),
   listTemplates: vi.fn(),
   runtime: vi.fn(),
+  catalog: vi.fn(),
   html: "<p>app</p>",
   mimeTypeValid: true,
 }));
-vi.mock("../../../services/plugin-host/request-runtime.js", () => ({
+vi.mock("../../../services/plugin-host/request-runtime.js", async original => ({
+  ...await original<typeof import("../../../services/plugin-host/request-runtime.js")>(),
   createPluginRequestRuntime: mocks.runtime,
 }));
 vi.mock("../../../services/plugin-host/request-invocation.js", () => ({
@@ -55,7 +57,7 @@ const source = {
   serverIdentity: { kind: "standalone" as const, serverId: "saved-id" },
 };
 const meta = { ui: { resourceUri: "ui://app" } };
-function fixture() {
+function fixture(visitor = actor) {
   const result = modelApps.publish(
     { content: [] },
     { ...source, owner: { ...source.owner, instanceId: crypto.randomUUID() } } as never,
@@ -76,7 +78,7 @@ function fixture() {
         }
       },
       admitted: async () => ({
-        actor,
+        actor: visitor,
         bearer: "private",
         admission: admission as never,
       }),
@@ -117,6 +119,67 @@ beforeEach(() => {
     resolve: mocks.resolve,
     resolveTools: mocks.resolveTools,
     release: mocks.release,
+    catalog: mocks.catalog,
+  });
+});
+
+describe("model App local file opening", () => {
+  const contract = { version: 1, targets: [{ serverId: "saved-id", root: "/allowed", exclusiveWrites: true, resources: [{ uri: "cad://part", relativePath: "part.stl" }] }] };
+  const viewer = { name: "viewer", inputSchema: { type: "object" }, _meta: { ui: { resourceUri: "ui://viewer" }, "openai/ui": { entrypoints: [{ type: "file", extensions: [".stl"] }] } } };
+  const open = (f: ReturnType<typeof fixture>, path = "/allowed/part.stl") => f.router.request("/files/open", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ projectId: "project", pluginWorkspace: { version: 1, workspaceId: "workspace" }, instanceToken: f.token, path }),
+  });
+  beforeEach(() => {
+    mocks.listResources.mockResolvedValue({ resources: [{ uri: "cad://part", name: "part.stl" }] });
+    mocks.catalog.mockResolvedValue({
+      tools: [viewer], localFileTargetContract: contract, fileTargets: { placement: "local" },
+      manager: { listResources: mocks.listResources },
+    });
+  });
+  it("resolves only a listed, admitted target and fences its source again after listing", async () => {
+    const f = fixture();
+    try {
+      const response = await open(f);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ file: { uri: "cad://part" }, entries: [{ toolName: "viewer" }] });
+      expect(mocks.resolve).toHaveBeenCalledTimes(2);
+      expect((await open(f, "/etc/passwd")).status).toBe(403);
+      mocks.resolve.mockResolvedValueOnce({ revision: "changed", tool: { _meta: meta } });
+      expect((await open(f)).status).toBe(403);
+    } finally { modelApps.close(f.token, actor); }
+  });
+  it("refuses a foreign owner, missing contract, or a source that closes during lookup", async () => {
+    const foreign = fixture({ ...actor, workspaceId: "other" });
+    expect((await open(foreign)).status).toBe(403);
+    expect(mocks.catalog).not.toHaveBeenCalled();
+    modelApps.close(foreign.token, actor);
+    const f = fixture();
+    try {
+      mocks.catalog.mockResolvedValueOnce({ tools: [viewer], fileTargets: { placement: "local" } });
+      expect((await open(f)).status).toBe(403);
+      mocks.listResources.mockImplementationOnce(async () => {
+        modelApps.close(f.token, actor);
+        return { resources: [{ uri: "cad://part", name: "part.stl" }] };
+      });
+      expect((await open(f)).status).toBe(403);
+    } finally { modelApps.close(f.token, actor); }
+  });
+  it("withholds the advertised port and refuses requests when Local files is off", async () => {
+    const f = fixture();
+    try {
+      mocks.resolve.mockResolvedValue({ revision: "source-revision", localFileTargetContract: contract,
+        extensions: { capabilities: { localFiles: false, fileViewers: true } },
+        tool: { name: "pickFile", _meta: meta },
+        manager: { readResource: mocks.read, getServerConfig: () => ({}) },
+      });
+      expect(await (await f.request()).json()).toMatchObject({ localFilesAvailable: false });
+      mocks.catalog.mockResolvedValue({ tools: [viewer], localFileTargetContract: contract,
+        extensions: { capabilities: { localFiles: false, fileViewers: true } },
+      });
+      expect((await open(f)).status).toBe(403);
+      expect(mocks.listResources).not.toHaveBeenCalled();
+    } finally { modelApps.close(f.token, actor); }
   });
 });
 describe("saved-server model App resource route", () => {

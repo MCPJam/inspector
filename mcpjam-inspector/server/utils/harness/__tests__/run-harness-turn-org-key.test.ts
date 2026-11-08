@@ -393,19 +393,15 @@ describe("runHarnessTurn on the organization's own key", () => {
     };
   }
 
-  it("reserves and starts with the selection under its CANONICAL id", async () => {
+  it("starts with the canonical selection and the current lease revision", async () => {
     const result = await runHarnessTurn(options(), "ui");
     await result.response!.text();
-    expect(vi.mocked(reserveHarnessBox).mock.lastCall?.[0]).toMatchObject({
-      modelId: "anthropic/claude-sonnet-4.5",
-      modelSelection: ORG_SELECTION,
-    });
+    expect(reserveHarnessBox).not.toHaveBeenCalled();
     expect(vi.mocked(startHarnessModelBroker).mock.lastCall?.[0]).toMatchObject(
       {
         modelId: "anthropic/claude-sonnet-4.5",
         modelSelection: ORG_SELECTION,
-        // The revision the reserve prepared: a key replaced since is refused.
-        expectedCredentialRevision: "rev_a",
+
       },
     );
   });

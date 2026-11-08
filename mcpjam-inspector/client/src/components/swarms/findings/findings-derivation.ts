@@ -1,4 +1,5 @@
 /** Presentation joins for the canonical swarm findings contract. */
+import { sessionReportUnavailableMessage } from "./findings-report-availability";
 import {
   SWARM_FINDING_DISPOSITIONS,
   SWARM_FINDING_DISPOSITION_LABELS,
@@ -376,6 +377,10 @@ export function deriveSwarmFindingsModelFromWire({
         JOURNEY_STAGES.find((stage) => stages[stage.id].state === "fail")?.id ??
         null;
       const disposition = lead?.disposition ?? "notMeasured";
+      const reportUnavailable = sessionReportUnavailableMessage(
+        rows.flatMap((row) => row.coverageNotes),
+      );
+      const reportStatus = reportUnavailable ?? "No session report is available.";
       return {
         runId,
         journeyRefId: lead?.goal.journeyRefId ?? run?.journeyRefId ?? "",
@@ -401,10 +406,12 @@ export function deriveSwarmFindingsModelFromWire({
             (disposition === "notRun"
               ? "No session launched for this goal, so nothing about the server was tested."
               : !report && lead?.verdictSeen === "passed"
-                ? "The grader recorded this goal as met. No session report is available."
+                ? `The grader recorded this goal as met. ${reportStatus}`
                 : !report && lead?.verdictSeen === "failed"
-                  ? "The grader recorded this goal as missed. No session report is available."
-                  : "No session evidence available."),
+                  ? `The grader recorded this goal as missed. ${reportStatus}`
+                  : reportUnavailable
+                    ? reportStatus
+                    : "No session evidence available."),
         },
         defaultStage: diagnosisStage ?? "value",
       };

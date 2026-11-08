@@ -1205,6 +1205,42 @@ describe("MCPAppsRenderer tool input streaming", () => {
     }
   });
 
+  it("dismisses and reopens a fullscreen-only App without changing its mode or remounting", async () => {
+    mockHostContextStoreState.draftHostContext = { availableDisplayModes: ["fullscreen"] };
+    function Controlled({ pending = false }: { pending?: boolean }) {
+      const [mode, setMode] = React.useState<"inline" | "fullscreen">("fullscreen");
+      const [owner, setOwner] = React.useState<string | null>("call-1");
+      return <HostedRenderer {...baseProps} displayMode={mode} fullscreenWidgetId={owner}
+        hostInputPending={pending} onDisplayModeChange={setMode}
+        onRequestFullscreen={setOwner} onExitFullscreen={() => setOwner(null)} />;
+    }
+    const view = render(<Controlled />);
+    await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+    act(() => triggerReady());
+    const iframe = screen.getByTestId("sandboxed-iframe");
+    fireEvent.click(screen.getByRole("button", { name: "Exit fullscreen" }));
+    expect(screen.getByRole("button", { name: "Open App" })).toBeInTheDocument();
+    expect(iframe).not.toBeVisible();
+    expect(appBridgeArgsRef.current.options.hostContext.displayMode).toBe("fullscreen");
+    fireEvent.click(screen.getByRole("button", { name: "Open App" }));
+    expect(iframe).toBeVisible();
+    expect(sandboxedIframeMountsRef.current).toBe(1);
+    expect(mockBridge.close).not.toHaveBeenCalled();
+    expect(mockBridge.teardownResource).not.toHaveBeenCalled();
+    const exit = screen.getByRole("button", { name: "Exit fullscreen" });
+    exit.focus();
+    fireEvent.keyDown(exit, { key: "Escape" });
+    expect(iframe).not.toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Open App" }));
+    view.rerender(<Controlled pending />);
+    expect(iframe).not.toBeVisible();
+    expect(screen.getByRole("button", { name: "App is waiting for input" })).toBeDisabled();
+    view.rerender(<Controlled />);
+    fireEvent.click(screen.getByRole("button", { name: "Open App" }));
+    expect(iframe).toBeVisible();
+    expect(sandboxedIframeMountsRef.current).toBe(1);
+  });
+
   it("leaves fullscreen geometry and toolbar to its workspace while preserving protocol mode", async () => {
     const { container, rerender } = render(
       <HostedRenderer
@@ -4461,6 +4497,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
       await vi.waitFor(() => {
         expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+        expect(mockBridge.oninitialized).toBeTypeOf("function");
       });
       act(() => triggerReady());
 
@@ -4511,6 +4548,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
       await vi.waitFor(() => {
         expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+        expect(mockBridge.oninitialized).toBeTypeOf("function");
       });
       expect(sandboxedIframePropsRef.current.csp.connectDomains).toEqual([]);
 
@@ -4662,10 +4700,10 @@ describe("MCPAppsRenderer host capability enforcement", () => {
       await mockBridge.oncalltool({
         name: "transparency-test",
         arguments: { value: 1 },
-      });
+      }, { signal: new AbortController().signal, requestId: 1 });
     });
 
-    expect(onCallTool).toHaveBeenCalledWith("transparency-test", { value: 1 });
+    expect(onCallTool).toHaveBeenCalledWith("transparency-test", { value: 1 }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(onAppToolInvocationChange).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
