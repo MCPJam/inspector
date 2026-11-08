@@ -9,6 +9,7 @@ import type {
   HarnessV1NetworkSandboxSession,
   HarnessV1SandboxProvider,
 } from "@ai-sdk/harness";
+import { escapeRegex } from "../../../shared/credential-urls/matching.js";
 import { logger } from "../logger.js";
 import {
   HARNESS_BAKE_HOME,
@@ -71,7 +72,7 @@ export interface HarnessBootstrapObservation {
 
 /** `<home>/<state directory>/<bootstrapDir>/.bootstrap-<identity>.ok`. */
 const MARKER_PATH = new RegExp(
-  `^(.*)/${HARNESS_STATE_DIRECTORY_NAME.replace(/\./g, "\\.")}/(.+)/\\.bootstrap-([0-9a-f]{16})\\.ok$`,
+  `^(.*)/${escapeRegex(HARNESS_STATE_DIRECTORY_NAME)}/(.+)/\\.bootstrap-([0-9a-f]{16})\\.ok$`,
 );
 
 /** The reduced session view the framework bootstraps through. */
