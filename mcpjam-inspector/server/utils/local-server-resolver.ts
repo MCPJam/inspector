@@ -777,7 +777,7 @@ export function toMCPServerConfig(
     if (typeof timeout === "number") stdio.timeout = timeout;
     if (clientCapabilities) {
       stdio.capabilities = clientCapabilities;
-      stdio.clientCapabilities = clientCapabilities;
+      if (baseClientCapabilities) stdio.clientCapabilities = clientCapabilities;
     }
     // mcpProfile.initialize fields flow into the SDK's per-server config.
     // Undefined skips the field entirely so callers that don't opt in stay
@@ -870,7 +870,7 @@ export function toMCPServerConfig(
   if (typeof timeout === "number") http.timeout = timeout;
   if (clientCapabilities) {
     http.capabilities = clientCapabilities;
-    http.clientCapabilities = clientCapabilities;
+    if (baseClientCapabilities) http.clientCapabilities = clientCapabilities;
   }
   // mcpProfile.initialize fields — same opt-in shape as the stdio branch.
   if (options?.clientInfo) http.clientInfo = options.clientInfo;

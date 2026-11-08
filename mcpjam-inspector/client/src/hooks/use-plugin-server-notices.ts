@@ -13,6 +13,7 @@ import { usePluginServerNoticeStore } from "@/stores/plugin-server-notice-store"
  */
 export function usePluginServerNotices(
   plugins: readonly ActivePluginRow[],
+  projectId?: string | null,
 ): void {
   const reports = usePluginServerNoticeStore((state) => state.reports);
   // Reports that made a notice. One whose server the plugins read doesn't
@@ -22,10 +23,10 @@ export function usePluginServerNotices(
   useEffect(() => {
     for (const [chatSessionId, report] of Object.entries(reports)) {
       if (said.current.has(report.seq)) continue;
-      const skipped = unavailableServersForNotice(plugins, report.servers);
+      const skipped = unavailableServersForNotice(plugins, report.servers, projectId ?? undefined);
       if (skipped.length === 0) continue;
       said.current.add(report.seq);
       showPluginNotice(chatSessionId, { kind: "skipped", plugins: skipped });
     }
-  }, [reports, plugins]);
+  }, [reports, plugins, projectId]);
 }

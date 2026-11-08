@@ -33,6 +33,7 @@ import type {
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { CspSubtypePolicy } from "./widget-host";
+import { useSandboxView, type SandboxViewAdmission } from "./use-sandbox-view";
 
 function isRecorderDebugEnabled() {
   try {
@@ -227,6 +228,8 @@ export interface SandboxedIframeHandle {
 }
 
 interface SandboxedIframeProps {
+  /** An authorized host supplies this before loading any proxy document. */
+  viewAdmission?: SandboxViewAdmission;
   /** HTML content to render in the sandbox */
   html: string | null;
   /** Sandbox attribute for the inner iframe */
@@ -343,6 +346,7 @@ export const SandboxedIframe = forwardRef<
 >(function SandboxedIframe(
   {
     html,
+    viewAdmission,
     sandbox = "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox",
     csp,
     permissions,
@@ -384,7 +388,8 @@ export const SandboxedIframe = forwardRef<
   // either: `viewOriginLabel` arrives with the widget-content response, after
   // this component has already mounted, so a one-shot value would leave every
   // view on the shared origin forever.
-  const sandboxProxyUrl = useMemo(
+  const preparedView = useSandboxView(viewAdmission);
+  const legacyProxyUrl = useMemo(
     () =>
       resolveSandboxProxyUrl({
         hostedMode,
@@ -398,9 +403,12 @@ export const SandboxedIframe = forwardRef<
     [hostedMode, sandboxOrigin, viewOriginLabel, viewSubdomainsEnabled]
   );
 
+  const sandboxProxyUrl = preparedView.required
+    ? preparedView.result?.proxyUrl
+    : legacyProxyUrl;
   const sandboxProxyOrigin = useMemo(() => {
     try {
-      return new URL(sandboxProxyUrl).origin;
+      return new URL(sandboxProxyUrl ?? "about:blank").origin;
     } catch {
       return "*";
     }
@@ -410,15 +418,16 @@ export const SandboxedIframe = forwardRef<
     ref,
     () => ({
       postMessage: (data: unknown) => {
-        outerRef.current?.contentWindow?.postMessage(data, sandboxProxyOrigin);
+        if (sandboxProxyUrl) outerRef.current?.contentWindow?.postMessage(data, sandboxProxyOrigin);
       },
       getIframeElement: () => outerRef.current,
     }),
-    [sandboxProxyOrigin]
+    [sandboxProxyOrigin, sandboxProxyUrl]
   );
 
   const handleMessage = useCallback(
     (event: MessageEvent) => {
+      if (!sandboxProxyUrl) return;
       if (event.origin !== sandboxProxyOrigin && sandboxProxyOrigin !== "*") {
         return;
       }
@@ -493,7 +502,7 @@ export const SandboxedIframe = forwardRef<
 
       onMessageRef.current(event);
     },
-    [sandboxProxyOrigin]
+    [sandboxProxyOrigin, sandboxProxyUrl]
   );
 
   useEffect(() => {
@@ -684,16 +693,18 @@ export const SandboxedIframe = forwardRef<
   // to the new proxy).
   useEffect(() => {
     setProxyReady(false);
-  }, [outerSandboxAttribute, sandboxProxyOrigin]);
+  }, [outerSandboxAttribute, sandboxProxyUrl]);
+
+  if (preparedView.error) return <div role="alert">{preparedView.error}</div>;
 
   return (
     <iframe
-      // Remount on a changed origin as well as changed sandbox flags: an
-      // <iframe> whose `src` changes navigates in place, and the proxy would
-      // keep the state of whichever origin it loaded first.
-      key={`${sandboxProxyOrigin}\u0000${outerSandboxAttribute}`}
+      // Admitted views keep a stable WindowProxy while their first URL is
+      // prepared, so the bridge can attach before the document loads.
+      // A changed URL resets readiness above; sandbox flags still remount.
+      key={`${preparedView.required ? "admitted" : sandboxProxyOrigin}\u0000${outerSandboxAttribute}`}
       ref={outerRef}
-      src={sandboxProxyUrl}
+      src={sandboxProxyUrl ?? "about:blank"}
       sandbox={outerSandboxAttribute}
       allow={outerAllowAttribute}
       title={title}

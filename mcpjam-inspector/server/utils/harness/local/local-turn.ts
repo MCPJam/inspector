@@ -219,6 +219,7 @@ export interface PrepareLocalHarnessTurnArgs {
    * compared against what is ACTUALLY installed.
    */
   installedAdapterVersion?: string;
+  getCleanupAuthorization?: () => Promise<string>;
   /** The user's bearer, for the lease start. Never persisted here. */
   bearer: string;
   /** Attended Off requires durable consent; unattended modes keep their mapping. */
@@ -642,6 +643,7 @@ async function prepareWithReservedRuntime(outer: {
     // entry under this id is still the one this turn registered.
     let mcpPlane: Awaited<ReturnType<typeof startLocalHarnessMcpPlane>> | undefined;
     let leaseBearer = args.bearer;
+    let leaseAuthorization = args.getCleanupAuthorization ?? (async () => leaseBearer);
     const sessionRecord: LocalHarnessSessionRecord = {
       userId: args.target.actingUserId,
       projectId: args.projectId,
@@ -657,7 +659,7 @@ async function prepareWithReservedRuntime(outer: {
         },
       },
       stop: async () => await supervisor.stopSession(args.sessionId),
-      revokeLease: () => revokeLease(currentRunId, leaseBearer),
+      revokeLease: () => revokeLease(currentRunId, leaseAuthorization),
       releaseRuntime: outer.releaseRuntimeUse,
       // A Stop, stop-all, workspace or project stop ends a parked session
       // through this registry; the parked record must stop answering at once.
@@ -671,7 +673,7 @@ async function prepareWithReservedRuntime(outer: {
         sessionRecord.gateway?.revoke();
         await sessionRecord.gateway?.close();
       } finally {
-        await revokeLease(currentRunId, leaseBearer);
+        await revokeLease(currentRunId, leaseAuthorization);
         // Stop the supervised tree, THEN give up the reservation. This is the
         // teardown a normal turn takes — `run-harness-turn.ts` calls it when
         // the model stream ends — and `endLocalHarnessSession` never reaches
@@ -735,9 +737,10 @@ async function prepareWithReservedRuntime(outer: {
         started.rebind(next.lease);
         currentRunId = next.runId;
         leaseBearer = next.bearer;
+        leaseAuthorization = next.getCleanupAuthorization ?? (async () => leaseBearer);
         sessionRecord.brokerRunId = next.runId;
       },
-      revokeCurrentLease: () => revokeLease(currentRunId, leaseBearer),
+      revokeCurrentLease: () => revokeLease(currentRunId, leaseAuthorization),
     };
     const prepared: PreparedLocalHarnessTurn = {
       plan,
@@ -791,7 +794,7 @@ async function prepareWithReservedRuntime(outer: {
             // minted, after re-checking authorization, when a decision lands.
             started.hold();
             mcpPlane?.hold();
-            void revokeLease(currentRunId, leaseBearer);
+            void revokeLease(currentRunId, leaseAuthorization);
           },
         }),
       unpark: () => releaseParkedLocalSession(args.sessionId),
@@ -820,7 +823,7 @@ interface LiveLocalRuntime {
   runtimeId: string;
   workspaceGrantId: string;
   /** Bind a fresh lease to the SAME gateway (same port, same capability). */
-  rebindLease: (next: { runId: string; lease: string; bearer: string }) => void;
+  rebindLease: (next: { runId: string; lease: string; bearer: string; getCleanupAuthorization?: () => Promise<string> }) => void;
   revokeCurrentLease: () => Promise<void>;
 }
 
@@ -984,7 +987,7 @@ async function adoptParkedLocalTurn(
     );
   }
   try {
-    live.rebindLease({ runId: broker.runId, lease: broker.lease, bearer: args.bearer });
+    live.rebindLease({ runId: broker.runId, lease: broker.lease, bearer: args.bearer, getCleanupAuthorization: args.getCleanupAuthorization });
   } catch (error) {
     await revokeLease(broker.runId, args.bearer);
     return fail(
@@ -1043,8 +1046,9 @@ async function abandonLocalSetup(args: {
   await revokeLease(args.runId, args.bearer);
 }
 
-async function revokeLease(runId: string, bearer: string): Promise<void> {
+async function revokeLease(runId: string, authorization: string | (() => Promise<string>)): Promise<void> {
   try {
+    const bearer = typeof authorization === "string" ? authorization : await authorization();
     await revokeHarnessModelBroker({ runId, bearer });
   } catch (error) {
     // Best-effort, exactly as the cloud path's revoke is: the lease's own TTL

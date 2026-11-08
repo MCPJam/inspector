@@ -9,9 +9,13 @@ import {
 } from "@mcpjam/sdk/host-compat";
 import {
   cloneHostTemplateInput,
+  hostConfigInputsEqual,
+  hostConfigDtoToInput,
   emptyHostConfigInputV2,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
+import { canonicalizeHostConfigV2 } from "@mcpjam/sdk/host-config/internal";
+import { addHostTemplateDefaults } from "../host-template-defaults";
 import { UpdateHostToLatestButton } from "../UpdateHostToLatestButton";
 import { toast } from "@/lib/toast";
 
@@ -19,7 +23,7 @@ const liveCatalog = bundledHostCompatCatalog();
 
 vi.mock("@/lib/host-compat/use-host-catalog", async () => {
   const sdk = await vi.importActual<typeof import("@mcpjam/sdk/host-compat")>(
-    "@mcpjam/sdk/host-compat"
+    "@mcpjam/sdk/host-compat",
   );
   return {
     useHostCatalog: () => ({
@@ -41,7 +45,7 @@ beforeEach(() => {
 
 function catalogDraftFor(
   hostStyle: string,
-  themeMode: "light" | "dark" = "light"
+  themeMode: "light" | "dark" = "light",
 ) {
   const template = getCatalogTemplate(liveCatalog, hostStyle);
   if (!template) throw new Error(`Missing template for ${hostStyle}`);
@@ -58,15 +62,10 @@ function renderButton(args: {
   initialDraft: HostConfigInputV2;
   initialName?: string;
   savedDraft?: HostConfigInputV2;
-  savedName?: string;
   strictMode?: boolean;
-  onSaveLatest?: (
-    name: string,
-    draft: HostConfigInputV2
-  ) => Promise<boolean>;
+  onSaveLatest?: (name: string, draft: HostConfigInputV2) => Promise<boolean>;
   hostLoaded?: boolean;
   saveInFlight?: boolean;
-  keepModel?: boolean;
 }) {
   const draftRef: { current: HostConfigInputV2 } = {
     current: args.initialDraft,
@@ -81,7 +80,7 @@ function renderButton(args: {
 
   function Harness() {
     const [draft, setDraft] = useState(args.initialDraft);
-    const [name, setName] = useState(nameRef.current);
+    const [name] = useState(nameRef.current);
     setDraftRef.current = setDraft;
     draftRef.current = draft;
     nameRef.current = name;
@@ -91,12 +90,6 @@ function renderButton(args: {
         draft={draft}
         savedDraft={args.savedDraft}
         hostDisplayName={name}
-        savedHostDisplayName={args.savedName}
-        onHostDisplayNameChange={(next) => {
-          nameRef.current = next;
-          setName(next);
-        }}
-        themeMode="light"
         onDraftChange={(updater) =>
           setDraft((prev) => {
             const next = updater(prev);
@@ -107,7 +100,6 @@ function renderButton(args: {
         onSaveLatest={onSaveLatest}
         hostLoaded={args.hostLoaded ?? true}
         saveInFlight={args.saveInFlight ?? false}
-        keepModel={args.keepModel}
       />
     );
   }
@@ -119,7 +111,7 @@ function renderButton(args: {
       </StrictMode>
     ) : (
       <Harness />
-    )
+    ),
   );
   return {
     draftRef,
@@ -131,369 +123,282 @@ function renderButton(args: {
 }
 
 describe("UpdateHostToLatestButton", () => {
-  describe("under the organization key policy", () => {
-    const orgSelection = {
-      modelId: "openai/gpt-5.6-luna",
-      source: "org",
-      connectionRef: { kind: "orgProvider", id: "orgprov_openai" },
-      nativeModelId: "gpt-5.6-luna",
-      fallback: { provider: "none", model: "none" },
-    } as const;
-
-    it("keeps the client's org model when it applies a newer template", async () => {
-      const user = userEvent.setup();
-      const initial = {
-        ...emptyHostConfigInputV2({
-          hostStyle: "mistral",
-          modelId: orgSelection.modelId,
-        }),
-        modelSelection: orgSelection,
-      };
-      const { draftRef, onSaveLatest } = renderButton({
-        initialDraft: initial,
-        initialName: "Old Mistral",
-        keepModel: true,
-      });
-
-      await user.click(
-        screen.getByRole("button", { name: /update to latest/i })
-      );
-
-      const expected = {
-        ...catalogDraftFor("mistral"),
-        modelId: orgSelection.modelId,
-        modelSelection: orgSelection,
-      };
-      expect(draftRef.current).toEqual(expected);
-      expect(onSaveLatest).toHaveBeenCalledWith(
-        catalogLabelFor("mistral"),
-        expected
-      );
+  it("does not offer an update for a custom name or agent resources alone", () => {
+    const current = {
+      ...catalogDraftFor("chatgpt"),
+      modelId: "custom-model",
+      systemPrompt: "Keep my instructions",
+      temperature: 0.2,
+      computer: { kind: "personal" as const, workdir: "/workspace/qa" },
+      builtInToolIds: ["bash"],
+      serverIds: ["server-qa"],
+    };
+    renderButton({
+      initialDraft: current,
+      initialName: "Defaults Baseline QA",
     });
-
-    it("does not offer an update for the model alone", () => {
-      const current = {
-        ...catalogDraftFor("chatgpt"),
-        modelId: orgSelection.modelId,
-        modelSelection: orgSelection,
-      };
-      renderButton({
-        initialDraft: current,
-        initialName: catalogLabelFor("chatgpt"),
-        savedDraft: current,
-        savedName: catalogLabelFor("chatgpt"),
-        keepModel: true,
-      });
-      expect(toast.info).not.toHaveBeenCalled();
-      expect(
-        screen.getByRole("button", { name: /update to latest/i })
-      ).toBeDisabled();
-    });
+    expect(toast.info).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: /update to latest/i }),
+    ).toBeDisabled();
   });
 
-  it("offers the latest client configuration in a toast", async () => {
-    const initial = emptyHostConfigInputV2({
-      hostStyle: "mistral",
-      modelId: "old-model",
-    });
-    const { draftRef, nameRef, onSaveLatest } = renderButton({
+  it("adds an absent preset default while preserving explicit choices", async () => {
+    const latest = catalogDraftFor("chatgpt");
+    expect(
+      latest.mcpProfile?.apps?.pluginExtensions?.capabilities?.mentions,
+    ).toBe(false);
+    const initial: HostConfigInputV2 = {
+      ...latest,
+      modelId: "custom-model",
+      systemPrompt: "Keep my instructions",
+      temperature: 0.2,
+      computer: { kind: "personal", workdir: "/workspace/qa" },
+      builtInToolIds: ["bash"],
+      serverIds: ["server-qa"],
+      serverConnectionOverrides: {
+        "server-qa": { requestTimeoutOverride: 4321 },
+      },
+      mcpProfile: {
+        ...latest.mcpProfile,
+        profileVersion: 1,
+        apps: {
+          ...latest.mcpProfile?.apps,
+          mcpAppsOverrides: {
+            serverTools: false,
+            availableDisplayModes: ["inline"],
+          },
+          pluginExtensions: { enabled: true, capabilities: { forms: false } },
+        },
+      },
+    };
+    const expected: HostConfigInputV2 = {
+      ...initial,
+      mcpProfile: {
+        ...initial.mcpProfile,
+        profileVersion: 1,
+        apps: {
+          ...initial.mcpProfile?.apps,
+          mcpAppsOverrides: {
+            ...latest.mcpProfile?.apps?.mcpAppsOverrides,
+            serverTools: false,
+            availableDisplayModes: ["inline"],
+          },
+          pluginExtensions: {
+            ...latest.mcpProfile?.apps?.pluginExtensions,
+            enabled: true,
+            capabilities: {
+              ...latest.mcpProfile?.apps?.pluginExtensions?.capabilities,
+              forms: false,
+            },
+          },
+        },
+      },
+    };
+    const untouched = structuredClone(initial);
+    const ui = renderButton({
       initialDraft: initial,
-      initialName: "Old Mistral",
+      initialName: "My QA client",
     });
-
-    await waitFor(() => expect(toast.info).toHaveBeenCalledTimes(1));
-    const [, options] = vi.mocked(toast.info).mock.calls[0];
-    expect(options?.action).toMatchObject({ label: "Update to latest" });
-
-    const action = options?.action as { onClick: () => void };
-    await act(() => action.onClick());
-
-    expect(draftRef.current).toEqual(catalogDraftFor("mistral"));
-    expect(nameRef.current).toBe(catalogLabelFor("mistral"));
-    expect(onSaveLatest).toHaveBeenCalledWith(
-      catalogLabelFor("mistral"),
-      catalogDraftFor("mistral")
+    expect(ui.onSaveLatest).not.toHaveBeenCalled();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /update to latest/i }));
+    expect(ui.draftRef.current).toEqual(expected);
+    expect(ui.nameRef.current).toBe("My QA client");
+    expect(ui.onSaveLatest).toHaveBeenCalledExactlyOnceWith(
+      "My QA client",
+      expected,
     );
-    expect(toast.success).toHaveBeenCalledWith("Updated to latest");
+    expect(initial).toEqual(untouched);
+    expect(
+      screen.getByRole("button", { name: /update to latest/i }),
+    ).toBeDisabled();
   });
 
-  it("keeps the catalog changes unsaved when persistence fails", async () => {
-    const user = userEvent.setup();
-    const onSaveLatest = vi.fn().mockResolvedValue(false);
-    const { draftRef } = renderButton({
-      initialDraft: emptyHostConfigInputV2({
-        hostStyle: "mistral",
-        modelId: "old-model",
-      }),
-      onSaveLatest,
+  it("does not overwrite an explicit false with a newer true default", () => {
+    const latest = catalogDraftFor("chatgpt");
+    const initial: HostConfigInputV2 = {
+      ...latest,
+      mcpProfile: {
+        ...latest.mcpProfile,
+        profileVersion: 1,
+        apps: {
+          ...latest.mcpProfile?.apps,
+          pluginExtensions: {
+            ...latest.mcpProfile?.apps?.pluginExtensions,
+            enabled: true,
+            capabilities: {
+              ...latest.mcpProfile?.apps?.pluginExtensions?.capabilities,
+              mentions: false,
+            },
+          },
+        },
+      },
+    };
+    renderButton({ initialDraft: initial });
+    expect(toast.info).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: /update to latest/i }),
+    ).toBeDisabled();
+  });
+
+  it("preserves the current model selection and a deliberately detached computer", async () => {
+    const latest = catalogDraftFor("chatgpt");
+    const initial: HostConfigInputV2 = {
+      ...latest,
+      modelId: "openai/gpt-5.6-luna",
+      modelSelection: {
+        modelId: "openai/gpt-5.6-luna",
+        source: "org",
+        connectionRef: { kind: "orgProvider", id: "orgprov_qa" },
+        nativeModelId: "gpt-5.6-luna",
+        fallback: { provider: "none", model: "none" },
+      },
+      computer: undefined,
+      harness: undefined,
+      agentLoop: "codex",
+      browserProfileId: "browser-qa",
+      mcpProfile: undefined,
+    };
+    const ui = renderButton({ initialDraft: initial, initialName: "Org QA" });
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /update to latest/i }));
+    expect(ui.draftRef.current.modelSelection).toEqual(initial.modelSelection);
+    expect(ui.draftRef.current.computer).toBeUndefined();
+    expect(ui.draftRef.current.harness).toBeUndefined();
+    expect(ui.draftRef.current.agentLoop).toBe("codex");
+    expect(ui.draftRef.current.browserProfileId).toBe("browser-qa");
+    expect(ui.onSaveLatest).toHaveBeenCalledOnce();
+  });
+
+  it("keeps explicit capability payloads and false values while adding other defaults", async () => {
+    const latest = catalogDraftFor("chatgpt");
+    const initial: HostConfigInputV2 = {
+      ...latest,
+      clientCapabilities: { experimental: {}, custom: [] },
+      hostCapabilitiesOverride: { serverTools: false },
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          pluginExtensions: {
+            enabled: false,
+            capabilities: { mentions: false },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline"],
+            toolResult: { content: { image: false } },
+          },
+        },
+      },
+    };
+    const ui = renderButton({ initialDraft: initial });
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /update to latest/i }));
+    expect(ui.draftRef.current.clientCapabilities).toMatchObject({
+      experimental: {},
+      custom: [],
     });
+    expect(ui.draftRef.current.hostCapabilitiesOverride).toEqual({
+      serverTools: false,
+    });
+    expect(
+      ui.draftRef.current.mcpProfile?.apps?.pluginExtensions,
+    ).toMatchObject({ enabled: false, capabilities: { mentions: false } });
+    expect(
+      ui.draftRef.current.mcpProfile?.apps?.mcpAppsOverrides,
+    ).toMatchObject({
+      availableDisplayModes: ["inline"],
+      toolResult: { content: { image: false } },
+    });
+  });
 
-    await user.click(
-      screen.getByRole("button", { name: /update to latest/i })
-    );
-
-    expect(onSaveLatest).toHaveBeenCalledTimes(1);
-    expect(draftRef.current).toEqual(catalogDraftFor("mistral"));
+  it("keeps an unsuccessful update as an unsaved draft and does not report success", async () => {
+    const initial = { ...catalogDraftFor("chatgpt"), mcpProfile: undefined };
+    const onSaveLatest = vi.fn().mockResolvedValue(false);
+    const ui = renderButton({ initialDraft: initial, onSaveLatest });
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /update to latest/i }));
+    expect(onSaveLatest).toHaveBeenCalledOnce();
+    expect(
+      ui.draftRef.current.mcpProfile?.apps?.pluginExtensions?.capabilities
+        ?.mentions,
+    ).toBe(false);
     expect(toast.success).not.toHaveBeenCalled();
   });
 
-  it("keeps the update toast visible during Strict Mode effect replay", async () => {
-    const { unmount } = renderButton({
-      initialDraft: emptyHostConfigInputV2({
-        hostStyle: "mistral",
-        modelId: "old-model",
-      }),
-      initialName: "Old Mistral",
+  it("offers the same missing defaults only once across Strict Mode and local edits", async () => {
+    const initial = { ...catalogDraftFor("chatgpt"), mcpProfile: undefined };
+    const ui = renderButton({
+      initialDraft: initial,
+      savedDraft: initial,
       strictMode: true,
     });
-
-    await waitFor(() => expect(toast.info).toHaveBeenCalledTimes(1));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(toast.dismiss).not.toHaveBeenCalled();
-
-    unmount();
-    await waitFor(() => expect(toast.dismiss).toHaveBeenCalledTimes(1));
-  });
-
-  it("does not treat unsaved local edits as a new client update", () => {
-    const savedDraft = catalogDraftFor("claude");
-    renderButton({
-      initialDraft: { ...savedDraft, modelId: "local-edit" },
-      savedDraft,
-      initialName: catalogLabelFor("claude"),
-      savedName: catalogLabelFor("claude"),
-    });
-
-    expect(toast.info).not.toHaveBeenCalled();
-  });
-
-  it("checks saved freshness against the saved host style", () => {
-    const savedDraft = catalogDraftFor("claude");
-    renderButton({
-      initialDraft: { ...savedDraft, hostStyle: "mistral" },
-      savedDraft,
-      initialName: catalogLabelFor("claude"),
-      savedName: catalogLabelFor("claude"),
-    });
-
-    expect(toast.info).not.toHaveBeenCalled();
-  });
-
-  it("does not offer an update while the host style has an unsaved change", () => {
-    const savedDraft = emptyHostConfigInputV2({
-      hostStyle: "mistral",
-      modelId: "old-model",
-    });
-    renderButton({
-      initialDraft: { ...savedDraft, hostStyle: "claude" },
-      savedDraft,
-      initialName: "Old Mistral",
-      savedName: "Old Mistral",
-    });
-
-    expect(toast.info).not.toHaveBeenCalled();
-  });
-
-  it("does not offer the same catalog update again after local edits", async () => {
-    const savedDraft = emptyHostConfigInputV2({
-      hostStyle: "mistral",
-      modelId: "old-model",
-    });
-    const { draftRef, setDraft } = renderButton({
-      initialDraft: savedDraft,
-      savedDraft,
-      initialName: "Old Mistral",
-      savedName: "Old Mistral",
-    });
-
     await waitFor(() => expect(toast.info).toHaveBeenCalledTimes(1));
     const [, options] = vi.mocked(toast.info).mock.calls[0];
-    const action = options?.action as { onClick: () => void };
-    act(() => action.onClick());
-    act(() => setDraft({ ...draftRef.current, modelId: "local-edit" }));
-
+    expect(options?.description).toContain("keep your saved settings");
+    await act(async () => options?.action?.onClick());
+    act(() =>
+      ui.setDraft({ ...ui.draftRef.current, modelId: "changed-model" }),
+    );
     expect(toast.info).toHaveBeenCalledTimes(1);
+    expect(ui.onSaveLatest).toHaveBeenCalledOnce();
   });
 
-  it("copies the latest catalog template, including image settings", async () => {
-    const user = userEvent.setup();
-    const serverConnectionOverrides = {
-      "srv-1": {
-        requestTimeoutOverride: 1234,
+  it("does not offer an update for unsaved host style changes", () => {
+    const saved = catalogDraftFor("chatgpt");
+    renderButton({
+      initialDraft: { ...saved, hostStyle: "mistral" },
+      savedDraft: saved,
+    });
+    expect(toast.info).not.toHaveBeenCalled();
+  });
+
+  it.each([{ hostLoaded: false }, { saveInFlight: true }])(
+    "waits for the host and saves already in flight: %j",
+    (state) => {
+      renderButton({
+        initialDraft: { ...catalogDraftFor("chatgpt"), mcpProfile: undefined },
+        ...state,
+      });
+      expect(
+        screen.getByRole("button", { name: /update to latest/i }),
+      ).toBeDisabled();
+    },
+  );
+
+  it("converges after the actual saved configuration canonicalizer", () => {
+    const latest = catalogDraftFor("chatgpt");
+    const sparse: HostConfigInputV2 = {
+      ...latest,
+      mcpProfile: {
+        ...latest.mcpProfile,
+        profileVersion: 1,
+        apps: {
+          ...latest.mcpProfile?.apps,
+          pluginExtensions: {
+            enabled: true,
+            capabilities: {
+              fileResources: false,
+              fileViewers: false,
+              localFiles: false,
+              forms: false,
+            },
+          },
+        },
       },
     };
-    const initial = emptyHostConfigInputV2({
-      hostStyle: "mistral",
-      modelId: "wrong-model",
-      systemPrompt: "local edit",
-      temperature: 0.1,
-      requireToolApproval: true,
-      respectToolVisibility: false,
-      progressiveToolDiscovery: true,
-      clientCapabilities: {},
-      hostContext: { wrong: true, theme: "light" },
-      chatUiOverride: { logo: { kind: "dots", color: "#ff0000", count: 1 } },
-      hostCapabilitiesOverride: { openLinks: {} },
-      modelVisibleMcpToolResults: {
-        directContent: { image: true },
-        embeddedResources: { blob: { image: true } },
-        linkedResources: { blob: { image: true } },
-      },
-      mcpToolResultImageRendering: {
-        placement: "inline",
-        directContent: { image: true },
-        embeddedResources: { blob: { image: true } },
-        linkedResources: { blob: { image: true } },
-      },
-      serverIds: ["srv-1"],
-      optionalServerIds: ["srv-2"],
-      serverConnectionOverrides,
-      mcpProfile: {
-        profileVersion: 1,
-        mcpProtocolVersion: "2025-06-18",
-        apps: {
-          uiInitialize: { hostInfo: { name: "Custom Host" } },
-          mcpAppsOverrides: { serverTools: false },
-        },
-      },
+    const first = addHostTemplateDefaults(latest, sparse);
+    const saved = hostConfigDtoToInput({
+      ...cloneHostTemplateInput(canonicalizeHostConfigV2(first)),
+      id: "saved-config",
+      schemaVersion: 2,
     });
-    const { draftRef, nameRef } = renderButton({
-      initialDraft: initial,
-      initialName: "Custom Mistral",
-    });
-
-    await user.click(
-      screen.getByRole("button", {
-        name: /update to latest/i,
-      })
-    );
-
-    const expected = catalogDraftFor("mistral");
-    expect(draftRef.current).toEqual({
-      ...expected,
-      hostContext: {
-        ...expected.hostContext,
-        theme: "light",
-      },
-      serverIds: ["srv-1"],
-      optionalServerIds: ["srv-2"],
-      serverConnectionOverrides,
-    });
-    expect(nameRef.current).toBe(catalogLabelFor("mistral"));
-    expect(draftRef.current.modelVisibleMcpToolResults).toEqual(
-      expected.modelVisibleMcpToolResults
-    );
-    expect(draftRef.current.mcpToolResultImageRendering).toEqual(
-      expected.mcpToolResultImageRendering
-    );
-  });
-
-  it("works for non-market templates", async () => {
-    const user = userEvent.setup();
-    const { draftRef } = renderButton({
-      initialDraft: emptyHostConfigInputV2({
-        hostStyle: "mcpjam",
-        mcpProfile: {
-          profileVersion: 1,
-          apps: { mcpAppsOverrides: { serverTools: false } },
-        },
-      }),
-    });
-
-    await user.click(
-      screen.getByRole("button", {
-        name: /update to latest/i,
-      })
-    );
-
-    expect(draftRef.current).toEqual(catalogDraftFor("mcpjam"));
-    expect(draftRef.current.clientCapabilities.elicitation).toEqual({
-      form: {},
-      url: {},
-    });
-  });
-
-  it("stays enabled when only the display name needs updating", async () => {
-    const user = userEvent.setup();
-    const { draftRef } = renderButton({
-      initialDraft: catalogDraftFor("slack"),
-      initialName: "Slack",
-    });
-
-    const button = screen.getByRole("button", {
-      name: /update to latest/i,
-    });
-    expect(button).toBeEnabled();
-
-    await user.click(button);
-
-    expect(draftRef.current).toEqual(catalogDraftFor("slack"));
-  });
-
-  it("disables when the draft already matches the catalog", () => {
-    const initialDraft = catalogDraftFor("claude");
-    renderButton({
-      initialDraft,
-      initialName: catalogLabelFor("claude"),
-    });
-
-    expect(
-      screen.getByRole("button", {
-        name: /update to latest/i,
-      })
-    ).toBeDisabled();
-  });
-
-  it("disables while the host is unavailable or another save is in flight", () => {
-    const initialDraft = emptyHostConfigInputV2({
-      hostStyle: "mistral",
-      modelId: "old-model",
-    });
-    const { rerender } = renderButton({
-      initialDraft,
-      hostLoaded: false,
-    });
-    expect(
-      screen.getByRole("button", { name: /update to latest/i })
-    ).toBeDisabled();
-
-    rerender(
-      <UpdateHostToLatestButton
-        hostId="host-test"
-        draft={initialDraft}
-        hostDisplayName="Custom Host"
-        onHostDisplayNameChange={vi.fn()}
-        themeMode="light"
-        onDraftChange={vi.fn()}
-        onSaveLatest={vi.fn().mockResolvedValue(true)}
-        hostLoaded
-        saveInFlight
-      />
-    );
-    expect(
-      screen.getByRole("button", { name: /update to latest/i })
-    ).toBeDisabled();
-  });
-
-  it("sets host theme to the current global theme instead of the catalog theme", async () => {
-    const user = userEvent.setup();
-    const initialDraft = emptyHostConfigInputV2({
-      hostStyle: "claude",
-      hostContext: { theme: "dark" },
-      modelId: "wrong-model",
-    });
-    const { draftRef } = renderButton({
-      initialDraft,
-      initialName: catalogLabelFor("claude"),
-    });
-
-    await user.click(
-      screen.getByRole("button", {
-        name: /update to latest/i,
-      })
-    );
-
-    expect(draftRef.current.hostContext.theme).toBe("light");
-    expect(draftRef.current.modelId).toBe(catalogDraftFor("claude").modelId);
+    const second = addHostTemplateDefaults(latest, saved);
+    expect(second).toEqual(saved);
+    expect(hostConfigInputsEqual(saved, second)).toBe(true);
   });
 });

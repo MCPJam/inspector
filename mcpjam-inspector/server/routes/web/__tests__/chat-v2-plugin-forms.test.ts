@@ -92,6 +92,37 @@ describe("which OpenAI plugin form path a chat turn installs", () => {
     expect(plan({ pins, harness: "codex" }).modernServerIds).toEqual([]);
   });
 
+  it("installs inline modern forms only for the qualified Codex host path", () => {
+    expect(plan({ harness: "codex", inlineMrtr: true }).inlineServerIds).toEqual(["a", "b"]);
+    expect(plan({ harness: "codex", inlineMrtr: true,
+      pins: { a: "2025-11-25", b: "2026-07-28" },
+    }).inlineServerIds).toEqual(["a", "b"]);
+    expect(plan({ harness: "codex", inlineMrtr: true,
+      pins: { a: "2025-06-18", b: "2026-07-28" },
+    }).inlineServerIds).toBeUndefined();
+    expect(plan({ harness: "codex", inlineMrtr: true, forms: false }).inlineServerIds).toBeUndefined();
+    expect(plan({ harness: "claude-code", inlineMrtr: true }).inlineServerIds).toBeUndefined();
+    expect(plan({ harness: "codex" }).inlineServerIds).toBeUndefined();
+  });
+
+  it.each(["codex", "claude-code", "cursor"])("keeps explicit %s agent loops on the owned inline path", (agentLoop) => {
+    const disabled = plan({ agentLoop });
+    expect(disabled.admitted).toBe(true);
+    expect(disabled.modernServerIds).toEqual([]);
+    expect(disabled.inlineServerIds).toBeUndefined();
+    const inline = plan({ agentLoop, inlineMrtr: true });
+    expect(inline.modernServerIds).toEqual([]);
+    expect(inline.inlineServerIds).toEqual(["a", "b"]);
+    expect(plan({ agentLoop, inlineMrtr: true, forms: false }).inlineServerIds).toBeUndefined();
+  });
+
+  it("rejects unknown or conflicting agent loop selections", () => {
+    expect(plan({ agentLoop: "unknown", inlineMrtr: true }).admitted).toBe(false);
+    expect(plan({ agentLoop: "codex", harness: "codex", inlineMrtr: true }).admitted).toBe(false);
+    expect(plan({}).modernServerIds).toEqual(["a", "b"]);
+    expect(plan({ inlineMrtr: true }).inlineServerIds).toBeUndefined();
+  });
+
   it("keeps a mixed batch and older pins off the legacy handler", () => {
     expect(
       plan({ pins: { a: "2026-07-28", b: undefined } }).legacyServerIds,

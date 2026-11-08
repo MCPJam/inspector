@@ -57,6 +57,7 @@ import oauth from "./oauth.js";
 import catalog from "./catalog.js";
 import chatSessions from "./chat-sessions.js";
 import widgets from "./widgets.js";
+import widgetSessions from "./widget-sessions.js";
 import registry from "./registry.js";
 import organizations from "./organizations.js";
 import evalChecks from "./eval-checks.js";
@@ -283,6 +284,7 @@ v1.route("/", chatSessions);
 // GUEST_ALLOWED_V1_RULES entry) — it launches a browser and executes the
 // caller's tool. Its own per-replica Chromium cap lives in the module.
 v1.route("/", widgets);
+v1.route("/", widgetSessions);
 v1.route("/", catalog);
 // Registry — directory search/detail/sources (guest-allowed reads) plus
 // project-scoped card/connection reads and install/uninstall writes. Mounted
