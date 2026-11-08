@@ -239,6 +239,10 @@ const HOSTED_HARNESS_ARGS = {
     modelId: "openai/gpt-5.5",
     auth: { CODEX_API_KEY: "bake", OPENAI_BASE_URL: "http://bake.invalid" },
   },
+  "copilot-cli": {
+    modelId: "openai/gpt-5.5",
+    auth: { COPILOT_MODEL_PROXY_PLACEHOLDER: "bake", OPENAI_BASE_URL: "http://bake.invalid/v1" },
+  },
   cursor: {
     auth: { CURSOR_API_KEY: "bake" },
     mcpJson: { mcpServers: {} },
@@ -368,6 +372,12 @@ export async function resolveHarnessBake() {
           ["linux-x64", "linux-arm64"].map((key) => [key, codexChecksums[key]]),
         ),
       },
+      sentinels: () => [],
+    },
+    {
+      loadRecipe: () => loadHostedRecipe("copilot-cli"),
+      runtimeVersion: HARNESS_PINNED_VERSIONS["copilot-cli"],
+      vendor: { kind: "github-copilot-sdk", sdkVersion: "1.0.11" },
       sentinels: () => [],
     },
     {

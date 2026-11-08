@@ -293,10 +293,29 @@ function extractUserText(prompt: HarnessV1Prompt | undefined): string {
 export function createCodexAppServer(
   settings: CodexAppServerSettings = {},
 ): HarnessV1<typeof CODEX_APPSERVER_BUILTIN_TOOLS> {
+  return createRetainedBridgeHarness(settings, {
+    id: CODEX_APPSERVER_HARNESS_ID,
+    builtinTools: CODEX_APPSERVER_BUILTIN_TOOLS,
+    bootstrapDir: CODEX_APPSERVER_BOOTSTRAP_DIR,
+    getBootstrap: async () => getCodexAppServerBootstrap(),
+  });
+}
+
+/** Host a runtime that speaks the retained Playground WebSocket protocol. */
+export function createRetainedBridgeHarness<T extends NonNullable<HarnessV1["builtinTools"]>>(
+  settings: CodexAppServerSettings,
+  runtime: {
+    id: string;
+    builtinTools: T;
+    requiresLiveContinuation?: boolean;
+    bootstrapDir: string;
+    getBootstrap: NonNullable<HarnessV1["getBootstrap"]>;
+  },
+): HarnessV1<T> {
   return {
     specificationVersion: "harness-v1",
-    harnessId: CODEX_APPSERVER_HARNESS_ID,
-    builtinTools: CODEX_APPSERVER_BUILTIN_TOOLS,
+    harnessId: runtime.id,
+    builtinTools: runtime.builtinTools,
     /**
      * TRUE, and this is the whole point of the transport. `HarnessAgent`
      * refuses to construct with a non-`allow-all` permission mode unless the
@@ -307,14 +326,14 @@ export function createCodexAppServer(
     /** Codex offers no way to remove a builtin from the model's tool set. */
     supportsBuiltinToolFiltering: false,
     lifecycleStateSchema: codexAppServerResumeStateSchema,
-    getBootstrap: async () => getCodexAppServerBootstrap(),
+    getBootstrap: runtime.getBootstrap,
 
     doStart: async (startOpts) => {
       if (startOpts.builtinToolFiltering != null) {
         throw new HarnessCapabilityUnsupportedError({
           message:
-            "Harness 'codex' (app-server) does not support built-in tool filtering controls.",
-          harnessId: CODEX_APPSERVER_HARNESS_ID,
+            `Harness '${runtime.id}' does not support built-in tool filtering controls.`,
+          harnessId: runtime.id,
         });
       }
 
@@ -350,7 +369,7 @@ export function createCodexAppServer(
       });
       const bootstrapDir = posix.resolve(
         defaultWorkingDirectory,
-        CODEX_APPSERVER_BOOTSTRAP_DIR,
+        runtime.bootstrapDir,
       );
       const sessionDataDir = `${defaultWorkingDirectory}/.agent-runs/${startOpts.sessionId}`;
       const bridgeStateDir = `${sessionDataDir}/bridge`;
@@ -377,7 +396,7 @@ export function createCodexAppServer(
             )
         : undefined;
       const onBridgeError = createBridgeErrorHandler({
-        harnessId: CODEX_APPSERVER_HARNESS_ID,
+        harnessId: runtime.id,
         sessionId: startOpts.sessionId,
       });
 
@@ -411,7 +430,8 @@ export function createCodexAppServer(
             onBridgeError,
           });
           await attachChannel.open(isContinue ? { resume: true } : undefined);
-          return createCodexAppServerSession({
+          return createRetainedBridgeSession({
+            harnessId: runtime.id,
             sessionId: startOpts.sessionId,
             channel: attachChannel,
             proc: undefined,
@@ -448,7 +468,7 @@ export function createCodexAppServer(
       let respawnStrategy: "replay" | "rerun" | undefined = isResume
         ? "rerun"
         : undefined;
-      if (coords && isContinue) {
+      if (coords && isContinue && !runtime.requiresLiveContinuation) {
         const logRaw = await Promise.resolve(
           toolSafeSandboxSession.readTextFile({
             path: `${bridgeStateDir}/event-log.ndjson`,
@@ -467,7 +487,7 @@ export function createCodexAppServer(
       // for one action may run another, so refuse rather than rerun.
       if (isContinue && respawnStrategy !== "replay") {
         throw new Error(
-          "The Codex session holding this approval is no longer running, so " +
+          `The ${runtime.id} session holding this approval is no longer running, so ` +
             "the pending action will not run. Start a new turn; anything " +
             "proposed then will ask for approval again.",
         );
@@ -501,7 +521,7 @@ export function createCodexAppServer(
       await markBridgeStarting({
         sandbox: toolSafeSandboxSession,
         bridgeStateDir,
-        bridgeType: CODEX_APPSERVER_HARNESS_ID,
+        bridgeType: runtime.id,
         abortSignal: startOpts.abortSignal,
       });
 
@@ -519,7 +539,7 @@ export function createCodexAppServer(
       const bridgeStderrDone = forwardBridgeProcessStream({
         stream: proc.stderr,
         streamName: "stderr",
-        source: CODEX_APPSERVER_HARNESS_ID,
+        source: runtime.id,
         collectTail: stderrTail,
       });
 
@@ -527,12 +547,12 @@ export function createCodexAppServer(
         proc,
         sandbox: toolSafeSandboxSession,
         bridgeStateDir,
-        bridgeType: CODEX_APPSERVER_HARNESS_ID,
+        bridgeType: runtime.id,
         timeoutMs,
         abortSignal: startOpts.abortSignal,
         createTimeoutError: ({ proc: p, stdoutTail }) =>
           createBridgeStartupError({
-            message: "codex app-server bridge did not become ready in time.",
+            message: `${runtime.id} bridge did not become ready in time.`,
             proc: p,
             stdoutTail,
             stderrTail,
@@ -540,7 +560,7 @@ export function createCodexAppServer(
           }),
         createExitError: ({ proc: p, stdoutTail }) =>
           createBridgeStartupError({
-            message: "codex app-server bridge exited before becoming ready.",
+            message: `${runtime.id} bridge exited before becoming ready.`,
             proc: p,
             stdoutTail,
             stderrTail,
@@ -574,7 +594,8 @@ export function createCodexAppServer(
         respawnStrategy === "replay" ? { resume: true } : undefined,
       );
 
-      return createCodexAppServerSession({
+      return createRetainedBridgeSession({
+        harnessId: runtime.id,
         sessionId: startOpts.sessionId,
         channel,
         proc,
@@ -599,7 +620,8 @@ export function createCodexAppServer(
   };
 }
 
-function createCodexAppServerSession(input: {
+function createRetainedBridgeSession(input: {
+  harnessId: string;
   sessionId: string;
   channel: Channel;
   /** Undefined on ATTACH — another process spawned the live bridge. */
@@ -798,7 +820,7 @@ function createCodexAppServerSession(input: {
       if (reason === "suspended") settleSuccess();
       else
         settleError(
-          new Error("codex app-server bridge closed before the turn finished."),
+          new Error(`${input.harnessId} bridge closed before the turn finished.`),
         );
     };
     unsubscribes.push(() => {
@@ -1028,14 +1050,14 @@ function createCodexAppServerSession(input: {
         message:
           "Harness 'codex' (app-server) cannot trigger manual compaction: the " +
           "bridge protocol has no command for it. Codex auto-compacts its own context.",
-        harnessId: CODEX_APPSERVER_HARNESS_ID,
+        harnessId: input.harnessId,
       });
     },
 
     doSuspendTurn: async () => {
       if (stopped) {
         throw new Error(
-          `codex app-server session ${sessionId} is stopped; cannot suspend.`,
+          `${input.harnessId} session ${sessionId} is stopped; cannot suspend.`,
         );
       }
       stopped = true;
@@ -1046,7 +1068,7 @@ function createCodexAppServerSession(input: {
       const lastSeenEventId = await channel.suspend();
       const payload: HarnessV1ContinueTurnState = {
         type: "continue-turn",
-        harnessId: CODEX_APPSERVER_HARNESS_ID,
+        harnessId: input.harnessId,
         specificationVersion: "harness-v1",
         data: lifecycleData({
           port: input.bridgePort,
@@ -1060,14 +1082,14 @@ function createCodexAppServerSession(input: {
     doDetach: async () => {
       if (stopped) {
         throw new Error(
-          `codex app-server session ${sessionId} is already stopped; cannot detach.`,
+          `${input.harnessId} session ${sessionId} is already stopped; cannot detach.`,
         );
       }
       stopped = true;
       const lastSeenEventId = await channel.suspend();
       const payload: HarnessV1ResumeSessionState = {
         type: "resume-session",
-        harnessId: CODEX_APPSERVER_HARNESS_ID,
+        harnessId: input.harnessId,
         specificationVersion: "harness-v1",
         data: lifecycleData({
           port: input.bridgePort,
@@ -1081,7 +1103,7 @@ function createCodexAppServerSession(input: {
     doStop: async () => {
       if (stopped) {
         throw new Error(
-          `codex app-server session ${sessionId} is already stopped; cannot stop.`,
+          `${input.harnessId} session ${sessionId} is already stopped; cannot stop.`,
         );
       }
       stopped = true;
@@ -1146,7 +1168,7 @@ function createCodexAppServerSession(input: {
           : {};
       const payload: HarnessV1ResumeSessionState = {
         type: "resume-session",
-        harnessId: CODEX_APPSERVER_HARNESS_ID,
+        harnessId: input.harnessId,
         specificationVersion: "harness-v1",
         data: {
           ...merged,

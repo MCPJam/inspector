@@ -763,6 +763,13 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   SLACK_HOST_STYLE,
   CURSOR_HOST_STYLE,
   CURSOR_CLI_HOST_STYLE,
+  {
+    ...COPILOT_HOST_STYLE,
+    id: "copilot-cli",
+    mcp: { ...COPILOT_HOST_STYLE.mcp, ...HOST_STYLE_CAPABILITIES["copilot-cli"] },
+    chatUi: { ...COPILOT_HOST_STYLE.chatUi, label: "GitHub Copilot CLI",
+      shortLabel: "GitHub Copilot CLI", pickerDescription: "GitHub Copilot CLI in a hosted sandbox" },
+  },
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,
   CLAUDE_CODE_HOST_STYLE,

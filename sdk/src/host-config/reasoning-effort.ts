@@ -68,6 +68,7 @@ export const HARNESS_REASONING_EFFORTS: Readonly<
   // app-server `turn/start effort`). none / minimal / max stay refused until
   // verified.
   codex: ["low", "medium", "high", "xhigh"],
+  "copilot-cli": [],
   cursor: [],
 };
 

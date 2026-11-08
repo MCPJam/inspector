@@ -71,7 +71,7 @@ export const HOST_CONFIG_SCHEMA_VERSION_V2 = 2;
  * Adding a runtime is a one-line addition here + a registry adapter + tests —
  * never a schema migration (absent ⇒ emulated still hashes byte-identically).
  */
-export const HARNESS_IDS = ["claude-code", "codex", "cursor"] as const;
+export const HARNESS_IDS = ["claude-code", "codex", "cursor", "copilot-cli"] as const;
 
 /**
  * Which real agent **harness** runs a host's turn. Absent ⇒ the MCPJam

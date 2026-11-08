@@ -43,6 +43,7 @@ export type HarnessMcpDelivery = "harness" | "mcpjam";
 export const HARNESS_MCP_DELIVERY = {
   "claude-code": HARNESS_DESCRIPTORS["claude-code"].mcpClient,
   codex: HARNESS_DESCRIPTORS.codex.mcpClient,
+  "copilot-cli": HARNESS_DESCRIPTORS["copilot-cli"].mcpClient,
   cursor: HARNESS_DESCRIPTORS.cursor.mcpClient,
 } as const satisfies Record<Harness, HarnessMcpDelivery>;
 export function harnessMcpDelivery(harness: Harness): HarnessMcpDelivery {

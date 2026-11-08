@@ -7,8 +7,8 @@ import { HARNESS_PINNED_VERSIONS, HARNESS_ORG_UPSTREAM } from "../harness-model-
 describe("harness descriptors", () => {
   it("covers every SDK id and derives the existing runtime maps", () => {
     expect(Object.keys(HARNESS_DESCRIPTORS).sort()).toEqual([...HARNESS_IDS].sort());
-    expect(HARNESS_MCP_DELIVERY).toEqual({ "claude-code": "harness", codex: "mcpjam", cursor: "harness" });
-    expect(HARNESS_PINNED_VERSIONS).toEqual({ "claude-code": "2.1.245", codex: "0.163.0", cursor: "2026.11.05-86047df" });
+    expect(HARNESS_MCP_DELIVERY).toEqual({ "claude-code": "harness", codex: "mcpjam", "copilot-cli": "mcpjam", cursor: "harness" });
+    expect(HARNESS_PINNED_VERSIONS).toEqual({ "claude-code": "2.1.245", codex: "0.163.0", "copilot-cli": "1.0.92", cursor: "2026.11.05-86047df" });
     expect(HARNESS_ORG_UPSTREAM.cursor).toBeNull();
     expect(LOCAL_HARNESS_IDS).toEqual(["claude-code", "codex"]);
   });

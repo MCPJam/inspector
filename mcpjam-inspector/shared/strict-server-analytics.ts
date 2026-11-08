@@ -31,7 +31,7 @@ const enums: Record<string, readonly string[]> = {
   terminal_reason: ["runner_error", "timeout", "cancelled", "completed"],
   scope: ["project", "organization", "user"],
   status: ["running", "completed", "failed", "cancelled"],
-  harness_id: ["claude-code", "codex", "cursor"],
+  harness_id: ["claude-code", "codex", "cursor", "copilot-cli"],
   trigger: ["boot", "readiness", "provision", "cli", "manual"],
   stage: ["download", "verify", "extract", "install", "probe", "activate"],
   role: ["desired", "previous", "candidate"],

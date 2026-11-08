@@ -10371,7 +10371,7 @@ const clientFieldSet = z
       .optional()
       .describe("null clears the host-level opt-in."),
     harness: z
-      .enum(["claude-code", "codex", "cursor"])
+      .enum(["claude-code", "codex", "cursor", "copilot-cli"])
       .nullable()
       .optional()
       .describe(

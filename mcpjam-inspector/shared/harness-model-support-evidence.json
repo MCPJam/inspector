@@ -2,6 +2,22 @@
   "$comment": "Harness x model compatibility evidence. Rows are evaluated in order; the first row whose harness matches, whose versionRange admits the runtime version and whose familyPattern matches the canonical model id wins. versionRange is \"*\" (any version, including an unknown one), \"<=A.B.x\" \">A.B.x\" or \"A.B.x\". When the runtime version is unknown and a version-specific row's pattern matches, the verdict is unknown. Mirrored byte-for-byte between mcpjam-inspector/shared/harness-model-support-evidence.json (source) and mcpjam-backend convex/lib/harnessModelSupportEvidence.json.",
   "rows": [
     {
+      "harness": "copilot-cli",
+      "versionRange": "1.0.x",
+      "familyPattern": "^openai/gpt-5\\.5$",
+      "status": "supported",
+      "evidence": "Copilot CLI 1.0.92 and GitHub SDK 1.0.11 issued a Responses tool call and consumed its approved result in the hosted bridge tracer.",
+      "observedAt": "2026-11-07"
+    },
+    {
+      "harness": "copilot-cli",
+      "versionRange": "*",
+      "familyPattern": ".*",
+      "status": "unsupported",
+      "evidence": "Only the pinned hosted Playground model route is admitted.",
+      "observedAt": "2026-11-07"
+    },
+    {
       "harness": "claude-code",
       "versionRange": "*",
       "familyPattern": "^anthropic/claude-(haiku|sonnet|opus)-\\d+(\\.\\d+)?$",

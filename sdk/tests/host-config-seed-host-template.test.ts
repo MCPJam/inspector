@@ -23,6 +23,7 @@ const ALL_IDS: HostTemplateId[] = [
   "slack",
   "cursor",
   "cursor-cli",
+  "copilot-cli",
   "codex",
   "copilot",
   "vscode",

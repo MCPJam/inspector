@@ -49,6 +49,11 @@ const LOOP_CONTROLS: Record<
       note: "Codex does its own tool discovery.",
     },
   },
+  "copilot-cli": {
+    modelId: ENFORCED, requireToolApproval: ENFORCED,
+    temperature: { enforced: false, note: "GitHub Copilot CLI controls temperature." },
+    progressiveToolDiscovery: { enforced: false, note: "GitHub Copilot CLI receives the selected tools at turn start." },
+  },
   cursor: {
     // The one harness whose MODEL is not MCPJam's to choose. It authenticates
     // with the customer's own Cursor account and that account picks the model
@@ -100,6 +105,13 @@ export const HARNESS_DESCRIPTORS = {
     orgUpstream: { provider: "openai", profile: "openai-native" },
     protocol: "openai-responses", credential: null,
     controls: LOOP_CONTROLS.codex, reasoningEfforts: HARNESS_REASONING_EFFORTS.codex,
+  },
+  "copilot-cli": {
+    displayName: "GitHub Copilot CLI", runtimeVersion: "1.0.92", mcpClient: "mcpjam",
+    modelAccess: "broker", local: false, guest: false,
+    orgUpstream: { provider: "openai", profile: "openai-native" },
+    protocol: "openai-responses", credential: null,
+    controls: LOOP_CONTROLS["copilot-cli"], reasoningEfforts: HARNESS_REASONING_EFFORTS["copilot-cli"],
   },
   cursor: {
     displayName: "Cursor CLI", runtimeVersion: "2026.11.05-86047df", mcpClient: "harness",

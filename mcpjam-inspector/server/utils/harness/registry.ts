@@ -25,6 +25,7 @@ export {
   CURSOR_CLI_CHECKSUMS,
   CURSOR_CLI_VERSION,
 } from "./cursor-bootstrap.js";
+import { createCopilotCli } from "./copilot-cli/index.js";
 import { createCodexAppServer } from "./codex-appserver/index.js";
 import type { CodexWorkspaceWriteSandboxPolicy } from "./codex-appserver/shared/sandbox-policy.js";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
@@ -153,6 +154,8 @@ export function buildBrokerDummyAuth(
         OPENAI_BASE_URL: proxyBaseUrl,
         ...(closeModelConnections ? { MCPJAM_CLOSE_MODEL_CONNECTIONS: "1" } : {}),
       };
+    case "copilot-cli":
+      return { OPENAI_BASE_URL: proxyBaseUrl, COPILOT_MODEL_PROXY_PLACEHOLDER: BROKER_DUMMY_CREDENTIAL };
     case "cursor":
       throw new Error(
         "The Cursor harness authenticates with the customer's own Cursor " +
@@ -1292,9 +1295,43 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   },
 };
 
+const copilotCliAdapter: HarnessRuntimeAdapter = {
+  id: "copilot-cli",
+  displayName: HARNESS_DESCRIPTORS["copilot-cli"].displayName,
+  modelAccess: "broker",
+  requiresComputer: true,
+  supportedReasoningEfforts: [],
+  defaultPermissionMode: "allow-all",
+  approvalPermissionMode: "allow-reads",
+  liveApprovalRuntime: true,
+  // Only registered host tools are exposed. The CLI denies any other request.
+  supportsNativeToolApproval: true,
+  supportsHostExecutedToolApproval: true,
+  supportsMcpToolApproval: false,
+  mcpDelivery: HARNESS_MCP_DELIVERY["copilot-cli"],
+  supportsSkills: false,
+  skillsBaseDir: "",
+  skillsWriteOptions: { trailingNewline: false },
+  prepareSkills: prepareNoSkills,
+  supportsPluginBundles: false,
+  listBuiltinTools: () => [],
+  parseToolName: parseHarnessToolName,
+  pinnedRuntimeVersion: harnessPinnedVersion("copilot-cli"),
+  modelSupport: modelSupportFor("copilot-cli"),
+  supportsModel: supportsModelFor("copilot-cli"),
+  toNativeModel: (modelId, upstream) => upstream?.nativeModelId ?? modelId,
+  createHarness: ({ modelId, upstream, auth, startupTimeoutMs }) =>
+    createCopilotCli({
+      model: upstream?.nativeModelId ?? modelId,
+      auth,
+      startupTimeoutMs,
+    }),
+};
+
 const HARNESS_ADAPTERS: Record<HarnessId, HarnessRuntimeAdapter> = {
   "claude-code": claudeCodeAdapter,
   codex: codexAdapter,
+  "copilot-cli": copilotCliAdapter,
   cursor: cursorAdapter,
 };
 
