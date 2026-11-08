@@ -292,9 +292,12 @@ export function personalComputerWorkspace(args: {
 
 /**
  * A server that logs its listen address prints `0.0.0.0`, and the relay
- * answers only the loopback names a page can keep as its origin.
+ * answers only the loopback names a page can keep as its origin. Browser
+ * judges a navigation by this URL too, so the origin it allows is the one the
+ * browser opens.
  */
-function loopbackUrl(raw: string): string {
+export function loopbackUrl(raw: string): string {
+  if (!URL.canParse(raw)) return raw;
   const url = new URL(raw);
   if (url.hostname !== "0.0.0.0") return raw;
   url.hostname = "localhost";
