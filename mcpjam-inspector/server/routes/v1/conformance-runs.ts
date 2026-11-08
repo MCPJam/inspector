@@ -19,6 +19,7 @@ import { translateConvexWriteError as translateConvexError } from "./convex-erro
 import { redactedReadRefusalError } from "./convex-read-errors.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { readAnyIdempotencyKey } from "../../utils/idempotency.js";
+import { readLaunchContext } from "../../utils/launch-context.js";
 import { findConformanceCheck } from "../shared/conformance-check.js";
 import {
   HOSTED_CONFORMANCE_SUITES,
@@ -183,6 +184,7 @@ conformanceRuns.post(
       protocolVersion: body.protocolVersion,
       engineVersion: body.engineVersion,
       settings: body.settings,
+      launcher: readLaunchContext(c)?.launcher,
       translateError: (error) =>
         translateConvexError(error, { resource: "Conformance run" }),
     });

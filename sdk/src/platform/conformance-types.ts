@@ -62,6 +62,10 @@ export interface PlatformConformanceRun {
   requestedSuites: string[];
   /** Null for runs whose deployment did not record it. */
   settingsSource?: PlatformConformanceSettingsSource | null;
+  /** What the launching client said it was: `cli`, `mcp` or `github_action`. */
+  launcher?: { kind: string; client?: string; version?: string } | null;
+  /** The surface the server verified the start came from, and its API key. */
+  attribution?: { surface: string; apiKeyId?: string | null } | null;
   protocolVersion: string | null;
   engineVersion: string | null;
   createdAt: number;

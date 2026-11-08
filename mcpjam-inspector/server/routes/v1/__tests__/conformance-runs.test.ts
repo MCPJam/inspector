@@ -682,6 +682,38 @@ describe("v1 persisted conformance runs", () => {
       expect(executePersistedConformanceRunMock).not.toHaveBeenCalled();
     });
 
+    it("passes the client's declared launcher to the run, and reads it back", async () => {
+      const res = await makeApp().request(START, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+          "x-mcpjam-launcher": JSON.stringify({ kind: "cli", client: "mcpjam-cli" }),
+        },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(202);
+      expect(
+        executePersistedConformanceRunMock.mock.calls[0]![0].launcher,
+      ).toMatchObject({ kind: "cli", client: "mcpjam-cli" });
+
+      convexQueryMock.mockResolvedValue({
+        ...RUN_ROW,
+        launcher: { kind: "cli", client: "mcpjam-cli" },
+        attribution: { surface: "rest", apiKeyId: "key_1" },
+        settingsSource: "saved",
+      });
+      const read = await request(
+        "GET",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/conformance-runs/run_1",
+      );
+      expect(await read.json()).toMatchObject({
+        launcher: { kind: "cli", client: "mcpjam-cli" },
+        attribution: { surface: "rest", apiKeyId: "key_1" },
+        settingsSource: "saved",
+      });
+    });
+
     it("takes the idempotency key from the header before the body", async () => {
       const res = await makeApp().request(START, {
         method: "POST",
