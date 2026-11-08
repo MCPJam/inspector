@@ -1,14 +1,16 @@
 import type { Harness } from "@mcpjam/sdk";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
+import {
+  orgKeySurfaceRefusal,
+  type OrgKeyRefusedSurface,
+} from "@/shared/org-key-surfaces";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 
 /**
- * Where a harness that runs on the organization's vendor key (Cursor) may run:
- * the Playground, evals and swarms. Their boxes receive the key, and their
- * turns check it before a box is reserved. User Testing, the v1 APIs and MCP
- * Events runs refuse it, each before anything is reserved.
+ * The server's side of `shared/org-key-surfaces.ts`: the predicate, the
+ * refusal as a chat route's answer, and the turn sources that never run it.
  */
-export type OrgKeyRefusedSurface = "study" | "elsewhere";
+export type { OrgKeyRefusedSurface };
 
 export function runsOnOrgVendorKey(harness: Harness): boolean {
   return HARNESS_DESCRIPTORS[harness].modelAccess === "external-account";
@@ -18,13 +20,7 @@ export function orgKeyHarnessSurfaceRefusal(
   harness: Harness,
   surface: OrgKeyRefusedSurface,
 ): string {
-  return (
-    `${HARNESS_DESCRIPTORS[harness].displayName} runs only in the ` +
-    "Playground, evals and swarms. " +
-    (surface === "study"
-      ? "Choose a different client for this study."
-      : "Use it there, or choose a different client.")
-  );
+  return orgKeySurfaceRefusal(HARNESS_DESCRIPTORS[harness].displayName, surface);
 }
 
 /** The same refusal as a chat route's answer. */
