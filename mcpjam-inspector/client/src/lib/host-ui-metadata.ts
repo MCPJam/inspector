@@ -38,6 +38,7 @@ const LOGO_BY_HOST_ID: Record<string, string> = {
   // because an id absent from this record falls back to the anonymous MCP mark.
   "cursor-cli": cursorLogo,
   codex: codexLogo,
+  "copilot-cli": copilotLogo,
   copilot: copilotLogo,
   vscode: vscodeLogo,
   agentcore: bedrockLogo,
@@ -115,6 +116,7 @@ const TINT_BY_HOST_ID: Record<string, string> = {
   slack: "#611F69",
   cursor: NEUTRAL_HOST_TINT,
   "cursor-cli": NEUTRAL_HOST_TINT,
+  "copilot-cli": NEUTRAL_HOST_TINT,
   copilot: NEUTRAL_HOST_TINT,
   vscode: "#0098FF",
   agentcore: "#FF9900",

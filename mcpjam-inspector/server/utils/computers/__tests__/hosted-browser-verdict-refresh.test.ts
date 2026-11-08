@@ -266,6 +266,54 @@ describe("hosted-browser verdict freshness", () => {
 });
 
 describe("startHostedBrowserVerdictRefresh", () => {
+  it("recovers data-plane credentials when the backend outlasts boot retries", async () => {
+    for (const name of [
+      "E2B_API_KEY",
+      "E2B_API_URL",
+      "E2B_DOMAIN",
+      "E2B_TEMPLATE_ID",
+      "COMPUTERS_TERMINAL_TOKEN_SECRET",
+    ]) {
+      vi.stubEnv(name, "");
+    }
+    let available = false;
+    let bootstrapCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/internal/v1/computers/runtime-config")) {
+          bootstrapCalls += 1;
+          return available
+            ? respond({
+                enabled: true,
+                e2bApiKey: "test-key",
+                e2bApiUrl: "https://embed.test",
+                e2bDomain: null,
+                e2bTemplateId: "test-template",
+                terminalTokenSecret: "test-terminal-secret",
+                hostedBrowser: BOOT,
+              })
+            : respond({}, 503);
+        }
+        return respond({ ok: true, hostedBrowser: BOOT });
+      }),
+    );
+    const mod = await load(true);
+    const { isComputersDataPlaneConfigured } = await import(
+      "../control-plane-client"
+    );
+    expect(bootstrapCalls).toBe(3);
+    expect(isComputersDataPlaneConfigured()).toBe(false);
+
+    available = true;
+    mod.startHostedBrowserVerdictRefresh();
+    await vi.advanceTimersByTimeAsync(mod.HOSTED_BROWSER_VERDICT_REFRESH_MS);
+
+    expect(bootstrapCalls).toBe(4);
+    expect(isComputersDataPlaneConfigured()).toBe(true);
+    mod.stopHostedBrowserVerdictRefresh();
+  });
+
   it("re-asks every minute in hosted mode, once however often it is started", async () => {
     const fetchMock = stubBackend(BOOT, [
       () => respond({ ok: true, hostedBrowser: BOOT }),

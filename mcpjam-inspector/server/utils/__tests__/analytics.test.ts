@@ -3,6 +3,7 @@ import type { Context } from "hono";
 
 const captureMock = vi.fn();
 const flagMock = vi.fn();
+const allFlagsMock = vi.fn();
 const shutdownMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("posthog-node", () => ({
@@ -11,6 +12,7 @@ vi.mock("posthog-node", () => ({
       capture: captureMock,
       shutdown: shutdownMock,
       isFeatureEnabled: flagMock,
+      getAllFlags: allFlagsMock,
     };
   }),
 }));
@@ -25,9 +27,14 @@ vi.mock("../../config.js", async (importOriginal) => {
   return { ...actual, HOSTED_MODE: false };
 });
 
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { PostHog } from "posthog-node";
 import {
   captureServerEvent,
   evaluateBrowserRollout,
+  evaluateClientFeatureFlags,
   evaluateLocalHarnessRollout,
   shutdownAnalytics,
 } from "../analytics.js";
@@ -46,8 +53,12 @@ function fakeContext(overrides: {
 describe("captureServerEvent", () => {
   beforeEach(() => {
     captureMock.mockClear();
+    flagMock.mockClear();
+    allFlagsMock.mockClear();
+    vi.mocked(PostHog).mockClear();
     delete process.env.VITE_DISABLE_POSTHOG_LOCAL;
     delete process.env.DO_NOT_TRACK;
+    delete process.env.MCPJAM_FEATURE_FLAGS_FILE;
   });
 
   afterEach(async () => {
@@ -106,7 +117,8 @@ describe("captureServerEvent", () => {
     expect(captureMock).not.toHaveBeenCalled();
   });
 
-  it.each(["VITE_DISABLE_POSTHOG_LOCAL", "DO_NOT_TRACK"])(
+  it.each(["VITE_DISABLE_POSTHOG_LOCAL"])(
+    // DO_NOT_TRACK is not among these: it stops flag evaluation too (below).
     "evaluates browser rollout with %s disabled without capturing events",
     async (setting) => {
       process.env[setting] = "true";
@@ -145,6 +157,69 @@ describe("captureServerEvent", () => {
       sendFeatureFlagEvents: false, personProperties: { deployment: "self_hosted", email: "account@example.test" },
     });
     expect(captureMock).not.toHaveBeenCalled();
+  });
+
+  it("asks PostHog nothing under DO_NOT_TRACK, so every rollout and client flag is off", async () => {
+    process.env.DO_NOT_TRACK = "true";
+    flagMock.mockResolvedValue(true);
+    expect(
+      await evaluateBrowserRollout(
+        "local-browser-enabled",
+        "user_01H00000000000000000000000",
+      ),
+    ).toBe(false);
+    expect(
+      await evaluateLocalHarnessRollout("user_01H00000000000000000000000"),
+    ).toBe(false);
+    expect(
+      await evaluateClientFeatureFlags("user_01H00000000000000000000000", {}),
+    ).toEqual({});
+    expect(flagMock).not.toHaveBeenCalled();
+    expect(allFlagsMock).not.toHaveBeenCalled();
+    expect(PostHog).not.toHaveBeenCalled();
+    flagMock.mockReset();
+  });
+
+  it("answers every flag from MCPJAM_FEATURE_FLAGS_FILE instead of PostHog", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "analytics-flags-"));
+    const path = join(dir, "flags.json");
+    writeFileSync(
+      path,
+      JSON.stringify({
+        "local-browser-enabled": true,
+        "local-harness-enabled": false,
+        "evaluate-enabled": true,
+        "guest-credit-wall-copy": "treatment",
+        "not-a-client-flag": true,
+      }),
+    );
+    process.env.MCPJAM_FEATURE_FLAGS_FILE = path;
+    try {
+      expect(
+        await evaluateBrowserRollout(
+          "local-browser-enabled",
+          "user_01H00000000000000000000000",
+        ),
+      ).toBe(true);
+      expect(
+        await evaluateLocalHarnessRollout("user_01H00000000000000000000000"),
+      ).toBe(false);
+      expect(
+        await evaluateClientFeatureFlags("user_01H00000000000000000000000", {}),
+      ).toEqual({
+        "local-browser-enabled": true,
+        "local-harness-enabled": false,
+        "evaluate-enabled": true,
+        "guest-credit-wall-copy": "treatment",
+      });
+      // An identity is still required, as it is for PostHog's answers.
+      expect(await evaluateClientFeatureFlags("not an actor", {})).toEqual({});
+      expect(flagMock).not.toHaveBeenCalled();
+      expect(allFlagsMock).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.MCPJAM_FEATURE_FLAGS_FILE;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("honors DO_NOT_TRACK", () => {

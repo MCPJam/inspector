@@ -51,7 +51,6 @@ describe.each(HARNESS_IDS)("%s descriptor", (id) => {
   it("keeps brokered and own-account harnesses distinct", () => {
     if (descriptor.modelAccess === "broker") {
       expect(descriptor.credential).toBeNull();
-      expect(descriptor.orgUpstream).not.toBeNull();
       expect(descriptor.protocol).not.toBeNull();
     } else {
       expect(descriptor.credential?.env.trim()).toBeTruthy();
@@ -59,6 +58,16 @@ describe.each(HARNESS_IDS)("%s descriptor", (id) => {
       expect(descriptor.protocol).toBeNull();
       expect(descriptor.local).toBe(false);
       expect(descriptor.guest).toBe(false);
+    }
+  });
+
+  it("only admits an organization key when that path is qualified", () => {
+    if (id === "codex" || id === "copilot-cli") {
+      expect(descriptor.orgUpstream).toEqual({ provider: "openai", profile: "openai-native" });
+    } else if (id === "claude-code") {
+      expect(descriptor.orgUpstream).not.toBeNull();
+    } else {
+      expect(descriptor.orgUpstream).toBeNull();
     }
   });
 });

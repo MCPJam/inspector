@@ -216,6 +216,16 @@ function verifyVendor(recipe, dir) {
     );
     return;
   }
+  if (vendor.kind === "github-copilot-sdk") {
+    const sdk = JSON.parse(readFileSync(join(dir, "node_modules/@github/copilot-sdk/package.json"), "utf8"));
+    const loader = realpathSync(join(dir, "node_modules/@github/copilot/npm-loader.js"));
+    const cli = createRequire(loader).resolve(`@github/copilot-${platformKey}`);
+    const version = execFileSync(cli, ["--version"], { encoding: "utf8" }).trim().split("\n")[0];
+    if (sdk.version !== vendor.sdkVersion || version !== `GitHub Copilot CLI ${recipe.runtimeVersion}.`) {
+      fail(`Unexpected GitHub Copilot SDK or CLI in ${recipe.dir}`);
+    }
+    return;
+  }
   if (vendor.kind === "codex-checksums") {
     // EVERY file of the platform package — the binary, rg, bwrap and the rest
     // all run — against the checksums recorded from the published tarball.
@@ -310,6 +320,28 @@ function verifyVendor(recipe, dir) {
       fail(`the Cursor CLI reports "${version}", not ${vendor.version}`);
     }
     log(`${recipe.dir}: vendor CLI ${version} verified (${platformKey})`);
+    return;
+  }
+  if (vendor.kind === "opencode-ai") {
+    const pkgDir = realpathSync(
+      join(dir, "node_modules", ...vendor.package.split("/")),
+    );
+    const pkg = JSON.parse(
+      readFileSync(join(pkgDir, "package.json"), "utf8"),
+    );
+    if (pkg.version !== recipe.runtimeVersion) {
+      fail(
+        `opencode-ai ${pkg.version} is installed; the inspector pins ${recipe.runtimeVersion}`,
+      );
+    }
+    const binary = join(dir, "node_modules", ".bin", "opencode");
+    const version = execFileSync(binary, ["--version"], {
+      encoding: "utf8",
+    }).trim();
+    if (!version.includes(recipe.runtimeVersion)) {
+      fail(`the OpenCode CLI reports "${version}", not ${recipe.runtimeVersion}`);
+    }
+    log(`${recipe.dir}: vendor CLI ${version} verified`);
     return;
   }
   fail(`unknown vendor verification "${vendor.kind}" for ${recipe.dir}`);

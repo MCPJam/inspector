@@ -44,6 +44,7 @@ import {
 } from "@/hooks/useProjects";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { useCopilotCliEnabled } from "@/hooks/useCopilotCliEnabled";
 import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
 import { cloneHostTemplateInput } from "@/lib/client-config-v2";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
@@ -120,6 +121,7 @@ export function CreateHostDialog({
   }, [claudeCodeLocalFlag, codexLocalFlag]);
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
+  const copilotCliEnabled = useCopilotCliEnabled();
   const cursorCliEnabled = useCursorHostEnabled();
   const visibleCatalogHosts = useMemo(
     () =>
@@ -127,10 +129,11 @@ export function CreateHostDialog({
         ? filterHostsByFeatureFlags(getCatalogHosts(catalogState.catalog), {
             claudeCode: claudeCodeEnabled,
             codex: codexEnabled,
+            copilotCli: copilotCliEnabled === true,
             cursorCli: cursorCliEnabled,
           }).sort((a, b) => a.label.localeCompare(b.label))
         : [],
-    [catalogState, claudeCodeEnabled, codexEnabled, cursorCliEnabled]
+    [catalogState, claudeCodeEnabled, codexEnabled, cursorCliEnabled, copilotCliEnabled]
   );
   const defaultHostId =
     visibleCatalogHosts.find((host) => host.id === DEFAULT_CATALOG_HOST_ID)

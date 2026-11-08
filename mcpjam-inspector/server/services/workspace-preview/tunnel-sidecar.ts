@@ -52,7 +52,12 @@ if (SECRET.length < 32 || !STATE) process.exit(2);
 
 const keyFor = (port) => createHmac("sha256", SECRET).update("port:" + port).digest("hex");
 const sameKey = (a, b) => { const x = Buffer.from(a); const y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
-const refuse = (socket, status) => socket.end("HTTP/1.1 " + status + "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+// The edge is public: a peer that takes its refusal and never closes would
+// otherwise hold the socket, so a refused connection gets a short deadline.
+const refuse = (socket, status) => {
+  socket.end("HTTP/1.1 " + status + "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+  socket.setTimeout(1000, () => socket.destroy());
+};
 
 const server = net.createServer((client) => {
   let head = Buffer.alloc(0);

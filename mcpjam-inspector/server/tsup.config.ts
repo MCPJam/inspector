@@ -58,6 +58,8 @@ export default defineConfig({
     // harness.
     "@ai-sdk/harness",
     "@ai-sdk/harness-claude-code",
+    "@ai-sdk/harness-cursor",
+    "@ai-sdk/harness-opencode",
     "@ai-sdk/anthropic",
     "@ai-sdk/openai",
     "@ai-sdk/deepseek",
