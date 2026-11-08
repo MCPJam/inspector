@@ -1339,7 +1339,7 @@ export function renderConformanceReportJUnitXml(
  * root element would make the whole file unparseable.
  */
 export function renderConformanceReportJUnitSuites(
-  report: ConformanceReport,
+  report: ConformanceReport
 ): ConformanceJUnitSuites {
   const redactedReport = renderConformanceReportJson(report);
   const tests = redactedReport.groups.reduce(

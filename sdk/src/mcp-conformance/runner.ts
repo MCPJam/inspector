@@ -143,7 +143,7 @@ const buildSummary = buildOutcomeSummary;
 function createServerConfig(
   config: NormalizedMCPConformanceConfig,
   recorder: WireObservationRecorder,
-  negotiationProbes: NegotiationProbeHold,
+  negotiationProbes: NegotiationProbeHold
 ): HttpServerConfig {
   // The client's traffic is only visible UNNORMALIZED here: by the time a
   // result reaches app code the official Client has consumed the wire-only
@@ -309,7 +309,7 @@ async function runClientChecks(
 
   const negotiationProbes = createNegotiationProbeHold(
     recorder,
-    config.protocolVersion === undefined,
+    config.protocolVersion === undefined
   );
   // The connect is the initialize handshake, so `server-initialize` reports
   // its duration rather than the near-zero time to read the stored result.

@@ -86,10 +86,23 @@ describe("wire-schema-valid on an unpinned run", { timeout: 20_000 }, () => {
       serverUrl: fixture.url,
       checkTimeout: 5_000,
       checkIds: ["wire-schema-valid"],
+      // The readiness advice sends its own server/discover; without it, the
+      // only one left in the record is the client's negotiation probe.
+      readinessIds: [],
     }).run();
     const check = wireSchemaCheck(result);
+    const violations = (
+      check.details as {
+        violations?: Array<{ origin: string; definition: string }>;
+      }
+    ).violations;
 
     expect(check.status).toBe("failed");
-    expect(check.error?.message).toContain("server/discover");
+    expect(violations).toContainEqual(
+      expect.objectContaining({
+        origin: "POST server/discover",
+        definition: "DiscoverResult",
+      })
+    );
   });
 });
