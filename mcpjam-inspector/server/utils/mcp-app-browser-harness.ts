@@ -43,6 +43,7 @@ import { join } from "path";
 import type {
   Browser,
   BrowserContext,
+  Frame,
   FrameLocator,
   Locator,
   Page,
@@ -65,7 +66,10 @@ import {
 import { HOSTED_MODE } from "../config";
 import { isBlockedEgressHost } from "./hosted-egress-guard";
 import { logger } from "./logger";
-import { RESOURCE_READS_DISABLED_MESSAGE } from "@mcpjam/sdk/widget-runtime";
+import {
+  isVisibleToModelOnly,
+  RESOURCE_READS_DISABLED_MESSAGE,
+} from "@mcpjam/sdk/widget-runtime";
 
 export { isChromiumInstalled };
 
@@ -441,7 +445,8 @@ export interface McpAppBrowserHarnessOptions {
   resolveToolVisibility?: (
     serverId: string,
     name: string,
-  ) => Array<"model" | "app"> | undefined;
+  ) => Array<"model" | "app"> | undefined |
+    Promise<Array<"model" | "app"> | undefined>;
   /** Host capabilities advertised in ui/initialize. Sensible default below. */
   hostCapabilities?: Record<string, unknown>;
   hostInfo?: { name: string; version: string };
@@ -620,6 +625,9 @@ interface MountedWidget {
 }
 
 export class McpAppBrowserHarness {
+  private isHostBindingSource(source: { page: Page; frame: Frame }) {
+    return source.page === this.page && source.frame === this.page?.mainFrame();
+  }
   private readonly workspaceRecorder = new PluginWorkspaceRecorder();
   private readonly opts: McpAppBrowserHarnessOptions;
   private readonly budgets: HarnessBudgets;
@@ -902,62 +910,82 @@ export class McpAppBrowserHarness {
     await this.page.exposeBinding(
       "__mcpjamHostRpc",
       async (
-        _source,
+        source,
         payload: {
           widgetId: string;
           name: string;
           args: Record<string, unknown>;
         },
       ) => {
-        const widget = this.mounted.get(payload.widgetId);
+        if (!this.isHostBindingSource(source)) return { error: "Host binding unavailable" };
+        const widget = this.mounted.get(payload?.widgetId);
         // Fail closed: a tools/call from a widget that isn't (or is no longer)
         // mounted Node-side has no server to route to. Dispatching with an empty
         // serverId would misroute to whatever resolves "" — refuse instead.
-        if (!widget) {
+        if (!widget || this.closing) {
           return { error: "widget not mounted" };
         }
-        const serverId = widget.serverId;
-        const ownedBuffer = this.opts.enableViewTools ? this.toolCallBuffer : undefined;
-        const startedAt = Date.now();
-        // Count the RPC as in-flight BEFORE awaiting so `drainAfterAction` waits
-        // for slow tool calls instead of returning before they land (and
-        // detaching the call from the action that triggered it).
+        const capabilities =
+          this.opts.hostCapabilities ?? DEFAULT_HOST_CAPABILITIES;
+        if (!capabilities.serverTools) {
+          return { error: "Tool calls are disabled for this host" };
+        }
+        // Metadata admission is in flight too; action draining must await it.
         this.pendingRpcCount += 1;
-        const visibility = this.opts.resolveToolVisibility?.(
-          serverId,
-          payload.name,
-        );
-        const completeRecording = this.workspaceRecorder.beginCall(
-          payload.widgetId,
-        );
+        const ownedBuffer = this.opts.enableViewTools ? this.toolCallBuffer : undefined;
         try {
-          const result = await this.opts.callTool(
-            serverId,
-            payload.name,
-            payload.args,
+          const serverId = widget.serverId;
+          let visibility: Array<"model" | "app"> | undefined;
+          try {
+            visibility = await this.opts.resolveToolVisibility?.(serverId, payload.name);
+          } catch (error) {
+            logger.warn("App tool visibility lookup failed", {
+              errorName: error instanceof Error ? error.name : typeof error,
+            });
+            return { error: "Tool declaration could not be verified" };
+          }
+          if (this.closing || this.mounted.get(payload.widgetId) !== widget) {
+            return { error: "widget not mounted" };
+          }
+          if (!(this.opts.hostCapabilities ?? DEFAULT_HOST_CAPABILITIES).serverTools) {
+            return { error: "Tool calls are disabled for this host" };
+          }
+          if (isVisibleToModelOnly({ ui: { visibility } })) {
+            return { error: `Tool "${payload.name}" is not callable by apps (visibility: model-only)` };
+          }
+          const startedAt = Date.now();
+          const completeRecording = this.workspaceRecorder.beginCall(
+            payload.widgetId,
           );
-          completeRecording(true);
-          (ownedBuffer ?? this.toolCallBuffer).push({
-            name: payload.name,
-            args: payload.args,
-            ok: true,
-            elapsedMs: Date.now() - startedAt,
-            result,
-            ...(visibility ? { visibility } : {}),
-          });
-          return { result };
-        } catch (err) {
-          completeRecording(false);
-          const error = err instanceof Error ? err.message : String(err);
-          (ownedBuffer ?? this.toolCallBuffer).push({
-            name: payload.name,
-            args: payload.args,
-            ok: false,
-            error,
-            elapsedMs: Date.now() - startedAt,
-            ...(visibility ? { visibility } : {}),
-          });
-          return { error };
+          try {
+            const result = await this.opts.callTool(
+              serverId,
+              payload.name,
+              payload.args,
+            );
+            completeRecording(true);
+            (ownedBuffer ?? this.toolCallBuffer).push({
+              name: payload.name,
+              args: payload.args,
+              ok: true,
+              elapsedMs: Date.now() - startedAt,
+              result,
+              ...(visibility ? { visibility } : {}),
+            });
+            return { result };
+          } catch (err) {
+            completeRecording(false);
+            const error = err instanceof Error ? err.message : String(err);
+            (ownedBuffer ?? this.toolCallBuffer).push({
+              name: payload.name,
+              args: payload.args,
+              ok: false,
+              error,
+              elapsedMs: Date.now() - startedAt,
+              ...(visibility ? { visibility } : {}),
+            });
+            return { error };
+          }
         } finally {
           this.pendingRpcCount -= 1;
         }
@@ -969,9 +997,10 @@ export class McpAppBrowserHarness {
       // Failures come back as `{ error }`, never a thrown Node Error: a widget
       // can call this binding directly and would otherwise see the stack.
       async (
-        _source,
+        source,
         payload: { widgetId: string; params: ResourceReadParams },
       ): Promise<{ result: MCPReadResourceResult } | { error: string }> => {
+        if (!this.isHostBindingSource(source)) return { error: "Host binding unavailable" };
         if (typeof payload?.params?.uri !== "string")
           return { error: "Invalid resource read request" };
         const widget = this.mounted.get(payload.widgetId);
@@ -1007,7 +1036,8 @@ export class McpAppBrowserHarness {
 
     await this.page.exposeBinding(
       "__mcpjamHostContext",
-      async (_source, payload: { widgetId: string; params: unknown }) => {
+      async (source, payload: { widgetId: string; params: unknown }) => {
+        if (!this.isHostBindingSource(source)) throw new Error("Host binding unavailable");
         if (!this.mounted.has(payload.widgetId) || this.closing)
           throw new Error("App context owner is closed");
         const capabilities =
@@ -1047,9 +1077,11 @@ export class McpAppBrowserHarness {
     // into a new model turn (the run-side analogue of chat's sendMessage).
     await this.page.exposeBinding(
       "__mcpjamHostFollowUp",
-      async (_source, payload: { widgetId: string; text: string }) => {
+      async (source, payload: { widgetId: string; text: string }) => {
+        if (!this.isHostBindingSource(source)) return;
         // Fail closed: ignore messages from a widget that isn't mounted.
-        if (!this.mounted.has(payload.widgetId)) return;
+        if (!this.mounted.has(payload.widgetId) || this.closing ||
+            !(this.opts.hostCapabilities ?? DEFAULT_HOST_CAPABILITIES).message) return;
         const text =
           typeof payload.text === "string" ? payload.text.trim() : "";
         if (text) this.followUpBuffer.push(text);

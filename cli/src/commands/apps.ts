@@ -33,6 +33,7 @@ import {
   parseJsonRecord,
   parseServerConfig,
   resolveAliasedStringOption,
+  resolveClientCapabilities,
   type SharedServerTargetOptions,
 } from "../lib/server-config.js";
 import { setProcessExitCode, usageError, writeResult } from "../lib/output.js";
@@ -96,6 +97,7 @@ export interface AppsSessionStartOptions extends SharedServerTargetOptions {
 }
 
 export interface AppsSessionActionOptions {
+  apiKey?: string;
   session?: string;
   action?: string;
   coordinate?: string;
@@ -311,15 +313,15 @@ export function registerAppsCommands(program: Command): void {
     const injectOpenAiCompat = resolveWidgetRenderInjectOpenAiCompat(
       options.protocol,
     );
-    const serverName =
+    const serverName = target?.serverName ?? (
       typeof options.serverName === "string" && options.serverName.trim()
         ? options.serverName.trim()
-        : buildInspectorServerName(options);
+        : buildInspectorServerName(options));
 
     const response = await runWidgetRender({
       baseUrl: options.inspectorUrl,
       config,
-      ...(target ? { target } : {}),
+      ...(target ? { target, clientCapabilities: resolveClientCapabilities(options.clientCapabilities) } : {}),
       serverName: target?.serverName ?? serverName,
       toolName,
       parameters,
@@ -428,15 +430,15 @@ export function registerAppsCommands(program: Command): void {
     const injectOpenAiCompat = resolveWidgetRenderInjectOpenAiCompat(
       options.protocol,
     );
-    const serverName =
+    const serverName = target?.serverName ?? (
       typeof options.serverName === "string" && options.serverName.trim()
         ? options.serverName.trim()
-        : buildInspectorServerName(options);
+        : buildInspectorServerName(options));
 
     const response = await runWidgetSessionStart({
       baseUrl: options.inspectorUrl,
       config,
-      ...(target ? { target } : {}),
+      ...(target ? { target, clientCapabilities: resolveClientCapabilities(options.clientCapabilities) } : {}),
       serverName: target?.serverName ?? serverName,
       toolName,
       parameters,
@@ -491,6 +493,7 @@ export function registerAppsCommands(program: Command): void {
       "Include the screenshot inline as base64 in the JSON output",
     )
     .option("--inspector-url <url>", "Local Inspector base URL")
+    .option("--api-key <key>", "MCPJam API key (or MCPJAM_API_KEY / cloud login)")
     .action(async (options: AppsSessionActionOptions, command) => {
       const globalOptions = getGlobalOptions(command);
       const sessionId = options.session?.trim();
@@ -502,6 +505,7 @@ export function registerAppsCommands(program: Command): void {
       const response = await runWidgetSessionAction({
         baseUrl: options.inspectorUrl,
         sessionId,
+        apiKey: options.apiKey,
         action,
         timeoutMs: globalOptions.timeout,
       });
@@ -527,9 +531,10 @@ export function registerAppsCommands(program: Command): void {
     )
     .requiredOption("--session <id>", "Session id from `apps session start`")
     .option("--inspector-url <url>", "Local Inspector base URL")
+    .option("--api-key <key>", "MCPJam API key (or MCPJAM_API_KEY / cloud login)")
     .action(
       async (
-        options: { session?: string; inspectorUrl?: string },
+        options: { session?: string; inspectorUrl?: string; apiKey?: string },
         command,
       ) => {
         const globalOptions = getGlobalOptions(command);
@@ -540,6 +545,7 @@ export function registerAppsCommands(program: Command): void {
         const response = await runWidgetSessionSnapshot({
           baseUrl: options.inspectorUrl,
           sessionId,
+          apiKey: options.apiKey,
           timeoutMs: globalOptions.timeout,
         });
         writeResult(response, globalOptions.format);
@@ -566,6 +572,7 @@ export function registerAppsCommands(program: Command): void {
       "Include the screenshot inline as base64 in the JSON output",
     )
     .option("--inspector-url <url>", "Local Inspector base URL")
+    .option("--api-key <key>", "MCPJam API key (or MCPJAM_API_KEY / cloud login)")
     .action(
       async (
         options: {
@@ -575,6 +582,7 @@ export function registerAppsCommands(program: Command): void {
           screenshotOut?: string;
           screenshotBase64?: boolean;
           inspectorUrl?: string;
+          apiKey?: string;
         },
         command,
       ) => {
@@ -591,6 +599,7 @@ export function registerAppsCommands(program: Command): void {
         const response = await runWidgetSessionScriptedStep({
           baseUrl: options.inspectorUrl,
           sessionId,
+          apiKey: options.apiKey,
           step,
           ...(priorWidgetToolCalls ? { priorWidgetToolCalls } : {}),
           timeoutMs: globalOptions.timeout,
@@ -623,9 +632,10 @@ export function registerAppsCommands(program: Command): void {
     .description("Close a widget session and dispose its browser")
     .requiredOption("--session <id>", "Session id from `apps session start`")
     .option("--inspector-url <url>", "Local Inspector base URL")
+    .option("--api-key <key>", "MCPJam API key (or MCPJAM_API_KEY / cloud login)")
     .action(
       async (
-        options: { session?: string; inspectorUrl?: string },
+        options: { session?: string; inspectorUrl?: string; apiKey?: string },
         command,
       ) => {
         const globalOptions = getGlobalOptions(command);
@@ -636,6 +646,7 @@ export function registerAppsCommands(program: Command): void {
         const response = await runWidgetSessionClose({
           baseUrl: options.inspectorUrl,
           sessionId,
+          apiKey: options.apiKey,
           timeoutMs: globalOptions.timeout,
         });
         writeResult({ closed: response.closed }, globalOptions.format);

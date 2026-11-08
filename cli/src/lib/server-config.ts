@@ -527,7 +527,7 @@ function parseEnvironmentOption(
   );
 }
 
-function resolveClientCapabilities(
+export function resolveClientCapabilities(
   value: string | Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
   if (value === undefined) {
