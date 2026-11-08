@@ -1,3 +1,5 @@
+import { fileReadResponse, readFileWriteBody } from "../../services/plugin-host/file-transfer.js";
+import { PLUGIN_FILE_MAX_BYTES, PLUGIN_FILE_MEDIA_TYPE } from "../../../shared/plugin-file-transfer.js";
 import { usesMcpjamClient } from "@/shared/harness-descriptors";
 import { pluginModelAppRoutes } from "./plugin-model-apps.js";
 import { preparePluginMessageTurn } from "../../services/plugin-host/message.js";
@@ -349,13 +351,17 @@ async function routeUntimed(c: Context, action: () => Promise<Response>) {
 }
 const instances = new Hono();
 const instanceBodyLimit = bodyLimit({ maxSize: 512 * 1024 });
-// A context update carries one App update up to the policy ceiling, and
-// `webBodyLimit` bounds it with a typed 413 before anything reads it.
-instances.use("*", (c, next) =>
-  c.req.method === "POST" && PLUGIN_CONTEXT_UPDATE_PATHS.has(c.req.path)
-    ? next()
-    : instanceBodyLimit(c, next),
-);
+const instanceFileBodyLimit = bodyLimit({ maxSize: PLUGIN_FILE_MAX_BYTES });
+// Context updates use the policy ceiling enforced by the typed web body limit.
+instances.use("*", (c, next) => {
+  if (c.req.method === "POST" && PLUGIN_CONTEXT_UPDATE_PATHS.has(c.req.path))
+    return next();
+  const limit = c.req.method === "POST" &&
+    c.req.path.endsWith("/files/write") &&
+    c.req.header("content-type") === PLUGIN_FILE_MEDIA_TYPE
+    ? instanceFileBodyLimit : instanceBodyLimit;
+  return limit(c, next);
+});
 instances.use("*", async (c, next) => {
   c.header("Cache-Control", "no-store");
   await next();
@@ -782,7 +788,7 @@ instances.post("/files/read", (c) =>
         ...diagnostic,
         serverId: access.instance.owner.serverId,
       }));
-      return c.json({ ...result, diagnostics });
+      return fileReadResponse(c, result, diagnostics);
     } finally {
       await access.runtime.release();
     }
@@ -890,7 +896,7 @@ instances.post("/files/write", (c) =>
   route(c, async () => {
     const body = fileRequestSchema
       .extend({ operationId: z.string().uuid() })
-      .parse(await c.req.json());
+      .parse(await readFileWriteBody(c));
     const access = await fileAccess(c, body);
     try {
       if (!access.file.localTarget)
@@ -1418,6 +1424,7 @@ async function invoke(
           new PluginInvocationError(
             `INSTANCE_TOOL_${kind.toUpperCase()}_INVALID`,
           ),
+        origin,
       ),
     ...(instance.activation.file?.localTarget
       ? {
