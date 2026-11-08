@@ -1,3 +1,4 @@
+import { useProjectEnvironmentsVisible } from "@/hooks/useProjectEnvironmentsEnabled";
 import * as React from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -549,9 +550,6 @@ export function MCPSidebar({
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
-  const projectEnvironmentsEnabled = useFeatureFlagEnabled(
-    "project-environments-enabled",
-  );
   const unifiedSessionsEnabled = useFeatureFlagEnabled(
     "unified-sessions-enabled",
   );
@@ -559,6 +557,7 @@ export function MCPSidebar({
   const eventsEnabled = useEventsEnabledState();
   const webmcpInspectorEnabled = useWebmcpInspectorEnabledState();
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
+  const projectEnvironmentsEnabled = useProjectEnvironmentsVisible(isAuthenticated);
   const { user, isLoading: isWorkOsAuthLoading } = useAuth();
   // Until WorkOS + Convex resolve the session we don't yet know guest-vs-authed
   // (`user` is null and `isAuthenticated` is false even for signed-in users).
@@ -668,8 +667,7 @@ export function MCPSidebar({
       "hosts-enabled": isAuthenticated,
       "home-page-enabled": isAuthenticated,
       xaa: xaaEnabled === true,
-      "project-environments-enabled":
-        projectEnvironmentsEnabled === true && isAuthenticated,
+      "project-environments-enabled": projectEnvironmentsEnabled,
       // Project-scoped like the two above: the feed needs a project, and
       // `SessionsRoute` renders a "needs a project" empty state without one.
       "unified-sessions-enabled":

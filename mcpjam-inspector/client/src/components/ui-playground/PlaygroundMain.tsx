@@ -256,7 +256,7 @@ import {
 } from "@/lib/local-harness-scope";
 import { HOSTED_MODE } from "@/lib/config";
 import { usePlaygroundEnvironment } from "@/hooks/use-playground-environment";
-import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useProjectEnvironmentsVisible } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { PlaygroundEnvironmentSection } from "@/components/playground/PlaygroundEnvironmentSection";
 import { ConversationTargetNotice } from "@/components/playground/ConversationTargetNotice";
@@ -1032,9 +1032,9 @@ export function PlaygroundMain({
   // Project Environments (Phase 2). Flag-gated and fail-closed inside the hook;
   // outside environment mode every field below is inert and the Playground
   // behaves exactly as it does today.
-  const playgroundEnvironment = usePlaygroundEnvironment(multiHostProjectId);
+  const environmentsEnabled = useProjectEnvironmentsVisible(isConvexAuthenticated);
+  const playgroundEnvironment = usePlaygroundEnvironment(multiHostProjectId, environmentsEnabled);
   const isEnvironmentMode = playgroundEnvironment.isEnvironmentMode;
-  const environmentsEnabled = useProjectEnvironmentsEnabled();
   // Whether this turn may use the tools of the page open in the WebMCP tab.
   // Derived from session liveness: a closed status leaves the last tool
   // snapshot in place, and advertising a dead browser's tools to a model is
@@ -1405,6 +1405,7 @@ export function PlaygroundMain({
     usePageTools: webmcpPageToolsEnabled,
     directVisibility: pendingDirectVisibility,
     hostedOrgModelConfig,
+    inheritedEnvironmentModel: isEnvironmentMode ? playgroundEnvironment.preview?.host : undefined,
     selectionIntent: isEnvironmentMode || previewedHostId ? "inherit" : "picked",
     hostedContext: {
       ...(shouldUseOwnedExtensionModelRoute({
@@ -1563,7 +1564,7 @@ export function PlaygroundMain({
   const onSelectMultipleServers =
     playgroundServerSelectorProps?.onSelectMultipleServers;
   const previewedHostConfigId = previewedHost?.config.id;
-  const lastSeededHostRef = useRef<{ hostId: string; configId: string } | null>(
+  const lastSeededHostRef = useRef<{ hostId: string; configId: string; environment: boolean } | null>(
     null,
   );
   // Whether the last host switch seeded an effort (so a switch to a host
@@ -1611,12 +1612,13 @@ export function PlaygroundMain({
       lastSeededHostRef.current = {
         hostId: previewedHostId,
         configId: previewedHost.config.id,
+        environment: isEnvironmentMode,
       };
       return;
     }
     const configId = previewedHost.config.id;
     const last = lastSeededHostRef.current;
-    if (last && last.hostId === previewedHostId && last.configId === configId) {
+    if (last && last.hostId === previewedHostId && last.configId === configId && last.environment === isEnvironmentMode) {
       return;
     }
 
@@ -1640,7 +1642,7 @@ export function PlaygroundMain({
     // Only a host SWITCH (or an edit of the host's config) moves the host's
     // model into pane 1.
     const isFirstSeedThisMount = last === null;
-    lastSeededHostRef.current = { hostId: previewedHostId, configId };
+    lastSeededHostRef.current = { hostId: previewedHostId, configId, environment: isEnvironmentMode };
 
     setSystemPrompt(cfg.systemPrompt);
     setTemperature(cfg.temperature);
@@ -1664,7 +1666,7 @@ export function PlaygroundMain({
     // path in applyHostConfigToPlayground covers cross-tab + cold-start;
     // this covers in-tab host switches without waiting for the storage
     // event round-trip.
-    const desiredModelId = cfg.modelId?.trim();
+    const desiredModelId = isEnvironmentMode ? undefined : cfg.modelId?.trim();
     if (desiredModelId) {
       // Selection-aware, as the host Agent tab resolves it: a saved canonical
       // id (`openai/gpt-5`) for a bare BYOK row must land on THAT row, not on
@@ -1732,6 +1734,7 @@ export function PlaygroundMain({
     previewedHostId,
     previewedHostConfigId,
     previewedHost,
+    isEnvironmentMode,
     serversById,
     onSelectMultipleServers,
     setSystemPrompt,

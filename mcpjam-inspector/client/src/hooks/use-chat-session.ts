@@ -507,6 +507,8 @@ export interface UseChatSessionOptions {
   /** A card's saved choice; its connection and settings remain authoritative. */
   pickedModelSelection?: RequestedModelSelection;
   selectionIntent?: "picked" | "inherit";
+  /** Display the named setup's exact choice without turning it into a wire override. */
+  inheritedEnvironmentModel?: { modelId: string | null; modelSelection?: RequestedModelSelection | null };
   pluginContextReferences?: string[] | ((workspaceId: string) => string[]);
   /**
    * The Playground's global extension owner. Its Apps have no chat of their
@@ -3303,9 +3305,10 @@ export function useChatSession(
     () => availableModels.filter((model) => !model.disabled),
     [availableModels],
   );
+  const environmentModel = hostedEnvironmentId ? options.inheritedEnvironmentModel : undefined;
   const savedSelection = (restoredChoice?.target === hostedTargetKeyValue
-    ? restoredChoice.selection : undefined) ?? pickedModelSelection ??
-    (!initialModelId ? savedLeadSelection : undefined);
+    ? restoredChoice.selection : undefined) ?? pickedModelSelection ?? environmentModel?.modelSelection ??
+    (!initialModelId && !environmentModel ? savedLeadSelection : undefined);
   const selectedModel = useMemo<ModelDefinition>(() => {
     if (savedSelection) {
       const candidates = initialModelId
@@ -3314,6 +3317,10 @@ export function useChatSession(
         : availableModels;
       return resolveCompareSelectionRow(savedSelection, candidates, hostedOrgModelConfig) ??
         { ...createLockedInitialModel(savedSelection.modelId), disabledReason: "The saved model or connection is unavailable. Choose a model again." };
+    }
+    if (environmentModel?.modelId) {
+      return resolveModelSelection(availableModels, environmentModel.modelId, null) ??
+        createLockedInitialModel(environmentModel.modelId);
     }
     const fallback =
       (harnessId
@@ -3369,7 +3376,7 @@ export function useChatSession(
         createLockedInitialModel(initialModelId)
       );
     }
-    if (!selectedModelId) return fallback;
+    if (environmentModel || !selectedModelId) return fallback;
     return resolveSelectableModel(selectedModelId) ?? fallback;
   }, [
     availableModels,
@@ -3383,6 +3390,7 @@ export function useChatSession(
     selectableModels,
     selectedModelId,
     savedSelection,
+    environmentModel,
     hostedOrgModelConfig,
   ]);
   const temperature = temperatureOverride ??
@@ -3564,7 +3572,10 @@ export function useChatSession(
         setPickedTarget(hostedTargetKeyValue);
         return;
       }
-      setRestoredChoice(null);
+      // An explicit pick on a named setup stays with that target. A setting
+      // change (effort, temperature) alone keeps the displayed inherited row.
+      setRestoredChoice(hostedEnvironmentId && options?.userInitiated && selection
+        ? { target: hostedTargetKeyValue, selection } : null);
       if (selection) saveSelectedModelSelections(replaceLeadCompareSelection(saved, selection));
       if (options?.userInitiated || options?.selection) setPickedTarget(hostedTargetKeyValue);
       const modelId = selection?.modelId ?? String(model.id);
@@ -3573,7 +3584,7 @@ export function useChatSession(
       setLeadProviderHint(hint);
       setSelectedModelId(modelId);
     },
-    [initialModelId, setSelectedModelId, hostedOrgModelConfig, hostedTargetKeyValue],
+    [initialModelId, setSelectedModelId, hostedOrgModelConfig, hostedTargetKeyValue, hostedEnvironmentId],
   );
 
   const setSelectedModelIds = useCallback(
