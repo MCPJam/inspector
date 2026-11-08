@@ -790,6 +790,14 @@ const REPLACEMENTS: readonly Replacement[] = [
       emitStreamEvent(msg);
       if (type === "result") {`,
   ],
+  // 1.0.162 counts a `result` only when it answers a message the bridge sent,
+  // and a turn the CLI starts itself (a background agent's report) answers
+  // none. Once the drain has its first answer, every later result is that
+  // follow-up, so let it through, as 1.0.121 did.
+  [
+    `          if (!queryInput.answersSentMessage(msg)) continue;`,
+    `          if (!queryInput.answersSentMessage(msg) && !mcpjamDrainState.answered) continue;`,
+  ],
   // The first `break`: an answer ends the turn unless the drain keeps it open.
   [
     `          queryInput.observeResult();
