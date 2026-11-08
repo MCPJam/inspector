@@ -29,11 +29,10 @@ import {
   resolveEnvironmentForRuntime,
   runtimeServerIds,
   runtimeServerNames,
-  toEnvironmentPreview,
 } from "../../services/environments/runtime.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { xaaPolicyFromMcpProfile } from "../../utils/effective-auth.js";
-import { harnessSupportsSkills } from "../../utils/harness/registry.js";
+import { toPlaygroundEnvironmentPreview } from "../../services/environments/playground-preview.js";
 import { logger } from "../../utils/logger.js";
 import { listTools } from "../../utils/route-handlers.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
@@ -68,7 +67,7 @@ environments.get("/:environmentId/preview", async (c) =>
       createConvexClient(await getConvexBearerForRequest(c)),
       { projectId, environmentId }
     );
-    return toEnvironmentPreview(spec, { harnessSupportsSkills });
+    return toPlaygroundEnvironmentPreview(spec);
   })
 );
 
