@@ -646,7 +646,6 @@ export function useConformanceRun({
     } catch (e) {
       if (!isRunActive(runToken, currentServer.name)) return;
       const state = { status: "error" as const, error: suiteErrorMessage(e) };
-      // OAuth needs a resolved version; on a 401 the rest run as "Not run".
       if (httpServerNow && selected?.oauth !== false) setOAuth(state);
       loginRequired = e instanceof ConformanceLoginRequiredError;
       if (!loginRequired) {
