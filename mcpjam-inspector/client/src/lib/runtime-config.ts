@@ -5,6 +5,7 @@ export interface InspectorClientRuntimeConfig {
   workosApiHostname?: string;
   doNotTrack?: boolean;
   sandboxOrigin?: string;
+  platformAgentDisabled?: boolean;
 }
 
 declare global {
@@ -72,4 +73,13 @@ export function getRuntimeSandboxOrigin(): string | undefined {
  */
 export function getRuntimeDoNotTrack(): boolean {
   return getRuntimeConfig()?.doNotTrack === true;
+}
+
+/**
+ * False when the server runs with `MCPJAM_PLATFORM_AGENT=off`: its agent
+ * routes refuse, so every entry point to the MCPJam agent is hidden. Read at
+ * render time, so a component reads the document it was rendered in.
+ */
+export function isPlatformAgentEnabled(): boolean {
+  return getRuntimeConfig()?.platformAgentDisabled !== true;
 }
