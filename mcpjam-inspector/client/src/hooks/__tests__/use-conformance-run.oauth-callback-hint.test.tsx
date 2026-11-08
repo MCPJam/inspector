@@ -70,6 +70,17 @@ async function openPopup(runTimeoutSeconds?: number) {
   return view;
 }
 
+function postCode() {
+  act(() => {
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        data: { type: "OAUTH_CALLBACK", code: "code", state: "s" },
+      }),
+    );
+  });
+}
+
 function closePopup() {
   popup.closed = true;
   act(() => {
@@ -122,18 +133,20 @@ describe("useConformanceRun OAuth callback hint", () => {
   it("stays quiet when the code came back before the popup closed", async () => {
     await openPopup();
 
-    act(() => {
-      window.dispatchEvent(
-        new MessageEvent("message", {
-          origin: window.location.origin,
-          data: { type: "OAUTH_CALLBACK", code: "code", state: "s" },
-        }),
-      );
-    });
+    postCode();
     closePopup();
 
     expect(toast.warning).not.toHaveBeenCalled();
-    expect(toast.dismiss).toHaveBeenCalled();
+  });
+
+  it("drops a hint shown early once the code comes back", async () => {
+    await openPopup();
+
+    closePopup();
+    postCode();
+
+    expect(toast.warning).toHaveBeenCalledTimes(1);
+    expect(toast.dismiss).toHaveBeenCalledTimes(1);
   });
 
   it("stays quiet when OAuth was skipped before the popup closed", async () => {

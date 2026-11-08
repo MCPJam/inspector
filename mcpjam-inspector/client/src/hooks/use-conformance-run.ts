@@ -63,15 +63,7 @@ import {
   loadSavedClientSecret,
   oauthTargetUrl,
 } from "@/lib/oauth/saved-client-secret";
-import {
-  dismissOAuthCallbackHint,
-  showOAuthCallbackHint,
-} from "@/components/conformance/oauth-callback-hint";
-import {
-  isWebUrl,
-  openAuthorizationPopup,
-  watchAuthorizationPopup,
-} from "./conformance-oauth-popup";
+import { isWebUrl, useAuthorizationPopup } from "./conformance-oauth-popup";
 
 export {
   createAppsState,
@@ -203,34 +195,14 @@ export function useConformanceRun({
     oauthListenerCleanupRef.current = null;
   }, []);
 
-  /** Set while a sign-in popup is open and no code has come back yet. */
-  const popupWatchRef = useRef<(() => void) | null>(null);
-  const stopPopupWatch = useCallback(() => {
-    popupWatchRef.current?.();
-    popupWatchRef.current = null;
-  }, []);
-  // A code, a skip, a new run or the deadline clears the watch first, so a
-  // close that still finds it current means the sign-in never came back.
-  const watchPopup = useCallback(
-    (popup: Window | null) => {
-      stopPopupWatch();
-      if (!popup) return;
-      const stop = watchAuthorizationPopup(popup, () => {
-        if (popupWatchRef.current === stop) showOAuthCallbackHint();
-      });
-      popupWatchRef.current = stop;
-    },
-    [stopPopupWatch],
-  );
-
   const { remember: rememberSession, forget: forgetSession, cancel: cancelSession } = useConformanceOAuthSession();
+  const authorizationPopup = useAuthorizationPopup();
   const deadline = useConformanceDeadline((message) => {
-    const waitedOnPopup = popupWatchRef.current !== null;
+    authorizationPopup.expire();
     cancelSession();
     latestRunTokenRef.current += 1;
     pendingOAuthRef.current = null;
     clearOAuthListeners();
-    if (waitedOnPopup) showOAuthCallbackHint();
     const expire = <T extends { status: string }>(state: T): T =>
       state.status === "running" || state.status === "needs-authorization"
         ? { ...state, status: "error", error: message, verdict: "incomplete", waitingForAuth: false }
@@ -445,7 +417,8 @@ export function useConformanceRun({
         });
         return;
       }
-      const popup = openAuthorizationPopup(authorizationUrl);
+      const cleanupFns: Array<() => void> = [];
+      const popup = authorizationPopup.open(authorizationUrl, cleanupFns);
       setOAuth({
         status: "running",
         sessionId,
@@ -454,7 +427,6 @@ export function useConformanceRun({
         popupBlocked: !popup,
       });
 
-      const cleanupFns: Array<() => void> = [];
       const cleanup = () => {
         for (const fn of cleanupFns) fn();
         if (oauthListenerCleanupRef.current === cleanup) {
@@ -462,12 +434,9 @@ export function useConformanceRun({
         }
       };
       oauthListenerCleanupRef.current = cleanup;
-      watchPopup(popup);
-      cleanupFns.push(stopPopupWatch);
 
       const onCode = (data: { code: string; state?: string }) => {
         cleanup();
-        dismissOAuthCallbackHint();
         void handleOAuthCallback(
           sessionId,
           data.code,
@@ -503,7 +472,7 @@ export function useConformanceRun({
         // BroadcastChannel not available
       }
     },
-    [handleOAuthCallback, stopPopupWatch, watchPopup],
+    [authorizationPopup.open, handleOAuthCallback],
   );
 
   const runOAuth = useCallback(
@@ -612,12 +581,11 @@ export function useConformanceRun({
 
   const openAuthorizationWindow = useCallback(() => {
     if (!oauth.waitingForAuth || !oauth.authorizationUrl) return;
-    const popup = openAuthorizationPopup(oauth.authorizationUrl);
-    watchPopup(popup);
+    const popup = authorizationPopup.open(oauth.authorizationUrl);
     setOAuth((prev) =>
       prev.waitingForAuth ? { ...prev, popupBlocked: !popup } : prev,
     );
-  }, [oauth.authorizationUrl, oauth.waitingForAuth, watchPopup]);
+  }, [authorizationPopup.open, oauth.authorizationUrl, oauth.waitingForAuth]);
 
   // The listeners for the code stay unwired after a skip, so a consent that
   // completes late in another tab cannot resurrect the suite.
