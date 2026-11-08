@@ -165,6 +165,22 @@ describe("conformance run version snapshot", () => {
     expect(result.current.resolvedProtocolVersion).toBeUndefined();
   });
 
+  it("keeps a pinned version for Apps and Tasks when the server asks for a login", async () => {
+    check.mockResolvedValueOnce({
+      status: "auth-required",
+      message: "The server requires authorization (HTTP 401).",
+    });
+    const { result } = renderHook(() =>
+      useConformanceRun({ server, initialVersionPin: "2025-06-18" }),
+    );
+    await act(async () => result.current.runAll());
+    for (const suite of [apps, tasks])
+      expect(suite).toHaveBeenLastCalledWith(
+        "target",
+        expect.objectContaining({ protocolVersion: "2025-06-18" }),
+      );
+  });
+
   it("ignores an Auto reply after the target changes", async () => {
     let resolve: (result: ConformanceConnectionResult) => void = () => {
       throw new Error("Not initialized");
