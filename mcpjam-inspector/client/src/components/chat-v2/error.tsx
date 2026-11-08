@@ -163,7 +163,11 @@ export function ErrorBox({
     );
   }
 
-  const orgKeysCode = orgKeysRefusalCodeOf(refusalCode);
+  // /stream/org uses provider_auth_error when the upstream provider rejects
+  // the organization's key. Other 401s can be session or MCP server errors.
+  const orgKeysCode = refusalCode === "provider_auth_error"
+    ? "provider_auth_failed"
+    : orgKeysRefusalCodeOf(refusalCode);
   if (orgKeysCode) {
     // The organization requires its own provider keys (or its provider
     // refused). Configuration, not credits: never a top-up, and a retry only
