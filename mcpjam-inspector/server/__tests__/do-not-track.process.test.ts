@@ -71,6 +71,7 @@ describe("a hosted server under DO_NOT_TRACK", () => {
   let control: GuardedServer;
   let brokenFlags: GuardedServer;
   let brokenFlagsBootOutput: string;
+  let brokenFlagsServed: unknown;
   let optedOutUse: Awaited<ReturnType<typeof exercise>>;
   let optedOutBoot: NetworkAttempt[];
   let optedOutExit: number | null;
@@ -102,6 +103,11 @@ describe("a hosted server under DO_NOT_TRACK", () => {
     const failure = started.find((result) => result.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
     brokenFlagsBootOutput = brokenFlags.output();
+    brokenFlagsServed = await (
+      await fetch(
+        `${brokenFlags.baseUrl}/api/web/flags?distinct_id=${VISITOR}&platform=web`,
+      )
+    ).json();
     await brokenFlags.stop();
     optedOutBoot = optedOut.attempts();
     optedOutUse = await exercise(optedOut);
@@ -156,6 +162,10 @@ describe("a hosted server under DO_NOT_TRACK", () => {
     expect(brokenFlagsBootOutput).toContain(
       "[flags] MCPJAM_FEATURE_FLAGS_FILE is not valid JSON, so every feature flag is off. Fix the file and restart.",
     );
+  });
+
+  it("serves every flag off from a broken flag file", () => {
+    expect(brokenFlagsServed).toEqual({ flags: {} });
   });
 
   it("control: without it, the guard sees the server reach PostHog and Sentry", () => {
