@@ -240,8 +240,7 @@ export function ClientSelector({
         .join(", ")
     : compactHostLabel(leadHostName);
   const clientListMaxHeight = isComparing ? 160 : 220;
-  // Environment panes count toward the panes Compare can show.
-  const paneLimit = maxSelectedHosts + environmentPanes.length;
+  const limitMessage = "Remove a pane to add another client.";
   const clientNames = effectiveSelectedHostIds.map((hostId) => {
     const host = hostsById.get(hostId);
     return host ? clientDisplayName(host) : hostId;
@@ -493,9 +492,7 @@ export function ClientSelector({
                 {environmentLeads ? null : environmentStripChips}
                 {limitReached ? (
                   <span className="w-full text-[10px] text-muted-foreground">
-                    {environmentPanes.length > 0
-                      ? `Max ${paneLimit} panes. Remove one to add another.`
-                      : `Max ${maxSelectedHosts}. Remove one to add another.`}
+                    {limitMessage}
                   </span>
                 ) : null}
               </div>
@@ -605,9 +602,7 @@ export function ClientSelector({
                               </span>
                             </TooltipTrigger>
                             <TooltipContent side="right">
-                              {environmentPanes.length > 0
-                                ? `You can compare up to ${paneLimit} panes at once`
-                                : `You can compare up to ${maxSelectedHosts} clients at once`}
+                              {limitMessage}
                             </TooltipContent>
                           </Tooltip>
                         ) : (
