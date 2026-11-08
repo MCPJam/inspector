@@ -1292,32 +1292,41 @@ var WorkspacePreviewRelay = class {
         res.end("This preview only answers requests from its own pages.");
         return;
       }
-      const upstream = http.request(
-        {
-          agent: relay.agent,
-          method: req.method,
-          path: req.url,
-          headers: req.headers,
-          setHost: false
-        },
-        (answer) => {
-          res.writeHead(answer.statusCode ?? 502, answer.rawHeaders);
-          answer.pipe(res);
-          answer.once("close", () => {
-            if (!answer.complete) res.destroy();
-          });
-        }
-      );
+      const replayable = req.method === "GET" || req.method === "HEAD";
+      let upstream;
+      const forward = (retried) => {
+        const attempt = http.request(
+          {
+            agent: relay.agent,
+            method: req.method,
+            path: req.url,
+            headers: req.headers,
+            setHost: false
+          },
+          (answer) => {
+            res.writeHead(answer.statusCode ?? 502, answer.rawHeaders);
+            answer.pipe(res);
+            answer.once("close", () => {
+              if (!answer.complete) res.destroy();
+            });
+          }
+        );
+        upstream = attempt;
+        attempt.on("error", (error) => {
+          if (!retried && replayable && attempt.reusedSocket && error.code === "ECONNRESET" && !res.headersSent && !res.destroyed)
+            return forward(true);
+          if (res.headersSent || res.destroyed) return void res.destroy();
+          const idle = error.message === "app_not_listening";
+          res.writeHead(502, { "content-type": "text/html; charset=utf-8" });
+          res.end(idle ? notListening(port) : "The conversation's computer did not answer. Reload to try again.");
+        });
+        if (replayable) attempt.end();
+        else req.pipe(attempt);
+      };
+      forward(false);
       res.once("close", () => {
         if (!res.writableFinished) upstream.destroy();
       });
-      upstream.on("error", (error) => {
-        if (res.headersSent || res.destroyed) return void res.destroy();
-        const idle = error.message === "app_not_listening";
-        res.writeHead(502, { "content-type": "text/html; charset=utf-8" });
-        res.end(idle ? notListening(port) : "The conversation's computer did not answer. Reload to try again.");
-      });
-      req.pipe(upstream);
     });
     server.on("connection", (socket) => {
       this.sockets.add(socket);
