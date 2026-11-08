@@ -1,4 +1,6 @@
-import { useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { ComparePaneSettingsSection } from "./compare-pane-settings";
+import type { ComparePaneSections } from "./use-compare-pane-controls";
 import { Button } from "@mcpjam/design-system/button";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { authFetch } from "@/lib/session-token";
@@ -34,7 +36,6 @@ export function ComparePaneSkills({
   pending,
 }: Props) {
   const visible = useSkillsEnabled();
-  const heading = useId();
   if (!visible || !projectId) return null;
   const request: PaneSkillsRequest = {
     projectId,
@@ -51,12 +52,9 @@ export function ComparePaneSkills({
   };
   const body = JSON.stringify(request);
   return (
-    <section aria-labelledby={heading} className="space-y-2">
-      <h3 id={heading} className="text-sm font-medium">
-        Skills
-      </h3>
+    <ComparePaneSettingsSection title="Skills">
       {pending ? <LoadingSkills /> : <DeliveryList key={body} body={body} />}
-    </section>
+    </ComparePaneSettingsSection>
   );
 }
 
@@ -136,5 +134,21 @@ function DeliveryList({ body }: { body: string }) {
         ))}
       </ul>
     </>
+  );
+}
+
+export function useComparePaneSkillsSection(
+  projectId: string | null,
+): ComparePaneSections {
+  return useCallback(
+    ({ pane, lane }) => (
+      <ComparePaneSkills
+        projectId={projectId}
+        pane={pane}
+        clientEnvironmentId={lane.environmentId}
+        pending={lane.pending}
+      />
+    ),
+    [projectId],
   );
 }
