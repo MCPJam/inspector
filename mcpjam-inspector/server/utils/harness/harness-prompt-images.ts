@@ -220,6 +220,11 @@ function historyPartImageData(part: Record<string, unknown>): unknown {
   return part.type === "image" ? part.image : part.data;
 }
 
+/**
+ * Sum of earlier user image/file parts, each capped at the per-image max.
+ * History keeps the original inbound parts, including ones that were skipped
+ * or sent with native images off, because persist does not mark attached parts.
+ */
 export function conversationImageBase64Bytes(history: ModelMessage[]): number {
   let total = 0;
   for (const message of history) {

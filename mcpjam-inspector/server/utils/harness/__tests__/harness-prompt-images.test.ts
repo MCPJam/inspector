@@ -303,6 +303,19 @@ describe("prepareHarnessPromptImages", () => {
     expect(results[1]).toEqual({ status: "not-image" });
   });
 
+  it("counts earlier user images even when they were never natively attached", () => {
+    const history = [
+      user([
+        {
+          type: "image",
+          image: "A".repeat(2048),
+          mediaType: "image/svg+xml",
+        },
+      ]),
+    ];
+    expect(conversationImageBase64Bytes(history)).toBe(2048);
+  });
+
   it("counts earlier user-message images toward the conversation budget", async () => {
     const history = [
       user(
