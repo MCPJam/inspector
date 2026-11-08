@@ -353,10 +353,22 @@ export function createE2BHarnessSandboxProvider(
     // spends a minute of retries before failing — which is why the failure is
     // spelled out below rather than surfacing as E2B's bare "exit status 1".
     try {
-      await sandbox.commands.run(harnessPnpmGuardCommand(), {
-        timeoutMs: commandTimeoutMs,
-        ...(connectSignal ? { signal: connectSignal } : {}),
-      });
+      // Both checks must finish before exposing the session. Socket cleanup
+      // targets only the model proxy and is independent of the package guard.
+      const preparation = await Promise.allSettled([
+        sandbox.commands.run(harnessPnpmGuardCommand(), {
+          timeoutMs: commandTimeoutMs,
+          ...(connectSignal ? { signal: connectSignal } : {}),
+        }),
+        ...(resuming
+          ? [closeModelProxyConnections(sandbox, opts.proxyUrl?.(), connectSignal)]
+          : []),
+      ]);
+      // Do not release the turn while a failed sibling still has socket
+      // cleanup running: it could close the next owner's connections.
+      for (const result of preparation) {
+        if (result.status === "rejected") throw result.reason;
+      }
     } catch (err) {
       if (err instanceof CommandExitError) {
         const output = (err.stderr || err.stdout || "").trim();
@@ -370,13 +382,6 @@ export function createE2BHarnessSandboxProvider(
         );
       }
       throw err;
-    }
-    if (resuming) {
-      await closeModelProxyConnections(
-        sandbox,
-        opts.proxyUrl?.(),
-        connectSignal,
-      );
     }
 
     // Housekeeping, so best-effort: a failure here never blocks the spawn.

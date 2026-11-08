@@ -121,6 +121,8 @@ import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
 import {
   chatHistoryAction,
   getChatHistoryDetail,
+  getChatHistoryState,
+  type ChatHistoryStateSession,
   type ChatHistoryDetailSession,
   type ChatHistorySession,
   type ChatHistoryTurnTrace,
@@ -872,7 +874,7 @@ export function ChatTabV2({
 
       for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
-          const detail = await getChatHistoryDetail({
+          const detail = await getChatHistoryState({
             sessionId: activeHistorySessionId ?? undefined,
             chatSessionId,
             projectId: effectiveHostedProjectId ?? undefined,
@@ -973,7 +975,7 @@ export function ChatTabV2({
   ]);
 
   const ensureThreadReadyForSend = useCallback(async () => {
-    let detail: ChatHistoryDetailSession | null = null;
+    let detail: ChatHistoryStateSession | null = null;
     try {
       detail = await refreshCurrentHistorySession();
     } catch (error) {

@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, FormEvent, ReactNode } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
@@ -10,7 +10,9 @@ import {
 } from "@/hooks/use-resumed-thread-persistence";
 
 const mockToastError = vi.hoisted(() => vi.fn());
-const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn());
+const mockReadHistory = vi.hoisted(() => vi.fn());
+const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn((...args: unknown[]) => mockReadHistory(...args)));
+const mockGetChatHistoryState = vi.hoisted(() => vi.fn((...args: unknown[]) => mockReadHistory(...args)));
 const mockChatHistoryAction = vi.hoisted(() => vi.fn());
 const mockUseFeatureFlagEnabled = vi.hoisted(() => vi.fn(() => true));
 const mockReactiveHistoryState = vi.hoisted(() => ({
@@ -264,18 +266,20 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     value,
     onChange,
     enableMultiModel,
+    onSubmit,
   }: {
     value: string;
     onChange: (value: string) => void;
     enableMultiModel?: boolean;
+    onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   }) => (
-    <input
+    <form onSubmit={onSubmit}><input
       aria-label="Chat input"
       data-testid="chat-input"
       data-enable-multi-model={enableMultiModel ? "true" : "false"}
       value={value}
       onChange={(event) => onChange(event.target.value)}
-    />
+    /><button type="submit">Test send</button></form>
   ),
 }));
 
@@ -484,8 +488,8 @@ vi.mock("@/hooks/use-chat-session", () => ({
 }));
 
 vi.mock("@/lib/apis/web/chat-history-api", () => ({
-  getChatHistoryDetail: (...args: unknown[]) =>
-    mockGetChatHistoryDetail(...args),
+  getChatHistoryDetail: mockGetChatHistoryDetail,
+  getChatHistoryState: mockGetChatHistoryState,
   chatHistoryAction: (...args: unknown[]) => mockChatHistoryAction(...args),
 }));
 
@@ -624,6 +628,29 @@ describe("ChatTabV2 history sync", () => {
     });
   });
 
+  it("refreshes only current state before sending and applies its CAS version", async () => {
+    mockReadHistory.mockResolvedValue({ ok: true, session: {
+      ...mockHistorySession, messagesBlobUrl: null,
+    }, widgetSnapshots: [] });
+    render(<ChatTabV2 {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+    expect(mockGetChatHistoryDetail).toHaveBeenCalledTimes(1);
+    mockGetChatHistoryDetail.mockClear();
+    mockGetChatHistoryState.mockClear();
+    mockReadHistory.mockResolvedValue({ ok: true, session: {
+      _id: "history-1", directVisibility: "private", version: 9,
+    } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Chat input" }), { target: { value: "Next message" } });
+    fireEvent.click(screen.getByRole("button", { name: "Test send" }));
+    await flushMicrotasks();
+    expect(mockGetChatHistoryState).toHaveBeenCalledTimes(1);
+    expect(mockGetChatHistoryDetail).not.toHaveBeenCalled();
+    expect(mockUseChatSession.syncResumedVersion).toHaveBeenCalledWith(9);
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
+  });
+
   it("asks before discarding a draft when switching threads", async () => {
     render(<ChatTabV2 {...defaultProps} />);
 
@@ -639,7 +666,7 @@ describe("ChatTabV2 history sync", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await flushMicrotasks();
 
-    expect(mockGetChatHistoryDetail).not.toHaveBeenCalled();
+    expect(mockReadHistory).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox", { name: "Chat input" })).toHaveValue(
       "Unsaved draft"
     );
@@ -677,7 +704,7 @@ describe("ChatTabV2 history sync", () => {
       };
       widgetSnapshots: [];
     }>();
-    mockGetChatHistoryDetail.mockImplementationOnce(() => deferred.promise);
+    mockReadHistory.mockImplementationOnce(() => deferred.promise);
 
     render(<ChatTabV2 {...defaultProps} />);
 
@@ -734,7 +761,7 @@ describe("ChatTabV2 history sync", () => {
 
     /** Select the history thread, then run a turn to completion. */
     async function resumeThreadAndStream() {
-      mockGetChatHistoryDetail
+      mockReadHistory
         .mockResolvedValueOnce(detailResponse)
         .mockResolvedValue(detailResponse);
 
@@ -931,7 +958,7 @@ describe("ChatTabV2 history sync", () => {
       };
       mockUseChatSession.availableModels = [hostedSonnet, openRouterSonnet];
       mockUseChatSession.setSelectedModel = vi.fn();
-      mockGetChatHistoryDetail.mockResolvedValue({
+      mockReadHistory.mockResolvedValue({
         ok: true,
         session: {
           ...mockHistorySession,
@@ -966,7 +993,7 @@ describe("ChatTabV2 history sync", () => {
     };
     mockUseChatSession.availableModels = [];
     mockUseChatSession.setSelectedModel = vi.fn();
-    mockGetChatHistoryDetail.mockResolvedValue({
+    mockReadHistory.mockResolvedValue({
       ok: true,
       session: { ...mockHistorySession, modelId: selection.modelId, modelSelection: selection,
         messagesBlobUrl: "https://storage.test/blob" },
@@ -994,7 +1021,7 @@ describe("ChatTabV2 history sync", () => {
       widgetSnapshots: [],
     };
 
-    mockGetChatHistoryDetail.mockResolvedValue(detailResponse);
+    mockReadHistory.mockResolvedValue(detailResponse);
 
     const view = render(<ChatTabV2 {...defaultProps} />);
 
@@ -1032,7 +1059,7 @@ describe("ChatTabV2 history sync", () => {
     expect(lastUseChatSessionOptionsRef.current?.directVisibility).toBe(
       "project"
     );
-    expect(mockGetChatHistoryDetail).not.toHaveBeenCalled();
+    expect(mockReadHistory).not.toHaveBeenCalled();
   });
 
   it("hides the multi-model toggle when the active thread is shared", async () => {
@@ -1062,7 +1089,7 @@ describe("ChatTabV2 history sync", () => {
         version: 5,
       },
     };
-    mockGetChatHistoryDetail
+    mockReadHistory
       .mockResolvedValueOnce(privateDetailResponse)
       .mockResolvedValueOnce(sharedDetailResponse);
 
@@ -1115,7 +1142,7 @@ describe("ChatTabV2 history sync", () => {
       },
     };
 
-    mockGetChatHistoryDetail
+    mockReadHistory
       .mockResolvedValueOnce(privateDetailResponse)
       .mockResolvedValueOnce(sharedDetailResponse);
 
@@ -1152,7 +1179,7 @@ describe("ChatTabV2 history sync", () => {
       widgetSnapshots: [],
     };
 
-    mockGetChatHistoryDetail.mockResolvedValue(initialDetailResponse);
+    mockReadHistory.mockResolvedValue(initialDetailResponse);
 
     const view = render(<ChatTabV2 {...defaultProps} />);
 
@@ -1368,7 +1395,7 @@ describe("ChatTabV2 history sync", () => {
       new Error("Too many concurrent requests"),
       { formatted: { code: "user_rate_limit", limitKind: "concurrency" } }
     );
-    mockGetChatHistoryDetail.mockResolvedValue({
+    mockReadHistory.mockResolvedValue({
       ok: true,
       session: {
         ...mockHistorySession,
@@ -1412,7 +1439,7 @@ describe("ChatTabV2 history sync", () => {
     // message lands in a third session. Detaching has to happen BEFORE the
     // rewind is dispatched; doing it after `rewindToMessage` returns is already
     // too late, which is why this asserts on state as observed from inside it.
-    mockGetChatHistoryDetail.mockResolvedValue({
+    mockReadHistory.mockResolvedValue({
       ok: true,
       session: {
         ...mockHistorySession,
