@@ -2184,6 +2184,7 @@ export async function runHarnessTurn(
         const leaseId = crypto.randomUUID();
         const claim = await claimHarnessSessionState({
           owner,
+          requestId: options.harnessStartupRequestId,
           ...(warmAgentPilot || isApprovalResume ? { approvalIds: approvalContinuations.map(({ approvalId }) => approvalId) } : {}),
           runtimeFingerprint,
           ...(skillsHash !== undefined ? { skillsHash } : {}),
@@ -4410,6 +4411,7 @@ export async function runHarnessTurn(
         ) {
           drainEndedByAbort = true;
         }
+        if (effectiveAbortSignal.aborted && !drainEndedByAbort) aborted = true;
         if (drainEndedByAbort) {
           logger.info(
             "[harness][background-drain] ended by a stop or deadline; keeping the delivered answer",
@@ -4681,7 +4683,9 @@ export async function runHarnessTurn(
             // this paused turn's transcript WITHOUT a sidecar commit, because
             // this commit has already advanced the state version and released
             // the lease, so an ingest carrying it would be refused.
+            effectiveAbortSignal.throwIfAborted();
             const continueState = await session.suspendTurn();
+            effectiveAbortSignal.throwIfAborted();
             const ok = await commitHarnessSessionState({
               owner: continuity.owner,
               leaseId: continuity.leaseId,
@@ -4696,8 +4700,12 @@ export async function runHarnessTurn(
               // Terminal path — bounded. A missed commit means the next request
               // re-claims the lane and starts fresh, which is recoverable;
               // hanging here is not.
-              signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
+              signal: AbortSignal.any([
+                effectiveAbortSignal,
+                AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
+              ]),
             });
+            effectiveAbortSignal.throwIfAborted();
             localStateCommitted = ok;
             retainLocalState ||= ok;
             if (!ok && !localPrepared) await releaseHarnessLease?.();
@@ -4755,6 +4763,7 @@ export async function runHarnessTurn(
             if (continuity && !localPrepared) await releaseHarnessLease?.();
           }
         } catch (finalizeErr) {
+          if (effectiveAbortSignal.aborted && !drainEndedByAbort) aborted = true;
           logger.warn(
             "[harness] session finalize failed; releasing lease, sidecar not committed",
             { error: finalizeErr },

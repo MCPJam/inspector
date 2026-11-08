@@ -60,3 +60,26 @@ describe("hosted harness approval Stop", () => {
     expect(db.mutation).not.toHaveBeenCalled();
   });
 });
+
+describe("active harness Stop", () => {
+  it("blocks a follow-up until the durable request cancellation completes", async () => {
+    let finish!: () => void;
+    db.mutation.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const { result } = renderHook(useTestChat);
+    let pending!: Promise<void>;
+    act(() => { pending = result.current.stopActiveTurn("request-before-lane"); });
+    expect(result.current.stopping).toBe(true);
+    expect(db.mutation).toHaveBeenCalledWith(expect.anything(), { ...owner, requestId: "request-before-lane" });
+    await act(async () => { finish(); await pending; });
+    expect(result.current.stopping).toBe(false);
+    expect(result.current.stopFailed).toBe(false);
+  });
+
+  it("keeps dispatch blocked when cancellation could not be confirmed", async () => {
+    db.mutation.mockRejectedValueOnce(new Error("offline"));
+    const { result } = renderHook(useTestChat);
+    await act(async () => { await result.current.stopActiveTurn("request"); });
+    expect(result.current.stopFailed).toBe(true);
+    expect(result.current.stopping).toBe(false);
+  });
+});

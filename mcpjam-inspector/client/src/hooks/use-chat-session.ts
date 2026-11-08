@@ -3830,7 +3830,11 @@ export function useChatSession(
 
   const handleChatError = useCallback(
     (chatError: Error) => {
-      turnAuthorizationRenewal.stop();
+      const requestId = harnessStartupRequestRef.current;
+    if (requestId && (status === "submitted" || status === "streaming")) {
+      void stopActiveTurn(requestId);
+    }
+    turnAuthorizationRenewal.stop();
       harnessStartupRequestRef.current = null;
       setHarnessStartupPhase(null);
       // Every chat failure used to end here and go no further: this handler
@@ -6840,7 +6844,7 @@ export function useChatSession(
    * the rail is withdrawn with it. (Stream END is deliberately NOT a trigger —
    * a suspended operation's stream always ends while its round is pending.)
    */
-  const { canStopApproval, stopApproval } = useHarnessApprovalStop({
+  const { canStopApproval, stopApproval, stopActiveTurn, stopping: stoppingHarness, stopFailed } = useHarnessApprovalStop({
     owner: isHostedTransport && isAuthenticated && hostedProjectId && isHarness(harnessId) && !hostedScenarioId
       ? { projectId: hostedProjectId, harnessId, chatSessionId }
       : null,
@@ -6860,9 +6864,10 @@ export function useChatSession(
     const store = useHostedMrtrStore.getState();
     for (const round of store.rounds) void store.cancel(round.key);
     stop();
-  }, [stop, savedClientSendGuard, sendPreparationGuard, status, canStopApproval, stopApproval]);
+  }, [stop, savedClientSendGuard, sendPreparationGuard, status, canStopApproval, stopApproval, stopActiveTurn]);
 
   const submitBlocked =
+    stoppingHarness || stopFailed ||
     disableForAuthentication ||
     isAuthLoading ||
     authHeadersNotReady ||

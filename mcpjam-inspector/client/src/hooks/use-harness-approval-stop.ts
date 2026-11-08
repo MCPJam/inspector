@@ -14,6 +14,10 @@ const cancelMutation = makeFunctionReference<
   "mutation", Owner & { approvalIds: string[] }, "cancelled" | "already-continuing"
 >("harnessApprovalCancellation:cancelPendingApproval");
 
+const cancelActiveMutation = makeFunctionReference<
+  "mutation", Owner & { requestId: string }, null
+>("harnessApprovalCancellation:cancelActiveTurn");
+
 export function pendingHarnessApprovalIds(messages: UIMessage[]): string[] {
   return messages.flatMap((message) => message.parts.flatMap((part) =>
     isToolUIPart(part) && part.state === "approval-requested" ? [part.approval.id] : [],
@@ -36,9 +40,10 @@ export function useHarnessApprovalStop({ owner, messages, setMessages }: {
 }) {
   const convex = useConvex();
   const [stopping, setStopping] = useState(false);
+  const [stopFailed, setStopFailed] = useState(false);
   const ownerKey = JSON.stringify(owner);
   const currentOwner = useRef(ownerKey);
-  useLayoutEffect(() => { currentOwner.current = ownerKey; }, [ownerKey]);
+  useLayoutEffect(() => { currentOwner.current = ownerKey; setStopping(false); setStopFailed(false); }, [ownerKey]);
   const inFlight = useRef(false);
   const approvalIds = useMemo(() => owner ? pendingHarnessApprovalIds(messages) : [], [messages, ownerKey]);
   const pendingKey = JSON.stringify(approvalIds);
@@ -78,5 +83,20 @@ export function useHarnessApprovalStop({ owner, messages, setMessages }: {
     }
   }, [convex, ownerKey, pendingKey, setMessages]);
 
-  return { canStopApproval: Boolean(owner && approvalIds.length), stopping, stopApproval };
+  const stopActiveTurn = useCallback(async (requestId: string) => {
+    if (!owner) return;
+    setStopping(true);
+    setStopFailed(false);
+    try {
+      await convex.mutation(cancelActiveMutation, { ...owner, requestId });
+    } catch (error) {
+      if (currentOwner.current === ownerKey) setStopFailed(true);
+      reportCaught(error, { source: "harness_stop_active_turn" });
+      toast.error("Could not confirm Stop. Refresh this conversation before continuing.");
+    } finally {
+      if (currentOwner.current === ownerKey) setStopping(false);
+    }
+  }, [convex, ownerKey]);
+
+  return { stopActiveTurn, stopFailed, canStopApproval: Boolean(owner && approvalIds.length), stopping, stopApproval };
 }
