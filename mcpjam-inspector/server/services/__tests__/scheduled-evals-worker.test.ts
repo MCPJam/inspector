@@ -188,6 +188,11 @@ describe("executeClaimedRun connection", () => {
     return vi.mocked(createAuthorizedManager).mock.calls[0][7];
   }
 
+  it("keeps plugin placement disabled before an iteration sandbox exists", async () => {
+    await executeClaimedRun(CLAIM);
+    expect(connectOptions()).toMatchObject({ pluginComputerRuntime: false });
+  });
+
   it("passes the deployment's XAA issuer, having no request to read one from", async () => {
     await executeClaimedRun(CLAIM);
 

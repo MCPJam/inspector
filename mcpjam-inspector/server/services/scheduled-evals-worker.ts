@@ -277,6 +277,7 @@ export async function executeClaimedRun(
       undefined,
       {
         serverNames: selection.serverNames,
+        pluginComputerRuntime: false,
         xaaIssuer: resolveConfiguredXaaIssuer(),
         xaaPolicy: xaaPolicyFromMcpProfile(hostConfig.mcpProfile),
       },
