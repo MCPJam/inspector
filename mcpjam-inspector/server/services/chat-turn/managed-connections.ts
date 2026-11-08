@@ -96,6 +96,7 @@ import {
   resolvePluginExtensions,
 } from "@mcpjam/sdk/host-config/internal";
 import { resolveManagedTurnSetup } from "./managed-setup.js";
+import { optionalAutomaticPluginServers } from "../../utils/optional-plugin-servers.js";
 import { pendingStdioCommandApproval } from "../../utils/stdio-command-approvals.js";
 
 type ManagedSetup = Extract<
@@ -110,6 +111,8 @@ export async function prepareManagedConnections(args: {
   resources: TurnResources;
   setup: { authorizedOrganizationId?: string } & Pick<
     ManagedSetup,
+    | "environmentSpec"
+    | "effectiveCapabilities"
     | "hostedBody"
     | "initializePins"
     | "mcpProtocolVersionsByServerId"
@@ -649,7 +652,16 @@ export async function prepareManagedConnections(args: {
   if (typeof hostRuntimeConfig?.hostConfigId === "string" && typeof hostRuntimeConfig.hostId === "string") setManagerResourceHostConfig(manager, hostRuntimeConfig.hostConfigId, hostRuntimeConfig.hostId);
   connectedManager = manager;
   taskCreatedBridge?.bindOwner(hostedBody.projectId, authenticatedUserId);
-  const pendingApproval = pendingStdioCommandApproval(refusedServers);
+  const optionalServers = optionalAutomaticPluginServers({
+    requested: rawBody.autoContributedPluginServerIds,
+    origin: args.setup.environmentSpec?.environmentOrigin,
+    mode: turnMode,
+    pluginServerIds: args.setup.effectiveCapabilities?.pluginServerIds ?? [],
+    selectedServerIds,
+  });
+  const pendingApproval = pendingStdioCommandApproval(
+    refusedServers, optionalServers,
+  );
   if (pendingApproval) throw pendingApproval;
   if (Array.isArray(hostedBody.messages) && hostedBody.messages.length <= 1)
     void refreshConnectionProfiles(manager, bearerToken, hostedBody.projectId);
@@ -665,6 +677,9 @@ export async function prepareManagedConnections(args: {
   // drives one retry leg (with reconstructed output-schema validation) before
   // the first model call and splices the result. `resolve` closes over the
   // freshly-authorized manager for the bound server.
+  const resumeServerName = mrtrResumeRequest
+    ? buildServerNamesById(selectedServerIds, selectedServerNames)?.[mrtrResumeRequest.serverId]
+    : undefined;
   const mrtrEngineResume: MrtrEngineResume | undefined =
     mrtrResumeRequest?.owned
       ? {
@@ -688,17 +703,7 @@ export async function prepareManagedConnections(args: {
                 manager,
                 bearer: convexBearer,
                 serverId: mrtrResumeRequest.serverId,
-                ...(buildServerNamesById(
-                  selectedServerIds,
-                  selectedServerNames,
-                )?.[mrtrResumeRequest.serverId]
-                  ? {
-                      serverName: buildServerNamesById(
-                        selectedServerIds,
-                        selectedServerNames,
-                      )![mrtrResumeRequest.serverId],
-                    }
-                  : {}),
+                ...(resumeServerName ? { serverName: resumeServerName } : {}),
                 toolCallId: mrtrResumeRequest.toolCallId,
                 submission: {
                   continuationId: mrtrResumeRequest.continuationId,

@@ -200,7 +200,7 @@ export function usePlaygroundHiddenEnvironment(
         : undefined,
     [canSignIn, signIn],
   );
-  usePluginServerNotices(plugins);
+  usePluginServerNotices(plugins, projectId);
   // No authoritative answer yet: who this is, or which plugins it has. An
   // empty list here is not "no plugins". Only for a chat that could have
   // plugins at all (the flag is on, a real project and a client).

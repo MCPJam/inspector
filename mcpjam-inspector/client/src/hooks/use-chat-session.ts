@@ -4099,6 +4099,9 @@ export function useChatSession(
                 // The project's skills reach this turn as they reach a client
                 // turn, alongside the plugins' own.
                 includeProjectSkills: true,
+                autoContributedPluginServerIds: hiddenPluginServerIds.filter(
+                  (id) => !resolvedServerIds.includes(id),
+                ),
               }
             : // Host-bound direct preview: forward the saved host id so the server
               // re-resolves the host's authoritative runtime config (harness /

@@ -249,13 +249,15 @@ function signInFor(
 export function unavailableServersForNotice(
   plugins: readonly ActivePluginRow[],
   servers: readonly PluginServerUnavailable[],
+  projectId?: string,
 ): PluginNoticePlugin[] {
   return plugins.flatMap((plugin): PluginNoticePlugin[] => {
     const own = servers.filter((unavailable) =>
       plugin.servers.some((server) => server.serverId === unavailable.serverId),
     );
     const chosen =
-      own.find((unavailable) => unavailable.reason === "needs_auth") ?? own[0];
+      own.find((unavailable) => unavailable.reason === "needs_auth") ??
+      own.find((unavailable) => unavailable.reason === "needs_approval") ?? own[0];
     if (!chosen) return [];
     const componentKey = plugin.servers.find(
       (server) => server.serverId === chosen.serverId,
@@ -267,6 +269,17 @@ export function unavailableServersForNotice(
         displayName: plugin.displayName,
         reason: chosen.reason,
         partial: true,
+        ...(chosen.reason === "needs_approval" && projectId
+          ? {
+              reviewCommand: {
+                projectId,
+                serverId: chosen.serverId,
+                serverName: plugin.servers.find(
+                  (server) => server.serverId === chosen.serverId,
+                )?.name ?? plugin.name,
+              },
+            }
+          : {}),
         ...signInFor(
           plugin,
           chosen.reason,
@@ -349,6 +362,7 @@ export function retargetHiddenEnvironmentBody(
     executionTarget: _target,
     environmentOverrides: _overrides,
     includeProjectSkills,
+    autoContributedPluginServerIds: _automatic,
     ...rest
   } = parsed;
   if (next.environmentId === null) {
@@ -365,6 +379,9 @@ export function retargetHiddenEnvironmentBody(
         next.pluginServerIds,
       ),
     },
+    autoContributedPluginServerIds: next.pluginServerIds.filter(
+      (id) => !selected.includes(id),
+    ),
     ...(includeProjectSkills !== undefined ? { includeProjectSkills } : {}),
   });
 }
