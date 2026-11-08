@@ -5,10 +5,10 @@ import { readFile } from "node:fs/promises";
 import { Sandbox } from "e2b";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
 import { tool, jsonSchema } from "ai";
-import { createE2BHarnessSandboxProvider } from "../e2b-sandbox-provider.js";
-import { createCopilotCli } from "./index.js";
+import { createE2BHarnessSandboxProvider } from "../server/utils/harness/e2b-sandbox-provider.js";
+import { createCopilotCli } from "../server/utils/harness/copilot-cli/index.js";
 
-import { withWarmBridgeBootstrap } from "../warm-bridge-files.js";
+import { withWarmBridgeBootstrap } from "../server/utils/harness/warm-bridge-files.js";
 
 const decision = process.env.PROBE_DECISION ?? "allow";
 if (!["allow", "deny", "stop", "lost-process"].includes(decision))
@@ -26,7 +26,7 @@ try {
   await sandbox.files.write(
     mockPath,
     await readFile(
-      new URL("../local/conformance/mock-responses.mjs", import.meta.url),
+      new URL("../server/utils/harness/local/conformance/mock-responses.mjs", import.meta.url),
       "utf8",
     ),
   );
