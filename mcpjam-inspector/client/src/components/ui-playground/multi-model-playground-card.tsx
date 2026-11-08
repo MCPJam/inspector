@@ -2,6 +2,8 @@ import { useCompareChatEnvironment } from "@/hooks/use-compare-chat-environment"
 import { showPluginNotice } from "@/lib/plugins/plugin-notice-display";
 import { SavedClientProvider } from "@/contexts/saved-client-context";
 import { CompareLaneWorkspace } from "@/components/host-workspace/CompareLaneWorkspace";
+import { OwnedModelAppPortsProvider } from "@/components/host-workspace/OwnedModelApp";
+import { useCompareLaneModelApps } from "@/components/host-workspace/use-compare-lane-model-apps";
 import {
   useThreadAppWorkspace,
   type WorkspaceServer,
@@ -152,6 +154,8 @@ function InvokingIndicator({
 interface MultiModelPlaygroundCardProps {
   /** Extra classes on the card root, e.g. hiding it while another card is shown. */
   className?: string;
+  active?: boolean;
+  readinessNotice?: string;
   /**
    * This lane's client has plugin extensions on (flag, backend access and the
    * client's own setting all passed). The lane then owns its own Apps.
@@ -192,6 +196,7 @@ interface MultiModelPlaygroundCardProps {
   comparisonSummaries: MultiModelCardSummary[];
   selectedServers: string[];
   broadcastRequest: BroadcastChatTurnRequest | null;
+  claimBroadcastDelivery?: (request: BroadcastChatTurnRequest) => boolean;
   deterministicExecutionRequest: PlaygroundDeterministicExecutionRequest | null;
   stopRequestId: number;
   reasoningDisplayMode?: ReasoningDisplayMode;
@@ -302,6 +307,8 @@ interface MultiModelPlaygroundCardProps {
 
 export function MultiModelPlaygroundCard({
   className,
+  active = true,
+  readinessNotice,
   extensionBinding = null,
   browserWorkspace,
   compareId,
@@ -316,6 +323,7 @@ export function MultiModelPlaygroundCard({
   comparisonSummaries,
   selectedServers,
   broadcastRequest,
+  claimBroadcastDelivery,
   deterministicExecutionRequest,
   stopRequestId,
   reasoningDisplayMode,
@@ -395,16 +403,17 @@ export function MultiModelPlaygroundCard({
   >([]);
   const [injectedToolRenderOverrides, setInjectedToolRenderOverrides] =
     useState<Record<string, ToolRenderOverride>>({});
-  const lastBroadcastRequestIdRef = useRef<number | null>(null);
   const lastExecutionRequestIdRef = useRef<number | null>(null);
   // Read when a restore fails, after the props it closed over may have moved.
   // Set at commit, so a render React discards never counts as received.
-  const broadcastRequestIdRef = useRef(broadcastRequest?.id);
+  const broadcastRequestRef = useRef(broadcastRequest);
+  const claimBroadcastDeliveryRef = useRef(claimBroadcastDelivery);
   const executionRequestIdRef = useRef(deterministicExecutionRequest?.id);
   useLayoutEffect(() => {
-    broadcastRequestIdRef.current = broadcastRequest?.id;
+    broadcastRequestRef.current = broadcastRequest;
+    claimBroadcastDeliveryRef.current = claimBroadcastDelivery;
     executionRequestIdRef.current = deterministicExecutionRequest?.id;
-  }, [broadcastRequest?.id, deterministicExecutionRequest?.id]);
+  }, [broadcastRequest, claimBroadcastDelivery, deterministicExecutionRequest?.id]);
   const onSummaryChangeRef = useRef(onSummaryChange);
   const onHasMessagesChangeRef = useRef(onHasMessagesChange);
   const lastAddColumnVersionRef = useRef(0);
@@ -559,7 +568,7 @@ export function MultiModelPlaygroundCard({
   });
 
   const readyToSend =
-    isSessionBootstrapComplete &&
+    !readinessNotice && isSessionBootstrapComplete &&
     (!hiddenEnvironmentActive ||
       (!hiddenEnvironment.blockingError &&
         (!hiddenEnvironment.wanted || !!hiddenEnvironment.environmentId)));
@@ -620,14 +629,23 @@ export function MultiModelPlaygroundCard({
         .map(({ serverId, name }) => ({ serverId, name })),
     ];
   }, [extensionBinding?.servers, hiddenEnvironmentActive, pluginServers]);
+  const readinessRef = useRef(readinessNotice);
+  readinessRef.current = readinessNotice;
+  const canInvoke = useCallback(() => !readinessRef.current, []);
   const laneApps = useThreadAppWorkspace(laneScope, laneServers, {
     capabilities: extensionBinding?.capabilities,
     launchProfile: extensionBinding?.profile,
+    canInvoke,
   });
+  const modelApps = useCompareLaneModelApps(
+    laneScope,
+    extensionBinding?.capabilities,
+    canInvoke,
+  );
   laneContextRefs.current = laneScope
     ? {
         workspaceId: laneScope.pluginWorkspace.workspaceId,
-        tokens: laneApps.contextReferences,
+        tokens: [...laneApps.contextReferences, ...modelApps.references],
       }
     : null;
   // A lane with live Apps keeps placeholder transcripts in its Trace view,
@@ -712,8 +730,9 @@ export function MultiModelPlaygroundCard({
         if (cancelled) return;
         // The turns that arrived while restoring are dropped with the alert;
         // the next one starts this column fresh.
-        lastBroadcastRequestIdRef.current =
-          broadcastRequestIdRef.current ?? null;
+        const pendingBroadcast = broadcastRequestRef.current;
+        if (pendingBroadcast)
+          claimBroadcastDeliveryRef.current?.(pendingBroadcast);
         lastExecutionRequestIdRef.current =
           executionRequestIdRef.current ?? null;
         setRecoveryStatus("failed");
@@ -762,6 +781,7 @@ export function MultiModelPlaygroundCard({
   const { sendBlocked: fullscreenChatSendBlocked } =
     getChatComposerInteractivity({
       isStreamingActive: isStreaming,
+      composerDisabled: !!readinessNotice,
     });
 
   useEffect(() => {
@@ -949,18 +969,14 @@ export function MultiModelPlaygroundCard({
 
   useEffect(() => {
     if (recoveryStatus === "loading") return;
-    if (!isSessionBootstrapComplete) return;
+    if (!readyToSend) return;
 
     if (!broadcastRequest) {
       return;
     }
 
-    if (lastBroadcastRequestIdRef.current === broadcastRequest.id) {
-      return;
-    }
-
-    lastBroadcastRequestIdRef.current = broadcastRequest.id;
     if (broadcastRequest.id === restoredBroadcastId) return;
+    if (!claimBroadcastDelivery?.(broadcastRequest)) return;
     // A column whose restore failed runs the next turn as a fresh column.
     if (recoveryStatus === "failed") setRecoveryStatus("ready");
 
@@ -985,8 +1001,9 @@ export function MultiModelPlaygroundCard({
     broadcastRequest,
     recoveryStatus,
     restoredBroadcastId,
+    claimBroadcastDelivery,
     drainModelContextQueue,
-    isSessionBootstrapComplete,
+    readyToSend,
     sendMessage,
     setMessages,
     outgoingSenderMetadata,
@@ -1124,13 +1141,14 @@ export function MultiModelPlaygroundCard({
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
+      if (!canInvoke()) return;
       sendMessage({
         text,
         metadata: outgoingSenderMetadata,
         widgetModelContext: drainModelContextQueue(),
       });
     },
-    [drainModelContextQueue, sendMessage, outgoingSenderMetadata],
+    [drainModelContextQueue, sendMessage, outgoingSenderMetadata, canInvoke],
   );
 
   // Provider stack wraps the WHOLE card body — header + trace branch +
@@ -1154,6 +1172,7 @@ export function MultiModelPlaygroundCard({
         className,
       )}
     >
+      {readinessNotice ? <p role="status" className="px-3 py-2 text-sm text-muted-foreground">{readinessNotice}</p> : null}
       <ModelCompareCardHeader
         model={model}
         compareLabel={compareLabel}
@@ -1204,6 +1223,7 @@ export function MultiModelPlaygroundCard({
           </div>
         )}
         <CompareLaneWorkspace
+          active={active}
           apps={laneScope ? laneApps : null}
           showDiagnostics={showTraceDiagnosticsShell}
           diagnostics={
@@ -1382,5 +1402,9 @@ export function MultiModelPlaygroundCard({
     );
   }
 
-  return wrapped;
+  return (
+    <OwnedModelAppPortsProvider value={modelApps.value}>
+      {wrapped}
+    </OwnedModelAppPortsProvider>
+  );
 }

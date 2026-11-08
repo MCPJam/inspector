@@ -66,6 +66,7 @@ type ModelMessageSource = {
   isLive: () => boolean;
 };
 export interface OwnedModelAppPorts {
+  canInvoke?: () => boolean;
   registerMessageSource: (
     token: string,
     source: ModelMessageSource,
@@ -84,6 +85,8 @@ export interface OwnedModelAppPorts {
   ) => Promise<boolean>;
   /** The client's Display modes toggle when the App opened (presentation only). */
   openAIDisplayModes?: boolean;
+  /** Compare lanes publish context without accepting App-initiated messages. */
+  messagesEnabled?: boolean;
 }
 const ModelAppPortsContext = createContext<OwnedModelAppPorts | null>(null);
 /** Root composer owns publication and dispatch; render leaves own no chat session. */
@@ -304,7 +307,8 @@ function ModelApp({
       renderProps.chatSessionId,
     ],
   );
-  const api = useMemo(() => createThreadAppApi(scope, "model/"), [scope]);
+  const invokeGate = useRef(ports?.canInvoke);
+  const api = useMemo(() => createThreadAppApi(scope, "model/", () => invokeGate.current?.() ?? true), [scope]);
   useEffect(() => {
     mounted.current = true;
     void authFetch("/api/web/apps/plugin-instances/model/open", {
@@ -408,7 +412,8 @@ function ModelApp({
     return () => clearInterval(timer);
   }, [api, handle, lifetime]);
   useEffect(() => {
-    if (!handle?.messageEnabled || !ports) return;
+    if (!handle?.messageEnabled || !ports || ports.messagesEnabled === false)
+      return;
     return ports.registerMessageSource(
       marker.instanceToken,
       {
@@ -461,7 +466,7 @@ function ModelApp({
             requireFiles();
             return selected;
           });
-    return ports
+    return ports && ports.messagesEnabled !== false
       ? withAppMessages(withFiles, base, handle, {
           threadId: scope.threadId,
           isLive: () => mounted.current && !lifetime.signal.aborted,
