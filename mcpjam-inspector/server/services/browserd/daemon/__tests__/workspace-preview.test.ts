@@ -80,6 +80,11 @@ describe("WorkspacePreviewRelay through the real sidecar", () => {
         res.once("close", () => clearInterval(tick));
         return;
       }
+      if (req.url === "/truncated") {
+        res.writeHead(200, { "content-length": "100" });
+        res.write("partial", () => req.socket.destroy());
+        return;
+      }
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({ host: req.headers.host, sawKey: "x-mcpjam-preview-key" in req.headers }));
     });
@@ -152,6 +157,23 @@ describe("WorkspacePreviewRelay through the real sidecar", () => {
     }
     const res = await get({ "sec-fetch-site": "none" });
     expect(res.status).toBe(200);
+  });
+
+  it("keeps serving after the app drops a connection mid-response", async () => {
+    const outcome = await new Promise<string>((resolve) => {
+      const req = http.request(
+        { host: "127.0.0.1", port, path: "/truncated", headers: { host: `localhost:${port}`, "sec-fetch-site": "none" } },
+        (res) => {
+          res.once("aborted", () => resolve("aborted"));
+          res.once("end", () => resolve("ended"));
+          res.resume();
+        },
+      );
+      req.on("error", () => resolve("aborted"));
+      req.end();
+    });
+    expect(outcome).toBe("aborted");
+    expect((await get({ "sec-fetch-site": "none" })).status).toBe(200);
   });
 
   it("re-grants the same port without a second listener", async () => {

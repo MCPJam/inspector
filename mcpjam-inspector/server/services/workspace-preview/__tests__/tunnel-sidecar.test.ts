@@ -74,6 +74,11 @@ describe("workspace preview sidecar", () => {
     expect(out.split("\r\n")[0]).toBe("HTTP/1.1 404 Not Found");
   });
 
+  it("refuses a handshake whose headers never end", async () => {
+    const out = await exchange(sidecar.port, `GET /tunnel?port=${appPort} HTTP/1.1\r\nX: ${"a".repeat(20_000)}`);
+    expect(out.split("\r\n")[0]).toBe("HTTP/1.1 431 Request Header Fields Too Large");
+  });
+
   it("answers 502 when nothing listens on the granted port", async () => {
     const closed = 1024 + ((appPort + 7) % 50000);
     const out = await exchange(sidecar.port, handshake(closed, previewKeyFor(sidecar.secret, closed)));

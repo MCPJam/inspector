@@ -1303,6 +1303,9 @@ var WorkspacePreviewRelay = class {
         (answer) => {
           res.writeHead(answer.statusCode ?? 502, answer.rawHeaders);
           answer.pipe(res);
+          answer.once("close", () => {
+            if (!answer.complete) res.destroy();
+          });
         }
       );
       res.once("close", () => {

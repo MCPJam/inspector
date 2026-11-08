@@ -61,7 +61,7 @@ const server = net.createServer((client) => {
   const onData = (chunk) => {
     head = Buffer.concat([head, chunk]);
     const end = head.indexOf("\r\n\r\n");
-    if (end < 0) { if (head.length > 16384) refuse(client, "431 Request Header Fields Too Large"); return; }
+    if (end < 0) { if (head.length > 16384) { client.off("data", onData); refuse(client, "431 Request Header Fields Too Large"); } return; }
     client.off("data", onData);
     client.setTimeout(0);
     const lines = head.subarray(0, end).toString("latin1").split("\r\n");

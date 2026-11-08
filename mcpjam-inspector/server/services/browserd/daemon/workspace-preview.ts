@@ -279,6 +279,11 @@ export class WorkspacePreviewRelay {
         (answer) => {
           res.writeHead(answer.statusCode ?? 502, answer.rawHeaders);
           answer.pipe(res);
+          // A pipe does not end the browser's response when the app drops
+          // mid-body, so the page would wait on bytes that never come.
+          answer.once("close", () => {
+            if (!answer.complete) res.destroy();
+          });
         },
       );
       // A response the browser abandons, such as a hot-reload event stream,
