@@ -40,5 +40,6 @@ export function nativeForwardingEnabled(): boolean {
  * that have not yet entered the next turn.
  */
 export function harnessNativeImagesEnabled(): boolean {
-  return process.env.MCPJAM_HARNESS_NATIVE_IMAGES !== "false";
+  const value = process.env.MCPJAM_HARNESS_NATIVE_IMAGES?.trim().toLowerCase();
+  return value !== "false" && value !== "0";
 }

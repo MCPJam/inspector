@@ -17,6 +17,7 @@ import {
   HARNESS_PROMPT_IMAGE_MAX_EDGE,
   conversationImageBase64Bytes,
   harnessPromptImageHistory,
+  isHarnessPromptRasterImage,
   prepareHarnessPromptImages,
   resetHarnessPromptImageLibraryForTests,
   setHarnessPromptImageLibraryLoaderForTests,
@@ -225,6 +226,66 @@ describe("prepareHarnessPromptImages", () => {
     });
   });
 
+  it("skips SVG before Sharp, even when labeled as PNG", async () => {
+    const inner = await sharp({
+      create: {
+        width: 1,
+        height: 1,
+        channels: 3,
+        background: { r: 0, g: 0, b: 0 },
+      },
+    })
+      .png()
+      .toBuffer();
+    const svg = Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><image href="data:image/png;base64,${inner.toString("base64")}" width="100" height="100"/></svg>`,
+    );
+    const decode = vi.fn(
+      (_input: Buffer, _options?: Record<string, unknown>) => {
+        throw new Error("sharp must not decode non-raster bytes");
+      },
+    );
+    setHarnessPromptImageLibraryLoaderForTests(async () => decode);
+    const results = await prepareHarnessPromptImages({
+      attachments: [
+        imageAttachment(svg, "image/png"),
+        imageAttachment(
+          Buffer.from(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="red"/></svg>',
+          ),
+          "image/svg+xml",
+        ),
+      ],
+      history: [],
+    });
+    expect(results).toEqual([
+      { status: "skipped", reason: "not JPEG, PNG, GIF, or WebP" },
+      { status: "skipped", reason: "not JPEG, PNG, GIF, or WebP" },
+    ]);
+    expect(decode).not.toHaveBeenCalled();
+  });
+
+  it("attaches a JPEG after the raster sniff", async () => {
+    const bytes = await sharp({
+      create: {
+        width: 16,
+        height: 12,
+        channels: 3,
+        background: { r: 10, g: 20, b: 30 },
+      },
+    })
+      .jpeg()
+      .toBuffer();
+    const [result] = await prepareHarnessPromptImages({
+      attachments: [imageAttachment(bytes, "image/jpeg")],
+      history: [],
+    });
+    expect(result).toMatchObject({
+      status: "attached",
+      part: { type: "image", mediaType: "image/jpeg" },
+    });
+  });
+
   it("skips a corrupt image and reports a PDF as not-image", async () => {
     const pdf: HarnessPromptAttachment = {
       name: "notes.pdf",
@@ -295,7 +356,7 @@ describe("prepareHarnessPromptImages", () => {
         r.reason === "this message already attaches 4 MiB of images",
     );
     expect(attached.length).toBeGreaterThan(0);
-    expect(skippedTurn.length + attached.length).toBeGreaterThan(0);
+    expect(skippedTurn.length).toBeGreaterThan(0);
     const attachedBytes = attached.reduce((sum, r) => {
       return r.status === "attached" ? sum + r.base64Bytes : sum;
     }, 0);
@@ -367,6 +428,35 @@ describe("prepareHarnessPromptImages", () => {
     expect(logged).toContain("[harness] prompt images");
     expect(logged).not.toContain(secret);
     expect(logged).not.toContain("shot.png");
+  });
+});
+
+describe("isHarnessPromptRasterImage", () => {
+  it("accepts JPEG, PNG, GIF, and WebP magic", () => {
+    expect(isHarnessPromptRasterImage(new Uint8Array([0xff, 0xd8, 0xff]))).toBe(
+      true,
+    );
+    expect(
+      isHarnessPromptRasterImage(
+        new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      ),
+    ).toBe(true);
+    expect(isHarnessPromptRasterImage(Buffer.from("GIF89a"))).toBe(true);
+    const webp = Buffer.alloc(12);
+    webp.write("RIFF", 0);
+    webp.write("WEBP", 8);
+    expect(isHarnessPromptRasterImage(webp)).toBe(true);
+  });
+
+  it("rejects SVG, empty buffers, and truncated headers", () => {
+    expect(
+      isHarnessPromptRasterImage(
+        Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'),
+      ),
+    ).toBe(false);
+    expect(isHarnessPromptRasterImage(new Uint8Array())).toBe(false);
+    expect(isHarnessPromptRasterImage(new Uint8Array([0xff, 0xd8]))).toBe(false);
+    expect(isHarnessPromptRasterImage(Buffer.from("RIFF"))).toBe(false);
   });
 });
 

@@ -4,7 +4,9 @@
  *
  * Decode already happened in `harness-attachments.ts`. This module never
  * throws: a frame that cannot be attached is skipped with a reason the note
- * can quote. The only process state is the one sharp-load promise.
+ * can quote. Only JPEG, PNG, GIF, and WebP magic reach Sharp: an SVG's
+ * outer canvas can sit under the pixel cap while a nested raster does not.
+ * The only process state is the one sharp-load promise.
  */
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { logger } from "../logger.js";
@@ -28,6 +30,38 @@ const TOO_LARGE = "too large to attach after resizing";
 const TURN_FULL = "this message already attaches 4 MiB of images";
 const CANCELLED = "the turn was cancelled";
 const UNREADABLE = "it was not readable";
+const NOT_RASTER = "not JPEG, PNG, GIF, or WebP";
+
+const JPEG_MAGIC = [0xff, 0xd8, 0xff] as const;
+const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
+const GIF_MAGIC = [0x47, 0x49, 0x46, 0x38] as const;
+const RIFF_MAGIC = [0x52, 0x49, 0x46, 0x46] as const;
+const WEBP_MAGIC = [0x57, 0x45, 0x42, 0x50] as const;
+
+function startsWithMagic(
+  bytes: Uint8Array,
+  magic: readonly number[],
+  offset = 0,
+): boolean {
+  if (bytes.length < offset + magic.length) return false;
+  for (let i = 0; i < magic.length; i++) {
+    if (bytes[offset + i] !== magic[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * JPEG, PNG, GIF, WebP only. Sharp's pixel cap does not apply to nested
+ * rasters inside an SVG, so vector (and unknown) bytes never reach decode.
+ */
+export function isHarnessPromptRasterImage(bytes: Uint8Array): boolean {
+  if (startsWithMagic(bytes, JPEG_MAGIC)) return true;
+  if (startsWithMagic(bytes, PNG_MAGIC)) return true;
+  if (startsWithMagic(bytes, GIF_MAGIC)) return true;
+  return (
+    startsWithMagic(bytes, RIFF_MAGIC) && startsWithMagic(bytes, WEBP_MAGIC, 8)
+  );
+}
 
 export type HarnessPromptImagePart = {
   type: "image";
@@ -292,6 +326,18 @@ export async function prepareHarnessPromptImages(args: {
       skipReasons.push(CANCELLED);
       continue;
     }
+    const decoded = attachment.decoded;
+    if (!decoded || "error" in decoded) {
+      const reason = decoded && "error" in decoded ? decoded.error : UNREADABLE;
+      results.push(skipped(reason));
+      skipReasons.push(reason);
+      continue;
+    }
+    if (!isHarnessPromptRasterImage(decoded.bytes)) {
+      results.push(skipped(NOT_RASTER));
+      skipReasons.push(NOT_RASTER);
+      continue;
+    }
     if (!sharp) {
       results.push(skipped(LIBRARY_UNAVAILABLE));
       skipReasons.push(LIBRARY_UNAVAILABLE);
@@ -307,13 +353,6 @@ export async function prepareHarnessPromptImages(args: {
     if (turnUsed >= HARNESS_PROMPT_IMAGE_TURN_BUDGET) {
       results.push(skipped(TURN_FULL));
       skipReasons.push(TURN_FULL);
-      continue;
-    }
-    const decoded = attachment.decoded;
-    if (!decoded || "error" in decoded) {
-      const reason = decoded && "error" in decoded ? decoded.error : UNREADABLE;
-      results.push(skipped(reason));
-      skipReasons.push(reason);
       continue;
     }
     const resized = await resizeOne(decoded.bytes, sharp);

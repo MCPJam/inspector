@@ -43,7 +43,10 @@ it.each([undefined, "", "true", "1"])(
   },
 );
 
-it("disables native harness images only on false", () => {
-  vi.stubEnv("MCPJAM_HARNESS_NATIVE_IMAGES", "false");
-  expect(harnessNativeImagesEnabled()).toBe(false);
-});
+it.each(["false", "0", " FALSE "])(
+  "disables native harness images on %s",
+  (value) => {
+    vi.stubEnv("MCPJAM_HARNESS_NATIVE_IMAGES", value);
+    expect(harnessNativeImagesEnabled()).toBe(false);
+  },
+);
