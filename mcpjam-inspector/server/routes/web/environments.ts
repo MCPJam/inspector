@@ -23,6 +23,9 @@
  * server-side flag would only add a second, drifting gate.
  */
 import { Hono } from "hono";
+import { parseEnvironmentOverrides } from "../../../shared/execution-target.js";
+import { applyPluginVersionOverride } from "../../services/environments/plugin-override.js";
+import { fetchPluginRuntimeAttribution } from "../../services/environments/plugin-attribution.js";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
 import {
@@ -40,6 +43,7 @@ import {
   callerContextFromHono,
   createAuthorizedManager,
   handleRoute,
+  readJsonBody,
 } from "./auth.js";
 import { ErrorCode, WebRouteError } from "./errors.js";
 
@@ -71,7 +75,7 @@ environments.get("/:environmentId/preview", async (c) =>
   })
 );
 
-// GET /api/web/environments/:environmentId/tools?projectId=...
+// GET lists the saved setup. POST accepts the same temporary narrowing as a turn.
 //
 // The environment's live tool surface: resolve the environment atomically
 // (same read as the preview), open the SAME ephemeral per-turn connections a
@@ -83,7 +87,7 @@ environments.get("/:environmentId/preview", async (c) =>
 // Per-server failures are per-server ROWS, not a route failure: an
 // environment with one unreachable server still shows every other server's
 // tools, and the error string doubles as a pre-turn health check.
-environments.get("/:environmentId/tools", async (c) =>
+environments.on(["GET", "POST"], "/:environmentId/tools", async (c) =>
   handleRoute(c, async () => {
     const environmentId = c.req.param("environmentId");
     const projectId = c.req.query("projectId");
@@ -95,10 +99,26 @@ environments.get("/:environmentId/tools", async (c) =>
       );
     }
     const bearerToken = await getConvexBearerForRequest(c);
-    const spec = await resolveEnvironmentForRuntime(
-      createConvexClient(bearerToken),
-      { projectId, environmentId }
+    const parsed = parseEnvironmentOverrides(
+      c.req.method === "POST" ? await readJsonBody(c) : undefined,
     );
+    if (!parsed.ok) {
+      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, parsed.error);
+    }
+    const client = createConvexClient(bearerToken);
+    let spec = await resolveEnvironmentForRuntime(client, {
+      projectId,
+      environmentId,
+      overrides: parsed.overrides,
+    });
+    const retainedVersionIds = parsed.overrides?.pluginVersionIds;
+    if (retainedVersionIds !== undefined) {
+      const attribution = await fetchPluginRuntimeAttribution(client, {
+        projectId,
+        pluginVersionIds: (spec.pluginVersions ?? []).map((p) => p.pluginVersionId),
+      });
+      spec = applyPluginVersionOverride({ spec, attribution, retainedVersionIds }).spec;
+    }
     const serverIds = runtimeServerIds(spec);
     const serverNames = runtimeServerNames(spec);
     const sources = Array.isArray(spec.servers.connectable)
@@ -108,7 +128,7 @@ environments.get("/:environmentId/tools", async (c) =>
 
     // Same enterprise-policy posture as an environment chat turn (chat-v2):
     // the policy comes from the environment's own resolved host config —
-    // there is no request body here to even be tempted by. Resolved ONCE and
+    // the caller can only narrow the saved setup. Resolved ONCE and
     // fail-closed for the whole route (a malformed policy is an environment
     // problem, not one server's).
     const xaaPolicy = xaaPolicyFromMcpProfile(
