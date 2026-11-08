@@ -116,7 +116,7 @@ function copilotRecipe(proxyUrl: string) {
 }
 
 function hostedHarnesses(): Record<
-  "claude-code" | "codex" | "copilot-cli" | "cursor",
+  "claude-code" | "codex" | "copilot-cli" | "cursor" | "opencode",
   HarnessWithBootstrap
 > {
   const claude = getHarnessAdapter("claude-code")
@@ -124,6 +124,8 @@ function hostedHarnesses(): Record<
   const codex = getHarnessAdapter("codex")
     .createHarness as unknown as CreateHarness;
   const cursor = getHarnessAdapter("cursor")
+    .createHarness as unknown as CreateHarness;
+  const opencode = getHarnessAdapter("opencode")
     .createHarness as unknown as CreateHarness;
   return {
     "claude-code": claude({
@@ -134,6 +136,10 @@ function hostedHarnesses(): Record<
     codex: codex({ modelId: "openai/gpt-5.5", auth: CODEX_AUTH }),
     "copilot-cli": copilotRecipe("http://test.invalid"),
     cursor: cursor({ auth: CURSOR_AUTH, mcpJson: { mcpServers: {} } }),
+    opencode: opencode({
+      modelId: "anthropic/claude-haiku-4.5",
+      auth: CLAUDE_AUTH,
+    }),
   };
 }
 
@@ -143,7 +149,7 @@ function hostedHarnesses(): Record<
  * them may reach the recipe, or one template could not cover every turn.
  */
 function hostedHarnessVariants(): Record<
-  "claude-code" | "codex" | "copilot-cli" | "cursor",
+  "claude-code" | "codex" | "copilot-cli" | "cursor" | "opencode",
   HarnessWithBootstrap[]
 > {
   const claude = getHarnessAdapter("claude-code")
@@ -151,6 +157,8 @@ function hostedHarnessVariants(): Record<
   const codex = getHarnessAdapter("codex")
     .createHarness as unknown as CreateHarness;
   const cursor = getHarnessAdapter("cursor")
+    .createHarness as unknown as CreateHarness;
+  const opencode = getHarnessAdapter("opencode")
     .createHarness as unknown as CreateHarness;
   return {
     "claude-code": [
@@ -184,6 +192,17 @@ function hostedHarnessVariants(): Record<
         },
       }),
     ],
+    opencode: [
+      opencode({
+        modelId: "anthropic/claude-haiku-4.5",
+        auth: CLAUDE_AUTH,
+        mcpJson: {
+          mcpServers: {
+            probe: { type: "http", url: "https://example.invalid/mcp" },
+          },
+        },
+      }),
+    ],
   };
 }
 
@@ -198,7 +217,7 @@ type HarnessBakeLock = {
 };
 
 describe("harnessRecipeIdentity", () => {
-  it.each(["claude-code", "codex", "copilot-cli", "cursor"] as const)(
+  it.each(["claude-code", "codex", "copilot-cli", "cursor", "opencode"] as const)(
     "is the identity the real framework checks for (%s)",
     async (id) => {
       const harness = hostedHarnesses()[id];
@@ -219,7 +238,7 @@ describe("harnessRecipeIdentity", () => {
     expect([...dirs].sort()).toEqual([...HARNESS_BAKED_BOOTSTRAP_DIRS].sort());
   });
 
-  it.each(["claude-code", "codex", "copilot-cli", "cursor"] as const)(
+  it.each(["claude-code", "codex", "copilot-cli", "cursor", "opencode"] as const)(
     "does not depend on the turn's settings (%s)",
     async (id) => {
       const base = harnessRecipeIdentity(
@@ -514,6 +533,7 @@ describe("the generated bake context", () => {
       codex: HARNESS_PINNED_VERSIONS.codex,
       "copilot-cli": HARNESS_PINNED_VERSIONS["copilot-cli"],
       cursor: HARNESS_PINNED_VERSIONS.cursor,
+      opencode: HARNESS_PINNED_VERSIONS.opencode,
     });
     expect(manifest.bakeRoot).toBe("/home/user/.harness-bootstrap");
     expect(manifest.runtimeUser).toBe("user");

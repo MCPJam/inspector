@@ -76,6 +76,7 @@ export const HARNESS_IDS = [
   "codex",
   "cursor",
   "copilot-cli",
+  "opencode",
 ] as const;
 
 /**
@@ -83,7 +84,9 @@ export const HARNESS_IDS = [
  * **emulated** loop — the only historical behavior, so pre-feature rows hash
  * byte-identically (the key is simply never written). `"claude-code"` runs the
  * turn inside a real Claude Code runtime via the AI SDK harness; `"codex"` runs
- * OpenAI Codex; `"cursor"` runs the Cursor CLI (`cursor-agent`) over ACP.
+ * OpenAI Codex; `"cursor"` runs the Cursor CLI (`cursor-agent`) over ACP;
+ * `"opencode"` runs OpenCode through the published AI SDK adapter, with MCPJam
+ * host-executed tools and a platform-brokered Anthropic lease.
  * Extensible to additional runtimes (e.g. `"pi"`) later without a schema
  * migration.
  */

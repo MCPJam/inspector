@@ -164,6 +164,30 @@
       "status": "unsupported",
       "evidence": "Cursor's agent CLI does not accept an explicit model id.",
       "observedAt": "2026-09-25"
+    },
+    {
+      "harness": "opencode",
+      "versionRange": "1.18.x",
+      "familyPattern": "^anthropic/claude-haiku-4\\.5$",
+      "status": "supported",
+      "evidence": "OpenCode 1.18.23 ran anthropic/claude-haiku-4.5 against a scripted Anthropic-compatible upstream. No hosted broker lease was exercised.",
+      "observedAt": "2026-11-08"
+    },
+    {
+      "harness": "opencode",
+      "versionRange": "*",
+      "familyPattern": "^anthropic/",
+      "status": "unknown",
+      "evidence": "Anthropic model outside the measured OpenCode 1.18.23 and claude-haiku-4.5 pair.",
+      "observedAt": "2026-11-08"
+    },
+    {
+      "harness": "opencode",
+      "versionRange": "*",
+      "familyPattern": ".*",
+      "status": "unsupported",
+      "evidence": "Hosted OpenCode only runs Anthropic models through MCPJam's brokered Anthropic lease.",
+      "observedAt": "2026-11-08"
     }
   ]
 }

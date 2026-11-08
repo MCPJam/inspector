@@ -31,7 +31,7 @@ const enums: Record<string, readonly string[]> = {
   terminal_reason: ["runner_error", "timeout", "cancelled", "completed"],
   scope: ["project", "organization", "user"],
   status: ["running", "completed", "failed", "cancelled"],
-  harness_id: ["claude-code", "codex", "cursor", "copilot-cli"],
+  harness_id: ["claude-code", "codex", "copilot-cli", "cursor", "opencode"],
   trigger: ["boot", "readiness", "provision", "cli", "manual"],
   stage: ["download", "verify", "extract", "install", "probe", "activate"],
   role: ["desired", "previous", "candidate"],
@@ -43,7 +43,7 @@ const enums: Record<string, readonly string[]> = {
     "unsupported",
     "unknown",
   ],
-  engine: ["emulated", "harness:claude-code", "harness:codex"],
+  engine: ["emulated", "harness:claude-code", "harness:codex", "harness:opencode"],
   environment_skill_delivery: ["harness", "harness_unsupported", "emulated"],
 };
 const numbers = new Set([

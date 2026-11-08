@@ -70,6 +70,8 @@ export const HARNESS_REASONING_EFFORTS: Readonly<
   codex: ["low", "medium", "high", "xhigh"],
   "copilot-cli": [],
   cursor: [],
+  // Empty until an OpenCode reasoning-variant mapping is verified live.
+  opencode: [],
 };
 
 /**

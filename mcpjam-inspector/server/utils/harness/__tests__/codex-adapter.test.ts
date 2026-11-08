@@ -34,6 +34,7 @@ describe("the Codex adapter", () => {
       "codex",
       "copilot-cli",
       "cursor",
+      "opencode",
     ]);
     expect(isHarnessId("codex")).toBe(true);
     expect(harnessSupportsSkills("codex")).toBe(true);

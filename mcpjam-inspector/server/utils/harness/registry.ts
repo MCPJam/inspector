@@ -27,6 +27,8 @@ export {
 } from "./cursor-bootstrap.js";
 import { createCopilotCli } from "./copilot-cli/index.js";
 import { createCodexAppServer } from "./codex-appserver/index.js";
+import { createOpenCode } from "@ai-sdk/harness-opencode";
+import { createOpenCodeHarness } from "./opencode-adapter.js";
 import type { CodexWorkspaceWriteSandboxPolicy } from "./codex-appserver/shared/sandbox-policy.js";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type {
@@ -49,6 +51,7 @@ import {
   toClaudeCodeModel,
   toClaudeCodeNativeModel,
   toCodexNativeModel,
+  toOpenCodeNativeModel,
   type HarnessNativeUpstream,
 } from "./runtime-model-ids.js";
 import {
@@ -72,6 +75,7 @@ import {
   CLAUDE_CODE_SKILLS_BASE,
   CODEX_SKILLS_BASE,
   CURSOR_SKILLS_BASE,
+  OPENCODE_SKILLS_BASE,
 } from "./skill-roots.js";
 
 /** A harness id this inspector has a runtime adapter for. Derived from the SDK's
@@ -118,9 +122,21 @@ function shellSingleQuote(value: string): string {
  *  has to be present so the CLI makes the request. */
 const BROKER_DUMMY_CREDENTIAL = "mcpjam-broker-dummy";
 
+/**
+ * OpenCode 1.18.23's Anthropic client appends `/messages` to
+ * `ANTHROPIC_BASE_URL`. Claude Code and the official SDK append
+ * `/v1/messages` to the lease origin (`…/model-proxy/anthropic`). Give OpenCode
+ * the `/v1` suffix so both hit the backend allowlist.
+ */
+export function opencodeAnthropicBrokerBaseUrl(proxyBaseUrl: string): string {
+  const trimmed = proxyBaseUrl.replace(/\/+$/, "");
+  return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
+}
+
 /** Build the dummy broker auth pointed at the proxy base URL. Claude Code reads
  *  `ANTHROPIC_AUTH_TOKEN` (Bearer) + `ANTHROPIC_BASE_URL`; Codex reads
- *  `CODEX_API_KEY` + `OPENAI_BASE_URL`.
+ *  `CODEX_API_KEY` + `OPENAI_BASE_URL`. OpenCode reads the same Anthropic pair
+ *  as Claude Code, but its base URL must already include `/v1`.
  *
  *  `ANTHROPIC_API_KEY` is deliberately ABSENT rather than empty: the adapter
  *  keys its credential-forwarding transformations off which variables are
@@ -156,6 +172,11 @@ export function buildBrokerDummyAuth(
       };
     case "copilot-cli":
       return { OPENAI_BASE_URL: proxyBaseUrl, COPILOT_MODEL_PROXY_PLACEHOLDER: BROKER_DUMMY_CREDENTIAL };
+    case "opencode":
+      return {
+        ANTHROPIC_AUTH_TOKEN: BROKER_DUMMY_CREDENTIAL,
+        ANTHROPIC_BASE_URL: opencodeAnthropicBrokerBaseUrl(proxyBaseUrl),
+      };
     case "cursor":
       throw new Error(
         "The Cursor harness authenticates with the customer's own Cursor " +
@@ -1328,11 +1349,51 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
     }),
 };
 
+const opencodeAdapter: HarnessRuntimeAdapter = {
+  id: "opencode",
+  displayName: HARNESS_DESCRIPTORS.opencode.displayName,
+  supportedReasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,
+  requiresComputer: true,
+  modelAccess: HARNESS_DESCRIPTORS.opencode.modelAccess,
+  defaultPermissionMode: "allow-all",
+  liveApprovalRuntime: true,
+  supportsNativeToolApproval: true,
+  approvalPermissionMode: "allow-reads",
+  supportsMcpToolApproval: false,
+  supportsHostExecutedToolApproval: true,
+  mcpDelivery: HARNESS_MCP_DELIVERY.opencode,
+  supportsSkills: false,
+  skillsBaseDir: OPENCODE_SKILLS_BASE,
+  skillsWriteOptions: { trailingNewline: false },
+  prepareSkills: prepareNoSkills,
+  supportsPluginBundles: false,
+  fileChangeToolName: undefined,
+  listBuiltinTools: memoizedBuiltinTools(() => createOpenCode()),
+  toNativeModel: toOpenCodeNativeModel,
+  pinnedRuntimeVersion: harnessPinnedVersion("opencode"),
+  modelSupport: modelSupportFor("opencode"),
+  supportsModel: supportsModelFor("opencode"),
+  parseToolName: parseHarnessToolName,
+  runtimeVersionCommand: (sessionWorkDir) =>
+    `'${shellSingleQuote(
+      sessionWorkDir,
+    )}/.harness-bootstrap/opencode/node_modules/.bin/opencode' --version`,
+  createHarness({ modelId, auth, upstream, startupTimeoutMs }) {
+    return createOpenCodeHarness({
+      modelId,
+      auth,
+      upstream,
+      startupTimeoutMs,
+    });
+  },
+};
+
 const HARNESS_ADAPTERS: Record<HarnessId, HarnessRuntimeAdapter> = {
   "claude-code": claudeCodeAdapter,
   codex: codexAdapter,
   "copilot-cli": copilotCliAdapter,
   cursor: cursorAdapter,
+  opencode: opencodeAdapter,
 };
 
 /** Membership test against the installed adapters (own-property, prototype-safe).

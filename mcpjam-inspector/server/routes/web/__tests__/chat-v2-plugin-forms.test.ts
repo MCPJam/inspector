@@ -105,7 +105,7 @@ describe("which OpenAI plugin form path a chat turn installs", () => {
     expect(plan({ harness: "codex" }).inlineServerIds).toBeUndefined();
   });
 
-  it.each(["codex", "claude-code", "cursor"])("keeps explicit %s agent loops on the owned inline path", (agentLoop) => {
+  it.each(["codex", "claude-code", "cursor", "opencode"])("keeps explicit %s agent loops on the owned inline path", (agentLoop) => {
     const disabled = plan({ agentLoop });
     expect(disabled.admitted).toBe(true);
     expect(disabled.modernServerIds).toEqual([]);

@@ -128,6 +128,7 @@ export const HARNESS_PINNED_VERSIONS = {
   "codex": HARNESS_DESCRIPTORS["codex"].runtimeVersion,
   "copilot-cli": HARNESS_DESCRIPTORS["copilot-cli"].runtimeVersion,
   "cursor": HARNESS_DESCRIPTORS["cursor"].runtimeVersion,
+  "opencode": HARNESS_DESCRIPTORS["opencode"].runtimeVersion,
 } as const satisfies Record<Harness, string | null>;
 
 /** The pinned runtime version for a harness id, or undefined when the harness
@@ -142,13 +143,13 @@ export function harnessPinnedVersion(harnessId: string): string | undefined {
 }
 
 /**
- * The organization upstream each BROKERED harness can run on: its own vendor's
- * native API, on the organization's key, and the runtime profile that talks to
- * it. Claude Code speaks Anthropic Messages and Codex speaks OpenAI Responses,
- * so a turn whose saved selection names an org Anthropic (resp. OpenAI)
- * connection runs on that key through MCPJam's model proxy. Cursor
- * authenticates with the customer's own Cursor account and runs on no org
- * connection.
+ * The organization upstream a harness can run on: its own vendor's native API,
+ * on the organization's key, and the runtime profile that talks to it. Claude
+ * Code speaks Anthropic Messages and Codex speaks OpenAI Responses, so a turn
+ * whose saved selection names an org Anthropic (resp. OpenAI) connection runs
+ * on that key through MCPJam's model proxy. Cursor authenticates with the
+ * customer's own Cursor account. OpenCode is platform-funded only until its
+ * org-key path is qualified, so it takes no org connection.
  *
  * This is the preflight's answer from non-secret metadata; the backend still
  * resolves the connection id authoritatively at lease start and refuses a
@@ -164,6 +165,7 @@ export const HARNESS_ORG_UPSTREAM = {
   "codex": HARNESS_DESCRIPTORS["codex"].orgUpstream,
   "copilot-cli": HARNESS_DESCRIPTORS["copilot-cli"].orgUpstream,
   "cursor": HARNESS_DESCRIPTORS["cursor"].orgUpstream,
+  "opencode": HARNESS_DESCRIPTORS["opencode"].orgUpstream,
 } as const satisfies Record<Harness, HarnessOrgUpstream | null>;
 
 /** The org upstream `harnessId` runs on, or null when it takes no org key. */
@@ -251,6 +253,7 @@ const HARNESS_DISPLAY_NAMES: Record<string, string> = {
   codex: HARNESS_DESCRIPTORS.codex.displayName,
   "copilot-cli": HARNESS_DESCRIPTORS["copilot-cli"].displayName,
   cursor: HARNESS_DESCRIPTORS.cursor.displayName,
+  opencode: HARNESS_DESCRIPTORS.opencode.displayName,
 };
 
 /** The runtime's human-facing name ("Claude Code"), or the id itself. */

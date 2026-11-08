@@ -68,6 +68,7 @@ export const HARNESS_BAKED_BOOTSTRAP_DIRS: ReadonlyArray<string> = [
   ".harness-bootstrap/codex-appserver",
   ".harness-bootstrap/copilot-cli",
   ".harness-bootstrap/cursor",
+  ".harness-bootstrap/opencode",
 ];
 
 /**

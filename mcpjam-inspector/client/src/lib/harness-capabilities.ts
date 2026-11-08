@@ -63,6 +63,7 @@ export const HARNESS_DISPLAY_NAME = {
   codex: HARNESS_DESCRIPTORS.codex.displayName,
   "copilot-cli": HARNESS_DESCRIPTORS["copilot-cli"].displayName,
   cursor: HARNESS_DESCRIPTORS.cursor.displayName,
+  opencode: HARNESS_DESCRIPTORS.opencode.displayName,
 };
 
 /** Behavior-tab controls whose value may not cross into a harness runtime. */
@@ -95,6 +96,7 @@ const HARNESS_LOOP_CONTROL_STATE = {
   codex: HARNESS_DESCRIPTORS.codex.controls,
   "copilot-cli": HARNESS_DESCRIPTORS["copilot-cli"].controls,
   cursor: HARNESS_DESCRIPTORS.cursor.controls,
+  opencode: HARNESS_DESCRIPTORS.opencode.controls,
 };
 
 /**
