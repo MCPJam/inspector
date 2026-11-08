@@ -74,6 +74,12 @@ describe("WorkspacePreviewRelay through the real sidecar", () => {
     sidecar = await startSidecar();
     app = http.createServer((req, res) => {
       hits += 1;
+      if (req.url === "/stream") {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        const tick = setInterval(() => res.write("data: tick\n\n"), 20);
+        res.once("close", () => clearInterval(tick));
+        return;
+      }
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({ host: req.headers.host, sawKey: "x-mcpjam-preview-key" in req.headers }));
     });
@@ -129,6 +135,23 @@ describe("WorkspacePreviewRelay through the real sidecar", () => {
       socket.once("error", () => resolve(undefined));
     });
     expect(status).toBe(403);
+  });
+
+  it("frees the tunnel when the browser abandons a streaming response", async () => {
+    // The relay holds eight tunnels per port, so nine abandoned streams
+    // would leave every later request queued.
+    for (let i = 0; i < 9; i++) {
+      await new Promise<void>((resolve, reject) => {
+        const req = http.request(
+          { host: "127.0.0.1", port, path: "/stream", headers: { host: `localhost:${port}`, "sec-fetch-site": "none" } },
+          (res) => res.once("data", () => (req.destroy(), resolve())),
+        );
+        req.on("error", reject);
+        req.end();
+      });
+    }
+    const res = await get({ "sec-fetch-site": "none" });
+    expect(res.status).toBe(200);
   });
 
   it("re-grants the same port without a second listener", async () => {

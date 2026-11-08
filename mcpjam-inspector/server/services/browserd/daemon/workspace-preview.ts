@@ -281,8 +281,13 @@ export class WorkspacePreviewRelay {
           answer.pipe(res);
         },
       );
+      // A response the browser abandons, such as a hot-reload event stream,
+      // never ends on its own and would hold one of the port's tunnels.
+      res.once("close", () => {
+        if (!res.writableFinished) upstream.destroy();
+      });
       upstream.on("error", (error) => {
-        if (res.headersSent) return void res.destroy();
+        if (res.headersSent || res.destroyed) return void res.destroy();
         const idle = error.message === "app_not_listening";
         res.writeHead(502, { "content-type": "text/html; charset=utf-8" });
         res.end(idle ? notListening(port) : "The conversation's computer did not answer. Reload to try again.");
