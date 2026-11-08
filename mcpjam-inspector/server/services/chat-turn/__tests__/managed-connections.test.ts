@@ -1,8 +1,11 @@
-import { getManagerResourceSnapshot, setManagerResourceSnapshots } from "../../../utils/mcp-connections";
+import {
+  getManagerResourceSnapshot,
+  setManagerResourceSnapshots,
+} from "../../../utils/mcp-connections";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { HOSTED_HARNESS_INPUT_VERSION } from "../../../../shared/hosted-elicitation";
-const m = vi.hoisted(() => ({ order: [] as string[], refused: {} as Record<string, unknown> }));
+const m = vi.hoisted(() => ({ order: [] as string[], authorize: vi.fn(), refused: {} as Record<string, unknown> }));
 vi.mock("../../../routes/web/hosted-elicitation.js", async (original) => ({
   ...(await original<
     typeof import("../../../routes/web/hosted-elicitation.js")
@@ -20,7 +23,7 @@ vi.mock("../../../routes/web/hosted-elicitation.js", async (original) => ({
 }));
 vi.mock("../../../routes/web/auth.js", async (original) => ({
   ...(await original<typeof import("../../../routes/web/auth.js")>()),
-  createAuthorizedManager: async () => ({
+  createAuthorizedManager: m.authorize.mockImplementation(async () => ({
     manager: {
       disconnectAllServers: async () => {
         m.order.push("disconnect servers");
@@ -30,7 +33,7 @@ vi.mock("../../../routes/web/auth.js", async (original) => ({
     oauthServerUrls: {},
     authenticatedUserId: "user-1",
     refusedServers: m.refused,
-  }),
+  })),
 }));
 vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerForRequest: async () => "convex-bearer",
@@ -70,19 +73,92 @@ const setup = {
 describe("managed connection ownership", () => {
   beforeEach(() => {
     m.order = [];
+    m.authorize.mockClear();
     m.refused = {};
   });
   afterEach(() => vi.unstubAllEnvs());
 
   it.each([
-    { harness: "claude-code" as const, expected: true, resolved: false, rail: "hosted" as const },
-    { harness: "codex" as const, expected: true, resolved: false, rail: "hosted" as const },
-    { harness: "cursor" as const, expected: false, resolved: false, rail: "hosted" as const },
-    { harness: "codex" as const, expected: true, resolved: true, rail: "hosted" as const },
-    { harness: "claude-code" as const, expected: true, resolved: false, rail: "org" as const },
-    { harness: "codex" as const, expected: true, resolved: false, rail: "org" as const },
-    { harness: "codex" as const, expected: false, resolved: false, rail: "own-key" as const },
-    { harness: "codex" as const, expected: false, resolved: false, rail: "local" as const },
+    { host: null, expected: false },
+    { host: { computer: null }, expected: false },
+    { host: { computer: { kind: "personal" } }, expected: true },
+  ])(
+    "uses only resolved host Computer attachment ($expected)",
+    async ({ host, expected }) => {
+      const resources = new TurnResources((error) => {
+        throw error;
+      });
+      const app = new Hono();
+      app.post("/", async (c) => {
+        await prepareManagedConnections({
+          c,
+          rawBody: {
+            computer: { kind: "personal" },
+            pluginComputerRuntime: true,
+          },
+          bearerToken: "bearer",
+          rpcCollector: createHostedRpcLogCollector({}),
+          resources,
+          setup: { ...setup, hostRuntimeConfig: host },
+          onOAuthServerUrls: () => {},
+        });
+        return c.json({ ok: true });
+      });
+      expect((await app.request("/", { method: "POST" })).status).toBe(200);
+      expect(m.authorize.mock.calls[0][7].pluginComputerRuntime).toBe(expected);
+      await resources.dispose();
+    },
+  );
+
+  it.each([
+    {
+      harness: "claude-code" as const,
+      expected: true,
+      resolved: false,
+      rail: "hosted" as const,
+    },
+    {
+      harness: "codex" as const,
+      expected: true,
+      resolved: false,
+      rail: "hosted" as const,
+    },
+    {
+      harness: "cursor" as const,
+      expected: false,
+      resolved: false,
+      rail: "hosted" as const,
+    },
+    {
+      harness: "codex" as const,
+      expected: true,
+      resolved: true,
+      rail: "hosted" as const,
+    },
+    {
+      harness: "claude-code" as const,
+      expected: true,
+      resolved: false,
+      rail: "org" as const,
+    },
+    {
+      harness: "codex" as const,
+      expected: true,
+      resolved: false,
+      rail: "org" as const,
+    },
+    {
+      harness: "codex" as const,
+      expected: false,
+      resolved: false,
+      rail: "own-key" as const,
+    },
+    {
+      harness: "codex" as const,
+      expected: false,
+      resolved: false,
+      rail: "local" as const,
+    },
   ])(
     "installs owned input for $harness on $rail (saved host: $resolved)",
     async ({ harness, expected, resolved, rail }) => {
@@ -141,11 +217,29 @@ describe("managed connection ownership", () => {
         bearerToken: "bearer",
         rpcCollector: createHostedRpcLogCollector({}),
         resources,
-        setup: {...setup, hostRuntimeConfig: {hostConfigId: "saved-host-config", hostId: "host", hostStyle: "claude", modelId: "anthropic/claude-haiku-4.5", systemPrompt: "", temperature: 0, requireToolApproval: false}},
+        setup: {
+          ...setup,
+          hostRuntimeConfig: {
+            hostConfigId: "saved-host-config",
+            hostId: "host",
+            hostStyle: "claude",
+            modelId: "anthropic/claude-haiku-4.5",
+            systemPrompt: "",
+            temperature: 0,
+            requireToolApproval: false,
+          },
+        },
         onOAuthServerUrls: () => {},
       });
-      setManagerResourceSnapshots(prepared.manager, new Map([["server-1", {serverUpdatedAt: 1, credentialAuthorizedAt: null}]]));
-      expect(getManagerResourceSnapshot(prepared.manager, "server-1")?.hostConfigId).toBe("saved-host-config");
+      setManagerResourceSnapshots(
+        prepared.manager,
+        new Map([
+          ["server-1", { serverUpdatedAt: 1, credentialAuthorizedAt: null }],
+        ]),
+      );
+      expect(
+        getManagerResourceSnapshot(prepared.manager, "server-1")?.hostConfigId,
+      ).toBe("saved-host-config");
       return c.json({});
     });
     expect((await app.request("/", { method: "POST" })).status).toBe(200);

@@ -18,7 +18,6 @@ import { logger } from "../../utils/logger.js";
 import {
   createPluginRuntimeConvexClient,
   readAuthorizedStdioLaunchSpec,
-  type WorkosApiKeyActingAs,
 } from "../../utils/local-server-resolver.js";
 import { e2bPluginBoxConnector } from "../../utils/computers/plugin-box.js";
 import {
@@ -45,7 +44,6 @@ export async function resolvePluginStdioHttpTarget(args: {
   accessScope?: "project_member" | "chat_v2";
   scenarioId?: string;
   accessVersion?: number;
-  workosApiKeyActingAs?: WorkosApiKeyActingAs;
   /**
    * `false` when the hosted authorize batch resolved a signed-in actor. See the
    * scenario note below for why only the anonymous case is refused here.
@@ -57,13 +55,6 @@ export async function resolvePluginStdioHttpTarget(args: {
   connect?: PluginBoxConnector;
 }): Promise<PluginStdioHttpTarget | null> {
   if (!canColocatePluginStdio()) return null;
-
-  // The plugin-runtime reads ride the Convex QUERY protocol (a user JWT via
-  // setAuth), which the service-token acting-as exchange cannot authenticate —
-  // a delegated caller's bearer is deliberately empty. Refuse BEFORE the spec
-  // read: this caller can never proceed, and the read costs a backend authorize
-  // round trip plus a secret reveal.
-  if (args.workosApiKeyActingAs) return null;
 
   // SHARE-LINK SCENARIO GUEST. The spec reread goes through
   // `/web/authorize-batch-local`, which authorizes under the caller's OWN
