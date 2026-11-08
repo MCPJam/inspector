@@ -65,6 +65,13 @@ describe("harness registry", () => {
     expect(a.supportsNativeToolApproval).toBe(true);
     expect(a.requiresComputer).toBe(true);
     expect(a.fileChangeToolName).toBeUndefined();
+    expect(a.promptImageInput).toBe(true);
+  });
+
+  it("only Codex advertises native prompt images", () => {
+    for (const id of registeredHarnessIds()) {
+      expect(getHarnessAdapter(id).promptImageInput).toBe(id === "codex");
+    }
   });
 
   it("every adapter that advertises a capability carries its strategy", () => {

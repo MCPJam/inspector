@@ -117,6 +117,7 @@ export const CODEX_APPSERVER_TOOL_NAMES = {
   commandExecution: "bash",
   fileChange: "fileChange",
   webSearch: "webSearch",
+  imageView: "imageView",
 } as const;
 
 /**
@@ -134,4 +135,7 @@ export const CODEX_APPSERVER_NATIVE_TOOL_NAMES = {
   commandExecution: "exec_command",
   fileChange: "apply_patch",
   webSearch: "web_search",
+  // Pinned 0.163.0 reports this as ImageViewThreadItem `{ id, path }`. There
+  // is no separate function-tool name in that schema.
+  imageView: "imageView",
 } as const;

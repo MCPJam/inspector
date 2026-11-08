@@ -18,7 +18,24 @@ import { nativeMcpServersSchema } from "./shared/native-mcp.js";
 export const outboundMessageSchema = harnessV1BridgeOutboundMessageSchema;
 export type OutboundMessage = z.infer<typeof outboundMessageSchema>;
 
-export const startMessageSchema = harnessV1BridgeStartBaseSchema.extend({
+/** String or text/image parts. Image `data` is raw base64, not a data URL. */
+const harnessPromptPartSchema = z.union([
+  z.object({ type: z.literal("text"), text: z.string() }),
+  z.object({
+    type: z.literal("image"),
+    data: z.string(),
+    mediaType: z.string(),
+  }),
+]);
+export const harnessPromptContentSchema = z.union([
+  z.string(),
+  z.array(harnessPromptPartSchema),
+]);
+
+export const startMessageSchema = harnessV1BridgeStartBaseSchema
+  .omit({ prompt: true })
+  .extend({
+  prompt: harnessPromptContentSchema,
   nativeMcpServers: nativeMcpServersSchema.optional(),
   /** Current workdir resolved by the hosted pilot's sandbox session. */
   warmWorkDir: z.string().min(1).optional(),

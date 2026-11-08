@@ -111,6 +111,20 @@ describe("takeHarnessPromptAttachments", () => {
       { type: "text", text: "what is this" },
     ]);
     expect(taken.attachments.map((a) => a.name)).toEqual(["attachment-1.png"]);
+    expect(taken.attachments[0]).toMatchObject({
+      sourceType: "image",
+      mediaType: "image/png",
+    });
+  });
+
+  it("defaults a missing image mediaType to image/png and still marks it an image", () => {
+    const taken = takeHarnessPromptAttachments([
+      userMessage([{ type: "image", image: "aGk=" }]),
+    ]);
+    expect(taken.attachments[0]).toMatchObject({
+      sourceType: "image",
+      mediaType: "image/png",
+    });
   });
 
   it("returns the same array when there is nothing to take", () => {
@@ -424,6 +438,44 @@ describe("the note", () => {
       ].join("\n"),
     );
     expect(buildHarnessAttachmentNote([])).toBe("");
+  });
+
+  it("marks attached images even when the save failed, and does not tell file tools to open them", () => {
+    const note = buildHarnessAttachmentNote(
+      [
+        { name: "shot.png", path: "/home/user/attachments/u-shot.png" },
+        { name: "oops.png", error: "the write failed" },
+      ],
+      [{ status: "attached" }, { status: "attached" }],
+    );
+    expect(note).toBe(
+      [
+        "[Attachments uploaded to the computer. Images marked (attached) are already in this message; use your file tools for the rest]",
+        "- shot.png: /home/user/attachments/u-shot.png (attached)",
+        "- oops.png: couldn't be saved (the write failed) (attached)",
+      ].join("\n"),
+    );
+    expect(note).not.toMatch(/use your file tools to read them/);
+  });
+
+  it("names a skipped image and keeps today's line when there is no image slot", () => {
+    const mixed = buildHarnessAttachmentNote(
+      [
+        { name: "shot.png", path: "/home/user/attachments/u-shot.png" },
+        { name: "notes.pdf", path: "/home/user/attachments/u-notes.pdf" },
+      ],
+      [
+        { status: "skipped", reason: "too large to attach after resizing" },
+        { status: "not-image" },
+      ],
+    );
+    expect(mixed).toContain(
+      "- shot.png: /home/user/attachments/u-shot.png (not attached: too large to attach after resizing)",
+    );
+    expect(mixed).toContain(
+      "- notes.pdf: /home/user/attachments/u-notes.pdf",
+    );
+    expect(mixed).toContain("use your file tools to read them");
   });
 
   it("rides as one more text part on the last user message, without mutating", () => {

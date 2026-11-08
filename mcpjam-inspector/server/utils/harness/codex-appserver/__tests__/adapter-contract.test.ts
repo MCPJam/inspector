@@ -25,6 +25,9 @@ import {
 } from "../bridge/index.js";
 import { LOCAL_UNATTENDED_SANDBOX_POLICY } from "../shared/sandbox-policy.js";
 import { startMessageSchema } from "../codex-appserver-bridge-protocol.js";
+import { toCodexPromptContent } from "../codex-prompt-content.js";
+import { toCodexTurnStartInput } from "../bridge/turn-start-input.js";
+import { HarnessCapabilityUnsupportedError } from "@ai-sdk/harness";
 
 describe("harness declaration", () => {
   const harness = createCodexAppServer();
@@ -83,6 +86,8 @@ describe("builtin tool catalog", () => {
     // Codex reports one patch covering every path.
     expect(tools.fileChange?.commonName).toBeUndefined();
     expect(tools.fileChange?.toolUseKind).toBe("edit");
+    expect(tools.imageView?.nativeName).toBe("imageView");
+    expect(tools.imageView?.toolUseKind).toBe("readonly");
   });
 
   it("exposes input schemas the display catalogue can convert", () => {
@@ -227,6 +232,21 @@ describe("permission mapping", () => {
     ).toBe(true);
   });
 
+  it("parses a string prompt and a parts prompt", () => {
+    expect(startMessageSchema.safeParse({ type: "start", prompt: "hi" }).success).toBe(
+      true,
+    );
+    expect(
+      startMessageSchema.safeParse({
+        type: "start",
+        prompt: [
+          { type: "text", text: "see" },
+          { type: "image", data: "abc", mediaType: "image/png" },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+
   it("accepts only a workspace-write sandbox policy on the wire", () => {
     const start = { type: "start", prompt: "hi" };
     expect(
@@ -244,6 +264,64 @@ describe("permission mapping", () => {
         startMessageSchema.safeParse({ ...start, sandboxPolicy }).success,
       ).toBe(false);
     }
+  });
+});
+
+describe("native image prompt", () => {
+  it("keeps a text-only prompt as joined text", () => {
+    expect(toCodexPromptContent("hello")).toBe("hello");
+    expect(
+      toCodexPromptContent({
+        content: [
+          { type: "text", text: "one" },
+          { type: "text", text: "two" },
+        ],
+      } as never),
+    ).toBe("one\n\ntwo");
+  });
+
+  it("passes raw base64 image parts through", () => {
+    expect(
+      toCodexPromptContent({
+        content: [
+          { type: "text", text: "see" },
+          { type: "image", image: "abc", mediaType: "image/png" },
+        ],
+      } as never),
+    ).toEqual([
+      { type: "text", text: "see" },
+      { type: "image", data: "abc", mediaType: "image/png" },
+    ]);
+  });
+
+  it("refuses a data URL or non-image part", () => {
+    expect(() =>
+      toCodexPromptContent({
+        content: [{ type: "image", image: "data:image/png;base64,abc" }],
+      } as never),
+    ).toThrow(HarnessCapabilityUnsupportedError);
+    expect(() =>
+      toCodexPromptContent({
+        content: [{ type: "file", data: "abc" }],
+      } as never),
+    ).toThrow(HarnessCapabilityUnsupportedError);
+  });
+
+  it("wraps turn/start image URLs with one data prefix", () => {
+    expect(
+      toCodexTurnStartInput([
+        { type: "text", text: "see" },
+        { type: "image", data: "abc", mediaType: "image/png" },
+      ]),
+    ).toEqual([
+      { type: "text", text: "see" },
+      { type: "image", url: "data:image/png;base64,abc" },
+    ]);
+    const url = toCodexTurnStartInput([
+      { type: "image", data: "abc", mediaType: "image/jpeg" },
+    ])[0] as { url: string };
+    expect(url.url.startsWith("data:image/jpeg;base64,")).toBe(true);
+    expect(url.url.includes("data:image/jpeg;base64,data:")).toBe(false);
   });
 });
 

@@ -33,3 +33,12 @@ export function hostedWarmAgentEnabled(organizationId: string | undefined): bool
 export function nativeForwardingEnabled(): boolean {
   return process.env.HARNESS_NATIVE_FORWARDING === "true";
 }
+
+/**
+ * Native image parts on the prompt. Default ON. Read per call so an operator
+ * can disable it on one deployment without a restart of in-flight processes
+ * that have not yet entered the next turn.
+ */
+export function harnessNativeImagesEnabled(): boolean {
+  return process.env.MCPJAM_HARNESS_NATIVE_IMAGES !== "false";
+}

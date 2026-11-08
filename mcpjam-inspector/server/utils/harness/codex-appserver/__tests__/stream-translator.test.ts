@@ -285,6 +285,32 @@ describe("constructed frames (not recorded — see fixtures/README.md)", () => {
     return { parts, translator };
   }
 
+  it("turns an imageView item into a read-only tool pair", () => {
+    const { parts, translator } = fresh();
+    const item = {
+      type: "imageView",
+      id: "item_img",
+      path: "/home/user/attachments/shot.png",
+      status: "completed",
+    };
+    translator.handleNotification({ method: "item/started", params: { item } });
+    translator.handleNotification({
+      method: "item/completed",
+      params: { item },
+    });
+    const call = parts.find((p) => p.type === "tool-call");
+    expect(call?.toolName).toBe("imageView");
+    expect(call?.nativeName).toBe("imageView");
+    expect(call?.input).toBe(
+      JSON.stringify({ path: "/home/user/attachments/shot.png" }),
+    );
+    const result = parts.find((p) => p.type === "tool-result");
+    expect(result?.result).toEqual({
+      path: "/home/user/attachments/shot.png",
+    });
+    expect(result?.isError).toBeFalsy();
+  });
+
   it("turns a fileChange item into a tool pair", () => {
     const { parts, translator } = fresh();
     const item = {
