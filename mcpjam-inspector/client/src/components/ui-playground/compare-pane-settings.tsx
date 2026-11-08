@@ -50,13 +50,15 @@ export function ComparePaneSettingsSection({
 }
 
 export interface ComparePaneServer {
+  /** Set for an environment's server, which is toggled by id. */
+  id?: string;
   name: string;
   enabled: boolean;
 }
 
 /**
  * A Compare pane's settings, from the button in its header. Each control
- * changes only this pane: its model and effort, which of the chat's servers
+ * changes only this pane: what it runs, its model and effort, which servers
  * it uses, and its place in the lineup. `children` adds sections for this
  * pane before the move controls.
  */
@@ -64,8 +66,10 @@ export function ComparePaneSettings({
   label,
   open,
   onOpenChange,
+  target,
   model,
   effort,
+  serverSource = "chat",
   servers,
   onServerChange,
   canMoveLeft,
@@ -77,12 +81,20 @@ export function ComparePaneSettings({
   label: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** The pane's model picker, or the locked row of a runtime that picks. */
-  model: ReactNode;
+  /** What the pane runs, with its section title. */
+  target?: { title: string; control: ReactNode };
+  /**
+   * The pane's model picker, or the locked row of a runtime that picks.
+   * Absent while the pane's target cannot run.
+   */
+  model?: ReactNode;
   effort?: ReactNode;
-  /** The chat's servers, each marked on when this pane uses it. */
+  /** The chat's servers, or an environment pane's own. */
+  serverSource?: "chat" | "environment";
+  /** Each server, marked on when this pane uses it. */
   servers: readonly ComparePaneServer[] | null;
-  onServerChange: (name: string, enabled: boolean) => void;
+  /** Called with the server's id when it has one, else its name. */
+  onServerChange: (server: string, enabled: boolean) => void;
   canMoveLeft: boolean;
   canMoveRight: boolean;
   onMove: (offset: -1 | 1) => void;
@@ -121,21 +133,36 @@ export function ComparePaneSettings({
             <X className="size-4" />
           </Button>
         </div>
-        <ComparePaneSettingsSection title="Model">
-          {model}
-          {effort}
-        </ComparePaneSettingsSection>
+        {target ? (
+          <ComparePaneSettingsSection title={target.title}>
+            {target.control}
+          </ComparePaneSettingsSection>
+        ) : null}
+        {model ? (
+          <ComparePaneSettingsSection title="Model">
+            {model}
+            {effort}
+          </ComparePaneSettingsSection>
+        ) : null}
         {servers ? (
-          <ComparePaneSettingsSection title="Servers for this chat">
+          <ComparePaneSettingsSection
+            title={
+              serverSource === "environment"
+                ? "Servers in this environment"
+                : "Servers for this chat"
+            }
+          >
             {servers.length === 0 ? (
               <p className="text-xs text-muted-foreground">
-                No servers in this chat. Add them with + in the composer.
+                {serverSource === "environment"
+                  ? "No servers in this pane. To use server tools, choose an environment with servers."
+                  : "No servers in this chat. Add them with + in the composer."}
               </p>
             ) : (
               <ul className="space-y-1.5">
                 {servers.map((server) => (
                   <li
-                    key={server.name}
+                    key={server.id ?? server.name}
                     className="flex items-center justify-between gap-2 text-sm"
                   >
                     <span className="flex min-w-0 items-center gap-2">
@@ -145,7 +172,7 @@ export function ComparePaneSettings({
                     <Switch
                       checked={server.enabled}
                       onCheckedChange={(enabled) =>
-                        onServerChange(server.name, enabled)
+                        onServerChange(server.id ?? server.name, enabled)
                       }
                       aria-label={`Use ${server.name} in ${label}`}
                     />

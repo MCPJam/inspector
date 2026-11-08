@@ -1,3 +1,4 @@
+import type { EnvironmentOverrides } from "@/shared/execution-target";
 import type { ComparePane } from "./compare-panes";
 import type { RecoveryPane } from "./comparison-recovery-record";
 
@@ -5,6 +6,21 @@ export type PaneOverrides = Pick<
   RecoveryPane,
   "serverIds" | "pluginVersionIds"
 >;
+
+/**
+ * How an environment pane narrows its environment for a turn, or undefined
+ * to follow it. `[]` is an explicit "none" and is sent, unlike null.
+ */
+export function paneEnvironmentOverrides({
+  serverIds,
+  pluginVersionIds,
+}: PaneOverrides): EnvironmentOverrides | undefined {
+  if (serverIds == null && pluginVersionIds == null) return undefined;
+  return {
+    ...(serverIds != null ? { serverIds } : {}),
+    ...(pluginVersionIds != null ? { pluginVersionIds } : {}),
+  };
+}
 
 /** A lineup write from another surface carries no overrides. Keep this tab's
  * overrides only while the same pane still targets the same setup. */

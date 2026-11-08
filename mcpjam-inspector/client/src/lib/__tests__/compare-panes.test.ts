@@ -7,7 +7,9 @@ import {
   normalizePanes,
   paneHostIds,
   panesForHostIds,
+  paneTargetKey,
   promoteLeadPane,
+  retargetPane,
   saveComparePanes,
   subscribeComparePanes,
   syncLeadPane,
@@ -277,5 +279,56 @@ describe("pane order and the client chips", () => {
         host("a"),
       ]),
     ).toBe(2);
+  });
+});
+
+describe("environment panes", () => {
+  const environment = (environmentId: string): ComparePane => ({
+    paneId: environmentId,
+    target: { kind: "environment", environmentId },
+  });
+
+  it("keeps each environment pane at its place as client chips change", () => {
+    const lineup = [host("a"), environment("env_1"), host("b")];
+    expect(panesForHostIds(lineup, ["b", "c"])).toEqual([
+      host("b"),
+      environment("env_1"),
+      host("c"),
+    ]);
+    expect(panesForHostIds(lineup, [])).toEqual([environment("env_1")]);
+  });
+
+  it("counts environment panes toward the cap of three", () => {
+    const lineup = [environment("env_1"), environment("env_2"), host("a")];
+    expect(panesForHostIds(lineup, ["a", "b", "c"])).toEqual([
+      environment("env_1"),
+      environment("env_2"),
+      host("a"),
+    ]);
+  });
+
+  it("gives a new client pane an id no environment pane holds", () => {
+    const lineup = [{ paneId: "a", target: { kind: "environment", environmentId: "env_1" } } as ComparePane];
+    expect(panesForHostIds(lineup, ["a"])[1].paneId).toBe("a~2");
+  });
+
+  it("retargets one pane in place, dropping what belonged to the old target", () => {
+    const lineup = [
+      { ...host("a"), pickedSelection: picked, serverIds: [], pluginVersionIds: ["v1"] },
+      host("b"),
+    ];
+    expect(
+      retargetPane(lineup, "a", { kind: "environment", environmentId: "env_1" }),
+    ).toEqual([
+      { paneId: "a", target: { kind: "environment", environmentId: "env_1" } },
+      host("b"),
+    ]);
+  });
+
+  it("names a target by its kind, so a client and an environment never share a key", () => {
+    expect(paneTargetKey({ kind: "host", hostId: "x" })).toBe("host:x");
+    expect(paneTargetKey({ kind: "environment", environmentId: "x" })).toBe(
+      "environment:x",
+    );
   });
 });

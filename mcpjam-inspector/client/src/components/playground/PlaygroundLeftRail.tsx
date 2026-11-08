@@ -20,7 +20,10 @@ import { useLocalHarnessRunsHere } from "@/hooks/useLocalHarnessTarget";
 import { PlaygroundAppsSection } from "./PlaygroundAppsSection";
 import { IncludedPluginToolsSection } from "./IncludedPluginToolsSection";
 import { ComparePaneSelect } from "./ComparePaneSelect";
-import { useSelectedComparePane } from "@/stores/compare-pane-store";
+import {
+  useSelectedComparePane,
+  type ComparePaneOption,
+} from "@/stores/compare-pane-store";
 import { cn } from "@/lib/utils";
 
 type LeftRailTab = "sessions" | "tools";
@@ -103,6 +106,7 @@ export function PlaygroundLeftRail({
                   comparePane ? comparePane.hostId : (previewedHostId ?? null)
                 }
                 serverNames={comparePane?.serverNames ?? null}
+                comparePane={comparePane}
                 projectId={projectId ?? null}
               />
             </div>
@@ -177,11 +181,14 @@ function SessionsBody() {
 function ToolsBody({
   previewedHostId,
   serverNames,
+  comparePane,
   projectId,
 }: {
   previewedHostId: string | null;
   /** A Compare pane's own servers, or null for every active server. */
   serverNames: string[] | null;
+  /** The selected Compare pane, whose environment (or none) the rail shows. */
+  comparePane: ComparePaneOption | null;
   projectId: string | null;
 }) {
   const state = usePlaygroundStateContext();
@@ -219,12 +226,19 @@ function ToolsBody({
   // tools instead.
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   const [storedEnvironmentId] = usePreviewedEnvironmentId(projectId);
-  const environmentId = environmentsEnabled ? storedEnvironmentId : null;
+  // While comparing, the selected pane's environment and its narrowing; the
+  // page's own environment rests until single chat.
+  const environmentId = !environmentsEnabled
+    ? null
+    : comparePane
+      ? comparePane.environmentId
+      : storedEnvironmentId;
   if (environmentId && projectId) {
     return (
       <EnvironmentToolsPane
         projectId={projectId}
         environmentId={environmentId}
+        environmentOverrides={comparePane?.environmentOverrides}
       />
     );
   }
