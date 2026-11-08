@@ -1862,6 +1862,7 @@ function buildLiveTraceEnvelope(
   }
 
   const envelope: LiveChatTraceEnvelope = {
+    projectedMessages: true,
     traceVersion: 1,
     messages: state.messages,
     spans: spans.length > 0 ? spans : undefined,
