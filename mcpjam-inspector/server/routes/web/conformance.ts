@@ -49,6 +49,7 @@ import {
 import { principalKey } from "../../utils/request-principal.js";
 import { toBrowserOAuthResult } from "../../utils/oauth-conformance-browser-result.js";
 import { checkConformanceConnection } from "../shared/conformance-connection.js";
+import { tasksSdkFields } from "../../../shared/conformance-settings.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 import {
@@ -466,20 +467,7 @@ conformanceWeb.post("/tasks", async (c) =>
             remainingRunTimeoutMs: parsed.remainingRunTimeoutMs,
             protocolVersion: parsed.protocolVersion,
             timeout: HOSTED_TASKS_CALL_TIMEOUT_MS,
-            ...(parsed.checkIds ? { checkIds: parsed.checkIds } : {}),
-            ...(parsed.readinessIds
-              ? { readinessIds: parsed.readinessIds }
-              : {}),
-            ...(parsed.checkOverrides
-              ? { checkOverrides: parsed.checkOverrides }
-              : {}),
-            ...(parsed.toolName ? { toolName: parsed.toolName } : {}),
-            ...(parsed.toolArguments
-              ? { toolArguments: parsed.toolArguments }
-              : {}),
-            ...(parsed.inputResponses
-              ? { inputResponses: parsed.inputResponses }
-              : {}),
+            ...tasksSdkFields(parsed),
             pollTimeoutMs: Math.min(
               parsed.pollTimeoutMs ?? HOSTED_TASKS_POLL_TIMEOUT_MS,
               HOSTED_TASKS_POLL_TIMEOUT_MS,
