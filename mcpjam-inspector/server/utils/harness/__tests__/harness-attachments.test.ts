@@ -341,6 +341,58 @@ describe("saveHarnessAttachments", () => {
     decodeSpy.mockRestore();
   });
 
+  it("still applies the total at write after a shared decode", async () => {
+    const session = fakeSession();
+    const MB = 1024 * 1024;
+    const attachments = [
+      attachment("first.bin", new Uint8Array(20 * MB)),
+      attachment("second.bin", new Uint8Array(11 * MB)),
+    ];
+    decodeHarnessAttachments(attachments);
+    expect(attachments.map((a) => a.decoded && "bytes" in a.decoded)).toEqual([
+      true,
+      true,
+    ]);
+    const outcomes = await saveHarnessAttachments({
+      session,
+      dir: "/d",
+      attachments,
+    });
+    expect(outcomes.map((o) => ("error" in o ? o.error : "saved"))).toEqual([
+      "saved",
+      "over the 30 MB total limit",
+    ]);
+    expect(session.writeBinaryFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not charge a failed write against the total, even after a shared decode", async () => {
+    const MB = 1024 * 1024;
+    const session = {
+      writeBinaryFile: vi.fn(
+        async (args: { path: string; content: Uint8Array }) => {
+          if (args.content.byteLength === 20 * MB) {
+            throw new Error("ENOSPC");
+          }
+        },
+      ),
+    };
+    const attachments = [
+      attachment("first.bin", new Uint8Array(20 * MB)),
+      attachment("second.bin", new Uint8Array(11 * MB)),
+    ];
+    decodeHarnessAttachments(attachments);
+    const outcomes = await saveHarnessAttachments({
+      session,
+      dir: "/d",
+      attachments,
+    });
+    expect(outcomes.map((o) => ("error" in o ? o.error : "saved"))).toEqual([
+      "the write failed",
+      "saved",
+    ]);
+    expect(session.writeBinaryFile).toHaveBeenCalledTimes(2);
+  });
+
   it("reports a failed write instead of throwing, and logs no contents", async () => {
     const secret = "TOP-SECRET-CONTENTS";
     const session = {
