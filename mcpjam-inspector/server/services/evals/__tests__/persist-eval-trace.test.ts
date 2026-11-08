@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { ConvexHttpClient } from "convex/browser";
+import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import type { ModelMessage } from "ai";
 import type {
   EvalTraceSpan,
@@ -818,4 +819,73 @@ test("persists requests in their own turn with reserved schema keys intact", asy
       requestPayloads[index],
     ]),
   );
+});
+
+describe("persistEvalTraceFanout — routing records", () => {
+  const route = (reason: string): HarnessMcpAtTurn => ({
+    version: 1,
+    upstream: "mcpjam",
+    delivery: "mcp-endpoint",
+    profile: "client",
+    gaps: [],
+    reasons: [reason],
+    pinnedRuntimeVersion: "1.0.35",
+    plannerVersion: "harness-mcp-plan-v1",
+  });
+
+  /** The `turn` of each `appendEvalTurnTrace` call for a three-turn eval. */
+  async function turnsSent(
+    harnessMcpByPromptIndex?: ReadonlyMap<number, HarnessMcpAtTurn>,
+  ): Promise<Record<string, unknown>[]> {
+    const { client, calls } = makeMockClient();
+    await persistEvalTraceFanout({
+      convexClient: client,
+      iterationId: "iter1",
+      messages: [0, 1, 2].flatMap((i) => [
+        { role: "user", content: `q${i}` } as ModelMessage,
+        { role: "assistant", content: `a${i}` } as ModelMessage,
+      ]),
+      spans: [0, 1, 2].map((promptIndex) => ({
+        id: `s${promptIndex}`,
+        name: "step",
+        category: "step" as const,
+        startMs: 0,
+        endMs: 1,
+        promptIndex,
+      })),
+      prompts: undefined,
+      ...(harnessMcpByPromptIndex ? { harnessMcpByPromptIndex } : {}),
+    });
+    return calls
+      .filter((c) => c.ref === "testSuites:appendEvalTurnTrace")
+      .map((c) => c.args.turn as Record<string, unknown>);
+  }
+
+  test("sends each turn's record with that turn only", async () => {
+    const turns = await turnsSent(
+      new Map([
+        [0, route("eval iteration")],
+        [2, route("third turn")],
+      ]),
+    );
+
+    expect(turns.map((turn) => turn.promptIndex)).toEqual([0, 1, 2]);
+    expect(turns[0]!.harnessMcpAtTurn).toEqual(route("eval iteration"));
+    expect(turns[1]).not.toHaveProperty("harnessMcpAtTurn");
+    expect(turns[2]!.harnessMcpAtTurn).toEqual(route("third turn"));
+  });
+
+  test("leaves the field off every turn, never null, when there are none", async () => {
+    for (const turns of [await turnsSent(), await turnsSent(new Map())]) {
+      expect(turns).toHaveLength(3);
+      expect(turns.filter((turn) => "harnessMcpAtTurn" in turn)).toEqual([]);
+    }
+  });
+
+  test("a record for a prompt index with no turn rides on no other turn", async () => {
+    const turns = await turnsSent(new Map([[5, route("orphan")]]));
+
+    expect(turns).toHaveLength(3);
+    expect(turns.filter((turn) => "harnessMcpAtTurn" in turn)).toEqual([]);
+  });
 });

@@ -3,6 +3,7 @@ import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace"
 import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { ModelMessage } from "ai";
 import type { ResolvedExecutionBudgets } from "@mcpjam/sdk/contract";
+import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import type { ConvexHttpClient } from "convex/browser";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { PromptTraceSummary } from "@/shared/eval-trace";
@@ -142,6 +143,8 @@ export type SuiteRunRecorder = {
     modelId?: string;
     spans?: EvalTraceSpan[];
     requestPayloads?: LiveChatTraceRequestPayloadEntry[];
+    /** Each harness turn's MCP route, by promptIndex. Pass-through. */
+    harnessMcpByPromptIndex?: ReadonlyMap<number, HarnessMcpAtTurn>;
     prompts?: PromptTraceSummary[];
     widgetSnapshots?: EvalTraceWidgetSnapshot[];
     /**

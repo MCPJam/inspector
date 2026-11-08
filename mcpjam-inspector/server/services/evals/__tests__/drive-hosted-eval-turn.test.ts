@@ -9,6 +9,7 @@ vi.mock("../../../utils/assistant-turn.js", () => ({
   runAssistantTurn: (...args: unknown[]) => runAssistantTurnMock(...args),
 }));
 
+import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import { driveHostedEvalTurn } from "../drive-hosted-eval-turn";
 import type { DriveHostedEvalTurnParams } from "../drive-hosted-eval-turn";
 import { logger } from "../../../utils/logger";
@@ -378,6 +379,65 @@ it("carries hosted request payloads into the authored eval turn", async () => {
   runAssistantTurnMock.mockImplementationOnce(async () => ({ messages: [], usage: {}, turnTrace: { spans: [], requestPayloads: [entry] } }) as never);
   await driveHostedEvalTurn(params);
   expect(params.acc.requestPayloads).toEqual([{ ...entry, promptIndex: 3 }]);
+});
+
+describe("the turn's MCP routing record", () => {
+  const route = (reason: string): HarnessMcpAtTurn => ({
+    version: 1,
+    upstream: "mcpjam",
+    delivery: "mcp-endpoint",
+    profile: "client",
+    gaps: [],
+    reasons: [reason],
+    pinnedRuntimeVersion: "1.0.35",
+    plannerVersion: "harness-mcp-plan-v1",
+  });
+
+  /** A completed turn whose trace carries `harnessMcpAtTurn` when given. */
+  function engineCompletesTurn(harnessMcpAtTurn?: HarnessMcpAtTurn) {
+    runAssistantTurnMock.mockImplementationOnce(async (...args: unknown[]) => {
+      const { messages } = args[0] as { messages: unknown[] };
+      return {
+        messages: [...messages, { role: "assistant", content: "Done." }],
+        usage: {},
+        // The engine's own turn counter, not the eval's prompt index.
+        turnTrace: { promptIndex: 0, spans: [], harnessMcpAtTurn },
+      } as never;
+    });
+  }
+
+  function paramsWithRecords(promptIndex: number) {
+    const params = baseParams({ promptIndex });
+    const records = new Map<number, HarnessMcpAtTurn>();
+    params.acc.harnessMcpByPromptIndex = records;
+    return { params, records };
+  }
+
+  it("keeps the record under the eval turn's prompt index", async () => {
+    const { params, records } = paramsWithRecords(3);
+    engineCompletesTurn(route("eval iteration"));
+
+    expect(await driveHostedEvalTurn(params)).toEqual({ kind: "completed" });
+    expect([...records]).toEqual([[3, route("eval iteration")]]);
+  });
+
+  it("keeps nothing for a turn whose trace has no record", async () => {
+    const { params, records } = paramsWithRecords(0);
+    engineCompletesTurn();
+
+    await driveHostedEvalTurn(params);
+    expect(records.size).toBe(0);
+  });
+
+  it("keeps the authored turn's record when a follow-up shares its prompt index", async () => {
+    const { params, records } = paramsWithRecords(1);
+    engineCompletesTurn(route("authored"));
+    await driveHostedEvalTurn(params);
+    engineCompletesTurn(route("follow-up"));
+    await driveHostedEvalTurn(params);
+
+    expect([...records]).toEqual([[1, route("authored")]]);
+  });
 });
 
 it("adds the turn's reasoning and cached-input tokens onto the iteration usage", async () => {
