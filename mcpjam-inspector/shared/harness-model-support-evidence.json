@@ -52,34 +52,6 @@
           "observedAt": "2026-11-01",
           "adapterVersion": "tool-search-auto-v1",
           "protocolVersion": "2026-07-28"
-        },
-        {
-          "runtimeVersion": "2.1.290",
-          "modelId": "anthropic/claude-haiku-4.5",
-          "delivery": "forwarded-bridge",
-          "venue": "hosted",
-          "surface": "chat",
-          "funding": "platform",
-          "upstreamProfile": "gateway",
-          "status": "supported",
-          "evidence": "Pin 2.1.290 inherits the HARN-13 2.1.245 forwarded-bridge qualification (small and 163-tool catalogs, native search/reference expansion, one approved call per turn). Live HARN-2 requalification at this CLI is still required. https://app.kestral.ai/workspace/yhNILB2/documents/1U5pmXZo",
-          "observedAt": "2026-11-08",
-          "adapterVersion": "tool-search-auto-v1",
-          "protocolVersion": "2026-07-28"
-        },
-        {
-          "runtimeVersion": "2.1.290",
-          "modelId": "anthropic/claude-haiku-4.5",
-          "delivery": "host-tools",
-          "venue": "hosted",
-          "surface": "chat",
-          "funding": "platform",
-          "upstreamProfile": "gateway",
-          "status": "supported",
-          "evidence": "Pin 2.1.290 inherits the HARN-13 2.1.245 host-tool qualification (required discovery, small and 163-tool catalogs, exact fixture results across two turns). Live HARN-2 requalification at this CLI is still required. https://app.kestral.ai/workspace/yhNILB2/documents/1U5pmXZo",
-          "observedAt": "2026-11-08",
-          "adapterVersion": "tool-search-auto-v1",
-          "protocolVersion": "2026-07-28"
         }
       ]
     },

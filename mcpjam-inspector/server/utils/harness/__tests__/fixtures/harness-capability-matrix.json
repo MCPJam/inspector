@@ -59,10 +59,7 @@
       "reasoningEfforts": [],
       "runtimeVersion": "2.1.290"
     },
-    "qualifiedDiscovery": [
-      "forwarded-bridge",
-      "host-tools"
-    ]
+    "qualifiedDiscovery": []
   },
   "codex": {
     "adapter": {
