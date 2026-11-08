@@ -11,12 +11,14 @@ describe("harness descriptors", () => {
       "claude-code": "harness",
       codex: "mcpjam",
       cursor: "harness",
+      "copilot-cli": "mcpjam",
       opencode: "mcpjam",
     });
     expect(HARNESS_PINNED_VERSIONS).toEqual({
       "claude-code": "2.1.245",
       codex: "0.163.0",
       cursor: "2026.11.05-86047df",
+      "copilot-cli": "1.0.92",
       opencode: "1.18.23",
     });
     expect(HARNESS_ORG_UPSTREAM.cursor).toBeNull();

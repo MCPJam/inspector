@@ -1091,7 +1091,7 @@
             "required": true,
             "schema": {
               "type": "string",
-              "enum": ["claude-code", "codex", "cursor", "opencode"]
+              "enum": ["claude-code", "codex", "copilot-cli", "cursor", "opencode"]
             },
             "description": "The harness id."
           }
@@ -25853,7 +25853,7 @@
           },
           "harness": {
             "type": ["string", "null"],
-            "enum": ["claude-code", "codex", "cursor", "opencode", null],
+            "enum": ["claude-code", "codex", "copilot-cli", "cursor", "opencode", null],
             "description": "Execution runtime selector. Send `null` to clear this field back to absent. Setting one requires the matching feature flag; clearing never does."
           },
           "computer": {

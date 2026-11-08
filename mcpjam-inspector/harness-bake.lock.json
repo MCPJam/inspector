@@ -18,6 +18,12 @@
       "runtimeVersion": "0.163.0"
     },
     {
+      "harnessId": "copilot-cli",
+      "bootstrapDir": ".harness-bootstrap/copilot-cli",
+      "identity": "8ae349b89aa56eb6",
+      "runtimeVersion": "1.0.92"
+    },
+    {
       "harnessId": "cursor",
       "bootstrapDir": ".harness-bootstrap/cursor",
       "identity": "1cd3c8b5f9bfa1d3",

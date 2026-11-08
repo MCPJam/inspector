@@ -126,6 +126,7 @@ export const HARNESS_MODEL_SUPPORT_ROWS: readonly HarnessModelSupportRow[] =
 export const HARNESS_PINNED_VERSIONS = {
   "claude-code": HARNESS_DESCRIPTORS["claude-code"].runtimeVersion,
   "codex": HARNESS_DESCRIPTORS["codex"].runtimeVersion,
+  "copilot-cli": HARNESS_DESCRIPTORS["copilot-cli"].runtimeVersion,
   "cursor": HARNESS_DESCRIPTORS["cursor"].runtimeVersion,
   "opencode": HARNESS_DESCRIPTORS["opencode"].runtimeVersion,
 } as const satisfies Record<Harness, string | null>;
@@ -162,6 +163,7 @@ export type HarnessOrgUpstream = {
 export const HARNESS_ORG_UPSTREAM = {
   "claude-code": HARNESS_DESCRIPTORS["claude-code"].orgUpstream,
   "codex": HARNESS_DESCRIPTORS["codex"].orgUpstream,
+  "copilot-cli": HARNESS_DESCRIPTORS["copilot-cli"].orgUpstream,
   "cursor": HARNESS_DESCRIPTORS["cursor"].orgUpstream,
   "opencode": HARNESS_DESCRIPTORS["opencode"].orgUpstream,
 } as const satisfies Record<Harness, HarnessOrgUpstream | null>;
@@ -249,6 +251,7 @@ export function harnessNoRunnableModelReason(
 const HARNESS_DISPLAY_NAMES: Record<string, string> = {
   "claude-code": HARNESS_DESCRIPTORS["claude-code"].displayName,
   codex: HARNESS_DESCRIPTORS.codex.displayName,
+  "copilot-cli": HARNESS_DESCRIPTORS["copilot-cli"].displayName,
   cursor: HARNESS_DESCRIPTORS.cursor.displayName,
   opencode: HARNESS_DESCRIPTORS.opencode.displayName,
 };

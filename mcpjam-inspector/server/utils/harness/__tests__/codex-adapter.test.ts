@@ -32,6 +32,7 @@ describe("the Codex adapter", () => {
     expect(registeredHarnessIds().sort()).toEqual([
       "claude-code",
       "codex",
+      "copilot-cli",
       "cursor",
       "opencode",
     ]);

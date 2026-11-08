@@ -15,7 +15,7 @@ describe.each(CASES)(
       expect(adapter.modelAccess).toBe(descriptor.modelAccess);
       if (descriptor.modelAccess === "broker") {
         const auth = buildBrokerDummyAuth(id, "https://broker.test");
-        if (id === "codex") {
+        if (descriptor.protocol === "openai-responses") {
           expect(auth.OPENAI_BASE_URL).toBe("https://broker.test");
         } else if (id === "opencode") {
           expect(auth.ANTHROPIC_BASE_URL).toBe("https://broker.test/v1");

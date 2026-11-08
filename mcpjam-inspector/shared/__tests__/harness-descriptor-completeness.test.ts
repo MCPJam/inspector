@@ -62,7 +62,9 @@ describe.each(HARNESS_IDS)("%s descriptor", (id) => {
   });
 
   it("only admits an organization key when that path is qualified", () => {
-    if (id === "claude-code" || id === "codex") {
+    if (id === "codex" || id === "copilot-cli") {
+      expect(descriptor.orgUpstream).toEqual({ provider: "openai", profile: "openai-native" });
+    } else if (id === "claude-code") {
       expect(descriptor.orgUpstream).not.toBeNull();
     } else {
       expect(descriptor.orgUpstream).toBeNull();
