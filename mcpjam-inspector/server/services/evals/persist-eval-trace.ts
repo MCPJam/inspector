@@ -181,6 +181,10 @@ type FanoutResult =
   | { persisted: true; turnsWritten: number }
   | { persisted: false; turnsWritten: number; error: Error };
 
+/** Whose model spend an eval session was (`chatSessions.modelSource`). */
+export type EvalTraceModelSource =
+  "mcpjam" | "byok" | "local_byok" | "external-account";
+
 export async function persistEvalTraceFanout(args: {
   convexClient: ConvexHttpClient;
   iterationId: string;
@@ -193,7 +197,7 @@ export async function persistEvalTraceFanout(args: {
   iterationStartedAt?: number;
   modelId?: string;
   /** Maps to `chatSessions.modelSource`. Defaults to 'mcpjam'. */
-  modelSource?: "mcpjam" | "byok" | "local_byok";
+  modelSource?: EvalTraceModelSource;
   messages: ModelMessage[];
   spans: EvalTraceSpan[] | undefined;
   requestPayloads?: LiveChatTraceRequestPayloadEntry[];

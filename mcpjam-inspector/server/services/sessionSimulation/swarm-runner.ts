@@ -4,6 +4,7 @@ import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { readTasksPolicy } from "@mcpjam/sdk";
 import { resolveBrowserHostCapabilities } from "../../utils/browser-host-capabilities.js";
 import { harnessDisplayName } from "@/shared/harness-model-support";
+import { orgKeyHarnessName } from "@/shared/org-key-surfaces";
 import type { LocalHarnessActor } from "../../utils/harness/local/acting-user.js";
 import { isLocalHarnessVenue, prepareLocalHarnessRun, acquireLocalHarnessSlot, assertLocalHarnessCapabilities, localHarnessIdOf } from "../../utils/harness/local/run-resources.js";
 import {
@@ -79,6 +80,7 @@ import {
   isAccountLimit,
   isBusyReservation,
   MAX_ATTEMPT_ERROR_CHARS,
+  MCPJAM_LIMIT_PHRASES,
 } from "../../../shared/swarm-attempt-error.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import {
@@ -875,6 +877,10 @@ async function runJourneyFanOut(
     // throw.
     const localHarness = runsLocally(opts, (target.agentLoop ?? target.harness));
     const harnessNeedsBox = (target.agentLoop ?? target.harness) !== undefined && !localHarness;
+    // A target on the org's vendor key (Cursor) runs on the customer's own
+    // vendor account. Read without throwing on a harness this build lacks.
+    const externalAccount =
+      orgKeyHarnessName(target.agentLoop ?? target.harness) !== undefined;
     // Assigned inside the try, once the model is RESOLVED — see the harness
     // admission block below.
     let harnessTargetBlockedReason: string | undefined;
@@ -1901,14 +1907,25 @@ async function runJourneyFanOut(
               continue;
             }
           }
+          // An external-account target's own spend or credit wording is its
+          // vendor's, never MCPJam's limit: there only MCPJam's own refusal
+          // (its simulated user's calls), by its code or in its own words,
+          // stops the run.
+          const mcpjamRefusal =
+            !externalAccount ||
+            isAccountLimit(errorMessage, errorReason) ||
+            MCPJAM_LIMIT_PHRASES.some((phrase) =>
+              phrase.test(errorMessage ?? ""),
+            );
           const accountLimitFailure =
             outcome === "failed" &&
             !abortedBySpendCap &&
+            mcpjamRefusal &&
             (isAccountLimit(errorMessage, errorReason) ||
               isCreditExhaustion({ message: errorMessage, code: errorReason }));
           if (outcome === "rate_limited" || accountLimitFailure) {
             const cause = classifyRateLimit(errorMessage, errorRefusal);
-            if (cause === "org_spend_cap") {
+            if (cause === "org_spend_cap" && mcpjamRefusal) {
               // WHOLE-RUN stop: halt all hosts + cancel in-flight turns. The
               // finalize sweep runs once the pool drains.
               spendCapTripped = true;
