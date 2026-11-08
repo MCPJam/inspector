@@ -1,3 +1,6 @@
+import { startLeaseHeartbeat } from "./lease-heartbeat.js";
+import { isCallToolResult } from "@modelcontextprotocol/client";
+import { deferCompletedTurnLeaseRelease, finishPendingPersist } from "../completed-turn-finalization.js";
 import { harnessAppTools } from "./app-tools";
 import { harnessStartupPart } from "@/shared/harness-startup";
 import { withRetainedResourceSource } from "@/shared/retained-app-resources";
@@ -251,7 +254,6 @@ import {
   sessionClaimConflictMessage,
   commitHarnessSessionState,
   getHarnessResumeEligibility,
-  heartbeatHarnessSessionState,
   releaseHarnessSessionState,
   type HarnessOwnerRef,
   type HarnessSessionCommitPayload,
@@ -927,6 +929,11 @@ export async function runHarnessTurn(
     : undefined;
   const turnStartedAt = Date.now();
   const turnId = crypto.randomUUID();
+  const currentAuthorization = options.turnAuthorization?.getAuthorization ?? (async () => {
+    if (!authHeader) throw new Error("Harness authorization is unavailable");
+    return authHeader;
+  });
+  const cleanupAuthorization = options.turnAuthorization?.getCleanupAuthorization ?? currentAuthorization;
   // Per-turn prompt index (user-message count − 1), computed from the inbound
   // history like runChatEngineLoop's getPromptIndex. Hardcoding 0 collapses a
   // multi-turn session: persisted traces rehydrate sorted by promptIndex, so
@@ -997,6 +1004,9 @@ export async function runHarnessTurn(
   const effectiveAbortSignal: AbortSignal = abortSignal
     ? AbortSignal.any([abortSignal, livenessAbort.signal])
     : livenessAbort.signal;
+  // A later lease failure must not turn a deliberate user Stop into an error.
+  const isLivenessFailure = () => livenessAbort.signal.aborted &&
+    effectiveAbortSignal.reason === livenessAbort.signal.reason;
   let usage:
     | { inputTokens?: number; outputTokens?: number; totalTokens?: number }
     | undefined;
@@ -1187,6 +1197,7 @@ export async function runHarnessTurn(
 
   const executeEngine = async ({ writer }: { writer: ChunkWriter }) => {
     onStreamWriterReady?.(writer);
+    options.turnAuthorization?.start(turnId, writer);
     if (effectiveAbortSignal.aborted) {
       aborted = true;
       return;
@@ -1839,7 +1850,7 @@ export async function runHarnessTurn(
       // box through E2B's egress proxy, outside this process entirely.
       if (harnessExecutionTarget) {
         await assertLocalSecretDelivery({
-          bearer: authHeader,
+          bearer: await currentAuthorization(),
           projectId,
           environmentId,
           environmentUnresolvedReason,
@@ -1913,7 +1924,7 @@ export async function runHarnessTurn(
         await resolveExternalAccountCredentialPlan({
           harness: harnessAdapter,
           secretEnv,
-          bearer: authHeader,
+          bearer: await currentAuthorization(),
           projectId,
           ...(environmentId ? { environmentId } : {}),
           ...(environmentUnresolvedReason
@@ -2171,7 +2182,7 @@ export async function runHarnessTurn(
           leaseId,
           leasedBy: `${HARNESS_INSTANCE_ID}:${turnId}`,
           leaseTtlMs: HARNESS_LEASE_TTL_MS,
-          bearer: authHeader,
+          bearer: await currentAuthorization(),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
         if (!claim.ok) {
@@ -2209,12 +2220,14 @@ export async function runHarnessTurn(
           // stalled release would hold the turn open exactly like the broker
           // revoke did. A missed release is recovered by the lane's lease TTL.
           releaseHarnessLease = () =>
-            releaseHarnessSessionState({
+            cleanupAuthorization().then((bearer) => releaseHarnessSessionState({
               owner,
               leaseId,
-              bearer: authHeader,
+              bearer,
               signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
-            }).catch(() => {});
+            })).catch((error) => {
+              logger.warn("[harness] lease cleanup deferred to expiry", { error });
+            });
           if (warmAgentPilot && !claim.supportsApprovalFence) {
             throw new Error("The server cannot protect pending approvals for this pilot. Disable warm-agent reuse and try again.");
           }
@@ -2339,7 +2352,8 @@ export async function runHarnessTurn(
               : {}),
           },
           projectId,
-          bearer: authHeader,
+          bearer: await currentAuthorization(),
+          getCleanupAuthorization: cleanupAuthorization,
           requireToolApproval,
           ...(approvalContinuation ? { approvalContinuation } : {}),
           scopedEnv: sessionSecretEnv,
@@ -2402,7 +2416,7 @@ export async function runHarnessTurn(
       } else {
         reportStartup("computer");
         const resolved = await resolveHarnessSandbox({
-          bearer: authHeader,
+          bearer: await currentAuthorization(),
           projectId,
           ...(executionScope ? { executionScope } : {}),
           signal: abortSignal,
@@ -2473,7 +2487,7 @@ export async function runHarnessTurn(
           harnessId: harnessAdapter.id,
           modelId,
           runId: turnRunId,
-          bearer: authHeader,
+          bearer: await currentAuthorization(),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
         // From here until the lease is minted, ANY exit must hand the box back —
@@ -2482,26 +2496,28 @@ export async function runHarnessTurn(
         // consumes the claim and the lease's own fence takes over.
         reservationHeld = true;
         releaseBoxReservation = async () => {
-          await releaseHarnessBoxReservation({
+          await cleanupAuthorization().then((bearer) => releaseHarnessBoxReservation({
             box: box!,
             harnessId: harnessAdapter.id,
             modelId,
             runId: turnRunId,
-            bearer: authHeader,
+            bearer,
             signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
-          }).catch(() => {});
+          })).catch((error) => {
+            logger.warn("[harness] reservation cleanup deferred to expiry", { error });
+          });
         };
         reservationHeartbeatTimer = setInterval(() => {
           if (!reservationHeld || reservationRenewalInFlight) return;
           reservationRenewalInFlight = true;
-          void renewHarnessBoxReservation({
+          void currentAuthorization().then((bearer) => renewHarnessBoxReservation({
             box: box!,
             harnessId: harnessAdapter.id,
             modelId,
             runId: turnRunId,
-            bearer: authHeader,
+            bearer,
             signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
-          })
+          }))
             .then((renewed) => {
               if (!renewed.ok && reservationHeld) {
                 logger.error(
@@ -2637,7 +2653,7 @@ export async function runHarnessTurn(
           ...(turnReasoningEffort !== undefined
             ? { reasoningEffort: turnReasoningEffort }
             : {}),
-          bearer: authHeader,
+          bearer: await currentAuthorization(),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
         if (!broker.ok) {
@@ -2832,7 +2848,7 @@ export async function runHarnessTurn(
         ),
       );
       const appTools = harness === "codex" && options.harnessAppTools?.length && chatSessionId
-        ? harnessAppTools({ entries: options.harnessAppTools, projectId, chatSessionId, turnId, authHeader, signal: effectiveAbortSignal, writer })
+        ? harnessAppTools({ entries: options.harnessAppTools, projectId, chatSessionId, turnId, authHeader, getAuthorization: currentAuthorization, getCleanupAuthorization: cleanupAuthorization, signal: effectiveAbortSignal, writer })
         : {};
       const hostExecutedTools = {
         ...appTools,
@@ -3435,47 +3451,15 @@ export async function runHarnessTurn(
         }).catch(() => {});
       }
 
-      // Heartbeat the lease while we stream (turns can outlive the TTL). The
-      // heartbeat is the liveness guard: it aborts the turn on a DEFINITIVE
-      // lease loss, tolerates transient failures (network blips), and gives up
-      // only if those transients span the whole lease TTL ("lost liveness").
-      let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
-      if (continuity) {
-        const c = continuity;
-        let firstRetryableAt = 0;
-        heartbeatTimer = setInterval(() => {
-          void heartbeatHarnessSessionState({
-            owner: c.owner,
-            leaseId: c.leaseId,
-            leaseTtlMs: HARNESS_LEASE_TTL_MS,
-            bearer: authHeader,
-          }).then((result) => {
-            if (result === "ok") {
-              firstRetryableAt = 0;
-              return;
-            }
-            if (result === "lost") {
-              logger.warn("[harness] lease lost — aborting turn", {
-                leaseId: c.leaseId,
-              });
-              livenessAbort.abort(new Error("harness lease lost"));
-              return;
-            }
-            // retryable: tolerate blips, but don't run blind forever
-            if (firstRetryableAt === 0) firstRetryableAt = Date.now();
-            const elapsedMs = Date.now() - firstRetryableAt;
-            logger.warn("[harness] heartbeat transient failure; will retry", {
-              elapsedMs,
-            });
-            if (elapsedMs >= HARNESS_LEASE_TTL_MS) {
-              logger.warn(
-                "[harness] heartbeat lost liveness past TTL — aborting turn",
-              );
-              livenessAbort.abort(new Error("harness lost liveness"));
-            }
-          });
-        }, HARNESS_HEARTBEAT_MS);
-      }
+      const stopHeartbeat = continuity ? startLeaseHeartbeat({
+        owner: continuity.owner,
+        leaseId: continuity.leaseId,
+        leaseTtlMs: HARNESS_LEASE_TTL_MS,
+        intervalMs: HARNESS_HEARTBEAT_MS,
+        timeoutMs: HARNESS_TEARDOWN_TIMEOUT_MS,
+        getAuthorization: currentAuthorization,
+        onLost: (error) => livenessAbort.abort(error),
+      }) : undefined;
       try {
         // v6 messages → v7 agent input: a documented loose cast at the boundary.
         // `session` is REQUIRED — agent.stream() reads options.session in
@@ -3729,6 +3713,7 @@ export async function runHarnessTurn(
           >,
         )) {
           if (effectiveAbortSignal.aborted) {
+            if (isLivenessFailure()) throw effectiveAbortSignal.reason;
             if (drainCanEndOnAbort()) {
               drainEndedByAbort = true;
             } else {
@@ -3962,7 +3947,8 @@ export async function runHarnessTurn(
             const isError =
               errorEvent ||
               (part as { isError?: unknown }).isError === true ||
-              (part as { error?: unknown }).error != null;
+              (part as { error?: unknown }).error != null ||
+              (isCallToolResult(output) && output.isError === true);
             // Result-only resumes retain the saved MCP identity even when the
             // runtime echoes an unqualified tool name.
             const parsedMeta = harnessAdapter.parseToolName(
@@ -4427,6 +4413,7 @@ export async function runHarnessTurn(
         // Cancelled mid-stream: do NOT drain res.text (it would block until the
         // full harness run finishes). The finally below destroys the harness
         // session, stopping the in-sandbox Claude Code run.
+        if (isLivenessFailure()) throw effectiveAbortSignal.reason;
         if (aborted) return;
 
         // WS3: paused awaiting approval. Do NOT `await res.text` — the turn
@@ -4607,7 +4594,7 @@ export async function runHarnessTurn(
           );
         }
       } finally {
-        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        stopHeartbeat?.();
         stopDrainKeepalive();
         try {
           // Turn-end adoption: sync filesystem-installed skills up into Convex
@@ -4640,7 +4627,7 @@ export async function runHarnessTurn(
             sandboxFileSession
           ) {
             const fileSession = sandboxFileSession;
-            const { adopted } = await adoptSandboxSkills({
+            const { adopted } = await currentAuthorization().then((authHeader) => adoptSandboxSkills({
               session: fileSession,
               authHeader,
               projectId,
@@ -4658,7 +4645,7 @@ export async function runHarnessTurn(
                     AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
                   ])
                 : AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
-            }).catch(() => ({
+            })).catch(() => ({
               adopted: [] as { skillId: string; name: string }[],
             }));
             // Only TRUE 'adopted' dirs become managed (decision 3b): never convert
@@ -4697,7 +4684,7 @@ export async function runHarnessTurn(
               runtimeFingerprint,
               awaitingApproval: true,
               ...(warmAgentPilot ? { guardedApprovalIds: pendingApprovalIds } : {}),
-              bearer: authHeader,
+              bearer: await currentAuthorization(),
               // Terminal path — bounded. A missed commit means the next request
               // re-claims the lane and starts fresh, which is recoverable;
               // hanging here is not.
@@ -4771,14 +4758,17 @@ export async function runHarnessTurn(
         }
       }
     } catch (err) {
-      if (effectiveAbortSignal.aborted || isAbortError(err)) {
+      const livenessFailed = isLivenessFailure();
+      if (!livenessFailed && (effectiveAbortSignal.aborted || isAbortError(err))) {
         aborted = true;
         return;
       }
       // A bridge's typed provider failure is a PLAIN OBJECT (the harness wire
       // flattens Error instances), so `String(err)` would read
       // "[object Object]". Its structured fields ride separately below.
-      const errorText = harnessFailureMessageOf(err);
+      const errorText = livenessFailed
+        ? "This turn lost access to its runtime. Check any tool results before trying again."
+        : harnessFailureMessageOf(err);
       const evidence = harnessFailureEvidenceOf(err) ?? rawProviderEvidence;
       const typedEvidence = await org.failedTurnEvidence(evidence, modelInvoked);
       // A runtime's provider failure says whose endpoint it came from.
@@ -4910,12 +4900,14 @@ export async function runHarnessTurn(
       // `computerId` we used to send, and with two kinds of box now possible,
       // sending a sandbox row id under that name would be a lie the reader has
       // to unpick.
-      await revokeHarnessModelBroker({
-        runId: brokerRunId,
+      await cleanupAuthorization().then((bearer) => revokeHarnessModelBroker({
+        runId: brokerRunId!,
         ...(projectId ? { projectId } : {}),
-        bearer: authHeader,
+        bearer,
         signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
-      }).catch(() => {});
+      })).catch((error) => {
+        logger.warn("[harness] broker cleanup deferred to expiry", { error });
+      });
     }
     // The box was claimed but never leased — preparation failed, or the turn was
     // aborted during it. Hand the box back now; the reservation's TTL would
@@ -4943,12 +4935,15 @@ export async function runHarnessTurn(
       // commit releases the lease; if persistence is absent or fails, the
       // sidecar did NOT advance — release the lane best-effort.
       let persistOk = false;
+      let completedRetry: Awaited<ReturnType<NonNullable<typeof onConversationComplete>>> | void = undefined;
       try {
-        const persistOutcome = await onConversationComplete?.(
+        let persistOutcome = await onConversationComplete?.(
           presentNativeTranscript(messageHistory, nativePresentations),
           trace,
           runSucceeded ? capturedHarnessCommit : undefined,
         );
+        if (chatSessionId) persistOutcome = await finishPendingPersist(persistOutcome, receiptWriter, { chatSessionId, turnId: trace.turnId }, abortSignal);
+        completedRetry = persistOutcome;
         // The callback RESOLVING is not the same as the turn being saved. Now
         // that it reports an outcome, a `failed`/`skipped`/`conflict` result
         // resolves normally — treating that as success would leave the harness
@@ -4972,6 +4967,9 @@ export async function runHarnessTurn(
         }
       } catch (persistErr) {
         logger.error("[harness] onConversationComplete failed", persistErr);
+        if (chatSessionId) writePersistReceipt(receiptWriter,
+          { outcome: "failed", failureKind: "exception" },
+          { chatSessionId, turnId: trace.turnId });
       }
       if (
         runSucceeded &&
@@ -4979,7 +4977,9 @@ export async function runHarnessTurn(
         !discardLocalState &&
         (!onConversationComplete || !persistOk)
       ) {
-        await releaseHarnessLease?.();
+        if (!releaseHarnessLease || !deferCompletedTurnLeaseRelease(completedRetry, releaseHarnessLease,
+          (error) => logger.warn("[harness] completed save retry lease cleanup failed", { error })))
+          await releaseHarnessLease?.();
       }
     }
     if (discardLocalState && !retainLocalState) {

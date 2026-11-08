@@ -1,3 +1,5 @@
+import { watchOwnedLegacyInput } from "@/lib/owned-legacy-input";
+import { withPluginOperationAuthorization } from "@/lib/plugin-operation-authorization";
 import { readTransferredFile, writeTransferredFile } from "./file-transfer";
 import { PLUGIN_FILE_MEDIA_TYPE } from "@/shared/plugin-file-transfer";
 import { driveOwnedPluginMrtr } from "@/lib/apis/owned-plugin-mrtr";
@@ -42,6 +44,8 @@ export interface ThreadAppDeclaration {
 }
 const declaredIcons = pluginIconMetadataSchema.shape.toolIcons.optional();
 export interface ThreadAppHandle {
+  /** Captured from the admitted open target, never from App-authored metadata. */
+  serverId?: string;
   localFilesAvailable?: boolean;
   presentation?: "app" | "result";
   deepLink?: { url: string };
@@ -532,7 +536,7 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "", canI
         .safeParse(value);
       if (!handle.success)
         throw new ThreadAppError("INSTANCE_RESPONSE_INVALID");
-      return handle.data;
+      return { ...handle.data, serverId };
     },
     invoke: async (
       handle: ThreadAppHandle,
@@ -548,7 +552,34 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "", canI
         instanceToken: handle.instanceToken,
         ...(call ? { invocationId: crypto.randomUUID(), params: call } : {}),
       };
-      let reply = await post(path, body, signal);
+      const send = (next: Record<string, unknown>) => withPluginOperationAuthorization(
+        { invocationId: call ? body.invocationId! : handle.operationId,
+          kind: call ? "call" : "activation", ...(call ? { params: call } : {}) },
+        signal,
+        async (operation, active) => {
+          const reply = await post(routePrefix + "renew", { ...owner, instanceToken: handle.instanceToken, ...operation }, active);
+          accepted(reply.response, reply.value);
+          return reply.value;
+        },
+        (authorization) => {
+          const stop = watchOwnedLegacyInput(
+            handle.serverId ? {
+              projectId: scope.projectId,
+              workspaceId: scope.pluginWorkspace.workspaceId,
+              instanceId: handle.instanceId,
+              generation: handle.generation,
+              serverId: handle.serverId,
+              invocationId: call ? body.invocationId! : handle.operationId,
+            } : undefined,
+            signal,
+            onInputPending,
+          );
+          return post(
+            path, { ...next, ...(authorization ? { authorization } : {}) }, signal,
+          ).finally(stop);
+        },
+      );
+      let reply = await send(body);
       if (
         reply.response.status === 409 &&
         reply.value?.status === "approval_required"
@@ -567,11 +598,7 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "", canI
           onInputPending?.(false);
         }
         signal.throwIfAborted();
-        reply = await post(
-          path,
-          { ...body, approval: { id: approval.id, approved } },
-          signal,
-        );
+        reply = await send({ ...body, approval: { id: approval.id, approved } });
       }
       accepted(reply.response, reply.value);
       reply.value = (await driveOwnedPluginMrtr(reply.value, {
@@ -582,7 +609,7 @@ export function createThreadAppApi(scope: ThreadAppScope, routePrefix = "", canI
           workspaceId: scope.pluginWorkspace.workspaceId,
         },
         submit: async (resume) => {
-          const next = await post(path, { ...body, resume }, signal);
+          const next = await send({ ...body, resume });
           accepted(next.response, next.value);
           return next.value;
         },

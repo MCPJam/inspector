@@ -16,6 +16,7 @@
  */
 import http from "node:http";
 import { randomUUID } from "node:crypto";
+import { generateKeyPair, jwtVerify, SignJWT } from "jose";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -29,7 +30,7 @@ import {
   toNodeHandler,
 } from "@modelcontextprotocol/node";
 import { MCPClientManager } from "@mcpjam/sdk";
-import { requestFormInput } from "@openai/mcp-extensions/server";
+import { createElicitInput, requestFormInput } from "@openai/mcp-extensions/server";
 import { projectSelectedMcpServersAsHostTools } from "../../../utils/harness/host-executed-mcp-tools";
 import { createModelFormExecutor, createModelFormDispatch } from "../model-forms";
 import { ownedPluginFormSchema } from "../owned-mrtr";
@@ -45,6 +46,8 @@ const f = vi.hoisted(() => ({
   managers: [] as { disconnectAllServers: () => Promise<void> }[],
   collector: vi.fn(),
   answer: vi.fn(),
+  consumed: vi.fn(),
+  verifyToken: undefined as ((bearer: string) => Promise<void>) | undefined,
 }));
 
 vi.mock("../../../routes/web/hosted-elicitation.js", async (original) => {
@@ -71,7 +74,12 @@ vi.mock("../../../routes/web/hosted-elicitation.js", async (original) => {
   };
 });
 vi.mock("../../evals/route-helpers.js", () => ({
-  createConvexClient: () => ({ query: f.query }),
+  createConvexClient: (bearer: string) => ({
+    query: async (...args: unknown[]) => {
+      await f.verifyToken?.(bearer);
+      return f.query(...args);
+    },
+  }),
 }));
 vi.mock("../owned-mrtr.js", async (original) => {
   const actual = await original<typeof import("../owned-mrtr.js")>();
@@ -178,7 +186,7 @@ async function readBody(req: http.IncomingMessage): Promise<unknown> {
  * its tool asks a STANDARD `elicitation/create` form exactly when the client
  * declared form support — the behavior of any server that trusts the claim.
  */
-async function serveLegacy(): Promise<Served> {
+async function serveLegacy(openaiForm = false): Promise<Served> {
   const served: Omit<Served, "url" | "close"> = { initialize: [], replies: [] };
   const transports = new Map<string, NodeStreamableHTTPServerTransport>();
   const build = () => {
@@ -190,6 +198,13 @@ async function serveLegacy(): Promise<Served> {
       "app",
       { description: "Asks a form when the client claims one." },
       async (ctx) => {
+        if (openaiForm) {
+          const result = await createElicitInput(server)(ctx, {
+            mode: "form", message: "Answer?", requestedSchema: formSchema,
+          });
+          f.consumed(result);
+          return { content: [{ type: "text" as const, text: `form:${result.action === "accept" ? result.content.answer : result.action}` }] };
+        }
         if (!server.server.getClientCapabilities()?.elicitation) {
           return { content: [{ type: "text" as const, text: "no-form" }] };
         }
@@ -301,8 +316,9 @@ async function serveModern(): Promise<Served> {
           requestState: "state-1",
         });
         if ("resultType" in answered) return answered;
+        f.consumed(answered);
         return {
-          content: [{ type: "text" as const, text: `form:${answered.content?.answer}` }],
+          content: [{ type: "text" as const, text: `form:${answered.action === "accept" ? answered.content.answer : answered.action}` }],
         };
       },
     );
@@ -360,6 +376,8 @@ let served: Served | undefined;
 beforeEach(async () => {
   await pluginConnectionPool.clear();
   f.managers.length = 0;
+  f.verifyToken = undefined;
+  f.consumed.mockReset();
   f.collector.mockReset();
   f.answer.mockReset().mockResolvedValue({ action: "accept", content: { answer: "modern" } });
   f.query.mockImplementation(async (_: unknown, args: any) => ({
@@ -584,3 +602,76 @@ it("keeps a Codex host-tool call pending through an owned modern form", async ()
     serverId: "server", schema: formSchema,
   }));
 });
+
+
+it.each(["legacy", "modern"] as const)("%s owned form revalidates with the renewed signed token after six minutes", async (era) => {
+  await delayedSignedForm(era, "same-owner");
+});
+it.each(["legacy", "modern"] as const)("%s refuses a revoked or foreign replacement after input without repeating the tool", async (era) => {
+  await delayedSignedForm(era, "foreign");
+});
+it.each(["legacy", "modern"] as const)("%s refuses revoked authorization after input without delivering the answer", async (era) => {
+  await delayedSignedForm(era, "revoked");
+});
+
+async function delayedSignedForm(era: "legacy" | "modern", outcome: "same-owner" | "foreign" | "revoked") {
+  const { privateKey, publicKey } = await generateKeyPair("RS256");
+  let now = Math.floor(Date.now() / 1000);
+  const mint = (subject: string) => new SignJWT({ sid: "original-session", org_id: "original-org" })
+    .setProtectedHeader({ alg: "RS256" }).setSubject(subject)
+    .setIssuedAt(now).setExpirationTime(now + 300).sign(privateKey);
+  const original = await mint("actor");
+  let current = original;
+  let revoked = false;
+  const getAuthorization = vi.fn(async () => {
+    if (revoked) throw new Error("Authorization revoked");
+    const { payload } = await jwtVerify(current, publicKey, { currentDate: new Date(now * 1000) });
+    if (payload.sub !== "actor") throw new Error("Foreign actor refused");
+    return current;
+  });
+  const readTokens: string[] = [];
+  f.verifyToken = async (bearer) => {
+    await jwtVerify(bearer, publicKey, { currentDate: new Date(now * 1000) });
+    readTokens.push(bearer);
+  };
+  served = era === "legacy" ? await serveLegacy(true) : await serveModern();
+  f.url = served.url;
+  const admission = await admitPluginWorkspace({ projectId: "project", bearer: original,
+    getAuthorization, descriptor: { version: 1, workspaceId: "workspace" } });
+  const dispatch = createModelFormDispatch(["server"]);
+  const manager = new MCPClientManager({}, { lazyConnect: true, extensionRequestHandlers: dispatch.handlers });
+  f.managers.push(manager);
+  const signal = new AbortController().signal;
+  const execute = createModelFormExecutor({
+    c: { req: { raw: { signal } } } as Context, admission, bearer: original,
+    identity: { actorId: "actor", projectId: "project", workspaceId: "workspace", subject: "subject" },
+    hostId: "host", hostRevision: pluginHostBindingDigest(host),
+    serverIds: ["server"], eligibleServerIds: ["server"], dispatch, inlineMrtr: true,
+  });
+  manager.setMrtrInputCollector("server", dispatch.inlineCollectorForServer("server")!, {
+    extensionClaims: ["openai/elicitation"],
+    selectFormSchema: (params) => ownedPluginFormSchema(params, "server"),
+  });
+  await manager.connectToServer("server", { url: f.url, timeout: 10_000,
+    clientCapabilities: installedFormClientCapabilities({}, { legacy: { binding: dispatch.handlers }, mrtr: true }, true) });
+  f.answer.mockImplementationOnce(async () => {
+    now += 360;
+    await expect(jwtVerify(original, publicKey, { currentDate: new Date(now * 1000) })).rejects.toThrow();
+    current = await mint(outcome === "foreign" ? "foreign-actor" : "actor");
+    revoked = outcome === "revoked";
+    return { action: "accept", content: { answer: "renewed" } };
+  });
+  const run = vi.fn(() => manager.executeTool("server", "app", {}));
+  const pending = execute({ serverKey: "server", toolName: "app", toolCallId: "one-original-call", input: {}, signal }, run);
+  if (outcome === "same-owner") {
+    await expect(pending).resolves.toMatchObject({ content: [{ type: "text", text: "form:renewed" }] });
+    expect(readTokens).toContain(current);
+    expect(f.consumed).toHaveBeenCalledOnce();
+  } else {
+    const result = await pending.catch((error: unknown) => error);
+    expect(JSON.stringify(result)).not.toContain("form:renewed");
+    expect(f.consumed).not.toHaveBeenCalled();
+  }
+  expect(run).toHaveBeenCalledOnce();
+  expect(f.answer).toHaveBeenCalledOnce();
+}

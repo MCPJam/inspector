@@ -107,6 +107,7 @@ import { registerSelfFetch } from "./utils/self-app.js";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url.js";
 import { initComputersStartup } from "./utils/computers/remote-data-plane.js";
 import { createNodeWebSocket } from "@hono/node-ws";
+import { createLocalMrtrStream } from "./routes/web/local-mrtr-stream.js";
 import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal.js";
 import {
   createLocalComputerTerminalWsHandler,
@@ -195,6 +196,7 @@ export async function createHonoApp() {
   // `injectWebSocket` is returned to the caller (src/main.ts) to attach to the
   // node server, exactly as server/index.ts calls it on its own server.
   const { upgradeWebSocket, injectWebSocket } = createNodeWebSocket({ app });
+  const localMrtrStream = createLocalMrtrStream(upgradeWebSocket);
   const strictModeResponse = (c: any, path: string) =>
     c.json(
       {
@@ -431,6 +433,7 @@ export async function createHonoApp() {
   // WebMCP Inspector frame stream WebSocket. Never mounted hosted — there is no
   // local browser there to stream. Mirror of the mount in server/index.ts.
   if (!HOSTED_MODE) {
+    app.get("/api/web/mcp/mrtr/stream", localMrtrStream.handler);
     app.get(
       "/api/web/webmcp/sessions/:id/frames",
       createWebMcpFramesWsHandler(upgradeWebSocket),
@@ -708,6 +711,8 @@ export async function createHonoApp() {
   return {
     app,
     injectWebSocket,
+    shutdownLocalMrtrStreams: localMrtrStream.shutdown,
+    killLocalMrtrStreams: localMrtrStream.kill,
     shutdownLocalComputerTerminals,
     killLocalComputerTerminals,
     // A local agent browser is a real Chromium this process started. Nothing

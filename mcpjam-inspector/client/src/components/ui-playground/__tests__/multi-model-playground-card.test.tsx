@@ -9,13 +9,15 @@ import { showPluginNotice } from "@/lib/plugins/plugin-notice-display";
 import type { LiveChatTraceEnvelope } from "@/shared/live-chat-trace";
 import { useBrowserComparisonStore } from "@/stores/browser-comparison-store";
 
-const composition = vi.hoisted(() => ({ wanted: false, failed: false, blockingError: undefined as string | undefined }));
+const composition = vi.hoisted(() => ({ wanted: false, failed: false, blockingError: undefined as string | undefined, inputs: vi.fn() }));
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => false,
 }));
 
 vi.mock("@/hooks/use-playground-hidden-environment", () => ({
-  usePlaygroundHiddenEnvironment: () => ({
+  usePlaygroundHiddenEnvironment: (input: { computerAttached?: boolean }) => {
+    composition.inputs(input);
+    return ({
     wanted: composition.wanted,
     failed: composition.failed,
     blockingError: composition.blockingError,
@@ -23,7 +25,8 @@ vi.mock("@/hooks/use-playground-hidden-environment", () => ({
     pluginServerIds: ["plugin_server"],
     pluginServers: [{ serverId: "plugin_server", name: "Plugin" }],
     venue: "hosted",
-  }),
+  });
+  },
 }));
 
 vi.mock("@/lib/plugins/plugin-notice-display", () => ({ showPluginNotice: vi.fn() }));
@@ -230,7 +233,11 @@ function Harness({
   active,
   readinessNotice,
   claimBroadcastDelivery,
+  hostCapsResolver,
+  pluginComputerAttached,
 }: {
+  hostCapsResolver?: Parameters<typeof MultiModelPlaygroundCard>[0]["hostCapsResolver"];
+  pluginComputerAttached?: boolean;
   active?: boolean;
   readinessNotice?: string;
   claimBroadcastDelivery?: Parameters<typeof MultiModelPlaygroundCard>[0]["claimBroadcastDelivery"];
@@ -271,6 +278,8 @@ function Harness({
       </div>
       <MultiModelPlaygroundCard
         active={active}
+        hostCapsResolver={hostCapsResolver}
+        pluginComputerAttached={pluginComputerAttached}
         readinessNotice={readinessNotice}
         onSendReadinessChange={onSendReadinessChange}
         extensionBinding={extensionBinding}
@@ -315,6 +324,17 @@ function Harness({
 }
 
 describe("MultiModelPlaygroundCard", () => {
+  it("does not borrow the parent Computer when a resolved compare client has none", () => {
+    const saved = {
+      id: "without_computer", schemaVersion: 2, hostStyle: "chatgpt", modelId: String(model.id),
+      systemPrompt: "", temperature: 0.7, requireToolApproval: false,
+      serverIds: [], optionalServerIds: [], connectionDefaults: { headers: {}, requestTimeout: 10000 },
+      clientCapabilities: {}, hostContext: {},
+    } satisfies NonNullable<Parameters<typeof MultiModelPlaygroundCard>[0]["hostCapsResolver"]>;
+    render(<Harness compareKind="host" pluginComputerAttached hostCapsResolver={saved} />);
+    expect(composition.inputs).toHaveBeenLastCalledWith(expect.objectContaining({ computerAttached: false }));
+  });
+
   it("passes a model card's selection while host cards explicitly inherit", () => {
     const selection = { modelId: String(model.id), source: "hosted" as const, fallback: { provider: "none", model: "none" } as const };
     const { rerender } = render(<Harness selection={selection} />);

@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   catalog: vi.fn(),
   html: "<p>app</p>",
   mimeTypeValid: true,
+  csp: undefined as { connectDomains: string[] } | undefined,
 }));
 vi.mock("../../../services/plugin-host/request-runtime.js", async original => ({
   ...await original<typeof import("../../../services/plugin-host/request-runtime.js")>(),
@@ -24,6 +25,7 @@ vi.mock("../../../utils/widget-resource-content.js", () => ({
   widgetResourceContent: () => ({
     html: mocks.html,
     mimeTypeValid: mocks.mimeTypeValid,
+    csp: mocks.csp,
   }),
 }));
 vi.mock("../../../utils/ui-resource-meta.js", () => ({
@@ -36,6 +38,7 @@ vi.mock("../../../utils/view-origin-label.js", () => ({
 import { pluginModelAppRoutes } from "../plugin-model-apps.js";
 import { modelApps } from "../../../services/plugin-host/model-apps.js";
 import { PLUGIN_MODEL_APP_META } from "../../../../shared/plugin-model-app.js";
+import { webReceiptApp, withReceiptSigning, expectOwnedSourceReceipt } from "./owned-source-receipt-fixture.js";
 const actor = {
   actorId: "actor",
   projectId: "project",
@@ -57,7 +60,7 @@ const source = {
   serverIdentity: { kind: "standalone" as const, serverId: "saved-id" },
 };
 const meta = { ui: { resourceUri: "ui://app" } };
-function fixture(visitor = actor) {
+function fixture(visitor = actor, web = false) {
   const result = modelApps.publish(
     { content: [] },
     { ...source, owner: { ...source.owner, instanceId: crypto.randomUUID() } } as never,
@@ -67,9 +70,7 @@ function fixture(visitor = actor) {
   ) as any;
   const token = result._meta[PLUGIN_MODEL_APP_META].instanceToken;
   const admission = { revalidate: vi.fn(async () => {}) };
-  const router = new Hono().route(
-    "/",
-    pluginModelAppRoutes({
+  const routes = pluginModelAppRoutes({
       route: async (_c, action) => {
         try {
           return await action();
@@ -83,13 +84,14 @@ function fixture(visitor = actor) {
         admission: admission as never,
       }),
       cleanup: async () => actor,
-    }),
-  );
+    });
+  const prefix = web ? "/api/web/model-apps" : "";
+  const router = web ? webReceiptApp(routes, "model-apps") : new Hono().route("/", routes);
   return {
     token,
     router,
     request: () =>
-      router.request("/open", {
+      router.request(`${prefix}/open`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -104,6 +106,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.html = "<p>app</p>";
   mocks.mimeTypeValid = true;
+  mocks.csp = undefined;
   mocks.read.mockResolvedValue({
     contents: [{ uri: "ui://app", text: "<p>app</p>" }],
   });
@@ -492,5 +495,34 @@ describe("owned model App resource operations", () => {
     const result = await resourceRequest(fixture(), { method: "resources/read", uri: "test://record" }, { connectionId: "other-account" });
     expect(result.status).toBe(403);
     expect(mocks.read).not.toHaveBeenCalled();
+  });
+});
+
+it("binds model App receipts to the original instance operation and rejects a foreign owner", async () => {
+  await withReceiptSigning(async () => {
+    mocks.html = "<p>Model-owned α</p>";
+    mocks.csp = { connectDomains: ["https://model.example"] };
+    const f = fixture(actor, true);
+    try {
+      const original = modelApps.get(f.token, actor);
+      const response = await f.request();
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      expect(result.operationId).toBe(original.owner.owner.instanceId);
+      expect(result.widgetContent).toMatchObject({ html: mocks.html, csp: mocks.csp });
+      expectOwnedSourceReceipt(result.widgetContent, { serverId: "saved-id", resourceUri: "ui://app", toolCallId: original.owner.owner.instanceId });
+    } finally {
+      modelApps.close(f.token, actor);
+    }
+    mocks.read.mockClear();
+    const foreign = fixture({ ...actor, workspaceId: "other-workspace" }, true);
+    try {
+      const denied = await foreign.request();
+      expect(denied.status).toBe(403);
+      expect(await denied.text()).not.toContain("sourceReceipt");
+      expect(mocks.read).not.toHaveBeenCalled();
+    } finally {
+      modelApps.close(foreign.token, actor);
+    }
   });
 });

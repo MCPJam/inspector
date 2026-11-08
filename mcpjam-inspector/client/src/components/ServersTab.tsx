@@ -1,3 +1,4 @@
+import { pluginExtensionProfileForHost } from "@/lib/client-config-v2-plugin-extensions";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { loadServerOrder, saveServerOrder, serverCheckQueue } from "@/lib/server-check-queue";
 import {
@@ -2292,6 +2293,7 @@ export function ServersTab({
             existingServerNames={Object.keys(projectServers)}
             projectClientConfig={selectedProject?.clientConfig}
             projectId={hostedProjectId}
+            extensionLaunchProfile={pluginExtensionProfileForHost(previewedHost?.config)}
             extensionSettingsScope={extensionSettingsEnabled && hostedProjectId && previewedHostId ? {
               projectId: hostedProjectId,
               hostId: previewedHostId,
@@ -2323,6 +2325,7 @@ export function ServersTab({
             plugin={pluginParts.detail}
             onClose={() => pluginParts.setDetail(null)}
             projectId={hostedProjectId}
+            extensionLaunchProfile={pluginExtensionProfileForHost(previewedHost?.config)}
             extensionSettingsScope={
               extensionSettingsEnabled && hostedProjectId && previewedHostId
                 ? {

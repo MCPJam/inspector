@@ -263,6 +263,7 @@ export function useThreadAppWorkspace(
   const settings = useWorkspaceSettings(
     options.settings === false || !capabilities.settings ? null : scope,
     servers,
+    options.launchProfile,
   );
   const onboardingOn = !!options.runOnboarding && capabilities.onboarding;
   const onboarding = usePluginOnboarding(
@@ -889,14 +890,14 @@ export function useThreadAppWorkspace(
           error instanceof ThreadAppError &&
           error.code === "APPROVAL_DENIED"
         )
-          (row.launch ?? lifetime.health.begin(
-            `open:${key}`,
+          (row.launch ??= lifetime.health.begin(
+            `open:${crypto.randomUUID()}`,
             declaration.kind,
             profileRef.current,
           )).exclude();
         else
-          (row.launch ?? lifetime.health.begin(
-            `open:${key}`,
+          (row.launch ??= lifetime.health.begin(
+            `open:${crypto.randomUUID()}`,
             declaration.kind,
             profileRef.current,
           )).fail(
@@ -1548,7 +1549,7 @@ export function AppRegistration({
           handle,
           row.server.serverId,
           row.declaration.kind === "global" ? "global" : "thread",
-          { openAIDisplayModes },
+          { openAIDisplayModes, projectId: scope.projectId },
         ),
         host,
         handle,
@@ -1606,6 +1607,7 @@ export function AppRegistration({
     localFileApi,
     liveSignal,
     context.update,
+    scope.projectId,
     scope.threadId,
     messagesAllowed,
     negotiatedCapabilities,

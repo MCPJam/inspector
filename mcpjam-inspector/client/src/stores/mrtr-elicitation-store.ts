@@ -3,7 +3,7 @@
  * (`input_required`) input bridge (MCP 2026-07-28 §12; server side in
  * `server/routes/mcp/mrtr.ts`).
  *
- * Singleton store + singleton SSE connection (same pattern as
+ * Singleton store + singleton WebSocket connection (same pattern as
  * `traffic-log-store`) so every surface that mounts `MrtrElicitationHost`
  * (Tools / Resources / Prompts / local Chat) shares ONE dialog rail rather than
  * opening a connection and a competing dialog each.
@@ -15,34 +15,10 @@
  */
 
 import { create } from "zustand";
-import { addTokenToUrl, authFetch } from "@/lib/session-token";
+import { openLocalMrtrStream, type LocalMrtrStream } from "@/lib/mrtr/local-stream";
 import { HOSTED_MODE } from "@/lib/config";
 
-/** One embedded elicitation request within a round (mirror of the server DTO). */
-export interface MrtrBridgeInputRequest {
-  key: string;
-  mode: "form" | "url";
-  message: string;
-  requestedSchema?: Record<string, unknown>;
-  pluginForm?: boolean;
-  url?: string;
-}
-
-/** One round of a logical MRTR operation awaiting the user's responses. */
-export interface MrtrRound {
-  opId: string;
-  roundKey: string;
-  round: number;
-  serverId?: string;
-  requests: MrtrBridgeInputRequest[];
-  timestamp: string;
-}
-
-/** One user answer to a single keyed request. */
-export type MrtrKeyAnswer = {
-  action: "accept" | "decline" | "cancel";
-  content?: Record<string, unknown>;
-};
+import type { MrtrRound, MrtrKeyAnswer } from "@/shared/local-mrtr";
 
 /**
  * Per-round collection progress. Lives in the SINGLETON store (not in
@@ -65,8 +41,8 @@ interface MrtrElicitationState {
   responding: boolean;
   /** Shared per-round collection progress (survives host promotion/unmount). */
   collection: MrtrCollection | null;
-  /** Idempotent: starts the singleton SSE listener (local mode only). */
-  connect: () => void;
+  /** Idempotent: starts the shared socket listener (local mode only). */
+  connect: () => () => void;
   /** Persist collection progress for a round (advances index, accrues answers). */
   setCollection: (
     roundKey: string,
@@ -89,7 +65,7 @@ function reduceEvent(rounds: MrtrRound[], data: any): MrtrRound[] {
       typeof data.roundKey === "string"
         ? data.roundKey
         : `${data.opId}:${data.round ?? 0}`;
-    // Dedupe SSE redelivery by roundKey; a new round of the SAME op replaces the
+    // Dedupe notification redelivery by roundKey; a new round of the SAME op replaces the
     // op's prior round (responses are replaced across rounds, never accumulated).
     if (rounds.some((r) => r.roundKey === roundKey)) return rounds;
     const withoutOp = rounds.filter((r) => r.opId !== data.opId);
@@ -116,7 +92,8 @@ function reduceEvent(rounds: MrtrRound[], data: any): MrtrRound[] {
   return rounds;
 }
 
-let sse: EventSource | null = null;
+let connection: LocalMrtrStream | null = null;
+let connectionRefs = 0;
 
 export const useMrtrElicitationStore = create<MrtrElicitationState>(
   (set, get) => ({
@@ -128,27 +105,31 @@ export const useMrtrElicitationStore = create<MrtrElicitationState>(
       set({ collection: { roundKey, index, answers } }),
 
     connect: () => {
-      if (HOSTED_MODE || sse) return;
-      try {
-        sse = new EventSource(addTokenToUrl("/api/mcp/mrtr/stream"));
-        sse.onmessage = (ev) => {
-          try {
-            get().__ingest(JSON.parse(ev.data));
-          } catch {
-            // keep-alive / malformed frame — ignore.
-          }
-        };
-        sse.onerror = () => {
-          // EventSource auto-reconnects; nothing to do.
-        };
-      } catch {
-        sse = null;
-      }
+      if (HOSTED_MODE) return () => {};
+      connectionRefs++;
+      connection ??= openLocalMrtrStream({
+        onEvent: (event) => get().__ingest(event),
+        onSnapshot: (rounds) => set((state) => ({
+          rounds,
+          collection: rounds.some((round) => round.roundKey === state.collection?.roundKey)
+            ? state.collection : null,
+        })),
+      });
+      const attached = connection;
+      let released = false;
+      return () => {
+        if (released || connection !== attached) return;
+        released = true;
+        if (--connectionRefs === 0) {
+          connection.close();
+          connection = null;
+        }
+      };
     },
 
     respond: async (opId, responsesByKey) => {
-      // Capture the exact round we are answering BEFORE the POST. A fast server
-      // can install the next round (N+1) under the same opId while this fetch is
+      // Capture the exact round we are answering before sending it. A fast server
+      // can install the next round (N+1) under the same opId while the answer is
       // in flight; we must drop only the answered `roundKey`, never every round
       // sharing the operation id (that would silently delete the newer round and
       // strand its still-pending server-side collector).
@@ -157,20 +138,10 @@ export const useMrtrElicitationStore = create<MrtrElicitationState>(
       )?.roundKey;
       set({ responding: true });
       try {
-        const res = await authFetch("/api/mcp/mrtr/respond", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ opId, responses: responsesByKey }),
-        });
-        // A 4xx/5xx (session auth failure, key-set rejection, unknown op) means
-        // the server-side collector is still pending: KEEP the round — and its
-        // collection progress — so the user can correct/retry from the last key
-        // rather than optimistically clearing a live dialog.
-        if (!res.ok) {
-          throw new Error(`MRTR respond failed (${res.status})`);
-        }
+        if (!connection || !answeredRoundKey) throw new Error("The form connection is unavailable. Try again.");
+        await connection.respond(opId, answeredRoundKey, responsesByKey);
         // Optimistically drop ONLY the answered round; the `mrtr_input_complete`
-        // SSE event is idempotent with this. Clear collection progress for that
+        // notification is idempotent with this. Clear collection progress for that
         // same round only: a later round (possibly already installed under this
         // opId while the POST was in flight) keeps its own in-progress answers.
         if (answeredRoundKey) {
@@ -187,6 +158,11 @@ export const useMrtrElicitationStore = create<MrtrElicitationState>(
 
     __ingest: (event) => set((s) => ({ rounds: reduceEvent(s.rounds, event) })),
 
-    __reset: () => set({ rounds: [], responding: false, collection: null }),
+    __reset: () => {
+      connection?.close();
+      connection = null;
+      connectionRefs = 0;
+      set({ rounds: [], responding: false, collection: null });
+    },
   }),
 );

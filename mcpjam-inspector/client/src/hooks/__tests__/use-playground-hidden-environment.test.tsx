@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
   activeLoading: false,
   activeFailed: false,
   hostedMode: false,
+  pluginComputerRuntime: false,
   clientRunsHere: false,
   pluginsEnabled: true,
   isMember: true as boolean | undefined,
@@ -54,6 +55,9 @@ vi.mock("@/lib/config", async (importOriginal) => ({
   get HOSTED_MODE() {
     return state.hostedMode;
   },
+}));
+vi.mock("@/hooks/useProjectComputer", () => ({
+  useComputersDataPlaneConfig: () => ({ pluginComputerRuntime: state.pluginComputerRuntime }),
 }));
 vi.mock("@/hooks/useLocalHarnessTarget", () => ({
   useLocalHarnessRunsHere: () => state.clientRunsHere,
@@ -306,6 +310,7 @@ describe("usePlaygroundHiddenEnvironment", () => {
     state.activeLoading = false;
     state.activeFailed = false;
     state.hostedMode = false;
+    state.pluginComputerRuntime = false;
     state.clientRunsHere = false;
     state.pluginsEnabled = true;
     state.isMember = true;
@@ -595,6 +600,72 @@ describe("usePlaygroundHiddenEnvironment", () => {
       expect(state.ensure.mock.calls[0][0].pluginVersionIds).toEqual([
         "ver_bits",
       ]);
+    });
+
+    it("composes hosted stdio plugins only with the saved Computer and server capability", async () => {
+      state.hostedMode = true;
+      state.pluginComputerRuntime = true;
+      state.plugins = [localPlugin(), plugin("bits")];
+      const { result, rerender } = render({ computerAttached: true });
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      expect(state.activePluginsVenues.at(-1)).toBe("computer");
+      expect(result.current.venue).toBe("computer");
+      expect(state.ensure.mock.calls[0][0].pluginVersionIds).toEqual(["ver_local", "ver_bits"]);
+      expect(result.current.pluginServerIds).toEqual(["srv_local", "srv_bits"]);
+      rerender({ ...PROPS_FOR_PENDING, computerAttached: false });
+      await waitFor(() => expect(result.current.environmentId).toBe("env_2"));
+      expect(result.current.pluginServerIds).toEqual(["srv_bits"]);
+      expect(state.activePluginsVenues.at(-1)).toBe("hosted");
+    });
+
+    it("keeps hosted stdio refused when plugin execution capability is absent", async () => {
+      state.hostedMode = true;
+      state.plugins = [localPlugin(), plugin("bits")];
+      const { result } = render({ computerAttached: true });
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      expect(result.current.venue).toBe("hosted");
+      expect(result.current.pluginServerIds).toEqual(["srv_bits"]);
+    });
+
+    it("keeps each compare client's Computer composition separate", async () => {
+      state.hostedMode = true;
+      state.pluginComputerRuntime = true;
+      state.plugins = [localPlugin(), plugin("bits")];
+      const { result } = renderHook(() => [
+        usePlaygroundHiddenEnvironment({ ...PROPS_FOR_PENDING, hostId: "with_computer", computerAttached: true }),
+        usePlaygroundHiddenEnvironment({ ...PROPS_FOR_PENDING, hostId: "without_computer", computerAttached: false }),
+      ]);
+      await waitFor(() => expect(result.current.every(column => !!column.environmentId)).toBe(true));
+      expect(result.current[0].pluginServerIds).toEqual(["srv_local", "srv_bits"]);
+      expect(result.current[1].pluginServerIds).toEqual(["srv_bits"]);
+      expect(state.ensure.mock.calls.map(([args]) => [args.hostId, args.pluginVersionIds])).toEqual([
+        ["with_computer", ["ver_local", "ver_bits"]],
+        ["without_computer", ["ver_bits"]],
+      ]);
+    });
+
+    it("does not recompose remote-only plugins when a Computer is attached", async () => {
+      state.hostedMode = true;
+      state.pluginComputerRuntime = true;
+      state.plugins = [plugin("bits")];
+      const { result, rerender } = render();
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      rerender({ ...PROPS_FOR_PENDING, computerAttached: true });
+      expect(result.current.environmentId).toBe("env_1");
+      expect(result.current.venue).toBe("hosted");
+      expect(state.ensure).toHaveBeenCalledTimes(1);
+    });
+
+    it("recovers a Computer composition without changing its venue", async () => {
+      state.hostedMode = true;
+      state.pluginComputerRuntime = true;
+      state.plugins = [localPlugin()];
+      const { result } = render({ computerAttached: true });
+      await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
+      state.query.mockResolvedValue({ enabled: true, plugins: [localPlugin()] });
+      await act(async () => { await result.current.recover(); });
+      expect(state.query).toHaveBeenCalledWith("plugins:resolveActivePlugins", expect.objectContaining({ runtimeVenue: "computer" }));
+      expect(state.ensure.mock.calls[1][0].pluginVersionIds).toEqual(["ver_local"]);
     });
 
     it("recovers for the venue it composed for", async () => {

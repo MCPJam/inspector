@@ -1,3 +1,5 @@
+import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
+import { HostCatalogProvider } from "@/lib/host-compat/use-host-catalog";
 import { UserMessageBubble } from "@/components/chat-v2/thread/user-message-bubble";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { hostComposerClasses } from "@/lib/host-composer-presentation";
@@ -10,6 +12,13 @@ import { RunHostWorkspace } from "@/components/plugin-workspace/unattended/RunHo
 import "./host-workspace.css";
 
 import type { HarnessPresentation } from "../../../shared/unattended-workspace";
+const harnessCatalog = {
+  status: "fallback",
+  source: "bundled",
+  version: 0,
+  catalog: bundledHostCompatCatalog(),
+} as const;
+
 /** Existing bridge owns the only live iframe. Updating text never remounts its panel. */
 export function mountHarnessWorkspace(container: HTMLElement) {
   let panel: HTMLDivElement | null = null;
@@ -29,6 +38,7 @@ export function mountHarnessWorkspace(container: HTMLElement) {
     container.classList.toggle("dark", presentation.theme === "dark");
     flushSync(() =>
       root.render(
+        <HostCatalogProvider value={harnessCatalog}>
         <PreferencesStoreProvider
           themeMode={presentation.theme ?? "light"}
           themePreset="default"
@@ -104,7 +114,8 @@ export function mountHarnessWorkspace(container: HTMLElement) {
               }
             />
           </HostStyledShell>
-        </PreferencesStoreProvider>,
+        </PreferencesStoreProvider>
+        </HostCatalogProvider>,
       ),
     );
   }

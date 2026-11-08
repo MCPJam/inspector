@@ -32,9 +32,9 @@ function visible(element: HTMLElement) {
   }
   return true;
 }
-function parentDialogs() {
+function parentDialogs(element: Element | null = document.activeElement) {
   const parents: HTMLElement[] = [];
-  for (let node = document.activeElement; node; node = node.parentElement)
+  for (let node = element; node; node = node.parentElement)
     if (node instanceof HTMLElement && node.getAttribute("role") === "dialog")
       parents.push(node);
   return parents;
@@ -76,6 +76,7 @@ export function useFormDialogFocus(
   fallbackWorkspaceId = workspaceId,
   open = true,
   canRestore?: () => boolean,
+  returnTo?: HTMLElement,
 ) {
   const token = useId();
   const key = workspaceId ?? token;
@@ -84,21 +85,22 @@ export function useFormDialogFocus(
     () => ({
       current: points.get(key) ?? {
         opener:
-          document.activeElement instanceof HTMLElement &&
+          returnTo ??
+          (document.activeElement instanceof HTMLElement &&
           document.activeElement !== document.body &&
           document.activeElement !== document.documentElement &&
           document.activeElement.getAttribute("role") !== "dialog"
             ? document.activeElement
-            : null,
+            : null),
         href: location.href,
-        parentDialogs: parentDialogs(),
+        parentDialogs: parentDialogs(returnTo ?? document.activeElement),
         composer: composer(fallbackWorkspaceId) ?? composer(),
         owners: new Set(),
         holders: new Set(),
         canRestore,
       },
     }),
-    [key, fallbackWorkspaceId, canRestore],
+    [key, fallbackWorkspaceId, canRestore, returnTo],
   );
   const lastOpen = useRef(holder);
   useLayoutEffect(() => {

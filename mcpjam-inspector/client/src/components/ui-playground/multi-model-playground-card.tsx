@@ -300,6 +300,7 @@ interface MultiModelPlaygroundCardProps {
   onSendReadinessChange?: (laneId: string, ready: boolean, error?: string) => void;
   pluginHarnessId?: string | null;
   pluginHostResolved?: boolean;
+  pluginComputerAttached?: boolean;
   showSenderAvatars?: boolean;
   resolveSenderAvatar?: (senderUserId?: string) => ProjectThreadOwnerAvatar;
   outgoingSenderMetadata?: Record<string, unknown>;
@@ -360,6 +361,7 @@ export function MultiModelPlaygroundCard({
   onSendReadinessChange,
   pluginHarnessId,
   pluginHostResolved = true,
+  pluginComputerAttached = false,
   showSenderAvatars = false,
   resolveSenderAvatar,
   outgoingSenderMetadata,
@@ -475,6 +477,9 @@ export function MultiModelPlaygroundCard({
     hostedContext,
     harnessId: pluginHarnessId ?? hostCapsResolver?.agentLoop ?? hostCapsResolver?.harness,
     hostResolved: pluginHostResolved,
+    computerAttached: hostCapsResolver
+      ? !!hostCapsResolver.computer
+      : pluginComputerAttached,
   });
   const [recoveryColumn] = useState(() =>
     readComparisonAuthRecovery(
@@ -640,6 +645,7 @@ export function MultiModelPlaygroundCard({
   const modelApps = useCompareLaneModelApps(
     laneScope,
     extensionBinding?.capabilities,
+    extensionBinding?.profile,
     canInvoke,
   );
   laneContextRefs.current = laneScope

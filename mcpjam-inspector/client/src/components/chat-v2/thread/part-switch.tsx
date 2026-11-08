@@ -666,6 +666,7 @@ function LivePartSwitch({
             uiType={uiType}
             minimalMode={minimalMode}
             serverId={serverId}
+            resourceServerId={toolServerId}
             mcpToolResultImageRendering={mcpToolResultImageRendering}
             rawOutput={rawToolOutput}
           />
@@ -728,6 +729,7 @@ function LivePartSwitch({
             editVersion={editVersion}
             minimalMode={minimalMode}
             serverId={serverId}
+            resourceServerId={toolServerId}
             mcpToolResultImageRendering={mcpToolResultImageRendering}
             rawOutput={rawToolOutput}
             recordedWidgetDiagnostics={
@@ -932,6 +934,7 @@ function LivePartSwitch({
         uiType={uiType}
         minimalMode={minimalMode}
         serverId={serverId}
+        resourceServerId={toolServerId}
         mcpToolResultImageRendering={mcpToolResultImageRendering}
         rawOutput={rawToolOutput}
         {...approvalProps}

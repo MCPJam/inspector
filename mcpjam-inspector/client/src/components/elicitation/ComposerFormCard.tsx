@@ -154,7 +154,7 @@ export function ComposerFormFrame({
           variant="ghost"
           size="icon"
           className="size-6 shrink-0 text-muted-foreground"
-          aria-label="Close"
+          aria-label="Cancel form"
           disabled={closeDisabled}
           onClick={onClose}
         >

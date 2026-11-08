@@ -1,4 +1,5 @@
 import { managedTurnFailureResponse } from "./managed-turn-error.js";
+import { prepareTurnAuthorization } from "./turn-authorization.js";
 import { TurnResources } from "./resources.js";
 import { stripForwardingRequestBody } from "@/shared/forwarding-approval";
 import { preparePluginMessageTurn } from "../plugin-host/message.js";
@@ -61,6 +62,7 @@ export async function handleManagedChatTurn(
   let streamOwnsResources = false;
   try {
     const bearerToken = assertBearerToken(c);
+    const retrySubject = c.get("workosUserId");
     const rawBody = JSON.parse(
       stripForwardingRequestBody(
         JSON.stringify(
@@ -141,6 +143,11 @@ export async function handleManagedChatTurn(
       projectSkillReadFailed,
     } = setup.value;
 
+    const turnAuthorization = await prepareTurnAuthorization(c, {
+      projectId: hostedBody.projectId, chatSessionId: body.chatSessionId, executionTarget,
+      requestId: hostedBody.harnessStartupRequestId,
+      harness: resolvedExecution.harness,
+    }, resources);
     const connections = await prepareManagedConnections({
       c,
       rawBody,
@@ -312,7 +319,7 @@ export async function handleManagedChatTurn(
         (!modelPluginAdmission || !modelPluginBearer || !modelPluginSubject)
       )
         throw new Error("App context unavailable for this chat");
-      const readTurnContext = (
+      const readTurnContext = async (
         references: string[],
         admission: NonNullable<typeof modelPluginAdmission>,
       ) =>
@@ -320,7 +327,7 @@ export async function handleManagedChatTurn(
           c,
           references,
           admission,
-          bearer: modelPluginBearer!,
+          bearer: admission.getAuthorization ? await admission.getAuthorization() : modelPluginBearer!,
           actor: {
             actorId: admission.actorId,
             projectId: admission.projectId,
@@ -344,7 +351,7 @@ export async function handleManagedChatTurn(
         pluginModelContextPolicy(hostRuntimeConfig).turnMaxBytes,
       );
       const appMessages = await withGlobalOwnerFallback(
-        (admission) =>
+        async (admission) =>
           preparePluginMessageTurn({
             c,
             intent: body.pluginMessage,
@@ -356,7 +363,7 @@ export async function handleManagedChatTurn(
             serverIds: effectiveServerIds,
             threadId: body.chatSessionId,
             admission,
-            bearer: modelPluginBearer,
+            bearer: admission?.getAuthorization ? await admission.getAuthorization() : modelPluginBearer,
           }),
         modelPluginAdmission,
         body.pluginMessage === undefined ? undefined : globalPluginAdmission,
@@ -510,6 +517,8 @@ export async function handleManagedChatTurn(
           },
         },
         persist: {
+          getAuthorization: turnAuthorization?.getAuthorization,
+          ...(executionTarget.kind !== "scenario" && !c.get("guestId") && typeof retrySubject === "string" ? { retryOwner: { subject: retrySubject, projectId: hostedBody.projectId } } : {}),
           requireNativeToolDiscovery: resolvedExecution.requireNativeToolDiscovery,
           executionBindingVersion: resolvedExecution.executionBindingVersion,
           executionTarget: toResumeExecutionTarget(executionTarget),
@@ -666,6 +675,7 @@ export async function handleManagedChatTurn(
           respectToolVisibility,
         },
         runtime: {
+          turnAuthorization,
           authHeader: c.req.header("authorization"),
           clientIp: getSpendClientIp(c),
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
