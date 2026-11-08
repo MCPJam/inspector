@@ -620,14 +620,18 @@ describe("resolveHostTools — browser", () => {
     );
     await initComputersRuntimeConfigBootstrap();
     try {
-      const suppressed: Array<{ id: string; reason: string }> = [];
+      const suppressed: Array<{ id: string; reason: string; code?: string }> =
+        [];
       expect(
         resolveHostTools(
           { builtInToolIds: ["browser"], computer },
           { ...browserCtx, onToolSuppressed: (i) => suppressed.push(i) },
         ),
       ).toBeUndefined();
-      expect(suppressed[0]).toMatchObject({ id: "browser" });
+      expect(suppressed[0]).toMatchObject({
+        id: "browser",
+        code: "hosted_not_configured",
+      });
       expect(suppressed[0].reason).toContain("not fully configured");
     } finally {
       resetComputersRuntimeConfigBootstrapForTests();
@@ -783,7 +787,8 @@ describe("resolveHostTools — browser on a per-run sandbox", () => {
   it("suppresses it on a TERMINAL box, and says why", () => {
     // A browser on a terminal image fails with nothing saying why — there is
     // no X server for Chromium to draw on.
-    const suppressed: Array<{ id: string; reason: string }> = [];
+    const suppressed: Array<{ id: string; reason: string; code?: string }> =
+      [];
     const tools = resolveHostTools(
       { builtInToolIds: ["browser"] },
       {
@@ -797,6 +802,9 @@ describe("resolveHostTools — browser on a per-run sandbox", () => {
     expect(tools).toBeUndefined();
     expect(suppressed.find((s) => s.id === "browser")?.reason).toContain(
       "not a desktop",
+    );
+    expect(suppressed.find((s) => s.id === "browser")?.code).toBe(
+      "terminal_only",
     );
   });
 

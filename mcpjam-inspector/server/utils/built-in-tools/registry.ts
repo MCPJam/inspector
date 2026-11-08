@@ -76,6 +76,7 @@ import {
   type ComputerEngine,
 } from "../computers/engine.js";
 import { buildSandboxBashTool } from "./sandbox-bash.js";
+import type { BrowserSuppressionCode } from "./browser-refusal.js";
 import {
   buildMcpjamTool,
   isMcpjamToolId,
@@ -275,7 +276,11 @@ export interface BuiltInToolContext {
    * missing tool reads as a host-config bug to whoever opens the run, so
    * surfaces that can show a notice wire this; the rest get log-only behavior.
    */
-  onToolSuppressed?: (info: { id: string; reason: string }) => void;
+  onToolSuppressed?: (info: {
+    id: string;
+    reason: string;
+    code?: BrowserSuppressionCode;
+  }) => void;
   /**
    * Platform API client for the MCPJam workspace tools, bound to the
    * caller's bearer (in the web chat it self-dispatches into this server's
@@ -726,6 +731,7 @@ export function resolveHostTools(
         );
         ctx.onToolSuppressed?.({
           id,
+          code: answered ? "hosted_not_configured" : "hosted_transient",
           reason: answered
             ? "browser is not available on this deployment yet: the backend reports " +
               "the hosted browser runtime is not fully configured."
@@ -764,6 +770,7 @@ export function resolveHostTools(
         );
         ctx.onToolSuppressed?.({
           id,
+          code: "terminal_only",
           reason:
             "browser is not advertised: this run's sandbox is not a desktop " +
             "(browser) box, and a browser cannot run on a terminal image.",
