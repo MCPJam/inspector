@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   emptyHostConfigInputV2,
@@ -25,6 +25,7 @@ vi.mock("@/components/ui/json-editor", () => ({
 }));
 
 import { AppsExtensionTab } from "../AppsExtensionTab";
+import { addHostTemplateDefaults } from "../host-template-defaults";
 
 function Harness({ initial }: { initial: HostConfigInputV2 }) {
   const [draft, setDraft] = useState(initial);
@@ -81,5 +82,86 @@ describe("AppsExtensionTab arms the Save gate on edit", () => {
     await user.paste(JSON.stringify(current, null, 2));
 
     expect(screen.getByTestId("dirty").textContent).toBe("dirty");
+  });
+});
+
+function DefaultsHarness() {
+  const [draft, setDraft] = useState(() =>
+    emptyHostConfigInputV2({
+      hostStyle: "chatgpt",
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          pluginExtensions: {
+            capabilities: { mentions: false },
+            enabled: true,
+          },
+        },
+      },
+    }),
+  );
+  return (
+    <>
+      <button
+        onClick={() =>
+          setDraft((prev) =>
+            addHostTemplateDefaults(
+              {
+                ...prev,
+                mcpProfile: {
+                  profileVersion: 1,
+                  apps: {
+                    pluginExtensions: {
+                      enabled: true,
+                      capabilities: { mentions: true },
+                    },
+                  },
+                },
+              },
+              prev,
+            ),
+          )
+        }
+      >
+        Add defaults
+      </button>
+      <AppsExtensionTab
+        draft={draft}
+        onDraftChange={(updater) => setDraft(updater)}
+      />
+    </>
+  );
+}
+
+describe("Apps JSON after adding profile defaults", () => {
+  it("refreshes an accepted edit even when the parser reordered object keys", async () => {
+    render(<DefaultsHarness />);
+    const editor = screen.getByRole<HTMLTextAreaElement>("textbox", {
+      name: "json",
+    });
+    const doc = JSON.parse(editor.value);
+    doc.pluginExtensions = { capabilities: { forms: false }, enabled: true };
+    fireEvent.change(editor, {
+      target: { value: JSON.stringify(doc, null, 2) },
+    });
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Add defaults" }));
+    expect(JSON.parse(editor.value).pluginExtensions).toEqual({
+      enabled: true,
+      capabilities: { mentions: true, forms: false },
+    });
+  });
+
+  it("keeps an incomplete JSON edit when defaults change outside the editor", async () => {
+    render(<DefaultsHarness />);
+    const editor = screen.getByRole<HTMLTextAreaElement>("textbox", {
+      name: "json",
+    });
+    fireEvent.change(editor, { target: { value: '{"hostContext":' } });
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Add defaults" }));
+    expect(editor.value).toBe('{"hostContext":');
   });
 });

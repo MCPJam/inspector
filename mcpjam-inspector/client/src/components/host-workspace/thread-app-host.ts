@@ -1,5 +1,6 @@
-import type { WidgetHost } from "@mcpjam/widget-react";
+import type { WidgetHost, WidgetHostServices } from "@mcpjam/widget-react";
 import type { ThreadAppHandle } from "./thread-app-api";
+import { createSandboxViewServices } from "../chat-v2/thread/mcp-apps/sandbox-view-services";
 
 /**
  * How an owned App is presented.
@@ -26,6 +27,58 @@ function chatDisplayModes(modes: unknown): ChatDisplayMode[] {
     : [...CHAT_DISPLAY_MODES];
 }
 
+type DocumentServices = Pick<
+  WidgetHostServices,
+  "prepareSandboxView" | "releaseSandboxView"
+>;
+const documentHosts = new WeakMap<
+  ThreadAppHandle,
+  { key: string; html: string | undefined; services: DocumentServices }
+>();
+
+/** Presentation changes keep the admission ports that own the live document. */
+function ownedDocumentServices(
+  host: WidgetHost,
+  handle: ThreadAppHandle,
+  serverId: string,
+  projectId?: string,
+): DocumentServices {
+  const source = {
+    serverId,
+    resourceUri: handle.resourceUri,
+    toolCallId: handle.operationId,
+  };
+  const html = handle.widgetContent?.html;
+  const key = JSON.stringify([projectId, source]);
+  const cached = projectId ? documentHosts.get(handle) : undefined;
+  if (cached?.key === key && cached.html === html) return cached.services;
+  const documentHost = projectId
+    ? createSandboxViewServices(() => true, () => ({ projectId, serverId }))
+    : host.services;
+  const prepareView = documentHost?.prepareSandboxView;
+  const releaseView = documentHost?.releaseSandboxView;
+  const admittedViews = new Set<string>();
+  const services: DocumentServices = prepareView && releaseView
+    ? {
+        prepareSandboxView: async (request, signal) => {
+          if (
+            request.source.serverId !== serverId ||
+            request.source.resourceUri !== source.resourceUri ||
+            request.html !== html
+          ) throw new Error("App resource changed");
+          const view = await prepareView({ ...request, source }, signal);
+          admittedViews.add(view.admissionId);
+          return view;
+        },
+        releaseSandboxView: async ({ admissionId }) => {
+          if (admittedViews.delete(admissionId)) await releaseView({ admissionId });
+        },
+      }
+    : {};
+  if (projectId) documentHosts.set(handle, { key, html, services });
+  return services;
+}
+
 /** Compose only the actual qualified ports. A normal chat host is not authority.
  * `openAIDisplayModes` is the client's Display modes extension toggle: on, the
  * App starts in the mode OpenAI's rules pick (see `openAIDisplayModes` in
@@ -35,12 +88,17 @@ export function createThreadAppHost(
   handle: ThreadAppHandle,
   serverId: string,
   presentation: ThreadAppPresentation = "thread",
-  { openAIDisplayModes = false }: { openAIDisplayModes?: boolean } = {},
+  { openAIDisplayModes = false, projectId }: {
+    openAIDisplayModes?: boolean;
+    /** Captured owner project; contributed servers need no ambient name lookup. */
+    projectId?: string;
+  } = {},
 ): WidgetHost {
   const model = presentation === "model";
   const unavailable = async () => {
     throw new Error("This App capability is unavailable");
   };
+  const documentServices = ownedDocumentServices(host, handle, serverId, projectId);
   const {
     "openai/deepLink": _link,
     "openai/modelContext": _context,
@@ -117,6 +175,7 @@ export function createThreadAppHost(
       }),
     },
     services: {
+      ...documentServices,
       fetchWidgetContent: async (request) => {
         if (
           request.resourceUri !== handle.resourceUri ||

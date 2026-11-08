@@ -1420,6 +1420,7 @@ export function useServerState({
         ? resolveEffectiveClientCapabilities({
             host: activeHostConfig,
             serverConfig,
+            localFormSupport: !HOSTED_MODE,
           })
         : resolveEffectiveClientCapabilities({
             host: activeProject?.clientConfig
@@ -1429,6 +1430,7 @@ export function useServerState({
                 } as Pick<HostConfigDtoV2, "clientCapabilities">)
               : null,
             serverConfig,
+            localFormSupport: !HOSTED_MODE,
           });
 
       // Hoisted above the transport split: the per-server override applies to

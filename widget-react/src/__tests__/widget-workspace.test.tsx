@@ -1,4 +1,4 @@
-import { StrictMode, useState } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { webcrypto } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -241,7 +241,13 @@ describe("workspace-owned widget surfaces", () => {
 
   it("keeps render parents, iframe nodes and component state through selection and row removal", () => {
     let surfaceStore: ReturnType<typeof useWidgetSurfaceStoreApi>;
+    const mounted: string[] = [];
+    const unmounted: string[] = [];
     function Counter({ toolCallId }: MCPAppsRendererProps) {
+      useEffect(() => {
+        mounted.push(toolCallId);
+        return () => { unmounted.push(toolCallId); };
+      }, [toolCallId]);
       const [count, setCount] = useState(0);
       return (
         <>
@@ -299,6 +305,10 @@ describe("workspace-owned widget surfaces", () => {
     );
     expect(frame.parentElement).toBe(parent);
     expect(parent?.hidden).toBe(false);
+    expect(mounted).toEqual(["call-1", "call-2"]);
+    expect(unmounted).toEqual([]);
+    view.unmount();
+    expect(unmounted.sort()).toEqual(["call-1", "call-2"]);
   });
 
   it("isolates surface and tool stores in two workspaces and cancels only the closed owner", async () => {

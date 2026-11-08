@@ -64,6 +64,7 @@ export interface FetchMcpAppsWidgetContentRequest {
 }
 
 export interface FetchMcpAppsWidgetContentResponse {
+  sourceReceipt?: string;
   resourceDisplayHints?: import("@mcpjam/sdk/widget-runtime").ResourceDisplayHints;
   html: string;
   csp?: McpUiResourceCsp;

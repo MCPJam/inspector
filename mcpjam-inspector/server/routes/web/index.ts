@@ -1,3 +1,5 @@
+import turnAuthorization from "./turn-authorization.js";
+import chatPersistence from "./chat-persistence.js";
 import pluginFormAnswers from "./plugin-form-answers.js";
 import pluginInstances from "./plugin-instances.js";
 import oauthConnections from "./oauth-connections.js";
@@ -230,6 +232,8 @@ web.use(
   bearerAuthMiddleware,
   guestRateLimitMiddleware,
 );
+web.use("/apps/mcp-apps/view-admissions", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/apps/mcp-apps/view-admissions/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 
 // MJ-012. The rate limit for signed-in callers on this family.
 //
@@ -296,6 +300,8 @@ web.route("/export", exporter);
 // runtimes mint their own guest via POST /api/web/guest-session.
 web.route("/audio", audioTranscriptions);
 web.route("/chat-v2", chatV2);
+web.route("/chat-persistence", chatPersistence);
+web.route("/turn-authorization", turnAuthorization);
 // Token-only (signed proxy token IS the auth) — NO bearerAuthMiddleware, like
 // /guest-token. `sessionAuthMiddleware` already bypasses /api/web/*. The Claude
 // Code harness (in a cloud sandbox) connects its MCP through here.

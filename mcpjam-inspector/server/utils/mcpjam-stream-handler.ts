@@ -1,3 +1,5 @@
+import type { TurnAuthorization } from "../services/turn-authorization.js";
+import { finishPendingPersist } from "./completed-turn-finalization.js";
 import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
 import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
@@ -931,6 +933,7 @@ function applyToolRefresh(
 }
 
 export interface MCPJamHandlerOptions {
+  turnAuthorization?: TurnAuthorization;
   harnessStartupRequestId?: string;
   /** Effective saved App declaration, qualified by the caller's installed handlers. */
   harnessHostCapabilities?: import("@/shared/harness-host-capabilities").HarnessHostCapabilityQualification;
@@ -1174,6 +1177,7 @@ export interface MCPJamHandlerOptions {
   agentLoop?: Harness;
   harnessTurnContext?: string;
   harnessUnavailableAppTools?: boolean;
+  harnessAppTools?: import("@/shared/chat-v2").AppToolSnapshotEntry[];
   /** Which MCP-proxy plane the harness uses to route its MCP through MCPJam —
    *  set by the CALLER ROUTE (local `/api/mcp/*` vs hosted `/api/web/*`), not a
    *  global env. Absent ⇒ harness runs without proxied MCP. See
@@ -5610,6 +5614,7 @@ export async function runChatEngineLoop(
     let modelInvoked = false;
 
     try {
+      options.turnAuthorization?.start(traceTurn.turnId, safeWriter);
       onStreamWriterReady?.(safeWriter);
 
       if (aborted) {
@@ -5831,7 +5836,7 @@ export async function runChatEngineLoop(
             tools,
             progressivePlan,
             discoveryState,
-            authHeader,
+            authHeader: options.turnAuthorization ? await options.turnAuthorization.getAuthorization() : authHeader,
             scenarioId,
             accessVersion,
             projectId,
@@ -6132,10 +6137,11 @@ export async function runChatEngineLoop(
         };
         capturedTurnTrace = trace;
         try {
-          const persistOutcome = await onConversationComplete?.(
+          let persistOutcome = await onConversationComplete?.(
             [...messageHistory],
             trace,
           );
+          if (chatSessionId) persistOutcome = await finishPendingPersist(persistOutcome, receiptWriter, { chatSessionId, turnId: trace.turnId }, abortSignal);
           // Costs no latency: `onConversationComplete` already awaited the
           // ingest, which is what gates this stream's close in the first place.
           if (persistOutcome && chatSessionId) {

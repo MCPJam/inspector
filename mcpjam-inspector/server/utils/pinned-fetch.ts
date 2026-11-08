@@ -41,6 +41,10 @@ import {
 } from "./hosted-egress-guard.js";
 
 export interface PinnedFetchOptions {
+  /** A trusted operator policy; never populate this from a request body. */
+  admitPrivateDestination?: Parameters<
+    typeof executeOAuthProxy
+  >[0]["admitPrivateDestination"];
   /**
    * Local-dev opt-in for loopback targets. Carved out for loopback ONLY — it
    * never relaxes the guard for LAN, link-local, CGNAT, multicast,
@@ -322,6 +326,7 @@ export function createPinnedFetch(
     if (
       !allowPrivateNetwork &&
       options.allowLoopback !== true &&
+      options.admitPrivateDestination === undefined &&
       isLoopbackOAuthUrl(url)
     ) {
       throw new BlockedEgressTargetError(
@@ -406,6 +411,7 @@ export function createPinnedFetch(
           // against the hop being dialled.
           httpsOnly: !hopAllowsLoopback && !hopAllowsPrivate,
           allowPrivateNetwork: hopAllowsPrivate,
+          admitPrivateDestination: options.admitPrivateDestination,
           redirect: "manual",
           timeoutMs: remainingTimeout(options.timeoutMs, startedAt),
           signal,

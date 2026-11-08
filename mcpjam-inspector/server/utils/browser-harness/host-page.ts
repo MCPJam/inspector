@@ -1,3 +1,4 @@
+import "./strict-zod.js";
 import { createViewToolsPage } from "../webmcp-view/view-tools-page.js";
 import type { HarnessPresentation } from "../../../shared/unattended-workspace";
 import { mountHarnessWorkspace } from "./host-workspace";

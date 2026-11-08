@@ -441,3 +441,22 @@ describe("useServerState mcpProtocolVersion re-validation", () => {
     expect(reconnectServerMock).not.toHaveBeenCalled();
   });
 });
+
+
+it("forwards the Forms-enabled client contract on an actual local reconnect", async () => {
+  reconnectServerMock.mockResolvedValue({ success: true });
+  const hostConfig = { ...buildHostConfig(), hostStyle: "chatgpt", mcpProfile: {
+    profileVersion: 1, apps: { pluginExtensions: { enabled: true, capabilities: { forms: true } } },
+  } };
+  const { rerender } = renderRevalidationHook(vi.fn(), { profile: undefined, hostConfig });
+  await flushAsyncWork(5);
+  rerender({ profile: { mcpProtocolVersion: "2026-07-28" }, hostConfig });
+  await waitFor(() => expect(reconnectServerMock).toHaveBeenCalledOnce());
+  const call = reconnectServerMock.mock.calls[0];
+  expect(call[1].clientCapabilities).toMatchObject({
+    elicitation: { form: {} }, extensions: { "openai/elicitation": { form: {} } },
+  });
+  expect(call[2].connectionDefaults.clientCapabilities).toMatchObject({
+    elicitation: { form: {} }, extensions: { "openai/elicitation": { form: {} } },
+  });
+});
