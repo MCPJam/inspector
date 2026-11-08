@@ -33,7 +33,8 @@ export function closeCancelledHarnessApprovals(messages: UIMessage[], ids: strin
   ) }));
 }
 
-export function useHarnessApprovalStop({ owner, messages, setMessages }: {
+export function useHarnessApprovalStop({ owner, messages, setMessages, dispatchBlocked }: {
+  dispatchBlocked: { current: boolean };
   owner: Owner | null;
   messages: UIMessage[];
   setMessages: Dispatch<SetStateAction<UIMessage[]>>;
@@ -43,7 +44,7 @@ export function useHarnessApprovalStop({ owner, messages, setMessages }: {
   const [stopFailed, setStopFailed] = useState(false);
   const ownerKey = JSON.stringify(owner);
   const currentOwner = useRef(ownerKey);
-  useLayoutEffect(() => { currentOwner.current = ownerKey; setStopping(false); setStopFailed(false); }, [ownerKey]);
+  useLayoutEffect(() => { currentOwner.current = ownerKey; dispatchBlocked.current = false; setStopping(false); setStopFailed(false); }, [ownerKey]);
   const inFlight = useRef(false);
   const approvalIds = useMemo(() => owner ? pendingHarnessApprovalIds(messages) : [], [messages, ownerKey]);
   const pendingKey = JSON.stringify(approvalIds);
@@ -85,6 +86,7 @@ export function useHarnessApprovalStop({ owner, messages, setMessages }: {
 
   const stopActiveTurn = useCallback(async (requestId: string) => {
     if (!owner) return;
+    dispatchBlocked.current = true;
     setStopping(true);
     setStopFailed(false);
     try {
@@ -92,6 +94,7 @@ export function useHarnessApprovalStop({ owner, messages, setMessages }: {
       const cancelled = await convex.query(cancelledQuery, owner);
       if (currentOwner.current === ownerKey) {
         setMessages((current) => closeCancelledHarnessApprovals(current, cancelled));
+        dispatchBlocked.current = false;
       }
     } catch (error) {
       if (currentOwner.current === ownerKey) setStopFailed(true);

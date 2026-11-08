@@ -2606,6 +2606,7 @@ export function useChatSession(
   );
 
   const harnessStartupRequestRef = useRef<string | null>(null);
+  const harnessStopBlockedRef = useRef(false);
   const [turnAuthorizationRenewal] = useState(() => createTurnAuthorizationRenewal(() => ({
     chatSessionId: chatSessionIdRef.current,
     requestId: harnessStartupRequestRef.current,
@@ -4142,6 +4143,7 @@ export function useChatSession(
       api: chatApi,
       fetch: chatFetch,
       body: () => {
+        if (harnessStopBlockedRef.current) throw new Error("Confirm Stop before continuing this conversation.");
         savedClientSendGuard.assertCurrent();
         if (requestChoiceRef.current.kind === "blocked") throw new Error(requestChoiceRef.current.reason);
         // Capture the task scope this turn is SUBMITTED under, next to
@@ -5503,6 +5505,7 @@ export function useChatSession(
       extraParts?: UIMessage["parts"];
       widgetModelContext?: WidgetModelContextEntry[];
     }) => {
+      if (harnessStopBlockedRef.current) throw new Error("Confirm Stop before continuing this conversation.");
       const {
         text,
         files,
@@ -6844,6 +6847,7 @@ export function useChatSession(
     owner: isHostedTransport && isAuthenticated && hostedProjectId && isHarness(harnessId) && !hostedScenarioId
       ? { projectId: hostedProjectId, harnessId, chatSessionId }
       : null,
+    dispatchBlocked: harnessStopBlockedRef,
     messages,
     setMessages,
   });
