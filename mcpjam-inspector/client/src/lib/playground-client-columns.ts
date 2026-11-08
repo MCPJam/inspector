@@ -15,6 +15,9 @@ import {
 } from "@/shared/harness-descriptors";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 
+const INVALID_CHOICE_REASON =
+  "The saved model choice is invalid. Edit this client in Connect.";
+
 export interface PlaygroundClientColumn {
   compareId: string;
   compareLabel: string;
@@ -79,17 +82,17 @@ export function resolvePlaygroundClientColumn({
     selection.source !== "legacy" &&
     !validateModelSelection(selection).ok
   ) {
-    return {
-      ...identity,
-      status: "invalid",
-      reason: "The saved model choice is invalid. Edit this client in Connect.",
-    };
+    return { ...identity, status: "invalid", reason: INVALID_CHOICE_REASON };
   }
   const harnessId = effectiveHarnessId(config);
   // The account picks the model (Cursor Auto): the sentinel is what runs.
+  // Any other saved id is a setup the server refuses, so the column blocks
+  // instead of showing a model the account never runs.
   const accountChosen = harnessAccountChoosesModel(harnessId)
     ? runtimeChosenModelRow(config.modelId)
     : undefined;
+  if (harnessAccountChoosesModel(harnessId) && !accountChosen)
+    return { ...identity, status: "invalid", reason: INVALID_CHOICE_REASON };
   const model =
     accountChosen ??
     findModelForStoredChoice(

@@ -170,6 +170,18 @@ describe("each column reads the catalog through its own harness", () => {
           status: "ready",
           column: { compareSubLabel: "Cursor Auto", model: { id: "cursor/auto" } },
         });
+        // A stale ordinary model is a broken setup the server refuses, never
+        // a ready column showing a model the account doesn't run. The picker
+        // falls back to the whole catalog for this harness, so it would find
+        // every row.
+        for (const row of catalog) {
+          expect(
+            resolve(clientOn({ harness: harnessId }, String(row.id)), catalog),
+          ).toMatchObject({
+            status: "invalid",
+            reason: "The saved model choice is invalid. Edit this client in Connect.",
+          });
+        }
         return;
       }
       const admitted = harnessPickerModels(catalog, { harnessId });
