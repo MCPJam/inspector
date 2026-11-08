@@ -212,6 +212,7 @@ import type { BillingFeatureName } from "./hooks/useOrganizationBilling";
 // Import global styles
 import "./index.css";
 import { track } from "./lib/analytics";
+import { useAppLaunchedEvent } from "./lib/launch-tracking";
 import {
   trackFirstRunConnectionCancelled,
   trackFirstRunConnectionFailed,
@@ -3575,18 +3576,7 @@ export default function App() {
   // `disable_session_recording` flag cannot cover in-app navigation into it.
   useSessionRecordingPathGuard();
 
-  const lastLaunchedActorRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!actorKey) return;
-    if (lastLaunchedActorRef.current === actorKey) return;
-    lastLaunchedActorRef.current = actorKey;
-    track("app_launched", {
-      location: "app",
-      user_agent: navigator.userAgent,
-      version: __APP_VERSION__,
-      is_authenticated: Boolean(workOsUser),
-    });
-  }, [actorKey, workOsUser, posthog]);
+  useAppLaunchedEvent(actorKey, Boolean(workOsUser));
 
   // Set the initial theme mode and preset on page load
   const initialThemeMode = getInitialThemeMode();
