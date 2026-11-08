@@ -9,29 +9,43 @@ export const PRESEND_SYNC_TIMEOUT_MS = 4_000;
 /**
  * Whether the thread's live session subscription already holds what the
  * pre-send state read would return: the same history row and conversation, at
- * a version the persistence cursor has reached. Send then goes at once. While
- * the subscription is paused (during a stream) or has not delivered yet, this
- * is false and Send reads the state first, as before.
+ * a version the persistence cursor has reached, with the visibility this turn
+ * will send. Send then goes at once. While the subscription is paused (during
+ * a stream) or has not delivered yet, this is false and Send reads the state
+ * first, as before.
+ *
+ * Visibility is compared on its own because sharing and unsharing do not move
+ * the version, and neither surface applies a live change that kept it: a tab
+ * still holding "project" would otherwise send it and re-share a thread its
+ * owner had just made private. Any value other than an exact match (including
+ * a raw `workspace`) falls back to the read, which normalizes it.
  */
 export function presendStateIsCurrent({
   activeHistorySessionId,
   chatSessionId,
   live,
   resumedVersion,
+  visibility,
 }: {
   activeHistorySessionId: string | null | undefined;
   chatSessionId: string | null | undefined;
   live:
-    | Pick<ChatHistoryStateSession, "_id" | "chatSessionId" | "version">
+    | Pick<
+        ChatHistoryStateSession,
+        "_id" | "chatSessionId" | "version" | "directVisibility"
+      >
     | null
     | undefined;
   resumedVersion: number | null;
+  /** The `directVisibility` this turn's request will carry. */
+  visibility: ChatHistoryStateSession["directVisibility"];
 }): boolean {
   return (
     Boolean(activeHistorySessionId) &&
     live != null &&
     live._id === activeHistorySessionId &&
     live.chatSessionId === chatSessionId &&
+    live.directVisibility === visibility &&
     resumedVersion !== null &&
     live.version <= resumedVersion
   );

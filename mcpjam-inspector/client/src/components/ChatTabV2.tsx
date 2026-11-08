@@ -866,6 +866,24 @@ export function ChatTabV2({
     ]
   );
 
+  // The thread a history read was issued for. A read can land after the user
+  // opened another thread (a pre-send read outlives its timeout); its result
+  // must never attach that thread's row or cursor to the one now open.
+  const currentHistoryTargetRef = useRef({
+    chatSessionId,
+    projectId: effectiveHostedProjectId,
+  });
+  currentHistoryTargetRef.current = {
+    chatSessionId,
+    projectId: effectiveHostedProjectId,
+  };
+  const isCurrentHistoryTarget = useCallback(
+    (target: { chatSessionId: string; projectId: typeof effectiveHostedProjectId }) =>
+      currentHistoryTargetRef.current.chatSessionId === target.chatSessionId &&
+      currentHistoryTargetRef.current.projectId === target.projectId,
+    []
+  );
+
   const refreshCurrentHistorySession = useCallback(
     async ({ retries = 0, markRead = false } = {}) => {
       if (!showHistoryRail) {
@@ -883,6 +901,15 @@ export function ChatTabV2({
             chatSessionId,
             projectId: effectiveHostedProjectId ?? undefined,
           });
+          if (
+            !isCurrentHistoryTarget({
+              chatSessionId,
+              projectId: effectiveHostedProjectId,
+            }) ||
+            detail.session.chatSessionId !== chatSessionId
+          ) {
+            return null;
+          }
           setActiveHistorySessionId(detail.session._id);
           setLoadedThreadOwnerUserId(detail.session.userId ?? null);
           setPendingDirectVisibility(detail.session.directVisibility);
@@ -913,6 +940,7 @@ export function ChatTabV2({
       chatSessionId,
       effectiveHostedProjectId,
       hasConversationMessages,
+      isCurrentHistoryTarget,
       markHistorySessionRead,
       showHistoryRail,
       syncResumedVersion,
@@ -985,10 +1013,12 @@ export function ChatTabV2({
         chatSessionId,
         live: reactiveHistorySession,
         resumedVersion,
+        visibility: pendingDirectVisibility,
       })
     ) {
       return true;
     }
+    const target = { chatSessionId, projectId: effectiveHostedProjectId };
     let detail: ChatHistoryStateSession | null = null;
     try {
       detail = await withPresendSyncTimeout(refreshCurrentHistorySession());
@@ -1003,6 +1033,11 @@ export function ChatTabV2({
     if (detail) {
       return true;
     }
+    // Another thread opened while the read was in flight: this send belonged
+    // to the one that closed, so drop it rather than detach the open thread.
+    if (!isCurrentHistoryTarget(target)) {
+      return false;
+    }
 
     if (activeHistorySessionId) {
       detachHistorySession(
@@ -1016,6 +1051,9 @@ export function ChatTabV2({
     activeHistorySessionId,
     chatSessionId,
     detachHistorySession,
+    effectiveHostedProjectId,
+    isCurrentHistoryTarget,
+    pendingDirectVisibility,
     reactiveHistorySession,
     refreshCurrentHistorySession,
     resumedVersion,

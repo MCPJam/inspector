@@ -6,6 +6,7 @@ const m = vi.hoisted(() => ({
   events: [] as string[],
   secrets: vi.fn(),
   acquire: vi.fn(),
+  credentialRefusal: vi.fn(async (): Promise<string | null> => null),
 }));
 vi.mock("../../browserd/page-tools-peek.js", async (original) => ({
   ...(await original<typeof import("../../browserd/page-tools-peek.js")>()),
@@ -26,7 +27,7 @@ vi.mock("../owned-playground-box.js", () => ({
 vi.mock("../../../utils/harness/playground-box.js", async (original) => ({
   ...(await original<typeof import("../../../utils/harness/playground-box.js")>()),
   playgroundHarnessBoxUnavailableReason: () => null,
-  playgroundCredentialRefusal: async () => null,
+  playgroundCredentialRefusal: m.credentialRefusal,
 }));
 vi.mock("../../../utils/computers/environment-context.js", async (original) => ({
   ...(await original<
@@ -151,6 +152,16 @@ describe("the Playground box and the secrets read", () => {
     expect((failure as { headers?: Record<string, string> }).headers).toEqual({
       "Retry-After": "3",
     });
+  });
+
+  it("books no box when the member's own credential is refused", async () => {
+    m.secrets.mockResolvedValue({ ok: true, secrets: [] });
+    m.credentialRefusal.mockResolvedValueOnce(
+      "Add your CURSOR_API_KEY to this project to run Cursor.",
+    );
+    const { failure } = await (await prepareTurn("cursor")).done;
+    expect(failure).toMatchObject({ status: 409 });
+    expect(m.acquire).not.toHaveBeenCalled();
   });
 
   it("leaves a guest's turn without a Playground box", async () => {

@@ -39,8 +39,10 @@ import { resolveManagedTurnSetup } from "./managed-setup.js";
 import { prepareManagedConnections } from "./managed-connections.js";
 import { prepareManagedTools } from "./managed-tools.js";
 import { TurnTiming } from "../../utils/turn-timing.js";
-import { startEarly } from "../../utils/early-start.js";
-import { assertConversationExecution } from "../../utils/harness/conversation-execution.js";
+import {
+  conversationExecutionArgs,
+  startBoundConversationExecutionCheck,
+} from "../../utils/harness/conversation-execution.js";
 
 export async function handleManagedChatTurn(
   c: Context,
@@ -146,6 +148,7 @@ export async function handleManagedChatTurn(
       includeProjectSkills,
       liveProjectCapabilities,
       projectSkillReadFailed,
+      executionBound,
     } = setup.value;
 
     const turnAuthorization = await prepareTurnAuthorization(c, {
@@ -191,33 +194,29 @@ export async function handleManagedChatTurn(
       validatedWidgetModelContext,
     } = connections;
     timing.mark("connections");
-    // A conversation with an earlier reply is already bound to its runtime, so
-    // the binding check is a read: it runs while tools are prepared and is
-    // awaited where the stream is prepared. A new chat's first bind keeps its
-    // place after the box, so a turn refused before then pins no runtime.
-    const executionBinding = messages.some(
-      (message) => message.role === "assistant",
-    )
-      ? startEarly(() =>
-          assertConversationExecution({
-            mcpClientManager: manager,
-            projectId: hostedBody.projectId,
-            chatSessionId: body.chatSessionId,
-            origin: scenarioId ? "scenario" : "playground",
-            executionBindingVersion: resolvedExecution.executionBindingVersion,
-            scenarioId,
-            executionScope,
-            ...(resolvedExecution.harness
-              ? {
-                  harness: resolvedExecution.harness,
-                  agentLoop: resolvedExecution.agentLoop,
-                }
-              : {}),
-            authHeader: c.req.header("authorization"),
-            signal: c.req.raw.signal as AbortSignal | undefined,
-          }),
-        )
-      : undefined;
+    // What the turn persists under, and so what its binding check validates.
+    // One object feeds both the check below and `persist`, so they agree.
+    const executionScopeFields = {
+      projectId: hostedBody.projectId,
+      chatSessionId: body.chatSessionId,
+      scenarioId,
+      executionBindingVersion: resolvedExecution.executionBindingVersion,
+      ...(executionScope ? { executionScope } : {}),
+      ...(resolvedExecution.harness
+        ? { harness: resolvedExecution.harness, agentLoop: resolvedExecution.agentLoop }
+        : {}),
+    };
+    // Started now, and awaited where the stream is prepared, only when the
+    // backend says the row `bind` would check is already bound (see the helper).
+    const executionBinding = startBoundConversationExecutionCheck(
+      executionBound,
+      conversationExecutionArgs({
+        manager,
+        scope: executionScopeFields,
+        authHeader: c.req.header("authorization"),
+        signal: c.req.raw.signal as AbortSignal | undefined,
+      }),
+    );
     const tools = await prepareManagedTools({
       c,
       rawBody,
@@ -555,18 +554,12 @@ export async function handleManagedChatTurn(
           getAuthorization: turnAuthorization?.getAuthorization,
           ...(executionTarget.kind !== "scenario" && !c.get("guestId") && typeof retrySubject === "string" ? { retryOwner: { subject: retrySubject, projectId: hostedBody.projectId } } : {}),
           requireNativeToolDiscovery: resolvedExecution.requireNativeToolDiscovery,
-          executionBindingVersion: resolvedExecution.executionBindingVersion,
+          ...executionScopeFields,
           executionTarget: toResumeExecutionTarget(executionTarget),
-          chatSessionId: body.chatSessionId,
-          projectId: hostedBody.projectId,
           sourceType,
           origin,
           ...(turnMode === "recorded" && surface ? { surface } : {}),
-          scenarioId,
           accessVersion,
-          // Phase 3: forward the runtime-config scope into the harness path
-          // (alongside the bash-tool path threaded above).
-          ...(executionScope ? { executionScope } : {}),
           // The conversation's box: its binding for a harness turn, and its
           // heartbeat to stop when the turn's stream completes.
           ...(scenarioBox ? { scenarioBox } : {}),
@@ -574,12 +567,8 @@ export async function handleManagedChatTurn(
           authenticatedUserId,
           ...(sourceType === "direct" && typeof hostRuntimeConfig?.hostId === "string" ? { hostId: hostRuntimeConfig.hostId } : hostId ? { hostId } : {}),
           originalMessages: messages,
-          ...(resolvedExecution.harness
-            ? {
-                harness: resolvedExecution.harness,
-                agentLoop: resolvedExecution.agentLoop,
-                ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
-              }
+          ...(resolvedExecution.harness && harnessExecutionTarget
+            ? { harnessExecutionTarget }
             : {}),
           // Harness-engine delivery of the environment's resolved skills.
           // Presence (even empty) is what makes it authoritative downstream.

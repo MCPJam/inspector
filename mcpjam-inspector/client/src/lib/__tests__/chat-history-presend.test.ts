@@ -5,18 +5,38 @@ import {
   withPresendSyncTimeout,
 } from "../chat-history-presend";
 
-const live = { _id: "history-1", chatSessionId: "chat-1", version: 7 };
+const live = {
+  _id: "history-1",
+  chatSessionId: "chat-1",
+  version: 7,
+  directVisibility: "private" as const,
+};
 const current = {
   activeHistorySessionId: "history-1",
   chatSessionId: "chat-1",
   live,
   resumedVersion: 7,
+  visibility: "private" as const,
 };
 
 describe("presendStateIsCurrent", () => {
   it("lets Send go when the live session matches the thread and the cursor reached it", () => {
     expect(presendStateIsCurrent(current)).toBe(true);
     expect(presendStateIsCurrent({ ...current, resumedVersion: 8 })).toBe(true);
+  });
+
+  it("reads the state first when the visibility changed without a version bump", () => {
+    // Unshared elsewhere: same version, but this turn would send "project".
+    expect(presendStateIsCurrent({ ...current, visibility: "project" })).toBe(
+      false,
+    );
+    // Shared elsewhere: the read applies the normalized value.
+    expect(
+      presendStateIsCurrent({
+        ...current,
+        live: { ...live, directVisibility: "project" },
+      }),
+    ).toBe(false);
   });
 
   it("reads the state first when another writer moved the session past the cursor", () => {

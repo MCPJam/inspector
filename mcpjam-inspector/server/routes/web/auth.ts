@@ -992,6 +992,7 @@ const conversationAuthorization = z.object({
     conversationId: z.string(),
     writable: z.boolean(),
     requireNativeToolDiscovery: z.boolean().optional(),
+    executionBound: z.boolean().optional(),
   }),
 });
 
@@ -1011,7 +1012,11 @@ export async function authorizeProject(
   signal?: AbortSignal,
 ): Promise<{
   preparedChatTurn?: unknown;
-  conversationState?: WebConversationState;
+  /**
+   * Only this combined answer can say the row `bind` would check for this
+   * conversation is already bound.
+   */
+  conversationState?: WebConversationState & { executionBound?: boolean };
   chatEnvironments: boolean;
   chatPreparation: boolean;
   organizationId?: string;

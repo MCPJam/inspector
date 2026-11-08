@@ -39,12 +39,14 @@ vi.mock("../chat-v2-orchestration.js", () => ({
 vi.mock("../mcp-tool-result-model-output.js", () => ({
   convertToMcpjamModelMessages: vi.fn(async () => []),
 }));
-vi.mock("../harness/conversation-execution.js", () => ({
+vi.mock("../harness/conversation-execution.js", async (original) => ({
+  ...(await original<typeof import("../harness/conversation-execution.js")>()),
   assertConversationExecution: m.assertExecution,
 }));
 
 import { streamWebChatTurn } from "../web-chat-turn";
 import { startEarly } from "../early-start";
+import { conversationExecutionArgs } from "../harness/conversation-execution.js";
 
 function args(runtime: Record<string, unknown> = {}) {
   return {
@@ -120,9 +122,20 @@ describe("streamWebChatTurn — execution binding", () => {
     expect(m.mcpjamFree).not.toHaveBeenCalled();
   });
 
-  it("checks the binding itself when the route started nothing", async () => {
-    await streamWebChatTurn(args() as never);
+  it("checks the binding itself, with the shared builder's arguments, when the route started nothing", async () => {
+    const turn = args();
+    await streamWebChatTurn(turn as never);
     expect(m.assertExecution).toHaveBeenCalledTimes(1);
+    // The route's early check builds its arguments the same way, from the same
+    // persisted fields, so the two cannot drift apart.
+    expect(m.assertExecution).toHaveBeenCalledWith(
+      conversationExecutionArgs({
+        manager: turn.manager,
+        scope: turn.persist,
+        authHeader: turn.runtime.authHeader,
+        signal: turn.runtime.abortSignal,
+      }),
+    );
     expect(m.mcpjamFree).toHaveBeenCalledTimes(1);
   });
 });

@@ -145,6 +145,28 @@ describe("managed setup local runtime policy", () => {
     }
   });
 
+  it("says a conversation is bound only on the backend's own answer for it", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://test.convex.site");
+    // The writability fallback never vouches for a binding, whatever it says.
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ writable: true, executionBound: true })));
+    const bound = async () => {
+      const { setup } = await resolveSetup({ chatSessionId: "chat" });
+      return "value" in setup && setup.value ? setup.value.executionBound : undefined;
+    };
+    try {
+      m.hostedSetup.mockResolvedValue(hostedSetup("interactive"));
+      m.authorize.mockResolvedValue({ conversationState: { writable: true, executionBound: true } });
+      expect(await bound()).toBe(true);
+      m.authorize.mockResolvedValue({ conversationState: { writable: true } });
+      expect(await bound()).toBe(false);
+      m.authorize.mockResolvedValue({});
+      expect(await bound()).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("checks auto-approve consent before a local Claude Code turn starts", async () => {
     m.hostedSetup.mockResolvedValue(
       hostedSetup("interactive", { harness: "claude-code" }),

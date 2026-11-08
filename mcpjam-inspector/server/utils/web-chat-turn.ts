@@ -11,7 +11,7 @@ import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import { DEFAULT_TURN_MAX_STEPS } from "../../shared/turn-step-budget.js";
 import { capturePreparedWebSetup } from "../services/chat-turn/setup-manifest.js";
 import type { ResolvedEnvironmentRuntime } from "../services/environments/runtime.js";
-import { assertConversationExecution } from './harness/conversation-execution.js';
+import { assertConversationExecution, conversationExecutionArgs } from './harness/conversation-execution.js';
 import { assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { preservePluginMessageTitles } from "../../shared/plugin-message-history.js";
 import {
@@ -1205,15 +1205,9 @@ export async function streamChatTurn(
 
   const hostedChatSessionId = persist.chatSessionId;
   if (runtime.executionBinding) await takeEarly(runtime.executionBinding);
-  else await assertConversationExecution({
-    mcpClientManager: manager,
-    projectId: persist.projectId, chatSessionId: hostedChatSessionId,
-    origin: persist.scenarioId ? "scenario" : "playground",
-    executionBindingVersion: persist.executionBindingVersion,
-    scenarioId: persist.scenarioId, executionScope: persist.executionScope,
-    harness: persist.harness, agentLoop: persist.agentLoop,
-    authHeader: runtime.authHeader, signal: runtime.abortSignal,
-  });
+  else await assertConversationExecution(conversationExecutionArgs({
+    manager, scope: persist, authHeader: runtime.authHeader, signal: runtime.abortSignal,
+  }));
 
   // MATERIALIZED PROJECT SECRETS for this turn, fetched ONCE here because two
   // very different things need the same list and must not disagree about it:

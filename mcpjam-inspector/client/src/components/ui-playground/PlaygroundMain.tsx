@@ -3798,6 +3798,7 @@ export function PlaygroundMain({
         chatSessionId,
         live: reactiveHistorySession,
         resumedVersion,
+        visibility: pendingDirectVisibility,
       })
     ) {
       return true;
@@ -3824,6 +3825,7 @@ export function PlaygroundMain({
     activeHistorySessionId,
     chatSessionId,
     detachHistorySession,
+    pendingDirectVisibility,
     reactiveHistorySession,
     refreshCurrentHistorySession,
     resumedVersion,
