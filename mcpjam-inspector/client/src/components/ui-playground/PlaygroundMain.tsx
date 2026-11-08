@@ -2418,7 +2418,7 @@ export function PlaygroundMain({
   const multiHostColumns = clientResolutions.flatMap((result) =>
     result.status === "ready" ? [result.column] : [],
   );
-  const skillsSection = useComparePaneSkillsSection(isConvexAuthenticated ? convexProjectId : null);
+  const skillsSection = useComparePaneSkillsSection(isConvexAuthenticated ? convexProjectId : null, environmentsEnabled);
   const paneControls = useComparePaneControls({
     sections: skillsSection,
     active: isMultiHostMode,

@@ -24,6 +24,7 @@ interface Props {
   /** Null when there is no signed-in project. */
   projectId: string | null;
   pane: RecoveryPane;
+  namedSetupsVisible: boolean;
   /** The exact ad hoc setup used for this client's plugin selections, if any. */
   clientEnvironmentId?: string | null;
   pending?: boolean;
@@ -33,10 +34,16 @@ export function ComparePaneSkills({
   projectId,
   pane,
   clientEnvironmentId,
+  namedSetupsVisible,
   pending,
 }: Props) {
   const visible = useSkillsEnabled();
-  if (!visible || !projectId) return null;
+  if (
+    !visible ||
+    !projectId ||
+    (pane.target.kind === "environment" && !namedSetupsVisible)
+  )
+    return null;
   const request: PaneSkillsRequest = {
     projectId,
     target:
@@ -139,16 +146,18 @@ function DeliveryList({ body }: { body: string }) {
 
 export function useComparePaneSkillsSection(
   projectId: string | null,
+  namedSetupsVisible: boolean,
 ): ComparePaneSections {
   return useCallback(
     ({ pane, lane }) => (
       <ComparePaneSkills
         projectId={projectId}
         pane={pane}
+        namedSetupsVisible={namedSetupsVisible}
         clientEnvironmentId={lane.environmentId}
         pending={lane.pending}
       />
     ),
-    [projectId],
+    [projectId, namedSetupsVisible],
   );
 }

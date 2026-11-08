@@ -35,7 +35,7 @@ const row = {
   reason: null,
 };
 const view = (pane: RecoveryPane, projectId: string | null = "proj") => (
-  <ComparePaneSkills pane={pane} projectId={projectId} />
+  <ComparePaneSkills namedSetupsVisible pane={pane} projectId={projectId} />
 );
 
 describe("Compare pane Skills", () => {
@@ -53,17 +53,47 @@ describe("Compare pane Skills", () => {
     },
   );
 
+  it("does not read a stored named target when named setups are hidden; client Skills still work", async () => {
+    fetchPreview.mockResolvedValue(
+      Response.json({ deliveredCount: 0, skills: [] }),
+    );
+    const ui = render(
+      <ComparePaneSkills
+        namedSetupsVisible={false}
+        projectId="p"
+        pane={paneA}
+      />,
+    );
+    expect(screen.queryByRole("region")).toBeNull();
+    expect(fetchPreview).not.toHaveBeenCalled();
+    ui.rerender(
+      <ComparePaneSkills
+        namedSetupsVisible={false}
+        projectId="p"
+        pane={client}
+      />,
+    );
+    expect(await screen.findByText("No skills for this pane.")).toBeVisible();
+    expect(fetchPreview).toHaveBeenCalledOnce();
+  });
+
   it("waits for a client’s plugin setup before requesting its effective skills", async () => {
     fetchPreview.mockResolvedValue(
       Response.json({ deliveredCount: 0, skills: [] }),
     );
     const ui = render(
-      <ComparePaneSkills projectId="proj" pane={client} pending />,
+      <ComparePaneSkills
+        namedSetupsVisible
+        projectId="proj"
+        pane={client}
+        pending
+      />,
     );
     expect(screen.getByRole("status")).toHaveTextContent("Loading skills");
     expect(fetchPreview).not.toHaveBeenCalled();
     ui.rerender(
       <ComparePaneSkills
+        namedSetupsVisible
         projectId="proj"
         pane={client}
         clientEnvironmentId="adhoc"
@@ -129,6 +159,7 @@ describe("Compare pane Skills", () => {
     const ui = render(view(paneA));
     ui.rerender(
       <ComparePaneSkills
+        namedSetupsVisible
         pane={client}
         projectId="proj"
         clientEnvironmentId="adhoc"
