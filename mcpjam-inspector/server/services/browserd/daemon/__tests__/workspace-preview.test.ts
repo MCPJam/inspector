@@ -291,6 +291,30 @@ describe("WorkspacePreviewRelay lifecycle", () => {
     app.close();
   });
 
+  it("answers at once when the edge closes before a whole 101", async () => {
+    for (const answer of ["", "HTTP/1.1 10"]) {
+      // Ends cleanly after writing nothing, or part of the status line.
+      const edge = net.createServer((socket) => socket.once("data", () => socket.end(answer)));
+      await new Promise<void>((resolve) => edge.listen(0, "127.0.0.1", resolve));
+      const relay = new WorkspacePreviewRelay();
+      const port = await freePort();
+      await relay.grant({ port, upstreamUrl: `ws://127.0.0.1:${(edge.address() as net.AddressInfo).port}`, upstreamHeaders: {}, key: KEY });
+      const status = new Promise<number>((resolve, reject) => {
+        const headers = { host: `localhost:${port}`, "sec-fetch-site": "none" };
+        const req = http.request({ host: "127.0.0.1", port, path: "/", agent: false, headers }, (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        });
+        req.on("error", reject);
+        req.end();
+      });
+      const outcome = await Promise.race([status, new Promise((resolve) => setTimeout(() => resolve("hung"), 3000))]);
+      expect(outcome).toBe(502);
+      await relay.close();
+      edge.close();
+    }
+  });
+
   it("survives a browser that resets while the tunnel is still opening", async () => {
     // An upstream that accepts and never answers keeps the handshake pending.
     const stalled = net.createServer(() => undefined);
