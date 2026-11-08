@@ -673,7 +673,7 @@ export async function runAssistantTurn(
     },
   );
 
-  // A host with a `harness` selected (claude-code | codex | cursor) runs the
+  // A host with a `harness` selected (claude-code | codex | cursor | opencode) runs the
   // real runtime inside its computer; otherwise the emulated engine. Both
   // satisfy the same ChatEngineLoopResult contract, so everything downstream is
   // identical.

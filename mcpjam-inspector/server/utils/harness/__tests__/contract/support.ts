@@ -35,6 +35,7 @@ export const OWN_MODEL: Record<Harness, string> = {
   "claude-code": "anthropic/claude-haiku-4.5",
   codex: "openai/gpt-5.5",
   cursor: "cursor/auto",
+  opencode: "anthropic/claude-haiku-4.5",
 };
 
 /** A model each runtime must refuse. */
@@ -42,6 +43,7 @@ export const FOREIGN_MODEL: Record<Harness, string> = {
   "claude-code": "openai/gpt-5.5",
   codex: "anthropic/claude-haiku-4.5",
   cursor: "anthropic/claude-haiku-4.5",
+  opencode: "openai/gpt-5.5",
 };
 
 /** A patch bump of a pinned version, for "what if the pin moved" rows. */

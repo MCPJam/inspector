@@ -22,6 +22,12 @@
       "bootstrapDir": ".harness-bootstrap/cursor",
       "identity": "1cd3c8b5f9bfa1d3",
       "runtimeVersion": "2026.11.05-86047df"
+    },
+    {
+      "harnessId": "opencode",
+      "bootstrapDir": ".harness-bootstrap/opencode",
+      "identity": "8f102f06f2ace069",
+      "runtimeVersion": "1.18.23"
     }
   ]
 }

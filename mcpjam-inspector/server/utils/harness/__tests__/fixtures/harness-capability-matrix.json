@@ -213,5 +213,57 @@
       "runtimeVersion": "2026.11.05-86047df"
     },
     "qualifiedDiscovery": []
+  },
+  "opencode": {
+    "adapter": {
+      "approvalPermissionMode": "allow-reads",
+      "defaultPermissionMode": "allow-all",
+      "displayName": "OpenCode",
+      "id": "opencode",
+      "liveApprovalRuntime": true,
+      "mcpDelivery": "mcpjam",
+      "modelAccess": "broker",
+      "pinnedRuntimeVersion": "1.18.23",
+      "requiresComputer": true,
+      "skillsBaseDir": "/home/user/.agents/skills",
+      "skillsWriteOptions": {
+        "trailingNewline": false
+      },
+      "supportedReasoningEfforts": [],
+      "supportsHostExecutedToolApproval": true,
+      "supportsMcpToolApproval": false,
+      "supportsNativeToolApproval": true,
+      "supportsPluginBundles": false,
+      "supportsSkills": false
+    },
+    "descriptor": {
+      "controls": {
+        "modelId": {
+          "enforced": true
+        },
+        "progressiveToolDiscovery": {
+          "enforced": false,
+          "note": "OpenCode does its own tool discovery."
+        },
+        "requireToolApproval": {
+          "enforced": true
+        },
+        "temperature": {
+          "enforced": false,
+          "note": "OpenCode runs its own loop and ignores temperature."
+        }
+      },
+      "credential": null,
+      "displayName": "OpenCode",
+      "guest": false,
+      "local": false,
+      "mcpClient": "mcpjam",
+      "modelAccess": "broker",
+      "orgUpstream": null,
+      "protocol": "anthropic-messages",
+      "reasoningEfforts": [],
+      "runtimeVersion": "1.18.23"
+    },
+    "qualifiedDiscovery": []
   }
 }

@@ -71,14 +71,21 @@ export const HOST_CONFIG_SCHEMA_VERSION_V2 = 2;
  * Adding a runtime is a one-line addition here + a registry adapter + tests —
  * never a schema migration (absent ⇒ emulated still hashes byte-identically).
  */
-export const HARNESS_IDS = ["claude-code", "codex", "cursor"] as const;
+export const HARNESS_IDS = [
+  "claude-code",
+  "codex",
+  "cursor",
+  "opencode",
+] as const;
 
 /**
  * Which real agent **harness** runs a host's turn. Absent ⇒ the MCPJam
  * **emulated** loop — the only historical behavior, so pre-feature rows hash
  * byte-identically (the key is simply never written). `"claude-code"` runs the
  * turn inside a real Claude Code runtime via the AI SDK harness; `"codex"` runs
- * OpenAI Codex; `"cursor"` runs the Cursor CLI (`cursor-agent`) over ACP.
+ * OpenAI Codex; `"cursor"` runs the Cursor CLI (`cursor-agent`) over ACP;
+ * `"opencode"` runs OpenCode through the published AI SDK adapter, with MCPJam
+ * host-executed tools and a platform-brokered Anthropic lease.
  * Extensible to additional runtimes (e.g. `"pi"`) later without a schema
  * migration.
  */

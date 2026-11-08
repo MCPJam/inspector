@@ -67,6 +67,7 @@ export const HARNESS_BAKED_BOOTSTRAP_DIRS: ReadonlyArray<string> = [
   ".harness-bootstrap/claude-code",
   ".harness-bootstrap/codex-appserver",
   ".harness-bootstrap/cursor",
+  ".harness-bootstrap/opencode",
 ];
 
 /**

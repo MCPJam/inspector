@@ -83,6 +83,22 @@ const LOOP_CONTROLS: Record<
       note: "The Cursor CLI does its own tool discovery.",
     },
   },
+  opencode: {
+    // Brokered Anthropic, same as Claude Code — the selected model is the
+    // model the runtime is launched with, including title/compaction pins.
+    modelId: ENFORCED,
+    temperature: {
+      enforced: false,
+      note: "OpenCode runs its own loop and ignores temperature.",
+    },
+    // OpenCode pauses on native built-ins, and MCPJam host-executed tools
+    // go through HarnessAgent's toolApproval before they run.
+    requireToolApproval: ENFORCED,
+    progressiveToolDiscovery: {
+      enforced: false,
+      note: "OpenCode does its own tool discovery.",
+    },
+  },
 };
 
 /** Runtime facts shared by the adapters, admission gates and client controls. */
@@ -108,6 +124,13 @@ export const HARNESS_DESCRIPTORS = {
     credential: { env: "CURSOR_API_KEY", label: "Cursor API key",
       binding: { hosts: ["api2.cursor.sh"], header: "authorization", template: "Bearer {}" } },
     controls: LOOP_CONTROLS.cursor, reasoningEfforts: HARNESS_REASONING_EFFORTS.cursor,
+  },
+  opencode: {
+    displayName: "OpenCode", runtimeVersion: "1.18.23", mcpClient: "mcpjam",
+    modelAccess: "broker", local: false, guest: false,
+    orgUpstream: null,
+    protocol: "anthropic-messages", credential: null,
+    controls: LOOP_CONTROLS.opencode, reasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,
   },
 } as const satisfies Record<Harness, object>;
 

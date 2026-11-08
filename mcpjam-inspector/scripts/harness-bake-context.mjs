@@ -243,6 +243,13 @@ const HOSTED_HARNESS_ARGS = {
     auth: { CURSOR_API_KEY: "bake" },
     mcpJson: { mcpServers: {} },
   },
+  opencode: {
+    modelId: "anthropic/claude-haiku-4.5",
+    auth: {
+      ANTHROPIC_AUTH_TOKEN: "bake",
+      ANTHROPIC_BASE_URL: "http://bake.invalid",
+    },
+  },
 };
 
 /** A recipe exactly as the registry's hosted adapter builds it. */
@@ -385,6 +392,15 @@ export async function resolveHarnessBake() {
           "linux-x64": { archiveSha256: registry.CURSOR_CLI_CHECKSUMS.x64 },
           "linux-arm64": { archiveSha256: registry.CURSOR_CLI_CHECKSUMS.arm64 },
         },
+      },
+      sentinels: () => [],
+    },
+    {
+      loadRecipe: () => loadHostedRecipe("opencode"),
+      runtimeVersion: HARNESS_PINNED_VERSIONS.opencode,
+      vendor: {
+        kind: "opencode-ai",
+        package: "opencode-ai",
       },
       sentinels: () => [],
     },
