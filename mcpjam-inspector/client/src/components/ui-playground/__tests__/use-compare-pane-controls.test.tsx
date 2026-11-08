@@ -125,11 +125,23 @@ function Harness({
   });
   const header = controls.renderPaneHeader(paneId)?.(lane);
   const servers = controls.paneServers(paneId);
+  const composer = controls.composerServers(paneId);
   return (
     <div>
       {header?.actions}
       {header?.summary}
       <output data-testid="servers">{JSON.stringify(servers)}</output>
+      <output data-testid="request">
+        {JSON.stringify(controls.paneRequest(paneId, ["chat-1"]))}
+      </output>
+      <output data-testid="composer">
+        {JSON.stringify(
+          composer && {
+            servers: composer.environmentServers,
+            overridden: composer.environmentServersOverridden,
+          },
+        )}
+      </output>
     </div>
   );
 }
@@ -316,5 +328,206 @@ describe("Compare pane settings", () => {
     expect(screen.getByTestId("compare-pane-settings")).toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(screen.queryByTestId("compare-pane-settings")).toBeNull();
+  });
+
+  describe("environment panes", () => {
+    const envPane: RecoveryPane = {
+      paneId: "env_1",
+      target: { kind: "environment", environmentId: "env_1" },
+    };
+    const environment: ComparePaneEnvironment = {
+      environmentId: "env_1",
+      visible: true,
+      isLoading: false,
+      error: null,
+      preview: {
+        specVersion: 1,
+        environment: { environmentId: "env_1", name: "E1", revision: 1 },
+        host: {
+          hostId: "codex",
+          hostName: "Codex",
+          hostConfigId: "cfg",
+          modelId: "openai/gpt-5-mini",
+          hostStyle: null,
+          harness: "codex",
+        },
+        servers: [
+          { serverId: "srv-linear", name: "Linear", source: "host_or_group" },
+          { serverId: "srv-notion", name: "Notion", source: "plugin" },
+        ],
+        skills: [],
+        plugins: [],
+        capabilities: {
+          requireToolApproval: null,
+          respectToolVisibility: null,
+          progressiveToolDiscovery: null,
+          builtInToolIds: [],
+          hasComputer: false,
+          serverCount: 2,
+          skillCount: 0,
+          skillDelivery: "emulated",
+          pluginCount: 0,
+          serversOverridden: false,
+        },
+      },
+    };
+    const envResolution = resolveEnvironmentPaneColumn({
+      paneId: "env_1",
+      environment,
+      slot: { host: codex, isLoading: false },
+      hosts: [],
+      models: catalog,
+    });
+
+    function EnvHarness(
+      props: Partial<Parameters<typeof Harness>[0]> & {
+        spies: ReturnType<typeof spies>;
+      },
+    ) {
+      return (
+        <Harness
+          paneId="env_1"
+          lineup={[envPane, panes[1]]}
+          lineupResolutions={[envResolution, resolutions[1]]}
+          paneEnvironments={new Map([["env_1", environment]])}
+          environments={[{ target: envPane.target, label: "E1" }]}
+          {...props}
+        />
+      );
+    }
+
+    it("lists the environment's servers and narrows them by id for this pane", async () => {
+      const user = userEvent.setup();
+      const calls = spies();
+      const { rerender } = render(<EnvHarness spies={calls} />);
+      await user.click(
+        screen.getByRole("button", { name: "Pane settings for E1" }),
+      );
+      const settings = screen.getByTestId("compare-pane-settings");
+      expect(
+        within(settings).getByText("Servers in this environment"),
+      ).toBeTruthy();
+      await user.click(
+        within(settings).getByRole("switch", { name: "Use Notion in E1" }),
+      );
+      expect(calls.setPaneOverrides).toHaveBeenLastCalledWith("env_1", {
+        serverIds: ["srv-linear"],
+      });
+
+      // Back to every server: follow the environment again.
+      rerender(
+        <EnvHarness
+          spies={calls}
+          overrides={{ env_1: { serverIds: ["srv-linear"] } }}
+        />,
+      );
+      await user.click(
+        within(settings).getByRole("switch", { name: "Use Notion in E1" }),
+      );
+      expect(calls.setPaneOverrides).toHaveBeenLastCalledWith("env_1", {
+        serverIds: null,
+      });
+
+      // The last one off is an explicit "no servers", not "follow".
+      await user.click(
+        within(settings).getByRole("switch", { name: "Use Linear in E1" }),
+      );
+      expect(calls.setPaneOverrides).toHaveBeenLastCalledWith("env_1", {
+        serverIds: [],
+      });
+      expect(screen.getByTestId("compare-pane-summary")).toHaveTextContent(
+        "Codex · 1 server",
+      );
+    });
+
+    it("sends the environment's pointer, and its narrowing only when it has one", () => {
+      const calls = spies();
+      const { rerender } = render(<EnvHarness spies={calls} />);
+      const request = () =>
+        JSON.parse(screen.getByTestId("request").textContent ?? "null");
+      expect(request()).toEqual({
+        selectedServerIds: ["chat-1"],
+        executionTarget: { kind: "environment", environmentId: "env_1" },
+        requiresWebChatApi: true,
+        presentationHostId: "codex",
+      });
+      rerender(
+        <EnvHarness
+          spies={calls}
+          overrides={{ env_1: { serverIds: [], pluginVersionIds: ["v1"] } }}
+        />,
+      );
+      expect(request().environmentOverrides).toEqual({
+        serverIds: [],
+        pluginVersionIds: ["v1"],
+      });
+      // A client pane sends its client and none of this.
+      rerender(<EnvHarness spies={calls} paneId="cursor" />);
+      expect(request()).toEqual({
+        selectedServerIds: ["chat-1"],
+        hostId: "cursor",
+      });
+    });
+
+    it("gives the composer this pane's environment rows, and the chat's rows to client panes", () => {
+      const calls = spies();
+      const { rerender } = render(
+        <EnvHarness spies={calls} overrides={{ env_1: { serverIds: [] } }} />,
+      );
+      expect(
+        JSON.parse(screen.getByTestId("composer").textContent ?? "null"),
+      ).toEqual({
+        servers: [
+          {
+            serverId: "srv-linear",
+            name: "Linear",
+            source: "host_or_group",
+            enabled: false,
+          },
+          {
+            serverId: "srv-notion",
+            name: "Notion",
+            source: "plugin",
+            enabled: false,
+          },
+        ],
+        overridden: true,
+      });
+      rerender(<EnvHarness spies={calls} paneId="cursor" />);
+      expect(screen.getByTestId("composer").textContent).toBe("null");
+    });
+
+    it("runs a pane on an environment from its settings", async () => {
+      const user = userEvent.setup();
+      const calls = spies();
+      render(<EnvHarness spies={calls} paneId="cursor" />);
+      await user.click(
+        screen.getByRole("button", { name: "Pane settings for cursor" }),
+      );
+      const settings = screen.getByTestId("compare-pane-settings");
+      expect(within(settings).getByText("Client or environment")).toBeTruthy();
+      await user.click(
+        within(settings).getByRole("combobox", { name: "What cursor runs" }),
+      );
+      await user.click(screen.getByRole("option", { name: "E1" }));
+      expect(calls.setPaneTarget).toHaveBeenCalledWith("cursor", {
+        kind: "environment",
+        environmentId: "env_1",
+      });
+    });
+
+    it("publishes an environment pane for the Tools rail with its narrowing", () => {
+      render(
+        <EnvHarness spies={spies()} overrides={{ env_1: { serverIds: [] } }} />,
+      );
+      expect(useComparePaneStore.getState().panes[0]).toEqual({
+        paneId: "env_1",
+        label: "E1",
+        hostId: "codex",
+        environmentId: "env_1",
+        environmentOverrides: { serverIds: [] },
+        serverNames: null,
+      });
+    });
   });
 });

@@ -2479,7 +2479,18 @@ describe("PlaygroundMain — multi-host render path", () => {
 
 // ── Project Environments — Phase 2 (Playground integration) ────────────────
 describe("PlaygroundMain — environment mode", () => {
-  beforeEach(() => { browserFixture.guest = false; });
+  beforeEach(() => {
+    browserFixture.guest = false;
+    // The lineup and the cards it rendered, which the outer suite's reset
+    // does not cover here.
+    multiHostFixture.panes = undefined;
+    multiHostFixture.selectedHostIds = [];
+    multiHostFixture.hosts = {};
+    environmentPreviewLoading.value = false;
+    mockMultiModelPlaygroundCard.mockClear();
+    mockRestorePanes.mockClear();
+    mockSetMultiHostEnabled.mockClear();
+  });
   const defaultProps = {
     activeProjectId: "default",
     serverName: "test-server",
@@ -2629,6 +2640,11 @@ describe("PlaygroundMain — environment mode", () => {
 
   function compareEnvironmentBeside(clientId: string) {
     selectEnvironment();
+    // The environment's resolved model, as the preview reports it.
+    environmentPreviewFixture.value = {
+      ...preview,
+      host: { ...preview.host, modelId: "openai/gpt-5-mini" },
+    };
     localStorage.removeItem("mcp-previewed-environment-id");
     multiHostFixture.hostList = [
       { hostId: "h-A", name: "Host A" },
@@ -2665,9 +2681,66 @@ describe("PlaygroundMain — environment mode", () => {
     expect(cardProps("h-B")?.hostedContext.hostId).toBe("h-B");
   });
 
+  it("runs an environment pane on its environment, beside a client pane on its client", () => {
+    compareEnvironmentBeside("h-B");
+    multiHostFixture.panes = [
+      { paneId: "env_1", target: { kind: "environment", environmentId: "env_1" } },
+      { paneId: "h-B", target: { kind: "host", hostId: "h-B" } },
+    ];
 
+    render(<PlaygroundMain {...defaultProps} />);
 
-  it("blocks Send while an environment pane cannot run, and never falls back to its client", () => {
+    const environment = cardProps("env_1");
+    expect(environment?.hostedContext).toMatchObject({
+      executionTarget: { kind: "environment", environmentId: "env_1" },
+      requiresWebChatApi: true,
+      presentationHostId: "h-A",
+    });
+    // One pointer only, and no narrowing it never asked for.
+    expect(environment?.hostedContext.hostId).toBeUndefined();
+    expect(environment?.hostedContext).not.toHaveProperty(
+      "environmentOverrides",
+    );
+    // An untouched environment pane sends no model of its own.
+    expect(environment?.selection).toBeUndefined();
+    expect(environment?.modelPicked).toBe(false);
+    expect(environment?.inheritedEnvironmentModel).toEqual({
+      modelId: "openai/gpt-5-mini",
+      modelSelection: undefined,
+    });
+    expect(environment?.compareLabel).toBe("Staging");
+
+    const client = cardProps("h-B");
+    expect(client?.hostedContext.hostId).toBe("h-B");
+    expect(client?.hostedContext.executionTarget).toBeUndefined();
+    expect(client?.inheritedEnvironmentModel).toBeUndefined();
+  });
+
+  it("keeps [] and following the environment apart per pane", () => {
+    compareEnvironmentBeside("h-B");
+    multiHostFixture.panes = [
+      {
+        paneId: "env_1",
+        target: { kind: "environment", environmentId: "env_1" },
+        serverIds: [],
+      },
+      {
+        paneId: "env_1~2",
+        target: { kind: "environment", environmentId: "env_1" },
+      },
+    ];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    expect(cardProps("env_1")?.hostedContext.environmentOverrides).toEqual({
+      serverIds: [],
+    });
+    expect(cardProps("env_1~2")?.hostedContext).not.toHaveProperty(
+      "environmentOverrides",
+    );
+  });
+
+  it("blocks Send while a saved setup is hidden, and never runs its client instead", () => {
     compareEnvironmentBeside("h-B");
     environmentsFlag.value = false;
     multiHostFixture.panes = [
@@ -2679,11 +2752,33 @@ describe("PlaygroundMain — environment mode", () => {
 
     expect(cardProps("env_1")).toBeUndefined();
     expect(
-      screen.getByText(
-        "Environments aren't available here. Choose a client in pane settings.",
-      ),
+      screen.getByText("This setup is unavailable. Choose a client in pane settings."),
     ).toBeTruthy();
+    expect(screen.queryByText("Staging")).toBeNull();
     expect(mockChatInput.mock.calls.at(-1)![0].submitDisabled).toBe(true);
+    // The client pane beside it still runs its own client.
+    expect(cardProps("h-B")?.hostedContext.hostId).toBe("h-B");
   });
 
+  it("starts Compare from an environment's chat with that environment in pane 0", () => {
+    selectEnvironment();
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.selectedHostIds = ["h-A"];
+
+    render(<PlaygroundMain {...defaultProps} />);
+    const chip = mockChatInput.mock.calls.at(-1)![0].clientSelector;
+    act(() => chip.onSelectedHostIdsChange(["h-A", "h-B"]));
+
+    expect(mockRestorePanes).toHaveBeenLastCalledWith([
+      { paneId: "env_1", target: { kind: "environment", environmentId: "env_1" } },
+      { paneId: "h-B", target: { kind: "host", hostId: "h-B" } },
+    ]);
+    // The environment moved into the pane; the page no longer runs it.
+    expect(localStorage.getItem("mcp-previewed-environment-id")).not.toContain(
+      "env_1",
+    );
+  });
 });

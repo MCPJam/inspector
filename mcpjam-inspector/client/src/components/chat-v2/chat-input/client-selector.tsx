@@ -202,10 +202,13 @@ export function ClientSelector({
   // fall back to single-select — a comparison-shaped UI with nothing behind
   // it. An empty array (nothing ever persisted) falls back to the single
   // previewed host so switching the client always shows the right lead.
+  // Environment panes mean a live lineup: its clients are exactly the client
+  // panes, possibly none, never the previewed client standing in for them.
   const effectiveSelectedHostIds = useMemo(() => {
+    if (environmentPanes.length > 0) return selectedHostIds;
     if (checklistMode && selectedHostIds.length > 0) return selectedHostIds;
     return currentHostId ? [currentHostId] : [];
-  }, [checklistMode, selectedHostIds, currentHostId]);
+  }, [checklistMode, selectedHostIds, currentHostId, environmentPanes]);
 
   const selectedIds = useMemo(
     () => new Set(effectiveSelectedHostIds),
@@ -237,6 +240,19 @@ export function ClientSelector({
         .join(", ")
     : compactHostLabel(leadHostName);
   const clientListMaxHeight = isComparing ? 160 : 220;
+  // Environment panes count toward the panes Compare can show.
+  const paneLimit = maxSelectedHosts + environmentPanes.length;
+  const clientNames = effectiveSelectedHostIds.map((hostId) => {
+    const host = hostsById.get(hostId);
+    return host ? clientDisplayName(host) : hostId;
+  });
+  const environmentNames = environmentPanes.map((pane) => pane.label);
+  const triggerName = isComparing
+    ? `Compare panes: ${(environmentLeads
+        ? [...environmentNames, ...clientNames]
+        : [...clientNames, ...environmentNames]
+      ).join(", ")}`
+    : `Client: ${leadHostName}`;
 
   const handleSelectLead = (hostId: string) => {
     // Collapsing the lineup is required, not cosmetic. `useComparePanes`
@@ -342,6 +358,7 @@ export function ClientSelector({
                     "h-8 rounded-full px-2 text-xs transition-colors hover:bg-muted/80 @max-2xl/toolbar:max-w-none @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
                     isComparing ? "max-w-[280px] gap-1" : "max-w-[170px] gap-1",
                   )}
+                  aria-label={triggerName}
                   data-testid="client-selector-trigger"
                 >
                   {isComparing ? (
@@ -476,7 +493,9 @@ export function ClientSelector({
                 {environmentLeads ? null : environmentStripChips}
                 {limitReached ? (
                   <span className="w-full text-[10px] text-muted-foreground">
-                    Max {maxSelectedHosts}. Remove one to add another.
+                    {environmentPanes.length > 0
+                      ? `Max ${paneLimit} panes. Remove one to add another.`
+                      : `Max ${maxSelectedHosts}. Remove one to add another.`}
                   </span>
                 ) : null}
               </div>
@@ -586,8 +605,9 @@ export function ClientSelector({
                               </span>
                             </TooltipTrigger>
                             <TooltipContent side="right">
-                              You can compare up to {maxSelectedHosts} clients
-                              at once
+                              {environmentPanes.length > 0
+                                ? `You can compare up to ${paneLimit} panes at once`
+                                : `You can compare up to ${maxSelectedHosts} clients at once`}
                             </TooltipContent>
                           </Tooltip>
                         ) : (
