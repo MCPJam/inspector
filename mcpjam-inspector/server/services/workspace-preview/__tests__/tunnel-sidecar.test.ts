@@ -74,6 +74,27 @@ describe("workspace preview sidecar", () => {
     expect(out.split("\r\n")[0]).toBe("HTTP/1.1 404 Not Found");
   });
 
+  it("drops a refused peer that never closes its side", async () => {
+    const socket = net.connect({ port: sidecar.port, host: "127.0.0.1", allowHalfOpen: true });
+    const closed = new Promise<void>((resolve) => {
+      socket.on("error", () => {});
+      socket.on("close", () => resolve());
+    });
+    socket.write("GET / HTTP/1.1\r\nHost: edge\r\n\r\n");
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    // A sidecar that closed its side answers the first write with a reset,
+    // which the second write surfaces; one that is still open accepts both.
+    socket.write("more");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    socket.write("again");
+    const outcome = await Promise.race([
+      closed.then(() => "closed"),
+      new Promise((resolve) => setTimeout(() => resolve("open"), 1000)),
+    ]);
+    socket.destroy();
+    expect(outcome).toBe("closed");
+  });
+
   it("refuses a handshake whose headers never end", async () => {
     const out = await exchange(sidecar.port, `GET /tunnel?port=${appPort} HTTP/1.1\r\nX: ${"a".repeat(20_000)}`);
     expect(out.split("\r\n")[0]).toBe("HTTP/1.1 431 Request Header Fields Too Large");
