@@ -1200,6 +1200,7 @@ function openTunnel(grant) {
         reject(new Error(status.includes(" 502 ") ? "app_not_listening" : "tunnel_refused"));
         return;
       }
+      socket.setTimeout(0);
       const rest = buf.subarray(end + 4);
       if (rest.length) socket.unshift(rest);
       resolve2(socket);
@@ -1207,17 +1208,28 @@ function openTunnel(grant) {
     socket.on("data", onData);
     socket.once("error", reject);
     socket.setTimeout(15e3, () => socket.destroy(new Error("tunnel_timeout")));
-    socket.once("connect", () => socket.setTimeout(0));
   });
 }
 var notListening = (port) => `<!doctype html><title>Nothing on port ${port}</title><p>Nothing is running on port ${port} on this conversation's computer. Start your app, then reload.</p>`;
 var WorkspacePreviewRelay = class {
   ports = /* @__PURE__ */ new Map();
+  /** Every accepted connection, upgraded ones included, so shutdown can end them. */
+  sockets = /* @__PURE__ */ new Set();
+  /** Grants run one at a time: two navigations to a new port must not race to listen. */
+  queue = Promise.resolve();
   granted() {
     return new Set(this.ports.keys());
   }
   /** Serve `grant.port`, or repoint an existing listener at a new upstream. */
-  async grant(grant) {
+  grant(grant) {
+    const run = this.queue.then(() => this.grantNow(grant));
+    this.queue = run.then(
+      () => "done",
+      () => "done"
+    );
+    return run;
+  }
+  async grantNow(grant) {
     const existing = this.ports.get(grant.port);
     if (existing) {
       if (existing.grant.upstreamUrl !== grant.upstreamUrl || existing.grant.key !== grant.key) {
@@ -1246,6 +1258,7 @@ var WorkspacePreviewRelay = class {
   async close() {
     const all = [...this.ports.values()];
     this.ports.clear();
+    for (const socket of this.sockets) socket.destroy();
     await Promise.all(
       all.flatMap((relay) => {
         relay.agent.destroy();
@@ -1300,13 +1313,23 @@ var WorkspacePreviewRelay = class {
       });
       req.pipe(upstream);
     });
+    server.on("connection", (socket) => {
+      this.sockets.add(socket);
+      socket.once("close", () => this.sockets.delete(socket));
+    });
     server.on("upgrade", (req, client, head) => {
+      let gone = false;
+      client.on("error", () => client.destroy());
+      client.once("close", () => {
+        gone = true;
+      });
       if (previewRequestRefusal(req.headers, port, this.granted())) {
         client.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
         return;
       }
       openTunnel(relay.grant).then(
         (tunnel) => {
+          if (gone) return void tunnel.destroy();
           const lines = [`${req.method} ${req.url} HTTP/1.1`];
           for (let i = 0; i < req.rawHeaders.length; i += 2)
             lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
@@ -1317,7 +1340,7 @@ var WorkspacePreviewRelay = class {
           tunnel.pipe(client);
           client.pipe(tunnel);
           tunnel.on("error", () => client.destroy());
-          client.on("error", () => tunnel.destroy());
+          client.once("close", () => tunnel.destroy());
         },
         () => client.end("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
       );

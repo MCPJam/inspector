@@ -158,3 +158,66 @@ describe("WorkspacePreviewRelay through the real sidecar", () => {
     busy.close();
   });
 });
+
+describe("WorkspacePreviewRelay lifecycle", () => {
+  const freePort = async () => {
+    const probe = net.createServer();
+    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+    const port = (probe.address() as net.AddressInfo).port;
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+    return port;
+  };
+
+  it("grants a new port to two concurrent callers without a false busy answer", async () => {
+    const relay = new WorkspacePreviewRelay();
+    const port = await freePort();
+    const grant = { port, upstreamUrl: "ws://127.0.0.1:9", upstreamHeaders: {}, key: KEY };
+    await expect(Promise.all([relay.grant(grant), relay.grant(grant)])).resolves.toEqual([
+      { ok: true, port },
+      { ok: true, port },
+    ]);
+    await relay.close();
+  });
+
+  it("shuts down while a hot-reload socket is still open", async () => {
+    const sidecar = await startSidecar();
+    const app = http.createServer((_req, res) => res.end("ok"));
+    const sockets = new WebSocketServer({ server: app });
+    await new Promise<void>((resolve) => app.listen(0, APP_HOST, resolve));
+    const port = (app.address() as net.AddressInfo).port;
+    const relay = new WorkspacePreviewRelay();
+    await relay.grant({ port, upstreamUrl: `ws://127.0.0.1:${sidecar.port}`, upstreamHeaders: {}, key: previewKeyFor(sidecar.secret, port) });
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/`, { headers: { host: `localhost:${port}`, origin: `http://localhost:${port}` } });
+    await new Promise((resolve, reject) => {
+      socket.once("open", resolve);
+      socket.once("error", reject);
+    });
+    socket.on("error", () => undefined);
+    await expect(
+      Promise.race([relay.close().then(() => "closed"), new Promise((resolve) => setTimeout(() => resolve("hung"), 3000))]),
+    ).resolves.toBe("closed");
+    sockets.close();
+    app.close();
+    sidecar.stop();
+  });
+
+  it("survives a browser that resets while the tunnel is still opening", async () => {
+    // An upstream that accepts and never answers keeps the handshake pending.
+    const stalled = net.createServer(() => undefined);
+    await new Promise<void>((resolve) => stalled.listen(0, "127.0.0.1", resolve));
+    const relay = new WorkspacePreviewRelay();
+    const port = await freePort();
+    await relay.grant({ port, upstreamUrl: `ws://127.0.0.1:${(stalled.address() as net.AddressInfo).port}`, upstreamHeaders: {}, key: KEY });
+    const client = net.connect(port, "127.0.0.1", () =>
+      client.write(
+        `GET / HTTP/1.1\r\nHost: localhost:${port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
+          `Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n`,
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    client.resetAndDestroy();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await relay.close();
+    stalled.close();
+  });
+});

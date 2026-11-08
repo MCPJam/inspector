@@ -164,10 +164,29 @@ function tunnelFor(sandbox: TunnelSandbox, state: TunnelState): WorkspaceTunnel 
   };
 }
 
-/** Reuse the workspace's sidecar, or start one. */
-export async function ensureWorkspaceTunnel(
+const starting = new Map<string, Promise<WorkspaceTunnel>>();
+
+/**
+ * Reuse the workspace's sidecar, or start one. Concurrent first navigations in
+ * this process share one attempt; two attempts would each start a sidecar and
+ * the one whose state file lost would time out.
+ */
+export function ensureWorkspaceTunnel(
   sandbox: TunnelSandbox,
   options: { pollMs?: number; timeoutMs?: number } = {},
+): Promise<WorkspaceTunnel> {
+  const running = starting.get(sandbox.sandboxId);
+  if (running) return running;
+  const attempt = startOrReuseTunnel(sandbox, options).finally(() =>
+    starting.delete(sandbox.sandboxId),
+  );
+  starting.set(sandbox.sandboxId, attempt);
+  return attempt;
+}
+
+async function startOrReuseTunnel(
+  sandbox: TunnelSandbox,
+  options: { pollMs?: number; timeoutMs?: number },
 ): Promise<WorkspaceTunnel> {
   const existing = await readState(sandbox);
   if (
@@ -299,7 +318,10 @@ export async function openPreviewForNavigation(args: {
     return undefined;
   } catch (error) {
     const code = error instanceof WorkspacePreviewError ? error.code : "tunnel_start_failed";
-    logger.warn("[workspace-preview] could not open a workspace port", { code });
+    logger.warn("[workspace-preview] could not open a workspace port", {
+      code,
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
     return error instanceof WorkspacePreviewError
       ? error.message
       : MESSAGES.tunnel_start_failed;

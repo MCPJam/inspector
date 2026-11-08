@@ -39,9 +39,15 @@ const VERSION = ${PREVIEW_TUNNEL_VERSION};
 const SECRET = process.env.MCPJAM_PREVIEW_SECRET || "";
 const STATE = process.env.MCPJAM_PREVIEW_STATE || "";
 const DENIED = new Set(${JSON.stringify(PREVIEW_TUNNEL_DENIED_PORTS)});
-// Tests run the app and the browser-side relay on one machine, on two
-// loopback addresses; a workspace always targets 127.0.0.1.
-const TARGET = process.env.MCPJAM_PREVIEW_TARGET_HOST || "127.0.0.1";
+// A dev server that binds "localhost" may listen on ::1 only, so a refused
+// IPv4 connect retries IPv6. Tests pin one address so the app and the relay
+// can share a port number on one machine.
+const TARGETS = process.env.MCPJAM_PREVIEW_TARGET_HOST ? [process.env.MCPJAM_PREVIEW_TARGET_HOST] : ["127.0.0.1", "::1"];
+const dial = (port, hosts, done) => {
+  const upstream = net.connect(port, hosts[0]);
+  upstream.once("connect", () => { upstream.removeAllListeners("error"); done(upstream); });
+  upstream.once("error", (error) => error.code === "ECONNREFUSED" && hosts.length > 1 ? dial(port, hosts.slice(1), done) : done(undefined));
+};
 if (SECRET.length < 32 || !STATE) process.exit(2);
 
 const keyFor = (port) => createHmac("sha256", SECRET).update("port:" + port).digest("hex");
@@ -67,16 +73,17 @@ const server = net.createServer((client) => {
     if (!match || (headers.upgrade || "").toLowerCase() !== "websocket" || !headers["sec-websocket-key"]) return refuse(client, "404 Not Found");
     if (port < 1 || port > 65535 || DENIED.has(port) || !sameKey(headers["x-mcpjam-preview-key"] || "", keyFor(port))) return refuse(client, "403 Forbidden");
     const accept = createHash("sha1").update(headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
-    const upstream = net.connect(port, TARGET);
-    upstream.once("connect", () => {
+    dial(port, TARGETS, (upstream) => {
+      if (!upstream) { if (!client.writableEnded) refuse(client, "502 Bad Gateway"); return; }
+      if (client.destroyed) return void upstream.destroy();
       client.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n");
       if (rest.length) upstream.write(rest);
       upstream.pipe(client);
       client.pipe(upstream);
+      upstream.on("error", () => client.destroy());
+      upstream.on("close", () => client.end());
+      client.on("close", () => upstream.destroy());
     });
-    upstream.once("error", () => { if (!client.writableEnded) refuse(client, "502 Bad Gateway"); });
-    upstream.on("close", () => client.end());
-    client.on("close", () => upstream.destroy());
   };
   client.on("data", onData);
 });

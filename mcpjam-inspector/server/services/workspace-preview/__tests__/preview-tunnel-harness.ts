@@ -18,7 +18,11 @@ export interface RunningSidecar {
   stop(): void;
 }
 
-export async function startSidecar(): Promise<RunningSidecar> {
+/** `target: null` runs the sidecar with its shipped targets, 127.0.0.1 then ::1. */
+export async function startSidecar(
+  options: { target?: string | null } = {},
+): Promise<RunningSidecar> {
+  const target = options.target === undefined ? APP_HOST : options.target;
   const dir = mkdtempSync(join(tmpdir(), "preview-tunnel-"));
   const script = join(dir, "tunnel.mjs");
   const state = join(dir, "state.json");
@@ -28,7 +32,7 @@ export async function startSidecar(): Promise<RunningSidecar> {
     env: {
       MCPJAM_PREVIEW_SECRET: secret,
       MCPJAM_PREVIEW_STATE: state,
-      MCPJAM_PREVIEW_TARGET_HOST: APP_HOST,
+      ...(target ? { MCPJAM_PREVIEW_TARGET_HOST: target } : {}),
     },
     stdio: "ignore",
   });
@@ -41,4 +45,14 @@ export async function startSidecar(): Promise<RunningSidecar> {
     stateMode: statSync(state).mode & 0o777,
     stop: () => child.kill(),
   };
+}
+
+/** Whether this machine can bind the IPv6 loopback at all. */
+export async function canBindIpv6Loopback(): Promise<boolean> {
+  const { createServer } = await import("node:net");
+  return new Promise((resolve) => {
+    const probe = createServer();
+    probe.once("error", () => resolve(false));
+    probe.listen(0, "::1", () => probe.close(() => resolve(true)));
+  });
 }

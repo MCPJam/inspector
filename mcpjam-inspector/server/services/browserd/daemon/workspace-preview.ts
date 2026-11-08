@@ -148,6 +148,9 @@ function openTunnel(grant: PreviewGrant): Promise<Duplex> {
         reject(new Error(status.includes(" 502 ") ? "app_not_listening" : "tunnel_refused"));
         return;
       }
+      // The deadline covers the whole handshake: an edge that accepts and
+      // never answers would otherwise hold one of the agent's sockets forever.
+      socket.setTimeout(0);
       const rest = buf.subarray(end + 4);
       if (rest.length) socket.unshift(rest);
       resolve(socket);
@@ -155,7 +158,6 @@ function openTunnel(grant: PreviewGrant): Promise<Duplex> {
     socket.on("data", onData);
     socket.once("error", reject);
     socket.setTimeout(15_000, () => socket.destroy(new Error("tunnel_timeout")));
-    socket.once("connect", () => socket.setTimeout(0));
   });
 }
 
@@ -170,13 +172,28 @@ interface PortRelay {
 
 export class WorkspacePreviewRelay {
   private readonly ports = new Map<number, PortRelay>();
+  /** Every accepted connection, upgraded ones included, so shutdown can end them. */
+  private readonly sockets = new Set<net.Socket>();
+  /** Grants run one at a time: two navigations to a new port must not race to listen. */
+  private queue: Promise<unknown> = Promise.resolve();
 
   private granted(): ReadonlySet<number> {
     return new Set(this.ports.keys());
   }
 
   /** Serve `grant.port`, or repoint an existing listener at a new upstream. */
-  async grant(grant: PreviewGrant): Promise<PreviewGrantResult> {
+  grant(grant: PreviewGrant): Promise<PreviewGrantResult> {
+    const run = this.queue.then(() => this.grantNow(grant));
+    // The caller gets `run`, rejection included; the queue only records that
+    // this grant finished, so one failure cannot stall the grants after it.
+    this.queue = run.then(
+      () => "done",
+      () => "done",
+    );
+    return run;
+  }
+
+  private async grantNow(grant: PreviewGrant): Promise<PreviewGrantResult> {
     const existing = this.ports.get(grant.port);
     if (existing) {
       if (existing.grant.upstreamUrl !== grant.upstreamUrl || existing.grant.key !== grant.key) {
@@ -208,6 +225,9 @@ export class WorkspacePreviewRelay {
   async close(): Promise<void> {
     const all = [...this.ports.values()];
     this.ports.clear();
+    // `server.close` waits for every open socket, and a hot-reload WebSocket
+    // never ends on its own; the daemon would never exit.
+    for (const socket of this.sockets) socket.destroy();
     await Promise.all(
       all.flatMap((relay) => {
         relay.agent.destroy();
@@ -269,13 +289,25 @@ export class WorkspacePreviewRelay {
       });
       req.pipe(upstream);
     });
+    server.on("connection", (socket: net.Socket) => {
+      this.sockets.add(socket);
+      socket.once("close", () => this.sockets.delete(socket));
+    });
     server.on("upgrade", (req, client: Duplex, head: Buffer) => {
+      // Node drops its own error listener when it hands over an upgraded
+      // socket, so a reset while the tunnel opens would crash the daemon.
+      let gone = false;
+      client.on("error", () => client.destroy());
+      client.once("close", () => {
+        gone = true;
+      });
       if (previewRequestRefusal(req.headers, port, this.granted())) {
         client.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
         return;
       }
       openTunnel(relay.grant).then(
         (tunnel) => {
+          if (gone) return void tunnel.destroy();
           const lines = [`${req.method} ${req.url} HTTP/1.1`];
           for (let i = 0; i < req.rawHeaders.length; i += 2)
             lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
@@ -284,7 +316,7 @@ export class WorkspacePreviewRelay {
           tunnel.pipe(client);
           client.pipe(tunnel);
           tunnel.on("error", () => client.destroy());
-          client.on("error", () => tunnel.destroy());
+          client.once("close", () => tunnel.destroy());
         },
         () => client.end("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
       );

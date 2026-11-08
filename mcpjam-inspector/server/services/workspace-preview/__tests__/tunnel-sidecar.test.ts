@@ -1,7 +1,12 @@
 import net from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { previewKeyFor } from "../workspace-tunnel";
-import { APP_HOST, startSidecar, type RunningSidecar } from "./preview-tunnel-harness";
+import {
+  APP_HOST,
+  canBindIpv6Loopback,
+  startSidecar,
+  type RunningSidecar,
+} from "./preview-tunnel-harness";
 
 /** Send one handshake and whatever follows it; resolve with every byte back. */
 function exchange(sidecarPort: number, request: string): Promise<string> {
@@ -78,4 +83,31 @@ describe("workspace preview sidecar", () => {
   it("keeps its state file private to the workspace user", () => {
     expect(sidecar.stateMode).toBe(0o600);
   });
+});
+
+const ipv6Loopback = await canBindIpv6Loopback();
+
+describe("workspace preview sidecar, shipped targets", () => {
+  it.skipIf(!ipv6Loopback)(
+    "reaches an app bound only to ::1 when 127.0.0.1 refuses",
+    async () => {
+      const sidecar = await startSidecar({ target: null });
+      const app = net.createServer((socket) =>
+        socket.once("data", () => socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nv6")),
+      );
+      await new Promise<void>((resolve) => app.listen(0, "::1", resolve));
+      const port = (app.address() as net.AddressInfo).port;
+      try {
+        const out = await exchange(
+          sidecar.port,
+          handshake(port, previewKeyFor(sidecar.secret, port), `GET / HTTP/1.1\r\nHost: localhost:${port}\r\n\r\n`),
+        );
+        expect(out.startsWith("HTTP/1.1 101 ")).toBe(true);
+        expect(out.endsWith("v6")).toBe(true);
+      } finally {
+        sidecar.stop();
+        app.close();
+      }
+    },
+  );
 });

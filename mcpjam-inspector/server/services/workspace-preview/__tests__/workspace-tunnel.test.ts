@@ -104,6 +104,16 @@ describe("ensureWorkspaceTunnel", () => {
     expect(tunnel.upstreamHeaders).toEqual({ "e2b-traffic-access-token": "tok" });
   });
 
+  it("shares one start between concurrent first navigations", async () => {
+    const ws = fakeWorkspace({});
+    const [a, b] = await Promise.all([
+      ensureWorkspaceTunnel(ws.sandbox, { pollMs: 1 }),
+      ensureWorkspaceTunnel(ws.sandbox, { pollMs: 1 }),
+    ]);
+    expect(a).toEqual(b);
+    expect(ws.commands.filter((c) => c.startsWith("exec node"))).toHaveLength(1);
+  });
+
   it("refuses a workspace without Node.js", async () => {
     const ws = fakeWorkspace({ hasNode: false });
     await expect(ensureWorkspaceTunnel(ws.sandbox)).rejects.toMatchObject({ code: "no_node_runtime" });
