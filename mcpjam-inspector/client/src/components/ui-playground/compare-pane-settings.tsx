@@ -155,7 +155,7 @@ export function ComparePaneSettings({
             {servers.length === 0 ? (
               <p className="text-xs text-muted-foreground">
                 {serverSource === "environment"
-                  ? "This environment has no servers."
+                  ? "No servers in this pane. To use server tools, choose an environment with servers."
                   : "No servers in this chat. Add them with + in the composer."}
               </p>
             ) : (
