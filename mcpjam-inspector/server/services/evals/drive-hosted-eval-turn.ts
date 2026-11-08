@@ -506,6 +506,7 @@ export function failedLayerForEngineError(
 
 export async function driveHostedEvalTurn(
   params: DriveHostedEvalTurnParams,
+  origin: "prompt" | "widget-follow-up" = "prompt",
 ): Promise<HostedEvalTurnOutcome> {
   const {
     promptIndex,
@@ -1019,12 +1020,11 @@ export async function driveHostedEvalTurn(
       turnResult.turnTrace?.requestPayloads ?? [],
     ).map((entry) => ({ ...entry, promptIndex: params.promptIndex })),
   );
-  // The route record is kept with the turn's spans. A widget follow-up turn
-  // reuses its parent's promptIndex, so the authored turn's record stands.
-  const routeRecords = acc.harnessMcpByPromptIndex;
+  // Widget follow-ups share the authored prompt's index. Leave it empty if
+  // the authored prompt supplied no receipt.
   const routeRecord = turnResult.turnTrace?.harnessMcpAtTurn;
-  if (routeRecords && routeRecord && !routeRecords.has(params.promptIndex)) {
-    routeRecords.set(params.promptIndex, routeRecord);
+  if (origin === "prompt" && routeRecord) {
+    acc.harnessMcpByPromptIndex?.set(params.promptIndex, routeRecord);
   }
   collectEvidenceResults(acc, evidence);
   // Reconcile accumulated usage to the engine's canonical post-turn total

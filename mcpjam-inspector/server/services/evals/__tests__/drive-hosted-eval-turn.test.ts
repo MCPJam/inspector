@@ -12,6 +12,7 @@ vi.mock("../../../utils/assistant-turn.js", () => ({
 import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import { driveHostedEvalTurn } from "../drive-hosted-eval-turn";
 import type { DriveHostedEvalTurnParams } from "../drive-hosted-eval-turn";
+import { buildHostedStepHandlers } from "../step-handlers";
 import { logger } from "../../../utils/logger";
 
 function baseParams(
@@ -429,15 +430,32 @@ describe("the turn's MCP routing record", () => {
     expect(records.size).toBe(0);
   });
 
-  it("keeps the authored turn's record when a follow-up shares its prompt index", async () => {
-    const { params, records } = paramsWithRecords(1);
-    engineCompletesTurn(route("authored"));
-    await driveHostedEvalTurn(params);
-    engineCompletesTurn(route("follow-up"));
-    await driveHostedEvalTurn(params);
+  it.each([true, false])(
+    "preserves the authored prompt's routing evidence across a widget follow-up (authored receipt present: %s)",
+    async (hasReceipt) => {
+      const { params, records } = paramsWithRecords(1);
+      const handlers = buildHostedStepHandlers({
+        ...params,
+        resolvePinnedServerKey: () => undefined,
+        pinnedToolErrors: [],
+      });
+      engineCompletesTurn(hasReceipt ? route("authored") : undefined);
+      await handlers.onPrompt({
+        step: { id: "p1", kind: "prompt", prompt: "Open the widget" },
+        stepIndex: 1,
+        turnOrdinal: 1,
+      });
+      engineCompletesTurn(route("follow-up"));
+      const followUp = await handlers.onFollowUp!({
+        text: "Show more",
+        stepIndex: 2,
+        turnOrdinal: 1,
+      });
 
-    expect([...records]).toEqual([[1, route("authored")]]);
-  });
+      expect(followUp.iterationError).toBeUndefined();
+      expect([...records]).toEqual(hasReceipt ? [[1, route("authored")]] : []);
+    },
+  );
 });
 
 it("adds the turn's reasoning and cached-input tokens onto the iteration usage", async () => {
