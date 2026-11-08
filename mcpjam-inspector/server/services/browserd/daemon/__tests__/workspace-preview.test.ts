@@ -246,6 +246,51 @@ describe("WorkspacePreviewRelay lifecycle", () => {
     sidecar.stop();
   });
 
+  it("sends a page load again on a fresh tunnel when a pooled one is already closing", async () => {
+    // Each accepted tunnel answers its first request, then drops the tunnel
+    // when a second request arrives on it: what a pooled tunnel looks like
+    // after the app closed its idle keep-alive connection.
+    const tunnels: net.Socket[] = [];
+    const app = http.createServer((req, res) => {
+      const served = (req.socket as net.Socket & { served?: number }).served ?? 0;
+      (req.socket as net.Socket & { served?: number }).served = served + 1;
+      if (served > 0) return void req.socket.destroy();
+      res.end("ok");
+    });
+    const edge = net.createServer((socket) => {
+      tunnels.push(socket);
+      socket.once("data", (handshake) => {
+        socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
+        const rest = handshake.subarray(handshake.indexOf("\r\n\r\n") + 4);
+        if (rest.length) socket.unshift(rest);
+        app.emit("connection", socket);
+      });
+    });
+    await new Promise<void>((resolve) => edge.listen(0, "127.0.0.1", resolve));
+    const relay = new WorkspacePreviewRelay();
+    const port = await freePort();
+    await relay.grant({ port, upstreamUrl: `ws://127.0.0.1:${(edge.address() as net.AddressInfo).port}`, upstreamHeaders: {}, key: KEY });
+    const load = () =>
+      new Promise<{ status: number; body: string }>((resolve, reject) => {
+        // A browser asks to keep the connection, which is what lets the
+        // relay pool the tunnel behind it.
+        const headers = { host: `localhost:${port}`, "sec-fetch-site": "none", connection: "keep-alive" };
+        const req = http.request({ host: "127.0.0.1", port, path: "/", agent: false, headers }, (res) => {
+          let body = "";
+          res.on("data", (chunk) => (body += chunk));
+          res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+        });
+        req.on("error", reject);
+        req.end();
+      });
+    expect(await load()).toEqual({ status: 200, body: "ok" });
+    expect(await load()).toEqual({ status: 200, body: "ok" });
+    expect(tunnels).toHaveLength(2);
+    await relay.close();
+    edge.close();
+    app.close();
+  });
+
   it("survives a browser that resets while the tunnel is still opening", async () => {
     // An upstream that accepts and never answers keeps the handshake pending.
     const stalled = net.createServer(() => undefined);
