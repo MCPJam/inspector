@@ -4921,7 +4921,7 @@ it("keeps an unsaved project server's timeout for the session without saving a m
     onSaveServerTimeout={saveTimeout}
   />);
   fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-  fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+  await continueSetup();
   fireEvent.click(await screen.findByRole("button", { name: "Run timeout" }));
   fireEvent.change(screen.getByLabelText("Total run timeout (seconds)"), { target: { value: "90" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -4929,7 +4929,7 @@ it("keeps an unsaved project server's timeout for the session without saving a m
   expect(saveTimeout).not.toHaveBeenCalled();
   expect(screen.getByText("90s")).toBeInTheDocument();
   fireEvent.click(within(screen.getByRole("navigation", { name: "breadcrumb" })).getByRole("button", { name: "Choose server and protocol" }));
-  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  await continueSetup();
   fireEvent.click(await screen.findByRole("button", { name: "Run timeout" }));
   expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(90);
 });
@@ -4946,7 +4946,7 @@ it("restores unsaved timeouts after remount, isolates projects, and keeps a clea
       onSelectServer={vi.fn()} onSaveServerTimeout={saveTimeout}
     />);
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+    await continueSetup();
     fireEvent.click(await screen.findByRole("button", { name: "Run timeout" }));
     return view;
   };
@@ -4983,7 +4983,7 @@ it("does not carry an unsaved timeout into another project without unmounting", 
   const props = { server, servers: [server], isSavedServer: () => false, onSelectServer: vi.fn() };
   const view = render(<ConformanceTab {...props} persist={{ projectId: "project-a" }} />);
   fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-  fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+  await continueSetup();
   fireEvent.click(await screen.findByRole("button", { name: "Run timeout" }));
   fireEvent.change(screen.getByLabelText("Total run timeout (seconds)"), { target: { value: "90" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
