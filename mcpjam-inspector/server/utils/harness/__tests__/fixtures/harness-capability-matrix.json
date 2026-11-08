@@ -199,15 +199,6 @@
       "approvalPermissionMode": "allow-reads",
       "defaultPermissionMode": "allow-all",
       "displayName": "Cursor CLI",
-      "externalAccountBrokerBinding": {
-        "CURSOR_API_KEY": {
-          "header": "authorization",
-          "hosts": [
-            "api2.cursor.sh"
-          ],
-          "template": "Bearer {}"
-        }
-      },
       "externalAccountCredentialEnv": [
         "CURSOR_API_KEY"
       ],
