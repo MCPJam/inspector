@@ -27,6 +27,7 @@ import type { ModelDefinition } from "@/shared/types";
  */
 export function resolveEnvironmentPaneColumn({
   paneId,
+  index,
   environment,
   slot,
   hosts,
@@ -35,6 +36,7 @@ export function resolveEnvironmentPaneColumn({
   pickedSelection,
 }: {
   paneId: string;
+  index: number;
   environment: ComparePaneEnvironment;
   slot: HostSlot | undefined;
   hosts: readonly HostListItem[];
@@ -49,16 +51,16 @@ export function resolveEnvironmentPaneColumn({
     hostId,
     targetKey: paneTargetKey({ kind: "environment", environmentId }),
     environmentId,
-    compareLabel: visible ? (preview?.environment.name ?? "Environment") : "Saved setup",
+    compareLabel: visible ? (preview?.environment.name ?? "Environment") : `Pane ${index + 1}`,
   };
   if (visible === undefined)
-    return { ...identity, status: "loading", reason: "Loading setup…" };
+    return { ...identity, status: "loading", reason: "Checking access…" };
   if (!visible)
     return {
       ...identity,
       status: "unavailable",
       reason:
-        "This setup is unavailable. Choose a client in pane settings.",
+        "Choose a client in pane settings to continue.",
     };
   if (environment.isLoading)
     return { ...identity, status: "loading", reason: "Loading environment…" };
@@ -74,7 +76,7 @@ export function resolveEnvironmentPaneColumn({
       ...identity,
       status: slot?.isLoading ? "loading" : "unavailable",
       reason: slot?.isLoading
-        ? "Loading saved configuration…"
+        ? "Loading client…"
         : `${hosts.find((item) => item.hostId === hostId)?.name ?? "This environment's client"} is unavailable. Choose another client or environment in pane settings.`,
     };
   const config = host.config;

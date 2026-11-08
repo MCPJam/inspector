@@ -106,7 +106,7 @@ export function useCompareEnvironmentHandoff({
   const environmentPanes = useMemo<ComparePaneChip[]>(
     () =>
       comparing
-        ? panes.flatMap(({ paneId, target }) =>
+        ? panes.flatMap(({ paneId, target }, index) =>
             target.kind === "environment"
               ? [
                   {
@@ -116,7 +116,7 @@ export function useCompareEnvironmentHandoff({
                         (option) =>
                           option.target.kind === "environment" &&
                           option.target.environmentId === target.environmentId,
-                      )?.label ?? "Saved setup",
+                      )?.label ?? `Pane ${index + 1}`,
                   },
                 ]
               : [],

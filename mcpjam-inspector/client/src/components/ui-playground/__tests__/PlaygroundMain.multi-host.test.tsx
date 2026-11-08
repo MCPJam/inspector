@@ -2752,7 +2752,7 @@ describe("PlaygroundMain — environment mode", () => {
 
     expect(cardProps("env_1")).toBeUndefined();
     expect(
-      screen.getByText("This setup is unavailable. Choose a client in pane settings."),
+      screen.getByText("Choose a client in pane settings to continue."),
     ).toBeTruthy();
     expect(screen.queryByText("Staging")).toBeNull();
     expect(mockChatInput.mock.calls.at(-1)![0].submitDisabled).toBe(true);

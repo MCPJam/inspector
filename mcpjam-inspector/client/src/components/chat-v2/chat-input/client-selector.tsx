@@ -222,8 +222,8 @@ export function ClientSelector({
   const leadHostName = leadHost
     ? clientDisplayName(leadHost)
     : environmentLeads
-      ? (environmentPanes[0]?.label ?? "Select host")
-      : "Select host";
+      ? (environmentPanes[0]?.label ?? "Select client")
+      : "Select client";
   const leadHostLogo = leadHost?.name
     ? resolveHostLogoByName(leadHost.name, themeMode)
     : null;

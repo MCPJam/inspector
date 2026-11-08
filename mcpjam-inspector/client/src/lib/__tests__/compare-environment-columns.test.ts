@@ -77,6 +77,7 @@ function resolve(
   } = {},
 ) {
   return resolveEnvironmentPaneColumn({
+    index: 0,
     paneId: "pane-1",
     environment: {
       environmentId: "env_1",
@@ -154,7 +155,7 @@ describe("resolveEnvironmentPaneColumn", () => {
     const hostLoading = resolve({}, { host: null, hostLoading: true });
     expect(hostLoading).toMatchObject({
       status: "loading",
-      reason: "Loading saved configuration…",
+      reason: "Loading client…",
     });
   });
 

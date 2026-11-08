@@ -2375,7 +2375,7 @@ export function PlaygroundMain({
             };
             const environment = compareEnvironments.byPane.get(pane.paneId);
             return environment
-              ? resolveEnvironmentPaneColumn({ ...input, environment })
+              ? resolveEnvironmentPaneColumn({ ...input, index, environment })
               : resolvePlaygroundClientColumn({
                   ...input,
                   hostId: paneHostId(pane) ?? "",
