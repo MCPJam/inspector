@@ -2223,6 +2223,7 @@ export function PlaygroundMain({
   // common parent is the correct fix instead of adding event traffic.
   const {
     panes: comparePanes,
+    restorePanes,
     selectedHostIds,
     setSelectedHostIds,
     multiHostEnabled,
@@ -2374,13 +2375,18 @@ export function PlaygroundMain({
   const comparisonLayoutRestoredRef = useRef(false);
   useEffect(() => {
     if (!comparisonRecovery || comparisonLayoutRestoredRef.current) return;
+    if (comparisonRecovery.projectId !== (convexProjectId ?? "local")) return;
     comparisonLayoutRestoredRef.current = true;
     setMultiModelEnabled(comparisonRecovery.multiModelEnabled);
     if (comparisonRecovery.modelSelections)
       setCompareSelections(comparisonRecovery.modelSelections);
-    setSelectedHostIds(comparisonRecovery.hostIds);
+    if (comparisonRecovery.version === 2 && comparisonRecovery.panes.length > 0)
+      restorePanes(comparisonRecovery.panes);
+    else setSelectedHostIds(comparisonRecovery.hostIds);
   }, [
     comparisonRecovery,
+    convexProjectId,
+    restorePanes,
     setMultiModelEnabled,
     setCompareSelections,
     setSelectedHostIds,
@@ -2392,10 +2398,13 @@ export function PlaygroundMain({
         multiModelEnabled,
         modelSelections: compareSelections,
         hostIds: selectedHostIds,
+        panes: isComparingHosts ? [...comparePanes] : [],
         selectedServers,
       }),
     [
       comparisonRecoveryGroupId,
+      isComparingHosts,
+      comparePanes,
       convexProjectId,
       multiModelEnabled,
       compareSelections,

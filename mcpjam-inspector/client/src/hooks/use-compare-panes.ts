@@ -7,8 +7,12 @@ import {
   saveComparePanes,
   subscribeComparePanes,
   syncLeadPane,
-  type ComparePane,
 } from "@/lib/compare-panes";
+import type { RecoveryPane } from "@/lib/comparison-recovery-record";
+import {
+  retainPaneOverrides,
+  type PaneOverrides,
+} from "@/lib/compare-pane-overrides";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 
 // Per project, like the lineup: opening another project must not inherit this
@@ -22,7 +26,9 @@ function multiHostEnabledKey(projectId: string): string {
 
 export interface UseComparePanesReturn {
   /** The lineup, with pane 0 on the lead (the project's previewed client). */
-  panes: readonly ComparePane[];
+  panes: readonly RecoveryPane[];
+  restorePanes: (panes: readonly RecoveryPane[]) => void;
+  setPaneOverrides: (paneId: string, overrides: PaneOverrides) => void;
   /** Each client pane's client, in order: what the client chips show. */
   selectedHostIds: string[];
   /**
@@ -46,14 +52,14 @@ export function useComparePanes(
   projectId: string | null,
 ): UseComparePanesReturn {
   const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(projectId);
-  const [storedPanes, setStoredPanes] = useState<readonly ComparePane[]>([]);
+  const [storedPanes, setStoredPanes] = useState<readonly RecoveryPane[]>([]);
   const [multiHostEnabled, setMultiHostEnabledState] = useState(false);
-  const [isInitialized, setIsInitialized] = useState(false);
+  const [loadedProject, setLoadedProject] = useState<string | null>(null);
 
   // Re-read on a project change, so one project never shows another's lineup.
   useEffect(() => {
     if (typeof window === "undefined") {
-      setIsInitialized(true);
+      setLoadedProject(projectId);
       return;
     }
     setStoredPanes(loadComparePanes(projectId));
@@ -68,14 +74,20 @@ export function useComparePanes(
         error,
       );
     }
-    setIsInitialized(true);
+    setLoadedProject(projectId);
     return subscribeComparePanes(() => {
-      setStoredPanes(loadComparePanes(projectId));
+      const next = loadComparePanes(projectId);
+      setStoredPanes((current) => retainPaneOverrides(next, current));
     });
   }, [projectId]);
 
   useEffect(() => {
-    if (!isInitialized || typeof window === "undefined" || !projectId) return;
+    if (
+      loadedProject !== projectId ||
+      typeof window === "undefined" ||
+      !projectId
+    )
+      return;
     try {
       localStorage.setItem(
         multiHostEnabledKey(projectId),
@@ -85,11 +97,16 @@ export function useComparePanes(
       console.warn("Failed to save the Compare lineup to localStorage:", error);
     }
     saveComparePanes(projectId, storedPanes);
-  }, [isInitialized, multiHostEnabled, storedPanes, projectId]);
+  }, [loadedProject, multiHostEnabled, storedPanes, projectId]);
 
-  const panes = useMemo(
-    () => syncLeadPane(storedPanes, previewedHostId),
-    [storedPanes, previewedHostId],
+  const panes = useMemo<readonly RecoveryPane[]>(
+    () =>
+      loadedProject !== projectId
+        ? []
+        : storedPanes[0]?.target.kind === "environment"
+          ? storedPanes
+          : syncLeadPane(storedPanes, previewedHostId),
+    [storedPanes, previewedHostId, loadedProject, projectId],
   );
   const selectedHostIds = useMemo(() => paneHostIds(panes), [panes]);
 
@@ -109,12 +126,34 @@ export function useComparePanes(
     [panes, previewedHostId, setPreviewedHostId],
   );
 
+  const restorePanes = useCallback(
+    (saved: readonly RecoveryPane[]) => {
+      setStoredPanes(saved);
+      const lead = saved[0] && paneHostId(saved[0]);
+      if (lead) setPreviewedHostId(lead);
+    },
+    [setPreviewedHostId],
+  );
+
+  const setPaneOverrides = useCallback(
+    (paneId: string, overrides: PaneOverrides) => {
+      setStoredPanes((current) =>
+        current.map((pane) =>
+          pane.paneId === paneId ? { ...pane, ...overrides } : pane,
+        ),
+      );
+    },
+    [],
+  );
+
   const setMultiHostEnabled = useCallback((enabled: boolean) => {
     setMultiHostEnabledState(enabled);
   }, []);
 
   return {
     panes,
+    restorePanes,
+    setPaneOverrides,
     selectedHostIds,
     setSelectedHostIds,
     multiHostEnabled,
