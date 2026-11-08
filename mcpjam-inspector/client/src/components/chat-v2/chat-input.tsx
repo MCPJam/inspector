@@ -320,6 +320,7 @@ interface ChatInputProps {
   /** Why Send is off, shown in its tooltip (an out-of-credits model). */
   submitDisabledReason?: string;
   isLoading?: boolean;
+  canStop?: boolean;
   placeholder?: string;
   className?: string;
   currentModel: ModelDefinition;
@@ -502,6 +503,7 @@ export function ChatInput({
   submitDisabled = false,
   submitDisabledReason,
   isLoading = false,
+  canStop = false,
   placeholder = "Type your message...",
   className,
   currentModel,
@@ -2422,7 +2424,7 @@ export function ChatInput({
                 </Tooltip>
               ) : (
                 voiceInputState !== "recording" &&
-                (isLoading ? (
+                (isLoading || canStop ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
