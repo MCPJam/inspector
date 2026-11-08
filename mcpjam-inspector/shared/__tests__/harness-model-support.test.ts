@@ -316,7 +316,7 @@ describe("evidence table", () => {
       join(here, "..", "harness-model-support-evidence.json"),
     );
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(
-      "ad248ab92d1ffa9d570444cbe2102c4160fbc2066bcc72ad8f3b73b39ddbd388",
+      "a692beea074bb962d99ceff424abbb1b2c3c1d81bd24473a46e5be84df52cced",
     );
   });
 });

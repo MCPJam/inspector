@@ -2190,13 +2190,28 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
   {
     id: "copilot-cli",
     label: "GitHub Copilot CLI",
-    description: "Run GitHub Copilot CLI with your selected MCP tools in a hosted sandbox.",
+    description:
+      "Run GitHub Copilot CLI with your selected MCP tools in a hosted sandbox.",
     seed: () => ({
-      ...emptyHostConfigInputV2({ hostStyle: "copilot-cli", modelId: "openai/gpt-5.5", temperature: 1,
-        requireToolApproval: true, harness: "copilot-cli", computer: { kind: "personal" } }),
-      progressiveToolDiscovery: false, clientCapabilities: {}, hostCapabilitiesOverride: {},
-      mcpProfile: { profileVersion: 1, initialize: { supportedProtocolVersions: ["2025-11-25"],
-        clientInfo: { name: "MCPJam", version: "1.0" } }, apps: { mcpAppsOverrides: MCP_APPS_NO_CLAIMS } },
+      ...emptyHostConfigInputV2({
+        hostStyle: "copilot-cli",
+        modelId: "openai/gpt-5.5",
+        temperature: 1,
+        requireToolApproval: true,
+        harness: "copilot-cli",
+        computer: { kind: "personal" },
+      }),
+      progressiveToolDiscovery: false,
+      clientCapabilities: {},
+      hostCapabilitiesOverride: {},
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: { name: "MCPJam", version: "1.0" },
+        },
+        apps: { mcpAppsOverrides: MCP_APPS_NO_CLAIMS },
+      },
     }),
   },
   {

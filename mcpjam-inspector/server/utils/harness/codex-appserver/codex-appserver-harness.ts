@@ -1048,8 +1048,7 @@ function createRetainedBridgeSession(input: {
        */
       throw new HarnessCapabilityUnsupportedError({
         message:
-          "Harness 'codex' (app-server) cannot trigger manual compaction: the " +
-          "bridge protocol has no command for it. Codex auto-compacts its own context.",
+          `Harness '${input.harnessId}' cannot trigger manual compaction.`,
         harnessId: input.harnessId,
       });
     },

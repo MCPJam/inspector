@@ -548,7 +548,7 @@ export type SystemEventMap = {
     reason: "fetch_failed" | "invalid_catalog";
   };
   "harness.timing": {
-    harnessId?: import("@mcpjam/sdk/host-config/internal").Harness;
+    harnessId?: "claude-code" | "codex" | "cursor" | "copilot-cli";
     harnessBootstrap?: "baked" | "installed" | "install-failed" | "reused" | "none";
     harnessBakeExpected?: "baked" | "custom-workdir" | "unbaked-recipe" | "none";
     harnessBakeOnBox?: "present" | "absent" | "unknown" | "not-checked";

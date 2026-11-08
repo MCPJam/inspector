@@ -124,6 +124,14 @@ await runBridge<Start>({
     const closeText = (id: string) => {
       if (openText.delete(id)) turn.emit({ type: "text-end", id });
     };
+    // A retained turn can wait for a human longer than the SDK sendAndWait timeout.
+    let finishTurn!: () => void;
+    let failTurn!: (error: Error) => void;
+    const completed = new Promise<void>((resolve, reject) => {
+      finishTurn = resolve;
+      failTurn = reject;
+    });
+    let reply: { messageId: string; content: string } | undefined;
     const unlisten = session.on((event) => {
       if (turn.abortSignal.aborted) return;
       if (event.type === "assistant.message_delta" && event.data.deltaContent) {
@@ -135,7 +143,12 @@ await runBridge<Start>({
         }
         turn.emit({ type: "text-delta", id, delta: event.data.deltaContent });
       } else if (event.type === "assistant.message") {
+        reply = event.data;
         closeText(event.data.messageId);
+      } else if (event.type === "session.idle") {
+        finishTurn();
+      } else if (event.type === "session.error") {
+        failTurn(new Error(event.data.message));
       } else if (event.type === "assistant.usage") {
         const data = event.data;
         if (data.inputTokens !== undefined)
@@ -145,20 +158,20 @@ await runBridge<Start>({
       }
     });
     const abort = () => {
-      void session.abort().catch((error) => turn.emitError({ error }));
+      void session.abort().then(finishTurn, failTurn);
     };
     turn.abortSignal.addEventListener("abort", abort, { once: true });
     try {
       turn.abortSignal.throwIfAborted();
-      const reply = await session.sendAndWait(start.prompt, 30 * 60_000);
+      await Promise.all([completed, session.send(start.prompt)]);
       if (
-        reply?.data.content &&
+        reply?.content &&
         !turn.abortSignal.aborted &&
-        !streamedText.has(reply.data.messageId)
+        !streamedText.has(reply.messageId)
       ) {
-        const id = reply.data.messageId;
+        const id = reply.messageId;
         turn.emit({ type: "text-start", id });
-        turn.emit({ type: "text-delta", id, delta: reply.data.content });
+        turn.emit({ type: "text-delta", id, delta: reply.content });
         turn.emit({ type: "text-end", id });
       }
       const finishReason = {
