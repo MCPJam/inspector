@@ -1,3 +1,4 @@
+import { harnessAppTools } from "./app-tools";
 import { harnessStartupPart } from "@/shared/harness-startup";
 import { withRetainedResourceSource } from "@/shared/retained-app-resources";
 import { retainedResourceExecutor, type RetainedResourcePresentation } from "./forwarding/retained-resources";
@@ -1062,7 +1063,10 @@ export async function runHarnessTurn(
   let sessionEstablished = false;
   // Cumulative tool spans for the turn trace, hoisted so onFinishEngine (a
   // sibling closure) can read them into PersistedTurnTrace.spans.
-  const capturedSpans: EvalTraceSpan[] = options.harnessUnavailableAppTools ? [unavailableAppToolsSpan()] : [];
+  const unprojectableAppTools = options.harnessAppTools?.filter((entry) =>
+    harness !== "codex" || !chatSessionId || !entry.bridgeId).length ?? 0;
+  const capturedSpans: EvalTraceSpan[] = options.harnessUnavailableAppTools || unprojectableAppTools
+    ? [unavailableAppToolsSpan(unprojectableAppTools)] : [];
   // Tool calls the MCP proxy refused on this run's sealed `toolPolicy`. The
   // block happens on whichever replica served the call; it is accounted for
   // HERE — from the proxy's own correlated report, and from the result the
@@ -1636,7 +1640,7 @@ export async function runHarnessTurn(
         forwardingOrganization: hasForwardingOrganization(mcpClientManager), accountRouting: hasAccountRouting(accountGroups),
         plane: harnessMcpProxy?.plane, selectedServerCount: selectedServers?.length ?? 0,
         hostId, scenarioId, evalIterationId, journeyRunId, localExecution: !!harnessExecutionTarget,
-        admit: () => forwardingAdmission({ manager: mcpClientManager, hostCapabilities: options.harnessHostCapabilities, serverIds: selectedServers ?? [], respectToolVisibility, modelVisibleMcpToolResults, hasClientTools: options.harnessUnavailableAppTools, hasTasks: tasks !== undefined,
+        admit: () => forwardingAdmission({ manager: mcpClientManager, hostCapabilities: options.harnessHostCapabilities, serverIds: selectedServers ?? [], respectToolVisibility, modelVisibleMcpToolResults, hasClientTools: options.harnessUnavailableAppTools || !!options.harnessAppTools?.length, hasTasks: tasks !== undefined,
           elicitationRuntimeVersion: onHarnessElicitation ? harnessAdapter.pinnedRuntimeVersion : undefined,
           modernInputAvailable: options.harnessOwnedInput === true,
           ownedTasksAvailable: options.harnessOwnedTasks === true && tasks?.mode === "expose",
@@ -2824,7 +2828,11 @@ export async function runHarnessTurn(
           },
         ),
       );
+      const appTools = harness === "codex" && options.harnessAppTools?.length && chatSessionId
+        ? harnessAppTools({ entries: options.harnessAppTools, projectId, chatSessionId, turnId, authHeader, signal: effectiveAbortSignal, writer })
+        : {};
       const hostExecutedTools = {
+        ...appTools,
         ...hostExecutedMcp.tools,
         ...offeredBuiltInTools,
       } as Record<string, unknown>;

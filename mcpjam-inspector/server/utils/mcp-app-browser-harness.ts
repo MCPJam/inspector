@@ -1,3 +1,5 @@
+import { PluginWorkspaceRecorder } from "./plugin-workspace-recorder.js";
+import type { PluginWorkspaceRecording } from "../../shared/plugin-workspace-recording.js";
 import { McpAppViewTools, type ViewToolCallRecord } from "./mcp-app-view-tools.js";
 import { WEBMCP_RELAY_SOURCE } from "./webmcp-view/webmcp-relay-source.js";
 import { WEBMCP_VIEW_POLYFILL_JS } from "./webmcp-view/webmcp-view-polyfill.js";
@@ -100,6 +102,7 @@ export type WidgetRenderStatus =
   | "browser_unavailable";
 
 export interface WidgetRenderObservation {
+  pluginWorkspace?: PluginWorkspaceRecording;
   toolCallId: string;
   toolName: string;
   serverId: string;
@@ -160,6 +163,7 @@ export interface WidgetToolCall {
 }
 
 export interface BrowserActionResult {
+  pluginWorkspace?: PluginWorkspaceRecording;
   action: BrowserActionSpec;
   /** base64 screenshot after the action settled (within the byte budget). */
   screenshotBase64?: string;
@@ -183,6 +187,7 @@ const SCRIPTED_STEP_TIMEOUT_MS = 4_000;
 
 /** Result of one scripted interaction step (PR: Widget interaction checks). */
 export interface ScriptedStepResult {
+  pluginWorkspace?: PluginWorkspaceRecording;
   step: ScriptedStep;
   /** Action steps: executed without error. Assert steps: assertion held. */
   ok: boolean;
@@ -615,6 +620,7 @@ interface MountedWidget {
 }
 
 export class McpAppBrowserHarness {
+  private readonly workspaceRecorder = new PluginWorkspaceRecorder();
   private readonly opts: McpAppBrowserHarnessOptions;
   private readonly budgets: HarnessBudgets;
   private readonly viewport: { width: number; height: number };
@@ -703,6 +709,7 @@ export class McpAppBrowserHarness {
     this.blockPrivateNetworks = opts.blockPrivateNetworks ?? HOSTED_MODE;
     this.viewTools = new McpAppViewTools({
       onCall: opts.onViewToolCall,
+      recordCall: (viewId) => this.workspaceRecorder.beginCall(viewId),
       enabled: opts.enableViewTools === true, page: () => this.page,
       mount: () => { const viewId = this.getMountedWidgetId(); const mount = viewId ? this.mounted.get(viewId) : null; return viewId && mount ? { viewId, serverId: mount.serverId, resourceUri: mount.resourceUri } : null; },
       dismiss: id => this.unmount(id),
@@ -920,12 +927,16 @@ export class McpAppBrowserHarness {
           serverId,
           payload.name,
         );
+        const completeRecording = this.workspaceRecorder.beginCall(
+          payload.widgetId,
+        );
         try {
           const result = await this.opts.callTool(
             serverId,
             payload.name,
             payload.args,
           );
+          completeRecording(true);
           (ownedBuffer ?? this.toolCallBuffer).push({
             name: payload.name,
             args: payload.args,
@@ -936,6 +947,7 @@ export class McpAppBrowserHarness {
           });
           return { result };
         } catch (err) {
+          completeRecording(false);
           const error = err instanceof Error ? err.message : String(err);
           (ownedBuffer ?? this.toolCallBuffer).push({
             name: payload.name,
@@ -1051,6 +1063,15 @@ export class McpAppBrowserHarness {
     await this.page.addScriptTag({ content: HARNESS_PAGE_BUNDLE });
   }
 
+  private withWorkspaceRecording<T extends object>(
+    result: T,
+  ): T & { pluginWorkspace?: PluginWorkspaceRecording } {
+    const pluginWorkspace = this.workspaceRecorder.snapshot(
+      this.opts.getWorkspacePresentation?.()?.hostStyle,
+    );
+    return pluginWorkspace ? { ...result, pluginWorkspace } : result;
+  }
+
   /* ---- render ---- */
 
   renderWidget(input: RenderWidgetInput): Promise<WidgetRenderObservation> {
@@ -1085,7 +1106,7 @@ export class McpAppBrowserHarness {
             presentation,
           );
         return {
-          ...observed,
+          ...this.withWorkspaceRecording(observed),
           screenshotBase64: await this.captureScreenshot(),
           ts: Date.now(),
         };
@@ -1105,7 +1126,8 @@ export class McpAppBrowserHarness {
         ts: Date.now(),
         consoleErrors: ["App render receipt limit reached"],
       });
-    const render = this.renderTail.then(() => this.renderWidgetSerial(input));
+    const render = this.renderTail.then(() => this.renderWidgetSerial(input))
+      .then((result) => this.withWorkspaceRecording(result));
     this.renderReceipts.set(input.toolCallId, { fingerprint, result: render });
     this.renderTail = render.catch(() => {});
     return render;
@@ -1165,7 +1187,9 @@ export class McpAppBrowserHarness {
     // widget, so drop stale Node mount entries too. Otherwise after two
     // keepMounted renders, executeAction(oldToolCallId) would pass the mount
     // check and drive the CURRENT page instead of the (gone) old widget.
+    for (const id of this.mounted.keys()) this.workspaceRecorder.close(id);
     this.mounted.clear();
+    this.workspaceRecorder.open(input.toolCallId);
     this.mounted.set(input.toolCallId, {
       resourceUri: input.resourceUri,
       serverId: input.serverId,
@@ -1405,7 +1429,8 @@ export class McpAppBrowserHarness {
     toolCallId: string;
     action: BrowserActionSpec;
   }): Promise<BrowserActionResult> {
-    return this.viewTools.runAction(input.toolCallId, () => this.executeActionSerial(input));
+    return this.viewTools.runAction(input.toolCallId, () => this.executeActionSerial(input))
+      .then((result) => this.withWorkspaceRecording(result));
   }
 
   private async executeActionSerial(input: Parameters<McpAppBrowserHarness["executeAction"]>[0]): Promise<BrowserActionResult> {
@@ -1521,7 +1546,8 @@ export class McpAppBrowserHarness {
     step: ScriptedStep;
     priorWidgetToolCalls?: WidgetToolCall[];
   }): Promise<ScriptedStepResult> {
-    return this.viewTools.runAction(input.toolCallId, () => this.runScriptedStepSerial(input));
+    return this.viewTools.runAction(input.toolCallId, () => this.runScriptedStepSerial(input))
+      .then((result) => this.withWorkspaceRecording(result));
   }
 
   private async runScriptedStepSerial(input: Parameters<McpAppBrowserHarness["runScriptedStep"]>[0]): Promise<ScriptedStepResult> {
@@ -1974,6 +2000,7 @@ export class McpAppBrowserHarness {
         )
         .catch(() => {});
     }
+    this.workspaceRecorder.close(toolCallId);
     this.mounted.delete(toolCallId);
     // Only drop network allowances once NO widget remains mounted. Clearing
     // them whenever unmount runs — even for a stale tool-call id that was never

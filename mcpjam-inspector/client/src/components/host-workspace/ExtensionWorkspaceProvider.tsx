@@ -514,11 +514,21 @@ const GlobalOwner = memo(function GlobalOwner({
     currentThreadId,
     sendMessage,
     runOnboarding,
-    routeLaunch: (server, declaration) => {
+    routeLaunch: (server, declaration, waitForAdmission) => {
       if (declaration.kind === "global") return undefined;
       const { chats, currentChatId } = store.getState();
       const chat = currentChatId ? chats[currentChatId] : undefined;
-      if (chat) return chat.launch(server, declaration);
+      if (chat) {
+        const source = store.getState().global;
+        const opened = chat.launch(server, declaration, undefined, waitForAdmission);
+        if (waitForAdmission) return opened.then(() => {
+          const current = store.getState().global;
+          if (current?.scope === source?.scope && current?.active === source?.active)
+            current?.select(null);
+        });
+        source?.select(null);
+        return opened;
+      }
       logExtensionEvent({
         serverId: server.serverId,
         serverName: server.name,
@@ -526,6 +536,8 @@ const GlobalOwner = memo(function GlobalOwner({
         level: "warning",
         message: `${declaration.title}: this App opens in the current chat, and no chat is ready yet. Open or start a chat, then open it again.`,
       });
+      if (declaration.kind === "file" && waitForAdmission)
+        return Promise.reject(new Error("Open a chat before opening this file."));
       return Promise.resolve();
     },
   });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   act,
   fireEvent,
@@ -8,11 +8,18 @@ import {
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WidgetHost } from "@mcpjam/widget-react";
+import { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { InMemoryTransport } from "@modelcontextprotocol/client";
+import { createThreadAppApi } from "../thread-app-api";
+import { WorkspaceFileActionsProvider } from "../file-actions";
 import {
   OwnedModelApp,
   OwnedModelAppPortsProvider,
   useOwnedModelAppWorkspace,
 } from "../OwnedModelApp";
+import { HostedMrtrHost } from "../../elicitation/HostedMrtrHost";
+import { registerComposerSlot } from "../../elicitation/composer-form-store";
+import { useHostedMrtrStore } from "@/stores/hosted-mrtr-store";
 import {
   ContextAttachmentChip,
   ContextGroupChip,
@@ -26,6 +33,14 @@ const mocks = vi.hoisted(() => ({
   mounted: 0,
   sourceEffects: 0,
   notifications: [] as unknown[],
+  hosts: new Map<string, WidgetHost>(),
+  upload: vi.fn(),
+}));
+vi.mock("@/lib/apis/web/base", () => ({ webPost: mocks.upload, WebApiError: class extends Error {} }));
+vi.mock("@/lib/apis/web/mrtr-api", async original => ({
+  ...await original<typeof import("@/lib/apis/web/mrtr-api")>(),
+  acknowledgeHostedMrtrContinuation: async () => {},
+  cancelHostedMrtrContinuation: async () => {},
 }));
 vi.mock("@/lib/session-token", () => ({ authFetch: mocks.fetch }));
 const policy = {
@@ -53,22 +68,31 @@ vi.mock("../../chat-v2/thread/mcp-apps/use-widget-host", () => ({
 // Replace only the iframe renderer. The owner, API, context controller, host
 // composition, workspace publication and shared chip are real production code.
 // Real bridge notification delivery is separately covered by Chromium tests.
-vi.mock("@mcpjam/widget-react", () => ({
+vi.mock("@mcpjam/widget-react", async () => {
+  const { createContext, useContext } = await import("react");
+  const Host = createContext<WidgetHost | null>(null);
+  return {
+  ...await vi.importActual<typeof import("@mcpjam/widget-react")>("@mcpjam/widget-react"),
   WidgetHostProvider: ({
     value,
     children,
   }: {
     value: WidgetHost;
-    children: unknown;
+    children: import("react").ReactNode;
   }) => {
     mocks.host = value;
-    return children;
+    return <Host.Provider value={value}>{children}</Host.Provider>;
   },
   MCPAppsRenderer: ({
     onCallTool,
+    toolCallId,
   }: {
     onCallTool: (name: string, args: object) => Promise<unknown>;
+    toolCallId: string;
   }) => {
+    const host = useContext(Host);
+    const [answer, setAnswer] = useState("");
+    if (host) mocks.hosts.set(toolCallId, host);
     mocks.renderCount++;
     if (mocks.renderCount > 40) throw new Error("Renderer publication loop");
     useEffect(() => {
@@ -76,13 +100,21 @@ vi.mock("@mcpjam/widget-react", () => ({
       void onCallTool("fixture.load", {}).catch(() => {});
     }, []);
     const context =
-      mocks.host?.environment.draftHostContext?.["openai/modelContext"];
+      host?.environment.draftHostContext?.["openai/modelContext"];
     useEffect(() => {
       mocks.notifications.push(context);
     }, [context]);
-    return <div data-testid="guest-context">{JSON.stringify(context)}</div>;
+    return <>
+      <div data-testid="guest-context">{JSON.stringify(context)}</div>
+      <button onClick={async () => {
+        try { setAnswer(JSON.stringify(await onCallTool("fixture.pick", {}))); }
+        catch (error) { setAnswer(String(error)); }
+      }}>Ask App form</button>
+      <output data-testid="app-form-result">{answer}</output>
+    </>;
   },
-}));
+  };
+});
 
 const token = "b".repeat(43);
 const updateId = "10000000-0000-4000-8000-000000000001";
@@ -172,6 +204,118 @@ beforeEach(() => {
   mocks.mounted = 0;
   mocks.sourceEffects = 0;
   mocks.notifications = [];
+  mocks.hosts.clear();
+  useHostedMrtrStore.getState().__reset();
+});
+
+function ModelFormWorkspace() {
+  const slot = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (slot.current) return registerComposerSlot("workspace", slot.current);
+  }, []);
+  return <><Workspace /><div ref={slot} data-testid="owned-form-slot" /><HostedMrtrHost /></>;
+}
+
+it.each([false, true])("opens admitted model App files with late workspace registration=%s without replacing the bridge", async (late) => {
+  const open = vi.fn(async () => {});
+  const chooseViewer = vi.fn(async (entries: import("../thread-app-api").ThreadAppDeclaration[]) => entries[1]);
+  const scope = { projectId: "project", hostId: "host", threadId: "thread", pluginWorkspace: { version: 1 as const, workspaceId: "workspace" } };
+  mocks.fetch.mockImplementation(async (url: string) => {
+    if (url.endsWith("/model/open")) return reply({ ...handle, localFilesAvailable: true });
+    if (url.endsWith("/model/files/open")) return reply({ file: { uri: "cad://part", name: "part.stl" }, entries: [{ toolName: "viewer", title: "Viewer" }, { toolName: "other", title: "Other viewer" }] });
+    if (url.endsWith("/model/call")) return reply({ status: "completed", result: { content: [] } });
+    if (url.endsWith("/model/close")) return reply({ closed: true });
+    throw new Error("Unexpected API path");
+  });
+  const view = (workspaceId: string, serverIds = ["saved-server"]) => <WorkspaceFileActionsProvider value={{
+    workspaceId, api: createThreadAppApi(scope), serverIds, open, chooseViewer,
+  }}><Workspace /></WorkspaceFileActionsProvider>;
+  const rendered = render(view("workspace", late ? [] : ["saved-server"]));
+  await waitFor(() => expect(mocks.host?.services.configureAppBridge).toBeTypeOf("function"));
+  const caps = { experimental: { "openai/files": {} } };
+  const bridge = new AppBridge(null, { name: "test", version: "1" }, caps);
+  const cleanup = mocks.host!.services.configureAppBridge!(bridge, caps);
+  const [hostTransport, guestTransport] = InMemoryTransport.createLinkedPair();
+  await bridge.connect(hostTransport);
+  await guestTransport.start();
+  let id = 0;
+  const send = () => new Promise<unknown>(resolve => {
+    guestTransport.onmessage = resolve;
+    void guestTransport.send({ jsonrpc: "2.0", id: ++id, method: "openai/files/open", params: { path: "/allowed/part.stl" } });
+  });
+  try {
+    if (late) {
+      const configure = mocks.host!.services.configureAppBridge;
+      const reads = mocks.fetch.mock.calls.length;
+      expect(await send()).toHaveProperty("error");
+      expect(mocks.fetch.mock.calls).toHaveLength(reads);
+      rendered.rerender(view("workspace"));
+      expect(mocks.host!.services.configureAppBridge).toBe(configure);
+    }
+    expect(await send()).toMatchObject({ result: {} });
+    expect(chooseViewer).toHaveBeenCalledOnce();
+    expect(open).toHaveBeenCalledExactlyOnceWith("saved-server", { kind: "file", toolName: "other", title: "Other viewer", resourceUri: "cad://part" });
+    const request = mocks.fetch.mock.calls.find(([url]) => url.endsWith("/model/files/open"));
+    expect(JSON.parse(request![1].body)).toEqual({ projectId: "project", pluginWorkspace: scope.pluginWorkspace, instanceToken: token, path: "/allowed/part.stl" });
+    rendered.rerender(view("another-workspace"));
+    // Its handshake stays negotiated; current workspace authority is checked
+    // by the existing handler before any new request reaches the server.
+    const reads = mocks.fetch.mock.calls.length;
+    expect(await send()).toHaveProperty("error");
+    expect(mocks.fetch.mock.calls).toHaveLength(reads);
+    expect(open).toHaveBeenCalledOnce();
+    cleanup?.();
+    expect(await send()).toHaveProperty("error");
+    expect(open).toHaveBeenCalledOnce();
+  } finally {
+    await bridge.close();
+    await guestTransport.close();
+    rendered.unmount();
+  }
+});
+
+it.each(["accept", "cancel"] as const)("delivers a model App's %s through its actual pending form UI", async action => {
+  const calls: Record<string, unknown>[] = [];
+  mocks.upload.mockResolvedValue({ ok: true, storageId: "private-receipt" });
+  mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    const body = JSON.parse(init.body as string);
+    if (url.endsWith("/model/open")) return reply(handle);
+    if (url.endsWith("/model/close")) return reply({ closed: true });
+    if (url.endsWith("/model/call")) {
+      if (body.params.name === "fixture.load") return reply({ status: "completed", result: { content: [] } });
+      calls.push(body);
+      if (body.resume) return reply({ status: "completed", result: { content: [{ type: "text", text: action }] } });
+      return reply({
+        status: "input_required", continuationId: "model-form", version: 1,
+        serverId: "saved-server", method: "tools/call", round: 1,
+        expiresAt: Date.now() + 60_000, negotiatedEra: "2026-07-28",
+        pluginFormProfile: { fileResources: false, origin: "mcp-app", userResources: false, previews: false },
+        inputRequests: [{ key: "form", mode: "form", message: "Choose model input", requestedSchema: {
+          type: "object", properties: {
+            enabled: { type: "boolean", title: "Enabled", default: false },
+            count: { type: "number", title: "Count", default: 0 },
+          }, required: ["enabled", "count"],
+        } }],
+      });
+    }
+    throw new Error("Unexpected API path");
+  });
+  const view = render(<ModelFormWorkspace />);
+  fireEvent.click(await screen.findByRole("button", { name: "Ask App form" }));
+  await waitFor(() => expect(screen.getByTestId("owned-form-slot")).toHaveTextContent("Choose model input"));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  if (action === "cancel") fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  else {
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+  }
+  await waitFor(() => expect(screen.getByTestId("app-form-result")).toHaveTextContent(action));
+  expect(mocks.upload.mock.calls[0][1]).toEqual({ form: action === "accept" ? { action, content: { enabled: false, count: 0 } } : { action } });
+  expect(calls).toHaveLength(2);
+  expect(calls[1].invocationId).toBe(calls[0].invocationId);
+  expect(calls[1].resume).toEqual({ continuationId: "model-form", round: 1, responsesBlobId: "private-receipt" });
+  expect(useHostedMrtrStore.getState().rounds).toHaveLength(0);
+  view.unmount();
 });
 
 function GroupedWorkspace() {
