@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { ErrorBox } from "../error";
+import { formatErrorMessage } from "../shared/chat-helpers";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import {
   AUTO_TOPUP_DECLINED_CODE,
@@ -213,6 +214,20 @@ describe("ErrorBox organization AI-key refusals", () => {
     fireEvent.click(screen.getByRole("button", { name: "Manage AI providers" }));
     expect(onManageOrgProviders).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("button", { name: /credits|retry/i })).toBeNull();
+  });
+
+  it("uses the private install's explicit repair and leaves ordinary platform errors alone", () => {
+    const failure = { code: "mcpjam_config_error", error: "Shared models unavailable." };
+    const hosted = formatErrorMessage(failure)!;
+    expect(hosted.code).toBe("mcpjam_config_error");
+    const repair = formatErrorMessage({ ...failure, remediation: "choose_org_model" })!;
+    const manage = vi.fn();
+    const { rerender } = render(<ErrorBox {...repair} onManageOrgProviders={manage} />);
+    fireEvent.click(screen.getByRole("button", { name: "Manage AI providers" }));
+    expect(manage).toHaveBeenCalledOnce();
+    rerender(<ErrorBox {...repair} onRetry={vi.fn()} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(/ask an organization admin/i);
+    expect(screen.queryByRole("button", { name: /Manage AI providers|retry/i })).toBeNull();
   });
 
   it("opens organization provider settings when the streaming provider rejects its key", () => {
