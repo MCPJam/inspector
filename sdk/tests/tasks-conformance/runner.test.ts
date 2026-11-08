@@ -1106,6 +1106,30 @@ describe("MCPTasksConformanceTest", () => {
     expect(scoreFromTasksResult(result)).toMatchObject({ failed: 0 });
   });
 
+  it("never reports a 401 on the task call as bad arguments", async () => {
+    const manager = extensionManager({
+      listTools: async () => ({
+        tools: [
+          {
+            name: "long_job",
+            inputSchema: { type: "object", required: ["city"] },
+          },
+        ],
+      }),
+      executeTool: async () => {
+        throw Object.assign(new Error("Unauthorized"), { status: 401 });
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", toolArguments: {}, pollTimeoutMs: 500 },
+    });
+
+    const ttl = result.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(isMissingInputCheck(ttl)).toBe(false);
+    expect(ttl.error?.message).toContain('calling "long_job" failed');
+  });
+
   it("keeps a failing call on args that fit as the server's to answer for", async () => {
     const broken = Object.assign(new Error("Internal error"), { code: -32603 });
     const manager = extensionManager({

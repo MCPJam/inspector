@@ -678,7 +678,7 @@ export function useConformanceRun({
       promises.push(
         runApps(runToken, currentServer.name, {
           checkIds: picked?.apps,
-          protocolVersion: resolved,
+          protocolVersion: pin === "auto" ? undefined : pin,
         }),
       );
     } else {
@@ -688,7 +688,7 @@ export function useConformanceRun({
       promises.push(
         runTasks(runToken, currentServer.name, {
           ...tasksRunOptions(probes, picked),
-          protocolVersion: resolved,
+          protocolVersion: pin === "auto" ? undefined : pin,
         }),
       );
     } else {

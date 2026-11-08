@@ -160,6 +160,8 @@ describe("conformance run version snapshot", () => {
       error: "The server requires authorization (HTTP 401).",
       verdict: "incomplete",
     });
+    // The login gap keeps the pooled run incomplete, not "nothing applicable".
+    expect(result.current.pooledScore?.outcome).toBe("incomplete");
     expect(result.current.resolvedProtocolVersion).toBeUndefined();
   });
 

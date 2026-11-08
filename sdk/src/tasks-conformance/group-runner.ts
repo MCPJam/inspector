@@ -10,6 +10,7 @@ import {
   AUTHORIZATION_REQUIRED_MESSAGE,
   isAuthorizationRefusal,
 } from "../conformance-authorization.js";
+import { getNumericStatus } from "../mcp-client-manager/errors.js";
 import {
   credentialsFromServerConfig,
   loginRequiredDetails,
@@ -163,6 +164,16 @@ export class TaskGroupRunner extends TaskOperations {
           ): MCPTasksCheckResult | undefined => {
             if (!probeTool || argsVerdict?.verdict !== "invalid")
               return undefined;
+            // A 401 is the login to report, and a task that came back without
+            // its discriminator is the server's violation: neither is about
+            // the caller's arguments, whatever they look like.
+            if (
+              creationResult instanceof Error &&
+              (isAuthorizationRefusal(creationResult) ||
+                getNumericStatus(creationResult) === 401)
+            )
+              return undefined;
+            if (rawCreation && !rawCreation.discriminated) return undefined;
             const text =
               message ??
               badToolArgsMessage(probeTool.name, argsVerdict.message);
