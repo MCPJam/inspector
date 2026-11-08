@@ -3830,11 +3830,7 @@ export function useChatSession(
 
   const handleChatError = useCallback(
     (chatError: Error) => {
-      const requestId = harnessStartupRequestRef.current;
-    if (requestId && (status === "submitted" || status === "streaming")) {
-      void stopActiveTurn(requestId);
-    }
-    turnAuthorizationRenewal.stop();
+      turnAuthorizationRenewal.stop();
       harnessStartupRequestRef.current = null;
       setHarnessStartupPhase(null);
       // Every chat failure used to end here and go no further: this handler
@@ -6855,6 +6851,10 @@ export function useChatSession(
     if (status === "ready" && canStopApproval) {
       void stopApproval();
       return;
+    }
+    const requestId = harnessStartupRequestRef.current;
+    if (requestId && (status === "submitted" || status === "streaming")) {
+      void stopActiveTurn(requestId);
     }
     turnAuthorizationRenewal.stop();
       harnessStartupRequestRef.current = null;
