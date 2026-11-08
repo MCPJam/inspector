@@ -2391,28 +2391,6 @@ export function PlaygroundMain({
     setCompareSelections,
     setSelectedHostIds,
   ]);
-  useEffect(
-    () =>
-      registerComparisonLayout(comparisonRecoveryGroupId, {
-        projectId: convexProjectId ?? "local",
-        multiModelEnabled,
-        modelSelections: compareSelections,
-        hostIds: selectedHostIds,
-        panes: isComparingHosts ? [...comparePanes] : [],
-        selectedServers,
-      }),
-    [
-      comparisonRecoveryGroupId,
-      isComparingHosts,
-      comparePanes,
-      convexProjectId,
-      multiModelEnabled,
-      compareSelections,
-      selectedHostIds,
-      selectedServers,
-    ],
-  );
-
   const isMultiHostMode = isComparingHosts && !viewingHistoryReplay;
   const leadHost = hostSlots[0].host;
   const currentClientResolutions = useMemo(
@@ -2452,6 +2430,32 @@ export function PlaygroundMain({
     paused: !isConvexAuthenticated || !isSessionBootstrapComplete,
     canConfirmMissing: isConvexAuthenticated && isSessionBootstrapComplete,
   });
+  useEffect(
+    () =>
+      registerComparisonLayout(comparisonRecoveryGroupId, {
+        projectId: convexProjectId ?? "local",
+        multiModelEnabled,
+        modelSelections: compareSelections,
+        hostIds: selectedHostIds,
+        panes: isComparingHosts ? [...comparePanes] : [],
+        unavailablePaneIds: clientResolutions.flatMap((r) =>
+          r.status === "unavailable" ? [r.compareId] : [],
+        ),
+        selectedServers,
+      }),
+    [
+      comparisonRecoveryGroupId,
+      clientResolutions,
+      isComparingHosts,
+      comparePanes,
+      convexProjectId,
+      multiModelEnabled,
+      compareSelections,
+      selectedHostIds,
+      selectedServers,
+    ],
+  );
+
   const multiHostColumns = clientResolutions.flatMap((result) =>
     result.status === "ready" ? [result.column] : [],
   );

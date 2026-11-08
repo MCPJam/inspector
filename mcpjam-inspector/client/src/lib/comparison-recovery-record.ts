@@ -34,6 +34,7 @@ const layout = z.object({
 });
 export type ComparisonRecoveryLayout = z.infer<typeof layout> & {
   panes?: RecoveryPane[];
+  unavailablePaneIds?: string[];
 };
 
 const column = z.object({
@@ -57,6 +58,7 @@ const record = z.discriminatedUnion("version", [
   common.extend({
     version: z.literal(2),
     panes: z.array(pane).max(MAX_COMPARE_PANES),
+    unavailablePaneIds: ids.optional(),
   }),
 ]);
 export type ComparisonAuthRecovery = z.infer<typeof record>;
@@ -79,12 +81,20 @@ export function readRecoveryRecord(
   )
     return null;
   if (value.version === 2) {
-    const hostColumns = value.columns
-      .filter((c) => c.kind === "host")
-      .sort((a, b) => a.order - b.order);
+    // An unavailable pane has settings to restore but no mounted chat.
+    // A loading pane is not exempt: wait for its real session before leaving.
+    const unavailable = new Set(value.unavailablePaneIds);
+    const hostColumns = value.columns.filter((c) => c.kind === "host");
     if (
-      value.panes.length !== hostColumns.length ||
-      value.panes.some((p, i) => hostColumns[i].compareId !== p.paneId)
+      unavailable.size + hostColumns.length !== value.panes.length ||
+      new Set(value.panes.map((p) => p.paneId)).size !== value.panes.length ||
+      value.panes.some((p, index) =>
+        unavailable.has(p.paneId)
+          ? children.has(p.paneId)
+          : !hostColumns.some(
+              (c) => c.compareId === p.paneId && c.order === index,
+            ),
+      )
     )
       return null;
     if (

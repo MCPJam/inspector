@@ -213,6 +213,48 @@ describe("comparison OAuth restoration", () => {
     expect(sessionStorage.getItem("mcp-comparison-auth-v1:old")).toBeNull();
   });
 
+  it("keeps an unavailable pane's settings without inventing a child session or blocking its sibling", () => {
+    const panes = ["gone", "ready"].map((id) => ({
+      paneId: id,
+      target: { kind: "host" as const, hostId: id },
+    }));
+    const layout = {
+      projectId: "p1",
+      multiModelEnabled: false,
+      hostIds: ["gone", "ready"],
+      selectedServers: [],
+      modelSelections: null,
+      panes,
+    };
+    const off = registerComparisonLayout("partial", layout);
+    const release = registerComparisonColumn("partial", {
+      kind: "host",
+      compareId: "ready",
+      order: 1,
+      chatSessionId: "real",
+      hasMessages: true,
+    });
+    expect(
+      prepareComparisonAuthRecovery("partial", "ready", "call", 1),
+    ).toEqual({ ok: false, reason: "loading" });
+    off();
+    const done = registerComparisonLayout("partial", {
+      ...layout,
+      unavailablePaneIds: ["gone"],
+    });
+    expect(
+      prepareComparisonAuthRecovery("partial", "ready", "call", 1),
+    ).toEqual({ ok: true });
+    expect(readComparisonAuthRecovery("p1")).toMatchObject({
+      panes,
+      columns: [{ compareId: "ready", chatSessionId: "real" }],
+    });
+    markComparisonColumnSettled("p1", { kind: "host", compareId: "ready" });
+    expect(readComparisonAuthRecovery("p1")).toBeNull();
+    done();
+    release();
+  });
+
   it("holds sign-in while a changed lineup still has registered children from the old layout", () => {
     const off = registerComparisonLayout("changing", {
       projectId: "p1",
