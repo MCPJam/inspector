@@ -36,6 +36,7 @@ vi.mock("../auth", () => ({
 }));
 
 import { harnessMcp } from "../harness-mcp.js";
+import { createAuthorizedManager } from "../auth";
 import { sealHarnessSessionEnvelope } from "../../../utils/harness/harness-proxy-policy-seal.js";
 import { sessionPolicyDigest } from "../../../utils/harness/session-mcp-config.js";
 import { SESSION_GRANT_HEADER } from "../../../utils/harness/session-grant.js";
@@ -144,6 +145,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
   __resetHarnessPolicyBlockChannelForTests();
 });
 
@@ -253,5 +255,102 @@ describe("session envelopes on the signed MCP proxy", () => {
     expect(response.status).toBe(200);
     expect(seen.map((event) => event.toolName)).toEqual(["delete_repo"]);
     expect(mockManager.executeTool).not.toHaveBeenCalled();
+  });
+
+  it("lets Cursor's 60-second cancel stop a slow call before MCPJam's 300-second timeout", async () => {
+    vi.useFakeTimers();
+    // The built-in Cursor CLI profile's outer timeout, so Cursor's own governs.
+    const outer = { clientCapabilities: {}, timeout: 300_000 };
+    liveTurn = {
+      turnId: "turn-1",
+      policyDigest: sessionPolicyDigest("srv-a", policy(), outer),
+    };
+    const token = sealHarnessSessionEnvelope({
+      handle: sessionHandle("srv-a"),
+      serverId: "srv-a",
+      policy: policy(),
+      profile: outer,
+    });
+    let signal: AbortSignal | undefined;
+    mockManager.executeTool.mockImplementationOnce(
+      (_server: string, _tool: string, _args: unknown, options: { request: { signal?: AbortSignal } }) =>
+        new Promise((resolve, reject) => {
+          signal = options.request.signal;
+          const timer = setTimeout(
+            () => resolve({ content: [{ type: "text", text: "slow" }] }),
+            70_000,
+          );
+          // MCPJam's MCP client sends the server its own cancel on abort.
+          signal?.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(signal!.reason);
+          });
+        }),
+    );
+    const send = (body: Record<string, unknown>) =>
+      app.request("/api/web/harness-mcp/srv-a", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-MCPJam-Proxy-Token": token,
+          [SESSION_GRANT_HEADER]: GRANT,
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", ...body }),
+      });
+    const pending = send({
+      id: 3,
+      method: "tools/call",
+      params: { name: "slow_write", arguments: {} },
+    });
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(vi.mocked(createAuthorizedManager).mock.calls.at(-1)?.[4]).toBe(300_000);
+    expect(signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const cancelled = await send({
+      method: "notifications/cancelled",
+      params: { requestId: 3, reason: "McpError: MCP error -32001: Request timed out" },
+    });
+    expect(cancelled.status).toBe(202);
+    expect(signal?.aborted).toBe(true);
+    const answered = await pending;
+    expect(await answered.text()).not.toContain("slow");
+    expect(mockManager.executeTool).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves another lane's call running when a cancel names its request id", async () => {
+    let signal: AbortSignal | undefined;
+    let finish!: () => void;
+    mockManager.executeTool.mockImplementationOnce(
+      (_server: string, _tool: string, _args: unknown, options: { request: { signal?: AbortSignal } }) =>
+        new Promise((resolve) => {
+          signal = options.request.signal;
+          finish = () => resolve({ content: [{ type: "text", text: "done" }] });
+        }),
+    );
+    const otherLane = sealHarnessSessionEnvelope({
+      handle: sessionHandle("srv-a", { lane: "lane-2" }),
+      serverId: "srv-a",
+      policy: policy(),
+      profile,
+    });
+    const pending = call(envelope());
+    await vi.waitFor(() => expect(signal).toBeDefined());
+    const response = await app.request("/api/web/harness-mcp/srv-a", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "X-MCPJam-Proxy-Token": otherLane,
+        [SESSION_GRANT_HEADER]: GRANT,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "notifications/cancelled",
+        params: { requestId: 1 },
+      }),
+    });
+    expect(response.status).toBe(202);
+    expect(signal?.aborted).toBe(false);
+    finish();
+    expect(await (await pending).text()).toContain("done");
   });
 });

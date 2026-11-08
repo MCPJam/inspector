@@ -210,3 +210,16 @@ export async function readNativeBody(
   }
   return Buffer.concat(chunks).toString("utf8");
 }
+
+/** The request a `notifications/cancelled` names, when this message is one. */
+export function cancelledRequestId(
+  message: Pick<NativeMessage, "method" | "params"> | undefined,
+): string | number | undefined {
+  if (message?.method !== "notifications/cancelled") return undefined;
+  const params = message.params;
+  const id: unknown =
+    params && typeof params === "object"
+      ? Reflect.get(params, "requestId")
+      : undefined;
+  return typeof id === "string" || typeof id === "number" ? id : undefined;
+}

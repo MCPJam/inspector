@@ -84,6 +84,26 @@ describe.each(CASES)("$id routing", ({ id, adapter, descriptor }) => {
     expect(plan.reasons).toContain("runtime contract unqualified");
   });
 
+  it("takes the profiled bridge only when its contract lets MCPJam's client stand in", () => {
+    const contract = qualifiedForwardingRuntime(adapter);
+    const plan = resolveHarnessMcpPlan(
+      hostedChatFacts({
+        dispatch: configured(),
+        forwardingRuntime: contract,
+        admit: () => ({ delivery: "bridge", gaps: ["app-host-capabilities"] }),
+      }),
+    );
+    expect(plan.forwardingKind).toBe(
+      contract && !contract.passThroughOnly ? "profiled" : undefined,
+    );
+    if (contract?.passThroughOnly) {
+      expect(plan.gaps).toEqual(["app-host-capabilities"]);
+      expect(plan.reasons).toEqual([
+        "forwarding not admitted; configured route retained",
+      ]);
+    }
+  });
+
   it("reaches a forwarded label only when it declares a forwarding contract", () => {
     const plan = resolveHarnessMcpPlan(
       hostedChatFacts({

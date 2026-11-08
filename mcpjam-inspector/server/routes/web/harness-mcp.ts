@@ -37,6 +37,11 @@ import {
   sameSessionTurn,
 } from "../../utils/harness/session-proxy-request.js";
 import { SESSION_GRANT_HEADER } from "../../utils/harness/session-grant.js";
+import {
+  cancelSessionCall,
+  trackSessionCall,
+} from "../../utils/harness/session-proxy-cancel.js";
+import { cancelledRequestId } from "../../utils/harness/forwarding/native-wire.js";
 import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
 import { unsealHarnessProxyToken } from "../../utils/harness/harness-proxy-policy-seal";
 import { evaluateHarnessProxyToolPolicy } from "../../utils/harness/harness-proxy-policy-enforcement";
@@ -326,6 +331,19 @@ async function handle(c: any) {
     return c.json(validation.response, validation.status as 400);
   }
   const body = validation.body;
+  // A session client cancels with a separate request; it stops the call only
+  // where that call runs.
+  const cancelled = session ? cancelledRequestId(body) : undefined;
+  if (session && cancelled !== undefined) {
+    cancelSessionCall(session.laneId, serverId, cancelled);
+    return c.body("Accepted", 202);
+  }
+  const call =
+    session &&
+    body.method &&
+    (typeof body.id === "string" || typeof body.id === "number")
+      ? trackSessionCall(session.laneId, serverId, body.id)
+      : undefined;
 
   // Rebuild the user's authorized connection server-side via the acting-as
   // service-token exchange (no browser bearer in the sandbox). Convex baked the
@@ -487,6 +505,7 @@ async function handle(c: any) {
           }
         }
         return handleJsonRpc(serverId, body, manager, "adapter", {
+          ...(call ? { signal: call.signal } : {}),
           // Inert unless this token carries an authorized eval scope AND the
           // harness named a turn — so playground traffic and capture-off runs
           // pay nothing and behave identically.
@@ -579,6 +598,8 @@ async function handle(c: any) {
       },
       200
     );
+  } finally {
+    call?.done();
   }
 }
 

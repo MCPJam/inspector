@@ -9,6 +9,7 @@ import { nativeForwardingSelection, prepareNativeForwarding, hasForwardingOrgani
   nativeToolMetadata,
 } from "./forwarding/native-turn.js";
 import { forwardingAdmission } from "./forwarding/enhanced-admission.js";
+import { startHarnessForwardingGrant } from "./forwarding/forwarding-grant.js";
 import { resolveHarnessMcpPlan, type HarnessMcpPlan } from "./harness-mcp-plan.js";
 import { buildHarnessMcpAtTurn } from "./harness-mcp-receipt.js";
 import { assertHarnessMcpDiscoveryGate } from "./harness-mcp-discovery-gate.js";
@@ -42,7 +43,8 @@ import { withLocalRuntimeBootstrap } from "./local/pack-bootstrap.js";
 import { startLocalHarnessMcpPlane } from "./local/mcp-plane.js";
 import { invalidateParkedLocalSession } from "./local/approval-park.js";
 import { getManagerConnections } from "../mcp-connections.js";
-import { toToolResultOutput } from "./tool-result-output.js";
+import { harnessToolOutputError, toToolResultOutput } from "./tool-result-output.js";
+import { coerceToolInput } from "./tool-input.js";
 import { sessionProxyInputs, type HarnessSessionTurn } from "./session-mcp-config.js";
 import { startHarnessSessionGrant } from "./session-grant.js";
 export { toToolResultOutput } from "./tool-result-output.js";
@@ -507,22 +509,6 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
       ? { harnessEvidence: mintedHarnessEvidence }
       : {}),
   };
-}
-
-/** The Claude Code harness serializes MCP tool-call arguments as a JSON STRING
- *  (e.g. `'{"city":"NYC"}'`), but MCPJam's UI chunks, the onToolCall callback,
- *  eval arg-matching, and MCP App widget capture all expect the structured
- *  object. Parse a string input back to its object/array; fall back to the raw
- *  value when it isn't JSON or doesn't decode to a structure (don't coerce a
- *  bare string/number/bool, and pass already-structured inputs through). */
-function coerceToolInput(raw: unknown): unknown {
-  if (typeof raw !== "string") return raw;
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed !== null && typeof parsed === "object" ? parsed : raw;
-  } catch {
-    return raw;
-  }
 }
 
 /** Per-process id for lease attribution (logs/debugging). */
@@ -2659,8 +2645,8 @@ export async function runHarnessTurn(
         modelEndpoint = "byok_hosted";
         // EXTERNAL-ACCOUNT: no lease exists to mint, so this whole step is
         // skipped rather than made conditional inside it. `brokerRunId` stays
-        // unset unless the turn installs a session grant, so teardown revokes
-        // only a grant that exists, never a lease that does not.
+        // unset unless the turn installs a forwarding or session grant, so
+        // teardown revokes only a grant that exists, never a lease that does not.
         //
         // The RESERVATION is deliberately NOT released here. On the brokered
         // path the lease consumes the claim and takes over the per-box fence;
@@ -2669,7 +2655,18 @@ export async function runHarnessTurn(
         // could start bootstrapping the same box mid-run. `reservationHeld`
         // stays true and the turn's own teardown releases it.
         auth = externalAccountAuth;
-        if (sessionGrantOrigin && continuity?.laneId) {
+        if (useNativeForwarding) {
+          brokerRunId = turnRunId;
+          const grant = await startHarnessForwardingGrant({ box: box!, harnessId: harnessAdapter.id, modelId, runId: turnRunId,
+            nativeForwarding: nativeForwardingSelection({ manager: mcpClientManager, laneId: continuity?.laneId, hostId, serverIds: selectedServers ?? [], connections: accountGroups }),
+            bearer: await currentAuthorization(), ...(abortSignal ? { signal: abortSignal } : {}) });
+          if (!grant.ok) throw new HarnessInfraSetupError(grant.error, { source: "platform_setup", code: grant.code ?? "harness_forwarding_unavailable", httpStatus: grant.status });
+          if (!harnessMcpProxy || !continuity?.laneId) throw new Error("Native forwarding was not confirmed.");
+          nativeForwarding = await prepareNativeForwarding({ ...grant.forwarding, expiresAt: grant.expiresAt, turnId: turnRunId, promptIndex, strategy: harnessMcpProxy, authHeader, policies: harnessToolPolicy, writer,
+            session: { owner: continuity.owner, leaseId: continuity.leaseId, turnId }, attributeToolCall: harnessAdapter.attributeToolCall });
+          ({ mcpJson, keyToServerId } = nativeForwarding);
+          harnessKeyToServerId = keyToServerId;
+        } else if (sessionGrantOrigin && continuity?.laneId) {
           brokerRunId = turnRunId;
           const grant = await startHarnessSessionGrant({ box: box!, harnessId: harnessAdapter.id, modelId, runId: turnRunId,
             laneId: continuity.laneId, leaseId: continuity.leaseId, bearer: await currentAuthorization(), ...(abortSignal ? { signal: abortSignal } : {}) });
@@ -3993,8 +3990,9 @@ export async function runHarnessTurn(
                 (part as { result?: unknown }).result;
             // Surface tool failures the harness reports so eval/trace consumers
             // that key off isError classify them correctly.
+            const outputError = errorEvent ? undefined : harnessToolOutputError(output);
             const isError =
-              errorEvent ||
+              errorEvent || outputError !== undefined ||
               (part as { isError?: unknown }).isError === true ||
               (part as { error?: unknown }).error != null ||
               (isCallToolResult(output) && output.isError === true);
@@ -4089,10 +4087,10 @@ export async function runHarnessTurn(
                   accountByCall.get(toolCallId),
                 ),
               });
-            if (errorEvent && rawNativeResult === undefined) {
+            if ((errorEvent || outputError) && rawNativeResult === undefined) {
               emitToolOutputError(writer, {
                 toolCallId,
-                errorText: harnessToolErrorText(part),
+                errorText: outputError ?? harnessToolErrorText(part),
                 providerExecuted: true,
               });
             } else {
