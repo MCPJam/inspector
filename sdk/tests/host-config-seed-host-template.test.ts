@@ -228,6 +228,40 @@ describe("seedHostTemplate", () => {
     });
   });
 
+  // None of these profile fields may count as a native-admission gap, so the
+  // real CLI's MCP traffic can be forwarded as it sends it. The seed and the
+  // bundled catalog row it falls back to carry the same values.
+  it("seeds Cursor CLI with the bundled catalog's pass-through profile", () => {
+    const passThroughFields = (config: {
+      respectToolVisibility?: boolean;
+      connectionDefaults: { requestTimeout: number };
+      clientCapabilities: Record<string, unknown>;
+      mcpProfile?: { profileVersion?: number; initialize?: unknown };
+    }) => ({
+      respectToolVisibility: config.respectToolVisibility,
+      requestTimeout: config.connectionDefaults.requestTimeout,
+      clientCapabilities: config.clientCapabilities,
+      initialize: config.mcpProfile?.initialize,
+    });
+    const seeded = seedHostTemplate("cursor-cli", { theme: "dark" });
+    expect(passThroughFields(seeded)).toEqual({
+      respectToolVisibility: false,
+      requestTimeout: 300_000,
+      clientCapabilities: {},
+      initialize: undefined,
+    });
+    expect(
+      passThroughFields(BUNDLED_HOST_COMPAT_CATALOG.hostsById["cursor-cli"])
+    ).toEqual(passThroughFields(seeded));
+    expect(BUNDLED_HOST_COMPAT_CATALOG.hostsById["cursor-cli"]).toMatchObject({
+      provenance: "probe",
+      supportedProtocolVersions: ["2025-11-25"],
+    });
+    expect(canonicalizeHostConfigV2(seeded).mcpProfile?.initialize).toBe(
+      undefined
+    );
+  });
+
   it("threads appVersion into the mcpjam template (and only it)", () => {
     const mcpjam = seedHostTemplate("mcpjam", { appVersion: "9.9.9" });
     const profile = mcpjam.mcpProfile as Record<string, any>;
