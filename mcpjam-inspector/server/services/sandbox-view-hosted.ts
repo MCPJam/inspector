@@ -2,6 +2,7 @@ import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import { reportRouteFailure } from "../utils/route-error-report.js";
 import type { PreparedSandboxView } from "@mcpjam/sdk/widget-runtime";
 import { SANDBOX_HOSTS } from "../config.js";
+import { sandboxOriginOf } from "../../shared/sandbox-origin.js";
 import {
   getServiceCredential,
   INSPECTOR_SERVICE_TOKEN_HEADER,
@@ -75,7 +76,11 @@ function unpack(value: unknown): SandboxViewLease {
   return validateSandboxViewLease(parsed.data);
 }
 function viewOrigin(keyHash: string): string {
-  const configured = process.env.VITE_MCPJAM_SANDBOX_ORIGIN;
+  // The sandbox origin the browser is served (`getInspectorClientRuntimeConfig`):
+  // a valid MCPJAM_SANDBOX_ORIGIN, else the build-time value.
+  const configured =
+    sandboxOriginOf(process.env.MCPJAM_SANDBOX_ORIGIN) ??
+    process.env.VITE_MCPJAM_SANDBOX_ORIGIN;
   if (!configured)
     throw new Error(
       "Configure the hosted App sandbox origin before opening Apps",

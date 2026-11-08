@@ -33,3 +33,6 @@ wt-*/
 .playwright-mcp/
 evaluators/dist/
 
+
+# Generated sandbox bootstrap, embedded in the Inspector build.
+mcpjam-inspector/server/utils/harness/copilot-cli/generated/

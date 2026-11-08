@@ -828,7 +828,7 @@ describe("web chat-v2 — environment execution target", () => {
       });
     });
 
-    it.each(["claude-code", "codex", "cursor"])("%s omits an authorization refusal from harness delivery", async (harness) => {
+    it.each(["claude-code", "codex", "cursor", "opencode"])("%s omits an authorization refusal from harness delivery", async (harness) => {
       convexQueryMock.mockResolvedValue({ ...ENV_SPEC, host: {
         ...ENV_SPEC.host, runtimeConfig: { ...ENV_SPEC.host.runtimeConfig, harness, ...(harness === "cursor" ? { modelId: "cursor/auto" } : {}) },
       } });

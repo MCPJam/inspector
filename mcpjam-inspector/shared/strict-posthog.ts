@@ -32,6 +32,15 @@ const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
     num_models: "count",
     replay: "boolean",
   },
+  conformance_run_triggered: {
+    location: [
+      "conformance_tab",
+      "score_runner",
+      "compat_page",
+      "compat_detail_modal",
+    ],
+    run_source: ["ui"],
+  },
   $pageview: {},
   $pageleave: {},
 };

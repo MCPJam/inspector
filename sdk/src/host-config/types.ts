@@ -71,14 +71,22 @@ export const HOST_CONFIG_SCHEMA_VERSION_V2 = 2;
  * Adding a runtime is a one-line addition here + a registry adapter + tests —
  * never a schema migration (absent ⇒ emulated still hashes byte-identically).
  */
-export const HARNESS_IDS = ["claude-code", "codex", "cursor"] as const;
+export const HARNESS_IDS = [
+  "claude-code",
+  "codex",
+  "cursor",
+  "copilot-cli",
+  "opencode",
+] as const;
 
 /**
  * Which real agent **harness** runs a host's turn. Absent ⇒ the MCPJam
  * **emulated** loop — the only historical behavior, so pre-feature rows hash
  * byte-identically (the key is simply never written). `"claude-code"` runs the
  * turn inside a real Claude Code runtime via the AI SDK harness; `"codex"` runs
- * OpenAI Codex; `"cursor"` runs the Cursor CLI (`cursor-agent`) over ACP.
+ * OpenAI Codex; `"cursor"` runs the Cursor CLI (`cursor-agent`) over ACP;
+ * `"opencode"` runs OpenCode through the published AI SDK adapter, with MCPJam
+ * host-executed tools and a platform-brokered Anthropic lease.
  * Extensible to additional runtimes (e.g. `"pi"`) later without a schema
  * migration.
  */
@@ -838,8 +846,7 @@ export type OAuthSpecVersionClaim =
  * Discriminated so "pinned" cannot be recorded without the pinned value.
  */
 export type OAuthProtocolVersionPinning =
-  | { mode: "pinned"; version: OAuthSpecRevision }
-  | { mode: "negotiated" };
+  { mode: "pinned"; version: OAuthSpecRevision } | { mode: "negotiated" };
 
 /**
  * The exact identity a client asserts at Dynamic Client Registration.
@@ -980,8 +987,7 @@ export type HostConfigOAuthProfileV2 = {
 
 /** Either profile version. V1 rows stay V1 — there is no auto-upgrade. */
 export type HostConfigOAuthProfile =
-  | HostConfigOAuthProfileV1
-  | HostConfigOAuthProfileV2;
+  HostConfigOAuthProfileV1 | HostConfigOAuthProfileV2;
 
 // Personal cloud workstation attached to a host: one machine per
 // (project, user), surfaced through computer-backed built-in tools (e.g.
@@ -1049,8 +1055,7 @@ export type HostConfigComputerInput = {
  *                                     and hashes distinctly from absent.
  */
 export type HostConfigSkillSelection =
-  | { mode: "all-visible" }
-  | { mode: "explicit"; skillIds: string[] };
+  { mode: "all-visible" } | { mode: "explicit"; skillIds: string[] };
 
 /**
  * Canonical-side skill selection. Only the explicit variant survives
@@ -1101,9 +1106,7 @@ export type ModelVisibleMcpToolResults = {
  * `toolAllowlist` names individual tools (and page-tool names) it may call.
  */
 export type HostConfigBrowserToolPolicyMode =
-  | "allow_all"
-  | "read_only"
-  | "allowlist";
+  "allow_all" | "read_only" | "allowlist";
 
 export type HostConfigBrowserToolPolicy = {
   mode: HostConfigBrowserToolPolicyMode;
@@ -1302,5 +1305,10 @@ export type CanonicalHostConfigV2 = {
 
 /** Saved automatic eligibility and the source of the applied text. */
 export type SystemPromptDefault = {
-  source?: { catalogEntryId: string; revision: string; sourceUrl: string; publisher?: string };
+  source?: {
+    catalogEntryId: string;
+    revision: string;
+    sourceUrl: string;
+    publisher?: string;
+  };
 };

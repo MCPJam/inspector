@@ -6,18 +6,21 @@
  * run time; one that hid it without saying why would look like a missing model.
  * So an incompatible row stays listed, disabled, with the server's own reason.
  *
- * Whose key pays is decided first, per ROW: a brokered harness (Claude Code,
- * Codex) runs an MCPJam-provided row on MCPJam's key, or a row from an
- * organization connection on its own vendor (Claude Code → Anthropic, Codex →
- * OpenAI) on the organization's key — read on the canonical id that row's
- * saved selection names. Any other row (a key on this machine, an org
- * connection to another vendor) is refused, exactly as the server refuses it.
+ * Whose key pays is decided first, per ROW: a harness with a qualified
+ * org-key path (Claude Code, Codex) runs an MCPJam-provided row on MCPJam's
+ * key, or a row from an organization connection on its own vendor (Claude
+ * Code → Anthropic, Codex → OpenAI) on the organization's key, read on the
+ * canonical id that row's saved selection names. OpenCode is platform-funded
+ * only. Any other row (a key on this machine, an org connection a harness
+ * cannot run on) is refused, exactly as the server refuses it.
  *
  * While the organization requires its own provider keys (`HarnessKeyPolicy`),
  * MCPJam-provided models are off: a brokered harness runs only on an
  * organization connection to its own vendor, and the copy says so.
  */
 import type { ModelSelection } from "@mcpjam/sdk/browser";
+import type { Harness } from "@mcpjam/sdk/host-config/internal";
+import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 import {
   harnessOrgUpstream,
   harnessModelSupport,
@@ -80,11 +83,24 @@ function harnessTakesOrgKeys(harnessId: string): boolean {
 }
 
 /**
+ * MCPJam brokers this harness's model credentials. A local key never pays,
+ * and an empty picker stays empty rather than restoring refused rows.
+ * Cursor (`modelAccess: "external-account"`) is the exception: its account
+ * picks the model, so the turn's catalog is not what runs.
+ */
+function harnessIsBrokered(harnessId: string): boolean {
+  return (
+    Object.prototype.hasOwnProperty.call(HARNESS_DESCRIPTORS, harnessId) &&
+    HARNESS_DESCRIPTORS[harnessId as Harness].modelAccess === "broker"
+  );
+}
+
+/**
  * The id the evidence table reads for a picker ROW on `target`, or why the row
  * cannot run there at all. See the module comment for the rule.
  *
- * A harness that never takes an org key (Cursor, which runs on the customer's
- * own Cursor account) reads the table alone.
+ * A harness that never takes an org key (Cursor, on the customer's own
+ * Cursor account; OpenCode, platform-funded only) reads the table alone.
  */
 export function harnessRowModelId(
   model: ModelDefinition,
@@ -94,6 +110,14 @@ export function harnessRowModelId(
   | { modelId: string; rail: "hosted" | "org" | "evidence" }
   | { refusal: string } {
   if (!harnessTakesOrgKeys(target.harnessId)) {
+    if (model.orgProvider) {
+      return {
+        refusal: harnessOrgProviderUnsupportedReason(
+          target.harnessId,
+          policy,
+        ),
+      };
+    }
     return { modelId: String(model.id), rail: "evidence" };
   }
   if (isMCPJamProvidedModelMenuItem(model)) {
@@ -166,19 +190,17 @@ export function harnessChoiceRefusalReason(
   purpose: HarnessModelPurpose,
 ): string | undefined {
   if (!target) return undefined;
-  if (harnessTakesOrgKeys(target.harnessId)) {
-    const source = choice.selection?.source;
-    if (source === "local") {
+  const source = choice.selection?.source;
+  if (source === "org") {
+    const vendor = choice.modelId.includes("/")
+      ? hostedProviderFromCanonicalId(choice.modelId)
+      : undefined;
+    if (!harnessRunsOnOrgProvider(target.harnessId, vendor)) {
       return harnessOrgProviderUnsupportedReason(target.harnessId);
     }
-    if (source === "org") {
-      const vendor = choice.modelId.includes("/")
-        ? hostedProviderFromCanonicalId(choice.modelId)
-        : undefined;
-      if (!harnessRunsOnOrgProvider(target.harnessId, vendor)) {
-        return harnessOrgProviderUnsupportedReason(target.harnessId);
-      }
-    }
+  }
+  if (harnessIsBrokered(target.harnessId) && source === "local") {
+    return harnessOrgProviderUnsupportedReason(target.harnessId);
   }
   return harnessModelRefusalReason(choice.modelId, target, purpose);
 }
@@ -256,11 +278,10 @@ export function harnessModelLockReasonsByRow(
  * verified (`unknown`) stays, with its reason as a warning, because the server
  * runs it in chat with the same warning. Nothing runnable leaves the list
  * EMPTY — the picker's empty state — never the unfiltered list, which would
- * offer only rows the server refuses.
- *
- * A harness that never takes an org key (Cursor, whose account picks its own
- * model and ignores the turn's) keeps the list as it was when nothing in it
- * is runnable: there the turn's model is not what runs.
+ * offer only rows the server refuses. That includes a platform-funded
+ * brokered harness (OpenCode) whose filter removed every org-key row. The
+ * catalog fallback is only for an external-account harness (Cursor): its
+ * account picks the model, so the turn's picker is not what runs.
  *
  * Under the organization's key policy (`policy.requireOrgKeys`) a brokered
  * harness offers only organization rows on its own vendor. A saved model the
@@ -301,7 +322,7 @@ export function harnessPickerModels(
         : model,
     );
   }
-  if (kept.length > 0 || harnessTakesOrgKeys(target.harnessId)) return kept;
+  if (kept.length > 0 || harnessIsBrokered(target.harnessId)) return kept;
   return models;
 }
 

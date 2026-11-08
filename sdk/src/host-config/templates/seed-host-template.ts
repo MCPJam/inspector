@@ -31,6 +31,7 @@ import {
   GOOSE_HOST_STYLE_VARIABLES,
   GOOSE_PLATFORM,
 } from "./goose-style.js";
+import { MCP_APPS_NO_CLAIMS } from "../../host-compat/capabilities.js";
 import { SLACK_FONT_CSS, getSlackStyleVariables } from "./slack-style.js";
 import { CHATGPT_MODEL_CONTEXT_POLICY } from "./chatgpt-model-context-policy.js";
 
@@ -243,6 +244,7 @@ export const HOST_TEMPLATE_IDS = [
   "goose",
   "slack",
   "cursor",
+  "copilot-cli",
   "cursor-cli",
   "codex",
   "copilot",
@@ -2184,6 +2186,33 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       };
       return base;
     },
+  },
+  {
+    id: "copilot-cli",
+    label: "GitHub Copilot CLI",
+    description:
+      "Run GitHub Copilot CLI with your selected MCP tools in a hosted sandbox.",
+    seed: () => ({
+      ...emptyHostConfigInputV2({
+        hostStyle: "copilot-cli",
+        modelId: "openai/gpt-5.5",
+        temperature: 1,
+        requireToolApproval: true,
+        harness: "copilot-cli",
+        computer: { kind: "personal" },
+      }),
+      progressiveToolDiscovery: false,
+      clientCapabilities: {},
+      hostCapabilitiesOverride: {},
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: { name: "MCPJam", version: "1.0" },
+        },
+        apps: { mcpAppsOverrides: MCP_APPS_NO_CLAIMS },
+      },
+    }),
   },
   {
     id: "cursor-cli",

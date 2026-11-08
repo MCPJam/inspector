@@ -29,6 +29,7 @@ import {
 import { CliError } from "../src/lib/output.js";
 import { parseServerConfig } from "../src/lib/server-config.js";
 import { main } from "../src/index.js";
+import { runCli } from "./support/cli-run.js";
 
 function parseConformanceRun(argv: string[]): Record<string, unknown> {
   const program = new Command();
@@ -199,6 +200,46 @@ test("conformance run rejects --reporter html before making any request", async 
     assert.equal(requestCount, 0);
   } finally {
     process.stderr.write = originalWrite;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+// CI is never a TTY, so the output format defaults to json there. The
+// reporter must still win, and several suites must make one JUnit document.
+test("conformance run --reporter junit-xml writes one JUnit document off a TTY", async () => {
+  const server: Server = createServer((_req, res) => {
+    res.statusCode = 404;
+    res.end("not an MCP endpoint");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("fixture server has no address");
+  }
+  const originalKey = process.env.MCPJAM_API_KEY;
+  delete process.env.MCPJAM_API_KEY;
+
+  try {
+    const { exitCode, stdout, stderr } = await runCli([
+      "conformance",
+      "run",
+      "--url",
+      `http://127.0.0.1:${address.port}/mcp`,
+      "--reporter",
+      "junit-xml",
+    ]);
+
+    assert.equal(exitCode, 3);
+    assert.ok(stdout.startsWith('<?xml version="1.0"'), stdout.slice(0, 80));
+    assert.equal(stdout.split("<?xml").length - 1, 1);
+    assert.equal(stdout.split("<testsuites ").length - 1, 1);
+    assert.match(stdout, /<testsuites name="MCPJam Conformance" tests="3"/);
+    assert.match(stderr, /Run incomplete/);
+  } finally {
+    // The command reports exit 3 through process.exitCode, which would
+    // otherwise fail this whole file.
+    process.exitCode = 0;
+    if (originalKey !== undefined) process.env.MCPJAM_API_KEY = originalKey;
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });

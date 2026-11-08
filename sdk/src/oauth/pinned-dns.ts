@@ -54,6 +54,20 @@ export interface ResolvedTarget {
 }
 
 /**
+ * A caller's own decision about one private destination: the hostname alone
+ * before resolution, then each private address it answered with. Asked only
+ * where a destination would otherwise be refused as private, and never about a
+ * link-local or cloud-metadata one, so it can open a destination but not the
+ * floor under every policy.
+ */
+export type PrivateDestinationAdmission = (destination: {
+  /** The URL's hostname as written: a name or an IP literal. */
+  hostname: string;
+  /** One private address the hostname resolved to. */
+  address?: string;
+}) => boolean;
+
+/**
  * What a chain is allowed to reach. Computed ONCE per chain by
  * {@link resolveEgressPolicy} and handed to every hop, so the three buffered
  * entry points and the streaming transport cannot drift apart on the question
@@ -70,6 +84,14 @@ export interface EgressPolicy {
    * and only {@link isNeverDialableHost} stays refused.
    */
   allowPrivateNetwork: boolean;
+  /**
+   * Private destinations admitted one by one, for a caller that otherwise
+   * refuses them all: a hosted deployment on its operator's own network,
+   * whose operator listed the ones it may reach. Every hop asks again, so a
+   * redirect onto a destination the caller did not admit is refused, and a
+   * plaintext hop must land on admitted private addresses only.
+   */
+  admitPrivateDestination?: PrivateDestinationAdmission;
 }
 
 /**
@@ -77,23 +99,37 @@ export interface EgressPolicy {
  *
  * `httpsOnly` is the hosted switch and always wins: a hosted deployment fetches
  * on OUR infrastructure, where a private destination means our own network, so
- * neither opt-in survives it.
+ * neither opt-in survives it. An admission does survive it: it is that
+ * deployment naming the private destinations it means, not a blanket opt-in.
+ * It also turns the loopback flow off, so a loopback destination is admitted
+ * hop by hop like any other rather than inherited from where the chain started.
  */
 export function resolveEgressPolicy(options: {
   httpsOnly?: boolean;
   allowPrivateNetwork?: boolean;
+  admitPrivateDestination?: PrivateDestinationAdmission;
   startUrl: string;
 }): EgressPolicy {
+  const admission = options.admitPrivateDestination
+    ? { admitPrivateDestination: options.admitPrivateDestination }
+    : {};
   if (options.httpsOnly === true) {
-    return { allowLoopbackFlow: false, allowPrivateNetwork: false };
+    return {
+      allowLoopbackFlow: false,
+      allowPrivateNetwork: false,
+      ...admission,
+    };
   }
   const allowPrivateNetwork = options.allowPrivateNetwork === true;
   return {
     // Private-network callers get loopback as a subset, so a chain that starts
     // on a private host is not held to the loopback-only rule below.
     allowLoopbackFlow:
-      !allowPrivateNetwork && isLoopbackOAuthUrl(options.startUrl),
+      !allowPrivateNetwork &&
+      !options.admitPrivateDestination &&
+      isLoopbackOAuthUrl(options.startUrl),
     allowPrivateNetwork,
+    ...admission,
   };
 }
 
@@ -118,6 +154,10 @@ function isLoopbackAddress(address: string): boolean {
  * something never-dialable", not "did it land off loopback". Resolution is
  * still done ONCE and still pinned, so the address that was classified is the
  * address that gets dialled.
+ *
+ * `policy.admitPrivateDestination` sits between the two: a private literal
+ * or a private answer is dialled only when it admits it, and it is asked at
+ * pin time, about exactly the addresses that will be pinned.
  */
 export async function resolvePinnedAddresses(
   targetUrl: URL,
@@ -126,6 +166,12 @@ export async function resolvePinnedAddresses(
   targetLabel = "OAuth metadata target",
 ): Promise<ResolvedTarget> {
   const targetIsLoopback = isLoopbackOAuthUrl(targetUrl.toString());
+  const admit = policy.admitPrivateDestination;
+  const admitted = (address?: string) =>
+    admit?.({
+      hostname: targetUrl.hostname,
+      ...(address === undefined ? {} : { address }),
+    }) === true;
 
   if (isNeverDialableHost(targetUrl.hostname)) {
     throw new OAuthProxyError(
@@ -135,7 +181,7 @@ export async function resolvePinnedAddresses(
   }
 
   if (!policy.allowPrivateNetwork && isPrivateHost(targetUrl.hostname)) {
-    if (!(policy.allowLoopbackFlow && targetIsLoopback)) {
+    if (!(policy.allowLoopbackFlow && targetIsLoopback) && !admitted()) {
       throw new OAuthProxyError(
         400,
         `${targetLabel} is a private/reserved host (${targetUrl.hostname})`,
@@ -143,16 +189,31 @@ export async function resolvePinnedAddresses(
     }
   }
 
+  // Plaintext that no blanket allowance covers: an admitting caller's http hop
+  // reaches resolution so the answer can decide it, and it may only land on
+  // private addresses — each of which the loop below admits or refuses.
+  const plaintextNeedsAdmission =
+    admit !== undefined &&
+    targetUrl.protocol === "http:" &&
+    !policy.allowPrivateNetwork &&
+    !(policy.allowLoopbackFlow && targetIsLoopback);
+  const refusePublicPlaintext = () =>
+    new OAuthProxyError(
+      400,
+      `Refusing a plaintext connection to "${targetUrl.hostname}": it is a public host, so the target must be served over https.`,
+    );
+
   // Numeric IPs are already the exact socket destination, so there is no DNS
   // lookup to pin. The literal-host check above has classified them.
   if (
     /^\d+\.\d+\.\d+\.\d+$/.test(targetUrl.hostname) ||
     targetUrl.hostname.includes(":")
   ) {
-    return {
-      addresses: null,
-      targetIsPrivate: isPrivateHost(targetUrl.hostname),
-    };
+    const targetIsPrivate = isPrivateHost(targetUrl.hostname);
+    if (plaintextNeedsAdmission && !targetIsPrivate) {
+      throw refusePublicPlaintext();
+    }
+    return { addresses: null, targetIsPrivate };
   }
 
   const addresses = await new Promise<PinnedAddress[]>((resolve, reject) => {
@@ -217,10 +278,10 @@ export async function resolvePinnedAddresses(
     targetUrl.protocol === "http:" &&
     !targetIsPrivate
   ) {
-    throw new OAuthProxyError(
-      400,
-      `Refusing a plaintext connection to "${targetUrl.hostname}": it is a public host, so the target must be served over https.`,
-    );
+    throw refusePublicPlaintext();
+  }
+  if (plaintextNeedsAdmission && !landedPrivate) {
+    throw refusePublicPlaintext();
   }
   for (const { address } of addresses) {
     if (isNeverDialableIpAddress(address)) {
@@ -241,7 +302,7 @@ export async function resolvePinnedAddresses(
           `Loopback ${targetLabel.toLowerCase()} resolved outside loopback (${address})`,
         );
       }
-    } else if (isDisallowedIpAddress(address)) {
+    } else if (isDisallowedIpAddress(address) && !admitted(address)) {
       throw new OAuthProxyError(
         400,
         `${targetLabel} resolves to a private/reserved IP address (${address})`,

@@ -11,6 +11,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "billing-entitlements-ui",
   "browser-workspace-enabled",
   "claude-code-host-enabled",
+  "client-agent-loop",
   "codex-host-enabled",
   "credit-estimate-enabled",
   "cursor-host-enabled",

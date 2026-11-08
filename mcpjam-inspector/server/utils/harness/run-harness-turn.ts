@@ -900,10 +900,18 @@ export async function runHarnessTurn(
   // approval mode and the tool catalog all come from this adapter, so a local
   // Codex turn must see the app-server arm here exactly as its preflight did.
   const harnessAdapter = getHarnessAdapter(harness);
-  const warmAgentPilot = isWarmChatManager(mcpClientManager) && !!qualifiedForwardingRuntime(harnessAdapter) &&
+  const copilotCli = harnessAdapter.id === "copilot-cli";
+  if (
+    copilotCli &&
+    (!isWarmChatManager(mcpClientManager) || sourceType !== "direct" ||
+      harnessExecutionTarget || !harnessSandboxBinding || harnessMcpProxy?.plane !== "web-authorized")
+  ) {
+    throw new Error("Open GitHub Copilot CLI in the signed-in hosted Playground.");
+  }
+  const warmAgentPilot = isWarmChatManager(mcpClientManager) && (copilotCli || !!qualifiedForwardingRuntime(harnessAdapter)) &&
     sourceType === "direct" && !harnessExecutionTarget && !!harnessSandboxBinding && !!chatSessionId &&
     harnessMcpProxy?.plane === "web-authorized" &&
-    (harness === "claude-code" || harness === "codex");
+    (copilotCli || harness === "claude-code" || harness === "codex");
   // The effort this turn asked for: the typed field, else the saved selection it
   // was forwarded with (`extraBodyFields.modelSelection`). Read once so the
   // refusal below and `createHarness` further down cannot disagree.
