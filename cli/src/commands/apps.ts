@@ -23,6 +23,7 @@ import {
   type ConformanceOutputFormat,
 } from "../lib/conformance-output.js";
 import { maybeUploadSingleSuite } from "../lib/conformance-upload.js";
+import { captureConformanceRunEvent } from "../lib/telemetry.js";
 import { parseReporterFormat, type ReporterFormat } from "../lib/reporting.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
@@ -212,7 +213,13 @@ export function registerAppsCommands(program: Command): void {
       }),
       ...(collector ? { rpcLogger: collector.rpcLogger } : {}),
     };
-    const result = await new MCPAppsConformanceTest(config).run();
+    // The CLI counts the run itself, under its own opt-outs.
+    const test = new MCPAppsConformanceTest({
+      ...config,
+      __suppressTelemetry: true,
+    });
+    captureConformanceRunEvent();
+    const result = await test.run();
 
     const outputResult = reporter
       ? result
@@ -675,7 +682,10 @@ export function registerAppsCommands(program: Command): void {
           ...config.target,
           ...(collector ? { rpcLogger: collector.rpcLogger } : {}),
         },
+        // The CLI counts the run itself, under its own opt-outs.
+        __suppressTelemetry: true,
       });
+      captureConformanceRunEvent();
       const result = await suite.run();
 
       const outputResult = reporter

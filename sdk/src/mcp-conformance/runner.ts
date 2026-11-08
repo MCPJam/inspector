@@ -10,6 +10,7 @@ import {
   isUnauthorizedProbe,
 } from "../conformance-authorization.js";
 import { PROTOCOL_CHECK_CATALOG } from "../conformance-catalog.js";
+import { captureConformanceRun } from "../telemetry.js";
 import {
   buildConformanceProfileStamp,
   conformanceProfile,
@@ -56,6 +57,10 @@ import { MCP_CHECK_CATEGORIES } from "./types.js";
 import { collectClientReadiness, collectRawReadiness } from "./readiness.js";
 import { WireObservationRecorder } from "./wire-observations.js";
 import { createCapturingFetch } from "./raw-capture.js";
+import {
+  createNegotiationProbeHold,
+  type NegotiationProbeHold,
+} from "./negotiation-probes.js";
 import {
   eraForProtocolVersion,
   normalizeMCPConformanceConfig,
@@ -139,6 +144,7 @@ const buildSummary = buildOutcomeSummary;
 function createServerConfig(
   config: NormalizedMCPConformanceConfig,
   recorder: WireObservationRecorder,
+  negotiationProbes: NegotiationProbeHold
 ): HttpServerConfig {
   // The client's traffic is only visible UNNORMALIZED here: by the time a
   // result reaches app code the official Client has consumed the wire-only
@@ -184,6 +190,7 @@ function createServerConfig(
     });
     const response = await capture.fetch(input, init);
     for (const exchange of capture.exchanges) {
+      if (negotiationProbes.hold(exchange)) continue;
       recorder.recordExchange(exchange);
     }
     return response;
@@ -301,12 +308,16 @@ async function runClientChecks(
     return { checks: [], config, readiness: [] };
   }
 
+  const negotiationProbes = createNegotiationProbeHold(
+    recorder,
+    config.protocolVersion === undefined
+  );
   // The connect is the initialize handshake, so `server-initialize` reports
   // its duration rather than the near-zero time to read the stored result.
   const connectStartedAt = Date.now();
   try {
     return await withEphemeralClient(
-      createServerConfig(config, recorder),
+      createServerConfig(config, recorder, negotiationProbes),
       async (manager, serverId) => {
         config.signal?.throwIfAborted();
         const connectDurationMs = Date.now() - connectStartedAt;
@@ -332,6 +343,7 @@ async function runClientChecks(
                 era: eraForProtocolVersion(negotiatedProtocolVersion),
               }
             : config;
+        negotiationProbes.settle(effectiveConfig.era);
 
         const [
           toolsResult,
@@ -567,13 +579,17 @@ function reclassifyUnauthorizedProbe(check: MCPCheckResult): MCPCheckResult {
 
 export class MCPConformanceTest {
   private readonly config: NormalizedMCPConformanceConfig;
+  private readonly suppressTelemetry: boolean;
 
   constructor(config: MCPConformanceConfig) {
     this.config = normalizeMCPConformanceConfig(config);
+    // The normalized config drops it, so read it from the caller's config.
+    this.suppressTelemetry = config.__suppressTelemetry === true;
   }
 
   async run(): Promise<MCPConformanceResult> {
     this.config.signal?.throwIfAborted();
+    if (!this.suppressTelemetry) void captureConformanceRun("sdk");
     const startedAt = Date.now();
     const selectedCheckIds = buildCheckSelection(this.config);
     // ONE record for the whole run, opened before the first byte moves. The

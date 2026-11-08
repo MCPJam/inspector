@@ -1,5 +1,6 @@
 import { readUiResources } from "./resource-reads.js";
 import { withAbortSignalFetch } from "../abort-signal.js";
+import { captureConformanceRun } from "../telemetry.js";
 import {
   AUTHORIZATION_REQUIRED_MESSAGE,
   authorizationRequiredDetails,
@@ -433,14 +434,18 @@ function buildConnectionFailureResult(
 
 export class MCPAppsConformanceTest {
   private readonly config: NormalizedMCPAppsConformanceConfig;
+  private readonly suppressTelemetry: boolean;
 
   constructor(config: MCPAppsConformanceConfig) {
     this.config = normalizeMCPAppsConformanceConfig(config);
+    // The normalized config drops it, so read it from the caller's config.
+    this.suppressTelemetry = config.__suppressTelemetry === true;
   }
 
   async run(): Promise<MCPAppsConformanceResult> {
     const signal = this.config.signal;
     signal?.throwIfAborted();
+    if (!this.suppressTelemetry) void captureConformanceRun("sdk");
     const serverConfig = this.config.serverConfig;
     const runConfig =
       signal && "url" in serverConfig

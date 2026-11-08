@@ -239,9 +239,20 @@ const HOSTED_HARNESS_ARGS = {
     modelId: "openai/gpt-5.5",
     auth: { CODEX_API_KEY: "bake", OPENAI_BASE_URL: "http://bake.invalid" },
   },
+  "copilot-cli": {
+    modelId: "openai/gpt-5.5",
+    auth: { COPILOT_MODEL_PROXY_PLACEHOLDER: "bake", OPENAI_BASE_URL: "http://bake.invalid/v1" },
+  },
   cursor: {
     auth: { CURSOR_API_KEY: "bake" },
     mcpJson: { mcpServers: {} },
+  },
+  opencode: {
+    modelId: "anthropic/claude-haiku-4.5",
+    auth: {
+      ANTHROPIC_AUTH_TOKEN: "bake",
+      ANTHROPIC_BASE_URL: "http://bake.invalid",
+    },
   },
 };
 
@@ -371,6 +382,12 @@ export async function resolveHarnessBake() {
       sentinels: () => [],
     },
     {
+      loadRecipe: () => loadHostedRecipe("copilot-cli"),
+      runtimeVersion: HARNESS_PINNED_VERSIONS["copilot-cli"],
+      vendor: { kind: "github-copilot-sdk", sdkVersion: "1.0.11" },
+      sentinels: () => [],
+    },
+    {
       loadRecipe: () => loadHostedRecipe("cursor"),
       runtimeVersion: HARNESS_PINNED_VERSIONS.cursor,
       vendor: {
@@ -385,6 +402,15 @@ export async function resolveHarnessBake() {
           "linux-x64": { archiveSha256: registry.CURSOR_CLI_CHECKSUMS.x64 },
           "linux-arm64": { archiveSha256: registry.CURSOR_CLI_CHECKSUMS.arm64 },
         },
+      },
+      sentinels: () => [],
+    },
+    {
+      loadRecipe: () => loadHostedRecipe("opencode"),
+      runtimeVersion: HARNESS_PINNED_VERSIONS.opencode,
+      vendor: {
+        kind: "opencode-ai",
+        package: "opencode-ai",
       },
       sentinels: () => [],
     },

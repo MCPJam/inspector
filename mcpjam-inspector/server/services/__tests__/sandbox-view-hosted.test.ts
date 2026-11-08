@@ -96,6 +96,51 @@ describe("hosted App document lease client", () => {
   });
 
   it.each([
+    ["set alone", undefined, "https://sandbox.example"],
+    [
+      "set with an unlisted build-time value",
+      "https://other.example",
+      "https://sandbox.example",
+    ],
+    [
+      "invalid, beside a listed build-time value",
+      "https://sandbox.example",
+      "not an origin",
+    ],
+  ])(
+    "mints view origins from the sandbox origin the browser is served, with MCPJAM_SANDBOX_ORIGIN %s",
+    async (_label, buildTime, runtime) => {
+      vi.stubEnv("VITE_MCPJAM_SANDBOX_ORIGIN", buildTime);
+      vi.stubEnv("MCPJAM_SANDBOX_ORIGIN", runtime);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init: RequestInit) => {
+          if (url.endsWith("/read"))
+            return Response.json(
+              { code: "SANDBOX_VIEW_LEASE_UNAVAILABLE" },
+              { status: 409 },
+            );
+          const fields = {
+            ...JSON.parse(String(init.body)),
+            generation: "server-generation-1",
+          };
+          return Response.json({
+            lease: {
+              ...fields,
+              identityHash: sandboxViewIdentity(fields),
+              expiresAt: Date.now() + 7200000,
+            },
+          });
+        }),
+      );
+      const view = await prepareHostedSandboxView(input(), owner);
+      expect(new URL(view.proxyUrl).hostname).toMatch(
+        /^v-[0-9a-f]{16}\.sandbox\.example$/,
+      );
+    },
+  );
+
+  it.each([
     ["invalid JSON", () => new Response("not-json")],
     ["missing lease", () => Response.json({})],
     ["invalid lease schema", () => Response.json({ lease: { keyHash: 1 } })],

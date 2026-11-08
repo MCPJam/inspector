@@ -32,6 +32,7 @@ import {
   type ConformanceOutputFormat,
 } from "../lib/conformance-output.js";
 import { maybeUploadSingleSuite } from "../lib/conformance-upload.js";
+import { captureConformanceRunEvent } from "../lib/telemetry.js";
 import { parseReporterFormat } from "../lib/reporting.js";
 import {
   parseHeadersOption,
@@ -140,7 +141,13 @@ export function registerProtocolCommands(program: Command): void {
       const reporter = parseReporterFormat(options.reporter as string | undefined);
       const format = getFormat(command, reporter);
       const config = buildConfig(options as ProtocolConformanceOptions);
-      const result = await new MCPConformanceTest(config).run();
+      // The CLI counts the run itself, under its own opt-outs.
+      const test = new MCPConformanceTest({
+        ...config,
+        __suppressTelemetry: true,
+      });
+      captureConformanceRunEvent();
+      const result = await test.run();
 
       writeConformanceOutput(renderConformanceForCli(result, reporter, format));
       // The JSON payload carries all three too, but a human running this in a
@@ -178,7 +185,13 @@ export function registerProtocolCommands(program: Command): void {
       const reporter = parseReporterFormat(options.reporter as string | undefined);
       const format = getFormat(command, reporter);
       const config = loadProtocolSuiteConfig(options.config as string);
-      const result = await new MCPConformanceSuite(config).run();
+      // The CLI counts the run itself, under its own opt-outs.
+      const suite = new MCPConformanceSuite({
+        ...config,
+        __suppressTelemetry: true,
+      });
+      captureConformanceRunEvent();
+      const result = await suite.run();
 
       writeConformanceOutput(renderConformanceForCli(result, reporter, format));
       // Each run carries its own score and reasons — a suite's runs usually

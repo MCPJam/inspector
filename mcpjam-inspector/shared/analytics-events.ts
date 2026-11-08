@@ -47,6 +47,12 @@ export const ANALYTICS_EVENTS = {
   eval_suite_run_started: { source: "client" },
   eval_suite_run_started_server: { source: "server" },
 
+  // --- Conformance runs (one name everywhere; no server twin) ---
+  // The CLI and the SDK send this same name from their own clients, with
+  // `run_source` saying where the run came from. Hosted server runs go
+  // through the SDK, so the app has no `_server` twin.
+  conformance_run_triggered: { source: "client" },
+
   // --- Public API agent surface (server-authoritative; no client twin) ---
   api_agent_turn_completed: { source: "server" },
   /**

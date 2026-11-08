@@ -506,7 +506,8 @@ describe("harnessModelEligibleForRuntime", () => {
         const preflightModelRefusal =
           !preflight.ok &&
           (preflight.kind === "model-not-hosted" ||
-            preflight.kind === "model-unsupported");
+            preflight.kind === "model-unsupported" ||
+            preflight.kind === "model-unverified");
         expect(eligible, `${id} / ${model.modelId}`).toBe(
           !preflightModelRefusal,
         );
@@ -1018,7 +1019,21 @@ describe("organization-key selections", () => {
     ],
     ["codex", "gpt-5", "openai", "openai/gpt-5", "ok"],
     [
+      "opencode",
+      "claude-haiku-4-5",
+      "anthropic",
+      "anthropic/claude-haiku-4.5",
+      "model-provider-unsupported",
+    ],
+    [
       "claude-code",
+      "gpt-5",
+      "openai",
+      "openai/gpt-5",
+      "model-provider-unsupported",
+    ],
+    [
+      "opencode",
       "gpt-5",
       "openai",
       "openai/gpt-5",
@@ -1054,6 +1069,30 @@ describe("organization-key selections", () => {
       else expect(r).toMatchObject({ ok: false, kind: expected });
     },
   );
+
+  it("refuses OpenCode on an organization Anthropic key until that path is qualified", () => {
+    setFullyAvailable();
+    expect(
+      checkHarnessRuntimeAvailable(
+        args({
+          harnessId: "opencode",
+          model: { id: "claude-haiku-4-5", provider: "anthropic" },
+          selection: orgSel("anthropic/claude-haiku-4.5"),
+          purpose: "chat",
+        }),
+      ),
+    ).toMatchObject({ ok: false, kind: "model-provider-unsupported" });
+    expect(
+      harnessModelRefusal({
+        adapter: getHarnessAdapter("opencode"),
+        model: { id: "claude-haiku-4-5", provider: "anthropic" },
+        purpose: "chat",
+        selection: orgSel("anthropic/claude-haiku-4.5"),
+      }).refusal?.reason,
+    ).toBe(
+      "The OpenCode client does not support organization provider keys. Choose another client.",
+    );
+  });
 
   it("an org row still answers to the evidence table: unverified is refused for evals", () => {
     setFullyAvailable();

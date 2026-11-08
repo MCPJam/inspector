@@ -49,6 +49,11 @@ const LOOP_CONTROLS: Record<
       note: "Codex does its own tool discovery.",
     },
   },
+  "copilot-cli": {
+    modelId: ENFORCED, requireToolApproval: ENFORCED,
+    temperature: { enforced: false, note: "GitHub Copilot CLI controls temperature." },
+    progressiveToolDiscovery: { enforced: false, note: "GitHub Copilot CLI receives the selected tools at turn start." },
+  },
   cursor: {
     // The one harness whose MODEL is not MCPJam's to choose. It authenticates
     // with the customer's own Cursor account and that account picks the model
@@ -83,6 +88,22 @@ const LOOP_CONTROLS: Record<
       note: "The Cursor CLI does its own tool discovery.",
     },
   },
+  opencode: {
+    // Brokered Anthropic, same as Claude Code — the selected model is the
+    // model the runtime is launched with, including title/compaction pins.
+    modelId: ENFORCED,
+    temperature: {
+      enforced: false,
+      note: "OpenCode runs its own loop and ignores temperature.",
+    },
+    // OpenCode pauses on native built-ins, and MCPJam host-executed tools
+    // go through HarnessAgent's toolApproval before they run.
+    requireToolApproval: ENFORCED,
+    progressiveToolDiscovery: {
+      enforced: false,
+      note: "OpenCode does its own tool discovery.",
+    },
+  },
 };
 
 /** Runtime facts shared by the adapters, admission gates and client controls. */
@@ -101,6 +122,13 @@ export const HARNESS_DESCRIPTORS = {
     protocol: "openai-responses", credential: null,
     controls: LOOP_CONTROLS.codex, reasoningEfforts: HARNESS_REASONING_EFFORTS.codex,
   },
+  "copilot-cli": {
+    displayName: "GitHub Copilot CLI", runtimeVersion: "1.0.92", mcpClient: "mcpjam",
+    modelAccess: "broker", local: false, guest: false,
+    orgUpstream: { provider: "openai", profile: "openai-native" },
+    protocol: "openai-responses", credential: null,
+    controls: LOOP_CONTROLS["copilot-cli"], reasoningEfforts: HARNESS_REASONING_EFFORTS["copilot-cli"],
+  },
   cursor: {
     displayName: "Cursor CLI", runtimeVersion: "2026.11.05-86047df", mcpClient: "harness",
     modelAccess: "external-account", local: false, guest: false,
@@ -108,6 +136,13 @@ export const HARNESS_DESCRIPTORS = {
     credential: { env: "CURSOR_API_KEY", label: "Cursor API key",
       binding: { hosts: ["api2.cursor.sh"], header: "authorization", template: "Bearer {}" } },
     controls: LOOP_CONTROLS.cursor, reasoningEfforts: HARNESS_REASONING_EFFORTS.cursor,
+  },
+  opencode: {
+    displayName: "OpenCode", runtimeVersion: "1.18.23", mcpClient: "mcpjam",
+    modelAccess: "broker", local: false, guest: false,
+    orgUpstream: null,
+    protocol: "anthropic-messages", credential: null,
+    controls: LOOP_CONTROLS.opencode, reasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,
   },
 } as const satisfies Record<Harness, object>;
 

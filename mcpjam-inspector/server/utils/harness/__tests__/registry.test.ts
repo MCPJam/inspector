@@ -469,6 +469,9 @@ describe("harness registry", () => {
     ).toBe(HARNESS_PINNED_VERSIONS["claude-code"]);
     // Codex's app-server bootstrap pins its CLI itself.
     expect(PINNED_CODEX_VERSION).toBe(HARNESS_PINNED_VERSIONS.codex);
+    expect(
+      bridgePkg("@ai-sdk/harness-opencode").dependencies["opencode-ai"],
+    ).toBe(HARNESS_PINNED_VERSIONS.opencode);
   });
 
   it("patches the Claude Code bridge bootstrap compatibility gaps", async () => {
@@ -1437,7 +1440,7 @@ describe("bootstrap recipes are auth-independent", () => {
 
   // cursor included: its bootstrap fetches the CLI with `curl … | bash`, so an
   // auth-dependent recipe there would re-run that install on every resume.
-  for (const id of ["claude-code", "codex", "cursor"] as const) {
+  for (const id of ["claude-code", "codex", "cursor", "opencode"] as const) {
     it(`${id}: two different credentials produce byte-identical files`, async () => {
       const adapter = getHarnessAdapter(id);
       const modelId =
@@ -1445,6 +1448,8 @@ describe("bootstrap recipes are auth-independent", () => {
           ? "openai/gpt-5-nano"
           : id === "cursor"
           ? "cursor/auto"
+          : id === "opencode"
+          ? "anthropic/claude-haiku-4.5"
           : "anthropic/claude-haiku-4.5";
       const a = makeHarness(adapter, { modelId, auth: auth("one") });
       const b = makeHarness(adapter, { modelId, auth: auth("two") });
@@ -1518,13 +1523,7 @@ describe("the organization's own key (native upstream profiles)", () => {
   };
   const mcpJson = { mcpServers: {} };
 
-  it("each brokered adapter has an org upstream; an external-account one has none", () => {
-    for (const id of registeredHarnessIds()) {
-      const adapter = getHarnessAdapter(id);
-      expect(harnessOrgUpstream(id) !== null).toBe(
-        adapter.modelAccess === "broker",
-      );
-    }
+  it("only Claude Code and Codex admit an organization key", () => {
     expect(harnessOrgUpstream("claude-code")).toEqual({
       provider: "anthropic",
       profile: "anthropic-native",
@@ -1533,6 +1532,8 @@ describe("the organization's own key (native upstream profiles)", () => {
       provider: "openai",
       profile: "openai-native",
     });
+    expect(harnessOrgUpstream("cursor")).toBeNull();
+    expect(harnessOrgUpstream("opencode")).toBeNull();
   });
 
   it("Claude Code runs the leased native id on the native profile, the alias on the Gateway", () => {
@@ -1653,4 +1654,5 @@ it("keeps every declared forwarding contract aligned with its qualified runtime 
   expect(getHarnessAdapter("codex").forwardingRuntime).toMatchObject({runtimeVersion: PINNED_CODEX_VERSION, correlationKey: "callId"});
   expect(getHarnessAdapter("claude-code").forwardingRuntime).toBeDefined();
   expect(getHarnessAdapter("cursor").forwardingRuntime).toBeUndefined();
+  expect(getHarnessAdapter("opencode").forwardingRuntime).toBeUndefined();
 });

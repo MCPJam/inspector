@@ -17,7 +17,13 @@ Use a sandbox hostname distinct from the app hostname. The sandbox hostname and
 its wildcard must route to the same Inspector service as the app.
 
 ```bash
-# Client build time AND Inspector server runtime.
+# Inspector server runtime. Served to the browser with the page and used for
+# each admitted view's origin, so one image serves every deployment. Wins over
+# VITE_MCPJAM_SANDBOX_ORIGIN.
+MCPJAM_SANDBOX_ORIGIN=https://sandbox.example.com
+
+# Client build time AND Inspector server runtime. Used when
+# MCPJAM_SANDBOX_ORIGIN is unset.
 VITE_MCPJAM_SANDBOX_ORIGIN=https://sandbox.example.com
 
 # Inspector server runtime; hostnames only, without scheme, port or wildcard.
@@ -26,6 +32,13 @@ SANDBOX_HOSTS=sandbox.example.com
 # Runtime URL of the matching backend's HTTP service.
 CONVEX_HTTP_URL=https://your-deployment.convex.site
 ```
+
+Hosted Apps open only when the sandbox origin is an `https://` origin whose
+hostname is listed in `SANDBOX_HOSTS`. An `MCPJAM_SANDBOX_ORIGIN` that is not an
+http(s) origin is ignored, with a warning on stderr, and
+`VITE_MCPJAM_SANDBOX_ORIGIN` is used instead. On an image built by MCPJam's
+Railway pipeline, the browser's build-time value is `https://sandbox.mcpjam.com`,
+so widgets would load from MCPJam's sandbox host, not yours.
 
 The Inspector also needs its existing `INSPECTOR_SERVICE_TOKEN` secret. Configure
 it through the deployment's secret manager, matching the backend service
@@ -69,11 +82,24 @@ CSP, blocked undeclared resources, retained-view renewal and explicit close.
 Repeat after a server restart to exercise the durable lease service. A passing
 `/health` alone does not prove wildcard routing, TLS or App admission works.
 
-`/health` reports `sandboxIsolation`: `ok` means the configured sandbox host is
-separate from the app host, `same-origin` means the app host was incorrectly
-partitioned as a sandbox, and `unset` means the partition or app origin could
-not be established. Missing backend lease credentials, wildcard routing or TLS
-leave Apps unavailable; they do not authorize an unsigned fallback.
+`/health` reports `sandboxIsolation`:
+
+- `ok` — a sandbox hostname is configured, it is not the app's own host, and
+  `MCPJAM_SANDBOX_ORIGIN`, when set, names a listed host.
+- `same-origin` — `SANDBOX_HOSTS` contains the app's host from
+  `MCPJAM_HOSTED_ORIGIN`, so that hostname has stopped serving the app, or
+  `MCPJAM_SANDBOX_ORIGIN` is the app's own origin. Either way widgets are not
+  isolated.
+- `unpartitioned` — `MCPJAM_SANDBOX_ORIGIN` names a host that `SANDBOX_HOSTS`
+  does not list, so the host widgets load from still serves the app shell and
+  `/api`.
+- `unset` — nothing is partitioned, or `MCPJAM_HOSTED_ORIGIN` could not be
+  parsed to compare against.
+
+Anything other than `ok` is also logged once at error level during boot, and
+printed on stderr, so it shows even in production without `VERBOSE_LOGS=true`.
+Missing backend lease credentials, wildcard routing or TLS leave Apps
+unavailable; they do not authorize an unsigned fallback.
 
 Rollback by restoring the previously tested, compatible Inspector/backend
 release pair through the deploy playbook. Keep the sandbox partition and origin
@@ -84,6 +110,39 @@ isolation enabled.
 Local admitted views use separate `127.0.0.1` listener ports and the same
 owner/policy checks. They do not require public wildcard DNS or a hosted service
 credential. A local pass does not qualify hosted routing or TLS.
+
+## Private MCP servers and model endpoints
+
+Hosted mode refuses to dial private destinations: loopback, RFC 1918, CGNAT
+(`100.64.0.0/10`), IPv6 unique-local, and any name that resolves to one. A
+deployment that runs on your own network, beside the MCP servers and model
+endpoints it should use, lists the ones it may reach:
+
+```bash
+# Comma-separated CIDRs and host suffixes.
+MCPJAM_PRIVATE_EGRESS_ALLOWLIST=10.0.0.0/8,fd00::/8,svc.cluster.local
+```
+
+- A range (`10.0.0.0/8`, `fd00::/8`, or a bare address for one host) matches
+  addresses: an IP literal in the URL, or an address a name resolves to. Write
+  the network address; `10.0.0.1/8` is refused.
+- A suffix (`svc.cluster.local`, leading dot optional) matches names on label
+  boundaries: `corp.example` matches `mcp.corp.example` but never
+  `evilcorp.example`. A listed name may resolve to any private address. There
+  are no wildcards.
+- Cloud metadata (`169.254.169.254`, `metadata.google.internal` and the
+  others), link-local, multicast and the unspecified address stay refused
+  whatever the list says, `0.0.0.0/0` included.
+- Every redirect hop is checked again, so a listed host cannot redirect onto an
+  unlisted one.
+- One invalid entry voids the whole list, so a typo never widens it: nothing
+  private is reachable, and the server logs an error at boot giving each bad
+  entry's position in the list and what is wrong with it. The entry itself is
+  not logged, since it could be a pasted URL with credentials. In production
+  the console shows the error only with `VERBOSE_LOGS=true`.
+
+The preflight check queries DNS directly, without `/etc/hosts`, so use fully
+qualified names such as `mcp.tools.svc.cluster.local`.
 
 ## Client address behind your own ingress
 
@@ -136,6 +195,29 @@ guest spend budgets and the limits that only trust a vouched-for address, the
 edge secret is then the only proof: a request without it gets no budget of its
 own, whatever the trusted header says. The other limits read the trusted
 header for it.
+
+## Turning the MCPJam agent off
+
+Ask MCPJam talks to MCPJam's own MCP servers: the platform worker
+(`mcp.mcpjam.com`) and the hosted docs servers. A deployment that cannot reach
+them turns the agent off:
+
+```bash
+MCPJAM_PLATFORM_AGENT=off
+```
+
+The agent's routes then answer `404` with code `FEATURE_NOT_SUPPORTED`
+without dialling anything, the server stops checking the platform worker URL
+at boot, and the app hides the agent's entry points. Any other value, or none,
+keeps the agent.
+
+The setting does not cover the headless agent in the public API
+(`POST /api/v1/projects/:projectId/agent`, the Slack bot's turn endpoint).
+Wherever `CONVEX_HTTP_URL` is set, each of its turns still checks the docs MCP
+server at `MCPJAM_DOCS_MCP_URL`, `https://docs.mcpjam.com/mcp` by default, and
+carries on without docs when that server does not answer. To keep those turns
+off the public docs server, set `MCPJAM_DOCS_MCP_URL` to one the deployment
+can reach.
 
 ## Organization-derived confidential CIMD (disabled by default)
 

@@ -211,6 +211,8 @@ export async function runProtocolConformance(
     // belong in this change") was taken up by the runner, and then by every
     // hosted connection factory when the gap it left became MJ-001.
     fetchFn: deadlineFetch(createConformanceFetch("MCP server"), signal),
+    // The browser counts the whole run once; a suite request must not.
+    __suppressTelemetry: true,
   };
   const test = new MCPConformanceTest(config);
   const result = await test.run();
@@ -245,6 +247,8 @@ export async function runAppsConformance({
       ...pinSuiteVersion(serverConfig, protocolVersion),
       signal,
       baseFetch: deadlineFetch(serverConfig.baseFetch ?? createConformanceFetch("MCP server"), signal),
+      // The browser counts the whole run once; a suite request must not.
+      __suppressTelemetry: true,
     });
     return { result: await test.run() };
   });
@@ -304,6 +308,8 @@ export async function runTasksConformance({
         serverConfig.baseFetch ?? createConformanceFetch("MCP server"),
         deadline.signal,
       ),
+      // The browser counts the whole run once; a Tasks group request must not.
+      __suppressTelemetry: true,
     });
     const result = await test.run();
     deadline.signal.throwIfAborted();
@@ -393,6 +399,8 @@ export async function startOAuthConformance(
     // fetch instead. Requests that ask for `redirect: "manual"` keep their 3xx:
     // this suite grades redirects, and following one would erase the evidence.
     fetchFn: deadlineFetch(createConformanceFetch("OAuth endpoint"), deadline.signal),
+    // The browser counts the whole run once; a suite request must not.
+    __suppressTelemetry: true,
   };
 
   const test = new OAuthConformanceTest(oauthConfig, {

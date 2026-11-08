@@ -57,7 +57,17 @@ function sse(res, type, payload) {
 }
 
 /** One complete streamed response: an optional message, then function calls. */
-function respond(res, { text, calls = [] }) {
+function respond(res, { text, calls = [] }, stream) {
+  if (!stream) {
+    const id = `resp_mock_${requestCount}`;
+    const output = text
+      ? [{ id: `msg_${id}`, type: "message", status: "completed", role: "assistant", content: [{ type: "output_text", text, annotations: [] }] }]
+      : calls.map((call, i) => ({ id: `fc_${id}_${i}`, type: "function_call", status: "completed",
+        call_id: `call_${id}_${i}`, name: call.name, arguments: JSON.stringify(call.arguments ?? {}) }));
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ id, object: "response", status: "completed", model: "gpt-5.5", output, usage: USAGE }));
+    return;
+  }
   const send = () => {
     if (res.writableEnded || res.destroyed) return;
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
@@ -118,7 +128,7 @@ function userText(item) {
     .join("\n");
 }
 
-const SCENARIO = /^(SHELL|MCPPROBE|COUNT)\b\s*(.*)$/s;
+const SCENARIO = /^(SHELL|MCPPROBE|HOSTWRITE|COUNT)\b\s*(.*)$/s;
 
 const server = http.createServer((req, res) => {
   requestCount += 1;
@@ -162,20 +172,22 @@ const server = http.createServer((req, res) => {
     const userTurns = userTexts.filter((t) => t.split("\n").some((line) => SCENARIO.test(line.trim()))).length;
     const tools = Array.isArray(body.tools) ? body.tools.map((t) => t.name ?? t.type) : [];
     log(`#${requestCount} model=${body.model} stream=${body.stream} items=${input.length} userTurns=${userTurns} tools=${JSON.stringify(tools).slice(0, 200)} last=${last?.type ?? last?.role}`);
+    const reply = (output) => respond(res, output, body.stream === true);
     if (last?.type === "function_call_output" || last?.type === "custom_tool_call_output") {
       const output = typeof last.output === "string" ? last.output : JSON.stringify(last.output);
-      return respond(res, { text: `TOOL RESULT RECEIVED: ${String(output).slice(0, 400)}` });
+      return reply({ text: `TOOL RESULT RECEIVED: ${String(output).slice(0, 400)}` });
     }
     const latest = [...userTexts].reverse().find((t) => t.split("\n").some((line) => SCENARIO.test(line.trim()))) ?? userTexts[userTexts.length - 1] ?? "";
     const line = latest.split("\n").map((l) => l.trim()).filter((l) => SCENARIO.test(l)).pop() ?? "";
     const m = SCENARIO.exec(line);
     if (m) {
       const [, kind, arg] = m;
-      if (kind === "SHELL") return respond(res, { calls: [{ name: "exec_command", arguments: { cmd: arg.trim(), yield_time_ms: 15_000 } }] });
-      if (kind === "MCPPROBE") return respond(res, { calls: [{ namespace: RELAY_NAMESPACE, name: PROBE_TOOL, arguments: { message: "conformance" } }] });
-      if (kind === "COUNT") return respond(res, { text: `USER_TURNS=${userTurns}` });
+      if (kind === "SHELL") return reply({ calls: [{ name: "exec_command", arguments: { cmd: arg.trim(), yield_time_ms: 15_000 } }] });
+      if (kind === "MCPPROBE") return reply({ calls: [{ namespace: RELAY_NAMESPACE, name: PROBE_TOOL, arguments: { message: "conformance" } }] });
+      if (kind === "HOSTWRITE") return reply({ calls: [{ name: "probe__record_write", arguments: {} }] });
+      if (kind === "COUNT") return reply({ text: `USER_TURNS=${userTurns}` });
     }
-    return respond(res, { text: `ECHO: ${latest.slice(0, 80)}` });
+    return reply({ text: `ECHO: ${latest.slice(0, 80)}` });
   });
 });
 log(`upstream latency: ${latencyMs}ms`);
