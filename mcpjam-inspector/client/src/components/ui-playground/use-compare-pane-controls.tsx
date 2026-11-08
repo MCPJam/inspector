@@ -403,7 +403,7 @@ export function useComparePaneControls({
           label={label}
           value={pane.target}
           clients={listed(targets.clients, "host")}
-          environments={listed(targets.environments, "environment")}
+          environments={environment && !environment.visible ? [] : listed(targets.environments, "environment")}
           onChange={(next) => setPaneTarget(pane.paneId, next)}
         />
       );
@@ -465,7 +465,7 @@ export function useComparePaneControls({
             }}
             target={{
               title:
-                targets.environments.length > 0 || environment
+                targets.environments.length > 0 || environment?.visible
                   ? "Client or environment"
                   : "Client",
               control: targetControl,

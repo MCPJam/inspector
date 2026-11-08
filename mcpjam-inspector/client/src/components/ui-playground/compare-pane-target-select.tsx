@@ -35,9 +35,11 @@ export function ComparePaneTargetSelect({
   onChange: (target: ComparePaneTarget) => void;
 }) {
   const options = [...clients, ...environments];
+  const valueKey = paneTargetKey(value);
+  const hasSelection = options.some((option) => paneTargetKey(option.target) === valueKey);
   return (
     <Select
-      value={paneTargetKey(value)}
+      value={hasSelection ? valueKey : ""}
       onValueChange={(next) => {
         const option = options.find(
           (entry) => paneTargetKey(entry.target) === next,
@@ -50,7 +52,7 @@ export function ComparePaneTargetSelect({
         className="w-full"
         aria-label={`What ${label} runs`}
       >
-        <SelectValue />
+        <SelectValue placeholder="Choose a client" />
       </SelectTrigger>
       <SelectContent>
         <SelectGroup>
