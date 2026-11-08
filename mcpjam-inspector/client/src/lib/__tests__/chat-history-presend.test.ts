@@ -55,7 +55,10 @@ describe("presendStateIsCurrent", () => {
 
   it("never trusts a session that belongs to another row or conversation", () => {
     expect(
-      presendStateIsCurrent({ ...current, activeHistorySessionId: "history-2" }),
+      presendStateIsCurrent({
+        ...current,
+        activeHistorySessionId: "history-2",
+      }),
     ).toBe(false);
     expect(presendStateIsCurrent({ ...current, chatSessionId: "chat-2" })).toBe(
       false,
@@ -72,9 +75,9 @@ describe("withPresendSyncTimeout", () => {
   });
 
   it("passes a prompt read through unchanged", async () => {
-    await expect(withPresendSyncTimeout(Promise.resolve("state"))).resolves.toBe(
-      "state",
-    );
+    await expect(
+      withPresendSyncTimeout(Promise.resolve("state")),
+    ).resolves.toBe("state");
     const failure = new Error("403");
     await expect(withPresendSyncTimeout(Promise.reject(failure))).rejects.toBe(
       failure,

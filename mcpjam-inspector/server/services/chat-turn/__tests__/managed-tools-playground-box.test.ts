@@ -25,17 +25,22 @@ vi.mock("../owned-playground-box.js", () => ({
   acquireOwnedPlaygroundHarnessBox: m.acquire,
 }));
 vi.mock("../../../utils/harness/playground-box.js", async (original) => ({
-  ...(await original<typeof import("../../../utils/harness/playground-box.js")>()),
+  ...(await original<
+    typeof import("../../../utils/harness/playground-box.js")
+  >()),
   playgroundHarnessBoxUnavailableReason: () => null,
   playgroundCredentialRefusal: m.credentialRefusal,
 }));
-vi.mock("../../../utils/computers/environment-context.js", async (original) => ({
-  ...(await original<
-    typeof import("../../../utils/computers/environment-context.js")
-  >()),
-  maybeAppendEnvironmentContext: async (args: { systemPrompt?: string }) =>
-    args.systemPrompt,
-}));
+vi.mock(
+  "../../../utils/computers/environment-context.js",
+  async (original) => ({
+    ...(await original<
+      typeof import("../../../utils/computers/environment-context.js")
+    >()),
+    maybeAppendEnvironmentContext: async (args: { systemPrompt?: string }) =>
+      args.systemPrompt,
+  }),
+);
 vi.mock("../../../routes/web/mcpjam-platform-client.js", () => ({
   buildMcpjamPlatformClient: () => undefined,
 }));

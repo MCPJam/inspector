@@ -8,11 +8,7 @@
  * forwards, to its per-turn `[harness][timing]` line.
  */
 export type TurnTimingStage =
-  | "setup"
-  | "turnAuthorization"
-  | "connections"
-  | "tools"
-  | "streamPreparation";
+  "setup" | "turnAuthorization" | "connections" | "tools" | "streamPreparation";
 
 export class TurnTiming {
   private readonly startedAt: number;

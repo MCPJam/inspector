@@ -53,9 +53,9 @@ describe("acquireOwnedPlaygroundHarnessBox", () => {
     };
     m.acquire.mockResolvedValue(refusal);
     const own = vi.fn();
-    await expect(
-      acquireOwnedPlaygroundHarnessBox({ own }, args),
-    ).resolves.toBe(refusal);
+    await expect(acquireOwnedPlaygroundHarnessBox({ own }, args)).resolves.toBe(
+      refusal,
+    );
     expect(own).not.toHaveBeenCalled();
   });
 });
