@@ -55,6 +55,7 @@ import {
   type CanonicalMcpCall,
 } from "./harness-evidence-merge.js";
 import type { FrictionResultEntry } from "@mcpjam/sdk/contract";
+import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import type { RunAssistantTurnOptions } from "../../utils/assistant-turn.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import { EVAL_WIDGET_MODEL_CONTEXT } from "../../config.js";
@@ -380,6 +381,11 @@ export interface DriveHostedEvalTurnParams {
     capturedSpans: EvalTraceSpan[];
     requestPayloads?: LiveChatTraceRequestPayloadEntry[];
     /**
+     * Each harness turn's MCP route (`turnTrace.harnessMcpAtTurn`), by eval
+     * `promptIndex`, for the per-turn persist. Empty on an emulated run.
+     */
+    harnessMcpByPromptIndex?: Map<number, HarnessMcpAtTurn>;
+    /**
      * Wire results, keyed by the `toolCallId` the GRADED call array uses:
      * a matched call under its narrated id, a wire-only call under
      * `evidence:<requestId>`. Carries the per-call timing, which is the only
@@ -500,6 +506,7 @@ export function failedLayerForEngineError(
 
 export async function driveHostedEvalTurn(
   params: DriveHostedEvalTurnParams,
+  origin: "prompt" | "widget-follow-up" = "prompt",
 ): Promise<HostedEvalTurnOutcome> {
   const {
     promptIndex,
@@ -1013,6 +1020,12 @@ export async function driveHostedEvalTurn(
       turnResult.turnTrace?.requestPayloads ?? [],
     ).map((entry) => ({ ...entry, promptIndex: params.promptIndex })),
   );
+  // Widget follow-ups share the authored prompt's index. Leave it empty if
+  // the authored prompt supplied no receipt.
+  const routeRecord = turnResult.turnTrace?.harnessMcpAtTurn;
+  if (origin === "prompt" && routeRecord) {
+    acc.harnessMcpByPromptIndex?.set(params.promptIndex, routeRecord);
+  }
   collectEvidenceResults(acc, evidence);
   // Reconcile accumulated usage to the engine's canonical post-turn total
   // against the pre-turn baseline. The stream runner's `onStepFinish` sink

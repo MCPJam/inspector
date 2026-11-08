@@ -78,6 +78,7 @@ import {
 
 import {
   applyVisibilityPolicyAndCountSignals,
+  type HarnessMcpAtTurn,
   type HostExecutionPolicy,
   type ModelVisibleMcpToolResults,
   type ToolExposureSignals,
@@ -7194,6 +7195,8 @@ const runHostedIterationWithBrowser = async (
     | undefined = undefined;
   const capturedSpans: EvalTraceSpan[] = [];
   const requestPayloads: LiveChatTraceRequestPayloadEntry[] = [];
+  /** Each harness turn's MCP route, by promptIndex; empty on emulated runs. */
+  const harnessMcpByPromptIndex = new Map<number, HarnessMcpAtTurn>();
   /**
    * Wire results for the friction signals, keyed as the GRADED call array
    * keys its calls. Filled per turn by `drive-hosted-eval-turn`; empty when
@@ -7417,6 +7420,7 @@ const runHostedIterationWithBrowser = async (
       traceMessageHistory,
       capturedSpans,
       requestPayloads,
+      harnessMcpByPromptIndex,
       evidenceResults,
       evidenceHadHole,
       accumulatedUsage,
@@ -7664,6 +7668,7 @@ const runHostedIterationWithBrowser = async (
       : {}),
     spans: capturedSpans,
     requestPayloads,
+    harnessMcpByPromptIndex,
     prompts: promptTraceSummaries,
     // Where the friction signals read their tool results from. THREE TIERS,
     // and the middle one is the reason this is threaded at all:
