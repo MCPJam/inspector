@@ -18,6 +18,7 @@ import * as operations from "../../src/operations.js";
 import type { MCPServerConfig } from "../../src/mcp-client-manager/index.js";
 import {
   isMissingInputCheck,
+  missingInputForCheck,
   missingInputMessage,
   noTaskCreatedMessage,
 } from "../../src/conformance-input.js";
@@ -1106,7 +1107,7 @@ describe("MCPTasksConformanceTest", () => {
     expect(scoreFromTasksResult(result)).toMatchObject({ failed: 0 });
   });
 
-  it("never reports a 401 on the task call as bad arguments", async () => {
+  it("reports a 401 on the task call as a login gap, not bad arguments", async () => {
     const manager = extensionManager({
       listTools: async () => ({
         tools: [
@@ -1125,9 +1126,13 @@ describe("MCPTasksConformanceTest", () => {
       config: { toolName: "long_job", toolArguments: {}, pollTimeoutMs: 500 },
     });
 
-    const ttl = result.checks.find((c) => c.id === "tasks-ttl-shape")!;
-    expect(isMissingInputCheck(ttl)).toBe(false);
-    expect(ttl.error?.message).toContain('calling "long_job" failed');
+    // A 401 is the login to fix: "Not run" at no cost, never bad arguments,
+    // and never a failure of the result-type check.
+    for (const id of ["tasks-result-type-discipline", "tasks-ttl-shape"]) {
+      const check = result.checks.find((c) => c.id === id)!;
+      expect(check.skipReason, id).toBe("could-not-run");
+      expect(missingInputForCheck(check), id).toBe("login");
+    }
   });
 
   it("keeps a failing call on args that fit as the server's to answer for", async () => {

@@ -184,6 +184,26 @@ export class TaskGroupRunner extends TaskOperations {
             });
           };
 
+          /**
+           * A 401 on the task call is the login to fix, not a server fault:
+           * the checks it stopped are "Not run" at no cost.
+           */
+          const loginGap = (
+            id: MCPTasksCheckId
+          ): MCPTasksCheckResult | undefined =>
+            creationResult instanceof Error &&
+            (isAuthorizationRefusal(creationResult) ||
+              getNumericStatus(creationResult) === 401)
+              ? couldNotRun(
+                  id,
+                  AUTHORIZATION_REQUIRED_MESSAGE,
+                  loginRequiredDetails(
+                    creationResult,
+                    credentialsFromServerConfig(this.config.serverConfig)
+                  )
+                )
+              : undefined;
+
           let createdTaskId: string | undefined;
           let creationResult: unknown;
           /** The creation response as it arrived, before decoding. */
@@ -249,7 +269,8 @@ export class TaskGroupRunner extends TaskOperations {
               );
             } else if (creationResult instanceof Error) {
               checks.push(
-                badArgs("tasks-result-type-discipline") ??
+                loginGap("tasks-result-type-discipline") ??
+                  badArgs("tasks-result-type-discipline") ??
                   failed(
                     "tasks-result-type-discipline",
                     Date.now() - stepStartedAt,
@@ -523,6 +544,7 @@ export class TaskGroupRunner extends TaskOperations {
             // the app's setup advice does not hide the real error.
             if (!createdTaskId && creationResult instanceof Error) {
               return (
+                loginGap(id) ??
                 badArgs(id) ??
                 couldNotRun(
                   id,
