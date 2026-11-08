@@ -30,7 +30,8 @@ import {
   runtimeServerIds,
   runtimeServerNames,
 } from "../../services/environments/runtime.js";
-import { paneSkillsRequest, previewPaneSkills } from "../../services/environments/pane-skills.js";
+import { paneSkillsRequest } from "../../../shared/pane-skills-preview.js";
+import { previewPaneSkills } from "../../services/environments/pane-skills.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { xaaPolicyFromMcpProfile } from "../../utils/effective-auth.js";
 import { toPlaygroundEnvironmentPreview } from "../../services/environments/playground-preview.js";

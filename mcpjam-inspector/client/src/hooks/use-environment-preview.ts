@@ -26,7 +26,7 @@ export type EnvironmentPreviewServerSource =
   | "plugin"
   | "override";
 
-export type EnvironmentPreviewSkillChannel = "host" | "environment" | "plugin";
+export type EnvironmentPreviewSkillChannel = "host" | "environment" | "plugin" | "mcp-server";
 
 export type EnvironmentSkillDelivery = "emulated" | "harness" | "unsupported";
 

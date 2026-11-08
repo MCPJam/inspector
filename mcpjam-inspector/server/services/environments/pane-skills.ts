@@ -1,5 +1,9 @@
 import type { ConvexHttpClient } from "convex/browser";
-import { z } from "zod";
+import type {
+  PaneSkillRow,
+  PaneSkillsRequest,
+  PaneSkillsPreview,
+} from "../../../shared/pane-skills-preview.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { listCloudRuntimeSkills } from "../../utils/computers/cloud-skill-tools.js";
 import {
@@ -18,54 +22,16 @@ import {
 } from "./effective-capabilities.js";
 import { fetchPluginRuntimeAttribution } from "./plugin-attribution.js";
 import { applyPluginVersionOverride } from "./plugin-override.js";
-import {
-  resolveEnvironmentForRuntime,
-  runtimeSkills,
-  type RuntimeSkillChannel,
-} from "./runtime.js";
-
-const id = z.string().min(1);
-export const paneSkillsRequest = z.object({
-  projectId: id,
-  target: z.discriminatedUnion("kind", [
-    z.object({
-      kind: z.literal("client"),
-      hostId: id,
-      environmentId: id.optional(),
-    }),
-    z.object({ kind: z.literal("environment"), environmentId: id }),
-  ]),
-  serverIds: z.array(id).optional(),
-  pluginVersionIds: z.array(id).optional(),
-});
-
-type Reason =
-  | "unsupported-harness"
-  | "server-skill-unsupported"
-  | "plugin-disabled"
-  | "name-collision"
-  | "invalid-skill-name";
-type Row = {
-  skillId: string;
-  name: string;
-  description: string;
-  channels: (RuntimeSkillChannel | "project")[];
-  reason: Reason | null;
-};
+import { resolveEnvironmentForRuntime, runtimeSkills } from "./runtime.js";
 
 /** A read of the inputs to a turn. Do not compose an environment, start a box,
  * fetch supporting files, or return an artifact from the runtime spec. */
 export async function previewPaneSkills(
   client: ConvexHttpClient,
   bearer: string,
-  {
-    projectId,
-    target,
-    pluginVersionIds,
-    serverIds,
-  }: z.infer<typeof paneSkillsRequest>,
+  { projectId, target, pluginVersionIds, serverIds }: PaneSkillsRequest,
   signal?: AbortSignal,
-) {
+): Promise<PaneSkillsPreview> {
   const environmentId = target.environmentId;
   const spec = environmentId
     ? await resolveEnvironmentForRuntime(client, {
@@ -130,10 +96,10 @@ export async function previewPaneSkills(
         })
       : undefined;
   const effective = narrowed?.spec ?? spec;
-  const rows = new Map<string, Row>();
+  const rows = new Map<string, PaneSkillRow>();
   function add(
-    skill: Pick<Row, "skillId" | "name" | "description">,
-    channels: Row["channels"],
+    skill: Pick<PaneSkillRow, "skillId" | "name" | "description">,
+    channels: PaneSkillRow["channels"],
   ) {
     if (!rows.has(skill.skillId)) {
       rows.set(skill.skillId, {
