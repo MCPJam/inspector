@@ -129,6 +129,7 @@ type Operation = {
 export function createOwnedPluginMrtr(deps: {
   c: Context;
   bearer: string;
+  getAuthorization?: () => Promise<string>;
   projectId: string;
   serverId: string;
   serverName?: () => string | undefined;
@@ -159,6 +160,8 @@ export function createOwnedPluginMrtr(deps: {
       op.authorization.origin === "app" ? "mcp-app" : "server",
       uploadTarget() !== undefined,
     );
+  const currentBearer = () =>
+    deps.getAuthorization?.() ?? Promise.resolve(deps.bearer);
   let operation: Operation | undefined;
   let captured: PluginInvocationSuspension | undefined;
   const readCaptured = (): PluginInvocationSuspension | undefined => captured;
@@ -258,7 +261,7 @@ export function createOwnedPluginMrtr(deps: {
     const current = manager();
     const negotiatedEra = resolveMrtrNegotiatedEra(current, deps.serverId);
     const inner = createHostedMrtrCollector({
-      bearer: deps.bearer,
+      bearer: await currentBearer(),
       projectId: deps.projectId,
       serverId: deps.serverId,
       serverName: deps.serverName?.(),
@@ -343,7 +346,7 @@ export function createOwnedPluginMrtr(deps: {
             suspended,
           );
         } catch (denied) {
-          await cancelContinuation(deps.bearer, {
+          await cancelContinuation(await currentBearer(), {
             continuationId: suspended.pending.continuationId,
             reason: disabled ? "plugin_forms_disabled" : "plugin_owner_changed",
           });
@@ -364,9 +367,9 @@ export function createOwnedPluginMrtr(deps: {
       const op: Operation = { authorization, invocationId, params, signal };
       const current = manager();
       await deps.assertCurrent();
-      const formsDisabled = () =>
+      const formsDisabled = async () =>
         endPluginMrtrFormsDisabled({
-          bearer: deps.bearer,
+          bearer: await currentBearer(),
           owner: authorization.owner,
           invocationId,
           continuationId: submission.continuationId,
@@ -401,7 +404,7 @@ export function createOwnedPluginMrtr(deps: {
         );
       let wireStarted = false;
       const result = await resumeMrtrContinuationLeg({
-        bearer: deps.bearer,
+        bearer: await currentBearer(),
         submission,
         schemaDisplayMaxBytes: PLUGIN_FORM_SCHEMA_MAX_BYTES,
         selectFormSchema: formSchema,
@@ -572,7 +575,7 @@ export function createOwnedPluginMrtr(deps: {
           );
         } catch (error) {
           pluginFormSources.closeOperation(authorization.owner, invocationId);
-          await cancelContinuation(deps.bearer, {
+          await cancelContinuation(await currentBearer(), {
             continuationId: submission.continuationId,
             reason: "plugin_form_source_unavailable",
           });

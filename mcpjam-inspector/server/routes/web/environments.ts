@@ -138,6 +138,7 @@ environments.get("/:environmentId/tools", async (c) =>
             undefined,
             undefined,
             {
+              pluginComputerRuntime: !!spec.host.runtimeConfig?.computer,
               ...(serverNames.length > 0 ? { serverNames: [name] } : {}),
               xaaPolicy,
               xaaIssuer,

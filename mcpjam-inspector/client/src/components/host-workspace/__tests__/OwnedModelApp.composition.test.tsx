@@ -17,8 +17,10 @@ import {
   OwnedModelAppPortsProvider,
   useOwnedModelAppWorkspace,
 } from "../OwnedModelApp";
+import { useCompareLaneModelApps } from "../use-compare-lane-model-apps";
+import { ALL_EXTENSION_CAPABILITIES, compareLaneWorkspace } from "../extension-owners";
 import { HostedMrtrHost } from "../../elicitation/HostedMrtrHost";
-import { registerComposerSlot } from "../../elicitation/composer-form-store";
+import { registerComposerForm, registerComposerSlot } from "../../elicitation/composer-form-store";
 import { useHostedMrtrStore } from "@/stores/hosted-mrtr-store";
 import {
   ContextAttachmentChip,
@@ -201,6 +203,68 @@ function Workspace({
   );
 }
 const reply = (value: unknown) => new Response(JSON.stringify(value));
+function CompareModelLane({ lane, enabled = true }: { lane: string; enabled?: boolean }) {
+  const pluginWorkspace = compareLaneWorkspace(
+    { actorId: "actor", projectId: "project", hostId: "host" },
+    "model", lane, `chat-${lane}`,
+  );
+  const scope = { projectId: "project", hostId: "host", threadId: `chat-${lane}`, pluginWorkspace };
+  const workspace = useCompareLaneModelApps(scope, {
+    ...ALL_EXTENSION_CAPABILITIES,
+    modelContext: enabled,
+  }, "codex");
+  return <OwnedModelAppPortsProvider value={workspace.value}>
+    <output data-testid={`references-${lane}`}>{JSON.stringify(workspace.references)}</output>
+    <OwnedModelApp
+      marker={{ ...marker, instanceToken: lane.repeat(43), workspaceId: pluginWorkspace.workspaceId }}
+      renderProps={{ toolCallId: lane, toolName: "fixture.part", serverId: "saved-server", resourceUri: "ui://part", toolState: "output-available", chatSessionId: scope.threadId }}
+    />
+  </OwnedModelAppPortsProvider>;
+}
+
+it("owns two Compare model App contexts independently and closes only the removed lane", async () => {
+  mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/renew")) return reply({});
+    const body = JSON.parse(init.body as string);
+    if (url.endsWith("/model/open")) return reply({ ...handle, instanceToken: body.instanceToken });
+    if (url.endsWith("/model/call")) return reply({ status: "completed", result: { content: [] } });
+    if (url.endsWith("/model/context")) return reply({
+      _meta: { "openai/modelContext": { updateId } },
+      snapshot: { revision: body.sequence, sequence: body.sequence, state: { updateId, ...body.params } },
+    });
+    if (url.endsWith("/model/close")) return reply({ closed: true });
+    throw new Error("Unexpected API path");
+  });
+  const lanes = (first = true, enabled = true) => <>
+    {first && <CompareModelLane key="c" lane="c" />}
+    <CompareModelLane key="d" lane="d" enabled={enabled} />
+  </>;
+  const view = render(lanes());
+  await waitFor(() => expect(mocks.hosts.size).toBe(2));
+  const first = mocks.hosts.get("c")!;
+  const second = mocks.hosts.get("d")!;
+  expect(first.surface.openAIDisplayModes).toBe(true);
+  expect(first.services.sendMessage).toBeUndefined();
+  await act(async () => {
+    await first.services.updateModelContext!(params);
+    await second.services.updateModelContext!({ content: [{ type: "text", text: "Other lane" }] });
+  });
+  expect(screen.getByTestId("references-c")).toHaveTextContent("c".repeat(43));
+  expect(screen.getByTestId("references-c")).not.toHaveTextContent("d".repeat(43));
+  expect(screen.getByTestId("references-d")).toHaveTextContent("d".repeat(43));
+  expect(screen.getByTestId("references-d")).not.toHaveTextContent("c".repeat(43));
+  view.rerender(lanes(false, false));
+  expect(screen.getByTestId("references-d")).toHaveTextContent("[]");
+  await waitFor(() => expect(mocks.fetch.mock.calls.some(([url, init]) =>
+    url.endsWith("/model/close") && JSON.parse(init.body).instanceToken === "c".repeat(43),
+  )).toBe(true));
+  expect(mocks.fetch.mock.calls.some(([url, init]) =>
+    url.endsWith("/model/close") && JSON.parse(init.body).instanceToken === "d".repeat(43),
+  )).toBe(false);
+  view.rerender(lanes(false));
+  expect(screen.getByTestId("references-d")).toHaveTextContent("d".repeat(43));
+  expect(mocks.mounted).toBe(2);
+});
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.host = null;
@@ -283,6 +347,7 @@ it.each(["accept", "cancel"] as const)("delivers a model App's %s through its ac
   const calls: Record<string, unknown>[] = [];
   mocks.upload.mockResolvedValue({ ok: true, storageId: "private-receipt" });
   mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/renew")) return reply({});
     const body = JSON.parse(init.body as string);
     if (url.endsWith("/model/open")) return reply(handle);
     if (url.endsWith("/model/close")) return reply({ closed: true });
@@ -309,7 +374,7 @@ it.each(["accept", "cancel"] as const)("delivers a model App's %s through its ac
   fireEvent.click(await screen.findByRole("button", { name: "Ask App form" }));
   await waitFor(() => expect(screen.getByTestId("owned-form-slot")).toHaveTextContent("Choose model input"));
   expect(screen.queryByRole("dialog")).toBeNull();
-  if (action === "cancel") fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  if (action === "cancel") fireEvent.click(screen.getByRole("button", { name: "Cancel form" }));
   else {
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
@@ -362,6 +427,7 @@ describe("a later send and Remove all", () => {
     let server: { updateId: string; content: unknown[] } | null = null;
     let revision = 0;
     mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/renew")) return reply({});
       const body = JSON.parse(init.body as string);
       if (url.endsWith("/model/open")) return reply(handle);
       if (url.endsWith("/model/call"))
@@ -429,6 +495,7 @@ describe("a stale Remove all on a model App", () => {
   it("shows the person's newer context but keeps it out of the next turn", async () => {
     let revision = 0;
     mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/renew")) return reply({});
       const body = JSON.parse(init.body as string);
       if (url.endsWith("/model/open")) return reply(handle);
       if (url.endsWith("/model/call"))
@@ -484,6 +551,7 @@ describe("inline App and composer composition", () => {
   it("publishes/removes real context with stable ownership and no repeated load effect", async () => {
     let finishRemoval!: (response: Response) => void;
     mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/renew")) return reply({});
       const body = JSON.parse(init.body as string);
       expect(body.instanceToken).toBe(token);
       if (url.endsWith("/model/open")) return reply(handle);
@@ -703,6 +771,7 @@ describe("the client's Model context toggle", () => {
 
   it("drops the App's reference and chip in the same render it turns off, keeping the App open", async () => {
     mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/renew")) return reply({});
       const body = JSON.parse(init.body as string);
       if (url.endsWith("/model/open")) return reply(handle);
       if (url.endsWith("/model/call"))
@@ -746,8 +815,32 @@ describe("the client's Model context toggle", () => {
   });
 });
 
+it("only exposes a direct model-tool form to Apps in its own Compare workspace", async () => {
+  mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/renew")) return reply({});
+    const body = JSON.parse(init.body as string);
+    if (url.endsWith("/model/open")) return reply({ ...handle, instanceToken: body.instanceToken });
+    if (url.endsWith("/model/close")) return reply({ closed: true });
+    throw new Error("Unexpected API path");
+  });
+  const view = render(<><CompareModelLane lane="c" /><CompareModelLane lane="d" /></>);
+  await waitFor(() => expect(mocks.pendingInputs.size).toBe(2));
+  const workspace = compareLaneWorkspace({ actorId: "actor", projectId: "project", hostId: "host" }, "model", "c", "chat-c");
+  const cancel = vi.fn();
+  let unregister = () => {};
+  act(() => { unregister = registerComposerForm({ id: "direct-mrtr-form", workspaceId: workspace.workspaceId, serverName: "CAD", cancel }); });
+  expect(mocks.pendingInputs.get("c")).toBe(true);
+  expect(mocks.pendingInputs.get("d")).toBe(false);
+  act(() => unregister());
+  expect(mocks.pendingInputs.get("c")).toBe(false);
+  expect(cancel).not.toHaveBeenCalled();
+  expect(mocks.mounted).toBe(2);
+  view.unmount();
+});
+
 it("gives a direct MCP tool's actual form priority without replaying the model App", async () => {
   mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/renew")) return reply({});
     if (url.endsWith("/model/open")) return reply(handle);
     if (url.endsWith("/model/close")) return reply({ closed: true });
     if (url.endsWith("/model/call") && JSON.parse(init.body as string).params.name === "fixture.load") return reply({ status: "completed", result: { content: [] } });
@@ -770,7 +863,7 @@ it("gives a direct MCP tool's actual form priority without replaying the model A
   await waitFor(() => expect(screen.getByTestId("owned-form-slot")).toHaveTextContent("Direct tool form"));
   expect(mocks.pendingInputs.get("original-call")).toBe(true);
   expect(mocks.fetch.mock.calls.filter(([url]) => url.endsWith("/model/call"))).toHaveLength(1);
-  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  fireEvent.click(screen.getByRole("button", { name: "Cancel form" }));
   await waitFor(() => expect(mocks.pendingInputs.get("original-call")).toBe(false));
   expect(submit).toHaveBeenCalledOnce();
   expect(cancel).not.toHaveBeenCalled();

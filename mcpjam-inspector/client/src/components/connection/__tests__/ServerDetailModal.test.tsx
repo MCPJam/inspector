@@ -13,7 +13,30 @@ import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 
 const settingsFixture = vi.hoisted(() => ({ available: false, mounts: 0 }));
 vi.mock("../../host-workspace/use-server-settings", () => ({ useServerSettingsAvailability: (scope: unknown) => ({ available: !!scope && settingsFixture.available, failed: false, retry: vi.fn() }) }));
-vi.mock("../../host-workspace/ServerSettingsPanel", () => ({ ServerSettingsPanel: () => <div data-testid="settings-view">Shared settings view</div> }));
+vi.mock("../../host-workspace/ServerSettingsPanel", async () => {
+  const { useState, useLayoutEffect } = await import("react");
+  const { useSettingsDialogPresentation } =
+    await import("../../host-workspace/settings-dialog-presentation");
+  return {
+    ServerSettingsPanel: () => {
+      const presentation = useSettingsDialogPresentation();
+      const [active, setActive] = useState(false);
+      useLayoutEffect(() => {
+        if (!active || !presentation) return;
+        presentation.claim("project-settings-child", "fullscreen", () =>
+          setActive(false),
+        );
+        return () => presentation.release("project-settings-child");
+      }, [active, presentation?.claim, presentation?.release]);
+      return (
+        <div data-testid="settings-view">
+          Shared settings view
+          <button onClick={() => setActive(true)}>Open test App</button>
+        </div>
+      );
+    },
+  };
+});
 const mockCapture = vi.fn();
 const mockUseFeatureFlagEnabled = vi.hoisted(() => vi.fn(() => false));
 const mockUseQuery = vi.hoisted(() => vi.fn(() => undefined));
@@ -198,6 +221,37 @@ describe("ServerDetailModal", () => {
     await user.click(screen.getByRole("tab", { name: "Settings" }));
     expect(screen.getByTestId("settings-view")).toBe(panel);
     expect(defaultProps.onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("uses the same project dialog for an App and dismisses its claim before the parent", async () => {
+    settingsFixture.available = true;
+    const user = userEvent.setup();
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        hostedServerId="server"
+        extensionSettingsScope={{
+          projectId: "project",
+          hostId: "host",
+          threadId: "thread",
+          pluginWorkspace: { version: 1, workspaceId: "workspace" },
+        }}
+      />,
+    );
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    await user.click(screen.getByRole("button", { name: "Open test App" }));
+    const parent = screen.getByRole("dialog");
+    expect(parent).toHaveAttribute("data-settings-dialog-fullscreen", "true");
+    expect(parent).toHaveStyle({ width: "100vw", height: "100dvh" });
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    fireEvent.keyDown(parent, { key: "Escape" });
+    await waitFor(() =>
+      expect(parent).not.toHaveAttribute("data-settings-dialog-app"),
+    );
+    expect(defaultProps.onClose).not.toHaveBeenCalled();
+    expect(defaultProps.onSubmit).not.toHaveBeenCalled();
+    fireEvent.keyDown(parent, { key: "Escape" });
+    await waitFor(() => expect(defaultProps.onClose).toHaveBeenCalledOnce());
   });
 
   it("prevents browser translation from rewriting the portaled dialog", () => {

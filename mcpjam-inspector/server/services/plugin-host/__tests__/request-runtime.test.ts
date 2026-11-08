@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { Context } from "hono";
 import {
+  pluginBindingDigest,
   pluginHostBindingDigest,
   pluginServerBindingDigest,
 } from "../bindings";
@@ -1321,6 +1322,7 @@ describe("a pending form and the client's current capability toggles", () => {
     host = {
       ...config,
       hostConfigId: crypto.randomUUID(),
+      configHash: pluginBindingDigest(capabilities),
       mcpProfile: {
         profileVersion: 1,
         mcpProtocolVersion: version,

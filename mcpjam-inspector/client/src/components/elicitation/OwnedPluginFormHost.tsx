@@ -1,7 +1,8 @@
+import { useLegacyFormOperation } from "./use-legacy-form-operation";
 import { useRetainedFormPortal } from "./use-retained-form-portal";
 import { PluginFormPreviewServices } from "./form-app-preview";
 import { formResourcePreviewPorts } from "./form-resource-preview";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { decodePrivatePluginFormSchema } from "@/shared/plugin-extensions/form-plan";
 import type { ReactNode } from "react";
 import {
@@ -123,8 +124,11 @@ export function OwnedPluginFormHost({
   workspaceId,
   active = true,
   presentServices,
+  retainWhileLoading = false,
 }: {
   projectId: string;
+  /** The matched global owner already bounds identity refresh retention. */
+  retainWhileLoading?: boolean;
   workspaceId: string;
   /**
    * False while another chat is shown: requests stay registered (and
@@ -142,14 +146,47 @@ export function OwnedPluginFormHost({
     "elicitations:listPendingElicitations" as any,
     owner ? { projectId, pluginWorkspaceId: workspaceId } : "skip",
   ) as Omit<HostedElicitationRequestEvent, "kind">[] | undefined;
+  const scopeKey = JSON.stringify([projectId, workspaceId]);
+  const retained = useRef<
+    | {
+        scopeKey: string;
+        owner: { _id: string };
+        rows: NonNullable<typeof rows>;
+      }
+    | undefined
+  >(undefined);
+  useLayoutEffect(() => {
+    if (
+      retained.current?.scopeKey !== scopeKey ||
+      !retainWhileLoading ||
+      owner === null ||
+      (owner && retained.current?.owner._id !== owner._id)
+    )
+      retained.current = undefined;
+    if (retainWhileLoading && owner && rows !== undefined)
+      retained.current = { scopeKey, owner, rows };
+  }, [scopeKey, retainWhileLoading, owner, rows]);
+  const previous =
+    retainWhileLoading && retained.current?.scopeKey === scopeKey
+      ? retained.current
+      : undefined;
+  const displayedOwner = owner === undefined ? previous?.owner : owner;
+  const displayedRows =
+    rows === undefined && displayedOwner?._id === previous?.owner._id
+      ? previous?.rows
+      : rows;
+  const focusOwner = useRef({ ownerId: displayedOwner?._id, scopeKey });
+  useLayoutEffect(() => {
+    focusOwner.current = { ownerId: displayedOwner?._id, scopeKey };
+  });
   const requests =
-    rows?.filter(
+    displayedRows?.filter(
       (row) =>
         row.formDialect === "openai" &&
         row.pluginWorkspaceId === workspaceId &&
         row.mode === "form",
     ) ?? [];
-  if (!owner || !requests.length) return null;
+  if (!displayedOwner || !requests.length) return null;
   // Every pending request registers with its chat's composer; only the first
   // in arrival order is shown, the rest wait their turn.
   return (
@@ -157,7 +194,7 @@ export function OwnedPluginFormHost({
       {requests.map((request) => (
         <OwnedRequest
           key={JSON.stringify([
-            owner._id,
+            displayedOwner._id,
             projectId,
             workspaceId,
             request.rendezvousId,
@@ -165,6 +202,10 @@ export function OwnedPluginFormHost({
           projectId={projectId}
           workspaceId={workspaceId}
           active={active}
+          canRestoreFocus={() =>
+            focusOwner.current.ownerId === displayedOwner._id &&
+            focusOwner.current.scopeKey === scopeKey
+          }
           presentServices={presentServices}
           request={{ ...request, kind: "request" }}
         />
@@ -178,8 +219,10 @@ function OwnedRequest({
   projectId,
   workspaceId,
   active,
+  canRestoreFocus,
   presentServices,
 }: {
+  canRestoreFocus: () => boolean;
   presentServices?: OwnedPluginFormPresenter;
   request: HostedElicitationRequestEvent;
   projectId: string;
@@ -317,6 +360,7 @@ function OwnedRequest({
   };
   const serverName = request.serverName?.trim() || request.serverId;
   const icons = useServerIconSources(request.serverId);
+  const operation = useLegacyFormOperation(projectId, workspaceId, request);
   const queue = useComposerFormRegistration(
     resolved
       ? null
@@ -324,11 +368,14 @@ function OwnedRequest({
           id: request.rendezvousId,
           workspaceId,
           serverName,
+          operation,
           cancel: () => cancel(),
         },
   );
   const slot = useComposerSlot(workspaceId);
-  const portal = useRetainedFormPortal(slot, queue.active && active);
+  const portal = useRetainedFormPortal(
+    slot, queue.active && active, workspaceId, canRestoreFocus, resolved,
+  );
   if (resolved) return null;
   // Later requests for this chat wait until the earlier ones are answered.
   if ((!queue.active || !active) && !portal.ready) return null;
@@ -381,7 +428,7 @@ function OwnedRequest({
           if (!open && !cancelling) void cancel();
         }}
       >
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={portal.onCloseAutoFocus}>
           <DialogHeader>
             <DialogTitle>
               {schemaFailed ? "Form unavailable" : "Loading form"}
@@ -443,6 +490,8 @@ function OwnedRequest({
     ) : (
       <ElicitationRequestDialog
         request={hydratedRequest}
+        focusWorkspaceId={workspaceId}
+        canRestoreFocus={canRestoreFocus}
         pluginForm={services}
         loading={submitting}
         onRespond={respond}

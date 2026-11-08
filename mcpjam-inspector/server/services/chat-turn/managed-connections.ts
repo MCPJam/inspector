@@ -299,7 +299,8 @@ export async function prepareManagedConnections(args: {
     scopeStepUpEnabled ||
     scopeStepUpResumeRequest ||
     scopeStepUpCancelRequest ||
-    tasksSeam
+    tasksSeam ||
+    (HOSTED_MODE && !!hostRuntimeConfig?.computer)
       ? await getConvexBearerForRequest(c)
       : undefined;
   const mrtrAuthPrincipal = resolveMrtrAuthPrincipal(c);
@@ -470,6 +471,7 @@ export async function prepareManagedConnections(args: {
       descriptor: pluginWorkspace,
       projectId: hostedBody.projectId,
       bearer: modelPluginBearer,
+      getAuthorization: () => getConvexBearerForRequest(c),
       signal: c.req.raw.signal,
     });
     const hostId = hostRuntimeConfig.hostId;
@@ -565,7 +567,7 @@ export async function prepareManagedConnections(args: {
     refusedServers,
   } = await createAuthorizedManager(
     callerContextFromHono(c),
-    bearerToken,
+    convexBearer ?? bearerToken,
     hostedBody.projectId,
     effectiveServerIds,
     hostPins?.timeoutMs ?? WEB_STREAM_TIMEOUT_MS,
@@ -591,6 +593,7 @@ export async function prepareManagedConnections(args: {
       pluginExtensions?.capabilities.forms,
     ),
     {
+      pluginComputerRuntime: !!hostRuntimeConfig?.computer,
       multiConnection: true,
       tolerateServerRefusals: isolatedServerIds,
       ...(modelFormDispatch
